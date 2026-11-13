@@ -137,7 +137,7 @@ beforeAll(async () => {
           HOOKS_PROBE,
           SANDBOX_FAKE,
         ],
-        runtime: { maxSteps: 4, keepRecentTurns: 1 },
+        runtime: { maxSteps: 4 },
         tools: { searchThresholdTools: 1 },
         extensionConfig: {
           "model-fake": {
@@ -162,6 +162,12 @@ beforeAll(async () => {
     // run context spec §10: the day a run start reads (a test moves it forward)
     { overrides: [{ provide: RUN_CONTEXT_CLOCK, useValue: () => clockMs ?? Date.now() }] },
   );
+  // the compaction settings this fixture used to set through `runtime.keepRecentTurns` (context
+  // compaction spec §4.8 moved them to the deployment settings, read live per model step)
+  await db
+    .insertInto("deployment_settings")
+    .values({ key: "compaction", value: JSON.stringify({ keepRecentTurns: 1 }) })
+    .execute();
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
   owner = await session(k, "owner");

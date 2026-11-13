@@ -24,6 +24,10 @@ import { ExtensionUnloadedError } from "../extensions/inflight.js";
 import type { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { hasInvocation, skillLoadOffered } from "../skills/catalog.js";
 import type { ToolRegistry, UnavailableTool } from "../tools/registry.js";
+import type {
+  CompactionSettings,
+  CompactionSettingsService,
+} from "./compaction-settings.service.js";
 import {
   type BuildModelRequestInput,
   buildModelRequest,
@@ -135,6 +139,11 @@ export interface ModelStepDeps {
   /** 工具注册表：每步开始时解析 agent 引用的工具（状态可能在步骤之间变化）。 */
   tools: Pick<ToolRegistry, "forAgent">;
   config: Pick<KernelConfigService, "get">;
+  /**
+   * The compaction settings in effect for the run's organization (context compaction spec §4.8):
+   * resolved once per model step.
+   */
+  compactionSettings: Pick<CompactionSettingsService, "resolve">;
   log: Logger;
   /**
    * 会话附件（构建请求时解析日志里的媒体引用；见 AttachmentsService）。未提供时媒体引用一律按「不再可用」处理。
@@ -428,7 +437,9 @@ async function runStep(
       },
     };
     const beforeCompaction = events.length;
-    events = await maybeCompact(deps, input, events, runtime, tools);
+    // the org's effective compaction settings, once for this step (org > platform > built-in)
+    const compaction = await deps.compactionSettings.resolve(input.orgId);
+    events = await maybeCompact(deps, input, events, runtime, compaction, tools);
     // a sub-agent checks its budget again after a compaction call, so the step's own request is
     // not a second call over the cap (review M5; the loop checks before each step); the budget
     // wrap-up is the one call allowed over it
@@ -875,8 +886,12 @@ async function maybeCompact(
   input: ModelStepInput,
   events: ConversationEvent[],
   runtime: Runtime,
+  compaction: CompactionSettings,
   tools: StepTools,
 ): Promise<ConversationEvent[]> {
+  // enabled: false turns proactive early compaction off; the provider's hard limits are handled
+  // elsewhere and are not configurable (context compaction spec §4.1)
+  if (!compaction.enabled) return events;
   if (compactionBackoff(events)) return events;
   let provider: BoundProvider;
   let info: ModelInfo;
@@ -908,8 +923,8 @@ async function maybeCompact(
     false,
   );
   const estimate = calibrate(raw, lastActual(events));
-  if (!shouldCompact(estimate, info, runtime.compactionThreshold)) return events;
-  const plan = compactionPlan(events, runtime.keepRecentTurns);
+  if (!shouldCompact(estimate, info, compaction.threshold)) return events;
+  const plan = compactionPlan(events, compaction.keepRecentTurns);
   if (!plan) return events;
 
   const { runId, step, signal, conversationId } = input;

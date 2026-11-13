@@ -1,11 +1,17 @@
 import { fileURLToPath } from "node:url";
 import { startTestPostgres } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { KernelConfigSchema } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import type { ApiError } from "../../src/errors.js";
-import { parseClientExtensions, readClientExtensions } from "../../src/identity/settings.js";
+import {
+  COMPACTION_SETTINGS,
+  DEPLOYMENT_SETTINGS,
+  parseClientExtensions,
+  readClientExtensions,
+} from "../../src/identity/settings.js";
 import { accountsFor, settingsFor } from "../helpers/identity.js";
 
 let box: Awaited<ReturnType<typeof startTestPostgres>>;
@@ -78,6 +84,13 @@ describe("SettingsService", () => {
       orgMarketplaceBrowse: true,
       uiTheme: { id: null },
       clientExtensions: { enabled: true, disabled: [] },
+      compaction: {
+        enabled: true,
+        threshold: 0.8,
+        keepRecentTurns: 4,
+        reserveTokens: 8000,
+        maxOutputTokens: 20_000,
+      },
     });
     expect(warns).toHaveLength(1);
     expect(warns[0]?.fields).toMatchObject({ key: "orgCreation" });
@@ -238,5 +251,51 @@ describe("SettingsService", () => {
     const s = settingsFor(db, { warn: (msg) => warns.push(msg) });
     expect((await s.get()).sandboxLimitOverrides).toEqual({});
     expect(warns).toHaveLength(1);
+  });
+
+  it("compaction: built-in defaults, a patch merges only the fields it gives, ranges are enforced", async () => {
+    await db.deleteFrom("deployment_settings").execute();
+    const defaults = COMPACTION_SETTINGS.parse({});
+    expect(DEPLOYMENT_SETTINGS.parse({}).compaction).toEqual(defaults);
+    const s = settingsFor(db);
+    const admin = await accountsFor(db).createLocal({
+      login: "compaction-admin",
+      password: "correct horse battery",
+      displayName: "C",
+      superAdmin: true,
+    });
+    const r1 = await s.update({ compaction: { threshold: 0.6 } }, admin.id);
+    expect(r1.compaction).toEqual({ ...defaults, threshold: 0.6 });
+    // a later patch changes only the fields it gives; the stored threshold stays
+    const r2 = await s.update({ compaction: { keepRecentTurns: 2 } }, admin.id);
+    expect(r2.compaction).toEqual({ ...defaults, threshold: 0.6, keepRecentTurns: 2 });
+    expect((await s.get()).compaction).toEqual(r2.compaction);
+    for (const patch of [
+      { compaction: { threshold: 0.99 } },
+      { compaction: { threshold: 0.49 } },
+      { compaction: { keepRecentTurns: 21 } },
+      { compaction: { reserveTokens: 50_001 } },
+      { compaction: { maxOutputTokens: 1023 } },
+      { compaction: { enabled: "yes" } },
+      { compaction: { other: true } },
+    ]) {
+      try {
+        // biome-ignore lint/suspicious/noExplicitAny: invalid on purpose
+        await s.update(patch as any, admin.id);
+        expect.unreachable(JSON.stringify(patch));
+      } catch (e) {
+        expect((e as ApiError).code, JSON.stringify(patch)).toBe("validation_failed");
+      }
+    }
+  });
+
+  it("runtime no longer carries the two compaction fields", () => {
+    const config = KernelConfigSchema.parse({
+      db: { url: "postgres://x" },
+      redis: { url: "redis://x" },
+      masterKey: Buffer.alloc(32, 7).toString("base64"),
+    });
+    expect(config.runtime).not.toHaveProperty("compactionThreshold");
+    expect(config.runtime).not.toHaveProperty("keepRecentTurns");
   });
 });

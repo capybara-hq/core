@@ -22,6 +22,7 @@ import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
 import { createLogger } from "../../src/log.js";
+import { COMPACTION_SETTINGS } from "../../src/runtime/compaction-settings.service.js";
 import { COMPACTION_MARKER } from "../../src/runtime/context/compaction.js";
 import { estimateTokens } from "../../src/runtime/context/tokens.js";
 import {
@@ -165,6 +166,7 @@ beforeAll(async () => {
     config: {
       get: () => ({ ...baseConfig, runtime: { ...baseConfig.runtime, ...runtimeOverrides } }),
     },
+    compactionSettings: { resolve: async () => COMPACTION_SETTINGS.parse({}) },
     tools: k.app.get(ToolRegistry),
     log: silent,
   };

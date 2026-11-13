@@ -10,7 +10,11 @@ import { z } from "zod";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
-import { readSandboxLimitOverride, type SandboxLimitOverride } from "../identity/settings.js";
+import {
+  COMPACTION_SETTINGS_PARTIAL,
+  readSandboxLimitOverride,
+  type SandboxLimitOverride,
+} from "../identity/settings.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
@@ -207,6 +211,11 @@ export const OrgSettingsSchema = z.object({
   scheduledTasks: ScheduledTasksSettingsSchema.prefault({}).catch(
     ScheduledTasksSettingsSchema.parse({}),
   ),
+  /**
+   * Conversation compaction overrides (context compaction spec §4.8): every field given wins, the
+   * rest follow the platform; absent (or an invalid stored value) follows the platform entirely.
+   */
+  compaction: COMPACTION_SETTINGS_PARTIAL.optional().catch(undefined),
 });
 
 export type OrgSettings = z.infer<typeof OrgSettingsSchema>;
@@ -241,6 +250,12 @@ export const OrgSettingsPatchSchema = z
     uiArrangement: OrgUiArrangementPatchSchema.optional(),
     /** Fields to change in the scheduled-tasks group; the rest keep their value. */
     scheduledTasks: ScheduledTasksPatchSchema.optional(),
+    /**
+     * Conversation compaction overrides (context compaction spec §4.8): a partial object merges
+     * into the stored fields (absent fields keep their value); null clears the whole override
+     * (follow the platform again).
+     */
+    compaction: COMPACTION_SETTINGS_PARTIAL.nullable().optional(),
   })
   .strict();
 
@@ -545,8 +560,10 @@ export class OrgSettingsService {
         .map(([k, v]) => [k, v === null ? undefined : v]),
     ) as Partial<OrgSettings>;
     const arrangementPatch = patch.uiArrangement;
+    const compactionPatch = patch.compaction;
     delete changes.uiArrangement;
     delete changes.scheduledTasks;
+    delete changes.compaction;
     const after: OrgSettings = { ...before, ...changes };
     if (patch.scheduledTasks !== undefined) {
       after.scheduledTasks = ScheduledTasksSettingsSchema.parse({
@@ -555,6 +572,11 @@ export class OrgSettingsService {
           Object.entries(patch.scheduledTasks).filter(([, v]) => v !== undefined),
         ),
       });
+    }
+    if (compactionPatch !== undefined) {
+      // a partial object merges into the stored fields; null clears the whole override
+      if (compactionPatch === null) delete after.compaction;
+      else after.compaction = { ...before.compaction, ...compactionPatch };
     }
     if (arrangementPatch !== undefined) {
       after.uiArrangement = mergeArrangement(before.uiArrangement, arrangementPatch);
@@ -571,6 +593,11 @@ export class OrgSettingsService {
     if (after.theme === undefined) delete after.theme;
     if (after.uiArrangement === undefined) delete after.uiArrangement;
     if (after.gitGateway === undefined) delete after.gitGateway;
+    // an empty compaction override is the same as none: follow the platform
+    if (after.compaction !== undefined && Object.keys(after.compaction).length === 0) {
+      delete after.compaction;
+    }
+    if (after.compaction === undefined) delete after.compaction;
     if (sameSettings(before, after)) return before;
     // Lock order: the org row (orgLock above), then the theme's catalog item and its row FOR
     // SHARE (assertThemeOnIn), then the check, so no scope writer changes what it read first
@@ -586,6 +613,7 @@ export class OrgSettingsService {
       theme: _oldTheme,
       uiArrangement: _oldArrangement,
       scheduledTasks: _oldScheduled,
+      compaction: _oldCompaction,
       ...rest
     } = stored;
     await this.db

@@ -214,8 +214,14 @@ export class AdminOperations implements OnModuleInit {
         example: { orgCreation: "super_admin" },
         authz: { superAdmin: true },
         mirrors: ["PUT /api/v1/admin/settings"],
-        // the per-org override records are orgs.set-limits (one org at a time)
-        omits: ["runConcurrencyOverrides", "sandboxLimitOverrides", "subagentLimitOverrides"],
+        // the per-org override records are orgs.set-limits (one org at a time); compaction is
+        // changed in the admin console's settings page
+        omits: [
+          "runConcurrencyOverrides",
+          "sandboxLimitOverrides",
+          "subagentLimitOverrides",
+          "compaction",
+        ],
         confirm: "platform",
         errors: [
           {
