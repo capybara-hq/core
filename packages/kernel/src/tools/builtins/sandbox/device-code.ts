@@ -31,8 +31,10 @@ export interface DeviceCode {
 /**
  * The line `gh` prints first: `! First copy your one-time code: 1A2B-C3D4`. Anchored to the line's
  * start and its full text so a similar sentence inside another program's output does not match.
+ * Global only so {@link parseDeviceCode} can walk every prompt it finds; it is never used with
+ * `exec`, so no `lastIndex` state is kept between calls.
  */
-const CODE_LINE = /^!\s*First copy your one-time code:\s*([A-Z0-9]{4}-[A-Z0-9]{4})\s*$/m;
+const CODE_LINE = /^!\s*First copy your one-time code:\s*([A-Z0-9]{4}-[A-Z0-9]{4})\s*$/gm;
 
 /**
  * The GitHub device-login URL as its own token: exactly the URL, followed by whitespace or the end
@@ -49,9 +51,16 @@ export const deviceCodeIdemKey = (runId: string, callId: string): string =>
  * The device code in an exec result's output, or `null` when the text is not `gh auth login --web`'s
  * fixed prompt. Both halves must be there: the `! First copy your one-time code:` line with a
  * well-formed code, and the GitHub device-login URL.
+ *
+ * When the text holds more than one prompt, the **last** code line wins. `TaskOutput` parses a
+ * window that re-reads up to 4 KiB of already-delivered output before the new bytes, so a retried
+ * login can put the old prompt (and its spent code) ahead of the live one; the newest prompt is
+ * always the later bytes, and returning it keeps the new card from being swallowed by the per-code
+ * dedupe. With one prompt the rule is unchanged.
  */
 export function parseDeviceCode(output: string): DeviceCode | null {
-  const code = CODE_LINE.exec(output)?.[1];
+  let code: string | undefined;
+  for (const match of output.matchAll(CODE_LINE)) code = match[1];
   if (code === undefined || !DEVICE_CODE_PATTERN.test(code)) return null;
   if (!URL_TOKEN.test(output)) return null;
   return { url: GITHUB_DEVICE_LOGIN_URL, code };

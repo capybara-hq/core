@@ -99,6 +99,57 @@ describe("TaskOutput read window: a prompt split across reads", () => {
   });
 });
 
+describe("TaskOutput read window: a newer prompt after an older one", () => {
+  // A login can be retried after its code expires: the old prompt stays in the re-read tail and the
+  // new one arrives in the fresh bytes. The parser's documented rule is the newest (last) prompt.
+  const OLD_CODE = "1A2B-C3D4";
+  const NEW_CODE = "5E6F-7G8H";
+  const prompt = (code: string) => `! First copy your one-time code: ${code}\n${URL_LINE}\n`;
+
+  it("returns the new code when the old prompt is in the tail and the new one is fresh", () => {
+    const oldPrompt = prompt(OLD_CODE);
+    const gap = "waiting for the browser...\n".repeat(4);
+    const newPrompt = prompt(NEW_CODE);
+    const bytes = Buffer.from(`${oldPrompt}${gap}${newPrompt}`, "utf8");
+    // read 1 delivers the old prompt and the gap
+    const first = readOnce(bytes, 0, Buffer.byteLength(`${oldPrompt}${gap}`));
+    expect(first.fresh).toContain(OLD_CODE);
+    expect(first.fresh).not.toContain(NEW_CODE);
+    // read 2 re-reads the old prompt in its tail and sees the new prompt in its fresh bytes
+    const second = readOnce(bytes, first.next, 50_000);
+    expect(second.fresh).toContain(newPrompt);
+    expect(second.fresh).not.toContain(OLD_CODE);
+    expect(second.parsed).toContain(OLD_CODE);
+    expect(parseDeviceCode(second.fresh)?.code).toBe(NEW_CODE);
+    expect(parseDeviceCode(second.parsed)?.code).toBe(NEW_CODE);
+  });
+
+  it("still matches a prompt split across the boundary when an older one is in the tail", () => {
+    const oldPrompt = prompt(OLD_CODE);
+    const gap = "waiting for the browser...\n".repeat(4);
+    const newCodeLine = `! First copy your one-time code: ${NEW_CODE}\n`;
+    const bytes = Buffer.from(`${oldPrompt}${gap}${newCodeLine}${URL_LINE}\n`, "utf8");
+    // read 1 ends after the new code line, so read 2's fresh bytes hold only its URL line
+    const first = readOnce(bytes, 0, Buffer.byteLength(`${oldPrompt}${gap}${newCodeLine}`));
+    expect(first.next).toBe(Buffer.byteLength(`${oldPrompt}${gap}${newCodeLine}`));
+    const second = readOnce(bytes, first.next, 50_000);
+    expect(second.parsed).toContain(OLD_CODE);
+    expect(second.fresh).toContain(GITHUB_DEVICE_LOGIN_URL);
+    expect(second.fresh).not.toContain("one-time code");
+    // no fresh match; the window's last prompt is the new one, not the old one in the tail
+    expect(parseDeviceCode(second.fresh)).toBeNull();
+    expect(parseDeviceCode(second.parsed)?.code).toBe(NEW_CODE);
+  });
+
+  it("returns the newest of two prompts both fully in the fresh bytes", () => {
+    const bytes = Buffer.from(`${prompt(OLD_CODE)}${prompt(NEW_CODE)}`, "utf8");
+    const read = readOnce(bytes, 0, 50_000);
+    expect(read.fresh).toContain(OLD_CODE);
+    expect(read.fresh).toContain(NEW_CODE);
+    expect(parseDeviceCode(read.fresh)?.code).toBe(NEW_CODE);
+  });
+});
+
 describe("TaskOutput read window: bounded", () => {
   it("stays cap + READ_TAIL_BYTES whatever the output size or offset", () => {
     const cap = 50_000;

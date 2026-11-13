@@ -532,7 +532,9 @@ export function taskOutputTool(deps: SandboxToolDeps): BuiltinTool {
       // A background command that waits for a person (`gh auth login --web`, any interactive
       // login) prints its prompt while TaskOutput reads it (auto mode spec §6, P-D13): this is
       // the path that shows the device-code card while the login is still pending. The parser sees
-      // the tail the window re-read plus the new bytes, so a prompt split across reads matches.
+      // the tail the window re-read plus the new bytes, so a prompt split across reads matches; it
+      // takes the newest prompt in the window, so a retried login's code is not hidden by an older
+      // prompt sitting in the tail.
       const loginCode = used > 0 ? parseDeviceCode(data.toString("utf8")) : null;
       return result(task, [statusLine(task), ...parts], loginCode);
     },
