@@ -86,6 +86,10 @@ Each line is the rule you must not miss; the skill has the rest.
   file, write new comments in English and translate the comments and test titles you edit (no bulk
   translation). Model-facing text is always English; UI text goes through i18n (zh and en); the zh UI
   says 平台 / 超级管理员 / 智能体, never 企业 or the Latin word `agent` (`pnpm check:i18n`).
+- **Tests:** unit tests need no database or app; integration tests use one app per file;
+  dual-replica tests live in the `container` project; no fixed sleeps, no per-test timeouts; a new
+  unit or container test joins its checked-in list in the same change (integration is the default).
+  [test-portfolio](docs/superpowers/specs/2026-11-14-test-portfolio-design.md)
 - **Migrations:** plain SQL `NNNN_<snake_desc>.sql`, `IF [NOT] EXISTS`, applied files are immutable,
   kernel schema `capybara`, extension schema `plugin_<name>`.
   [writing-migrations](.agents/skills/writing-migrations/SKILL.md)
