@@ -235,7 +235,7 @@
     "packages/kernel/test/skills/promote-on-share.test.ts": "timeout override; removed by the T1 batch",
     "packages/kernel/test/skills/skills-runtime.test.ts": "timeout override; removed by the T1 batch",
     "packages/kernel/test/skills/skills.http.test.ts": "timeout override; removed by the T1 batch",
-    "packages/kernel/test/storage/storage-host.test.ts": "setTimeout wait; removed by the T1 batch",
+    "packages/kernel/test/storage/storage-host.test.ts": "setTimeout wait: the mocked deletePrefix holds each delete open for 30 ms so two purge runs really overlap; the latency is the race the test is about",
     "packages/kernel/test/subagents/forked-skill.dual.test.ts": "fixed sleep; timeout override; small app file; removed by the T1 batch",
     "packages/kernel/test/subagents/forked-skill.e2e.test.ts": "timeout override; removed by the T1 batch",
     "packages/kernel/test/subagents/org-agents.test.ts": "timeout override; removed by the T1 batch",
