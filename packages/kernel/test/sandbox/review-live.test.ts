@@ -29,7 +29,7 @@ const OAI = {
   model: process.env.CAPYBARA_TEST_OAICOMPAT_MODEL,
 };
 const ANTHROPIC_KEY = process.env.CAPYBARA_TEST_ANTHROPIC_API_KEY;
-const ANTHROPIC_MODEL = process.env.CAPYBARA_TEST_ANTHROPIC_MODEL ?? "claude-haiku-5-5";
+const ANTHROPIC_MODEL = process.env.CAPYBARA_TEST_ANTHROPIC_MODEL ?? "claude-haiku-4-5";
 const LIVE =
   process.env.CAPYBARA_TEST_REVIEW === "1" &&
   ((OAI.base !== undefined && OAI.key !== undefined && OAI.model !== undefined) ||

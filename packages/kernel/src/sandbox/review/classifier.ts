@@ -13,6 +13,7 @@ import type { ModelRef } from "../../agents/definition.js";
 import type { AppendEvent, EventLog } from "../../conversations/event-log.js";
 import type { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import { type ModelPurposesService, PurposeAttemptError } from "../../models/purposes.js";
+import { estimateTokens } from "../../runtime/context/tokens.js";
 import type { ConversationKindForHooks, HookRunner } from "../../runtime/hook-calls.js";
 import {
   fireObserve,
@@ -56,6 +57,9 @@ export const REVIEW_SYSTEM_PROMPT =
 
 /** The answer cap of the classifier call (one sentence is far less). */
 export const REVIEW_MAX_OUTPUT_TOKENS = 300;
+
+/** The marker a command (or path) cut to fit the review model's context ends with. */
+export const REVIEW_TRUNCATED_MARKER = " [command truncated to fit the review model's context]";
 
 /** The reason of an `ask` the classifier could not decide (timeout, error, unparseable answer). */
 export const REVIEW_ASK_REASON =
@@ -212,6 +216,74 @@ export function boundMessages(texts: readonly string[], budget: number): string 
   return kept.reverse().join("\n\n");
 }
 
+/** The longest start of `text` within `budget` estimated tokens, never splitting a surrogate pair. */
+function headToTokens(text: string, budget: number): string {
+  const limit = Math.max(0, budget) * 4;
+  let quarters = 0;
+  let i = 0;
+  for (; i < text.length; i++) {
+    const q = text.charCodeAt(i) < 128 ? 1 : 4;
+    if (quarters + q > limit) break;
+    quarters += q;
+  }
+  // a cut between a surrogate pair drops the lone high surrogate
+  if (i > 0 && i < text.length && isHighSurrogate(text.charCodeAt(i - 1))) i--;
+  return text.slice(0, i);
+}
+
+/** Tokens kept free of the context window beyond the answer: the estimate is only approximate. */
+const headroomTokens = (contextWindow: number): number =>
+  Math.max(1024, Math.ceil(contextWindow / 10));
+
+/**
+ * The input fitted to the review model's context (the `WebFetch` extraction's approach): the system
+ * prompt, the message's fixed parts and the rule hits are always kept; the command (or path) — the
+ * one unbounded part — is cut to the rest of the budget, its beginning kept and
+ * {@link REVIEW_TRUNCATED_MARKER} appended, so a huge heredoc or base64 blob cannot overflow a
+ * small-context model and turn a decidable command into an ask. The person's messages were already
+ * bounded by `sandbox.review.messageTokens`; they are cut only if that alone overflows the model.
+ */
+export function fitReviewInput(
+  input: ReviewClassifierInput,
+  system: string,
+  limits: { contextWindow: number; maxOutputTokens: number },
+): ReviewClassifierInput {
+  const estimate = (text: string, personMessages: string): number =>
+    estimateTokens(
+      [
+        {
+          role: "user",
+          content: [{ type: "text", text: classifierMessage({ ...input, text, personMessages }) }],
+        },
+      ],
+      [{ text: system, cache: false }],
+      [],
+    );
+  const budget =
+    limits.contextWindow -
+    Math.min(REVIEW_MAX_OUTPUT_TOKENS, limits.maxOutputTokens) -
+    headroomTokens(limits.contextWindow);
+  if (estimate(input.text, input.personMessages) <= budget) return input;
+  // the fixed part of the message and the person's messages; the command gets the rest
+  let personMessages = input.personMessages;
+  let available = budget - estimate("", personMessages);
+  if (available < 0) {
+    // a misconfigured message budget alone overflows the model: keep the newest end, half the room
+    const fixed = estimate("", "");
+    personMessages = tailToTokens(
+      input.personMessages,
+      Math.max(0, Math.floor((budget - fixed) / 2)),
+    );
+    available = budget - estimate("", personMessages);
+  }
+  const commandRoom = Math.max(0, available - cost(REVIEW_TRUNCATED_MARKER));
+  const text =
+    cost(input.text) > commandRoom
+      ? `${headToTokens(input.text, commandRoom)}${REVIEW_TRUNCATED_MARKER}`
+      : input.text;
+  return { ...input, text, personMessages };
+}
+
 /* ---------------------------------------------------------------------------------------------- *
  * The call
  * ---------------------------------------------------------------------------------------------- */
@@ -242,7 +314,7 @@ export interface ReviewHookFacts {
 }
 
 export interface ReviewClassifierDeps {
-  purposes: Pick<ModelPurposesService, "chat">;
+  purposes: Pick<ModelPurposesService, "chat" | "chatLimits">;
   eventLog: Pick<EventLog, "notify">;
   stepLog: Pick<StepLog, "appendReported" | "appendAudited">;
   config: Pick<KernelConfigService, "get">;
@@ -283,6 +355,20 @@ export async function runClassifier(
 ): Promise<ClassifierAnswer> {
   const { input } = args;
   const system = reviewSystemPrompt(input.tag);
+  // fit the command and messages to the model the call will use (as `chat` resolves it)
+  let limits: { contextWindow: number; maxOutputTokens: number };
+  try {
+    limits = await deps.purposes.chatLimits(args.orgId, REVIEW_PURPOSE);
+  } catch (err) {
+    // no usable purpose model: fail closed without sending anything
+    deps.log.warn("command review classifier has no usable model", {
+      conversationId: args.conversationId,
+      callId: args.callId,
+      err,
+    });
+    return { decision: "ask", reason: REVIEW_ASK_REASON };
+  }
+  const fitted = fitReviewInput(input, system, limits);
   const scope = hookScope(deps.hooks, {
     ...(args.hookFacts.conversationKind !== undefined && {
       conversationKind: args.hookFacts.conversationKind,
@@ -317,7 +403,7 @@ export async function runClassifier(
       REVIEW_PURPOSE,
       {
         system: [{ text: system, cache: false }],
-        messages: [{ role: "user", content: [{ type: "text", text: classifierMessage(input) }] }],
+        messages: [{ role: "user", content: [{ type: "text", text: classifierMessage(fitted) }] }],
         tools: [],
         toolChoice: "none",
         maxOutputTokens: REVIEW_MAX_OUTPUT_TOKENS,

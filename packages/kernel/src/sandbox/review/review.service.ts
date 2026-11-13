@@ -1,5 +1,5 @@
 import type { HookParentScope, Logger, ModelRequest } from "@capybara-hq/plugin-sdk";
-import { Inject, Injectable, Optional } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
 import type { ModelRef } from "../../agents/definition.js";
 import { EventLog } from "../../conversations/event-log.js";
 import { ExtensionHost } from "../../extensions/host.js";
@@ -129,15 +129,14 @@ export class CommandReviewService implements CommandReview {
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
     @Inject(ModelPurposesService)
-    private readonly purposes: Pick<ModelPurposesService, "chat" | "resolve">,
+    private readonly purposes: Pick<ModelPurposesService, "chat" | "chatLimits" | "resolve">,
     @Inject(StepLog) private readonly stepLog: Pick<StepLog, "appendReported" | "appendAudited">,
     @Inject(EventLog) private readonly eventLog: Pick<EventLog, "notify">,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     @Inject(KERNEL_LOGGER) private readonly log: Logger,
-    /** Extension hooks (absent: none fire). */
-    @Optional()
+    /** Extension hooks (absent in a hand-built test service: none fire). */
     @Inject(ExtensionHost)
-    private readonly host?: Pick<ExtensionHost, "hooks">,
+    private readonly host: Pick<ExtensionHost, "hooks" | "current"> | undefined,
   ) {}
 
   private get db() {
@@ -177,6 +176,11 @@ export class CommandReviewService implements CommandReview {
       // argument validation runs before this stage; a shape the tool itself will refuse
       return allow(REVIEW_REASONS.notReviewed, null);
     }
+    // the person's messages and the session grants live on the root, whatever conversation the
+    // caller named (a sub-agent's conversation carries agent-authored task text, never shown here)
+    let root: string | undefined;
+    const rootOf = async (): Promise<string> =>
+      (root ??= await this.rootConversationOf(input.conversationId));
     const facts = {
       workspace,
       cwd: workspace,
@@ -198,7 +202,7 @@ export class CommandReviewService implements CommandReview {
       return allow(hit?.reason ?? "The command review allows this command.", hit?.id ?? null);
     }
     if (result.outcome === "ask") {
-      return (await this.sessionGranted(input, hit?.id ?? null))
+      return (await this.sessionGranted(await rootOf(), hit?.id ?? null))
         ? allow(REVIEW_REASONS.sessionGrant, hit?.id ?? null)
         : {
             decision: "ask",
@@ -211,7 +215,7 @@ export class CommandReviewService implements CommandReview {
     // unsure: the classifier decides when the purpose is mapped, else the hit itself is an ask
     if (!(await this.classifierMapped(input.orgId))) {
       const rule = hit?.id ?? "unsure.uncovered";
-      return (await this.sessionGranted(input, rule))
+      return (await this.sessionGranted(await rootOf(), rule))
         ? allow(REVIEW_REASONS.sessionGrant, rule)
         : {
             decision: "ask",
@@ -249,7 +253,7 @@ export class CommandReviewService implements CommandReview {
           text: target,
           cwd: workspace,
           ruleHits: result.hits,
-          personMessages: await this.personMessages(input.conversationId),
+          personMessages: await this.personMessages(await rootOf()),
           tag: newReviewTag(),
         },
         beforeSend: input.beforeSend,
@@ -276,15 +280,39 @@ export class CommandReviewService implements CommandReview {
   }
 
   /**
+   * The root conversation of the tree `conversationId` belongs to, by walking
+   * `parent_conversation_id`: the person's messages and the session grants live there, so a caller
+   * that names a sub-agent's conversation still reviews against what the person asked for, never
+   * against agent-authored task text. The input is normally the root already (one query).
+   */
+  private async rootConversationOf(conversationId: string): Promise<string> {
+    let id = conversationId;
+    // a tree is shallow (`subagents.maxDepth`); the cap only guards a corrupted parent chain
+    for (let depth = 0; depth < 64; depth++) {
+      const row = await this.db
+        .selectFrom("conversations")
+        .select(["kind", "parent_conversation_id"])
+        .where("id", "=", id)
+        .executeTakeFirst();
+      // a missing conversation (or one deleted meanwhile) is left to the reads that follow
+      if (row === undefined || row.kind !== "subagent" || row.parent_conversation_id === null) {
+        return id;
+      }
+      id = row.parent_conversation_id;
+    }
+    return id;
+  }
+
+  /**
    * Whether the root conversation holds a session grant for this rule class (`command:<ruleId>`).
    * Command grants carry no tool-spec fingerprint: the approval records the rule, not the command.
    */
-  private async sessionGranted(input: ReviewInput, rule: string | null): Promise<boolean> {
+  private async sessionGranted(rootConversationId: string, rule: string | null): Promise<boolean> {
     if (rule === null) return false;
     const grant = await this.db
       .selectFrom("conversation_tool_grants")
       .select("tool_key")
-      .where("conversation_id", "=", input.conversationId)
+      .where("conversation_id", "=", rootConversationId)
       .where("tool_key", "=", `command:${rule}`)
       .executeTakeFirst();
     return grant !== undefined;

@@ -18,6 +18,7 @@ import type { ConversationEvent, EventPayload } from "../../src/conversations/ev
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ModelPurposesService } from "../../src/models/purposes.js";
+import { estimateTokens } from "../../src/runtime/context/tokens.js";
 import {
   boundMessages,
   CommandReviewService,
@@ -26,6 +27,7 @@ import {
   REVIEW_MAX_OUTPUT_TOKENS,
   REVIEW_REASONS,
   REVIEW_SYSTEM_PROMPT,
+  REVIEW_TRUNCATED_MARKER,
   REVIEW_UNAVAILABLE_PREFIX,
   type ReviewCall,
   type ReviewInput,
@@ -485,7 +487,7 @@ describe("CommandReviewService", { timeout: 120_000 }, () => {
     expect(await reviewUsage()).toHaveLength(1);
   });
 
-  it("a sub-agent's call reviews against the root conversation's messages, not its own task", async () => {
+  it("a sub-agent's conversation resolves to the root: its task text is never seen", async () => {
     answer("allow", "Fine.");
     const child = randomUUID();
     await db
@@ -511,9 +513,10 @@ describe("CommandReviewService", { timeout: 120_000 }, () => {
       },
     ]);
 
-    // the pipeline passes the root conversation; the sub-agent's own task text is never read
+    // even a caller that names the sub-agent's conversation is reviewed against the root's
+    // person messages; the child's agent-authored task text is never read
     const verdict = await call({
-      conversationId: conv,
+      conversationId: child,
       conversationKind: "subagent",
       parent: { conversationId: conv, runId, callId: "agent-call" },
     });
@@ -521,6 +524,31 @@ describe("CommandReviewService", { timeout: 120_000 }, () => {
     const user = userText(reviewRequest());
     expect(user).toContain(PERSON_MESSAGE);
     expect(user).not.toContain("only the sub-agent sees this");
+  });
+
+  it("cuts a command too large for the review model's context instead of overflowing it", async () => {
+    answer("allow");
+    // model-script declares a 64 000-token context; 300 000 ASCII characters are ~75 000 tokens
+    const huge = `${UNSURE_COMMAND} ${"A".repeat(300_000)}`;
+    let sent: ModelRequest | undefined;
+    const verdict = await call({
+      input: { command: huge },
+      beforeSend: async (_target, request) => {
+        sent = request;
+      },
+    });
+    expect(verdict.decision).toBe("allow");
+    const req = sent as ModelRequest;
+    const limits = await purposes.chatLimits(orgId, "review");
+    expect(estimateTokens(req.messages, req.system, [])).toBeLessThanOrEqual(
+      limits.contextWindow -
+        Math.min(REVIEW_MAX_OUTPUT_TOKENS, limits.maxOutputTokens) -
+        Math.max(1024, Math.ceil(limits.contextWindow / 10)),
+    );
+    const user = userText(req);
+    expect(user).toContain(UNSURE_COMMAND);
+    expect(user).toContain(REVIEW_TRUNCATED_MARKER);
+    expect(user).toContain(PERSON_MESSAGE);
   });
 });
 
