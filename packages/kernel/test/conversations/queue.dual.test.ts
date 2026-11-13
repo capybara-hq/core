@@ -58,7 +58,7 @@ beforeAll(async () => {
   ownerB = await session(b, "owner");
   orgId = await createOrg(ownerA);
   agentId = await createAgent(ownerA, orgId);
-}, 180_000);
+});
 afterAll(async () => {
   await Promise.all([a?.close(), b?.close()]);
   await Promise.all([rawA?.destroy(), rawB?.destroy()]);
@@ -84,7 +84,7 @@ const queueLen = async (conv: string) =>
     ).n,
   );
 
-describe("queued messages on two replicas", { timeout: 90_000 }, () => {
+describe("queued messages on two replicas", () => {
   it("concurrent ensureRun on both replicas sends each item once, in order", async () => {
     const conv = await createConv(ownerA, orgId, agentId);
     await postMessage(ownerA, orgId, conv, "stall");

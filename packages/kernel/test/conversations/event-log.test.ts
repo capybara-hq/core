@@ -49,7 +49,7 @@ beforeAll(async () => {
   bus = createBus(redis, sub, "kernel");
   logA = eventLogFor(dbA, bus);
   logB = eventLogFor(dbB, bus);
-}, 120_000);
+});
 afterAll(async () => {
   await k?.close();
   await sub?.close();

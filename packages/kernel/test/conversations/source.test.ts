@@ -136,7 +136,7 @@ beforeAll(async () => {
       },
     },
   ]);
-}, 180_000);
+});
 
 afterAll(async () => {
   openBarrier(HOLD);
@@ -204,7 +204,7 @@ async function fireNow(t: ScheduledTask): Promise<TaskRun> {
   return (await store.updateRun(db, r.id, {})) ?? Promise.reject(new Error("no task run"));
 }
 
-describe("conversations.source (memory plugin spec §6.2)", { timeout: 90_000 }, () => {
+describe("conversations.source (memory plugin spec §6.2)", () => {
   it("a conversation created on the web is web", async () => {
     expect(await sourceOf(await createConv(owner, orgId, agentId))).toBe("web");
   });

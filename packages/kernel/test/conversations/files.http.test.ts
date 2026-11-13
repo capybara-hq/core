@@ -76,7 +76,7 @@ beforeAll(async () => {
       },
     ),
   );
-}, 180_000);
+});
 afterAll(async () => {
   await k?.close();
   await raw?.destroy();
@@ -188,7 +188,7 @@ const listFiles = async (conv: string, query = "") => {
   return r.json() as { files: FileOutput[]; next: string | null };
 };
 
-describe("file outputs", { timeout: 60_000 }, () => {
+describe("file outputs", () => {
   it("two deliveries of one path are one file with two versions; delivering sends changed: files", async () => {
     const conv = await sandboxConversation();
     {

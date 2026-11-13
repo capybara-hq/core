@@ -126,7 +126,7 @@ beforeAll(async () => {
       },
     ),
   );
-}, 180_000);
+});
 
 afterAll(async () => {
   release();
@@ -304,7 +304,7 @@ const FIX = "Fix GitHub issue $ARGUMENTS.";
 const rendered = (version: number, body: string) =>
   `The user invoked the skill "fix-issue" with /fix-issue 9. Follow its instructions for this request.\n\n<skill_invocation name="fix-issue" version="${version}">\n${body}\n</skill_invocation>`;
 
-describe("queued skill invocations (phase D Task 9)", { timeout: 90_000 }, () => {
+describe("queued skill invocations (phase D Task 9)", () => {
   it("is rendered when queued and sent as that text, even after the skill got a new version", async () => {
     const fix = await seedSkill("fix-issue", FIX);
     const agentId = await createAgent([fix.id]);
@@ -478,7 +478,7 @@ describe("queued skill invocations (phase D Task 9)", { timeout: 90_000 }, () =>
   });
 });
 
-describe("queued skill invocations: more cases (batch 5 review m5)", { timeout: 90_000 }, () => {
+describe("queued skill invocations: more cases (batch 5 review m5)", () => {
   it("a queued invocation with a model pick goes out with the switch and the skill together", async () => {
     const fix = await seedSkill("fix-issue", FIX);
     const agentId = await createAgent([fix.id]);
