@@ -1,5 +1,4 @@
 import { apiFetch } from "./api";
-import type { SandboxTier } from "./devices";
 import type { ScheduledTasksSettings } from "./schedules";
 import type { UiArrangementEntry } from "./ui";
 
@@ -74,16 +73,6 @@ export interface OrgSettingsDeployment {
    * starts from.
    */
   cloudNetwork: { mode: "open" | "allowlist"; allowHosts: string[] };
-  /**
-   * The old platform sandbox levels. The kernel no longer sends them; the only remaining reader is
-   * the device page's `DeviceSandboxSection`, which Task 11 replaces (Task 14 removes it).
-   */
-  sandboxTiers?: {
-    max: SandboxTier;
-    default: SandboxTier;
-    allowUnsandboxed: boolean;
-    devHosts: string[];
-  };
 }
 
 /** 组织实际生效的沙箱 cpu / 内存（只读：超级管理员在部署设置里按组织覆盖；旧内核不返回）。 */

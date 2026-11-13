@@ -75,10 +75,10 @@ function usePutPrice() {
 
 /**
  * The purposes while they load, as PurposeEditor draws them at the deployment scope: the kernel's
- * six (eval, title, web extraction and the three sub-agent tiers), each a row with its one hint
- * (what happens while it is unset) over the model select.
+ * seven (eval, title, command review, web extraction and the three sub-agent tiers), each a row
+ * with its one hint (what happens while it is unset) over the model select.
  */
-const LOADING_PURPOSES = [1, 1, 1, 1, 1, 1].map((lines) => ({
+const LOADING_PURPOSES = [1, 1, 1, 1, 1, 1, 1].map((lines) => ({
   lines,
   lineSize: "small" as const,
   field: { control: "select" as const },

@@ -209,11 +209,11 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     ["/settings/organization", `GET ${O}/settings`, { radios: 1, kv: 0, items: 0, switches: 0 }],
     // the tool policy, auto mode and cloud network radios, the resources' key-value
     ["/settings/sandbox", `GET ${O}/settings`, { radios: 3, kv: 1, items: 0, switches: 0 }],
-    // the 用途默认 tab: the kernel's six purposes as item rows, each with its model select
+    // the 用途默认 tab: the kernel's seven purposes as item rows, each with its model select
     [
       "/settings/models?tab=purposes",
       `GET ${O}/model-purposes`,
-      { radios: 0, kv: 0, items: 6, switches: 0 },
+      { radios: 0, kv: 0, items: 7, switches: 0 },
     ],
   ] as const)(
     "%s: the loading state draws the page's static shapes (Q6)",

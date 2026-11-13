@@ -22,8 +22,8 @@ vi.mock("next/navigation", () => ({
 /**
  * 自动模式 on the admin settings page (auto mode spec §4.3): one control, allowed or off, the
  * source line (env / file / nacos / db / default; a startup-config value is read-only), and a save
- * that invalidates every org's settings and devices. The kernel refuses a raise through an API
- * token or the Platform tool; the page only surfaces that answer.
+ * that invalidates every org's settings and devices. A signed-in super admin may set it either
+ * way; only an API token or the Platform tool may narrow alone (a kernel rule, tested there).
  */
 
 const A = en.admin.settings.autoMode;
@@ -120,23 +120,22 @@ describe("自动模式 on /admin/settings", () => {
     expect(within(section).getByText(`${z.sources.file} · devices.autoMode`)).toBeTruthy();
   });
 
-  it("a refusal from the kernel is shown and is not re-implemented here", async () => {
-    stubApi({
-      ...routeMap({ mode: "off", source: "db" }),
-      "PUT /api/v1/admin/settings": () =>
-        json(409, {
-          error: {
-            code: "deployment.auto_mode_not_allowed",
-            message: "Turning auto mode on at the platform level needs a super admin.",
-          },
-        }),
-    });
+  it("a signed-in super admin may raise it: the page sends mode allowed", async () => {
+    const calls = routes({ mode: "off", source: "db" });
     await renderRouteWithCache("/admin/settings", lastStubRoutes());
     const section = await sectionOf(A.title);
     const user = userEvent.setup();
-    // The page offers both choices; the kernel decides whether a raise is allowed
+    expect(within(section).getByRole("radio", { name: new RegExp(`^${A.off}`) })).toHaveProperty(
+      "checked",
+      true,
+    );
+    // The narrow-only rule (an API token or the Platform tool may only turn it off) lives in the
+    // kernel; a session PUT may raise, and this asserts the real write the page makes.
     await user.click(within(section).getByRole("radio", { name: new RegExp(`^${A.allowed}`) }));
     await user.click(screen.getByRole("button", { name: en.admin.settings.save }));
-    expect(await screen.findByText(en.errors.deployment.auto_mode_not_allowed)).toBeTruthy();
+    await waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
+    expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({
+      devicesAutoMode: { mode: "allowed" },
+    });
   });
 });

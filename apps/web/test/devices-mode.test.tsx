@@ -509,9 +509,9 @@ describe("the recent changes", () => {
     expect(meta).toContain(E.recent.via.device);
     expect(meta).not.toContain(E.recent.unknownBy);
     expect(meta).not.toContain("Ada");
-    // no tier vocabulary in the list
-    for (const tier of ["strict", "dev", "open"] as const) {
-      expect(within(list).queryByText(E.tier[tier])).toBeNull();
+    // no old tier vocabulary in the list (Open stays: it is a valid network mark)
+    for (const tier of ["Strict", "Development"]) {
+      expect(within(list).queryByText(tier)).toBeNull();
     }
   });
 });

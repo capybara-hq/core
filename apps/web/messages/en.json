@@ -122,7 +122,7 @@
     },
     "org": {
       "not_found": "The organization does not exist or you are no longer a member.",
-      "sandbox_egress_not_allowed": "This deployment turned the network off; only a super admin can turn it back on.",
+      "sandbox_egress_not_allowed": "Widening the organization's cloud network needs a person in the organization settings.",
       "last_owner": "An organization must keep at least one org owner.",
       "owner_required": "Only an org owner can do this.",
       "creation_disabled": "Creating organizations is turned off on this deployment.",
@@ -341,9 +341,7 @@
       "program_outdated": "The device program on this computer is out of date. Update it and connect again.",
       "credential_invalid": "This computer's connection credential is no longer valid. Connect again on the computer.",
       "policy_refused": "This device does not accept this change from the platform. Change it on the machine.",
-      "policy_unsupported": "This device can't change its network settings from the platform. Upgrade the device program on the machine.",
-      "tier_not_allowed": "This sandbox level is above the highest the organization or the platform allows.",
-      "tier_not_granted": "This scheduled task has no grant for the open level, so it can't use a device at the open level."
+      "policy_unsupported": "This device can't change its network settings from the platform. Upgrade the device program on the machine."
     },
     "device_sign_in": {
       "authorization_pending": "The connection is not confirmed yet. Confirm it on the web page and wait a moment.",
@@ -1699,11 +1697,6 @@
         "platform": "The platform sets this."
       },
       "cloudEmpty": "No domains are allowed."
-    },
-    "tier": {
-      "strict": "Strict",
-      "dev": "Development",
-      "open": "Open"
     }
   },
   "nav": {
@@ -3441,7 +3434,8 @@
       "hint": {
         "eval": "The eval judge uses it to compare baseline and candidate and give pass / fail. When it is not set, evals cannot use a judge.",
         "titles": "Generates titles for new conversations. When it is not set, the model of the conversation's latest run is used.",
-        "webFetch": "The web fetch tool uses it to extract what is asked from a fetched page. When it is not set, the model of the calling conversation's latest run is used (for a sub-agent's call, the sub-agent's)."
+        "webFetch": "The web fetch tool uses it to extract what is asked from a fetched page. When it is not set, the model of the calling conversation's latest run is used (for a sub-agent's call, the sub-agent's).",
+        "review": "The command-review classifier uses it to judge commands before they run. When it is not set, no classifier runs and a command it would be unsure about is asked about."
       }
     },
     "catalog": {
@@ -3947,7 +3941,7 @@
         "allowed": "Allowed",
         "allowedHint": "Organizations may allow auto mode; each device owner still chooses on the machine.",
         "off": "Off",
-        "offHint": "Off forces local devices to sandbox mode and cloud devices to the allowlist; turning it back on needs a super admin in this console.",
+        "offHint": "Off forces local devices to sandbox mode; cloud devices keep the container and follow the organization's cloud network (open by default). Turning it back on needs a super admin in this console.",
         "source": "Source: {source}",
         "sources": {
           "env": "From an environment variable (read-only)",

@@ -439,8 +439,9 @@ const autoLocked = (source: DevicesAutoModeSource | undefined): boolean =>
 /**
  * 自动模式 (auto mode spec §4.3): one control, allowed or off, with where the value comes from. A
  * value set in the startup config is disabled with its source. Off forces local devices to sandbox
- * mode and cloud devices to the allowlist; the kernel refuses a raise through an API token or the
- * Platform tool, which may only turn it off. Saved with the page's ActionRow.
+ * mode; cloud devices keep the container and follow the organization's cloud network. The kernel
+ * refuses a raise through an API token or the Platform tool, which may only turn it off; a signed-in
+ * super admin here may set it either way. Saved with the page's ActionRow.
  */
 function AutoModeSection({
   value,

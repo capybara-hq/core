@@ -75,16 +75,17 @@ export default function OrgModelsView({
 }
 
 /**
- * The purposes while they load, as PurposeEditor draws them: the kernel's six (eval, title, web
- * extraction and the three sub-agent tiers), each a row with its one hint (what happens while it
- * is unset) over the model select (its default option names the deployment default).
+ * The purposes while they load, as PurposeEditor draws them: the kernel's seven (eval, title,
+ * command review, web extraction and the three sub-agent tiers), each a row with its one hint (what
+ * happens while it is unset) over the model select (its default option names the deployment
+ * default).
  */
 const purposeRow = (lines: number) => ({
   lines,
   lineSize: "small" as const,
   field: { control: "select" as const },
 });
-const LOADING_PURPOSES = [1, 1, 1, 1, 1, 1].map(purposeRow);
+const LOADING_PURPOSES = [1, 1, 1, 1, 1, 1, 1].map(purposeRow);
 
 type Header = {
   path: { label: string; href?: string }[];

@@ -605,7 +605,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     await release();
   });
 
-  it("/admin/models: the purposes load as the kernel's six item rows", async () => {
+  it("/admin/models: the purposes load as the kernel's seven item rows", async () => {
     const { release } = await renderHeld(
       "/admin/models?tab=purposes",
       "GET /api/v1/admin/model-purposes",
@@ -615,7 +615,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     });
     expect(
       document.querySelectorAll('[data-part="loading-item-list"] > [data-part="loading-item-row"]'),
-    ).toHaveLength(6);
+    ).toHaveLength(7);
     await release();
   });
 

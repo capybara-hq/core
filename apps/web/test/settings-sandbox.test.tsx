@@ -1,8 +1,9 @@
-import { cleanup, screen, within } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
+import { keys } from "../src/lib/query/keys";
 import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
@@ -186,6 +187,22 @@ describe("沙箱设置（SettingsPage）", () => {
       expect(actionRow("zh")).toBeNull();
     });
 
+    it("saving auto mode invalidates the org's cached device lists and details", async () => {
+      const o = en.orgSettings;
+      stub({ toolSearch: "on" }, DEPLOYMENT);
+      const { client } = await renderRouteWithCache("/settings/sandbox", lastStubRoutes());
+      client.setQueryData(keys.org("o1").devices(), { items: [] });
+      client.setQueryData(keys.org("o1").device("d1"), { device: {} });
+      await screen.findByRole("radio", { name: prefix(o.autoMode.allowed) });
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("radio", { name: prefix(o.autoMode.off) }));
+      await save("en");
+      await waitFor(() =>
+        expect(client.getQueryState(keys.org("o1").devices())?.isInvalidated).toBe(true),
+      );
+      expect(client.getQueryState(keys.org("o1").device("d1"))?.isInvalidated).toBe(true);
+    });
+
     it.each(LOCALES)("a member reads both sections without changing them (%s)", async (locale) => {
       const o = msgs[locale].orgSettings;
       stub({ toolSearch: "on" }, DEPLOYMENT);
@@ -259,6 +276,64 @@ describe("沙箱设置（SettingsPage）", () => {
         screen.queryByText(o.cloudNetwork.invalidHost.replace("{host}", "bad_host")),
       ).toBeNull();
       expect(within(row).getByRole("button", { name: o.save })).toHaveProperty("disabled", false);
+    });
+
+    it("a stale invalid allowlist draft does not block an unrelated save in open mode", async () => {
+      const o = en.orgSettings;
+      const calls = stub(
+        { toolSearch: "on", cloudNetwork: { mode: "allowlist", allowHosts: ["a.example.com"] } },
+        DEPLOYMENT,
+      );
+      await renderRouteWithCache("/settings/sandbox", lastStubRoutes());
+      const hosts = (await screen.findByRole("textbox", {
+        name: o.cloudNetwork.hosts,
+      })) as HTMLTextAreaElement;
+      const user = userEvent.setup();
+      await user.clear(hosts);
+      await user.type(hosts, "Bad_Host");
+      expect(
+        within(actionRow("en") as HTMLElement).getByRole("button", { name: o.save }),
+      ).toHaveProperty("disabled", true);
+      // Open the network: the allowlist is not sent, so its stale text must not block the save
+      await user.click(screen.getByRole("radio", { name: prefix(o.cloudNetwork.open) }));
+      // An unrelated change is now saveable and goes through without the invalid hosts
+      await user.click(screen.getByRole("radio", { name: prefix(o.autoMode.off) }));
+      const row = actionRow("en") as HTMLElement;
+      expect(within(row).getByRole("button", { name: o.save })).toHaveProperty("disabled", false);
+      await user.click(within(row).getByRole("button", { name: o.save }));
+      expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({
+        autoMode: "off",
+        cloudNetwork: { mode: "open" },
+      });
+    });
+
+    it("switching back to allowlist keeps the invalid text, so the error and disabled save return", async () => {
+      const o = en.orgSettings;
+      stub(
+        { toolSearch: "on", cloudNetwork: { mode: "allowlist", allowHosts: ["a.example.com"] } },
+        DEPLOYMENT,
+      );
+      await renderRouteWithCache("/settings/sandbox", lastStubRoutes());
+      const hosts = (await screen.findByRole("textbox", {
+        name: o.cloudNetwork.hosts,
+      })) as HTMLTextAreaElement;
+      const user = userEvent.setup();
+      await user.clear(hosts);
+      await user.type(hosts, "Bad_Host");
+      await user.click(screen.getByRole("radio", { name: prefix(o.cloudNetwork.open) }));
+      expect(
+        screen.queryByText(o.cloudNetwork.invalidHost.replace("{host}", "bad_host")),
+      ).toBeNull();
+      await user.click(screen.getByRole("radio", { name: prefix(o.cloudNetwork.allowlist) }));
+      expect(
+        (screen.getByRole("textbox", { name: o.cloudNetwork.hosts }) as HTMLTextAreaElement).value,
+      ).toBe("Bad_Host");
+      expect(
+        screen.getByText(o.cloudNetwork.invalidHost.replace("{host}", "bad_host")),
+      ).toBeTruthy();
+      expect(
+        within(actionRow("en") as HTMLElement).getByRole("button", { name: o.save }),
+      ).toHaveProperty("disabled", true);
     });
 
     it("the platform's kill switch closes the network: both choices disabled with the reason", async () => {

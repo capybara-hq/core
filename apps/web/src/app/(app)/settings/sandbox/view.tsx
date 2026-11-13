@@ -29,6 +29,7 @@ import {
   parseHostList,
   updateOrgSettings,
 } from "../../../../lib/org-settings";
+import { keys } from "../../../../lib/query/keys";
 import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
 import { orgSettingsQuery } from "../../../../lib/query/settings";
@@ -79,7 +80,11 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
   // The answer is the new settings; the read-only parts it leaves out keep their cached values.
   const update = useAppMutation({
     fn: (patch: OrgSettingsPatch) => updateOrgSettings(orgId, patch),
-    invalidates: () => [],
+    // auto mode and cloud network change every device's allowed and effective mode and its network
+    invalidates: (patch) =>
+      patch.autoMode !== undefined || patch.cloudNetwork !== undefined
+        ? [keys.org(orgId).devices(), keys.org(orgId).deviceAll()]
+        : [],
     onSuccess: (res) =>
       qc.setQueryData<OrgSettingsResponse>(orgSettingsQuery(orgId).queryKey, (old) => ({
         ...old,
@@ -192,7 +197,9 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
   const hostsText = draft.hostsText ?? baseHosts.join("\n");
   const hosts = parseHostList(hostsText);
   const badHost = hosts.find((h) => allowHostProblem(h, { wildcard: true }) !== null);
-  const hostsInvalid = badHost !== undefined || hosts.length > 200;
+  // Only an allowlist is validated and sent: a stale draft keeps its text when the person switches
+  // to open, so it must not block unrelated saves (and open mode never sends the hosts).
+  const hostsInvalid = cloudMode === "allowlist" && (badHost !== undefined || hosts.length > 200);
   const cloudChanged =
     cloudMode !== savedCloudMode ||
     (cloudMode === "allowlist" && draft.hostsText !== undefined && !sameList(hosts, baseHosts));
