@@ -10,16 +10,13 @@ import {
   type DeviceStatArgs,
   type DeviceWriteFileArgs,
   isPolicyOpId,
-  isSandboxTier,
   type KernelReq,
-  type SandboxTier,
-  tierAtMost,
+  type SandboxLimits,
   validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
 import type { CommandLogEntry } from "./command-log.js";
-import { execIsolation } from "./exec/switch.js";
-import { DeviceOpError, type ExecIsolation, type Executor } from "./exec/types.js";
-import { grantedHosts, type TierLimits, tierFacts } from "./policy.js";
+import { DeviceOpError, type ExecMode, type Executor } from "./exec/types.js";
+import { effectiveMode, grantedHosts } from "./policy.js";
 import type { PolicyOpRecord } from "./policy-ops.js";
 import type { PolicyStore } from "./policy-store.js";
 import { publicSuffixWildcard } from "./public-suffix.js";
@@ -27,8 +24,8 @@ import { DEFAULT_POLICY, type Policy } from "./state.js";
 
 /** What this program has seen across requests (one per program run, kept over reconnects). */
 export interface SeenState {
-  /** The tier limits of the latest exec: the org's ceiling and default, for the summary. */
-  limits?: TierLimits;
+  /** The mode of the latest exec's limits (the kernel's ceiling), for the summary. */
+  limits?: Pick<SandboxLimits, "mode">;
 }
 
 /** What a request may need beyond the executor. */
@@ -40,35 +37,11 @@ export interface OpContext {
   policy?: PolicyStore;
   /** Updated by every exec; read by the policy op's summary. */
   seen?: SeenState;
-  /** The platform the summary describes (default: this process's). */
-  platform?: NodeJS.Platform;
 }
 
-/** The refusal of a `policy` op adding hosts under `remoteGrants: "off"`. */
-export const REMOTE_GRANTS_OFF_MESSAGE =
-  "This device does not accept network changes from the deployment; allow it locally: " +
-  "capybara-device policy add allowedDomains <host>";
-
-/** The refusal of a `policy` op raising the tier under `remoteGrants: "off"`. */
-export const REMOTE_TIER_OFF_MESSAGE =
-  "This device does not accept a higher tier from the deployment; raise it locally: " +
-  "capybara-device policy set tier <tier>";
-
-/**
- * The refusal of a `policy` op that tries to turn the sandbox off: whatever `remoteGrants` says,
- * only the person on the machine does that (spec §5.4).
- */
-export const ISOLATION_REMOTE_MESSAGE =
-  "This device turns its sandbox off only on the machine itself (capybara-device policy set " +
-  'isolation none); the deployment may only set isolation to "sandbox".';
-
-/**
- * The refusal of a widening `policy` op in Docker mode: the container has either no network or the
- * whole internet, so one allowed domain would open everything.
- */
-export const DOCKER_WIDENING_MESSAGE =
-  "This device runs commands in Docker mode, which cannot limit network access per domain; " +
-  "switch the device to OS mode to allow single domains.";
+/** The refusal of a `policy` op that tries to turn auto mode on from the deployment. */
+export const MODE_ON_DEVICE_MESSAGE =
+  "The device's mode can only be changed on the machine: run `capybara-device mode auto`.";
 
 /** The local-log line for a finished request; `detail` is its audit line, `run` how an exec ran. */
 export function logEntryFor(
@@ -76,7 +49,7 @@ export function logEntryFor(
   res: DeviceRes,
   now: Date,
   detail?: string,
-  run?: Pick<ExecIsolation, "tier" | "isolation">,
+  run?: ExecMode,
 ): CommandLogEntry {
   const exec = req.op === "exec" ? (req.args as DeviceExecArgs) : undefined;
   const exitCode =
@@ -89,7 +62,7 @@ export function logEntryFor(
     tag: exec ? exec.tag : null,
     actor: exec ? { accountId: exec.actor.accountId } : null,
     exitCode,
-    ...(run !== undefined && { tier: run.tier, isolation: run.isolation }),
+    ...(run !== undefined && { mode: run.mode }),
     ...(detail !== undefined && { detail }),
   };
 }
@@ -97,32 +70,18 @@ export function logEntryFor(
 /** What the summary describes besides the policy file. */
 export interface SummaryFacts {
   mode: Executor["mode"];
-  /** The latest exec's tier limits; undefined before the first exec. */
-  limits?: TierLimits | undefined;
-  /** The localhost proxy guard found a local forwarding proxy (OS mode). */
-  proxyDetected?: boolean;
-  platform?: NodeJS.Platform;
+  /** The latest exec's mode ceiling; undefined before the first exec. */
+  limits?: Pick<SandboxLimits, "mode"> | undefined;
 }
 
 /**
- * The summary the kernel keeps of a local policy (hello, `policy` op result): the owner's tier,
- * what it gives on this machine with the latest ceiling seen ({@link tierFacts}), and the
- * isolation. Docker mode always reports `sandbox` (it ignores `isolation`).
+ * The summary the kernel keeps of a local policy (hello, `policy` op result): the effective mode
+ * (the owner's choice cut to the latest ceiling seen) and the device's sandbox-mode allowlist.
  */
 export function policySummary(p: Policy, facts: SummaryFacts): DeviceLocalPolicySummary {
-  const tf = tierFacts(p, facts.limits, {
-    mode: facts.mode,
-    proxyDetected: facts.proxyDetected ?? false,
-    ...(facts.platform !== undefined && { platform: facts.platform }),
-  });
   return {
-    ...(p.tier !== undefined && { tier: p.tier }),
-    effectiveTier: tf.effectiveTier,
-    isolation: facts.mode === "docker" ? "sandbox" : p.isolation,
-    localhost: tf.localhost,
-    unixSockets: tf.unixSockets,
+    mode: facts.limits === undefined ? p.mode : effectiveMode(p, facts.limits),
     allowedDomains: [...p.allowedDomains],
-    remoteGrants: p.remoteGrants,
   };
 }
 
@@ -131,8 +90,6 @@ export function summaryFacts(executor: Executor, ctx: OpContext): SummaryFacts {
   return {
     mode: executor.mode,
     limits: ctx.seen?.limits,
-    proxyDetected: executor.proxyGuard?.().detected ?? false,
-    ...(ctx.platform !== undefined && { platform: ctx.platform }),
   };
 }
 
@@ -182,16 +139,13 @@ function opHosts(list: unknown, key: "add" | "remove", fromApproval: boolean): s
 /**
  * Applies a `policy` op to the local policy (a trust boundary: the deployment is not the owner).
  *
- * - `isolation`: only `"sandbox"` (narrowing) is ever applied; anything else is refused whatever
- *   `remoteGrants` says, so the deployment can never turn the sandbox off.
- * - Widening (`add`; a `tier` above the file's; `tier: null` when the file has strict or dev,
- *   since the org's default is not known here) applies only under `remoteGrants: "owner"`, read from the
- *   file under the lock. Docker mode refuses `add` (its container cannot limit single domains).
- * - Narrowing always applies. Any tier change turns an unsandboxed device's sandbox back on (it
- *   runs unsandboxed only on the owner's own local tier `open`).
+ * - `mode`: only `"sandbox"` (narrowing) is ever applied; `"auto"` is refused, so the deployment
+ *   can never turn auto mode on. Only `capybara-device mode auto` on the machine does.
+ * - `add` / `remove` change the sandbox-mode allowlist; every host is validated (an approval adds
+ *   an exact host, never a wildcard).
  *
- * Every host is validated; the op is idempotent. Returns the result and the local audit line; a
- * refusal carries its audit line too ({@link PolicyRefused}).
+ * The op is idempotent. Returns the result and the local audit line; a refusal carries its audit
+ * line too ({@link PolicyRefused}).
  */
 function applyPolicyOp(
   store: PolicyStore,
@@ -204,78 +158,38 @@ function applyPolicyOp(
   const add = [...new Set(opHosts(args.add, "add", fromApproval))];
   const remove = [...new Set(opHosts(args.remove, "remove", fromApproval))];
   // Read as unknown: the frame parser may have been bypassed, so nothing is assumed of the shape.
-  const rawTier: unknown = (args as { tier?: unknown }).tier;
-  const rawIsolation: unknown = (args as { isolation?: unknown }).isolation;
+  const rawMode: unknown = (args as { mode?: unknown }).mode;
   const parts: string[] = [];
   if (add.length > 0) parts.push(`add ${add.join(", ")}`);
   if (remove.length > 0) parts.push(`remove ${remove.join(", ")}`);
-  if (rawTier !== undefined) {
-    parts.push(`tier ${rawTier === null ? "org default" : clean(String(rawTier), 40)}`);
-  }
-  if (rawIsolation !== undefined) parts.push(`isolation ${clean(String(rawIsolation), 40)}`);
+  if (rawMode !== undefined) parts.push(`mode ${clean(String(rawMode), 40)}`);
   const by =
     `by ${clean(source.accountName, 100)} (${clean(source.accountId, 100)}) ` +
     `via ${clean(source.via, 10)}`;
   const approval = fromApproval ? `, approval ${clean(source.approvalId, 100)}` : "";
   const what = parts.length > 0 ? parts.join("; ") : "unchanged";
   const refused = `policy refused ${what} ${by}${approval}`;
-  if (rawIsolation !== undefined && rawIsolation !== "sandbox") {
-    // Turning the sandbox off is decided on the machine only.
-    throw new PolicyRefused(ISOLATION_REMOTE_MESSAGE, refused);
+  if (rawMode !== undefined && rawMode !== "sandbox") {
+    // Turning auto mode on is decided on the machine only (spec §4.1).
+    throw new PolicyRefused(MODE_ON_DEVICE_MESSAGE, refused);
   }
-  if (rawTier !== undefined && rawTier !== null && !isSandboxTier(rawTier)) {
-    throw new PolicyRefused(`unknown tier ${clean(String(rawTier), 40)}`, refused);
-  }
-  const nextTier = rawTier as SandboxTier | null | undefined;
   const both = add.find((h) => remove.includes(h));
   if (both !== undefined) {
     throw new DeviceOpError("policy", `${both} is both added and removed`);
   }
-  if (add.length > 0 && facts.mode === "docker") {
-    throw new PolicyRefused(DOCKER_WIDENING_MESSAGE, refused);
-  }
-  // Docker mode takes a tier change under remoteGrants owner: raising it to dev does not open the
-  // container's network bridge (the dev hosts do not count there), only open does (spec §5.2).
-  // A tier above the file's, or following the org's default (not known here) when the file has
-  // a tier, may widen.
-  const widensTier = (p: Policy): boolean => {
-    if (nextTier === undefined || nextTier === "strict") return false;
-    // The org's default is at most its ceiling, which is at most open: following it from open
-    // never widens. From strict or dev it may.
-    if (nextTier === null) return p.tier !== undefined && p.tier !== "open";
-    return p.tier === undefined || !tierAtMost(nextTier, p.tier);
-  };
-  let sandboxBackOn = false;
   const change = (p: Policy): Policy => {
-    // Judged against the file as it is now, inside the lock: a local `remoteGrants off` wins.
-    if (p.remoteGrants !== "owner") {
-      if (add.length > 0) throw new PolicyRefused(REMOTE_GRANTS_OFF_MESSAGE, refused);
-      if (widensTier(p)) throw new PolicyRefused(REMOTE_TIER_OFF_MESSAGE, refused);
-    }
     const kept = p.allowedDomains.filter((d) => !remove.includes(d.toLowerCase()));
     const present = new Set(kept.map((d) => d.toLowerCase()));
-    const { tier: _old, ...rest } = p;
-    const tier = nextTier === undefined ? p.tier : (nextTier ?? undefined);
-    let isolation = rawIsolation === "sandbox" ? "sandbox" : p.isolation;
-    // A device runs unsandboxed only on the owner's local tier `open`: any tier change from the
-    // deployment turns the sandbox back on, so the deployment is never the last step that makes
-    // (or keeps) a device unsandboxed.
-    if (isolation === "none" && nextTier !== undefined && tier !== p.tier) {
-      isolation = "sandbox";
-      sandboxBackOn = true;
-    }
     return {
-      ...rest,
-      ...(tier !== undefined && { tier }),
-      isolation,
+      ...p,
+      mode: rawMode === "sandbox" ? "sandbox" : p.mode,
       allowedDomains: [...kept, ...add.filter((h) => !present.has(h))],
     };
   };
   const next = store.update(change, { written });
-  const also = sandboxBackOn ? "; isolation sandbox (tier changed by the deployment)" : "";
   return {
     result: { policy: policySummary(next, facts) },
-    detail: `policy ${what}${also} ${by}${approval}`,
+    detail: `policy ${what} ${by}${approval}`,
   };
 }
 
@@ -360,7 +274,7 @@ function policyStatus(store: PolicyStore, args: unknown, facts: SummaryFacts): D
   };
 }
 
-/** The audit line of an exec whose grants applied (OS mode only: Docker mode ignores grants). */
+/** The audit line of an exec whose grants applied (sandbox mode only: auto mode ignores grants). */
 function grantsDetail(
   executor: Executor,
   args: DeviceExecArgs,
@@ -369,24 +283,24 @@ function grantsDetail(
   if (executor.mode !== "os" || args.grants === undefined || policy === undefined) {
     return undefined;
   }
-  const hosts = grantedHosts(policy, args.limits, args.grants);
+  if (effectiveMode(policy, args.limits) !== "sandbox") return undefined;
+  const hosts = grantedHosts(args.limits, args.grants);
   if (hosts.length === 0) return undefined;
   const s = args.grants.source;
   return `grants ${clean(s.kind, 10)} ${clean(s.id, 100)} by ${clean(s.accountId, 100)}: ${hosts.join(", ")}`;
 }
 
 /**
- * Runs one request and returns the answer plus its local audit line and, for an exec, its tier
- * and isolation (for the local command log). A vanished device
- * directory answers `fs_gone` for every operation except `stop`, `policy` and `policyStatus`.
- * Never throws.
+ * Runs one request and returns the answer plus its local audit line and, for an exec, its mode
+ * (for the local command log). A vanished device directory answers `fs_gone` for every operation
+ * except `stop`, `policy` and `policyStatus`. Never throws.
  */
 export async function serveOp(
   executor: Executor,
   req: KernelReq,
   signal: AbortSignal,
   ctx: OpContext = {},
-): Promise<{ res: DeviceRes; detail?: string; run?: ExecIsolation }> {
+): Promise<{ res: DeviceRes; detail?: string; run?: ExecMode }> {
   const ok = (result: unknown): DeviceRes => ({ type: "res", id: req.id, ok: true, result });
   try {
     if (req.op === "stop") return { res: ok(null) };
@@ -427,21 +341,15 @@ export async function serveOp(
         return { res: ok({ roots: executor.roots }) };
       case "exec": {
         const args = req.args as DeviceExecArgs;
-        if (ctx.seen !== undefined) {
-          ctx.seen.limits = {
-            tier: args.limits.tier,
-            ...(args.limits.defaultTier !== undefined && { defaultTier: args.limits.defaultTier }),
-          };
-        }
+        if (ctx.seen !== undefined) ctx.seen.limits = { mode: args.limits.mode };
         // One decision per command, on one read of the policy: the executor runs it and the
         // local log records it. Grants are judged on the same read.
         const policy = ctx.policy?.current();
-        const run = execIsolation(policy ?? DEFAULT_POLICY, args.limits, executor.mode);
-        // Refused or not, these limits are the latest decision file operations follow.
+        const run: ExecMode = {
+          mode: effectiveMode(policy ?? DEFAULT_POLICY, args.limits),
+        };
+        // These limits are the latest decision file operations follow.
         executor.noteLimits?.(args.limits);
-        if (run.refusal !== undefined) {
-          return { ...errorAnswer(req, new DeviceOpError("policy", run.refusal)), run };
-        }
         const detail = grantsDetail(executor, args, policy);
         try {
           const result =

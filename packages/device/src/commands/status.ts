@@ -1,4 +1,4 @@
-import { readCredential } from "../state.js";
+import { readCredential, readPolicy, type SandboxMode } from "../state.js";
 
 /** `status`: exit 0 when logged in, 1 when not (or the credential file is unusable). */
 export function status(
@@ -18,10 +18,17 @@ export function status(
     out(json ? JSON.stringify({ loggedIn: false }) : "Not logged in.");
     return 1;
   }
+  // An unreadable policy file is reported by `start` and `policy show`; status still answers.
+  let sandboxMode: SandboxMode | undefined;
+  try {
+    sandboxMode = readPolicy(stateDir).mode;
+  } catch {
+    sandboxMode = undefined;
+  }
   // The credential itself is never printed.
   const { credential: _secret, ...shown } = cred;
   if (json) {
-    out(JSON.stringify({ loggedIn: true, ...shown }));
+    out(JSON.stringify({ loggedIn: true, ...shown, ...(sandboxMode && { sandboxMode }) }));
   } else {
     out(
       [
@@ -30,7 +37,7 @@ export function status(
         `  organization: ${cred.orgId}`,
         `  device:       ${cred.deviceId}`,
         `  directory:    ${cred.dir}`,
-        `  mode:         ${cred.mode}`,
+        `  mode:         ${cred.mode} | ${sandboxMode ?? "unknown"}`,
       ].join("\n"),
     );
   }

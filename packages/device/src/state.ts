@@ -16,7 +16,6 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { type DeviceRemoteGrants, isSandboxTier, type SandboxTier } from "@capybara-hq/plugin-sdk";
 import type { DeviceMode } from "./args.js";
 
 /** What `login` stores: how to reach the deployment and who this machine is there. */
@@ -34,6 +33,13 @@ export interface Credential {
   maxFrameBytes: number;
 }
 
+/**
+ * How commands run on this machine: `auto` (no OS sandbox; the owner's files, credentials and
+ * network, with every command reviewed by the deployment) or `sandbox` (today's strict
+ * `sandbox-runtime` profile). Not `DeviceMode`, which is the run mode (`os | docker`).
+ */
+export type SandboxMode = "auto" | "sandbox";
+
 /** Local limits the person sets for this machine. */
 export interface Policy {
   allowedDomains: string[];
@@ -41,20 +47,10 @@ export interface Policy {
   cpu: number | null;
   memoryMb: number | null;
   /**
-   * The sandbox tier the owner chose for this machine; absent = the org's default. Commands run at
-   * this tier cut to the org's ceiling.
+   * The mode the owner chose for this machine. The kernel's `limits.mode` can only narrow it: a
+   * sandbox-mode machine never runs auto because the organization allows it.
    */
-  tier?: SandboxTier;
-  /** `sandbox` (default), or `none`: commands run without a sandbox (only with tier `open`). */
-  isolation: "sandbox" | "none";
-  /** `auto` (default): localhost access unless a local proxy is detected; `allow`: always. */
-  localhost: "auto" | "allow";
-  /**
-   * `owner` (default): the deployment may widen this policy (the `policy` op's `add` and a higher
-   * `tier`, an exec's run or task grants) on the device owner's decision. `off`: only narrowing
-   * changes from the deployment are accepted. Set only locally.
-   */
-  remoteGrants: DeviceRemoteGrants;
+  mode: SandboxMode;
 }
 
 const DEFAULT_RECONNECT_GRACE_SECONDS = 120;
@@ -65,9 +61,7 @@ export const DEFAULT_POLICY: Policy = {
   allowCredentials: [],
   cpu: null,
   memoryMb: null,
-  isolation: "sandbox",
-  localhost: "auto",
-  remoteGrants: "owner",
+  mode: "auto",
 };
 
 type Env = Record<string, string | undefined>;
@@ -162,9 +156,23 @@ const isStringList = (v: unknown): v is string[] =>
 const isCeiling = (v: unknown): v is number | null =>
   v === null || (typeof v === "number" && Number.isFinite(v) && v > 0);
 
-const POLICY_KEYS: readonly string[] = [...Object.keys(DEFAULT_POLICY), "tier"];
-/** Keys of older policy files: ignored on read and dropped on the next write. */
-const LEGACY_POLICY_KEYS: readonly string[] = ["network", "allowLocalBinding", "allowUnixSockets"];
+const POLICY_KEYS: readonly string[] = Object.keys(DEFAULT_POLICY);
+/**
+ * Keys of older policy files: ignored on read and dropped on the next write. `tier` / `isolation` /
+ * `localhost` / `remoteGrants` are the auto-mode migration (spec §4.4): a file without `mode` runs
+ * in auto when it asked for no sandbox, else in sandbox.
+ */
+const LEGACY_POLICY_KEYS: readonly string[] = [
+  "network",
+  "allowLocalBinding",
+  "allowUnixSockets",
+  "tier",
+  "isolation",
+  "localhost",
+  "remoteGrants",
+];
+
+const isMode = (v: unknown): v is SandboxMode => v === "auto" || v === "sandbox";
 
 /** The local policy (defaults when absent). Throws, naming the file, on bad JSON or field types. */
 export function readPolicy(dir: string): Policy {
@@ -176,8 +184,12 @@ export interface PolicyFile {
   policy: Policy;
   /** The file's keys this version does not know (legacy keys excluded). */
   extra: Record<string, unknown>;
-  /** The file still has the legacy `network: "open"` (now tier `open`; worth a notice at start). */
-  legacyNetworkOpen: boolean;
+  /**
+   * The file was written before auto mode (it has no `mode`): the mode was derived from its legacy
+   * keys and the file is rewritten in the new vocabulary at the next change (worth a notice at
+   * start).
+   */
+  legacy: boolean;
 }
 
 /**
@@ -187,7 +199,7 @@ export interface PolicyFile {
 export function readPolicyFile(dir: string): PolicyFile {
   const file = policyPath(dir);
   if (!existsSync(file)) {
-    return { policy: { ...DEFAULT_POLICY }, extra: {}, legacyNetworkOpen: false };
+    return { policy: { ...DEFAULT_POLICY }, extra: {}, legacy: false };
   }
   let raw: unknown;
   try {
@@ -198,43 +210,34 @@ export function readPolicyFile(dir: string): PolicyFile {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     throw new Error(`${file} is invalid: expected a JSON object`);
   }
-  const policy: Policy = { ...DEFAULT_POLICY, ...(raw as Partial<Policy>) };
+  const o = raw as Record<string, unknown>;
   const bad = (key: string, want: string): Error =>
     new Error(`${file} is invalid: ${key} must be ${want} (fix or delete the file)`);
+  // Lenient read (spec §4.4): no `mode` means an older file; `isolation: none` or `tier: open`
+  // asked for no sandbox, so it becomes auto, anything else sandbox.
+  const legacy = o.mode === undefined;
+  const rawMode: unknown = legacy
+    ? o.isolation === "none" || o.tier === "open"
+      ? "auto"
+      : "sandbox"
+    : o.mode;
+  if (!isMode(rawMode)) throw bad("mode", '"auto" or "sandbox"');
+  const policy: Policy = {
+    allowedDomains: o.allowedDomains === undefined ? [] : (o.allowedDomains as string[]),
+    allowCredentials: o.allowCredentials === undefined ? [] : (o.allowCredentials as string[]),
+    cpu: o.cpu === undefined ? null : (o.cpu as number | null),
+    memoryMb: o.memoryMb === undefined ? null : (o.memoryMb as number | null),
+    mode: rawMode,
+  };
   if (!isStringList(policy.allowedDomains)) throw bad("allowedDomains", "a list of strings");
   if (!isStringList(policy.allowCredentials)) throw bad("allowCredentials", "a list of strings");
   if (!isCeiling(policy.cpu)) throw bad("cpu", "a positive number or null");
   if (!isCeiling(policy.memoryMb)) throw bad("memoryMb", "a positive number or null");
-  if (policy.tier !== undefined && !isSandboxTier(policy.tier)) {
-    throw bad("tier", '"strict", "dev" or "open"');
-  }
-  if (policy.isolation !== "sandbox" && policy.isolation !== "none") {
-    throw bad("isolation", '"sandbox" or "none"');
-  }
-  if (policy.localhost !== "auto" && policy.localhost !== "allow") {
-    throw bad("localhost", '"auto" or "allow"');
-  }
-  if (policy.remoteGrants !== "owner" && policy.remoteGrants !== "off") {
-    throw bad("remoteGrants", '"owner" or "off"');
-  }
   const extra: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(raw)) {
+  for (const [k, v] of Object.entries(o)) {
     if (!POLICY_KEYS.includes(k) && !LEGACY_POLICY_KEYS.includes(k)) extra[k] = v;
   }
-  return {
-    policy: {
-      allowedDomains: policy.allowedDomains,
-      allowCredentials: policy.allowCredentials,
-      cpu: policy.cpu,
-      memoryMb: policy.memoryMb,
-      ...(policy.tier !== undefined && { tier: policy.tier }),
-      isolation: policy.isolation,
-      localhost: policy.localhost,
-      remoteGrants: policy.remoteGrants,
-    },
-    extra,
-    legacyNetworkOpen: (raw as Record<string, unknown>).network === "open",
-  };
+  return { policy, extra, legacy };
 }
 
 /** Writes policy.json atomically (owner-only); `extra` are unknown keys to keep (never legacy ones). */
