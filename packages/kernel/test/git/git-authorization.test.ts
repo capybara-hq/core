@@ -78,7 +78,7 @@ beforeAll(async () => {
     locks: new LockService(redis, log),
     redis,
   });
-}, 120_000);
+});
 
 afterEach(async () => {
   for (const s of stops.splice(0).reverse()) await s();

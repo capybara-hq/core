@@ -75,7 +75,7 @@ beforeAll(async () => {
   agentId = await createAgent(owner, orgId);
   otherOrgId = await createOrg(owner, "Other");
   otherAgentId = await createAgent(owner, otherOrgId);
-}, 180_000);
+});
 
 afterAll(async () => {
   await b?.close();
