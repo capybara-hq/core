@@ -320,9 +320,9 @@ Each task is identical apart from the area path; the steps below are the templat
 Run: `pnpm check:test-portfolio --list --area <area>`
 Expected: the small app-booting files, the files with fixed waits and the files with timeout overrides, one per line.
 
-- [ ] **Step 2: Record the area's test count before touching it**
+- [ ] **Step 2: Record the area's counts before touching it**
 
-Run: `pnpm exec vitest list <area> --filesOnly | wc -l` and `pnpm exec vitest list <area> | wc -l` (files, tests). Save both numbers for the commit message.
+Run: `pnpm exec vitest list <area> --filesOnly | wc -l` and `pnpm exec vitest list <area> | wc -l` (files, tests). Save both numbers. The test count must be identical after the batch; the file count drops by the number of merges, which is expected.
 
 - [ ] **Step 3: Merge the small app-booting files**
 
@@ -339,7 +339,7 @@ Delete every `timeout:` property and third-argument timeout in the area; the pro
 - [ ] **Step 6: Run the area's tests**
 
 Run: `pnpm exec vitest run <area>`
-Expected: PASS, with the same file count and test count recorded in Step 2.
+Expected: PASS with exactly the test count recorded in Step 2. The file count is lower by the number of merges; confirm the difference equals that number.
 
 - [ ] **Step 7: Shrink the grandfather list**
 
@@ -402,14 +402,21 @@ Expected: PASS; record the remaining test count.
 
 - [ ] **Step 5: Measure the coverage delta**
 
-Run: `pnpm coverage && pnpm coverage:baseline`, then compare the affected modules with the baseline. If a module drops, either restore the test that covered it or state the deliberate decision in the PR.
+Run: `pnpm coverage` and render the summary to a scratch copy (do **not** overwrite
+`docs/testing/coverage-baseline.md` during T2 — the committed baseline is the fixed reference all
+batches compare against until Task 22). Compare the affected modules with the committed baseline.
+If a module drops, either restore the test that covered it or state the deliberate decision in the
+PR description.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add <area> docs/testing/coverage-baseline.md
+git add <area>
 git commit -m "test: prune <area> implementation-detail tests"
 ```
+
+The coverage baseline doc is not part of a T2 batch commit; Task 22 records the post-pruning
+baseline once, deliberately.
 
 ---
 
@@ -426,9 +433,11 @@ From a kernel-touching PR: `gh run view <id> --json jobs --jq '.jobs[] | [.name,
 
 Test count, files, app-booting files, fixed waits, timeout overrides (three forms), per-module coverage, per-job durations.
 
-- [ ] **Step 3: Verify the guards hold**
+- [ ] **Step 3: Record the post-pruning coverage baseline and verify the guards**
 
-Run: `pnpm check` and `pnpm exec vitest run packages/kernel`.
+Run: `pnpm coverage && pnpm coverage:baseline` and commit the new
+`docs/testing/coverage-baseline.md` once, with the deliberate drops named in the commit message.
+Then run `pnpm check` and `pnpm exec vitest run packages/kernel`.
 Expected: PASS; `test-portfolio-baseline.json` is `{"files": []}`.
 
 - [ ] **Step 4: Commit and open the PR**
