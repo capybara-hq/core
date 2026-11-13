@@ -10,6 +10,17 @@
  * read with confidence — heredocs, backslash obfuscation, `base64` fed into an interpreter — is
  * `unsure`, never a guess: the classifier (spec §5.3) decides those. No shell-parser dependency
  * (P-D10).
+ *
+ * The table is best-effort, not a security boundary (the device owner's machine is reachable by the
+ * agent in auto mode; the spec says so). Accepted, documented gaps: a git value inspection is
+ * shallow, so `ssh -o ProxyCommand=…`, `ssh -F FILE` (whose file can hold a ProxyCommand) and
+ * `ssh -o LocalCommand=…` inside `core.sshCommand`/`GIT_SSH_COMMAND`, and a pager or editor value
+ * such as `PAGER='less ~/.ssh/id_rsa'` or `EDITOR='vim ~/.aws/credentials'`, are not inspected
+ * (only shell metacharacters and a few network/decoder programs are); `git --config-env=…` is not
+ * read; an alias defined outside the reviewed line (`git pwn` alone) runs as a plain git command;
+ * LESSOPEN and similar interpreter hooks on non-git programs are not inspected; tar still needs
+ * `-c` before `-f` for the archive target; and variable state is tracked linearly across `&&` /
+ * `||`.
  */
 import type {
   ParsedCommand,
@@ -1082,8 +1093,9 @@ function pathCandidates(token: string): string[] {
     }
   };
   if (token.startsWith("@") && token.length > 1) add(token.slice(1));
-  // Attached short-option values that name files: `-d@file`, `-Tfile`, `-Ffile=@path`, `-ofile`.
-  const attached = /^-(?:d|T|F|o|D|O)(.+)$/.exec(token);
+  // Attached short-option values that name files: `-d@file`, `-Tfile`, `-Ffile=@path`, `-ofile`,
+  // `awk -fprog`, `sed -fscript`.
+  const attached = /^-(?:d|f|T|F|o|D|O)(.+)$/.exec(token);
   if (attached !== null && attached[1] !== undefined) add(attached[1]);
   const eq = token.indexOf("=");
   if (eq > 0) add(token.slice(eq + 1));
@@ -2232,7 +2244,7 @@ function commandHasUnresolvedSecret(command: SimpleCommand, ctx: RuleContext): b
   const nonPath = nonPathTokens(command);
   const tokens = [...command.argv, ...command.redirects.map((redirect) => redirect.target)];
   return tokens.some((token) => {
-    if (written.has(token) || nonPath.has(token)) return false;
+    if (written.has(token) || consumeNonPath(nonPath, token)) return false;
     return pathCandidates(token).some((candidate) =>
       isUnresolvedSecretWord(candidate, command, ctx),
     );
@@ -2474,19 +2486,49 @@ const DOCKER_VALUE_OPTIONS: ReadonlySet<string> = new Set([
   "--workdir",
 ]);
 
+/** sed options that take a value (so its script operand can be found). */
+const SED_VALUE_OPTIONS: ReadonlySet<string> = new Set(["-e", "--expression", "-f", "--file"]);
+
+/** awk options that take a value (so its program operand can be found). */
+const AWK_VALUE_OPTIONS: ReadonlySet<string> = new Set(["-f", "--file", "-v", "-F"]);
+
+/** grep options that take a value (so its pattern operand can be found). */
+const GREP_VALUE_OPTIONS: ReadonlySet<string> = new Set([
+  "-e",
+  "--regexp",
+  "-f",
+  "--file",
+  "-m",
+  "--max-count",
+  "-A",
+  "--after-context",
+  "-B",
+  "--before-context",
+  "-C",
+  "--context",
+  "-d",
+  "--directories",
+  "-D",
+  "--devices",
+  "--include",
+  "--exclude",
+  "--exclude-dir",
+]);
+
 /**
  * Raw argument values in a clearly non-path position of a known program: a commit message, a
  * branch/ref name, a script name, a search pattern, a header, a data payload or a URL. An
  * unresolved variable there is ordinary text, so it must not turn a routine command into ask or
- * unsure. A value that names a file (`@file`, `<file`) is never listed.
+ * unsure. A value that names a file (`@file`, `<file`, sed/awk `-f FILE`) is never listed. Values
+ * are counted, so the same word in a file position (`git commit -m $X -F $X`) is still checked.
  */
-function nonPathArguments(inv: Invocation): Set<string> {
-  const out = new Set<string>();
+function nonPathArguments(inv: Invocation): Map<string, number> {
+  const out = new Map<string, number>();
   const { program, args } = inv;
   const add = (value: string | undefined): void => {
     if (value === undefined) return;
     if (value.includes("@") || value.includes("<")) return;
-    out.add(value);
+    out.set(value, (out.get(value) ?? 0) + 1);
   };
   // `-x VALUE`, `-xVALUE`, `--long VALUE`, `--long=VALUE`.
   const values = (flags: readonly string[]): void => {
@@ -2504,6 +2546,9 @@ function nonPathArguments(inv: Invocation): Set<string> {
     }
   };
   const positional = (): string[] => args.filter((a) => !a.startsWith("-"));
+  // An attached short `-fVALUE` (sed/awk/grep read a file) is not a script/pattern operand.
+  const hasAttachedFile = (letter: string): boolean =>
+    args.some((a) => a.startsWith(`-${letter}`) && !a.startsWith("--") && a.length > 2);
 
   if (program === "git") {
     values(["-m", "--message", "-b", "--branch", "--author"]);
@@ -2553,19 +2598,26 @@ function nonPathArguments(inv: Invocation): Set<string> {
         a.startsWith("--file="),
     );
     values(["-e", "--regexp"]);
-    if (!explicit) add(positional()[0]);
+    if (!explicit && !hasAttachedFile("f")) add(operands(args, GREP_VALUE_OPTIONS)[0]);
     return out;
   }
   if (program === "sed") {
     const explicit = args.some(
-      (a) => a === "-e" || a === "--expression" || a.startsWith("--expression="),
+      (a) =>
+        a === "-e" ||
+        a === "--expression" ||
+        a === "-f" ||
+        a === "--file" ||
+        a.startsWith("--expression=") ||
+        a.startsWith("--file="),
     );
     values(["-e", "--expression"]);
-    if (!explicit) add(positional()[0]);
+    if (!explicit && !hasAttachedFile("f")) add(operands(args, SED_VALUE_OPTIONS)[0]);
     return out;
   }
   if (program === "awk" || program === "gawk") {
-    add(positional()[0]);
+    const explicit = args.some((a) => a === "-f" || a === "--file" || a.startsWith("--file="));
+    if (!explicit && !hasAttachedFile("f")) add(operands(args, AWK_VALUE_OPTIONS)[0]);
     return out;
   }
   if (program === "curl" || program === "wget") {
@@ -2658,13 +2710,23 @@ function nonPathArguments(inv: Invocation): Set<string> {
   return out;
 }
 
-/** Every non-path argument value of a command (the union over its invocations). */
-function nonPathTokens(command: SimpleCommand): Set<string> {
-  const out = new Set<string>();
+/** Every non-path argument value of a command, with how many times it may be subtracted. */
+function nonPathTokens(command: SimpleCommand): Map<string, number> {
+  const out = new Map<string, number>();
   for (const inv of invocationsOf(command)) {
-    for (const value of nonPathArguments(inv)) out.add(value);
+    for (const [value, count] of nonPathArguments(inv)) {
+      out.set(value, (out.get(value) ?? 0) + count);
+    }
   }
   return out;
+}
+
+/** Subtract one allowlisted occurrence of `token`; false when it has none left. */
+function consumeNonPath(allowed: Map<string, number>, token: string): boolean {
+  const count = allowed.get(token) ?? 0;
+  if (count <= 0) return false;
+  allowed.set(token, count - 1);
+  return true;
 }
 
 /* -------------------------------------------------------------------------------------------- *
@@ -2857,6 +2919,17 @@ function isPathLikeDynamic(candidate: string): boolean {
   return /\.[A-Za-z0-9]{1,8}$/.test(candidate);
 }
 
+/** Long options whose `--name=VALUE` value names a local file to read or write. */
+const FILE_LONG_OPTIONS: ReadonlySet<string> = new Set([
+  "--file",
+  "--output",
+  "--upload-file",
+  "--post-file",
+  "--body-file",
+  "--directory",
+  "--input",
+]);
+
 /**
  * The generic fail-closed floor: a value with a variable, substitution, backtick or quote that
  * cannot be resolved is never allowed in a path position. A command whose program reads or writes
@@ -2872,13 +2945,28 @@ function dynamicArgumentAsks(command: SimpleCommand, ctx: RuleContext): boolean 
   const tokens = [...command.argv, ...command.redirects.map((redirect) => redirect.target)];
   for (const token of tokens) {
     if (!/[$`"']/.test(token)) continue;
-    if (nonPath.has(token) || written.has(token)) continue;
+    if (written.has(token) || consumeNonPath(nonPath, token)) continue;
     // A leading environment assignment is a variable value, not a file argument.
     if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) continue;
     // `pathCandidates` drops dynamic words that are not path-shaped (`$A$B`, `$(date).txt`); in a
-    // file position the word itself is still a path.
+    // file position the word itself is still a path. An option carries its value after `=` or, for
+    // the file flags (`-f` sed/awk/grep, `-T`, `-o`, `-O`, `-D`), attached to the letter.
     const candidates = pathCandidates(token);
-    const probes = candidates.length > 0 ? candidates : token.startsWith("-") ? [] : [token];
+    let probes: string[];
+    if (candidates.length > 0) {
+      probes = candidates;
+    } else if (token.startsWith("-")) {
+      const eq = token.indexOf("=");
+      const longName = eq > 0 ? token.slice(0, eq) : token;
+      const attached = /^-[fToOD](.+)$/.exec(token);
+      const value = eq > 0 && FILE_LONG_OPTIONS.has(longName) ? token.slice(eq + 1) : attached?.[1];
+      probes =
+        value !== undefined && value.length > 0 && !nonPath.has(value) && !written.has(value)
+          ? [value]
+          : [];
+    } else {
+      probes = [token];
+    }
     for (const candidate of probes) {
       if (expandPath(candidate, ctx.facts, cwd, command.vars) !== null) continue;
       if (isUrlLike(candidate) || isRemoteSpec(candidate)) continue;
@@ -3046,7 +3134,7 @@ const RULES: readonly Rule[] = [
           ...inv.argv,
           ...command.redirects.map((redirect) => redirect.target),
         ].some((token) => {
-          if (nonPath.has(token)) return false;
+          if (consumeNonPath(nonPath, token)) return false;
           return pathCandidates(token).some(
             (candidate) =>
               isConcretePathWord(candidate) &&

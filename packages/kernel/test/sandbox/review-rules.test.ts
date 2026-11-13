@@ -775,6 +775,48 @@ describe("reviewRules: review findings round 5", () => {
   });
 });
 
+describe("reviewRules: review findings round 6", () => {
+  it("treats sed/awk/grep -f as a file position", () => {
+    for (const command of [
+      "sed -f $SCRIPT file",
+      "sed --file=$SCRIPT file",
+      "sed -n -f $SCRIPT file",
+      "sed -f$SCRIPT file",
+      "awk -f $SCRIPT file",
+      "awk -f$SCRIPT file",
+      "awk --file $SCRIPT file",
+      "grep -f $SCRIPT file",
+      "grep --file=$SCRIPT file",
+      "grep -f$SCRIPT file",
+    ]) {
+      const result = reviewRules(command, facts);
+      expect(result.outcome, command).toBe("ask");
+      expect(
+        result.hits.map((h) => h.id),
+        command,
+      ).toContain("ask.dynamic-arg");
+    }
+    // A literal script file and a pattern-style sed/awk program stay allowed.
+    expect(outcomeOf("sed -f script.sed file")).toBe("allow");
+    expect(outcomeOf("awk -f prog.awk file")).toBe("allow");
+    expect(outcomeOf("sed -n 's/a/b/p' file")).toBe("allow");
+  });
+
+  it("checks a token again when it also appears in a file position", () => {
+    for (const command of [
+      "git commit --author $X -F $X",
+      "git commit -m $MSG -F $MSG",
+      "grep -e $X -f $X file",
+      "sed -e $X -f $X file",
+      "grep -e $P -f $F file",
+    ]) {
+      expect(outcomeOf(command), command).toBe("ask");
+    }
+    // Two distinct non-path values stay allowed.
+    expect(outcomeOf("git commit -m $MSG --author $AUTHOR")).toBe("allow");
+  });
+});
+
 describe("reviewWrite", () => {
   const expectWrite = (path: string, outcome: string, id: string): void => {
     const result = reviewWrite(path, facts);
