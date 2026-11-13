@@ -310,6 +310,11 @@ export interface ConversationsTable {
    * (the column's `web` default is not relied on: a forgotten source must not read as web).
    */
   source: ColumnType<ConversationSource, ConversationSource, never>;
+  /**
+   * 0125: when a person stopped this root conversation and its sub-agent tree; cleared when the
+   * root next starts a run. While set the tree's wakes are held (agent map spec §6).
+   */
+  tree_stopped_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
 }
 
 /** 0060: an org's order of file-preview@1 previewers (UI refresh B Task 11). */

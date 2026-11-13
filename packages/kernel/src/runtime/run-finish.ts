@@ -69,8 +69,8 @@ export class RunFinish {
    * invocation gets its report (`pairStoppedForks`; an `Agent` call has its result from its
    * dispatch), so no terminal path leaves an open call. After it, the stops and the delivery the
    * run's end causes are owed here (runtime/subagents/tree-jobs.ts), the caller still doing them
-   * right after its commit: `stop-tree` when an active fork child remains or a sub-agent run a
-   * person stopped has sub-agents below it, `deliver-to-parent` for a sub-agent's run. The
+   * right after its commit: `stop-tree` when an active fork child remains or a run a person
+   * stopped (a root's or a sub-agent's) has sub-agents below it, `deliver-to-parent` for a sub-agent's run. The
    * delivery is a job, not written here: this transaction holds the child's conversation and run
    * rows, and the parent's conversation row comes first in the dispatch's lock order (parent
    * conversation, parent run, budget run, child conversation).
@@ -148,8 +148,8 @@ export class RunFinish {
       .where("cr.status", "in", ACTIVE_RUN_STATUSES)
       .limit(1)
       .executeTakeFirst();
+    // a root's too (agent map spec §6, changed in acceptance 2026-11-13)
     const stoppedWithChildren =
-      kind === "subagent" &&
       personStopped(a.event) &&
       (await t
         .selectFrom("conversations")
@@ -175,8 +175,8 @@ export class RunFinish {
 }
 
 /**
- * A `run_aborted` a person caused (an account and no `detail`): a sub-agent run stopped that way
- * stops its descendants (`Waits.stopDescendantsOfStopped`, agent map spec §6).
+ * A `run_aborted` a person caused (an account and no `detail`): a run stopped that way stops its
+ * descendants (`Waits.stopDescendantsOfStopped`, agent map spec §6; a root's, those of its windows).
  */
 function personStopped(event: FinishRunArgs["event"]): boolean {
   if (event.type !== "run_aborted") return false;

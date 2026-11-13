@@ -646,11 +646,11 @@ export class ConversationsService {
    * log, runs and trajectory stay (super admins still see them).
    */
   async remove(orgId: string, conversationId: string, accountId: string): Promise<void> {
-    await this.writable(orgId, conversationId, accountId);
-    try {
-      await this.abort(orgId, conversationId, accountId);
-    } catch (e) {
-      if (!(e instanceof ApiError && e.code === "run.not_active")) throw e;
+    const conv = await this.writable(orgId, conversationId, accountId);
+    // the root's own run only: the tree stops below, after the mark (a sub-agent's conversation
+    // is read-only, so `writable` refused it)
+    if (conv.parentConversationId === null) {
+      await this.abortRootRun(conversationId, accountId);
     }
     await this.markDeleted(orgId, conversationId, accountId);
     // after the mark, so no finish or delivery of the stops below can start a run on the deleted
@@ -1503,24 +1503,71 @@ export class ConversationsService {
    * 等人处理的运行没有 worker：直接取消等待并写终态。其余经 Redis 广播，运行所在的任意副本都会收到；
    * 运行已是孤儿（没有任何 worker 在执行）时直接写终态。
    *
-   * A root conversation's stop stops only its own run: its background sub-agents keep working
-   * (agent map spec §6). A sub-agent's conversation (its owner, from the agent map) stops that
-   * sub-agent with every descendant (`RunControl.stopTree`); `run.not_active` when nothing in that
-   * subtree runs, else the sub-agent's latest run id.
+   * A root conversation's stop stops everything below it too (agent map spec §6, changed in
+   * acceptance 2026-11-13: after a person stops, the conversation stays stopped). In order:
+   * 1. `tree_stopped_at` is set on the root, in its own committed transaction under the root's
+   *    row lock: from then on no sub-agent delivery wakes the root (`wakeDecisionIn`) and no
+   *    sub-agent of the tree starts a run by a wake or a parent's message (`RunQueue.childWakeIn`),
+   *    until the root next starts a run (a person's message, the queue, a background Bash task's
+   *    finish), which clears it. A child that finishes just before or after the stop, `completed`
+   *    or `aborted`, thus never wakes the root; its delivery stays in the log and reaches the
+   *    model with the next run;
+   * 2. the root's own active run stops as before ({@link abortRootRun});
+   * 3. every active sub-agent run of the tree stops (`RunControl.stopTree`, as the agent map's stop
+   *    and the deletion do), with the background tasks of every sub-agent. A sub-agent the root's
+   *    run dispatched after that read is stopped when the root run ends
+   *    (`Waits.stopDescendantsOfStopped`).
+   * The root's own background Bash tasks keep running: they are the conversation's tasks, stopped
+   * with `TaskStop` or the task list. `run.not_active` when neither the root nor its tree had an
+   * active run (the stop still holds the tree's wakes); else the root's run id (its latest when only
+   * sub-agents ran).
+   *
+   * A sub-agent's conversation (its owner, from the agent map) stops that sub-agent with every
+   * descendant (`RunControl.stopTree`); `run.not_active` when nothing in that subtree runs, else
+   * the sub-agent's latest run id. Its `aborted` finish never wakes its parent.
    */
   async abort(orgId: string, conversationId: string, accountId: string): Promise<string> {
     const conv = await this.get(orgId, conversationId, accountId);
-    if (conv.parentConversationId !== null) {
-      const latest = await this.db
+    const latest = () =>
+      this.db
         .selectFrom("runs")
         .select("id")
         .where("conversation_id", "=", conversationId)
         .orderBy("created_at", "desc")
         .executeTakeFirst();
+    if (conv.parentConversationId !== null) {
+      const last = await latest();
       const n = await this.runs.stopTree(conversationId, accountId);
-      if (n === 0 || !latest) throw new ApiError("run.not_active", "No active run to abort");
-      return latest.id;
+      if (n === 0 || !last) throw new ApiError("run.not_active", "No active run to abort");
+      return last.id;
     }
+    await this.holdTree(conversationId);
+    const stopped = await this.abortRootRun(conversationId, accountId);
+    const n = await this.runs.stopTree(conversationId, accountId, { includeSelf: false });
+    if (stopped !== null) return stopped;
+    const last = await latest();
+    if (n === 0 || !last) throw new ApiError("run.not_active", "No active run to abort");
+    return last.id;
+  }
+
+  /**
+   * Marks a person's stop of the root's tree (`tree_stopped_at`, see {@link abort}); committed
+   * before any stop, so every wake decided after it (under the root's row lock) sees it.
+   */
+  @Transactional()
+  private async holdTree(conversationId: string): Promise<void> {
+    await this.db
+      .updateTable("conversations")
+      .set({ tree_stopped_at: sql<Date>`now()` })
+      .where("id", "=", conversationId)
+      .execute();
+  }
+
+  /**
+   * Stops a root conversation's own active run (queued / running / waiting) and returns its id;
+   * null when none is active. Its sub-agents are the caller's.
+   */
+  private async abortRootRun(conversationId: string, accountId: string): Promise<string | null> {
     const run = await this.db
       .selectFrom("runs")
       .select(["id", "status"])
@@ -1528,7 +1575,7 @@ export class ConversationsService {
       .where("status", "in", ["queued", "running", "waiting"])
       .orderBy("created_at", "desc")
       .executeTakeFirst();
-    if (!run) throw new ApiError("run.not_active", "No active run to abort");
+    if (!run) return null;
     const runs = this.runs;
     // 等待中：直接结束；没成功（刚被续跑、已回到 queued）则按下面的常规路径中止。
     // the stop's terminal transaction owed the ensure-run backstop; the direct call starts what

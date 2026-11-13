@@ -328,8 +328,10 @@ Specs `docs/superpowers/specs/2026-10-26-subagents-design.md` §4–§9 (phase C
 - **No in-process waiting**: nothing waits for a background child. Children run on the queue `cap-kernel-subagent-runs`; the wait
   sweep repairs lost enqueues and parked messages. Only a person's `context: fork` skill keeps the foreground `subagents` wait (its
   dispatch row has `for_skill = true`; `timed_out`, `Waits.expire` and the overdue sweep count only those).
-- **Stops**: the conversation's stop stops only the root's current run (children keep working); stopping a sub-agent stops it and
-  its descendants (and all its background tasks); deleting the root stops the whole tree. A finished parent run with active
+- **Stops**: the conversation's stop stops the root's current run and every active sub-agent of its tree, and holds the tree
+  (`tree_stopped_at`: no delivery wakes the root, no sub-agent starts, until the root's next run; the root's own background Bash
+  tasks keep running and still wake it; agent map spec §6, acceptance 2026-11-13); stopping a sub-agent stops it and its
+  descendants (and all its background tasks); deleting the root stops the whole tree. A finished parent run with active
   children is the normal case.
 - **`Agent` inputs** exactly `description` (1–80), `prompt`, `subagent_type` (default `general-purpose`) and `model` (`inherit` /
   `fast` / `standard` / `capable`: tiers mapped to the purposes `subagent_*`, never a vendor model id; an unmapped tier runs on the
