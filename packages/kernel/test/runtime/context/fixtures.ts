@@ -8,8 +8,9 @@ import type {
 import type { CompactionSettings } from "../../../src/identity/settings.js";
 
 /**
- * Compaction settings for the tests that are not about the trigger: the schema defaults, with any
- * field overridden.
+ * Compaction settings shared by the context tests: the trigger and plan test values (a 16k output
+ * cap and an 8k reserve), with any field overridden. `maxOutputTokens` here is the `O` the trigger
+ * tests exercise, not the 20k summary cap of the settings schema.
  */
 export function compactionSettings(over: Partial<CompactionSettings> = {}): CompactionSettings {
   return {

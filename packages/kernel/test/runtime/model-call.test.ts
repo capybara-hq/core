@@ -943,7 +943,7 @@ describe("runModelStep", () => {
       expect(compactionCalls()).toBe(2);
     });
 
-    it("enabled: false 时硬线仍然压缩，硬线之下不主动压缩（spec §4.1）", async () => {
+    it("the hard line compacts even with enabled: false, and proactive compaction stays off below it (spec §4.1)", async () => {
       stubImpl = stub([stubInfo("tight", { contextWindow: 6000, maxOutputTokens: 1000 })], (req) =>
         req.system.some((x) => x.text.includes(COMPACTION_MARKER))
           ? `Summary: ${"s".repeat(300)}`
@@ -955,7 +955,7 @@ describe("runModelStep", () => {
         resolve: async () => ({ ...COMPACTION_SETTINGS.parse({}), enabled: false }),
       };
       try {
-        // 15 轮 ≈ 3000 token，低于硬线（6000 - 1000）：主动压缩关闭 → 不压缩
+        // 15 turns ≈ 3000 tokens, below the hard line (6000 - 1000): proactive compaction is off
         for (let i = 0; i < 15; i++) {
           await say(filler(i));
           await answer(filler(i));
@@ -964,7 +964,7 @@ describe("runModelStep", () => {
         await step({ agent });
         expect(await ofType("compaction_summary")).toHaveLength(0);
 
-        // 再 15 轮，估算越过硬线：即使 enabled: false 也压缩
+        // 15 more turns put the estimate over the hard line: it compacts even with enabled: false
         for (let i = 15; i < 30; i++) {
           await say(filler(i));
           await answer(filler(i));
@@ -978,7 +978,7 @@ describe("runModelStep", () => {
       }
     });
 
-    it("退避期内越过硬线仍然尝试压缩（spec §4.1）", async () => {
+    it("the hard line still attempts compaction during a backoff (spec §4.1)", async () => {
       stubImpl = stub([stubInfo("tight", { contextWindow: 6000, maxOutputTokens: 1000 })], (req) =>
         req.system.some((x) => x.text.includes(COMPACTION_MARKER)) ? "too short" : "answer",
       );
@@ -987,7 +987,7 @@ describe("runModelStep", () => {
         await say(filler(i));
         await answer(filler(i));
       }
-      // 上一次压缩失败、之后还没有新增 user 轮次：主动压缩处于退避期
+      // the previous compaction failed and no user turn has arrived since: proactive compaction backs off
       await eventLog.append(conversationId, [
         {
           type: "compaction_failed",
@@ -997,7 +997,7 @@ describe("runModelStep", () => {
       ]);
       await say("go");
       await step({ agent });
-      // 硬线越过退避：又写了一次失败（attempt 2），而不是跳过
+      // the hard line bypasses the backoff: another failure is written (attempt 2), not skipped
       expect((await ofType("compaction_failed")).map((f) => f.payload.attempt)).toEqual([1, 2]);
     });
   });

@@ -39,6 +39,7 @@ export function compactionInputBudget(window: number, maxOutput: number, reserve
  * Compaction trigger (context compaction spec §4.1): the calibrated estimate reaches the lower of
  * `threshold × window` and the input budget, or it reaches the hard line `estimate + output >
  * window`, which fires even when proactive early compaction is turned off (`enabled: false`).
+ * `settings.maxOutputTokens` here carries `O`, the request's output cap (§4.1), not the summary cap (§4.8).
  */
 export function shouldCompact(
   estimate: number,
