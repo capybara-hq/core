@@ -268,8 +268,9 @@ function providerRefusal(
   ) {
     return err;
   }
-  if (limits.mode === "auto" && limits.network.kind === "open-public") {
-    // a provider set to refuse the open network (`openEgress: "off"`) fails here
+  // a provider set to refuse the open network (`openEgress: "off"`) fails on it in either mode:
+  // auto always has it, a narrowed cloud device has it while the org's network is open
+  if (limits.network.kind === "open-public") {
     log.warn(
       "the sandbox provider refused an instance with the open public network; check its openEgress setting or switch the org's cloud network to the allowlist",
       { ...facts, err },

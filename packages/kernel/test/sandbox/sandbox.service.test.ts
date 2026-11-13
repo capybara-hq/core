@@ -389,7 +389,8 @@ describe("lazy creation", () => {
     };
     const s = service(() => flaky);
     // sandbox mode: the deployment allowlist, so a failure is not attributed to the open network
-    await sql`UPDATE capybara.orgs SET settings = '{"autoMode":"off"}'::jsonb
+    await sql`UPDATE capybara.orgs SET settings =
+      '{"autoMode":"off","cloudNetwork":{"mode":"allowlist"}}'::jsonb
       WHERE id = ${orgId}`.execute(raw);
     // the provider's own message stays in the log
     await expect(use(s)).rejects.toMatchObject({ code: "sandbox.create_failed" });
@@ -1008,7 +1009,8 @@ describe("restarted is sticky (fix round 1)", () => {
     };
     const s = service(() => flaky);
     // sandbox mode: the deployment allowlist, so a failure is not attributed to the open network
-    await sql`UPDATE capybara.orgs SET settings = '{"autoMode":"off"}'::jsonb
+    await sql`UPDATE capybara.orgs SET settings =
+      '{"autoMode":"off","cloudNetwork":{"mode":"allowlist"}}'::jsonb
       WHERE id = ${orgId}`.execute(raw);
     await use(s);
     expect(await s.destroyInactive(later(8 * DAY))).toBe(1);
