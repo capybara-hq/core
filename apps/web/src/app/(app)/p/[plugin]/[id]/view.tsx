@@ -1,10 +1,10 @@
 "use client";
 
-import { DetailPage } from "@capybara-hq/design";
+import { DetailPage, Text } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { ErrorFrame } from "../../../../../components/ErrorFrame";
-import { PluginPage } from "../../../../../components/extension-ui/PluginPage";
+import { ExtensionSlot } from "../../../../../components/extension-ui/ExtensionSlot";
 import { NoAccess } from "../../../../../components/NoAccess";
 import { usePagePath } from "../../../../../components/shell/path";
 import { retryOnMountOf } from "../../../../../lib/query/client";
@@ -12,7 +12,11 @@ import { contributionsQuery } from "../../../../../lib/query/conversation";
 import { usePageQuery } from "../../../../../lib/query/page-query";
 import { uiArrangementQuery } from "../../../../../lib/query/ui";
 import { useWorkspace } from "../../../../../lib/query/workspace";
-import type { UiArrangementListSlot, UiContributionItem } from "../../../../../lib/ui";
+import {
+  type UiArrangementListSlot,
+  type UiContributionItem,
+  uiLocale,
+} from "../../../../../lib/ui";
 import NotFound from "../../../not-found";
 
 /**
@@ -88,5 +92,41 @@ function PluginPageHidden({
       contribution={listed ?? hidden}
       direct={hidden !== undefined}
     />
+  );
+}
+
+function PluginPage({
+  orgId,
+  plugin,
+  id,
+  contribution,
+  direct,
+}: {
+  orgId: string;
+  plugin: string;
+  id: string;
+  /** Undefined when the org has no such page. */
+  contribution: UiContributionItem | undefined;
+  /** The page is hidden from the lists: the slot gets it as `args.direct`. */
+  direct: boolean;
+}) {
+  const scope = usePagePath("org");
+  const t = useTranslations();
+  const locale = uiLocale(useLocale());
+  const title = contribution?.title[locale] ?? id;
+  return (
+    <DetailPage
+      header={{ path: [...scope, { label: t("pluginPage.pathLabel") }, { label: title }], title }}
+    >
+      {contribution ? (
+        <ExtensionSlot
+          slot="org.page"
+          args={{ orgId, ...(direct ? { direct: contribution } : {}) }}
+          select={{ plugin, id }}
+        />
+      ) : (
+        <Text tone="muted">{t("errors.ui.not_found")}</Text>
+      )}
+    </DetailPage>
   );
 }

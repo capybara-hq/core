@@ -1000,24 +1000,6 @@ export const ROUTES: readonly RouteEntry[] = [
     queries: () => [q(authSourcesQuery()), q(maybeMeQuery())],
   },
   {
-    pattern: "/p/[plugin]",
-    // A plugin's page without the id (a plugin with one page): the UI contributions, then the
-    // page's view when it is a schema view.
-    queries: ({ orgId }) => (orgId === null ? [] : [q(contributionsQuery(orgId))]),
-    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
-    then: async ({ orgId, params, locale }, qc) => {
-      const { plugin } = params;
-      if (orgId === null || plugin === undefined) return;
-      const items = qc.getQueryData<UiContributionItem[]>(contributionsQuery(orgId).queryKey);
-      const page = items?.find((c) => c.plugin === plugin && c.slot === "org.page");
-      if (page?.kind !== "view") return;
-      await qc.prefetchQuery({
-        ...uiViewQuery(orgId, { plugin, id: page.id }, { locale }),
-        retry: false,
-      });
-    },
-  },
-  {
     pattern: "/p/[plugin]/[id]",
     // Anyone in the org: the UI contributions, then the page's view when it is a schema view (an
     // embed's token handshake stays in the browser).

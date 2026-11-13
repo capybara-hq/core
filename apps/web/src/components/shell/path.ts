@@ -108,7 +108,6 @@ export const APP_PAGES: readonly string[] = [
   "/evals/runs/[runId]",
   "/extensions",
   "/inbox",
-  "/p/[plugin]",
   "/p/[plugin]/[id]",
   "/plugins",
   "/plugins/[itemId]",

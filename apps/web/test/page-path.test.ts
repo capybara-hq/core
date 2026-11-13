@@ -55,7 +55,7 @@ describe("routeSegments", () => {
     ]);
     expect(routeSegments("/p/board/overview/x").rest.slice(0, 2)).toEqual([
       { label: "p" },
-      { label: "board", href: "/p/board" },
+      { label: "board" },
     ]);
   });
 

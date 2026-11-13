@@ -267,10 +267,6 @@ describe("activeNavOf", () => {
     // an extension page is its sidebar item (m1), decoded like the item ids
     ["/p/example-board/board", "ext:example-board/board"],
     ["/p/%40acme%2Fboard/main%20view", "ext:@acme/board/main view"],
-    // a plugin with one page is its own address: `/p/<plugin>` is that page
-    ["/p/memory", "ext:memory"],
-    ["/p/memory/", "ext:memory"],
-    ["/p/%40acme%2Fmemory", "ext:@acme/memory"],
   ])("%s → %s", (path, id) => {
     expect(activeNavOf(path)).toBe(id);
   });
