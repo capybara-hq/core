@@ -67,7 +67,7 @@ export default defineConfig({
           include: ["packages/kernel/test/**/*.test.ts"],
           exclude: [...unitTests, ...containerTests].map(kernelTest),
           globalSetup: ["packages/testing/src/global-setup.ts"],
-          testTimeout: 30_000,
+          testTimeout: 60_000,
           hookTimeout: 120_000,
         },
       },

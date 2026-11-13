@@ -163,7 +163,7 @@ beforeAll(async () => {
   redis = new Redis(rd.url);
   subQueue = new Queue(SUBAGENT_RUN_QUEUE_NAME, { connection: redisClient() });
   runQueue = new Queue(RUN_QUEUE_NAME, { connection: redisClient() });
-}, 120_000);
+});
 
 afterAll(async () => {
   for (const k of kernels.splice(0)) await k.close();
@@ -265,7 +265,7 @@ describe("sub-agents across two replicas", () => {
     expect(ofType(parentRun, "model_call").map((e) => e.payload.step)).toEqual([1, 2]);
     expect((await childRunsOf(db, conv)).map((c) => c.status)).toEqual(["completed", "completed"]);
     expect(b).toBeDefined();
-  }, 90_000);
+  });
 
   it("a child whose job stalls too often fails run.stalled and delivers that failure", async () => {
     const a = await boot();
@@ -298,7 +298,7 @@ describe("sub-agents across two replicas", () => {
       status: "failed",
       errorCode: "run.stalled",
     });
-  }, 90_000);
+  });
 
   it("children finished while their deliveries were lost: both replicas run the owed deliver-to-parent jobs, each delivered once, one wake", async () => {
     const a = await boot();
@@ -348,7 +348,7 @@ describe("sub-agents across two replicas", () => {
     const wakeStart = ofType(after, "run_started").find((e) => e.runId === parentRuns[1]?.id);
     expect(wakeStart?.payload.trigger).toBe("subagent");
     expect(ds.map((d) => d.seq)).toContain(wakeStart?.payload.triggerSeq);
-  }, 90_000);
+  });
 
   it("a job the queue lost: both replicas run the run-orphan-check, the child runs once and delivers once", async () => {
     const a = await boot();
@@ -376,7 +376,7 @@ describe("sub-agents across two replicas", () => {
     const events = await eventsOf(db, conv);
     expect(ofType(events, "subagent_dispatched")).toHaveLength(1);
     expect(ofType(events, "subagent_delivery")).toHaveLength(1);
-  }, 90_000);
+  });
 
   it("stopping a child on A stops it running on B (Task 13)", async () => {
     // A takes HTTP only; every run, the children included, runs on B
@@ -411,5 +411,5 @@ describe("sub-agents across two replicas", () => {
     );
     openBarrier("hang");
     await finishedDeliveries(db, conv, 2);
-  }, 60_000);
+  });
 });

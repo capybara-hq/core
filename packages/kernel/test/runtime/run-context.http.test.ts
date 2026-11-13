@@ -51,7 +51,7 @@ beforeAll(async () => {
   k = await startKernel(runConfig({ pg: pgc.url, redis: rd.url }, { roles: ["api", "worker"] }), {
     overrides: [{ provide: RUN_CONTEXT_CLOCK, useValue: () => clockMs ?? Date.now() }],
   });
-}, 120_000);
+});
 afterAll(async () => {
   capture.restore();
   await k?.close();
@@ -104,7 +104,7 @@ async function send(
 const contexts = async (conv: string) =>
   (await eventsOf(db, conv)).filter((e) => e.type === "run_context").map((e) => e.payload);
 
-describe("message sender, time zone and language", { timeout: 60_000 }, () => {
+describe("message sender, time zone and language", () => {
   it("records the sender at send time; the browser's zone and language, else the org's", async () => {
     const conv = await createConv(owner, orgId, agentId);
     const first = await send(conv, "echo:one", { timeZone: "Asia/Shanghai", locale: "zh" });
@@ -173,7 +173,7 @@ describe("message sender, time zone and language", { timeout: 60_000 }, () => {
   });
 });
 
-describe("run start", { timeout: 90_000 }, () => {
+describe("run start", () => {
   it("writes the full snapshot once, then only changes: a rename, a later day, another zone", async () => {
     clockMs = Date.parse("2026-11-08T10:00:00Z");
     const conv = await createConv(owner, orgId, agentId);
@@ -270,9 +270,7 @@ describe("run start", { timeout: 90_000 }, () => {
   });
 });
 
-describe("run start for a message that recorded no zone or language (older logs)", {
-  timeout: 60_000,
-}, () => {
+describe("run start for a message that recorded no zone or language (older logs)", () => {
   /** A conversation whose only message is an older one: no `timeZone`, no `locale`. */
   async function oldConversation(): Promise<string> {
     const conv = await createConv(owner, orgId, agentId);
@@ -319,9 +317,7 @@ describe("run start for a message that recorded no zone or language (older logs)
   });
 });
 
-describe("CurrentTime reads the run context's zone and the run context clock", {
-  timeout: 60_000,
-}, () => {
+describe("CurrentTime reads the run context's zone and the run context clock", () => {
   const currentTime = async (conversationId: string, input: unknown = {}) => {
     const tool = k.app
       .get(BuiltinTools)

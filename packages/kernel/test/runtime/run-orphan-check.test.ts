@@ -130,7 +130,7 @@ beforeAll(async () => {
   redis = new Redis(rd.url);
   subQueue = new Queue(SUBAGENT_RUN_QUEUE_NAME, { connection: redis.duplicate() });
   runQueue = new Queue(RUN_QUEUE_NAME, { connection: redis.duplicate() });
-}, 180_000);
+});
 
 afterAll(async () => {
   await subQueue?.close();
@@ -268,7 +268,7 @@ describe("run-orphan-check", () => {
     ]);
     // once: a second pass finds nothing
     expect(await check()).toEqual({ runningRepaired: 0, queuedReadded: 0 });
-  }, 60_000);
+  });
 
   it("a running chat run nobody runs is failed once, its checkpoints dropped, and the waiting message starts the next run", async () => {
     const { conv, runId, seq } = await runningOrphan();
@@ -309,7 +309,7 @@ describe("run-orphan-check", () => {
       ["failed", seq],
       ["completed", next],
     ]);
-  }, 60_000);
+  });
 
   it("a queued run whose job was removed from Redis is re-added and reported", async () => {
     await runQueue.pause();
@@ -336,7 +336,7 @@ describe("run-orphan-check", () => {
     expect(t?.type).toBe("run_finished");
     expect(t?.runId).toBe(run?.id);
     expect(await check()).toEqual({ runningRepaired: 0, queuedReadded: 0 });
-  }, 60_000);
+  });
 
   it("leaves alone a run with its job, with a lock holder, in its state for under a minute, or whose job is still owed", async () => {
     // queued with its job (the run queue is paused)
@@ -381,7 +381,7 @@ describe("run-orphan-check", () => {
     expect(await runStatus(db, fresh.runId)).toBe("running");
     expect(await runStatus(db, owed.runId)).toBe("queued");
     expect(errors.map((e) => e.msg)).not.toContain("queued run without a job: the queue lost jobs");
-  }, 60_000);
+  });
 
   it("a deleted org's queued run whose owed job went with the org is no lost job; its usage stays owed", async () => {
     // queued, its job still owed by the outbox (Redis was down): the org's deletion purges the row
@@ -433,7 +433,7 @@ describe("run-orphan-check", () => {
         .where("job_id", "=", runJobId(owed.conv, owed.seq))
         .execute(),
     ).toEqual([]);
-  }, 60_000);
+  });
 
   it("reaches an orphan behind a full page of healthy candidates, and skips a dead-lettered job", async () => {
     // 600 queued runs older than the orphan, each with its job still owed (Redis was down): a
@@ -484,7 +484,7 @@ describe("run-orphan-check", () => {
     expect(await runStatus(db, runId)).toBe("failed");
     expect(await runStatus(db, dead.runId)).toBe("queued");
     expect(errors.map((e) => e.msg)).not.toContain("queued run without a job: the queue lost jobs");
-  }, 60_000);
+  });
 
   it("GET events and opening SSE never change run state", async () => {
     const { conv, runId } = await runningOrphan();
@@ -515,7 +515,7 @@ describe("run-orphan-check", () => {
     ac.abort();
     expect(await runsOf(conv)).toEqual([expect.objectContaining({ id: runId, status: "running" })]);
     expect(ofType(await eventsOf(db, conv), "run_failed")).toEqual([]);
-  }, 60_000);
+  });
 
   it("a finished run has no pending waits", async () => {
     const conv = await createConv(owner, orgId, agentId);
@@ -570,5 +570,5 @@ describe("run-orphan-check", () => {
     const evs = await eventsOf(db, conv);
     const at = (type: string) => evs.findIndex((e) => e.type === type);
     expect(at("approval_decided")).toBeLessThan(at("run_failed"));
-  }, 60_000);
+  });
 });

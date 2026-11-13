@@ -179,7 +179,7 @@ beforeAll(async () => {
     ),
   );
   subQueue = new Queue(SUBAGENT_RUN_QUEUE_NAME, { connection: redisClient() });
-}, 180_000);
+});
 
 afterAll(async () => {
   capture.restore();
@@ -475,7 +475,7 @@ describe("concurrency", () => {
     expect(agentResults(events).map((r) => [r.payload.content, r.payload.isError])).toEqual([
       [AGENT_REFUSALS.tooManyConcurrent(4), true],
     ]);
-  }, 60_000);
+  });
 
   it("five calls with maxConcurrentPerConversation 3: three dispatched, two refused with the exact text", async () => {
     await override({ maxConcurrentPerConversation: 3 });
@@ -508,7 +508,7 @@ describe("concurrency", () => {
     expect(req.tools?.find((t) => t.name === "Agent")?.description).toContain(
       "(at most 3 of your sub-agents run at a time)",
     );
-  }, 60_000);
+  });
 
   it("an org override lowers the cap, and the agent tool description shows it", async () => {
     const before = await converse("SCENARIO two");
@@ -532,7 +532,7 @@ describe("concurrency", () => {
     expect(req.tools?.find((t) => t.name === "Agent")?.description).toContain(
       "(at most 1 of your sub-agents run at a time)",
     );
-  }, 60_000);
+  });
 });
 
 describe("dispatch count", () => {
@@ -549,7 +549,7 @@ describe("dispatch count", () => {
       b.type === "tool_call" ? [b.id] : [],
     );
     expect(refused[0]?.payload.callId).toBe(second?.at(-1));
-  }, 90_000);
+  });
 });
 
 describe("tree budget", () => {
@@ -636,7 +636,7 @@ describe("tree budget", () => {
       .where("id", "=", root)
       .execute();
     expect(await subagentBudgetUsedUp(db, liveConfig(), orgId, root)).toBe(false);
-  }, 60_000);
+  });
 });
 
 describe("tokens", () => {
@@ -646,7 +646,7 @@ describe("tokens", () => {
     expect(Number(run.subagent_tokens_used)).toBe(3_000);
     // the parent's own usage is not counted
     expect(ofType(events, "usage").length).toBeGreaterThan(0);
-  }, 60_000);
+  });
 
   it("over the cap a running child ends with budget and the parent's result says so", async () => {
     await override({ maxTokensPerRun: 10_000 });
@@ -667,7 +667,7 @@ describe("tokens", () => {
     expect(ofType(events, "subagent_delivery").map((d) => d.payload)).toMatchObject([
       { kind: "finished", status: "budget", text: "findings so far" },
     ]);
-  }, 60_000);
+  });
 
   it("a dispatch at the cap is refused", async () => {
     await override({ maxTokensPerRun: 10_000 });
@@ -722,5 +722,5 @@ describe("tokens", () => {
     expect(AGENT_REFUSALS.budget(10_000)).toBe(
       "Sub-agents have used their token budget since the user's latest message (10,000 tokens, counted across all levels of sub-agents); do the remaining work yourself.",
     );
-  }, 60_000);
+  });
 });

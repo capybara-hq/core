@@ -58,7 +58,7 @@ beforeAll(async () => {
   k = await startKernel(cfg, { env: {}, logger: createLogger("error", { write: () => {} }) });
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
-}, 120_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -278,7 +278,7 @@ const eff = async (
   });
 };
 
-describe("resolveRoster / findType", { timeout: 60_000 }, () => {
+describe("resolveRoster / findType", () => {
   it("general-purpose first, then templates, inline and org agents in the owner's order", async () => {
     const t1 = await template("code-reviewer");
     const t2 = await template("implementer", {}, "other");
@@ -375,7 +375,7 @@ describe("resolveRoster / findType", { timeout: 60_000 }, () => {
   });
 });
 
-describe("effectiveDefinition", { timeout: 60_000 }, () => {
+describe("effectiveDefinition", () => {
   /** The parent keeps these builtins on and turns the others off. */
   const parentOff = builtinsOff("AskUserQuestion", "ReadToolOutput", "Deliver", "Bash", "Agent");
   /** Every child's key filter removes these (sub-agents spec §5.3). */

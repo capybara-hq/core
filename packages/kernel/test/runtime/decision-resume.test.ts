@@ -89,7 +89,7 @@ beforeAll(async () => {
   redis = new Redis(rd.url, { maxRetriesPerRequest: null });
   runQueue = new Queue(RUN_QUEUE_NAME, { connection: redis });
   maint = new Queue(MAINTENANCE_QUEUE_NAME, { connection: redis });
-}, 180_000);
+});
 
 afterAll(async () => {
   failing = false;

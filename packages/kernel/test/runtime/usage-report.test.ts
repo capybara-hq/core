@@ -105,7 +105,7 @@ beforeAll(async () => {
   rd2 = await startTestRedis();
   conn2 = new Redis(rd2.url, { maxRetriesPerRequest: null });
   queue2 = new Queue(USAGE_REPORT_QUEUE, { connection: conn2 });
-}, 180_000);
+});
 
 afterAll(async () => {
   await queue?.close();
@@ -166,7 +166,7 @@ async function addJob(data: Record<string, unknown>, jobId: string): Promise<voi
   await queue.add(USAGE_REPORT_JOB, data, { ...OUTBOX_JOBS[USAGE_REPORT_JOB].opts, jobId });
 }
 
-describe("usage.report delivery", { timeout: 60_000 }, () => {
+describe("usage.report delivery", () => {
   it("a two-step turn: each plugin gets each usage event exactly once, payload from the log", async () => {
     await probe({});
     const { conv, usage } = await turn(`tool:${TOOL}:{"text":"x"}`);
@@ -291,7 +291,7 @@ describe("usage.report delivery", { timeout: 60_000 }, () => {
   });
 });
 
-describe("UsageReporter (standalone, own Valkey)", { timeout: 60_000 }, () => {
+describe("UsageReporter (standalone, own Valkey)", () => {
   const silent = createLogger("error", { write: () => {} });
   const reporters: TestUsageReporter[] = [];
   let ev: { conv: string; seq: number };
@@ -835,9 +835,7 @@ describe("UsageReporter (standalone, own Valkey)", { timeout: 60_000 }, () => {
   });
 });
 
-describe("usage.report for model usage outside conversations (spec B §5.4)", {
-  timeout: 60_000,
-}, () => {
+describe("usage.report for model usage outside conversations (spec B §5.4)", () => {
   async function usageRow(occurredAt?: Date): Promise<string> {
     const row = await db
       .insertInto("model_usage")

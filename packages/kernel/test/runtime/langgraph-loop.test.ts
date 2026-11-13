@@ -36,7 +36,7 @@ import { truncateTables } from "../helpers/db.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { eventsOf, PW, sleep, waitFor, waitForTerminal } from "../helpers/runs.js";
+import { eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
 import { checkpointsFor, providerRegistryFor, stepLogFor } from "../helpers/runtime.js";
 import {
   approvalsFor,
@@ -163,7 +163,7 @@ beforeAll(async () => {
     }),
   };
   saver = checkpointsFor(db);
-}, 120_000);
+});
 
 afterAll(async () => {
   await sub?.close();
@@ -502,7 +502,6 @@ describe("LangGraphLoop crash resume (dual replica)", () => {
 
       const [fin] = await waitForTerminal(hdb, convId, 1, 40_000);
       expect(fin?.type).toBe("run_finished");
-      await sleep(300);
       const evs = await eventsOf(hdb, convId);
       const runId = fin?.runId as string;
       const msgs = evs.filter((e) => e.type === "assistant_message" && e.runId === runId);
@@ -518,7 +517,7 @@ describe("LangGraphLoop crash resume (dual replica)", () => {
       const resetAt = after.findIndex((d) => d.delta === "step_reset" && d.step === 1);
       expect(resetAt).toBeGreaterThanOrEqual(0);
       expect(after.slice(resetAt + 1).filter((d) => d.delta === "text").length).toBeGreaterThan(0);
-      // 运行到达终态后该 thread 的 checkpoint 全部删除（删除在终态写入之后进行，稍等）
+      // 运行到达终态后该 thread 的 checkpoint 全部删除（删除在终态写入之后进行）
       const cpsLeft = async () =>
         (
           await hdb
@@ -527,11 +526,7 @@ describe("LangGraphLoop crash resume (dual replica)", () => {
             .where("thread_id", "=", runId)
             .execute()
         ).length;
-      const until = Date.now() + 5_000;
-      while ((await cpsLeft()) > 0 && Date.now() < until) {
-        await new Promise((r) => setTimeout(r, 50));
-      }
-      expect(await cpsLeft()).toBe(0);
+      await waitFor(async () => (await cpsLeft()) === 0, 5_000, "checkpoints deleted");
       // 被杀的副本之后的请求直接报错
       await expect(
         (async () => {
@@ -541,5 +536,5 @@ describe("LangGraphLoop crash resume (dual replica)", () => {
     } finally {
       await hraw.destroy();
     }
-  }, 120_000);
+  });
 });

@@ -97,7 +97,7 @@ beforeAll(async () => {
   db = kernelDb(raw);
   redis = new Redis(rd.url, { maxRetriesPerRequest: null });
   usageQueue = new Queue(USAGE_REPORT_QUEUE, { connection: redis });
-}, 180_000);
+});
 
 afterAll(async () => {
   await usageQueue?.close();
@@ -204,7 +204,7 @@ async function ghostSubscriber(on: boolean): Promise<void> {
     .execute();
 }
 
-describe("no subscriber, then one", { timeout: 60_000 }, () => {
+describe("no subscriber, then one", () => {
   let plain: TestKernel;
   let owner: Req;
 
@@ -218,7 +218,7 @@ describe("no subscriber, then one", { timeout: 60_000 }, () => {
     owner = await session(plain, "owner");
     orgId = await createOrg(owner);
     agentId = await createAgent(owner, orgId);
-  }, 120_000);
+  });
 
   afterAll(async () => {
     await plain?.close();
@@ -269,7 +269,7 @@ describe("no subscriber, then one", { timeout: 60_000 }, () => {
   });
 });
 
-describe("a subscriber is enabled", { timeout: 60_000 }, () => {
+describe("a subscriber is enabled", () => {
   let sub: TestKernel;
   let owner: Req;
 
@@ -284,7 +284,7 @@ describe("a subscriber is enabled", { timeout: 60_000 }, () => {
     );
     owner = await session(sub, "owner");
     await enableExtensions(raw, orgId, "usage-b", "embed-consumer");
-  }, 120_000);
+  });
 
   afterAll(async () => {
     await sub?.close();
