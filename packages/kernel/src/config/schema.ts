@@ -1667,7 +1667,7 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "Default host list of the allowlist: the hosts cloud device instances may reach on allowlist (the default of an organization's cloud network) and, in sandbox mode, a local device's allowlist; lowercase hostnames, optional leading '*.', no IPs, ports or internal-only names; applies to instances created after the change",
+                  "Default host list of the allowlist: in sandbox mode, the hosts a cloud device instance may reach on allowlist (the default of an organization's cloud network, used in sandbox mode only) and a local device's allowlist; lowercase hostnames, optional leading '*.', no IPs, ports or internal-only names; applies to instances created after the change",
               }),
             ),
         })
