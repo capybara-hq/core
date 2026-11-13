@@ -1,5 +1,6 @@
 ---
 "@capybara-hq/capybara": minor
+"@capybara-hq/kernel": minor
 ---
 
 Auto mode for devices replaces the sandbox tiers. The platform's `devices.autoMode` switch and each
