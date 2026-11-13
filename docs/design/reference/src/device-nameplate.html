@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>DeviceNameplate · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>DeviceNameplate</h1>
+<p>A device page's head (spec §6.41, auto mode design §4): one flat band, the name as a nameplate with its origin, a status light and the mode mark on the left, the program version and last seen as mono figures on the right. The status light is the page's one bright element while the device runs (accent); online is ok, suspended warn, offline muted. The band draws its own hairline, never a card in a card.</p>
+<div class="r-blocks">
+<section data-ref-block="device-nameplate-cloud" style="width:640px">
+  <div class="r-nameplate" data-part="device-nameplate" data-origin="cloud" data-state="running">
+    <div class="r-nameplate-main">
+      <span class="r-nameplate-name" data-part="device-nameplate-name">staging-builder</span>
+      <span class="r-nameplate-meta" data-part="device-nameplate-meta">
+        <span class="r-nameplate-origin" data-part="device-nameplate-origin">云端设备</span>
+        <span class="r-nameplate-status" data-part="device-nameplate-status"><span class="r-nameplate-light" data-part="device-nameplate-light" data-state="running"></span>运行中</span>
+        <span class="r-nameplate-badge" data-part="device-nameplate-badge">开放（挡内网）</span>
+      </span>
+    </div>
+    <div class="r-nameplate-figures" data-part="device-nameplate-figures">
+      <span class="r-nameplate-figure" data-part="device-nameplate-figure"><span class="r-nameplate-label" data-part="device-nameplate-label">程序</span><span class="r-nameplate-value" data-part="device-nameplate-value">v0.4.0</span></span>
+      <span class="r-nameplate-figure" data-part="device-nameplate-figure"><span class="r-nameplate-label" data-part="device-nameplate-label">最后活跃</span><span class="r-nameplate-value" data-part="device-nameplate-value">2026-11-13 16:21</span></span>
+    </div>
+  </div>
+</section>
+<section data-ref-block="device-nameplate-local" style="width:640px">
+  <div class="r-nameplate" data-part="device-nameplate" data-origin="local" data-state="online">
+    <div class="r-nameplate-main">
+      <span class="r-nameplate-name" data-part="device-nameplate-name">设计工作机</span>
+      <span class="r-nameplate-meta" data-part="device-nameplate-meta">
+        <span class="r-nameplate-origin" data-part="device-nameplate-origin">本地设备</span>
+        <span class="r-nameplate-status" data-part="device-nameplate-status"><span class="r-nameplate-light" data-part="device-nameplate-light" data-state="online"></span>在线</span>
+        <span class="r-nameplate-badge" data-part="device-nameplate-badge" data-tone="warn">自动</span>
+      </span>
+    </div>
+    <div class="r-nameplate-figures" data-part="device-nameplate-figures">
+      <span class="r-nameplate-figure" data-part="device-nameplate-figure"><span class="r-nameplate-label" data-part="device-nameplate-label">程序</span><span class="r-nameplate-value" data-part="device-nameplate-value">v0.4.0</span></span>
+      <span class="r-nameplate-figure" data-part="device-nameplate-figure"><span class="r-nameplate-label" data-part="device-nameplate-label">最后活跃</span><span class="r-nameplate-value" data-part="device-nameplate-value">2026-11-13 15:58</span></span>
+    </div>
+  </div>
+</section>
+<section data-ref-block="device-nameplate-suspended" style="width:640px">
+  <div class="r-nameplate" data-part="device-nameplate" data-origin="cloud" data-state="suspended">
+    <div class="r-nameplate-main">
+      <span class="r-nameplate-name" data-part="device-nameplate-name">report-runner</span>
+      <span class="r-nameplate-meta" data-part="device-nameplate-meta">
+        <span class="r-nameplate-origin" data-part="device-nameplate-origin">云端设备</span>
+        <span class="r-nameplate-status" data-part="device-nameplate-status"><span class="r-nameplate-light" data-part="device-nameplate-light" data-state="suspended"></span>已暂停</span>
+        <span class="r-nameplate-badge" data-part="device-nameplate-badge">白名单</span>
+      </span>
+    </div>
+    <div class="r-nameplate-figures" data-part="device-nameplate-figures">
+      <span class="r-nameplate-figure" data-part="device-nameplate-figure"><span class="r-nameplate-label" data-part="device-nameplate-label">程序</span><span class="r-nameplate-value" data-part="device-nameplate-value">v0.4.0</span></span>
+      <span class="r-nameplate-figure" data-part="device-nameplate-figure"><span class="r-nameplate-label" data-part="device-nameplate-label">最后活跃</span><span class="r-nameplate-value" data-part="device-nameplate-value">2026-11-12 09:04</span></span>
+    </div>
+  </div>
+</section>
+<section data-ref-block="device-nameplate-offline" style="width:640px">
+  <div class="r-nameplate" data-part="device-nameplate" data-origin="local" data-state="offline">
+    <div class="r-nameplate-main">
+      <span class="r-nameplate-name" data-part="device-nameplate-name">办公室工作站</span>
+      <span class="r-nameplate-meta" data-part="device-nameplate-meta">
+        <span class="r-nameplate-origin" data-part="device-nameplate-origin">本地设备</span>
+        <span class="r-nameplate-status" data-part="device-nameplate-status"><span class="r-nameplate-light" data-part="device-nameplate-light" data-state="offline"></span>离线</span>
+        <span class="r-nameplate-badge" data-part="device-nameplate-badge">沙箱</span>
+      </span>
+    </div>
+    <div class="r-nameplate-figures" data-part="device-nameplate-figures">
+      <span class="r-nameplate-figure" data-part="device-nameplate-figure"><span class="r-nameplate-label" data-part="device-nameplate-label">程序</span><span class="r-nameplate-value" data-part="device-nameplate-value">v0.3.9</span></span>
+      <span class="r-nameplate-figure" data-part="device-nameplate-figure"><span class="r-nameplate-label" data-part="device-nameplate-label">最后活跃</span><span class="r-nameplate-value" data-part="device-nameplate-value">2026-11-10 18:40</span></span>
+    </div>
+  </div>
+</section>
+</div>
+</main>
+<script src="fill.js"></script>
+</body>
+</html>
