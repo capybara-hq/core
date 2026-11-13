@@ -45,6 +45,11 @@ export const KERNEL_PURPOSES = [
   /** Conversation titles (UI refresh B); unmapped → the conversation's current chat model. */
   { purpose: "title", kind: "chat", label: { zh: "会话标题", en: "Conversation titles" } },
   /**
+   * The command-review classifier (auto mode spec §5.3); unmapped → no classifier runs and an
+   * `unsure` command is asked about.
+   */
+  { purpose: "review", kind: "chat", label: { zh: "命令审查", en: "Command review" } },
+  /**
    * The `WebFetch` extraction call (web tools spec §5); unmapped → the calling conversation's
    * current chat model (a sub-agent's call: the sub-agent's).
    */
