@@ -55,7 +55,7 @@ export default defineExtension({
   // …
   setup(ctx) {
     ctx.tools.register(SPEC, async (input, call) => {
-      // call: { orgId, accountId, agentId, conversationId, callId, signal, resume? }
+      // call: { orgId, accountId, ownerAccountId, role, source, agentId, conversationId, callId, signal, resume? }
       // …validate, write ctx.db…
       return { content: [{ type: "text", text: "Todo list updated (3 items): …" }] };
     });
@@ -63,6 +63,7 @@ export default defineExtension({
 });
 ```
 
+- **Source and identity in the handler.** `ToolSpec.sources` limits a tool to conversation sources (`ConversationSource`; absent = all): in any other source the tool is hidden from the model and listed as unavailable with the reason `Not available in <source> conversations` (`tools/registry.ts`). The handler's `ToolCallContext` carries `source`, `ownerAccountId` (the conversation's owner, `conversations.account_id`), `accountId` (the account that triggered this run: in a group or channel conversation it can differ from the owner) and `role` (the trigger account's org role, `guest` without membership). **Per-member data must be keyed by `ownerAccountId`, and the handler must refuse when it differs from `accountId`**: otherwise a participant could read or write the owner's data.
 - **Register only during `setup`**; calling it afterwards throws; names must be unique within an extension; `validateToolSpec` validates at registration (name, non-empty description, inputSchema is an object, `defaultPolicy` may only be `allow` / `ask`).
 - **An extension tool is available only in orgs that have enabled the extension** (Ruling A5, unlike model providers): an org admin needs `PUT /api/v1/orgs/:orgId/extensions/<plugin> {"enabled": true}`. When not enabled, an agent can still save the reference (only that the extension is registered is checked), and at runtime it is treated as "unavailable" (see above). Connectors are deployment-level and need no per-org enabling. Two more org reasons make an extension tool unavailable: "Plugin <p> needs configuration in this organization" (the org's effective config is invalid) and "Tool <key> is turned off in this organization" (an org admin switched it off: `GET …/orgs/:orgId/extensions/:extension/tools`, `PUT …/tools/:tool`, previewed with the org's agents that selected it and confirmed with a hash, audit `extension.tool_switched`, 404 `extension.tool_not_found`; the agent editor marks it `switchedOff`). The pipeline also refuses a call to a turned-off tool (backstop), and a tool call carries the effective `config` in its context.
 - State in the handler follows the multi-replica discipline: persistent data goes in `ctx.db` (todo upserts one row per `conversationId`), not in a module-level Map.
@@ -115,7 +116,7 @@ The conversation page shows a tool call as one row, "verb + source: title + key 
 
 - Return `{ content: ToolContent[], isError? }`. `text` is concatenated as is; for `image` / `resource_link` the model gets a type description (not dropped). `isError: true` means "the tool ran but the result is an error", and the content is still given to the model.
 - Throw `ToolError(message)`: the message is given to the model **as is** (so it must be English and actionable). An optional second argument `{ kind: "unavailable" }` means the remote is unavailable (can't connect, HTTP 5xx) and is meaningful only for connectors; the default `kind: "error"` (argument errors, business errors, authentication failures, etc.) means the remote is reachable. Circuit breaker semantics (Ruling A15): the connector-level circuit breaker counts only "remote unavailable": timeouts, transport / connection errors (exceptions that are not `ToolError`), and `kind: "unavailable"`; a `ToolError` with `kind: "error"` and `isError` results both mean the remote is reachable and reset the count. Extension tools and builtin tools are not affected by the circuit breaker.
-- **Display summary `display` (optional, for humans only)**: `{ content, display: { summary: { zh, en } } }`; the tool call line in the conversation stream shows this sentence (for example todo's "更新任务清单（3 项）" / "Updated task list (3 items)") instead of the raw input JSON. Both Chinese and English are required, each ≤ 200 code points (`validateToolDisplay`); the kernel drops an invalid one and logs a warning, and the result is written as usual. The summary goes into the log with the `tool_result` event (so a page refresh can restore it) and **does not go into the model context** (request rebuilding uses only content / isError), so don't put information the model needs only in the summary. Only summaries from extension tools, kernel builtin tools and the kernel's resources tools are honored; connector tool results are not trusted (the web falls back to "tool name + the first few input fields"). The builtin tools `AskUserQuestion` / `ReadToolOutput` / `ToolSearch` all give summaries.
+- **Display summary `display` (optional, for humans only)**: `{ content, display: { summary: { zh, en } } }`; the tool call line in the conversation stream shows this sentence (for example todo's "更新待办（3 项）" / "Updated todos (3 items)") instead of the raw input JSON. Both Chinese and English are required, each ≤ 200 code points (`validateToolDisplay`); the kernel drops an invalid one and logs a warning, and the result is written as usual. The summary goes into the log with the `tool_result` event (so a page refresh can restore it) and **does not go into the model context** (request rebuilding uses only content / isError), so don't put information the model needs only in the summary. Only summaries from extension tools, kernel builtin tools and the kernel's resources tools are honored; connector tool results are not trusted (the web falls back to "tool name + the first few input fields"). The builtin tools `AskUserQuestion` / `ReadToolOutput` / `ToolSearch` all give summaries.
 - Throwing any other error: the model sees only `Tool <key> failed (<ErrorName>). The operation may not have completed; check before retrying or try another approach.`, and the error details go into the log (redacted). Don't rely on the exception message to pass information.
 - Timeout: `Tool <key> timed out after <n>s. The operation may or may not have completed; verify before retrying.`
 - **The extension providing a tool is taken down mid-call** (disabled / uninstalled / upgraded to a new instance on the deployment, C17): the kernel first stops accepting new calls, and waits for in-flight calls for up to `extensionHost.drainSeconds` (default 30 seconds); calls still unfinished at that point have `call.signal` aborted, and the model receives `PLUGIN_UNLOADED_TOOL_ERROR` (`extensions/inflight.ts`: `The plugin that provides this tool was disabled or upgraded while the call was running, so the call was aborted. Retry if the tool is still available.`). In later steps, an extension tool that this replica no longer has is treated as an unavailable tool (reason `Plugin tool does not exist`; when the org hasn't enabled it, `Plugin <name> is not enabled in this organization`). So the handler must honor `call.signal`, and long operations should be abortable and retryable.
@@ -233,7 +234,7 @@ the same transaction as the business rows.
   appends an `artifact_created` event, and the web "Artifacts" tab is rebuilt from the log.
 
 **Background tasks** (spec `docs/superpowers/specs/2026-11-05-background-bash-design.md`; code `packages/kernel/src/background/*`,
-`tools/builtins/sandbox/{bash,task-output,task-stop}.ts`):
+`tools/builtins/sandbox/{bash,task-output,task-stop,task-list}.ts`):
 
 - `Bash` `run_in_background: true` reserves a `capybara.background_tasks` row first (counted against `sandbox.background.maxTasks` under a
   per-root-conversation `XactLock`, `sid` null; the row records its `device_id`), then launches with one short exec under the call's shared lease (`setsid` + `timeout -s KILL` + `bash`,
@@ -245,6 +246,14 @@ the same transaction as the business rows.
   claims the task (`stopping_at`), sends SIGTERM to the session, SIGKILL after 5 s. Both are `defaultPolicy: "allow"`, offered whenever
   `Bash` is (the registry adds them, `BASH_COMPANION_TOOLS`), given to sub-agents, and go through `SandboxService.ifRunning` (see
   `.agents/skills/writing-sandbox-providers`). A conversation reads and stops only its own tasks.
+- `TaskList {status?: "running" | "all"}` (no required input; default `all`) lists the calling conversation's own tasks (owner
+  `conversation_id`, never a sub-agent's or another conversation's): running ones first (oldest first), then the
+  `TASK_LIST_FINISHED_LIMIT` (20) most recently finished, each with id, description, status (`running`, `completed`, `failed`,
+  `timed_out`, `stopped`, `lost`), elapsed time, exit code and output path; then a "Sub-agents" section with the sub-agents
+  it dispatched itself (`readChildAgents` in `conversations/agent-tree.ts`: live children with a dispatch row, never
+  grandchildren; agentId, description, latest run status, `aborted` shown as `stopped`), same cap. It reads PG only (statuses
+  are the poller's or a tool's last ones), is `readOnlyHint` + `defaultPolicy: "allow"`, a Bash companion like
+  `TaskOutput` / `TaskStop`, and `TaskOutput`'s not-found error points to it.
 - A finish (poll, `TaskOutput`, `TaskStop`, or a person's stop from the panel) is one conditional update from `running` plus the
   model-visible `background_task_finished` event (idempotency key `background_task_finished:<taskId>`) in the same transaction. A finish a
   tool result already showed the model is `reported: true` (one short line, never wakes); a person's stop is `stoppedBy: "person"` (never

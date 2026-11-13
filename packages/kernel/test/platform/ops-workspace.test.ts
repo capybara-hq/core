@@ -34,6 +34,7 @@ afterAll(async () => {
 beforeEach(async () => {
   await resetOrgCatalog(env);
   await setDeployment(env, { customSkills: "allow" });
+  await env.db.deleteFrom("conversations").execute();
   await env.db.deleteFrom("agents").execute();
 });
 
@@ -105,6 +106,21 @@ const ctxOf = (accountId: string, agentId: string): OperationContext => ({
   runId: randomUUID(),
   signal: new AbortController().signal,
 });
+
+/** Stores `c`'s conversation (a web one): operations that read the run's conversation need it. */
+async function inConversation(c: OperationContext): Promise<OperationContext> {
+  await env.db
+    .insertInto("conversations")
+    .values({
+      id: c.conversationId,
+      org_id: c.orgId,
+      agent_id: c.agentId,
+      account_id: c.actorAccountId,
+      source: "web",
+    })
+    .execute();
+  return c;
+}
 
 /** An org skill without a plugin, uploaded by the org admin; returns its id. */
 async function orgSkill(name: string): Promise<string> {
@@ -612,7 +628,7 @@ describe("agent templates", () => {
 describe("agent description", () => {
   it("agents.update saves the description into a new version and the profile shows it", async () => {
     const mine = await agentOf(env.memId, "private", "Mine");
-    const c = ctxOf(env.memId, mine);
+    const c = await inConversation(ctxOf(env.memId, mine));
     await run(
       "agents.update",
       { agentId: mine, version: 1, description: "Answers HR questions." },
@@ -679,7 +695,7 @@ describe("platform", () => {
 
   it("platform.me lists the agent's tool keys, its sandbox and no secret", async () => {
     const id = await agentOf(env.memId, "private");
-    const out = await run("platform.me", {}, ctxOf(env.memId, id));
+    const out = await run("platform.me", {}, await inConversation(ctxOf(env.memId, id)));
     // every builtin but Bash is off; this deployment has no sandbox provider, so Bash cannot load
     // now and is listed with the reason
     expect(out).toMatchObject({
@@ -698,7 +714,7 @@ describe("platform", () => {
     await orgSkill("report");
     const draft = await orgSkill("draft");
     const id = await agentOf(env.memId, "private");
-    const c = ctxOf(env.memId, id);
+    const c = await inConversation(ctxOf(env.memId, id));
     // nothing turned off: every org skill is on (skills default-on spec §11)
     expect(await run("platform.me", {}, c)).toMatchObject({
       skills: [
@@ -722,7 +738,7 @@ describe("platform", () => {
 
   it("platform.me shows the agent's profile: avatar, description and quick actions", async () => {
     const id = await agentOf(env.memId, "private");
-    const c = ctxOf(env.memId, id);
+    const c = await inConversation(ctxOf(env.memId, id));
     const actions = [{ title: "Triage", body: "Triage the new issues." }];
     await run(
       "agents.update-profile",

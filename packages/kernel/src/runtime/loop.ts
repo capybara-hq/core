@@ -1,6 +1,8 @@
+import type { ConversationSource } from "@capybara-hq/plugin-sdk";
 import type { AgentDefinition } from "../agents/definition.js";
 import type { KernelConfig } from "../config/schema.js";
 import type { AbsorbableEvent } from "../conversations/events.js";
+import type { OrgRole } from "../orgs/roles.js";
 import type { StreamSink } from "./model-call.js";
 
 /** 一次运行交给 loop 的上下文（spec 4.4）。 */
@@ -13,6 +15,12 @@ export interface LoopContext {
   agentId: string;
   /** 发起本次运行的人（对话发起人）：工具调用用其个人凭据，审计记为 actor。 */
   triggerAccountId: string;
+  /** The conversation's source, read once per run (memory plugin spec §6.2). */
+  source: ConversationSource;
+  /** The conversation's owner (`conversations.account_id`); plugin tool handlers receive it. */
+  ownerAccountId: string;
+  /** The trigger account's org role when the run starts; plugin tool handlers receive it. */
+  role: OrgRole;
   agent: AgentDefinition;
   agentVersion: number;
   /** 用户中止或到达 deadline 时触发：进行中的模型调用立即停下。 */
@@ -28,7 +36,11 @@ export interface LoopContext {
    * 即 seq 也大于会话的 `consumed_seq`），按 seq 升序。loop 记录吸收到的最大 seq 作为 `consumedUpToSeq`。
    */
   pendingAbsorbable(afterSeq: number): Promise<AbsorbableEvent[]>;
-  limits: { maxSteps: number; deadline: number };
+  /**
+   * The run's limits; an absent one is no limit (`runtime.maxSteps` / `runtime.maxRunSeconds` 0):
+   * `maxSteps` model steps before the final wrap-up, `deadline` in epoch ms.
+   */
+  limits: { maxSteps?: number; deadline?: number };
   /**
    * Kind of the conversation: plugin hooks fire for `chat` and `subagent` (F10, P-18, sub-agents
    * spec §11). Eval replays pass `eval`; when absent, hooks do not fire.
@@ -121,7 +133,8 @@ export interface AgentLoop {
 /**
  * The wait of a step whose sub-agents still run (spec §7.2): id `sa-<runId>-<step>`, expiring after
  * the approval timeout plus one run's duration plus 10 minutes (a child may itself wait for an
- * approval); the timeout is a safety net.
+ * approval); the timeout is a safety net. Without a run duration limit (`runtime.maxRunSeconds` 0)
+ * it is the approval timeout plus 10 minutes.
  */
 export function subagentsWait(
   runId: string,

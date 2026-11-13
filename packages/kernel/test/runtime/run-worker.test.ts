@@ -65,16 +65,18 @@ class SequentialLoop implements AgentLoop {
       step,
       agent: ctx.agent,
       agentVersion: ctx.agentVersion,
+      source: ctx.source,
       signal: ctx.signal,
       sink: ctx.sink,
       absorbedUpToSeq: consumed,
+      ...(ctx.limits.maxSteps !== undefined && { maxSteps: ctx.limits.maxSteps }),
     });
-    const timedOut = () => Date.now() >= ctx.limits.deadline;
+    const timedOut = () => ctx.limits.deadline !== undefined && Date.now() >= ctx.limits.deadline;
     for (;;) {
       if (ctx.shutdown.aborted) return { kind: "interrupted" };
       if (timedOut()) return { kind: "max_duration", consumedUpToSeq: consumed };
       for (const m of await ctx.pendingAbsorbable(consumed)) consumed = Math.max(consumed, m.seq);
-      if (step > ctx.limits.maxSteps) {
+      if (ctx.limits.maxSteps !== undefined && step > ctx.limits.maxSteps) {
         const r = await runFinalWrapUp(this.deps, input());
         if (r.aborted && !timedOut()) return { kind: "aborted" };
         return { kind: "max_steps", consumedUpToSeq: consumed };
@@ -445,6 +447,33 @@ describe.each(LOOPS)("RunWorker（%s）", (_name, loopFactory) => {
     expect(await runsOf(db, convId)).toMatchObject([{ status: "completed" }]);
   });
 
+  it("no step or duration limit by default: a run goes past 50 steps without a step-limit reminder or wrap-up, and ends when the model stops calling tools", async () => {
+    await worker();
+    const { orgId, convId } = await setup(LOOPER);
+    await postMessage(req, orgId, convId, "loop:0");
+    await waitFor(
+      async () =>
+        (await eventsOf(db, convId)).filter((e) => e.type === "assistant_message").length >= 55
+          ? true
+          : null,
+      30_000,
+      "55 steps",
+    );
+    // the looper stops calling tools once the latest message is not a loop directive
+    const hello = await postMessage(req, orgId, convId, "hello");
+    const [fin] = await waitForTerminal(db, convId, 1, 30_000);
+    expect(fin?.payload).toEqual({ reason: "completed", consumedUpToSeq: hello });
+    const evs = await eventsOf(db, convId);
+    expect(evs.filter((e) => e.type === "assistant_message").length).toBeGreaterThan(55);
+    expect(evs.filter((e) => e.type === "reminder")).toEqual([]);
+    expect(
+      evs
+        .filter((e) => e.type === "assistant_message")
+        .map(textOf)
+        .at(-1),
+    ).toBe("You said: hello");
+  }, 90_000);
+
   it("步数上限：每步都返回工具调用且 maxSteps 3 → runFinalWrapUp，reason max_steps", async () => {
     await worker({ maxSteps: 3 });
     const { orgId, convId } = await setup(LOOPER);
@@ -727,7 +756,7 @@ describe.each(LOOPS)("RunWorker（%s）", (_name, loopFactory) => {
       .set({ status: "running", started_at: sql`now() - interval '1 hour'` })
       .where("id", "=", stale?.id as string)
       .execute();
-    await worker();
+    await worker({ maxRunSeconds: 900 });
     const terms = await waitForTerminal(db, convId, 2);
     expect(terms[0]?.runId).toBe(stale?.id);
     expect(terms[0]?.payload).toEqual({ reason: "max_duration", consumedUpToSeq: 0 });
@@ -755,9 +784,9 @@ describe.each(LOOPS)("RunWorker（%s）", (_name, loopFactory) => {
               const real = ctx.limits.deadline;
               // 第一轮的截止时间在测试设置 passed 之后视为已过（不触发 run-worker 自己的截止计时器）
               const limits = {
-                maxSteps: ctx.limits.maxSteps,
-                get deadline() {
-                  return isFirst && passed ? Date.now() - 1 : real;
+                ...(ctx.limits.maxSteps !== undefined && { maxSteps: ctx.limits.maxSteps }),
+                get deadline(): number {
+                  return isFirst && passed ? Date.now() - 1 : (real ?? Number.MAX_SAFE_INTEGER);
                 },
               };
               return inner.run({ ...ctx, limits });

@@ -20,6 +20,7 @@ import {
 } from "../../src/runtime/run-queue.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
+import { drainOutbox } from "../helpers/outbox.js";
 import {
   consumedSeq,
   createAgent,
@@ -215,6 +216,8 @@ describe("RunQueue.ensureRun through the outbox", () => {
     );
     const evs = await eventsOf(db, convId);
     expect(evs.filter((e) => e.type === "run_failed")).toEqual([]);
+    // a later run's job went through the api kernel's fast path: its row is gone once that commits
+    await drainOutbox(api.app, { jobName: "run" });
     expect(await owedRows(convId)).toEqual([]);
   }, 60_000);
 
@@ -294,6 +297,7 @@ describe("RunQueue.ensureRun through the outbox", () => {
         account_id: ownerId,
         title: "Child",
         kind: "subagent",
+        source: "subagent",
         parent_conversation_id: convId,
         subagent_type: "general-purpose",
         subagent_depth: 1,

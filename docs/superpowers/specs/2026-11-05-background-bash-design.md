@@ -453,6 +453,11 @@ one bullet each.
 - `TaskOutput` and `TaskStop` are offered whenever the agent has `Bash` (the registry adds them); a
   definition need not name them, or an agent could start tasks it can neither read nor stop. Old
   recordings of a `Bash` agent show the expected `tools_changed`.
+- `TaskList` (2026-11-13, maintainer decision from acceptance) joins them as a third companion: no
+  required input (`status?: "running" | "all"`), it lists the calling conversation's own tasks, running
+  first, then the 20 most recently finished, and the sub-agents it dispatched itself. It reads PG only
+  and is read-only (`readOnlyHint`, allowed by default). `TaskOutput`'s not-found error and `Bash`'s
+  description point to it.
 - Tool error texts keep the spec's wording and add one actionable sentence (the tool design check).
 - `TaskOutput` reports a finish only together with its result, so a `reported: true` finish is one
   the model really saw.

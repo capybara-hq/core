@@ -2,6 +2,7 @@ import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
 import type { AgentView } from "../../agents/agent-lookup.js";
 import { AgentsService } from "../../agents/agents.service.js";
+import { conversationSourceOf } from "../../conversations/source.js";
 import { AccountsService } from "../../identity/accounts.js";
 import { PreferencesSchema } from "../../identity/me.schemas.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
@@ -75,12 +76,17 @@ export class PlatformOperationsProvider implements OnModuleInit {
    * default-on spec §8): every tool the org offers that the definition does not turn off, builtins
    * by name, extension tools as `plugin__<plugin>__<tool>`, connector tools as
    * `mcp__<slug>__<tool>`; the ones that cannot load now are listed with the registry's reason.
+   * Listed for the source of the conversation the operation runs in (memory plugin spec §6.2).
    */
-  private async toolKeys(orgId: string, d: AgentView["definition"]) {
-    const resolved = await this.tools.forAgent(orgId, {
+  private async toolKeys(
+    ctx: { orgId: string; conversationId: string },
+    d: AgentView["definition"],
+  ) {
+    const resolved = await this.tools.forAgent(ctx.orgId, {
       disabledTools: d.disabledTools ?? [],
       subagentTools: d.subagentTools,
       subagents: d.subagents,
+      source: await conversationSourceOf(this.db.db, ctx.conversationId),
     });
     return {
       keys: [...new Set(resolved.tools.map((t) => t.key))],
@@ -141,7 +147,7 @@ export class PlatformOperationsProvider implements OnModuleInit {
           const agent = await this.agents.get(ctx.orgId, ctx.agentId, ctx.actorAccountId);
           const d = agent.definition;
           const [{ keys: toolKeys, unavailable }, skills] = await Promise.all([
-            this.toolKeys(ctx.orgId, d),
+            this.toolKeys(ctx, d),
             this.skillNames(ctx, d),
           ]);
           const sandbox = toolKeys.some((k) =>

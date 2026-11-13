@@ -334,6 +334,34 @@ export class BackgroundTaskStore {
     return rows.map(toRow);
   }
 
+  /**
+   * The finished tasks one conversation owns (not those of its sub-agents), the most recently
+   * finished first, at most `limit` of them, with how many it owns in all (`TaskList`).
+   */
+  async finishedOwnedBy(
+    conversationId: string,
+    limit: number,
+  ): Promise<{ rows: BackgroundTaskRow[]; total: number }> {
+    const [rows, count] = await Promise.all([
+      this.db
+        .selectFrom("background_tasks")
+        .selectAll()
+        .where("conversation_id", "=", conversationId)
+        .where("status", "<>", "running")
+        .orderBy("finished_at", "desc")
+        .orderBy("id", "desc")
+        .limit(limit)
+        .execute(),
+      this.db
+        .selectFrom("background_tasks")
+        .select((eb) => eb.fn.countAll().as("n"))
+        .where("conversation_id", "=", conversationId)
+        .where("status", "<>", "running")
+        .executeTakeFirstOrThrow(),
+    ]);
+    return { rows: rows.map(toRow), total: Number(count.n) };
+  }
+
   /** The running tasks of one root conversation's tree (what `maxTasks` limits). */
   async countRunning(sandboxConversationId: string): Promise<number> {
     const r = await this.db

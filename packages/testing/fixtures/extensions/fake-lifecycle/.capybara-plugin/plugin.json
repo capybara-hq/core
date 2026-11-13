@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "name": "fake-lifecycle",
+  "version": "0.1.0",
+  "publisher": "Capybara",
+  "description": "Test fake: observes the lifecycle hooks and records each delivery in its own table"
+}

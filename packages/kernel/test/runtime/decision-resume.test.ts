@@ -25,6 +25,7 @@ import { truncateTables } from "../helpers/db.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
+import { drainOutbox } from "../helpers/outbox.js";
 import {
   createConv,
   createOrg,
@@ -303,6 +304,9 @@ describe("decisions resume their run in the decision's transaction", () => {
     await sql`UPDATE capybara.runs SET status = 'running', waiting_since = NULL WHERE id = ${runId}`.execute(
       raw,
     );
+    // the first suspend's timeout: its row is gone (the pass that added the job committed), so
+    // the suspend below owes a new one rather than finding that row still owed
+    await drainOutbox(k.app, { jobId: waitTimeoutJobId(waitId) });
     const delivered = await waitFor(() => maint.getJob(waitTimeoutJobId(waitId)), 5_000, "job");
     await delivered.remove();
     failing = true;

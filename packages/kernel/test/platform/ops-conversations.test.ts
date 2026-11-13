@@ -125,9 +125,9 @@ describe("registration", () => {
 describe("reads", () => {
   it("lists only my conversations as compact rows, and gets one", async () => {
     const agent = await agentOf(env.memId);
-    const mine = await conversations.create(env.orgId, env.memId, agent, {});
+    const mine = await conversations.create(env.orgId, env.memId, agent, {}, { source: "web" });
     const otherAgent = await agentOf(env.bossId);
-    await conversations.create(env.orgId, env.bossId, otherAgent, {});
+    await conversations.create(env.orgId, env.bossId, otherAgent, {}, { source: "web" });
     const c = ctxOf(env.memId, agent);
     const out = (await run("conversations.list", {}, c)) as {
       conversations: { id: string; name: string; state: string; agentId: string }[];
@@ -150,7 +150,7 @@ describe("reads", () => {
 
   it("someone else's conversation is not found, with the next step", async () => {
     const agent = await agentOf(env.bossId);
-    const theirs = await conversations.create(env.orgId, env.bossId, agent, {});
+    const theirs = await conversations.create(env.orgId, env.bossId, agent, {}, { source: "web" });
     await expect(
       run("conversations.get", { conversationId: theirs.id }, ctxOf(env.memId, agent)),
     ).rejects.toThrow(/conversations\.list/);
@@ -158,7 +158,7 @@ describe("reads", () => {
 
   it("reads the events of a conversation and refuses after together with before", async () => {
     const agent = await agentOf(env.memId);
-    const conv = await conversations.create(env.orgId, env.memId, agent, {});
+    const conv = await conversations.create(env.orgId, env.memId, agent, {}, { source: "web" });
     await conversations.postUserMessage(env.orgId, conv.id, env.memId, { text: "hello there" });
     const c = ctxOf(env.memId, agent);
     const out = (await run("conversations.events", { conversationId: conv.id }, c)) as {
@@ -180,7 +180,7 @@ describe("reads", () => {
 describe("personal writes", () => {
   it("rename keeps the title, names the target in the card and may be remembered", async () => {
     const agent = await agentOf(env.memId);
-    const conv = await conversations.create(env.orgId, env.memId, agent, {});
+    const conv = await conversations.create(env.orgId, env.memId, agent, {}, { source: "web" });
     const c = ctxOf(env.memId, agent);
     const input = { conversationId: conv.id, title: "Q3 report" };
     expect(await precheck("conversations.rename", input, c)).toEqual({ ok: true });
@@ -195,7 +195,7 @@ describe("personal writes", () => {
 
   it("archive and unarchive move the conversation out of and back into the list", async () => {
     const agent = await agentOf(env.memId);
-    const conv = await conversations.create(env.orgId, env.memId, agent, {});
+    const conv = await conversations.create(env.orgId, env.memId, agent, {}, { source: "web" });
     const c = ctxOf(env.memId, agent);
     await run("conversations.archive", { conversationId: conv.id }, c);
     const listed = async (archived?: "1") =>
@@ -215,7 +215,7 @@ describe("personal writes", () => {
 
   it("a write on someone else's conversation is denied before the card", async () => {
     const agent = await agentOf(env.bossId);
-    const theirs = await conversations.create(env.orgId, env.bossId, agent, {});
+    const theirs = await conversations.create(env.orgId, env.bossId, agent, {}, { source: "web" });
     const r = await precheck(
       "conversations.rename",
       { conversationId: theirs.id, title: "mine now" },
@@ -234,7 +234,7 @@ describe("personal writes", () => {
 describe("delete", () => {
   it("is never remembered, names the target, and hides the conversation", async () => {
     const agent = await agentOf(env.memId);
-    const conv = await conversations.create(env.orgId, env.memId, agent, {});
+    const conv = await conversations.create(env.orgId, env.memId, agent, {}, { source: "web" });
     await conversations.rename(env.orgId, conv.id, env.memId, "Old chat");
     const c = ctxOf(env.memId, agent);
     const input = { conversationId: conv.id };
@@ -255,7 +255,7 @@ describe("delete", () => {
 
   it("refuses the run's root conversation also from a sub-agent's run", async () => {
     const agent = await agentOf(env.memId);
-    const conv = await conversations.create(env.orgId, env.memId, agent, {});
+    const conv = await conversations.create(env.orgId, env.memId, agent, {}, { source: "web" });
     const child = randomUUID();
     await env.db
       .insertInto("conversations")
@@ -265,6 +265,7 @@ describe("delete", () => {
         agent_id: agent,
         account_id: env.memId,
         kind: "subagent",
+        source: "subagent",
         parent_conversation_id: conv.id,
         subagent_depth: 1,
         title: "Child",
@@ -284,7 +285,7 @@ describe("delete", () => {
 
   it("refuses the conversation the run is in, and someone else's", async () => {
     const agent = await agentOf(env.memId);
-    const conv = await conversations.create(env.orgId, env.memId, agent, {});
+    const conv = await conversations.create(env.orgId, env.memId, agent, {}, { source: "web" });
     const here = ctxOf(env.memId, agent, conv.id);
     expect(await precheck("conversations.delete", { conversationId: conv.id }, here)).toMatchObject(
       {
@@ -302,7 +303,7 @@ describe("delete", () => {
 describe("conversation detail reads and abort", () => {
   it("reads usage, sub-agents, the agent tree, files and the device of my conversation", async () => {
     const agent = await agentOf(env.memId);
-    const conv = await conversations.create(env.orgId, env.memId, agent, {});
+    const conv = await conversations.create(env.orgId, env.memId, agent, {}, { source: "web" });
     const c = ctxOf(env.memId, agent);
     const input = { conversationId: conv.id };
     expect(await run("conversations.usage", input, c)).toEqual({
@@ -320,7 +321,7 @@ describe("conversation detail reads and abort", () => {
 
   it("someone else's conversation is not found for each detail read", async () => {
     const agent = await agentOf(env.bossId);
-    const theirs = await conversations.create(env.orgId, env.bossId, agent, {});
+    const theirs = await conversations.create(env.orgId, env.bossId, agent, {}, { source: "web" });
     const c = ctxOf(env.memId, agent);
     for (const id of [
       "conversations.usage",
@@ -337,7 +338,7 @@ describe("conversation detail reads and abort", () => {
 
   it("abort asks every time, names the target, and reports no active run", async () => {
     const agent = await agentOf(env.memId);
-    const conv = await conversations.create(env.orgId, env.memId, agent, {});
+    const conv = await conversations.create(env.orgId, env.memId, agent, {}, { source: "web" });
     await conversations.rename(env.orgId, conv.id, env.memId, "Busy chat");
     const c = ctxOf(env.memId, agent);
     const input = { conversationId: conv.id };

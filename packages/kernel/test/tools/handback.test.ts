@@ -36,6 +36,7 @@ import {
   type TestKernel,
   waitForTerminal,
 } from "../helpers/runs.js";
+import { webCaller } from "../helpers/step-context.js";
 import { finishedDeliveries, subagentFinishes } from "../helpers/subagents.js";
 
 /**
@@ -167,6 +168,7 @@ async function parentRun(): Promise<{ conv: string; ctx: ToolStepContext }> {
       agentVersion: 1,
       agent: normalizeStoredDefinition(v.definition),
       accountId: ownerId,
+      ...webCaller(ownerId),
       signal: new AbortController().signal,
     },
   };
@@ -286,6 +288,7 @@ describe("SubagentHandback", { timeout: 90_000 }, () => {
     expect(ofType(await eventsOf(db, conv), "subagent_delivery")).toHaveLength(before);
     // and it is offered neither tool to reach its parent
     const tools = await k.app.get(ToolRegistry).forAgent(orgId, {
+      source: "web",
       disabledTools: onlyBuiltins([{ kind: "builtin", name: "Read" }]),
       child: true,
       forkChild: true,

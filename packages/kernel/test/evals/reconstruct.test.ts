@@ -877,6 +877,59 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     await expectZeroDrift(conv, await snapshotOf(conv));
   });
 
+  it("plugin_context events before and after a summary (memory spec §6.1): zero drift", async () => {
+    reset();
+    const agentId = await createAgent({ provider: "model-fake", model: "fake-small" });
+    const conv = await createConv(owner, orgId, agentId);
+    // written directly: nothing calls context@1 providers here; the runtime only renders the log
+    const context = async (key: string, plugin: string, text: string) => {
+      await k.app.get(EventLog).append(conv, [
+        {
+          type: "plugin_context",
+          idemKey: `test_plugin_context:${conv}:${key}`,
+          payload: { plugin, text, hash: createHash("sha256").update(text).digest("hex") },
+        },
+      ]);
+    };
+    await context("1", "notes", "- notes v1");
+    await context("2", "memory", "- prefers tea");
+    let n = 0;
+    for (let i = 0; i < 5; i++) {
+      if (i === 1) await context("3", "notes", "- notes v2");
+      if (i === 4) await context("4", "memory", "");
+      await postMessage(owner, orgId, conv, `long:${300 + i}`);
+      await waitForTerminal(db, conv, ++n, 30_000);
+    }
+    const events = await eventsOf(db, conv);
+    const summarySeq = events.findLast((e) => e.type === "compaction_summary")?.seq;
+    expect(summarySeq).toBeDefined();
+    const tag = (plugin: string, text: string) =>
+      `<plugin-context plugin="${plugin}">\n${text}\n</plugin-context>`;
+    // before any summary: at their positions
+    expect(sent[0]?.messages.slice(0, 2)).toEqual([
+      { role: "system", content: tag("notes", "- notes v1") },
+      { role: "system", content: tag("memory", "- prefers tea") },
+    ]);
+    // after a summary covering them: the latest non-empty one per plugin, in plugin-name order
+    const afterSummary = sent.filter((r) =>
+      JSON.stringify(r.messages[0]?.content ?? "").includes("<conversation_summary>"),
+    );
+    expect(afterSummary.length).toBeGreaterThan(0);
+    const covered = afterSummary.find((r) =>
+      r.messages.some((m) => m.role === "system" && m.content === tag("notes", "- notes v2")),
+    );
+    // right after the summary and the run context
+    expect(String(covered?.messages[1]?.content)).toMatch(/^Context from the platform:/);
+    expect(covered?.messages.slice(2, 4)).toEqual([
+      { role: "system", content: tag("memory", "- prefers tea") },
+      { role: "system", content: tag("notes", "- notes v2") },
+    ]);
+    // the empty memory context, once logged, stops the old text in every later request
+    const lastSys = (sent.at(-1)?.messages ?? []).filter((m) => m.role === "system");
+    expect(lastSys.some((m) => String(m.content).includes("prefers tea"))).toBe(false);
+    await expectZeroDrift(conv, await snapshotOf(conv));
+  });
+
   it("run context: snapshots, a rename, a day change, sender lines and a compaction over them: zero drift", async () => {
     reset();
     clockMs = Date.parse("2026-11-08T10:00:00Z");

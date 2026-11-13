@@ -17,6 +17,7 @@ import { ChannelSupervisor } from "../../src/channels/supervisor.js";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
 import { TITLE_QUEUE } from "../../src/conversations/titles.js";
 import { EVAL_QUEUE_NAME } from "../../src/evals/jobs.js";
+import { LIFECYCLE_QUEUE } from "../../src/extensions/lifecycle-hooks.js";
 import { PLUGINS_RECONCILE_JOB } from "../../src/extensions/lifecycle-topics.js";
 import { LockedIntervalScheduler } from "../../src/infra/schedule/locked-interval.js";
 import { LOCKED_JOB } from "../../src/infra/schedule/locked-tick.js";
@@ -49,6 +50,7 @@ const KERNEL_QUEUES = [
   MAINTENANCE_QUEUE_NAME,
   CHANNEL_QUEUE_NAME,
   PLUGIN_SCOPE_QUEUE,
+  LIFECYCLE_QUEUE,
 ];
 
 let pgc: TestContainer;

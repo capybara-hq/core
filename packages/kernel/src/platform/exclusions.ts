@@ -106,6 +106,12 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason: "Confirms an import review, an approval decision by the super admin",
   },
   {
+    route: "POST /api/v1/admin/catalog/imports/:stagingId/update",
+    category: "human-only",
+    reason:
+      "Confirms an import review together with the platform update it applies, an approval decision by the super admin",
+  },
+  {
     route: "GET /api/v1/admin/catalog/items/:id/icon",
     category: "transport",
     reason: "Serves icon image bytes",

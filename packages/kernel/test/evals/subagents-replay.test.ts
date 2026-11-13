@@ -52,6 +52,7 @@ import {
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
+import { webCaller } from "../helpers/step-context.js";
 import { finishedDeliveries } from "../helpers/subagents.js";
 
 /**
@@ -1116,6 +1117,7 @@ describe("follow-ups by SendMessage", { timeout: 60_000 }, () => {
         agentVersion: 1,
         agent,
         accountId: ownerId,
+        ...webCaller(ownerId),
         signal: new AbortController().signal,
       },
       "s1",

@@ -135,7 +135,9 @@ export class LangGraphLoop implements AgentLoop {
     const config = {
       configurable: { thread_id: ctx.runId },
       // 每步最多 3 个超步（prepare、model、tools），再加 wrapUp 与余量。
-      recursionLimit: ctx.limits.maxSteps * 3 + 10,
+      // no step limit: no recursion limit either (the loop ends when the model stops calling tools)
+      recursionLimit:
+        ctx.limits.maxSteps === undefined ? Number.MAX_SAFE_INTEGER : ctx.limits.maxSteps * 3 + 10,
       durability: "sync" as const,
     };
     const existing = await this.saver.getTuple({ configurable: { thread_id: ctx.runId } });
@@ -163,7 +165,12 @@ export class LangGraphLoop implements AgentLoop {
   }
 
   private build(ctx: LoopContext) {
-    const timedOut = () => Date.now() >= ctx.limits.deadline;
+    // an absent limit is no limit (`runtime.maxSteps` / `runtime.maxRunSeconds` 0)
+    const { maxSteps } = ctx.limits;
+    const timedOut = () => {
+      const deadline = ctx.limits.deadline;
+      return deadline !== undefined && Date.now() >= deadline;
+    };
     // 本次运行的附件字节缓存：各步共用，运行结束即丢弃（只是优化，见 MediaCache）
     const mediaCache = new MediaCache(this.stepDeps.config.get().attachments.requestMediaBytes);
     const input = (step: number, absorbedUpToSeq: number): ModelStepInput => ({
@@ -176,10 +183,11 @@ export class LangGraphLoop implements AgentLoop {
       signal: ctx.signal,
       sink: ctx.sink,
       absorbedUpToSeq,
-      maxSteps: ctx.limits.maxSteps,
+      ...(maxSteps !== undefined && { maxSteps }),
       mediaCache,
       agentId: ctx.agentId,
       accountId: ctx.triggerAccountId,
+      source: ctx.source,
       ...(ctx.conversationKind !== undefined && { conversationKind: ctx.conversationKind }),
       ...(ctx.parent !== undefined && { parentRunId: ctx.parent.runId, parent: ctx.parent }),
       ...(ctx.subagent === true && { subagent: true }),
@@ -258,8 +266,11 @@ export class LangGraphLoop implements AgentLoop {
         agentVersion: ctx.agentVersion,
         agent: ctx.agent,
         accountId: ctx.triggerAccountId,
+        source: ctx.source,
+        ownerAccountId: ctx.ownerAccountId,
+        role: ctx.role,
         signal: ctx.signal,
-        deadline: ctx.limits.deadline,
+        ...(ctx.limits.deadline !== undefined && { deadline: ctx.limits.deadline }),
         ...(ctx.conversationKind !== undefined && { conversationKind: ctx.conversationKind }),
         ...(ctx.parent !== undefined && { parent: ctx.parent }),
       });
@@ -305,7 +316,9 @@ export class LangGraphLoop implements AgentLoop {
         (s: State) => {
           // (aborted / completed: a fork invocation's run ended in its first prepare, phase D)
           if (s.outcome !== null) return END;
-          return s.budgetWrapUp === true || s.step > ctx.limits.maxSteps ? "wrapUp" : "model";
+          return s.budgetWrapUp === true || (maxSteps !== undefined && s.step > maxSteps)
+            ? "wrapUp"
+            : "model";
         },
         ["model", "wrapUp", END],
       )

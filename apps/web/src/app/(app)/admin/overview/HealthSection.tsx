@@ -42,7 +42,8 @@ type QueueLabel =
   | "pluginScope"
   | "titles"
   | "usageReport"
-  | "evals";
+  | "evals"
+  | "lifecycle";
 
 /** The readable name of each kernel queue (spec §6.2); an unknown queue shows its own name. */
 const QUEUE_LABELS: Record<string, QueueLabel> = {
@@ -54,6 +55,7 @@ const QUEUE_LABELS: Record<string, QueueLabel> = {
   "cap-kernel-titles": "titles",
   "cap-kernel-usage-report": "usageReport",
   "cap-kernel-evals": "evals",
+  "cap-kernel-lifecycle": "lifecycle",
 };
 
 /** Counts as the overview formats them (grouped digits in both locales, spec §8.2). */

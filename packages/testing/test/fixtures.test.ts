@@ -70,6 +70,7 @@ const EXPECTED: Record<FakeExtensionName, { provides: string[]; requires?: strin
   "fake-object-store": { provides: ["object-store@1"] },
   "fake-tools-ui": { provides: [] },
   "fake-storage-user": { provides: [] },
+  "fake-lifecycle": { provides: [] },
   "fake-embed": { provides: [] },
   "fake-bootstrap-a": { provides: ["model-provider@2"] },
   "fake-bootstrap-b": { provides: ["object-store@1"] },
@@ -78,6 +79,7 @@ const EXPECTED: Record<FakeExtensionName, { provides: string[]; requires?: strin
   "fake-im": { provides: ["channel@1", "identity-source@1", "directory@1"] },
   "fake-web": { provides: ["web-search@1", "web-fetch@1"] },
   "fake-web-2": { provides: ["web-search@1", "web-fetch@1"] },
+  "fake-context": { provides: ["context@1"] },
   "fake-config-form": { provides: [] },
   "fake-client": { provides: [] },
   "fake-client-broken": { provides: [] },
@@ -145,7 +147,7 @@ describe("packing", () => {
     ).toEqual([["fake-notes", "fake-connector", "fake"]]);
     // Like todo: no storage permission, so it runs without an object store
     expect(plugin.manifest.extension?.manifest.permissions).toEqual({
-      tools: ["write"],
+      tools: ["write", "web-only"],
       ui: { views: ["tasks", "agent-notes", "org-admin", "platform-home"] },
     });
     const storageUser = await readPluginPackage(packed.get("fake-storage-user") as Uint8Array, {
@@ -708,7 +710,7 @@ describe("loaded by path in a kernel", () => {
         .get(ExtensionHost)
         .tools()
         .filter((t) => t.plugin === "fake-tools-ui");
-      expect(tools.map((t) => t.spec.name)).toEqual(["write"]);
+      expect(tools.map((t) => t.spec.name)).toEqual(["write", "web-only"]);
       const write = tools.find((t) => t.spec.name === "write");
       const orgId = randomUUID();
       const r = await write?.handler(

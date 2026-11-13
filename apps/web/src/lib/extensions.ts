@@ -19,7 +19,8 @@ export type SensitiveReason =
   | "directory"
   | "identity_source"
   | "sandbox"
-  | "object_store";
+  | "object_store"
+  | "context";
 
 /** 权限清单的一项（内核 `PermissionItem`）：逐项的敏感标记与原因码。 */
 export interface PermissionItem {

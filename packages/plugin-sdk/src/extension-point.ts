@@ -110,6 +110,13 @@ export const EXTENSION_POINTS: Record<string, ExtensionPointInfo> = {
     true,
     "org-default",
   ),
+  context: info(
+    [1],
+    "Adds text to the model's context at run start in conversations of orgs that enable it.",
+    "multi",
+    true,
+    true,
+  ),
   "web-fetch": info(
     [1],
     "Fetches and extracts web pages for the WebFetch tool; each org picks a default provider.",
@@ -136,6 +143,9 @@ export const IDENTITY_SOURCE_EXTENSION_POINT = "identity-source@1";
 
 /** Directory sync extension point ref (see `directory.ts`). */
 export const DIRECTORY_EXTENSION_POINT = "directory@1";
+
+/** Context provider extension point ref (see `context.ts`). */
+export const CONTEXT_EXTENSION_POINT = "context@1";
 
 /** Parses an extension point ref; throws when the format is invalid. */
 export function parseExtensionPoint(ref: string): { name: string; major: number } {

@@ -20,9 +20,11 @@ export {
 } from "@capybara-hq/kernel";
 export {
   createFreshDatabase,
+  startPostgresContainer,
   startTestPostgres,
   startTestRedis,
   startTestS3,
+  TEST_PG_IMAGE,
   TEST_S3_IMAGE,
   type TestContainer,
   type TestS3,

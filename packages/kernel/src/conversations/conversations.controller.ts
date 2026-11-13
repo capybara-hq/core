@@ -247,7 +247,9 @@ export class ConversationsController {
     const pick = body.deviceId === undefined ? {} : { deviceId: body.deviceId };
     if (body.message === undefined) {
       return {
-        conversation: await this.conversations.create(org.orgId, p.account.id, body.agentId, pick),
+        conversation: await this.conversations.create(org.orgId, p.account.id, body.agentId, pick, {
+          source: "web",
+        }),
       };
     }
     const m = body.message;
@@ -267,6 +269,7 @@ export class ConversationsController {
         ...(m.locale !== undefined && { locale: m.locale }),
       },
       pick,
+      { source: "web" },
     );
     reply.status(out.created ? 201 : 200);
     return { conversation: out.conversation, event: out.event, events: out.events };

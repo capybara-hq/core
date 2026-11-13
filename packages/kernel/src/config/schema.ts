@@ -39,8 +39,6 @@ function isValidMasterKey(value: string): boolean {
  */
 const TRUSTED_SOURCE_RE = /^(?!local:)[a-z0-9][a-z0-9._-]{0,213}:\S{1,256}$/;
 
-/** `runtime.maxRunSeconds` 的默认值。 */
-export const DEFAULT_MAX_RUN_SECONDS = 900;
 /** `sandbox.limits.maxCommandSeconds` 的默认值。 */
 export const DEFAULT_MAX_COMMAND_SECONDS = 7200;
 
@@ -704,9 +702,14 @@ export const KernelConfigSchema = z.object({
       maxSteps: z
         .number()
         .int()
-        .positive()
-        .default(50)
-        .meta(meta({ description: "Maximum model steps per agent run before the final wrap-up" })),
+        .nonnegative()
+        .default(0)
+        .meta(
+          meta({
+            description:
+              "Maximum model steps per agent run before the final wrap-up; 0 (the default) means no limit: a run goes on until the model stops calling tools or someone stops it",
+          }),
+        ),
       wakeOnBackgroundTask: z
         .boolean()
         .default(true)
@@ -719,12 +722,12 @@ export const KernelConfigSchema = z.object({
       maxRunSeconds: z
         .number()
         .int()
-        .positive()
-        .default(DEFAULT_MAX_RUN_SECONDS)
+        .nonnegative()
+        .default(0)
         .meta(
           meta({
             description:
-              "Maximum wall-clock duration of one agent run in seconds (time spent waiting for people is not counted). Sandbox commands are limited to the time left in the run, so agents that need long commands need maxRunSeconds >= sandbox.limits.maxCommandSeconds",
+              "Maximum wall-clock duration of one agent run in seconds (time spent waiting for people is not counted); 0 (the default) means no limit. With a limit, sandbox commands are limited to the time left in the run, so agents that need long commands need maxRunSeconds >= sandbox.limits.maxCommandSeconds; without one, commands are limited only by sandbox.limits.maxCommandSeconds and the tool timeouts",
           }),
         ),
       streamIdleMs: z
@@ -832,9 +835,9 @@ export const KernelConfigSchema = z.object({
         ),
     })
     .default({
-      maxSteps: 50,
+      maxSteps: 0,
       wakeOnBackgroundTask: true,
-      maxRunSeconds: DEFAULT_MAX_RUN_SECONDS,
+      maxRunSeconds: 0,
       streamIdleMs: 60000,
       maxOutputTokens: 16000,
       compactionThreshold: 0.8,
@@ -1475,7 +1478,7 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "Longest a single sandbox command may run, in seconds. A command also stops when its run is about to reach runtime.maxRunSeconds, so long commands need runtime.maxRunSeconds >= maxCommandSeconds (a startup warning is logged otherwise)",
+                  "Longest a single sandbox command may run, in seconds. When runtime.maxRunSeconds is set (not 0), a command also stops when its run is about to reach it, so long commands need runtime.maxRunSeconds >= maxCommandSeconds (a startup warning is logged otherwise)",
               }),
             ),
           suspendAfterIdleMinutes: z

@@ -210,7 +210,7 @@ describe("schedule_attention inbox items", () => {
   it("a tool above the creator's role is marked needsRole", async () => {
     const task = await mkTask();
     const registry = k.app.get(ToolRegistry);
-    const real = await registry.forAgent(orgId, { disabledTools: [] });
+    const real = await registry.forAgent(orgId, { source: "web", disabledTools: [] });
     const stub = vi.spyOn(registry, "forAgent").mockResolvedValue({
       ...real,
       tools: [

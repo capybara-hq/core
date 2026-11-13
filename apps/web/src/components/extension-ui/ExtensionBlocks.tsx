@@ -14,7 +14,7 @@ import { ApiClientError } from "../../lib/api";
 import { type UiContributionItem, type UiIcon, type UiOpen, uiKey, uiLocale } from "../../lib/ui";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { BlockBoundary } from "../conversation/BlockBoundary";
-import { UiViewRenderer } from "../ui-view/UiViewRenderer";
+import { isEmptyView, UiViewRenderer } from "../ui-view/UiViewRenderer";
 import { EmbedTab } from "./EmbedTab";
 import {
   useExtensionViews,
@@ -227,6 +227,13 @@ export function ExtensionCard({
 
 // ── Properties section ─────────────────────────────────────────────────────
 
+/**
+ * A schema-view properties section. A section with nothing to show (`isEmptyView`: no blocks, or
+ * only empty lists) is not drawn at all, like the built-in Files and Background sections: no frame,
+ * no empty state, until the view has something in it (todo before the first write). It is not drawn
+ * during its first load either, so an empty section never flashes a skeleton; once it has been
+ * drawn (content or a failure) it keeps its frame while it reloads, so Retry does not vanish.
+ */
 function SectionBody({ ctx, c }: { ctx: BlockContext; c: UiContributionItem }) {
   const locale = uiLocale(useLocale());
   const title = c.title[locale];
@@ -234,18 +241,30 @@ function SectionBody({ ctx, c }: { ctx: BlockContext; c: UiContributionItem }) {
   const v = useOneView(ctx, target);
   const reason = useReason(v.state);
   const view = v.state?.kind === "ready" ? v.state.view : undefined;
+  const drawn = useRef(false);
+  if (v.state?.kind === "error") drawn.current = true;
+  else if (view !== undefined) drawn.current = !isEmptyView(view);
+  if (!drawn.current) return null;
   return (
-    <PropertySection
-      title={title}
-      state={blockState(v.state)}
-      {...(reason !== undefined ? { failure: { reason } } : {})}
-      onRetry={v.retry}
-      {...(view?.badge !== undefined ? { value: view.badge } : {})}
-    >
-      {view ? (
-        <UiViewRenderer view={view} onAction={v.onAction} onOpen={(o) => ctx.onOpen(c.plugin, o)} />
-      ) : null}
-    </PropertySection>
+    <div data-extension-section={uiKey(c.plugin, c.id)}>
+      <BlockBoundary name={title}>
+        <PropertySection
+          title={title}
+          state={blockState(v.state)}
+          {...(reason !== undefined ? { failure: { reason } } : {})}
+          onRetry={v.retry}
+          {...(view?.badge !== undefined ? { value: view.badge } : {})}
+        >
+          {view ? (
+            <UiViewRenderer
+              view={view}
+              onAction={v.onAction}
+              onOpen={(o) => ctx.onOpen(c.plugin, o)}
+            />
+          ) : null}
+        </PropertySection>
+      </BlockBoundary>
+    </div>
   );
 }
 
@@ -270,13 +289,7 @@ export function ExtensionSection({ ctx, c }: { ctx: BlockContext; c: UiContribut
       </div>
     );
   }
-  return (
-    <div data-extension-section={uiKey(c.plugin, c.id)}>
-      <BlockBoundary name={c.title[locale]}>
-        <SectionBody ctx={ctx} c={c} />
-      </BlockBoundary>
-    </div>
-  );
+  return <SectionBody ctx={ctx} c={c} />;
 }
 
 // ── Right panel ────────────────────────────────────────────────────────────

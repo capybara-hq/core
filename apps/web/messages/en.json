@@ -232,7 +232,7 @@
       "single_provider_required": "A plugin this deployment requires provides this; it can't be replaced.",
       "package_invalid": "The extension package is invalid:",
       "legacy_format": "The package uses the pre-0.1.0 package format. Repack it as a plugin with .capybara-plugin/plugin.json (pnpm pack-plugin) and upload it again.",
-      "no_extension": "This plugin has no extension, so there is nothing to install on the deployment. Import it into the catalog instead.",
+      "no_extension": "This plugin has no extension, so there is no extension to install on the deployment. Install it into the platform catalog instead.",
       "package_too_large": "The extension package is over the size limit.",
       "unavailable": "The extension is unavailable right now.",
       "field_not_overridable": "This field cannot be set by an organization.",
@@ -246,7 +246,7 @@
       "missing_file": "A bootstrap package pinned by the deployment is missing from the bootstrap directory."
     },
     "catalog": {
-      "version_exists": "This version has already been imported.",
+      "version_exists": "This version is already among the plugin's versions: update to it on the plugin's page.",
       "item_not_found": "The item does not exist or you cannot see it.",
       "name_conflict": "An item with the same name comes from a different npm package.",
       "item_disabled": "A super admin disabled this catalog item (or an extension it contains), so it cannot be newly installed or enabled.",
@@ -259,7 +259,7 @@
       "invalid_manifest": "The plugin package is invalid:",
       "legacy_format": "The package uses the pre-0.1.0 package format. Repack it as a plugin with .capybara-plugin/plugin.json (pnpm pack-plugin) and import it again.",
       "no_extension": "This plugin has no extension, so there is nothing to install on the deployment.",
-      "dependency_unresolved": "A plugin this one depends on is not in the catalog at a matching version. Ask the super admin to import it first.",
+      "dependency_unresolved": "A plugin this one depends on is not on the platform at a matching version. Ask the super admin to install it first.",
       "dependency_disabled": "A plugin this one depends on is disabled by the super admin.",
       "dependency_cycle": "The plugin's dependencies form a cycle and cannot be installed.",
       "request_pending": "A request of this kind is already pending.",
@@ -411,8 +411,8 @@
     },
     "payload_too_large": "The request is over the size limit.",
     "theme": {
-      "invalid": "A theme of this plugin is invalid; fix the theme file or its fonts and logo and import the plugin again.",
-      "unreadable": "A theme of this plugin is not readable: some text does not stand out enough from its background. Fix the listed colors and import the plugin again.",
+      "invalid": "A theme of this plugin is invalid; fix the theme file or its fonts and logo and install the plugin again.",
+      "unreadable": "A theme of this plugin is not readable: some text does not stand out enough from its background. Fix the listed colors and install the plugin again.",
       "not_available": "This theme is not available here. Choose one of the themes listed for this setting.",
       "platform_default": "This theme is the platform default. Choose another platform default theme in platform settings first, then narrow, disable or remove it.",
       "id_taken": "Another theme with the same id is already on in that organization; switch it off or remove it first.",
@@ -439,7 +439,7 @@
       "private_address": "The download was refused: the host resolves to a private or reserved address. To use an internal host, add it to marketplaces.allowPrivateHosts in the deployment config.",
       "redirect": "The download was refused: the server responded with a redirect, and redirects are not followed. Use the final URL instead.",
       "incompatible": "This version is not compatible with this deployment's kernel / SDK.",
-      "entry_deprecated": "The marketplace marks this version as deprecated, so it cannot be imported. Choose another version.",
+      "entry_deprecated": "The marketplace marks this version as deprecated, so it cannot be installed. Choose another version.",
       "package_mismatch": "The downloaded package does not match the marketplace entry.",
       "builtin": "The official marketplace comes from the deployment config; it can only be enabled or disabled here.",
       "git_failed": "Reading the git repository failed (the server, the ref or the commit). The message says which.",
@@ -467,7 +467,8 @@
       "switch_stale": "What this changes moved on before you confirmed; review it again.",
       "builtin": "A built-in plugin's scope cannot be changed and it cannot be disabled.",
       "scope_stale": "The impact changed before you confirmed; preview it again.",
-      "extension_upload_pending": "This plugin carries an extension. It was submitted and can be used once the super admin confirms it."
+      "extension_upload_pending": "This plugin carries an extension. It was submitted and can be used once the super admin confirms it.",
+      "imported_not_updated": "The new version was added to the plugin's versions, but the platform update failed; the platform stays on its version. Update again from the plugin's page."
     },
     "lock": {
       "acquire_failed": "Another operation is in progress on this resource. Try again shortly."
@@ -2754,6 +2755,7 @@
         "identity_source": "decides who can sign in as which account",
         "sandbox": "runs arbitrary commands in the deployment",
         "object_store": "holds every attachment and extension package",
+        "context": "adds text to the model's context in conversations of organizations that enable it",
         "migration_warnings": "the migration warnings changed (see Migration warnings below); approve again"
       },
       "warnings": "Migration warnings",
@@ -3663,7 +3665,8 @@
           "pluginScope": "Plugin scope sync",
           "titles": "Titles",
           "usageReport": "Usage reports",
-          "evals": "Evals"
+          "evals": "Evals",
+          "lifecycle": "Lifecycle notices"
         },
         "connections": {
           "channels": "Channels",
@@ -3742,14 +3745,14 @@
       "request": {
         "kind": {
           "access": "Access request",
-          "import": "Import request"
+          "import": "Install request"
         },
         "requester": "Requested by",
         "version": "Version",
         "note": "Note",
         "hint": {
           "access": "{org} asks to use this plugin. Approve or reject it in the Pending tab of the Plugins page; once approved, the organization can use it at once.",
-          "import": "{org} asks to bring this plugin in from a marketplace. Approve or reject it in the Pending tab of the Plugins page; approving opens the import review, scoped to that organization by default."
+          "import": "{org} asks to install this plugin from a marketplace. Approve or reject it in the Pending tab of the Plugins page; approving opens the install review, scoped to that organization by default."
         }
       },
       "permission": {
@@ -3770,7 +3773,7 @@
         "hint": {
           "install": "The plugin's scope turns it on in {org}, but the sync failed. It is tried again the next time this plugin and organization sync: once the cause is fixed, changing the plugin's scope on its page or a worker restart syncs it again (saving an unchanged scope does not).",
           "uninstall": "The plugin's scope turns it off in {org}, but the sync failed. It is tried again the next time this plugin and organization sync: once the cause is fixed, changing the plugin's scope on its page or a worker restart syncs it again (saving an unchanged scope does not).",
-          "dependencies": "The plugin is on in {org}, but a dependency a platform update added could not be installed. It is tried again the next time this plugin and organization sync: once the cause is fixed (import a version the dependency range accepts, for example), changing the plugin's scope on its page or a worker restart syncs it again (saving an unchanged scope does not)."
+          "dependencies": "The plugin is on in {org}, but a dependency a platform update added could not be installed. It is tried again the next time this plugin and organization sync: once the cause is fixed (install a version the dependency range accepts, for example), changing the plugin's scope on its page or a worker restart syncs it again (saving an unchanged scope does not)."
         }
       },
       "orgUpload": {
@@ -3822,7 +3825,7 @@
         "marketplaceUpdated": "Updated a marketplace",
         "marketplaceRemoved": "Removed a marketplace",
         "marketplaceRefreshed": "Refreshed a marketplace",
-        "catalogImported": "Imported a plugin",
+        "catalogImported": "Installed a plugin",
         "catalogPluginStaged": "Staged a plugin package for review",
         "catalogRemoved": "Removed a plugin",
         "catalogScopeChanged": "Changed a plugin's scope",
@@ -4221,7 +4224,7 @@
       },
       "loadFailed": "Could not load extensions.",
       "retry": "Retry",
-      "importPlugin": "Import a plugin",
+      "importPlugin": "Install a plugin",
       "builtin": "Built-in",
       "description": "Code from plugins that runs on the deployment. Deployment config, permissions and run status live here.",
       "wizard": {
@@ -4383,7 +4386,7 @@
       "disabled": "Disabled"
     },
     "source": {
-      "manual": "Manual import",
+      "manual": "Manual install",
       "official": "Official marketplace",
       "removed": "Removed marketplace"
     },
@@ -4399,7 +4402,7 @@
       "extension": "Extension",
       "extensionNone": "No extension.",
       "extensionVersion": "{name} {version}",
-      "declaredHint": "Permissions as declared in the package (reviewed when the version was imported; approved on the deployment in the extension admin).",
+      "declaredHint": "Permissions as declared in the package (reviewed when the platform installed or updated to this version; approved on the deployment in the extension admin).",
       "skills": "Skills",
       "skillsNone": "No skills.",
       "skillFiles": "{n} files",
@@ -4409,7 +4412,7 @@
       "dependenciesNone": "No dependencies.",
       "dependenciesHint": "Plugins this one depends on; an organization install installs them first (unless the organization already has them).",
       "dependencyResolved": "{name} {range} → {version} in the catalog",
-      "dependencyUnresolved": "{name} {range}: no matching version in the catalog yet. The import still completes, but organizations cannot install this plugin until a matching version is imported.",
+      "dependencyUnresolved": "{name} {range}: the platform has no matching version yet. The install still completes, but organizations cannot turn this plugin on until a matching version is installed.",
       "dependencyInCatalog": "{name} {range}: in the catalog ({versions})",
       "dependencyNotInCatalog": "{name} {range}: not in the catalog",
       "errorDependency": "Dependency: {dependency}",
@@ -4427,7 +4430,7 @@
     },
     "admin": {
       "title": "Plugins",
-      "empty": "No plugins yet. Bring one in from a marketplace or upload a plugin package.",
+      "empty": "No plugins yet. Install one from a marketplace or upload a plugin package.",
       "noResults": "No items match the filters.",
       "filters": {
         "source": "Source",
@@ -4459,7 +4462,7 @@
         "delete": "Delete plugin",
         "deleteConfirm": {
           "title": "Delete plugin {name}",
-          "hint": "Organizations will no longer see this plugin; installed components are not affected. You can bring it in again later.",
+          "hint": "Organizations will no longer see this plugin; installed components are not affected. You can install it again later.",
           "confirm": "Delete",
           "extensionNote": "A plugin whose extension is enabled on the deployment cannot be deleted: disable the extension on the Extensions page first. After the delete the extension stays on the Extensions page, where you can uninstall it.",
           "openExtension": "Disable it on the Extensions page"
@@ -4471,11 +4474,11 @@
           "source": "Source",
           "ref": "Reference",
           "size": "Size",
-          "imported": "Imported",
+          "imported": "Added",
           "origin": "Origin",
           "format": "Format"
         },
-        "contentChanged": "Its marketplace now has other content for a version already imported. Bring it in again from the Marketplace tab; it is recorded as a build of that version.",
+        "contentChanged": "Its marketplace now has other content for a version the platform already has. Update to it from the Marketplace tab; it is recorded as a build of that version.",
         "format": {
           "capybara": "Capybara",
           "claudeCode": "Claude Code"
@@ -4490,8 +4493,8 @@
           "update": "Update to {version}",
           "disable": "Disable",
           "enable": "Enable",
-          "import": "Import {version}",
-          "applyAppearance": "Apply this plugin's appearance"
+          "applyAppearance": "Apply this plugin's appearance",
+          "rollback": "Roll back to {version}"
         },
         "componentColumns": {
           "name": "Component",
@@ -4529,11 +4532,12 @@
         "ownerValue": "{org} (new versions come from it)"
       },
       "review": {
-        "title": "Import plugin",
+        "title": "Install plugin",
         "steps": {
           "source": "Choose package",
           "review": "Review",
-          "confirm": "Confirm"
+          "confirm": "Confirm",
+          "update": "Update preview"
         },
         "sourceLabel": "Source",
         "sourceFile": "Upload plugin package (.tgz)",
@@ -4558,20 +4562,20 @@
         "keepExtension": "The extension {name} {version} is already installed on the deployment.",
         "ackHint": "The plugin has sensitive permissions or migration warnings. Review them before confirming.",
         "ack": "I understand the sensitive items",
-        "confirm": "Confirm import",
-        "done": "Imported plugin \"{name}\".",
+        "confirm": "Confirm install",
+        "done": "Installed plugin \"{name}\".",
         "deployResult": "Deployment result",
-        "deployFailed": "{name} {version}: installing on the deployment failed ({code}); the import is kept. Retry in the extension admin.",
+        "deployFailed": "{name} {version}: installing on the deployment failed ({code}); the plugin is kept on the platform. Retry in the extension admin.",
         "deployLeftDisabled": "{name} {version} is installed but left disabled: only one {point} provider can be enabled. Disable {other} first, then enable it.",
         "deployLeftDisabledRequired": "{name} {version} is installed but left disabled: {point} is provided by {other}, a plugin this deployment requires; it can't be replaced.",
         "openEnabled": "Open {name}",
         "openItem": "Open plugin",
-        "gone": "The staged import has expired or was already confirmed. Start the import again.",
-        "restart": "Start a new import",
+        "gone": "The staged plugin package has expired or was already confirmed. Start again.",
+        "restart": "Start again",
         "sourceGit": "Git repository",
         "sourceGitHint": "Read it once from a Git repository: no marketplace is added and updates are not tracked.",
         "gitUrl": "Repository",
-        "gitUrlHelp": "An https git URL or owner/repo on GitHub. A one-off import: no marketplace is added and updates are not tracked.",
+        "gitUrlHelp": "An https git URL or owner/repo on GitHub. Read once: no marketplace is added and updates are not tracked.",
         "gitRef": "Branch, tag or commit",
         "gitRefHelp": "Optional; empty uses the remote HEAD.",
         "gitPath": "Directory",
@@ -4682,7 +4686,11 @@
           "origin": "Source",
           "provenance": "Provenance",
           "provenanceNotChecked": "Not checked ({reason})"
-        }
+        },
+        "titleUpdate": "Update plugin \"{name}\"",
+        "confirmUpdate": "Confirm update",
+        "updateHint": "Confirming adds {version} to the platform and updates the plugin to it, for every organization at once. Cancelling before you confirm changes nothing.",
+        "importedNotUpdated": "{version} was added to the plugin's versions, but updating the platform to it failed ({code}): the platform stays on {from}, and the extension and its permissions are unchanged. Retry with \"Update to {version}\" on the plugin's page."
       },
       "entries": {
         "title": "Browse marketplaces",
@@ -4704,10 +4712,10 @@
         "permissionsNone": "Not provided",
         "incompatible": "{version} (incompatible)",
         "noVersion": "(the package's)",
-        "adopted": "Imported {version}",
-        "notAdopted": "Not imported",
-        "import": "Import",
-        "importVersion": "Import {version}",
+        "adopted": "Installed {version}",
+        "notAdopted": "Not installed",
+        "import": "Install",
+        "importVersion": "Install {version}",
         "noCompatible": "No compatible version",
         "reason": {
           "host_not_allowed": "Host {host} is not in marketplaces.allowedHosts.",
@@ -4717,21 +4725,21 @@
         "gitFollows": "follows {ref}",
         "gitFollowsDefault": "follows the default branch",
         "pathSource": "{path} in the marketplace repository",
-        "importChanged": "Import the changed content of {version}",
-        "contentChangedHint": "Importing it again records a build of that version (for example 1.0.0+git.1a2b3c4d5e6f).",
+        "importChanged": "Update to the changed content of {version}",
+        "contentChangedHint": "The update records a build of that version (for example 1.0.0+git.1a2b3c4d5e6f).",
         "view": "View",
         "homepage": "Homepage",
         "loadFailed": "Marketplace entries failed to load.",
         "retry": "Retry",
-        "adoptedUpdate": "Imported {version} · update to {latest} available",
-        "update": "Update",
+        "adoptedUpdate": "Installed {version} · update to {latest} available",
+        "update": "Update to {version}",
         "otherVersions": "Other versions",
         "deprecated": "{version} (deprecated)",
         "deprecatedReason": "{version} (deprecated: {reason})"
       },
       "marketplaces": {
         "title": "Marketplace sources",
-        "description": "Plugins are listed from the sources set up here. Bringing one in from the Marketplace tab of Plugins downloads it, checks it against the marketplace's integrity and reviews it before it is added.",
+        "description": "Plugins are listed from the sources set up here. Installing or updating one from the Marketplace tab of Plugins downloads it, checks it against the marketplace's integrity and reviews it before it is added.",
         "search": "Search sources",
         "clearSearch": "Clear search",
         "noMatch": "No matching sources.",
@@ -4769,7 +4777,7 @@
         "remove": "Remove",
         "removeConfirm": {
           "title": "Remove marketplace {name}",
-          "hint": "Its cached entries are removed; catalog items already imported are kept.",
+          "hint": "Its cached entries are removed; plugins already installed are kept.",
           "confirm": "Remove"
         },
         "removed": "Removed \"{name}\".",
@@ -4802,7 +4810,7 @@
         "pending": "Pending"
       },
       "search": "Search plugins",
-      "description": "A plugin bundles an extension, skills, connector templates and agent templates. Bring one in from a marketplace or upload it; it is installed once its permissions are confirmed.",
+      "description": "A plugin bundles an extension, skills, connector templates and agent templates. Install one from a marketplace or upload it; it is installed once its permissions are confirmed.",
       "chips": {
         "builtin": "Built-in",
         "claudeCode": "Claude Code",
@@ -4885,7 +4893,7 @@
         "noHash": "The plugin's extension package cannot be read, so it cannot be confirmed yet.",
         "kind": {
           "access": "Asks for access",
-          "import": "Asks to bring in",
+          "import": "Asks to install",
           "enable": "Asks to enable"
         },
         "requester": "By {name}",
@@ -5115,11 +5123,11 @@
       "pathEntry": "Marketplace entry {entry} (path {path})",
       "sameVersion": "The platform already runs {version}.",
       "dependentRange": "The plugin {dependent} depends on {range}, which {version} does not satisfy.",
-      "templateConnector": "Connector template {template} moves to another connector ({plugin} / {connector}); delete the plugin and import the new version as a new plugin instead.",
+      "templateConnector": "Connector template {template} moves to another connector ({plugin} / {connector}); delete the plugin and install the new version as a new plugin instead.",
       "configExtension": "This plugin's extension is declared in the startup config (the deployment runs {version}); an update cannot move it. Change the startup config first.",
       "configExtensionUnloaded": "This plugin's extension is declared in the startup config; an update cannot move it. Change the startup config first.",
       "extensionRemoved": "{version} has no extension, but the deployment runs it; uninstall the extension first.",
-      "extensionPackage": "The extension package of {version} is missing from the catalog; import that version again."
+      "extensionPackage": "The extension package of {version} is missing from the platform; update to that version again from the marketplace or a plugin package."
     },
     "owner": {
       "self": "This org",
@@ -5356,7 +5364,7 @@
       "disable": "Turn off",
       "request": "Request",
       "requestEnable": "Ask to turn on",
-      "requestImport": "Request import",
+      "requestImport": "Request install",
       "connectors": "Complete setup",
       "withdraw": "Withdraw",
       "delete": "Delete"
@@ -5393,12 +5401,12 @@
     "market": {
       "title": "Marketplace",
       "empty": "The marketplaces have no entries yet.",
-      "adopted": "Imported",
-      "unavailable": "Cannot be imported",
+      "adopted": "Installed",
+      "unavailable": "Cannot be installed",
       "otherVersions": "Other versions",
       "deprecated": "{version} (deprecated)",
       "deprecatedReason": "{version} (deprecated: {reason})",
-      "requestVersion": "Request import of {version}",
+      "requestVersion": "Request install of {version}",
       "requestedVersion": "Requested {version}, waiting"
     },
     "detail": {
@@ -5658,10 +5666,10 @@
       "org": "Created by organizations"
     },
     "empty": {
-      "skill": "No skills yet. They appear here once a plugin that brings skills is imported.",
-      "connector_template": "No connector templates yet. They appear here once a plugin that brings connector templates is imported.",
-      "agent_template": "No agent templates yet. They appear here once a plugin that brings agent templates is imported.",
-      "theme": "No themes yet. They appear here once a plugin that brings themes is imported."
+      "skill": "No skills yet. They appear here once a plugin that brings skills is installed.",
+      "connector_template": "No connector templates yet. They appear here once a plugin that brings connector templates is installed.",
+      "agent_template": "No agent templates yet. They appear here once a plugin that brings agent templates is installed.",
+      "theme": "No themes yet. They appear here once a plugin that brings themes is installed."
     },
     "emptyTab": {
       "agent_template": "No agent templates under this tab."
@@ -5857,7 +5865,7 @@
       "title": "Themes",
       "description": "The themes on in this organization; choose the default among them below. The platform default theme is on in every organization and cannot be switched off.",
       "label": "Themes of this organization",
-      "empty": "No themes are available yet. They appear here once a super admin imports a plugin that brings themes.",
+      "empty": "No themes are available yet. They appear here once a super admin installs a plugin that brings themes.",
       "lockedDefault": "Platform default theme · cannot be switched off"
     },
     "org": {

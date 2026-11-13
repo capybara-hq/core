@@ -7,6 +7,7 @@ import {
   type HookHandler,
   type HookMediaPlaceholder,
   type HookVerdict,
+  LIFECYCLE_HOOKS,
   type ModelCallRequestHookPayload,
   type ModelRequestHookPayload,
   POLICY_HOOKS,
@@ -15,13 +16,16 @@ import {
 } from "../src/index.js";
 
 describe("hook mount points", () => {
-  it("the five registrable mount points are a subset of the manifest mount points", () => {
+  it("the registrable mount points are a subset of the manifest mount points", () => {
     expect([...HOOKS_AVAILABLE]).toEqual([
       "model.request",
       "model.response",
       "tool.preExecute",
       "tool.postExecute",
       "usage.report",
+      "org.member_removed",
+      "agent.deleted",
+      "org.deleted",
     ]);
     for (const h of HOOKS_AVAILABLE) expect(HOOK_MOUNT_POINTS).toContain(h);
   });
@@ -56,6 +60,19 @@ describe("hook mount points", () => {
     expect(validatePermissions("p", { policyHooks: "model.request" })).toEqual([
       "permissions.policyHooks must be an array",
     ]);
+  });
+
+  it("lifecycle mounts are registrable observe hooks and never policy hooks", () => {
+    for (const h of ["org.member_removed", "agent.deleted", "org.deleted"]) {
+      expect(HOOKS_AVAILABLE as readonly string[]).toContain(h);
+      expect(HOOK_MOUNT_POINTS as readonly string[]).toContain(h);
+      expect(POLICY_HOOKS as readonly string[]).not.toContain(h);
+      expect(validatePermissions("p", { hooks: [h] })).toEqual([]);
+      expect(validatePermissions("p", { hooks: [h], policyHooks: [h] })).toEqual([
+        `permissions.policyHooks has "${h}", which takes no policy hooks (allowed: model.request, tool.preExecute)`,
+      ]);
+    }
+    expect([...LIFECYCLE_HOOKS]).toEqual(["org.member_removed", "agent.deleted", "org.deleted"]);
   });
 
   it("model.request payloads carry media placeholders, never media sources (I-3)", () => {

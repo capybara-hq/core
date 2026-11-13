@@ -139,7 +139,10 @@ describe("capybara-plugin marketplace", () => {
     expect(m.plugins[1]).not.toHaveProperty("displayName");
     const tools = m.plugins[1] as { permissions: { keys: string[]; sensitive: string[] } };
     expect(tools.permissions.keys).toContain("permissions.tools:write");
-    expect(tools.permissions.sensitive).toEqual(["permissions.tools:write"]);
+    expect(tools.permissions.sensitive).toEqual([
+      "permissions.tools:web-only",
+      "permissions.tools:write",
+    ]);
     expect("errors" in parseMarketplaceManifest(m)).toBe(false);
     // up to date now: --check passes and another --write changes nothing
     expect((await sync(false)).findings).toEqual([]);

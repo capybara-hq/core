@@ -6,10 +6,7 @@ import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import {
-  OUTBOX_DISPATCH_FAILS,
-  OutboxDispatcher,
-} from "../../src/infra/outbox/outbox.dispatcher.js";
+import { OUTBOX_DISPATCH_FAILS } from "../../src/infra/outbox/outbox.dispatcher.js";
 import { RUN_STOP_JOB } from "../../src/orgs/offboarding.js";
 import { RunContextService } from "../../src/runtime/run-context.service.js";
 import { RunControl } from "../../src/runtime/run-control.js";
@@ -21,6 +18,7 @@ import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
+import { drainOutbox } from "../helpers/outbox.js";
 import {
   createAgent,
   createConv,
@@ -265,14 +263,7 @@ describe("a run resumed from waiting back to queued is stopped in PG too", () =>
       .set({ next_attempt_at: sql<Date>`now()` as unknown as Date })
       .where("queue", "=", RUN_QUEUE_NAME)
       .execute();
-    await k.app.get(OutboxDispatcher).dispatchDue(500);
-    await waitFor(
-      async () =>
-        (await db.selectFrom("outbox").select("id").where("queue", "=", RUN_QUEUE_NAME).execute())
-          .length === 0,
-      15_000,
-      "resume job delivered",
-    );
+    await drainOutbox(k.app, { queue: RUN_QUEUE_NAME });
     await waitForRunJobDone(db, runQueue, runId, 15_000);
   }
 
@@ -380,9 +371,8 @@ describe("a run resumed from waiting back to queued is stopped in PG too", () =>
     expect(res.statusCode, res.body).toBe(204);
     // the run-stop job (maintenance queue: the fast path works) ends it without throwing
     await waitFor(async () => (await runStatus(runId)) === "aborted", 15_000, "run aborted");
-    expect(
-      await db.selectFrom("outbox").select("id").where("job_name", "=", RUN_STOP_JOB).execute(),
-    ).toEqual([]);
+    // the run-stop's row is gone once the pass that added its job committed
+    await drainOutbox(k.app, { jobName: RUN_STOP_JOB });
     await deliverResume(runId);
     expect(await runStatus(runId)).toBe("aborted");
     expect(await afterAbort(conv, runId)).toEqual([]);

@@ -9,7 +9,7 @@ import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { EffectiveConfigs } from "./effective-config.js";
 import { enabledExtensionsQuery, isExtensionEnabled } from "./enabled.js";
-import { OrgExtensionConfigs } from "./org-config.js";
+import { OrgConfigInvalidError, OrgExtensionConfigs } from "./org-config.js";
 import { ExtensionRegistry } from "./registry.js";
 
 /**
@@ -19,6 +19,17 @@ import { ExtensionRegistry } from "./registry.js";
 export type PointResolution<T> =
   | { ok: true; extension: string; impl: T; orgConfig: unknown; config: unknown }
   | { ok: false; reason: "none" | "ambiguous" };
+
+/**
+ * One provider of a multi-provider extension point for an org ({@link ExtensionPointDefaults.providersFor}),
+ * with its org config and its effective deployment config for the org, both to pass back to it.
+ */
+export interface PointProvider<T> {
+  extension: string;
+  impl: T;
+  orgConfig: unknown;
+  config: unknown;
+}
 
 /** One `org-default` extension point of an org (the admin view). */
 export interface OrgPointDefaultView {
@@ -76,7 +87,7 @@ export class ExtensionPointDefaults {
     if (!hasSelection(point)) {
       throw new Error(`extension point ${point} has no org-default selection`);
     }
-    const candidates = await this.candidates(orgId, point);
+    const { candidates } = await this.candidates(orgId, point);
     const chosen = await this.choose(orgId, point, candidates);
     if (!chosen.ok) return chosen;
     const c = chosen.candidate;
@@ -89,12 +100,37 @@ export class ExtensionPointDefaults {
     };
   }
 
+  /**
+   * Every provider of `point` (the name without the major, e.g. `context`) that could serve
+   * `orgId` now, in extension-name order: the same candidates {@link resolve} chooses from (loaded
+   * here, enabled in the org, valid org and effective config, `configured()` not false), for
+   * points whose every enabled provider is used (no `selection`). `failed`: the providers enabled
+   * in the org whose status could not be read (reading a config or `configured()` threw, e.g. a
+   * transient database error); they are neither serving nor known to be off. An invalid stored
+   * org config ({@link OrgConfigInvalidError}) is not a read error: that provider is off.
+   */
+  async providersFor<T>(
+    orgId: string,
+    point: string,
+  ): Promise<{ providers: PointProvider<T>[]; failed: Set<string> }> {
+    const { candidates, failed } = await this.candidates(orgId, point);
+    return {
+      providers: candidates.map((c) => ({
+        extension: c.extension,
+        impl: c.impl as T,
+        orgConfig: c.orgConfig,
+        config: c.config,
+      })),
+      failed,
+    };
+  }
+
   /** Every `org-default` point with its candidates, stored default and effective provider. */
   async list(orgId: string): Promise<OrgPointDefaultView[]> {
     const stored = await this.storedDefaults(orgId);
     const out: OrgPointDefaultView[] = [];
     for (const point of selectionPoints()) {
-      const candidates = await this.candidates(orgId, point);
+      const { candidates } = await this.candidates(orgId, point);
       const chosen = pick(candidates, stored.get(point));
       out.push({
         point,
@@ -163,8 +199,15 @@ export class ExtensionPointDefaults {
     });
   }
 
-  /** The candidates of `point` in `orgId`, by extension name. */
-  private async candidates(orgId: string, point: string): Promise<Candidate[]> {
+  /**
+   * The candidates of `point` in `orgId`, by extension name, and the enabled providers whose status
+   * could not be read (a read or `configured()` threw: excluded, logged). A provider whose stored
+   * org config or effective config is invalid is excluded but not `failed`: it is known to be off.
+   */
+  private async candidates(
+    orgId: string,
+    point: string,
+  ): Promise<{ candidates: Candidate[]; failed: Set<string> }> {
     const db = this.kdb.db;
     const enabled = new Set(
       (
@@ -179,17 +222,22 @@ export class ExtensionPointDefaults {
       if (enabled.has(e.plugin) && !providers.has(e.plugin)) providers.set(e.plugin, e.impl);
     }
     const out: Candidate[] = [];
+    const failed = new Set<string>();
     for (const [extension, impl] of providers) {
       let cfg: { enabled: boolean; config: unknown } | undefined;
       try {
         cfg = await this.orgConfigs.get(orgId, extension);
       } catch (err) {
-        this.log.warn("org default provider: provider excluded, its org config is invalid", {
-          orgId,
-          point,
-          extension,
-          err,
-        });
+        // a stored org config that no longer validates is a known state: the provider is off
+        // (as for an invalid effective config below); only a read that failed is `failed`
+        const invalid = err instanceof OrgConfigInvalidError;
+        this.log.warn(
+          invalid
+            ? "extension point provider excluded, its stored org config is invalid"
+            : "extension point provider excluded, cannot read its org config",
+          { orgId, point, extension, err },
+        );
+        if (!invalid) failed.add(extension);
         continue;
       }
       if (!cfg?.enabled) continue;
@@ -198,12 +246,13 @@ export class ExtensionPointDefaults {
       try {
         effective = await this.effective.get(orgId, extension);
       } catch (err) {
-        this.log.warn("org default provider: provider excluded, cannot read its effective config", {
+        this.log.warn("extension point provider excluded, cannot read its effective config", {
           orgId,
           point,
           extension,
           err,
         });
+        failed.add(extension);
         continue;
       }
       if (!effective.ok) continue;
@@ -214,19 +263,21 @@ export class ExtensionPointDefaults {
         try {
           ok = configured.call(impl, cfg.config, effective.config) !== false;
         } catch (err) {
-          this.log.warn("org default provider: provider excluded, configured() threw", {
+          this.log.warn("extension point provider excluded, configured() threw", {
             orgId,
             point,
             extension,
             err,
           });
+          failed.add(extension);
           continue;
         }
         if (!ok) continue;
       }
       out.push({ extension, impl, orgConfig: cfg.config, config: effective.config });
     }
-    return out.sort((a, b) => (a.extension < b.extension ? -1 : a.extension > b.extension ? 1 : 0));
+    out.sort((a, b) => (a.extension < b.extension ? -1 : a.extension > b.extension ? 1 : 0));
+    return { candidates: out, failed };
   }
 
   private async choose(

@@ -287,7 +287,7 @@ describe("WebFetch: fetching", () => {
     await enable(orgId, "fake-web");
     const { tools } = await k.app
       .get(ToolRegistry)
-      .forAgent(orgId, { disabledTools: builtinsOff("WebFetch") });
+      .forAgent(orgId, { source: "web", disabledTools: builtinsOff("WebFetch") });
     const resolved = tools.find((t) => t.key === "WebFetch");
     expect(resolved?.timeoutMs?.({ url: "https://example.com/", prompt: "p" })).toBe(180_000);
     let ms = 1234;
