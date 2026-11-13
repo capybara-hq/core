@@ -1,5 +1,13 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.19
+
+### Minor Changes
+
+- da677b6: context@1, conversation source, lifecycle hooks: the `context@1` extension point and provider types,
+  `ToolSpec.sources` with `ToolCallContext.source`, `ownerAccountId` and `role`, and the observe-only
+  mounts `org.member_removed`, `agent.deleted` and `org.deleted`.
+
 ## 0.1.0-rc.18
 
 ### Patch Changes

@@ -1,5 +1,22 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.26
+
+### Patch Changes
+
+- b177905: The compose files and test containers run PostgreSQL 17 with pgvector (`pgvector/pgvector:pg17`),
+  and migration 0123 creates the `vector` extension in `public` when the server offers it and the
+  migrating role may create it; otherwise it only raises a notice, and plugins fall back to `real[]`.
+  `@capybara-hq/testing` exports `startPostgresContainer` (with an `image` option) and `TEST_PG_IMAGE`.
+- Updated dependencies [fc46148]
+- Updated dependencies [23c16d8]
+- Updated dependencies [b7e70f7]
+- Updated dependencies [b177905]
+- Updated dependencies [fcfabb4]
+- Updated dependencies [b4d2b44]
+- Updated dependencies [240801c]
+  - @capybara-hq/kernel@0.1.0-rc.25
+
 ## 0.1.0-rc.25
 
 ### Patch Changes
