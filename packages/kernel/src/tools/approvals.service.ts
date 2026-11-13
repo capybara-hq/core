@@ -11,6 +11,8 @@ import { Inject, Injectable } from "@nestjs/common";
 import { type Selectable, sql } from "kysely";
 import { EventLog } from "../conversations/event-log.js";
 import {
+  GIT_ASK_MAX_REFS,
+  GIT_REF_MAX_CHARS,
   NETWORK_ASK_MAX_HOSTS,
   NETWORK_HOST_MAX_CHARS,
   type ToolView,
@@ -38,13 +40,18 @@ import { rootConversationOf } from "../runtime/subagents/child.js";
 import { deviceNotFound, SandboxService } from "../sandbox/sandbox.service.js";
 import { readScheduleSettings } from "../schedules/effective-settings.js";
 import {
+  GIT_GRANT_SPEC_HASH,
+  gitGrantRefusal,
+  gitPushGrantKey,
   grantRefusalOf,
   NETWORK_GRANT_PREFIX,
   NETWORK_GRANT_SPEC_HASH,
   networkGrantRefusal,
+  normalizeGitRepo,
 } from "../schedules/grant-rules.js";
 import { ScheduledTaskStore } from "../schedules/store.js";
 import { unattendedTaskRunOf } from "../schedules/unattended.js";
+import { gitPushPolicyName, personalAuth } from "./connector-account-policies.js";
 import { pluginDisplayNames } from "./display-names.js";
 import { normalizeStoredDefinitionIn } from "./legacy-data.js";
 import type { ApprovalPolicySource } from "./pipeline.js";
@@ -63,8 +70,24 @@ export type ApprovalStatus =
   | "cancelled"
   | "skipped";
 export type ApprovalScope = "once" | "session" | "always";
-/** What an approval asks: a tool call, or the device owner about refused network hosts. */
-export type ApprovalKind = "tool" | "network";
+/**
+ * What an approval asks: a tool call, the device owner about refused network hosts, or the actor
+ * about a git push the gateway held.
+ */
+export type ApprovalKind = "tool" | "network" | "git";
+
+/**
+ * The formatted `tool_result` of a command an ask kept (≤ 16 KB; larger output already archived),
+ * and the display-only fields the pipeline writes with it when the ask settles.
+ */
+export interface KeptToolResult {
+  content: string;
+  isError: boolean;
+  outputId?: string;
+  contentTypes?: string[];
+  display?: ToolDisplay;
+  view?: ToolView;
+}
 
 /**
  * A network ask's `detail` (network ask-to-allow spec §6.1, P-D2): the device, the refused hosts,
@@ -76,18 +99,8 @@ export interface NetworkAskDetail {
   hosts: { host: string; port: number }[];
   command: string;
   description: string | null;
-  /**
-   * The formatted `tool_result` of the command (≤ 16 KB; larger output already archived), and the
-   * display-only fields the pipeline writes with it when the ask settles.
-   */
-  result: {
-    content: string;
-    isError: boolean;
-    outputId?: string;
-    contentTypes?: string[];
-    display?: ToolDisplay;
-    view?: ToolView;
-  };
+  /** The formatted `tool_result` of the command and its display-only fields. */
+  result: KeptToolResult;
   /** The hosts the decision allowed (every approved decision writes them; none: nothing). */
   grantedHosts?: string[];
   /**
@@ -121,11 +134,36 @@ export interface NetworkAskAttempt {
 export type NetworkAskView = Omit<NetworkAskDetail, "result">;
 
 /**
+ * A git push ask's `detail` (sandbox git credentials spec §7): the host, the repository
+ * (`<owner>/<repo>`, normalized) and the refs of the push the gateway held, the command that ran
+ * it and its device, the kept `tool_result` (written with a note when the ask settles; the push is
+ * never run again by the kernel), and once approved what took effect. The connector whose
+ * credential the push used is the approval's `connectorId`.
+ */
+export interface GitAskDetail {
+  host: string;
+  repo: string;
+  refs: string[];
+  command?: string;
+  deviceId?: string;
+  result: KeptToolResult;
+  /** What took effect: a run grant (`once`) or the member's standing allow for the repo (`always`). */
+  outcome?: "once" | "always";
+}
+
+/** A git ask's detail as the API shows it: without the kept command result. */
+export type GitAskView = Omit<GitAskDetail, "result">;
+
+/**
  * The model-visible note written after a network ask's kept result when its run is stopped before
  * the device owner answered (spec §6.7).
  */
 export const NETWORK_ASK_CANCELLED_NOTE =
   "[network] The run was stopped before the user answered; access stays blocked.";
+
+/** The model-visible note after a git ask's kept result when its run is stopped before the answer. */
+export const GIT_ASK_CANCELLED_NOTE =
+  "[git] The run was stopped before the user answered; the push was not made.";
 
 /** 一条审批记录。 */
 export interface ApprovalRecord {
@@ -138,8 +176,10 @@ export interface ApprovalRecord {
   attempt: number;
   /** `network`: a network ask (its tool key is `Bash`, its facts in {@link detail}). */
   kind: ApprovalKind;
-  /** A network ask's hosts, command, kept result and outcome; null for a tool approval. */
+  /** A network ask's hosts, command, kept result and outcome; null for any other kind. */
   detail: NetworkAskDetail | null;
+  /** A git ask's host, repository, refs, kept result and outcome; null for any other kind. */
+  git: GitAskDetail | null;
   toolKey: string;
   specHash: string;
   connectorId: string | null;
@@ -163,16 +203,20 @@ export interface ApprovalRecord {
   createdAt: string;
 }
 
-/** An approval as a route answers it: a network ask's detail without the kept command result. */
-export interface ApprovalPublicRecord extends Omit<ApprovalRecord, "detail"> {
+/** An approval as a route answers it: a network or git ask's detail without the kept command result. */
+export interface ApprovalPublicRecord extends Omit<ApprovalRecord, "detail" | "git"> {
   detail: NetworkAskView | null;
+  git: GitAskView | null;
 }
 
-/** The record without a network ask's kept command result (what routes and cards may show). */
+/** The record without an ask's kept command result (what routes and cards may show). */
 export function publicRecord(r: ApprovalRecord): ApprovalPublicRecord {
-  if (r.detail === null) return { ...r, detail: null };
-  const { result: _result, ...detail } = r.detail;
-  return { ...r, detail };
+  const strip = <T extends { result: KeptToolResult }>(d: T | null): Omit<T, "result"> | null => {
+    if (d === null) return null;
+    const { result: _result, ...rest } = d;
+    return rest;
+  };
+  return { ...r, detail: strip(r.detail), git: strip(r.git) };
 }
 
 /** 审批详情（列表与详情接口返回）。 */
@@ -268,6 +312,32 @@ interface NetworkDecision {
 export const NETWORK_ASK_TOOL_KEY = "Bash";
 /** The spec hash of a network ask (no tool definition is approved). */
 const NETWORK_ASK_SPEC_HASH = "network";
+/** The tool key a git ask is recorded under (the push ran in a `Bash` command). */
+export const GIT_ASK_TOOL_KEY = "Bash";
+/** The spec hash of a git ask (no tool definition is approved). */
+const GIT_ASK_SPEC_HASH = "git";
+
+/** A new git push ask (sandbox git credentials spec §7), made by the tool pipeline. */
+export interface GitAskInput {
+  orgId: string;
+  conversationId: string;
+  runId: string;
+  /** The call's step (written to `approval_requested`). */
+  step: number;
+  callId: string;
+  /** The actor whose credential the push used: the only person who may decide. */
+  requestedFor: string;
+  /** The connector whose credential the push used (its git source). */
+  connectorId: string;
+  detail: Omit<GitAskDetail, "outcome">;
+}
+
+/** What a git ask's decision took effect as, passed to the decision's transaction. */
+interface GitDecision {
+  /** Null when denied. */
+  outcome: "once" | "always" | null;
+  via: DecisionVia;
+}
 
 /** 「以后都允许」授权（本人可撤销）。 */
 export interface ToolGrantView {
@@ -314,6 +384,7 @@ function toRecord(r: Selectable<ApprovalsTable>): ApprovalRecord {
     attempt: r.attempt,
     kind: r.kind,
     detail: r.kind === "network" ? ((r.detail as NetworkAskDetail | null) ?? null) : null,
+    git: r.kind === "git" ? ((r.detail as GitAskDetail | null) ?? null) : null,
     toolKey: r.tool_key,
     specHash: r.spec_hash,
     connectorId: r.connector_id,
@@ -565,6 +636,116 @@ export class ApprovalsService {
     return { record: rec, toSeq: Math.max(...written.map((e) => e.seq)) };
   }
 
+  /**
+   * A git push ask (sandbox git credentials spec §7): a pending approval of kind `git` for the
+   * actor whose credential the push used, expiring like a tool approval, and its
+   * `approval_requested` (tool key `Bash`, the display-only `git` field), in one transaction. The
+   * scopes are `once` (a run grant) and, for a personal connector (the push used the actor's own
+   * connection), `always` (the actor's standing allow for the repository); an org connector's push
+   * acts as the org, so no member allow applies to it. Takes the attempt after the call's other
+   * approvals; one per call: a second request returns the first.
+   */
+  async requestGit(input: GitAskInput): Promise<ApprovalRecord> {
+    const d = input.detail;
+    const repo = normalizeGitRepo(d.repo);
+    if (repo === null || repo !== d.repo) {
+      throw new Error(`a git ask names a normalized <owner>/<repo> (got ${d.repo})`);
+    }
+    if (d.host.length === 0 || d.host.length > NETWORK_HOST_MAX_CHARS) {
+      throw new Error("a git ask's host is 1 to 255 characters");
+    }
+    if (
+      d.refs.length > GIT_ASK_MAX_REFS ||
+      d.refs.some((r) => r.length === 0 || r.length > GIT_REF_MAX_CHARS)
+    ) {
+      throw new Error(`a git ask lists at most ${GIT_ASK_MAX_REFS} refs of 1 to 255 characters`);
+    }
+    const { record, toSeq } = await this.requestGitIn(input);
+    if (toSeq !== null) await this.eventLog.notify(record.conversationId, toSeq);
+    return record;
+  }
+
+  @Transactional()
+  private async requestGitIn(
+    input: GitAskInput,
+  ): Promise<{ record: ApprovalRecord; toSeq: number | null }> {
+    const hours = this.config.get().tools.approvalTimeoutHours;
+    const t = this.db.db;
+    // the conversation row first (as `requestIn`): it also serializes two asks of one call
+    await t
+      .selectFrom("conversations")
+      .select("id")
+      .where("id", "=", input.conversationId)
+      .forUpdate()
+      .execute();
+    // only a member of the org is asked, and only about a live connector of the org
+    const member = await this.roleOf(input.orgId, input.requestedFor);
+    const connector = await t
+      .selectFrom("connectors")
+      .select("auth")
+      .where("id", "=", input.connectorId)
+      .where("org_id", "=", input.orgId)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    if (member === null || connector === undefined) {
+      throw new Error(
+        `a git ask is for a member of the org about one of its connectors (connector ${input.connectorId})`,
+      );
+    }
+    const existing = await this.gitForCall(input.runId, input.callId);
+    if (existing !== null) return { record: existing, toSeq: null };
+    const last = await t
+      .selectFrom("approvals")
+      .select(sql<number | null>`max(attempt)`.as("attempt"))
+      .where("run_id", "=", input.runId)
+      .where("call_id", "=", input.callId)
+      .executeTakeFirst();
+    const scopes: ApprovalScope[] = personalAuth(connector.auth) ? ["once", "always"] : ["once"];
+    const row = await t
+      .insertInto("approvals")
+      .values({
+        id: randomUUID(),
+        org_id: input.orgId,
+        conversation_id: input.conversationId,
+        run_id: input.runId,
+        call_id: input.callId,
+        attempt: Number(last?.attempt ?? 0) + 1,
+        kind: "git",
+        detail: JSON.stringify(input.detail),
+        tool_key: GIT_ASK_TOOL_KEY,
+        spec_hash: GIT_ASK_SPEC_HASH,
+        connector_id: input.connectorId,
+        input: JSON.stringify({}),
+        requested_for: input.requestedFor,
+        approver_role: null,
+        scopes,
+        scope: null,
+        decided_by: null,
+        expires_at: sql<Date>`now() + ${hours}::integer * interval '1 hour'`,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    const rec = toRecord(row);
+    const written = await this.eventLog.appendIn(rec.conversationId, [
+      {
+        type: "approval_requested",
+        runId: rec.runId,
+        idemKey: `approval_requested:${rec.id}`,
+        payload: {
+          step: input.step,
+          callId: rec.callId,
+          approvalId: rec.id,
+          toolKey: rec.toolKey,
+          expiresAt: rec.expiresAt,
+          git: { host: input.detail.host, repo: input.detail.repo, refs: input.detail.refs },
+          requestedFor: rec.requestedFor,
+          approverRole: null,
+        },
+      },
+    ]);
+    return { record: rec, toSeq: Math.max(...written.map((e) => e.seq)) };
+  }
+
   /** 当前用户能处理的审批（新的在前，最多 {@link APPROVALS_LIST_MAX} 条）；`status` 缺省为全部。 */
   async list(orgId: string, accountId: string, status?: ApprovalStatus): Promise<ApprovalView[]> {
     const role = await this.roleOf(orgId, accountId);
@@ -641,6 +822,9 @@ export class ApprovalsService {
       throw new ApiError("validation_failed", "hosts are only for network asks", [
         { path: "hosts", message: "Only a network ask takes hosts" },
       ]);
+    }
+    if (kind.kind === "git") {
+      return this.decideGit(orgId, id, accountId, body, actorTokenId, via);
     }
     const { record, toSeq } = await this.decideIn(orgId, id, accountId, body, actorTokenId);
     await this.announceDecided(record, toSeq);
@@ -749,6 +933,67 @@ export class ApprovalsService {
       network = { wanted: [], granted: [], outcome: null, via };
     }
     const decided = await this.decideIn(orgId, id, accountId, body, actorTokenId, network);
+    await this.announceDecided(decided.record, decided.toSeq);
+    return decided.record;
+  }
+
+  /**
+   * A git push ask's decision (sandbox git credentials spec §7): only the asked actor
+   * (`requested_for`) decides, in a signed-in session (a personal access token is refused, as for
+   * network asks); `once` is a run grant (the row itself), `always` also writes the actor's
+   * standing allow for the repository on that host (`connector_tool_account_policies`,
+   * `git_push:<host>/<owner>/<repo>`) in the decision's transaction. The run resumes after the
+   * commit.
+   */
+  private async decideGit(
+    orgId: string,
+    id: string,
+    accountId: string,
+    body: DecisionInput,
+    actorTokenId: string | undefined,
+    via: DecisionVia,
+  ): Promise<ApprovalRecord> {
+    const row = await this.db
+      .selectFrom("approvals")
+      .selectAll()
+      .where("id", "=", id)
+      .where("org_id", "=", orgId)
+      .executeTakeFirst();
+    if (!row) throw notFound();
+    const ask = toRecord(row);
+    if (ask.requestedFor !== accountId) {
+      // named only to the people the ask is shown to (the run's starter); any other member
+      // learns nothing about it, as `get` (approval.not_found)
+      const trigger = await this.db
+        .selectFrom("runs")
+        .select("trigger_account_id")
+        .where("id", "=", ask.runId)
+        .executeTakeFirst();
+      if (accountId !== trigger?.trigger_account_id) throw notFound();
+      const name = ask.requestedFor === null ? null : await this.displayNameOf(ask.requestedFor);
+      throw new ApiError(
+        "approval.not_yours",
+        `Only ${name ?? "the person whose connection the push used"} can allow this push.`,
+      );
+    }
+    if (actorTokenId !== undefined) {
+      throw new ApiError(
+        "auth.session_required",
+        "Git pushes are decided in a signed-in session, not with a personal access token.",
+      );
+    }
+    let git: GitDecision = { outcome: null, via };
+    if (body.decision === "approve") {
+      const scope = body.scope ?? "once";
+      if (scope === "session" || !ask.scopes.includes(scope)) {
+        throw new ApiError(
+          "approval.scope_not_allowed",
+          `Scope "${scope}" is not allowed for this approval; allowed: ${ask.scopes.join(", ")}`,
+        );
+      }
+      git = { outcome: scope, via };
+    }
+    const decided = await this.decideIn(orgId, id, accountId, body, actorTokenId, undefined, git);
     await this.announceDecided(decided.record, decided.toSeq);
     return decided.record;
   }
@@ -1106,8 +1351,9 @@ export class ApprovalsService {
     body: DecisionInput,
     actorTokenId: string | undefined,
     network?: NetworkDecision,
+    git?: GitDecision,
   ): Promise<{ record: ApprovalRecord; toSeq: number }> {
-    return this.decideTx(orgId, id, accountId, body, actorTokenId, network);
+    return this.decideTx(orgId, id, accountId, body, actorTokenId, network, git);
   }
 
   /**
@@ -1122,6 +1368,7 @@ export class ApprovalsService {
     body: DecisionInput,
     actorTokenId: string | undefined,
     network?: NetworkDecision,
+    git?: GitDecision,
   ): Promise<{ record: ApprovalRecord; toSeq: number }> {
     const t = this.db.db;
     // lock order: the conversation, the approval, then the run (as a stop of the waiting run)
@@ -1154,19 +1401,25 @@ export class ApprovalsService {
     if (locked.expired) {
       throw new ApiError("approval.already_decided", "Approval has expired");
     }
-    // a network ask is decided only with what took effect (decideNetwork, the op's resolver)
-    if ((before.kind === "network") !== (network !== undefined)) {
+    // a network ask is decided only through decideNetwork (its policy op went first), a git ask
+    // only through decideGit
+    if (
+      (before.kind === "network") !== (network !== undefined) ||
+      (before.kind === "git") !== (git !== undefined)
+    ) {
       throw new Error(`approval ${id} is of kind ${before.kind}`);
     }
     const approved = body.decision === "approve";
     const reason = approved ? undefined : body.reason?.trim() || undefined;
     const scope: ApprovalScope | null = !approved
       ? null
-      : network === undefined
-        ? (body.scope ?? "once")
-        : network.outcome === "always" || network.outcome === "refused"
-          ? "always"
-          : "once";
+      : git !== undefined
+        ? (git.outcome ?? "once")
+        : network === undefined
+          ? (body.scope ?? "once")
+          : network.outcome === "always" || network.outcome === "refused"
+            ? "always"
+            : "once";
     // 按角色升级的批准只对这一次有效：授权记在发起人名下会让其以后绕过角色要求
     if (scope !== null && scope !== "once" && before.requestedFor === null) {
       throw new ApiError(
@@ -1202,6 +1455,10 @@ export class ApprovalsService {
               ...(network.fallback !== undefined && { fallback: network.fallback }),
             } satisfies NetworkAskDetail),
           }),
+        ...(git?.outcome != null &&
+          before.git !== null && {
+            detail: JSON.stringify({ ...before.git, outcome: git.outcome } satisfies GitAskDetail),
+          }),
       })
       .where("id", "=", id)
       .returningAll()
@@ -1211,6 +1468,12 @@ export class ApprovalsService {
     const connectorId = before.connectorId;
     if (network !== undefined) {
       // a network ask grants nothing of the tool kind: its run grant is the row itself
+    } else if (git !== undefined) {
+      // a git ask's run grant is the row itself; `always` is the actor's standing allow for the
+      // repository on the connector (a row the connector's deletion removes with it)
+      if (git.outcome === "always" && before.git !== null && connectorId !== null) {
+        await this.allowRepoIn(orgId, connectorId, accountId, before.git.host, before.git.repo);
+      }
     } else if (scope === "session") {
       // a sub-agent's grant is the root conversation's (agent map spec §7): the root and every
       // agent of its tree, at any depth, are not asked again for the same call
@@ -1251,9 +1514,12 @@ export class ApprovalsService {
         )
         .execute();
     }
-    if (approved && scope !== null && network === undefined) {
+    if (approved && scope !== null && network === undefined && git === undefined) {
       await this.keepTrialGrant(before, accountId);
     }
+    // 「这次允许」 of a push in a trial run: the task's grant for that repository; a standing
+    // allow needs none (the member's policy already allows it)
+    if (git?.outcome === "once") await this.keepTrialGitGrant(before, accountId);
     // 「这次允许」 in a trial run (also an 「一直允许」 the device could not take): the task's
     // grants; one the device took needs none (network ask-to-allow spec §8.1)
     if (network?.outcome === "once" || network?.outcome === "once_fallback") {
@@ -1307,6 +1573,14 @@ export class ApprovalsService {
       action: "approval.decided",
       target: id,
       detail: {
+        ...(git !== undefined &&
+          before.git !== null && {
+            kind: "git",
+            host: before.git.host,
+            repo: before.git.repo,
+            connectorId,
+            via: git.via,
+          }),
         toolKey: before.toolKey,
         conversationId: before.conversationId,
         runId: before.runId,
@@ -1425,6 +1699,67 @@ export class ApprovalsService {
   }
 
   /**
+   * The actor's standing allow for pushes to `repo` through the connector (sandbox git
+   * credentials spec §7, 「一直允许」): a `connector_tool_account_policies` row named
+   * `git_push:<host>/<owner>/<repo>` with policy `allow`, in the decision's transaction.
+   */
+  @Transactional({ propagation: "mandatory" })
+  private async allowRepoIn(
+    orgId: string,
+    connectorId: string,
+    accountId: string,
+    host: string,
+    repo: string,
+  ): Promise<void> {
+    await this.db.db
+      .insertInto("connector_tool_account_policies")
+      .values({
+        org_id: orgId,
+        connector_id: connectorId,
+        account_id: accountId,
+        tool_name: gitPushPolicyName(host, repo),
+        policy: "allow",
+      })
+      .onConflict((oc) =>
+        oc
+          .columns(["connector_id", "account_id", "tool_name"])
+          .doUpdateSet({ policy: "allow", updated_at: sql<Date>`now()` }),
+      )
+      .execute();
+  }
+
+  /**
+   * A trial run of a scheduled task (sandbox git credentials spec §7): a push its creator allowed
+   * for this run (「这次允许」) becomes the task's `git:push:<owner>/<repo>` grant, when
+   * `gitGrantRefusal` allows it (the org does not forbid it). Never for an ask another account
+   * decided or one asked of someone else. In the decision's transaction.
+   */
+  @Transactional({ propagation: "mandatory" })
+  private async keepTrialGitGrant(a: ApprovalRecord, decidedBy: string): Promise<void> {
+    if (a.git === null) return;
+    if (a.requestedFor === null || a.requestedFor !== decidedBy) return;
+    const t = this.db.db;
+    const served = await unattendedTaskRunOf(t, a.runId);
+    if (served === null || !served.trial) return;
+    const task = await t
+      .selectFrom("scheduled_tasks")
+      .select("account_id")
+      .where("id", "=", served.taskId)
+      .where("org_id", "=", a.orgId)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    if (task?.account_id !== decidedBy) return;
+    const key = gitPushGrantKey(a.git.repo);
+    const { forbiddenTools } = await readScheduleSettings(t, this.config, a.orgId);
+    if (gitGrantRefusal(key, { forbiddenTools }) !== null) return;
+    await this.schedules.addGrant(t, served.taskId, {
+      toolKey: key,
+      specHash: GIT_GRANT_SPEC_HASH,
+      connectorId: null,
+    });
+  }
+
+  /**
    * 详情，不做处理人校验（内核内部用：渠道出站投递组装 IM 审批卡片）；不存在返回 null。
    * 不得直接回给请求方——HTTP 接口用 {@link get}。
    */
@@ -1461,6 +1796,20 @@ export class ApprovalsService {
       .where("run_id", "=", runId)
       .where("call_id", "=", callId)
       .where("kind", "=", "network")
+      .orderBy("attempt", "desc")
+      .limit(1)
+      .executeTakeFirst();
+    return row ? toRecord(row) : null;
+  }
+
+  /** The git push ask of a tool call (at most one per call); null when it has none. */
+  async gitForCall(runId: string, callId: string): Promise<ApprovalRecord | null> {
+    const row = await this.db
+      .selectFrom("approvals")
+      .selectAll()
+      .where("run_id", "=", runId)
+      .where("call_id", "=", callId)
+      .where("kind", "=", "git")
       .orderBy("attempt", "desc")
       .limit(1)
       .executeTakeFirst();
@@ -1606,7 +1955,8 @@ export class ApprovalsService {
   /**
    * In the caller's transaction (`mandatory`; it wrote `authorAccountId`'s message in
    * `conversationId` and holds that conversation's row lock): the message skips the pending
-   * network asks it closes (network ask-to-allow spec §6.7), as it skips questions: the asks of
+   * network and git asks it closes (network ask-to-allow spec §6.7; a git push ask follows the
+   * same flow, sandbox git credentials spec §7), as it skips questions: the asks of
    * active runs `authorAccountId` started, in the conversation and in its sub-agents'
    * conversations at any depth (their asks are shown in the root). Each becomes `skipped` with
    * `approval_decided{skipped}` by the author; access stays blocked. Returns the skipped records and
@@ -1629,7 +1979,7 @@ export class ApprovalsService {
         .selectFrom("approvals")
         .select("conversation_id")
         .where("conversation_id", "in", tree)
-        .where("kind", "=", "network")
+        .where("kind", "in", ["network", "git"])
         .where("status", "=", "pending"),
     );
     if (convs.length === 0) return { records: [], seqs: new Map() };
@@ -1638,7 +1988,7 @@ export class ApprovalsService {
       .innerJoin("runs as r", "r.id", "a.run_id")
       .selectAll("a")
       .where("a.conversation_id", "in", convs)
-      .where("a.kind", "=", "network")
+      .where("a.kind", "in", ["network", "git"])
       .where("a.status", "=", "pending")
       .where(sql<boolean>`a.expires_at > now()`)
       .where("r.status", "in", ["running", "waiting"])

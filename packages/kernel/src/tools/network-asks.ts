@@ -273,12 +273,20 @@ export const withNetworkNotes = (text: string, notes: readonly string[]): string
  * {@link NETWORK_ASK_CLIPPED_NOTE}. The caller archives large output first, so this rarely cuts.
  */
 export function clipKept(content: string): string {
+  return clipKeptWith(content, NETWORK_ASK_CLIPPED_NOTE);
+}
+
+/**
+ * `content` within {@link NETWORK_ASK_KEPT_MAX_BYTES} (UTF-8): unchanged when it fits, else its
+ * head and then `note` on a line of its own (the git asks clip with their own note).
+ */
+export function clipKeptWith(content: string, note: string): string {
   const bytes = Buffer.from(content, "utf8");
   if (bytes.length <= NETWORK_ASK_KEPT_MAX_BYTES) return content;
-  const room = NETWORK_ASK_KEPT_MAX_BYTES - Buffer.byteLength(NETWORK_ASK_CLIPPED_NOTE) - 1;
+  const room = NETWORK_ASK_KEPT_MAX_BYTES - Buffer.byteLength(note) - 1;
   // a cut inside a multi-byte character drops it rather than keeping half of it
   const head = new TextDecoder("utf-8", { fatal: false })
     .decode(bytes.subarray(0, room))
     .replace(/�$/, "");
-  return `${head}\n${NETWORK_ASK_CLIPPED_NOTE}`;
+  return `${head}\n${note}`;
 }

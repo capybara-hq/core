@@ -16,6 +16,7 @@ export * from "./device-protocol.js";
 export * from "./directory.js";
 export * from "./extension-point.js";
 export * from "./file-preview.js";
+export * from "./git-hosts.js";
 export * from "./hooks.js";
 export * from "./identity.js";
 export * from "./marketplace.js";

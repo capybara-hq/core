@@ -2,6 +2,7 @@ import semver from "semver";
 import type { z } from "zod";
 import { ConnectorAuthSchema } from "./connector-auth.js";
 import { EXTENSION_NAME_RE, type ExtensionManifest } from "./define-extension.js";
+import { type GitSource, validateGitSource } from "./git-hosts.js";
 import type { ExtensionPermissions } from "./permissions.js";
 import type { PluginManifest } from "./plugin-manifest.js";
 
@@ -356,6 +357,8 @@ export interface ConnectorTemplateSpec {
   ownership?: "org" | "personal";
   /** 工具名 → 默认策略（安装后记 `policy_source 'template'`）。 */
   defaultToolPolicies?: Record<string, "allow" | "ask" | "deny">;
+  /** Git hosts this connector's credential serves in sandboxes ({@link GitSource}). */
+  git?: GitSource;
   /** 包内路径，svg / png，≤ {@link CONNECTOR_TEMPLATE_LIMITS}`.iconBytes`。 */
   icon?: string;
 }
@@ -452,6 +455,7 @@ const TEMPLATE_KEYS = new Set([
   "auth",
   "ownership",
   "defaultToolPolicies",
+  "git",
   "icon",
 ]);
 
@@ -570,6 +574,7 @@ export function validateConnectorTemplate(t: unknown): string[] {
       }
     }
   }
+  if (t.git !== undefined) errs.push(...validateGitSource(t.git, "template.git"));
   if (t.icon !== undefined) {
     if (typeof t.icon !== "string" || !isSafePackagePath(t.icon) || !/\.(svg|png)$/i.test(t.icon)) {
       errs.push("template.icon must be a relative .svg or .png path inside the package");

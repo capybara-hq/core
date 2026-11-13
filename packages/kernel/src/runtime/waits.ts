@@ -15,8 +15,9 @@ import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { OrgRole } from "../orgs/roles.js";
 import {
   ApprovalsService,
+  GIT_ASK_CANCELLED_NOTE,
+  type KeptToolResult,
   NETWORK_ASK_CANCELLED_NOTE,
-  type NetworkAskDetail,
 } from "../tools/approvals.service.js";
 import {
   APPROVAL_CANCELLED_TEXT,
@@ -390,16 +391,18 @@ export class Waits implements OnApplicationShutdown {
       .orderBy("attempt")
       .execute();
     for (const a of approvals) {
-      // a network ask's command already ran: its kept result, then why access stays blocked
-      // (network ask-to-allow spec §6.7)
+      // a network or git ask's command already ran: its kept result, then why access stays
+      // blocked or the push was not made (network ask-to-allow spec §6.7)
       const kept =
-        a.kind === "network" ? (a.detail as Pick<NetworkAskDetail, "result"> | null)?.result : null;
+        a.kind === "network" || a.kind === "git"
+          ? (a.detail as { result?: KeptToolResult } | null)?.result
+          : null;
       cancelled.set(
         a.call_id,
         kept
           ? {
               toolKey: a.tool_key,
-              text: `${kept.content}\n\n${NETWORK_ASK_CANCELLED_NOTE}`,
+              text: `${kept.content}\n\n${a.kind === "git" ? GIT_ASK_CANCELLED_NOTE : NETWORK_ASK_CANCELLED_NOTE}`,
               isError: kept.isError,
             }
           : { toolKey: a.tool_key, text: APPROVAL_CANCELLED_TEXT },

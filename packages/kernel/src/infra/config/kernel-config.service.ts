@@ -21,6 +21,8 @@ const HOT_APPLIERS: Record<string, (k: { log: KernelLogger }, value: unknown) =>
   // Login methods and trusted identity sources are read on every request.
   "auth.loginSources": () => {},
   "auth.trustedIdentitySources": () => {},
+  // The git gateway reads tools.git.enabled through the config service on every request.
+  "tools.git.enabled": () => {},
   // The hook registry reads the time limit on every run.
   "hooks.timeoutMs": () => {},
   // The provider registry reads the list time limit at every listModels call.

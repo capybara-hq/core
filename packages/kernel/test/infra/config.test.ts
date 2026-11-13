@@ -53,6 +53,12 @@ describe("KernelConfigService", () => {
     expect(warn?.keys).toContain("http.port");
   });
 
+  it("constructs with the full default schema: every hot field has an applier", () => {
+    const log = createLogger("info", { write: () => {} });
+    const config = KernelConfigSchema.parse(raw());
+    expect(() => new KernelConfigService({ config, env: {} }, log)).not.toThrow();
+  });
+
   it("warns once at start when the retired env var of subagents.maxConcurrentPerRun is set", () => {
     const lines: ({ level: string; msg: string } & Record<string, unknown>)[] = [];
     const log = createLogger("info", { write: (line) => lines.push(JSON.parse(line)) });

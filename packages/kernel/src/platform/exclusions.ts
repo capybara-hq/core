@@ -301,6 +301,9 @@ export const PLATFORM_EXCLUSIONS: readonly {
     category: "transport",
     reason: "Serves sandbox file bytes",
   },
+  // git gateway (sandbox git credentials spec §5): `GET` / `POST /git/v1/*` is git smart-HTTP for
+  // sandboxes, authenticated by run tickets, not an API; it is a raw api-role Fastify route
+  // (`git/gateway.route.ts`), not a Nest controller, so it is not listed (like the webhook)
   // devices (personal cloud devices, environments design phase 1)
   // connected machines (environments design phase 2): device sign-in by the program and on the
   // confirmation page, and disconnecting a machine. The machine's WebSocket (`GET /device/connect`)

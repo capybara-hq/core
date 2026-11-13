@@ -28,6 +28,10 @@ export function finishRun(
     eventLog,
     h.txHost,
     { onRunFinished: async () => {} },
+    // no git tickets here: revoking them is not under test
+    {
+      onRunFinished: async () => {},
+    },
     // no outbox here: the ensure-run backstop is not under test
     { add: async () => true },
     // runs finished by hand ask for nothing: no waits to cancel

@@ -39,6 +39,10 @@ const PUBLIC_ROUTES = new Set([
   "POST /channels/webhook/:connectionId",
   // Gateway role: the device WebSocket checks its machine credential itself (environments §13.4)
   "GET /device/connect",
+  // API role: the git gateway, a raw Fastify route outside Nest; the run ticket is checked by the
+  // gateway itself (sandbox git credentials spec §5)
+  "GET /git/v1/*",
+  "POST /git/v1/*",
 ]);
 
 const ZERO_UUID = "00000000-0000-0000-0000-000000000000";
