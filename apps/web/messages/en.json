@@ -6115,6 +6115,7 @@
         "target_gone": "The chat can't be reached",
         "conversation_gone": "The conversation is gone",
         "org_disabled": "Turned off by the organization",
+        "plugin_disabled": "The channel's plugin is turned off in this organization",
         "unsupported_target": "This target is not supported yet",
         "task_deleted": "The task was deleted",
         "task_paused": "The task was paused"

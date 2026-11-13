@@ -7,6 +7,7 @@ import { ConversationAccess } from "../conversations/access.js";
 import { readMessageContext } from "../conversations/message-context.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { enabledExtensionsByOrg, isExtensionEnabled } from "../extensions/enabled.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
 import { audit } from "../identity/audit.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
@@ -746,15 +747,20 @@ export class ScheduledTasksService {
   }
 
   /**
-   * The chats the caller can point a `chat` task at (spec §8): per active connection of the org,
-   * their DM threads (archived included) and, on a channel with threads, the groups they have a
-   * thread in. Members up (`schedules.use`, the route's).
+   * The chats the caller can point a `chat` task at (spec §8): per active connection of the org
+   * whose extension is enabled in it, their DM threads (archived included) and, on a channel with
+   * threads, the groups they have a thread in. Members up (`schedules.use`, the route's).
    */
   async chatTargets(orgId: string, accountId: string): Promise<ChatTarget[]> {
     await this.liveRole(orgId, accountId);
     const rows = await this.db.db
       .selectFrom("channel_threads")
       .innerJoin("channel_connections", "channel_connections.id", "channel_threads.connection_id")
+      .innerJoin(enabledExtensionsByOrg(this.db.db).as("en"), (j) =>
+        j
+          .onRef("en.org_id", "=", "channel_connections.org_id")
+          .onRef("en.plugin", "=", "channel_connections.plugin"),
+      )
       .select([
         "channel_connections.id as connection_id",
         "channel_connections.name",
@@ -1234,9 +1240,9 @@ export class ScheduledTasksService {
    * - the mode and its fields agree (`conversation`: a conversation and no chat; `chat`: a chat
    *   and no conversation; `new`: neither);
    * - `conversation`: the creator's live chat conversation with this agent, still accessible;
-   * - `chat`: the connection is active and bound to this agent; a DM needs a thread row (archived
-   *   allowed) of the creator in that chat; a group needs the creator's thread row in the group
-   *   and a channel with threads.
+   * - `chat`: the connection is active, its channel extension is enabled in this org, and it is
+   *   bound to this agent; a DM needs a thread row (archived allowed) of the creator in that chat;
+   *   a group needs the creator's thread row in the group and a channel with threads.
    */
   private async checkTarget(
     orgId: string,
@@ -1280,6 +1286,11 @@ export class ScheduledTasksService {
         .executeTakeFirst();
       if (conn?.status !== "active") {
         throw targetInvalid("The channel connection does not exist or is not active");
+      }
+      if (!(await isExtensionEnabled(t, orgId, conn.plugin))) {
+        throw targetInvalid(
+          "The channel's extension is disabled in this organization, so its chats cannot receive a task's runs",
+        );
       }
       if (conn.agent_id !== agentId) {
         throw targetInvalid("The chat belongs to another agent: use the connection's agent");

@@ -400,4 +400,23 @@ describe("scheduled task channel delivery (spec §8)", { timeout: 90_000 }, () =
     expect(await runOf(r.id)).toMatchObject({ status: "skipped", skipReason: "target_gone" });
     expect(await taskOf(t.id)).toMatchObject({ status: "paused", pauseReason: "target_gone" });
   });
+
+  it("a channel extension disabled in the org skips the run as plugin_disabled", async () => {
+    const t = await chatTask({ connectionId: miniId, chatId: "dm-u-owner", chatType: "dm" });
+    await sql`UPDATE capybara.extension_org_configs SET enabled = false
+      WHERE org_id = ${orgId} AND plugin = 'chan-mini'`.execute(raw);
+    try {
+      const r = await fireNow(t);
+      expect(await runOf(r.id)).toMatchObject({
+        status: "skipped",
+        skipReason: "plugin_disabled",
+        firedAt: null,
+      });
+      // unlike target_gone, the task stays active and recovers when the extension is enabled again
+      expect((await taskOf(t.id)).status).toBe("active");
+    } finally {
+      await sql`UPDATE capybara.extension_org_configs SET enabled = true
+        WHERE org_id = ${orgId} AND plugin = 'chan-mini'`.execute(raw);
+    }
+  });
 });

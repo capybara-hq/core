@@ -11,6 +11,7 @@ import type { OrgRole } from "../../orgs/roles.js";
 import { readScheduleSettings } from "../../schedules/effective-settings.js";
 import { nextTick } from "../../schedules/schedule-math.js";
 import type {
+  ChatTarget,
   ScheduledTasksService,
   TriggerInput,
   UpdateTaskInput,
@@ -35,9 +36,9 @@ import { clip, display } from "./sandbox/common.js";
 
 /**
  * The schedule builtins (scheduled tasks spec §11): `ScheduleCreate`, `ScheduleUpdate`,
- * `ScheduleList` and `ScheduleDelete` manage the scheduled tasks of the run's trigger account
- * through the same service as the HTTP routes (`ScheduledTasksService`), so the org's limits and
- * the grant rules apply unchanged.
+ * `ScheduleList`, `ScheduleTargets` and `ScheduleDelete` manage the scheduled tasks of the run's
+ * trigger account through the same service as the HTTP routes (`ScheduledTasksService`), so the
+ * org's limits and the grant rules apply unchanged.
  *
  * - `ScheduleCreate` / `ScheduleUpdate` are fixed asks (R3, `R3_FIXED_ASK_TOOL_KEYS`) with a
  *   per-call policy that never remembers: every call asks, no grant (conversation, always or task)
@@ -47,18 +48,20 @@ import { clip, display } from "./sandbox/common.js";
  * - The approved tools of a task are exactly the `approvedTools` of the approved input: create
  *   grants that list, and an update that passes it replaces the task's grants with it (the card
  *   lists the full new set), so nothing beyond what the person saw is ever granted.
- * - `ScheduleList` (allow) lists the person's own tasks; `ScheduleDelete` (allow; deleting only
- *   narrows) deletes only the person's own task, even when they are an org admin.
+ * - `ScheduleList` (allow) lists the person's own tasks; `ScheduleTargets` (allow) lists the IM
+ *   chats they can deliver to (the service's `chatTargets`, the same data as the route);
+ *   `ScheduleDelete` (allow; deleting only narrows) deletes only the person's own task, even when
+ *   they are an org admin.
  * - `mode: "here"`: a `chat` task for this conversation's IM direct chat when the conversation is
  *   delivered to one (`channel_deliveries`) and is the live DM thread of the person
- *   (`channel_threads`), else a `conversation` task for this conversation. The zone is the run's
- *   (`run_context`, else the org's, else UTC).
+ *   (`channel_threads`), else a `conversation` task for this conversation. `mode: "chat"` posts into
+ *   the IM chat named by `chat`. The zone is the run's (`run_context`, else the org's, else UTC).
  */
 
 /** The task service as the tools use it (bound at start; null when not loaded here). */
 export type ScheduleService = Pick<
   ScheduledTasksService,
-  "create" | "update" | "list" | "remove" | "addGrants" | "removeGrant"
+  "create" | "update" | "list" | "remove" | "addGrants" | "removeGrant" | "chatTargets"
 >;
 
 /**
@@ -136,22 +139,59 @@ const RUN_AT_SCHEMA = {
 
 const MODE_SCHEMA = {
   type: "string",
-  enum: ["new", "here"],
+  enum: ["new", "here", "chat"],
   description:
     '"new": every run starts a new conversation with this agent. "here": every run posts the ' +
     "prompt into this conversation (in an IM direct chat: the chat's current conversation), " +
-    'e.g. for "check this again at 3 pm".',
+    'e.g. for "check this again at 3 pm". "chat": every run posts into the IM chat named by ' +
+    "chat.",
+} as const;
+
+const CHAT_SCHEMA = {
+  type: "object",
+  properties: {
+    connectionId: {
+      type: "string",
+      minLength: 1,
+      maxLength: 100,
+      description: "The id of the active channel connection that delivers to the chat.",
+    },
+    chatId: {
+      type: "string",
+      minLength: 1,
+      maxLength: 500,
+      description: "The chat's id within that connection, e.g. a DM's user id or a group's id.",
+    },
+    chatType: {
+      type: "string",
+      enum: ["dm", "group"],
+      description:
+        'The kind of chat: "dm" (the default) or "group". A group needs a channel with threads.',
+    },
+  },
+  required: ["connectionId", "chatId"],
+  additionalProperties: false,
+} as const;
+
+const AGENT_ID_SCHEMA = {
+  type: "string",
+  minLength: 1,
+  maxLength: 100,
+  description:
+    "For mode chat: the agent the chat's connection runs; omit it to use this conversation's " +
+    "agent. A chat target must use the connection's agent.",
 } as const;
 
 const CREATE_SPEC: ToolSpec = {
   name: BUILTIN.ScheduleCreate,
   description:
     "Create a scheduled task for the user: this agent runs the prompt on a schedule (cron) or " +
-    "once at a time (runAt), in the user's time zone, acting as the user. Use it when the user " +
-    'asks for something recurring or later ("every weekday at 9 send me a brief", "remind me at ' +
-    '3 pm"). Every call asks the user to approve the whole task first. Runs happen without the ' +
-    "user present: write the prompt so it stands on its own, and list in approvedTools the tools " +
-    "a run needs without asking. Do not use it for work to do now.",
+    "once at a time (runAt), in the user's time zone, acting as the user. Each run starts a new " +
+    "conversation, posts into this conversation, or posts into an IM chat the user names with " +
+    'chat. Use it when the user asks for something recurring or later ("every weekday at 9 ' +
+    'send me a brief", "remind me at 3 pm"). Every call asks the user to approve the whole task ' +
+    "first. Runs happen without the user present: write the prompt so it stands on its own, and " +
+    "list in approvedTools the tools a run needs without asking. Do not use it for work to do now.",
   keyArgs: ["name"],
   inputSchema: {
     type: "object",
@@ -172,6 +212,11 @@ const CREATE_SPEC: ToolSpec = {
       cron: CRON_SCHEMA,
       runAt: RUN_AT_SCHEMA,
       mode: MODE_SCHEMA,
+      chat: {
+        ...CHAT_SCHEMA,
+        description: 'For mode "chat": the IM chat every run posts into.',
+      },
+      agentId: AGENT_ID_SCHEMA,
       approvedTools: TOOL_KEYS_SCHEMA,
     },
     required: ["name", "prompt", "mode"],
@@ -182,11 +227,10 @@ const CREATE_SPEC: ToolSpec = {
 const UPDATE_SPEC: ToolSpec = {
   name: BUILTIN.ScheduleUpdate,
   description:
-    "Change one of the user's scheduled tasks: its name, prompt, schedule, where it runs or its " +
-    "approved tools. Pass the task id (from ScheduleList or ScheduleCreate) and only the fields " +
-    "to change; approvedTools replaces the whole list. Every call asks the user to approve the " +
-    "change first. To pause or stop a task, use ScheduleDelete or tell the user to pause it on " +
-    "the task page.",
+    "Change one of the user's scheduled tasks: its name, prompt, schedule, where it runs (a new " +
+    "conversation, this conversation or an IM chat, and the agent) or its approved tools. Pass " +
+    "the task id and only the fields to change; approvedTools replaces the whole list. Every " +
+    "call asks the user to approve the change first. It does not pause, resume or delete a task.",
   keyArgs: ["id"],
   inputSchema: {
     type: "object",
@@ -202,6 +246,11 @@ const UPDATE_SPEC: ToolSpec = {
       cron: CRON_SCHEMA,
       runAt: RUN_AT_SCHEMA,
       mode: MODE_SCHEMA,
+      chat: {
+        ...CHAT_SCHEMA,
+        description: 'For mode "chat": the IM chat every run posts into; replaces the target.',
+      },
+      agentId: AGENT_ID_SCHEMA,
       approvedTools: {
         ...TOOL_KEYS_SCHEMA,
         description: `${TOOL_KEYS_SCHEMA.description} Replaces the task's whole list; pass [] to remove every approved tool, omit it to keep the list.`,
@@ -216,8 +265,16 @@ const LIST_SPEC: ToolSpec = {
   name: BUILTIN.ScheduleList,
   description:
     "List the user's scheduled tasks in this organization: id, name, schedule with its time " +
-    "zone, status, next run and where runs go. Use it to find a task's id before ScheduleUpdate " +
-    "or ScheduleDelete, or when the user asks what is scheduled. Read-only.",
+    "zone, status, next run and where runs go. Read-only.",
+  inputSchema: { type: "object", properties: {}, additionalProperties: false },
+};
+
+const TARGETS_SPEC: ToolSpec = {
+  name: BUILTIN.ScheduleTargets,
+  description:
+    "List the IM chats scheduled task runs can be delivered to for the user in this " +
+    "organization: each chat's connection id, chat id, chat type and the connection's agent id, " +
+    "with a label naming the connection. Read-only.",
   inputSchema: { type: "object", properties: {}, additionalProperties: false },
 };
 
@@ -225,8 +282,8 @@ const DELETE_SPEC: ToolSpec = {
   name: BUILTIN.ScheduleDelete,
   description:
     "Delete one of the user's scheduled tasks for good: it never runs again; past conversations " +
-    "stay. Use it when the user asks to stop or remove a task; find the id with ScheduleList. " +
-    "Only the user's own tasks can be deleted.",
+    "stay. Use it when the user asks to stop or remove a task. Only the user's own tasks can be " +
+    "deleted.",
   keyArgs: ["id"],
   inputSchema: {
     type: "object",
@@ -239,7 +296,15 @@ const DELETE_SPEC: ToolSpec = {
 };
 
 const ToolKeys = z.array(z.string().min(1).max(200)).max(TOOLS_MAX);
-const Mode = z.enum(["new", "here"]);
+const Mode = z.enum(["new", "here", "chat"]);
+const Chat = z
+  .object({
+    connectionId: z.string().min(1).max(100),
+    chatId: z.string().min(1).max(500),
+    chatType: z.enum(["dm", "group"]).optional(),
+  })
+  .strict();
+type ChatInput = z.infer<typeof Chat>;
 
 const CreateInput = z
   .object({
@@ -248,6 +313,8 @@ const CreateInput = z
     cron: z.string().min(1).max(100).optional(),
     runAt: z.string().min(1).max(40).optional(),
     mode: Mode,
+    chat: Chat.optional(),
+    agentId: z.string().min(1).max(100).optional(),
     approvedTools: ToolKeys.optional(),
   })
   .strict();
@@ -261,6 +328,8 @@ const UpdateInput = z
     cron: z.string().min(1).max(100).optional(),
     runAt: z.string().min(1).max(40).optional(),
     mode: Mode.optional(),
+    chat: Chat.optional(),
+    agentId: z.string().min(1).max(100).optional(),
     approvedTools: ToolKeys.optional(),
   })
   .strict();
@@ -271,18 +340,23 @@ const IdInput = z.object({ id: z.string().min(1).max(100) }).strict();
 // ---- model-facing texts (English, actionable) ----
 
 const INVALID_CREATE_TEXT =
-  "Invalid input; pass name, prompt, mode (new or here), exactly one of cron or runAt, and " +
-  "optionally approvedTools as an array of tool keys.";
+  "Invalid input; pass name, prompt, mode (new, here or chat), exactly one of cron or runAt, " +
+  "chat with mode chat, and optionally agentId and approvedTools as an array of tool keys.";
 const INVALID_UPDATE_TEXT =
   "Invalid input; pass the task id and the fields to change (name, prompt, cron or runAt, mode, " +
-  "approvedTools).";
+  "chat, agentId, approvedTools).";
 const INVALID_ID_TEXT = "Invalid input; pass the task id from ScheduleList.";
 const ONE_TRIGGER_TEXT =
   "Pass exactly one of cron (a repeating schedule) or runAt (a single run), not both and not neither.";
 const BOTH_TRIGGERS_TEXT =
   "Pass at most one of cron or runAt: cron makes the task repeat, runAt makes it run once.";
 const NOTHING_TO_UPDATE_TEXT =
-  "Nothing to change; pass at least one of name, prompt, cron, runAt, mode or approvedTools with the id.";
+  "Nothing to change; pass at least one of name, prompt, cron, runAt, mode, chat, agentId or " +
+  "approvedTools with the id.";
+const CHAT_NEEDS_CHAT_TEXT =
+  'mode "chat" needs a chat; pass chat with connectionId and chatId (and optionally chatType).';
+const CHAT_ONLY_TEXT =
+  'chat and agentId apply only to mode "chat"; pass mode "chat" with them, or omit them.';
 export const SCHEDULES_UNAVAILABLE_TEXT =
   "Scheduled tasks are not available on this server; ask the user to manage the task on the scheduled tasks page instead.";
 export const SCHEDULES_OFF_TEXT =
@@ -320,7 +394,7 @@ export function scheduleErrorText(e: ApiError, ctx: { id?: string; zone?: string
     case "schedule.invalid_time_zone":
       return `${m}. Ask the user to set their time zone in their profile, then retry.`;
     case "schedule.target_invalid":
-      return `${m}. Use mode "new" to start a new conversation for every run instead.`;
+      return `${m}. Fix the target and retry, or use mode "new" to start a new conversation for every run instead.`;
     case "schedule.grant_not_allowed":
       return `${m}. Remove it from approvedTools and call again.`;
     case "forbidden":
@@ -390,7 +464,9 @@ function targetWords(t: Target, currentConversationId?: string): Words {
   if (t.mode === "new") return { zh: "每次运行新建对话", en: "a new conversation for every run" };
   if (t.mode === "chat") {
     const n = clip(t.connectionName, 60);
-    return { zh: `${n} 的私聊`, en: `the direct chat on ${n}` };
+    return t.chat.chatType === "group"
+      ? { zh: `${n} 的群聊`, en: `the group chat on ${n}` }
+      : { zh: `${n} 的私聊`, en: `the direct chat on ${n}` };
   }
   return t.conversationId === currentConversationId
     ? { zh: "当前对话", en: "this conversation" }
@@ -403,16 +479,26 @@ function toolsWords(keys: readonly string[]): Words {
     : { zh: keys.join("、"), en: keys.join(", ") };
 }
 
+/** The `chat` input with its default kind (`dm`). */
+const normalizedChat = (chat: ChatInput): ScheduleChat => ({
+  connectionId: chat.connectionId,
+  chatId: chat.chatId,
+  chatType: chat.chatType ?? "dm",
+});
+
+/** A chat target with its connection's name for the words. */
+async function chatTargetOf(db: KernelSchemaDb, chat: ScheduleChat): Promise<Target> {
+  const c = await db
+    .selectFrom("channel_connections")
+    .select("name")
+    .where("id", "=", chat.connectionId)
+    .executeTakeFirst();
+  return { mode: "chat", chat, connectionName: c?.name ?? chat.connectionId };
+}
+
 /** A stored task's target; a chat's connection name is read for the words. */
 async function storedTarget(db: KernelSchemaDb, task: ScheduledTask): Promise<Target> {
-  if (task.mode === "chat" && task.chat !== null) {
-    const c = await db
-      .selectFrom("channel_connections")
-      .select("name")
-      .where("id", "=", task.chat.connectionId)
-      .executeTakeFirst();
-    return { mode: "chat", chat: task.chat, connectionName: c?.name ?? task.chat.connectionId };
-  }
+  if (task.mode === "chat" && task.chat !== null) return chatTargetOf(db, task.chat);
   if (task.mode === "conversation" && task.conversationId !== null) {
     return { mode: "conversation", conversationId: task.conversationId };
   }
@@ -470,7 +556,8 @@ const sameTarget = (a: Target, b: Target): boolean =>
     a.conversationId === (b as Extract<Target, { mode: "conversation" }>).conversationId) &&
   (a.mode !== "chat" ||
     (a.chat.connectionId === (b as Extract<Target, { mode: "chat" }>).chat.connectionId &&
-      a.chat.chatId === (b as Extract<Target, { mode: "chat" }>).chat.chatId));
+      a.chat.chatId === (b as Extract<Target, { mode: "chat" }>).chat.chatId &&
+      a.chat.chatType === (b as Extract<Target, { mode: "chat" }>).chat.chatType));
 
 const uniqueSorted = (keys: readonly string[]): string[] => [...new Set(keys)].sort();
 
@@ -479,6 +566,30 @@ function triggerOf(i: { cron?: string | undefined; runAt?: string | undefined })
   if (i.cron !== undefined) return { kind: "cron", expr: i.cron.trim() } satisfies TriggerInput;
   if (i.runAt !== undefined) return { kind: "once", at: i.runAt.trim() } satisfies TriggerInput;
   return undefined;
+}
+
+/** `chat` / `agentId` against the mode on create, as a refusal; null when they agree. */
+function createChatError(i: {
+  mode: z.infer<typeof Mode>;
+  chat?: ChatInput | undefined;
+  agentId?: string | undefined;
+}): ToolError | null {
+  if (i.mode !== "chat" && (i.chat !== undefined || i.agentId !== undefined)) {
+    return new ToolError(CHAT_ONLY_TEXT);
+  }
+  if (i.mode === "chat" && i.chat === undefined) return new ToolError(CHAT_NEEDS_CHAT_TEXT);
+  return null;
+}
+
+/** `chat` / `agentId` against the mode on update; null when they agree (or are absent). */
+function updateChatError(i: {
+  mode?: z.infer<typeof Mode> | undefined;
+  chat?: ChatInput | undefined;
+  agentId?: string | undefined;
+}): ToolError | null {
+  if (i.chat === undefined && i.agentId === undefined) return null;
+  if (i.mode !== "chat") return new ToolError(CHAT_ONLY_TEXT);
+  return i.chat === undefined ? new ToolError(CHAT_NEEDS_CHAT_TEXT) : null;
 }
 
 const withZone = (t: TriggerInput, timeZone: string): ScheduleTrigger =>
@@ -559,7 +670,7 @@ export class ScheduleUpdates {
   }
 }
 
-/** The four schedule builtins. */
+/** The five schedule builtins. */
 export function scheduleTools(deps: ScheduleToolsDeps): BuiltinTool[] {
   /**
    * The service, or a refusal (the tools are hidden then too: {@link unavailable}). Defensive:
@@ -641,18 +752,35 @@ export function scheduleTools(deps: ScheduleToolsDeps): BuiltinTool[] {
     const target: Target =
       input.mode === "here"
         ? await hereTarget(deps.db(), ctx.orgId, ctx.accountId, ctx.conversationId)
-        : { mode: "new" };
-    return { trigger, zone, target, tools: uniqueSorted(input.approvedTools ?? []) };
+        : input.mode === "chat"
+          ? await chatTargetOf(deps.db(), normalizedChat(input.chat as ChatInput))
+          : { mode: "new" };
+    return {
+      trigger,
+      zone,
+      target,
+      tools: uniqueSorted(input.approvedTools ?? []),
+      agentId: input.agentId ?? ctx.agentId,
+    };
   }
 
-  function createCard(input: CreateInput, p: CreatePlan, conversationId: string): Words {
+  function createCard(
+    input: CreateInput,
+    p: CreatePlan,
+    conversationId: string,
+    runAgentId: string,
+  ): Words {
     const when = scheduleWords(withZone(p.trigger as TriggerInput, p.zone));
     const where = targetWords(p.target, conversationId);
     const tools = toolsWords(p.tools);
     const name = clip(input.name, NAME_MAX);
+    const agent =
+      p.agentId === runAgentId
+        ? { zh: "", en: "" }
+        : { zh: `；以智能体 ${p.agentId} 运行`, en: `; runs as agent ${p.agentId}` };
     return {
-      zh: `创建定时任务「${name}」：${when.zh}；运行位置：${where.zh}；预先批准的工具：${tools.zh}`,
-      en: `Create the scheduled task "${name}": ${when.en}; runs in ${where.en}; approved tools: ${tools.en}`,
+      zh: `创建定时任务「${name}」：${when.zh}；运行位置：${where.zh}${agent.zh}；预先批准的工具：${tools.zh}`,
+      en: `Create the scheduled task "${name}": ${when.en}; runs in ${where.en}${agent.en}; approved tools: ${tools.en}`,
     };
   }
 
@@ -667,25 +795,33 @@ export function scheduleTools(deps: ScheduleToolsDeps): BuiltinTool[] {
       if ((parsed.data.cron === undefined) === (parsed.data.runAt === undefined)) {
         return deny(key, ONE_TRIGGER_TEXT);
       }
+      const bad = createChatError(parsed.data);
+      if (bad !== null) return deny(key, bad.message);
       const p = await createPlan(parsed.data, ctx);
-      return ask(key, createCard(parsed.data, p, ctx.conversationId));
+      return ask(key, createCard(parsed.data, p, ctx.conversationId, ctx.agentId));
     },
     async run(raw, ctx) {
       const parsed = CreateInput.safeParse(raw);
       if (!parsed.success) throw new ToolError(INVALID_CREATE_TEXT);
       const input = parsed.data;
+      const bad = createChatError(input);
+      if (bad !== null) throw bad;
       const svc = await service();
       const p = await createPlan(input, ctx);
       if (p.trigger === undefined || (input.cron !== undefined && input.runAt !== undefined)) {
         throw new ToolError(ONE_TRIGGER_TEXT);
       }
       // the zone and target are recomputed now: they must be the ones the person approved
-      await sameAsApproved(ctx, BUILTIN.ScheduleCreate, createCard(input, p, ctx.conversationId));
+      await sameAsApproved(
+        ctx,
+        BUILTIN.ScheduleCreate,
+        createCard(input, p, ctx.conversationId, ctx.agentId),
+      );
       const trigger = p.trigger;
       const task = await call(
         () =>
           svc.create(ctx.orgId, ctx.accountId, {
-            agentId: ctx.agentId,
+            agentId: p.agentId,
             name: input.name,
             prompt: input.prompt,
             trigger,
@@ -758,13 +894,19 @@ export function scheduleTools(deps: ScheduleToolsDeps): BuiltinTool[] {
       const after: Target =
         input.mode === "here"
           ? await hereTarget(db, ctx.orgId, ctx.accountId, ctx.conversationId)
-          : { mode: "new" };
+          : input.mode === "chat"
+            ? await chatTargetOf(db, normalizedChat(input.chat as ChatInput))
+            : { mode: "new" };
       if (!sameTarget(before, after)) {
         const b = targetWords(before, ctx.conversationId);
         const a = targetWords(after, ctx.conversationId);
         zh.push(`运行位置 ${b.zh} → ${a.zh}`);
         en.push(`runs in ${b.en} → ${a.en}`);
       }
+    }
+    if (input.agentId !== undefined && input.agentId !== task.agentId) {
+      zh.push(`智能体 ${clip(task.agentId, 80)} → ${clip(input.agentId, 80)}`);
+      en.push(`agent ${clip(task.agentId, 80)} → ${clip(input.agentId, 80)}`);
     }
     if (input.approvedTools !== undefined) {
       const next = uniqueSorted(input.approvedTools);
@@ -803,6 +945,8 @@ export function scheduleTools(deps: ScheduleToolsDeps): BuiltinTool[] {
     i.cron === undefined &&
     i.runAt === undefined &&
     i.mode === undefined &&
+    i.chat === undefined &&
+    i.agentId === undefined &&
     i.approvedTools === undefined;
 
   const update: BuiltinTool = {
@@ -817,6 +961,8 @@ export function scheduleTools(deps: ScheduleToolsDeps): BuiltinTool[] {
       if (input.cron !== undefined && input.runAt !== undefined) {
         return deny(key, BOTH_TRIGGERS_TEXT);
       }
+      const bad = updateChatError(input);
+      if (bad !== null) return deny(key, bad.message);
       if (nothingToUpdate(input)) return deny(key, NOTHING_TO_UPDATE_TEXT);
       const task = await ownTask(ctx.orgId, ctx.accountId, input.id);
       if (task === null) return deny(key, notYoursText(input.id));
@@ -830,6 +976,8 @@ export function scheduleTools(deps: ScheduleToolsDeps): BuiltinTool[] {
       if (input.cron !== undefined && input.runAt !== undefined) {
         throw new ToolError(BOTH_TRIGGERS_TEXT);
       }
+      const bad = updateChatError(input);
+      if (bad !== null) throw bad;
       if (nothingToUpdate(input)) throw new ToolError(NOTHING_TO_UPDATE_TEXT);
       const svc = await service();
       const task = await ownTask(ctx.orgId, ctx.accountId, input.id);
@@ -842,13 +990,16 @@ export function scheduleTools(deps: ScheduleToolsDeps): BuiltinTool[] {
       const patch: UpdateTaskInput = {};
       if (input.name !== undefined) patch.name = input.name;
       if (input.prompt !== undefined) patch.prompt = input.prompt;
+      if (input.agentId !== undefined) patch.agentId = input.agentId;
       const trigger = triggerOf(input);
       if (trigger !== undefined) patch.trigger = trigger;
       if (input.mode !== undefined) {
         const target: Target =
           input.mode === "here"
             ? await hereTarget(deps.db(), ctx.orgId, ctx.accountId, ctx.conversationId)
-            : { mode: "new" };
+            : input.mode === "chat"
+              ? await chatTargetOf(deps.db(), normalizedChat(input.chat as ChatInput))
+              : { mode: "new" };
         const f = targetFields(target);
         patch.mode = f.mode;
         patch.conversationId = f.conversationId ?? null;
@@ -929,6 +1080,52 @@ export function scheduleTools(deps: ScheduleToolsDeps): BuiltinTool[] {
     },
   };
 
+  // ---- ScheduleTargets ----
+
+  /** A target's fields in the model-facing line (`ScheduleTargets`). */
+  const targetLine = (t: ChatTarget): string =>
+    `- ${clip(t.label, 120)}: connectionId=${t.connectionId}, chatId=${t.chatId}, ` +
+    `chatType=${t.chatType}, agentId=${t.agentId} (${clip(t.connectionName, 80)}, ${t.plugin})`;
+
+  const targets: BuiltinTool = {
+    spec: TARGETS_SPEC,
+    defaultPolicy: "allow",
+    unavailable,
+    async run(_raw, ctx) {
+      const svc = await service();
+      await liveRole(ctx);
+      const items = await call(() => svc.chatTargets(ctx.orgId, ctx.accountId), {});
+      if (items.length === 0) {
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                "The user has no IM chats scheduled task runs can be delivered to in this " +
+                "organization; a chat appears once the user has messaged the channel's bot or " +
+                "talked in a group.",
+            },
+          ],
+          display: display("没有可送达的聊天", "No delivery chats"),
+        };
+      }
+      return {
+        content: [
+          {
+            type: "text",
+            text:
+              `The IM chats this user can deliver scheduled task runs to (${items.length}):\n` +
+              items.map(targetLine).join("\n"),
+          },
+        ],
+        display: display(
+          `可送达的聊天（${items.length} 个）`,
+          `Listed ${items.length} delivery chats`,
+        ),
+      };
+    },
+  };
+
   // ---- ScheduleDelete ----
 
   const remove: BuiltinTool = {
@@ -953,5 +1150,5 @@ export function scheduleTools(deps: ScheduleToolsDeps): BuiltinTool[] {
     },
   };
 
-  return [create, update, list, remove];
+  return [create, update, list, targets, remove];
 }

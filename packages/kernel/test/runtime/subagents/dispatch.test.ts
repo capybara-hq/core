@@ -330,6 +330,7 @@ describe("dispatch", () => {
         "ScheduleCreate",
         "ScheduleUpdate",
         "ScheduleList",
+        "ScheduleTargets",
         "ScheduleDelete",
       ],
     });

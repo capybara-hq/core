@@ -6103,6 +6103,7 @@
         "target_gone": "无法送达聊天",
         "conversation_gone": "会话已不存在",
         "org_disabled": "组织已关闭定时任务",
+        "plugin_disabled": "组织已停用该聊天插件",
         "unsupported_target": "暂不支持这个目标",
         "task_deleted": "任务已删除",
         "task_paused": "任务已暂停"

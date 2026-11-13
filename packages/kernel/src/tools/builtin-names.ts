@@ -33,6 +33,7 @@ export const BUILTIN = {
   ScheduleCreate: "ScheduleCreate",
   ScheduleUpdate: "ScheduleUpdate",
   ScheduleList: "ScheduleList",
+  ScheduleTargets: "ScheduleTargets",
   ScheduleDelete: "ScheduleDelete",
 } as const;
 
@@ -83,12 +84,14 @@ export const SANDBOX_ASK_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
 
 /**
  * The builtins that manage the person's scheduled tasks (scheduled tasks spec §11): create and
- * update are fixed asks ({@link R3_FIXED_ASK_TOOL_KEYS}), list and delete only read or narrow.
+ * update are fixed asks ({@link R3_FIXED_ASK_TOOL_KEYS}), list, targets and delete only read or
+ * narrow.
  */
 export const SCHEDULE_TOOL_NAMES: readonly BuiltinName[] = [
   BUILTIN.ScheduleCreate,
   BUILTIN.ScheduleUpdate,
   BUILTIN.ScheduleList,
+  BUILTIN.ScheduleTargets,
   BUILTIN.ScheduleDelete,
 ];
 
@@ -176,6 +179,7 @@ export const CHILD_REMOVED_TOOLS = [
   BUILTIN.ScheduleCreate,
   BUILTIN.ScheduleUpdate,
   BUILTIN.ScheduleList,
+  BUILTIN.ScheduleTargets,
   BUILTIN.ScheduleDelete,
 ] as const;
 
@@ -219,6 +223,7 @@ export const BUILTIN_TOOL_KINDS: Readonly<Record<string, ToolKind>> = {
   [BUILTIN.ScheduleCreate]: "tool",
   [BUILTIN.ScheduleUpdate]: "tool",
   [BUILTIN.ScheduleList]: "tool",
+  [BUILTIN.ScheduleTargets]: "tool",
   [BUILTIN.ScheduleDelete]: "tool",
 };
 

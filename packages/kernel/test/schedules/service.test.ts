@@ -29,6 +29,7 @@ import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
   createOrg,
+  enableExtensions,
   PW,
   type Req,
   runConfig,
@@ -141,6 +142,8 @@ const setSchedules = (patch: Record<string, unknown>) =>
   k.app.get(OrgSettingsService).update(orgId, { scheduledTasks: patch }, ownerId);
 
 async function seedConnection(agent = agentId): Promise<string> {
+  // a connection exists only on an extension the org has enabled (a chat target asks for it)
+  await enableExtensions(raw, orgId, "fake-im");
   const id = randomUUID();
   await sql`INSERT INTO capybara.channel_connections (id, org_id, plugin, name, agent_id, created_by)
     VALUES (${id}, ${orgId}, 'fake-im', ${`c-${id.slice(0, 6)}`}, ${agent}, ${ownerId})`.execute(

@@ -196,6 +196,7 @@ describe("builtin names", () => {
       "ScheduleCreate",
       "ScheduleUpdate",
       "ScheduleList",
+      "ScheduleTargets",
       "ScheduleDelete",
     ]);
     for (const n of SCHEDULE_TOOL_NAMES) {
@@ -208,9 +209,11 @@ describe("builtin names", () => {
     expect(R3_FIXED_ASK_TOOL_KEYS.has("ScheduleUpdate")).toBe(true);
     // listing reads, deleting one's own task only narrows
     expect(R3_FIXED_ASK_TOOL_KEYS.has("ScheduleList")).toBe(false);
+    expect(R3_FIXED_ASK_TOOL_KEYS.has("ScheduleTargets")).toBe(false);
     expect(R3_FIXED_ASK_TOOL_KEYS.has("ScheduleDelete")).toBe(false);
     const byName = new Map(builtins().map((t) => [t.spec.name, t]));
     expect(byName.get("ScheduleList")?.defaultPolicy).toBe("allow");
+    expect(byName.get("ScheduleTargets")?.defaultPolicy).toBe("allow");
     expect(byName.get("ScheduleDelete")?.defaultPolicy).toBe("allow");
     expect(byName.get("ScheduleCreate")?.callPolicy).toBeTypeOf("function");
     expect(byName.get("ScheduleUpdate")?.callPolicy).toBeTypeOf("function");

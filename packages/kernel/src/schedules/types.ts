@@ -50,6 +50,8 @@ export type TaskRunSkipReason =
   | "target_gone"
   | "conversation_gone"
   | "org_disabled"
+  /** The channel's extension is disabled in the org: the task stays active. */
+  | "plugin_disabled"
   /** A group chat on a channel without threads (a group run needs its own thread). */
   | "unsupported_target"
   /** The task was deleted after the run was recorded. */

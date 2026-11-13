@@ -459,18 +459,29 @@ Web (`writing-web-ui`, zh copy 定时任务, 智能体):
 *Decided*: agents can manage tasks. New builtin tools (names *my call*, close to Claude Code's
 `CronCreate` / `CronList` / `CronDelete`; keys contain no dots):
 
-- `ScheduleCreate { name, prompt, cron? | runAt?, mode: "new" | "here", approvedTools? }`:
+- `ScheduleCreate { name, prompt, cron? | runAt?, mode: "new" | "here" | "chat", chat?, agentId?, approvedTools? }`:
   `here` targets the current conversation: a `chat` task for its chat when the conversation is an
   IM thread, else a `conversation` task (so "check this again at 3 pm"
-  works with `runAt`); the zone is the run's `run_context` zone. **Fixed ask** (R3): the approval
-  card shows the whole task, grants included, so a person approves every task an agent creates.
-- `ScheduleUpdate { id, … }`: fixed ask, same card with the diff.
+  works with `runAt`); the zone is the run's `run_context` zone. `chat` targets an IM chat named
+  by `chat { connectionId, chatId, chatType? }`: `chatType` is `dm` (the default) or `group` (a
+  group needs a channel with threads). `agentId` names the agent the task runs as and defaults to
+  the run's agent; a chat target must use the connection's agent, and the kernel refuses any other
+  with `schedule.target_invalid`. **Fixed ask** (R3): the approval card shows the whole task,
+  grants included, so a person approves every task an agent creates.
+- `ScheduleUpdate { id, … }`: fixed ask, same card with the diff; `mode: "chat"` with `chat` and
+  `agentId` moves an existing task into an IM chat.
 - `ScheduleList`: allow; the creator's tasks.
+- *Amended 2026-11-14*: `ScheduleTargets`: allow; the IM chats the caller can deliver scheduled
+  task runs to (the creator's DMs with each active connection's bot, archived ones included, and,
+  on a channel with threads, the groups they have talked in), each with `connectionId`, `chatId`,
+  `chatType` and the connection's `agentId`: the same data as `schedules.chat-targets`. A chat
+  whose channel extension is disabled in the org is not offered and is refused at create or update
+  (`schedule.target_invalid`).
 - `ScheduleDelete { id }`: allow for the creator's own tasks (deleting only narrows), even when the
   caller is an org admin: an agent never deletes another member's task.
 - Because the first two are fixed-ask, an unattended run can never create or widen a task (§7).
 
-All four act as the run's trigger account through the same service as the HTTP routes and respect
+All five act as the run's trigger account through the same service as the HTTP routes and respect
 the org's limits; errors are English and actionable (`writing-tools`).
 
 ## 12. Replay

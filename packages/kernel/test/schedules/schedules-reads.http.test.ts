@@ -186,6 +186,29 @@ describe("schedule reads for the web", () => {
     expect(dm.label.length).toBeGreaterThan(0);
   });
 
+  it("a channel extension disabled in the org offers no chat target", async () => {
+    await db
+      .updateTable("extension_org_configs")
+      .set({ enabled: false })
+      .where("org_id", "=", orgId)
+      .where("plugin", "=", "chan-mini")
+      .execute();
+    try {
+      const res = await alice({ method: "GET", url: `${base()}/chat-targets` });
+      expect(res.statusCode, res.body).toBe(200);
+      const items = (res.json() as { items: Target[] }).items;
+      expect(items.some((t) => t.connectionId === miniId)).toBe(false);
+      expect(items.some((t) => t.connectionId === plainId)).toBe(true);
+    } finally {
+      await db
+        .updateTable("extension_org_configs")
+        .set({ enabled: true })
+        .where("org_id", "=", orgId)
+        .where("plugin", "=", "chan-mini")
+        .execute();
+    }
+  });
+
   it("grantable tools: every tool of the agent, each grantable or why not", async () => {
     let res = await owner({
       method: "PATCH",

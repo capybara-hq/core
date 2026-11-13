@@ -98,9 +98,9 @@ const DEVICE_GONE = new Set(["device.not_found", "device.unavailable", "sandbox.
  *    count), then the task run and the task rows: the checks in order (task paused since the
  *    scan, unless a person's "run now"; a tick fired more than 10 minutes past the org's catch-up
  *    window, `missed`, unless a "run now"; org disabled, creator inactive or not a member, agent
- *    gone or not visible, conversation gone, connection inactive,
- *    overlap, rate limit, device offline, queue paused), each a `skipped` run with its reason, the
- *    lasting ones also pausing the task; then `fired_at` is written, after the rate limit count,
+ *    gone or not visible, conversation gone, connection inactive or its extension disabled in the
+ *    org, overlap, rate limit, device offline, queue paused), each a `skipped` run with its reason,
+ *    the lasting ones also pausing the task; then `fired_at` is written, after the rate limit count,
  *    with the run's delayed settle check owed (`sched-settle`, {@link settle}).
  *    A run whose claim committed before (a retried job) goes straight to the start.
  * 2. The start, idempotent: `new` creates the conversation with its first message keyed by the
@@ -291,11 +291,13 @@ export class ScheduledTaskFirer {
         !conn ||
         conn.orgId !== orgId ||
         conn.status !== "active" ||
-        !conn.pluginEnabled ||
         conn.agentId !== task.agentId
       ) {
         return skip("target_gone");
       }
+      // the org switched the channel's extension off: the task stays active and recovers when it
+      // is switched on again (unlike a target that is gone)
+      if (!conn.pluginEnabled) return skip("plugin_disabled");
       if (chat.chatType === "group") {
         // a group has no current conversation: each run starts its own thread at its first post
         // (spec §8), which needs a channel with threads; the creator must have written there
