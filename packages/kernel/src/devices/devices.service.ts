@@ -116,6 +116,11 @@ export interface DeviceModeView {
    * it, files kept (「下次使用时生效，文件保留」).
    */
   pendingNextUse: boolean;
+  /**
+   * Its provider applies limits at its file system (`limitsApplyAt: "fileSystem"`) and the instance
+   * runs another mode or network kind: only a file reset applies it (「重置文件后生效」).
+   */
+  pendingFilesReset: boolean;
   /** Its last {@link RECENT_POLICY_CHANGES} mode and policy changes, newest first. */
   recent: DeviceModeChangeView[];
 }
@@ -1156,6 +1161,7 @@ export class DevicesService {
           summaryOf(r),
           {
             pendingNextUse: perDevice.get(r.id)?.state.pendingNextUse ?? false,
+            pendingFilesReset: perDevice.get(r.id)?.state.pendingFilesReset ?? false,
             recent: recent.get(r.id) ?? [],
           },
           this.config.get().sandbox.limits.egress === "none",
@@ -1368,7 +1374,7 @@ export function deviceModeViewOf(
   settings: OrgDeviceSettings,
   local: boolean,
   summary: DeviceLocalPolicySummary | null,
-  extra: { pendingNextUse: boolean; recent: DeviceModeChangeView[] },
+  extra: { pendingNextUse: boolean; pendingFilesReset: boolean; recent: DeviceModeChangeView[] },
   /** The platform kill switch (`sandbox.limits.egress: none`): the network is the platform's. */
   killSwitch = false,
 ): DeviceModeView {
