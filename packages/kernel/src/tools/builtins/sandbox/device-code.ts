@@ -6,7 +6,14 @@
  *
  * Pure: it reads an exec result's output and has no side effects. Only `gh`'s own wording matches
  * on purpose — another CLI's device flow is not recognised (P-D13); a parser for it can be added
- * the same way later.
+ * the same way later. Recognition is output-only, so a command that prints the same text by hand
+ * produces the same card; the card only opens GitHub's fixed URL and shows the printed code.
+ *
+ * When the card appears: the kernel parses the output it is handed, so a `Bash` call's result when
+ * the command returns, or a `TaskOutput` read of a background task's output while the command is
+ * still waiting. There is no streaming stage: a foreground `gh auth login --web` returns only when
+ * the flow ends (the code is then spent), so the login belongs in the background, read with
+ * `TaskOutput`.
  */
 
 /** The one URL `gh auth login --web` sends the person to. */
@@ -27,8 +34,12 @@ export interface DeviceCode {
  */
 const CODE_LINE = /^!\s*First copy your one-time code:\s*([A-Z0-9]{4}-[A-Z0-9]{4})\s*$/m;
 
-/** The GitHub device-login URL as its own token (not a prefix of a longer URL or path). */
-const URL_TOKEN = /https:\/\/github\.com\/login\/device(?![\w./-])/;
+/**
+ * The GitHub device-login URL as its own token: exactly the URL, followed by whitespace or the end
+ * of the output (the recorded `gh` line has a space after it). A query, a fragment, a path or a
+ * lookalike host does not match.
+ */
+const URL_TOKEN = /https:\/\/github\.com\/login\/device(?=\s|$)/;
 
 /** The idempotency key of a call's `device_code` event (a retry or a resumed run writes it once). */
 export const deviceCodeIdemKey = (runId: string, callId: string): string =>

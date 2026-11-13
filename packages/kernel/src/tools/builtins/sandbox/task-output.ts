@@ -36,6 +36,7 @@ import {
   sandboxUsable,
   unavailableWhenNoSandbox,
 } from "./common.js";
+import { type DeviceCode, parseDeviceCode } from "./device-code.js";
 
 /** How long `TaskOutput` waits with `block` when `timeout` is not given (ms). */
 export const TASK_OUTPUT_DEFAULT_TIMEOUT_MS = 30_000;
@@ -57,8 +58,9 @@ const SPEC: ToolSpec = {
     "call for it. With block (the default) it waits until the task finishes or timeout " +
     "milliseconds pass, checking every 2 seconds; prefer this over sleeping in Bash. Each call " +
     "returns a bounded slice of new output; the task's whole output file (its path is in the Bash " +
-    "result) can also be read with Read. You are told when a task finishes, so there is no need " +
-    "to poll for that.",
+    "result) can also be read with Read. A background task that waits for a person (an " +
+    "interactive login, a prompt) prints its prompt here; read it while the task waits. You are " +
+    "told when a task finishes, so there is no need to poll for that.",
   inputSchema: {
     type: "object",
     properties: {
@@ -486,17 +488,23 @@ export function taskOutputTool(deps: SandboxToolDeps): BuiltinTool {
           `[${more} more bytes of output after this; call TaskOutput again to read them, or Read ${outputFile(task)}.]`,
         );
       }
-      parts.push(used === 0 ? "[No new output.]" : data.subarray(0, used).toString("utf8"));
-      return result(task, [statusLine(task), ...parts]);
+      const text = used === 0 ? "" : data.subarray(0, used).toString("utf8");
+      parts.push(used === 0 ? "[No new output.]" : text);
+      // A background command that waits for a person (`gh auth login --web`, any interactive
+      // login) prints its prompt while TaskOutput reads it (auto mode spec §6, P-D13): this is
+      // the path that shows the device-code card while the login is still pending.
+      return result(task, [statusLine(task), ...parts], parseDeviceCode(text));
     },
   };
 }
 
-function result(task: BackgroundTaskRow, lines: string[]) {
+function result(task: BackgroundTaskRow, lines: string[], loginCode: DeviceCode | null = null) {
   const d = clip(task.description, 120);
   return {
     content: [{ type: "text" as const, text: lines.join("\n") }],
     isError: false,
     display: display(`读取后台任务输出：${d}`, `Read background task output: ${d}`),
+    // kernel-internal (see `BuiltinResult.loginCode`): never part of the content above
+    ...(loginCode !== null && { loginCode }),
   };
 }

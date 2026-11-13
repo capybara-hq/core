@@ -69,7 +69,9 @@ const SPEC: ToolSpec = {
     "under .capybara/tasks in the workspace directory. Read the output with TaskOutput (or Read) and stop the " +
     "task with TaskStop; you will be told when it finishes. TaskList lists this conversation's " +
     "background tasks and their ids, running ones first. You do not need to use '&' at the end " +
-    "of the command when using this parameter. In the background, timeout defaults to the " +
+    "of the command when using this parameter. A command that waits for a person (an interactive " +
+    "login, a prompt) should run in the background so its output, such as a one-time code to " +
+    "enter, can be read with TaskOutput while it waits. In the background, timeout defaults to the " +
     "deployment's background maximum (7200000 by default). A background task ends when its " +
     "command exits, and processes it left running are stopped. A background task is lost if the " +
     "sandbox is suspended (it is suspended after it has been running for a while, " +

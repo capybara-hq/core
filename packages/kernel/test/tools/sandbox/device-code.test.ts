@@ -74,6 +74,22 @@ describe("parseDeviceCode: other outputs are not recognised (P-D13)", () => {
     );
     expect(parseDeviceCode(lookalike)).toBeNull();
   });
+
+  it("the URL must be exactly the device URL: a query or a fragment is not it", () => {
+    expect(
+      parseDeviceCode(
+        GH_RECORDED.replace(
+          "https://github.com/login/device",
+          "https://github.com/login/device?x=1",
+        ),
+      ),
+    ).toBeNull();
+    expect(
+      parseDeviceCode(
+        GH_RECORDED.replace("https://github.com/login/device", "https://github.com/login/device#x"),
+      ),
+    ).toBeNull();
+  });
 });
 
 describe("deviceCodeIdemKey", () => {

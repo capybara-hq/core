@@ -149,6 +149,49 @@ describe("the device code in the pipeline", { timeout: 120_000 }, () => {
     expect(JSON.stringify(result?.payload)).not.toContain("loginCode");
   });
 
+  it("a background login shows its code when TaskOutput reads the task's output", async () => {
+    capture.reset();
+    const conv = await createConv(owner, orgId, agentId);
+    // the natural flow: the login waits for the person, so it runs in the background and its
+    // prompt is read while it waits (there is no streaming stage)
+    const command = `printf '%s\\n' '${GH_OUTPUT[0]}' '${GH_OUTPUT[1]}'; sleep 20`;
+    await postMessage(
+      owner,
+      orgId,
+      conv,
+      `tool:Bash:${JSON.stringify({ command, description: "Sign in", run_in_background: true })}`,
+    );
+    await waitForTerminal(db, conv, 1, 30_000);
+    const started = await eventsOf(db, conv);
+    const launched = started.filter((e) => e.type === "tool_result").at(-1)?.payload.content;
+    const taskId = /Started background task (bt_[A-Za-z0-9_-]+)/.exec(launched ?? "")?.[1];
+    expect(taskId, launched).toBeDefined();
+    // the launch only records the task: the prompt has not been read, so there is no card yet
+    expect(started.filter((e) => e.type === "device_code")).toHaveLength(0);
+
+    await postMessage(
+      owner,
+      orgId,
+      conv,
+      `tool:TaskOutput:${JSON.stringify({ task_id: taskId, block: true, timeout: 3000 })}`,
+    );
+    await waitForTerminal(db, conv, 2, 60_000);
+    const events = await eventsOf(db, conv);
+    const codes = events.filter(
+      (e): e is Extract<ConversationEvent, { type: "device_code" }> => e.type === "device_code",
+    );
+    expect(codes).toHaveLength(1);
+    const result = events.filter((e) => e.type === "tool_result").at(-1);
+    expect(codes[0]?.payload.code).toBe("1A2B-C3D4");
+    // the event names the call whose output carried it (the TaskOutput call), and the result
+    // the model sees has the command's own output but never the kernel-internal field
+    expect(codes[0]?.payload.callId).toBe(
+      (result?.payload as { callId: string } | undefined)?.callId,
+    );
+    expect(result?.payload.content).toContain("1A2B-C3D4");
+    expect(result?.payload).not.toHaveProperty("loginCode");
+  });
+
   it("the append is idempotent: the same retry key writes nothing new", async () => {
     capture.reset();
     const conv = await signIn();

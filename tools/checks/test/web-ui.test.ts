@@ -357,6 +357,10 @@ describe("checkWebUi", () => {
         // Loop1's traits first read inside the Loop1 / Loop2 cycle are not kept
         ["web-ui-box-in-box", 68, "<Loop1> (draws Card) inside <FormSection>"],
       ]));
+    it("a pane resets the box for a followed component too: what a TranscriptFrame holds is on the page ground, while a component drawing a Card without a pane is still an inner box", () =>
+      expect(at([], "pane.tsx")).toEqual([
+        ["web-ui-box-in-box", 33, "<Nested> (draws Card) inside <AgentMapDialog>"],
+      ]));
     it("names the fix", () => {
       const f = run("box-in-box");
       expect(f[0]?.message).toContain("ItemList");
