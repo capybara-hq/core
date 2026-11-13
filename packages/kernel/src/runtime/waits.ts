@@ -700,6 +700,13 @@ export class Waits implements OnApplicationShutdown {
    * background tasks of every covered sub-agent conversation stop, whether it was running or idle.
    * Returns the number of runs asked to stop.
    *
+   * `windowsUpTo` (a root run's id; only after that root run a person stopped ended,
+   * {@link stopDescendantsOfStopped}) narrows the stop to the runs of the budget windows opened up
+   * to that run (`runs.budget_run_id`, agent map spec §6): a run of a window a later root run
+   * opened (the person's next message, started meanwhile) is never stopped by the late call, and
+   * the background task sweep is left out (a stopped child's own end stops its tasks,
+   * {@link childFinished}).
+   *
    * Lock order: nothing is held across runs. Each run's stop is its own transaction (or none), and
    * one that writes the terminal state locks that run's conversation row, then its run row, the
    * order of `StepLog.appendCounted` (conversation row, then the root's budget run row) and of
@@ -709,20 +716,34 @@ export class Waits implements OnApplicationShutdown {
   async stopTree(
     conversationId: string,
     byAccountId: string | null,
-    opts: { includeSelf?: boolean } = {},
+    opts: { includeSelf?: boolean; windowsUpTo?: string } = {},
   ): Promise<number> {
     const tree = await conversationTree(this.db, conversationId);
     const ids = tree.filter((c) => opts.includeSelf !== false || c.level > 0).map((c) => c.id);
     if (ids.length === 0) return 0;
     const level = new Map(tree.map((c) => [c.id, c.level]));
-    const runs = (
-      await this.db
-        .selectFrom("runs")
-        .select(["id", "conversation_id", "status"])
-        .where("conversation_id", "in", ids)
-        .where("status", "in", ACTIVE_RUN_STATUSES)
-        .execute()
-    ).sort((a, b) => (level.get(a.conversation_id) ?? 0) - (level.get(b.conversation_id) ?? 0));
+    let q = this.db
+      .selectFrom("runs")
+      .select(["id", "conversation_id", "status"])
+      .where("conversation_id", "in", ids)
+      .where("status", "in", ACTIVE_RUN_STATUSES);
+    const upTo = opts.windowsUpTo;
+    if (upTo !== undefined) {
+      // a window is opened by a root run without a budget run of its own (`budgetWindowOf`)
+      q = q.where("budget_run_id", "in", (eb) =>
+        eb
+          .selectFrom("runs as w")
+          .select("w.id")
+          .where("w.conversation_id", "=", conversationId)
+          .where("w.budget_run_id", "is", null)
+          .where("w.created_at", "<=", (eb2) =>
+            eb2.selectFrom("runs as s").select("s.created_at").where("s.id", "=", upTo),
+          ),
+      );
+    }
+    const runs = (await q.execute()).sort(
+      (a, b) => (level.get(a.conversation_id) ?? 0) - (level.get(b.conversation_id) ?? 0),
+    );
     for (const r of runs) {
       try {
         // a stopped wait's card updates are owed by its transaction's appends (outbox spec §8.1)
@@ -736,17 +757,21 @@ export class Waits implements OnApplicationShutdown {
     // all of each conversation's tasks, as a stopped child's run end does (`childFinished`), with
     // which this is idempotent (only running tasks are stopped; `stoppedBy: "subagent_end"`
     // never wakes). A root conversation is skipped (`stopSubagentTasks`); never throws.
-    await Promise.all(ids.map((id) => this.background.stopSubagentTasks(id)));
+    if (upTo === undefined) {
+      await Promise.all(ids.map((id) => this.background.stopSubagentTasks(id)));
+    }
     return runs.length;
   }
 
   /**
-   * After a sub-agent run's terminal commit (its worker): a run a person stopped (`run_aborted`
-   * with an account and no `detail`; only {@link stopTree} stops a sub-agent's run that way) stops
-   * the active runs below its conversation as well, so a descendant it dispatched after the tree
-   * stop read the tree still stops (dispatch needs its run `running`, so after its terminal commit
-   * the set is final). Any other end leaves its children running (agent map spec §5.4). Returns
-   * the number of runs asked to stop. A root conversation's run never stops its children here.
+   * After a run's terminal commit (its worker): a run a person stopped (`run_aborted` with an
+   * account and no `detail`; {@link stopTree} or a person's stop of the root) stops the active runs
+   * below its conversation as well, so a descendant it dispatched after the tree stop read the tree
+   * still stops (dispatch needs its run `running`, so after its terminal commit the set is final).
+   * A root's run stops only the runs of the budget windows up to it (`windowsUpTo`): the person's
+   * next message may already have started a new run with sub-agents of its own (agent map spec §6,
+   * changed in acceptance 2026-11-13). Any other end leaves its children running (§5.4). Returns
+   * the number of runs asked to stop.
    */
   async stopDescendantsOfStopped(runId: string): Promise<number> {
     const ev = await this.db
@@ -755,17 +780,18 @@ export class Waits implements OnApplicationShutdown {
         j.onRef("e.conversation_id", "=", "r.conversation_id").onRef("e.run_id", "=", "r.id"),
       )
       .innerJoin("conversations as c", "c.id", "r.conversation_id")
-      .select(["r.conversation_id", "e.payload"])
+      .select(["r.conversation_id", "c.kind", "e.payload"])
       .where("r.id", "=", runId)
-      // a root's stop leaves its children running (agent map spec §6): a person-stopped root run
-      // reaching here (a redelivered job, the failure path) stops nothing
-      .where("c.kind", "=", "subagent")
+      .where("c.kind", "in", ["chat", "subagent"])
       .where("r.status", "=", "aborted")
       .where("e.type", "=", "run_aborted")
       .executeTakeFirst();
     const p = ev?.payload as { byAccountId?: string | null; detail?: string } | undefined;
     if (!ev || typeof p?.byAccountId !== "string" || p.detail !== undefined) return 0;
-    return this.stopTree(ev.conversation_id, p.byAccountId, { includeSelf: false });
+    return this.stopTree(ev.conversation_id, p.byAccountId, {
+      includeSelf: false,
+      ...(ev.kind === "chat" && { windowsUpTo: runId }),
+    });
   }
 
   /**

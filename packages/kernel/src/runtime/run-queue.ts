@@ -157,6 +157,7 @@ export class RunQueue {
         "queue_paused",
         "account_id",
         "deleted_at",
+        "tree_stopped_at",
       ])
       .where("id", "=", conversationId)
       .forUpdate()
@@ -294,6 +295,15 @@ export class RunQueue {
       .execute();
     // the task run its message started follows this run from now on (spec §6)
     if (taskRunId !== null) await linkStartedRunIn(t, taskRunId, runId, conversationId);
+    // the root runs again: a person's stop of its tree no longer holds the tree's wakes
+    // (agent map spec §6); read with the row lock above, so the hot path issues no statement
+    if (conv.tree_stopped_at !== null) {
+      await t
+        .updateTable("conversations")
+        .set({ tree_stopped_at: null })
+        .where("id", "=", conversationId)
+        .execute();
+    }
     return runId;
   }
 
@@ -349,11 +359,12 @@ export class RunQueue {
    * racing the run's end starts a new run, never lost); and it is woken by its own background
    * task's finish or a delivery from its own sub-agent, under the same rules as a chat
    * conversation. Neither happens once its last run was stopped (`aborted`): a stopped sub-agent is
-   * started again only by its parent. Both read the queue and the trigger account's access on the
-   * root of its tree; a message needs no wake setting and has no wake window. The run counts
-   * against the root's budget window and runs on the sub-agent queue under
-   * `runJobId(child, boundary seq)`. An active run is never started past (one nobody runs is the
-   * `run-orphan-check`'s).
+   * started again only by its parent; nor while a person's stop of the root holds the tree
+   * (`conversations.tree_stopped_at`, cleared by the root's next run). Both read the queue and the
+   * trigger account's access on the root of its tree; a message needs no wake setting and has no
+   * wake window. The run counts against the root's budget window and runs on the sub-agent queue
+   * under `runJobId(child, boundary seq)`. An active run is never started past (one nobody runs is
+   * the `run-orphan-check`'s).
    */
   private async childWakeIn(
     conversationId: string,
@@ -377,6 +388,10 @@ export class RunQueue {
       .executeTakeFirst();
     if (last?.status === "aborted") return null;
     const rootId = await rootConversationOf(t, conversationId);
+    // a tree a person stopped at its root (agent map spec §6, changed in acceptance 2026-11-13)
+    // starts no sub-agent run here until the root runs again: an idle sub-agent the stop found
+    // with nothing running (or one whose report raced the stop) is not woken by a late finish
+    if (await treeStopped(t, rootId)) return null;
     const wake =
       (await this.pendingMessageIn(conversationId, Number(conv.consumed_seq), rootId)) ??
       (await wakeDecisionIn(
@@ -733,4 +748,17 @@ async function authorCanSend(
     )
     .executeTakeFirst();
   return row !== undefined;
+}
+
+/**
+ * Whether a person's stop of the root conversation holds its tree (`tree_stopped_at`, agent map
+ * spec §6): set by the stop, cleared when the root next starts a run.
+ */
+async function treeStopped(t: KernelSchemaDb, rootId: string): Promise<boolean> {
+  const root = await t
+    .selectFrom("conversations")
+    .select("tree_stopped_at")
+    .where("id", "=", rootId)
+    .executeTakeFirst();
+  return root?.tree_stopped_at != null;
 }

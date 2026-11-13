@@ -256,14 +256,21 @@ export class RunWorker {
   /**
    * After any terminal commit of a run that is not a sub-agent's (sub-agents spec §12): stops its
    * active fork invocation child on its behalf (no account); background `Agent` children keep
-   * running (agent map spec §5.4). The terminal transaction owed the same stop (`stop-tree`), the
-   * backstop when this call never happens.
+   * running (agent map spec §5.4), unless a person stopped the run: then the sub-agents of its
+   * windows stop too, also one it dispatched after the stop read the tree (agent map spec §6,
+   * changed in acceptance 2026-11-13). The terminal transaction owed the same stops
+   * (`stop-tree`), the backstop when this call never happens.
    */
   private async stopChildren(runId: string): Promise<void> {
     try {
       await this.waits.stopChildren(runId, null);
     } catch (err) {
       this.log.error("cannot stop the sub-agents of a finished run", { runId, err });
+    }
+    try {
+      await this.waits.stopDescendantsOfStopped(runId);
+    } catch (err) {
+      this.log.error("cannot stop the sub-agents of a stopped run", { runId, err });
     }
   }
 

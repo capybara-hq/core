@@ -727,8 +727,10 @@ export class ConversationsController {
 
   /**
    * Stops the current run (the conversation's owner): 202 `{ runId }`; nothing active → 409
-   * `run.not_active`. On a root conversation `runId` is the stopped run, and its background
-   * sub-agents keep working. On a sub-agent's conversation (the root's owner, at any depth) the
+   * `run.not_active`. On a root conversation every active sub-agent of its tree stops with its
+   * run, and nothing they deliver starts the root again until its next run (agent map spec §6,
+   * changed in acceptance 2026-11-13); `runId` is the stopped run (the latest when only sub-agents
+   * ran). On a sub-agent's conversation (the root's owner, at any depth) the
    * sub-agent stops with every sub-agent below it, and `runId` is the sub-agent's latest run,
    * which may already be finished when only its descendants were working (agent map spec §6).
    */
