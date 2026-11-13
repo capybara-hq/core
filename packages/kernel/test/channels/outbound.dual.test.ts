@@ -44,7 +44,7 @@ const cleanups: (() => Promise<unknown> | unknown)[] = [];
 beforeAll(async () => {
   [pgc, rdc] = await Promise.all([startTestPostgres(), startTestRedis()]);
   im = await startFakeChannelServer({ dedupeSends: false });
-}, 120_000);
+});
 
 afterEach(async () => {
   for (const c of cleanups.splice(0).reverse()) await c();
@@ -248,7 +248,7 @@ describe("渠道出站投递（双副本）", () => {
       | undefined;
     const lastText = (lastPayload?.content ?? []).map((b) => b.text ?? "").join("");
     expect(lastText).toBe(LONG);
-  }, 180_000);
+  });
 
   it("T5a: the delivering worker dies after recording the card as pending; the other replica sends it exactly once and the row ends sent", async () => {
     // A platform that dedupes by idempotency key, like Lark's uuid: the survivor's resend reuses it
@@ -290,5 +290,5 @@ describe("渠道出站投递（双副本）", () => {
     expect(await row()).toEqual({ message_id: cardMsg.messageId, status: "sent" });
     await sleep(1000);
     expect(cards()).toHaveLength(1);
-  }, 180_000);
+  });
 });

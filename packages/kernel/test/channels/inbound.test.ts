@@ -129,7 +129,7 @@ beforeAll(async () => {
   expect(res.statusCode, res.body).toBe(201);
   connId = (res.json() as { channel: { id: string } }).channel.id;
   await waitFor(async () => im.active(connId).length === 1, 10_000, "long connection");
-}, 120_000);
+});
 
 afterAll(async () => {
   await queue?.close();
@@ -467,7 +467,7 @@ describe("入站持久化（Ruling A21）", () => {
         .raw(`DROP TRIGGER IF EXISTS w2_inbound_fail ON capybara.channel_deliveries`)
         .execute(raw);
     }
-  }, 40_000);
+  });
 
   it("回复时插件报不可重试的 target_gone → 入站任务直接失败，不重试", async () => {
     // 未绑定策略为 bind：未绑定的私聊必回绑定卡片（前面的用例可能留下了 anonymous）
@@ -491,7 +491,7 @@ describe("入站持久化（Ruling A21）", () => {
     expect(job?.attemptsMade).toBe(1);
     await sleep(1500);
     expect(im.sent.filter((x) => x.target.chatId === "dm-u-gone")).toEqual([]);
-  }, 15_000);
+  });
 
   it("入站任务的优先级高于出站投递任务", async () => {
     await waitFor(() => processed("m1"), 10_000, "m1 processed");

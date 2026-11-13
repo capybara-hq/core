@@ -198,7 +198,7 @@ beforeAll(async () => {
   anonId = await mk("chan-mini", "cli_anon", agentId, "anonymous");
   slowId = await mk("chan-slowedit", "cli_slow");
   plainId = await mk("chan-plain", "cli_plain");
-}, 120_000);
+});
 
 afterAll(async () => {
   redis?.disconnect();
@@ -300,7 +300,7 @@ async function approvalStatus(id: string): Promise<string> {
 
 const LONG = "The quick brown fox jumps over the lazy dog while streaming tokens to IM. ".repeat(2);
 
-describe("出站投递：流式回复", { timeout: 40_000 }, () => {
+describe("出站投递：流式回复", () => {
   it("首个增量发草稿，之后至多每秒更新一次，定稿为完整文本；不发 thinking；进度推进且清草稿", async () => {
     const chat = "dm-u-owner";
     im.push(connId, dm("s1", "u-owner", `slow:60:${LONG}`));
@@ -435,7 +435,7 @@ describe("出站投递：流式回复", { timeout: 40_000 }, () => {
   });
 });
 
-describe("出站投递：卡片与卡片操作", { timeout: 40_000 }, () => {
+describe("出站投递：卡片与卡片操作", () => {
   let target: ChannelTarget;
   let conv: string;
 
@@ -928,7 +928,7 @@ describe("出站投递：卡片与卡片操作", { timeout: 40_000 }, () => {
   });
 });
 
-describe("network asks in IM (network ask-to-allow spec §6.4, §6.5)", { timeout: 40_000 }, () => {
+describe("network asks in IM (network ask-to-allow spec §6.4, §6.5)", () => {
   /**
    * A network ask on a run that waits on an echo approval (the echo keeps the run waiting while
    * the ask is decided), for the device owner `requestedFor`. Returns the ask's card message.
@@ -1173,9 +1173,7 @@ describe("network asks in IM (network ask-to-allow spec §6.4, §6.5)", { timeou
   });
 });
 
-describe("cards speak the requester's language (run context spec §3.4)", {
-  timeout: 40_000,
-}, () => {
+describe("cards speak the requester's language (run context spec §3.4)", () => {
   it("a person whose latest web message is Chinese gets a Chinese approval card in an en org", async () => {
     const mem = await session(k, "mem");
     const web = await mem({
@@ -1226,7 +1224,7 @@ describe("cards speak the requester's language (run context spec §3.4)", {
   });
 });
 
-describe("T5a: cards are recorded before they are sent", { timeout: 40_000 }, () => {
+describe("T5a: cards are recorded before they are sent", () => {
   const cardRow = async (approvalId: string) =>
     (
       await sql<{ message_id: string | null; status: string }>`SELECT message_id, status
@@ -1340,7 +1338,7 @@ describe("T5a: cards are recorded before they are sent", { timeout: 40_000 }, ()
   });
 });
 
-describe("卡片操作：eventId 去重与缺 threadId（Ruling A26）", { timeout: 40_000 }, () => {
+describe("卡片操作：eventId 去重与缺 threadId（Ruling A26）", () => {
   it("平台用同一 eventId 重投卡片点击 → 只处理一次（不回「已处理」）", async () => {
     const chat = "grp-evt";
     im.push(connId, group("ev1", "u-owner", ECHO, { chatId: chat }));
@@ -1418,7 +1416,7 @@ describe("卡片操作：eventId 去重与缺 threadId（Ruling A26）", { timeo
   });
 });
 
-describe("features.cards / threads = false 的渠道（Ruling A33）", { timeout: 40_000 }, () => {
+describe("features.cards / threads = false 的渠道（Ruling A33）", () => {
   it("卡片按 renderCardAsText 拼进正文、不传 cards；群聊回复与卡片的目标都不带 threadId", async () => {
     const chat = "grp-plain";
     im.push(plainId, group("pl1", "u-owner", ECHO, { chatId: chat }));
@@ -1446,7 +1444,7 @@ describe("features.cards / threads = false 的渠道（Ruling A33）", { timeout
   });
 });
 
-describe("出站投递：发送失败", { timeout: 40_000 }, () => {
+describe("出站投递：发送失败", () => {
   it("Ruling A14：同一事件不可重试地失败 3 次 → 跳过它并提示去网页查看，之后的回复照常投递", async () => {
     const chat = "grp-poison";
     im.failNext("/send", 400, 3, undefined, undefined, undefined, chat);

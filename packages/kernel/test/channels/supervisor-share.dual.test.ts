@@ -32,7 +32,7 @@ let raw: ReturnType<typeof createDb> | undefined;
 
 beforeAll(async () => {
   im = await startFakeChannelServer();
-}, 120_000);
+});
 
 afterAll(async () => {
   await raw?.destroy();
@@ -163,5 +163,5 @@ describe("channel long connections: fair share across gateway replicas (dual rep
     // margin covers the fake handshake, this test's polling and load on a busy runner
     expect(Date.now() - killedAt).toBeLessThanOrEqual(LEASE_TTL_MS + 2 * SCAN_MS + 1_500);
     for (const id of ids) expect(im.maxConcurrent(id)).toBe(1);
-  }, 180_000);
+  });
 });

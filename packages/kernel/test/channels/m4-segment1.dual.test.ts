@@ -58,7 +58,7 @@ const cleanups: (() => Promise<unknown> | unknown)[] = [];
 beforeAll(async () => {
   [pgc, rdc] = await Promise.all([startTestPostgres(), startTestRedis()]);
   im = await startFakeChannelServer();
-}, 120_000);
+});
 
 afterEach(async () => {
   for (const c of cleanups.splice(0).reverse()) await c();
@@ -568,5 +568,5 @@ describe("M4 第一段验收（双副本）", () => {
     // ---- 全程：没有任何发送需要靠平台的幂等键去重；所有消息都由本连接的应用发出 ----
     expect(im.duplicateSends).toEqual([]);
     expect(im.sent.every((s) => s.appId === "cli_acme")).toBe(true);
-  }, 240_000);
+  });
 });

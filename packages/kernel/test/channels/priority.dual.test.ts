@@ -30,7 +30,7 @@ let rd: TestContainer;
 
 beforeAll(async () => {
   rd = await startTestRedis();
-}, 120_000);
+});
 
 afterAll(async () => {
   await rd?.stop();
@@ -132,5 +132,5 @@ describe("渠道队列优先级（行为）", () => {
       for (const c of conns) await c.quit().catch(() => c.disconnect());
       redis.disconnect();
     }
-  }, 60_000);
+  });
 });
