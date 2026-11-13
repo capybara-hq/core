@@ -13,7 +13,7 @@ import { OrgLockModule } from "../orgs/org-lock.js";
 import { ProvidersModule } from "../runtime/providers.js";
 import { RuntimeModule } from "../runtime/runtime.module.js";
 import { EvalBudgetModule } from "./budget.js";
-import { EVAL_QUEUE_NAME, type EvalJobData, EvalJobs } from "./jobs.js";
+import { EVAL_CASE_JOB, EVAL_QUEUE_NAME, type EvalJobData, EvalJobs } from "./jobs.js";
 import { EvalReplaySeeder } from "./run-replay.js";
 import { EvalRunsService } from "./runs.service.js";
 import { EvalSetsService } from "./sets.service.js";
@@ -57,6 +57,10 @@ export class EvalsProcessor extends WorkerHost<Worker<EvalJobData>> {
   }
 
   process(job: Job<EvalJobData>, token?: string): Promise<void> {
+    // the queue's one job name, owed by an eval run's start
+    if (job.name !== EVAL_CASE_JOB) {
+      return Promise.reject(new Error(`unknown eval job "${job.name}"`));
+    }
     return runJob(EVAL_QUEUE_NAME, job, () => this.evals.process(job, token));
   }
 

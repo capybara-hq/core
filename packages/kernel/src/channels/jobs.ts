@@ -16,6 +16,9 @@ import {
   type DeliverJobData,
   deliverJobId,
   oweDelivery,
+  RESUME_JOB,
+  type ResumeJobData,
+  resumeJobId,
 } from "./deliver-job.js";
 
 export {
@@ -24,6 +27,9 @@ export {
   type DeliverJobData,
   deliverJobId,
   oweDelivery,
+  RESUME_JOB,
+  type ResumeJobData,
+  resumeJobId,
 } from "./deliver-job.js";
 
 /**
@@ -50,7 +56,7 @@ export interface InboundJobData {
   event: InboundEvent;
 }
 
-export type ChannelJobData = DeliverJobData | InboundJobData;
+export type ChannelJobData = DeliverJobData | InboundJobData | ResumeJobData;
 
 /** 入站任务名。 */
 export const INBOUND_JOB = "inbound";
@@ -201,7 +207,23 @@ export class ChannelJobs implements OnApplicationShutdown {
   }
 
   /**
-   * 连接重新可投递（轮换了凭据 / 重新启用）：给该连接投递进度落后于会话日志的会话各排一个出站任务，
+   * Owes the catch-up of a connection that can deliver again in the caller's transaction (the
+   * update that re-enabled it or rotated its credentials while active): the deliveries that ran
+   * while it could not deliver have ended, and nothing else finds the conversations lagging the log.
+   * `at` is the connection row's new `updated_at`.
+   */
+  oweResume(connectionId: string, orgId: string, at: Date): Promise<boolean> {
+    return this.outbox.add<ResumeJobData>({
+      queue: CHANNEL_QUEUE_NAME,
+      name: RESUME_JOB,
+      jobId: resumeJobId(connectionId, at),
+      data: { connectionId },
+      orgId,
+    });
+  }
+
+  /**
+   * The {@link RESUME_JOB} job: 连接重新可投递（轮换了凭据 / 重新启用）：给该连接投递进度落后于会话日志的会话各排一个出站任务，
    * 补投停用或凭据失效期间落下的内容（不必等下一条消息）。
    */
   async resumeConnection(connectionId: string): Promise<void> {

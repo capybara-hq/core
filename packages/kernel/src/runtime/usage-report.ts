@@ -137,7 +137,9 @@ export function narrowPending(stored: readonly string[] | undefined, failed: rea
  *   `model_usage` row and owes job `usage-model-<rowId>` with it; the payload
  *   (`purpose: "embedding"`, `eventId` = the row id, the calling `extension`, no conversation fields)
  *   is read from the row when the job runs, and the row's `reported_at` is set once nothing is left
- *   to deliver; a job that gives up after its last attempt sets `report_failed_at`.
+ *   to deliver; a job that gives up after its last attempt sets `report_failed_at`. A row with
+ *   `reported_at IS NULL` is not necessarily pending: no job is owed when no enabled extension
+ *   subscribed to `usage.report` at the time of the call, and such a row is never reported.
  */
 @Injectable()
 export class UsageReporter {
@@ -401,7 +403,7 @@ export class UsageReporter {
   /** One delivery job (the `@Processor` of {@link USAGE_REPORT_QUEUE} calls it). */
   async process(j: Job<UsageReportJob>, token: string | undefined): Promise<void> {
     const payload = await this.payloadOfJob(j.data);
-    // conversation (or org) deleted meanwhile: nothing to report
+    // conversation deleted meanwhile: nothing to report
     if (payload === null) return;
     const subscribers = await this.subscribers(payload.orgId);
     if (j.data.pending === undefined) {

@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { OutboxDeadService } from "../../src/admin/outbox-dead.service.js";
 import type { AdminAttention } from "../../src/admin/overview.service.js";
 import { type CatalogItemView, CatalogService } from "../../src/catalog/catalog.service.js";
 import {
@@ -236,6 +237,27 @@ describe("GET /api/v1/admin/overview/attention", { timeout: 60_000 }, () => {
     expect(a.unavailable).toEqual(["providers"]);
     expect(a.extensions.length).toBeGreaterThan(0);
     expect(r.body).not.toContain("sk-SECRET");
+  });
+});
+
+describe("the dead outbox rows source (transactional outbox spec §3.4)", {
+  timeout: 60_000,
+}, () => {
+  it("failing alone leaves the other lists and marks the overview partial", async () => {
+    vi.spyOn(k.app.get(OutboxDeadService), "summary").mockRejectedValue(
+      new Error("outbox unreadable: sk-SECRET"),
+    );
+    const r = await root({ method: "GET", url: "/api/v1/admin/overview/attention" });
+    expect(r.statusCode, r.body).toBe(200);
+    const a = r.json() as AdminAttention;
+    expect(a.outbox).toEqual([]);
+    expect(a.unavailable).toEqual(["outbox"]);
+    // the other sources are read as usual: badconfig and the two failing providers
+    expect(a.extensions.map((e) => e.name)).toContain("badconfig");
+    expect(a.providers.length).toBeGreaterThan(0);
+    expect(r.body).not.toContain("sk-SECRET");
+    const s = await root({ method: "GET", url: "/api/v1/admin/overview" });
+    expect(s.json()).toMatchObject({ partial: true });
   });
 });
 

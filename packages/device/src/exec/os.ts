@@ -181,6 +181,13 @@ export class OsExecutor implements Executor {
    * running. The ask callback allows any public name only while one runs.
    */
   private readonly openCommands = new Set<string>();
+  /**
+   * Background tasks launched on macOS that still run, by the command id of their launch, with
+   * the task's process group id (its sid). A task keeps its launch's network permissions (the
+   * per-command list and {@link openCommands}) until its group is gone: it uses the launch's proxy
+   * credentials long after the launch returned. Checked on the prune tick.
+   */
+  private readonly backgroundNet = new Map<string, number>();
 
   constructor(private readonly opts: OsExecutorOptions) {
     this.reaper = new Reaper(opts.reaper);
@@ -426,15 +433,43 @@ export class OsExecutor implements Executor {
     return { child, commandId };
   }
 
+  /** Drops a command's network permissions (its per-command list and any-host membership). */
+  private releaseNet(commandId: string): void {
+    this.backgroundNet.delete(commandId);
+    this.openCommands.delete(commandId);
+    SandboxManager.unregisterCommandNetworkLists(commandId);
+  }
+
+  /** Keeps a launched background task's network permissions while its group `sid` lives. */
+  private keepBackgroundNet(commandId: string, sid: number): void {
+    if (!killGroupId(sid, 0)) {
+      this.releaseNet(commandId);
+      return;
+    }
+    this.backgroundNet.set(commandId, sid);
+    this.startPruning();
+  }
+
+  /** Releases the network permissions of background tasks whose group is gone (all: `all`). */
+  private pruneBackgroundNet(all = false): void {
+    for (const [commandId, sid] of [...this.backgroundNet]) {
+      if (all || !killGroupId(sid, 0)) this.releaseNet(commandId);
+    }
+  }
+
+  private startPruning(): void {
+    if (this.pruneTimer === undefined) {
+      this.pruneTimer = setInterval(() => this.prune(), PRUNE_INTERVAL_MS);
+      this.pruneTimer.unref();
+    }
+  }
+
   /** Tracks a spawned command's process group; returns the entry. */
   private track(tag: string, child: ChildProcess): Group | undefined {
     if (child.pid === undefined) return undefined;
     const g: Group = { tag, pgid: child.pid, exited: false };
     this.groups.add(g);
-    if (this.pruneTimer === undefined) {
-      this.pruneTimer = setInterval(() => this.prune(), PRUNE_INTERVAL_MS);
-      this.pruneTimer.unref();
-    }
+    this.startPruning();
     return g;
   }
 
@@ -446,7 +481,8 @@ export class OsExecutor implements Executor {
       // that pid means the id now belongs to someone else.
       if (pidAlive(g.pgid) || !killGroupId(g.pgid, 0)) this.groups.delete(g);
     }
-    if (this.groups.size === 0 && this.pruneTimer !== undefined) {
+    this.pruneBackgroundNet();
+    if (this.groups.size === 0 && this.backgroundNet.size === 0 && this.pruneTimer !== undefined) {
       clearInterval(this.pruneTimer);
       this.pruneTimer = undefined;
     }
@@ -510,7 +546,7 @@ export class OsExecutor implements Executor {
       }, args.timeoutMs);
       const onAbort = (): void => kill();
       signal.addEventListener("abort", onAbort, { once: true });
-      const cleanup = (): void => {
+      const cleanup = (keepFor?: number): void => {
         clearTimeout(timer);
         if (grace) clearTimeout(grace);
         signal.removeEventListener("abort", onAbort);
@@ -518,8 +554,8 @@ export class OsExecutor implements Executor {
           group.exited = true;
           group.onKill = undefined;
         }
-        this.openCommands.delete(commandId);
-        SandboxManager.unregisterCommandNetworkLists(commandId);
+        if (keepFor !== undefined) this.keepBackgroundNet(commandId, keepFor);
+        else this.releaseNet(commandId);
         SandboxManager.cleanupAfterCommand();
       };
       const finish = (): void => {
@@ -533,7 +569,11 @@ export class OsExecutor implements Executor {
           // The explanation is best effort: the command's result always comes back.
         }
         const trailer = networkTrailer(blocked);
-        cleanup();
+        cleanup(
+          reap || killed || timedOut || exit.code !== 0
+            ? undefined
+            : launchedGroup(cap.text("stdout")),
+        );
         child.stdout?.destroy();
         child.stderr?.destroy();
         let exitCode: number | null = exit.code;
@@ -687,6 +727,7 @@ export class OsExecutor implements Executor {
   async killAll(): Promise<void> {
     for (const g of [...this.groups]) this.killGroup(g);
     await this.killLeftovers();
+    this.pruneBackgroundNet(true);
   }
 
   /** Kills every process carrying this device's marker (also a previous run's). */
@@ -702,6 +743,17 @@ export class OsExecutor implements Executor {
     this.pruneTimer = undefined;
     await SandboxManager.reset();
   }
+}
+
+/**
+ * The process group id a background task launch printed as its last line (the task's sid), on
+ * macOS only: there the sandbox shares the host's process ids, so the device can watch the group.
+ * Elsewhere (Linux: bwrap's own pid namespace) undefined, and the launch's permissions end with it.
+ */
+export function launchedGroup(stdout: string, platform: NodeJS.Platform = process.platform) {
+  if (platform !== "darwin") return undefined;
+  const last = stdout.trimEnd().split("\n").pop()?.trim() ?? "";
+  return /^[1-9][0-9]*$/.test(last) ? Number(last) : undefined;
 }
 
 /**

@@ -139,16 +139,20 @@ export const subagentNotTaskText = (id: string): string =>
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** {@link notFound}, or {@link subagentNotTaskText} when `id` is a sub-agent of the caller's tree. */
-async function missingTask(env: TaskEnv, ctx: BuiltinCallContext, id: string): Promise<ToolError> {
+/** Whether `id` is the agentId of a sub-agent in the caller's tree (not a task id). */
+async function isSubagentId(env: TaskEnv, ctx: BuiltinCallContext, id: string): Promise<boolean> {
   const trimmed = id.trim();
-  if (
+  return (
+    !TASK_ID_RE.test(id) &&
     env.subagents !== undefined &&
     UUID_RE.test(trimmed) &&
     (await env.subagents.inTree(sandboxConversationOf(ctx), trimmed.toLowerCase()))
-  ) {
-    return new ToolError(subagentNotTaskText(trimmed));
-  }
+  );
+}
+
+/** {@link notFound}, or {@link subagentNotTaskText} when `id` is a sub-agent of the caller's tree. */
+async function missingTask(env: TaskEnv, ctx: BuiltinCallContext, id: string): Promise<ToolError> {
+  if (await isSubagentId(env, ctx, id)) return new ToolError(subagentNotTaskText(id.trim()));
   return notFound(id);
 }
 
@@ -413,6 +417,17 @@ export function taskOutputTool(deps: SandboxToolDeps): BuiltinTool {
     async run(input, ctx) {
       const { task_id, block = true, timeout } = input as TaskOutputInput;
       const env = await taskEnv(deps, ctx);
+      // A sub-agent's agentId is answered, not refused: where its report arrives is the answer
+      // (acceptance 2026-11-13: guidance the model is expected to follow is not a failed call).
+      // TaskStop keeps the error: it cannot stop a sub-agent.
+      if (await isSubagentId(env, ctx, task_id)) {
+        const id = clip(task_id.trim(), 40);
+        return {
+          content: [{ type: "text" as const, text: subagentNotTaskText(task_id.trim()) }],
+          isError: false,
+          display: display(`查看子智能体：${id}`, `Checked sub-agent: ${id}`),
+        };
+      }
       let task = await ownedTask(env, ctx, task_id);
       await recheckDevice(env, ctx);
       if (block && task.status === "running") {

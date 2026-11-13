@@ -136,7 +136,7 @@ export interface KcException {
 export interface KcPendingEntry {
   path: string;
   max: number;
-  /** Why it is not converted yet, and where it moves (an outbox entry names its PR). */
+  /** Why it is not converted yet, and where it moves. */
   reason?: string;
 }
 
@@ -278,6 +278,98 @@ export const KC_EXCEPTIONS: readonly KcException[] = [
       "request): the request fails when the add fails, so it is not owed work (ruling R28)",
   },
   {
+    rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/channels/actions.ts",
+    within: "handle",
+    reason:
+      "a hint: the delivery of a card's thread after a click, inside the inbound job; the " +
+      "decision's own appends owe their conversation's delivery, and a sub-agent card's thread " +
+      "is redrawn by the next delivery the child's report to its parent owes",
+  },
+  {
+    rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/channels/inbound.ts",
+    within: "handle",
+    reason:
+      "a job's own follow-up: the directory sync of a `directory_changed` event, added inside " +
+      "the inbound job, which fails and is retried by BullMQ when the add fails; no write owes it",
+  },
+  {
+    rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/channels/jobs.ts",
+    within: "enqueue",
+    reason:
+      "the delivery hint (run.started) and the adds of a job: a delivery's re-checks and the " +
+      "owed channel-resume job's catch-up, where a failed add fails the job and BullMQ retries " +
+      "it; every append to a conversation with a target owes its delivery (oweDelivery)",
+  },
+  {
+    rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/channels/jobs.ts",
+    within: "enqueueInbound",
+    reason:
+      "the inbound add of a platform event: no kernel write owes it, and the plugin acks the " +
+      "event only after the add, so a failed add makes the platform redeliver it",
+  },
+  {
+    rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/channels/outbound.ts",
+    within: "deliver",
+    reason:
+      "a delivery job's own follow-up (a changed connection resumes in a new job): a failed add " +
+      "fails the job, which BullMQ retries; no write owes it",
+  },
+  {
+    rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/channels/outbound.ts",
+    within: "followUp",
+    reason:
+      "a delivery job's own re-check of events that arrived while it held the lock (their own " +
+      "jobs ended at the lock): a failed add fails this job, and BullMQ re-runs a failed or " +
+      "stalled delivery job, which delivers them",
+  },
+  {
+    rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/conversations/titles.ts",
+    within: "maybeEnqueue",
+    reason:
+      "a hint: a title is cosmetic, and a lost title job is re-derived from the conversation's " +
+      "state (titleAttemptDue) after its next completed run; nothing is wrong meanwhile",
+  },
+  {
+    rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/orgs/directory-sync.ts",
+    within: "addJob",
+    reason:
+      "no write owes a directory sync: an inbound event's add fails its job (BullMQ retries), a " +
+      "person's request fails when the add fails, and the hourly scan re-derives a lost scan " +
+      "add or a sync's follow-up rerun",
+  },
+  {
+    rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/schedules/fire.ts",
+    within: "start",
+    reason:
+      "not a BullMQ job: ConversationQueue.add writes a queued message to PG, and that write " +
+      "owes its own ensure-run through the outbox",
+  },
+  {
+    rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/tools/drift.ts",
+    within: "onToolsChanged",
+    reason:
+      "a hint: a connector's tools-changed notice during a call writes nothing, and the " +
+      "periodic drift scan re-derives a lost check",
+  },
+  {
+    rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/tools/drift.ts",
+    within: "scan",
+    reason:
+      "the periodic drift scan's own adds: no write owes them, and the next scan period " +
+      "re-derives every connector not checked",
+  },
+  {
     rule: "kc-cache",
     path: "packages/kernel/src/runtime/media-cache.ts",
     reason:
@@ -339,67 +431,12 @@ export const KC_EXCEPTIONS: readonly KcException[] = [
 
 /**
  * Not converted yet: a directory (ending with `/`) or file with the number of violations it may
- * still hide. The Nest refactor converted everything; the only entries are the direct enqueue
- * sites the transactional outbox moves, one PR at a time (`reason` names the PR; the plan is
- * `docs/superpowers/plans/`). Never add an entry for new code: more violations than `max` fail,
- * and so do fewer (`kc-stale-pending`), so each conversion deletes its entry.
+ * still hide. Empty: the Nest refactor converted everything, and the transactional outbox moved or
+ * excepted every direct enqueue. The mechanism stays for a future migration; never add an entry
+ * for new code: more violations than `max` fail, and so do fewer (`kc-stale-pending`), so each
+ * conversion deletes its entry.
  */
-export const KC_PENDING: KcPending = {
-  "kc-enqueue-via-outbox": [
-    {
-      path: "packages/kernel/src/channels/actions.ts",
-      max: 1,
-      reason:
-        "a card click's thread delivery hint (the decision's appends owe their own): settled in PR 7",
-    },
-    {
-      path: "packages/kernel/src/channels/inbound.ts",
-      max: 1,
-      reason: "the directory sync enqueue: moves to the outbox in PR 5",
-    },
-    {
-      path: "packages/kernel/src/channels/jobs.ts",
-      max: 2,
-      reason:
-        "the deliver hint (run.started, follow-ups, a connection's catch-up; appends owe the " +
-        "delivery) and the inbound add an un-acked platform event owes: settled in PR 7",
-    },
-    {
-      path: "packages/kernel/src/channels/outbound.ts",
-      max: 2,
-      reason:
-        "a delivery job's own follow-ups (a failure fails the job, which BullMQ retries): " +
-        "settled in PR 7",
-    },
-    {
-      path: "packages/kernel/src/conversations/titles.ts",
-      max: 1,
-      reason: "moves to the outbox in PR 3",
-    },
-    { path: "packages/kernel/src/evals/jobs.ts", max: 1, reason: "moves to the outbox in PR 7" },
-    {
-      path: "packages/kernel/src/evals/runs.service.ts",
-      max: 1,
-      reason: "moves to the outbox in PR 7",
-    },
-    {
-      path: "packages/kernel/src/orgs/directory-sync.ts",
-      max: 1,
-      reason: "moves to the outbox in PR 5",
-    },
-    {
-      path: "packages/kernel/src/runtime/run-queue.ts",
-      max: 1,
-      reason: "the delayed bg-wake add, not in the run lifecycle tasks: settled in PR 7",
-    },
-    {
-      path: "packages/kernel/src/schedules/fire.ts",
-      max: 1,
-      reason: "moves to the outbox in PR 2",
-    },
-    { path: "packages/kernel/src/tools/drift.ts", max: 2, reason: "moves to the outbox in PR 7" },
-  ],
-};
+export const KC_PENDING: KcPending = {};
 
 // ---------------------------------------------------------------------------------------------
 // Implementation
@@ -537,25 +574,50 @@ const isAfterCommitCall = (a: Node) =>
   a.type === "CallExpression" &&
   (nameOf(a.callee) === "afterCommit" || memberCall(a)?.prop === "afterCommit");
 
+/** A name that ends in "queue" (`queue`, `runQueue`, `getQueue`); `queuedIds` is not one. */
+const QUEUE_NAME = /(^|[a-z0-9_])queue$/i;
+/** A holder of queues a queue is picked from: `queues.get(name)`, `queues[name]`. */
+const QUEUES_HOLDER = /(^|[a-z0-9_])queues$/i;
 /**
- * A job added to a BullMQ queue by hand: `.add(` / `.addBulk(` on a value named like a queue or
- * declared as a BullMQ `Queue`, or `.enqueue(` on a jobs / queue facade (`this.enqueue(` helpers
- * and stream controllers are not: the helper's own add is reported where it is).
+ * The kernel's enqueuing facades by the end of their field name: `RunJobs` / `ChannelJobs`
+ * (`jobs`), a queue facade, the channel `outbound`, `directorySync`. Any other `.enqueue(` receiver (a stream
+ * controller, a mailer) is not a BullMQ add.
+ */
+const ENQUEUE_FACADE = /(jobs|queue|outbound|sync)$/i;
+
+/** The last name of `a.b.c` (`c`) or of a plain identifier. */
+const lastNameOf = (n: Node): string | undefined =>
+  n.type === "MemberExpression" && !n.computed ? nameOf(n.property) : nameOf(n);
+
+/**
+ * A job added to a BullMQ queue by hand: `.add(` / `.addBulk(` on a value named like a queue
+ * (ending in "queue", or the result of a call so named) or declared as a BullMQ `Queue`, on a
+ * queue picked from a holder of queues (`this.queues.get(name).add(`, `queues[name].add(`), or
+ * `.enqueue(` on a jobs / queue facade ({@link ENQUEUE_FACADE}; `this.enqueue(` helpers are not:
+ * the helper's own add is reported where it is).
  */
 function isEnqueue(mc: { object: Node; prop: string }, queueTyped: ReadonlySet<string>): boolean {
   const obj = unwrap(mc.object);
-  const last = obj.type === "MemberExpression" ? nameOf(obj.property) : nameOf(obj);
+  const last = lastNameOf(obj);
   if (mc.prop === "add" || mc.prop === "addBulk") {
-    const callee = obj.type === "CallExpression" ? unwrap(obj.callee as Node) : undefined;
-    const named = callee
-      ? callee.type === "MemberExpression"
-        ? nameOf(callee.property)
-        : nameOf(callee)
-      : last;
-    return named !== undefined && (/queue/i.test(named) || queueTyped.has(named));
+    if (obj.type === "MemberExpression" && obj.computed) {
+      const holder = lastNameOf(unwrap(obj.object as Node));
+      return holder !== undefined && QUEUES_HOLDER.test(holder);
+    }
+    if (obj.type === "CallExpression") {
+      const callee = unwrap(obj.callee as Node);
+      if (callee.type === "MemberExpression" && !callee.computed) {
+        const picked = nameOf(callee.property);
+        const holder = lastNameOf(unwrap(callee.object as Node));
+        if (picked === "get" && holder !== undefined && QUEUES_HOLDER.test(holder)) return true;
+      }
+      const named = lastNameOf(callee);
+      return named !== undefined && (QUEUE_NAME.test(named) || queueTyped.has(named));
+    }
+    return last !== undefined && (QUEUE_NAME.test(last) || queueTyped.has(last));
   }
   if (mc.prop === "enqueue") {
-    return obj.type !== "ThisExpression" && last !== undefined && last !== "controller";
+    return obj.type !== "ThisExpression" && last !== undefined && ENQUEUE_FACADE.test(last);
   }
   return false;
 }

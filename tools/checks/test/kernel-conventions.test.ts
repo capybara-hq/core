@@ -67,12 +67,18 @@ describe("checkKernelConventions", () => {
     });
   }
 
+  it("kc-enqueue-via-outbox and kc-after-commit-hint have no pending entries", () => {
+    // every direct enqueue was moved to the outbox or given a permanent exception with a reason
+    expect(KC_PENDING["kc-enqueue-via-outbox"] ?? []).toEqual([]);
+    expect(KC_PENDING["kc-after-commit-hint"] ?? []).toEqual([]);
+  });
+
   it("a pending enqueue entry that no longer matches fails as kc-stale-pending", () => {
     const root = join(fixtures, "kc-enqueue-via-outbox");
     const f = checkKernelConventions(root, {
       pending: {
         "kc-enqueue-via-outbox": [
-          { path: "packages/kernel/src/runtime/enqueuer.service.ts", max: 4 },
+          { path: "packages/kernel/src/runtime/enqueuer.service.ts", max: 6 },
           { path: "packages/kernel/src/runtime/moved.service.ts", max: 1 },
         ],
       },

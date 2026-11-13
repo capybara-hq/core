@@ -192,6 +192,49 @@ describe("OutboxService.add", () => {
   });
 });
 
+describe("OutboxService.addMany", () => {
+  it("inserts every job in one transaction, skips owed ids, hands the due rows to one fast path", async () => {
+    const outbox = outboxWith(true);
+    await expect(outbox.addMany([job("a")])).rejects.toThrow(/propagation "mandatory"/);
+    await host.run(() => outbox.add(job("owed")));
+    fastPath.mockClear();
+    const runAt = new Date(Date.now() + 60_000);
+    const inserted = await host.run(() =>
+      outbox.addMany([
+        job("m1", { n: 1 }, { orgId: "org-1" }),
+        job("owed"),
+        job("m2", { n: 2 }, { runAt }),
+        job("m3", { n: 3 }),
+        // a duplicate inside the same call is skipped too
+        job("m3", { n: 3 }),
+      ]),
+    );
+    expect(inserted).toBe(3);
+    const stored = await rows();
+    expect(stored.map((r) => r.job_id)).toEqual(["owed", "m1", "m2", "m3"]);
+    expect(stored[1]).toMatchObject({ org_id: "org-1" });
+    expect(stored[2]).toMatchObject({ run_at: runAt });
+    // the delayed row waits for the relay (ruling R20)
+    expect(fastPath).toHaveBeenCalledTimes(1);
+    expect(fastPath).toHaveBeenCalledWith([stored[1]?.id, stored[3]?.id]);
+  });
+
+  it("a rolled-back transaction leaves none of its rows, and a ':' in a job id is refused", async () => {
+    const outbox = outboxWith(true);
+    await expect(
+      host.run(async () => {
+        await outbox.addMany([job("a"), job("b")]);
+        throw new Error("business write failed");
+      }),
+    ).rejects.toThrow("business write failed");
+    await expect(host.run(() => outbox.addMany([job("c"), job("d:e")]))).rejects.toThrow(
+      /must not contain ":"/,
+    );
+    expect(await rows()).toEqual([]);
+    expect(fastPath).not.toHaveBeenCalled();
+  });
+});
+
 describe("org deletion", () => {
   it("deleting an org removes its pending rows and keeps rows without org_id", async () => {
     const outbox = outboxWith(true);

@@ -2,6 +2,7 @@ import { getQueueToken } from "@nestjs/bullmq";
 import { Inject, Injectable, Module } from "@nestjs/common";
 import type { Job, Queue } from "bullmq";
 import { sql } from "kysely";
+import { BG_WAKE_JOB, type BgWakeJobData, bgWakeJobId } from "../background/wake-rules.js";
 import type { ConversationKind, KernelSchemaDb } from "../db/kernel-schema.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
@@ -31,15 +32,8 @@ export const runQueueNameFor = (
 /** 未结束的运行状态（waiting：等人处理审批 / 输入请求，没有任务、不占会话锁与配额）。 */
 export const ACTIVE_RUN_STATUSES = ["queued", "running", "waiting"] as const;
 
-/** 运行的终态。 */
-export type TerminalStatus = "completed" | "failed" | "aborted";
-
-/** The terminal run statuses (here, not in `run-finish.ts`, which the sub-agent modules import). */
-export const TERMINAL_STATUSES: ReadonlySet<string> = new Set<TerminalStatus>([
-  "completed",
-  "failed",
-  "aborted",
-]);
+// The terminal run statuses (here, not in `run-finish.ts`, which the sub-agent modules import)
+export { TERMINAL_STATUSES, type TerminalStatus } from "./run-status.js";
 
 /**
  * Locks a run's approval and input request rows (`FOR UPDATE`, in id order) in the caller's
@@ -188,7 +182,40 @@ export class RunJobs {
   oweEnsureRun(conversationId: string, seq: number | string, orgId: string): Promise<boolean> {
     return oweEnsureRun(this.outbox, conversationId, seq, orgId);
   }
+
+  /**
+   * Owes the delayed `bg-wake` job at the end of the conversation's wake window in the caller's
+   * transaction (the `ensureRun` that decided `later`): one job per conversation and window end
+   * ({@link bgWakeJobId}), so finishes inside one window share it; `retry` > 0 is a job that fired
+   * before its window ended. The relay adds it with the remaining delay (a row due later skips the
+   * fast path); `runAt` carries {@link WAKE_JOB_MARGIN_MS}, since the window is read on the
+   * database's clock and the delay runs on this process's and Redis's. Every `ensureRun` inside the
+   * window (each append that calls it) owes it again: a no-op while the row is pending, and once it
+   * was delivered a new row whose add BullMQ dedupes by the job id while the delayed job exists.
+   */
+  oweBgWake(
+    conversationId: string,
+    w: { windowEnd: number; delayMs: number },
+    retry: number,
+    orgId: string,
+  ): Promise<boolean> {
+    return this.outbox.add<BgWakeJobData>({
+      queue: MAINTENANCE_QUEUE_NAME,
+      name: BG_WAKE_JOB,
+      jobId: bgWakeJobId(conversationId, w.windowEnd, retry),
+      data: { conversationId, ...(retry > 0 && { retry }) },
+      runAt: new Date(Date.now() + w.delayMs + WAKE_JOB_MARGIN_MS),
+      orgId,
+    });
+  }
 }
+
+/**
+ * Margin added to the delayed wake job: its window is read on the database's clock, the delay runs
+ * on this process's and Redis's, so the job does not usually fire just before the window ends (one
+ * that does reschedules itself under its next retry id, `bgWakeJobId`).
+ */
+export const WAKE_JOB_MARGIN_MS = 1000;
 
 /**
  * What {@link RunResume.resumeIn} found: `queued`, the run was waiting on nothing else and now is

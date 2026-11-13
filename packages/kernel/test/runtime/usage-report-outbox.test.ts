@@ -73,7 +73,11 @@ let failUsage = true;
 let clockShift = 0;
 let orgId: string;
 let agentId: string;
-/** The usage events written while no plugin subscribed (never reported). */
+/**
+ * The usage events written while no plugin subscribed (never reported). Filled by the "no
+ * subscriber, then one" describe and read by the last test of "a subscriber is enabled": the two
+ * describes run in file order and share the kernels, so they are not independent.
+ */
 let unreported: { conv: string; seq: number }[] = [];
 
 const urls = () => ({ pg: pgc.url, redis: rd.url });

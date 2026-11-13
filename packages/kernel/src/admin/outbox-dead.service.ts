@@ -118,8 +118,9 @@ export class OutboxDeadService {
    * the fast path after the commit; the relay delivers it otherwise. When the same (queue, job id)
    * is owed by a pending row already, the dead row is deleted instead (`already_owed`). A pending
    * row added between the check and the update fails the update on the unique index: the retry
-   * then runs once more and takes the `already_owed` branch. `outbox.not_found` (404) when no dead
-   * row has the id.
+   * then runs once more and takes the `already_owed` branch; a second conflict on that run (the
+   * job owed, delivered and owed again meanwhile) is `conflict` (409), the dead row left as it was.
+   * `outbox.not_found` (404) when no dead row has the id.
    */
   async retry(
     id: string,
@@ -130,7 +131,15 @@ export class OutboxDeadService {
       return await this.retryOnce(id, actor, detail);
     } catch (e) {
       if (!isPendingConflict(e)) throw e;
-      return this.retryOnce(id, actor, detail);
+    }
+    try {
+      return await this.retryOnce(id, actor, detail);
+    } catch (e) {
+      if (!isPendingConflict(e)) throw e;
+      throw new ApiError(
+        "conflict",
+        `The job of dead outbox row ${id} was owed again while it was retried; list the dead rows with GET /api/v1/admin/outbox/dead and retry or discard it again`,
+      );
     }
   }
 
@@ -161,7 +170,7 @@ export class OutboxDeadService {
       outcome = "retried";
       afterCommit(() => this.fastPath([id]));
     }
-    await this.audit("outbox.retried", id, row, actor, { outcome, ...detail });
+    await this.audit("outbox.retried", id, row, actor, { ...detail, outcome });
     return { outcome };
   }
 
@@ -190,7 +199,10 @@ export class OutboxDeadService {
     return row;
   }
 
-  /** A platform-level audit event (no org: the outbox is the deployment's), naming the job. */
+  /**
+   * A platform-level audit event (no org: the outbox is the deployment's), naming the job. The
+   * caller's detail (`via`, `operation`) comes first, so it cannot override the row's fields.
+   */
   private audit(
     action: "outbox.retried" | "outbox.discarded",
     id: string,
@@ -204,11 +216,11 @@ export class OutboxDeadService {
       action,
       target: id,
       detail: {
+        ...detail,
         queue: row.queue,
         jobName: row.job_name,
         jobId: row.job_id,
         ...(row.org_id !== null && { orgId: row.org_id }),
-        ...detail,
       },
     });
   }

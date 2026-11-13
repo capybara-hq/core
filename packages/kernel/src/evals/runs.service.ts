@@ -332,7 +332,8 @@ interface EvalRunsDeps {
   registry: Pick<ProviderRegistry, "resolve">;
   prices: Pick<PricesService, "table">;
   settings: Pick<SettingsService, "get">;
-  queue: Pick<EvalJobs, "enqueue">;
+  /** Owes the case jobs in the start transaction. */
+  jobs: Pick<EvalJobs, "owe">;
   budget: Pick<EvalBudget, "recountCases" | "skipRun">;
   /** 模型用途映射：开评委时 `eval` 用途必须已映射（否则 `model.unconfigured`）；估算按它给评委定价。 */
   purposes: Pick<ModelPurposesService, "resolve">;
@@ -363,7 +364,7 @@ export class EvalRunsService {
     @Inject(ProviderRegistry) registry: ProviderRegistry,
     @Inject(PricesService) prices: PricesService,
     @Inject(SettingsService) settings: SettingsService,
-    @Inject(EvalJobs) queue: EvalJobs,
+    @Inject(EvalJobs) jobs: EvalJobs,
     @Inject(EvalBudget) budget: EvalBudget,
     @Inject(ModelPurposesService) purposes: ModelPurposesService,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
@@ -378,7 +379,7 @@ export class EvalRunsService {
       registry,
       prices,
       settings,
-      queue,
+      jobs,
       budget,
       purposes,
     };
@@ -655,8 +656,9 @@ export class EvalRunsService {
 
   /**
    * 启动：校验 token 上限（[1, `evals.maxTokenCap`]，缺省 `evals.defaultTokenCap`）、候选、评委用途；
-   * 没有可回放的 → `eval.nothing_to_replay`。事务内建运行行、预建 pending 结果，提交后每个用例入队一个任务；
-   * 入队失败 → 运行标 failed、结果 skipped，错误照常抛出。
+   * 没有可回放的 → `eval.nothing_to_replay`。One transaction writes the run row and its pending
+   * results and owes one case job per valid case (transactional outbox spec §3): the outbox adds
+   * them after the commit, so a run never waits for a job that was never added.
    */
   async start(
     orgId: string,
@@ -682,7 +684,7 @@ export class EvalRunsService {
       throw candidateInvalid(firstProblem.message, firstProblem.details ?? []);
     }
 
-    const { runId, plans } = await this.startIn(
+    const { runId } = await this.startIn(
       orgId,
       actor,
       setId,
@@ -695,16 +697,10 @@ export class EvalRunsService {
       auditDetail,
     );
 
-    try {
-      await this.d.queue.enqueue(plans.map((p) => ({ runId, caseId: p.caseId, orgId })));
-    } catch (e) {
-      await this.failStartIn(runId);
-      throw e;
-    }
     return this.get(orgId, runId);
   }
 
-  /** The run row and its pending results, in a transaction of their own (enqueued after the commit). */
+  /** The run row, its pending results and its owed case jobs, in a transaction of their own. */
   @Transactional({ propagation: "requires_new" })
   private async startIn(
     orgId: string,
@@ -717,7 +713,7 @@ export class EvalRunsService {
     judge: JudgePricing | null,
     actorTokenId: string | undefined,
     auditDetail?: Record<string, unknown>,
-  ): Promise<{ runId: string; plans: PlannedCase[] }> {
+  ): Promise<{ runId: string }> {
     const db = this.d.db;
     await this.d.orgLock.lockAndAuthorize(orgId, actor, "evals.manage");
     // 与删除用例（锁集合行 FOR UPDATE）互斥：之后读到的用例在提交前不会被删
@@ -801,25 +797,12 @@ export class EvalRunsService {
       },
     });
     await this.d.budget.recountCases(run.id);
-    return { runId: run.id, plans: plans.filter((p) => p.problem === null) };
-  }
-
-  /** The enqueue failed: the run is `failed`, its pending results `skipped`. */
-  @Transactional({ propagation: "requires_new" })
-  private async failStartIn(runId: string): Promise<void> {
-    const db = this.d.db;
-    await db
-      .updateTable("eval_runs")
-      .set({ status: "failed", finished_at: sql`now()` })
-      .where("id", "=", runId)
-      .execute();
-    await db
-      .updateTable("eval_results")
-      .set({ status: "skipped", updated_at: sql`now()` })
-      .where("run_id", "=", runId)
-      .where("status", "=", "pending")
-      .execute();
-    await this.d.budget.recountCases(runId);
+    await this.d.jobs.owe(
+      plans
+        .filter((p) => p.problem === null)
+        .map((p) => ({ runId: run.id, caseId: p.caseId, orgId })),
+    );
+    return { runId: run.id };
   }
 
   /** 各运行的汇总（只算已结束的）。 */

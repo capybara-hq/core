@@ -44,9 +44,9 @@ class TaskScanFailed extends Error {
  * transaction owes `sched-fire-<taskRunId>` (transactional outbox spec §8.1), so a written tick is
  * never left unfired and the scan needs no repair of lost fire jobs (a fire delivered too late
  * marks its tick missed itself, `ScheduledTaskFirer`), and the run's unfired settle check (a fire
- * job that failed for good before its claim: the tick is missed, `job-ids.ts`). A task whose stored trigger the schedule
- * math cannot evaluate is paused (`invalid_schedule`) instead of failing the scan; a database
- * error fails the pass (the next minute retries) and pauses nothing.
+ * job that failed for good before its claim: the tick is missed, `job-ids.ts`). A task whose stored
+ * trigger the schedule math cannot evaluate is paused (`invalid_schedule`) instead of failing the
+ * scan; a database error fails the pass (the next minute retries) and pauses nothing.
  */
 @Injectable()
 export class ScheduledTaskScanJob {
@@ -90,9 +90,9 @@ export class ScheduledTaskScanJob {
   }
 
   /**
-   * One due task in its own transaction (a task whose trigger cannot be evaluated rolls back
-   * alone and is paused, so it cannot block the others): locked with `SKIP LOCKED`, so replicas take different tasks. False
-   * when no task is due.
+   * One due task in its own transaction (a task whose trigger cannot be evaluated rolls back alone
+   * and is paused, so it cannot block the others): locked with `SKIP LOCKED`, so replicas take
+   * different tasks. False when no task is due.
    */
   @Transactional()
   private async scanOne(

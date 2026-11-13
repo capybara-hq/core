@@ -19,8 +19,10 @@ import { CHANNEL_QUEUE_NAME, inboundJobId } from "../../src/channels/outbound.js
 import { channelLeaseKey } from "../../src/channels/supervisor.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { OUTBOX_DISPATCH_FAILS } from "../../src/infra/outbox/outbox.dispatcher.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
+import { drainOutbox } from "../helpers/outbox.js";
 import {
   createAgent,
   createOrg,
@@ -58,6 +60,8 @@ let redis: Redis;
 let owner: Req;
 let ownerId: string;
 let queue: Queue;
+/** While true, kernel a's outbox adds to the channel queue fail (`OUTBOX_DISPATCH_FAILS`). */
+let failChannels = false;
 /**
  * The client the queue above uses. A queue given a client does not close it, so afterAll quits it
  * before Redis stops: an open client without an error listener reports "[ioredis] Unhandled error
@@ -84,7 +88,14 @@ const cfg = (plugins: string[], scanIntervalMs = SCAN, leaseTtlMs = TTL) =>
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   im = await startFakeChannelServer();
-  a = await startKernel(cfg([MODEL_FAKE, CHAN_MINI]));
+  a = await startKernel(cfg([MODEL_FAKE, CHAN_MINI]), {
+    overrides: [
+      {
+        provide: OUTBOX_DISPATCH_FAILS,
+        useValue: (q: string) => failChannels && q === CHANNEL_QUEUE_NAME,
+      },
+    ],
+  });
   raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
   redis = new Redis(rd.url);
@@ -281,7 +292,31 @@ describe("渠道连接生命周期", () => {
     );
     await sleep(1000);
     expect(toChat().length).toBe(before);
-    expect((await patch({ status: "active" })).statusCode).toBe(200);
+    // the re-enable owes the catch-up in its transaction (transactional outbox spec §3.1): with
+    // the outbox's adds to the channel queue failing, nothing goes out until the relay delivers it
+    failChannels = true;
+    try {
+      expect((await patch({ status: "active" })).statusCode).toBe(200);
+      const owed = (
+        await db
+          .selectFrom("outbox")
+          .select(["job_name", "data", "org_id"])
+          .where("queue", "=", CHANNEL_QUEUE_NAME)
+          .where("job_name", "=", "channel-resume")
+          .execute()
+      ).filter((r) => (r.data as { connectionId?: string }).connectionId === connId);
+      expect(owed).toEqual([
+        { job_name: "channel-resume", data: { connectionId: connId }, org_id: orgId },
+      ]);
+      expect(toChat().length).toBe(before);
+    } finally {
+      failChannels = false;
+    }
+    await db
+      .updateTable("outbox")
+      .set({ next_attempt_at: sql<Date>`now()` as unknown as Date })
+      .execute();
+    await drainOutbox(a.app, { queue: CHANNEL_QUEUE_NAME, jobName: "channel-resume" });
     await waitFor(async () => toChat().length > before, 10_000, "backlog delivered");
   }, 60_000);
 

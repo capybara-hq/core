@@ -725,8 +725,12 @@ export class RunWorker {
         const toSeq = started.toSeq;
         if (toSeq !== undefined) await this.eventLog.notify(conversationId, toSeq);
       }
-      // 技能目录快照（Ruling M17）：在置为 running 之前写，崩溃重试时仍走这里（幂等键去重）
-      await this.skillsCatalog.record(
+      // Skills catalog snapshot (ruling M17): written before the run is running, and again on a
+      // crash retry (deduped by its idem key). Both records re-read the run under the conversation
+      // and run row locks in their append transactions: a stop that ended it meanwhile (a retried
+      // start reads `queued` before any lock) wins, nothing is appended after its end, and the run
+      // never starts.
+      const catalogged = await this.skillsCatalog.record(
         {
           orgId: conv.org_id,
           agentId: conv.agent_id,
@@ -736,9 +740,10 @@ export class RunWorker {
         },
         { log: this.log },
       );
+      if (!catalogged) return "finished";
       // run context (spec §5): after the catalog, before the run is running, so before any
       // compaction and model call; a retried run start finds its event or no change
-      await this.runContext.record({
+      const contexted = await this.runContext.record({
         orgId: conv.org_id,
         conversationId,
         runId,
@@ -752,9 +757,11 @@ export class RunWorker {
           },
         }),
       });
+      if (!contexted) return "finished";
       // plugin context (memory plugin spec §6.1): after the run context, still before the run is
-      // running; the providers are asked outside any transaction, a chat run only
-      await this.pluginContext.record({
+      // running; the providers are asked outside any transaction, a chat run only, so a stop may
+      // end the run meanwhile: its append transaction re-reads the run under the locks
+      const pluginContexted = await this.pluginContext.record({
         orgId: conv.org_id,
         conversationId,
         runId,
@@ -771,6 +778,7 @@ export class RunWorker {
         // the run's own abort watch starts with its execution below: until then, the shutdown
         signal: state.shutdown.signal,
       });
+      if (!pluginContexted) return "finished";
       await this.hooks?.beforeRunning?.(runId, conversationId);
       // never over a terminal status: a run finished meanwhile stays finished
       const updated = await this.db
@@ -1024,6 +1032,27 @@ export class RunWorker {
   }
 
   /**
+   * Whether the run is gone or terminal, read in the caller's transaction under the locks
+   * (conversation, then run, as `RunFinish.finishIn`): the job read its status before taking the
+   * conversation lock, and a stop may have ended it since.
+   */
+  private async endedUnderLocks(conversationId: string, runId: string): Promise<boolean> {
+    await this.db
+      .selectFrom("conversations")
+      .select("id")
+      .where("id", "=", conversationId)
+      .forUpdate()
+      .execute();
+    const row = await this.db
+      .selectFrom("runs")
+      .select("status")
+      .where("id", "=", runId)
+      .forUpdate()
+      .executeTakeFirst();
+    return !row || TERMINAL_STATUSES.has(row.status);
+  }
+
+  /**
    * `run_started` under the conversation row lock, with the model / effort switch in effect then
    * (a chat run's `saved` version under the conversation's selection): what the run uses.
    */
@@ -1036,21 +1065,7 @@ export class RunWorker {
     saved: AgentDefinition | undefined,
   ): Promise<{ toSeq: number | undefined; agent: AgentDefinition; terminal?: true }> {
     const t = this.db;
-    await t
-      .selectFrom("conversations")
-      .select("id")
-      .where("id", "=", conversationId)
-      .forUpdate()
-      .execute();
-    // the run's status again under the locks (conversation, then run, as `RunFinish.finishIn`):
-    // the job read it before taking the conversation lock, and a stop may have ended it since
-    const row = await t
-      .selectFrom("runs")
-      .select("status")
-      .where("id", "=", run.id)
-      .forUpdate()
-      .executeTakeFirst();
-    if (!row || TERMINAL_STATUSES.has(row.status)) {
+    if (await this.endedUnderLocks(conversationId, run.id)) {
       return { toSeq: undefined, agent: current, terminal: true };
     }
     const agent =

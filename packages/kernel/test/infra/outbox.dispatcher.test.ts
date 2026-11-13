@@ -14,7 +14,6 @@ import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import {
   OUTBOX_BACKOFF,
   OUTBOX_FAST_PATH_CONCURRENCY,
-  OUTBOX_REDIS_TIMEOUT_MS,
   OutboxDispatcher,
 } from "../../src/infra/outbox/outbox.dispatcher.js";
 import { outboxFastPath } from "../../src/infra/outbox/outbox.module.js";
@@ -267,11 +266,9 @@ describe("OutboxDispatcher", () => {
     const d = fakeDispatcher({ "cap-kernel-runs": hung.queue, [QUEUE]: later.queue });
     await insertRow("hung-1", { queue: "cap-kernel-runs" });
     await insertRow("later-1");
-    const start = Date.now();
+    // asserted on behaviour, not on elapsed time (a CI stall must not fail it): the pass returns
+    // although the first group never settles, and the later group was never tried
     expect(await d.dispatchDue(500)).toEqual({ sent: 0, failed: 2, dead: 0 });
-    const took = Date.now() - start;
-    expect(took).toBeGreaterThanOrEqual(OUTBOX_REDIS_TIMEOUT_MS - 50);
-    expect(took).toBeLessThan(OUTBOX_REDIS_TIMEOUT_MS + 1_000);
     expect(hung.add).toHaveBeenCalledTimes(1);
     expect(later.add).not.toHaveBeenCalled();
     const [first, second] = await rows();

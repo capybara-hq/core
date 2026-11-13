@@ -29,10 +29,10 @@ import { useErrorMessage } from "../../../lib/use-error-message";
 import NotFound from "../not-found";
 
 /**
- * `/schedules` (定时任务): my scheduled tasks, as a list or a calendar (the page head's tabs 列表 /
- * 日历, calendar spec §4.1). The list is ListPage + DataTable: name, agent, the schedule in words
+ * `/schedules` (定时任务): my scheduled tasks, as a calendar or a list (the page head's tabs 日历 /
+ * 列表, calendar spec §4.1; the calendar is the default). The list (`?view=list`) is ListPage + DataTable: name, agent, the schedule in words
  * with its zone, status, next run and last result; a row opens the task, its menu pauses, resumes
- * or deletes it. The calendar (`?view=calendar`) is ListPage + `ScheduleCalendar`
+ * or deletes it. The calendar (the bare `/schedules`) is ListPage + `ScheduleCalendar`
  * (`components/ScheduleCalendarView`). Members up (guests can't create tasks: the no-access
  * state). From the query cache (the layout prefetched the list, the agents and, for a remembered
  * calendar, its range on a first load). `initial` is the view `page.tsx` read from the address and
@@ -76,12 +76,12 @@ function Schedules({
     title: t("title"),
     actions: [{ label: t("new"), variant: "primary" as const, href: "/schedules/new" }],
     tabs: [
-      { id: "list", label: t("tabs.list"), onSelect: () => setUrl({ ...url, view: "list" }) },
       {
         id: "calendar",
         label: t("tabs.calendar"),
         onSelect: () => setUrl({ ...url, view: "calendar" }),
       },
+      { id: "list", label: t("tabs.list"), onSelect: () => setUrl({ ...url, view: "list" }) },
     ],
     activeTab: url.view,
   };

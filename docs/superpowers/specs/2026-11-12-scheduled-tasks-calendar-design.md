@@ -28,7 +28,8 @@ that will.
 ## 2. Goals, non-goals, anti-goals
 
 Goals:
-- A 列表 / 日历 switch on `/schedules`; the list stays the default (decided).
+- A 日历 / 列表 switch on `/schedules`; the calendar is the default and the first tab (decided;
+  changed in acceptance 2026-11-13, it was the list).
 - A week view (default) and a month view of runs (decided): recorded runs in the past, computed
   occurrences in the future up to a horizon of about six weeks (decided).
 - A run opens a panel with the task's details, that run's result and its conversation (decided).
@@ -85,11 +86,11 @@ Anti-goals (a failure even if it works):
 ### 4.1 Switch and URL
 
 - The page head of `/schedules` keeps its title, description and 新建定时任务 primary. Its **tab
-  row** holds 列表 / 日历 (decided, Q1): the design spec's tab row is the pattern for "pages
+  row** holds 日历 / 列表 (decided, Q1; the calendar first since acceptance 2026-11-13): the design spec's tab row is the pattern for "pages
   with views" (§4.2 row 4), while `Segmented` is a control inside content (§6.4). The tabs change the
   view with `onSelect` and a `history.replaceState` of the query (implementation 2026-11-13: as
   `useUrlParam`; Next keeps its search params in step, no server round trip), no reload.
-- URL: `/schedules` (list), `/schedules?view=calendar` (calendar), plus `&range=week|month`
+- URL: `/schedules` (calendar), `/schedules?view=list` (list); the calendar takes `range=week|month`
   (absent = `week`), `&date=YYYY-MM-DD` (any day of the shown week or month, in the viewer's zone;
   absent = today) and `&scope=all` (admins; absent = mine). Every state is a URL, so a reload, Back
   and a shared link show the same view.
@@ -98,7 +99,7 @@ Anti-goals (a failure even if it works):
   one year, not `HttpOnly` since only the client writes it). `page.tsx` reads the
   cookie and `searchParams` (no kernel read, allowed by `web-query-page-read`) and passes the
   effective view to the view, so the first paint is already the remembered view; `localStorage` is
-  not used because a server render cannot read it and the page would flash the list first. An
+  not used because a server render cannot read it and the page would flash the calendar first. An
   explicit `?view=` always wins and is written back to the cookie.
 - The admin 全组织 scope is not remembered (designer's call): an admin returns to 只看我的, the
   scope that matches the list's default.
