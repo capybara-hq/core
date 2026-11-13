@@ -878,9 +878,13 @@ function consecutiveCompactionFailures(events: ConversationEvent[]): number {
 }
 
 /**
- * 压缩：校正后的估算达到阈值、且不在失败退避期内时，用主模型生成摘要（非流式消费）。
- * 通过 → `compaction_summary`；过短或出错 → `compaction_failed`（attempt 从 1 起，连续失败递增），
- * 本步按原样继续。主模型此刻解析不了时跳过压缩，交给降级梯子处理。
+ * Compaction: summarize the earlier conversation with the main model (consumed non-streaming) when
+ * the calibrated estimate crosses the trigger (context compaction spec §4.1). The hard line
+ * (`estimate + output > window`) ignores `enabled: false` and the failure backoff; the proactive
+ * trigger respects both. Accepted → `compaction_summary`; too short or an error →
+ * `compaction_failed` (attempt from 1, consecutive failures increment), and the step continues
+ * unchanged. When the main model cannot be resolved right now, compaction is skipped and the
+ * fallback ladder handles the step.
  */
 async function maybeCompact(
   deps: ModelStepDeps,
@@ -890,10 +894,6 @@ async function maybeCompact(
   compaction: CompactionSettings,
   tools: StepTools,
 ): Promise<ConversationEvent[]> {
-  // enabled: false turns proactive early compaction off; the provider's hard limits are handled
-  // elsewhere and are not configurable (context compaction spec §4.1)
-  if (!compaction.enabled) return events;
-  if (compactionBackoff(events)) return events;
   let provider: BoundProvider;
   let info: ModelInfo;
   try {
@@ -927,6 +927,9 @@ async function maybeCompact(
   // The trigger's output cap is the step's own cap, min(agent max, model max) (spec §4.1), not the
   // settings' maxOutputTokens — that one caps the summary call (spec §4.8).
   const output = built.maxOutputTokens;
+  // The hard line ignores both gates: enabled: false turns proactive early compaction off only,
+  // and backoff only delays proactive attempts (context compaction spec §4.1).
+  if (estimate + output <= info.contextWindow && compactionBackoff(events)) return events;
   if (!shouldCompact(estimate, info.contextWindow, { ...compaction, maxOutputTokens: output })) {
     return events;
   }

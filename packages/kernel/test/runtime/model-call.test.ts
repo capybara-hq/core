@@ -904,9 +904,13 @@ describe("runModelStep", () => {
       expect((await ofType("reminder")).at(-1)?.payload.text).toBe(BUDGET_WRAP_UP_REMINDER);
     });
 
-    it("摘要过短 → 写 compaction_failed（attempt 1），本步仍完成；下一轮因退避跳过；退避期满再失败 attempt 2", async () => {
-      const s = stub([stubInfo("small", { contextWindow: 2000 })], (req) =>
-        req.system.some((x) => x.text.includes(COMPACTION_MARKER)) ? "too short" : "answer",
+    it("a too-short summary writes compaction_failed (attempt 1) and the step completes; the next turn is skipped by the backoff; after it lapses attempt 2 fails again", async () => {
+      // a window above the output cap (O = 1000) keeps the proactive trigger below the hard line,
+      // where the backoff still applies
+      const s = stub(
+        [stubInfo("small", { contextWindow: 10_000, maxOutputTokens: 1000 })],
+        (req) =>
+          req.system.some((x) => x.text.includes(COMPACTION_MARKER)) ? "too short" : "answer",
       );
       stubImpl = s;
       for (let i = 0; i < 8; i++) {
@@ -937,6 +941,64 @@ describe("runModelStep", () => {
       await step({ agent });
       expect((await ofType("compaction_failed")).map((f) => f.payload.attempt)).toEqual([1, 2]);
       expect(compactionCalls()).toBe(2);
+    });
+
+    it("enabled: false 时硬线仍然压缩，硬线之下不主动压缩（spec §4.1）", async () => {
+      stubImpl = stub([stubInfo("tight", { contextWindow: 6000, maxOutputTokens: 1000 })], (req) =>
+        req.system.some((x) => x.text.includes(COMPACTION_MARKER))
+          ? `Summary: ${"s".repeat(300)}`
+          : "answer",
+      );
+      const agent = agentWith({ model: { provider: "stub", model: "tight" } });
+      const original = deps.compactionSettings;
+      deps.compactionSettings = {
+        resolve: async () => ({ ...COMPACTION_SETTINGS.parse({}), enabled: false }),
+      };
+      try {
+        // 15 轮 ≈ 3000 token，低于硬线（6000 - 1000）：主动压缩关闭 → 不压缩
+        for (let i = 0; i < 15; i++) {
+          await say(filler(i));
+          await answer(filler(i));
+        }
+        await say("go");
+        await step({ agent });
+        expect(await ofType("compaction_summary")).toHaveLength(0);
+
+        // 再 15 轮，估算越过硬线：即使 enabled: false 也压缩
+        for (let i = 15; i < 30; i++) {
+          await say(filler(i));
+          await answer(filler(i));
+        }
+        await say("again");
+        runId = randomUUID();
+        await step({ agent });
+        expect(await ofType("compaction_summary")).toHaveLength(1);
+      } finally {
+        deps.compactionSettings = original;
+      }
+    });
+
+    it("退避期内越过硬线仍然尝试压缩（spec §4.1）", async () => {
+      stubImpl = stub([stubInfo("tight", { contextWindow: 6000, maxOutputTokens: 1000 })], (req) =>
+        req.system.some((x) => x.text.includes(COMPACTION_MARKER)) ? "too short" : "answer",
+      );
+      const agent = agentWith({ model: { provider: "stub", model: "tight" } });
+      for (let i = 0; i < 30; i++) {
+        await say(filler(i));
+        await answer(filler(i));
+      }
+      // 上一次压缩失败、之后还没有新增 user 轮次：主动压缩处于退避期
+      await eventLog.append(conversationId, [
+        {
+          type: "compaction_failed",
+          runId: "old-run",
+          payload: { attempt: 1, reason: "too short" },
+        },
+      ]);
+      await say("go");
+      await step({ agent });
+      // 硬线越过退避：又写了一次失败（attempt 2），而不是跳过
+      expect((await ofType("compaction_failed")).map((f) => f.payload.attempt)).toEqual([1, 2]);
     });
   });
 
