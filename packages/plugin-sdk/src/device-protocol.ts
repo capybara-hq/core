@@ -291,10 +291,10 @@ function bool(o: Record<string, unknown>, k: string): boolean {
   return v;
 }
 
-function strArray(o: Record<string, unknown>, k: string): string[] {
+function strArray(o: Record<string, unknown>, k: string, label: string = k): string[] {
   const v = o[k];
   if (!Array.isArray(v) || v.some((x) => typeof x !== "string")) {
-    throw new DeviceProtocolError(`field "${k}" must be an array of strings`);
+    throw new DeviceProtocolError(`field "${label}" must be an array of strings`);
   }
   return v as string[];
 }
@@ -303,7 +303,7 @@ function parseLimits(v: unknown): SandboxLimits {
   const o = obj(v, 'field "limits"');
   const network = obj(o.network, 'field "network"');
   const kind = oneOf(network, "kind", ["open-public", "allowlist"] as const);
-  const hosts = strArray(network, "hosts");
+  const hosts = strArray(network, "hosts", "network.hosts");
   for (const h of hosts) {
     const problems = validateAllowHost(h);
     if (problems.length > 0) {

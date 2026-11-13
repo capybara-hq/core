@@ -205,6 +205,17 @@ describe("device protocol", () => {
     for (const [op, args] of goods) expect(parse(req(op, args), "kernel")().type).toBe("req");
   });
 
+  it("names the nested path when network.hosts is malformed", () => {
+    const bad = { ...exec, limits: { ...limits, network: { ...limits.network, hosts: [1] } } };
+    expect(parse(req("exec", bad), "kernel")).toThrow(
+      'field "network.hosts" must be an array of strings',
+    );
+    // a top-level array key keeps its own name
+    expect(parse(req("killTagged", { tags: [1] }), "kernel")).toThrow(
+      'field "tags" must be an array of strings',
+    );
+  });
+
   it("parseOpResult validates results per op", () => {
     const execRes = { exitCode: null, stdout: "", stderr: "", truncated: false, timedOut: true };
     expect(parseOpResult("exec", execRes)).toEqual(execRes);

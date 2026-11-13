@@ -181,5 +181,10 @@ describe("SandboxLimits", () => {
     expectTypeOf<"tier" extends keyof SandboxLimits ? true : false>().toEqualTypeOf<false>();
     expectTypeOf<"egress" extends keyof SandboxLimits ? true : false>().toEqualTypeOf<false>();
     expectTypeOf<"allowHosts" extends keyof SandboxLimits ? true : false>().toEqualTypeOf<false>();
+    expectTypeOf<"defaultTier" extends keyof SandboxLimits ? true : false>().toEqualTypeOf<false>();
+    expectTypeOf<
+      "allowUnsandboxed" extends keyof SandboxLimits ? true : false
+    >().toEqualTypeOf<false>();
+    expectTypeOf<"devHosts" extends keyof SandboxLimits ? true : false>().toEqualTypeOf<false>();
   });
 });
