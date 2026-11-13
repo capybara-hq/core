@@ -24,6 +24,7 @@
   "extensions/permission-client.test.ts",
   "git/gateway.test.ts",
   "local-devices/local-device-gateway.dual.test.ts",
+  "migrations/0123.test.ts",
   "orgs/directory-sync.dual.test.ts",
   "runtime/subagents/messages.dual.test.ts",
   "runtime/subagents/subagents.dual.test.ts",

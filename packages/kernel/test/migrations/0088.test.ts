@@ -52,13 +52,13 @@ beforeAll(async () => {
       ('t2', 'o1', 'c1', 'c1', 'r1', 'k2', 'a1', 'd', 'true', '2', 'out2', 'completed',
       now() + interval '1 hour', now())`.execute(db);
   await migrate(pg.url, { schema: "capybara", dir: copyMigrations((f) => f <= FILE) });
-}, 120_000);
+});
 
 afterAll(async () => {
   await db?.destroy();
   await pg?.stop();
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
-}, 120_000);
+});
 
 describe("0088_environments", () => {
   it("migration creates the environment tables and constraints", async () => {

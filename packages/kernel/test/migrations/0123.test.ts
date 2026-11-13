@@ -65,7 +65,7 @@ afterAll(async () => {
   // containers themselves are left. Stopped one at a time, newest first.
   for (const stop of stops.reverse()) await stop();
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
-}, 120_000);
+});
 
 describe("0123_pgvector on a server with pgvector", () => {
   it("installs vector in public, visible from a plugin schema", async () => {
@@ -81,7 +81,7 @@ describe("0123_pgvector on a server with pgvector", () => {
       await c.query(`set search_path to capybara, public; ${TEXT}`);
     });
     expect(await vectorSchema(db.url)).toBe("public");
-  }, 180_000);
+  });
 
   it("leaves an extension a DBA installed in another schema where it is", async () => {
     const db = track(await startTestPostgres());
@@ -91,7 +91,7 @@ describe("0123_pgvector on a server with pgvector", () => {
     });
     await migrate(db.url, { schema: "capybara", dir: migrationsThrough(FILE) });
     expect(await vectorSchema(db.url)).toBe("other");
-  }, 180_000);
+  });
 
   it("only raises a notice for a role that may not create extensions", async () => {
     const db = track(await startTestPostgres());
@@ -117,7 +117,7 @@ describe("0123_pgvector on a server with pgvector", () => {
     }
     expect(notices.some((m) => /pgvector not installed.*SQLSTATE 42501/.test(m))).toBe(true);
     expect(await vectorSchema(db.url)).toBeNull();
-  }, 180_000);
+  });
 
   it("only raises a notice when the server refuses CREATE EXTENSION as not supported", async () => {
     // Stands in for a managed server's allow-list (e.g. Azure Flexible Server): an event trigger
@@ -138,7 +138,7 @@ describe("0123_pgvector on a server with pgvector", () => {
     });
     expect(notices.some((m) => /pgvector not installed.*SQLSTATE 0A000/.test(m))).toBe(true);
     expect(await vectorSchema(db.url)).toBeNull();
-  }, 180_000);
+  });
 });
 
 describe("0123_pgvector on a server without pgvector", () => {
@@ -151,5 +151,5 @@ describe("0123_pgvector on a server without pgvector", () => {
       return r.rowCount;
     });
     expect(available).toBe(0);
-  }, 180_000);
+  });
 });

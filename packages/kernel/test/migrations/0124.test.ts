@@ -72,13 +72,13 @@ beforeAll(async () => {
     values ('c-group-pending', 'cc1', '{"chatId":"chat-1","chatType":"group"}', 'a1')`.execute(db);
   await conversation("c-sub", "subagent", "c-web");
   await migrate(pg.url, { schema: "capybara", dir: copyMigrations((f) => f <= FILE) });
-}, 120_000);
+});
 
 afterAll(async () => {
   await db?.destroy();
   await pg?.stop();
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
-}, 120_000);
+});
 
 const sources = async () =>
   Object.fromEntries(
