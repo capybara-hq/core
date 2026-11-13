@@ -37,6 +37,12 @@ export const AGENT_TEMPLATE_LIMITS: {
 export const AGENT_TEMPLATE_NAME_RE: RegExp;
 
 // @public
+export interface AgentDeletedPayload {
+    agentId: string;
+    orgId: string;
+}
+
+// @public
 export interface AgentTemplate {
     connectors?: AgentTemplateConnector[];
     description: string;
@@ -148,6 +154,9 @@ export interface AuthInjection {
 
 // @public
 export type AvailableHook = (typeof HOOKS_AVAILABLE)[number];
+
+// @public
+export const BACKGROUND_LAUNCH_LINE = "# capybara: background task launch";
 
 // @public
 export const BOOTSTRAP_MANIFEST_SCHEMA_VERSION = 1;
@@ -403,6 +412,9 @@ export function clientCssProblem(css: string, assets: ReadonlySet<string>): stri
 
 // @public
 export function clipMediaName(name: string, max?: number): string;
+
+// @public
+export function compareTiers(a: SandboxTier, b: SandboxTier): number;
 
 // @public
 export function compositeOver(color: string, ground: string): string | undefined;
@@ -693,13 +705,58 @@ export type ContentBlock =
 };
 
 // @public
+export const CONTEXT_EXTENSION_POINT = "context@1";
+
+// @public
+export const CONTEXT_LIMITS: {
+    readonly timeoutMs: 2000;
+    readonly maxBytes: 32768;
+};
+
+// @public
+export interface ContextProvider {
+    provide(req: ContextRequest): Promise<ContextResult>;
+}
+
+// @public
+export interface ContextRequest {
+    accountId: string;
+    agentId: string;
+    agentName: string;
+    config: unknown;
+    conversationId: string;
+    orgId: string;
+    ownerAccountId: string;
+    ownerName: string;
+    role: "owner" | "admin" | "member" | "guest";
+    runId: string;
+    signal: AbortSignal;
+    source: ConversationSource;
+    tools: string[];
+}
+
+// @public
+export type ContextResult = {
+    text: string;
+} | null;
+
+// @public
 export function contrastRatio(fg: string, bg: string): number;
+
+// @public
+export const CONVERSATION_SOURCES: readonly ["web", "channel_dm", "channel_group", "subagent"];
+
+// @public
+export type ConversationSource = (typeof CONVERSATION_SOURCES)[number];
 
 // @public
 export const DEFAULT_SANDBOX_ROOTS: Readonly<SandboxRoots>;
 
 // @public
 export function defineExtension(m: ExtensionManifest): ExtensionManifest;
+
+// @public
+export const DEV_HOSTS: readonly string[];
 
 // @public
 export const DEVICE_PROTOCOL_VERSION = 1;
@@ -744,10 +801,10 @@ export interface DeviceExecGrants {
 export type DeviceExecResult = ExecResult;
 
 // @public
-export type DeviceFeature = "networkReport" | "policyOp";
+export type DeviceFeature = "networkReport" | "policyOp" | "policyOpId" | "tiers";
 
 // @public
-export type DeviceFrame = DeviceHello | DeviceRes | KernelReq | KernelCancel;
+export type DeviceFrame = DeviceHello | DeviceRes | DevicePolicyChanged | KernelReq | KernelCancel;
 
 // @public
 export interface DeviceHello {
@@ -758,6 +815,7 @@ export interface DeviceHello {
     policy?: DeviceLocalPolicySummary;
     programVersion: string;
     protocol: number;
+    recentOps?: DevicePolicyOpReport[];
     roots: SandboxRoots;
     sessionIsolation: boolean;
     type: "hello";
@@ -774,15 +832,16 @@ export interface DeviceKillTaggedArgs {
 // @public
 export interface DeviceLocalPolicySummary {
     allowedDomains: string[];
-    network: DeviceNetworkMode;
+    effectiveTier: SandboxTier;
+    isolation: "sandbox" | "none";
+    localhost: "on" | "off-proxy-detected" | "off";
     remoteGrants: DeviceRemoteGrants;
+    tier?: SandboxTier;
+    unixSockets: "roots" | "all-masked" | "off";
 }
 
 // @public
-export type DeviceNetworkMode = "allowlist" | "open";
-
-// @public
-export type DeviceOp = "create" | "exec" | "readFile" | "writeFile" | "stat" | "killTagged" | "killAll" | "stop" | "policy";
+export type DeviceOp = "create" | "exec" | "readFile" | "writeFile" | "stat" | "killTagged" | "killAll" | "stop" | "policy" | "policyStatus";
 
 // @public
 export interface DeviceOpResults {
@@ -791,6 +850,7 @@ export interface DeviceOpResults {
     killAll: null;
     killTagged: null;
     policy: DevicePolicyResult;
+    policyStatus: DevicePolicyStatus;
     readFile: DeviceReadFileResult;
     stat: DeviceStatResult;
     stop: null;
@@ -800,7 +860,8 @@ export interface DeviceOpResults {
 // @public
 export interface DevicePolicyArgs {
     add?: string[];
-    network?: DeviceNetworkMode;
+    isolation?: "sandbox";
+    opId: string;
     remove?: string[];
     source: {
         approvalId?: string;
@@ -808,11 +869,39 @@ export interface DevicePolicyArgs {
         accountName: string;
         via: "web" | "im";
     };
+    tier?: SandboxTier | null;
+}
+
+// @public
+export interface DevicePolicyChanged {
+    policy?: DeviceLocalPolicySummary;
+    type: "policy";
+}
+
+// @public
+export type DevicePolicyOpOutcome = "applied" | "refused" | "started";
+
+// @public
+export interface DevicePolicyOpReport {
+    opId: string;
+    outcome: DevicePolicyOpOutcome;
 }
 
 // @public
 export interface DevicePolicyResult {
     policy: DeviceLocalPolicySummary;
+}
+
+// @public
+export interface DevicePolicyStatus {
+    message?: string;
+    outcome: DevicePolicyOpOutcome | "unknown";
+    policy?: DeviceLocalPolicySummary;
+}
+
+// @public
+export interface DevicePolicyStatusArgs {
+    opId: string;
 }
 
 // @public
@@ -1430,7 +1519,7 @@ export function hasControlChars(s: string): boolean;
 export function hasShellInjection(body: string): boolean;
 
 // @public
-export const HOOK_MOUNT_POINTS: readonly ["session.start", "session.end", "agent.preStep", "model.request", "model.response", "tool.preExecute", "tool.postExecute", "usage.report"];
+export const HOOK_MOUNT_POINTS: readonly ["session.start", "session.end", "agent.preStep", "model.request", "model.response", "tool.preExecute", "tool.postExecute", "usage.report", "org.member_removed", "agent.deleted", "org.deleted"];
 
 // @public
 export interface HookCall {
@@ -1489,15 +1578,18 @@ export interface HookParentScope {
 
 // @public
 export interface HookPayloads {
+    "agent.deleted": AgentDeletedPayload;
     "model.request": ModelRequestHookPayload;
     "model.response": ModelResponseHookPayload;
+    "org.deleted": OrgDeletedPayload;
+    "org.member_removed": OrgMemberRemovedPayload;
     "tool.postExecute": ToolPostHookPayload;
     "tool.preExecute": ToolPreHookPayload;
     "usage.report": UsageReportPayload;
 }
 
 // @public
-export const HOOKS_AVAILABLE: readonly ["model.request", "model.response", "tool.preExecute", "tool.postExecute", "usage.report"];
+export const HOOKS_AVAILABLE: readonly ["model.request", "model.response", "tool.preExecute", "tool.postExecute", "usage.report", "org.member_removed", "agent.deleted", "org.deleted"];
 
 // @public
 export interface HookScope {
@@ -1615,6 +1707,9 @@ export interface InputRequired {
 export function isAttachmentId(s: unknown): s is string;
 
 // @public
+export function isBackgroundLaunch(command: string): boolean;
+
+// @public
 export function isChannelSendError(e: unknown): e is ChannelSendError;
 
 // @public
@@ -1627,6 +1722,9 @@ export function isFileSystemGoneError(e: unknown): e is FileSystemGoneError;
 export function isModelError(e: unknown): e is ModelError;
 
 // @public
+export function isPolicyOpId(v: unknown): v is string;
+
+// @public
 export function isPublicHostname(host: string): boolean;
 
 // @public
@@ -1637,6 +1735,9 @@ export function isSafePackagePath(p: string): boolean;
 
 // @public
 export function isSandboxGoneError(e: unknown): e is SandboxGoneError;
+
+// @public
+export function isSandboxTier(v: unknown): v is SandboxTier;
 
 // @public
 export function isSecret(schema: z.ZodTypeAny): boolean;
@@ -1678,6 +1779,9 @@ export interface Lease {
     release(): Promise<void>;
     renew(): Promise<boolean>;
 }
+
+// @public
+export const LIFECYCLE_HOOKS: readonly ["org.member_removed", "agent.deleted", "org.deleted"];
 
 // @public
 export type Locale = "zh" | "en";
@@ -1807,6 +1911,12 @@ export type MarketplaceSource = {
 export const MAX_NETWORK_BLOCKED_HOSTS = 20;
 
 // @public
+export const MAX_POLICY_OP_ID_LENGTH = 128;
+
+// @public
+export const MAX_RECENT_POLICY_OPS = 100;
+
+// @public
 export const MEDIA_LIMITS: {
     readonly imageBytes: 5242880;
     readonly documentBytes: 33554432;
@@ -1834,6 +1944,9 @@ export type MergedScheme = {
 
 // @public
 export function mergeThemeSchemes(theme: Pick<ThemeFile, "schemes">): Partial<Record<ThemeScheme, MergedScheme>>;
+
+// @public
+export function minTier(first: SandboxTier, ...rest: SandboxTier[]): SandboxTier;
 
 // @public
 export function missingInboundModeFields(schema: JsonSchema, mode: ChannelInboundMode, has: (field: string) => boolean): string[];
@@ -2100,6 +2213,11 @@ export function orgAccess<T extends z.ZodTypeAny>(schema: T, access: OrgAccess):
 export function orgAccessOf(schema: z.ZodTypeAny): OrgAccess | undefined;
 
 // @public
+export interface OrgDeletedPayload {
+    orgId: string;
+}
+
+// @public
 export interface OrgEmbedClaims extends EmbedClaimsBase {
     agentId?: string;
     conversationId?: string;
@@ -2107,6 +2225,12 @@ export interface OrgEmbedClaims extends EmbedClaimsBase {
     orgId: string;
     role: UiRole;
     scope: "org";
+}
+
+// @public
+export interface OrgMemberRemovedPayload {
+    accountId: string;
+    orgId: string;
 }
 
 // @public
@@ -2543,6 +2667,9 @@ export const SANDBOX_ROOTS: readonly ["/workspace", "/skills", "/tmp"];
 export const SANDBOX_TAG_RE: RegExp;
 
 // @public
+export const SANDBOX_TIERS: readonly SandboxTier[];
+
+// @public
 export interface SandboxActor {
     accountId: string;
     conversationId: string;
@@ -2566,10 +2693,14 @@ export interface SandboxHandle {
 // @public
 export interface SandboxLimits {
     allowHosts: string[];
+    allowUnsandboxed?: boolean;
     cpu: number;
+    defaultTier?: SandboxTier;
+    devHosts: string[];
     diskMb: number;
     egress: "none" | "allowlist" | "open";
     memoryMb: number;
+    tier: SandboxTier;
 }
 
 // @public
@@ -2603,6 +2734,7 @@ export interface SandboxProvider {
     }): Promise<ExecResult>;
     killAll(h: SandboxHandle, signal: AbortSignal): Promise<void>;
     killTagged(h: SandboxHandle, tags: string[], signal: AbortSignal): Promise<void>;
+    readonly limitsApplyAt?: "instance" | "fileSystem";
     readFile(h: SandboxHandle, path: string, opts: {
         maxBytes: number;
         signal: AbortSignal;
@@ -2617,6 +2749,7 @@ export interface SandboxProvider {
         isDir: boolean;
     } | null>;
     suspend(h: SandboxHandle, signal: AbortSignal): Promise<void>;
+    update?(h: SandboxHandle, limits: SandboxLimits, signal: AbortSignal): Promise<"updated" | "recreate">;
     writeFile(h: SandboxHandle, path: string, data: Uint8Array, signal: AbortSignal): Promise<void>;
 }
 
@@ -2626,6 +2759,9 @@ export interface SandboxRoots {
     tmp: string;
     workspace: string;
 }
+
+// @public
+export type SandboxTier = "strict" | "dev" | "open";
 
 // @public
 export function sanitizeParams(decl: ModelParameter[], params: Record<string, unknown>): {
@@ -2641,7 +2777,7 @@ export function sanitizeThemeSvg(bytes: Uint8Array): {
 };
 
 // @public
-export const SDK_VERSION = "0.1.0-rc.15";
+export const SDK_VERSION = "0.1.0-rc.20";
 
 // @public
 export function secret<T extends z.ZodTypeAny>(schema: T): T;
@@ -3254,6 +3390,9 @@ export interface ThemeSchemeOverride {
 export const THINKING_VALUES: readonly string[];
 
 // @public
+export function tierAtMost(a: SandboxTier, b: SandboxTier): boolean;
+
+// @public
 export const TOOL_KEY_ARGS_MAX = 3;
 
 // @public
@@ -3276,11 +3415,14 @@ export interface ToolCallContext {
     config?: unknown;
     conversationId: string;
     orgId: string;
+    ownerAccountId?: string;
     resume?: {
         state: unknown;
         answer: FormAnswer | null;
     };
+    role?: "owner" | "admin" | "member" | "guest";
     signal: AbortSignal;
+    source?: ConversationSource;
 }
 
 // @public
@@ -3363,6 +3505,7 @@ export interface ToolSpec {
     inputSchema: Record<string, unknown>;
     keyArgs?: string[];
     name: string;
+    sources?: ConversationSource[];
     title?: string;
 }
 
@@ -3640,6 +3783,9 @@ export interface UiView {
     data?: JsonValue;
     open?: UiOpen;
 }
+
+// @public
+export const UNSANDBOXED_NOT_ALLOWED_MESSAGE = "This device runs commands without a sandbox, which your organization does not allow. Its owner can turn the sandbox back on with `capybara-device policy set isolation sandbox`.";
 
 // @public
 export type UsagePurpose = ModelCallPurpose | "embedding";

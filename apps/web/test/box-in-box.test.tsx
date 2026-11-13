@@ -9,6 +9,8 @@ import { CATALOG_ROUTES, REFERENCE_ROUTES } from "../src/dev/catalog/routes";
 // item AB): no catalog or reference block draws a boxed design component inside another. The app
 // pages are guarded statically by `web-ui-box-in-box` (`pnpm check:web-ui`).
 
+// the catalog draws the /schedules calendar page, whose view navigates through the app's router
+vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({
   notFound: () => {
     throw new Error("NEXT_NOT_FOUND");

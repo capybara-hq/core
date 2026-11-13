@@ -605,10 +605,6 @@ export class ConnectorsService {
   ): { slug: string; endpoint: unknown; owner?: CredentialOwner; secret?: StaticSecret } {
     const slug = this.resolveSlug(input);
     const endpoint = this.parseEndpoint(input.connector, input.endpoint);
-    // a defaulted slug skips plugin names itself (`freeName`)
-    if (!input.slugDefault && this.extensions.manifests().some((m) => m.name === slug)) {
-      throw fail("slug", `Slug "${slug}" is the name of an installed plugin; choose another`);
-    }
     const auth = input.auth;
     const credential = input.credential ?? undefined;
     if (!isOAuth(auth)) {

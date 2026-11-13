@@ -1021,7 +1021,7 @@ describe("admin plugin detail: components and the platform update", () => {
     expect(await screen.findByText(fill(U.done, { name: "jina", version: "v1.3.0" }))).toBeTruthy();
   });
 
-  it("the platform on the newest version offers no update; a newer marketplace version is imported first", async () => {
+  it("a newer marketplace version is the one 更新到 (the wizard); the platform's own version offers none", async () => {
     await open(
       `/admin/plugins/${ITEM}`,
       routes({
@@ -1040,7 +1040,7 @@ describe("admin plugin detail: components and the platform update", () => {
     );
     expect(
       await screen.findByRole("button", {
-        name: fill(en.catalog.admin.detail.actions.import, { version: "v1.4.0" }),
+        name: fill(en.catalog.admin.detail.actions.update, { version: "v1.4.0" }),
       }),
     ).toBeTruthy();
     expect(
@@ -1048,6 +1048,45 @@ describe("admin plugin detail: components and the platform update", () => {
         name: fill(en.catalog.admin.detail.actions.update, { version: "v1.3.0" }),
       }),
     ).toBeNull();
+  });
+
+  it("版本: a row other than the platform's moves the platform to it (更新到 / 回退到, the update preview)", async () => {
+    const calls = await open(
+      `/admin/plugins/${ITEM}`,
+      routes({
+        [`GET /api/v1/admin/catalog/items/${ITEM}`]: () =>
+          json(200, {
+            item: { ...item, platformVersion: "1.3.0", newerInMarketplace: false },
+            versions: [version("1.3.0"), version("1.2.0")],
+            hasIcon: false,
+          }),
+        [`POST /api/v1/admin/catalog/items/${ITEM}/update/preview`]: () =>
+          json(200, { ...PREVIEW, from: "1.3.0", to: "1.2.0" }),
+      }),
+    );
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("tab", { name: new RegExp(en.catalog.admin.detail.tabs.versions) }),
+    );
+    const table = await screen.findByRole("table", {
+      name: en.catalog.admin.detail.versionColumns.version,
+    });
+    const rowOf = (v: string) => within(table).getByText(v).closest("tr") as HTMLElement;
+    // the platform's own version has no move
+    expect(within(rowOf("v1.3.0")).queryByRole("button", { name: "Row actions" })).toBeNull();
+    await user.click(within(rowOf("v1.2.0")).getByRole("button", { name: "Row actions" }));
+    await user.click(
+      await screen.findByRole("menuitem", {
+        name: fill(en.catalog.admin.detail.actions.rollback, { version: "v1.2.0" }),
+      }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    await waitFor(() =>
+      expect(bodyOf(calls.find((c) => c.url.endsWith("/update/preview")))).toEqual({
+        version: "1.2.0",
+      }),
+    );
+    expect(within(dialog).getByRole("button", { name: en.catalog.update.confirm })).toBeTruthy();
   });
 
   it("更新到 picks the highest version, and offers none when the versions do not compare", async () => {

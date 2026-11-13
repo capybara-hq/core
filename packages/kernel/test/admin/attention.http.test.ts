@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { OutboxDeadService } from "../../src/admin/outbox-dead.service.js";
 import type { AdminAttention } from "../../src/admin/overview.service.js";
 import { type CatalogItemView, CatalogService } from "../../src/catalog/catalog.service.js";
 import {
@@ -14,6 +15,7 @@ import { ExtensionAdmin } from "../../src/extensions/admin-view.js";
 import type { AdminExtensionView } from "../../src/extensions/permission-view.js";
 import { PlatformInboxService } from "../../src/inbox/platform-inbox.service.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
+import { QUEUE_LOST_JOBS_KEY, QueueLostJobs } from "../../src/runtime/queue-lost-jobs.js";
 import { evalModelState, resetEvalModel } from "../fixtures/plugins/model-eval/index.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE_B } from "../helpers/model-plugins.js";
@@ -138,7 +140,9 @@ describe("GET /api/v1/admin/overview/attention", { timeout: 60_000 }, () => {
       { plugin: "model-embed-probe", displayName: null, icon: null, problem: "no_chat_model" },
     ]);
     expect(a.updates).toEqual([]);
-    expect(a.more).toEqual({ extensions: 0, updates: 0, providers: 0 });
+    expect(a.more).toEqual({ extensions: 0, updates: 0, providers: 0, outbox: 0, queue: 0 });
+    expect(a.outbox).toEqual([]);
+    expect(a.queue).toEqual([]);
     expect(a.unavailable).toEqual([]);
     // privacy (spec §9): categories only
     const keys = keysOf(a);
@@ -233,6 +237,57 @@ describe("GET /api/v1/admin/overview/attention", { timeout: 60_000 }, () => {
     expect(a.unavailable).toEqual(["providers"]);
     expect(a.extensions.length).toBeGreaterThan(0);
     expect(r.body).not.toContain("sk-SECRET");
+  });
+});
+
+describe("the dead outbox rows source (transactional outbox spec §3.4)", {
+  timeout: 60_000,
+}, () => {
+  it("failing alone leaves the other lists and marks the overview partial", async () => {
+    vi.spyOn(k.app.get(OutboxDeadService), "summary").mockRejectedValue(
+      new Error("outbox unreadable: sk-SECRET"),
+    );
+    const r = await root({ method: "GET", url: "/api/v1/admin/overview/attention" });
+    expect(r.statusCode, r.body).toBe(200);
+    const a = r.json() as AdminAttention;
+    expect(a.outbox).toEqual([]);
+    expect(a.unavailable).toEqual(["outbox"]);
+    // the other sources are read as usual: badconfig and the two failing providers
+    expect(a.extensions.map((e) => e.name)).toContain("badconfig");
+    expect(a.providers.length).toBeGreaterThan(0);
+    expect(r.body).not.toContain("sk-SECRET");
+    const s = await root({ method: "GET", url: "/api/v1/admin/overview" });
+    expect(s.json()).toMatchObject({ partial: true });
+  });
+});
+
+describe("the run queue's lost jobs (transactional outbox spec §8.3)", { timeout: 60_000 }, () => {
+  it("lists one queue_lost_jobs item with the count and the last loss, counted in attentionTotal", async () => {
+    await redis.del(QUEUE_LOST_JOBS_KEY);
+    expect((await attention()).queue).toEqual([]);
+    const before = (await root({ method: "GET", url: "/api/v1/admin/overview" })).json() as {
+      attentionTotal: number;
+    };
+    try {
+      // what the run-orphan-check reports for two queued runs whose jobs the queue lost
+      await k.app.get(QueueLostJobs).report(2);
+      const a = await attention();
+      expect(a.queue).toEqual([{ kind: "queue_lost_jobs", count: 2, lastAt: expect.any(String) }]);
+      expect(Number.isNaN(Date.parse(a.queue[0]?.lastAt ?? ""))).toBe(false);
+      expect(a.more.queue).toBe(0);
+      expect(a.unavailable).toEqual([]);
+      // a later loss adds to the count
+      await k.app.get(QueueLostJobs).report(1);
+      expect((await attention()).queue[0]?.count).toBe(3);
+      const after = (await root({ method: "GET", url: "/api/v1/admin/overview" })).json() as {
+        attentionTotal: number;
+      };
+      expect(after.attentionTotal).toBe(before.attentionTotal + 1);
+      // it expires a week after the last loss
+      expect(await redis.ttl(QUEUE_LOST_JOBS_KEY)).toBeGreaterThan(6 * 24 * 3600);
+    } finally {
+      await redis.del(QUEUE_LOST_JOBS_KEY);
+    }
   });
 });
 

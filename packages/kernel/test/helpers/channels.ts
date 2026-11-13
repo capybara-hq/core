@@ -53,7 +53,7 @@ export function channelInboundFor(d: {
     none,
     none,
     none,
-    { enqueue: async () => {}, ...d.jobs },
+    { enqueue: async () => {}, bind: async () => {}, ...d.jobs },
     none,
     none,
     none,

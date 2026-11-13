@@ -151,7 +151,9 @@ describe("inputParity", () => {
   });
 });
 
-describe("the real kernel tree", () => {
+// real work, not a wait: these parse every kernel controller and compare every route's schemas,
+// which took 5.1 to 5.6 s under a loaded full run (over vitest's 5 s default)
+describe("the real kernel tree", { timeout: 30_000 }, () => {
   const ops = registeredOperations();
 
   it("builds every registered operation", () => {

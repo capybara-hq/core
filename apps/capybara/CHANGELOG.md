@@ -1,5 +1,247 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.27
+
+### Patch Changes
+
+- 8770eeb: The scheduled tasks page opens on the calendar: 日历 is the first tab and the default (`/schedules`), the list moves to `?view=list`; a remembered choice still wins.
+- 47ef322: A person's stop of a conversation now stops every running sub-agent below it too, and the
+  conversation stays stopped: no sub-agent finish or report starts it again until the next message,
+  whose run sees what they delivered. The conversation's own background Bash tasks keep running.
+- b6b8d13: TaskOutput given a sub-agent's agentId answers where its report arrives instead of failing the call; TaskStop still refuses it.
+- 3c7c8bf: Device policy changes record their intent before the call. Before a `policy` op is sent, one
+  transaction writes the op on the machine's row (who asked, for which network ask), audits
+  `device.policy_requested` and owes a `device-op-resolve` job for when the op can no longer reach the
+  machine; the outcome is recorded after the call: `device.policy_changed` when applied,
+  `device.policy_failed` when refused or never received, `device.policy_unknown` when no answer came.
+  A crash between the call and the record no longer leaves a changed device without an audit: the
+  job asks the machine what became of the op (`policyStatus`, never sending the change again), and
+  a machine that is offline reports it in its next hello (`recentOps`), recorded late. Policy changes
+  now need a `capybara-device` that announces `policyOpId`; an older one is told to update.
+  `device.policy_changed` no longer carries `confirmed`.
+  
+  Network asks decide on that intent. 「这台设备一直允许」 records the intent (naming the ask) before
+  the device is called, and the ask's decision and the op's outcome are written in one transaction;
+  a change applied after the ask closed is audited `device.network_allowed` with `late: true` in that
+  same transaction. When the process stops between the call and the record, the resolve job approves
+  the still-pending ask (`always`, by the person who chose it) and resumes its run if the device
+  applied the change; otherwise the ask stays pending with the reason (`detail.attempt`, an
+  `approval_updated` event) and the card says why. A device is asked only when its program announces
+  `policyOpId`. The device page lists changes the machine did not confirm or that did not take
+  effect (the view's `confirmed` is replaced by `outcome`).
+- bb931fd: Transactional outbox follow-ups. Retrying a dead outbox row that is owed again twice while it is
+  retried answers 409 `conflict` instead of an internal error, and its audit detail always names the
+  row's own queue and job. A run job that read a run as queued before a stop ended it records no
+  skills catalog or run context for it. Allowing hosts always on a device no longer reports success
+  when the request was approved meanwhile with other hosts and the device did not confirm this
+  change. On the admin overview, a dead outbox list that cannot be read shows the group's
+  unavailable state with retry instead of a bare count.
+  A stop that lands while the context providers are asked appends no plugin context after the run
+  ended; a deleted org's runs are no "queue lost jobs" report and its usage is still reported; a
+  worker fails a maintenance job it does not know so a newer replica retries it.
+- Updated dependencies [76828c0]
+- Updated dependencies [47ef322]
+- Updated dependencies [b6b8d13]
+- Updated dependencies [a9f726b]
+- Updated dependencies [3c7c8bf]
+- Updated dependencies [bb931fd]
+  - @capybara-hq/kernel@0.1.0-rc.26
+
+## 0.1.0-rc.26
+
+### Patch Changes
+
+- b177905: The compose files and test containers run PostgreSQL 17 with pgvector (`pgvector/pgvector:pg17`),
+  and migration 0123 creates the `vector` extension in `public` when the server offers it and the
+  migrating role may create it; otherwise it only raises a notice, and plugins fall back to `real[]`.
+  `@capybara-hq/testing` exports `startPostgresContainer` (with an `image` option) and `TEST_PG_IMAGE`.
+- Updated dependencies [fc46148]
+- Updated dependencies [23c16d8]
+- Updated dependencies [b7e70f7]
+- Updated dependencies [b177905]
+- Updated dependencies [fcfabb4]
+- Updated dependencies [b4d2b44]
+- Updated dependencies [240801c]
+  - @capybara-hq/kernel@0.1.0-rc.25
+
+## 0.1.0-rc.25
+
+### Patch Changes
+
+- 4807c1f: The `Bash` description tells the model that tools ignoring HTTP(S)_PROXY, such as browsers, need
+  the proxy passed explicitly (Chromium: `--proxy-server=$HTTPS_PROXY`).
+- ba36733: A device's recent sandbox changes now list the policy changes its owner makes on the machine
+  (`capybara-device policy ...`: tier from and to, localhost, allowed domains added and removed,
+  isolation, remote grants) as 本机 beside the web's, each change once.
+- 67e6ad5: A local OS-sandboxed device now kills what a foreground command leaves running (`server &`,
+  `nohup …`) when the command ends, by its process group and by a per-command marker for processes
+  that left the group. Inside the sandbox no later command could signal them, so they leaked. A
+  background task launch, whose command starts with the new `BACKGROUND_LAUNCH_LINE`
+  (`@capybara-hq/plugin-sdk`), keeps what it starts. The `Bash` description tells the model to use
+  `run_in_background` for servers and watchers.
+- 916b1d0: An extension's properties section whose schema view has nothing to show (no blocks, or only empty
+  lists) is no longer drawn: no header, badge or empty state until it has content (the todo
+  section before the agent's first to-do), and no skeleton during its first load.
+  
+  The bootstrap `todo` plugin moves to 0.1.0-rc.8 (the plugins marketplace at 4bfd588): the list is
+  titled 「待办」 / "Todos" and its properties section stays hidden until the first to-do.
+- 9370947: Updating an installed platform plugin to a newer version is one wizard: 更新到 vX on the admin
+  plugin list, the plugin's page and the marketplace tab stages the version and shows the import
+  review, then the platform update preview; one confirm applies both (`GET
+  /api/v1/admin/catalog/imports/:stagingId/update-preview`, `POST …/imports/:stagingId/update`).
+  Cancelling writes nothing; an update failing after the import says so (409
+  `plugin.imported_not_updated`) and leaves the platform on its version. An installed plugin is no
+  longer imported on its own; the 版本 tab moves the platform to another imported version (更新到 /
+  回退到). A plugin not installed yet shows 安装 instead of 导入 / 引入.
+- 73c1232: Org-side plugin wording follows install/update: 申请安装, 已安装, 不能安装; the audit reads 安装了插件.
+- 3a884eb: A cloud sandbox provider that refuses a device's tier (for example sandbox-docker or sandbox-e2b with
+  `openEgress: "off"` at the open tier) now gives the model an actionable tool error
+  (`sandbox.tier_refused`) instead of a generic failure; any other failed create is
+  `sandbox.create_failed`. TaskOutput and TaskStop called with a sub-agent's agentId say that its
+  report arrives as a notification, so the model stops polling for it.
+  
+  The bootstrap plugins move to the plugins marketplace at 3750cf7: sandbox-docker 0.1.0-rc.12 (sandbox
+  tiers, `openEgress` defaulting to `proxy`; rc.10 refused the open tier by default), and the other
+  pins to the versions built on plugin-sdk rc.17. The compose sandbox image contexts follow the commit.
+- 46fda48: A scheduled task calendar read: `GET /api/v1/orgs/:orgId/schedules/calendar` (and the Platform
+  operation `schedules.calendar`) returns a range's recorded runs and the planned occurrences the
+  scheduler will fire, from its own ticker, with dense task-days summarized per day.
+- 42b1637: The scheduled tasks calendar on `/schedules`: 列表 / 日历 tabs in the page head (remembered per
+  browser), a week and a month of recorded and planned runs, dense tasks collapsed per day, the run
+  panel (from the address hash) with the run, its conversation and the task, the admin 全组织 scope
+  and the phone's agenda.
+- e2731bd: New builtin tool `TaskList`, offered with `Bash` like `TaskOutput` and `TaskStop`: it lists the
+  conversation's own background tasks (running first, then the 20 most recently finished, with id,
+  description, status, elapsed time, exit code and output file) and the sub-agents it dispatched.
+  Read-only and allowed by default; `status: "running"` lists only what still runs. `TaskOutput`'s
+  not-found error and the `Bash` description point to it.
+- c619811: A transactional outbox: work that must follow a commit is a row in `capybara.outbox` written in the
+  same transaction (`OutboxService.add`), delivered right after the commit by a fast path and, when
+  that fails, by a relay on the worker role every 2 s; failures back off and after 20 attempts the
+  row is a dead letter the super admin sees in the overview (无法排入队列的后台任务) and can retry or
+  discard (`/api/v1/admin/outbox/dead`, Platform operations). New checks `kc-enqueue-via-outbox`,
+  `kc-after-commit-hint` and `check:outbox-registry` (migration 0119).
+- 86c258c: Agent runs have no step limit and no duration limit by default: `runtime.maxSteps` and
+  `runtime.maxRunSeconds` default to 0 (no limit), so a run goes on until the model stops calling
+  tools or someone stops it. Without a run duration limit, sandbox commands are limited only by
+  `sandbox.limits.maxCommandSeconds` and the tool timeouts; explicit positive limits work as before.
+- Updated dependencies [ba36733]
+- Updated dependencies [9370947]
+- Updated dependencies [e2731bd]
+- Updated dependencies [c619811]
+- Updated dependencies [b8a3c5b]
+- Updated dependencies [36d904d]
+- Updated dependencies [86c258c]
+  - @capybara-hq/kernel@0.1.0-rc.24
+
+## 0.1.0-rc.24
+
+### Patch Changes
+
+- 8471657: A local policy change made on the machine (`capybara-device policy ...` while the service runs, a
+  flipped localhost proxy guard, a new tier ceiling) reaches the deployment at once: the device
+  pushes its new summary in a `policy` frame (new in the device protocol), and the kernel stores it
+  as it stores the hello's, so the device page and the next `device_paths` line show it.
+- 8ef7ec6: The plugin enable wizard no longer asks for connector templates that start switched off
+  (`defaultEnabled: false`); the org catalog detail marks them with `defaultOff`.
+- f156a46: Background Bash tasks (`run_in_background`) work on macOS devices: where `pgrep` has no `-s`, the
+  launch runs the command in a process group of its own, watched by a small perl launcher that
+  enforces the time limit and signals the group on a stop (macOS has no `setsid` or GNU `timeout`,
+  and its OS sandbox lets no command list or signal another command's processes).
+- a3ca5ef: The super admin sets the platform's sandbox levels (`sandbox.tiers.max`, `default`,
+  `allowUnsandboxed`) on the admin settings page (`PUT /api/v1/admin/settings` `sandboxTiers`). A field
+  set in the startup config (env, file or Nacos) wins and is read-only there; an API token or the
+  Platform tool may only lower them. The dev hosts preset (`DEV_HOSTS`) adds `storage.googleapis.com`,
+  where Playwright's Chromium download (Chrome for Testing) is served from.
+- Updated dependencies [8471657]
+- Updated dependencies [8ef7ec6]
+- Updated dependencies [f156a46]
+- Updated dependencies [a3ca5ef]
+  - @capybara-hq/kernel@0.1.0-rc.23
+
+## 0.1.0-rc.23
+
+### Minor Changes
+
+- 67b39b3: The device owner edits a connected device's network policy from the web:
+  `POST /api/v1/orgs/:orgId/devices/:id/policy` (`add`, wildcards allowed; `remove`; `network`
+  `allowlist` or `open`), web session only, delivered with the `policy` device operation. Widening
+  needs the device's local `remoteGrants: "owner"` (else 409 `device.policy_refused` with the command
+  to run on the machine). The device view lists the last ten policy changes (`network.recent`).
+- e964b57: Network asks: when a command on a connected device is refused a domain by the device's local
+  policy, the device owner is asked in the conversation or on the IM card (「这次允许 / 这台设备一直允许 /
+  拒绝」). "This time" allows the domain for the rest of the run tree; "always" adds it to the device's
+  local policy through the new `policy` device operation. Org-layer and address-layer refusals are
+  explained to the model and shown under the command. Migration 0114 adds approval kinds and device
+  policy summaries.
+- 9725087: A character budget for the skills catalog: `skills.catalogBudgetChars` (hot, default 16000). At run
+  start the catalog's entries are ranked (the agent's own and the ones it shared, builtin, the organization's own, then
+  plugin skills) and those past the budget are recorded in the snapshot as name-only and listed
+  after the others under "More skills (names only; …)". Old snapshots render as before.
+- e808481: Skills are on by default in the web app: the agent page's 技能 section lists every skill on in the
+  org checked, and unticking one turns it off (`disabledSkills`); a plugin's group head turns the
+  whole plugin off, its later skills too. Pinning is gone (the 置顶 section, the pinned suggestions
+  of plugin import, the token estimates). The agent template editor edits `disallowedSkills` with the
+  same list and the skills a sub-agent loads first. The org 技能 page filters by plugin and its
+  detail says how many agents turned a skill off (`agentsOff` on the skill detail); switching off a
+  plugin with skills says every agent loses them; the admin agent pages show the off count.
+- 95fc4b0: Skills are on by default and pinning is gone. Every skill on in an org is on for every agent unless
+  the agent's new `disabledSkills` turns it off (a plugin's skills by name, a whole plugin as `"all"`
+  including skills it gains later, or a skill without a plugin by id); builtin skills, the agent's
+  own and its shared skills cannot be turned off. `skills.orgSkills` and `skills.pinned` are removed
+  from the agent definition (refused on save; migration 0116 rewrites every agent version), run start
+  no longer injects pinned skill bodies (an old conversation gets a "Pinned skills removed" notice),
+  and `agent.pinned_invalid` is gone. A sub-agent template's `skills` become one logged line telling
+  the child to load them with `Skill` first. `plugin.json` `skills[].pinned` and the import confirm's
+  `pinnedSuggestions` are removed; the skill APIs drop `suggestPinned`, `entryBytes` and
+  `tokenEstimate` and the library list gains `builtin`; the Claude Code import reports a
+  `session_start_hook` warning instead of a pin hint. The Platform tool's `agents.create` /
+  `agents.update` take `disabledSkills`, and `platform.me` lists the agent's skills.
+
+### Patch Changes
+
+- 0f8f5bb: The agent page's 组织技能 and the agent template's 技能 group the skills by where they come from
+  (each plugin, the org's own, the built-in ones), each group with a select-all box (checked/total,
+  mixed) and a filter for long lists; each row is the name and its badges on one line and the
+  description cut to one muted line with the full text on hover (new design `CheckList`). A badge
+  never shrinks or wraps, and a checked disabled checkbox keeps its check visible.
+- 89a0a5c: The `Bash` tool description tells the model that network access goes through a proxy and that a
+  blocked domain is reported after the command output.
+- 105a59e: The skills of builtin plugins on in the org (`skills-core`'s `skill-guide`) are in every agent's
+  skills catalog without being selected (listed, not pinned; an agent's own skill of the same name
+  wins); the skill library marks them `builtin`, and the agent page shows them ticked and disabled
+  with a "Built-in" tag
+- f6d6f16: The `capybara:oauth-token-endpoint` setup check reads GitHub's token endpoint answers
+  (`bad_verification_code` accepted, `incorrect_client_credentials` refused), and its fix text no
+  longer names Slack's "Basic Information" page.
+- bb3d177: Sandbox tiers in the kernel: cloud devices get their effective tier (applied on use through the provider's `update`, or by recreating the instance on the kept files), local devices get the org's ceiling with every command, scheduled runs need the `tier:open` task grant for the open tier, and a device running without a sandbox is refused where the org does not allow it
+- c36ce32: Scheduled tasks: cron-triggered agent runs into a new conversation, a chosen one or an IM chat, with task grants, trial runs and pause on lasting failures
+- bfb35e3: Tool rows no longer read a Bash command's non-zero exit as a failure (only a timeout or a stopped
+  command fails; the summary names the exit code), and an `Edit` / `Write` refused by the
+  read-before-write check carries the display-only `tool_result.view.kind: "guard"`, shown as
+  "Blocked: read the file (again) first" and counted apart from failures; the model still gets the
+  same error result
+- f274ba6: Sandbox levels in the web app: the device page has a 沙箱级别 section (strict / development / open
+  cards, follow the org default, capped cards, the effective level, the machine's development facts,
+  the local commands for running without a sandbox and 恢复沙箱), device cards and the composer's
+  device picker mark 开放 and 不使用沙箱 devices, and the org sandbox settings choose the highest
+  level, the default for new devices and whether members' devices may run without a sandbox, with
+  the development hosts listed under the allowlist.
+- Updated dependencies [2682d5f]
+- Updated dependencies [89a0a5c]
+- Updated dependencies [105a59e]
+- Updated dependencies [67b39b3]
+- Updated dependencies [f6d6f16]
+- Updated dependencies [bb3d177]
+- Updated dependencies [e964b57]
+- Updated dependencies [c36ce32]
+- Updated dependencies [9725087]
+- Updated dependencies [e808481]
+- Updated dependencies [95fc4b0]
+- Updated dependencies [f1331fe]
+- Updated dependencies [bfb35e3]
+  - @capybara-hq/kernel@0.1.0-rc.22
+
 ## 0.1.0-rc.22
 
 ### Minor Changes

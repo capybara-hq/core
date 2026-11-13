@@ -48,7 +48,11 @@ export function useScheduleWords(): (
 }
 
 /** The status mark of a task: its state, or why it is paused. */
-export function ScheduleStateMark({ task }: { task: ScheduledTask }) {
+export function ScheduleStateMark({
+  task,
+}: {
+  task: Pick<ScheduledTask, "status" | "pauseReason">;
+}) {
   const t = useTranslations("schedules.state");
   const state = scheduleState(task);
   const status: ComponentProps<typeof StatusMark>["status"] =

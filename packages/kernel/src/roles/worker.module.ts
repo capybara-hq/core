@@ -3,7 +3,6 @@ import { BackgroundModule } from "../background/background.module.js";
 import { BackgroundTaskPollJob } from "../background/poll.job.js";
 import { CatalogModule } from "../catalog/catalog.module.js";
 import { CatalogJobs } from "../catalog/jobs.js";
-import { PlatformMigration } from "../catalog/platform-migration.js";
 import { PluginScopeWorkersModule } from "../catalog/scope-sync-workers.js";
 import { ChannelsModule, ChannelWorkersModule } from "../channels/channels.module.js";
 import { GatewayCheckJob } from "../channels/supervisor.js";
@@ -18,17 +17,19 @@ import { LegacySandboxCleanupJob } from "../devices/legacy-cleanup.job.js";
 import { EvalWorkersModule } from "../evals/evals.module.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { PluginsReconcileJob } from "../extensions/lifecycle.js";
+import { LifecycleHookWorkersModule } from "../extensions/lifecycle-hooks.js";
 import { InitialPasswordCleanupJob } from "../identity/initial-passwords.job.js";
+import { OutboxRelayModule } from "../infra/outbox/outbox-relay.module.js";
 import { KernelScheduleModule } from "../infra/schedule/schedule.module.js";
 import { DirectoryScanJob } from "../orgs/directory-sync.js";
-import { OffboardSweepJob } from "../orgs/offboarding.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
 import { OrgsModule } from "../orgs/orgs.module.js";
 import { MaintenanceModule } from "../runtime/maintenance.js";
+import { RunJobsModule } from "../runtime/run-jobs.js";
+import { RunOrphanCheck } from "../runtime/run-orphan-check.job.js";
 import { RuntimeWorkersModule } from "../runtime/run-processors.js";
 import { RuntimeModule } from "../runtime/runtime.module.js";
-import { UsageReportModule, UsageSweepJob } from "../runtime/usage-report.js";
-import { WaitSweepJob } from "../runtime/waits.js";
+import { UsageReportModule } from "../runtime/usage-report.js";
 import { SandboxSweepJobs } from "../sandbox/jobs.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
 import { ScheduledTaskFireModule } from "../schedules/fire.js";
@@ -55,6 +56,8 @@ export class WorkerModule {
       module: WorkerModule,
       imports: [
         KernelScheduleModule,
+        // the outbox relay (`@LockedInterval`): delivers what the fast path did not
+        OutboxRelayModule,
         ClientModule,
         // the queue consumers (their worker options come from the startup config)
         RuntimeWorkersModule.forRoot(config),
@@ -62,8 +65,10 @@ export class WorkerModule {
         ChannelWorkersModule.forRoot(config),
         MaintenanceModule,
         PluginScopeWorkersModule,
+        LifecycleHookWorkersModule,
         // the domains the fixed-period jobs call
         RuntimeModule,
+        RunJobsModule,
         UsageReportModule,
         TitlesModule,
         AttachmentsModule,
@@ -81,8 +86,8 @@ export class WorkerModule {
         ScheduledTaskFireModule,
       ],
       providers: [
-        WaitSweepJob,
-        UsageSweepJob,
+        // the one repair of a run nobody runs (transactional outbox spec §8.3)
+        RunOrphanCheck,
         AttachmentCleanupJob,
         StoragePurgeJob,
         SandboxSweepJobs,
@@ -92,9 +97,7 @@ export class WorkerModule {
         InitialPasswordCleanupJob,
         ClientReportsCron,
         CatalogJobs,
-        PlatformMigration,
         DirectoryScanJob,
-        OffboardSweepJob,
         PluginsReconcileJob,
         GatewayCheckJob,
         WorkerRole,

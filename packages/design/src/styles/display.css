@@ -209,6 +209,12 @@
   border-color: transparent;
   color: var(--cb-warn);
 }
+/* A danger mark ("不使用沙箱"): the word in fail, no box. */
+.cb-badge[data-tone="fail"] {
+  padding: 0;
+  border-color: transparent;
+  color: var(--cb-fail);
+}
 .cb-badge[data-tone="count"] {
   border-color: transparent;
   background: var(--cb-selected);

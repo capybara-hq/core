@@ -26,7 +26,15 @@ afterAll(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
-const limits = { cpu: 1, memoryMb: 1, diskMb: 1, egress: "none" as const, allowHosts: [] };
+const limits = {
+  cpu: 1,
+  memoryMb: 1,
+  diskMb: 1,
+  egress: "none" as const,
+  allowHosts: [],
+  tier: "strict" as const,
+  devHosts: [],
+};
 const sig = () => AbortSignal.timeout(10_000);
 const actor = { accountId: "acc-1", conversationId: "conv-1" };
 

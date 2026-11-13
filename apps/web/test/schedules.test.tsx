@@ -11,6 +11,8 @@ import { ME } from "./support/render";
 import { pickOption } from "./support/select";
 import { expectNoFirstPaintFetch } from "./support/server";
 
+// `/schedules` reads the remembered view's cookie (calendar spec §4.1): none here, the list.
+vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({
   redirect: (to: string) => {
@@ -184,7 +186,7 @@ describe("/schedules (my scheduled tasks)", () => {
 
   it("lists the tasks from the hydrated cache with no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRouteWithCache("/schedules", routes);
+    await renderRouteWithCache("/schedules?view=list", routes);
     expect(template("ListPage")).not.toBeNull();
     const rows = screen.getAllByRole("row").slice(1);
     expect(rows).toHaveLength(2);
@@ -204,7 +206,7 @@ describe("/schedules (my scheduled tasks)", () => {
 
   it("zh: the schedule in words and the 定时任务 title", async () => {
     stubApi(routes);
-    await renderRouteWithCache("/schedules", routes, { locale: "zh" });
+    await renderRouteWithCache("/schedules?view=list", routes, { locale: "zh" });
     expect(screen.getByRole("heading", { level: 1, name: Z.title })).toBeTruthy();
     expect(screen.getByText("工作日 09:00（Asia/Shanghai）")).toBeTruthy();
     expect(screen.getByText("每周一 08:30（UTC）")).toBeTruthy();
@@ -215,7 +217,7 @@ describe("/schedules (my scheduled tasks)", () => {
     const held = new Promise<void>((r) => {
       release = r;
     });
-    await renderRouteEmptyCache("/schedules", {
+    await renderRouteEmptyCache("/schedules?view=list", {
       ...routes,
       [`GET ${BASE}`]: async () => {
         await held;
@@ -232,7 +234,7 @@ describe("/schedules (my scheduled tasks)", () => {
 
   it("no tasks: the empty state offers a new task", async () => {
     stubApi({ ...common, [`GET ${BASE}`]: ok({ items: [] }) });
-    await renderRouteWithCache("/schedules", lastStubRoutes());
+    await renderRouteWithCache("/schedules?view=list", lastStubRoutes());
     expect(screen.getByText(E.empty)).toBeTruthy();
     expect(screen.getAllByRole("link", { name: E.new }).length).toBeGreaterThan(0);
   });
@@ -250,7 +252,7 @@ describe("/schedules (my scheduled tasks)", () => {
       [`GET ${ORG}/inbox`]: ok({ items: [], truncated: false }),
       [`GET ${ORG}/inbox/count`]: ok({ count: 0, more: false }),
     });
-    await renderRouteWithCache("/schedules", lastStubRoutes());
+    await renderRouteWithCache("/schedules?view=list", lastStubRoutes());
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Row actions" }));
     await user.click(await screen.findByRole("menuitem", { name: E.actions.pause }));

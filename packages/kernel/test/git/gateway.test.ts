@@ -248,7 +248,13 @@ function git(
   cwd?: string,
 ): Promise<{ code: number | null; out: string }> {
   return new Promise((resolve, reject) => {
-    const p = spawn("git", args, { env, cwd: cwd ?? env.HOME, stdio: ["ignore", "pipe", "pipe"] });
+    // a C locale: the messages asserted below are git's English ones (macOS would otherwise
+    // follow the user's system locale, which `env` here does not override)
+    const p = spawn("git", args, {
+      env: { ...env, LC_ALL: "C" },
+      cwd: cwd ?? env.HOME,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     let out = "";
     p.stdout.on("data", (b: Buffer) => {
       out += b.toString();

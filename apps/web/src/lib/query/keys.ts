@@ -59,6 +59,26 @@ export const keys = {
       schedulesAll: (): readonly unknown[] => [...all, "schedules"],
       /** My scheduled tasks (`all`: every task of the org, org admins). */
       schedules: (scope: "mine" | "all"): readonly unknown[] => [...all, "schedules", scope],
+      /**
+       * A calendar range (under `schedulesAll`: every task mutation refreshes it); `taskId`: one
+       * task's day in the run panel.
+       */
+      scheduleCalendar: (
+        scope: "mine" | "all",
+        from: string,
+        to: string,
+        timeZone: string,
+        taskId?: string,
+      ): readonly unknown[] => [
+        ...all,
+        "schedules",
+        "calendar",
+        scope,
+        from,
+        to,
+        timeZone,
+        taskId ?? null,
+      ],
       /** One scheduled task, its runs and grants (under it: invalidating the task refreshes them). */
       schedule: (id: string): readonly unknown[] => [...all, "schedule", id],
       scheduleRuns: (id: string): readonly unknown[] => [...all, "schedule", id, "runs"],
@@ -460,6 +480,8 @@ export const keys = {
        * numbers (an extension or plugin change) reads the lists again too.
        */
       adminAttention: (): readonly unknown[] => [...all, "adminOverview", "attention"],
+      /** The dead outbox rows (under `adminOverview`, read again with the numbers). */
+      adminOutboxDead: (): readonly unknown[] => [...all, "adminOverview", "outboxDead"],
       /** The admin overview's 运行状况 (polled while the page shows). */
       adminHealth: (): readonly unknown[] => [...all, "adminHealth"],
       /** The admin overview's 用量 in the reader's zone (the days are calendar days in it). */
@@ -556,6 +578,12 @@ export const keys = {
       catalogItem: (itemId: string): readonly unknown[] => [...all, "catalogItem", itemId],
       /** A staged plugin import's review. */
       stagedImport: (stagingId: string): readonly unknown[] => [...all, "stagedImport", stagingId],
+      /** The platform update a staged new version of an installed plugin applies. */
+      stagedUpdatePreview: (stagingId: string): readonly unknown[] => [
+        ...all,
+        "stagedUpdatePreview",
+        stagingId,
+      ],
       /** The plugins waiting for a permission confirmation (待确认). */
       catalogPending: (): readonly unknown[] => [...all, "catalogPending"],
       /** The pending catalog requests at the deployment stage. */

@@ -117,8 +117,7 @@ Kernel schema `capybara`, one migration (names are *my call*):
 - `id`, `task_id`, `org_id`, `scheduled_for` (the tick, before jitter), `fired_at`,
   `trial` boolean, `manual` boolean (a person's "Run now", trial or not), `conversation_id`,
   `run_id`, `status` (`pending` / `running` / `completed` / `failed` / `skipped`), `skip_reason`,
-  `error`, `missing_grants` jsonb (§7), `rechecked_at` (when the scan's repair last found this
-  started run still in flight; it rotates the rechecks so a new stuck run is reached).
+  `error`, `missing_grants` jsonb (§7).
 - `skip_reason`: `missed`, `overlap`, `rate_limited`, `queue_paused`, `removed`, `device_offline`,
   `creator_inactive`, `agent_gone`, `target_gone`, `conversation_gone`, `org_disabled`, and
   (*decided during implementation*) `unsupported_target` (a group chat on a channel without
@@ -192,17 +191,25 @@ connection_id)` for the chat targets.
      catch-up, never a backlog).
   2. Insert the `scheduled_task_runs` row (`pending`); the unique key makes a second insert a no-op.
   3. Advance `next_run_at` to the next tick plus jitter.
-  4. In `afterCommit`, enqueue the fire job `sched-fire-<taskRunId>` on the maintenance queue (no
-     `:` in ids).
+  4. In the same transaction, owe the fire job `sched-fire-<taskRunId>` on the maintenance queue
+     through the outbox (no `:` in ids; transactional outbox spec §8.1); "Run now" owes it too.
   A task whose stored trigger the schedule math cannot evaluate is paused (`invalid_schedule`)
   instead of failing the scan; a database error fails the pass (the next minute retries) and
   pauses nothing (*decided during implementation*).
-- **Repair** (*decided during implementation*): after the due tasks, the same scan re-enqueues the
-  fire job of a run still `pending` and unfired 10 minutes after its tick, and gives it up
-  (`skipped`, `missed`) after an hour; a run fired an hour ago and still `pending` goes through the
-  run tracker's check, which links it to its run, settles it, or releases it, so a `once` task's
-  last run never stays pending. A started run that shows no queued item, no message and no run
-  5 minutes after `fired_at` is released (`skipped`, `removed`).
+- **No repair** (transactional outbox spec §8.2): the fire job is owed with the task run, so the
+  scan no longer re-enqueues lost fire jobs. A tick whose fire job runs more than 10 minutes past
+  the org's `catchUpWindowMinutes` (workers down for long) is `skipped` (`missed`) by the fire job
+  itself; a "Run now" still runs. The fire job's claim owes a delayed settle check
+  (`sched-settle-<taskRunId>`, 10 minutes on; ruling R26): a run still claimed and `pending` then
+  goes through the run tracker's check, which links it to its run, settles it, or releases it, so
+  a `once` task's last run never stays pending; one still in flight owes the next check an hour
+  on. The transaction that writes a task run (the tick, "Run now") also owes its unfired check
+  (`sched-settle-<taskRunId>-unfired`, due when the fire job would call the tick missed, or
+  10 minutes after a "Run now"): a run no claim took (its fire job failed for good first) is
+  `skipped`, `missed` for a tick and `removed` for a "Run now", so it never holds later ticks back
+  as an overlap. The overlap check does the same as the claimed check for the task's previous run. A started run that shows no
+  queued item, no message and no run 5 minutes after `fired_at` is released (`skipped`,
+  `removed`).
 - The fire job (idempotent on the task run's status) re-checks, then starts the run:
   - **Checks**, in order: the task still exists (else `task_deleted`) and, for a tick of the
     schedule, is not paused since the scan (`task_paused`; a person's "Run now" is `manual` and

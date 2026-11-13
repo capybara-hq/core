@@ -1,6 +1,9 @@
 import type { Job } from "bullmq";
 import { describe, expect, it } from "vitest";
+import { outboxJobOptions } from "../../src/infra/outbox/registry.js";
 import {
+  deviceDestroyJobId,
+  oweDeviceDestroy,
   resetFilesJobId,
   runSandboxDestroyFor,
   runSandboxResetFiles,
@@ -28,17 +31,21 @@ function stubQueue() {
 const job = (data: unknown) => ({ data }) as Job;
 
 describe("sandbox-destroy-for", () => {
-  it("enqueue: job name, device ids, retries on failure", async () => {
-    const { jobs, added } = stubQueue();
-    await jobs.destroy(["c1", "c2"]);
-    expect(added).toEqual([
+  it("owed: job name, one device per job under its deterministic id, retries on failure", async () => {
+    const owed: unknown[] = [];
+    await oweDeviceDestroy({ add: async (j) => owed.push(j) > 0 }, "c1", "o1");
+    expect(owed).toEqual([
       {
+        queue: "cap-kernel-maintenance",
         name: SANDBOX_DESTROY_FOR_JOB,
-        data: { deviceIds: ["c1", "c2"] },
-        opts: expect.objectContaining({ attempts: expect.any(Number) }),
+        jobId: "device-destroy-c1",
+        data: { deviceIds: ["c1"] },
+        orgId: "o1",
       },
     ]);
+    expect(deviceDestroyJobId("c1")).toBe("device-destroy-c1");
     expect(SANDBOX_DESTROY_FOR_JOB).not.toContain(":");
+    expect(outboxJobOptions(SANDBOX_DESTROY_FOR_JOB)).toMatchObject({ attempts: 5 });
   });
 
   it("worker: destroyDevice one by one; a failure is warned and fails the job (the batch is retried) after the others were destroyed", async () => {

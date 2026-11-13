@@ -197,7 +197,7 @@ describe("ToolRegistry", () => {
     const connectorId = await installConnector("docs");
     const def = { disabledTools: [] };
     await enablePlugin("mem-connector", false);
-    const before = await registry.forAgent(orgId, def);
+    const before = await registry.forAgent(orgId, { ...def, source: "web" });
     expect(before.tools.map((t) => t.key)).toEqual([
       "AskUserQuestion",
       "mcp__docs__drop",
@@ -208,7 +208,7 @@ describe("ToolRegistry", () => {
     expect(before.unavailable).toEqual([]);
 
     await enablePlugin("mem-connector", true);
-    const after = await registry.forAgent(orgId, def);
+    const after = await registry.forAgent(orgId, { ...def, source: "web" });
     expect(after.unavailable).toEqual([]);
     expect(after.tools.map((t) => t.key)).toEqual([
       "AskUserQuestion",
@@ -241,6 +241,7 @@ describe("ToolRegistry", () => {
 
     // turned off: a builtin, one extension tool, one connector tool
     const off = await registry.forAgent(orgId, {
+      source: "web",
       disabledTools: [
         ASK_OFF,
         { kind: "plugin", plugin: "mem-connector", tools: ["wipe", "ask"] },
@@ -277,7 +278,10 @@ describe("ToolRegistry", () => {
 
     // only enabled tools; disabled / pending ones never reach `unavailable` (no reminder every
     // step), but `hidden`, for the facts when the model names one (spec 6.3)
-    const all = await registry.forAgent(orgId, { disabledTools: [ASK_OFF, MEM_OFF] });
+    const all = await registry.forAgent(orgId, {
+      source: "web",
+      disabledTools: [ASK_OFF, MEM_OFF],
+    });
     expect(all.tools.map((t) => t.key)).toEqual(["mcp__docs__read"]);
     expect(all.tools[0]?.defaultPolicy).toBe("deny");
     expect(all.unavailable).toEqual([]);
@@ -288,6 +292,7 @@ describe("ToolRegistry", () => {
 
     // a tool the agent turned off is not explained: it is its own choice
     const own = await registry.forAgent(orgId, {
+      source: "web",
       disabledTools: [ASK_OFF, MEM_OFF, { kind: "connector", connectorId, tools: ["drop"] }],
     });
     expect(own.hidden).toEqual([{ ref: "mcp__docs__write", reason: "Tool is disabled" }]);
@@ -298,7 +303,10 @@ describe("ToolRegistry", () => {
       .set({ status: "disabled" })
       .where("id", "=", connectorId)
       .execute();
-    const disabled = await registry.forAgent(orgId, { disabledTools: [ASK_OFF, MEM_OFF] });
+    const disabled = await registry.forAgent(orgId, {
+      source: "web",
+      disabledTools: [ASK_OFF, MEM_OFF],
+    });
     expect(disabled.tools).toEqual([]);
     expect(disabled.unavailable).toEqual([]);
     expect(disabled.hidden).toEqual([{ ref: "mcp__docs__*", reason: "App docs is disabled" }]);
@@ -309,7 +317,10 @@ describe("ToolRegistry", () => {
       url: `/api/v1/orgs/${orgId}/connectors/${connectorId}`,
     });
     expect(del.statusCode).toBe(204);
-    const deleted = await registry.forAgent(orgId, { disabledTools: [ASK_OFF, MEM_OFF] });
+    const deleted = await registry.forAgent(orgId, {
+      source: "web",
+      disabledTools: [ASK_OFF, MEM_OFF],
+    });
     expect(deleted.tools).toEqual([]);
     expect(deleted.hidden).toEqual([]);
 
@@ -317,7 +328,10 @@ describe("ToolRegistry", () => {
     const other = await req({ method: "POST", url: "/api/v1/orgs", payload: { name: "Other" } });
     const otherId = (other.json() as { org: { id: string } }).org.id;
     await installConnector("docs2");
-    const cross = await registry.forAgent(otherId, { disabledTools: [ASK_OFF, MEM_OFF] });
+    const cross = await registry.forAgent(otherId, {
+      source: "web",
+      disabledTools: [ASK_OFF, MEM_OFF],
+    });
     expect(cross.tools).toEqual([]);
   });
 
@@ -325,7 +339,7 @@ describe("ToolRegistry", () => {
     const def = { disabledTools: [ASK_OFF] };
     await enablePlugin("orglevels", true);
     // following the platform, which leaves the required overridable apiKey empty
-    const following = await registry.forAgent(orgId, def);
+    const following = await registry.forAgent(orgId, { ...def, source: "web" });
     expect(following.tools).toEqual([]);
     expect(following.unavailable).toEqual([]);
     expect(following.hidden).toEqual([
@@ -342,7 +356,7 @@ describe("ToolRegistry", () => {
       payload: { values: { baseUrl: "https://org.example", apiKey: "ok-Qw72org" } },
     });
     expect(saved.statusCode, saved.body).toBe(200);
-    const copied = await registry.forAgent(orgId, def);
+    const copied = await registry.forAgent(orgId, { ...def, source: "web" });
     expect(copied.unavailable).toEqual([]);
     expect(copied.tools.map((t) => t.key)).toEqual(["plugin__orglevels__echo"]);
   });
@@ -362,7 +376,7 @@ describe("ToolRegistry", () => {
       .insertInto("org_tool_switches")
       .values({ org_id: orgId, plugin: "mem-connector", tool: "echo", enabled: false })
       .execute();
-    const here = await registry.forAgent(orgId, def);
+    const here = await registry.forAgent(orgId, { ...def, source: "web" });
     expect(here.tools.map((t) => t.key)).toEqual(["plugin__mem-connector__wipe"]);
     expect(here.unavailable).toEqual([]);
     expect(here.hidden).toEqual([
@@ -371,7 +385,7 @@ describe("ToolRegistry", () => {
         reason: "Tool plugin__mem-connector__echo is turned off in this organization",
       },
     ]);
-    const there = await registry.forAgent(otherId, def);
+    const there = await registry.forAgent(otherId, { ...def, source: "web" });
     expect(there.tools.map((t) => t.key)).toEqual([
       "plugin__mem-connector__echo",
       "plugin__mem-connector__wipe",
@@ -381,6 +395,7 @@ describe("ToolRegistry", () => {
   it("overlapping entries in disabledTools are harmless", async () => {
     const connectorId = await installConnector("docs");
     const r = await registry.forAgent(orgId, {
+      source: "web",
       disabledTools: [
         MEM_OFF,
         { kind: "connector", connectorId, tools: ["read"] },
@@ -433,6 +448,12 @@ describe("组织设置与 ToolSearch 启用条件", () => {
       },
       deployment: {
         sandboxEgress: { mode: "allowlist", allowHosts: baseCfg.sandbox.limits.allowHosts },
+        sandboxTiers: {
+          max: "dev",
+          default: "dev",
+          allowUnsandboxed: true,
+          devHosts: baseCfg.sandbox.limits.devHosts,
+        },
       },
       // 组织级沙箱限额只读（C19）：没有超级管理员的覆盖时取部署默认
       sandboxLimits: {
@@ -587,9 +608,75 @@ describe("组织设置与 ToolSearch 启用条件", () => {
     expect(await none.update(orgId, { sandboxEgress: { mode: "none" } }, ownerId)).toMatchObject({
       sandboxEgress: { mode: "none" },
     });
-    expect(none.deployment()).toEqual({
-      sandboxEgress: { mode: "none", allowHosts: baseCfg.sandbox.limits.allowHosts },
+    expect((await none.deployment()).sandboxEgress).toEqual({
+      mode: "none",
+      allowHosts: baseCfg.sandbox.limits.allowHosts,
     });
+  });
+
+  it("sandboxTier: never above the platform, default at most max, unsandboxed only where the platform allows; null clears; an invalid stored value reads as max strict", async () => {
+    const patch = (sandboxTier: unknown) =>
+      req({ method: "PATCH", url: settingsUrl(), payload: { sandboxTier } });
+    for (const bad of [{ max: "wide" }, { extra: 1 }, { allowUnsandboxed: "yes" }]) {
+      const r = await patch(bad);
+      expect(r.statusCode, JSON.stringify(bad)).toBe(400);
+      expect(r.json().error.code).toBe("validation_failed");
+    }
+    // the platform default max is dev
+    for (const bad of [{ max: "open" }, { default: "open" }, { max: "strict", default: "dev" }]) {
+      const r = await patch(bad);
+      expect(r.statusCode, JSON.stringify(bad)).toBe(400);
+      expect(r.json().error.code).toBe("org.sandbox_tier_not_allowed");
+    }
+    const ok = await patch({ max: "dev", default: "strict", allowUnsandboxed: false });
+    expect(ok.statusCode, ok.body).toBe(200);
+    expect(ok.json().settings.sandboxTier).toEqual({
+      max: "dev",
+      default: "strict",
+      allowUnsandboxed: false,
+    });
+    const cleared = await patch(null);
+    expect(cleared.statusCode).toBe(200);
+    expect(cleared.json().settings).not.toHaveProperty("sandboxTier");
+    // an empty object is the same as following the platform
+    expect((await patch({})).json().settings).not.toHaveProperty("sandboxTier");
+
+    const ownerId = (await db.selectFrom("accounts").select("id").executeTakeFirstOrThrow()).id;
+    const open = orgSettingsFor(db, () => ({
+      sandbox: {
+        ...baseCfg.sandbox,
+        tiers: { max: "open", default: "dev", allowUnsandboxed: false },
+      },
+    }));
+    expect(await open.update(orgId, { sandboxTier: { max: "open" } }, ownerId)).toMatchObject({
+      sandboxTier: { max: "open" },
+    });
+    expect(
+      await open
+        .update(orgId, { sandboxTier: { max: "open", allowUnsandboxed: true } }, ownerId)
+        .catch((e: unknown) => e),
+    ).toMatchObject({ code: "org.sandbox_tier_not_allowed" });
+    expect((await open.deployment()).sandboxTiers).toMatchObject({
+      max: "open",
+      default: "dev",
+      allowUnsandboxed: false,
+    });
+    expect(await open.sandboxPolicy(await open.get(orgId), null)).toMatchObject({
+      tier: "dev",
+      ceiling: "open",
+      allowUnsandboxed: false,
+    });
+
+    // a stored value this version cannot read narrows to strict, never widens
+    await db
+      .updateTable("orgs")
+      .set({ settings: JSON.stringify({ sandboxTier: { max: "everything" } }) })
+      .where("id", "=", orgId)
+      .execute();
+    expect((await req({ method: "GET", url: settingsUrl() })).json().settings.sandboxTier).toEqual({
+      max: "strict",
+    });
+    await patch(null);
   });
 
   it("阈值切换：工具数或定义估算超过阈值才启用并自动加入 ToolSearch；组织关闭后全部直接加载", async () => {
@@ -600,7 +687,7 @@ describe("组织设置与 ToolSearch 启用条件", () => {
     };
     const r = searchRegistry();
     // 4 个工具，未超过阈值
-    const below = await r.forAgent(orgId, def);
+    const below = await r.forAgent(orgId, { ...def, source: "web" });
     expect(below.toolSearch).toBe(false);
     expect(below.tools.map((t) => t.key)).toEqual([
       "AskUserQuestion",
@@ -611,7 +698,7 @@ describe("组织设置与 ToolSearch 启用条件", () => {
     expect(below.unavailable).toEqual([]);
 
     thresholds.searchThresholdTools = 3;
-    const byCount = await r.forAgent(orgId, def);
+    const byCount = await r.forAgent(orgId, { ...def, source: "web" });
     expect(byCount.toolSearch).toBe(true);
     expect(byCount.tools.map((t) => t.key)).toEqual([
       "AskUserQuestion",
@@ -626,7 +713,7 @@ describe("组织设置与 ToolSearch 启用条件", () => {
     });
 
     thresholds = { searchThresholdTools: 30, searchThresholdTokens: 10 };
-    expect((await r.forAgent(orgId, def)).toolSearch).toBe(true);
+    expect((await r.forAgent(orgId, { ...def, source: "web" })).toolSearch).toBe(true);
 
     const patched = await req({
       method: "PATCH",
@@ -634,12 +721,12 @@ describe("组织设置与 ToolSearch 启用条件", () => {
       payload: { toolSearch: "off" },
     });
     expect(patched.statusCode).toBe(200);
-    const off = await r.forAgent(orgId, def);
+    const off = await r.forAgent(orgId, { ...def, source: "web" });
     expect(off.toolSearch).toBe(false);
     expect(off.tools.map((t) => t.key)).not.toContain("ToolSearch");
     expect(off.tools).toHaveLength(4);
 
     // 没有 config 的注册表（旧调用方）从不启用
-    expect((await registry.forAgent(orgId, def)).toolSearch).toBe(false);
+    expect((await registry.forAgent(orgId, { ...def, source: "web" })).toolSearch).toBe(false);
   });
 });

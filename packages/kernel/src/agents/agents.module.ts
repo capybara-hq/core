@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import { AttachmentsModule } from "../conversations/attachments.module.js";
 import { EvalBudgetModule } from "../evals/budget.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
+import { LifecycleHooksModule } from "../extensions/lifecycle-hooks.js";
 import { ModelsModule } from "../models/models.module.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
 import { ProvidersModule } from "../runtime/providers.js";
@@ -40,6 +41,8 @@ import { AgentTemplatesService } from "./templates.js";
     // creating from a template: the extension tools and the tier purposes (rulings P4-4, P4-5)
     ExtensionsModule,
     ModelsModule,
+    // the agent delete records `agent.deleted` deliveries
+    LifecycleHooksModule,
   ],
   providers: [
     AgentsService,

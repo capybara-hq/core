@@ -1,7 +1,6 @@
 import { fileURLToPath } from "node:url";
 import type { UsageReportPayload } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
-import { SchedulerRegistry } from "@nestjs/schedule";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -11,18 +10,15 @@ import { createDb } from "../../src/db/pool.js";
 import { HookNeedsConfigError } from "../../src/extensions/hooks.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
+import { OUTBOX_JOBS } from "../../src/infra/outbox/registry.js";
 import { createLogger } from "../../src/log.js";
-import { RETIRED_SCHEDULER_IDS } from "../../src/runtime/retired-schedulers.js";
 import {
-  ModelUsageJobs,
   modelUsageJobId,
   narrowPending,
   queryUnservable,
   queryUsageSubscribers,
+  USAGE_REPORT_JOB,
   USAGE_REPORT_QUEUE,
-  USAGE_SWEEP_JOB,
-  USAGE_SWEEP_SCHEDULER_ID,
-  UsageReporter,
   usageReportJobId,
 } from "../../src/runtime/usage-report.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
@@ -48,7 +44,9 @@ import { type TestUsageReporter, usageReporterFor } from "../helpers/runtime.js"
 /**
  * T16: `usage.report` metering through queue `cap-kernel-usage-report` (F11, P-17): one job per `usage`
  * event, payload read from the log at execution time, per-plugin retries, delivery only to plugins
- * the organization enabled.
+ * the organization enabled. The job is owed with the usage (transactional outbox spec §8.1:
+ * `usage-report-outbox.test.ts`); jobs added here directly are added as the outbox dispatcher adds
+ * them.
  */
 
 const fx = (n: string) =>
@@ -80,10 +78,6 @@ beforeAll(async () => {
       { roles: ["api", "worker"], extensions: [MODEL_FAKE, fx("hooks-probe"), fx("usage-b")] },
     ),
   );
-  // Every sweep in this file is called explicitly. The kernel's own minute tick would also sweep
-  // the rows a case set up for a standalone reporter (and deliver them first) whenever a minute
-  // boundary falls inside the case.
-  k.app.get(SchedulerRegistry).getCronJob(USAGE_SWEEP_JOB).stop();
   await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
   owner = await session(k, "owner");
   orgId = await createOrg(owner);
@@ -166,6 +160,11 @@ async function turn(text: string): Promise<{ conv: string; usage: ConversationEv
 }
 
 const idOf = (e: ConversationEvent) => `${e.conversationId}/${e.seq}`;
+
+/** Adds a delivery job to the kernel's queue the way the outbox dispatcher adds an owed one. */
+async function addJob(data: Record<string, unknown>, jobId: string): Promise<void> {
+  await queue.add(USAGE_REPORT_JOB, data, { ...OUTBOX_JOBS[USAGE_REPORT_JOB].opts, jobId });
+}
 
 describe("usage.report delivery", { timeout: 60_000 }, () => {
   it("a two-step turn: each plugin gets each usage event exactly once, payload from the log", async () => {
@@ -289,71 +288,6 @@ describe("usage.report delivery", { timeout: 60_000 }, () => {
     } finally {
       await enable("usage-b", true);
     }
-  });
-
-  it("with no usage.report handler nothing is enqueued, without any query (M-2)", async () => {
-    const conversationId = "00000000-0000-4000-8000-000000000001";
-    let looked = 0;
-    const producer = usageReporterFor({
-      pool: raw,
-      redisUrl: rd.url,
-      hooks: { handlers: () => [], has: () => false },
-      subscribers: async () => {
-        looked++;
-        return new Set(["hooks-probe"]);
-      },
-      config: () => k.app.get(KernelConfigService).get(),
-      log: createLogger("error", { write: () => {} }),
-    });
-    try {
-      await producer.enqueue(conversationId, 7);
-    } finally {
-      await producer.stop();
-    }
-    expect(await queue.getJob(usageReportJobId(conversationId, 7))).toBeUndefined();
-    expect(looked).toBe(0);
-  });
-});
-
-describe("sweeper (Ruling R13)", { timeout: 60_000 }, () => {
-  it("runs every minute as a @LockedCron; its old maintenance scheduler is retired", () => {
-    expect(USAGE_SWEEP_JOB).not.toContain(":");
-    expect(RETIRED_SCHEDULER_IDS).toContain(USAGE_SWEEP_SCHEDULER_ID);
-    const cron = k.app.get(SchedulerRegistry).getCronJob(USAGE_SWEEP_JOB);
-    expect(String(cron.cronTime.source)).toBe("* * * * *");
-  });
-
-  it("a lost fast-path enqueue is caught up by the sweep, exactly once", async () => {
-    await probe({});
-    const reporter = k.app.get(UsageReporter) as unknown as { enqueue: UsageReporter["enqueue"] };
-    const original = reporter.enqueue;
-    // the fast path "fails" (as a Redis error would: logged, nothing enqueued)
-    reporter.enqueue = async () => {};
-    let id: string;
-    let conv: string;
-    let seq: number;
-    try {
-      const t = await turn("echo:lost enqueue");
-      const e = t.usage[0] as ConversationEvent;
-      [id, conv, seq] = [idOf(e), t.conv, e.seq];
-    } finally {
-      reporter.enqueue = original;
-    }
-    await sleep(1000);
-    expect((await probeUsage([id]))[id]?.calls).toBe(0);
-    expect(await queue.getJob(usageReportJobId(conv, seq))).toBeUndefined();
-    // the event is older than the 30 s lag at this "now"
-    const now = Date.now() + 31_000;
-    expect(await k.app.get(UsageReporter).sweep({ now })).toBeGreaterThan(0);
-    await waitFor(async () => (await probeUsage([id]))[id]?.calls === 1, 10_000, "swept");
-    await waitFor(async () => (await seenB(id)) === 1, 10_000, "swept to usage-b");
-    // sweeping again (overlap) dedupes on the kept job
-    await k.app.get(UsageReporter).sweep({ now: now + 1000 });
-    await sleep(1000);
-    expect((await probeUsage([id]))[id]?.calls).toBe(1);
-    expect(await seenB(id)).toBe(1);
-    const wm = await db.selectFrom("usage_report_sweep").select("watermark").executeTakeFirst();
-    expect(new Date(wm?.watermark as Date).getTime()).toBe(now + 1000 - 30_000);
   });
 });
 
@@ -766,19 +700,6 @@ describe("UsageReporter (standalone, own Valkey)", { timeout: 60_000 }, () => {
     await next.stop();
   });
 
-  it("with no subscriber the sweep enqueues nothing but still advances the watermark", async () => {
-    const r = reporter({}, []);
-    const now = Date.now() + 3_600_000;
-    expect(await r.sweep({ now })).toBe(0);
-    expect(await queue2.getJobCounts("waiting", "delayed", "completed")).toEqual({
-      waiting: 0,
-      delayed: 0,
-      completed: 0,
-    });
-    const wm = await db.selectFrom("usage_report_sweep").select("watermark").executeTakeFirst();
-    expect(new Date(wm?.watermark as Date).getTime()).toBe(now - 30_000);
-  });
-
   it("a worker that never enqueued still requeues on shutdown (its queue exists)", async () => {
     const producer = reporter({}, ["x"]);
     let started = 0;
@@ -803,7 +724,7 @@ describe("UsageReporter (standalone, own Valkey)", { timeout: 60_000 }, () => {
     expect(await j?.getState()).not.toBe("failed");
   });
 
-  it("a plugin disabled at deployment level is no target: no job, no error log", async () => {
+  it("a plugin disabled at deployment level is no target: the job completes, no error log", async () => {
     const sha = "a".repeat(64);
     const snapshot = (plugin: string) => ({
       plugin,
@@ -881,8 +802,12 @@ describe("UsageReporter (standalone, own Valkey)", { timeout: 60_000 }, () => {
       reporters.push(r);
       r.startWorker();
       await r.enqueue(ev.conv, ev.seq);
-      await sleep(500);
-      expect(await jobOf()).toBeUndefined();
+      await waitFor(
+        async () => (await (await jobOf())?.getState()) === "completed",
+        10_000,
+        "done",
+      );
+      expect((await jobOf())?.data.pending).toEqual([]);
       expect(errors).toEqual([]);
       await r.stop();
     } finally {
@@ -913,11 +838,6 @@ describe("UsageReporter (standalone, own Valkey)", { timeout: 60_000 }, () => {
 describe("usage.report for model usage outside conversations (spec B §5.4)", {
   timeout: 60_000,
 }, () => {
-  // earlier cases move the shared watermark into the future: start each case from a fresh one
-  beforeEach(async () => {
-    await db.deleteFrom("usage_report_sweep").execute();
-  });
-
   async function usageRow(occurredAt?: Date): Promise<string> {
     const row = await db
       .insertInto("model_usage")
@@ -946,7 +866,7 @@ describe("usage.report for model usage outside conversations (spec B §5.4)", {
   it("one payload per row: purpose embedding, the extension, no conversation fields", async () => {
     await probe({});
     const id = await usageRow();
-    await k.app.get(ModelUsageJobs).enqueue(id);
+    await addJob({ usageId: id }, modelUsageJobId(id));
     const got = await waitFor(
       async () => {
         const d = await probeUsage([id]);
@@ -984,7 +904,7 @@ describe("usage.report for model usage outside conversations (spec B §5.4)", {
     await probe({ usageThrowOnce: true });
     try {
       const id = await usageRow();
-      await k.app.get(ModelUsageJobs).enqueue(id);
+      await addJob({ usageId: id }, modelUsageJobId(id));
       await waitFor(async () => (await probeUsage([id]))[id]?.calls === 2, 15_000, "retry");
       expect((await probeUsage([id]))[id]?.last).toMatchObject({ eventId: id });
       expect(await seenB(id)).toBe(1);
@@ -994,32 +914,7 @@ describe("usage.report for model usage outside conversations (spec B §5.4)", {
     }
   });
 
-  it("the sweep re-enqueues unreported rows older than its lag, and leaves newer ones", async () => {
-    await probe({});
-    const old = await usageRow(new Date(Date.now() - 5 * 60_000));
-    const fresh = await usageRow();
-    await k.app.get(UsageReporter).sweep();
-    await waitFor(async () => (await probeUsage([old]))[old]?.calls === 1, 10_000, "swept row");
-    await waitFor(async () => (await reportedAt(old)) !== null, 10_000, "reported_at");
-    expect((await probeUsage([fresh]))[fresh]?.calls ?? 0).toBe(0);
-    expect(await reportedAt(fresh)).toBeNull();
-    await db.deleteFrom("model_usage").where("id", "=", fresh).execute();
-  });
-
-  it("the sweep leaves rows older than its window (like usage events)", async () => {
-    await probe({});
-    const old = await usageRow(new Date(Date.now() - 2 * 3600_000));
-    try {
-      expect(await k.app.get(UsageReporter).sweep()).toBe(0);
-      await sleep(500);
-      expect(await queue.getJob(modelUsageJobId(old))).toBeUndefined();
-      expect((await probeUsage([old]))[old]?.calls ?? 0).toBe(0);
-    } finally {
-      await db.deleteFrom("model_usage").where("id", "=", old).execute();
-    }
-  });
-
-  it("a job that gives up marks its row, and the sweep never offers it again", async () => {
+  it("a job that gives up marks its row", async () => {
     const id = await usageRow(new Date(Date.now() - 2 * 60_000));
     const r = usageReporterFor({
       pool: raw,
@@ -1059,32 +954,9 @@ describe("usage.report for model usage outside conversations (spec B §5.4)", {
         )?.report_failed_at ?? null;
       await waitFor(async () => (await failedAt()) !== null, 10_000, "report_failed_at");
       expect(await reportedAt(id)).toBeNull();
-      // the failed job leaves Redis (retention): the sweep must not create a fresh one
-      await (await queue2.getJob(modelUsageJobId(id)))?.remove();
-      await r.sweep();
-      expect(await queue2.getJob(modelUsageJobId(id))).toBeUndefined();
     } finally {
       await r.stop();
       await db.deleteFrom("model_usage").where("id", "=", id).execute();
     }
-  });
-
-  it("with no subscriber the sweep marks unreported rows without enqueueing", async () => {
-    const id = await usageRow(new Date(Date.now() - 5 * 60_000));
-    const r = usageReporterFor({
-      pool: raw,
-      redisUrl: rd2.url,
-      hooks: { handlers: () => [], has: () => true },
-      subscribers: async () => new Set(),
-      config: () => k.app.get(KernelConfigService).get(),
-      log: createLogger("error", { write: () => {} }),
-    });
-    try {
-      await r.sweep();
-    } finally {
-      await r.stop();
-    }
-    expect(await reportedAt(id)).not.toBeNull();
-    expect(await queue2.getJob(modelUsageJobId(id))).toBeUndefined();
   });
 });

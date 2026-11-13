@@ -278,6 +278,7 @@ describe("GET /conversations/groups", () => {
         agent_id: agent,
         account_id: m.account.id,
         kind: "eval",
+        source: "web",
       })
       .execute();
     const res = await groups(m.req, orgId);

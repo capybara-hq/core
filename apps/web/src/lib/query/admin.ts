@@ -1,3 +1,4 @@
+import type { QueryClient } from "@tanstack/react-query";
 import {
   type DeploymentSettingsPatch,
   getAdminAttention,
@@ -7,6 +8,7 @@ import {
   getDeploymentSettings,
   listAdminAccounts,
   listAdminOrgs,
+  listOutboxDead,
   listPlatformAudit,
 } from "../admin";
 import {
@@ -19,6 +21,7 @@ import { getPlatformInbox, getPlatformInboxCount } from "../admin-inbox";
 import {
   getCatalogItem,
   getStagedImport,
+  getStagedUpdatePreview,
   listCatalogItems,
   listDeploymentRequests,
   listMarketplaceEntries,
@@ -46,6 +49,18 @@ export const adminAttentionQuery = () =>
   defineQuery({
     key: d().adminAttention(),
     fn: () => getAdminAttention(),
+    freshness: "deployment",
+  });
+
+/**
+ * The dead outbox rows the overview's 待处理 lists with 重试 / 丢弃: under `adminOverview`, so a
+ * retry or discard (which invalidates the overview) reads them again. Read only when the attention
+ * lists name dead rows.
+ */
+export const adminOutboxDeadQuery = () =>
+  defineQuery({
+    key: d().adminOutboxDead(),
+    fn: () => listOutboxDead(),
     freshness: "deployment",
   });
 
@@ -135,6 +150,23 @@ export const settingsChangeKeys = (patch: DeploymentSettingsPatch): (readonly un
     ...[...orgIds].map((id) => keys.org(id).orgSettings()),
   ];
 };
+
+/**
+ * After a change of the platform's sandbox levels: every cached org's settings (the platform's
+ * levels ride on them) and devices (their effective level) are stale.
+ */
+export function invalidateSandboxTiers(qc: QueryClient): Promise<void> {
+  const under = (k: readonly unknown[], prefix: readonly unknown[]) =>
+    prefix.every((p, i) => k[i] === p);
+  return qc.invalidateQueries({
+    predicate: ({ queryKey: k }) =>
+      k[0] === "org" &&
+      typeof k[1] === "string" &&
+      (under(k, keys.org(k[1]).orgSettings()) ||
+        under(k, keys.org(k[1]).devices()) ||
+        under(k, keys.org(k[1]).device(String(k[3])))),
+  });
+}
 
 /** The providers with their models and the price table. */
 export const adminModelsQuery = () =>
@@ -238,6 +270,17 @@ export const stagedImportQuery = (stagingId: string) =>
   defineQuery({
     key: d().stagedImport(stagingId),
     fn: () => getStagedImport(stagingId),
+    freshness: "deployment",
+  });
+
+/**
+ * The platform update a staged new version of an installed plugin applies (the 更新到 wizard's
+ * update preview; `plugin.upgrade_target_invalid` when it is not installed).
+ */
+export const stagedUpdatePreviewQuery = (stagingId: string) =>
+  defineQuery({
+    key: d().stagedUpdatePreview(stagingId),
+    fn: () => getStagedUpdatePreview(stagingId),
     freshness: "deployment",
   });
 

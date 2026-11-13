@@ -1,7 +1,9 @@
 import type {
+  ConversationSource,
   FileSystemHandle,
   GitHostEntry,
   ParsedTheme,
+  SandboxTier,
   SkillInvocation,
 } from "@capybara-hq/plugin-sdk";
 import type { ColumnType, Generated, Kysely } from "kysely";
@@ -304,6 +306,16 @@ export interface ConversationsTable {
   device_id: ColumnType<string | null, string | null | undefined, string | null>;
   /** 0113: the scheduled task that created it (`new` mode); null otherwise. */
   scheduled_task_id: ColumnType<string | null, string | null | undefined, string | null>;
+  /**
+   * 0124: where the conversation comes from, set at creation and never changed. Required on insert
+   * (the column's `web` default is not relied on: a forgotten source must not read as web).
+   */
+  source: ColumnType<ConversationSource, ConversationSource, never>;
+  /**
+   * 0125: when a person stopped this root conversation and its sub-agent tree; cleared when the
+   * root next starts a run. While set the tree's wakes are held (agent map spec §6).
+   */
+  tree_stopped_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
 }
 
 /** 0060: an org's order of file-preview@1 previewers (UI refresh B Task 11). */
@@ -390,7 +402,11 @@ export interface RunsTable {
   waiting_since: TsNullable;
   /** 0012：累计等待时长（毫秒），不计入运行时长。 */
   waited_ms: Int8;
-  /** 0012：续跑任务的 jobId；为空表示按触发消息生成的 jobId。 */
+  /**
+   * 0012: the run's job id when it is not the trigger's `runJobId`: a resume's
+   * (`resumeJobId`), or `<runJobId>-<n>` for a later run of the same trigger (R34); null: the
+   * trigger's first run, under `runJobId`.
+   */
   job_id: string | null;
   /** 0012：最近一次（续跑）回到 queued 的时刻。 */
   queued_at: TsNullable;
@@ -498,11 +514,11 @@ export interface ConnectorsTable {
    * hash, mode: null }`); null when unknown (custom connectors, connectors before 0106).
    */
   guide_ack: ColumnType<GuideAckJson | null, string | null | undefined, string | null>;
-  /** 0118: the git hosts this connector declares (null: none). */
+  /** 0126: the git hosts this connector declares (null: none). */
   git_hosts: ColumnType<GitHostEntry[] | null, string | null | undefined, string | null>;
-  /** 0118: an org-owned connector serves as a git gateway source (personal ones always do). */
+  /** 0126: an org-owned connector serves as a git gateway source (personal ones always do). */
   use_for_git: Generated<boolean>;
-  /** 0119: the org's policy for pushes through this connector (virtual tool `git_push`). */
+  /** 0127: the org's policy for pushes through this connector (virtual tool `git_push`). */
   git_push_policy: Generated<"allow" | "ask" | "deny">;
 }
 
@@ -596,7 +612,7 @@ export interface ApprovalsTable {
     ("once" | "session" | "always")[] | null
   >;
   /**
-   * 0114: what is asked: a tool call ('tool') or a refused network domain ('network'); 0118: a
+   * 0114: what is asked: a tool call ('tool') or a refused network domain ('network'); 0126: a
    * git push the gateway held ('git').
    */
   kind: Generated<"tool" | "network" | "git">;
@@ -976,6 +992,8 @@ export interface DevicesTable {
   provider: ColumnType<string | null, string | null | undefined, string | null>;
   /** 0096: the provider a demoted default was demoted from; null for every other device. */
   demoted_from_provider: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0117: a cloud device's own sandbox tier; null follows the org's default. */
+  tier: ColumnType<SandboxTier | null, SandboxTier | null | undefined, SandboxTier | null>;
   created_at: Ts;
   updated_at: Ts;
   deleted_at: TsNullable;
@@ -1014,6 +1032,12 @@ export interface DeviceInstancesTable {
   prev_provider: ColumnType<string | null, string | null | undefined, string | null>;
   prev_handle: InstanceHandle;
   sweep_failed_at: TsNullable;
+  /**
+   * 0117: the limits in force on the instance, `{ tier, egress }`, plus `unapplied` when the
+   * provider could not apply a newer value without a file reset; null = unknown (made before
+   * 0117). Read with `readInstanceLimits` (`sandbox/tiers.ts`).
+   */
+  instance_limits: ColumnType<unknown | null, string | null | undefined, string | null>;
 }
 
 /**
@@ -1046,6 +1070,8 @@ export interface DeviceMachinesTable {
   features: ColumnType<string[], string[] | undefined, string[]>;
   /** 0114: the program's local network policy summary (hello, refreshed by each `policy` op). */
   local_policy: ColumnType<unknown | null, string | null | undefined, string | null>;
+  /** 0118: the `policy` ops sent whose answer is not recorded yet (`PendingPolicyOp[]`). */
+  pending_policy_ops: ColumnType<unknown, string | undefined, string>;
 }
 
 /** 0088_environments.sql, renamed in 0105: the device a member's new conversations use by default. */
@@ -1286,13 +1312,6 @@ export interface ExtensionReplicaStatusTable {
   heartbeat_at: Ts;
 }
 
-/** 0040: the usage.report sweeper's watermark (a single row, id = 1). */
-export interface UsageReportSweepTable {
-  id: ColumnType<number, number | undefined, never>;
-  watermark: Ts;
-  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
-}
-
 /** A model disabled on the platform (`org_id` null) or in one org (0089, spec B §5.3). */
 export interface ModelDisabledTable {
   org_id: string | null;
@@ -1313,7 +1332,7 @@ export interface ModelUsageTable {
   input_tokens: number;
   occurred_at: Ts;
   reported_at: TsNullable;
-  /** Set when the row's `usage.report` job gave up after its last attempt (the sweep skips it). */
+  /** Set when the row's `usage.report` job gave up after its last attempt. */
   report_failed_at: TsNullable;
 }
 
@@ -1371,8 +1390,6 @@ export interface ScheduledTaskRunsTable {
   >;
   error: NullableText;
   missing_grants: ColumnType<string[], string | undefined, string>;
-  /** When the scanner's repair last found this started run still in flight. */
-  rechecked_at: NullableTs;
 }
 
 /** 0113: a scheduled task's remembered grants (same shape as `conversation_tool_grants`). */
@@ -1455,7 +1472,6 @@ export interface KernelDatabase {
   extension_blobs: ExtensionBlobsTable;
   extension_installs: ExtensionInstallsTable;
   extension_replica_status: ExtensionReplicaStatusTable;
-  usage_report_sweep: UsageReportSweepTable;
   extension_name_owners: ExtensionNameOwnersTable;
   extension_deployment_configs: ExtensionDeploymentConfigsTable;
   catalog_items: CatalogItemsTable;
@@ -1483,12 +1499,35 @@ export interface KernelDatabase {
   plugin_install_components: PluginInstallComponentsTable;
   extension_catalog_sources: ExtensionCatalogSourcesTable;
   bootstrap_runs: BootstrapRunsTable;
-  platform_migration_runs: PlatformMigrationRunsTable;
   org_notices: OrgNoticesTable;
   platform_notices: PlatformNoticesTable;
   plugin_scope_sync_failures: PluginScopeSyncFailuresTable;
   extension_client_builds: ExtensionClientBuildsTable;
   extension_client_reports: ExtensionClientReportsTable;
+  outbox: OutboxTable;
+}
+
+/**
+ * 0119: the transactional outbox (transactional outbox spec §4). A row is a BullMQ job owed by a
+ * committed transaction; deleted on delivery, so only dead rows (`dead_at` set) stay.
+ */
+export interface OutboxTable {
+  /** bigint identity; the pg driver reads it as a string. */
+  id: Generated<string>;
+  queue: string;
+  job_name: string;
+  /** Unique per queue: a second add of the same job before delivery is a no-op. */
+  job_id: string;
+  data: Json;
+  /** The job's delay target; null runs it now. */
+  run_at: Date | null;
+  /** Null for platform work. */
+  org_id: string | null;
+  attempts: Generated<number>;
+  next_attempt_at: Generated<Date>;
+  last_error: string | null;
+  dead_at: Date | null;
+  created_at: Generated<Date>;
 }
 
 /**
@@ -1527,17 +1566,8 @@ export interface ExtensionClientReportsTable {
   last_message: string;
 }
 
-/** 0082: one run of the platform components migration job (`catalog/platform-migration.ts`). */
-export interface PlatformMigrationRunsTable {
-  id: string;
-  started_at: Ts;
-  finished_at: TsNullable;
-  stats: Json<Record<string, unknown>>;
-}
-
-/** 0082: the kinds of {@link OrgNoticesTable}. */
+/** 0084 (0121 dropped `skill_renamed`): the kinds of {@link OrgNoticesTable}. */
 export type OrgNoticeKind =
-  | "skill_renamed"
   | "item_shared"
   | "shared_item_updated"
   | "upload_confirmed"
@@ -1548,7 +1578,7 @@ export interface OrgNoticesTable {
   id: string;
   org_id: string;
   kind: OrgNoticeKind;
-  /** `skill_renamed`: `{ skillId, from, to, platformSkillId, plugin }`. */
+  /** The kind's shape (`OrgNoticeDetails` in `inbox/org-notices.ts`). */
   detail: Json<Record<string, unknown>>;
   created_at: Ts;
   dismissed_at: TsNullable;

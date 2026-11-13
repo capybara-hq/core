@@ -1,5 +1,44 @@
 # @capybara-hq/design
 
+## 0.2.0-rc.8
+
+### Patch Changes
+
+- ba36733: Field `action`: a control that acts on the field's value (an 「添加」 button) sits on the control's
+  line, the help and error below both; the device page's 「添加域名」 row uses it.
+- e76028b: ScheduleCalendar: the scheduled task runs of a week or a month (time grid with a now line, three blocks side by side then +N, a dense lane, 6 × 7 month cells, the phone agenda, roving keyboard focus, loading, empty and load-failed states); the layout.calendar-* sizes and the ink / fail on hover and selected contrast pairs (also in the SDK's theme readability check)
+- 8f08231: ScheduleCalendar: at most two overlapping blocks side by side in the week view (three left about
+  51 px each, an icon and a clipped time); a larger cluster keeps one block and puts the rest in +N
+
+## 0.2.0-rc.7
+
+### Minor Changes
+
+- e964b57: Network asks: when a command on a connected device is refused a domain by the device's local
+  policy, the device owner is asked in the conversation or on the IM card (「这次允许 / 这台设备一直允许 /
+  拒绝」). "This time" allows the domain for the rest of the run tree; "always" adds it to the device's
+  local policy through the new `policy` device operation. Org-layer and address-layer refusals are
+  explained to the model and shown under the command. Migration 0114 adds approval kinds and device
+  policy summaries.
+- 239555e: The device page gains a network section for the owner of a local device: the machine's allowed
+  domains with remove, an add field that takes `*.` wildcards and whether the machine accepts changes
+  from the platform (`remoteGrants`, set only on the machine). Opening the network is the sandbox
+  level's 开放 (see the sandbox levels changeset). The device picker and the properties panel can mark
+  a device (`PickerItem.badge`, `ContextSection.sandboxBadge`).
+
+### Patch Changes
+
+- 0f8f5bb: The agent page's 组织技能 and the agent template's 技能 group the skills by where they come from
+  (each plugin, the org's own, the built-in ones), each group with a select-all box (checked/total,
+  mixed) and a filter for long lists; each row is the name and its badges on one line and the
+  description cut to one muted line with the full text on hover (new design `CheckList`). A badge
+  never shrinks or wraps, and a checked disabled checkbox keeps its check visible.
+- bfb35e3: Tool rows no longer read a Bash command's non-zero exit as a failure (only a timeout or a stopped
+  command fails; the summary names the exit code), and an `Edit` / `Write` refused by the
+  read-before-write check carries the display-only `tool_result.view.kind: "guard"`, shown as
+  "Blocked: read the file (again) first" and counted apart from failures; the model still gets the
+  same error result
+
 ## 0.2.0-rc.6
 
 ### Patch Changes

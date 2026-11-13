@@ -58,15 +58,19 @@ const keyOf = (e: MarketplaceEntry) => `${e.sourceId}/${e.name}/${e.version ?? "
  * version (see {@link groupMarketplaceEntries}). A row: the mono name, the summary, a meta line (the
  * marketplace, its source: npm package, archive URL, a git URL pinned to a commit or following a
  * branch, a path in the marketplace's repository; the version only when incompatible or unnamed;
- * the permission summary with the sensitive count in warn), the state (未引入 / 已引入 <version> /
- * 已引入 <version> · 可更新到 <latest>, or why it cannot be imported: a host outside
+ * the permission summary with the sensitive count in warn), the state (未安装 / 已安装 <version> /
+ * 已安装 <version> · 可更新到 <latest>, or why it cannot be installed: a host outside
  * `marketplaces.allowedHosts`, a path entry of an http marketplace), a chip for changed content,
- * one action and a menu. The action 引入 <latest> (更新 when an older version is imported; when the
- * content changed, "Import the changed content") downloads, verifies and stages the plugin, then
- * opens the import review (`/admin/plugins/import?staging=<id>`); a plugin imported at the latest
- * opens its plugin. The menu's 其他版本 imports another version the same way; a version the
- * marketplace deprecates reads 已废弃 (with its reason) there and is never imported, and
- * prereleases sit there while a stable version can be imported. The
+ * one action and a menu. The action 安装 <latest> (更新到 <latest> when an older version is
+ * installed; when the content changed, 更新到 <version> 的新内容) downloads, verifies and stages the
+ * plugin, then opens the wizard (`/admin/plugins/import?staging=<id>`: the install review, or for
+ * an installed plugin the review and the update preview confirmed together, maintainer decision
+ * 2026-11-13); a plugin installed at the latest opens its plugin. The menu's 其他版本 installs
+ * another version of a plugin not installed yet the same way, and offers an installed plugin only
+ * the versions newer than the ones it has (更新到; an older one is a rollback on the plugin's 版本
+ * tab, never an import alone); a version the marketplace deprecates reads 已废弃 (with its reason)
+ * there and is never installed, and prereleases sit there while a stable version can be installed.
+ * The
  * search sits in the page head (the 插件 head with its tabs and counts); the marketplaces become
  * tabs above the list when there is more than one. Errors such as `marketplace.integrity_mismatch` are a fail callout (with the kernel's
  * line naming the host for network and git codes); a warn callout when the entries are truncated.
@@ -225,7 +229,10 @@ function Catalog({ initial }: { initial: { sourceId: string; q: string } }) {
   const actionOf = (e: MarketplaceEntry) => {
     if (canImport(e) && (e.adopted === null || imported(e) || updatable(e) !== undefined)) {
       return {
-        label: updatable(e) !== undefined ? t("update") : importLabel(e),
+        label:
+          updatable(e) !== undefined && e.version !== null
+            ? t("update", { version: versionLabel(e.version) })
+            : importLabel(e),
         onSelect: () => {
           if (busy === undefined) void doImport(e);
         },
@@ -244,7 +251,10 @@ function Catalog({ initial }: { initial: { sourceId: string; q: string } }) {
       return { label: deprecatedLabel(o), disabled: true, onSelect: () => {} };
     if (canImport(o)) {
       return {
-        label: importLabel(o),
+        label:
+          o.adopted !== null && o.version !== null && !o.contentChanged
+            ? t("update", { version: v })
+            : importLabel(o),
         onSelect: () => {
           if (busy === undefined) void doImport(o);
         },
@@ -257,8 +267,18 @@ function Catalog({ initial }: { initial: { sourceId: string; q: string } }) {
         : t("importVersion", { version: v });
     return { label, disabled: true, onSelect: () => {} };
   };
-  const menuOf = ({ latest: e, others }: MarketplacePlugin): MenuItem[] => {
+  /**
+   * The other versions the menu offers: all of a plugin not installed yet; of an installed one
+   * only those newer than its newest version (an older one is a rollback on its 版本 tab).
+   */
+  const othersOf = (e: MarketplaceEntry, others: MarketplaceEntry[]) => {
+    const top = importedTop(e);
+    if (top === undefined) return others;
+    return others.filter((o) => o.version !== null && (compareSemver(o.version, top) ?? -1) > 0);
+  };
+  const menuOf = ({ latest: e, others: all }: MarketplacePlugin): MenuItem[] => {
     const action = actionOf(e);
+    const others = othersOf(e, all);
     return [
       ...(!e.importable
         ? [{ label: reasonOf(e), disabled: true, onSelect: () => {} }]

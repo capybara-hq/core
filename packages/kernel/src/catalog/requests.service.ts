@@ -18,11 +18,11 @@ import { orgAllows } from "../local-devices/network-grants.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { roleAtLeast } from "../orgs/roles.js";
 import {
-  effectiveSandboxEgress,
   ORG_SANDBOX_ALLOW_HOSTS_MAX,
   OrgSettingsService,
   readOrgSettings,
 } from "../orgs/settings.service.js";
+import { baseSandboxEgress } from "../sandbox/tiers.js";
 import { CatalogService, type MarketplaceImportResult } from "./catalog.service.js";
 import { CatalogScopeService } from "./catalog-scope.service.js";
 import { assertEntryNotDeprecated, loadMarketplaceEntry } from "./marketplaces.service.js";
@@ -349,7 +349,7 @@ export class CatalogRequestsService {
     const t = this.db;
     await this.orgLock.lockAndAuthorize(orgId, actor, "catalog.request");
     const hosts = [...new Set(input.hosts.map((h) => h.toLowerCase()))].sort();
-    const deployment = this.orgSettings.deployment().sandboxEgress;
+    const deployment = (await this.orgSettings.deployment()).sandboxEgress;
     if (deployment.mode === "none") throw deploymentEgressNone();
     const settings = await readOrgSettings(t, orgId);
     if (settings.sandboxEgress?.mode === "none") {
@@ -358,7 +358,8 @@ export class CatalogRequestsService {
         "The organization has sandbox network turned off; ask an admin to turn it on first.",
       );
     }
-    const effective = effectiveSandboxEgress(
+    // the org's base list: the hosts a strict device reaches (the tiers only widen it)
+    const effective = baseSandboxEgress(
       { egress: deployment.mode, allowHosts: deployment.allowHosts },
       settings.sandboxEgress,
     );
@@ -835,7 +836,8 @@ export class CatalogRequestsService {
    * {@link OrgSettingsService.update} (audited `org.settings_updated` with `requestId`). An org
    * following the deployment default starts from the deployment's list (it keeps its own list from
    * then on). The deployment egress `none`, or the org's `none` -> `catalog.request_invalid`; more
-   * than {@link ORG_SANDBOX_ALLOW_HOSTS_MAX} hosts -> `catalog.request_invalid`. Hosts all allowed
+   * than {@link ORG_SANDBOX_ALLOW_HOSTS_MAX} hosts -> `catalog.request_invalid`; decided with an API
+   * token -> `org.sandbox_egress_not_allowed` (only a person widens the network). Hosts all allowed
    * already: nothing is written.
    */
   private async approveNetwork(
@@ -846,7 +848,7 @@ export class CatalogRequestsService {
     opts: RequestActorOpts,
   ): Promise<void> {
     const hosts = (detail as Partial<NetworkRequestDetail> | null)?.hosts ?? [];
-    const deployment = this.orgSettings.deployment().sandboxEgress;
+    const deployment = (await this.orgSettings.deployment()).sandboxEgress;
     if (deployment.mode === "none") throw deploymentEgressNone();
     const current = (await readOrgSettings(this.db, orgId)).sandboxEgress;
     if (current?.mode === "none") {
@@ -855,7 +857,8 @@ export class CatalogRequestsService {
         "The organization has sandbox network turned off; turn it on in the organization settings first",
       );
     }
-    const effective = effectiveSandboxEgress(
+    // the org's base list: the hosts a strict device reaches (the tiers only widen it)
+    const effective = baseSandboxEgress(
       { egress: deployment.mode, allowHosts: deployment.allowHosts },
       current,
     );
@@ -869,12 +872,15 @@ export class CatalogRequestsService {
         `The organization's sandbox allowlist would exceed ${ORG_SANDBOX_ALLOW_HOSTS_MAX} hosts; remove some in the organization settings first`,
       );
     }
+    // approving widens the org's base list: only a person in a session does that, never an API
+    // token (sandbox dev tiers spec §7.2; the Platform tool has no decide operation at all)
     await this.orgSettings.update(
       orgId,
       { sandboxEgress: { mode: "allowlist", allowHosts } },
       actor,
       opts.actorTokenId,
       { requestId },
+      { onlyNarrows: opts.actorTokenId !== undefined },
     );
   }
 

@@ -108,6 +108,14 @@ export function slugOf(id: string): string {
 export const defaultSlug = (t: Pick<OrgCatalogTemplate, "id">, itemName: string): string =>
   slugOf(t.id === "connector" ? itemName : t.id);
 
+/**
+ * The templates the install asks for: the default-on ones, and a default-off one an admin turned on
+ * in this org (the install is what creates its connector, so its input is needed too).
+ */
+export function installTemplates(templates: OrgCatalogTemplate[]): OrgCatalogTemplate[] {
+  return templates.filter((c) => !c.defaultOff || c.on === true);
+}
+
 export const initialTemplateDraft = (
   t: OrgCatalogTemplate,
   locale: string,
@@ -328,7 +336,11 @@ function Wizard({
   const catalogLines = useCatalogErrorLines();
   const item = detail.item;
   const name = displayNameOf(item, locale);
-  const templates = detail.templates;
+  // A default-off template starts switched off in every org: it is set up when an org admin
+  // switches it on, so the wizard does not ask for it.
+  // A default-off template is not asked for, unless an admin switched it on in this org: the
+  // install is what creates its connector, so its input is needed like any other
+  const templates = installTemplates(detail.templates);
   // The plugin's own extension in this org: its org config is asked only when this install enables it
   const own =
     detail.extension === null

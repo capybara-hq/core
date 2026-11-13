@@ -3,6 +3,7 @@ import { CatalogModule } from "../catalog/catalog.module.js";
 import { EventLogModule } from "../conversations/event-log.js";
 import { EvalBudgetModule } from "../evals/budget.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
+import { LifecycleHooksModule } from "../extensions/lifecycle-hooks.js";
 import { IdentityModule } from "../identity/identity.module.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
@@ -29,6 +30,8 @@ import { OrgSettingsModule } from "./settings.service.js";
     OrgLockModule,
     OrgSettingsModule,
     ExtensionsModule,
+    // offboarding and the org delete record lifecycle hook deliveries
+    LifecycleHooksModule,
     // offboarding clears credentials and cancels approvals and questions
     ToolsModule,
     // offboarding stops the member's runs

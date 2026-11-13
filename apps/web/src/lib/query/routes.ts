@@ -14,12 +14,15 @@ import {
 import { type ConnectorSummary, canManageConnectors, personalConnectors } from "../connectors";
 import type { Conversation } from "../conversations";
 import { codeParam, defaultDeviceOrg } from "../device-sign-in";
+import { type Device, deviceCapped } from "../devices";
 import type { EvalSetDetail } from "../evals";
 import { labelLocale } from "../extension-label";
 import type { InboxItem } from "../inbox";
 import { myRole, type OrgRole, roleAtLeast } from "../members";
 import { canEditAgent } from "../org-settings";
+import { dayIn, rangeBounds, SCHEDULES_VIEW_COOKIE, schedulesUrlOf } from "../schedule-calendar";
 import type { Me } from "../session";
+import { parseTimeZone, TIME_ZONE_COOKIE } from "../time";
 import type { UiContributionItem, UiLocale } from "../ui";
 import { identitiesQuery, preferencesQuery, toolGrantsQuery } from "./account";
 import {
@@ -95,6 +98,7 @@ import {
   chatTargetsQuery,
   conversationSchedulesQuery,
   grantableToolsQuery,
+  scheduleCalendarQuery,
   scheduleGrantsQuery,
   scheduleQuery,
   scheduleRunsQuery,
@@ -135,6 +139,10 @@ export interface RouteCtx {
   orgId: string | null;
   /** The page's UI locale (reads that render text in it, such as an extension view). */
   locale: UiLocale;
+  /** A cookie of the document request (the viewer's zone `cb-tz`, a remembered view). */
+  cookie: (name: string) => string | undefined;
+  /** The request's time (ms): what "today" is for a read keyed by days. */
+  now: number;
 }
 
 /**
@@ -483,12 +491,17 @@ export const ROUTES: readonly RouteEntry[] = [
   {
     pattern: "/admin/plugins/import",
     // `?staging=<id>`: the staged import's review, the pending requests (a staging prepared for
-    // an org's request defaults to that org) and the orgs (the scope); no staging: the source
-    // step reads nothing.
+    // an org's request defaults to that org), the orgs (the scope) and the catalog (an installed
+    // plugin is updated, not installed); no staging: the source step reads nothing.
     queries: ({ me, search }) => {
       const staging = search.get("staging") ?? "";
       return superAdmin(me) && staging !== ""
-        ? [q(stagedImportQuery(staging)), q(deploymentRequestsQuery()), q(adminOrgsQuery())]
+        ? [
+            q(stagedImportQuery(staging)),
+            q(deploymentRequestsQuery()),
+            q(adminOrgsQuery()),
+            q(catalogItemsQuery()),
+          ]
         : [];
     },
   },
@@ -837,6 +850,15 @@ export const ROUTES: readonly RouteEntry[] = [
     pattern: "/devices/[id]",
     queries: ({ orgId, params }) =>
       orgId === null || params.id === undefined ? [] : [q(deviceQuery(orgId, params.id))],
+    // A device below the open level: the org settings say who caps its higher cards (org or
+    // platform).
+    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
+    then: async ({ orgId, params }, qc) => {
+      if (orgId === null || params.id === undefined) return;
+      const read = qc.getQueryData<{ device: Device }>(deviceQuery(orgId, params.id).queryKey);
+      if (!deviceCapped(read?.device)) return;
+      await qc.prefetchQuery({ ...orgSettingsQuery(orgId), retry: false });
+    },
   },
   {
     pattern: "/connectors/install",
@@ -1086,11 +1108,29 @@ export const ROUTES: readonly RouteEntry[] = [
   {
     pattern: "/schedules",
     // Members up (guests get no access): my tasks, the agents that name them and the org's
-    // settings (turned off; sections).
-    queries: ({ orgId, me }) =>
-      orgId === null || !atLeast(me, "member")
-        ? []
-        : [q(schedulesQuery(orgId)), q(agentsQuery(orgId)), q(orgSettingsQuery(orgId))],
+    // settings (turned off; sections). The calendar view (the address, else the remembered view)
+    // also needs the range it shows, keyed by the viewer's zone: only when the server knows it
+    // (the `cb-tz` cookie), else the view reads it on mount (calendar spec §9).
+    queries: ({ orgId, me, search, cookie, now }) => {
+      if (orgId === null || !atLeast(me, "member")) return [];
+      const base = [q(schedulesQuery(orgId)), q(agentsQuery(orgId)), q(orgSettingsQuery(orgId))];
+      const url = schedulesUrlOf(search, cookie(SCHEDULES_VIEW_COOKIE));
+      const timeZone = parseTimeZone(cookie(TIME_ZONE_COOKIE));
+      if (url.view !== "calendar" || timeZone === undefined) return base;
+      const all = url.scope === "all" && atLeast(me, "admin");
+      const date = url.date ?? dayIn(now, timeZone);
+      return [
+        ...base,
+        q(
+          scheduleCalendarQuery(orgId, {
+            ...rangeBounds(url.range, date, timeZone),
+            timeZone,
+            all,
+          }),
+        ),
+        ...(all ? [q(schedulesQuery(orgId, "all")), q(membersQuery(orgId))] : []),
+      ];
+    },
   },
   {
     pattern: "/schedules/new",

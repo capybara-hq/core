@@ -304,7 +304,7 @@ describe("改名后的路由与旧 agent 版本", () => {
     expect(base?.definition.disabledTools).toEqual([]);
     const resolved = await k.app
       .get(ToolRegistry)
-      .forAgent(orgId, base?.definition ?? { disabledTools: [] });
+      .forAgent(orgId, { ...(base?.definition ?? { disabledTools: [] }), source: "web" });
     const keys = resolved.tools.map((t) => t.key);
     expect(keys).toEqual(expect.arrayContaining(["mcp__fx_docs__search", "mcp__fx_priv__search"]));
     expect(JSON.stringify(resolved.unavailable)).not.toContain("undefined");
@@ -360,7 +360,7 @@ describe("改名后的路由与旧 agent 版本", () => {
     expect(base?.definition.disabledTools).toEqual(candidate?.disabledTools);
     const resolved = await k.app
       .get(ToolRegistry)
-      .forAgent(orgId, base?.definition ?? { disabledTools: [] });
+      .forAgent(orgId, { ...(base?.definition ?? { disabledTools: [] }), source: "web" });
     expect(resolved.tools.map((t) => t.key)).toContain("AskUserQuestion");
     expect(resolved.unavailable).toEqual([]);
 

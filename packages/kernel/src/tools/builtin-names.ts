@@ -25,6 +25,7 @@ export const BUILTIN = {
   SubagentHandback: "SubagentHandback",
   TaskOutput: "TaskOutput",
   TaskStop: "TaskStop",
+  TaskList: "TaskList",
   WebSearch: "WebSearch",
   WebFetch: "WebFetch",
   Platform: "Platform",
@@ -39,7 +40,8 @@ export type BuiltinName = (typeof BUILTIN)[keyof typeof BUILTIN];
 
 /**
  * The builtin tools that run in the conversation's sandbox. `TaskOutput` and `TaskStop` read and
- * stop the background tasks `Bash` started (background Bash spec §2.2, §2.3).
+ * stop the background tasks `Bash` started (background Bash spec §2.2, §2.3); `TaskList` lists them
+ * (and the conversation's sub-agents).
  */
 export const SANDBOX_TOOL_NAMES: readonly BuiltinName[] = [
   BUILTIN.Bash,
@@ -51,6 +53,7 @@ export const SANDBOX_TOOL_NAMES: readonly BuiltinName[] = [
   BUILTIN.Deliver,
   BUILTIN.TaskOutput,
   BUILTIN.TaskStop,
+  BUILTIN.TaskList,
 ];
 
 /** The builtin tools that reach the web through the org's web-search / web-fetch providers. */
@@ -60,11 +63,15 @@ export const WEB_TOOL_NAMES: readonly BuiltinName[] = [BUILTIN.WebSearch, BUILTI
  * The tools offered with `Bash` whenever it is offered (background Bash: a model that can start a
  * background task can read and stop it). `ToolRegistry` adds them; an explicit ref is harmless.
  */
-export const BASH_COMPANION_TOOLS: readonly BuiltinName[] = [BUILTIN.TaskOutput, BUILTIN.TaskStop];
+export const BASH_COMPANION_TOOLS: readonly BuiltinName[] = [
+  BUILTIN.TaskOutput,
+  BUILTIN.TaskStop,
+  BUILTIN.TaskList,
+];
 
 /**
  * Sandbox tools that need approval when the org setting `sandboxToolPolicy` is `ask` (not the
- * read-only ones). Not `TaskOutput` or `TaskStop`: they only read or stop a task whose launch
+ * read-only ones). Not `TaskOutput`, `TaskStop` or `TaskList`: they only read, list or stop tasks whose launch
  * already went through `Bash`'s policy (background Bash spec §4.5).
  */
 export const SANDBOX_ASK_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
@@ -175,7 +182,7 @@ export const CHILD_REMOVED_TOOLS = [
 /**
  * The builtins every agent has unless it turns them off (tools default-on spec §4), in this
  * order: {@link BUILTIN_TOOL_NAMES} without the ones the registry manages by rule (`ToolSearch`,
- * `Skill`, `SendMessage`, `SubagentHandback`) and without `TaskOutput` / `TaskStop`, which come
+ * `Skill`, `SendMessage`, `SubagentHandback`) and without `TaskOutput` / `TaskStop` / `TaskList`, which come
  * with `Bash` ({@link BASH_COMPANION_TOOLS}). These are also the builtins an agent can turn off.
  */
 export const AGENT_BUILTIN_NAMES: readonly BuiltinName[] = BUILTIN_TOOL_NAMES.filter(
@@ -198,6 +205,7 @@ export const BUILTIN_TOOL_KINDS: Readonly<Record<string, ToolKind>> = {
   [BUILTIN.Deliver]: "tool",
   [BUILTIN.TaskOutput]: "read",
   [BUILTIN.TaskStop]: "command",
+  [BUILTIN.TaskList]: "read",
   [BUILTIN.ToolSearch]: "meta",
   [BUILTIN.Skill]: "meta",
   [BUILTIN.ReadToolOutput]: "meta",

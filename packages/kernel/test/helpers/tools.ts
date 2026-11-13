@@ -71,6 +71,9 @@ export function credentialsFor(
   );
 }
 
+/** No run resumes here: a hand-built decision leaves its run as it is (no kernel, no outbox). */
+const noResume = { resumeIn: async () => "not-waiting" as const };
+
 /**
  * The approvals over a test's Kysely and an event log; `events` gets `approval.decided`.
  * `registry`: the agent's tools a trial run's kept approval is checked against (default: none, so
@@ -96,7 +99,13 @@ export function approvalsFor(
     registry,
     // no device here: deciding a network ask needs the kernel's DevicePolicyService
     {
-      apply: async () => {
+      begin: async () => {
+        throw new Error("DevicePolicyService is not available in this test");
+      },
+      send: async () => {
+        throw new Error("DevicePolicyService is not available in this test");
+      },
+      settleIn: async () => {
         throw new Error("DevicePolicyService is not available in this test");
       },
       summary: async () => null,
@@ -104,14 +113,17 @@ export function approvalsFor(
     undefined as never,
     // no sandbox config here: an org's egress is open (a trial's network grants are kept)
     {
-      orgLimits: async () => ({
+      ceilingLimits: async () => ({
         cpu: 1,
         memoryMb: 512,
         diskMb: 1024,
         egress: "open" as const,
         allowHosts: [],
+        tier: "strict" as const,
+        devHosts: [],
       }),
     },
+    noResume,
   );
 }
 
@@ -123,7 +135,7 @@ export function questionsFor(
   events: KernelEvents = new KernelEvents(quiet),
 ): QuestionsService {
   const h = handlesFor(db);
-  return new QuestionsService(h.db, configFrom(config), eventLog, events, h.txHost);
+  return new QuestionsService(h.db, configFrom(config), eventLog, events, h.txHost, noResume);
 }
 
 /** What a hand-built pipeline runs on (the shape of the old `ToolPipelineDeps`). */

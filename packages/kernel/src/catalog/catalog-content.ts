@@ -110,6 +110,16 @@ export interface OrgCatalogTemplate {
   auth: Record<string, unknown>;
   ownership: "org" | "personal" | null;
   /**
+   * The template file says `defaultEnabled: false`: it starts switched off in every org, so the
+   * install wizard does not ask for it (an org admin sets it up when switching it on).
+   */
+  defaultOff: boolean;
+  /**
+   * The template is on in this org right now (a default-off one an admin switched on): the install
+   * asks for its input too, since the install is what creates its connector.
+   */
+  on: boolean;
+  /**
    * The template's setup guide in the item's latest version (`GET …/catalog/:itemId/guides/
    * :guideId`), null without one (spec 2026-11-09-setup-guides-v2-design.md §9.3).
    */
@@ -149,6 +159,7 @@ export function orgTemplateView(
   id: string,
   file: ConnectorTemplateFile,
   guide: OrgCatalogTemplate["guide"] = null,
+  on = true,
 ): OrgCatalogTemplate {
   const t = file.template;
   return {
@@ -163,6 +174,8 @@ export function orgTemplateView(
     ownership:
       t.ownership ??
       (typeof t.auth.ownership === "string" ? (t.auth.ownership as "org" | "personal") : null),
+    defaultOff: file.defaultEnabled === false,
+    on,
     guide,
   };
 }

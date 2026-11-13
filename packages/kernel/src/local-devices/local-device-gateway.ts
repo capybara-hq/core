@@ -130,6 +130,8 @@ class DeviceConnection {
   private chain: Promise<void> = Promise.resolve();
   /** Resolves once the lease is handed back (or was never held). */
   private released: Promise<void> | undefined;
+  /** The hello's record, then each policy frame's, one after another (never rejects). */
+  private recorded: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly gw: LocalDeviceGateway,
@@ -195,15 +197,39 @@ class DeviceConnection {
       }
       clearTimeout(this.helloTimer);
       this.state = "claiming";
-      if (!(await this.claim())) return;
-      try {
-        await this.gw.machines.recordHello(this.identity.machineId, frame);
-      } catch (e) {
-        this.gw.log.warn("could not record a device hello", {
-          deviceId: this.deviceId,
-          error: errMsg(e),
-        });
-      }
+      // the raw summary too: the frame parser drops one it cannot read whole, and its
+      // isolation must still reach the kernel
+      const rawPolicy = (JSON.parse(text) as { policy?: unknown }).policy;
+      // set before the first await: a policy frame that follows is recorded after the hello
+      this.recorded = (async () => {
+        if (!(await this.claim())) return;
+        try {
+          await this.gw.machines.recordHello(this.identity.machineId, frame, rawPolicy);
+        } catch (e) {
+          this.gw.log.warn("could not record a device hello", {
+            deviceId: this.deviceId,
+            error: errMsg(e),
+          });
+        }
+      })();
+      await this.recorded;
+      return;
+    }
+    if (frame.type === "policy" && this.state !== "hello") {
+      // after the hello's record and the earlier policy frames, in the order they came
+      const rawPolicy = (JSON.parse(text) as { policy?: unknown }).policy;
+      this.recorded = this.recorded.then(async () => {
+        if (this.state === "closed") return;
+        try {
+          await this.gw.machines.recordPolicy(this.identity.machineId, frame.policy, rawPolicy);
+        } catch (e) {
+          this.gw.log.warn("could not record a device policy change", {
+            deviceId: this.deviceId,
+            error: errMsg(e),
+          });
+        }
+      });
+      await this.recorded;
       return;
     }
     if (frame.type !== "res" || this.state === "hello") {
@@ -504,7 +530,10 @@ export class LocalDeviceGateway {
 
   constructor(
     @Inject(MachinesService)
-    readonly machines: Pick<MachinesService, "authenticate" | "recordHello" | "touch">,
+    readonly machines: Pick<
+      MachinesService,
+      "authenticate" | "recordHello" | "recordPolicy" | "touch"
+    >,
     @Inject(LockService) readonly locks: Pick<LockService, "hold">,
     @Inject(KERNEL_BUS) readonly bus: ExtensionContext["bus"],
     @Inject(REDIS) readonly redis: Redis,

@@ -30,6 +30,7 @@ import {
   type TestKernel,
   waitFor,
 } from "../../helpers/runs.js";
+import { webCaller } from "../../helpers/step-context.js";
 
 /**
  * Agent map spec §5.1 (Task A6), two replicas: two in-process kernels sharing PG and Redis, each
@@ -163,6 +164,7 @@ describe("SendMessage across replicas", { timeout: 90_000 }, () => {
       agentVersion: 1,
       agent: normalizeStoredDefinition(v.definition),
       accountId: ownerId,
+      ...webCaller(ownerId),
       signal: new AbortController().signal,
     };
     // dispatched through A; only B has workers, so the child runs on B

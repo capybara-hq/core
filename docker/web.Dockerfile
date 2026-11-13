@@ -44,6 +44,8 @@ RUN npm install -g "pnpm@$(node -p 'require("./package.json").packageManager.spl
 # Fetch dependencies from the lockfile alone so this layer survives source edits. The store cache
 # is locked so concurrent (multi-platform) builds don't write it at the same time.
 COPY pnpm-lock.yaml pnpm-workspace.yaml ./
+# pnpm-workspace.yaml's patchedDependencies: fetch needs the patch files
+COPY patches ./patches
 RUN --mount=type=cache,id=capybara-pnpm-store,target=/pnpm/store,sharing=locked \
     pnpm config set store-dir /pnpm/store && pnpm fetch
 

@@ -4,11 +4,13 @@
  */
 import {
   type ExecResult,
+  isSandboxTier,
   type NetworkBlockedHost,
   type NetworkBlockLayer,
   type SandboxActor,
   type SandboxLimits,
   type SandboxRoots,
+  type SandboxTier,
   validateAllowHost,
   validateSandboxPathShape,
 } from "./sandbox.js";
@@ -26,7 +28,8 @@ export type DeviceOp =
   | "killTagged"
   | "killAll"
   | "stop"
-  | "policy";
+  | "policy"
+  | "policyStatus";
 
 const DEVICE_OPS: readonly DeviceOp[] = [
   "create",
@@ -38,30 +41,57 @@ const DEVICE_OPS: readonly DeviceOp[] = [
   "killAll",
   "stop",
   "policy",
+  "policyStatus",
 ];
 
 /**
- * Optional capabilities a device announces in its hello. A kernel sends the `policy` op only to a
- * device with `policyOp`; `networkReport` means exec results may carry `network`.
+ * Optional capabilities a device announces in its hello. `policyOp`: the device takes the `policy`
+ * op; `policyOpId`: it also logs each `policy` op's outcome by its `opId`, answers `policyStatus`
+ * and reports recent outcomes in its hello (`recentOps`); `networkReport` means exec results may
+ * carry `network`; `tiers` means the device applies `limits.tier` / `defaultTier` / `devHosts`
+ * (without it the device behaves as `strict`).
  */
-export type DeviceFeature = "networkReport" | "policyOp";
-const DEVICE_FEATURES: readonly DeviceFeature[] = ["networkReport", "policyOp"];
+export type DeviceFeature = "networkReport" | "policyOp" | "policyOpId" | "tiers";
+const DEVICE_FEATURES: readonly DeviceFeature[] = [
+  "networkReport",
+  "policyOp",
+  "policyOpId",
+  "tiers",
+];
 
 /**
  * Whether the device accepts widening its local policy from the kernel (the `policy` op's `add`
- * and `network: "open"`, run and task grants): `owner` (default, decided by the device owner in a
+ * and a higher `tier`, run and task grants): `owner` (default, decided by the device owner in a
  * signed-in session) or `off` (only the machine's user widens it, with the CLI).
  */
 export type DeviceRemoteGrants = "owner" | "off";
 
-/** The device's local network mode: only the allowed domains (within the org's limits), or open. */
-export type DeviceNetworkMode = "allowlist" | "open";
-
-/** What the kernel knows of a device's local network policy (from the hello or a `policy` op). */
+/** What the kernel knows of a device's local policy (from the hello or a `policy` op). */
 export interface DeviceLocalPolicySummary {
-  network: DeviceNetworkMode;
+  /** The tier the device owner chose; absent = follows the org's default. */
+  tier?: SandboxTier;
+  /** The tier the device ran its last command at (its choice cut to the org's ceiling). */
+  effectiveTier: SandboxTier;
+  /** `none` = the device runs commands without a sandbox (only with tier `open`, OS mode). */
+  isolation: "sandbox" | "none";
+  /** Whether sandboxed commands may bind and reach localhost on this machine. */
+  localhost: "on" | "off-proxy-detected" | "off";
+  /** Unix socket access: within the roots, every socket masked, or none. */
+  unixSockets: "roots" | "all-masked" | "off";
   allowedDomains: string[];
   remoteGrants: DeviceRemoteGrants;
+}
+
+/**
+ * The first line of the kernel's background task launch command (`Bash` `run_in_background`), a
+ * shell comment. A device kills what a foreground exec leaves running once the exec ends; an exec
+ * whose command starts with this line detaches a task on purpose, and its processes are left alone.
+ */
+export const BACKGROUND_LAUNCH_LINE = "# capybara: background task launch";
+
+/** Whether an exec's command is a background task launch ({@link BACKGROUND_LAUNCH_LINE}). */
+export function isBackgroundLaunch(command: string): boolean {
+  return command === BACKGROUND_LAUNCH_LINE || command.startsWith(`${BACKGROUND_LAUNCH_LINE}\n`);
 }
 
 /** The most blocked hosts an exec result reports; the parser cuts longer lists. */
@@ -69,6 +99,24 @@ export const MAX_NETWORK_BLOCKED_HOSTS = 20;
 
 /** The most hosts a `policy` op's `add` / `remove` or an exec's `grants` may carry. */
 const MAX_POLICY_HOSTS = 100;
+
+/** The longest `opId` a `policy` / `policyStatus` op may carry. */
+export const MAX_POLICY_OP_ID_LENGTH = 128;
+
+/** The most entries a hello's `recentOps` carries; the parser keeps the newest. */
+export const MAX_RECENT_POLICY_OPS = 100;
+
+/**
+ * What a device recorded of a `policy` op: `started` (written before the change, so an op the
+ * device was stopped in the middle of stays `started`), then `applied` or `refused`.
+ */
+export type DevicePolicyOpOutcome = "applied" | "refused" | "started";
+
+/** One entry of a hello's `recentOps`. */
+export interface DevicePolicyOpReport {
+  opId: string;
+  outcome: DevicePolicyOpOutcome;
+}
 
 /** First frame from the device after the WebSocket opens. */
 export interface DeviceHello {
@@ -82,8 +130,14 @@ export interface DeviceHello {
   sessionIsolation: boolean;
   /** Optional capabilities (absent on older devices; unknown entries are dropped by the parser). */
   features?: DeviceFeature[];
-  /** The device's local network policy at connect time (absent on older devices). */
+  /** The device's local policy at connect time (absent on older devices). */
   policy?: DeviceLocalPolicySummary;
+  /**
+   * The outcomes of the latest `policy` ops by op id, oldest first, at most
+   * {@link MAX_RECENT_POLICY_OPS} (devices with `policyOpId`; malformed entries are dropped by
+   * the parser).
+   */
+  recentOps?: DevicePolicyOpReport[];
 }
 
 /** Error kinds a device reports for a failed request. */
@@ -109,7 +163,18 @@ export interface KernelCancel {
   id: string;
 }
 
-export type DeviceFrame = DeviceHello | DeviceRes | KernelReq | KernelCancel;
+/**
+ * The device's local policy changed while connected (its file was edited on the machine, the
+ * localhost proxy guard flipped, a new tier ceiling): the summary as it is now, sent only when it
+ * differs from the last one sent on this connection. `policy` is absent when the frame's summary
+ * was unreadable; the kernel then keeps only its isolation, from the raw frame, as for the hello.
+ */
+export interface DevicePolicyChanged {
+  type: "policy";
+  policy?: DeviceLocalPolicySummary;
+}
+
+export type DeviceFrame = DeviceHello | DeviceRes | DevicePolicyChanged | KernelReq | KernelCancel;
 
 export interface DeviceExecArgs {
   command: string;
@@ -161,21 +226,45 @@ export interface DeviceStopArgs {
   reason: "revoked" | "deleted";
 }
 /**
- * Edits the device's local network policy. The device refuses widening (`add`,
- * `network: "open"`) unless its `remoteGrants` is `owner`; narrowing is always accepted.
+ * Edits the device's local policy. The device refuses widening (`add`, a higher `tier`) unless
+ * its `remoteGrants` is `owner`; narrowing is always accepted. `isolation` may only turn the
+ * sandbox back on: turning it off is decided on the machine.
  */
 export interface DevicePolicyArgs {
+  /**
+   * The kernel's id of this change (non-empty, no `:`, at most {@link MAX_POLICY_OP_ID_LENGTH}
+   * characters): the device logs the op's outcome under it, for `policyStatus` and the hello's
+   * `recentOps`.
+   */
+  opId: string;
   /** Hosts to add to `allowedDomains`. */
   add?: string[];
   /** Hosts to remove from `allowedDomains`. */
   remove?: string[];
-  network?: DeviceNetworkMode;
+  /** The device's tier; null = follow the org's default. */
+  tier?: SandboxTier | null;
+  /** Only `sandbox`: the kernel never turns the sandbox off. */
+  isolation?: "sandbox";
   /** Who decided, for the device's local audit line. */
   source: { approvalId?: string; accountId: string; accountName: string; via: "web" | "im" };
 }
 /** The policy as the device wrote it. */
 export interface DevicePolicyResult {
   policy: DeviceLocalPolicySummary;
+}
+/** Asks what became of the `policy` op with this id. Read-only on the device. */
+export interface DevicePolicyStatusArgs {
+  opId: string;
+}
+/**
+ * What the device logged of a `policy` op: its {@link DevicePolicyOpOutcome}, or `unknown` when
+ * the id is not in its log (never received, or dropped from the log since). `policy` is the
+ * device's summary now; `message` the refusal's.
+ */
+export interface DevicePolicyStatus {
+  outcome: DevicePolicyOpOutcome | "unknown";
+  policy?: DeviceLocalPolicySummary;
+  message?: string;
 }
 
 /** A frame that is not valid protocol v1 (or came from the wrong side). */
@@ -235,13 +324,39 @@ function parseLimits(v: unknown): SandboxLimits {
   if (egress !== "none" && egress !== "allowlist" && egress !== "open") {
     throw new DeviceProtocolError(`unknown egress "${egress}"`);
   }
-  return {
+  const devHosts = strArray(o, "devHosts");
+  for (const h of devHosts) {
+    const problems = validateAllowHost(h);
+    if (problems.length > 0) {
+      throw new DeviceProtocolError(`invalid dev host "${h}": ${problems.join("; ")}`);
+    }
+  }
+  const out: SandboxLimits = {
     cpu: num(o, "cpu"),
     memoryMb: num(o, "memoryMb"),
     diskMb: num(o, "diskMb"),
     egress,
     allowHosts: strArray(o, "allowHosts"),
+    tier: parseTier(o, "tier"),
+    devHosts,
   };
+  if (o.defaultTier !== undefined) out.defaultTier = parseTier(o, "defaultTier");
+  if (o.allowUnsandboxed !== undefined) out.allowUnsandboxed = bool(o, "allowUnsandboxed");
+  return out;
+}
+
+function parseTier(o: Record<string, unknown>, k: string): SandboxTier {
+  const v = str(o, k);
+  if (!isSandboxTier(v)) throw new DeviceProtocolError(`unknown tier "${v}"`);
+  return v;
+}
+
+function oneOf<T extends string>(o: Record<string, unknown>, k: string, values: readonly T[]): T {
+  const v = str(o, k);
+  if (!(values as readonly string[]).includes(v)) {
+    throw new DeviceProtocolError(`unknown ${k} "${v}"`);
+  }
+  return v as T;
 }
 
 function num(o: Record<string, unknown>, k: string): number {
@@ -280,39 +395,83 @@ function hostArray(o: Record<string, unknown>, k: string): string[] {
   return v;
 }
 
-function parseNetworkMode(o: Record<string, unknown>, k: string): DeviceNetworkMode {
-  const v = str(o, k);
-  if (v !== "allowlist" && v !== "open") throw new DeviceProtocolError(`unknown network "${v}"`);
-  return v;
-}
-
 function parsePolicySummary(v: unknown): DeviceLocalPolicySummary {
   const o = obj(v, 'field "policy"');
   const remoteGrants = str(o, "remoteGrants");
   if (remoteGrants !== "owner" && remoteGrants !== "off") {
     throw new DeviceProtocolError(`unknown remoteGrants "${remoteGrants}"`);
   }
-  return {
-    network: parseNetworkMode(o, "network"),
+  const out: DeviceLocalPolicySummary = {
+    effectiveTier: parseTier(o, "effectiveTier"),
+    isolation: oneOf(o, "isolation", ["sandbox", "none"] as const),
+    localhost: oneOf(o, "localhost", ["on", "off-proxy-detected", "off"] as const),
+    unixSockets: oneOf(o, "unixSockets", ["roots", "all-masked", "off"] as const),
     allowedDomains: strArray(o, "allowedDomains"),
     remoteGrants,
   };
+  if (o.tier !== undefined) out.tier = parseTier(o, "tier");
+  return out;
+}
+
+/**
+ * Whether `v` is a valid policy op id: non-empty, no `:`, at most
+ * {@link MAX_POLICY_OP_ID_LENGTH} characters.
+ */
+export function isPolicyOpId(v: unknown): v is string {
+  return (
+    typeof v === "string" && v !== "" && v.length <= MAX_POLICY_OP_ID_LENGTH && !v.includes(":")
+  );
+}
+
+function opId(o: Record<string, unknown>): string {
+  const v = o.opId;
+  if (!isPolicyOpId(v)) {
+    throw new DeviceProtocolError(
+      `field "opId" must be a non-empty string without ":" of at most ${MAX_POLICY_OP_ID_LENGTH} characters`,
+    );
+  }
+  return v;
+}
+
+const OP_OUTCOMES: readonly DevicePolicyOpOutcome[] = ["applied", "refused", "started"];
+
+/**
+ * The valid entries of a hello's `recentOps`, one per op id (the last listed), the newest
+ * {@link MAX_RECENT_POLICY_OPS}.
+ */
+function parseRecentOps(v: unknown[]): DevicePolicyOpReport[] {
+  // one entry per op id: the last one listed (the newest outcome), where it is listed
+  const byId = new Map<string, DevicePolicyOpReport>();
+  for (const e of v) {
+    if (!isRecord(e) || !isPolicyOpId(e.opId)) continue;
+    if (!OP_OUTCOMES.includes(e.outcome as DevicePolicyOpOutcome)) continue;
+    byId.delete(e.opId);
+    byId.set(e.opId, { opId: e.opId, outcome: e.outcome as DevicePolicyOpOutcome });
+  }
+  return [...byId.values()].slice(-MAX_RECENT_POLICY_OPS);
 }
 
 /** Optional hello fields: malformed values are ignored so old and new peers interoperate. */
-function optionalHelloFields(o: Record<string, unknown>): Pick<DeviceHello, "features" | "policy"> {
-  const out: Pick<DeviceHello, "features" | "policy"> = {};
+function optionalHelloFields(
+  o: Record<string, unknown>,
+): Pick<DeviceHello, "features" | "policy" | "recentOps"> {
+  const out: Pick<DeviceHello, "features" | "policy" | "recentOps"> = {};
   if (Array.isArray(o.features)) {
     out.features = DEVICE_FEATURES.filter((f) => (o.features as unknown[]).includes(f));
   }
-  if (o.policy !== undefined) {
-    try {
-      out.policy = parsePolicySummary(o.policy);
-    } catch {
-      // an unreadable summary is the same as none: the kernel learns the policy later
-    }
+  if (Array.isArray(o.recentOps)) out.recentOps = parseRecentOps(o.recentOps);
+  return { ...out, ...optionalPolicy(o.policy) };
+}
+
+/** A summary field that is dropped when absent or unreadable. */
+function optionalPolicy(v: unknown): Pick<DeviceHello, "policy"> {
+  if (v === undefined) return {};
+  try {
+    return { policy: parsePolicySummary(v) };
+  } catch {
+    // an unreadable summary is the same as none: the kernel learns the policy later
+    return {};
   }
-  return out;
 }
 
 const BLOCK_LAYERS: readonly NetworkBlockLayer[] = ["device", "org", "address", "unknown"];
@@ -449,9 +608,13 @@ function validateArgs(op: DeviceOp, a: Record<string, unknown>): void {
       return;
     }
     case "policy": {
+      opId(a);
       if (a.add !== undefined) hostArray(a, "add");
       if (a.remove !== undefined) hostArray(a, "remove");
-      if (a.network !== undefined) parseNetworkMode(a, "network");
+      if (a.tier !== undefined && a.tier !== null) parseTier(a, "tier");
+      if (a.isolation !== undefined && a.isolation !== "sandbox") {
+        throw new DeviceProtocolError('field "isolation" may only be "sandbox"');
+      }
       const src = obj(a.source, 'field "source"');
       nonEmptyStr(src, "accountId");
       str(src, "accountName");
@@ -460,6 +623,9 @@ function validateArgs(op: DeviceOp, a: Record<string, unknown>): void {
       if (src.approvalId !== undefined) str(src, "approvalId");
       return;
     }
+    case "policyStatus":
+      opId(a);
+      return;
   }
 }
 
@@ -474,6 +640,7 @@ export interface DeviceOpResults {
   killAll: null;
   stop: null;
   policy: DevicePolicyResult;
+  policyStatus: DevicePolicyStatus;
 }
 
 /** Validates the `result` of a successful `res` for `op`; throws {@link DeviceProtocolError}. */
@@ -500,6 +667,15 @@ export function parseOpResult(op: DeviceOp, result: unknown): DeviceOpResults[De
     }
     case "policy":
       return { policy: parsePolicySummary(obj(result, "policy result").policy) };
+    case "policyStatus": {
+      const r = obj(result, "policyStatus result");
+      const out: DevicePolicyStatus = {
+        outcome: oneOf(r, "outcome", [...OP_OUTCOMES, "unknown"] as const),
+      };
+      if (r.policy !== undefined) out.policy = parsePolicySummary(r.policy);
+      if (r.message !== undefined) out.message = str(r, "message");
+      return out;
+    }
     case "readFile": {
       if (result === null) return null;
       const r = obj(result, "readFile result");
@@ -519,7 +695,8 @@ export function parseOpResult(op: DeviceOp, result: unknown): DeviceOpResults[De
 }
 
 /**
- * Parses one WebSocket text frame. `from` is the sender: a device may send `hello` and `res`, the
+ * Parses one WebSocket text frame. `from` is the sender: a device may send `hello`, `res` and
+ * `policy`, the
  * kernel `req` and `cancel`. Throws {@link DeviceProtocolError} on bad JSON, an unknown `type`,
  * missing fields or a frame of the wrong direction.
  */
@@ -535,7 +712,9 @@ export function parseDeviceFrame(raw: string, from: "device" | "kernel"): Device
   switch (type) {
     case "hello":
     case "res":
+    case "policy":
       if (from !== "device") throw new DeviceProtocolError(`"${type}" must come from the device`);
+      if (type === "policy") return { type, ...optionalPolicy(o.policy) };
       return type === "hello" ? parseHello(o) : parseRes(o);
     case "req":
     case "cancel":

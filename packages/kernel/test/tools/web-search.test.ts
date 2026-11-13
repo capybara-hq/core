@@ -414,7 +414,7 @@ describe("WebSearch: availability", { timeout: 90_000 }, () => {
     expect(calls[0]).not.toContain("WebSearch");
     const why = await k.app
       .get(ToolRegistry)
-      .forAgent(orgId, { disabledTools: builtinsOff("WebSearch") });
+      .forAgent(orgId, { source: "web", disabledTools: builtinsOff("WebSearch") });
     expect(why.hidden).toEqual([{ ref: "WebSearch", reason: NONE_REASON }]);
   });
 
@@ -424,8 +424,12 @@ describe("WebSearch: availability", { timeout: 90_000 }, () => {
     await enable(orgB, "fake-web-2");
     const def = { disabledTools: builtinsOff("WebSearch") };
     const reg = k.app.get(ToolRegistry);
-    const a = (await reg.forAgent(orgId, def)).tools.find((t) => t.key === "WebSearch");
-    const b = (await reg.forAgent(orgB, def)).tools.find((t) => t.key === "WebSearch");
+    const a = (await reg.forAgent(orgId, { ...def, source: "web" })).tools.find(
+      (t) => t.key === "WebSearch",
+    );
+    const b = (await reg.forAgent(orgB, { ...def, source: "web" })).tools.find(
+      (t) => t.key === "WebSearch",
+    );
     expect(a?.specHash).toBeDefined();
     expect(a?.specHash).toBe(b?.specHash);
     // and each org's call goes to its own provider

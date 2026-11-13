@@ -558,6 +558,25 @@ describe("ContextSection", () => {
     expect(screen.getByText("连接器：Acme 文档、Acme 工单")).toBeTruthy();
   });
 
+  it("the sandbox mark is warn by default and fail when asked", () => {
+    const r = wrap(
+      <ContextSection ratio={10} model="m" sandbox="Laptop" sandboxBadge="开放" connectors={[]} />,
+    );
+    expect(screen.getByText("开放").getAttribute("data-tone")).toBe("warn");
+    r.unmount();
+    wrap(
+      <ContextSection
+        ratio={10}
+        model="m"
+        sandbox="Laptop"
+        sandboxBadge="不使用沙箱"
+        sandboxBadgeTone="fail"
+        connectors={[]}
+      />,
+    );
+    expect(screen.getByText("不使用沙箱").getAttribute("data-tone")).toBe("fail");
+  });
+
   it("a total line (tokens with sub-agents) only when given", () => {
     const { unmount } = wrap(
       <ContextSection ratio={10} model="m" connectors={[]} total="含子智能体共 1,234 tokens" />,

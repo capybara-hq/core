@@ -40,14 +40,11 @@ const requestName = (r: CatalogRequestView): string =>
 const requester = (r: CatalogRequestView): string => r.requestedByName ?? "a deleted account";
 
 /** The name an org notice is about. */
-const orgNoticeName = (n: OrgNoticeView): string =>
-  n.kind === "skill_renamed" ? n.skillRenamed.to : n.detail.name;
+const orgNoticeName = (n: OrgNoticeView): string => n.detail.name;
 
 /** An org notice in one English sentence, as the inbox tells it. */
 function orgNoticeSummary(n: OrgNoticeView): string {
   switch (n.kind) {
-    case "skill_renamed":
-      return `Skill "${n.skillRenamed.from}" was renamed to "${n.skillRenamed.to}": a platform skill on in this org has its name; agents keep it.`;
     case "item_shared": {
       const d = n.detail as OrgNoticeDetails["item_shared"];
       return `${d.ref.kind} ${d.name} was shared with ${d.org === "all_orgs" ? "every org" : d.org.name}.`;
@@ -197,18 +194,6 @@ function platformRow(i: PlatformInboxItem) {
         next: "Open the plugin in the admin console to see the error and retry.",
       };
     }
-    case "platform_migration": {
-      const r = i.run;
-      const failed = r.itemsFailed.slice(0, 5).join(", ");
-      return {
-        ...base,
-        name: "platform components migration",
-        state: r.stuck ? "stuck" : "failed",
-        summary: r.stuck
-          ? "The platform components migration run has not finished for over an hour; its worker stopped. The next run starts at the next worker start or day."
-          : `The platform components migration could not write ${r.itemsFailed.length} catalog item(s): ${failed}${r.itemsFailed.length > 5 ? ", …" : ""}. The next run tries them again.`,
-      };
-    }
     case "ownership_transferred":
       return {
         ...base,
@@ -254,11 +239,7 @@ export class InboxOperations implements OnModuleInit {
       .executeTakeFirst();
     if (row === undefined) return null;
     const base = { id: row.id, createdAt: row.created_at.toISOString() };
-    return (
-      row.kind === "skill_renamed"
-        ? { ...base, kind: row.kind, skillRenamed: row.detail }
-        : { ...base, kind: row.kind, detail: row.detail }
-    ) as OrgNoticeView;
+    return { ...base, kind: row.kind, detail: row.detail } as OrgNoticeView;
   }
 
   /** A platform notice by id (dismissed or not), or null. */
@@ -308,7 +289,7 @@ export class InboxOperations implements OnModuleInit {
       defineOperation({
         id: "inbox.dismiss-notice",
         description:
-          "Dismiss an org notice from the inbox for every org admin (org admins): the id of a notice row from inbox.list (types skill_renamed, item_shared, shared_item_updated, upload_confirmed, upload_rejected). Approvals and requests are not dismissed here: they are decided on the web.",
+          "Dismiss an org notice from the inbox for every org admin (org admins): the id of a notice row from inbox.list (types item_shared, shared_item_updated, upload_confirmed, upload_rejected). Approvals and requests are not dismissed here: they are decided on the web.",
         input: NoticeInput,
         example: NOTICE_EXAMPLE,
         authz: { orgAction: "catalog.decide" },
@@ -344,7 +325,7 @@ export class InboxOperations implements OnModuleInit {
       defineOperation({
         id: "inbox.platform-list",
         description:
-          "List the platform inbox (super admin), newest first, one compact row each (type, what, state, summary, next step): orgs' requests to the platform, plugins waiting for a permission confirmation, this org's uploads waiting for you, failed scope syncs, a failed or stuck components migration and ownership notices. Only the newest 100 items are read (truncated: more wait); listed is how many of them are shown, otherOrgItems how many are items of plugins other orgs own (only counted). total counts everything waiting on the platform, other orgs' items included, as the admin console does; byType splits total by type (everything waiting, not the listed page). Nothing is decided here: requests and confirmations are done in the admin console. Pages by 50: pass the returned next as params.cursor.",
+          "List the platform inbox (super admin), newest first, one compact row each (type, what, state, summary, next step): orgs' requests to the platform, plugins waiting for a permission confirmation, this org's uploads waiting for you, failed scope syncs and ownership notices. Only the newest 100 items are read (truncated: more wait); listed is how many of them are shown, otherOrgItems how many are items of plugins other orgs own (only counted). total counts everything waiting on the platform, other orgs' items included, as the admin console does; byType splits total by type (everything waiting, not the listed page). Nothing is decided here: requests and confirmations are done in the admin console. Pages by 50: pass the returned next as params.cursor.",
         input: z.object({ cursor: Cursor.optional() }).strict(),
         example: {},
         authz: { superAdmin: true },

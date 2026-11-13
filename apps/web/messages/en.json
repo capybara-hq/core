@@ -126,7 +126,8 @@
       "last_owner": "An organization must keep at least one org owner.",
       "owner_required": "Only an org owner can do this.",
       "creation_disabled": "Creating organizations is turned off on this deployment.",
-      "slug_taken": "This slug is already used by another organization."
+      "slug_taken": "This slug is already used by another organization.",
+      "sandbox_tier_not_allowed": "The platform doesn't allow this sandbox level setting."
     },
     "setup": {
       "already_completed": "Setup has already been completed.",
@@ -166,6 +167,9 @@
     "background_task": {
       "not_found": "The background task does not exist or has been cleaned up.",
       "output_unavailable": "The output can't be read now. Open the task to see why."
+    },
+    "outbox": {
+      "not_found": "The background job no longer exists."
     },
     "run": {
       "not_active": "There is no reply in progress.",
@@ -228,7 +232,7 @@
       "single_provider_required": "A plugin this deployment requires provides this; it can't be replaced.",
       "package_invalid": "The extension package is invalid:",
       "legacy_format": "The package uses the pre-0.1.0 package format. Repack it as a plugin with .capybara-plugin/plugin.json (pnpm pack-plugin) and upload it again.",
-      "no_extension": "This plugin has no extension, so there is nothing to install on the deployment. Import it into the catalog instead.",
+      "no_extension": "This plugin has no extension, so there is no extension to install on the deployment. Install it into the platform catalog instead.",
       "package_too_large": "The extension package is over the size limit.",
       "unavailable": "The extension is unavailable right now.",
       "field_not_overridable": "This field cannot be set by an organization.",
@@ -242,7 +246,7 @@
       "missing_file": "A bootstrap package pinned by the deployment is missing from the bootstrap directory."
     },
     "catalog": {
-      "version_exists": "This version has already been imported.",
+      "version_exists": "This version is already among the plugin's versions: update to it on the plugin's page.",
       "item_not_found": "The item does not exist or you cannot see it.",
       "name_conflict": "An item with the same name comes from a different npm package.",
       "item_disabled": "A super admin disabled this catalog item (or an extension it contains), so it cannot be newly installed or enabled.",
@@ -255,7 +259,7 @@
       "invalid_manifest": "The plugin package is invalid:",
       "legacy_format": "The package uses the pre-0.1.0 package format. Repack it as a plugin with .capybara-plugin/plugin.json (pnpm pack-plugin) and import it again.",
       "no_extension": "This plugin has no extension, so there is nothing to install on the deployment.",
-      "dependency_unresolved": "A plugin this one depends on is not in the catalog at a matching version. Ask the super admin to import it first.",
+      "dependency_unresolved": "A plugin this one depends on is not on the platform at a matching version. Ask the super admin to install it first.",
       "dependency_disabled": "A plugin this one depends on is disabled by the super admin.",
       "dependency_cycle": "The plugin's dependencies form a cycle and cannot be installed.",
       "request_pending": "A request of this kind is already pending.",
@@ -320,7 +324,9 @@
       "file_invalid_path": "The path must be absolute and inside the sandbox.",
       "file_not_found": "No file at this path in the sandbox.",
       "file_is_directory": "This path is a directory; pass one file.",
-      "file_too_large": "The file is too large."
+      "file_too_large": "The file is too large.",
+      "tier_refused": "The cloud sandbox can't run this device at its sandbox level. Lower the device's level, or ask an org admin or the super admin.",
+      "create_failed": "The cloud sandbox could not be created. Try again; if it keeps failing, ask the super admin to check the sandbox extension's settings."
     },
     "device": {
       "not_found": "The device does not exist or has been deleted.",
@@ -333,8 +339,12 @@
       "offline": "This computer is not connected. Start the Capybara device program on it and try again.",
       "program_outdated": "The device program on this computer is out of date. Update it and connect again.",
       "credential_invalid": "This computer's connection credential is no longer valid. Connect again on the computer.",
-      "policy_refused": "This device does not accept this network change from the platform. Change it on the machine.",
-      "policy_unsupported": "This device can't change its network settings from the platform. Upgrade the device program on the machine."
+      "policy_refused": "This device does not accept this change from the platform. Change it on the machine.",
+      "policy_unsupported": "This device can't change its network settings from the platform. Upgrade the device program on the machine.",
+      "tier_not_allowed": "This sandbox level is above the highest the organization or the platform allows.",
+      "tier_on_device": "A local device's sandbox level is kept on its machine: change it on the device page, or run capybara-device policy set tier on the machine.",
+      "unsandboxed_not_allowed": "This device runs commands without a sandbox, which your organization does not allow. Its owner can turn the sandbox back on with capybara-device policy set isolation sandbox.",
+      "tier_not_granted": "This scheduled task has no grant for the open level, so it can't use a device at the open level."
     },
     "device_sign_in": {
       "authorization_pending": "The connection is not confirmed yet. Confirm it on the web page and wait a moment.",
@@ -401,8 +411,8 @@
     },
     "payload_too_large": "The request is over the size limit.",
     "theme": {
-      "invalid": "A theme of this plugin is invalid; fix the theme file or its fonts and logo and import the plugin again.",
-      "unreadable": "A theme of this plugin is not readable: some text does not stand out enough from its background. Fix the listed colors and import the plugin again.",
+      "invalid": "A theme of this plugin is invalid; fix the theme file or its fonts and logo and install the plugin again.",
+      "unreadable": "A theme of this plugin is not readable: some text does not stand out enough from its background. Fix the listed colors and install the plugin again.",
       "not_available": "This theme is not available here. Choose one of the themes listed for this setting.",
       "platform_default": "This theme is the platform default. Choose another platform default theme in platform settings first, then narrow, disable or remove it.",
       "id_taken": "Another theme with the same id is already on in that organization; switch it off or remove it first.",
@@ -429,7 +439,7 @@
       "private_address": "The download was refused: the host resolves to a private or reserved address. To use an internal host, add it to marketplaces.allowPrivateHosts in the deployment config.",
       "redirect": "The download was refused: the server responded with a redirect, and redirects are not followed. Use the final URL instead.",
       "incompatible": "This version is not compatible with this deployment's kernel / SDK.",
-      "entry_deprecated": "The marketplace marks this version as deprecated, so it cannot be imported. Choose another version.",
+      "entry_deprecated": "The marketplace marks this version as deprecated, so it cannot be installed. Choose another version.",
       "package_mismatch": "The downloaded package does not match the marketplace entry.",
       "builtin": "The official marketplace comes from the deployment config; it can only be enabled or disabled here.",
       "git_failed": "Reading the git repository failed (the server, the ref or the commit). The message says which.",
@@ -457,7 +467,8 @@
       "switch_stale": "What this changes moved on before you confirmed; review it again.",
       "builtin": "A built-in plugin's scope cannot be changed and it cannot be disabled.",
       "scope_stale": "The impact changed before you confirmed; preview it again.",
-      "extension_upload_pending": "This plugin carries an extension. It was submitted and can be used once the super admin confirms it."
+      "extension_upload_pending": "This plugin carries an extension. It was submitted and can be used once the super admin confirms it.",
+      "imported_not_updated": "The new version was added to the plugin's versions, but the platform update failed; the platform stays on its version. Update again from the plugin's page."
     },
     "lock": {
       "acquire_failed": "Another operation is in progress on this resource. Try again shortly."
@@ -495,6 +506,10 @@
       "invalid_time_zone": "The time zone isn't valid.",
       "limit_reached": "The limit of scheduled tasks is reached.",
       "once_in_past": "That time has already passed."
+    },
+    "deployment": {
+      "setting_readonly": "This sandbox level is set in the deployment's startup config (environment, file or Nacos) and can only be changed there.",
+      "sandbox_tier_not_allowed": "An API token or the Platform tool can only lower the platform's sandbox levels; a super admin raises them on the admin settings page."
     }
   },
   "agents": {
@@ -1627,9 +1642,6 @@
     "network": {
       "title": "Network",
       "description": "Which domains commands on this machine may reach, on top of what the organization allows.",
-      "open": "No network limit",
-      "openOnHint": "Commands reach anything the organization allows. Turning it off goes back to the domains below.",
-      "openOffHint": "Commands reach only the domains below, within what the organization allows.",
       "remoteGrants": "Changes from the platform",
       "remoteGrantsOwner": "Accepted from you",
       "remoteGrantsOff": "Not accepted",
@@ -1649,29 +1661,101 @@
       "hostPresent": "This domain is already allowed.",
       "upgrade": "The device program on this machine can't change its network settings from the platform. Upgrade capybara-device on the machine.",
       "dockerNote": "This machine runs commands in Docker, which can't limit single domains, so it accepts no widening from the platform.",
-      "unknown": "The machine has not reported its network settings yet.",
-      "opened": "No network limit is on.",
-      "closed": "The network limit is back on.",
-      "confirmTitle": "Turn off the network limit on this device?",
-      "confirmSubmit": "Turn off the limit",
+      "unknown": "The machine has not reported its network settings yet."
+    },
+    "tier": {
+      "strict": "Strict",
+      "dev": "Development",
+      "open": "Open"
+    },
+    "mark": {
+      "open": "Open",
+      "unsandboxed": "No sandbox"
+    },
+    "sandbox": {
+      "title": "Sandbox level",
+      "description": "How wide the sandbox is for commands on this device, up to the highest level the organization and the platform allow.",
+      "follow": "Follow the organization default ({tier})",
+      "followHint": "Changes when the organization changes its default level.",
+      "hint": {
+        "strict": "Only allowed domains; no local ports or unix sockets.",
+        "dev": "Also common developer hosts, local ports and unix sockets; for everyday development.",
+        "open": "Any public address and port."
+      },
+      "capped": {
+        "org": "Organization allows up to: {tier}",
+        "platform": "Platform allows up to: {tier}",
+        "any": "Allowed up to: {tier}"
+      },
+      "effective": "Effective level",
+      "lower": {
+        "org": "The organization allows up to {tier}.",
+        "platform": "The platform allows up to {tier}.",
+        "program": "The device program on this machine doesn't know sandbox levels, so commands run at the strict level. Upgrade capybara-device on the machine."
+      },
+      "pendingNextUse": "Takes effect at the next use; files are kept.",
+      "pendingFilesReset": "Takes effect after the files are reset.",
+      "changed": "Sandbox level set to {tier}.",
+      "followed": "The device now follows the organization default.",
+      "remoteOff": "This machine takes no raise from the platform. To raise the level, run on the machine:",
+      "unknown": "The machine has not reported its sandbox level yet.",
+      "noMachine": "Connect a machine to change the sandbox level.",
+      "upgrade": "The device program on this machine can't change its sandbox level from the platform. Upgrade capybara-device on the machine.",
+      "localhost": "Local ports",
+      "localhostValue": {
+        "on": "Reachable",
+        "off-proxy-detected": "Off: a local proxy or Docker port was found",
+        "off": "Not reachable"
+      },
+      "localhostOverride": "To allow local ports anyway, run on the machine:",
+      "unixSockets": "Unix sockets",
+      "unixSocketsValue": {
+        "roots": "Within the device's directories",
+        "all-masked": "Available, system daemon sockets hidden",
+        "off": "Not available"
+      },
+      "linuxNote": "On Linux the development level opens unix sockets only when the device program can hide the system daemons' sockets; otherwise they stay off.",
+      "openConfirmTitle": "Set this device to the open level?",
+      "openConfirmSubmit": "Set to open",
+      "openRisk": "At the open level, agent commands on this device can reach any public address and port, including uploading files to outside sites. Prompt injection can make an agent do that. Turn it on only on your own development machine, with agents and material you trust.",
       "cancel": "Cancel",
-      "risk": "With no network limit, agent commands on this device can reach any address the organization allows (any public address if the organization has no limit), including uploading files to outside sites. Prompt injection can make an agent do that. Turn it on only on your own development machine, with agents and material you trust.",
+      "unsandboxed": "No sandbox",
+      "unsandboxedOffHint": "Only on this machine: the platform can't turn it on for you. Run on the machine:",
+      "unsandboxedRisk": "Without a sandbox, agent commands run on this computer as you: they can read and write all your files, use your credentials (SSH keys, cloud accounts, keychain), Docker and any network. Prompt injection can make an agent delete files or send your credentials away. Turn it on only on your own development machine, with agents and material you fully trust.",
+      "unsandboxedOn": "Commands on this device run on the computer as you, without a sandbox.",
+      "unsandboxedNotAllowed": "The organization doesn't allow devices without a sandbox, so agents can't use this device until the sandbox is back on.",
+      "restore": "Turn the sandbox back on",
+      "restored": "The sandbox is back on.",
       "recent": {
         "title": "Recent changes",
         "add": "Added {hosts}",
         "remove": "Removed {hosts}",
-        "network": {
-          "open": "No network limit on",
-          "allowlist": "Network limit back on"
+        "tier": "Level set to {tier}",
+        "tierFollow": "Set to follow the organization default",
+        "tierFrom": "Level changed from {from} to {to}",
+        "followDefault": "the organization default",
+        "localhost": "Local ports: {value}",
+        "remoteGrants": "Changes from the platform: {value}",
+        "isolation": {
+          "none": "No sandbox",
+          "sandbox": "Sandbox back on"
         },
         "none": "No change",
         "unknownBy": "Unknown account",
         "via": {
           "web": "web",
-          "im": "IM"
+          "im": "IM",
+          "device": "on the machine"
         },
-        "unconfirmed": "Not confirmed by the machine"
-      }
+        "outcome": {
+          "unknown": "Not confirmed by the machine",
+          "failed": "Did not take effect"
+        }
+      },
+      "openRiskCloud": "At the open level, agent commands on this cloud device can reach any public address and port, including uploading files and data to outside sites. Prompt injection can make an agent do that. Turn it on only with agents and material you trust.",
+      "unsandboxedOnMark": "On",
+      "unsandboxedRefused": "The device is set to run without a sandbox, but the current level is below open, so it refuses every command. Turn the sandbox back on to use it.",
+      "isolationResetNote": "This device runs without a sandbox now. Changing its level here turns the sandbox back on."
     }
   },
   "nav": {
@@ -1760,7 +1844,12 @@
       "fixed": "This tool always asks for approval"
     },
     "network": {
-      "otherApprover": "The agent wants to reach {hosts}; waiting for the device owner."
+      "otherApprover": "The agent wants to reach {hosts}; waiting for the device owner.",
+      "attempt": {
+        "unknown": "The device did not confirm the change to its network rules; when it connects again it says whether the change took effect. You can decide again.",
+        "failed": "The change to the device's network rules did not take effect: {message} You can decide again.",
+        "appliedUndecided": "The device allowed it, but the person who chose this can no longer decide this request."
+      }
     }
   },
   "question": {
@@ -1851,16 +1940,6 @@
       "reject": "Reject",
       "approved": "Skill change approved",
       "rejected": "Skill change rejected"
-    },
-    "skillRenamed": {
-      "label": "Skill renamed",
-      "title": "Skill {from} was renamed to {to}",
-      "hint": "A platform skill named {from} is now available to this organization, so your organization's own skill {from} was renamed to {to}. Agents that use it keep it under the new name. The platform skill is switched off in this organization; an admin can switch it on on the Skills page. Its stored SKILL.md still says {from}: when you upload a new version, set the name in SKILL.md to {to}.",
-      "from": "Old name",
-      "to": "New name",
-      "plugin": "Plugin",
-      "dismiss": "Got it",
-      "dismissed": "Notice dismissed"
     },
     "orgNotice": {
       "itemSharedLabel": "Item shared",
@@ -2340,8 +2419,7 @@
       "default": "Deployment default",
       "defaultHint": {
         "allowlist": "Allowlist set by the deployment ({count} hosts).",
-        "none": "The deployment disables sandbox network access.",
-        "open": "The deployment allows any outbound network."
+        "none": "The deployment disables sandbox network access."
       },
       "allowlist": "Custom allowlist",
       "allowlistHint": "Only the hosts below; replaces the deployment list.",
@@ -2350,7 +2428,8 @@
       "hosts": "Allowed hosts",
       "hostsHelp": "One host per line, such as registry.npmjs.org or *.example.com (subdomains only). No IP addresses, ports or internal names; at most 200.",
       "newOnly": "Changes apply to sandboxes created afterwards; existing sandboxes keep their network settings until they are destroyed.",
-      "prefilled": "Added {hosts} from a blocked command. Save to allow it."
+      "prefilled": "Added {hosts} from a blocked command. Save to allow it.",
+      "devHosts": "The development level also allows common developer hosts ({count})"
     },
     "limits": {
       "title": "Sandbox resources",
@@ -2370,6 +2449,19 @@
       "title": "Default time zone",
       "description": "Agents use this time zone to tell what day it is for messages without a time zone of their own: members who set none and write from an IM, and anonymous guests.",
       "label": "Default time zone"
+    },
+    "tiers": {
+      "title": "Sandbox levels",
+      "description": "The highest level devices in the organization may use, and the level new devices start at. Members can choose any level up to the highest on their own devices.",
+      "max": "Highest level",
+      "strictHint": "Only the hosts the network setting below allows; no local ports or unix sockets.",
+      "devHint": "Also common developer hosts, local ports and unix sockets; for everyday development.",
+      "openHint": "Any public address and port. Agent commands can send files and data to any outside site, and prompt injection can make an agent do that. Allow it only with agents and material you fully trust.",
+      "platformClosed": "Not enabled by the platform",
+      "default": "Default for new devices",
+      "defaultHelp": "Used by devices that choose no level; at most the highest level.",
+      "allowUnsandboxed": "Let members' devices run without a sandbox",
+      "allowUnsandboxedHint": "Allowed by default when the highest level is open. Members still turn the sandbox off by running a command on their own computer. Without it, commands can read and write every file and credential on that computer."
     }
   },
   "configForm": {
@@ -2663,6 +2755,7 @@
         "identity_source": "decides who can sign in as which account",
         "sandbox": "runs arbitrary commands in the deployment",
         "object_store": "holds every attachment and extension package",
+        "context": "adds text to the model's context in conversations of organizations that enable it",
         "migration_warnings": "the migration warnings changed (see Migration warnings below); approve again"
       },
       "warnings": "Migration warnings",
@@ -3480,13 +3573,14 @@
           "inbox": "Inbox",
           "extensions": "Extensions",
           "updates": "Plugin updates",
-          "providers": "Model providers"
+          "providers": "Model providers",
+          "outbox": "Background work that could not be queued",
+          "queue": "Background queue"
         },
         "inboxTypes": {
           "catalog_request": "Catalog requests",
           "permission_confirmation": "Permission confirmations",
           "scope_sync_failed": "Scope sync failures",
-          "platform_migration": "Migration needs a look",
           "ownership_transferred": "Ownership transfers",
           "org_upload_pending": "Org uploads to confirm"
         },
@@ -3503,6 +3597,22 @@
         "problems": {
           "list_failed": "Model list failed",
           "no_chat_model": "No usable chat model"
+        },
+        "outbox": {
+          "count": "{n, plural, one {# job} other {# jobs}}",
+          "retry": "Retry",
+          "discard": "Discard",
+          "cancel": "Cancel",
+          "discardTitle": "Discard this background work?",
+          "discardHint": "{job} will never run. Retry it instead if the work is still needed.",
+          "retried": "Queued again.",
+          "alreadyOwed": "The same work was already queued; this copy was discarded.",
+          "discarded": "Discarded."
+        },
+        "queue": {
+          "lostJobs": "The queue lost background jobs",
+          "count": "{n, plural, one {# job queued again} other {# jobs queued again}}",
+          "hint": "Redis lost data (check its persistence); the runs were queued again. Shown for a week after the last loss."
         },
         "retry": "Retry"
       },
@@ -3555,7 +3665,8 @@
           "pluginScope": "Plugin scope sync",
           "titles": "Titles",
           "usageReport": "Usage reports",
-          "evals": "Evals"
+          "evals": "Evals",
+          "lifecycle": "Lifecycle notices"
         },
         "connections": {
           "channels": "Channels",
@@ -3634,14 +3745,14 @@
       "request": {
         "kind": {
           "access": "Access request",
-          "import": "Import request"
+          "import": "Install request"
         },
         "requester": "Requested by",
         "version": "Version",
         "note": "Note",
         "hint": {
           "access": "{org} asks to use this plugin. Approve or reject it in the Pending tab of the Plugins page; once approved, the organization can use it at once.",
-          "import": "{org} asks to bring this plugin in from a marketplace. Approve or reject it in the Pending tab of the Plugins page; approving opens the import review, scoped to that organization by default."
+          "import": "{org} asks to install this plugin from a marketplace. Approve or reject it in the Pending tab of the Plugins page; approving opens the install review, scoped to that organization by default."
         }
       },
       "permission": {
@@ -3662,18 +3773,8 @@
         "hint": {
           "install": "The plugin's scope turns it on in {org}, but the sync failed. It is tried again the next time this plugin and organization sync: once the cause is fixed, changing the plugin's scope on its page or a worker restart syncs it again (saving an unchanged scope does not).",
           "uninstall": "The plugin's scope turns it off in {org}, but the sync failed. It is tried again the next time this plugin and organization sync: once the cause is fixed, changing the plugin's scope on its page or a worker restart syncs it again (saving an unchanged scope does not).",
-          "dependencies": "The plugin is on in {org}, but a dependency a platform update added could not be installed. It is tried again the next time this plugin and organization sync: once the cause is fixed (import a version the dependency range accepts, for example), changing the plugin's scope on its page or a worker restart syncs it again (saving an unchanged scope does not)."
+          "dependencies": "The plugin is on in {org}, but a dependency a platform update added could not be installed. It is tried again the next time this plugin and organization sync: once the cause is fixed (install a version the dependency range accepts, for example), changing the plugin's scope on its page or a worker restart syncs it again (saving an unchanged scope does not)."
         }
-      },
-      "migration": {
-        "label": "Platform components migration",
-        "stuck": "Unfinished",
-        "failed": "{n, plural, one {# plugin failed} other {# plugins failed}}",
-        "started": "Started",
-        "finished": "Finished",
-        "items": "Failed plugins",
-        "hintStuck": "The latest run has not finished an hour after it started; its worker may have stopped. It runs again at the next worker start or daily run.",
-        "hintFailed": "The latest run could not write these plugins' platform components; the next run tries again. See the kernel log for the cause."
       },
       "orgUpload": {
         "label": "Upload to confirm",
@@ -3724,7 +3825,7 @@
         "marketplaceUpdated": "Updated a marketplace",
         "marketplaceRemoved": "Removed a marketplace",
         "marketplaceRefreshed": "Refreshed a marketplace",
-        "catalogImported": "Imported a plugin",
+        "catalogImported": "Installed a plugin",
         "catalogPluginStaged": "Staged a plugin package for review",
         "catalogRemoved": "Removed a plugin",
         "catalogScopeChanged": "Changed a plugin's scope",
@@ -3753,7 +3854,9 @@
         "modelPriceUpdated": "Changed a model price",
         "modelPriceDeleted": "Deleted a model price",
         "modelPurposeMapped": "Changed a purpose's default model",
-        "modelDisabledSet": "Changed the models switched off on the platform"
+        "modelDisabledSet": "Changed the models switched off on the platform",
+        "outboxRetried": "Retried background work that could not be queued",
+        "outboxDiscarded": "Discarded background work that could not be queued"
       }
     },
     "accounts": {
@@ -3896,6 +3999,23 @@
         "description": "Whether organizations may create or import skills themselves, outside the catalog.",
         "allowHint": "Organizations can create and import skills themselves or install them from the catalog.",
         "denyHint": "Organizations can only install skills from the catalog."
+      },
+      "sandboxTiers": {
+        "title": "Sandbox levels",
+        "description": "The highest level devices on the platform may use, and the level new devices start with. Organizations may narrow it further; after lowering it, organizations and devices above the new highest run at it automatically.",
+        "max": "Highest level",
+        "strictHint": "Only the hosts the network settings allow; no local ports or Unix sockets.",
+        "devHint": "Also common developer hosts (package managers, code hosting, browser downloads), local ports and Unix sockets; suited to everyday development.",
+        "openHint": "Any public address and port. Agents' commands can send files and data to any outside site, and prompt injection can make them do so.",
+        "belowDefault": "Below the default fixed in the startup config",
+        "default": "Default level",
+        "defaultHelp": "Used when neither the organization nor the device chooses a level; at most the highest level.",
+        "allowUnsandboxed": "Allow devices without a sandbox",
+        "allowUnsandboxedHint": "Applies only where an organization's highest level is Open, and an organization may forbid it. Members still have to run a command on their own computer to turn the sandbox off; then commands can read and write every file and sign-in credential on that computer.",
+        "openConfirmTitle": "Set the platform's highest level to Open?",
+        "openConfirmBody": "Organization admins can then let devices reach any public address and port. Agents' commands can upload files and data to any outside site, and prompt injection can make them do so. Open it only if you trust the organizations, agents and material on the platform.",
+        "openConfirmSubmit": "Set to Open",
+        "cancel": "Cancel"
       },
       "clientCode": {
         "title": "Plugin interface code",
@@ -4104,7 +4224,7 @@
       },
       "loadFailed": "Could not load extensions.",
       "retry": "Retry",
-      "importPlugin": "Import a plugin",
+      "importPlugin": "Install a plugin",
       "builtin": "Built-in",
       "description": "Code from plugins that runs on the deployment. Deployment config, permissions and run status live here.",
       "wizard": {
@@ -4266,7 +4386,7 @@
       "disabled": "Disabled"
     },
     "source": {
-      "manual": "Manual import",
+      "manual": "Manual install",
       "official": "Official marketplace",
       "removed": "Removed marketplace"
     },
@@ -4282,7 +4402,7 @@
       "extension": "Extension",
       "extensionNone": "No extension.",
       "extensionVersion": "{name} {version}",
-      "declaredHint": "Permissions as declared in the package (reviewed when the version was imported; approved on the deployment in the extension admin).",
+      "declaredHint": "Permissions as declared in the package (reviewed when the platform installed or updated to this version; approved on the deployment in the extension admin).",
       "skills": "Skills",
       "skillsNone": "No skills.",
       "skillFiles": "{n} files",
@@ -4292,7 +4412,7 @@
       "dependenciesNone": "No dependencies.",
       "dependenciesHint": "Plugins this one depends on; an organization install installs them first (unless the organization already has them).",
       "dependencyResolved": "{name} {range} → {version} in the catalog",
-      "dependencyUnresolved": "{name} {range}: no matching version in the catalog yet. The import still completes, but organizations cannot install this plugin until a matching version is imported.",
+      "dependencyUnresolved": "{name} {range}: the platform has no matching version yet. The install still completes, but organizations cannot turn this plugin on until a matching version is installed.",
       "dependencyInCatalog": "{name} {range}: in the catalog ({versions})",
       "dependencyNotInCatalog": "{name} {range}: not in the catalog",
       "errorDependency": "Dependency: {dependency}",
@@ -4310,7 +4430,7 @@
     },
     "admin": {
       "title": "Plugins",
-      "empty": "No plugins yet. Bring one in from a marketplace or upload a plugin package.",
+      "empty": "No plugins yet. Install one from a marketplace or upload a plugin package.",
       "noResults": "No items match the filters.",
       "filters": {
         "source": "Source",
@@ -4342,7 +4462,7 @@
         "delete": "Delete plugin",
         "deleteConfirm": {
           "title": "Delete plugin {name}",
-          "hint": "Organizations will no longer see this plugin; installed components are not affected. You can bring it in again later.",
+          "hint": "Organizations will no longer see this plugin; installed components are not affected. You can install it again later.",
           "confirm": "Delete",
           "extensionNote": "A plugin whose extension is enabled on the deployment cannot be deleted: disable the extension on the Extensions page first. After the delete the extension stays on the Extensions page, where you can uninstall it.",
           "openExtension": "Disable it on the Extensions page"
@@ -4354,11 +4474,11 @@
           "source": "Source",
           "ref": "Reference",
           "size": "Size",
-          "imported": "Imported",
+          "imported": "Added",
           "origin": "Origin",
           "format": "Format"
         },
-        "contentChanged": "Its marketplace now has other content for a version already imported. Bring it in again from the Marketplace tab; it is recorded as a build of that version.",
+        "contentChanged": "Its marketplace now has other content for a version the platform already has. Update to it from the Marketplace tab; it is recorded as a build of that version.",
         "format": {
           "capybara": "Capybara",
           "claudeCode": "Claude Code"
@@ -4373,8 +4493,8 @@
           "update": "Update to {version}",
           "disable": "Disable",
           "enable": "Enable",
-          "import": "Import {version}",
-          "applyAppearance": "Apply this plugin's appearance"
+          "applyAppearance": "Apply this plugin's appearance",
+          "rollback": "Roll back to {version}"
         },
         "componentColumns": {
           "name": "Component",
@@ -4412,11 +4532,12 @@
         "ownerValue": "{org} (new versions come from it)"
       },
       "review": {
-        "title": "Import plugin",
+        "title": "Install plugin",
         "steps": {
           "source": "Choose package",
           "review": "Review",
-          "confirm": "Confirm"
+          "confirm": "Confirm",
+          "update": "Update preview"
         },
         "sourceLabel": "Source",
         "sourceFile": "Upload plugin package (.tgz)",
@@ -4441,20 +4562,20 @@
         "keepExtension": "The extension {name} {version} is already installed on the deployment.",
         "ackHint": "The plugin has sensitive permissions or migration warnings. Review them before confirming.",
         "ack": "I understand the sensitive items",
-        "confirm": "Confirm import",
-        "done": "Imported plugin \"{name}\".",
+        "confirm": "Confirm install",
+        "done": "Installed plugin \"{name}\".",
         "deployResult": "Deployment result",
-        "deployFailed": "{name} {version}: installing on the deployment failed ({code}); the import is kept. Retry in the extension admin.",
+        "deployFailed": "{name} {version}: installing on the deployment failed ({code}); the plugin is kept on the platform. Retry in the extension admin.",
         "deployLeftDisabled": "{name} {version} is installed but left disabled: only one {point} provider can be enabled. Disable {other} first, then enable it.",
         "deployLeftDisabledRequired": "{name} {version} is installed but left disabled: {point} is provided by {other}, a plugin this deployment requires; it can't be replaced.",
         "openEnabled": "Open {name}",
         "openItem": "Open plugin",
-        "gone": "The staged import has expired or was already confirmed. Start the import again.",
-        "restart": "Start a new import",
+        "gone": "The staged plugin package has expired or was already confirmed. Start again.",
+        "restart": "Start again",
         "sourceGit": "Git repository",
         "sourceGitHint": "Read it once from a Git repository: no marketplace is added and updates are not tracked.",
         "gitUrl": "Repository",
-        "gitUrlHelp": "An https git URL or owner/repo on GitHub. A one-off import: no marketplace is added and updates are not tracked.",
+        "gitUrlHelp": "An https git URL or owner/repo on GitHub. Read once: no marketplace is added and updates are not tracked.",
         "gitRef": "Branch, tag or commit",
         "gitRefHelp": "Optional; empty uses the remote HEAD.",
         "gitPath": "Directory",
@@ -4565,7 +4686,11 @@
           "origin": "Source",
           "provenance": "Provenance",
           "provenanceNotChecked": "Not checked ({reason})"
-        }
+        },
+        "titleUpdate": "Update plugin \"{name}\"",
+        "confirmUpdate": "Confirm update",
+        "updateHint": "Confirming adds {version} to the platform and updates the plugin to it, for every organization at once. Cancelling before you confirm changes nothing.",
+        "importedNotUpdated": "{version} was added to the plugin's versions, but updating the platform to it failed ({code}): the platform stays on {from}, and the extension and its permissions are unchanged. Retry with \"Update to {version}\" on the plugin's page."
       },
       "entries": {
         "title": "Browse marketplaces",
@@ -4587,10 +4712,10 @@
         "permissionsNone": "Not provided",
         "incompatible": "{version} (incompatible)",
         "noVersion": "(the package's)",
-        "adopted": "Imported {version}",
-        "notAdopted": "Not imported",
-        "import": "Import",
-        "importVersion": "Import {version}",
+        "adopted": "Installed {version}",
+        "notAdopted": "Not installed",
+        "import": "Install",
+        "importVersion": "Install {version}",
         "noCompatible": "No compatible version",
         "reason": {
           "host_not_allowed": "Host {host} is not in marketplaces.allowedHosts.",
@@ -4600,21 +4725,21 @@
         "gitFollows": "follows {ref}",
         "gitFollowsDefault": "follows the default branch",
         "pathSource": "{path} in the marketplace repository",
-        "importChanged": "Import the changed content of {version}",
-        "contentChangedHint": "Importing it again records a build of that version (for example 1.0.0+git.1a2b3c4d5e6f).",
+        "importChanged": "Update to the changed content of {version}",
+        "contentChangedHint": "The update records a build of that version (for example 1.0.0+git.1a2b3c4d5e6f).",
         "view": "View",
         "homepage": "Homepage",
         "loadFailed": "Marketplace entries failed to load.",
         "retry": "Retry",
-        "adoptedUpdate": "Imported {version} · update to {latest} available",
-        "update": "Update",
+        "adoptedUpdate": "Installed {version} · update to {latest} available",
+        "update": "Update to {version}",
         "otherVersions": "Other versions",
         "deprecated": "{version} (deprecated)",
         "deprecatedReason": "{version} (deprecated: {reason})"
       },
       "marketplaces": {
         "title": "Marketplace sources",
-        "description": "Plugins are listed from the sources set up here. Bringing one in from the Marketplace tab of Plugins downloads it, checks it against the marketplace's integrity and reviews it before it is added.",
+        "description": "Plugins are listed from the sources set up here. Installing or updating one from the Marketplace tab of Plugins downloads it, checks it against the marketplace's integrity and reviews it before it is added.",
         "search": "Search sources",
         "clearSearch": "Clear search",
         "noMatch": "No matching sources.",
@@ -4652,7 +4777,7 @@
         "remove": "Remove",
         "removeConfirm": {
           "title": "Remove marketplace {name}",
-          "hint": "Its cached entries are removed; catalog items already imported are kept.",
+          "hint": "Its cached entries are removed; plugins already installed are kept.",
           "confirm": "Remove"
         },
         "removed": "Removed \"{name}\".",
@@ -4685,7 +4810,7 @@
         "pending": "Pending"
       },
       "search": "Search plugins",
-      "description": "A plugin bundles an extension, skills, connector templates and agent templates. Bring one in from a marketplace or upload it; it is installed once its permissions are confirmed.",
+      "description": "A plugin bundles an extension, skills, connector templates and agent templates. Install one from a marketplace or upload it; it is installed once its permissions are confirmed.",
       "chips": {
         "builtin": "Built-in",
         "claudeCode": "Claude Code",
@@ -4768,7 +4893,7 @@
         "noHash": "The plugin's extension package cannot be read, so it cannot be confirmed yet.",
         "kind": {
           "access": "Asks for access",
-          "import": "Asks to bring in",
+          "import": "Asks to install",
           "enable": "Asks to enable"
         },
         "requester": "By {name}",
@@ -4998,11 +5123,11 @@
       "pathEntry": "Marketplace entry {entry} (path {path})",
       "sameVersion": "The platform already runs {version}.",
       "dependentRange": "The plugin {dependent} depends on {range}, which {version} does not satisfy.",
-      "templateConnector": "Connector template {template} moves to another connector ({plugin} / {connector}); delete the plugin and import the new version as a new plugin instead.",
+      "templateConnector": "Connector template {template} moves to another connector ({plugin} / {connector}); delete the plugin and install the new version as a new plugin instead.",
       "configExtension": "This plugin's extension is declared in the startup config (the deployment runs {version}); an update cannot move it. Change the startup config first.",
       "configExtensionUnloaded": "This plugin's extension is declared in the startup config; an update cannot move it. Change the startup config first.",
       "extensionRemoved": "{version} has no extension, but the deployment runs it; uninstall the extension first.",
-      "extensionPackage": "The extension package of {version} is missing from the catalog; import that version again."
+      "extensionPackage": "The extension package of {version} is missing from the platform; update to that version again from the marketplace or a plugin package."
     },
     "owner": {
       "self": "This org",
@@ -5239,7 +5364,7 @@
       "disable": "Turn off",
       "request": "Request",
       "requestEnable": "Ask to turn on",
-      "requestImport": "Request import",
+      "requestImport": "Request install",
       "connectors": "Complete setup",
       "withdraw": "Withdraw",
       "delete": "Delete"
@@ -5276,12 +5401,12 @@
     "market": {
       "title": "Marketplace",
       "empty": "The marketplaces have no entries yet.",
-      "adopted": "Imported",
-      "unavailable": "Cannot be imported",
+      "adopted": "Installed",
+      "unavailable": "Cannot be installed",
       "otherVersions": "Other versions",
       "deprecated": "{version} (deprecated)",
       "deprecatedReason": "{version} (deprecated: {reason})",
-      "requestVersion": "Request import of {version}",
+      "requestVersion": "Request install of {version}",
       "requestedVersion": "Requested {version}, waiting"
     },
     "detail": {
@@ -5541,10 +5666,10 @@
       "org": "Created by organizations"
     },
     "empty": {
-      "skill": "No skills yet. They appear here once a plugin that brings skills is imported.",
-      "connector_template": "No connector templates yet. They appear here once a plugin that brings connector templates is imported.",
-      "agent_template": "No agent templates yet. They appear here once a plugin that brings agent templates is imported.",
-      "theme": "No themes yet. They appear here once a plugin that brings themes is imported."
+      "skill": "No skills yet. They appear here once a plugin that brings skills is installed.",
+      "connector_template": "No connector templates yet. They appear here once a plugin that brings connector templates is installed.",
+      "agent_template": "No agent templates yet. They appear here once a plugin that brings agent templates is installed.",
+      "theme": "No themes yet. They appear here once a plugin that brings themes is installed."
     },
     "emptyTab": {
       "agent_template": "No agent templates under this tab."
@@ -5740,7 +5865,7 @@
       "title": "Themes",
       "description": "The themes on in this organization; choose the default among them below. The platform default theme is on in every organization and cannot be switched off.",
       "label": "Themes of this organization",
-      "empty": "No themes are available yet. They appear here once a super admin imports a plugin that brings themes.",
+      "empty": "No themes are available yet. They appear here once a super admin installs a plugin that brings themes.",
       "lockedDefault": "Platform default theme · cannot be switched off"
     },
     "org": {
@@ -6024,7 +6149,81 @@
     "turnedOff": "Scheduled tasks are turned off in this organization: no task runs, and none can be created.",
     "startedByGone": "Started by a scheduled task that no longer exists",
     "panelTitle": "Scheduled tasks",
-    "nextRunAt": "Next run {at}"
+    "nextRunAt": "Next run {at}",
+    "tabs": {
+      "list": "List",
+      "calendar": "Calendar"
+    },
+    "calendar": {
+      "mine": "Mine",
+      "all": "Whole org",
+      "zone": "Times in {zone}.",
+      "horizon": "Planned runs are shown up to {day}.",
+      "truncatedMonth": "Too many runs: shown up to {day}. Switch to the week view.",
+      "truncatedWeek": "Too many runs: shown up to {day}. Switch to Mine or the list.",
+      "emptyWeek": "No runs this week",
+      "emptyMonth": "No runs this month",
+      "nextRun": "The next run is at {at}.",
+      "jumpToNext": "Go to the next run",
+      "allPaused": "All scheduled tasks are paused",
+      "allPausedHint": "Resume a task to see its planned runs here.",
+      "showList": "Show the list",
+      "state": {
+        "upcoming": "Planned",
+        "running": "Running",
+        "completed": "Succeeded",
+        "failed": "Failed",
+        "skipped": "Skipped"
+      },
+      "trial": "Trial",
+      "manual": "Manual",
+      "dayLabel": "{weekday} {mm}-{dd}",
+      "itemLabel": "{title}, {meta}, {day} {time}, {state}",
+      "itemNoMetaLabel": "{title}, {day} {time}, {state}",
+      "itemMarkLabel": "{label}, {mark}",
+      "metaWithCreator": "{agent} · {person}",
+      "collapsed": {
+        "minutes": "Every {n} min · {count, plural, one {# run} other {# runs}}",
+        "hourly": "Hourly · {count, plural, one {# run} other {# runs}}",
+        "hours": "Every {n} hours · {count, plural, one {# run} other {# runs}}",
+        "runs": "{count, plural, one {# run} other {# runs}}"
+      },
+      "collapsedFailed": "{n} failed",
+      "collapsedLabel": "{title}, {summary}, {day}",
+      "collapsedFailedLabel": "{title}, {summary}, {day}, {n} failed",
+      "panel": {
+        "run": "This run",
+        "task": "Task",
+        "status": "Status",
+        "kind": "Kind",
+        "scheduled": "On schedule",
+        "manual": "Manual",
+        "trial": "Trial",
+        "reason": "Reason",
+        "failed": "The run failed.",
+        "missing": "{n, plural, one {# tool refused} other {# tools refused}}",
+        "openConversation": "Open conversation",
+        "openTask": "Open task",
+        "planned": "Planned",
+        "plannedHint": "It is skipped if the previous run is still going, the org's run limit is reached or the device is offline.",
+        "about": "about {time}",
+        "taskZone": "task time zone {zone} {time}",
+        "schedule": "Schedule",
+        "agent": "Agent",
+        "target": "Results go to",
+        "taskStatus": "Task status",
+        "nextRun": "Next run",
+        "creator": "Creator",
+        "none": "None",
+        "day": "Runs on {day}",
+        "dayLabel": "Runs on {day}",
+        "dayEmpty": "No runs on this day.",
+        "back": "Back to the day",
+        "view": "View",
+        "loadFailed": "Failed to load.",
+        "retry": "Retry"
+      }
+    }
   },
   "scheduleSettings": {
     "title": "Scheduled tasks",

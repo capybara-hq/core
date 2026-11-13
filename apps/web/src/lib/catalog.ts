@@ -867,6 +867,13 @@ export interface OrgCatalogTemplate {
   editableEndpoint: string[];
   auth: Record<string, unknown>;
   ownership: "org" | "personal" | null;
+  /** The template starts switched off in every org: the install wizard does not ask for it. */
+  defaultOff: boolean;
+  /**
+   * The template is on in this org now (a default-off one an admin switched on): the install asks
+   * for its input too, since the install is what creates its connector.
+   */
+  on?: boolean;
   /**
    * The template's setup guide in the item's latest version (setup guides v2 spec §9.3): the
    * wizard shows it above the template's input. Null without one (older kernels: absent).
@@ -1222,6 +1229,29 @@ export const confirmPluginImport = (
  */
 export const getStagedImport = (stagingId: string) =>
   apiFetch<PluginPrepared>(`${admin}/imports/${enc(stagingId)}`);
+
+/**
+ * The platform update a staged new version of an installed platform plugin applies (the 更新到
+ * wizard's second step; nothing written). Not installed yet -> 409 `plugin.upgrade_target_invalid`.
+ */
+export const getStagedUpdatePreview = (stagingId: string) =>
+  apiFetch<PlatformUpdatePreview>(`${admin}/imports/${enc(stagingId)}/update-preview`);
+
+/** `POST /api/v1/admin/catalog/imports/:stagingId/update` (kernel `PlatformImportUpdateResult`). */
+export interface PlatformImportUpdateResult {
+  item: CatalogItem;
+  update: PlatformUpdateResult;
+}
+
+/**
+ * Imports the staged version and updates the platform plugin to it, with the review's
+ * `reviewHash` and the update preview's `diffHash`. 409 `plugin.imported_not_updated`: the version
+ * was imported but the update failed (the platform stays on its version).
+ */
+export const confirmImportUpdate = (
+  stagingId: string,
+  body: { reviewHash: string; diffHash: string },
+) => apiFetch<PlatformImportUpdateResult>(`${admin}/imports/${enc(stagingId)}/update`, post(body));
 
 /** The import page of a staged import (it loads the review with {@link getStagedImport}). */
 export const importPageHref = (stagingId: string) =>

@@ -178,6 +178,10 @@ const kernelRunsOf = async (r: TaskRun) =>
 describe("scheduled task scan on two replicas", { timeout: 120_000 }, () => {
   it("two replicas fire one run per tick", async () => {
     expect(h.replicas.map((r) => r.roles.includes("worker"))).toEqual([true, true]);
+    // the test's scans take a few seconds: started just before a five-minute boundary, the next
+    // tick (tick + 5 min) would come due during them and fire a second run, so wait it out
+    const left = FIVE_MIN - (Date.now() % FIVE_MIN);
+    if (left < 20_000) await new Promise((r) => setTimeout(r, left + 100));
     const tick = new Date(Math.floor(Date.now() / FIVE_MIN) * FIVE_MIN);
     const t = await task({ nextRunAt: tick });
     const first = await scanEverywhere();
@@ -200,6 +204,9 @@ describe("scheduled task scan on two replicas", { timeout: 120_000 }, () => {
   });
 
   it("three hours of downtime produce one fired and one skipped run", async () => {
+    // as above: not across the next hour's boundary, which would fire one more run
+    const left = HOUR - (Date.now() % HOUR);
+    if (left < 20_000) await new Promise((r) => setTimeout(r, left + 100));
     const hour = Math.floor(Date.now() / HOUR) * HOUR;
     const t = await task({
       trigger: { kind: "cron", expr: "0 * * * *", timeZone: "UTC" },

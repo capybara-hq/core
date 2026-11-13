@@ -3,7 +3,6 @@ import { Controller, Get, Headers, Inject, Param, Req, Res } from "@nestjs/commo
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { ConversationAccess } from "../conversations/access.js";
-import { ConversationsService } from "../conversations/conversations.service.js";
 import { ApiError } from "../errors.js";
 import { ApiTokenService } from "../identity/api-tokens.js";
 import { credentialCheck } from "../identity/credential-check.js";
@@ -42,7 +41,7 @@ class RunDraftParamsDto extends createZodDto(DraftParams, "RunDraftParams") {}
 
 /**
  * 会话事件流（SSE）：`GET /api/v1/orgs/:orgId/conversations/:id/stream?after=<seq>`，`agents.use`，只有会话所有者可用。
- * - 打开时不阻塞地调用一次 ensureRun（`ConversationsService.kickRun`），停在「运行中」的孤儿运行由此被清理；
+ * - opening it never changes run state (a read; transactional outbox spec §6);
  * - 先订阅会话频道、再回放 `after`（或优先的 `Last-Event-ID`）之后的事件：`id: <seq>` / `event: event`；
  * - after that catch-up, one `event: draft` (`data: {"runId","step","text","thinking"}`) per step of
  *   the running run whose `assistant_message` is not logged (live drafts, spec 2026-11-07 §3.2);
@@ -59,7 +58,6 @@ export class ConversationStreamController {
     @Inject(ConversationStreams) private readonly streams: ConversationStreams,
     @Inject(SessionService) private readonly sessions: SessionService,
     @Inject(ApiTokenService) private readonly tokens: ApiTokenService,
-    @Inject(ConversationsService) private readonly conversations: ConversationsService,
     @Inject(ConversationAccess) private readonly access: ConversationAccess,
     @Inject(RunDrafts) private readonly drafts: RunDrafts,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<Logger, "warn">,
@@ -142,8 +140,6 @@ export class ConversationStreamController {
       },
     );
     reply.hijack();
-    // 可见性已通过：不阻塞地 ensureRun（清理孤儿运行、投递等待中的消息），见 ConversationsService.kickRun。
-    this.conversations.kickRun(id);
     res.on("close", () => handle.close());
     // 订阅期间客户端已断开：close 事件可能已经错过
     if (res.destroyed || !res.socket || res.socket.destroyed) {

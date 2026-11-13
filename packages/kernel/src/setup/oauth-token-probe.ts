@@ -23,14 +23,18 @@ const PROBE_VERIFIER = "capybara-setup-probe-verifier-0000000000000";
 /** The most of a token endpoint answer the probe reads (an error body is a few hundred bytes). */
 const PROBE_MAX_BYTES = 64 * 1024;
 
-/** Codes that say the client authenticated and only the code was bad, as intended. */
-const ACCEPTED = new Set(["invalid_grant", "invalid_code"]);
-/** Codes that say the client id or secret is wrong (RFC 6749 and Slack's). */
+/**
+ * Codes that say the client authenticated and only the code was bad, as intended (RFC 6749,
+ * Slack's `invalid_code`, GitHub's `bad_verification_code`).
+ */
+const ACCEPTED = new Set(["invalid_grant", "invalid_code", "bad_verification_code"]);
+/** Codes that say the client id or secret is wrong (RFC 6749, Slack's and GitHub's). */
 const CLIENT_REFUSED = new Set([
   "invalid_client",
   "unauthorized_client",
   "invalid_client_id",
   "bad_client_secret",
+  "incorrect_client_credentials",
 ]);
 /** Codes that say the redirect URI is not registered (RFC 6749 servers and Slack's). */
 const REDIRECT_REFUSED = new Set(["redirect_uri_mismatch", "bad_redirect_uri"]);
@@ -45,8 +49,8 @@ export const PROBE_TEXTS = {
     "令牌端点拒绝了客户端 ID 或密钥。",
   ),
   clientFix: text(
-    "Copy the Client ID and Client Secret again from the app's Basic Information page.",
-    "从应用的 Basic Information 页面重新复制 Client ID 和 Client Secret。",
+    "Copy the client ID and client secret again from the app's settings page.",
+    "从应用的设置页面重新复制 Client ID 和 Client Secret。",
   ),
   redirectRefused: text(
     "The app does not list the callback URL.",

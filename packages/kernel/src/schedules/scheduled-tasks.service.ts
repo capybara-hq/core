@@ -1,8 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { CHANNEL_EXTENSION_POINT, type Channel } from "@capybara-hq/plugin-sdk";
-import { getQueueToken } from "@nestjs/bullmq";
 import { Inject, Injectable } from "@nestjs/common";
-import type { Queue } from "bullmq";
 import { AgentLookup, type AgentView } from "../agents/agent-lookup.js";
 import type { ModelRef } from "../agents/definition.js";
 import { ConversationAccess } from "../conversations/access.js";
@@ -12,21 +10,29 @@ import { ApiError } from "../errors.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
 import { audit } from "../identity/audit.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
-import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import { DevicePolicyService } from "../local-devices/device-policy.service.js";
 import { orgAllows } from "../local-devices/network-grants.js";
 import type { KernelLogger } from "../log.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { can, type OrgRole, roleAtLeast } from "../orgs/roles.js";
-import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { ProviderRegistry } from "../runtime/providers.js";
 import { SandboxService } from "../sandbox/sandbox.service.js";
 import { isTimeZone } from "../time-zone.js";
 import { ToolRegistry } from "../tools/registry.js";
+import {
+  assembleCalendar,
+  CALENDAR_LIMITS,
+  CALENDAR_RANGE_DAYS,
+  CALENDAR_TASK_RANGE_DAYS,
+  type CalendarAnswer,
+  type CalendarLimits,
+  calendarRunReadLimit,
+} from "./calendar.js";
 import { type EffectiveScheduleSettings, readScheduleSettings } from "./effective-settings.js";
 import {
   grantNotAllowed,
@@ -45,14 +51,18 @@ import {
   grantRefusalOf,
   isGitGrantKey,
   isNetworkGrantKey,
+  isPolicyGrantKey,
+  isTierGrantKey,
   NETWORK_GRANT_PREFIX,
   NETWORK_GRANT_SPEC_HASH,
   type NetworkGrantContext,
   networkGrantHost,
   networkGrantRefusal,
   normalizeGitGrantKey,
+  TIER_GRANT_SPEC_HASH,
+  tierGrantRefusal,
 } from "./grant-rules.js";
-import { schedFireJob } from "./job-ids.js";
+import { oweSchedFire, oweSchedSettleUnfired } from "./job-ids.js";
 import { pauseTaskIn } from "./pause.js";
 import { jitterForGap, minGapMinutes, nextTick, validateTrigger } from "./schedule-math.js";
 import { type ScheduledTaskPatch, ScheduledTaskStore } from "./store.js";
@@ -185,8 +195,14 @@ const NETWORK_GRANT_NEEDS_PERSON = "Network domains are approved on the task pag
 /** Why a git push grant needs a person (sandbox git credentials spec §7). */
 const GIT_GRANT_NEEDS_PERSON = "Git pushes are approved on the task page by a person.";
 
-/** A grant that belongs to no tool: a network domain or a git push (never stale, never re-resolved). */
-const isNonToolGrantKey = (key: string): boolean => isNetworkGrantKey(key) || isGitGrantKey(key);
+/** The refusal of a sandbox tier grant written outside a person's web session. */
+const TIER_GRANT_NEEDS_PERSON = "A sandbox level is approved on the task page by a person.";
+
+/**
+ * A grant that belongs to no tool: a network domain, a git push or a sandbox tier (never stale,
+ * never re-resolved).
+ */
+const isNonToolGrantKey = (key: string): boolean => isPolicyGrantKey(key) || isGitGrantKey(key);
 
 /** Who acts on a task: the service reads their live role itself and decides by that one. */
 export interface ScheduleActor {
@@ -279,10 +295,11 @@ export class ScheduledTasksService {
     /** A task's model must resolve for the org and declare its effort (as a message's switch). */
     @Inject(ProviderRegistry) private readonly providers: Pick<ProviderRegistry, "resolve">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
-    /** "Run now" enqueues the fire job (consumed by the worker role). */
-    @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME)) private readonly maintenance: Pick<Queue, "add">,
+    /** "Run now" owes the fire job (consumed by the worker role). */
+    @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
     /** Network grants: the org's effective egress (network ask-to-allow spec §8.1). */
-    @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "orgLimits">,
+    @Inject(SandboxService)
+    private readonly sandbox: Pick<SandboxService, "ceilingLimits" | "devicePolicy">,
     /** Network grants: the task's device's local policy summary (`remoteGrants`). */
     @Inject(DevicePolicyService)
     private readonly devicePolicy: Pick<DevicePolicyService, "summary">,
@@ -411,7 +428,7 @@ export class ScheduledTasksService {
       changes.agentId = agent.id;
       // the grants were approved for the old agent's tools: each must hold for the new agent
       // too (refused, so the creator sees which), and takes the new agent's definition; network
-      // and git grants belong to no tool and stay as they are
+      // and git and sandbox tier grants belong to no tool and stay as they are
       const held = (await this.store.listGrants(t, task.id)).filter(
         (g) => !isNonToolGrantKey(g.toolKey),
       );
@@ -607,6 +624,74 @@ export class ScheduledTasksService {
   }
 
   /**
+   * The calendar between two instants (calendar spec §5): the runs and planned occurrences of the
+   * actor's own tasks, or with `all` (org admins only, else `forbidden`) every task of the org; with
+   * `taskId` only that task (one the actor may see, else `schedule.not_found`), never collapsed.
+   * Another creator's runs come without `conversationId`, `error` and `missingGrants` (§15 Q3).
+   * A range longer than 43 days (2 with `taskId`), or not forward, is `validation_failed`. `now`
+   * is for tests.
+   */
+  async calendar(
+    orgId: string,
+    actor: ScheduleActor,
+    q: { from: Date; to: Date; timeZone: string; all?: boolean; taskId?: string },
+    now: Date = new Date(),
+    limits: CalendarLimits = CALENDAR_LIMITS,
+  ): Promise<CalendarAnswer> {
+    const role = await this.liveRole(orgId, actor.accountId);
+    const manage = can(role, "schedules.manage");
+    if (q.all === true && !manage) {
+      throw new ApiError("forbidden", "Only org admins can read every scheduled task");
+    }
+    const span = q.to.getTime() - q.from.getTime();
+    const maxDays = q.taskId === undefined ? CALENDAR_RANGE_DAYS : CALENDAR_TASK_RANGE_DAYS;
+    if (!(span > 0)) throw new ApiError("validation_failed", "from must be before to");
+    if (span > maxDays * DAY_MS) {
+      throw new ApiError(
+        "validation_failed",
+        `The range is at most ${maxDays} days${q.taskId === undefined ? "" : " with taskId"}`,
+      );
+    }
+    const t = this.db.db;
+    let tasks: ScheduledTask[];
+    if (q.taskId !== undefined) {
+      const task = await this.store.getTask(t, orgId, q.taskId);
+      if (!task || (task.accountId !== actor.accountId && !manage)) throw scheduleNotFound();
+      tasks = [task];
+    } else {
+      tasks =
+        q.all === true
+          ? await this.store.listForOrg(t, orgId)
+          : await this.store.listForAccount(t, orgId, actor.accountId);
+    }
+    const runs = await this.store.listRunsBetween(
+      t,
+      orgId,
+      tasks.map((x) => x.id),
+      q.from,
+      q.to,
+      // one row past the caps tells the assembly where to cut
+      calendarRunReadLimit(limits),
+    );
+    const settings = await readScheduleSettings(t, this.config, orgId);
+    return assembleCalendar(
+      {
+        tasks,
+        runs,
+        viewerAccountId: actor.accountId,
+        from: q.from,
+        to: q.to,
+        timeZone: q.timeZone,
+        now,
+        plan: settings.enabled,
+        catchUpWindowMinutes: settings.catchUpWindowMinutes,
+        collapse: q.taskId === undefined,
+      },
+      limits,
+    );
+  }
+
+  /**
    * The tasks of `tasks` that post into the conversation: a `conversation` task naming it, or a
    * `chat` task whose chat the conversation is a thread of (spec §10 side panel).
    */
@@ -736,6 +821,8 @@ export class ScheduledTasksService {
       disabledTools: d.disabledTools ?? [],
       subagentTools: d.subagentTools,
       subagents: d.subagents,
+      // no conversation at hand: a web one's tools; a run elsewhere still refuses by spec.sources
+      source: "web",
     });
     const ctx: GrantContext = {
       role,
@@ -773,7 +860,7 @@ export class ScheduledTasksService {
       : await this.agentToolFacts(orgId, task.accountId, task.agentId);
     return grants.map((g) => ({
       ...g,
-      // a network or git grant names a domain or a repository, not a tool definition: never stale
+      // a network, git or sandbox tier grant names no tool definition: never stale
       stale: isNonToolGrantKey(g.toolKey)
         ? false
         : current === null
@@ -891,11 +978,17 @@ export class ScheduledTasksService {
     let loaded = false;
     let role: OrgRole | null = null;
     const agentTools = new Map<string, Promise<AgentToolFacts | null>>();
-    // the org's effective egress, read once and only when a refused domain needs it
+    // the network of the org's ceiling, read once and only when a refused domain needs it
     let limitsOf: Promise<NetworkGrantContext["limits"]> | undefined;
     const orgLimits = () => {
-      limitsOf ??= this.sandbox.orgLimits(orgId);
+      limitsOf ??= this.sandbox.ceilingLimits(orgId);
       return limitsOf;
+    };
+    // the org's sandbox ceiling, read once and only when a refused sandbox level needs it
+    let ceilingOf: Promise<boolean> | undefined;
+    const openReachable = () => {
+      ceilingOf ??= this.sandbox.devicePolicy({ orgId }).then((p) => p.ceiling === "open");
+      return ceilingOf;
     };
     const toolsOf = (agentId: string) => {
       const lookup = agentTools.get(agentId) ?? this.agentToolFacts(orgId, accountId, agentId);
@@ -942,21 +1035,24 @@ export class ScheduledTasksService {
       // a refused tool granted since drops out, unless its grant no longer matches the tool's
       // definition (stale: it would be refused again); a refused domain granted since drops out
       // while the org's network allowlist admits it (network ask-to-allow spec §8.3)
-      // a refused git push drops out once the task holds a grant for it or for every repository
+      // a refused git push drops out once the task holds a grant for it or for every repository;
+      // a refused sandbox level granted since drops out while the org's ceiling is still open
       const isTool = (k: string) => !k.startsWith("connection:") && !isNonToolGrantKey(k);
       const facts = refused.some(isTool) ? await toolsOf(task.agentId) : null;
       const limits = refused.some(isNetworkGrantKey) ? await orgLimits() : null;
-      const admits = (k: string) => limits !== null && orgAllows(networkGrantHost(k), limits);
+      const open = refused.some(isTierGrantKey) ? await openReachable() : false;
+      const admits = (k: string) =>
+        isTierGrantKey(k) ? open : limits !== null && orgAllows(networkGrantHost(k), limits);
       const missing = refused.filter((k) => {
         const hash = have?.get(k);
-        if (isNetworkGrantKey(k)) return hash === undefined || !admits(k);
+        if (isPolicyGrantKey(k)) return hash === undefined || !admits(k);
         if (isGitGrantKey(k)) return hash === undefined && have?.get(GIT_PUSH_GRANT) === undefined;
         if (hash === undefined) return true;
         const current = facts?.get(k);
         return facts !== null && current?.specHash !== hash;
       });
       if (missing.length === 0) continue;
-      const needsAdmin = missing.filter((k) => isNetworkGrantKey(k) && !admits(k));
+      const needsAdmin = missing.filter((k) => isPolicyGrantKey(k) && !admits(k));
       let deviceRefuses = false;
       if (missing.some(isNetworkGrantKey)) {
         const deviceId = await this.taskDeviceOf(orgId, task).catch(() => null);
@@ -1018,6 +1114,8 @@ export class ScheduledTasksService {
         disabledTools: d.disabledTools ?? [],
         subagentTools: d.subagentTools,
         subagents: d.subagents,
+        // no conversation at hand: a web one's tools; a run elsewhere still refuses by spec.sources
+        source: "web",
       });
       return new Map(
         tools.map((x) => [
@@ -1056,7 +1154,7 @@ export class ScheduledTasksService {
   /**
    * "Run now" (spec §6), creator only: a task run for the request time, outside the schedule (no
    * unique-key conflict with a tick, and `next_run_at` does not move), fired at once through the
-   * fire job after the commit. `trial`: an attended trial run whose approvals become the task's
+   * fire job its transaction owes. `trial`: an attended trial run whose approvals become the task's
    * grants (§7). Counted in the rate limit like any run. An ended task cannot run; a paused one
    * can (only its creator gets here: the run is `manual`, which the fire's paused check lets by).
    */
@@ -1089,10 +1187,9 @@ export class ScheduledTasksService {
       target: task.id,
       detail: { taskRunId: run.id, trial: opts.trial },
     });
-    const job = schedFireJob(run.id);
-    afterCommit(async () => {
-      await this.maintenance.add(job.name, job.data, job.opts);
-    });
+    await oweSchedFire(this.outbox, run.id, orgId);
+    // a fire job that fails for good before its claim leaves the run to this check (`removed`)
+    await oweSchedSettleUnfired(this.outbox, run.id, orgId, run.scheduledFor, null);
     return run;
   }
 
@@ -1341,6 +1438,28 @@ export class ScheduledTasksService {
         out.set(toolKey, { toolKey, specHash: GIT_GRANT_SPEC_HASH, connectorId: null });
       }
     }
+    const tiers = grants.filter((g) => isTierGrantKey(g.toolKey));
+    if (tiers.length > 0) {
+      if (source.fromSession !== true) throw grantNotAllowed(TIER_GRANT_NEEDS_PERSON);
+      const [{ ceiling }, device] = await Promise.all([
+        this.sandbox.devicePolicy({ orgId }),
+        deviceId === null ? null : this.devicePolicy.summary(deviceId),
+      ]);
+      // a connected local machine whose program applies no tiers runs every command in strict
+      const deviceReachesOpen = device === null || device.features.includes("tiers");
+      for (const g of tiers) {
+        if (g.connectorId !== undefined) {
+          throw grantNotAllowed(`${g.toolKey} is a sandbox level and comes from no connector`);
+        }
+        const why = tierGrantRefusal(g.toolKey, { ceiling, deviceReachesOpen });
+        if (why !== null) throw grantNotAllowed(why.message);
+        out.set(g.toolKey, {
+          toolKey: g.toolKey,
+          specHash: TIER_GRANT_SPEC_HASH,
+          connectorId: null,
+        });
+      }
+    }
     const toolGrants = grants.filter((g) => !isNonToolGrantKey(g.toolKey));
     if (toolGrants.length === 0) return [...out.values()];
     const d = agent.definition;
@@ -1348,6 +1467,8 @@ export class ScheduledTasksService {
       disabledTools: d.disabledTools ?? [],
       subagentTools: d.subagentTools,
       subagents: d.subagents,
+      // no conversation at hand: a web one's tools; a run elsewhere still refuses by spec.sources
+      source: "web",
     });
     for (const g of toolGrants) {
       const tool = tools.find((x) => x.key === g.toolKey);
@@ -1366,15 +1487,15 @@ export class ScheduledTasksService {
   }
 
   /**
-   * What a network grant is checked against (network ask-to-allow spec §8.1): the org's effective
-   * egress now and the local policy summary of the task's device (null without a device or a
-   * connected machine).
+   * What a network grant is checked against (network ask-to-allow spec §8.1): the network of the
+   * org's sandbox ceiling now (sandbox dev tiers spec §4.2) and the local policy summary of the
+   * task's device (null without a device or a connected machine).
    */
   private async networkGrantContext(
     orgId: string,
     deviceId: string | null,
   ): Promise<NetworkGrantContext> {
-    const limits = await this.sandbox.orgLimits(orgId);
+    const limits = await this.sandbox.ceilingLimits(orgId);
     const summary = deviceId === null ? null : await this.devicePolicy.summary(deviceId);
     return { limits, deviceSummary: summary?.policy ?? null };
   }

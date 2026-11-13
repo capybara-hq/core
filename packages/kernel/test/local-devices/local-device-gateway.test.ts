@@ -17,6 +17,7 @@ import {
 } from "../../src/local-devices/keys.js";
 import { LocalDeviceGateway } from "../../src/local-devices/local-device-gateway.js";
 import { MachinesService } from "../../src/local-devices/machines.js";
+import { NetworkGrants } from "../../src/local-devices/network-grants.js";
 import { LocalDeviceRelay } from "../../src/local-devices/relay.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -31,7 +32,7 @@ import {
   type TestKernel,
   waitFor,
 } from "../helpers/runs.js";
-import { FakeMachine, refusal } from "./fake-machine.js";
+import { FakeMachine, HELLO, refusal } from "./fake-machine.js";
 
 /**
  * The gateway holds the WebSocket connections of connected machines (environments spec §13.4):
@@ -41,7 +42,15 @@ import { FakeMachine, refusal } from "./fake-machine.js";
 
 const MAX_FRAME_BYTES = 64 * 1024;
 const EXEC_RESULT = { exitCode: 0, stdout: "hi\n", stderr: "", truncated: false, timedOut: false };
-const LIMITS = { cpu: 1, memoryMb: 512, diskMb: 1024, egress: "none", allowHosts: [] };
+const LIMITS = {
+  cpu: 1,
+  memoryMb: 512,
+  diskMb: 1024,
+  egress: "none",
+  allowHosts: [],
+  tier: "strict",
+  devHosts: [],
+};
 const execArgs = {
   command: "echo hi",
   timeoutMs: 1000,
@@ -155,6 +164,121 @@ function rawUpgrade(
 const held = (deviceId: string) =>
   waitFor(() => redis.get(deviceLeaseKey(deviceId)), 10_000, "lease held");
 const codeOf = (body: string) => (JSON.parse(body) as { error: { code: string } }).error.code;
+
+describe("the hello's policy summary and the unsandboxed gate", () => {
+  const SUMMARY = {
+    tier: "open",
+    effectiveTier: "open",
+    localhost: "on",
+    unixSockets: "roots",
+    allowedDomains: [],
+    remoteGrants: "owner",
+  };
+
+  /** Connects a machine of a new device that says `hello`; resolves once it is recorded. */
+  async function helloWith(hello: Record<string, unknown>) {
+    const m = await connected();
+    const machine = new FakeMachine(url, m.credential, undefined, { hello: false });
+    await machine.opened;
+    machine.send({ ...HELLO, ...hello });
+    await held(m.deviceId);
+    await waitFor(
+      async () =>
+        (
+          await db
+            .selectFrom("device_machines")
+            .select("program_version")
+            .where("id", "=", m.machineId)
+            .executeTakeFirst()
+        )?.program_version === "0.9.0",
+      10_000,
+      "hello recorded",
+    );
+    return { m, machine };
+  }
+
+  it("a summary the frame parser drops still tells that the device runs without a sandbox", async () => {
+    // a newer program: a localhost value this kernel does not know drops the whole summary
+    const { m, machine } = await helloWith({
+      programVersion: "0.9.0",
+      features: ["networkReport", "policyOp", "tiers"],
+      policy: { ...SUMMARY, isolation: "none", localhost: "on-loopback-only" },
+    });
+    expect(await k.app.get(NetworkGrants).unsandboxed(m.deviceId)).toBe(true);
+    expect((await machines.activeFor(m.deviceId))?.localPolicy).toBeNull();
+    expect(
+      await db
+        .selectFrom("audit_events")
+        .select("detail")
+        .where("target", "=", m.deviceId)
+        .where("action", "=", "device.isolation_reported")
+        .execute(),
+    ).toEqual([{ detail: { machineId: m.machineId, isolation: "none", previous: "sandbox" } }]);
+    machine.close();
+  });
+
+  it("a policy frame after the hello replaces the stored summary, in order", async () => {
+    const { m, machine } = await helloWith({
+      programVersion: "0.9.0",
+      features: ["networkReport", "policyOp", "tiers"],
+      policy: { ...SUMMARY, isolation: "sandbox", localhost: "off-proxy-detected" },
+    });
+    machine.send({ type: "policy", policy: { ...SUMMARY, isolation: "sandbox", localhost: "on" } });
+    machine.send({ type: "policy", policy: { ...SUMMARY, isolation: "none", localhost: "on" } });
+    await waitFor(
+      async () => (await machines.activeFor(m.deviceId))?.localPolicy?.isolation === "none",
+      10_000,
+      "policy recorded",
+    );
+    expect((await machines.activeFor(m.deviceId))?.localPolicy).toEqual({
+      ...SUMMARY,
+      isolation: "none",
+      localhost: "on",
+    });
+    expect(await k.app.get(NetworkGrants).unsandboxed(m.deviceId)).toBe(true);
+    // each frame's change is listed as made on the machine, the isolation with it
+    expect(
+      await db
+        .selectFrom("audit_events")
+        .select(["action", "detail"])
+        .where("target", "=", m.deviceId)
+        .where("action", "in", ["device.isolation_reported", "device.policy_changed"])
+        .orderBy("at")
+        .orderBy("id")
+        .execute(),
+    ).toEqual([
+      {
+        action: "device.policy_changed",
+        detail: expect.objectContaining({ localhost: "on", via: "device" }),
+      },
+      {
+        action: "device.policy_changed",
+        detail: expect.objectContaining({ isolation: "none", via: "device" }),
+      },
+    ]);
+    // the connection stays up
+    expect(machine.ws.readyState).toBe(machine.ws.OPEN);
+    machine.close();
+  });
+
+  it("a valid summary with the sandbox on is sandboxed; a tiers program without one is not", async () => {
+    const ok = await helloWith({
+      programVersion: "0.9.0",
+      features: ["networkReport", "policyOp", "tiers"],
+      policy: { ...SUMMARY, isolation: "sandbox" },
+    });
+    expect(await k.app.get(NetworkGrants).unsandboxed(ok.m.deviceId)).toBe(false);
+    ok.machine.close();
+    // fail closed: a program that applies tiers always sends a summary
+    const none = await helloWith({ programVersion: "0.9.0", features: ["tiers"] });
+    expect(await k.app.get(NetworkGrants).unsandboxed(none.m.deviceId)).toBe(true);
+    none.machine.close();
+    // an older program has no unsandboxed mode
+    const old = await helloWith({ programVersion: "0.9.0" });
+    expect(await k.app.get(NetworkGrants).unsandboxed(old.m.deviceId)).toBe(false);
+    old.machine.close();
+  });
+});
 
 describe("GET /device/connect", () => {
   it("unknown credential is 401 before upgrade", async () => {

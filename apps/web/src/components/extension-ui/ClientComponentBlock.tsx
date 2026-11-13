@@ -9,6 +9,7 @@ import {
   createElement,
   type ReactNode,
   useCallback,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -222,9 +223,15 @@ export function ComponentHost({
   );
   const key = targetKey(target);
 
-  // The view is read once the component reads `useView()` (a getter below), not before.
+  // The view is read once the component reads `useView()` (a getter below), not before. The read
+  // happens during the component's render, where no state may be set: the request is made in the
+  // effect after this commit. (A microtask from the render ran before React mounted the tree,
+  // which React 19 reports as a state update on a component that has not mounted yet.)
   const [wanted, setWanted] = useState(false);
   const asked = useRef(false);
+  useEffect(() => {
+    if (asked.current && !wanted) setWanted(true);
+  });
   const targets = useMemo(() => (wanted ? [target] : []), [wanted, target]);
   const views = useExtensionViews(orgId, targets, {
     ...(conversationId !== undefined && { conversationId }),
@@ -288,11 +295,7 @@ export function ComponentHost({
     Object.defineProperty(value, "view", {
       enumerable: true,
       get: () => {
-        if (!asked.current) {
-          asked.current = true;
-          // after this render: a state update is never made while rendering
-          queueMicrotask(() => setWanted(true));
-        }
+        asked.current = true;
         return view;
       },
     });

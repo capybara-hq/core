@@ -9,7 +9,7 @@ import { activeNavOf } from "../src/components/shell/nav";
 import { Catalog } from "../src/dev/catalog";
 import { adminUsageQuery } from "../src/lib/query/admin";
 import type { Me } from "../src/lib/session";
-import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
+import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
 import { ME, renderPage } from "./support/render";
@@ -52,8 +52,7 @@ const BY_TYPE = {
   catalog_request: 3,
   permission_confirmation: 0,
   scope_sync_failed: 2,
-  platform_migration: 1,
-  ownership_transferred: 0,
+  ownership_transferred: 1,
   org_upload_pending: 0,
 };
 const OV_INBOX = { items: [], truncated: false, total: 6, byType: BY_TYPE };
@@ -82,14 +81,18 @@ const ATTENTION = {
     },
   ],
   providers: [{ plugin: "model-openai", displayName: null, icon: null, problem: "list_failed" }],
-  more: { extensions: 2, updates: 0, providers: 0 },
+  outbox: [],
+  queue: [],
+  more: { extensions: 2, updates: 0, providers: 0, outbox: 0, queue: 0 },
   unavailable: [],
 };
 const EMPTY_ATTENTION = {
   extensions: [],
   updates: [],
   providers: [],
-  more: { extensions: 0, updates: 0, providers: 0 },
+  outbox: [],
+  queue: [],
+  more: { extensions: 0, updates: 0, providers: 0, outbox: 0, queue: 0 },
   unavailable: [],
 };
 const AUDIT = {
@@ -133,6 +136,7 @@ const QUEUE_NAMES = [
   "cap-kernel-titles",
   "cap-kernel-usage-report",
   "cap-kernel-evals",
+  "cap-kernel-lifecycle",
 ];
 const HEALTH = {
   kernel: { version: "0.1.0" },
@@ -280,7 +284,7 @@ describe("/admin 概览（OverviewPage）", () => {
         .getByRole("link", { name: o.inboxTypes.scope_sync_failed })
         .getAttribute("href"),
     ).toBe("/admin/inbox?type=scope_sync_failed");
-    expect(within(typeRow(o.inboxTypes.platform_migration)).getByText("1")).toBeTruthy();
+    expect(within(typeRow(o.inboxTypes.ownership_transferred)).getByText("1")).toBeTruthy();
     expect(within(inbox).queryByText(o.inboxTypes.permission_confirmation)).toBeNull();
     expect(box.getByRole("link", { name: o.viewInbox }).getAttribute("href")).toBe("/admin/inbox");
     // extensions: the reason in words, linking to the extension
@@ -350,11 +354,150 @@ describe("/admin 概览（OverviewPage）", () => {
     expect(within(section(o.title)).queryByRole("list")).toBeNull();
   });
 
+  it.each(LOCALES)(
+    "待处理：无法排入队列的后台任务逐条列出，重试与丢弃（丢弃先确认）（%s）",
+    async (locale) => {
+      const o = msgs[locale].admin.overview.attention;
+      const deadRow = (id: string, jobName: string) => ({
+        id,
+        queue: "cap-kernel-maintenance",
+        jobName,
+        jobId: `job-${id}`,
+        orgId: null,
+        attempts: 20,
+        lastError: "connect ECONNREFUSED",
+        deadAt: "2026-11-12T08:00:00.000Z",
+        createdAt: "2026-11-12T07:00:00.000Z",
+      });
+      let items = [deadRow("7", "plugin-scope-sync"), deadRow("8", "device-destroy")];
+      const calls = stubApi(
+        overviewRoutes({
+          "GET /api/v1/admin/overview/attention": () =>
+            json(200, {
+              ...EMPTY_ATTENTION,
+              outbox: items.length
+                ? [
+                    {
+                      kind: "outbox_dead",
+                      count: items.length,
+                      oldestAt: "2026-11-12T08:00:00.000Z",
+                    },
+                  ]
+                : [],
+            }),
+          "GET /api/v1/admin/outbox/dead": () => json(200, { items }),
+          "POST /api/v1/admin/outbox/dead/7/retry": () => {
+            items = items.filter((i) => i.id !== "7");
+            return json(200, { outcome: "retried" });
+          },
+          "DELETE /api/v1/admin/outbox/dead/8": () => {
+            items = items.filter((i) => i.id !== "8");
+            return noContent();
+          },
+        }),
+      );
+      await renderRouteWithCache("/admin", lastStubRoutes(), { locale });
+      const list = await screen.findByRole("list", { name: o.groups.outbox });
+      const rowOf = (name: string) => within(list).getByText(name).closest("li") as HTMLElement;
+      await within(list).findByText("plugin-scope-sync");
+      expect(
+        within(rowOf("plugin-scope-sync")).getByText(
+          "cap-kernel-maintenance · connect ECONNREFUSED",
+        ),
+      ).toBeTruthy();
+      const user = userEvent.setup();
+      await user.click(
+        within(rowOf("plugin-scope-sync")).getByRole("button", { name: o.outbox.retry }),
+      );
+      await waitFor(() => expect(within(list).queryByText("plugin-scope-sync")).toBeNull());
+      expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/outbox/dead/7/retry"))).toBe(
+        true,
+      );
+      // discard asks first: nothing is deleted until confirmed
+      await user.click(
+        within(rowOf("device-destroy")).getByRole("button", { name: o.outbox.discard }),
+      );
+      const dialog = await screen.findByRole("dialog");
+      expect(calls.some((c) => c.method === "DELETE")).toBe(false);
+      await user.click(within(dialog).getByRole("button", { name: o.outbox.discard }));
+      await waitFor(() => expect(screen.queryByRole("list", { name: o.groups.outbox })).toBeNull());
+      expect(calls.filter((c) => c.method === "DELETE").map((c) => c.url)).toEqual([
+        "/api/v1/admin/outbox/dead/8",
+      ]);
+      expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+    },
+  );
+
+  it("attention: a failed read of the dead outbox rows is the group's unavailable state with retry", async () => {
+    const o = zh.admin.overview.attention;
+    let failing = true;
+    const calls = stubApi(
+      overviewRoutes({
+        "GET /api/v1/admin/overview/attention": () =>
+          json(200, {
+            ...EMPTY_ATTENTION,
+            outbox: [{ kind: "outbox_dead", count: 2, oldestAt: "2026-11-12T08:00:00.000Z" }],
+          }),
+        "GET /api/v1/admin/outbox/dead": () =>
+          failing
+            ? boom()
+            : json(200, {
+                items: [
+                  {
+                    id: "7",
+                    queue: "cap-kernel-maintenance",
+                    jobName: "plugin-scope-sync",
+                    jobId: "job-7",
+                    orgId: null,
+                    attempts: 20,
+                    lastError: null,
+                    deadAt: "2026-11-12T08:00:00.000Z",
+                    createdAt: "2026-11-12T07:00:00.000Z",
+                  },
+                ],
+              }),
+      }),
+    );
+    await renderRouteWithCache("/admin", lastStubRoutes(), { locale: "zh" });
+    const box = within(section(o.title));
+    expect(await box.findByText(o.unavailable)).toBeTruthy();
+    // no bare count stands in for rows that could not be read
+    expect(box.queryByRole("list", { name: o.groups.outbox })).toBeNull();
+    expect(box.queryByText(fill(o.outbox.count, { n: 2 }))).toBeNull();
+    const from = calls.length;
+    failing = false;
+    await userEvent.setup().click(box.getByRole("button", { name: o.retry }));
+    const list = await box.findByRole("list", { name: o.groups.outbox });
+    expect(await within(list).findByText("plugin-scope-sync")).toBeTruthy();
+    expect(pathsAfter(calls, from)).toEqual(["/api/v1/admin/outbox/dead"]);
+  });
+
+  it.each(LOCALES)("待处理：队列丢失了后台任务时显示一项，说明已重新排入（%s）", async (locale) => {
+    const o = msgs[locale].admin.overview.attention;
+    stubApi(
+      overviewRoutes({
+        "GET /api/v1/admin/overview/attention": () =>
+          json(200, {
+            ...EMPTY_ATTENTION,
+            queue: [{ kind: "queue_lost_jobs", count: 3, lastAt: "2026-11-12T08:00:00.000Z" }],
+          }),
+      }),
+    );
+    await renderRouteWithCache("/admin", lastStubRoutes(), { locale });
+    const list = await screen.findByRole("list", { name: o.groups.queue });
+    expect(within(list).getByText(o.queue.lostJobs)).toBeTruthy();
+    expect(within(list).getByText(o.queue.hint)).toBeTruthy();
+    expect(
+      within(list).getByText(locale === "zh" ? "已重新排入 3 项" : "3 jobs queued again"),
+    ).toBeTruthy();
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+  });
+
   const boom = () => json(500, { error: { code: "internal", message: "boom" } });
   const pathsAfter = (calls: { url: string }[], from: number) =>
     calls.slice(from).map((c) => new URL(c.url, "http://x").pathname);
 
-  it("待处理的扩展等列表读取失败：这三组显示「暂时无法读取」与重试，收件箱组、数字与平台操作照常", async () => {
+  it("待处理的扩展等列表读取失败：这五组显示「暂时无法读取」与重试，收件箱组、数字与平台操作照常", async () => {
     const o = zh.admin.overview;
     let failing = true;
     const calls = stubApi(
@@ -373,7 +516,7 @@ describe("/admin 概览（OverviewPage）", () => {
       },
       { timeout: 3000 },
     );
-    expect(box.getAllByText(o.attention.unavailable)).toHaveLength(3);
+    expect(box.getAllByText(o.attention.unavailable)).toHaveLength(5);
     expect(box.getByRole("list", { name: o.attention.groups.inbox })).toBeTruthy();
     expect(box.queryByRole("alert")).toBeNull();
     const metrics = await metricsOf(container);
@@ -2078,30 +2221,34 @@ describe("/admin/inbox?type=（按类型过滤）", () => {
       failedAt: "2026-11-10T08:00:00.000Z",
     },
   });
-  const MIGRATION = {
-    type: "platform_migration",
-    id: "run1",
+  const TRANSFERRED = {
+    type: "ownership_transferred",
+    id: "n9",
     createdAt: "2026-11-10T09:00:00.000Z",
-    run: {
-      id: "run1",
-      startedAt: "2026-11-10T09:00:00.000Z",
-      finishedAt: null,
-      stuck: true,
-      itemsFailed: [],
+    notice: {
+      id: "n9",
+      kind: "ownership_transferred",
+      createdAt: "2026-11-10T09:00:00.000Z",
+      detail: {
+        ref: { kind: "skill", id: "sk-9" },
+        name: "transferred-skill",
+        fromOrg: { id: "o-gone", name: "Gone" },
+        reason: "org_deleted",
+        usedBy: 1,
+      },
     },
   };
   const routes = () => ({
     "GET /api/v1/admin/inbox": () =>
       json(200, {
-        items: [MIGRATION, SYNC("s1", "Beta"), SYNC("s2", "Gamma")],
+        items: [TRANSFERRED, SYNC("s1", "Beta"), SYNC("s2", "Gamma")],
         truncated: false,
         total: 3,
         byType: {
           catalog_request: 0,
           permission_confirmation: 0,
           scope_sync_failed: 2,
-          platform_migration: 1,
-          ownership_transferred: 0,
+          ownership_transferred: 1,
           org_upload_pending: 0,
         },
       }),
@@ -2117,7 +2264,7 @@ describe("/admin/inbox?type=（按类型过滤）", () => {
     });
     const table = await screen.findByRole("table", { name: I.listLabel });
     expect(within(table).getAllByRole("row").slice(1)).toHaveLength(2);
-    expect(within(table).queryByText(I.migration.label)).toBeNull();
+    expect(within(table).queryByText("transferred-skill")).toBeNull();
     expect(screen.getByText(fill(I.filtered, { type: types.scope_sync_failed }))).toBeTruthy();
     expect(screen.getByRole("link", { name: I.clearFilter }).getAttribute("href")).toBe(
       "/admin/inbox",

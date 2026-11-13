@@ -73,6 +73,24 @@ function grid(cards: ObjectCardProps[] = NAMES.map((n, i) => card({ title: n, hr
 }
 
 describe("ObjectCard", () => {
+  it("draws a meta part in warn or fail by its tone", () => {
+    withNav(
+      grid([
+        card({
+          meta: [
+            "本地设备",
+            { label: "开放", tone: "warn" },
+            { label: "不使用沙箱", tone: "fail" },
+          ],
+        }),
+      ]),
+    );
+    const parts = [...document.querySelectorAll(".cb-object-card-meta-part")].map((n) =>
+      n.getAttribute("data-tone"),
+    );
+    expect(parts).toEqual(["warn", "fail"]);
+  });
+
   it("draws the avatar, the name as the one link, the description, the meta, the primary and the menu", () => {
     withNav(grid([card()]));
     const list = screen.getByRole("list", { name: "智能体" });

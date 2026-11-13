@@ -114,6 +114,8 @@ export const KC_RULES = [
   "kc-lock-in-tx",
   "kc-side-effect-in-tx",
   "kc-worker-only",
+  "kc-enqueue-via-outbox",
+  "kc-after-commit-hint",
 ] as const;
 export type KcRule = (typeof KC_RULES)[number];
 
@@ -134,6 +136,8 @@ export interface KcException {
 export interface KcPendingEntry {
   path: string;
   max: number;
+  /** Why it is not converted yet, and where it moves. */
+  reason?: string;
 }
 
 /** Rule → the directories and files not converted yet. */
@@ -252,6 +256,120 @@ export const KC_EXCEPTIONS: readonly KcException[] = [
       "created and closed with the extension's lifecycle (spec §2.4)",
   },
   {
+    rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/infra/outbox/",
+    reason:
+      "the outbox dispatcher is the one place that adds BullMQ jobs: it delivers the rows " +
+      "OutboxService.add wrote (spec 2026-11-12-transactional-outbox §3.3)",
+  },
+  {
+    rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/ctx/queue.ts",
+    reason:
+      "ctx.queue is the extension contract: an extension's own queues, outside the kernel's " +
+      "transactions, so there is no kernel row for the job to be owed by",
+  },
+  {
+    rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/sandbox/jobs.ts",
+    within: "resetFiles",
+    reason:
+      "a files reset is a request-time action that no write owes (the audit row only records the " +
+      "request): the request fails when the add fails, so it is not owed work (ruling R28)",
+  },
+  {
+    rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/channels/actions.ts",
+    within: "handle",
+    reason:
+      "a hint: the delivery of a card's thread after a click, inside the inbound job; the " +
+      "decision's own appends owe their conversation's delivery, and a sub-agent card's thread " +
+      "is redrawn by the next delivery the child's report to its parent owes",
+  },
+  {
+    rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/channels/inbound.ts",
+    within: "handle",
+    reason:
+      "a job's own follow-up: the directory sync of a `directory_changed` event, added inside " +
+      "the inbound job, which fails and is retried by BullMQ when the add fails; no write owes it",
+  },
+  {
+    rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/channels/jobs.ts",
+    within: "enqueue",
+    reason:
+      "the delivery hint (run.started) and the adds of a job: a delivery's re-checks and the " +
+      "owed channel-resume job's catch-up, where a failed add fails the job and BullMQ retries " +
+      "it; every append to a conversation with a target owes its delivery (oweDelivery)",
+  },
+  {
+    rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/channels/jobs.ts",
+    within: "enqueueInbound",
+    reason:
+      "the inbound add of a platform event: no kernel write owes it, and the plugin acks the " +
+      "event only after the add, so a failed add makes the platform redeliver it",
+  },
+  {
+    rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/channels/outbound.ts",
+    within: "deliver",
+    reason:
+      "a delivery job's own follow-up (a changed connection resumes in a new job): a failed add " +
+      "fails the job, which BullMQ retries; no write owes it",
+  },
+  {
+    rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/channels/outbound.ts",
+    within: "followUp",
+    reason:
+      "a delivery job's own re-check of events that arrived while it held the lock (their own " +
+      "jobs ended at the lock): a failed add fails this job, and BullMQ re-runs a failed or " +
+      "stalled delivery job, which delivers them",
+  },
+  {
+    rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/conversations/titles.ts",
+    within: "maybeEnqueue",
+    reason:
+      "a hint: a title is cosmetic, and a lost title job is re-derived from the conversation's " +
+      "state (titleAttemptDue) after its next completed run; nothing is wrong meanwhile",
+  },
+  {
+    rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/orgs/directory-sync.ts",
+    within: "addJob",
+    reason:
+      "no write owes a directory sync: an inbound event's add fails its job (BullMQ retries), a " +
+      "person's request fails when the add fails, and the hourly scan re-derives a lost scan " +
+      "add or a sync's follow-up rerun",
+  },
+  {
+    rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/schedules/fire.ts",
+    within: "start",
+    reason:
+      "not a BullMQ job: ConversationQueue.add writes a queued message to PG, and that write " +
+      "owes its own ensure-run through the outbox",
+  },
+  {
+    rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/tools/drift.ts",
+    within: "onToolsChanged",
+    reason:
+      "a hint: a connector's tools-changed notice during a call writes nothing, and the " +
+      "periodic drift scan re-derives a lost check",
+  },
+  {
+    rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/tools/drift.ts",
+    within: "scan",
+    reason:
+      "the periodic drift scan's own adds: no write owes them, and the next scan period " +
+      "re-derives every connector not checked",
+  },
+  {
     rule: "kc-cache",
     path: "packages/kernel/src/runtime/media-cache.ts",
     reason:
@@ -311,6 +429,14 @@ export const KC_EXCEPTIONS: readonly KcException[] = [
       "never a cron or a queue consumer",
   },
   {
+    rule: "kc-side-effect-in-tx",
+    path: "packages/kernel/src/infra/outbox/outbox.dispatcher.ts",
+    within: "claimAndSend",
+    reason:
+      "Only infra/outbox/outbox.dispatcher.ts calls Redis while holding a PG transaction, and " +
+      "only with outbox rows locked (spec §3.3)",
+  },
+  {
     rule: "kc-ported-header",
     path: "packages/kernel/src/infra/schedule/locked-cron.decorator.ts",
     reason:
@@ -321,9 +447,10 @@ export const KC_EXCEPTIONS: readonly KcException[] = [
 
 /**
  * Not converted yet: a directory (ending with `/`) or file with the number of violations it may
- * still hide. The Nest refactor converted everything, so the map is empty and must stay empty:
- * the map and its stale check remain so a regression cannot be parked here quietly. Never add an
- * entry: more violations than `max` fail, and so do fewer (`kc-stale-pending`).
+ * still hide. Empty: the Nest refactor converted everything, and the transactional outbox moved or
+ * excepted every direct enqueue. The mechanism stays for a future migration; never add an entry
+ * for new code: more violations than `max` fail, and so do fewer (`kc-stale-pending`), so each
+ * conversion deletes its entry.
  */
 export const KC_PENDING: KcPending = {};
 
@@ -381,6 +508,9 @@ const MESSAGES: Record<KcRule, string> = {
     "a file ported from octok-platform starts with `// Ported from octok-platform <path> (owner-approved, 2026-10-28).`",
   "kc-lock-in-tx": "",
   "kc-side-effect-in-tx": "",
+  "kc-enqueue-via-outbox":
+    "an owed job is added through OutboxService.add in the transaction that owes it (spec 2026-11-12-transactional-outbox §3)",
+  "kc-after-commit-hint": "afterCommit is for hints; owed work goes to the outbox",
   "kc-worker-only":
     "a cron, interval or queue-consumer provider must be provided only by modules that only WorkerModule imports (transitively)",
 };
@@ -456,6 +586,58 @@ function xactLockAllowed(value: string, anc: readonly Node[]): boolean {
   });
 }
 /** A constant cache value (`"1"`, `DONE`): a marker or a dedupe key, not cached data. */
+const isAfterCommitCall = (a: Node) =>
+  a.type === "CallExpression" &&
+  (nameOf(a.callee) === "afterCommit" || memberCall(a)?.prop === "afterCommit");
+
+/** A name that ends in "queue" (`queue`, `runQueue`, `getQueue`); `queuedIds` is not one. */
+const QUEUE_NAME = /(^|[a-z0-9_])queue$/i;
+/** A holder of queues a queue is picked from: `queues.get(name)`, `queues[name]`. */
+const QUEUES_HOLDER = /(^|[a-z0-9_])queues$/i;
+/**
+ * The kernel's enqueuing facades by the end of their field name: `RunJobs` / `ChannelJobs`
+ * (`jobs`), a queue facade, the channel `outbound`, `directorySync`. Any other `.enqueue(` receiver (a stream
+ * controller, a mailer) is not a BullMQ add.
+ */
+const ENQUEUE_FACADE = /(jobs|queue|outbound|sync)$/i;
+
+/** The last name of `a.b.c` (`c`) or of a plain identifier. */
+const lastNameOf = (n: Node): string | undefined =>
+  n.type === "MemberExpression" && !n.computed ? nameOf(n.property) : nameOf(n);
+
+/**
+ * A job added to a BullMQ queue by hand: `.add(` / `.addBulk(` on a value named like a queue
+ * (ending in "queue", or the result of a call so named) or declared as a BullMQ `Queue`, on a
+ * queue picked from a holder of queues (`this.queues.get(name).add(`, `queues[name].add(`), or
+ * `.enqueue(` on a jobs / queue facade ({@link ENQUEUE_FACADE}; `this.enqueue(` helpers are not:
+ * the helper's own add is reported where it is).
+ */
+function isEnqueue(mc: { object: Node; prop: string }, queueTyped: ReadonlySet<string>): boolean {
+  const obj = unwrap(mc.object);
+  const last = lastNameOf(obj);
+  if (mc.prop === "add" || mc.prop === "addBulk") {
+    if (obj.type === "MemberExpression" && obj.computed) {
+      const holder = lastNameOf(unwrap(obj.object as Node));
+      return holder !== undefined && QUEUES_HOLDER.test(holder);
+    }
+    if (obj.type === "CallExpression") {
+      const callee = unwrap(obj.callee as Node);
+      if (callee.type === "MemberExpression" && !callee.computed) {
+        const picked = nameOf(callee.property);
+        const holder = lastNameOf(unwrap(callee.object as Node));
+        if (picked === "get" && holder !== undefined && QUEUES_HOLDER.test(holder)) return true;
+      }
+      const named = lastNameOf(callee);
+      return named !== undefined && (QUEUE_NAME.test(named) || queueTyped.has(named));
+    }
+    return last !== undefined && (QUEUE_NAME.test(last) || queueTyped.has(last));
+  }
+  if (mc.prop === "enqueue") {
+    return obj.type !== "ThisExpression" && last !== undefined && ENQUEUE_FACADE.test(last);
+  }
+  return false;
+}
+
 const isConstant = (n: Node | undefined) =>
   n === undefined ||
   n.type === "Literal" ||
@@ -785,6 +967,7 @@ function scanFile(
 
   const inInfra = within(k, "infra");
   const bullmq = new Set<string>();
+  const queueTyped = new Set<string>();
   let importsIoredis = false;
   for (const s of parsed.program.body as Node[]) {
     if (s.type !== "ImportDeclaration") continue;
@@ -797,6 +980,35 @@ function scanFile(
         }
       }
     }
+  }
+  // Names declared with a BullMQ `Queue` type (parameters, properties, variables).
+  const bullQueueTypes = new Set<string>();
+  for (const s of parsed.program.body as Node[]) {
+    if (s.type !== "ImportDeclaration" || (s.source as Node).value !== "bullmq") continue;
+    for (const sp of (s.specifiers as Node[]) ?? []) {
+      if (sp.type === "ImportSpecifier" && nameOf(sp.imported) === "Queue") {
+        bullQueueTypes.add(nameOf(sp.local) as string);
+      }
+    }
+  }
+  if (bullQueueTypes.size > 0) {
+    visit(parsed.program, (n) => {
+      // `const q = new Queue(…)`
+      if (n.type === "VariableDeclarator" && (n.init as Node | null)?.type === "NewExpression") {
+        const made = nameOf((n.init as Node).callee);
+        const id = nameOf(n.id);
+        if (made && id && bullQueueTypes.has(made)) queueTyped.add(id);
+      }
+      const key = n.type === "PropertyDefinition" ? nameOf(n.key) : nameOf(n);
+      let t = typeName(n.typeAnnotation);
+      // `Pick<Queue, "add">`
+      if (t === "Pick" || t === "Omit") {
+        const ref = (n.typeAnnotation as Node).typeAnnotation as Node;
+        const first = (((ref.typeArguments as Node | undefined)?.params as Node[]) ?? [])[0];
+        t = first?.type === "TSTypeReference" ? nameOf(first.typeName) : undefined;
+      }
+      if (key && t && bullQueueTypes.has(t)) queueTyped.add(key);
+    });
   }
   const isModuleFile = k === "kernel.module.ts" || (k.endsWith(".module.ts") && !inInfra);
   const moduleRefs = new Set<string>();
@@ -887,6 +1099,10 @@ function scanFile(
           if (mc && !within(k, "infra/database")) hit("kc-transaction", n, anc);
         }
         if (mc?.prop === "upsertJobScheduler" && !within(k, "infra/queue")) hit("kc-queue", n, anc);
+        if (mc && isEnqueue(mc, queueTyped)) {
+          hit("kc-enqueue-via-outbox", n, anc);
+          if (anc.some(isAfterCommitCall)) hit("kc-after-commit-hint", n, anc);
+        }
         if (callee === "forwardRef" && !forwardRefAllowed) hit("kc-late-binding", n, anc);
         if (mc && (mc.prop === "get" || mc.prop === "resolve") && !inInfra) {
           const holder =

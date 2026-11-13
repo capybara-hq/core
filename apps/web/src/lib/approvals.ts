@@ -32,6 +32,12 @@ export interface NetworkApprovalDetail {
   outcome?: "once" | "always" | "once_fallback";
   /** Why "always" fell back to "this time". */
   fallback?: "offline" | "refused" | "unsupported";
+  /**
+   * While pending: the last "always" whose device change did not take effect (`failed`, with the
+   * device's reason), that the device did not confirm (`unknown`), or that the device applied but
+   * whose chooser can no longer decide the request (`applied_undecided`).
+   */
+  attempt?: { outcome: "failed" | "unknown" | "applied_undecided"; message: string };
 }
 
 export interface Approval {

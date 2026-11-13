@@ -19,6 +19,7 @@ import { RunAbort } from "./abort.js";
 import { KyselyCheckpointSaver } from "./checkpointer.js";
 import { ConversationLock } from "./conversation-lock.js";
 import { MAINTENANCE_QUEUE_NAME } from "./maintenance-queue.js";
+import { PluginContextService } from "./plugin-context.service.js";
 import { ProvidersModule } from "./providers.js";
 import { EVAL_QUOTA, EVAL_QUOTA_PREFIX, OrgQuota, RUN_QUOTA, RUN_QUOTA_PREFIX } from "./quota.js";
 import { RunContextService } from "./run-context.service.js";
@@ -33,13 +34,12 @@ import { StepLogModule } from "./step-log.js";
 import { ConversationStreams } from "./stream.js";
 import { SubagentsModule } from "./subagents/subagents.service.js";
 import { UsageReportModule } from "./usage-report.js";
-import { DecisionResumer, Waits } from "./waits.js";
+import { Waits } from "./waits.js";
 
 /**
  * The run runtime: the conversation run lock, this process's event streams, the run queue and its
- * worker (consumed through `RuntimeWorkersModule`'s processors), the waits (their sweep is the
- * worker role's `WaitSweepJob`), run
- * stops, the checkpoints, the org quotas, the step writes and the agent loops. The model provider
+ * worker (consumed through `RuntimeWorkersModule`'s processors), the waits (a run nobody runs is
+ * the worker role's `RunOrphanCheck`'s to repair), run stops, the checkpoints, the org quotas, the step writes and the agent loops. The model provider
  * registry, the sub-agent dispatch, `usage.report` and the titles have modules of their own (the
  * tools, models and conversations domains import them without the runtime).
  */
@@ -62,7 +62,8 @@ import { DecisionResumer, Waits } from "./waits.js";
     BackgroundModule,
     // a scheduled task's run follows its kernel run's end (`RunFinish`)
     ScheduledTaskTrackerModule,
-    // the producer side of `wait-timeout` jobs (`MaintenanceProcessor` consumes them)
+    // the maintenance queue's handle: the outbox delivers the `wait-timeout` jobs the waits owe
+    // (`MaintenanceProcessor` consumes them)
     QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
   ],
   providers: [
@@ -73,12 +74,12 @@ import { DecisionResumer, Waits } from "./waits.js";
     RunFinish,
     RunQueue,
     Waits,
-    DecisionResumer,
     RunControl,
     RunDrafts,
     AgentLoops,
     RunSteps,
     RunContextService,
+    PluginContextService,
     RunWorker,
     // a finished background task wakes an idle conversation (background Bash spec §3)
     BackgroundWake,

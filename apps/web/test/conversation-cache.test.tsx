@@ -229,6 +229,17 @@ describe("useConversation and the cache", () => {
     expect(invalidated()).toEqual(side);
   });
 
+  it("approval_updated makes the approval's read stale (its card reads it again)", async () => {
+    stubApi({ [`GET ${BASE}`]: () => new Response(JSON.stringify(CONV("c1"))) });
+    const qc = cached();
+    const approval = keys.org("o1").approval("ap1");
+    qc.setQueryData(approval, { id: "ap1" });
+    mount(qc);
+    const es = FakeEventSource.instances[0] as FakeEventSource;
+    act(() => es.emit("event", ev(3, "approval_updated", { approvalId: "ap1", callId: "k1" })));
+    expect(qc.getQueryState(approval)?.isInvalidated).toBe(true);
+  });
+
   it("a seeded new conversation reads no queue or files when its run's events arrive, only its title (send spec 2.1)", async () => {
     const calls = stubApi({
       [`GET ${BASE}`]: () => json(200, CONV("c1", { title: "Generated early" })),

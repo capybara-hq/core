@@ -434,7 +434,14 @@ describe("评测对话只给组织管理员（Ruling S1-c）", () => {
     const convEval = "conv-eval-1";
     await db
       .insertInto("conversations")
-      .values({ id: convEval, org_id: orgId, agent_id: agentA, account_id: ownerId, kind: "eval" })
+      .values({
+        id: convEval,
+        org_id: orgId,
+        agent_id: agentA,
+        account_id: ownerId,
+        kind: "eval",
+        source: "web",
+      })
       .execute();
     await seedRun(convEval, "run-eval-1", ownerId);
     const url = `/api/v1/orgs/${orgId}/trajectories`;

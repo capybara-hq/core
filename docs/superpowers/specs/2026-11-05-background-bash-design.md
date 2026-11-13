@@ -215,6 +215,20 @@ next person message would pick it up.
 - This works on every provider that runs `sh` and `bash` with `setsid`, `nohup`, `timeout`, `pkill`,
   `pgrep` and `base64`:
   sandbox-docker and sandbox-e2b. A provider without them fails the launch with a readable error.
+- **macOS devices** (no `setsid`, no GNU `timeout`, `pgrep` / `pkill` without `-s`; inside the OS
+  sandbox a command can neither list processes nor signal another command's processes). Every
+  script starts with a mode test: where `pgrep -s 0` works (exit 0 or 1) it uses the session as
+  above; elsewhere the process group:
+  - the launch runs a small perl launcher (`perl` ships with macOS) under `nohup`. It calls
+    `setsid()` to leave the exec's group, starts `bash <id>.sh` as the leader of a new process
+    group, writes that group id to `<id>.sid` (the launch waits for it and prints it) and watches
+    the group every 0.1 s from outside it: the command's exit status goes to `<id>.exit` and what
+    it left running is SIGKILLed; at the time limit it writes 137 and SIGKILLs the group;
+  - liveness is `kill(0, -<sid>)`, where "not permitted" (a group of another sandboxed command)
+    still means the group exists;
+  - a stop or kill appends the signal to `.capybara/tasks/g<sid>.ctl`; the launcher, which may
+    signal its own group, sends it to the group and writes no exit file afterwards.
+  The programs needed there are `bash`, `perl`, `nohup` and `base64`.
 - **sandbox-fake** (the test fixture, which runs on the host) changes:
   - it puts small node shims for `setsid`, `timeout`, `pkill -s` and `pgrep -s` first on its PATH,
     so the tests also run on macOS;
@@ -439,6 +453,11 @@ one bullet each.
 - `TaskOutput` and `TaskStop` are offered whenever the agent has `Bash` (the registry adds them); a
   definition need not name them, or an agent could start tasks it can neither read nor stop. Old
   recordings of a `Bash` agent show the expected `tools_changed`.
+- `TaskList` (2026-11-13, maintainer decision from acceptance) joins them as a third companion: no
+  required input (`status?: "running" | "all"`), it lists the calling conversation's own tasks, running
+  first, then the 20 most recently finished, and the sub-agents it dispatched itself. It reads PG only
+  and is read-only (`readOnlyHint`, allowed by default). `TaskOutput`'s not-found error and `Bash`'s
+  description point to it.
 - Tool error texts keep the spec's wording and add one actionable sentence (the tool design check).
 - `TaskOutput` reports a finish only together with its result, so a `reported: true` finish is one
   the model really saw.

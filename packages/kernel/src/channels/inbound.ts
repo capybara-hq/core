@@ -15,6 +15,7 @@ import {
   imSenderContext,
   recipientLocale,
 } from "../conversations/message-context.js";
+import { channelSource } from "../conversations/source.js";
 import { DevicesService, type DeviceView } from "../devices/devices.service.js";
 import { DEFAULT_DEVICE_ALIASES, deviceLabel } from "../devices/label.js";
 import { ApiError } from "../errors.js";
@@ -102,7 +103,8 @@ export class ChannelInbound {
     /** 通讯录同步的投递（按 (组织, 插件) 每分钟去重的维护队列任务）。 */
     @Inject(DirectorySync) private readonly directorySync: Pick<DirectorySync, "enqueue">,
     /** The channel queue: inbound jobs (`onEvent` only dedupes and enqueues) and deliveries. */
-    @Inject(ChannelJobs) private readonly jobs: Pick<ChannelJobs, "enqueue" | "enqueueInbound">,
+    @Inject(ChannelJobs)
+    private readonly jobs: Pick<ChannelJobs, "enqueue" | "enqueueInbound" | "bind">,
     /** 卡片操作：审批决定与提问回答（授权由这两个服务按点击者映射到的账号判定）。 */
     @Inject(ApprovalsService) approvals: Pick<ApprovalsService, "decide">,
     @Inject(QuestionsService) questions: Pick<QuestionsService, "answer">,
@@ -263,8 +265,15 @@ export class ChannelInbound {
       try {
         // bound to the person's IM default device, else their default (environments spec
         // §4.2 item 8); an anonymous sender's stays unbound (no sandbox)
-        created = (await this.conversations.create(row.orgId, accountId, row.agentId, { im: true }))
-          .id;
+        created = (
+          await this.conversations.create(
+            row.orgId,
+            accountId,
+            row.agentId,
+            { im: true },
+            { source: channelSource(e.target.chatType) },
+          )
+        ).id;
       } catch (err) {
         if (err instanceof ApiError && err.code === "agent.not_found") {
           await reply("agentUnavailable");
@@ -313,23 +322,8 @@ export class ChannelInbound {
       }
       throw err;
     }
-    await db
-      .insertInto("channel_deliveries")
-      .values({
-        conversation_id: conversationId,
-        connection_id: connectionId,
-        target: JSON.stringify(replyTarget),
-        last_seq: seq,
-      })
-      .onConflict((oc) =>
-        oc.column("conversation_id").doUpdateSet({
-          connection_id: connectionId,
-          target: JSON.stringify(replyTarget),
-          updated_at: new Date(),
-        }),
-      )
-      .execute();
-    await this.jobs.enqueue(conversationId);
+    // the reply target and its delivery, owed in one transaction (transactional outbox spec §8.1)
+    await this.jobs.bind(row.orgId, conversationId, connectionId, replyTarget, seq);
   }
 
   /**

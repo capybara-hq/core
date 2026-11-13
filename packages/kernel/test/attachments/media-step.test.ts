@@ -244,6 +244,7 @@ const step = (
   opts: { runId?: string; step?: number; mediaCache?: MediaCache } = {},
 ) =>
   runModelStep(deps, {
+    source: "web",
     orgId,
     conversationId,
     runId: opts.runId ?? randomUUID(),
@@ -429,6 +430,7 @@ describe("供应商拒收媒体（Ruling M8 / I1）", () => {
         log: { ...silent, warn: (msg: string) => void warned.push(msg) },
       },
       {
+        source: "web",
         orgId,
         conversationId,
         runId: randomUUID(),

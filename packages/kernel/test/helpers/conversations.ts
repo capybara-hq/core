@@ -22,7 +22,7 @@ import { ConversationQueue } from "../../src/conversations/queue.service.js";
 import { ApiError, errorBody } from "../../src/errors.js";
 import type { KernelDb } from "../../src/infra/database/kernel-db.js";
 import type { TransactionHost } from "../../src/infra/database/transaction-host.js";
-import { KernelEvents } from "../../src/infra/events/kernel-events.js";
+import { OutboxService } from "../../src/infra/outbox/outbox.service.js";
 import { createLogger, type KernelLogger } from "../../src/log.js";
 import type { SkillInvoker } from "../../src/skills/invoke.js";
 import { handlesFor } from "./identity.js";
@@ -31,14 +31,23 @@ export { legacyDbFor } from "./identity.js";
 
 const quiet = createLogger("error", { write: () => {} });
 
-/** The event log over a test's pool and bus; `events` gets `conversation.event-appended`. */
+/**
+ * The event log over a test's pool and bus. An append to a conversation with a channel target owes
+ * its IM delivery through `outbox` (default: one with no fast path, so the row stays in PG).
+ */
 export function eventLogFor(
   raw: Kysely<any>,
   bus: EventBus,
-  events: KernelEvents = new KernelEvents(quiet),
+  outbox?: Pick<OutboxService, "add">,
 ): EventLog {
   const h = handlesFor(raw);
-  return new EventLog(h.db, bus, quiet, events, h.txHost);
+  return new EventLog(
+    h.db,
+    bus,
+    quiet,
+    outbox ?? new OutboxService(h.txHost, h.db, quiet, async () => {}),
+    h.txHost,
+  );
 }
 
 /** The agent templates over a test's pool. */
@@ -77,9 +86,14 @@ export interface DbHandles {
 
 /** A run control that starts and stops nothing (the old optional `runs` left out). */
 const noRuns: RunControl = {
-  ensureRun: async () => null,
+  ensureRunAfterCommit: async () => {},
+  oweEnsureRun: async () => true,
   wakeHeldTree: async () => {},
+  oweHeldTreeIn: async () => {},
+  resumeIn: async () => "not-waiting",
+  oweStopDeletedTree: async () => true,
   abortIfOrphaned: async () => false,
+  abortQueued: async () => false,
   abortWaiting: async () => false,
   requestAbort: async () => {},
   stopTree: async () => 0,
@@ -121,7 +135,6 @@ export function conversationsFor(
     { isAccessible: async () => true },
     d.runs ?? noRuns,
     { resolve: refuse("providers") },
-    quiet,
     { resolveAttachments: d.resolveAttachments ?? refuse("resolveAttachments") },
     { bindForMessage: d.bindFiles ?? refuse("bindFiles") },
     { prepare: invoker ? (a) => invoker.prepare(a) : refuse("invoker") },

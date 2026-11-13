@@ -358,6 +358,7 @@ describe("agents.register-skill", { timeout: 120_000 }, () => {
         agent_id: agentId,
         account_id: ownerId,
         kind: "subagent",
+        source: "subagent",
         parent_conversation_id: parent,
         subagent_depth: 1,
         title: "Child",

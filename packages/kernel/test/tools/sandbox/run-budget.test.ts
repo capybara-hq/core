@@ -61,38 +61,46 @@ describe("运行时限与命令超时（纯函数）", () => {
     expect(searchTimeoutMs(cfg, t0, t0, t0 + 1000)).toBe(1000);
   });
 
-  it("maxRunSeconds < maxCommandSeconds：都是默认值时 info，运维改过一个仍不一致时 warn；指向两个配置键", () => {
-    const [w] = sandboxConfigWarnings(cfg);
-    expect(w?.level).toBe("info");
-    expect(w?.message).toContain("runtime.maxRunSeconds (900)");
-    expect(w?.message).toContain("sandbox.limits.maxCommandSeconds (7200)");
+  it("no run duration limit by default: no warning; an explicit maxRunSeconds below maxCommandSeconds warns, naming both keys", () => {
+    expect(cfg.runtime.maxRunSeconds).toBe(0);
+    expect(sandboxConfigWarnings(cfg)).toEqual([]);
     const [changed] = sandboxConfigWarnings({
       ...cfg,
       runtime: { ...cfg.runtime, maxRunSeconds: 1800 },
     });
     expect(changed?.level).toBe("warn");
     expect(changed?.message).toContain("runtime.maxRunSeconds (1800)");
+    expect(changed?.message).toContain("sandbox.limits.maxCommandSeconds (7200)");
     expect(
       sandboxConfigWarnings({ ...cfg, runtime: { ...cfg.runtime, maxRunSeconds: 7200 } }),
     ).toEqual([]);
   });
 
-  it("egress open 而提供方没打开 allowOpenEgress 时告警，点名插件配置", () => {
+  it('warns when sandbox.tiers.max is open and the provider plugin sets openEgress "off" (absent is the plugin default, proxy)', () => {
     const long = { ...cfg, runtime: { ...cfg.runtime, maxRunSeconds: 7200 } };
     const open = {
       ...long,
-      sandbox: { ...long.sandbox, limits: { ...long.sandbox.limits, egress: "open" as const } },
+      sandbox: { ...long.sandbox, tiers: { ...long.sandbox.tiers, max: "open" as const } },
     };
-    const [w] = sandboxConfigWarnings(open, "sandbox-docker");
+    const off = { ...open, extensionConfig: { "sandbox-docker": { openEgress: "off" } } };
+    const [w] = sandboxConfigWarnings(off, "sandbox-docker");
     expect(w?.level).toBe("warn");
-    expect(w?.message).toContain('extensionConfig."sandbox-docker".allowOpenEgress');
+    expect(w?.message).toContain('extensionConfig."sandbox-docker".openEgress is "off"');
+    expect(w?.message).toContain("sandbox.tiers.max");
+    expect(sandboxConfigWarnings(open, "sandbox-docker")).toEqual([]);
+    for (const openEgress of ["proxy", "direct"]) {
+      expect(
+        sandboxConfigWarnings(
+          { ...open, extensionConfig: { "sandbox-docker": { openEgress } } },
+          "sandbox-docker",
+        ),
+      ).toEqual([]);
+    }
+    // below open, the plugin's setting does not matter
     expect(
-      sandboxConfigWarnings(
-        { ...open, extensionConfig: { "sandbox-docker": { allowOpenEgress: true } } },
-        "sandbox-docker",
-      ),
+      sandboxConfigWarnings({ ...long, extensionConfig: off.extensionConfig }, "sandbox-docker"),
     ).toEqual([]);
-    expect(sandboxConfigWarnings(long, "sandbox-docker")).toEqual([]);
+    expect(sandboxConfigWarnings(off)).toEqual([]);
   });
 });
 

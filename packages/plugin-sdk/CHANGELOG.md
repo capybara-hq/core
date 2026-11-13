@@ -1,5 +1,92 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.20
+
+### Minor Changes
+
+- 76828c0: Device policy ops carry an op id. The device protocol's `policy` op now requires `opId` (non-empty,
+  no `:`, at most 128 characters); the new `policyStatus` op asks a device what became of an op id
+  (`applied`, `refused`, `started` or `unknown`, with its policy summary now); a hello may carry
+  `recentOps`, the outcomes of the latest 100 policy ops; the new feature `policyOpId` announces all
+  three. `capybara-device` logs each policy op in `policy-ops.json` next to `policy.json` (`started`
+  before the change, then `applied` or `refused`; the last 100 kept), answers a repeated op id from
+  that log without applying it again, and reports the log in every hello. The kernel sends its op id
+  with each `policy` op.
+  
+  The SDK's hello parser keeps one `recentOps` entry per op id (the last one listed). `capybara-device`
+  keeps a refusal's message in the log cut to 500 characters, never logs an applied op as refused
+  when releasing the policy lock fails after the write, and keeps an op the log already says was
+  applied as applied.
+
+## 0.1.0-rc.19
+
+### Minor Changes
+
+- da677b6: context@1, conversation source, lifecycle hooks: the `context@1` extension point and provider types,
+  `ToolSpec.sources` with `ToolCallContext.source`, `ownerAccountId` and `role`, and the observe-only
+  mounts `org.member_removed`, `agent.deleted` and `org.deleted`.
+
+## 0.1.0-rc.18
+
+### Patch Changes
+
+- 67e6ad5: A local OS-sandboxed device now kills what a foreground command leaves running (`server &`,
+  `nohup …`) when the command ends, by its process group and by a per-command marker for processes
+  that left the group. Inside the sandbox no later command could signal them, so they leaked. A
+  background task launch, whose command starts with the new `BACKGROUND_LAUNCH_LINE`
+  (`@capybara-hq/plugin-sdk`), keeps what it starts. The `Bash` description tells the model to use
+  `run_in_background` for servers and watchers.
+- e76028b: ScheduleCalendar: the scheduled task runs of a week or a month (time grid with a now line, three blocks side by side then +N, a dense lane, 6 × 7 month cells, the phone agenda, roving keyboard focus, loading, empty and load-failed states); the layout.calendar-* sizes and the ink / fail on hover and selected contrast pairs (also in the SDK's theme readability check)
+
+## 0.1.0-rc.17
+
+### Patch Changes
+
+- 8471657: A local policy change made on the machine (`capybara-device policy ...` while the service runs, a
+  flipped localhost proxy guard, a new tier ceiling) reaches the deployment at once: the device
+  pushes its new summary in a `policy` frame (new in the device protocol), and the kernel stores it
+  as it stores the hello's, so the device page and the next `device_paths` line show it.
+- a3ca5ef: The super admin sets the platform's sandbox levels (`sandbox.tiers.max`, `default`,
+  `allowUnsandboxed`) on the admin settings page (`PUT /api/v1/admin/settings` `sandboxTiers`). A field
+  set in the startup config (env, file or Nacos) wins and is read-only there; an API token or the
+  Platform tool may only lower them. The dev hosts preset (`DEV_HOSTS`) adds `storage.googleapis.com`,
+  where Playwright's Chromium download (Chrome for Testing) is served from.
+
+## 0.1.0-rc.16
+
+### Minor Changes
+
+- 2682d5f: Agent templates turn skills off with `disallowedSkills` (`<plugin>:<name>`, `<plugin>:*` or a bare
+  `<name>`, at most 64; `isDisallowedSkillRef`) instead of selecting them: `selectedSkills` is
+  removed. Creating an agent from a template turns those skills off and lists every name in `skills`
+  as carried or unavailable; saving an agent as an org template writes its off-list.
+- 2e52ca1: Network asks: `ExecResult.network` reports the hosts a command was refused and the layer that
+  refused them (`parseOpResult("exec")` keeps the valid entries, at most 20, and drops a malformed
+  report); the device hello may carry `features` and a local policy summary; a new device op `policy`
+  edits a device's allowed domains; exec args may carry run or task `grants`; `SandboxActor.runId`;
+  the `approval` card gains `scopeLabels` and the `skipped` state.
+- 8fa0e32: Sandbox tiers: `SandboxTier` (`strict` < `dev` < `open`), `SANDBOX_TIERS`, `isSandboxTier`,
+  `compareTiers`, `tierAtMost`, `minTier` and the dev hosts preset `DEV_HOSTS`. `SandboxLimits`
+  requires `tier` and `devHosts` and may carry `defaultTier` and `allowUnsandboxed` (local exec args:
+  whether the command may run without a sandbox; absent = no), with the refusal text
+  `UNSANDBOXED_NOT_ALLOWED_MESSAGE`; `SandboxProvider` gains the optional
+  `update(h, limits, signal)` and `limitsApplyAt`. Device protocol: the local policy summary replaces
+  `network` with `tier` (absent = follows the org), `effectiveTier`, `isolation`, `localhost` and
+  `unixSockets`; the hello feature `tiers`; the `policy` op takes `tier` (null = follow the org) and
+  `isolation: "sandbox"` instead of `network`. `DeviceNetworkMode` is removed.
+- 95fc4b0: Skills are on by default and pinning is gone. Every skill on in an org is on for every agent unless
+  the agent's new `disabledSkills` turns it off (a plugin's skills by name, a whole plugin as `"all"`
+  including skills it gains later, or a skill without a plugin by id); builtin skills, the agent's
+  own and its shared skills cannot be turned off. `skills.orgSkills` and `skills.pinned` are removed
+  from the agent definition (refused on save; migration 0116 rewrites every agent version), run start
+  no longer injects pinned skill bodies (an old conversation gets a "Pinned skills removed" notice),
+  and `agent.pinned_invalid` is gone. A sub-agent template's `skills` become one logged line telling
+  the child to load them with `Skill` first. `plugin.json` `skills[].pinned` and the import confirm's
+  `pinnedSuggestions` are removed; the skill APIs drop `suggestPinned`, `entryBytes` and
+  `tokenEstimate` and the library list gains `builtin`; the Claude Code import reports a
+  `session_start_hook` warning instead of a pin hint. The Platform tool's `agents.create` /
+  `agents.update` take `disabledSkills`, and `platform.me` lists the agent's skills.
+
 ## 0.1.0-rc.15
 
 ### Minor Changes

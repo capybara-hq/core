@@ -22,8 +22,14 @@ import { createDb } from "../../src/db/pool.js";
 import { reconstructRequest } from "../../src/evals/reconstruct.js";
 import { takeSnapshot, toEvents } from "../../src/evals/snapshot.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
+import {
+  OUTBOX_DISPATCH_FAILS,
+  OutboxDispatcher,
+} from "../../src/infra/outbox/outbox.dispatcher.js";
+import { LockedIntervalScheduler } from "../../src/infra/schedule/locked-interval.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
+import { RUN_ORPHAN_CHECK_JOB, RunOrphanCheck } from "../../src/runtime/run-orphan-check.job.js";
 import { RunQueue } from "../../src/runtime/run-queue.js";
 import type { ScriptRule } from "../fixtures/plugins/model-script/index.js";
 import { legacyDbFor } from "../helpers/conversations.js";
@@ -118,6 +124,27 @@ let store: BackgroundTaskStore;
 let finisher: BackgroundTaskFinisher;
 let runs: RunQueue;
 let root: string;
+/** While true, the kernel's outbox adds to the maintenance queue fail (`OUTBOX_DISPATCH_FAILS`). */
+let failMaintenance = false;
+
+/**
+ * One relay pass over the owed rows (their backoff from failed passes reset), then the job `id` of
+ * the maintenance queue, once there.
+ */
+async function relayed(id: string) {
+  const queue = k.app.get<Queue>(getQueueToken(MAINTENANCE_QUEUE_NAME));
+  return waitFor(
+    async () => {
+      await sql`UPDATE capybara.outbox SET next_attempt_at = now() WHERE dead_at IS NULL`.execute(
+        raw,
+      );
+      await k.app.get(OutboxDispatcher).dispatchDue(500);
+      return queue.getJob(id);
+    },
+    10_000,
+    `relayed job ${id}`,
+  );
+}
 
 beforeAll(async () => {
   capture.install();
@@ -135,7 +162,17 @@ beforeAll(async () => {
         sandbox: { background: { pollSeconds: 3600 } },
       },
     ),
+    {
+      overrides: [
+        {
+          provide: OUTBOX_DISPATCH_FAILS,
+          useValue: (queue: string) => failMaintenance && queue === MAINTENANCE_QUEUE_NAME,
+        },
+      ],
+    },
   );
+  // the orphan test calls the run-orphan-check itself
+  k.app.get(LockedIntervalScheduler).stop(RUN_ORPHAN_CHECK_JOB);
   store = k.app.get(BackgroundTaskStore);
   finisher = k.app.get(BackgroundTaskFinisher);
   runs = k.app.get(RunQueue);
@@ -459,8 +496,12 @@ describe("waking an idle conversation", { timeout: 60_000 }, () => {
     ]);
     expect(await consumedSeq(db, conv)).toBeGreaterThanOrEqual(b.seq);
 
-    // a third finish seconds after that wake started: inside the window, a delayed job instead
+    // a third finish seconds after that wake started: inside the window, a delayed job instead,
+    // owed in the transaction that decided it (transactional outbox spec §3.1): with every add
+    // to the maintenance queue failing, the row waits for the relay and no job exists yet
+    failMaintenance = true;
     const c = await finishTask(conv);
+    expect(await runs.ensureRun(conv)).toBeNull();
     expect(await runRows(conv)).toHaveLength(2);
     const { started } = await db
       .selectFrom("runs")
@@ -469,15 +510,33 @@ describe("waking an idle conversation", { timeout: 60_000 }, () => {
       .executeTakeFirstOrThrow();
     const windowEnd = Number(started) + WAKE_WINDOW_MS;
     const queue = k.app.get<Queue>(getQueueToken(MAINTENANCE_QUEUE_NAME));
-    const job = await queue.getJob(bgWakeJobId(conv, windowEnd));
+    const owed = await db
+      .selectFrom("outbox")
+      .select(["job_name", "data", "org_id", "run_at"])
+      .where("queue", "=", MAINTENANCE_QUEUE_NAME)
+      .where("job_id", "=", bgWakeJobId(conv, windowEnd))
+      .executeTakeFirstOrThrow();
+    expect(owed).toMatchObject({
+      job_name: "bg-wake",
+      data: { conversationId: conv },
+      org_id: orgId,
+    });
+    expect(owed.run_at?.getTime()).toBeGreaterThan(Date.now());
+    expect(await queue.getJob(bgWakeJobId(conv, windowEnd))).toBeUndefined();
+    // the relay adds it with the remaining delay once the queue takes adds again
+    failMaintenance = false;
+    const job = await relayed(bgWakeJobId(conv, windowEnd));
     expect(job?.name).toBe("bg-wake");
     expect(job?.data).toEqual({ conversationId: conv });
     expect(await job?.getState()).toBe("delayed");
     // a second ensureRun in the window keeps the one job
     expect(await runs.ensureRun(conv)).toBeNull();
-    expect((await queue.getDelayed()).filter((j) => j.data?.conversationId === conv)).toHaveLength(
-      1,
-    );
+    // (the delayed bg-wake jobs only: the conversation's ensure-run backstops are delayed too)
+    expect(
+      (await queue.getDelayed()).filter(
+        (j) => j.name === "bg-wake" && j.data?.conversationId === conv,
+      ),
+    ).toHaveLength(1);
     // the window ends (moved back instead of waiting a minute): the job wakes the conversation
     await sql`UPDATE capybara.runs SET created_at = created_at - interval '61 seconds'
       WHERE id = ${wake.id}`.execute(raw);
@@ -613,19 +672,14 @@ describe("fix round 1", { timeout: 60_000 }, () => {
             .executeTakeFirstOrThrow()
         ).t,
       ) + WAKE_WINDOW_MS;
-    const queue = k.app.get<Queue>(getQueueToken(MAINTENANCE_QUEUE_NAME));
-    const job = await queue.getJob(bgWakeJobId(conv, await windowEndOf()));
+    const job = await relayed(bgWakeJobId(conv, await windowEndOf()));
     expect(await job?.getState()).toBe("delayed");
     // the window now ends in about 3 s on the database's clock; the job fires before that
     await sql`UPDATE capybara.runs SET created_at = created_at - interval '57 seconds'
       WHERE id = ${wake.id}`.execute(raw);
     const end = await windowEndOf();
     await job?.promote();
-    const retry = await waitFor(
-      async () => queue.getJob(bgWakeJobId(conv, end, 1)),
-      10_000,
-      "rescheduled wake job",
-    );
+    const retry = await relayed(bgWakeJobId(conv, end, 1));
     expect(retry.data).toEqual({ conversationId: conv, retry: 1 });
     expect(await runRows(conv)).toHaveLength(2);
     await waitForTerminal(db, conv, 3, 20_000);
@@ -637,7 +691,7 @@ describe("fix round 1", { timeout: 60_000 }, () => {
     });
   });
 
-  it("an orphaned wake run is repaired by ensureRun; later finishes and messages go on", async () => {
+  it("a wake run whose job the queue lost is re-added by the run-orphan-check; later finishes and messages go on", async () => {
     const conv = await idleConversation("SCENARIO orphan");
     // a finish whose wake run was queued, and whose job was lost (no job ever existed). The
     // orphan goes in first: the run that just ended may still be in its own ensureRun, which
@@ -669,17 +723,27 @@ describe("fix round 1", { timeout: 60_000 }, () => {
     await sql`UPDATE capybara.runs SET trigger_seq = ${ev?.seq ?? 0} WHERE id = ${orphan}`.execute(
       raw,
     );
-    // past the queued grace period and outside the wake window
+    // queued for over the check's minute and outside the wake window
     await sql`UPDATE capybara.runs SET created_at = now() - interval '2 minutes',
       queued_at = now() - interval '2 minutes' WHERE id = ${orphan}`.execute(raw);
+    // a read path or another ensureRun never repairs it
     expect(await runs.ensureRun(conv)).toBeNull();
-    const repaired = (await runRows(conv)).find((r) => r.id === orphan);
-    expect(repaired?.status).toBe("failed");
-    expect(await consumedSeq(db, conv)).toBeGreaterThanOrEqual(ev?.seq ?? 0);
-    const failed = (await eventsOf(db, conv)).find(
-      (e) => e.type === "run_failed" && e.runId === orphan,
+    expect((await runRows(conv)).find((r) => r.id === orphan)?.status).toBe("queued");
+    // the check owes its job again (the canary: the queue lost a job) and the wake run runs
+    expect(await k.app.get(RunOrphanCheck).check()).toEqual({
+      runningRepaired: 0,
+      queuedReadded: 1,
+    });
+    await waitFor(
+      async () => (await runRows(conv)).find((r) => r.id === orphan)?.status === "completed",
+      30_000,
+      "the re-added wake run finished",
     );
-    expect(failed?.payload).toMatchObject({ error: { code: "run.orphaned" } });
+    expect(await consumedSeq(db, conv)).toBeGreaterThanOrEqual(ev?.seq ?? 0);
+    expect((await runStarted(conv, orphan)).payload).toMatchObject({
+      trigger: "background_task",
+      triggerSeq: ev?.seq,
+    });
     // a later finish wakes the conversation again
     const next = await finishTask(conv);
     await waitFor(

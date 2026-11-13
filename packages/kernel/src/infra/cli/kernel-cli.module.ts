@@ -24,6 +24,7 @@ import { KernelEventsModule } from "../events/kernel-events.js";
 import { GracefulShutdownModule } from "../lifecycle/graceful-shutdown.module.js";
 import { LockModule } from "../lock/lock.module.js";
 import { LoggingModule } from "../logging/logging.module.js";
+import { OutboxModule } from "../outbox/outbox.module.js";
 import { QueueModule } from "../queue/queue.module.js";
 import { KERNEL_BUS, KERNEL_LOGGER, REDIS, REDIS_SUBSCRIBER } from "../tokens.js";
 
@@ -128,6 +129,10 @@ export class KernelCliModule {
         ConfigModule.forRoot(config, opts.env !== undefined ? { env: opts.env } : {}),
         GracefulShutdownModule,
         DatabaseModule.forRoot(),
+        // owed jobs a command's domain writes carry (an extension's embed call owes its usage
+        // report); delivered by the fast path when the command's context has the queue, else by a
+        // worker's relay
+        OutboxModule,
         // QueueModule's root gives the queues a command's modules register (the catalog's scope
         // sync and maintenance queues) the configured Redis; without it BullMQ would connect to
         // its default 127.0.0.1:6379

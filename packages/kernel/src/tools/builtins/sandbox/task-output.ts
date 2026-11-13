@@ -99,6 +99,7 @@ export interface TaskEnv {
   ifRunning: SandboxService["ifRunning"];
   devices: SandboxToolDeps["devices"];
   log: SandboxToolDeps["log"];
+  subagents?: SandboxToolDeps["subagents"];
 }
 
 /**
@@ -120,24 +121,52 @@ export async function taskEnv(deps: SandboxToolDeps, ctx: BuiltinCallContext): P
     ifRunning: deps.sandbox.ifRunning.bind(deps.sandbox),
     devices: deps.devices,
     log: deps.log,
+    ...(deps.subagents !== undefined && { subagents: deps.subagents }),
   };
 }
 
 const notFound = (id: string): ToolError =>
   new ToolError(
-    `No background task ${clip(id, 40)} in this conversation. Pass a task id that Bash with run_in_background returned in this conversation.`,
+    `No background task ${clip(id, 40)} in this conversation. Pass a task id that Bash with run_in_background returned in this conversation; call TaskList to see this conversation's tasks.`,
   );
 
 /**
+ * A sub-agent's agentId passed as a task id (as Claude Code's TaskOutput allows for background
+ * agents): its report arrives on its own, so polling or sleeping for it only wastes the run.
+ */
+export const subagentNotTaskText = (id: string): string =>
+  `${clip(id, 40)} is a sub-agent, not a background task. Its report arrives in this conversation as a notification when it hands back or finishes. Don't poll or sleep for it: keep working or end your turn. Use SendMessage to give it more instructions.`;
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Whether `id` is the agentId of a sub-agent in the caller's tree (not a task id). */
+async function isSubagentId(env: TaskEnv, ctx: BuiltinCallContext, id: string): Promise<boolean> {
+  const trimmed = id.trim();
+  return (
+    !TASK_ID_RE.test(id) &&
+    env.subagents !== undefined &&
+    UUID_RE.test(trimmed) &&
+    (await env.subagents.inTree(sandboxConversationOf(ctx), trimmed.toLowerCase()))
+  );
+}
+
+/** {@link notFound}, or {@link subagentNotTaskText} when `id` is a sub-agent of the caller's tree. */
+async function missingTask(env: TaskEnv, ctx: BuiltinCallContext, id: string): Promise<ToolError> {
+  if (await isSubagentId(env, ctx, id)) return new ToolError(subagentNotTaskText(id.trim()));
+  return notFound(id);
+}
+
+/**
  * The task `id` when it belongs to the calling conversation; a task of another conversation (a
- * sub-agent's, when called from its parent) is not found, the same as an unknown id.
+ * sub-agent's, when called from its parent) is not found, the same as an unknown id. A sub-agent's
+ * agentId gets its own text ({@link subagentNotTaskText}).
  */
 export async function ownedTask(
   env: TaskEnv,
   ctx: BuiltinCallContext,
   id: string,
 ): Promise<BackgroundTaskRow> {
-  if (!TASK_ID_RE.test(id)) throw notFound(id);
+  if (!TASK_ID_RE.test(id)) throw await missingTask(env, ctx, id);
   const task = await env.store.get(id);
   if (!task || task.conversationId !== ctx.conversationId) throw notFound(id);
   return task;
@@ -388,6 +417,17 @@ export function taskOutputTool(deps: SandboxToolDeps): BuiltinTool {
     async run(input, ctx) {
       const { task_id, block = true, timeout } = input as TaskOutputInput;
       const env = await taskEnv(deps, ctx);
+      // A sub-agent's agentId is answered, not refused: where its report arrives is the answer
+      // (acceptance 2026-11-13: guidance the model is expected to follow is not a failed call).
+      // TaskStop keeps the error: it cannot stop a sub-agent.
+      if (await isSubagentId(env, ctx, task_id)) {
+        const id = clip(task_id.trim(), 40);
+        return {
+          content: [{ type: "text" as const, text: subagentNotTaskText(task_id.trim()) }],
+          isError: false,
+          display: display(`查看子智能体：${id}`, `Checked sub-agent: ${id}`),
+        };
+      }
       let task = await ownedTask(env, ctx, task_id);
       await recheckDevice(env, ctx);
       if (block && task.status === "running") {

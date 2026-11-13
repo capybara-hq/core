@@ -1,4 +1,4 @@
-export const SDK_VERSION = "0.1.0-rc.15";
+export const SDK_VERSION = "0.1.0-rc.20";
 export * from "./agent-template.js";
 export * from "./bootstrap.js";
 export * from "./cards.js";
@@ -8,8 +8,10 @@ export * from "./client-section.js";
 export * from "./config-ui.js";
 export * from "./connector.js";
 export * from "./connector-auth.js";
+export * from "./context.js";
 export * from "./ctx.js";
 export * from "./define-extension.js";
+export * from "./dev-hosts.js";
 export * from "./device-protocol.js";
 export * from "./directory.js";
 export * from "./extension-point.js";

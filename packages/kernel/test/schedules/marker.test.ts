@@ -181,7 +181,7 @@ async function fireNew(m: ScheduleMarker, text: string, timeZoneOverride = "Asia
       agentId,
       { text, clientMessageId: m.taskRunId },
       {},
-      { schedule: m, timeZoneOverride },
+      { schedule: m, timeZoneOverride, source: "web" },
     );
 }
 

@@ -43,6 +43,7 @@ import { ModelsOperations } from "./ops/models.ops.js";
 import { OrgPluginsOperations } from "./ops/org-plugins.ops.js";
 import { OrgSettingsOperations } from "./ops/org-settings.ops.js";
 import { OrgsOperations } from "./ops/orgs.ops.js";
+import { OutboxOperations } from "./ops/outbox.ops.js";
 import { PlatformOperationsProvider } from "./ops/platform.ops.js";
 import { PluginsOperations } from "./ops/plugins.ops.js";
 import { PreviewersOperations } from "./ops/previewers.ops.js";
@@ -102,6 +103,8 @@ export const PLATFORM_OPERATION_PROVIDERS = [
   AdminItemsOperations,
   // scheduled tasks (scheduled tasks spec §10)
   SchedulesOperations,
+  // dead outbox rows (transactional outbox spec §3.4)
+  OutboxOperations,
 ] as const;
 
 /**

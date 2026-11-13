@@ -39,7 +39,7 @@ export class OrgSettingsController {
   async get(@CurrentOrg() org: OrgContext): Promise<SettingsResponse> {
     return {
       settings: await this.settings.get(org.orgId),
-      deployment: this.settings.deployment(),
+      deployment: await this.settings.deployment(),
       sandboxLimits: await this.settings.sandboxLimits(org.orgId),
     };
   }
@@ -53,8 +53,16 @@ export class OrgSettingsController {
   ): Promise<SettingsResponse> {
     const p = requireUser(principal);
     return {
-      settings: await this.settings.update(org.orgId, body, p.account.id, patTokenId(p)),
-      deployment: this.settings.deployment(),
+      // an API token may narrow the sandbox, never widen it (sandbox dev tiers spec §2)
+      settings: await this.settings.update(
+        org.orgId,
+        body,
+        p.account.id,
+        patTokenId(p),
+        undefined,
+        { onlyNarrows: patTokenId(p) !== undefined },
+      ),
+      deployment: await this.settings.deployment(),
       sandboxLimits: await this.settings.sandboxLimits(org.orgId),
     };
   }

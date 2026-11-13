@@ -8,9 +8,10 @@ import { KernelDb } from "../../infra/database/kernel-db.js";
 import { TransactionHost } from "../../infra/database/transaction-host.js";
 import { Transactional } from "../../infra/database/transactional.decorator.js";
 import { KernelEvents } from "../../infra/events/kernel-events.js";
+import { OutboxService } from "../../infra/outbox/outbox.service.js";
 import { KERNEL_LOGGER } from "../../infra/tokens.js";
 import type { KernelLogger } from "../../log.js";
-import { TERMINAL_STATUSES } from "../run-finish.js";
+import { oweEnsureRun, TERMINAL_STATUSES } from "../run-jobs.js";
 import { childResult, type DispatchRow, deliveryRowOfChildRun, finishedEvent } from "./child.js";
 import { dispatchedIdemKey } from "./dispatch.js";
 
@@ -35,7 +36,7 @@ const DELIVERY_TEXT_MAX = 200_000;
  *
  * A background child's run reaching a terminal state ({@link childFinished}) writes the
  * display-only `subagent_finished` and a `finished` delivery in one transaction, both idempotent by
- * the child run, so of two finishers (the worker and a stop, the orphan sweep) exactly one writes
+ * the child run, so of two finishers (the worker, a stop, the `deliver-to-parent` job, the `run-orphan-check`) exactly one writes
  * them. A run that handed back a report and then completed writes no delivery (acceptance
  * 2026-11-07): the report already told the parent everything, and a content-free "completed" line
  * only woke an idle parent for nothing and pushed the report away from the end of its request. Fork invocations (phase D, `for_skill`) do not deliver: their parent run waits on the child
@@ -49,6 +50,7 @@ export class SubagentDeliveries {
     @Inject(KernelEvents) private readonly events: KernelEvents,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
+    @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
   ) {}
 
   /** The context's handle (the transaction of a `@Transactional` method, else the pool). */
@@ -62,7 +64,8 @@ export class SubagentDeliveries {
    * the child run's (a wake runs as that person, §7). Idempotent by `opts.idemKey` (a finish's
    * default is {@link finishedDeliveryIdemKey}; a report or a note must name its own): under the
    * parent conversation's row lock, an existing delivery returns null and writes nothing. After
-   * the commit: the log's notify and `subagent.delivered`. Returns the new event's seq.
+   * the commit: the log's notify and `subagent.delivered`; the parent's ensure-run backstop is
+   * owed in the transaction. Returns the new event's seq.
    */
   @Transactional()
   async deliverIn(
@@ -75,9 +78,9 @@ export class SubagentDeliveries {
     if (idemKey === undefined) throw new Error(`a ${d.kind} delivery needs its idempotency key`);
     const t = this.db;
     const parent = row.parentConversationId;
-    await t
+    const conv = await t
       .selectFrom("conversations")
-      .select("id")
+      .select("org_id")
       .where("id", "=", parent)
       .forUpdate()
       .executeTakeFirst();
@@ -108,6 +111,9 @@ export class SubagentDeliveries {
       },
     ]);
     if (!event) return null;
+    // the parent's wake is owed with the delivery: the wake after the commit (`BackgroundWake`)
+    // may never happen (transactional outbox spec §6)
+    if (conv) await oweEnsureRun(this.outbox, parent, event.seq, conv.org_id);
     afterCommit(async () => {
       await this.eventLog.notify(parent, event.seq);
       await this.events.emit("subagent.delivered", { conversationId: parent });

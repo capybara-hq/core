@@ -39,7 +39,7 @@ import NotFound from "../not-found";
  * platform offers this org, as object rows: name, chips (内置, Claude Code), components, scope,
  * the state in the org (已启用 / 未启用 / 需要配置 / 已启用 · 平台统一 / 未开放，可申请 / 已申请，
  * 等待处理) and the actions of {@link usePluginActions}. Org admins also get the 市场 tab (spec
- * §5.1): the marketplaces' entries, read-only, with 申请引入; it is left out while the entries
+ * §5.1): the marketplaces' entries, read-only, with 申请安装; it is left out while the entries
  * cannot be read (the deployment turned `orgMarketplaceBrowse` off: a 404), and the head's
  * 上传插件包 (a `.tgz` plugin package, or a skill `.zip`; see OrgPluginUploadDialog). The org's own
  * uploads carry 本组织上传; one waiting for the super admin reads 等待超级管理员确认 (a pending new
@@ -216,12 +216,12 @@ const keyOf = (e: MarketplaceEntry) => `${e.sourceId}/${e.name}/${e.version ?? "
 
 /**
  * The 市场 tab (org admins, spec §5.1 rule 3): the marketplaces' plugins, one row per plugin of a
- * marketplace at its latest version, read-only; 申请引入 asks the super admin to bring the
+ * marketplace at its latest version, read-only; 申请安装 asks the super admin to bring the
  * latest in (approving runs the import review with this org as the scope), and the row menu's
  * 其他版本 asks for another version (a deprecated one reads 已废弃 and cannot be asked for;
  * prereleases sit there while a stable version can be asked for). A version asked for in this
  * visit reads 已申请，等待处理 (the latest) or 已申请 <version>，等待处理; a plugin the deployment
- * has imported reads 已引入.
+ * has imported reads 已安装.
  */
 function Market({
   orgId,
@@ -297,7 +297,7 @@ function Market({
     !entryDeprecated(e) &&
     e.version !== null;
   /**
-   * 其他版本: 申请引入 each other version that can be asked for (asked ones read 已申请); a
+   * 其他版本: 申请安装 each other version that can be asked for (asked ones read 已申请); a
    * deprecated version reads 已废弃 (with the reason) and cannot be asked for.
    */
   const menuOf = ({ others }: MarketplacePlugin): MenuItem[] => {

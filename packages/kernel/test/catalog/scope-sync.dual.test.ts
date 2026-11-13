@@ -140,7 +140,7 @@ describe("plugin scope sync (dual replica)", () => {
       })
       .execute();
 
-    // Org creations on both replicas (each enqueues its org's sync on the replica that served it)
+    // Org creations on both replicas (each owes its org's sync on the replica that served it)
     const orgIds: string[] = [];
     const created = await Promise.all(
       Array.from({ length: 6 }, (_, i) =>
@@ -164,6 +164,14 @@ describe("plugin scope sync (dual replica)", () => {
 
     await waitFor(
       async () => {
+        // the org creations' owed rows delivered first (their fast path runs after the commit)
+        const owed = await db
+          .selectFrom("outbox")
+          .select("id")
+          .where("queue", "=", PLUGIN_SCOPE_QUEUE)
+          .where("dead_at", "is", null)
+          .execute();
+        if (owed.length > 0) return false;
         const c = await queue?.getJobCounts("waiting", "active", "delayed", "prioritized");
         return c !== undefined && Object.values(c).every((n) => n === 0);
       },

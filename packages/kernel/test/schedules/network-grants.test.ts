@@ -47,6 +47,7 @@ import {
   type TestKernel,
   waitFor,
 } from "../helpers/runs.js";
+import { webCaller } from "../helpers/step-context.js";
 import { FakeMachine, HELLO } from "../local-devices/fake-machine.js";
 
 /**
@@ -57,7 +58,10 @@ import { FakeMachine, HELLO } from "../local-devices/fake-machine.js";
  */
 
 const POLICY: DeviceLocalPolicySummary = {
-  network: "allowlist",
+  effectiveTier: "strict",
+  isolation: "sandbox",
+  localhost: "off",
+  unixSockets: "off",
   allowedDomains: [],
   remoteGrants: "owner",
 };
@@ -108,7 +112,10 @@ describe("planNetworkAsk with task grants", () => {
     unattendedAsk: "fail",
     forbiddenTools: [],
   };
-  const device = { features: ["networkReport", "policyOp"] as const, policy: POLICY };
+  const device = {
+    features: ["networkReport", "policyOp", "policyOpId"] as const,
+    policy: POLICY,
+  };
 
   it("a task-granted host the device still refused: the ignored note, no ask, no missing grant", () => {
     const plan = planNetworkAsk(
@@ -248,7 +255,7 @@ async function setup(policy: Partial<DeviceLocalPolicySummary> = {}): Promise<Se
   await machine.opened;
   machine.send({
     ...HELLO,
-    features: ["networkReport", "policyOp"],
+    features: ["networkReport", "policyOp", "policyOpId"],
     policy: dev.policy,
   } as typeof HELLO);
   await waitFor(
@@ -368,6 +375,7 @@ async function curlStep(
     agentVersion: 1,
     agent,
     accountId: s.accountId,
+    ...webCaller(s.accountId),
     signal: new AbortController().signal,
     unattended: {
       taskId,

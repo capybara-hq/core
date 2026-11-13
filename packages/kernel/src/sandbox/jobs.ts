@@ -2,6 +2,7 @@ import { getQueueToken } from "@nestjs/bullmq";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Job, Queue } from "bullmq";
 import { LockService } from "../infra/lock/lock.service.js";
+import type { OutboxService } from "../infra/outbox/outbox.service.js";
 import { LockedCron } from "../infra/schedule/locked-cron.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
@@ -15,10 +16,40 @@ export const SANDBOX_SUSPEND_JOB = "sandbox-suspend-idle";
 export const SANDBOX_DESTROY_JOB = "sandbox-destroy-inactive";
 
 /**
- * One-off job: destroy a batch of devices now, instance and file system (device
- * deletion, offboarding; data `{ deviceIds }`).
+ * One-off job: destroy devices now, instance and file system (data `{ deviceIds }`). Owed through
+ * the outbox by the transaction that soft-deletes the device (a device's deletion, offboarding),
+ * one device per job under {@link deviceDestroyJobId} ({@link oweDeviceDestroy}).
  */
 export const SANDBOX_DESTROY_FOR_JOB = "sandbox-destroy-for";
+
+/** The data of a {@link SANDBOX_DESTROY_FOR_JOB} job. */
+export interface SandboxDestroyForData {
+  deviceIds: string[];
+}
+
+/**
+ * The deterministic id of a deleted device's destroy job (no `:`): a device is deleted once, so
+ * its destruction is owed once.
+ */
+export const deviceDestroyJobId = (deviceId: string): string => `device-destroy-${deviceId}`;
+
+/**
+ * Owes the destruction of a device in the caller's transaction, the one that soft-deleted it
+ * (transactional outbox spec §8.1; throws outside a transaction).
+ */
+export function oweDeviceDestroy(
+  outbox: Pick<OutboxService, "add">,
+  deviceId: string,
+  orgId: string,
+): Promise<boolean> {
+  return outbox.add<SandboxDestroyForData>({
+    queue: MAINTENANCE_QUEUE_NAME,
+    name: SANDBOX_DESTROY_FOR_JOB,
+    jobId: deviceDestroyJobId(deviceId),
+    data: { deviceIds: [deviceId] },
+    orgId,
+  });
+}
 
 /**
  * One-off job: start a device over with empty files (`resetFileSystem`; data
@@ -34,32 +65,14 @@ export const resetFilesJobId = (deviceId: string): string =>
   `${SANDBOX_RESET_FILES_JOB}-${deviceId}`;
 
 /**
- * The producer of the sandbox maintenance jobs: {@link SANDBOX_DESTROY_FOR_JOB} (BullMQ's own job
- * ids, as before: every enqueue is a new job, also after a batch failed all its attempts) and
- * {@link SANDBOX_RESET_FILES_JOB}; `MaintenanceProcessor` consumes them.
+ * The producer of {@link SANDBOX_RESET_FILES_JOB} (destroys are owed through the outbox,
+ * {@link oweDeviceDestroy}); `MaintenanceProcessor` consumes both.
  */
 @Injectable()
 export class SandboxJobs {
   constructor(
     @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME)) private readonly queue: Pick<Queue, "add">,
   ) {}
-
-  /**
-   * Enqueues the destruction of these devices: a failed batch is retried whole (destroying
-   * one already destroyed does nothing).
-   */
-  async destroy(deviceIds: string[]): Promise<void> {
-    await this.queue.add(
-      SANDBOX_DESTROY_FOR_JOB,
-      { deviceIds },
-      {
-        attempts: 5,
-        backoff: { type: "exponential", delay: 30_000 },
-        removeOnComplete: true,
-        removeOnFail: 100,
-      },
-    );
-  }
 
   /**
    * Enqueues the reset of a device's files (see {@link resetFilesJobId}): retried on failure

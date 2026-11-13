@@ -7,7 +7,7 @@ import type { KernelSchemaDb, OrgNoticeKind } from "../db/kernel-schema.js";
 
 export type { OrgNoticeKind };
 
-/** The `detail` of each notice kind except `skill_renamed` (written by the platform migration). */
+/** The `detail` of each notice kind. */
 export interface OrgNoticeDetails {
   /** An org was added to the item's list, or its scope widened (`all_orgs`). */
   /** `displayName`: a plugin's display name, which the inbox names it by (null otherwise). */

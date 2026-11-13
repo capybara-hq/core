@@ -65,6 +65,11 @@ const WAKE_EVENT_TYPES = ["background_task_finished", "subagent_delivery"] as co
  * - the wake setting is on (the org's override, else `deploymentOn`);
  * - the root's queue is not paused and the root is not deleted (a paused root holds the wakes of
  *   the whole tree, agent map spec §5.3);
+ * - for a `subagent_delivery` to the root: the root's tree is not stopped (`tree_stopped_at`, set by
+ *   a person's stop of the root and cleared by the root's next run; agent map spec §6, changed in
+ *   acceptance 2026-11-13): no sub-agent's finish or report, whenever its child finished, wakes a
+ *   root a person stopped, the delivery waits for the next run. A sub-agent of a stopped tree is
+ *   never woken here (`RunQueue.childWakeIn` refuses it first);
  * - the event's trigger account can still send to the root (`canSend`, which the caller binds to
  *   the root);
  * - no other wake of this conversation started in the last {@link WAKE_WINDOW_MS} (else `later`).
@@ -103,18 +108,23 @@ export async function wakeDecisionIn(
     .orderBy("e.seq", "desc")
     .limit(CANDIDATES)
     .execute();
-  const candidates = [...finishes, ...deliveries]
-    .sort((a, b) => Number(b.seq) - Number(a.seq))
-    .slice(0, CANDIDATES);
-  if (candidates.length === 0) return null;
+  if (finishes.length === 0 && deliveries.length === 0) return null;
   const org = (await readOrgSettings(t, conv.orgId)).wakeOnBackgroundTask;
   if (!effectiveWakeOnBackgroundTask(deploymentOn, org)) return null;
+  // read under the root's row lock when `conv` is the root (`RunQueue.ensureRunIn` holds it), so a
+  // person's stop of the tree (which writes `tree_stopped_at` on that row) is seen by every wake
+  // decided after its commit
   const root = await t
     .selectFrom("conversations")
-    .select(["queue_paused", "deleted_at"])
+    .select(["queue_paused", "deleted_at", "tree_stopped_at"])
     .where("id", "=", conv.rootId)
     .executeTakeFirst();
   if (!root || root.queue_paused || root.deleted_at !== null) return null;
+  const treeStopped = root.tree_stopped_at !== null;
+  const candidates = [...finishes, ...(treeStopped ? [] : deliveries)]
+    .sort((a, b) => Number(b.seq) - Number(a.seq))
+    .slice(0, CANDIDATES);
+  if (candidates.length === 0) return null;
   let boundary: { seq: number; triggerAccountId: string } | undefined;
   for (const c of candidates) {
     if (await canSend(c.account)) {

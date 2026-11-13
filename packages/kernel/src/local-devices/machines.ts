@@ -14,12 +14,24 @@ import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { KERNEL_BUS, KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { LOCAL_PROVIDER } from "../sandbox/providers.js";
 import { deviceNotFound } from "../sandbox/sandbox.service.js";
 import { deviceRevokedTopic } from "./keys.js";
-import { deviceFeaturesOf, localPolicyOf } from "./policy-summary.js";
+import { DEVICE_OP_RESOLVE_JOB, deviceOpReportedJobId } from "./policy-op-jobs.js";
+import {
+  deviceFeaturesOf,
+  isolationOf,
+  localPolicyDiff,
+  localPolicyOf,
+  opExplains,
+  opVisibleIn,
+  pendingPolicyOpsOf,
+  type ReportedPolicyOp,
+} from "./policy-summary.js";
 import { LocalDeviceRelay } from "./relay.js";
 
 /** The machine credential's prefix (`cap_dev_` plus 32 random bytes, base64url). */
@@ -71,6 +83,7 @@ export class MachinesService {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(LocalDeviceRelay) private readonly relay: Pick<LocalDeviceRelay, "holderLive" | "send">,
     @Inject(KERNEL_BUS) private readonly bus: ExtensionContext["bus"],
+    @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
   ) {}
 
@@ -194,13 +207,36 @@ export class MachinesService {
    * decision 2026-11-08), so conversations get the files-reset notice. A previous machine that
    * never said hello has no known roots: nothing to compare. The reported features (known ones
    * only) and local policy summary (null when absent or malformed) replace the stored ones, so a
-   * program downgraded to one without them is no longer sent what it cannot do.
+   * program downgraded to one without them is no longer sent what it cannot do. A summary the
+   * kernel cannot read (`hello.policy` dropped by the frame parser) is kept as its isolation
+   * alone, read from `rawPolicy` (the frame's raw `policy`; {@link isolationOf}: anything but
+   * `sandbox` is `none`), so it never hides that commands run without a sandbox. A reported
+   * isolation that differs from the stored one (none stored counts as `sandbox`) is audited
+   * `device.isolation_reported` (sandbox dev tiers spec §10.4), once per change; a change of what
+   * the owner sets, made on the machine while it was away, is audited `device.policy_changed`
+   * ({@link reportedPolicy}). The outcomes of its recent policy ops (`recentOps`) backfill the
+   * platform's ops still pending on the row ({@link backfillOps}).
    */
   @Transactional()
-  async recordHello(machineId: string, hello: DeviceHello): Promise<void> {
+  async recordHello(
+    machineId: string,
+    hello: DeviceHello,
+    rawPolicy: unknown = hello.policy,
+  ): Promise<void> {
     const self = await this.db
       .selectFrom("device_machines")
-      .select(["device_id", "name", "os", "arch", "roots", "created_at"])
+      .select([
+        "device_id",
+        "org_id",
+        "account_id",
+        "name",
+        "os",
+        "arch",
+        "roots",
+        "created_at",
+        "local_policy",
+        "pending_policy_ops",
+      ])
       .where("id", "=", machineId)
       .where("revoked_at", "is", null)
       .forUpdate()
@@ -231,6 +267,7 @@ export class MachinesService {
           .execute();
       }
     }
+    const policy = await this.reportedPolicy(machineId, self, hello.policy, rawPolicy);
     await this.db
       .updateTable("device_machines")
       .set({
@@ -241,12 +278,167 @@ export class MachinesService {
         roots: JSON.stringify(hello.roots),
         session_isolation: hello.sessionIsolation,
         features: deviceFeaturesOf(hello.features),
-        local_policy: jsonOrNull(localPolicyOf(hello.policy)),
+        local_policy: jsonOrNull(policy),
         last_seen_at: sql<Date>`now()`,
       })
       .where("id", "=", machineId)
       .where("revoked_at", "is", null)
       .execute();
+    if (hello.recentOps !== undefined) {
+      await this.backfillOps(machineId, self, hello.recentOps, localPolicyOf(hello.policy));
+    }
+  }
+
+  /**
+   * Hello backfill (transactional outbox spec §7): a pending op of the platform's whose outcome
+   * the hello reports (`applied`, `refused`), or that it does not list although the op can no
+   * longer reach the machine (`absent`: past its `resolveAt`), is marked `reported` and owes a
+   * `device-op-resolve` job (`device-op-reported-<opId>`) that records the outcome. An op the
+   * machine logged only as `started` (it stopped between the log and the answer) is judged once
+   * past its `resolveAt` by the policy the hello reports: its change there → `applied`, else
+   * `interrupted` (within the window, or with no readable policy, it is left). An expired entry
+   * (past `until`) is skipped: the machine's reports are no longer the op's. Runs in the caller's
+   * transaction, with the machine's row locked; an op already reported is not owed again.
+   */
+  private async backfillOps(
+    machineId: string,
+    self: { org_id: string; pending_policy_ops: unknown },
+    recentOps: NonNullable<DeviceHello["recentOps"]>,
+    policy: DeviceLocalPolicySummary | null,
+  ): Promise<void> {
+    const outcomes = new Map(recentOps.map((r) => [r.opId, r.outcome]));
+    const now = Date.now();
+    const reported = new Map<string, ReportedPolicyOp>();
+    for (const op of pendingPolicyOpsOf(self.pending_policy_ops)) {
+      if (op.reported !== undefined || op.until <= now) continue;
+      const outcome = outcomes.get(op.id);
+      if (outcome === "applied" || outcome === "refused") reported.set(op.id, { outcome });
+      else if (now < op.resolveAt) continue;
+      else if (outcome === undefined) reported.set(op.id, { outcome: "absent" });
+      else if (policy !== null) {
+        reported.set(op.id, { outcome: opVisibleIn(op, policy) ? "applied" : "interrupted" });
+      }
+    }
+    if (reported.size === 0) return;
+    const ops = Array.isArray(self.pending_policy_ops) ? self.pending_policy_ops : [];
+    const next = ops.map((e: unknown) => {
+      const id = (e as { id?: unknown } | null)?.id;
+      const r = typeof id === "string" ? reported.get(id) : undefined;
+      return r === undefined ? e : { ...(e as object), reported: r };
+    });
+    await this.db
+      .updateTable("device_machines")
+      .set({ pending_policy_ops: JSON.stringify(next) })
+      .where("id", "=", machineId)
+      .execute();
+    for (const opId of reported.keys()) {
+      await this.outbox.add({
+        queue: MAINTENANCE_QUEUE_NAME,
+        name: DEVICE_OP_RESOLVE_JOB,
+        jobId: deviceOpReportedJobId(opId),
+        data: { machineId, opId },
+        orgId: self.org_id,
+      });
+    }
+  }
+
+  /**
+   * Stores the local policy summary a connected program pushed after its hello (a `policy` frame:
+   * its policy file changed on the machine, its localhost proxy guard flipped, a new tier
+   * ceiling), read and audited as the hello's ({@link recordHello}): an unreadable summary keeps
+   * its isolation alone (`rawPolicy`); a change the owner made on the machine is audited
+   * `device.policy_changed` (`via: "device"`), else a changed isolation `device.isolation_reported`.
+   * The next sandbox call then records a new `device_paths` event when the facts the model is told
+   * changed. A revoked machine is left alone.
+   */
+  @Transactional()
+  async recordPolicy(
+    machineId: string,
+    summary: DeviceLocalPolicySummary | undefined,
+    rawPolicy: unknown = summary,
+  ): Promise<void> {
+    const self = await this.db
+      .selectFrom("device_machines")
+      .select(["device_id", "org_id", "account_id", "local_policy", "pending_policy_ops"])
+      .where("id", "=", machineId)
+      .where("revoked_at", "is", null)
+      .forUpdate()
+      .executeTakeFirst();
+    if (self === undefined) return;
+    const policy = await this.reportedPolicy(machineId, self, summary, rawPolicy);
+    await this.db
+      .updateTable("device_machines")
+      .set({ local_policy: jsonOrNull(policy), last_seen_at: sql<Date>`now()` })
+      .where("id", "=", machineId)
+      .where("revoked_at", "is", null)
+      .execute();
+  }
+
+  /**
+   * The summary to store for one a program reported (hello or `policy` frame): the parsed one,
+   * else its raw isolation alone, else null. When both the stored and the reported summary are
+   * readable and what the owner sets changed ({@link localPolicyDiff}) by no `policy` op the
+   * platform sent ({@link opExplains}: its answer may come after the machine's own report), the
+   * owner changed it on the machine (`capybara-device policy ...`): audited
+   * `device.policy_changed` with `via: "device"`, the isolation with it, so the device page lists
+   * it beside the platform's changes; one an op explains is not audited here (the op's answer
+   * is). Otherwise a reported isolation that differs from the stored one (none stored counts as
+   * `sandbox`) is audited `device.isolation_reported`. A summary reported again is no change. Runs in the caller's transaction, with the machine's row locked.
+   */
+  private async reportedPolicy(
+    machineId: string,
+    self: {
+      device_id: string;
+      org_id: string;
+      account_id: string;
+      local_policy: unknown;
+      pending_policy_ops: unknown;
+    },
+    reported: DeviceLocalPolicySummary | undefined,
+    rawPolicy: unknown,
+  ): Promise<DeviceLocalPolicySummary | { isolation: "sandbox" | "none" } | null> {
+    const summary = localPolicyOf(reported);
+    const prev = localPolicyOf(self.local_policy);
+    const diff = summary !== null && prev !== null ? localPolicyDiff(prev, summary) : null;
+    if (diff !== null) {
+      const now = Date.now();
+      const byOp = pendingPolicyOpsOf(self.pending_policy_ops).some(
+        (op) => op.until > now && opExplains(op, diff),
+      );
+      // the platform's op: its answer lists it (the isolation with it)
+      if (byOp) return summary;
+      await audit(this.db.db, {
+        actorAccountId: self.account_id,
+        orgId: self.org_id,
+        action: "device.policy_changed",
+        target: self.device_id,
+        detail: {
+          add: diff.add,
+          remove: diff.remove,
+          ...(diff.tier !== undefined && { tier: diff.tier.to, tierFrom: diff.tier.from }),
+          ...(diff.localhost !== undefined && { localhost: diff.localhost }),
+          ...(diff.isolation !== undefined && { isolation: diff.isolation }),
+          ...(diff.remoteGrants !== undefined && { remoteGrants: diff.remoteGrants }),
+          by: self.account_id,
+          via: "device",
+          machineId,
+          approvalId: null,
+        },
+      });
+      return summary;
+    }
+    const isolation = summary?.isolation ?? isolationOf(rawPolicy);
+    const before = isolationOf(self.local_policy) ?? "sandbox";
+    if (isolation !== null && isolation !== before) {
+      await audit(this.db.db, {
+        actorAccountId: self.account_id,
+        orgId: self.org_id,
+        action: "device.isolation_reported",
+        target: self.device_id,
+        detail: { machineId, isolation, previous: before },
+      });
+    }
+    return summary ?? (isolation === null ? null : { isolation });
   }
 
   /** Marks the machine seen (a ping); writes at most once every 60 seconds. */

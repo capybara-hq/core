@@ -391,9 +391,16 @@ test("phase D: invoke skills from the / menu and typed, send one while running, 
   await expect(report).toHaveCount(1, { timeout: 60_000 });
   const rows = page.locator('[data-entry="subagents"]');
   await expect(rows.last()).toContainText(designZh("subagent.done").replace("{n}", "1"));
+  // Open the report once the run has settled: while the reply streams, the thread follows the
+  // bottom, so each wrapped line moves the report up and a click whose press and release straddle
+  // that move lands on another element and leaves the report closed.
+  await expect(answered).toHaveCount(5, { timeout: 60_000 });
+  await expect(page.locator('[data-cap-part="shell"]')).toHaveAttribute(
+    "data-cap-state",
+    /(^| )run=idle( |$)/,
+  );
   await report.getByRole("button", { name: zh.chat.skillReport }).click();
   await expect(report).toContainText('Report from the sub-agent that ran the skill "e2e-review"');
-  await expect(answered).toHaveCount(5, { timeout: 60_000 });
   const kinds = await page
     .locator("[data-entry]")
     .evaluateAll((els) => els.map((e) => e.getAttribute("data-entry")));

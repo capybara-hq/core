@@ -1,5 +1,67 @@
 # @capybara-hq/testing
 
+## 0.1.0-rc.17
+
+### Patch Changes
+
+- fc46148: Call `context@1` providers at a chat run's start: every provider enabled in the org with a valid
+  config is asked in parallel (2 s each, outside any transaction), and a `plugin_context` event is
+  appended when its text changed; a throw, a timeout or text over 32 KB is skipped and logged, and a
+  provider switched off in the org gets an empty event. The import review shows `provides
+  context@1` as adding text to the model's context. Tool step contexts now always carry the source,
+  the owner and the role. `@capybara-hq/testing` gains the `fake-context` fixture.
+- b7e70f7: Deliver the lifecycle hooks `org.member_removed`, `agent.deleted` and `org.deleted` durably: one
+  job per subscribing plugin is owed through the transactional outbox in the deleting transaction and
+  delivered through the `cap-kernel-lifecycle` queue, with retries (shown in the admin overview's
+  queues). Add the fake extension `fake-lifecycle`.
+- b177905: The compose files and test containers run PostgreSQL 17 with pgvector (`pgvector/pgvector:pg17`),
+  and migration 0123 creates the `vector` extension in `public` when the server offers it and the
+  migrating role may create it; otherwise it only raises a notice, and plugins fall back to `real[]`.
+  `@capybara-hq/testing` exports `startPostgresContainer` (with an `image` option) and `TEST_PG_IMAGE`.
+- fcfabb4: Offer an extension tool only in the conversation sources its `spec.sources` lists (hidden with the
+  reason elsewhere, a resumed call refused), and give plugin tool handlers the conversation's
+  `source`, its owner (`ownerAccountId`) and the trigger account's `role`. `fake-tools-ui` gains the
+  tool `web-only`.
+- Updated dependencies [fc46148]
+- Updated dependencies [23c16d8]
+- Updated dependencies [b7e70f7]
+- Updated dependencies [da677b6]
+- Updated dependencies [b177905]
+- Updated dependencies [fcfabb4]
+- Updated dependencies [b4d2b44]
+- Updated dependencies [240801c]
+  - @capybara-hq/kernel@0.1.0-rc.25
+  - @capybara-hq/plugin-sdk@0.1.0-rc.19
+  - @capybara-hq/plugin-tools@0.1.0-rc.13
+
+## 0.1.0-rc.16
+
+### Minor Changes
+
+- b8a3c5b: Runs follow the transactional outbox: a run's job, its ensure-run backstop, resumes, wait timeouts,
+  sub-agent dispatches, deliveries and tree stops are owed in the transactions that cause them. A run
+  nobody runs any more is repaired by one `run-orphan-check` (worker role, every minute): a running
+  run whose replica died is failed `run.orphaned` and reported to its parent; a queued run whose job
+  the queue lost is queued again and shown in the admin overview (队列丢失了后台任务). Reading a
+  conversation (events, SSE) no longer changes run state, the wait sweep is gone, and a finished run
+  cancels its pending approvals and questions in its terminal transaction. The dual-replica harness
+  fails `stop()` when the replicas left a queued run without its job.
+
+### Patch Changes
+
+- Updated dependencies [ba36733]
+- Updated dependencies [67e6ad5]
+- Updated dependencies [9370947]
+- Updated dependencies [e76028b]
+- Updated dependencies [e2731bd]
+- Updated dependencies [c619811]
+- Updated dependencies [b8a3c5b]
+- Updated dependencies [36d904d]
+- Updated dependencies [86c258c]
+  - @capybara-hq/kernel@0.1.0-rc.24
+  - @capybara-hq/plugin-sdk@0.1.0-rc.18
+  - @capybara-hq/plugin-tools@0.1.0-rc.13
+
 ## 0.1.0-rc.15
 
 ### Patch Changes

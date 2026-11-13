@@ -39,6 +39,7 @@ beforeAll(async () => {
     values ('ps1', 'report', 'd', 1)`.execute(db);
   await sql`insert into capybara.skills (id, org_id, scope, name, description, current_version)
     values ('s1', 'org-a', 'org', 'sk', 'd', 1)`.execute(db);
+  // `skill_renamed` is still a valid notice kind at this migration (0084)
   await sql`insert into capybara.org_notices (id, org_id, kind, detail)
     values ('00000000-0000-0000-0000-0000000000a1', 'org-a', 'skill_renamed', '{}'::jsonb)`.execute(
     db,

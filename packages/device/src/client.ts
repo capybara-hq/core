@@ -10,7 +10,14 @@ import WebSocket from "ws";
 import type { CommandLog } from "./command-log.js";
 import type { Executor } from "./exec/types.js";
 import type { PolicyStore } from "./policy-store.js";
-import { logEntryFor, policySummary, serveOp } from "./server-ops.js";
+import {
+  logEntryFor,
+  type OpContext,
+  policySummary,
+  type SeenState,
+  serveOp,
+  summaryFacts,
+} from "./server-ops.js";
 import type { Credential } from "./state.js";
 import { PROGRAM_VERSION } from "./version.js";
 
@@ -44,12 +51,19 @@ export interface ConnectOptions {
   random?: () => number;
   now?: () => number;
   programVersion?: string;
+  /** The platform the policy summary describes (default: this process's; for tests). */
+  platform?: NodeJS.Platform;
   /** A connection must stay up this long before the backoff resets (default 10 s). */
   stableMs?: number;
   /** Terminate a socket that heard nothing from the server for this long (default 60 s). */
   livenessMs?: number;
   /** Terminate a socket still closing this long after we asked it to close (default 2 s). */
   closeTimeoutMs?: number;
+  /**
+   * How often a connected program checks its policy summary for a change made on the machine
+   * (default 2 s); a change is pushed to the deployment as a `policy` frame.
+   */
+  policyCheckMs?: number;
 }
 
 /**
@@ -102,6 +116,7 @@ export function connect(
   const stableMs = opts.stableMs ?? 10_000;
   const livenessMs = opts.livenessMs ?? 60_000;
   const closeTimeoutMs = opts.closeTimeoutMs ?? 2000;
+  const policyCheckMs = opts.policyCheckMs ?? 2000;
 
   const lifetime = new AbortController();
   let ws: WebSocket | undefined;
@@ -110,6 +125,14 @@ export function connect(
   let exitAfterStop: { exit: number; message?: string } | undefined;
   let session: ((end: SessionEnd) => void) | undefined;
   let drainTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /** What the requests of this run have seen (the latest exec's tier limits), over reconnects. */
+  const seen: SeenState = {};
+  const ctx: OpContext = {
+    seen,
+    ...(opts.policy !== undefined && { policy: opts.policy }),
+    ...(opts.platform !== undefined && { platform: opts.platform }),
+  };
 
   const running = new Map<string, AbortController>();
   /** Requests the kernel gave up on: never started, or their result is dropped. */
@@ -126,6 +149,30 @@ export function connect(
   };
 
   const isOpen = (): boolean => ws !== undefined && ws.readyState === WebSocket.OPEN;
+
+  /** The policy summary now: the store's policy (re-read when its file changed) and the facts. */
+  const summaryNow = () =>
+    opts.policy === undefined
+      ? undefined
+      : policySummary(opts.policy.current(), summaryFacts(executor, ctx));
+  /** The summary the deployment last got on this connection (hello, `policy` op, `policy` frame). */
+  let sentPolicy: string | undefined;
+
+  /**
+   * Pushes the policy summary when it differs from the one the deployment last got: the owner
+   * changed the policy on the machine (`capybara-device policy ...`), the localhost proxy guard
+   * flipped, or an exec brought a new tier ceiling. Without it the deployment would learn the
+   * change only at the next connect.
+   */
+  const pushPolicy = (): void => {
+    if (!isOpen()) return;
+    const summary = summaryNow();
+    if (summary === undefined) return;
+    const json = JSON.stringify(summary);
+    if (json === sentPolicy) return;
+    sentPolicy = json;
+    ws?.send(JSON.stringify({ type: "policy", policy: summary }));
+  };
 
   /** `res`, or an error answer when its frame would exceed the deployment's frame limit. */
   const fit = (res: DeviceRes): DeviceRes =>
@@ -203,10 +250,9 @@ export function connect(
     }
     const ctl = new AbortController();
     running.set(req.id, ctl);
-    const ctx = opts.policy !== undefined ? { policy: opts.policy } : {};
-    void serveOp(executor, req, ctl.signal, ctx).then(({ res, detail }) => {
+    void serveOp(executor, req, ctl.signal, ctx).then(({ res, detail, run }) => {
       running.delete(req.id);
-      opts.log?.append(logEntryFor(req, res, new Date(now()), detail));
+      opts.log?.append(logEntryFor(req, res, new Date(now()), detail, run));
       if (cancelled.has(req.id)) {
         // The kernel is no longer waiting for this one.
       } else if (req.op === "stop") {
@@ -224,7 +270,13 @@ export function connect(
         }
         return;
       } else {
+        // a policy op's answer carries the summary the deployment stores
+        if (req.op === "policy" && res.ok) {
+          sentPolicy = JSON.stringify((res.result as { policy: unknown }).policy);
+        }
         deliver(res);
+        // an exec may have changed the facts (the proxy guard, the tier ceiling)
+        pushPolicy();
       }
       maybeFinishDrain();
     });
@@ -264,12 +316,18 @@ export function connect(
 
   /**
    * The hello, built at each (re)connect: the OS mode reports blocked hosts per command (Docker
-   * mode has no per-host view); the policy summary is the store's policy now.
+   * mode has no per-host view); the device applies tiers (`limits.tier` / `defaultTier` /
+   * `devHosts`); the policy summary is the store's policy now, with the latest ceiling seen; then the
+   * outcomes of the latest policy ops by op id.
    */
   const hello = (): DeviceHello => {
+    const summary = summaryNow();
+    sentPolicy = summary === undefined ? undefined : JSON.stringify(summary);
     const features: DeviceFeature[] = [];
     if (executor.mode === "os") features.push("networkReport");
-    if (opts.policy !== undefined) features.push("policyOp");
+    // the policy op, logged by its op id (policy-ops.json next to the policy)
+    if (opts.policy !== undefined) features.push("policyOp", "policyOpId");
+    features.push("tiers");
     return {
       type: "hello",
       protocol: DEVICE_PROTOCOL_VERSION,
@@ -280,7 +338,9 @@ export function connect(
       roots: executor.roots,
       sessionIsolation: false,
       features,
-      ...(opts.policy !== undefined && { policy: policySummary(opts.policy.current()) }),
+      ...(summary !== undefined && { policy: summary }),
+      // what became of the latest policy ops, so an answer lost with a connection is not lost
+      ...(opts.policy !== undefined && { recentOps: opts.policy.ops.recent() }),
     };
   };
 
@@ -308,6 +368,7 @@ export function connect(
       ws = sock;
       let liveness: ReturnType<typeof setTimeout> | undefined;
       let stable: ReturnType<typeof setTimeout> | undefined;
+      let policyCheck: ReturnType<typeof setInterval> | undefined;
       let opened = false;
       /** The deployment answered the upgrade with an HTTP status (already handled). */
       let answered = false;
@@ -324,6 +385,7 @@ export function connect(
           lastReport = undefined;
         }, stableMs);
         sock.send(JSON.stringify(hello()));
+        if (opts.policy !== undefined) policyCheck = setInterval(pushPolicy, policyCheckMs);
         prune();
         for (const [id, p] of pending) {
           pending.delete(id);
@@ -361,6 +423,7 @@ export function connect(
       sock.on("close", (code, reason) => {
         clearTimeout(liveness);
         clearTimeout(stable);
+        clearInterval(policyCheck);
         if (ws === sock) ws = undefined;
         if (exitAfterStop) return endSession(exitAfterStop);
         if (code === 4002) return endSession({ exit: 0, message: REPLACED_MESSAGE });

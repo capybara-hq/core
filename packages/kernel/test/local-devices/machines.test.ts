@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { DeviceHello } from "@capybara-hq/plugin-sdk";
+import type { DeviceHello, DeviceLocalPolicySummary } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -184,25 +184,27 @@ describe("MachinesService", () => {
       sessionIsolation: false,
     };
     const policy = {
-      network: "allowlist" as const,
+      effectiveTier: "strict" as const,
+      isolation: "sandbox" as const,
+      localhost: "off" as const,
+      unixSockets: "off" as const,
       allowedDomains: ["pypi.org"],
       remoteGrants: "owner" as const,
     };
     await machines.recordHello(m.machineId, {
       ...hello,
-      features: ["policyOp", "teleport", "networkReport"] as unknown as NonNullable<
+      features: ["policyOpId", "policyOp", "teleport", "networkReport"] as unknown as NonNullable<
         DeviceHello["features"]
       >,
       policy,
     });
     expect(await machines.activeFor(m.deviceId)).toMatchObject({
-      features: ["networkReport", "policyOp"],
+      features: ["networkReport", "policyOp", "policyOpId"],
       localPolicy: policy,
     });
     expect((await devices.get(orgId, a, m.deviceId)).network).toEqual({
-      features: ["networkReport", "policyOp"],
+      features: ["networkReport", "policyOp", "policyOpId"],
       policy,
-      recent: [],
     });
 
     // a malformed summary is none
@@ -224,8 +226,138 @@ describe("MachinesService", () => {
     expect((await devices.get(orgId, a, m.deviceId)).network).toEqual({
       features: [],
       policy: null,
-      recent: [],
     });
+  });
+
+  it("recordHello audits device.isolation_reported once per change (sandbox dev tiers spec §10.4)", async () => {
+    const a = await member();
+    const m = await connected(a);
+    const hello: DeviceHello = {
+      type: "hello",
+      protocol: 1,
+      programVersion: "0.3.0",
+      os: "linux",
+      arch: "x64",
+      mode: "os",
+      roots: { workspace: "/w", skills: "/s", tmp: "/t" },
+      sessionIsolation: false,
+      features: ["networkReport", "policyOp", "tiers"],
+    };
+    const policy = (isolation: "sandbox" | "none") => ({
+      tier: "open" as const,
+      effectiveTier: "open" as const,
+      isolation,
+      localhost: "on" as const,
+      unixSockets: "roots" as const,
+      allowedDomains: [],
+      remoteGrants: "owner" as const,
+    });
+    const reported = () =>
+      db
+        .selectFrom("audit_events")
+        .select(["actor_account_id", "org_id", "detail"])
+        .where("target", "=", m.deviceId)
+        .where("action", "=", "device.isolation_reported")
+        .orderBy("at")
+        .orderBy("id")
+        .execute();
+    // a first hello with the sandbox on is no change; one without a summary neither
+    await machines.recordHello(m.machineId, { ...hello, policy: policy("sandbox") });
+    await machines.recordHello(m.machineId, hello);
+    expect(await reported()).toEqual([]);
+    // off: audited once, however many hellos say so
+    await machines.recordHello(m.machineId, { ...hello, policy: policy("none") });
+    await machines.recordHello(m.machineId, { ...hello, policy: policy("none") });
+    // back on, from a summary to a summary: the owner's change on the machine, listed once
+    await machines.recordHello(m.machineId, { ...hello, policy: policy("sandbox") });
+    await machines.recordHello(m.machineId, { ...hello, policy: policy("sandbox") });
+    expect(await reported()).toEqual([
+      {
+        actor_account_id: a,
+        org_id: orgId,
+        detail: { machineId: m.machineId, isolation: "none", previous: "sandbox" },
+      },
+    ]);
+    // the device page lists both, made on the device
+    const recent = (await devices.get(orgId, a, m.deviceId)).sandbox.recent;
+    expect(recent.map((r) => [r.kind, r.isolation, r.via])).toEqual([
+      ["policy", "sandbox", "device"],
+      ["isolation", "none", "device"],
+    ]);
+  });
+
+  it("recordPolicy lists the owner's change on the machine once, across replicas (sandbox dev tiers spec §10.4)", async () => {
+    const a = await member();
+    const m = await connected(a);
+    const base: DeviceLocalPolicySummary = {
+      effectiveTier: "strict",
+      isolation: "sandbox",
+      localhost: "off",
+      unixSockets: "off",
+      allowedDomains: ["pypi.org"],
+      remoteGrants: "owner",
+    };
+    const changes = () =>
+      db
+        .selectFrom("audit_events")
+        .select(["actor_account_id", "detail"])
+        .where("target", "=", m.deviceId)
+        .where("action", "=", "device.policy_changed")
+        .orderBy("at")
+        .orderBy("id")
+        .execute();
+    // the first summary a machine reports is no change
+    await machines.recordPolicy(m.machineId, base);
+    expect(await changes()).toEqual([]);
+    // `policy set localhost allow` and `policy set tier dev`, reported to both replicas at once,
+    // and again
+    const k2 = await startKernel(runConfig({ pg: pgc.url, redis: rd.url }, { roles: ["api"] }));
+    try {
+      const other = k2.app.get(MachinesService);
+      const next = {
+        ...base,
+        tier: "dev" as const,
+        effectiveTier: "dev" as const,
+        localhost: "on" as const,
+      };
+      await Promise.all([
+        machines.recordPolicy(m.machineId, next),
+        other.recordPolicy(m.machineId, next),
+        machines.recordPolicy(m.machineId, next),
+        other.recordPolicy(m.machineId, next),
+      ]);
+    } finally {
+      await k2.close();
+    }
+    // `policy add allowedDomains files.example.com`; an effective tier alone is no owner change
+    const last = {
+      ...base,
+      tier: "dev" as const,
+      effectiveTier: "strict" as const,
+      localhost: "on" as const,
+      allowedDomains: ["pypi.org", "files.example.com"],
+    };
+    await machines.recordPolicy(m.machineId, { ...last, allowedDomains: ["pypi.org"] });
+    await machines.recordPolicy(m.machineId, last);
+    await machines.recordPolicy(m.machineId, last);
+    const common = {
+      by: a,
+      via: "device",
+      machineId: m.machineId,
+      approvalId: null,
+    };
+    expect(await changes()).toEqual([
+      {
+        actor_account_id: a,
+        detail: { add: [], remove: [], tier: "dev", tierFrom: null, localhost: "on", ...common },
+      },
+      { actor_account_id: a, detail: { add: ["files.example.com"], remove: [], ...common } },
+    ]);
+    const recent = (await devices.get(orgId, a, m.deviceId)).sandbox.recent;
+    expect(recent.map((r) => [r.add, r.tier, r.localhost, r.via, r.by])).toEqual([
+      [["files.example.com"], null, null, "device", expect.any(String)],
+      [[], { from: null, to: "dev" }, "on", "device", expect.any(String)],
+    ]);
   });
 
   it("recordHello stores what the program reported; touch writes at most every 60 s", async () => {

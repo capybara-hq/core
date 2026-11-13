@@ -168,11 +168,29 @@ describe("output-cleanup", () => {
 });
 
 describe("MaintenanceProcessor (the one consumer)", () => {
-  it("dispatches each one-off job by name to its domain, a periodic job's name to its body; an unknown name is only warned", async () => {
+  it("dispatches each one-off job by name to its domain, a periodic job's name to its body; an unknown name fails", async () => {
     const calls: unknown[][] = [];
     const warned: unknown[][] = [];
     const processor = new MaintenanceProcessor(
-      { processTimeout: async (job, token) => void calls.push(["wait", job.data, token]) },
+      {
+        processTimeout: async (job, token) => void calls.push(["wait", job.data, token]),
+        childFinished: async (id) => {
+          calls.push(["deliver", id]);
+          return false;
+        },
+        stopChildren: async (id, by) => {
+          calls.push(["stop-children", id, by]);
+          return 0;
+        },
+        stopDescendantsOfStopped: async (id) => {
+          calls.push(["stop-descendants", id]);
+          return 0;
+        },
+        stopTree: async (id, by, opts) => {
+          calls.push(["stop-tree", id, by, opts]);
+          return 0;
+        },
+      },
       {
         destroyDevice: async (id) => void calls.push(["sandbox", id]),
         resetFileSystem: async (id) => void calls.push(["reset", id]),
@@ -184,6 +202,7 @@ describe("MaintenanceProcessor (the one consumer)", () => {
         },
       },
       { runSyncJob: async (d) => void calls.push(["directory", d]) },
+      { stopRun: async (d) => void calls.push(["run-stop", d]) },
       {
         ensureRun: async (id) => {
           calls.push(["wake", id]);
@@ -191,7 +210,11 @@ describe("MaintenanceProcessor (the one consumer)", () => {
         },
       },
       { run: async (id) => void calls.push(["owned-cleanup", id]) },
-      { fire: async (id) => void calls.push(["sched-fire", id]) },
+      {
+        fire: async (id) => void calls.push(["sched-fire", id]),
+        settle: async (d) => void calls.push(["sched-settle", d]),
+      },
+      { resolve: async (d) => void calls.push(["device-op-resolve", d]) },
       {
         runNow: async (name) => {
           if (name !== "sandbox-suspend-idle") return false;
@@ -210,25 +233,39 @@ describe("MaintenanceProcessor (the one consumer)", () => {
       job("drift-connector", { orgId: "o", connectorId: "k", trigger: "schedule" }),
     );
     await processor.process(job("directory-sync", { orgId: "o" }));
+    await processor.process(job("run-stop", { conversationId: "c4", runId: "r4" }));
     await processor.process(job("bg-wake", { conversationId: "c2" }));
+    await processor.process(job("stop-tree", { runId: "r1" }));
+    await processor.process(job("stop-tree", { conversationId: "c3", byAccountId: "a1" }));
+    await processor.process(job("deliver-to-parent", { childRunId: "r2" }));
     await processor.process(job("owned-plugin-cleanup", { itemId: "i1" }));
     await processor.process(job("sched-fire", { taskRunId: "tr1" }));
+    await processor.process(job("sched-settle", { taskRunId: "tr1", check: 2 }));
+    await processor.process(job("device-op-resolve", { machineId: "m1", opId: "op1" }));
     await processor.process(job("sandbox-suspend-idle", {}));
-    await processor.process(job("no-such-job", {}));
+    // an unknown name fails (BullMQ retries it, a newer replica knows it), never completes unrun
+    await expect(processor.process(job("no-such-job", {}))).rejects.toThrow(
+      'unknown maintenance job "no-such-job"',
+    );
     expect(calls).toEqual([
       ["wait", { waitId: "w" }, "tok"],
       ["sandbox", "c1"],
       ["reset", "e1"],
       ["drift", "o", "k", "schedule"],
       ["directory", { orgId: "o" }],
+      ["run-stop", { conversationId: "c4", runId: "r4" }],
       ["wake", "c2"],
+      ["stop-children", "r1", null],
+      ["stop-descendants", "r1"],
+      ["stop-tree", "c3", "a1", { includeSelf: false }],
+      ["deliver", "r2"],
       ["owned-cleanup", "i1"],
       ["sched-fire", "tr1"],
+      ["sched-settle", { taskRunId: "tr1", check: 2 }],
+      ["device-op-resolve", { machineId: "m1", opId: "op1" }],
       ["periodic", "sandbox-suspend-idle"],
     ]);
-    expect(warned).toEqual([
-      ["unknown maintenance job", { name: "no-such-job", jobId: "no-such-job-1" }],
-    ]);
+    expect(warned).toEqual([]);
   });
 });
 

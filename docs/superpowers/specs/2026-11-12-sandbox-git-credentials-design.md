@@ -388,8 +388,8 @@ ours to change into a MITM.
    line, task page grants).
 4. Later: LFS, GHES / GitLab sources, signing.
 
-Migrations: the kernel migrations are 0118 and 0119 and must be applied after sandbox dev tiers'
-0117 (the migrator refuses out-of-order files).
+Migrations: the kernel migrations are 0126 and 0127, after every migration before them (the
+migrator refuses out-of-order files).
 
 ## 15. Tests (outline)
 

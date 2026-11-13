@@ -28,6 +28,7 @@ import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZQuery } from "../infra/validation/zod-params.js";
 import {
   AdminCatalogGuideQuery,
+  CatalogImportUpdateBody,
   CatalogItemsQuery,
   CatalogUpdateBody,
   CatalogUpdatePreviewBody,
@@ -57,6 +58,7 @@ import {
 import { CatalogScopeService, type ScopePreview } from "./catalog-scope.service.js";
 import { sendCatalogIcon } from "./org-catalog.controller.js";
 import { OrgCatalogService } from "./org-catalog.service.js";
+import { PlatformImportUpdate, type PlatformImportUpdateResult } from "./platform-import-update.js";
 import { type PluginConfirmResult, PluginImport, type PluginReview } from "./plugin-import.js";
 import {
   PlatformPluginUpdater,
@@ -104,6 +106,10 @@ class CatalogUpdatePreviewBodyDto extends createZodDto(
   "CatalogUpdatePreviewBody",
 ) {}
 class CatalogUpdateBodyDto extends createZodDto(CatalogUpdateBody, "CatalogUpdateBody") {}
+class CatalogImportUpdateBodyDto extends createZodDto(
+  CatalogImportUpdateBody,
+  "CatalogImportUpdateBody",
+) {}
 class AppearanceApplyBodyDto extends createZodDto(AppearanceApplyBody, "AppearanceApplyBody") {}
 
 /**
@@ -121,6 +127,7 @@ export class AdminCatalogController {
     @Inject(OrgCatalogService) private readonly orgCatalog: OrgCatalogService,
     @Inject(CatalogScopeService) private readonly scope: CatalogScopeService,
     @Inject(PlatformPluginUpdater) private readonly updater: PlatformPluginUpdater,
+    @Inject(PlatformImportUpdate) private readonly importUpdate: PlatformImportUpdate,
     @Inject(PluginIcons) private readonly icons: PluginIcons,
     @Inject(AppearanceService) private readonly appearance: AppearanceService,
     @Inject(ClientBuilds) private readonly clientBuilds: ClientBuilds,
@@ -251,6 +258,37 @@ export class AdminCatalogController {
       },
       actorOpts(actor),
     );
+  }
+
+  /**
+   * What confirming a staged new version of an installed platform plugin would do as the platform
+   * update (`PlatformImportUpdate`, the one 更新到 wizard): the update preview of the staged
+   * version, nothing written (cancelling the wizard leaves only the staging row). Not a platform
+   * plugin yet -> 409 `plugin.upgrade_target_invalid` (reason `not_installed`); staging missing ->
+   * 404 `plugin.staging_not_found`; otherwise as `items/:id/update/preview`.
+   */
+  @Get("imports/:stagingId/update-preview")
+  importUpdatePreview(@Param("stagingId") stagingId: string): Promise<PlatformUpdatePreview> {
+    return this.importUpdate.preview(stagingId);
+  }
+
+  /**
+   * Imports the staged version and updates the platform plugin to it, confirmed with the import
+   * review's `reviewHash` and the update preview's `diffHash` (201 `{ item, update }`). Stale review
+   * -> 409 `plugin.review_stale`, stale preview -> 409 `plugin.upgrade_stale`, another update
+   * running -> 409 `plugin.install_in_progress`: nothing written. The update failing after the
+   * import -> 409 `plugin.imported_not_updated` (the version stays in the catalog, the platform on
+   * its version, the extension's approval put back; details name the cause).
+   */
+  @Post("imports/:stagingId/update")
+  @HttpCode(201)
+  importAndUpdate(
+    @CurrentPrincipal() principal: Principal,
+    @Param("stagingId") stagingId: string,
+    @ZBody(CatalogImportUpdateBodyDto) body: z.infer<typeof CatalogImportUpdateBody>,
+  ): Promise<PlatformImportUpdateResult> {
+    const actor = requireUser(principal);
+    return this.importUpdate.confirm(actor.account.id, stagingId, body, actorOpts(actor));
   }
 
   /**

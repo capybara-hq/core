@@ -29,10 +29,15 @@ export const OVERLAY_ROUTES = [
 
 /**
  * Real app pages drawn from a seeded query cache in the admin console's shell (`pages.tsx`): no
- * kernel behind them. Screenshotted by their own visual spec (`visual/admin-overview.spec.ts`), so
- * they are not catalog routes.
+ * kernel behind them. Screenshotted by their own visual specs (`visual/admin-overview.spec.ts`,
+ * `visual/schedules-calendar.spec.ts`), so they are not catalog routes.
  */
-export const PAGE_ROUTES = ["pages/admin-overview"] as const;
+export const PAGE_ROUTES = [
+  "pages/admin-overview",
+  "pages/schedules-calendar",
+  "pages/schedules-calendar-month",
+  "pages/schedules-calendar-admin",
+] as const;
 
 export const CATALOG_ROUTES = [
   "components",
@@ -138,6 +143,8 @@ export const REFERENCE_COMPONENTS = [
   "overview-section",
   // the usage chart: two panels on one x-axis, never a second y-scale (admin overview design §10.1)
   "trend-chart",
+  // the scheduled tasks calendar: week, month and the phone agenda (scheduled tasks calendar design §6)
+  "schedule-calendar",
   // tools with their policy next to them (the agent page's 工具 section, 2026-11-08)
   "tool-policy-list",
   // skills to choose, grouped with a select-all per group (maintainer acceptance 2026-11-12)

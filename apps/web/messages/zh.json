@@ -126,7 +126,8 @@
       "last_owner": "组织至少要保留一个组织所有者。",
       "owner_required": "只有组织所有者可以执行这个操作。",
       "creation_disabled": "本部署关闭了新建组织。",
-      "slug_taken": "该 slug 已被其他组织使用。"
+      "slug_taken": "该 slug 已被其他组织使用。",
+      "sandbox_tier_not_allowed": "平台不允许这个沙箱级别设置。"
     },
     "setup": {
       "already_completed": "系统已完成初始化。",
@@ -166,6 +167,9 @@
     "background_task": {
       "not_found": "这个后台任务不存在或已被清理。",
       "output_unavailable": "现在读不到输出。打开任务可查看原因。"
+    },
+    "outbox": {
+      "not_found": "这个后台任务已不存在。"
     },
     "run": {
       "not_active": "当前没有进行中的回复。",
@@ -228,7 +232,7 @@
       "single_provider_required": "这个能力由部署必需的插件提供，不能替换。",
       "package_invalid": "扩展包不合法：",
       "legacy_format": "该包是 0.1.0 之前的旧格式。请用 pnpm pack-plugin 重新打包为带 .capybara-plugin/plugin.json 的插件后再上传。",
-      "no_extension": "该插件不含扩展，部署上没有可安装的内容。请改为导入到目录。",
+      "no_extension": "该插件不含扩展，部署上没有可安装的扩展。请改为安装到平台目录。",
       "package_too_large": "扩展包超过大小上限。",
       "unavailable": "扩展当前不可用。",
       "field_not_overridable": "这个字段不能由组织设置。",
@@ -242,7 +246,7 @@
       "missing_file": "部署锁定的某个引导插件包不在引导目录里。"
     },
     "catalog": {
-      "version_exists": "这个版本已经导入过。",
+      "version_exists": "这个版本已在插件的版本列表里：在插件页更新到它。",
       "item_not_found": "条目不存在或你看不到它。",
       "name_conflict": "同名条目来自另一个 npm 包。",
       "item_disabled": "超级管理员禁用了这个条目（或它包含的某个扩展），不能新装或启用。",
@@ -255,7 +259,7 @@
       "invalid_manifest": "插件包不合法：",
       "legacy_format": "该包使用 0.1.0 之前的包格式。请用 .capybara-plugin/plugin.json 重新打包为插件（pnpm pack-plugin）后再导入。",
       "no_extension": "该插件没有扩展，部署上没有可安装的内容。",
-      "dependency_unresolved": "该插件依赖的插件在目录中没有满足版本范围的版本，请先让超级管理员导入。",
+      "dependency_unresolved": "该插件依赖的插件在平台上没有满足版本范围的版本，请先让超级管理员安装。",
       "dependency_disabled": "该插件依赖的插件已被超级管理员禁用。",
       "dependency_cycle": "该插件的依赖形成循环，无法安装。",
       "request_pending": "已经有一个待处理的同类申请。",
@@ -320,7 +324,9 @@
       "file_invalid_path": "路径必须是沙箱内的绝对路径。",
       "file_not_found": "沙箱里没有这个文件。",
       "file_is_directory": "这个路径是目录，请指定一个文件。",
-      "file_too_large": "文件过大。"
+      "file_too_large": "文件过大。",
+      "tier_refused": "云端沙箱无法以该设备的沙箱级别运行。请降低设备的级别，或联系组织管理员或超级管理员。",
+      "create_failed": "无法创建云端沙箱。请重试；如果一直失败，请让超级管理员检查沙箱扩展的设置。"
     },
     "device": {
       "not_found": "该设备不存在或已被删除。",
@@ -333,8 +339,12 @@
       "offline": "这台电脑当前未连接，请在电脑上启动 Capybara 设备程序后重试。",
       "program_outdated": "这台电脑上的设备程序版本过旧，请更新后重新连接。",
       "credential_invalid": "这台电脑的连接凭据已失效，请在电脑上重新连接。",
-      "policy_refused": "这台设备不接受平台的这次网络修改，请在机器上修改。",
-      "policy_unsupported": "这台设备不支持从平台修改网络设置，请在机器上升级设备程序。"
+      "policy_refused": "这台设备不接受平台的这次修改，请在机器上修改。",
+      "policy_unsupported": "这台设备不支持从平台修改网络设置，请在机器上升级设备程序。",
+      "tier_not_allowed": "这个沙箱级别超出了组织或平台允许的最高级别。",
+      "tier_on_device": "本地设备的沙箱级别保存在机器上，请在设备页面修改，或在机器上运行 capybara-device policy set tier。",
+      "unsandboxed_not_allowed": "这台设备不使用沙箱运行命令，组织不允许这样做。设备所有者可以在机器上运行 capybara-device policy set isolation sandbox 恢复沙箱。",
+      "tier_not_granted": "这个定时任务没有开放级别的授权，不能使用开放级别的设备。"
     },
     "device_sign_in": {
       "authorization_pending": "还未确认连接，请在网页上确认后稍候。",
@@ -401,8 +411,8 @@
     },
     "payload_too_large": "内容超过大小上限。",
     "theme": {
-      "invalid": "该插件的某个主题不合法。请修正主题文件或其字体、标志后重新导入插件。",
-      "unreadable": "该插件的某个主题可读性不足：部分文字与背景的对比度不够。请修正列出的配色后重新导入插件。",
+      "invalid": "该插件的某个主题不合法。请修正主题文件或其字体、标志后重新安装插件。",
+      "unreadable": "该插件的某个主题可读性不足：部分文字与背景的对比度不够。请修正列出的配色后重新安装插件。",
       "not_available": "该主题在此处不可用。请从此设置列出的主题中选择。",
       "platform_default": "该主题是平台默认主题。请先在平台设置中选择其他平台默认主题，再收窄范围、停用或移除它。",
       "id_taken": "该组织中已启用了同一 ID 的另一个主题；请先关闭或移除它。",
@@ -425,11 +435,11 @@
       "entry_not_found": "市场条目或版本不存在（市场可能已停用）。",
       "fetch_failed": "拉取市场内容失败，已保留上一份条目。",
       "invalid": "市场内容格式不合法，已保留上一份条目。",
-      "integrity_mismatch": "下载的包与市场的 sha512 不符，已拒绝引入。包可能被篡改，请联系市场维护者。",
+      "integrity_mismatch": "下载的包与市场的 sha512 不符，已拒绝安装。包可能被篡改，请联系市场维护者。",
       "private_address": "下载被拒绝：该主机解析到私有或保留地址。如需访问内部主机，请在部署配置的 marketplaces.allowPrivateHosts 中加入它。",
       "redirect": "下载被拒绝：服务器返回了重定向，重定向不会被跟随。请改用最终地址。",
       "incompatible": "这个版本与本部署的内核 / SDK 不兼容。",
-      "entry_deprecated": "这个版本已被市场标为废弃，不能引入，请选择其他版本。",
+      "entry_deprecated": "这个版本已被市场标为废弃，不能安装，请选择其他版本。",
       "package_mismatch": "下载的包与市场条目不一致。",
       "builtin": "官方市场由部署配置决定，这里只能启用或停用。",
       "git_failed": "读取 git 仓库失败（服务器、分支或提交有问题），具体原因见错误信息。",
@@ -457,7 +467,8 @@
       "switch_stale": "影响在你确认前变了，请重新查看后再确认。",
       "builtin": "内置插件的范围不能更改，也不能停用。",
       "scope_stale": "影响在你确认前变了，请重新预览后再确认。",
-      "extension_upload_pending": "这个插件带扩展，已提交，等待超级管理员确认后才能使用。"
+      "extension_upload_pending": "这个插件带扩展，已提交，等待超级管理员确认后才能使用。",
+      "imported_not_updated": "新版本已加入插件的版本列表，但平台更新失败，平台仍在原版本。可在插件页再次更新。"
     },
     "lock": {
       "acquire_failed": "该资源上有其他操作正在进行，请稍后再试。"
@@ -495,6 +506,10 @@
       "invalid_time_zone": "时区无效。",
       "limit_reached": "定时任务数量已达上限。",
       "once_in_past": "这个时间已经过去了。"
+    },
+    "deployment": {
+      "setting_readonly": "这项沙箱级别由部署的启动配置（环境变量、配置文件或 Nacos）设定，只能在那里修改。",
+      "sandbox_tier_not_allowed": "通过 API 令牌或平台工具只能调低平台的沙箱级别；要调高，请超级管理员在后台设置页修改。"
     }
   },
   "agents": {
@@ -1615,9 +1630,6 @@
     "network": {
       "title": "网络",
       "description": "在组织允许的范围内，这台机器上的命令还能访问哪些域名。",
-      "open": "不限网络",
-      "openOnHint": "命令可以访问组织允许的任何地址。关闭后回到下面的域名列表。",
-      "openOffHint": "命令只能访问下面的域名，且不超出组织允许的范围。",
       "remoteGrants": "接受平台修改",
       "remoteGrantsOwner": "接受你的修改",
       "remoteGrantsOff": "不接受",
@@ -1637,29 +1649,101 @@
       "hostPresent": "这个域名已经允许。",
       "upgrade": "这台机器上的设备程序不支持从平台修改网络设置。请在机器上升级 capybara-device。",
       "dockerNote": "这台机器用 Docker 运行命令，无法按域名限制，因此不接受平台放宽网络。",
-      "unknown": "机器还没有上报它的网络设置。",
-      "opened": "已开启不限网络。",
-      "closed": "已恢复网络限制。",
-      "confirmTitle": "这台设备不限网络？",
-      "confirmSubmit": "开启不限网络",
+      "unknown": "机器还没有上报它的网络设置。"
+    },
+    "tier": {
+      "strict": "严格",
+      "dev": "开发",
+      "open": "开放"
+    },
+    "mark": {
+      "open": "开放",
+      "unsandboxed": "不使用沙箱"
+    },
+    "sandbox": {
+      "title": "沙箱级别",
+      "description": "这台设备上的命令在多宽的沙箱里运行，不超过组织和平台允许的最高级别。",
+      "follow": "跟随组织默认（{tier}）",
+      "followHint": "组织修改默认级别时，这台设备随之改变。",
+      "hint": {
+        "strict": "只能访问允许的域名，不能访问本机端口和 Unix 套接字。",
+        "dev": "还能访问常用开发域名、本机端口和 Unix 套接字，适合日常开发。",
+        "open": "可以访问任何公网地址和端口。"
+      },
+      "capped": {
+        "org": "组织最高允许：{tier}",
+        "platform": "平台最高允许：{tier}",
+        "any": "最高允许：{tier}"
+      },
+      "effective": "实际级别",
+      "lower": {
+        "org": "组织最高只允许{tier}。",
+        "platform": "平台最高只允许{tier}。",
+        "program": "这台机器上的设备程序不支持沙箱级别，命令按严格级别运行。请在机器上升级 capybara-device。"
+      },
+      "pendingNextUse": "下次使用时生效，文件保留。",
+      "pendingFilesReset": "重置文件后生效。",
+      "changed": "沙箱级别已改为{tier}。",
+      "followed": "已改为跟随组织默认。",
+      "remoteOff": "这台机器不接受平台提高级别。要提高级别，在机器上运行：",
+      "unknown": "机器还没有上报它的沙箱级别。",
+      "noMachine": "连接机器后才能修改沙箱级别。",
+      "upgrade": "这台机器上的设备程序不支持从平台修改沙箱级别。请在机器上升级 capybara-device。",
+      "localhost": "本机端口",
+      "localhostValue": {
+        "on": "可访问",
+        "off-proxy-detected": "已关闭：检测到本机代理或 Docker 端口",
+        "off": "不可访问"
+      },
+      "localhostOverride": "要仍然允许访问本机端口，在机器上运行：",
+      "unixSockets": "Unix 套接字",
+      "unixSocketsValue": {
+        "roots": "设备目录内可用",
+        "all-masked": "可用，系统守护进程的套接字已隐藏",
+        "off": "不可用"
+      },
+      "linuxNote": "在 Linux 上，只有设备程序能隐藏系统守护进程的套接字时，开发级别才开放 Unix 套接字；否则保持关闭。",
+      "openConfirmTitle": "把这台设备设为开放级别？",
+      "openConfirmSubmit": "设为开放",
+      "openRisk": "开放级别下，智能体在这台设备上运行的命令可以访问任何公网地址和端口，包括把文件上传到外部网站。提示注入能让智能体这样做。只在你自己的开发机上、并且信任所用的智能体和资料时开启。",
       "cancel": "取消",
-      "risk": "不限网络后，智能体在这台设备上运行的命令可以访问组织允许的任何地址（组织也不限时，就是任何公网地址），包括把文件上传到外部网站。提示注入能让智能体这样做。只在你自己的开发机上、并且信任所用的智能体和资料时开启。",
+      "unsandboxed": "不使用沙箱",
+      "unsandboxedOffHint": "只能在这台机器上开启，平台无法替你打开。在机器上运行：",
+      "unsandboxedRisk": "不使用沙箱时，智能体的命令直接以你的身份在这台电脑上运行：能读写你的所有文件、使用你的登录凭据（SSH 密钥、云账号、钥匙串）、Docker 和任意网络。提示注入能让智能体删除文件或把凭据发出去。只在你自己的开发机上、并且完全信任所用的智能体和资料时开启。",
+      "unsandboxedOn": "这台设备的命令直接以你的身份在这台电脑上运行，没有沙箱。",
+      "unsandboxedNotAllowed": "组织不允许不使用沙箱的设备，智能体暂时不能使用这台设备。恢复沙箱后即可继续使用。",
+      "restore": "恢复沙箱",
+      "restored": "已恢复沙箱。",
       "recent": {
         "title": "最近的修改",
         "add": "添加 {hosts}",
         "remove": "移除 {hosts}",
-        "network": {
-          "open": "开启不限网络",
-          "allowlist": "恢复网络限制"
+        "tier": "级别改为{tier}",
+        "tierFollow": "改为跟随组织默认",
+        "tierFrom": "级别从{from}改为{to}",
+        "followDefault": "组织默认",
+        "localhost": "本机端口：{value}",
+        "remoteGrants": "接受平台修改：{value}",
+        "isolation": {
+          "none": "不使用沙箱",
+          "sandbox": "恢复沙箱"
         },
         "none": "没有改动",
         "unknownBy": "未知账号",
         "via": {
           "web": "网页",
-          "im": "IM"
+          "im": "IM",
+          "device": "本机"
         },
-        "unconfirmed": "机器未确认"
-      }
+        "outcome": {
+          "unknown": "机器未确认",
+          "failed": "未生效"
+        }
+      },
+      "openRiskCloud": "开放级别下，智能体在这台云端设备上运行的命令可以访问任何公网地址和端口，包括把文件和数据上传到外部网站。提示注入能让智能体这样做。只在信任所用的智能体和资料时开启。",
+      "unsandboxedOnMark": "已开启",
+      "unsandboxedRefused": "这台设备在本机上被设为不使用沙箱，但当前级别低于开放，命令会被拒绝。恢复沙箱后才能使用。",
+      "isolationResetNote": "这台设备现在不使用沙箱。在这里修改级别会同时恢复沙箱。"
     }
   },
   "nav": {
@@ -1748,7 +1832,12 @@
       "fixed": "该工具总是需要审批"
     },
     "network": {
-      "otherApprover": "智能体想访问 {hosts}，等待设备所有者处理。"
+      "otherApprover": "智能体想访问 {hosts}，等待设备所有者处理。",
+      "attempt": {
+        "unknown": "设备没有确认这次网络规则的修改；设备下次连接时会说明是否生效。你可以重新处理。",
+        "failed": "设备的网络规则修改没有生效：{message} 你可以重新处理。",
+        "appliedUndecided": "设备已经允许，但做出这个选择的人已不能处理这条请求。"
+      }
     }
   },
   "question": {
@@ -1839,16 +1928,6 @@
       "reject": "拒绝",
       "approved": "已批准技能变更",
       "rejected": "已拒绝技能变更"
-    },
-    "skillRenamed": {
-      "label": "技能改名",
-      "title": "技能 {from} 已改名为 {to}",
-      "hint": "平台提供了同名技能 {from}，所以本组织自己的技能 {from} 已改名为 {to}。使用它的智能体会继续使用，名称变为新名称。该平台技能在本组织默认关闭，管理员可在技能页面开启。已存的 SKILL.md 里名称仍是 {from}，以后上传新版本时请把 SKILL.md 里的名称改为 {to}。",
-      "from": "原名称",
-      "to": "新名称",
-      "plugin": "插件",
-      "dismiss": "知道了",
-      "dismissed": "已移除通知"
     },
     "orgNotice": {
       "itemSharedLabel": "已共享",
@@ -2328,8 +2407,7 @@
       "default": "跟随部署默认",
       "defaultHint": {
         "allowlist": "部署设置的白名单（{count} 个主机）。",
-        "none": "部署已禁止沙箱联网。",
-        "open": "部署允许任意出站网络。"
+        "none": "部署已禁止沙箱联网。"
       },
       "allowlist": "自定义白名单",
       "allowlistHint": "只放行下面的主机，替换部署的清单。",
@@ -2338,7 +2416,8 @@
       "hosts": "允许的主机",
       "hostsHelp": "每行一个，如 registry.npmjs.org 或 *.example.com（只匹配子域）。不能填 IP、端口或内网名称；最多 200 个。",
       "newOnly": "改动只对之后新建的沙箱生效；已有的沙箱沿用原来的网络设置，直到被销毁。",
-      "prefilled": "已从被拦截的命令添加 {hosts}，保存后生效。"
+      "prefilled": "已从被拦截的命令添加 {hosts}，保存后生效。",
+      "devHosts": "开发级别还会放行常用开发域名（{count} 个）"
     },
     "limits": {
       "title": "沙箱资源",
@@ -2358,6 +2437,19 @@
       "title": "默认时区",
       "description": "成员没有设置自己的时区、又不是从浏览器发消息时（如 IM 里的消息、匿名访客），智能体按这个时区判断「今天」。",
       "label": "默认时区"
+    },
+    "tiers": {
+      "title": "沙箱级别",
+      "description": "组织内设备最高能用到哪个级别，以及新设备默认用哪个级别。成员可以在自己的设备上选择不超过最高级别的级别。",
+      "max": "最高级别",
+      "strictHint": "只能访问下面网络设置允许的主机，不能访问本机端口和 Unix 套接字。",
+      "devHint": "还能访问常用开发域名、本机端口和 Unix 套接字，适合日常开发。",
+      "openHint": "可以访问任何公网地址和端口。智能体的命令能把文件和数据发到任何外部网站，提示注入能让智能体这样做。只在完全信任所用的智能体和资料时开放。",
+      "platformClosed": "平台未开放",
+      "default": "新设备默认",
+      "defaultHelp": "设备没有自选级别时使用，不能高于最高级别。",
+      "allowUnsandboxed": "允许成员的设备不使用沙箱",
+      "allowUnsandboxedHint": "最高级别为开放时默认允许。成员仍要在自己的电脑上运行命令才能关闭沙箱。关闭后，命令能读写他们电脑上的所有文件和登录凭据。"
     }
   },
   "configForm": {
@@ -2651,6 +2743,7 @@
         "identity_source": "决定谁能登录成哪个账号",
         "sandbox": "在部署里执行任意命令",
         "object_store": "保管全部附件与扩展包",
+        "context": "在启用它的组织的对话中，向模型上下文加入文本",
         "migration_warnings": "迁移警告变了（见下方迁移警告），须重新批准"
       },
       "warnings": "迁移警告",
@@ -3468,13 +3561,14 @@
           "inbox": "收件箱",
           "extensions": "扩展",
           "updates": "插件更新",
-          "providers": "模型供应商"
+          "providers": "模型供应商",
+          "outbox": "无法排入队列的后台任务",
+          "queue": "后台队列"
         },
         "inboxTypes": {
           "catalog_request": "平台目录申请",
           "permission_confirmation": "权限确认",
           "scope_sync_failed": "范围同步失败",
-          "platform_migration": "迁移需要查看",
           "ownership_transferred": "所有权转移",
           "org_upload_pending": "组织上传待确认"
         },
@@ -3491,6 +3585,22 @@
         "problems": {
           "list_failed": "列模型失败",
           "no_chat_model": "没有可用的对话模型"
+        },
+        "outbox": {
+          "count": "{n} 项任务",
+          "retry": "重试",
+          "discard": "丢弃",
+          "cancel": "取消",
+          "discardTitle": "丢弃这项后台任务？",
+          "discardHint": "{job} 将不会再运行。如果仍需要这项工作，请改为重试。",
+          "retried": "已重新排入队列。",
+          "alreadyOwed": "同一任务已在队列中，这份副本已丢弃。",
+          "discarded": "已丢弃。"
+        },
+        "queue": {
+          "lostJobs": "队列丢失了后台任务",
+          "count": "已重新排入 {n} 项",
+          "hint": "Redis 丢失了数据（请检查其持久化配置），相关运行已重新排入队列。最后一次丢失后保留一周。"
         },
         "retry": "重试"
       },
@@ -3543,7 +3653,8 @@
           "pluginScope": "插件范围同步",
           "titles": "会话标题",
           "usageReport": "用量上报",
-          "evals": "评测"
+          "evals": "评测",
+          "lifecycle": "生命周期通知"
         },
         "connections": {
           "channels": "渠道",
@@ -3622,14 +3733,14 @@
       "request": {
         "kind": {
           "access": "申请使用",
-          "import": "申请引入"
+          "import": "申请安装"
         },
         "requester": "申请人",
         "version": "版本",
         "note": "说明",
         "hint": {
           "access": "{org} 申请使用这个插件。在插件页的待确认中批准或拒绝；批准后这个组织立即可以使用。",
-          "import": "{org} 申请从市场引入这个插件。在插件页的待确认中批准或拒绝；批准后进入导入审阅，范围默认是这个组织。"
+          "import": "{org} 申请从市场安装这个插件。在插件页的待确认中批准或拒绝；批准后进入安装审阅，范围默认是这个组织。"
         }
       },
       "permission": {
@@ -3650,18 +3761,8 @@
         "hint": {
           "install": "插件的范围要求它在 {org} 中启用，但同步失败了。这个插件和组织下次同步时会再试：排除原因后，在插件页修改范围或重启 worker 时会重新同步（保存未改动的范围不会触发同步）。",
           "uninstall": "插件的范围要求它在 {org} 中停用，但同步失败了。这个插件和组织下次同步时会再试：排除原因后，在插件页修改范围或重启 worker 时会重新同步（保存未改动的范围不会触发同步）。",
-          "dependencies": "插件已在 {org} 中启用，但平台更新后新增的依赖没能安装。这个插件和组织下次同步时会再试：排除原因后（例如导入满足版本要求的依赖），在插件页修改范围或重启 worker 时会重新同步（保存未改动的范围不会触发同步）。"
+          "dependencies": "插件已在 {org} 中启用，但平台更新后新增的依赖没能安装。这个插件和组织下次同步时会再试：排除原因后（例如安装满足版本要求的依赖），在插件页修改范围或重启 worker 时会重新同步（保存未改动的范围不会触发同步）。"
         }
-      },
-      "migration": {
-        "label": "平台组件迁移",
-        "stuck": "未完成",
-        "failed": "{n} 个插件失败",
-        "started": "开始时间",
-        "finished": "结束时间",
-        "items": "失败的插件",
-        "hintStuck": "最近一次迁移开始一小时后仍未结束，运行它的 worker 可能已停止。下次 worker 启动或每日运行时会重新执行。",
-        "hintFailed": "最近一次迁移没能写入这些插件的平台组件，下次运行会再次尝试。原因见内核日志。"
       },
       "orgUpload": {
         "label": "上传待确认",
@@ -3712,7 +3813,7 @@
         "marketplaceUpdated": "修改了市场",
         "marketplaceRemoved": "移除了市场",
         "marketplaceRefreshed": "刷新了市场",
-        "catalogImported": "导入了插件",
+        "catalogImported": "安装了插件",
         "catalogPluginStaged": "上传了插件包待审阅",
         "catalogRemoved": "移除了插件",
         "catalogScopeChanged": "修改了插件范围",
@@ -3741,7 +3842,9 @@
         "modelPriceUpdated": "修改了模型价格",
         "modelPriceDeleted": "删除了模型价格",
         "modelPurposeMapped": "修改了用途的默认模型",
-        "modelDisabledSet": "修改了平台停用的模型"
+        "modelDisabledSet": "修改了平台停用的模型",
+        "outboxRetried": "重试了无法排入队列的后台任务",
+        "outboxDiscarded": "丢弃了无法排入队列的后台任务"
       }
     },
     "accounts": {
@@ -3884,6 +3987,23 @@
         "description": "组织能否不经平台目录、自己新建或导入技能。",
         "allowHint": "组织可以自己新建、导入技能，也可以从平台目录安装。",
         "denyHint": "组织只能从平台目录安装技能。"
+      },
+      "sandboxTiers": {
+        "title": "沙箱级别",
+        "description": "整个平台的设备最高能用到哪个级别，以及新设备默认用哪个级别。组织可以在此范围内再收紧；调低后，高于新上限的组织和设备会自动按新上限运行。",
+        "max": "最高级别",
+        "strictHint": "只能访问网络设置允许的主机，不能访问本机端口和 Unix 套接字。",
+        "devHint": "还能访问常用开发域名（包管理器、代码托管、浏览器下载等）、本机端口和 Unix 套接字，适合日常开发。",
+        "openHint": "可以访问任何公网地址和端口。智能体的命令能把文件和数据发到任何外部网站，提示注入能让智能体这样做。",
+        "belowDefault": "低于配置文件固定的默认级别",
+        "default": "默认级别",
+        "defaultHelp": "组织和设备都没有自选级别时使用，不能高于最高级别。",
+        "allowUnsandboxed": "允许设备不使用沙箱",
+        "allowUnsandboxedHint": "只在组织最高级别为开放时生效，组织也可以禁止。成员仍要在自己的电脑上运行命令才能关闭沙箱；关闭后，命令能读写他们电脑上的所有文件和登录凭据。",
+        "openConfirmTitle": "把平台最高级别设为开放？",
+        "openConfirmBody": "开放后，各组织的管理员可以让设备访问任何公网地址和端口。智能体的命令能把文件和数据上传到任何外部网站，提示注入能让智能体这样做。只在信任平台上的组织、智能体和资料时开放。",
+        "openConfirmSubmit": "设为开放",
+        "cancel": "取消"
       },
       "clientCode": {
         "title": "插件界面代码",
@@ -4092,7 +4212,7 @@
       },
       "loadFailed": "扩展没有加载出来。",
       "retry": "重试",
-      "importPlugin": "导入插件",
+      "importPlugin": "安装插件",
       "builtin": "内置",
       "description": "插件里在部署上运行的代码。部署级配置、权限和运行状态在这里。",
       "wizard": {
@@ -4254,7 +4374,7 @@
       "disabled": "已停用"
     },
     "source": {
-      "manual": "手动导入",
+      "manual": "手动安装",
       "official": "官方市场",
       "removed": "已删除的市场"
     },
@@ -4270,7 +4390,7 @@
       "extension": "扩展",
       "extensionNone": "没有扩展。",
       "extensionVersion": "{name} {version}",
-      "declaredHint": "包里声明的权限（引入这个版本时已审阅；在部署上的批准在扩展后台进行）。",
+      "declaredHint": "包里声明的权限（安装或更新到这个版本时已审阅；在部署上的批准在扩展后台进行）。",
       "skills": "技能",
       "skillsNone": "没有技能。",
       "skillFiles": "{n} 个文件",
@@ -4280,7 +4400,7 @@
       "dependenciesNone": "没有依赖。",
       "dependenciesHint": "这个插件依赖的插件；组织安装时先装它们（组织已有的不重装）。",
       "dependencyResolved": "{name} {range} → 平台目录里的 {version}",
-      "dependencyUnresolved": "{name} {range}：平台目录里还没有符合的版本。导入仍会完成，但在导入符合的版本之前，组织无法安装这个插件。",
+      "dependencyUnresolved": "{name} {range}：平台上还没有符合的版本。安装仍会完成，但在平台装上符合的版本之前，组织无法启用这个插件。",
       "dependencyInCatalog": "{name} {range}：已在平台目录（{versions}）",
       "dependencyNotInCatalog": "{name} {range}：不在平台目录里",
       "errorDependency": "依赖：{dependency}",
@@ -4298,7 +4418,7 @@
     },
     "admin": {
       "title": "插件",
-      "empty": "还没有插件。从市场引入，或上传插件包。",
+      "empty": "还没有插件。从市场安装，或上传插件包。",
       "noResults": "没有符合筛选条件的条目。",
       "filters": {
         "source": "来源",
@@ -4330,7 +4450,7 @@
         "delete": "删除插件",
         "deleteConfirm": {
           "title": "删除插件 {name}",
-          "hint": "组织将不再看到这个插件，已安装的组件不受影响。之后可以重新引入。",
+          "hint": "组织将不再看到这个插件，已安装的组件不受影响。之后可以重新安装。",
           "confirm": "删除",
           "extensionNote": "插件的扩展在部署上启用时不能删除：须先在扩展页停用它。删除后扩展仍保留在扩展页，可在那里卸载。",
           "openExtension": "去扩展页停用"
@@ -4342,11 +4462,11 @@
           "source": "来源",
           "ref": "来源引用",
           "size": "大小",
-          "imported": "导入时间",
+          "imported": "加入时间",
           "origin": "出处",
           "format": "格式"
         },
-        "contentChanged": "它的市场里，一个已导入的版本现在指向了不同的内容。可在「市场」再次引入，会记为该版本的一个构建。",
+        "contentChanged": "它的市场里，一个已有的版本现在指向了不同的内容。可在「市场」更新到新内容，会记为该版本的一个构建。",
         "format": {
           "capybara": "Capybara",
           "claudeCode": "Claude Code"
@@ -4361,8 +4481,8 @@
           "update": "更新到 {version}",
           "disable": "停用",
           "enable": "启用",
-          "import": "导入 {version}",
-          "applyAppearance": "应用此插件的外观"
+          "applyAppearance": "应用此插件的外观",
+          "rollback": "回退到 {version}"
         },
         "componentColumns": {
           "name": "组件",
@@ -4400,11 +4520,12 @@
         "ownerValue": "{org}（新版本由该组织上传）"
       },
       "review": {
-        "title": "导入插件",
+        "title": "安装插件",
         "steps": {
           "source": "选择插件包",
           "review": "审阅",
-          "confirm": "确认"
+          "confirm": "确认",
+          "update": "更新预览"
         },
         "sourceLabel": "来源",
         "sourceFile": "上传插件包（.tgz）",
@@ -4429,20 +4550,20 @@
         "keepExtension": "扩展 {name} {version} 已安装在部署上。",
         "ackHint": "插件里有敏感权限或迁移警告，确认前请逐项看过。",
         "ack": "我已了解敏感项",
-        "confirm": "确认导入",
-        "done": "已导入插件「{name}」。",
+        "confirm": "确认安装",
+        "done": "已安装插件「{name}」。",
         "deployResult": "部署结果",
-        "deployFailed": "{name} {version}：装到部署失败（{code}），导入已保留。可在扩展后台重试。",
+        "deployFailed": "{name} {version}：装到部署失败（{code}），插件已保留在平台上。可在扩展后台重试。",
         "deployLeftDisabled": "{name} {version} 已安装但保持停用：{point}只能启用一个提供方。请先停用 {other}，再启用它。",
         "deployLeftDisabledRequired": "{name} {version} 已安装但保持停用：{point}由部署必需的插件「{other}」提供，不能替换。",
         "openEnabled": "查看 {name}",
         "openItem": "查看插件",
-        "gone": "暂存的导入已过期或已确认。请重新导入。",
-        "restart": "重新导入",
+        "gone": "暂存的插件包已过期或已确认。请重新开始。",
+        "restart": "重新开始",
         "sourceGit": "Git 仓库",
         "sourceGitHint": "从 Git 仓库读取一次：不会添加市场，也不跟踪更新。",
         "gitUrl": "仓库",
-        "gitUrlHelp": "https 的 git 地址，或 GitHub 上的 owner/repo。一次性导入：不会添加市场，也不跟踪更新。",
+        "gitUrlHelp": "https 的 git 地址，或 GitHub 上的 owner/repo。一次性读取：不会添加市场，也不跟踪更新。",
         "gitRef": "分支、标签或提交",
         "gitRefHelp": "可选；留空用远端 HEAD。",
         "gitPath": "目录",
@@ -4553,7 +4674,11 @@
           "origin": "来源",
           "provenance": "来源证明",
           "provenanceNotChecked": "未核对（{reason}）"
-        }
+        },
+        "titleUpdate": "更新插件「{name}」",
+        "confirmUpdate": "确认更新",
+        "updateHint": "确认后把 {version} 加入平台并把插件更新到它，所有组织一起更新。确认前取消不会改动任何东西。",
+        "importedNotUpdated": "{version} 已加入插件的版本列表，但把平台更新到它失败了（{code}）：平台仍在 {from}，扩展和权限保持原样。可在插件页「更新到 {version}」重试。"
       },
       "entries": {
         "title": "浏览市场",
@@ -4575,10 +4700,10 @@
         "permissionsNone": "未提供",
         "incompatible": "{version}（不兼容）",
         "noVersion": "（以包为准）",
-        "adopted": "已引入 {version}",
-        "notAdopted": "未引入",
-        "import": "引入",
-        "importVersion": "引入 {version}",
+        "adopted": "已安装 {version}",
+        "notAdopted": "未安装",
+        "import": "安装",
+        "importVersion": "安装 {version}",
         "noCompatible": "没有兼容的版本",
         "reason": {
           "host_not_allowed": "主机 {host} 不在 marketplaces.allowedHosts 中。",
@@ -4588,21 +4713,21 @@
         "gitFollows": "跟随 {ref}",
         "gitFollowsDefault": "跟随默认分支",
         "pathSource": "市场仓库中的 {path}",
-        "importChanged": "导入 {version} 的新内容",
-        "contentChangedHint": "再次导入会记为该版本的一个构建（例如 1.0.0+git.1a2b3c4d5e6f）。",
+        "importChanged": "更新到 {version} 的新内容",
+        "contentChangedHint": "更新时会记为该版本的一个构建（例如 1.0.0+git.1a2b3c4d5e6f）。",
         "view": "查看",
         "homepage": "主页",
         "loadFailed": "市场条目没有加载出来。",
         "retry": "重试",
-        "adoptedUpdate": "已引入 {version} · 可更新到 {latest}",
-        "update": "更新",
+        "adoptedUpdate": "已安装 {version} · 可更新到 {latest}",
+        "update": "更新到 {version}",
         "otherVersions": "其他版本",
         "deprecated": "{version} 已废弃",
         "deprecatedReason": "{version} 已废弃：{reason}"
       },
       "marketplaces": {
         "title": "市场源",
-        "description": "插件从这里的市场源列出。在插件页的「市场」里引入时会下载、按市场的完整性校验，审阅后才加入。",
+        "description": "插件从这里的市场源列出。在插件页的「市场」里安装或更新时会下载、按市场的完整性校验，审阅后才加入。",
         "search": "搜索市场源",
         "clearSearch": "清除搜索",
         "noMatch": "没有匹配的市场源。",
@@ -4640,7 +4765,7 @@
         "remove": "删除",
         "removeConfirm": {
           "title": "删除市场 {name}",
-          "hint": "它的条目缓存随之删除，已引入的平台目录条目保留。",
+          "hint": "它的条目缓存随之删除，已安装的插件保留。",
           "confirm": "删除"
         },
         "removed": "已删除「{name}」。",
@@ -4673,7 +4798,7 @@
         "pending": "待确认"
       },
       "search": "搜索插件",
-      "description": "插件是一包扩展、技能、连接器模板和智能体模板。从市场引入或上传，确认权限后即装好。",
+      "description": "插件是一包扩展、技能、连接器模板和智能体模板。从市场安装或上传，确认权限后即装好。",
       "chips": {
         "builtin": "内置",
         "claudeCode": "Claude Code",
@@ -4756,7 +4881,7 @@
         "noHash": "读不出这个插件的扩展包，暂时无法确认。",
         "kind": {
           "access": "申请使用",
-          "import": "申请引入",
+          "import": "申请安装",
           "enable": "申请启用"
         },
         "requester": "申请人 {name}",
@@ -4986,11 +5111,11 @@
       "pathEntry": "市场条目 {entry}（路径 {path}）",
       "sameVersion": "平台已在用 {version}。",
       "dependentRange": "插件 {dependent} 依赖 {range}，{version} 不满足。",
-      "templateConnector": "连接器模板 {template} 改用了另一种连接器（{plugin} / {connector}）；请删除插件，再把新版本作为新插件引入。",
+      "templateConnector": "连接器模板 {template} 改用了另一种连接器（{plugin} / {connector}）；请删除插件，再把新版本作为新插件安装。",
       "configExtension": "这个插件的扩展在启动配置里声明（部署运行 {version}），更新不能移动它；请先在启动配置里修改。",
       "configExtensionUnloaded": "这个插件的扩展在启动配置里声明，更新不能移动它；请先在启动配置里修改。",
       "extensionRemoved": "{version} 不带扩展，但部署正在运行它；请先卸载扩展。",
-      "extensionPackage": "{version} 的扩展包不在目录里，不能更新到它；请重新引入这个版本。"
+      "extensionPackage": "{version} 的扩展包不在平台上，不能更新到它；请从市场或插件包重新更新到这个版本。"
     },
     "owner": {
       "self": "本组织",
@@ -5227,7 +5352,7 @@
       "disable": "停用",
       "request": "申请",
       "requestEnable": "申请启用",
-      "requestImport": "申请引入",
+      "requestImport": "申请安装",
       "connectors": "补充配置",
       "withdraw": "撤回",
       "delete": "删除"
@@ -5264,12 +5389,12 @@
     "market": {
       "title": "市场",
       "empty": "市场里还没有条目。",
-      "adopted": "已引入",
-      "unavailable": "不能引入",
+      "adopted": "已安装",
+      "unavailable": "不能安装",
       "otherVersions": "其他版本",
       "deprecated": "{version} 已废弃",
       "deprecatedReason": "{version} 已废弃：{reason}",
-      "requestVersion": "申请引入 {version}",
+      "requestVersion": "申请安装 {version}",
       "requestedVersion": "已申请 {version}，等待处理"
     },
     "detail": {
@@ -5529,10 +5654,10 @@
       "org": "组织创建"
     },
     "empty": {
-      "skill": "还没有技能。引入带技能的插件后，它们会出现在这里。",
-      "connector_template": "还没有连接器模板。引入带连接器模板的插件后，它们会出现在这里。",
-      "agent_template": "还没有智能体模板。引入带智能体模板的插件后，它们会出现在这里。",
-      "theme": "还没有主题。引入带主题的插件后，它们会出现在这里。"
+      "skill": "还没有技能。安装带技能的插件后，它们会出现在这里。",
+      "connector_template": "还没有连接器模板。安装带连接器模板的插件后，它们会出现在这里。",
+      "agent_template": "还没有智能体模板。安装带智能体模板的插件后，它们会出现在这里。",
+      "theme": "还没有主题。安装带主题的插件后，它们会出现在这里。"
     },
     "emptyTab": {
       "agent_template": "这一栏下没有智能体模板。"
@@ -5728,7 +5853,7 @@
       "title": "主题",
       "description": "本组织启用的主题，可在下面选为默认主题。平台默认主题在每个组织都启用，不能关闭。",
       "label": "本组织的主题",
-      "empty": "还没有可用的主题。超级管理员引入带主题的插件后，它们会出现在这里。",
+      "empty": "还没有可用的主题。超级管理员安装带主题的插件后，它们会出现在这里。",
       "lockedDefault": "平台默认主题 · 不能关闭"
     },
     "org": {
@@ -6012,7 +6137,81 @@
     "turnedOff": "本组织已关闭定时任务：任务不会运行，也不能新建。",
     "startedByGone": "由一个已不存在的定时任务发起",
     "panelTitle": "定时任务",
-    "nextRunAt": "下次运行 {at}"
+    "nextRunAt": "下次运行 {at}",
+    "tabs": {
+      "list": "列表",
+      "calendar": "日历"
+    },
+    "calendar": {
+      "mine": "只看我的",
+      "all": "全组织",
+      "zone": "时间按 {zone} 显示。",
+      "horizon": "只显示到 {day} 的计划运行。",
+      "truncatedMonth": "运行太多，只显示到 {day}，请切到周视图。",
+      "truncatedWeek": "运行太多，只显示到 {day}，请切到「只看我的」或列表。",
+      "emptyWeek": "本周没有运行",
+      "emptyMonth": "本月没有运行",
+      "nextRun": "下一次运行在 {at}。",
+      "jumpToNext": "跳到下一次运行",
+      "allPaused": "所有定时任务都已暂停",
+      "allPausedHint": "恢复任务后，计划运行会出现在日历上。",
+      "showList": "查看列表",
+      "state": {
+        "upcoming": "计划运行",
+        "running": "运行中",
+        "completed": "已完成",
+        "failed": "失败",
+        "skipped": "已跳过"
+      },
+      "trial": "试运行",
+      "manual": "手动",
+      "dayLabel": "{m}月{d}日 {weekday}",
+      "itemLabel": "{title}，{meta}，{day} {time}，{state}",
+      "itemNoMetaLabel": "{title}，{day} {time}，{state}",
+      "itemMarkLabel": "{label}，{mark}",
+      "metaWithCreator": "{agent} · {person}",
+      "collapsed": {
+        "minutes": "每 {n} 分钟 · {count} 次",
+        "hourly": "每小时 · {count} 次",
+        "hours": "每 {n} 小时 · {count} 次",
+        "runs": "{count} 次运行"
+      },
+      "collapsedFailed": "{n} 次失败",
+      "collapsedLabel": "{title}，{summary}，{day}",
+      "collapsedFailedLabel": "{title}，{summary}，{day}，其中 {n} 次失败",
+      "panel": {
+        "run": "本次运行",
+        "task": "任务",
+        "status": "状态",
+        "kind": "类型",
+        "scheduled": "按时",
+        "manual": "手动",
+        "trial": "试运行",
+        "reason": "原因",
+        "failed": "运行失败。",
+        "missing": "{n, plural, other {# 个工具被拒绝}}",
+        "openConversation": "打开会话",
+        "openTask": "打开任务",
+        "planned": "计划运行",
+        "plannedHint": "到时如遇上次运行未结束、组织运行上限或设备离线，本次会跳过。",
+        "about": "约 {time}",
+        "taskZone": "任务时区 {zone} {time}",
+        "schedule": "时间",
+        "agent": "智能体",
+        "target": "结果去向",
+        "taskStatus": "任务状态",
+        "nextRun": "下次运行",
+        "creator": "创建人",
+        "none": "无",
+        "day": "{day} 的运行",
+        "dayLabel": "{day} 的运行",
+        "dayEmpty": "这天没有运行。",
+        "back": "返回这一天",
+        "view": "查看",
+        "loadFailed": "加载失败。",
+        "retry": "重试"
+      }
+    }
   },
   "scheduleSettings": {
     "title": "定时任务",

@@ -15,6 +15,7 @@ import { OrgCatalogService } from "./org-catalog.service.js";
 import { OrgExtensionSwitch } from "./org-extension-switch.js";
 import { OrgPluginUploads } from "./org-plugin-uploads.js";
 import { OwnedItems } from "./owned-items.js";
+import { PlatformImportUpdate } from "./platform-import-update.js";
 import { PluginInstaller } from "./plugin-install.js";
 import { PlatformPluginUpdater } from "./plugin-upgrade.js";
 import { CatalogRequestsService } from "./requests.service.js";
@@ -29,7 +30,8 @@ const MAINTENANCE_QUEUE_MODULE = QueueModule.registerQueue(MAINTENANCE_QUEUE_NAM
 
 /**
  * The plugin catalog (spec §4, §10): {@link CatalogImportModule}, catalog requests, org installs
- * with their dependencies, the platform plugin update (`PlatformPluginUpdater`), the admin's scope
+ * with their dependencies, the platform plugin update (`PlatformPluginUpdater`) and the update to a
+ * staged version (`PlatformImportUpdate`), the admin's scope
  * and disable
  * (`CatalogScopeService`), org admins' plugin uploads (`OrgPluginUploads`) and their own plugins (`OwnedItems`), and the producer of the plugin scope sync
  * (`PluginScopeSync`; its consumer is the worker role's `PluginScopeWorkersModule`). The catalog's periodic jobs (`CatalogJobs`) are
@@ -46,10 +48,11 @@ const MAINTENANCE_QUEUE_MODULE = QueueModule.registerQueue(MAINTENANCE_QUEUE_NAM
     StorageModule,
     SkillsModule,
     ToolsModule,
-    // the producer side of the plugin scope sync (`PluginScopeWorkersModule` consumes it)
+    // the plugin scope sync's queue: the outbox dispatcher adds the owed jobs through it
+    // (`PluginScopeWorkersModule` consumes it)
     PLUGIN_SCOPE_QUEUE_MODULE,
-    // a removed org plugin's cleanup job (`OwnedItems`, `CatalogScopeService`; consumed by the
-    // worker role's `MaintenanceProcessor`)
+    // the queue of a removed org plugin's owed cleanup job (`OwnedItems`, `CatalogScopeService`;
+    // consumed by the worker role's `MaintenanceProcessor`)
     MAINTENANCE_QUEUE_MODULE,
   ],
   providers: [
@@ -63,6 +66,7 @@ const MAINTENANCE_QUEUE_MODULE = QueueModule.registerQueue(MAINTENANCE_QUEUE_NAM
     ComponentScopeService,
     OrgPluginUploads,
     OwnedItems,
+    PlatformImportUpdate,
   ],
   exports: [
     PLUGIN_SCOPE_QUEUE_MODULE,
@@ -78,6 +82,7 @@ const MAINTENANCE_QUEUE_MODULE = QueueModule.registerQueue(MAINTENANCE_QUEUE_NAM
     ComponentScopeService,
     OrgPluginUploads,
     OwnedItems,
+    PlatformImportUpdate,
   ],
 })
 export class CatalogModule {}

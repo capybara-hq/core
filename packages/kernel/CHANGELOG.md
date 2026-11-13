@@ -1,5 +1,294 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.26
+
+### Minor Changes
+
+- 3c7c8bf: Device policy changes record their intent before the call. Before a `policy` op is sent, one
+  transaction writes the op on the machine's row (who asked, for which network ask), audits
+  `device.policy_requested` and owes a `device-op-resolve` job for when the op can no longer reach the
+  machine; the outcome is recorded after the call: `device.policy_changed` when applied,
+  `device.policy_failed` when refused or never received, `device.policy_unknown` when no answer came.
+  A crash between the call and the record no longer leaves a changed device without an audit: the
+  job asks the machine what became of the op (`policyStatus`, never sending the change again), and
+  a machine that is offline reports it in its next hello (`recentOps`), recorded late. Policy changes
+  now need a `capybara-device` that announces `policyOpId`; an older one is told to update.
+  `device.policy_changed` no longer carries `confirmed`.
+  
+  Network asks decide on that intent. 「这台设备一直允许」 records the intent (naming the ask) before
+  the device is called, and the ask's decision and the op's outcome are written in one transaction;
+  a change applied after the ask closed is audited `device.network_allowed` with `late: true` in that
+  same transaction. When the process stops between the call and the record, the resolve job approves
+  the still-pending ask (`always`, by the person who chose it) and resumes its run if the device
+  applied the change; otherwise the ask stays pending with the reason (`detail.attempt`, an
+  `approval_updated` event) and the card says why. A device is asked only when its program announces
+  `policyOpId`. The device page lists changes the machine did not confirm or that did not take
+  effect (the view's `confirmed` is replaced by `outcome`).
+
+### Patch Changes
+
+- 76828c0: Device policy ops carry an op id. The device protocol's `policy` op now requires `opId` (non-empty,
+  no `:`, at most 128 characters); the new `policyStatus` op asks a device what became of an op id
+  (`applied`, `refused`, `started` or `unknown`, with its policy summary now); a hello may carry
+  `recentOps`, the outcomes of the latest 100 policy ops; the new feature `policyOpId` announces all
+  three. `capybara-device` logs each policy op in `policy-ops.json` next to `policy.json` (`started`
+  before the change, then `applied` or `refused`; the last 100 kept), answers a repeated op id from
+  that log without applying it again, and reports the log in every hello. The kernel sends its op id
+  with each `policy` op.
+  
+  The SDK's hello parser keeps one `recentOps` entry per op id (the last one listed). `capybara-device`
+  keeps a refusal's message in the log cut to 500 characters, never logs an applied op as refused
+  when releasing the policy lock fails after the write, and keeps an op the log already says was
+  applied as applied.
+- 47ef322: A person's stop of a conversation now stops every running sub-agent below it too, and the
+  conversation stays stopped: no sub-agent finish or report starts it again until the next message,
+  whose run sees what they delivered. The conversation's own background Bash tasks keep running.
+- b6b8d13: TaskOutput given a sub-agent's agentId answers where its report arrives instead of failing the call; TaskStop still refuses it.
+- a9f726b: The last direct job adds follow the transactional outbox or say why they need not. An eval run's
+  start owes one case job per case in the transaction that writes the run, so a crash after the
+  start no longer leaves a run waiting for jobs that were never added (the "enqueue failed" path
+  that marked such a run failed is gone). A background task finish or delivery inside a
+  conversation's wake window owes the delayed `bg-wake` job in the transaction that found it, so the
+  wake is no longer lost when the process dies or Redis is down. A channel connection that is
+  re-enabled, or gets new credentials while active, owes its catch-up (`channel-resume`) in the
+  update's transaction, so the replies held back meanwhile are no longer left unsent by a crash. The eval queue's jobs are named
+  `eval-case`.
+- bb931fd: Transactional outbox follow-ups. Retrying a dead outbox row that is owed again twice while it is
+  retried answers 409 `conflict` instead of an internal error, and its audit detail always names the
+  row's own queue and job. A run job that read a run as queued before a stop ended it records no
+  skills catalog or run context for it. Allowing hosts always on a device no longer reports success
+  when the request was approved meanwhile with other hosts and the device did not confirm this
+  change. On the admin overview, a dead outbox list that cannot be read shows the group's
+  unavailable state with retry instead of a bare count.
+  A stop that lands while the context providers are asked appends no plugin context after the run
+  ended; a deleted org's runs are no "queue lost jobs" report and its usage is still reported; a
+  worker fails a maintenance job it does not know so a newer replica retries it.
+- Updated dependencies [76828c0]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.20
+
+## 0.1.0-rc.25
+
+### Minor Changes
+
+- b4d2b44: Plugin scope syncs follow the transactional outbox: a scope change, a deployment-level disable or
+  enable, a 可共享 switch-off that narrows a plugin, an approved access request, an ownership
+  transfer, a platform plugin update and a new org owe their `scope-item` / `scope-org` job in the
+  transaction that makes the change, and a confirmed import or org upload owes it right after its
+  extension is deployed. The removal of an org-owned plugin owes its `owned-plugin-cleanup` job with
+  the removal. A crash or a Redis outage after the commit no longer loses the sync, so the worker no
+  longer re-enqueues every plugin's sync at start and the daily owned-plugin cleanup sweep is gone. A
+  migration that changes a scope inserts the outbox rows itself.
+  
+  A plugin import writes its platform components (skills, agent templates, connector templates,
+  themes) in the import's transaction, and so does the super admin's confirmation of an org upload's
+  first version: their files are copied before it under a key made from their content, so a failed
+  import leaves no item and a retry copies nothing again. The worker job
+  `platform-components-migrate` and its retry after a failed post-import sync are gone. Removing an
+  org upload still awaiting confirmation owes its cleanup too.
+  
+  With the job gone, the platform inbox no longer has a "platform components migration" item and
+  the org inbox no longer has the `skill_renamed` notice (only that job wrote it): migration 0121
+  drops `platform_migration_runs`, deletes those notices and narrows the notice kind check.
+- 240801c: Scheduled task fires follow the transactional outbox: the transaction that writes a pending task
+  run (the scan's tick, a person's "Run now") owes its `sched-fire-<taskRunId>` job in the outbox, so
+  a crash or a Redis outage after the commit no longer loses a tick. The scan's repair is gone (no
+  re-enqueue after 10 minutes, no give-up after an hour, no recheck of started runs) and with it the
+  `scheduled_task_runs.rechecked_at` column (migration 0122). A tick whose fire job runs more than 10
+  minutes past the org's catch-up window (workers down for long) is still skipped as `missed`, now by
+  the fire job itself; a "Run now" still runs. The fire job's claim owes a settle check 10 minutes on
+  (`sched-settle`): a run claimed but never started (its start failed for good) is linked, settled or
+  released as the scan's recheck did, so a once task's last run never stays pending. The tick and "Run
+  now" also owe an unfired check: a run whose fire job failed for good before claiming it is skipped
+  (`missed`, or `removed` for a "Run now") instead of blocking every later tick as an overlap.
+  
+  Offboarding follows the transactional outbox: removing a member, a member leaving and a directory
+  sync offboarding owe a `run-stop` job for each of the person's active runs in the org and a
+  `sandbox-destroy-for` job for each of their devices, in the offboarding's transaction. Deleting a
+  device owes its destroy the same way, under `device-destroy-<deviceId>`. A crash or a Redis outage
+  after the commit no longer leaves a departed member's runs going or their devices standing, so the
+  10-minute offboarding sweep is gone; the session revocation markers stay hints (`revoked_at` in
+  PG decides). Offboarding locks the conversations it touches tree by tree, root first, so it no
+  longer deadlocks with a reply that skips a sub-agent's network ask.
+
+### Patch Changes
+
+- fc46148: Call `context@1` providers at a chat run's start: every provider enabled in the org with a valid
+  config is asked in parallel (2 s each, outside any transaction), and a `plugin_context` event is
+  appended when its text changed; a throw, a timeout or text over 32 KB is skipped and logged, and a
+  provider switched off in the org gets an empty event. The import review shows `provides
+  context@1` as adding text to the model's context. Tool step contexts now always carry the source,
+  the owner and the role. `@capybara-hq/testing` gains the `fake-context` fixture.
+- 23c16d8: Conversations record where they come from (`conversations.source`: `web`, `channel_dm`,
+  `channel_group` or `subagent`), set at creation and never changed. Migration 0124 adds the column
+  and backfills existing conversations from their kind, their channel thread rows (archived ones
+  included) and, for a group run whose thread is not bound yet, their delivery target.
+- b7e70f7: Deliver the lifecycle hooks `org.member_removed`, `agent.deleted` and `org.deleted` durably: one
+  job per subscribing plugin is owed through the transactional outbox in the deleting transaction and
+  delivered through the `cap-kernel-lifecycle` queue, with retries (shown in the admin overview's
+  queues). Add the fake extension `fake-lifecycle`.
+- b177905: The compose files and test containers run PostgreSQL 17 with pgvector (`pgvector/pgvector:pg17`),
+  and migration 0123 creates the `vector` extension in `public` when the server offers it and the
+  migrating role may create it; otherwise it only raises a notice, and plugins fall back to `real[]`.
+  `@capybara-hq/testing` exports `startPostgresContainer` (with an `image` option) and `TEST_PG_IMAGE`.
+- fcfabb4: Offer an extension tool only in the conversation sources its `spec.sources` lists (hidden with the
+  reason elsewhere, a resumed call refused), and give plugin tool handlers the conversation's
+  `source`, its owner (`ownerAccountId`) and the trigger account's `role`. `fake-tools-ui` gains the
+  tool `web-only`.
+- Updated dependencies [da677b6]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.19
+
+## 0.1.0-rc.24
+
+### Minor Changes
+
+- c619811: A transactional outbox: work that must follow a commit is a row in `capybara.outbox` written in the
+  same transaction (`OutboxService.add`), delivered right after the commit by a fast path and, when
+  that fails, by a relay on the worker role every 2 s; failures back off and after 20 attempts the
+  row is a dead letter the super admin sees in the overview (无法排入队列的后台任务) and can retry or
+  discard (`/api/v1/admin/outbox/dead`, Platform operations). New checks `kc-enqueue-via-outbox`,
+  `kc-after-commit-hint` and `check:outbox-registry` (migration 0119).
+- b8a3c5b: Runs follow the transactional outbox: a run's job, its ensure-run backstop, resumes, wait timeouts,
+  sub-agent dispatches, deliveries and tree stops are owed in the transactions that cause them. A run
+  nobody runs any more is repaired by one `run-orphan-check` (worker role, every minute): a running
+  run whose replica died is failed `run.orphaned` and reported to its parent; a queued run whose job
+  the queue lost is queued again and shown in the admin overview (队列丢失了后台任务). Reading a
+  conversation (events, SSE) no longer changes run state, the wait sweep is gone, and a finished run
+  cancels its pending approvals and questions in its terminal transaction. The dual-replica harness
+  fails `stop()` when the replicas left a queued run without its job.
+- 36d904d: Usage reports follow the transactional outbox: a `usage.report` delivery is owed in the transaction
+  that writes the usage it reports (a model call's, compaction's, title's or `WebFetch` extraction's
+  `usage` event, an embed call's `model_usage` row), while the deployment has at least one enabled
+  extension that declares the hook. That is read from the database (cached 30 s per replica, cleared
+  when plugins change), so a replica without the handler still owes the report another replica
+  delivers. Usage written while no extension subscribed is not reported later. The usage sweep, its
+  watermark table (migration 0120) and `hooks.usageReportKeepHours` are gone: finished delivery jobs
+  are kept 24 hours.
+  
+  IM delivery is owed too: an event append to a conversation with a channel target (a reply, an
+  approval decision, a question answer, a wait stop) adds the conversation's deliver job to the outbox
+  in its own transaction, and binding a conversation to its IM target owes the first one with it, so a
+  crash or a Redis outage after the commit no longer loses the reply or the card update. A
+  conversation without a channel target writes nothing more. The in-process
+  `conversation.event-appended` and `run.wait-stopped` events are gone; `run.started` stays a hint
+  that starts streaming drafts at once.
+
+### Patch Changes
+
+- ba36733: A device's recent sandbox changes now list the policy changes its owner makes on the machine
+  (`capybara-device policy ...`: tier from and to, localhost, allowed domains added and removed,
+  isolation, remote grants) as 本机 beside the web's, each change once.
+- 9370947: Updating an installed platform plugin to a newer version is one wizard: 更新到 vX on the admin
+  plugin list, the plugin's page and the marketplace tab stages the version and shows the import
+  review, then the platform update preview; one confirm applies both (`GET
+  /api/v1/admin/catalog/imports/:stagingId/update-preview`, `POST …/imports/:stagingId/update`).
+  Cancelling writes nothing; an update failing after the import says so (409
+  `plugin.imported_not_updated`) and leaves the platform on its version. An installed plugin is no
+  longer imported on its own; the 版本 tab moves the platform to another imported version (更新到 /
+  回退到). A plugin not installed yet shows 安装 instead of 导入 / 引入.
+- e2731bd: New builtin tool `TaskList`, offered with `Bash` like `TaskOutput` and `TaskStop`: it lists the
+  conversation's own background tasks (running first, then the 20 most recently finished, with id,
+  description, status, elapsed time, exit code and output file) and the sub-agents it dispatched.
+  Read-only and allowed by default; `status: "running"` lists only what still runs. `TaskOutput`'s
+  not-found error and the `Bash` description point to it.
+- 86c258c: Agent runs have no step limit and no duration limit by default: `runtime.maxSteps` and
+  `runtime.maxRunSeconds` default to 0 (no limit), so a run goes on until the model stops calling
+  tools or someone stops it. Without a run duration limit, sandbox commands are limited only by
+  `sandbox.limits.maxCommandSeconds` and the tool timeouts; explicit positive limits work as before.
+- Updated dependencies [67e6ad5]
+- Updated dependencies [e76028b]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.18
+
+## 0.1.0-rc.23
+
+### Patch Changes
+
+- 8471657: A local policy change made on the machine (`capybara-device policy ...` while the service runs, a
+  flipped localhost proxy guard, a new tier ceiling) reaches the deployment at once: the device
+  pushes its new summary in a `policy` frame (new in the device protocol), and the kernel stores it
+  as it stores the hello's, so the device page and the next `device_paths` line show it.
+- 8ef7ec6: The plugin enable wizard no longer asks for connector templates that start switched off
+  (`defaultEnabled: false`); the org catalog detail marks them with `defaultOff`.
+- f156a46: Background Bash tasks (`run_in_background`) work on macOS devices: where `pgrep` has no `-s`, the
+  launch runs the command in a process group of its own, watched by a small perl launcher that
+  enforces the time limit and signals the group on a stop (macOS has no `setsid` or GNU `timeout`,
+  and its OS sandbox lets no command list or signal another command's processes).
+- a3ca5ef: The super admin sets the platform's sandbox levels (`sandbox.tiers.max`, `default`,
+  `allowUnsandboxed`) on the admin settings page (`PUT /api/v1/admin/settings` `sandboxTiers`). A field
+  set in the startup config (env, file or Nacos) wins and is read-only there; an API token or the
+  Platform tool may only lower them. The dev hosts preset (`DEV_HOSTS`) adds `storage.googleapis.com`,
+  where Playwright's Chromium download (Chrome for Testing) is served from.
+- Updated dependencies [8471657]
+- Updated dependencies [a3ca5ef]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.17
+
+## 0.1.0-rc.22
+
+### Minor Changes
+
+- 67b39b3: The device owner edits a connected device's network policy from the web:
+  `POST /api/v1/orgs/:orgId/devices/:id/policy` (`add`, wildcards allowed; `remove`; `network`
+  `allowlist` or `open`), web session only, delivered with the `policy` device operation. Widening
+  needs the device's local `remoteGrants: "owner"` (else 409 `device.policy_refused` with the command
+  to run on the machine). The device view lists the last ten policy changes (`network.recent`).
+- e964b57: Network asks: when a command on a connected device is refused a domain by the device's local
+  policy, the device owner is asked in the conversation or on the IM card (「这次允许 / 这台设备一直允许 /
+  拒绝」). "This time" allows the domain for the rest of the run tree; "always" adds it to the device's
+  local policy through the new `policy` device operation. Org-layer and address-layer refusals are
+  explained to the model and shown under the command. Migration 0114 adds approval kinds and device
+  policy summaries.
+- 9725087: A character budget for the skills catalog: `skills.catalogBudgetChars` (hot, default 16000). At run
+  start the catalog's entries are ranked (the agent's own and the ones it shared, builtin, the organization's own, then
+  plugin skills) and those past the budget are recorded in the snapshot as name-only and listed
+  after the others under "More skills (names only; …)". Old snapshots render as before.
+- 95fc4b0: Skills are on by default and pinning is gone. Every skill on in an org is on for every agent unless
+  the agent's new `disabledSkills` turns it off (a plugin's skills by name, a whole plugin as `"all"`
+  including skills it gains later, or a skill without a plugin by id); builtin skills, the agent's
+  own and its shared skills cannot be turned off. `skills.orgSkills` and `skills.pinned` are removed
+  from the agent definition (refused on save; migration 0116 rewrites every agent version), run start
+  no longer injects pinned skill bodies (an old conversation gets a "Pinned skills removed" notice),
+  and `agent.pinned_invalid` is gone. A sub-agent template's `skills` become one logged line telling
+  the child to load them with `Skill` first. `plugin.json` `skills[].pinned` and the import confirm's
+  `pinnedSuggestions` are removed; the skill APIs drop `suggestPinned`, `entryBytes` and
+  `tokenEstimate` and the library list gains `builtin`; the Claude Code import reports a
+  `session_start_hook` warning instead of a pin hint. The Platform tool's `agents.create` /
+  `agents.update` take `disabledSkills`, and `platform.me` lists the agent's skills.
+
+### Patch Changes
+
+- 2682d5f: Agent templates turn skills off with `disallowedSkills` (`<plugin>:<name>`, `<plugin>:*` or a bare
+  `<name>`, at most 64; `isDisallowedSkillRef`) instead of selecting them: `selectedSkills` is
+  removed. Creating an agent from a template turns those skills off and lists every name in `skills`
+  as carried or unavailable; saving an agent as an org template writes its off-list.
+- 89a0a5c: The `Bash` tool description tells the model that network access goes through a proxy and that a
+  blocked domain is reported after the command output.
+- 105a59e: The skills of builtin plugins on in the org (`skills-core`'s `skill-guide`) are in every agent's
+  skills catalog without being selected (listed, not pinned; an agent's own skill of the same name
+  wins); the skill library marks them `builtin`, and the agent page shows them ticked and disabled
+  with a "Built-in" tag
+- f6d6f16: The `capybara:oauth-token-endpoint` setup check reads GitHub's token endpoint answers
+  (`bad_verification_code` accepted, `incorrect_client_credentials` refused), and its fix text no
+  longer names Slack's "Basic Information" page.
+- bb3d177: Sandbox tiers in the kernel: cloud devices get their effective tier (applied on use through the provider's `update`, or by recreating the instance on the kept files), local devices get the org's ceiling with every command, scheduled runs need the `tier:open` task grant for the open tier, and a device running without a sandbox is refused where the org does not allow it
+- c36ce32: Scheduled tasks: cron-triggered agent runs into a new conversation, a chosen one or an IM chat, with task grants, trial runs and pause on lasting failures
+- e808481: Skills are on by default in the web app: the agent page's 技能 section lists every skill on in the
+  org checked, and unticking one turns it off (`disabledSkills`); a plugin's group head turns the
+  whole plugin off, its later skills too. Pinning is gone (the 置顶 section, the pinned suggestions
+  of plugin import, the token estimates). The agent template editor edits `disallowedSkills` with the
+  same list and the skills a sub-agent loads first. The org 技能 page filters by plugin and its
+  detail says how many agents turned a skill off (`agentsOff` on the skill detail); switching off a
+  plugin with skills says every agent loses them; the admin agent pages show the off count.
+- f1331fe: `subagents.maxTokensPerRun` now defaults to 0 (no limit); set it, or an org override, to cap sub-agent tokens.
+- bfb35e3: Tool rows no longer read a Bash command's non-zero exit as a failure (only a timeout or a stopped
+  command fails; the summary names the exit code), and an `Edit` / `Write` refused by the
+  read-before-write check carries the display-only `tool_result.view.kind: "guard"`, shown as
+  "Blocked: read the file (again) first" and counted apart from failures; the model still gets the
+  same error result
+- Updated dependencies [2682d5f]
+- Updated dependencies [2e52ca1]
+- Updated dependencies [8fa0e32]
+- Updated dependencies [95fc4b0]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.16
+
 ## 0.1.0-rc.21
 
 ### Minor Changes

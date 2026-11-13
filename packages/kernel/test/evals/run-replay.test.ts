@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -273,6 +274,7 @@ async function seedRun(
     | { delivery: EventPayload<"subagent_delivery"> },
   catalog?: EventPayload<"skills_catalog">,
   runContext?: EventPayload<"run_context">,
+  pluginContexts: EventPayload<"plugin_context">[] = [],
 ): Promise<{ userSeq: number; interjectionSeq: number | null }> {
   const [msg] = await eventLog.append(convId, [
     {
@@ -345,6 +347,7 @@ async function seedRun(
     ...(runContext !== undefined
       ? [{ type: "run_context" as const, runId, payload: runContext }]
       : []),
+    ...pluginContexts.map((payload) => ({ type: "plugin_context" as const, runId, payload })),
     call(1, userSeq),
   ]);
   let interjectionSeq: number | null = null;
@@ -976,6 +979,42 @@ describe("整轮回放", { timeout: 60_000 }, () => {
     expect(r?.status, JSON.stringify(r?.error)).toBe("done");
     const copied = (await evalEvents(r as EvalResultView)).filter((e) => e.type === "run_context");
     expect(copied.map((e) => e.payload)).toEqual([runContext]);
+  });
+
+  it("the run's plugin_context events are copied unchanged, earlier ones stay seeds (memory spec §6.1)", async () => {
+    const setId = await createSet();
+    const conv = await createConv(admin, orgId, agentId);
+    const ctx = (plugin: string, text: string): EventPayload<"plugin_context"> => ({
+      plugin,
+      text,
+      hash: createHash("sha256").update(text).digest("hex"),
+    });
+    const earlier = ctx("notes", "- an earlier note");
+    await eventLog.append(conv, [{ type: "plugin_context", payload: earlier }]);
+    const recorded = [ctx("memory", "- prefers tea"), ctx("notes", "")];
+    await seedRun(
+      conv,
+      "plugin-ctx-copy",
+      'tool:plugin__tools-count__count:{"n":1}',
+      [{ name: "plugin__tools-count__count", input: { n: 1 }, content: "recorded count" }],
+      undefined,
+      undefined,
+      undefined,
+      recorded,
+    );
+    await addCase(setId, conv, "plugin-ctx-copy");
+    const run = await startRun(setId, {});
+    expect((await finished(run.id)).status).toBe("completed");
+    const [r] = await results(run.id);
+    expect(r?.status, JSON.stringify(r?.error)).toBe("done");
+    const copied = (await evalEvents(r as EvalResultView)).filter(
+      (e) => e.type === "plugin_context",
+    );
+    expect(copied.map((e) => e.payload)).toEqual([earlier, ...recorded]);
+    // the earlier one is a seed (no run); the run's are the replay run's own
+    expect(copied[0]?.runId).toBeNull();
+    expect(new Set(copied.slice(1).map((e) => e.runId)).size).toBe(1);
+    expect(copied[1]?.runId).not.toBeNull();
   });
 
   /** A fork invocation's run (phase D) written by hand: dispatch, report (optional), one reply. */

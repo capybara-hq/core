@@ -1,9 +1,14 @@
+import type { INestApplicationContext } from "@nestjs/common";
 import type { Queue } from "bullmq";
 import { sql } from "kysely";
 import type { EventLog } from "../../src/conversations/event-log.js";
 import type { EventPayload } from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
+import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
+import { KernelDb } from "../../src/infra/database/kernel-db.js";
+import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { type FinishRunArgs, RunFinish } from "../../src/runtime/run-finish.js";
+import { commitDispatchIn, type DispatchDeps } from "../../src/runtime/subagents/dispatch.js";
 import { handlesFor } from "./identity.js";
 import { waitFor } from "./runs.js";
 
@@ -23,10 +28,43 @@ export function finishRun(
     eventLog,
     h.txHost,
     { onRunFinished: async () => {} },
+    // no git tickets here: revoking them is not under test
     {
       onRunFinished: async () => {},
     },
+    // no outbox here: the ensure-run backstop is not under test
+    { add: async () => true },
+    // runs finished by hand ask for nothing: no waits to cancel
+    { cancelPendingIn: async () => [] },
+    { cancelPendingIn: async () => [] },
   ).finish(a);
+}
+
+/**
+ * A `DispatchDeps.commitDispatch` that runs the kernel's dispatch transaction
+ * (`commitDispatchIn`, as `SubagentsService.commitDispatch` does) with the test's `owe` in place
+ * of the outbox: a test that finishes its children by hand owes nothing, so no worker runs them.
+ */
+export function commitDispatchOwing(
+  app: Pick<INestApplicationContext, "get">,
+  eventLog: EventLog,
+  owe: DispatchDeps["owe"],
+): DispatchDeps["commitDispatch"] {
+  const kdb = app.get(KernelDb);
+  const config = app.get(KernelConfigService);
+  const deps = {
+    // the context's handle: the dispatch's transaction inside `run`
+    get db() {
+      return kdb.db;
+    },
+    eventLog,
+    config,
+    owe,
+  };
+  return (a, plan, child) =>
+    app
+      .get(TransactionHost)
+      .run(() => commitDispatchIn(deps, a, plan, child), { propagation: "requires_new" });
 }
 
 /** A dispatched child run of a parent conversation, oldest first. */
@@ -99,13 +137,14 @@ export async function dropChildJobs(queue: Queue, childConvs: string[]): Promise
   return n;
 }
 
-/** Moves a run's queued / created time back past the sweeps' grace periods. */
+/** Moves a run's times back past the run-orphan-check's minute (and any other grace period). */
 export async function backdateRun(db: KernelSchemaDb, runId: string): Promise<void> {
   await db
     .updateTable("runs")
     .set({
       created_at: sql`now() - interval '5 minutes'`,
       queued_at: sql`CASE WHEN queued_at IS NULL THEN NULL ELSE now() - interval '5 minutes' END`,
+      started_at: sql`CASE WHEN started_at IS NULL THEN NULL ELSE now() - interval '5 minutes' END`,
       waiting_since: sql`CASE WHEN waiting_since IS NULL THEN NULL ELSE now() - interval '5 minutes' END`,
       finished_at: sql`CASE WHEN finished_at IS NULL THEN NULL ELSE now() - interval '5 minutes' END`,
     })

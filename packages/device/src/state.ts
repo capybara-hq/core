@@ -16,7 +16,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { DeviceNetworkMode, DeviceRemoteGrants } from "@capybara-hq/plugin-sdk";
+import { type DeviceRemoteGrants, isSandboxTier, type SandboxTier } from "@capybara-hq/plugin-sdk";
 import type { DeviceMode } from "./args.js";
 
 /** What `login` stores: how to reach the deployment and who this machine is there. */
@@ -41,14 +41,18 @@ export interface Policy {
   cpu: number | null;
   memoryMb: number | null;
   /**
-   * `allowlist` (default): commands reach only `allowedDomains`, within the org's egress.
-   * `open`: the local policy stops narrowing; commands reach what the org allows.
+   * The sandbox tier the owner chose for this machine; absent = the org's default. Commands run at
+   * this tier cut to the org's ceiling.
    */
-  network: DeviceNetworkMode;
+  tier?: SandboxTier;
+  /** `sandbox` (default), or `none`: commands run without a sandbox (only with tier `open`). */
+  isolation: "sandbox" | "none";
+  /** `auto` (default): localhost access unless a local proxy is detected; `allow`: always. */
+  localhost: "auto" | "allow";
   /**
-   * `owner` (default): the deployment may widen this policy (the `policy` op's `add` and
-   * `network: "open"`, an exec's run or task grants) on the device owner's decision. `off`: only
-   * narrowing changes from the deployment are accepted. Set only locally.
+   * `owner` (default): the deployment may widen this policy (the `policy` op's `add` and a higher
+   * `tier`, an exec's run or task grants) on the device owner's decision. `off`: only narrowing
+   * changes from the deployment are accepted. Set only locally.
    */
   remoteGrants: DeviceRemoteGrants;
 }
@@ -61,7 +65,8 @@ export const DEFAULT_POLICY: Policy = {
   allowCredentials: [],
   cpu: null,
   memoryMb: null,
-  network: "allowlist",
+  isolation: "sandbox",
+  localhost: "auto",
   remoteGrants: "owner",
 };
 
@@ -80,6 +85,11 @@ export function credentialPath(dir: string): string {
 
 export function policyPath(dir: string): string {
   return join(dir, "policy.json");
+}
+
+/** The outcomes of the latest `policy` ops by op id (written under the policy lock). */
+export function policyOpsPath(dir: string): string {
+  return join(dir, "policy-ops.json");
 }
 
 /** The lock file that serializes read-modify-writes of policy.json across processes. */
@@ -152,20 +162,33 @@ const isStringList = (v: unknown): v is string[] =>
 const isCeiling = (v: unknown): v is number | null =>
   v === null || (typeof v === "number" && Number.isFinite(v) && v > 0);
 
-const POLICY_KEYS: readonly string[] = Object.keys(DEFAULT_POLICY);
+const POLICY_KEYS: readonly string[] = [...Object.keys(DEFAULT_POLICY), "tier"];
+/** Keys of older policy files: ignored on read and dropped on the next write. */
+const LEGACY_POLICY_KEYS: readonly string[] = ["network", "allowLocalBinding", "allowUnixSockets"];
 
 /** The local policy (defaults when absent). Throws, naming the file, on bad JSON or field types. */
 export function readPolicy(dir: string): Policy {
   return readPolicyFile(dir).policy;
 }
 
+/** {@link readPolicyFile}'s result. */
+export interface PolicyFile {
+  policy: Policy;
+  /** The file's keys this version does not know (legacy keys excluded). */
+  extra: Record<string, unknown>;
+  /** The file still has the legacy `network: "open"` (now tier `open`; worth a notice at start). */
+  legacyNetworkOpen: boolean;
+}
+
 /**
  * The local policy plus the file's keys this version does not know (kept on every write, so an
  * older program never drops a newer one's settings). Throws like {@link readPolicy}.
  */
-export function readPolicyFile(dir: string): { policy: Policy; extra: Record<string, unknown> } {
+export function readPolicyFile(dir: string): PolicyFile {
   const file = policyPath(dir);
-  if (!existsSync(file)) return { policy: { ...DEFAULT_POLICY }, extra: {} };
+  if (!existsSync(file)) {
+    return { policy: { ...DEFAULT_POLICY }, extra: {}, legacyNetworkOpen: false };
+  }
   let raw: unknown;
   try {
     raw = JSON.parse(readFileSync(file, "utf8"));
@@ -182,34 +205,48 @@ export function readPolicyFile(dir: string): { policy: Policy; extra: Record<str
   if (!isStringList(policy.allowCredentials)) throw bad("allowCredentials", "a list of strings");
   if (!isCeiling(policy.cpu)) throw bad("cpu", "a positive number or null");
   if (!isCeiling(policy.memoryMb)) throw bad("memoryMb", "a positive number or null");
-  if (policy.network !== "allowlist" && policy.network !== "open") {
-    throw bad("network", '"allowlist" or "open"');
+  if (policy.tier !== undefined && !isSandboxTier(policy.tier)) {
+    throw bad("tier", '"strict", "dev" or "open"');
+  }
+  if (policy.isolation !== "sandbox" && policy.isolation !== "none") {
+    throw bad("isolation", '"sandbox" or "none"');
+  }
+  if (policy.localhost !== "auto" && policy.localhost !== "allow") {
+    throw bad("localhost", '"auto" or "allow"');
   }
   if (policy.remoteGrants !== "owner" && policy.remoteGrants !== "off") {
     throw bad("remoteGrants", '"owner" or "off"');
   }
   const extra: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(raw)) if (!POLICY_KEYS.includes(k)) extra[k] = v;
+  for (const [k, v] of Object.entries(raw)) {
+    if (!POLICY_KEYS.includes(k) && !LEGACY_POLICY_KEYS.includes(k)) extra[k] = v;
+  }
   return {
     policy: {
       allowedDomains: policy.allowedDomains,
       allowCredentials: policy.allowCredentials,
       cpu: policy.cpu,
       memoryMb: policy.memoryMb,
-      network: policy.network,
+      ...(policy.tier !== undefined && { tier: policy.tier }),
+      isolation: policy.isolation,
+      localhost: policy.localhost,
       remoteGrants: policy.remoteGrants,
     },
     extra,
+    legacyNetworkOpen: (raw as Record<string, unknown>).network === "open",
   };
 }
 
-/** Writes policy.json atomically (owner-only); `extra` are unknown keys to keep. */
+/** Writes policy.json atomically (owner-only); `extra` are unknown keys to keep (never legacy ones). */
 export function writePolicy(
   dir: string,
   policy: Policy,
   extra: Record<string, unknown> = {},
 ): void {
-  writePrivate(policyPath(dir), `${JSON.stringify({ ...extra, ...policy }, null, 2)}\n`);
+  const kept = Object.fromEntries(
+    Object.entries(extra).filter(([k]) => !LEGACY_POLICY_KEYS.includes(k)),
+  );
+  writePrivate(policyPath(dir), `${JSON.stringify({ ...kept, ...policy }, null, 2)}\n`);
 }
 
 /** A lock file older than this is left over by a crashed process and is taken over. */
@@ -325,7 +362,11 @@ export function withPolicyLock<T>(
       } catch {
         // Already gone.
       }
-      closeSync(fd);
+      try {
+        closeSync(fd);
+      } catch {
+        // `fn` ran (a policy write may have happened): a failed close must not turn it into an error
+      }
     }
   }
 }

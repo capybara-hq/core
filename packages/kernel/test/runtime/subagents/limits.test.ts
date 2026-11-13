@@ -23,7 +23,6 @@ import {
   subagentBudgetUsedUp,
   subagentLimits,
 } from "../../../src/runtime/subagents/limits.js";
-import { SubagentsService } from "../../../src/runtime/subagents/subagents.service.js";
 import { AGENT_REFUSALS, type AgentToolInputT } from "../../../src/tools/builtins/agent.js";
 import type { ToolStepContext } from "../../../src/tools/pipeline.js";
 import { type ScriptRule, scriptRules } from "../../fixtures/plugins/model-script/index.js";
@@ -46,7 +45,7 @@ import {
   waitFor,
   waitForTerminal,
 } from "../../helpers/runs.js";
-import { childRunsOf, finishedDeliveries } from "../../helpers/subagents.js";
+import { childRunsOf, commitDispatchOwing, finishedDeliveries } from "../../helpers/subagents.js";
 
 /**
  * Phase C Task 10: the per-run sub-agent limits (concurrency, dispatch count, tokens), the
@@ -323,6 +322,7 @@ async function seedChild(
       agent_id: agentId,
       account_id: await accountOf(parentConv),
       kind: "subagent",
+      source: "subagent",
       parent_conversation_id: parentConv,
       subagent_type: "general-purpose",
     })
@@ -360,7 +360,9 @@ async function dispatchFrom(
     agentVersion: 1,
     accountId: account,
   } as unknown as ToolStepContext;
-  const out = await k.app.get(SubagentsService).commitDispatch(
+  // the kernel's dispatch transaction, owing no run job: these children never run
+  const commitDispatch = commitDispatchOwing(k.app, eventLog, async () => true);
+  const out = await commitDispatch(
     { ctx, callId: randomUUID(), input: { description: "Task", prompt: "p" } as AgentToolInputT },
     {
       childConversationId: childConv,
@@ -381,6 +383,7 @@ async function dispatchFrom(
           agent_id: agentId,
           account_id: account,
           kind: "subagent",
+          source: "subagent",
           parent_conversation_id: conv,
           subagent_type: "general-purpose",
         })
@@ -405,7 +408,7 @@ describe("subagentLimits", () => {
       maxDepth: 3,
       maxConcurrentPerConversation: 4,
       maxDispatchesPerRun: 50,
-      maxTokensPerRun: 5_000_000,
+      maxTokensPerRun: 0,
     });
     await override({ maxTokensPerRun: 20_000 });
     expect(
@@ -419,7 +422,7 @@ describe("subagentLimits", () => {
     expect(
       (await subagentLimits(db, { get: () => k.app.get(KernelConfigService).get() }, "another-org"))
         .maxTokensPerRun,
-    ).toBe(5_000_000);
+    ).toBe(0);
     // out of bounds or unknown keys are refused; null removes the override
     for (const bad of [
       { maxConcurrentPerConversation: 21 },
@@ -444,7 +447,7 @@ describe("subagentLimits", () => {
     expect(
       (await subagentLimits(db, { get: () => k.app.get(KernelConfigService).get() }, orgId))
         .maxTokensPerRun,
-    ).toBe(5_000_000);
+    ).toBe(0);
   });
 });
 

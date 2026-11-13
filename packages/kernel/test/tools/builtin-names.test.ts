@@ -69,7 +69,6 @@ const builtins = () =>
     dummy,
     dummy,
     dummy,
-    dummy,
   ).list();
 
 const repoFile = (path: string) =>
@@ -131,12 +130,15 @@ describe("builtin names", () => {
       "Deliver",
       "TaskOutput",
       "TaskStop",
+      "TaskList",
     ]);
     // reading or stopping a task changes nothing the person has not already approved
     expect(SANDBOX_ASK_TOOL_NAMES.has("TaskOutput")).toBe(false);
     expect(SANDBOX_ASK_TOOL_NAMES.has("TaskStop")).toBe(false);
     expect(BUILTIN_TOOL_KINDS.TaskOutput).toBe("read");
     expect(BUILTIN_TOOL_KINDS.TaskStop).toBe("command");
+    expect(SANDBOX_ASK_TOOL_NAMES.has("TaskList")).toBe(false);
+    expect(BUILTIN_TOOL_KINDS.TaskList).toBe("read");
     expect([...SANDBOX_ASK_TOOL_NAMES]).toEqual(["Bash", "Write", "Edit", "Deliver"]);
   });
 
@@ -219,6 +221,7 @@ describe("builtin names", () => {
     const never: readonly string[] = [
       BUILTIN.TaskOutput,
       BUILTIN.TaskStop,
+      BUILTIN.TaskList,
       BUILTIN.SendMessage,
       BUILTIN.SubagentHandback,
       ...WEB_TOOL_NAMES,

@@ -215,9 +215,16 @@ Required with the removal, not optional:
   it ends with `budget` (phase C §8.3); the dispatch and token caps take 0 for no limit (deployment
   and org override), and the admin org limits dialog shows each deployment default as the empty
   field's placeholder.
-- Stopping **(decided, 2026-11-06, as Claude Code)**: the conversation's stop button stops only the
-  root's current run; background children keep working. Stopping an agent in the map (level 2 or 3)
-  stops it and all its descendants. Deleting the root conversation stops the whole tree.
+- Stopping **(decided, 2026-11-06, as Claude Code; changed in acceptance 2026-11-13)**: the
+  conversation's stop button stops the root's current run **and every active sub-agent of its
+  tree** (with their background tasks); after a person stops, the conversation stays stopped. No
+  sub-agent finish or report, whether its child ended because of the stop, just before it or just
+  after it, wakes the root: the deliveries stay in the log and reach the model with the person's
+  next message. The root's own background Bash tasks keep running (they are the conversation's,
+  stopped with `TaskStop`) and their finish still wakes it. Stopping an agent in the map (level 2
+  or 3) stops it and all its descendants; its `aborted` finish never wakes its parent. Deleting the
+  root conversation stops the whole tree. (Until 2026-11-13 the stop button stopped only the
+  root's run and background children kept working; their later finish woke the stopped root.)
 
 ## 7. Approvals
 
@@ -366,6 +373,22 @@ The builder's choices for §11 and the rulings of the build that change behaviou
   rebuild byte for byte; the switch is the delivery's absence in the log, so no `DriftReason`. The
   web shows the "<name> 已完成" entry of a handed-back run from `subagent_finished` (once per child
   run, also when an older log's delivery follows).
+- A person's stop of the root holds its tree (acceptance 2026-11-13, §6): it sets
+  `conversations.tree_stopped_at` on the root under the root's row lock (with the stopped run's
+  terminal state for a waiting, queued or orphaned run, so the stop keeps the lock order of
+  decisions and stops; before the stop is asked for when a worker holds the run, which stays active
+  until then; on its own when nothing of the root ran), then stops every active sub-agent run
+  (`stopTree`). While it is set, no
+  `subagent_delivery` wakes the root (`wakeDecisionIn`, read under the root's row lock, so a
+  delivery committed at any time after the mark is held whatever its status) and no sub-agent of
+  the tree starts a run by a wake or a parent's message (`childWakeIn`); the root's next run (a
+  person's message, the queue, its own background Bash finish) clears it. A sub-agent the stopped
+  root run dispatched after the tree read is stopped at that run's end
+  (`stopDescendantsOfStopped`, limited to the budget windows opened up to that run, so a run the
+  person's next message started is never touched; owed as `stop-tree` by its terminal
+  transaction). The stop answers `run.not_active` when nothing in the tree ran, and still holds it.
+  No new model-visible input: the held deliveries are the existing absorbable events, so no
+  `DriftReason`.
 - A tree stop never wakes the stopped ancestors: the `aborted` delivery is still written (marked)
   and absorbed at that conversation's next run. A stopped sub-agent (last run `aborted`) is never
   woken at all: a message, task finish or delivery that reached it before or during the stop is

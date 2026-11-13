@@ -4,6 +4,7 @@ import {
   type HookHandler,
   type HookOptions,
   type HookPayloads,
+  type LIFECYCLE_HOOKS,
   type Logger,
   POLICY_HOOKS,
   type PolicyHook,
@@ -85,7 +86,18 @@ export interface HookSource {
   readonly name: string;
   readonly hooks: readonly RegisteredHook[];
   readonly inflight: InflightTracker;
+  /** The instance's platform deployment config (what lifecycle hooks are called with). */
+  readonly config?: unknown;
 }
+
+/** A lifecycle mount: an observe-only notice that a member, an agent or an org was removed. */
+export type LifecycleHook = (typeof LIFECYCLE_HOOKS)[number];
+
+/**
+ * Mounts delivered by a queue (at least once, by plugin) instead of {@link HookRegistry.run}:
+ * `usage.report` and the lifecycle mounts.
+ */
+export type QueuedHook = "usage.report" | LifecycleHook;
 
 const AVAILABLE: ReadonlySet<string> = new Set(HOOKS_AVAILABLE);
 const POLICY: ReadonlySet<string> = new Set(POLICY_HOOKS);
@@ -294,8 +306,26 @@ export class HookRegistry {
     }));
   }
 
-  /** Runs the hooks of a mount point (see the class comment). */
-  async run<K extends Exclude<AvailableHook, "usage.report">>(
+  /**
+   * Lifecycle handlers by plugin name (delivered by the lifecycle queue, `lifecycle-hooks.ts`, not
+   * by {@link run}). Each call runs through the instance's `inflight.run` with the plugin's platform
+   * deployment config, never an org's copy: cleanup goes out whether or not the org's effective
+   * config is valid (or the org still exists).
+   */
+  lifecycleHandlers<K extends LifecycleHook>(
+    mount: K,
+  ): { plugin: string; handler: HookHandler<K> }[] {
+    return this.entries(mount).map(({ src, hook }) => ({
+      plugin: src.name,
+      handler: (payload, signal) =>
+        src.inflight.run(signal, async (s) => {
+          await hook.handler(payload, s, { config: src.config });
+        }),
+    }));
+  }
+
+  /** Runs the hooks of a mount point (see the class comment); queue-delivered mounts excluded. */
+  async run<K extends Exclude<AvailableHook, QueuedHook>>(
     mount: K,
     payload: HookPayloads[K],
     signal: AbortSignal,

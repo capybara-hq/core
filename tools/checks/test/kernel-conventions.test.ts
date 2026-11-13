@@ -67,6 +67,29 @@ describe("checkKernelConventions", () => {
     });
   }
 
+  it("kc-enqueue-via-outbox and kc-after-commit-hint have no pending entries", () => {
+    // every direct enqueue was moved to the outbox or given a permanent exception with a reason
+    expect(KC_PENDING["kc-enqueue-via-outbox"] ?? []).toEqual([]);
+    expect(KC_PENDING["kc-after-commit-hint"] ?? []).toEqual([]);
+  });
+
+  it("a pending enqueue entry that no longer matches fails as kc-stale-pending", () => {
+    const root = join(fixtures, "kc-enqueue-via-outbox");
+    const f = checkKernelConventions(root, {
+      pending: {
+        "kc-enqueue-via-outbox": [
+          { path: "packages/kernel/src/runtime/enqueuer.service.ts", max: 6 },
+          { path: "packages/kernel/src/runtime/moved.service.ts", max: 1 },
+        ],
+      },
+      exceptions: KC_EXCEPTIONS.filter(
+        (e) => e.rule === "kc-enqueue-via-outbox" && existsSync(join(root, e.path)),
+      ),
+      factoryTokens: [],
+    }).map((x) => [x.rule, relative(root, x.file)]);
+    expect(f).toEqual([["kc-stale-pending", "packages/kernel/src/runtime/moved.service.ts"]]);
+  });
+
   // kc-queue fixture: 4 violations under packages/kernel/src/runtime/.
   const queueRoot = join(fixtures, "kc-queue");
   const ratchet = (max: number, extra: { path: string; max: number }[] = []) =>

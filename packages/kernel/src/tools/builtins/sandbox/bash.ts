@@ -59,19 +59,25 @@ const SPEC: ToolSpec = {
     "Deliver. Other sub-agents of this conversation may run commands in this sandbox at " +
     "the same time. Always pass description: a few words saying what the command is for; the " +
     "user sees it instead of the command.\n\n" +
+    "Processes a normal call leaves running (started with '&' or nohup) may be stopped when the " +
+    "call ends, depending on the device, so use run_in_background for a dev server, a watcher or " +
+    "anything that must keep running after the call.\n\n" +
     "You can use the run_in_background parameter to run the command in the background, which " +
     "allows you to continue working while the command runs, e.g. a dev server, a long build or a " +
     "test suite. The call returns at once with a task id and the command's output goes to a file " +
     "under .capybara/tasks in the workspace directory. Read the output with TaskOutput (or Read) and stop the " +
-    "task with TaskStop; you will be told when it finishes. You do not need to use '&' at the end " +
+    "task with TaskStop; you will be told when it finishes. TaskList lists this conversation's " +
+    "background tasks and their ids, running ones first. You do not need to use '&' at the end " +
     "of the command when using this parameter. In the background, timeout defaults to the " +
     "deployment's background maximum (7200000 by default). A background task ends when its " +
     "command exits, and processes it left running are stopped. A background task is lost if the " +
     "sandbox is suspended (it is suspended after it has been running for a while, " +
     "sandbox.limits.maxRunningMinutes), so keep its results in files under the workspace directory.\n\n" +
     "Network access goes through a proxy set in HTTP_PROXY / HTTPS_PROXY / ALL_PROXY; a tool " +
-    "that ignores them fails with 'Operation not permitted'. A blocked domain is reported after " +
-    "the output.",
+    "that ignores them fails with 'Operation not permitted' or cannot resolve names. Such tools, " +
+    "browsers for example, need the proxy passed explicitly: for Chromium (also headless, as " +
+    "Playwright or Puppeteer launch it) pass --proxy-server=$HTTPS_PROXY. A blocked domain is " +
+    "reported after the output.",
   inputSchema: {
     type: "object",
     properties: {

@@ -3,11 +3,27 @@ import { Inject, Injectable } from "@nestjs/common";
 import { z } from "zod";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import {
+  applyPlatformTiersPatch,
+  chosenPlatformDefault,
+  PLATFORM_TIER_FIELDS,
+  PLATFORM_TIERS_PATCH,
+  PLATFORM_TIERS_SETTING,
+  type PlatformTierSource,
+  type PlatformTiers,
+  type PlatformTiersPatch,
+  type PlatformTiersStored,
+  type PlatformTiersView,
+  platformTiersWiden,
+  readStoredPlatformTiers,
+  resolvePlatformTiers,
+} from "../sandbox/platform-tiers.js";
 import { assertPlatformDefaultEligible, lockThemeShared } from "../themes/theme-state.js";
 import {
   mergeArrangement,
@@ -174,6 +190,19 @@ export type DeploymentSettings = z.infer<typeof DEPLOYMENT_SETTINGS>;
 const DEFAULTS: DeploymentSettings = DEPLOYMENT_SETTINGS.parse({});
 
 /**
+ * What `GET /api/v1/admin/settings` answers: the stored settings, and the platform's sandbox tiers
+ * as they are in effect with where each field comes from (`env` / `file` / `nacos`: the startup
+ * config, read-only here; `db`: chosen in the admin console; `default`).
+ */
+export type DeploymentSettingsView = DeploymentSettings & { sandboxTiers: PlatformTiersView };
+
+const tierWidenRefused = (): ApiError =>
+  new ApiError(
+    "deployment.sandbox_tier_not_allowed",
+    "Raising the platform's sandbox level (sandboxTiers) needs a super admin in the admin console; an API token or the Platform tool may only lower it.",
+  );
+
+/**
  * 设置的修改（PUT /api/v1/admin/settings 的 body）：只改给出的键。
  * `runConcurrencyOverrides` 按组织合并：值为正整数 → 设置该组织的上限；值为 null → 删除该组织的覆盖
  * （回到 `runtime.orgConcurrency`）；未列出的组织保持不变。
@@ -218,6 +247,14 @@ export const DEPLOYMENT_SETTINGS_PATCH = z
         message: "give enabled, disabled or both",
       })
       .optional(),
+    /**
+     * The platform's sandbox tiers (sandbox dev tiers spec §4.1): each given field replaces the
+     * stored one, null clears it (back to the default: max dev, default dev, unsandboxed allowed).
+     * A field set in the startup config is read-only (409 `deployment.setting_readonly`); the
+     * default may not be above the max; an API token or the Platform tool may only narrow (400
+     * `deployment.sandbox_tier_not_allowed`).
+     */
+    sandboxTiers: PLATFORM_TIERS_PATCH.optional(),
   })
   .strict();
 export type DeploymentSettingsPatch = z.infer<typeof DEPLOYMENT_SETTINGS_PATCH>;
@@ -397,7 +434,81 @@ export class SettingsService {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(SuperAdminLock) private readonly adminLock: SuperAdminLock,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
+    /** The startup config's `sandbox.tiers`, which wins over the stored choice. */
+    @Inject(KernelConfigService)
+    private readonly config: Pick<KernelConfigService, "get" | "fieldSource">,
   ) {}
+
+  /** The settings with the platform's sandbox tiers in effect and their sources. */
+  async view(): Promise<DeploymentSettingsView> {
+    const [settings, stored] = await Promise.all([
+      this.get(),
+      readStoredPlatformTiers(this.db.db, this.log),
+    ]);
+    return { ...settings, sandboxTiers: this.tiersView(stored) };
+  }
+
+  private tiersView(stored: PlatformTiersStored): PlatformTiersView {
+    const config = this.config.get().sandbox.tiers;
+    const sources = Object.fromEntries(
+      PLATFORM_TIER_FIELDS.map((f): [string, PlatformTierSource] => [
+        f,
+        this.config.fieldSource(`sandbox.tiers.${f}`) ??
+          (stored[f] !== undefined ? "db" : "default"),
+      ]),
+    ) as PlatformTiersView["sources"];
+    return { ...resolvePlatformTiers(config, stored), sources };
+  }
+
+  /**
+   * The refusals of a `sandboxTiers` change against the stored choice: a field set in the
+   * startup config (`deployment.setting_readonly`), a default above the max
+   * (`validation_failed`), and with `onlyNarrows` (an API token, the Platform tool) any widening:
+   * a higher max or default, unsandboxed allowed, in effect or in the stored choice (which
+   * applies once the startup config stops setting a field). Returns the next stored choice and
+   * the effective tiers before and after.
+   */
+  async checkSandboxTiers(
+    patch: PlatformTiersPatch,
+    opts: { onlyNarrows?: boolean } = {},
+  ): Promise<{ next: PlatformTiersStored; before: PlatformTiers; after: PlatformTiers }> {
+    const readonly = PLATFORM_TIER_FIELDS.filter(
+      (f) => patch[f] !== undefined && this.config.fieldSource(`sandbox.tiers.${f}`) !== undefined,
+    );
+    if (readonly.length > 0) {
+      throw new ApiError(
+        "deployment.setting_readonly",
+        `These sandbox tier settings are set in the startup config (file, Nacos or environment) and are read-only here: ${readonly.map((f) => `sandbox.tiers.${f}`).join(", ")}`,
+        readonly.map((f) => ({
+          path: `sandboxTiers.${f}`,
+          source: this.config.fieldSource(`sandbox.tiers.${f}`),
+        })),
+      );
+    }
+    const config = this.config.get().sandbox.tiers;
+    const stored = await readStoredPlatformTiers(this.db.db, this.log);
+    const next = applyPlatformTiersPatch(stored, patch);
+    const before = resolvePlatformTiers(config, stored);
+    const after = resolvePlatformTiers(config, next);
+    const chosen = chosenPlatformDefault(config, next);
+    if ((patch.max !== undefined || patch.default !== undefined) && chosen !== after.default) {
+      throw new ApiError(
+        "validation_failed",
+        `The default sandbox tier (${chosen}) cannot be above the highest (${after.max}); lower sandboxTiers.default as well`,
+        [{ path: "sandboxTiers.default", message: `must be at most ${after.max}` }],
+      );
+    }
+    if (opts.onlyNarrows) {
+      const none = {};
+      if (
+        platformTiersWiden(before, after) ||
+        platformTiersWiden(resolvePlatformTiers(none, stored), resolvePlatformTiers(none, next))
+      ) {
+        throw tierWidenRefused();
+      }
+    }
+    return { next, before, after };
+  }
 
   /**
    * Reads every setting, in the context's transaction when there is one (a caller holding a
@@ -424,14 +535,18 @@ export class SettingsService {
     return out as DeploymentSettings;
   }
 
-  /** Updates settings under the super admin lock, re-checking the actor (else `forbidden`). */
+  /**
+   * Updates settings under the super admin lock, re-checking the actor (else `forbidden`).
+   * `onlyNarrows` (an API token, the Platform tool): `sandboxTiers` may only narrow.
+   */
   async update(
     patch: DeploymentSettingsPatch,
     actorAccountId: string,
     actorTokenId?: string,
     /** Merged into the audit detail (the Platform tool's `via: "agent"`). */
     auditDetail?: Record<string, unknown>,
-  ): Promise<DeploymentSettings> {
+    opts: { onlyNarrows?: boolean } = {},
+  ): Promise<DeploymentSettingsView> {
     const check = DEPLOYMENT_SETTINGS_PATCH.safeParse(patch);
     if (!check.success) {
       throw new ApiError(
@@ -440,8 +555,8 @@ export class SettingsService {
         check.error.issues.map((i) => ({ path: i.path.join("."), message: i.message })),
       );
     }
-    await this.write(check.data, actorAccountId, actorTokenId, auditDetail);
-    return this.get();
+    await this.write(check.data, actorAccountId, actorTokenId, auditDetail, opts);
+    return this.view();
   }
 
   @Transactional()
@@ -450,6 +565,7 @@ export class SettingsService {
     actorAccountId: string,
     actorTokenId: string | undefined,
     auditDetail: Record<string, unknown> | undefined,
+    opts: { onlyNarrows?: boolean },
   ): Promise<void> {
     await this.adminLock.lockAndAuthorize(actorAccountId);
     // The super admin lock serializes every settings write: the current overrides are read
@@ -513,7 +629,16 @@ export class SettingsService {
         next.subagentLimitOverrides = mergeByOrg(current.subagentLimitOverrides, subagentPatch);
       }
     }
-    for (const [key, value] of Object.entries(next)) {
+    // the platform's sandbox tiers: checked against the stored choice under the lock; lowering
+    // the max needs no org rewrite, the effective policy cuts every org's ceiling and default
+    let tiersChange: { before: PlatformTiers; after: PlatformTiers } | undefined;
+    const writes: [string, unknown][] = Object.entries(next);
+    if (patch.sandboxTiers !== undefined) {
+      const r = await this.checkSandboxTiers(patch.sandboxTiers, opts);
+      tiersChange = { before: r.before, after: r.after };
+      writes.push([PLATFORM_TIERS_SETTING, r.next]);
+    }
+    for (const [key, value] of writes) {
       if (value === undefined) continue;
       const json = JSON.stringify(value);
       await this.db
@@ -530,7 +655,11 @@ export class SettingsService {
       actorAccountId,
       ...(actorTokenId !== undefined && { actorTokenId }),
       action: "deployment.settings.updated",
-      detail: { ...patch, ...auditDetail },
+      detail: {
+        ...patch,
+        ...(tiersChange !== undefined && { sandboxTiersEffective: tiersChange }),
+        ...auditDetail,
+      },
     });
   }
 }

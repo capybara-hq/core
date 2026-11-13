@@ -6,10 +6,16 @@ import type { KernelConfig } from "../config/schema.js";
 import { TITLE_QUEUE, TitleQueue, TitlesModule } from "../conversations/titles.js";
 import { configuredProcessor } from "../infra/queue/configured-processor.js";
 import { runJob } from "../infra/queue/run-job.js";
-import { RUN_QUEUE_NAME, type RunJobData, SUBAGENT_RUN_QUEUE_NAME } from "./run-jobs.js";
+import {
+  type RUN_JOB,
+  RUN_QUEUE_NAME,
+  type RunJobData,
+  SUBAGENT_RUN_QUEUE_NAME,
+} from "./run-jobs.js";
 import { MAX_STALLED_COUNT, RunWorker } from "./run-worker.js";
 import { RuntimeModule } from "./runtime.module.js";
 import {
+  type USAGE_REPORT_JOB,
   USAGE_REPORT_QUEUE,
   UsageReporter,
   type UsageReportJob,
@@ -18,6 +24,9 @@ import {
 
 type RunResult = Awaited<ReturnType<RunWorker["process"]>>;
 
+/** A run job: both run queues carry only {@link RUN_JOB} jobs (the outbox registry's `run`). */
+type RunJob = Job<RunJobData, RunResult, typeof RUN_JOB>;
+
 /** The consumer of `cap-kernel-runs` (conversation runs): {@link RunWorker}. */
 @Injectable()
 export class RunsProcessor extends WorkerHost<Worker<RunJobData, RunResult>> {
@@ -25,17 +34,17 @@ export class RunsProcessor extends WorkerHost<Worker<RunJobData, RunResult>> {
     super();
   }
 
-  process(job: Job<RunJobData>, token?: string): Promise<RunResult> {
+  process(job: RunJob, token?: string): Promise<RunResult> {
     return runJob(RUN_QUEUE_NAME, job, () => this.runs.process(job, token));
   }
 
   @OnWorkerEvent("completed")
-  completed(job: Job<RunJobData>, result: RunResult): void {
+  completed(job: RunJob, result: RunResult): void {
     this.runs.onCompleted(job, result);
   }
 
   @OnWorkerEvent("failed")
-  failed(job: Job<RunJobData> | undefined, err: Error): void {
+  failed(job: RunJob | undefined, err: Error): void {
     this.runs.onFailed(job, err);
   }
 
@@ -52,17 +61,17 @@ export class SubagentRunsProcessor extends WorkerHost<Worker<RunJobData, RunResu
     super();
   }
 
-  process(job: Job<RunJobData>, token?: string): Promise<RunResult> {
+  process(job: RunJob, token?: string): Promise<RunResult> {
     return runJob(SUBAGENT_RUN_QUEUE_NAME, job, () => this.runs.process(job, token));
   }
 
   @OnWorkerEvent("completed")
-  completed(job: Job<RunJobData>, result: RunResult): void {
+  completed(job: RunJob, result: RunResult): void {
     this.runs.onCompleted(job, result);
   }
 
   @OnWorkerEvent("failed")
-  failed(job: Job<RunJobData> | undefined, err: Error): void {
+  failed(job: RunJob | undefined, err: Error): void {
     this.runs.onFailed(job, err);
   }
 
@@ -72,6 +81,12 @@ export class SubagentRunsProcessor extends WorkerHost<Worker<RunJobData, RunResu
   }
 }
 
+/**
+ * A delivery job: the usage report queue carries only {@link USAGE_REPORT_JOB} jobs (the outbox
+ * registry's `usage-report`).
+ */
+type UsageJob = Job<UsageReportJob, void, typeof USAGE_REPORT_JOB>;
+
 /** The consumer of `cap-kernel-usage-report`: {@link UsageReporter}. */
 @Injectable()
 export class UsageReportProcessor extends WorkerHost<Worker<UsageReportJob>> {
@@ -79,7 +94,7 @@ export class UsageReportProcessor extends WorkerHost<Worker<UsageReportJob>> {
     super();
   }
 
-  process(job: Job<UsageReportJob>, token?: string): Promise<void> {
+  process(job: UsageJob, token?: string): Promise<void> {
     return runJob(USAGE_REPORT_QUEUE, job, () => this.reporter.process(job, token));
   }
 

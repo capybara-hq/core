@@ -8,6 +8,7 @@
 import { getQueueToken } from "@nestjs/bullmq";
 import type { Kysely } from "kysely";
 import { SetupService } from "../../src/admin/setup.service.js";
+import type { KernelConfig } from "../../src/config/schema.js";
 import type { Keyring } from "../../src/ctx/secrets.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { EvalBudget } from "../../src/evals/budget.js";
@@ -26,6 +27,7 @@ import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { KernelEvents } from "../../src/infra/events/kernel-events.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
+import type { OutboxService } from "../../src/infra/outbox/outbox.service.js";
 import { KERNEL_ROOT_LOGGER, REDIS } from "../../src/infra/tokens.js";
 import { createLogger, type KernelLogger } from "../../src/log.js";
 import { DirectorySync } from "../../src/orgs/directory-sync.js";
@@ -36,7 +38,6 @@ import { OrgLock } from "../../src/orgs/org-lock.js";
 import { OrgsService } from "../../src/orgs/orgs.service.js";
 import { OrgSettingsService } from "../../src/orgs/settings.service.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
-import type { SandboxJobs } from "../../src/sandbox/jobs.js";
 import type { ApprovalsService } from "../../src/tools/approvals.service.js";
 import { type Credentials, clearAccountCredentials } from "../../src/tools/credentials.js";
 import type { QuestionsService } from "../../src/tools/questions.service.js";
@@ -98,7 +99,12 @@ export function settingsFor(
   log: Pick<KernelLogger, "warn"> = quiet,
 ): SettingsService {
   const h = handlesFor(db);
-  return new SettingsService(h.db, h.txHost, adminLockFor(db), log);
+  // no startup config sets the sandbox tiers: the stored choice decides
+  const config = {
+    get: () => ({ sandbox: { tiers: {} } }) as unknown as KernelConfig,
+    fieldSource: () => undefined,
+  };
+  return new SettingsService(h.db, h.txHost, adminLockFor(db), log, config);
 }
 
 export function orgsFor(
@@ -120,6 +126,8 @@ export function orgsFor(
     { enqueueOrg: async () => {} },
     // no catalog here: what a deleted org owns is covered by test/orgs/org-delete-owned.test.ts
     { onOrgDeleted: async () => ({ transferred: 0, removed: 0 }) },
+    // no worker here: lifecycle hook deliveries are covered by test/extensions/lifecycle-hooks*
+    { recordIn: async () => [] },
   );
 }
 
@@ -160,23 +168,27 @@ export function externalFor(db: Kysely<any>, config: () => unknown): ExternalIde
   });
 }
 
-const noWaits = { cancelPendingFor: async () => ({ records: [], seqs: new Map() }) };
+const noWaits = {
+  pendingConversationsFor: async () => [],
+  cancelPendingFor: async () => ({ records: [], seqs: new Map() }),
+};
 const noRuns: OffboardingRunControl = {
   abortWaiting: async () => false,
   abortIfOrphaned: async () => false,
+  abortQueued: async () => false,
   requestAbort: async () => {},
 };
 
-/** What offboarding reads besides the database: the sandbox jobs and the tools services. */
+/** What offboarding reads besides the database: the outbox, run control and the tools services. */
 export type OffboardingTestDeps = {
-  /** Enqueues the member's sandbox destruction (nothing by default). */
-  sandboxDestroy?: Pick<SandboxJobs, "destroy">;
-  eventLog?: ConstructorParameters<typeof Offboarding>[5];
-  /** Stops the member's runs (none by default). */
+  /** Receives the owed run stops and device destroys (dropped by default). */
+  outbox?: Pick<OutboxService, "add">;
+  eventLog?: ConstructorParameters<typeof Offboarding>[4];
+  /** Stops a run in the `run-stop` job (none by default). */
   offboardRuns?: OffboardingRunControl;
   credentials?: Pick<Credentials, "clearAccount">;
-  approvals?: Pick<ApprovalsService, "cancelPendingFor">;
-  questions?: Pick<QuestionsService, "cancelPendingFor">;
+  approvals?: Pick<ApprovalsService, "pendingConversationsFor" | "cancelPendingFor">;
+  questions?: Pick<QuestionsService, "pendingConversationsFor" | "cancelPendingFor">;
 };
 
 /**
@@ -187,28 +199,28 @@ export function testOffboarding(
   db: Kysely<any>,
   deps: OffboardingTestDeps = {},
   opts: {
-    redis?: ConstructorParameters<typeof Offboarding>[3];
     sessions?: ConstructorParameters<typeof Offboarding>[2];
     registry?: ExtensionRegistry;
     log?: Pick<KernelLogger, "warn">;
   } = {},
 ): Offboarding {
   const h = handlesFor(db);
-  const { credentials, approvals, questions, eventLog, offboardRuns, sandboxDestroy } = deps;
+  const { credentials, approvals, questions, eventLog, offboardRuns, outbox } = deps;
   return new Offboarding(
     h.db,
     h.txHost,
     opts.sessions ?? { markRevoked: async () => {} },
-    opts.redis ?? ({ set: async () => "OK", exists: async () => 0 } as never),
     opts.registry ?? new ExtensionRegistry(),
     eventLog ?? { notify: async () => {}, publishChanged: async () => {} },
-    sandboxDestroy ?? { destroy: async () => {} },
+    outbox ?? { add: async () => true },
     offboardRuns ?? noRuns,
     credentials ?? {
       clearAccount: (orgId, accountId) => clearAccountCredentials(h.db.db, orgId, accountId),
     },
     approvals ?? noWaits,
     questions ?? noWaits,
+    // no worker here: lifecycle hook deliveries are covered by test/extensions/lifecycle-hooks*
+    { recordIn: async () => [] },
     (opts.log ?? quiet) as KernelLogger,
   );
 }

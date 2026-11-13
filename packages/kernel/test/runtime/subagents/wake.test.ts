@@ -12,6 +12,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BackgroundTaskFinisher } from "../../../src/background/finish.js";
 import { newTaskId, taskOutputPath } from "../../../src/background/launch.js";
 import { BackgroundTaskStore } from "../../../src/background/store.js";
+import { BG_WAKE_JOB } from "../../../src/background/wake-rules.js";
 import type { ConversationEvent, EventPayload } from "../../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
@@ -23,6 +24,7 @@ import { ProviderRegistry } from "../../../src/runtime/providers.js";
 import { RunQueue } from "../../../src/runtime/run-queue.js";
 import { SubagentDeliveries } from "../../../src/runtime/subagents/deliveries.js";
 import { renderSubagentDelivery } from "../../../src/runtime/subagents/render.js";
+import { processDeliverToParent } from "../../../src/runtime/subagents/tree-jobs.js";
 import { Waits } from "../../../src/runtime/waits.js";
 import type { ScriptRule } from "../../fixtures/plugins/model-script/index.js";
 import { legacyDbFor } from "../../helpers/conversations.js";
@@ -152,6 +154,16 @@ const RULES: ScriptRule[] = [
     when: { lastUserIncludes: "SCENARIO trio", assistantTurns: 2 },
     reply: { toolCalls: [READ], barrier: held("trio-wake") },
   },
+  // SCENARIO stoproot: the root dispatches a held child and holds its own next call until stopped
+  {
+    when: { lastUserIncludes: "SCENARIO stoproot", assistantTurns: 0 },
+    reply: { toolCalls: [agent("Held task", "child-hold: stop")] },
+  },
+  {
+    when: { lastUserIncludes: "SCENARIO stoproot", assistantTurns: 1 },
+    reply: { text: "never", barrier: held("root-hold") },
+  },
+  { when: { lastUserIncludes: "after the stop" }, reply: { text: "resumed" } },
   {
     when: { lastToolResultIncludes: "running in the background" },
     reply: { text: "parent went on" },
@@ -434,7 +446,7 @@ describe("waking on sub-agent deliveries", { timeout: 90_000 }, () => {
     // ruling R22: the step's first sandbox call recorded the device's directories
     expect(systemTexts(sent[2])).toEqual([
       renderSubagentDelivery(delivery.payload),
-      devicePathsText(DEFAULT_SANDBOX_ROOTS),
+      devicePathsText({ roots: DEFAULT_SANDBOX_ROOTS, tier: "dev", isolation: "sandbox" }),
     ]);
     expect(
       ((end as ConversationEvent).payload as EventPayload<"run_finished">).consumedUpToSeq,
@@ -472,12 +484,17 @@ describe("waking on sub-agent deliveries", { timeout: 90_000 }, () => {
     expect(systemTexts(wakeRequests[1])).toEqual([
       ...all.map((d) => renderSubagentDelivery(d.payload)),
       // ruling R22: the wake run's first sandbox call recorded the device's directories
-      devicePathsText(DEFAULT_SANDBOX_ROOTS),
+      devicePathsText({ roots: DEFAULT_SANDBOX_ROOTS, tier: "dev", isolation: "sandbox" }),
     ]);
     expect(await consumedSeq(db, conv)).toBeGreaterThanOrEqual(all[2]?.seq ?? 0);
-    // everything consumed: no delayed wake waits for this conversation
+    // everything consumed: no delayed wake waits for this conversation (its ensure-run backstops
+    // are delayed too, and are no-ops now)
     const queue = k.app.get<Queue>(getQueueToken(MAINTENANCE_QUEUE_NAME));
-    expect((await queue.getDelayed()).filter((j) => j.data?.conversationId === conv)).toEqual([]);
+    expect(
+      (await queue.getDelayed()).filter(
+        (j) => j.name === BG_WAKE_JOB && j.data?.conversationId === conv,
+      ),
+    ).toEqual([]);
     await expectNoWake(conv, 2);
   });
 
@@ -618,9 +635,9 @@ describe("waking on sub-agent deliveries", { timeout: 90_000 }, () => {
       (e) => e.type === "subagent_finished" && e.payload.childRunId === wake.id,
     );
     expect(finished).toHaveLength(1);
-    // exactly once: the end handling again, and the sweep, write nothing more
+    // exactly once: the end handling again, and the owed deliver-to-parent job, write nothing more
     expect(await k.app.get(Waits).childFinished(wake.id)).toBe(false);
-    await k.app.get(Waits).sweep();
+    await processDeliverToParent(k.app.get(Waits), { childRunId: wake.id });
     expect(await ofWake()).toHaveLength(1);
   });
 
@@ -866,6 +883,99 @@ describe("waking on sub-agent deliveries", { timeout: 90_000 }, () => {
     await waitForTerminal(db, child.conversationId, 2, 30_000);
     const wake = (await runRows(child.conversationId))[1] as RunRow;
     expect(Number(wake.trigger_seq)).toBe(finished.seq);
+  });
+});
+
+/** The root's `tree_stopped_at` (agent map spec §6). */
+const treeStoppedAt = async (conv: string) =>
+  (
+    await db
+      .selectFrom("conversations")
+      .select("tree_stopped_at")
+      .where("id", "=", conv)
+      .executeTakeFirstOrThrow()
+  ).tree_stopped_at;
+
+describe("a person's stop of the root holds its tree", { timeout: 90_000 }, () => {
+  it("stops the running sub-agents; no finish, before or after the stop, wakes the root; the next message's run sees them", async () => {
+    capture.reset();
+    const before = arrivals("root-hold");
+    const conv = await createConv(owner, orgId, agentId);
+    await postMessage(owner, orgId, conv, "SCENARIO stoproot");
+    await waitFor(async () => arrivals("root-hold") > before, 20_000, "the root held");
+    const child = await waitFor(
+      async () => {
+        const [c] = await childRunsOf(db, conv);
+        return c && (await runRows(c.conversationId))[0]?.status === "running" ? c : null;
+      },
+      20_000,
+      "the child running",
+    );
+    const res = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${conv}/abort`,
+    });
+    expect(res.statusCode, res.body).toBe(202);
+    expect(await treeStoppedAt(conv)).not.toBeNull();
+    // the child stops with the root run and delivers its finish as stopped
+    const stopped = await waitFor(
+      async () => (await deliveriesOf(conv)).find((d) => d.payload.childRunId === child.runId),
+      30_000,
+      "the child's finish",
+    );
+    expect(stopped.payload).toMatchObject({ kind: "finished", status: "aborted" });
+    expect((await runRows(child.conversationId))[0]?.status).toBe("aborted");
+    // a sub-agent's delivery that races the stop (one that would wake an idle root) waits too
+    const late = await noteFrom(conv, ownerId);
+    await new Promise((r) => setTimeout(r, 500));
+    await expectNoWake(conv, 1);
+    expect((await runRows(conv))[0]?.status).toBe("aborted");
+    // the person's next message starts the root again: its run sees both deliveries
+    await postMessage(owner, orgId, conv, "after the stop");
+    await waitForTerminal(db, conv, 2, 30_000);
+    const rows = await runRows(conv);
+    expect(rows.map((r) => r.status)).toEqual(["aborted", "completed"]);
+    expect(await treeStoppedAt(conv)).toBeNull();
+    const sent = parentRequests("after the stop");
+    expect(sent).toHaveLength(1);
+    const text = JSON.stringify(sent[0]?.messages);
+    for (const d of [stopped, late]) {
+      expect(text).toContain(JSON.stringify(renderSubagentDelivery(d.payload)).slice(1, -1));
+    }
+    await expectZeroDrift(conv, rows[1]?.id as string, "SCENARIO stoproot");
+  });
+
+  it("holds an idle tree too: a sub-agent's task finish wakes neither it nor the root; the root's own task still wakes the root", async () => {
+    const conv = await dispatched("SCENARIO quick held");
+    const [child] = await childRunsOf(db, conv);
+    if (!child) throw new Error("no child dispatched");
+    await waitForTerminal(db, child.conversationId, 1, 30_000);
+    await waitForTerminal(db, conv, 2, 30_000);
+    // out of the wake window of the root's wake run
+    await sql`UPDATE capybara.runs SET created_at = created_at - interval '61 seconds'
+      WHERE conversation_id = ${conv}`.execute(raw);
+    // nothing runs: the stop answers run.not_active, and still holds the tree
+    const res = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${conv}/abort`,
+    });
+    expect([res.statusCode, (res.json() as { error: { code: string } }).error.code]).toEqual([
+      409,
+      "run.not_active",
+    ]);
+    expect(await treeStoppedAt(conv)).not.toBeNull();
+    await finishChildTask(conv, child);
+    await expectNoWake(child.conversationId, 1);
+    await noteFrom(conv, ownerId);
+    await expectNoWake(conv, 2);
+    // the root's own background Bash task is the conversation's: its finish wakes the root, and
+    // that run ends the hold
+    const rootRun = (await runRows(conv))[0] as RunRow;
+    const own = await finishChildTask(conv, { conversationId: conv, runId: rootRun.id });
+    await waitForTerminal(db, conv, 3, 30_000);
+    const wake = (await runRows(conv))[2] as RunRow;
+    expect(Number(wake.trigger_seq)).toBeGreaterThanOrEqual(own.seq);
+    expect(await treeStoppedAt(conv)).toBeNull();
   });
 });
 

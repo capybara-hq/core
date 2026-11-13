@@ -308,6 +308,21 @@ textarea {
   font-size: var(--cb-type-prose-small-size);
   line-height: var(--cb-type-prose-small-line);
 }
+.r-field-control {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+}
+.r-field-control > .r-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.r-field-help {
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
 .r-field-error {
   display: flex;
   align-items: center;
@@ -5710,4 +5725,578 @@ textarea {
   line-height: var(--cb-type-small-line);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ── ScheduleCalendar (spec §6.40): the week / month grid and the phone agenda in one box ── */
+
+.r-scal {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-3);
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Toolbar: 今天, ‹ ›, the range label, then 周 / 月 and the scope at the right end ── */
+.r-scal-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-width: 0;
+}
+.r-scal-range {
+  color: var(--cb-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.r-scal-spin {
+  display: inline-flex;
+  color: var(--cb-accent);
+  animation: cb-spin var(--cb-motion-spin) linear infinite;
+}
+.r-scal-tools-end {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  margin-left: auto;
+}
+.r-scal-wide {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+}
+.r-scal-narrow {
+  display: none;
+}
+
+/* ── The box: the grid on the panel ground with the card hairline ── */
+.r-scal-box {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--cb-panel);
+  border-radius: var(--cb-radius-md);
+  box-shadow: inset 0 0 0 1px var(--cb-line-card);
+  overflow: hidden;
+}
+.r-scal-error {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  padding: var(--cb-pad-dense-y) var(--cb-space-3);
+  border-bottom: 1px solid var(--cb-line-soft);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.r-scal-error-text {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cb-space-1);
+  color: var(--cb-fail);
+}
+.r-scal-error-code {
+  color: var(--cb-muted);
+  margin-right: auto;
+}
+.r-scal-footnote {
+  margin: 0;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+
+/* ── Week: an axis column and seven day columns ── */
+.r-scal-grid {
+  position: relative;
+  min-width: 0;
+}
+.r-scal-scroll {
+  position: relative;
+  max-height: calc(var(--cb-layout-calendar-hour) * 12 + var(--cb-space-8) * 2);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.r-scal-band {
+  display: grid;
+  grid-template-columns:
+    var(--cb-layout-calendar-axis)
+    repeat(7, minmax(var(--cb-layout-calendar-day-min), 1fr));
+}
+.r-scal-pin {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--cb-panel);
+  border-bottom: 1px solid var(--cb-line-soft);
+}
+.r-scal-dayhead {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-1);
+  min-width: 0;
+  height: var(--cb-row-default);
+  padding: 0 var(--cb-space-2);
+  border-left: 1px solid var(--cb-line-soft);
+  color: var(--cb-muted);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.r-scal-dayhead[data-today="true"] {
+  color: var(--cb-ink);
+  font-weight: 500;
+}
+.r-scal-date {
+  padding: 0 var(--cb-space-1);
+  border-radius: var(--cb-radius-sm);
+}
+.r-scal-date[data-today="true"] {
+  background: var(--cb-selected);
+}
+.r-scal-not-loaded {
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  font-weight: 400;
+}
+.r-scal-lane {
+  border-top: 1px solid var(--cb-line-soft);
+}
+.r-scal-lane-day {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 2px;
+  border-left: 1px solid var(--cb-line-soft);
+}
+.r-scal-axis {
+  display: flex;
+  flex-direction: column;
+}
+.r-scal-hour {
+  flex: none;
+  height: var(--cb-layout-calendar-hour);
+  padding: 2px var(--cb-space-2) 0 0;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  text-align: right;
+}
+.r-scal-day {
+  position: relative;
+  min-width: var(--cb-layout-calendar-day-min);
+  border-left: 1px solid var(--cb-line-soft);
+  background-image: linear-gradient(to bottom, var(--cb-line-soft) 1px, transparent 1px);
+  background-size: 100% var(--cb-layout-calendar-hour);
+}
+
+/* Blocks, chips, month lines and agenda rows share the state look (design §6.2). */
+.r-scal-block,
+.r-scal-more,
+.r-scal-chip,
+.r-scal-line,
+.r-scal-row,
+.r-scal-pop-item {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-1);
+  min-width: 0;
+  margin: 0;
+  padding: 0 var(--cb-space-1);
+  border: 1px solid transparent;
+  border-radius: var(--cb-radius-sm);
+  background: transparent;
+  color: var(--cb-ink);
+  font: inherit;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+}
+.r-scal-block,
+.r-scal-more {
+  position: absolute;
+  height: calc(var(--cb-layout-calendar-hour) / 2);
+  margin-left: 1px;
+}
+.r-scal-chip,
+.r-scal-line {
+  flex: none;
+  height: calc(var(--cb-layout-calendar-hour) / 2);
+}
+.r-scal-more {
+  justify-content: center;
+  border-color: var(--cb-line);
+  color: var(--cb-muted);
+}
+.r-scal-more-line {
+  border-color: transparent;
+  color: var(--cb-muted);
+}
+.r-scal-block:focus-visible,
+.r-scal-more:focus-visible,
+.r-scal-chip:focus-visible,
+.r-scal-line:focus-visible,
+.r-scal-row:focus-visible,
+.r-scal-pop-item:focus-visible,
+.r-scal-daynum:focus-visible,
+.r-scal-agenda-day:focus-visible {
+  outline: 1px solid var(--cb-accent);
+  outline-offset: -1px;
+}
+[data-state="upcoming"]:is(
+  .r-scal-block,
+  .r-scal-chip,
+  .r-scal-line,
+  .r-scal-row,
+  .r-scal-pop-item
+) {
+  border: 1px dashed var(--cb-line);
+  color: var(--cb-muted);
+}
+[data-state="running"]:is(
+  .r-scal-block,
+  .r-scal-chip,
+  .r-scal-line,
+  .r-scal-row,
+  .r-scal-pop-item
+),
+[data-state="completed"]:is(
+  .r-scal-block,
+  .r-scal-chip,
+  .r-scal-line,
+  .r-scal-row,
+  .r-scal-pop-item
+) {
+  background: var(--cb-selected);
+}
+[data-state="failed"]:is(
+  .r-scal-block,
+  .r-scal-chip,
+  .r-scal-line,
+  .r-scal-row,
+  .r-scal-pop-item
+) {
+  background: var(--cb-selected);
+  box-shadow: inset 2px 0 0 var(--cb-fail);
+}
+[data-state="skipped"]:is(
+  .r-scal-block,
+  .r-scal-chip,
+  .r-scal-line,
+  .r-scal-row,
+  .r-scal-pop-item
+) {
+  background: var(--cb-hover);
+  color: var(--cb-muted);
+}
+/* Hover: a `line` border, no new ground (the state's ground stays). */
+.r-scal-block:hover,
+.r-scal-chip:hover,
+.r-scal-line:hover,
+.r-scal-row:hover,
+.r-scal-pop-item:hover {
+  border-color: var(--cb-line);
+}
+.r-scal-block[data-selected="true"],
+.r-scal-chip[data-selected="true"],
+.r-scal-line[data-selected="true"],
+.r-scal-row[data-selected="true"],
+.r-scal-pop-item[data-selected="true"] {
+  border: 1px solid var(--cb-line-strong);
+}
+.r-scal-icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--cb-muted);
+}
+.r-scal-icon[data-state="running"] {
+  color: var(--cb-accent);
+}
+.r-scal-icon[data-state="running"] > .cb-icon {
+  animation: cb-spin var(--cb-motion-spin) linear infinite;
+}
+.r-scal-icon[data-state="failed"] {
+  color: var(--cb-fail);
+}
+.r-scal-time {
+  flex: none;
+}
+[data-state="failed"] > .r-scal-time {
+  color: var(--cb-fail);
+}
+.r-scal-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.r-scal-mark,
+.r-scal-summary,
+.r-scal-meta {
+  flex: none;
+  color: var(--cb-muted);
+}
+.r-scal-chip-failed {
+  color: var(--cb-fail);
+}
+/* A collapsed task's line: the name keeps up to half the line, the summary shrinks first. */
+.r-scal-chip-title {
+  flex: 0 0 auto;
+  max-width: 50%;
+}
+.r-scal-tail {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.r-scal-tail > .r-scal-summary {
+  flex: initial;
+}
+.r-scal-now {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  height: 1px;
+  background: var(--cb-accent);
+  pointer-events: none;
+}
+.r-scal-now::before {
+  content: "";
+  position: absolute;
+  top: -3px;
+  left: -3px;
+  width: 6px;
+  height: 6px;
+  background: var(--cb-accent);
+}
+.r-scal-skeleton {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+}
+.r-scal-skel-box {
+  display: block;
+  border-radius: var(--cb-radius-sm);
+  height: calc(var(--cb-layout-calendar-hour) / 2);
+}
+
+/* The panel EmptyState over the grid body (design §8). */
+.r-scal-empty {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+.r-scal-empty-panel {
+  padding: 0 var(--cb-space-4);
+  background: var(--cb-panel);
+  pointer-events: auto;
+}
+.r-scal-empty[data-inline="true"] {
+  position: static;
+}
+
+/* ── Month: 6 × 7 cells, three lines each ── */
+.r-scal-month-head,
+.r-scal-month {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+.r-scal-month-head {
+  border-bottom: 1px solid var(--cb-line-soft);
+}
+.r-scal-weekday {
+  color: inherit;
+}
+.r-scal-month-head > .r-scal-weekday {
+  height: var(--cb-row-dense);
+  padding: 0 var(--cb-space-2);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-row-dense);
+}
+.r-scal-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  min-height: var(--cb-layout-calendar-cell);
+  padding: 2px;
+  border-left: 1px solid var(--cb-line-soft);
+  border-bottom: 1px solid var(--cb-line-soft);
+}
+.r-scal-cell:nth-child(7n + 1) {
+  border-left: 0;
+}
+.r-scal-cell:nth-last-child(-n + 7) {
+  border-bottom: 0;
+}
+.r-scal-cell-head {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-1);
+  height: var(--cb-control-dense);
+}
+.r-scal-daynum {
+  display: inline-flex;
+  align-items: center;
+  margin: 0;
+  padding: 0 2px;
+  border: 0;
+  border-radius: var(--cb-radius-sm);
+  background: transparent;
+  color: var(--cb-ink);
+  font: inherit;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  cursor: pointer;
+}
+span.r-scal-daynum {
+  cursor: default;
+}
+.r-scal-cell[data-outside="true"] .r-scal-daynum {
+  color: var(--cb-muted);
+}
+.r-scal-number {
+  padding: 0 var(--cb-space-1);
+  border-radius: var(--cb-radius-sm);
+}
+.r-scal-number[data-today="true"] {
+  background: var(--cb-selected);
+  color: var(--cb-ink);
+}
+.r-scal-cell-skeleton {
+  display: flex;
+  padding: 0 var(--cb-space-1);
+}
+
+/* ── The 「+N」 Popover ── */
+.r-scal-pop {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: var(--cb-layout-menu-max-height);
+  padding: var(--cb-space-1);
+  overflow-y: auto;
+}
+.r-scal-pop-head {
+  margin: 0;
+  padding: var(--cb-space-1);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.r-scal-pop-item {
+  flex: none;
+  height: calc(var(--cb-layout-calendar-hour) / 2);
+}
+
+/* ── Agenda (phones, design §7): seven day buttons, then the chosen day's 40 px rows ── */
+.r-scal-agenda {
+  display: none;
+  flex-direction: column;
+  min-width: 0;
+}
+.r-scal-agenda-days {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  border-bottom: 1px solid var(--cb-line-soft);
+}
+.r-scal-agenda-day {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  height: var(--cb-space-8);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--cb-muted);
+  font: inherit;
+  font-size: var(--cb-type-small-size);
+  cursor: pointer;
+}
+.r-scal-agenda-day[data-today="true"] {
+  color: var(--cb-ink);
+  font-weight: 600;
+}
+.r-scal-agenda-day[aria-pressed="true"] {
+  background: var(--cb-selected);
+  color: var(--cb-ink);
+}
+.r-scal-dot {
+  position: absolute;
+  bottom: var(--cb-space-1);
+  left: calc(50% - 2px);
+  width: 4px;
+  height: 4px;
+  background: var(--cb-fail);
+}
+.r-scal-agenda-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--cb-space-1);
+}
+.r-scal-row {
+  flex: none;
+  gap: var(--cb-space-2);
+  height: var(--cb-space-8);
+  padding: 0 var(--cb-space-2);
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
+}
+.r-scal-row > .r-scal-meta {
+  margin-left: auto;
+  font-size: var(--cb-type-small-size);
+}
+.r-scal-row-skeleton {
+  cursor: default;
+}
+.r-scal-day-empty {
+  margin: 0;
+  padding: var(--cb-space-3) var(--cb-space-2);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+
+/* Under forced colors: borders CanvasText, the failed marker and the now line Highlight. */
+@media (forced-colors: active) {
+  .r-scal-block,
+  .r-scal-more,
+  .r-scal-chip,
+  .r-scal-line,
+  .r-scal-row {
+    border-color: CanvasText;
+  }
+  [data-state="failed"]:is(
+    .r-scal-block,
+    .r-scal-chip,
+    .r-scal-line,
+    .r-scal-row,
+    .r-scal-pop-item
+  ) {
+    border-left: 2px solid Highlight;
+  }
+  .r-scal-now,
+  .r-scal-now::before,
+  .r-scal-dot {
+    background: Highlight;
+    forced-color-adjust: none;
+  }
+}
+
+/* The agenda block (range="agenda") shows the agenda and folds the controls into one button. */
+.r-scal[data-range="agenda"] .r-scal-agenda {
+  display: flex;
 }

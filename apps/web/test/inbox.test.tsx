@@ -469,58 +469,6 @@ describe("inbox: skill change kinds", () => {
   });
 });
 
-describe("inbox: a renamed skill (org admins)", () => {
-  const notice = {
-    id: "n1",
-    kind: "skill_renamed",
-    createdAt: T,
-    skillRenamed: {
-      skillId: "k1",
-      from: "pdf",
-      to: "pdf-org",
-      platformSkillId: "p1",
-      plugin: "docs",
-    },
-  };
-  const withNotice = (open: boolean) => ({
-    items: open ? [{ type: "skill_renamed", id: "n1", createdAt: T, notice }] : [],
-    truncated: false,
-  });
-
-  it.each(LOCALES)("shows the rename and dismisses it (%s)", async (locale) => {
-    const m = msgs[locale];
-    let open = true;
-    const { calls } = await renderInbox(
-      {
-        [LIST]: () => json(200, withNotice(open)),
-        "POST /api/v1/orgs/o1/inbox/notices/n1/dismiss": () => {
-          open = false;
-          return noContent();
-        },
-      },
-      { locale },
-    );
-    const table = await screen.findByRole("table", { name: m.inbox.listLabel });
-    // the row leads with the new name; the kind and the old name come second
-    expect(within(table).getByText("pdf-org", { selector: ".cb-cell-title-name" })).toBeTruthy();
-    expect(within(table).getByText(`${m.inbox.skillRenamed.label} · pdf`)).toBeTruthy();
-    const title = m.inbox.skillRenamed.title.replace("{from}", "pdf").replace("{to}", "pdf-org");
-    expect(await screen.findByText(title)).toBeTruthy();
-    const row = screen.getByRole("region", {
-      name: locale === "zh" ? "待提交改动" : "Pending changes",
-    });
-    await userEvent
-      .setup()
-      .click(within(row).getByRole("button", { name: m.inbox.skillRenamed.dismiss }));
-    expect(await screen.findByText(m.inbox.skillRenamed.dismissed)).toBeTruthy();
-    expect(await screen.findByText(m.inbox.empty)).toBeTruthy();
-    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
-      "POST /api/v1/orgs/o1/inbox/notices/n1/dismiss",
-      "GET /api/v1/orgs/o1/inbox",
-    ]);
-  });
-});
-
 describe("inbox: my decided requests", () => {
   const request = (status: "approved" | "rejected", reason: string | null = null) => ({
     id: "r1",

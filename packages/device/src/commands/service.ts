@@ -12,8 +12,13 @@ export interface ServiceDeps {
   env: Record<string, string | undefined>;
   out: (line: string) => void;
   err: (line: string) => void;
-  /** Runs a system command; throws when it fails (default: execFileSync). */
+  /**
+   * Runs a system command; throws when it fails (default: execFileSync, whose error carries the
+   * exit `status` and `stderr`).
+   */
   run?: (cmd: string, args: string[]) => void;
+  /** Waits between launchctl checks (default: setTimeout). */
+  sleep?: (ms: number) => Promise<void>;
   uid?: number;
   nodePath?: string;
   binPath?: string;
@@ -38,8 +43,21 @@ export function serviceEnv(env: Record<string, string | undefined>): Record<stri
   return out;
 }
 
-/** `service install|uninstall`: runs `capybara-device start` at login (launchd) or boot (systemd user). */
-export function serviceCommand(action: "install" | "uninstall", deps: ServiceDeps): number {
+/** How often launchctl is asked whether the old service is gone. */
+export const SERVICE_POLL_MS = 200;
+/** How long install / uninstall wait for `launchctl bootout` to finish (it is asynchronous). */
+export const SERVICE_GONE_TIMEOUT_MS = 10_000;
+/** The waits before each retry of a `launchctl bootstrap` that failed with error 5. */
+export const BOOTSTRAP_BACKOFF_MS = [500, 1000, 2000] as const;
+
+/**
+ * `service install|uninstall`: runs `capybara-device start` at login (launchd) or boot (systemd
+ * user).
+ */
+export async function serviceCommand(
+  action: "install" | "uninstall",
+  deps: ServiceDeps,
+): Promise<number> {
   const run = deps.run ?? defaultRun;
   const spec: ServiceSpec = {
     nodePath: deps.nodePath ?? process.execPath,
@@ -48,7 +66,7 @@ export function serviceCommand(action: "install" | "uninstall", deps: ServiceDep
     env: serviceEnv(deps.env),
   };
   try {
-    if (deps.platform === "darwin") return launchd(action, spec, deps, run);
+    if (deps.platform === "darwin") return await launchd(action, spec, deps, run);
     if (deps.platform === "linux") return systemd(action, spec, deps, run);
   } catch (e) {
     deps.err(
@@ -60,14 +78,32 @@ export function serviceCommand(action: "install" | "uninstall", deps: ServiceDep
   return 1;
 }
 
-function launchd(
+/** The text launchctl printed for a failed call (its stderr, else the error message). */
+function failureText(e: unknown): string {
+  const stderr = (e as { stderr?: unknown }).stderr;
+  const text =
+    stderr instanceof Uint8Array || typeof stderr === "string" ? String(stderr).trim() : "";
+  return text !== "" ? text : e instanceof Error ? e.message : String(e);
+}
+
+/**
+ * `launchctl bootstrap` failed with error 5 (Input/output error): typically the previous instance
+ * of the service is still being booted out.
+ */
+function isBootstrapIoError(e: unknown): boolean {
+  return (e as { status?: unknown }).status === 5 || /Bootstrap failed: 5:/.test(failureText(e));
+}
+
+async function launchd(
   action: "install" | "uninstall",
   spec: ServiceSpec,
   deps: ServiceDeps,
   run: (cmd: string, args: string[]) => void,
-): number {
+): Promise<number> {
   const file = plistPath(deps.home);
   const domain = `gui/${deps.uid ?? process.getuid?.() ?? 501}`;
+  const service = `${domain}/${LAUNCHD_LABEL}`;
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const tryRun = (args: string[]): void => {
     try {
       run("launchctl", args);
@@ -75,16 +111,52 @@ function launchd(
       // Not loaded yet / already gone.
     }
   };
+  /** Whether launchd still knows the service (`launchctl print` fails once it is gone). */
+  const loaded = (): boolean => {
+    try {
+      run("launchctl", ["print", service]);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  /** Boots the service out and waits until launchd has let it go (bootout returns before that). */
+  const bootout = async (): Promise<void> => {
+    tryRun(["bootout", service]);
+    for (let waited = 0; loaded(); waited += SERVICE_POLL_MS) {
+      // Gave up: bootstrap's retries cover what is left.
+      if (waited >= SERVICE_GONE_TIMEOUT_MS) return;
+      await sleep(SERVICE_POLL_MS);
+    }
+  };
   if (action === "install") {
     mkdirSync(dirname(file), { recursive: true });
     mkdirSync(spec.stateDir, { recursive: true });
-    if (existsSync(file)) tryRun(["bootout", `${domain}/${LAUNCHD_LABEL}`]);
+    if (existsSync(file) || loaded()) await bootout();
     writeFileSync(file, plistContent(spec));
-    run("launchctl", ["bootstrap", domain, file]);
+    for (let attempt = 0; ; attempt++) {
+      try {
+        run("launchctl", ["bootstrap", domain, file]);
+        break;
+      } catch (e) {
+        if (!isBootstrapIoError(e)) throw e;
+        const backoff = BOOTSTRAP_BACKOFF_MS[attempt];
+        if (backoff === undefined) {
+          deps.err(
+            `capybara-device service install failed: launchctl bootstrap failed ${attempt + 1} times (${failureText(e)}). ` +
+              `The previous capybara-device service may still be stopping: wait a few seconds and run capybara-device service install again. ` +
+              `launchctl print ${service} shows what launchd knows of it.`,
+          );
+          return 1;
+        }
+        await sleep(backoff);
+        await bootout();
+      }
+    }
     deps.out(`Installed ${file}; capybara-device now starts at login.`);
     return 0;
   }
-  tryRun(["bootout", `${domain}/${LAUNCHD_LABEL}`]);
+  await bootout();
   rmSync(file, { force: true });
   deps.out("Removed the capybara-device login service.");
   return 0;
@@ -101,7 +173,10 @@ function systemd(
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, unitContent(spec));
     run("systemctl", ["--user", "daemon-reload"]);
-    run("systemctl", ["--user", "enable", "--now", SYSTEMD_UNIT]);
+    run("systemctl", ["--user", "enable", SYSTEMD_UNIT]);
+    // restart, not start: a unit already running (an earlier install) picks up the new file.
+    // systemctl waits for the stop and start jobs, so nothing is left in flight.
+    run("systemctl", ["--user", "restart", SYSTEMD_UNIT]);
     deps.out(
       `Installed ${file}; capybara-device now starts at login. A user unit runs only while you have a session unless you run: loginctl enable-linger $USER`,
     );

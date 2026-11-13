@@ -5,6 +5,7 @@ import { userEvent } from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  Badge,
   Button,
   Checkbox,
   DensityContext,
@@ -226,6 +227,34 @@ describe("Field + Input", () => {
   });
 });
 
+describe("Field action", () => {
+  it("draws the action on the control's line, the help below both", () => {
+    const { container } = zh(
+      <Field label="添加域名" help="完整主机名。" action={<Button>添加</Button>}>
+        <Input />
+      </Field>,
+    );
+    const input = screen.getByRole("textbox", { name: "添加域名" });
+    const line = container.querySelector('[data-part="field-control"]');
+    expect(line).not.toBeNull();
+    expect(line?.contains(input)).toBe(true);
+    expect(line?.contains(screen.getByRole("button", { name: "添加" }))).toBe(true);
+    const help = screen.getByText("完整主机名。");
+    expect(line?.contains(help)).toBe(false);
+    // the help comes after the line and still describes the control
+    expect(line?.compareDocumentPosition(help) ?? 0).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(input.getAttribute("aria-describedby")).toBe(help.id);
+  });
+  it("without an action the control stands alone", () => {
+    const { container } = zh(
+      <Field label="名称">
+        <Input />
+      </Field>,
+    );
+    expect(container.querySelector('[data-part="field-control"]')).toBeNull();
+  });
+});
+
 describe("其他输入", () => {
   it("Textarea code keeps lines unwrapped, Select renders options, Stepper steps", async () => {
     const onChange = vi.fn();
@@ -271,6 +300,31 @@ describe("Checkbox / Radio / Switch", () => {
     a.focus();
     await userEvent.keyboard("{ArrowDown}");
     expect(onChange).toHaveBeenCalledWith("b");
+  });
+  it("RadioGroup: a disabled option alone can't be chosen", async () => {
+    const onChange = vi.fn();
+    zh(
+      <RadioGroup
+        variant="card"
+        label="级别"
+        value="a"
+        onChange={onChange}
+        options={[
+          { value: "a", label: "A" },
+          { value: "b", label: "B", description: "组织最高允许：A", disabled: true },
+        ]}
+      />,
+    );
+    const b = screen.getByRole("radio", { name: /^B/ }) as HTMLInputElement;
+    expect(b.disabled).toBe(true);
+    expect(b.closest("label")?.getAttribute("data-disabled")).toBe("true");
+    expect((screen.getByRole("radio", { name: /^A/ }) as HTMLInputElement).disabled).toBe(false);
+    await userEvent.click(b);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+  it("Badge tone fail is a danger mark (data-tone fail)", () => {
+    zh(<Badge tone="fail">不使用沙箱</Badge>);
+    expect(screen.getByText("不使用沙箱").getAttribute("data-tone")).toBe("fail");
   });
   it("Switch 空格切换", async () => {
     const onChange = vi.fn();

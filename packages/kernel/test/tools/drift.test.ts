@@ -379,7 +379,7 @@ describe("漂移检测（后台检查）", () => {
     const docs = (key: string) => key.startsWith("mcp__docs__");
     const { tools, unavailable, hidden } = await k.app
       .get(ToolRegistry)
-      .forAgent(orgId, { disabledTools: builtinsOff() });
+      .forAgent(orgId, { source: "web", disabledTools: builtinsOff() });
     expect(tools.map((t) => t.key).filter(docs)).toEqual(["mcp__docs__delete_doc"]);
     // never reported every step: the facts wait for a call naming one (hidden)
     expect(unavailable).toEqual([]);
@@ -518,7 +518,7 @@ describe("复核", () => {
     });
     const { tools } = await k.app
       .get(ToolRegistry)
-      .forAgent(orgId, { disabledTools: builtinsOff() });
+      .forAgent(orgId, { source: "web", disabledTools: builtinsOff() });
     expect(
       tools
         .map((t) => t.key)
@@ -708,7 +708,7 @@ describe("复核", () => {
     const resolve = async () => {
       const { tools } = await k.app
         .get(ToolRegistry)
-        .forAgent(orgId, { disabledTools: builtinsOff() });
+        .forAgent(orgId, { source: "web", disabledTools: builtinsOff() });
       return tools.find((t) => t.key === "mcp__docs__create_doc");
     };
     const t0 = await resolve();

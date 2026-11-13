@@ -9,14 +9,20 @@ export type Command =
   | { command: "status"; json: boolean }
   | { command: "start" }
   | { command: "stop" }
-  | { command: "drain" }
+  | {
+      command: "drain";
+      /** `--wait`: wait until the program has exited. */
+      wait?: true;
+      /** `--timeout <seconds>` with `--wait` (default 600). */
+      timeoutSeconds?: number;
+    }
   | { command: "policy"; action: "show" }
   | {
       command: "policy";
       action: "set" | "add" | "remove";
       key: string;
       value: string;
-      /** `--yes`: confirms `set network open` without asking. */
+      /** `--yes`: confirms `set tier open` or `set isolation none` without asking. */
       yes?: true;
     }
   | { command: "service"; action: "install" | "uninstall" }
@@ -29,12 +35,18 @@ export const USAGE = `Usage:
   capybara-device status [--json] Show whether this machine is logged in
   capybara-device start           Connect and serve the device
   capybara-device stop            Stop the running program
-  capybara-device drain           Finish running commands, accept no new ones, then stop
+  capybara-device drain [--wait] [--timeout <seconds>]
+                                  Finish running commands, accept no new ones, then stop;
+                                  --wait returns once it has stopped (default limit 600 s)
   capybara-device policy [show]   Show the local policy
   capybara-device policy set <key> <value>
                                   Replace one field (applies at the next command)
-  capybara-device policy set network allowlist|open [--yes]
-                                  Limit network to allowedDomains, or to what the org allows
+  capybara-device policy set tier strict|dev|open|default [--yes]
+                                  Choose the sandbox tier (default: follow the organization)
+  capybara-device policy set isolation sandbox|none [--yes]
+                                  none: at tier open, run commands without a sandbox (OS mode)
+  capybara-device policy set localhost auto|allow
+                                  allow: reach localhost at tier dev or open despite a local proxy
   capybara-device policy set remoteGrants owner|off
                                   Let the device owner widen the network from the web, or not
   capybara-device policy add|remove allowedDomains <host>
@@ -59,7 +71,7 @@ export function parseCommandLine(argv: string[]): Command {
   if (name === undefined || name === "help" || name === "--help" || name === "-h") {
     return { command: "help" };
   }
-  const noArgs = (command: "logout" | "start" | "stop" | "drain"): Command => {
+  const noArgs = (command: "logout" | "start" | "stop"): Command => {
     const { positionals } = parse(rest, {});
     if (positionals.length > 0) throw new UsageError(`${command} takes no arguments`);
     return { command };
@@ -92,8 +104,24 @@ export function parseCommandLine(argv: string[]): Command {
     case "logout":
     case "start":
     case "stop":
-    case "drain":
       return noArgs(name);
+    case "drain": {
+      const { values, positionals } = parse(rest, {
+        wait: { type: "boolean" },
+        timeout: { type: "string" },
+      });
+      if (positionals.length > 0) throw new UsageError("drain takes no positional arguments");
+      if (values.timeout !== undefined && values.wait !== true) {
+        throw new UsageError("--timeout needs --wait");
+      }
+      if (values.wait !== true) return { command: "drain" };
+      if (values.timeout === undefined) return { command: "drain", wait: true };
+      const seconds = Number(values.timeout);
+      if (!Number.isInteger(seconds) || seconds < 1) {
+        throw new UsageError("--timeout must be a whole number of seconds, at least 1");
+      }
+      return { command: "drain", wait: true, timeoutSeconds: seconds };
+    }
     case "policy": {
       const { values, positionals } = parse(rest, { yes: { type: "boolean", short: "y" } });
       const yes = values.yes === true;

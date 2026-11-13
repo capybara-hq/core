@@ -1,18 +1,20 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, realpathSync } from "node:fs";
-import { constants as osConstants } from "node:os";
-import { resolve } from "node:path";
+import { existsSync, lstatSync, mkdirSync, realpathSync } from "node:fs";
+import { homedir, constants as osConstants } from "node:os";
+import { join, resolve } from "node:path";
 import {
   type SandboxAskCallback,
   SandboxManager,
   type SandboxRuntimeConfig,
 } from "@anthropic-ai/sandbox-runtime";
-import type {
-  DeviceExecArgs,
-  ExecResult,
-  SandboxLimits,
-  SandboxRoots,
+import {
+  type DeviceExecArgs,
+  type ExecResult,
+  isBackgroundLaunch,
+  type SandboxLimits,
+  type SandboxRoots,
+  type SandboxTier,
 } from "@capybara-hq/plugin-sdk";
 import {
   type BlockedHost,
@@ -21,11 +23,24 @@ import {
   isPublicName,
   networkTrailer,
 } from "../network.js";
-import { ANY_HOST, effectiveEgress, grantedHosts, srtConfig } from "../policy.js";
+import {
+  ANY_HOST,
+  deviceTier,
+  type EgressLimits,
+  effectiveEgress,
+  grantedHosts,
+  srtConfig,
+  type TierFacts,
+  tierFacts,
+} from "../policy.js";
+import { detectLocalProxy, PROXY_GUARD_TTL_MS, type ProxyGuardResult } from "../proxy-guard.js";
 import type { Policy } from "../state.js";
 import { FS_HELPER_SCRIPT } from "./fs-helper.js";
 import { EXEC_MARKER, killMarked } from "./procs.js";
+import { Reaper, type ReaperDeps } from "./reap.js";
 import {
+  cacheEnv,
+  cacheRoot,
   ENV_NAME_RE,
   HostFiles,
   isUnder,
@@ -33,8 +48,11 @@ import {
   osRoots,
   PIPE_GRACE_MS,
   policyError,
+  prepareSocketDir,
   RootGuard,
   shellQuote,
+  socketDirPath,
+  toolHomeEnv,
 } from "./shared.js";
 import { DeviceOpError, type Executor } from "./types.js";
 
@@ -111,6 +129,12 @@ export interface OsExecutorOptions {
   home?: string;
   /** More paths commands may not read (this program's state directory). */
   denyRead?: string[];
+  /** The localhost proxy guard (default: {@link detectLocalProxy}); injectable for tests. */
+  detectProxy?: () => Promise<ProxyGuardResult>;
+  /** Where the macOS short socket directory is made (default `/private/tmp`). */
+  socketBase?: string;
+  /** The reaper's process operations (default: the real ones); injectable for tests. */
+  reaper?: Partial<ReaperDeps>;
 }
 
 interface Spawned {
@@ -129,24 +153,44 @@ export class OsExecutor implements Executor {
   readonly mode = "os" as const;
   readonly roots: SandboxRoots;
   private readonly dir: string;
-  /** Marks every process of this device's commands: `<dirKey>.<tag>`. */
+  /** Marks every process of this device's commands: `<dirKey>.<tag>.<exec id>`. */
   private readonly dirKey: string;
   private readonly groups = new Set<Group>();
   private pruneTimer: NodeJS.Timeout | undefined;
+  /** Kills what a foreground exec left running once it ends. */
+  private readonly reaper: Reaper;
   private readonly guard: RootGuard;
   private readonly files: HostFiles;
   /**
    * The limits of the latest command. The ask callback has no command id; a device belongs to one
    * org, so these stand for the org's egress when it explains a refusal.
    */
-  private lastLimits: Pick<SandboxLimits, "egress" | "allowHosts"> | undefined;
+  private lastLimits: EgressLimits | undefined;
+  /** macOS: the short socket directory (TMPDIR in `dev` / `open`); undefined elsewhere. */
+  private socketDir: string | undefined;
+  /** The device's package caches (`<dir>/cache`). */
+  private readonly cacheDir: string;
+  /** The latest proxy guard result, and the policy object it was taken for. */
+  private proxy: ProxyGuardResult = { detected: false, reasons: [] };
+  private guardedPolicy: Policy | undefined;
+  private guardedAt = 0;
+  /** The configuration the sandbox runs with now, as JSON (see {@link applyConfig}). */
+  private installed: string | undefined;
   /**
    * Commands spawned while nothing narrowed them (policy `open`, their limits `open`) and still
    * running. The ask callback allows any public name only while one runs.
    */
   private readonly openCommands = new Set<string>();
+  /**
+   * Background tasks launched on macOS that still run, by the command id of their launch, with
+   * the task's process group id (its sid). A task keeps its launch's network permissions (the
+   * per-command list and {@link openCommands}) until its group is gone: it uses the launch's proxy
+   * credentials long after the launch returned. Checked on the prune tick.
+   */
+  private readonly backgroundNet = new Map<string, number>();
 
   constructor(private readonly opts: OsExecutorOptions) {
+    this.reaper = new Reaper(opts.reaper);
     const dir = resolve(opts.dir);
     // The roots are reported as real paths, so what commands print matches what the kernel sends.
     this.dir = existsSync(dir) ? realpathSync(dir) : dir;
@@ -154,14 +198,91 @@ export class OsExecutor implements Executor {
     this.guard = new RootGuard(this.dir, this.roots);
     this.files = new HostFiles(this.roots);
     this.dirKey = createHash("sha256").update(this.dir).digest("hex").slice(0, 16);
+    this.cacheDir = cacheRoot(this.dir);
   }
 
-  /** The configuration the sandbox is initialized with (no domains: those are per command). */
-  config(): SandboxRuntimeConfig {
-    return srtConfig(this.opts.policy(), this.roots, [], {
+  /**
+   * The tier of work that has no limits of its own (the file helper): the device's choice cut to
+   * the latest exec's ceiling, `strict` before any exec (no ceiling known yet).
+   */
+  tier(policy: Policy = this.opts.policy()): SandboxTier {
+    return this.lastLimits === undefined ? "strict" : deviceTier(policy, this.lastLimits);
+  }
+
+  /** What the tier gives on this machine now (for the policy summary). */
+  tierFacts(policy: Policy = this.opts.policy()): TierFacts {
+    return tierFacts(policy, this.lastLimits, {
+      proxyDetected: this.proxy.detected,
+      mode: "os",
+    });
+  }
+
+  /** The latest proxy guard result. */
+  proxyGuard(): ProxyGuardResult {
+    return this.proxy;
+  }
+
+  /** The sandbox configuration for the policy at `tier` (no domains: those are per command). */
+  config(
+    policy: Policy = this.opts.policy(),
+    tier: SandboxTier = this.tier(policy),
+  ): SandboxRuntimeConfig {
+    return srtConfig(policy, this.roots, [], {
+      tier,
       ...(this.opts.home !== undefined && { home: this.opts.home }),
       ...(this.opts.denyRead !== undefined && { denyRead: this.opts.denyRead }),
+      proxyDetected: this.proxy.detected,
+      ...(this.socketDir !== undefined && { socketDir: this.socketDir }),
+      cacheDir: this.cacheDir,
     });
+  }
+
+  /**
+   * Installs {@link config} when the policy or the tier changed it, so the change applies at the
+   * next command without a restart. The runtime reads its global configuration at each wrap.
+   */
+  private applyConfig(policy: Policy, tier: SandboxTier): void {
+    const config = this.config(policy, tier);
+    const json = JSON.stringify(config);
+    if (json === this.installed) return;
+    if (this.installed !== undefined) SandboxManager.updateConfig(config);
+    this.installed = json;
+  }
+
+  /** Records the configuration the sandbox was initialized with. */
+  markInstalled(config: SandboxRuntimeConfig): void {
+    this.installed = JSON.stringify(config);
+  }
+
+  /**
+   * macOS: makes the short socket directory (0700) at creation, and again before a `dev` / `open`
+   * command when it is gone (macOS prunes /tmp). A path taken by something else leaves the
+   * device without one: commands then use the tmp root.
+   */
+  prepareSocketDir(): void {
+    if (process.platform !== "darwin") return;
+    this.socketDir = prepareSocketDir(socketDirPath(this.dirKey, this.opts.socketBase));
+  }
+
+  /**
+   * Runs the localhost proxy guard at creation, when the policy was reloaded since the last run
+   * (the store returns a new object for each new version of policy.json), and when the last result
+   * is older than {@link PROXY_GUARD_TTL_MS} (a proxy started after this program). A guard that
+   * fails counts as a proxy found (fail safe; `localhost: allow` still overrides).
+   */
+  async refreshProxyGuard(policy: Policy): Promise<void> {
+    const now = Date.now();
+    if (policy === this.guardedPolicy && now - this.guardedAt < PROXY_GUARD_TTL_MS) return;
+    this.guardedPolicy = policy;
+    this.guardedAt = now;
+    try {
+      this.proxy = await (this.opts.detectProxy ?? (() => detectLocalProxy()))();
+    } catch (e) {
+      this.proxy = {
+        detected: true,
+        reasons: [`the localhost proxy guard failed: ${(e as Error).message}`],
+      };
+    }
   }
 
   async ensureRoot(): Promise<"ok" | "gone"> {
@@ -199,9 +320,31 @@ export class OsExecutor implements Executor {
     return blockedHosts(lines, limits, policy);
   }
 
-  /** The marker value of a tag's processes. */
+  /**
+   * `<dir>/git-template`, an empty directory commands can read but not write (it is outside the
+   * roots), made on demand; undefined when it cannot be made.
+   */
+  private gitTemplate(): string | undefined {
+    const path = join(this.dir, "git-template");
+    try {
+      mkdirSync(path, { recursive: true, mode: 0o755 });
+      return lstatSync(path).isDirectory() ? path : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * The marker value of a tag's processes. An exec's processes carry `<this>.<exec id>` (see
+   * {@link execMarker}); {@link killTagged} matches both.
+   */
   markerOf(tag: string): string {
     return `${this.dirKey}.${tag}`;
+  }
+
+  /** The marker value of one exec's processes: its tag's plus an id of its own (no dots in a tag). */
+  private execMarker(tag: string): string {
+    return `${this.markerOf(tag)}.${randomBytes(8).toString("hex")}`;
   }
 
   /**
@@ -213,13 +356,23 @@ export class OsExecutor implements Executor {
     o: {
       cwd: string;
       env?: Record<string, string>;
-      tag: string;
+      /** The marker value every process of the command carries. */
+      marker: string;
       egress: string[];
+      policy: Policy;
+      tier: SandboxTier;
       signal?: AbortSignal;
       stdin?: boolean;
     },
   ): Promise<Spawned> {
     const exports: string[] = [];
+    const dev = o.tier !== "strict";
+    // Re-checked before every dev / open command (macOS prunes /tmp, and a path swapped for a
+    // link or another user's directory must not be used): prepareSocketDir never follows links.
+    if (dev && process.platform === "darwin") this.prepareSocketDir();
+    // dev / open on macOS: the short socket directory, where unix sockets are allowed.
+    const tmp = dev && this.socketDir !== undefined ? this.socketDir : this.roots.tmp;
+    const gitTemplate = dev ? this.gitTemplate() : undefined;
     const inner: Record<string, string> = {
       // The user's PATH applies inside the sandbox only (the wrapper runs with OUTER_ENV).
       PATH: process.env.PATH ?? "/usr/bin:/bin:/usr/sbin:/sbin",
@@ -228,16 +381,26 @@ export class OsExecutor implements Executor {
       TERM: "dumb",
       HOME: this.roots.workspace,
       ...(process.env.USER !== undefined && { USER: process.env.USER }),
+      // Version managers (asdf, nvm, pyenv, ...) read their data under the real home, at every
+      // tier: HOME is the workspace here. Read only; the request's values win.
+      ...toolHomeEnv(this.opts.home ?? homedir()),
+      // dev / open: package caches under <dir>/cache; the command's own values win.
+      ...(dev && cacheEnv(this.cacheDir, { create: true })),
+      // dev / open may write .git/config but never .git/hooks: init and clone copy no sample hooks.
+      ...(dev && gitTemplate !== undefined && { GIT_TEMPLATE_DIR: gitTemplate }),
       ...o.env,
-      // The runtime points TMPDIR at its own /tmp/claude (denied by the config): use the tmp root.
-      TMPDIR: this.roots.tmp,
-      [EXEC_MARKER]: this.markerOf(o.tag),
+      // The runtime points TMPDIR at its own /tmp/claude (denied by the config): use ours.
+      TMPDIR: tmp,
+      // Chromium on macOS ignores TMPDIR and reads this instead (its singleton socket).
+      ...(process.platform === "darwin" && { MAC_CHROMIUM_TMPDIR: tmp }),
+      [EXEC_MARKER]: o.marker,
     };
     for (const [k, v] of Object.entries(inner)) {
       if (!ENV_NAME_RE.test(k))
         throw policyError(`invalid environment variable name ${JSON.stringify(k)}`);
       exports.push(`export ${k}=${shellQuote(v)}`);
     }
+    this.applyConfig(o.policy, o.tier);
     const commandId = randomBytes(16).toString("base64url");
     const wrapped = await SandboxManager.wrapWithSandbox(
       `${exports.join("\n")}\n${script}`,
@@ -270,15 +433,43 @@ export class OsExecutor implements Executor {
     return { child, commandId };
   }
 
+  /** Drops a command's network permissions (its per-command list and any-host membership). */
+  private releaseNet(commandId: string): void {
+    this.backgroundNet.delete(commandId);
+    this.openCommands.delete(commandId);
+    SandboxManager.unregisterCommandNetworkLists(commandId);
+  }
+
+  /** Keeps a launched background task's network permissions while its group `sid` lives. */
+  private keepBackgroundNet(commandId: string, sid: number): void {
+    if (!killGroupId(sid, 0)) {
+      this.releaseNet(commandId);
+      return;
+    }
+    this.backgroundNet.set(commandId, sid);
+    this.startPruning();
+  }
+
+  /** Releases the network permissions of background tasks whose group is gone (all: `all`). */
+  private pruneBackgroundNet(all = false): void {
+    for (const [commandId, sid] of [...this.backgroundNet]) {
+      if (all || !killGroupId(sid, 0)) this.releaseNet(commandId);
+    }
+  }
+
+  private startPruning(): void {
+    if (this.pruneTimer === undefined) {
+      this.pruneTimer = setInterval(() => this.prune(), PRUNE_INTERVAL_MS);
+      this.pruneTimer.unref();
+    }
+  }
+
   /** Tracks a spawned command's process group; returns the entry. */
   private track(tag: string, child: ChildProcess): Group | undefined {
     if (child.pid === undefined) return undefined;
     const g: Group = { tag, pgid: child.pid, exited: false };
     this.groups.add(g);
-    if (this.pruneTimer === undefined) {
-      this.pruneTimer = setInterval(() => this.prune(), PRUNE_INTERVAL_MS);
-      this.pruneTimer.unref();
-    }
+    this.startPruning();
     return g;
   }
 
@@ -290,7 +481,8 @@ export class OsExecutor implements Executor {
       // that pid means the id now belongs to someone else.
       if (pidAlive(g.pgid) || !killGroupId(g.pgid, 0)) this.groups.delete(g);
     }
-    if (this.groups.size === 0 && this.pruneTimer !== undefined) {
+    this.pruneBackgroundNet();
+    if (this.groups.size === 0 && this.backgroundNet.size === 0 && this.pruneTimer !== undefined) {
       clearInterval(this.pruneTimer);
       this.pruneTimer = undefined;
     }
@@ -311,17 +503,23 @@ export class OsExecutor implements Executor {
     // Read once: the command's lists and the explanation of its refusals use the same policy.
     const policy = this.opts.policy();
     this.lastLimits = args.limits;
+    await this.refreshProxyGuard(policy);
     // A granted host the command still could not reach is not the device's doing.
     const judged: Policy = {
       ...policy,
       allowedDomains: [...policy.allowedDomains, ...grantedHosts(policy, args.limits, args.grants)],
     };
     const egress = effectiveEgress(policy, args.limits, args.grants);
+    const marker = this.execMarker(args.tag);
+    // A background task launch detaches the task on purpose: what it leaves running stays.
+    const reap = !isBackgroundLaunch(args.command);
     const { child, commandId } = await this.spawnSandboxed(args.command, {
       cwd,
       ...(args.env !== undefined && { env: args.env }),
-      tag: args.tag,
+      marker,
       egress,
+      policy,
+      tier: deviceTier(policy, args.limits),
       signal,
     });
     if (egress.includes(ANY_HOST)) this.openCommands.add(commandId);
@@ -348,7 +546,7 @@ export class OsExecutor implements Executor {
       }, args.timeoutMs);
       const onAbort = (): void => kill();
       signal.addEventListener("abort", onAbort, { once: true });
-      const cleanup = (): void => {
+      const cleanup = (keepFor?: number): void => {
         clearTimeout(timer);
         if (grace) clearTimeout(grace);
         signal.removeEventListener("abort", onAbort);
@@ -356,8 +554,8 @@ export class OsExecutor implements Executor {
           group.exited = true;
           group.onKill = undefined;
         }
-        this.openCommands.delete(commandId);
-        SandboxManager.unregisterCommandNetworkLists(commandId);
+        if (keepFor !== undefined) this.keepBackgroundNet(commandId, keepFor);
+        else this.releaseNet(commandId);
         SandboxManager.cleanupAfterCommand();
       };
       const finish = (): void => {
@@ -371,7 +569,11 @@ export class OsExecutor implements Executor {
           // The explanation is best effort: the command's result always comes back.
         }
         const trailer = networkTrailer(blocked);
-        cleanup();
+        cleanup(
+          reap || killed || timedOut || exit.code !== 0
+            ? undefined
+            : launchedGroup(cap.text("stdout")),
+        );
         child.stdout?.destroy();
         child.stderr?.destroy();
         let exitCode: number | null = exit.code;
@@ -404,6 +606,10 @@ export class OsExecutor implements Executor {
       child.once("exit", (code, sig) => {
         exit = { code, sig };
         if (group) group.exited = true;
+        // The call is over (exit, timeout or abort): nothing it started may outlive it, because no
+        // later command can stop it (the sandbox lets no command signal another's processes).
+        // Its group goes before the result; processes that left the group soon after.
+        if (group && reap) void this.reaper.reap(group.pgid, marker);
         // A background child may hold the pipes open; do not wait for it past a short grace.
         grace = setTimeout(finish, PIPE_GRACE_MS);
       });
@@ -432,8 +638,10 @@ export class OsExecutor implements Executor {
       .join(" ");
     const { child, commandId } = await this.spawnSandboxed(script, {
       cwd: this.roots.workspace,
-      tag: "fs-helper",
+      marker: this.markerOf("fs-helper"),
       egress: [],
+      policy: this.opts.policy(),
+      tier: this.tier(),
       stdin: data !== undefined,
     });
     const chunks: Buffer[] = [];
@@ -508,12 +716,18 @@ export class OsExecutor implements Executor {
     const want = new Set(tags);
     for (const g of [...this.groups]) if (want.has(g.tag)) this.killGroup(g);
     const values = new Set(tags.map((t) => this.markerOf(t)));
-    await killMarked((v) => values.has(v));
+    // `<dirKey>.<tag>` or an exec's `<dirKey>.<tag>.<id>`: a tag has no dot, so `ab` never
+    // matches `ab-cd`'s processes.
+    await killMarked((v) => {
+      const dot = v.indexOf(".", this.dirKey.length + 1);
+      return values.has(dot < 0 ? v : v.slice(0, dot));
+    });
   }
 
   async killAll(): Promise<void> {
     for (const g of [...this.groups]) this.killGroup(g);
     await this.killLeftovers();
+    this.pruneBackgroundNet(true);
   }
 
   /** Kills every process carrying this device's marker (also a previous run's). */
@@ -532,6 +746,17 @@ export class OsExecutor implements Executor {
 }
 
 /**
+ * The process group id a background task launch printed as its last line (the task's sid), on
+ * macOS only: there the sandbox shares the host's process ids, so the device can watch the group.
+ * Elsewhere (Linux: bwrap's own pid namespace) undefined, and the launch's permissions end with it.
+ */
+export function launchedGroup(stdout: string, platform: NodeJS.Platform = process.platform) {
+  if (platform !== "darwin") return undefined;
+  const last = stdout.trimEnd().split("\n").pop()?.trim() ?? "";
+  return /^[1-9][0-9]*$/.test(last) ? Number(last) : undefined;
+}
+
+/**
  * The OS sandbox executor: checks the platform and dependencies, starts the sandbox's proxies
  * once for this process, and kills what a previous run of this device left running.
  * Network is denied unless a command's own list allows it.
@@ -540,12 +765,17 @@ export async function createOsExecutor(opts: OsExecutorOptions): Promise<OsExecu
   const available = sandboxAvailability();
   if (!available.ok) throw new Error(available.reason);
   const executor = new OsExecutor(opts);
+  executor.prepareSocketDir();
+  const policy = opts.policy();
+  await executor.refreshProxyGuard(policy);
   // The ask callback never allows: a destination outside the lists is refused, with a reason
   // when this runtime carries one (an older runtime would read any answer object as an allow).
+  const config = executor.config(policy);
   await SandboxManager.initialize(
-    executor.config(),
+    config,
     SandboxManager.askCallbackDenyReason === true ? executor.askCallback : undefined,
   );
+  executor.markInstalled(config);
   await executor.killLeftovers();
   return executor;
 }

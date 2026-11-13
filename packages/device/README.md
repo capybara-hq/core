@@ -21,7 +21,8 @@ the code to enter on any signed-in browser, where you pick the org and the devic
 an existing connected one of yours) after reading what the program can do. Logging in again from
 another machine into the same device replaces the first machine (its credential is revoked).
 `stop` ends the running program, `drain` makes it accept no new commands and exit when the running
-ones finish. `logout` stops a running program, then forgets the credential (the machine stays
+ones finish (`drain --wait [--timeout <seconds>]` returns only once it has exited, at most 600 s by
+default). `logout` stops a running program, then forgets the credential (the machine stays
 connected on the platform until it is revoked there). Deleting the device in the web app
 revokes the machine and stops the program; the files in the working directory stay on your machine.
 
@@ -43,7 +44,7 @@ the device page says so. To start afresh, run `capybara-device logout` and then
 and the platform rebuilds the device on its next use.
 
 Commands: `login --url <url> [--no-browser] [--dir <path>] [--mode os|docker]`, `logout`,
-`status [--json]`, `start`, `stop`, `drain`,
+`status [--json]`, `start`, `stop`, `drain [--wait] [--timeout <seconds>]`,
 `policy [show | set <key> <value> [--yes] | add|remove <key> <value>]` and
 `service install|uninstall`.
 
@@ -60,10 +61,12 @@ and `tmp/`.
 In OS mode every command runs inside `@anthropic-ai/sandbox-runtime` (macOS Seatbelt, Linux
 bubblewrap; Linux needs `bwrap` and `socat`): writes only under `workspace/` and `tmp/`,
 `skills/` read only, `~/.ssh`, cloud CLI credentials, `~/.netrc`, `~/.gnupg`, browser profiles and
-this program's state directory unreadable. Network is limited to the domains of the local policy
-that the device's egress also allows; with an empty policy (the default) commands reach no
-network at all. You edit the policy locally; the deployment can change it only as described in
-[Changes from the deployment](#changes-from-the-deployment):
+this program's state directory unreadable. What else a command may do depends on the device's
+[sandbox tier](#sandbox-tiers): at `strict`, network only to the domains of the local policy that
+the device's egress also allows (with an empty list, no network at all); at `dev` (the default of
+every organization unless changed) also the common package registries and local servers; at
+`open` anything the organization allows. You edit the policy locally; the deployment can change it
+only as described in [Changes from the deployment](#changes-from-the-deployment):
 
 ```bash
 capybara-device policy set allowedDomains registry.npmjs.org,*.github.com
@@ -75,6 +78,15 @@ capybara-device policy show
 Changes apply at the next command; a running program does not need a restart. `add` and `remove`
 work on `allowedDomains` and `allowCredentials`; every domain must be a lowercase host name
 (optionally `*.` for subdomains, never the apex), never an IP address or an internal name.
+
+A command ends with everything it started: once it returns (or times out, or is stopped), the
+program kills what it left running, such as `server &` or `nohup …`, because inside the sandbox no
+later command may signal another command's processes. Its process group goes at once, and a process
+that left the group (`setsid`) is found by the marker every process of the command carries. On
+macOS only a background task launch (`Bash` with `run_in_background`, whose command starts with the
+line `# capybara: background task launch`) keeps what it starts. On Linux the sandbox's pid
+namespace already ends every process with its command. In Docker mode and without a sandbox, a
+later command can stop what an earlier one left, so nothing is killed.
 
 When a command is refused a domain, the program says why. Clients that print the proxy's answer
 show a reason such as `capybara: files.slack.com is not in this device's allowed domains`, and
@@ -94,29 +106,130 @@ lines (at most 21).
 
 In OS mode each command's result also carries the refused hosts and their layers, so the
 deployment can ask the device owner on the spot (the device announces this in its hello, together
-with a summary of its local policy: `network`, `allowedDomains` and `remoteGrants`).
+with a summary of its local policy: the chosen and effective `tier`, `isolation`, what `localhost`
+and `unixSockets` give on this machine, `allowedDomains` and `remoteGrants`).
 
-### Network open
+### Sandbox tiers
 
-`network` in `policy.json` is `allowlist` (default) or `open`. Under `open` the local policy stops
-narrowing: a command may reach exactly what the organization allows (its allowlist; any public host
-when the organization's egress is open; nothing when it is none). Loopback, private addresses and
-internal names stay refused. When the organization is open too, the program lets a command reach
-any public host only while a command started that way is running (the sandbox runtime cannot list
-"any host" per command, so it is allowed process-wide meanwhile; turning `network` back to
-`allowlist` takes effect at once). With nothing narrowing it, a command can upload files to any outside
-site the organization allows, and prompt injection can make an agent do that: turn it on only on
-your own development machine, with agents and material you trust.
+`tier` in `policy.json` is `strict`, `dev` or `open`; without it (the default) the device follows
+the organization's default tier, which is `dev` unless an admin changed it. The deployment sends
+the organization's ceiling with every command, and the device runs the command at its own tier cut
+to that ceiling: a device set to `open` in an organization that allows at most `dev` runs at
+`dev`.
+
+| | `strict` | `dev` | `open` |
+|---|---|---|---|
+| Network | `allowedDomains` within the organization's list | also the dev hosts (npm, PyPI, GitHub, crates.io, Go, Maven / Gradle, Docker Hub, Playwright) | anything the organization allows |
+| Local servers (macOS) | no | yes, unless a local proxy is detected | same as `dev` |
+| Unix sockets (macOS) | no | under `workspace/`, `tmp/` and the socket directory | same as `dev` |
+| Package caches | none | `<dir>/cache/` | same as `dev` |
+
+In every tier commands keep `HOME` = `workspace/`, writes stay inside the device directory (plus
+the socket directory), the secret paths stay unreadable, and the network proxy refuses loopback,
+private addresses and internal names as destinations. Local servers are a separate permission:
+at `dev` and `open` on macOS a command may listen on and connect to this machine's localhost
+directly (below), never through the proxy.
+
+The tier sets what the device adds to its own list; the organization's ceiling only cuts. So a
+device at `strict` under a `dev` ceiling still reaches a dev host (say `registry.npmjs.org`) when
+its owner listed it in `allowedDomains`: `strict` means "only what I listed", not "less than the
+organization's strict list".
 
 ```bash
-capybara-device policy set network open --yes   # no network limit on this device
-capybara-device policy set network allowlist     # back to allowedDomains
+capybara-device policy set tier dev            # or strict
+capybara-device policy set tier open --yes     # anything the organization allows
+capybara-device policy set tier default        # follow the organization's default again
+capybara-device policy show                    # what the tier gives on this machine
 ```
 
-`set network open` prints the risk and changes nothing without a confirmation: `--yes`, or, on a
+`set tier open` prints the risk and changes nothing without a confirmation: `--yes`, or, on a
 terminal, an answer of `y` at the prompt (without a terminal and without `--yes` it exits with
-status 2). `set network allowlist` is always accepted. The device's owner can also switch it on the
+status 2): at `open` a command can upload files to any outside site the organization allows, and
+prompt injection can make an agent do that. Turn it on only on your own development machine, with
+agents and material you trust. Lower tiers are always accepted. When the organization allows any
+host too, the program lets a command reach any public host only while a command started that way
+is running (the sandbox runtime cannot list "any host" per command, so it is allowed process-wide
+meanwhile; a lower tier takes effect at once). The device's owner can also raise the tier on the
 device page, behind the same risk text, while `remoteGrants` is `owner`.
+
+An older `policy.json` with `network` is read without it (the device follows the organization's
+default) and loses the key at the next change; `start` says so at each start while it held
+`network: open`. Any `capybara-device policy set` writes the file again and so clears the notice.
+
+#### Local servers, sockets and caches at `dev` and `open`
+
+- **Git.** Commands may write `.git/config`, so `git init`, `git clone`, `git config`,
+  `git remote add` and branch tracking work. `.git/hooks` stays unwritable at every tier (a hook is
+  code that runs unsandboxed when you later run git in that folder yourself), and `GIT_TEMPLATE_DIR`
+  points at an empty, read-only `<dir>/git-template`, so init and clone copy no sample hooks. At
+  `strict`, `.git/config` stays unwritable too. Remaining risk: a `.git/config` a command wrote can
+  set `core.hooksPath`, `core.fsmonitor`, `core.sshCommand` or similar, which run when you later
+  run git in that repository on your own machine. Treat a repository a command created or
+  configured like any downloaded one (check `git config --local --list` before running git there),
+  or keep the device at `strict`.
+
+- **Local servers (macOS).** Commands may listen on local ports (a dev server, a browser's
+  debugging port) and connect to this machine's localhost. That also reaches any local proxy that
+  forwards past the network allowlist (Clash and the like) or Docker's TCP API, so the program
+  looks for one when it starts and whenever `policy.json` changes: the system proxy
+  (`scutil --proxy`), `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` pointing at loopback in its own
+  environment, and a listener on 127.0.0.1 or ::1 ports 7890, 7891, 7897, 1080, 1087, 8118, 9050,
+  9150, 2375 or 2376. When it finds one, commands get no localhost and `policy show` says why. A
+  proxy set up only through a PAC file (automatic proxy configuration) or on another port is not
+  found: if you run one, keep `localhost auto` and consider tier `strict`. To allow localhost
+  despite a detected proxy: `capybara-device policy set localhost allow` (back with
+  `localhost auto`).
+- **Local servers (Linux).** The sandbox has its own network namespace: a server listens and
+  answers inside the command (and its children), never reachable from the host's browser.
+- **Unix sockets (macOS).** Allowed under `workspace/`, `tmp/` and a short socket directory
+  `/private/tmp/cap-<8 hex>` (mode 0700, made at start), never anywhere else (Docker's socket stays
+  out of reach). `TMPDIR` and `MAC_CHROMIUM_TMPDIR` point at the socket directory, so a headless
+  Chromium's socket path stays under the 104-byte limit (`chromium-headless-shell` with
+  `--single-process`; full Chrome needs the patched sandbox runtime, see below).
+- **The sandbox runtime patch is not in published installs yet.** This repository patches
+  `@anthropic-ai/sandbox-runtime` (`patches/@anthropic-ai__sandbox-runtime@*.patch`, applied by pnpm
+  in the workspace) so the macOS profile lets full Chrome read the `hw.product` and
+  `kern.hv_vmm_present` sysctls it needs to start headless. The package is built with plain `tsc`
+  and depends on the runtime from npm, so `npm i -g @capybara-hq/device` installs the unpatched
+  runtime: there, full Chrome (and Puppeteer's or Playwright's default `chrome` / `chromium`
+  headless mode) fails to start in the macOS sandbox. Everything else works the same:
+  `chromium-headless-shell` with `--single-process`, local servers, unix sockets, package caches,
+  the network rules, Linux (the patch is macOS only), Docker mode and running without a sandbox.
+- **Unix sockets (Linux).** Blocked: the sandbox runtime can only allow every socket there,
+  including the host daemons' (Docker, D-Bus, ssh-agent). Allowing them with the daemons' sockets
+  masked is planned after a spike that proves them unreachable; it has not been done yet. Use
+  Docker mode for browsers on Linux.
+- **Package caches.** `XDG_CACHE_HOME`, `npm_config_cache`, `PIP_CACHE_DIR`, `UV_CACHE_DIR`,
+  `CARGO_HOME`, `GOMODCACHE`, `GOCACHE`, `GRADLE_USER_HOME`, `MAVEN_OPTS` (`-Dmaven.repo.local`), `PLAYWRIGHT_BROWSERS_PATH` and `COREPACK_HOME` point at
+  folders of `<dir>/cache/`, kept across commands. Your own `~/.npm`, `~/.cache` and pnpm store stay
+  read only, so a sandboxed command cannot poison your own builds. A command that sets one of
+  these variables itself keeps its value. pnpm's store is not redirected (pnpm reads it only from
+  `npm_config_store_dir`, which makes npm warn on every command): it stays at pnpm's default under
+  the command's HOME, the workspace.
+
+### Running without a sandbox
+
+`isolation` in `policy.json` is `sandbox` (default) or `none`. With `none` and tier `open`, in OS
+mode, commands run directly on this computer as you: your real `HOME`, `PATH`, environment,
+caches, credentials (SSH keys, cloud accounts, keychain), Docker and any network, like a coding
+agent with its sandbox off. They still start in `workspace/`, and the platform's file tools still
+stay inside the device's directories. Such commands can also read this program's own credential
+(`credential.json`): if you suspect misuse, run `capybara-device logout` and log in again, which
+revokes it. Prompt injection can make an agent delete files or send your credentials away: turn it
+on only on your own development machine, with agents and material you fully trust.
+
+```bash
+capybara-device policy set tier open --yes        # first: an explicit local tier open
+capybara-device policy set isolation none --yes
+capybara-device policy set isolation sandbox      # back to the sandbox
+```
+
+It is set only on this machine: `set isolation none` is refused unless `tier` is set to `open` in
+`policy.json` (following the organization's default is not enough), prints the risk and needs
+`--yes` or a `y` at the prompt, and the device refuses it from the deployment whatever `remoteGrants` says (turning it
+back to `sandbox` from the deployment is accepted). A Docker-mode device refuses it. The platform
+or the organization may refuse to use a device that runs without a sandbox; its owner then turns
+the sandbox back on.
 
 ### Changes from the deployment
 
@@ -125,14 +238,15 @@ policy on the device owner's decision (an approval answered in a signed-in web o
 the device page):
 
 - `owner` (default): the device accepts the `policy` operation's additions to `allowedDomains`
-  (an approval adds an exact host; the device page may add a `*.` wildcard) and `network: open`,
+  (an approval adds an exact host; the device page may add a `*.` wildcard) and a higher `tier`,
   and adds a run's or a scheduled task's granted hosts to a command's list. Grants are exact hosts
   and never go beyond the organization's egress.
-- `off`: the device refuses every widening from the deployment (additions, `network: open`, run and
+- `off`: the device refuses every widening from the deployment (additions, a higher `tier`, run and
   task grants) with "This device does not accept network changes from the deployment; allow it
   locally: capybara-device policy add allowedDomains <host>".
 
-Narrowing (removing hosts, `network: allowlist`) is always accepted. Every host is validated like
+`isolation: none` is never accepted from the deployment. Narrowing (removing hosts, a lower
+`tier`, `isolation: sandbox`) is always accepted. Every host is validated like
 a local one, the change is written under `policy.json.lock`, and it applies at the next command.
 `remoteGrants` itself is set only locally: `capybara-device policy set remoteGrants owner|off`
 (or in `policy.json`). Each change from the deployment is
@@ -141,7 +255,7 @@ and so is a refused attempt and the grants a command was given:
 
 ```text
 {"op":"policy","detail":"policy add files.slack.com by Ada Lovelace (acc_123) via web, approval apr_456",...}
-{"op":"policy","detail":"policy refused network open by Ada Lovelace (acc_123) via web",...}
+{"op":"policy","detail":"policy refused tier open by Ada Lovelace (acc_123) via web",...}
 {"op":"exec","detail":"grants run run_789 by acc_123: files.slack.com",...}
 ```
 
@@ -161,10 +275,10 @@ Limits to know: the platform's `Grep` tool assumes GNU grep, so on macOS (BSD gr
 Grep options behave differently or fail. Docker mode (a Linux container) does not have this issue.
 
 Not enforced yet in OS mode: the `cpu` and `memoryMb` ceilings, and `allowCredentials` (commands
-get no local credentials at all). Processes a command leaves running are killed with it by tag;
+get no local credentials at all). Processes a command leaves running are killed when it ends;
 on macOS a child that leaves the command's process group and runs only Apple system binaries
-cannot be found again (Linux runs each command in its own pid namespace, which takes every child
-down with it).
+cannot be found by its marker (`ps -E` hides their environment), so it survives (Linux runs each
+command in its own pid namespace, which takes every child down with it).
 
 ## Docker mode
 
@@ -175,12 +289,18 @@ run as your own uid:gid, so they can write the mounted directories you own (a ro
 the image's `sandbox` user, uid 1000); on macOS as the image's `sandbox` user. `<dir>/workspace`, `<dir>/skills` (read only) and `<dir>/tmp` are mounted
 at `/workspace`, `/skills` and `/tmp`; the container has a read-only root file system, a pids limit of 1024, `--memory-swap` equal to
 `memoryMb`, `--cap-drop ALL` and `no-new-privileges`. The policy's `cpu` and
-`memoryMb` become `--cpus` and `--memory`. The container is reused while its mounts and limits
-match and recreated when they change; it stays running (idle) between starts.
+`memoryMb` become `--cpus` and `--memory`; at tier `dev` and `open` `/dev/shm` grows to a quarter
+of `memoryMb` (at most 1 GiB; 1 GiB without a ceiling) for browsers. The container is reused while
+its mounts and flags match and recreated when they change (at the next command that finds it
+idle); it stays running (idle) between starts. Commands always have the container's own localhost
+and unix sockets; `isolation none` is refused.
 
-Docker mode has no domain allowlist: a command has either no network (`--network none`, when the
-local policy or the device's egress allows no domain) or the default bridge, with the whole
-internet. Use OS mode to limit commands to the domains of the local policy.
+Docker mode has no domain allowlist: a command has either no network (`--network none`) or the
+default bridge, with the whole internet and this machine's network. It gets the bridge only when
+the local `allowedDomains` holds a domain the device's egress allows, or the tier is `open` and the
+organization allows any host (under an organization allowlist, `open` counts only the explicit
+local domains, like the lower tiers); the dev hosts of tier `dev` do not open it. Use OS mode to limit
+commands to single domains.
 
 ## Running at login
 
@@ -192,4 +312,7 @@ program when it exits non-zero (systemd after 5 s) and leave it stopped after a 
 while you have a session, so run `loginctl enable-linger $USER` to start it at boot and keep it
 running after you log out. `service.log` is emptied into `service.log.1` at 10 MiB when the program
 starts. The service runs `node <bin> start` with the `PATH` of the shell that installed it (so
-`docker` is found). `service uninstall` reverses it.
+`docker` is found). `service uninstall` reverses it. On macOS, installing again first boots the old
+agent out and waits (up to 10 s) until launchd has let it go, because `launchctl bootout` returns
+before that; a `bootstrap` that still fails with error 5 (Input/output error) is retried a few
+times. On Linux, installing again restarts the unit so the new file applies.

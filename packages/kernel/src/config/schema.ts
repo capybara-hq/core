@@ -1,7 +1,9 @@
 import { isIP } from "node:net";
 import {
+  DEV_HOSTS,
   DOCUMENT_MEDIA_TYPES,
   IMAGE_MEDIA_TYPES,
+  tierAtMost,
   validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
@@ -37,8 +39,6 @@ function isValidMasterKey(value: string): boolean {
  */
 const TRUSTED_SOURCE_RE = /^(?!local:)[a-z0-9][a-z0-9._-]{0,213}:\S{1,256}$/;
 
-/** `runtime.maxRunSeconds` 的默认值。 */
-export const DEFAULT_MAX_RUN_SECONDS = 900;
 /** `sandbox.limits.maxCommandSeconds` 的默认值。 */
 export const DEFAULT_MAX_COMMAND_SECONDS = 7200;
 
@@ -702,9 +702,14 @@ export const KernelConfigSchema = z.object({
       maxSteps: z
         .number()
         .int()
-        .positive()
-        .default(50)
-        .meta(meta({ description: "Maximum model steps per agent run before the final wrap-up" })),
+        .nonnegative()
+        .default(0)
+        .meta(
+          meta({
+            description:
+              "Maximum model steps per agent run before the final wrap-up; 0 (the default) means no limit: a run goes on until the model stops calling tools or someone stops it",
+          }),
+        ),
       wakeOnBackgroundTask: z
         .boolean()
         .default(true)
@@ -717,12 +722,12 @@ export const KernelConfigSchema = z.object({
       maxRunSeconds: z
         .number()
         .int()
-        .positive()
-        .default(DEFAULT_MAX_RUN_SECONDS)
+        .nonnegative()
+        .default(0)
         .meta(
           meta({
             description:
-              "Maximum wall-clock duration of one agent run in seconds (time spent waiting for people is not counted). Sandbox commands are limited to the time left in the run, so agents that need long commands need maxRunSeconds >= sandbox.limits.maxCommandSeconds",
+              "Maximum wall-clock duration of one agent run in seconds (time spent waiting for people is not counted); 0 (the default) means no limit. With a limit, sandbox commands are limited to the time left in the run, so agents that need long commands need maxRunSeconds >= sandbox.limits.maxCommandSeconds; without one, commands are limited only by sandbox.limits.maxCommandSeconds and the tool timeouts",
           }),
         ),
       streamIdleMs: z
@@ -830,9 +835,9 @@ export const KernelConfigSchema = z.object({
         ),
     })
     .default({
-      maxSteps: 50,
+      maxSteps: 0,
       wakeOnBackgroundTask: true,
-      maxRunSeconds: DEFAULT_MAX_RUN_SECONDS,
+      maxRunSeconds: 0,
       streamIdleMs: 60000,
       maxOutputTokens: 16000,
       compactionThreshold: 0.8,
@@ -1287,12 +1292,12 @@ export const KernelConfigSchema = z.object({
         .int()
         .min(0)
         .refine((n) => n === 0 || n >= 10_000, "0 (no limit) or at least 10,000")
-        .default(5_000_000)
+        .default(0)
         .meta(
           meta({
             hot: true,
             description:
-              "Tokens (input, output and cache) all sub-agents of the tree under a person's message may use together; at the cap running sub-agents stop and new dispatches are refused. 0 means no limit; otherwise at least 10,000. Organizations can be given their own value in subagentLimitOverrides",
+              "Tokens (input, output and cache) all sub-agents of the tree under a person's message may use together; at the cap running sub-agents stop and new dispatches are refused. 0 (the default) means no limit; otherwise at least 10,000. Organizations can be given their own value in subagentLimitOverrides",
           }),
         ),
     })
@@ -1565,7 +1570,7 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "Longest a single sandbox command may run, in seconds. A command also stops when its run is about to reach runtime.maxRunSeconds, so long commands need runtime.maxRunSeconds >= maxCommandSeconds (a startup warning is logged otherwise)",
+                  "Longest a single sandbox command may run, in seconds. When runtime.maxRunSeconds is set (not 0), a command also stops when its run is about to reach it, so long commands need runtime.maxRunSeconds >= maxCommandSeconds (a startup warning is logged otherwise)",
               }),
             ),
           suspendAfterIdleMinutes: z
@@ -1602,12 +1607,17 @@ export const KernelConfigSchema = z.object({
               }),
             ),
           egress: z
-            .enum(["none", "allowlist", "open"])
+            .enum(["none", "allowlist"], {
+              error: (iss) =>
+                iss.input === "open"
+                  ? 'sandbox.limits.egress no longer takes "open": open egress is the open sandbox tier now; set sandbox.tiers.max to "open" (and egress to "allowlist")'
+                  : undefined,
+            })
             .default("allowlist")
             .meta(
               meta({
                 description:
-                  "Outbound network from cloud device instances: none, allowlist (only allowHosts) or open; applies to instances created after the change, existing ones keep theirs until destroyed",
+                  'Outbound network of sandboxed devices: none (no tier reaches the network, the kill switch) or allowlist (strict reaches allowHosts, dev adds devHosts, open reaches any public host). Open egress is the open tier: set sandbox.tiers.max to "open"',
               }),
             ),
           allowHosts: z
@@ -1626,7 +1636,66 @@ export const KernelConfigSchema = z.object({
                   "Hosts cloud device instances may reach when egress is allowlist: lowercase hostnames, optional leading '*.', no IPs, ports or internal-only names; applies to instances created after the change",
               }),
             ),
+          devHosts: z
+            .array(z.string())
+            .default([...DEV_HOSTS])
+            .superRefine((hosts, ctx) => {
+              hosts.forEach((h, i) => {
+                for (const message of validateAllowHost(h)) {
+                  ctx.addIssue({ code: "custom", path: [i], message: `${h}: ${message}` });
+                }
+              });
+            })
+            .meta(
+              meta({
+                description:
+                  "Hosts the dev sandbox tier adds to the allowlist (package registries, source hosts, tool downloads) when egress is allowlist; same format as allowHosts",
+              }),
+            ),
         })
+        .prefault({} as never),
+      tiers: z
+        .object({
+          max: z
+            .enum(["strict", "dev", "open"])
+            .optional()
+            .meta(
+              meta({
+                hot: true,
+                description:
+                  "Highest sandbox tier any organization may reach: strict (the allowlist only), dev (adds devHosts and local development affordances) or open (any public host); organizations and devices choose at most this. Unset: the super admin's choice in the admin console, else dev; set here, it is read-only there",
+              }),
+            ),
+          default: z
+            .enum(["strict", "dev", "open"])
+            .optional()
+            .meta(
+              meta({
+                hot: true,
+                description:
+                  "Sandbox tier of a device whose owner chose none, unless its organization sets its own default; at most sandbox.tiers.max. Unset: the super admin's choice in the admin console, else dev; set here, it is read-only there",
+              }),
+            ),
+          allowUnsandboxed: z
+            .boolean()
+            .optional()
+            .meta(
+              meta({
+                hot: true,
+                description:
+                  "Whether a local device may run commands without a sandbox (its owner's local choice); it only applies where the organization's ceiling is open, and an organization may forbid it. Unset: the super admin's choice in the admin console, else true; set here, it is read-only there",
+              }),
+            ),
+        })
+        // both set here: the default may not be above the max (a max from the admin console
+        // caps a default set here instead, see sandbox/platform-tiers.ts)
+        .refine(
+          (t) => t.default === undefined || t.max === undefined || tierAtMost(t.default, t.max),
+          {
+            message: "sandbox.tiers.default must not be above sandbox.tiers.max",
+            path: ["default"],
+          },
+        )
         .prefault({} as never),
     })
     .prefault({} as never),
@@ -1837,18 +1906,6 @@ export const KernelConfigSchema = z.object({
         .meta(
           meta({
             description: "usage.report delivery jobs one worker replica processes at the same time",
-          }),
-        ),
-      usageReportKeepHours: z
-        .number()
-        .int()
-        .min(1)
-        .max(720)
-        .default(24)
-        .meta(
-          meta({
-            description:
-              "Hours a finished usage.report job is kept in Redis so re-enqueueing the same usage event (resumed step, sweeper) is deduplicated; at least 1, well above the sweeper's 10-minute overlap",
           }),
         ),
     })

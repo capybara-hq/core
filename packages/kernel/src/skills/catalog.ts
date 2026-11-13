@@ -18,6 +18,7 @@ import {
   type SkillsSnapshot,
   sameSnapshot,
 } from "../runtime/context/skills.js";
+import { runEndedIn } from "../runtime/run-status.js";
 import {
   agentOwnSkillIds,
   agentSkills,
@@ -374,23 +375,30 @@ export class SkillsCatalogService {
 
   /**
    * Records the run start's snapshot (see the class comment). `opts.log`: the run's logger
-   * (default the kernel logger).
+   * (default the kernel logger). False: the run had ended (a stop got there first), so nothing was
+   * appended and the run must not go on.
    */
   async record(
     input: EffectiveSkillsInput & { runId: string },
     opts: { log?: Pick<Logger, "warn" | "error"> } = {},
-  ): Promise<void> {
+  ): Promise<boolean> {
     const toSeq = await this.append(input, opts.log ?? this.log);
+    if (toSeq === "ended") return false;
     if (toSeq !== null) await this.eventLog.notify(input.conversationId, toSeq);
+    return true;
   }
 
-  /** Under the conversation row lock, resolves the skills and appends a changed snapshot. */
+  /**
+   * Under the conversation row lock, resolves the skills and appends a changed snapshot; `ended`
+   * (nothing appended) when the run is terminal under the locks.
+   */
   @Transactional()
   private async append(
     input: EffectiveSkillsInput & { runId: string },
     log: Pick<Logger, "warn" | "error">,
-  ): Promise<number | null> {
+  ): Promise<number | null | "ended"> {
     const last = await lockLatestCatalog(this.db.db, input.conversationId);
+    if (await runEndedIn(this.db.db, input.runId)) return "ended";
     const all = await resolveSkills(this.db.db, input, log);
     const resolved = forModel(all, input, log);
     const budget = this.config.get().skills.catalogBudgetChars;

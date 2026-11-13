@@ -24,14 +24,18 @@ import {
   readCatalogFiles,
   skillOf,
 } from "../../src/catalog/catalog-content.js";
-import { PlatformComponents } from "../../src/catalog/platform-components.js";
-import { PLUGIN_SCOPE_QUEUE } from "../../src/catalog/scope-sync.js";
+import {
+  PLUGIN_SCOPE_QUEUE,
+  SCOPE_BACKSTOP_DELAY,
+  SCOPE_BACKSTOP_JOB,
+} from "../../src/catalog/scope-sync.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
 import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 import type { KernelLogger } from "../../src/log.js";
+import type { KernelOverride } from "../../src/overrides.js";
 import { packagePath } from "../../src/packages/tgz.js";
 import { SkillsService } from "../../src/skills/skills.service.js";
 import { StorageService } from "../../src/storage/storage.service.js";
@@ -52,6 +56,7 @@ import {
 } from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
 import { mcpTemplate, skillPlugin, templatePlugin } from "./packages.js";
+import { syncPlatformComponents } from "./platform-sync.js";
 
 // The core fakes of @capybara-hq/testing stand in for official plugins: an object store, a
 // connector extension (kind `fake`), an extension with tools / view / migration (`fake-tools-ui`)
@@ -63,6 +68,9 @@ const DEP_PROVIDER = fakeExtensionEntry("fake-dep-provider");
 
 const fixture = (name: string) =>
   fileURLToPath(new URL(`../fixtures/plugins/${name}/index.ts`, import.meta.url));
+
+/** The scope sync backstop's delay in these tests: an hour, longer than any test file. */
+export const TEST_SCOPE_BACKSTOP_DELAY_MS = 60 * 60_000;
 
 /** The bearer the fake MCP server requires. */
 export const MCP_TOKEN = "tok-123";
@@ -97,6 +105,8 @@ export async function startOrgEnv(
     tools?: Record<string, unknown>;
     /** The kernel's logger (default: logs discarded). */
     logger?: KernelLogger;
+    /** Kernel provider overrides (test seams such as `OUTBOX_DISPATCH_FAILS`). */
+    kernelOverrides?: KernelOverride[];
   } = {},
 ): Promise<OrgEnv> {
   let pgc: TestContainer | undefined;
@@ -161,6 +171,11 @@ export async function startOrgEnv(
   const k = await startKernel(config, {
     env: {},
     ...(overrides.logger !== undefined && { logger: overrides.logger }),
+    overrides: [
+      // a confirmation's scope sync backstop never fires within a test file (ruling R24)
+      { provide: SCOPE_BACKSTOP_DELAY, useValue: TEST_SCOPE_BACKSTOP_DELAY_MS },
+      ...(overrides.kernelOverrides ?? []),
+    ],
   });
   const accounts = accountsFor(db);
   const rootId = (
@@ -207,12 +222,36 @@ export async function startOrgEnv(
   };
 }
 
+/**
+ * Whether the scope queue has nothing to do: no owed outbox row (one the fast path or the relay
+ * has not delivered yet) and no waiting, running or delayed job. A confirmation's backstop
+ * (`scope-item-backstop`, due five minutes later, ruling R24) is left out: it only repeats the
+ * immediate sync.
+ */
+export async function scopeQueueIdle(env: OrgEnv): Promise<boolean> {
+  const owed = await env.db
+    .selectFrom("outbox")
+    .select("id")
+    .where("queue", "=", PLUGIN_SCOPE_QUEUE)
+    .where("job_name", "!=", SCOPE_BACKSTOP_JOB)
+    .where("dead_at", "is", null)
+    .execute();
+  if (owed.length > 0) return false;
+  const queue = env.k.app.get<Queue>(getQueueToken(PLUGIN_SCOPE_QUEUE));
+  const c = await queue.getJobCounts("waiting", "active", "prioritized");
+  if (Object.values(c).some((n) => n > 0)) return false;
+  const delayed = await queue.getDelayed();
+  return delayed.every((j) => j.name === SCOPE_BACKSTOP_JOB);
+}
+
 /** Clears the catalog, installs, requests, org skills / connectors / extension enabling and audits (accounts and orgs stay). */
 export async function resetOrgCatalog(env: OrgEnv): Promise<void> {
-  // A scope change of the previous test (a share switch, an update) enqueued a scope sync after
-  // its commit. Left running, it holds catalog_items FOR SHARE and then reads the switches while
+  // A scope change of the previous test (a share switch, an update) owed a scope sync with its
+  // commit. Left running, it holds catalog_items FOR SHARE and then reads the switches while
   // the TRUNCATE below holds the switches and waits for catalog_items: a deadlock PostgreSQL only
   // breaks after deadlock_timeout (1 s), and a sync still queued would run into the next test.
+  // A sync still owed (an outbox row not delivered yet) would run into the next test too
+  await env.db.deleteFrom("outbox").where("queue", "=", PLUGIN_SCOPE_QUEUE).execute();
   const scope = env.k.app.get<Queue>(getQueueToken(PLUGIN_SCOPE_QUEUE));
   await scope.drain(true);
   await waitFor(async () => (await scope.getActiveCount()) === 0, 30_000, "idle scope syncs");
@@ -496,7 +535,7 @@ export async function seedPlugin(
     })
     .execute();
   if (o.addTo === undefined && o.platform !== false) {
-    await env.k.app.get(PlatformComponents).syncFromVersion(id, version, { initial: true });
+    await syncPlatformComponents(env.k.app, id, version);
   }
   return id;
 }

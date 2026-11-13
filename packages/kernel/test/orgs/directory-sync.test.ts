@@ -476,7 +476,7 @@ describe("通讯录同步", () => {
         async () => {
           const r = await sql<{ n: number }>`SELECT count(*)::int AS n FROM pg_stat_activity
             WHERE wait_event_type = 'Lock'
-              AND query LIKE '%from "capybara"."conversations"%order by "id" for %'`.execute(raw);
+              AND query LIKE '%FOR NO KEY UPDATE OF c%'`.execute(raw);
           return (r.rows[0]?.n ?? 0) > 0;
         },
         10_000,

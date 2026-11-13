@@ -105,7 +105,7 @@ const put = (req: Req, tool: string, body: Record<string, unknown>, org = orgId)
   req({ method: "PUT", url: `${toolsUrl(org)}/${tool}`, payload: body });
 
 const resolve = (org: string) =>
-  k.app.get(ToolRegistry).forAgent(org, { disabledTools: PROBER_OFF });
+  k.app.get(ToolRegistry).forAgent(org, { source: "web", disabledTools: PROBER_OFF });
 
 describe("org tool switches over HTTP", () => {
   it("lists the extension's tools, on by default, for members too", async () => {

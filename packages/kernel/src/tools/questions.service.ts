@@ -10,6 +10,7 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KernelEvents } from "../infra/events/kernel-events.js";
+import { RunResume } from "../runtime/run-jobs.js";
 
 export type QuestionStatus = "pending" | "answered" | "skipped" | "expired" | "cancelled";
 
@@ -98,9 +99,11 @@ const isPlainObject = (v: unknown): v is Record<string, unknown> =>
  * 状态全部在 PG：回答 / 超时 / 取消都在事务里 `SELECT … FOR UPDATE` 该行，多副本并发时恰好一个生效，
  * 只有生效的那次写 `question_answered`。HTTP 接口见 questions.controller.ts。
  *
- * An answer is announced after the commit as the domain event `question.answered` (exactly once),
- * which the run's waits follow to resume it (spec §3b; the wait sweep resumes a run whose resume was
- * lost). Events are appended in the context's transaction (`EventLog.appendIn`).
+ * An answer resumes its waiting run in the answer's transaction (`RunResume.resumeIn`, after the
+ * question row: lock order conversation, question, then run; transactional outbox spec §6). It is
+ * announced after the commit as the domain event `question.answered` (exactly once; no kernel
+ * subscriber: the IM card update is owed by the `question_answered` append, transactional outbox
+ * spec §8.1). Events are appended in the context's transaction (`EventLog.appendIn`).
  */
 @Injectable()
 export class QuestionsService {
@@ -110,6 +113,8 @@ export class QuestionsService {
     @Inject(EventLog) private readonly eventLog: Pick<EventLog, "appendIn" | "notify">,
     @Inject(KernelEvents) private readonly events: Pick<KernelEvents, "emit">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
+    /** An answer resumes its waiting run in the answer's transaction. */
+    @Inject(RunResume) private readonly resumes: Pick<RunResume, "resumeIn">,
   ) {}
 
   /**
@@ -217,7 +222,7 @@ export class QuestionsService {
   ): Promise<QuestionRecord> {
     const { record, toSeq } = await this.answerIn(questionId, accountId, answer, orgId);
     await this.eventLog.notify(record.conversationId, toSeq);
-    // waits resume the run and its IM delivery is enqueued (handler failures are logged)
+    // its IM delivery is enqueued (handler failures are logged); the run resumed in the answer
     await this.events.emit("question.answered", {
       id: record.id,
       orgId: record.orgId,
@@ -309,6 +314,8 @@ export class QuestionsService {
       .returningAll()
       .executeTakeFirstOrThrow();
     const toSeq = await this.answeredEvent(before, answer as FormAnswer, accountId, "answered");
+    // the run last; a still-running run is resumed by its suspend's re-check
+    await this.resumes.resumeIn(before.runId, questionId);
     return { record: toRecord(updated), toSeq };
   }
 
@@ -387,18 +394,12 @@ export class QuestionsService {
   }
 
   /**
-   * 在调用方的事务内（`mandatory`）取消某组织里由 `accountId` 发起的运行上的全部 pending 输入请求（只有运行发起人能回答，
-   * 即「其作为处理人」的提问；成员离职时调用），走与 {@link cancelPendingIn} 相同的取消路径：置 cancelled、
-   * 写 `question_answered{cancelled}`。返回被取消的记录与各会话写到的最大 seq；调用方提交后发布事件。
+   * The conversations of `orgId` holding a pending question of a run `accountId` started (only the
+   * run's starter answers), read without locks: offboarding locks them, by tree root first
+   * (`lockConversationTrees`), before {@link cancelPendingFor}.
    */
-  @Transactional({ propagation: "mandatory" })
-  async cancelPendingFor(
-    orgId: string,
-    accountId: string,
-  ): Promise<{ records: QuestionRecord[]; seqs: Map<string, number> }> {
-    const t = this.db.db;
-    // the conversations first, in id order (lock order D7: conversation, then question rows)
-    const convs = await t
+  async pendingConversationsFor(orgId: string, accountId: string): Promise<string[]> {
+    const rows = await this.db
       .selectFrom("questions")
       .select("conversation_id")
       .distinct()
@@ -408,31 +409,33 @@ export class QuestionsService {
         eb.selectFrom("runs").select("id").where("trigger_account_id", "=", accountId),
       )
       .execute();
-    if (convs.length > 0) {
-      await t
-        .selectFrom("conversations")
-        .select("id")
-        .where(
-          "id",
-          "in",
-          convs.map((c) => c.conversation_id),
-        )
-        .orderBy("id")
-        .forUpdate()
-        .execute();
-    }
-    // only the conversations locked above: a question asked meanwhile in another one waits for
-    // the run's stop (offboarding aborts it) or the sweep, so no conversation is locked after a row
+    return rows.map((r) => r.conversation_id);
+  }
+
+  /**
+   * In the caller's transaction (`mandatory`; offboarding): cancels every pending question of a run
+   * `accountId` started in `orgId` within `conversationIds`, the conversations the caller already
+   * locked (by tree root first, `lockConversationTrees`; lock order D7: conversation, then question
+   * rows), along the same path as {@link cancelPendingIn}: `cancelled`,
+   * `question_answered{cancelled}`. A question asked meanwhile in another conversation waits for
+   * its run's stop (offboarding owes it), so no conversation is locked after a row. Returns the
+   * cancelled records and the highest seq written per conversation; the caller publishes after the
+   * commit.
+   */
+  @Transactional({ propagation: "mandatory" })
+  async cancelPendingFor(
+    orgId: string,
+    accountId: string,
+    conversationIds: readonly string[],
+  ): Promise<{ records: QuestionRecord[]; seqs: Map<string, number> }> {
+    const t = this.db.db;
+    const convs = [...conversationIds];
     if (convs.length === 0) return { records: [], seqs: new Map() };
     const rows = await t
       .selectFrom("questions")
       .selectAll()
       .where("org_id", "=", orgId)
-      .where(
-        "conversation_id",
-        "in",
-        convs.map((c) => c.conversation_id),
-      )
+      .where("conversation_id", "in", convs)
       .where("status", "=", "pending")
       .where("run_id", "in", (eb) =>
         eb.selectFrom("runs").select("id").where("trigger_account_id", "=", accountId),
@@ -463,8 +466,10 @@ export class QuestionsService {
    * by a run of it that is `running` or `waiting` and was started by `accountId`. The caller holds
    * the conversation row lock (its `appendIn`), so only questions logged before the message are
    * seen. Each becomes `skipped` with `question_answered { outcome: "skipped", skippedBySeq }`.
-   * Returns the records and the highest seq written (null: none); the caller notifies and emits
-   * `question.answered` after the commit.
+   * The caller resumes their waiting runs in this transaction after it locked every row it skips
+   * (`ConversationsService.skipWaitsIn`: conversations, decided rows, runs). Returns the records and
+   * the highest seq written (null: none); the caller notifies and emits `question.answered` after
+   * the commit.
    */
   @Transactional({ propagation: "mandatory" })
   async skipPendingIn(

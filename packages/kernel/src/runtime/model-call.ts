@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   type ContentBlock,
+  type ConversationSource,
   isModelError,
   isRetryableKind,
   type Logger,
@@ -60,7 +61,6 @@ import { MediaCache } from "./media-cache.js";
 import { type BoundProvider, ProviderListError, type ProviderRegistry } from "./providers.js";
 import type { StepLog } from "./step-log.js";
 import { budgetRunOf, subagentBudgetUsedUp } from "./subagents/limits.js";
-import type { UsageReporter } from "./usage-report.js";
 
 /** 单轮收尾的尾部提醒（模型可见，英文；spec 6 轮次额度收尾）。 */
 export const WRAP_UP_REMINDER =
@@ -126,8 +126,11 @@ export type StreamSink = (delta: {
 export interface ModelStepDeps {
   db: KernelSchemaDb;
   eventLog: EventLog;
-  /** The step's transactional writes (a model call with its tool specs, a denial with its audit row, a sub-agent's counted usage). */
-  stepLog: Pick<StepLog, "appendCounted" | "appendAudited" | "appendWithSpecs">;
+  /**
+   * The step's transactional writes (a model call with its tool specs, a denial with its audit row,
+   * usage events with their owed `usage.report` deliveries, a sub-agent's counted usage).
+   */
+  stepLog: Pick<StepLog, "appendCounted" | "appendReported" | "appendAudited" | "appendWithSpecs">;
   registry: Pick<ProviderRegistry, "resolve">;
   /** 工具注册表：每步开始时解析 agent 引用的工具（状态可能在步骤之间变化）。 */
   tools: Pick<ToolRegistry, "forAgent">;
@@ -145,11 +148,6 @@ export interface ModelStepDeps {
    * `conversationKind: "chat"` on the step input.
    */
   hooks?: HookRunner;
-  /**
-   * `usage.report` delivery (P-17): each written `usage` event is enqueued (chat runs and full-run eval
-   * replays, which both log usage). `enqueue` never throws and returns at once without handlers.
-   */
-  usageReport?: Pick<UsageReporter, "enqueue">;
 }
 
 /** 构建请求用到的附件来源。 */
@@ -203,6 +201,11 @@ export interface ModelStepInput {
   /** Hook payload scope: the run's agent, its trigger account and the conversation kind. */
   agentId?: string;
   accountId?: string;
+  /**
+   * The conversation's source (memory plugin spec §6.2): extension tools limited by
+   * `spec.sources` are listed by it.
+   */
+  source: ConversationSource;
   /** Hooks fire for `chat` and `subagent` (never for eval replays). */
   conversationKind?: ConversationKindForHooks;
   /** A sub-agent's run: where it was dispatched from (hook payloads carry it as `parent`). */
@@ -217,7 +220,8 @@ export interface ModelStepInput {
   parentRunId?: string;
   /**
    * The run's step limit (`LoopContext.limits.maxSteps`) for the turn-limit reminder; a child's
-   * may be below `runtime.maxSteps` (final review m4). Defaults to `runtime.maxSteps`.
+   * may be below `runtime.maxSteps` (final review m4). Absent: the run has no step limit, and no
+   * reminder is sent.
    */
   maxSteps?: number;
 }
@@ -362,11 +366,6 @@ async function runStep(
   const { conversationId, runId, step, signal, sink } = input;
   const existing = await findExisting(deps.eventLog, conversationId, runId, step);
   if (existing) {
-    // resumed after a crash between writing usage and enqueueing it: enqueue again (job id dedupes)
-    if (deps.usageReport && existing.usage !== null) {
-      const u = await deps.eventLog.findByIdem(conversationId, idem.usage(runId, step));
-      if (u) void deps.usageReport.enqueue(conversationId, u.seq);
-    }
     // a crash between the assistant_message and clearing its draft leaves one behind
     sink({ kind: "step_end", runId, step });
     return existing;
@@ -409,6 +408,7 @@ async function runStep(
       forkChild: input.parent?.forSkill === true,
       sandboxConversationId: input.parent?.rootConversationId ?? input.conversationId,
       replay: input.conversationKind === "eval",
+      source: input.source,
       skillLoad: skillLoadOffered(
         events.findLast(
           (e): e is Extract<ConversationEvent, { type: "skills_catalog" }> =>
@@ -498,8 +498,9 @@ async function runStep(
       wrapUpReason,
       streamed,
     );
-    // assistant_message 与 usage 同一次 append = 同一事务。
-    const appended = await appendCounted(deps, input, [
+    // assistant_message and usage in one append = one transaction, which also owes the usage's
+    // usage.report delivery (transactional outbox spec §8.1)
+    await appendCounted(deps, input, [
       {
         type: "assistant_message",
         runId,
@@ -513,10 +514,6 @@ async function runStep(
         payload: { step, provider: ref.provider, model: ref.model, ...outcome.usage },
       },
     ]);
-    // usage.report metering (never awaited on the run's path; enqueue logs and swallows failures)
-    const usageEvent = appended.find((e) => e.type === "usage");
-    if (deps.usageReport && usageEvent)
-      void deps.usageReport.enqueue(conversationId, usageEvent.seq);
     sink({ kind: "step_end", runId, step });
     return {
       content: outcome.content,
@@ -545,16 +542,16 @@ async function runStep(
 
 /**
  * Appends a model call's events (its reply or compaction outcome with its `usage`; also the usage
- * of a `WebFetch` extraction call, `tools/builtins/web/extract.ts`). For a
- * sub-agent's run (`input.parentRunId`) in one transaction that also adds the tokens of the usage
- * events it newly wrote to the budget run's `subagent_tokens_used` (sub-agents spec §8.3): a usage
- * event already in the log (an idempotent hit after a crash) adds nothing, so each call counts
- * exactly once.
+ * of a `WebFetch` extraction call, `tools/builtins/web/extract.ts`) in one transaction that also
+ * owes the `usage.report` delivery of the usage events it newly wrote (transactional outbox spec
+ * §8.1). For a sub-agent's run (`input.parentRunId`) that transaction also adds their tokens to the
+ * budget run's `subagent_tokens_used` (sub-agents spec §8.3): a usage event already in the log (an
+ * idempotent hit after a crash) adds nothing, so each call counts and is reported exactly once.
  */
 export async function appendCounted(
   deps: {
-    eventLog: Pick<EventLog, "append" | "notify">;
-    stepLog: Pick<StepLog, "appendCounted">;
+    eventLog: Pick<EventLog, "notify">;
+    stepLog: Pick<StepLog, "appendCounted" | "appendReported">;
   },
   input: {
     conversationId: string;
@@ -566,13 +563,15 @@ export async function appendCounted(
   events: AppendEvent[],
 ): Promise<ConversationEvent[]> {
   const { conversationId, parentRunId } = input;
-  if (parentRunId === undefined) return deps.eventLog.append(conversationId, events);
   const budgetRunId = input.budgetRunId ?? input.parent?.budgetRunId;
-  const out = await deps.stepLog.appendCounted(
-    conversationId,
-    { parentRunId, ...(budgetRunId !== undefined && { budgetRunId }) },
-    events,
-  );
+  const out =
+    parentRunId === undefined
+      ? await deps.stepLog.appendReported(conversationId, events)
+      : await deps.stepLog.appendCounted(
+          conversationId,
+          { parentRunId, ...(budgetRunId !== undefined && { budgetRunId }) },
+          events,
+        );
   if (out.toSeq !== null) await deps.eventLog.notify(conversationId, out.toSeq);
   return out.written;
 }
@@ -1061,8 +1060,6 @@ async function maybeCompact(
     });
   }
   const written = await appendCounted(deps, input, batch);
-  const usageEvent = written.find((e) => e.type === "usage");
-  if (deps.usageReport && usageEvent) void deps.usageReport.enqueue(conversationId, usageEvent.seq);
   return mergeLocal(events, written);
 }
 
@@ -1102,7 +1099,9 @@ async function ladder(
       ? BUDGET_WRAP_UP_REMINDER
       : wrapUp
         ? WRAP_UP_REMINDER
-        : turnLimitReminder(step, input.maxSteps ?? runtime.maxSteps);
+        : input.maxSteps === undefined
+          ? null
+          : turnLimitReminder(step, input.maxSteps);
   let evs = events;
   const rungs: { ref: ModelRef; fallback: boolean }[] = [
     { ref: agent.model, fallback: false },

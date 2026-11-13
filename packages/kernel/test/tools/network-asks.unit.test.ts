@@ -30,8 +30,15 @@ const run = (over: Partial<NetworkRunState> = {}): NetworkRunState => ({
   ...over,
 });
 const owner = {
-  features: ["networkReport", "policyOp"] as const,
-  policy: { network: "allowlist" as const, allowedDomains: [], remoteGrants: "owner" as const },
+  features: ["networkReport", "policyOp", "policyOpId"] as const,
+  policy: {
+    effectiveTier: "strict" as const,
+    isolation: "sandbox" as const,
+    localhost: "off" as const,
+    unixSockets: "off" as const,
+    allowedDomains: [],
+    remoteGrants: "owner" as const,
+  },
 };
 const attended = { device: { ...owner, features: [...owner.features] }, unattended: null };
 const unattended = (mode: "fail" | "wait", trial = false): UnattendedRun => ({
@@ -106,18 +113,20 @@ describe("planNetworkAsk", () => {
 
   it("a machine without networkReport (Docker mode) is never asked", () => {
     const p = planNetworkAsk([dev("a.com")], run(), {
-      device: { features: ["policyOp"], policy: owner.policy },
+      device: { features: ["policyOp", "policyOpId"], policy: owner.policy },
       unattended: null,
     });
     expect(p).toMatchObject({ ask: [], notes: [] });
   });
 
-  it("a program without policyOp: no ask, no note for the device layer", () => {
-    const p = planNetworkAsk([dev("a.com")], run(), {
-      device: { features: ["networkReport"], policy: null },
-      unattended: null,
-    });
-    expect(p).toMatchObject({ ask: [], notes: [] });
+  it("a program without policyOpId: no ask, no note for the device layer", () => {
+    for (const features of [["networkReport"], ["networkReport", "policyOp"]] as const) {
+      const p = planNetworkAsk([dev("a.com")], run(), {
+        device: { features, policy: owner.policy },
+        unattended: null,
+      });
+      expect(p).toMatchObject({ ask: [], notes: [] });
+    }
     expect(planNetworkAsk([dev("a.com")], null, { device: null, unattended: null }).notes).toEqual(
       [],
     );

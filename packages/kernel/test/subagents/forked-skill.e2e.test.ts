@@ -13,13 +13,13 @@ import {
 } from "@capybara-hq/testing";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
-import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { SUBAGENT_RUN_QUEUE_NAME } from "../../src/runtime/run-queue.js";
-import { unreportedForkRuns, Waits } from "../../src/runtime/waits.js";
+import { LockedIntervalScheduler } from "../../src/infra/schedule/locked-interval.js";
+import { RUN_ORPHAN_CHECK_JOB, RunOrphanCheck } from "../../src/runtime/run-orphan-check.job.js";
+import { RUN_QUEUE_NAME, SUBAGENT_RUN_QUEUE_NAME } from "../../src/runtime/run-queue.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { AGENT_STOPPED_WITH_RUN_TEXT } from "../../src/tools/builtins/agent.js";
 import { type ScriptRule, scriptRules } from "../fixtures/plugins/model-script/index.js";
@@ -46,6 +46,7 @@ import {
   startKernel,
   type TestKernel,
   waitFor,
+  waitForRunJobDone,
   waitForTerminal,
 } from "../helpers/runs.js";
 import { onlySkills } from "../helpers/skills.js";
@@ -134,6 +135,8 @@ beforeAll(async () => {
       },
     ),
   );
+  // the orphan test calls the run-orphan-check itself
+  k.app.get(LockedIntervalScheduler).stop(RUN_ORPHAN_CHECK_JOB);
   subQueue = new Queue(SUBAGENT_RUN_QUEUE_NAME, { connection: redisClient() });
 }, 180_000);
 
@@ -479,26 +482,28 @@ describe("forked skills (phase D Task 6)", { timeout: 90_000 }, () => {
     ]);
   });
 
-  it("the wait sweep writes a missing report of a finished fork run", async () => {
+  it("a fork run the run-orphan-check fails gets its report in its terminal transaction", async () => {
     const review = await seedForked("review", "Review it.");
     const agentId = await createAgent([review.id]);
     const conv = await createConv(owner, orgId, agentId);
-    await invoke(conv, "review", "");
-    await waitForTerminal(db, conv, 1, 30_000);
-    const [run] = await runsOf(db, conv);
-    // a crash before the report: remove it, and age the run past the sweep's grace period
-    await db
-      .deleteFrom("conversation_events")
-      .where("conversation_id", "=", conv)
-      .where("type", "=", "skill_fork_result")
-      .execute();
-    await backdateRun(db, (run as { id: string }).id);
-    const r = await k.app.get(Waits).sweep();
-    expect(r.repaired).toBeGreaterThanOrEqual(1);
+    await subQueue.pause();
+    await invoke(conv, "review", "now");
+    const { runId } = await parentWaiting(db, conv, 1);
+    const runs = new Queue(RUN_QUEUE_NAME, { connection: redisClient() });
+    try {
+      await waitForRunJobDone(db, runs, runId);
+    } finally {
+      await runs.close();
+    }
+    // its replica died while running it: `running`, no job, no lock holder, for minutes
+    await db.updateTable("runs").set({ status: "running" }).where("id", "=", runId).execute();
+    await backdateRun(db, runId);
+    expect((await k.app.get(RunOrphanCheck).check()).runningRepaired).toBe(1);
     const report = ofType(await eventsOf(db, conv), "skill_fork_result");
-    expect(report).toHaveLength(1);
-    expect(report[0]?.payload.text).toContain("child report");
-    expect((await k.app.get(Waits).sweep()).repaired).toBe(0);
+    expect(report.map((r) => r.payload.text)).toEqual([
+      `${HEADER}\n\n${AGENT_STOPPED_WITH_RUN_TEXT}`,
+    ]);
+    await subQueue.resume();
   });
 
   it("C1 P1: a message posted during the fork wait is not absorbed by the fork's first step; the report precedes the first model call", async () => {
@@ -610,70 +615,6 @@ describe("forked skills (phase D Task 6)", { timeout: 90_000 }, () => {
     expect(last.flat()).toEqual(
       expect.arrayContaining(["MID1", "MID2", reports[0]?.payload.text, reports[1]?.payload.text]),
     );
-  });
-
-  it("batch 4 S4: a fork run ends without its report, the next message is answered, then the sweep writes the report late at its log position", async () => {
-    const review = await seedForked("review", "Review it.");
-    const agentId = await createAgent([review.id]);
-    const conv = await createConv(owner, orgId, agentId);
-    await subQueue.pause();
-    const forkSeq = await invoke(conv, "review", "now");
-    const { runId } = await parentWaiting(db, conv, 1);
-    // the run's terminal path skipped pairing: it ended and consumed the fork, with no report
-    await db
-      .updateTable("runs")
-      .set({ status: "aborted", finished_at: sql`now()` })
-      .where("id", "=", runId)
-      .execute();
-    await db
-      .updateTable("conversations")
-      .set({ consumed_seq: String(forkSeq) })
-      .where("id", "=", conv)
-      .execute();
-    await say(conv, "X");
-    await waitForTerminal(db, conv, 1, 30_000);
-    await waitFor(
-      async () =>
-        (await runsOf(db, conv)).filter((r) => r.status === "completed").length === 1 || null,
-      30_000,
-      "X answered",
-    );
-    expect(ofType(await eventsOf(db, conv), "skill_fork_result")).toEqual([]);
-    await backdateRun(db, runId);
-    expect((await k.app.get(Waits).sweep()).repaired).toBeGreaterThanOrEqual(1);
-    const report = ofType(await eventsOf(db, conv), "skill_fork_result");
-    expect(report).toHaveLength(1);
-    expect(report[0]?.payload.text).toBe(`${HEADER}\n\n${AGENT_STOPPED_WITH_RUN_TEXT}`);
-    await subQueue.resume();
-    await say(conv, "Y");
-    await waitFor(
-      async () =>
-        (await runsOf(db, conv)).filter((r) => r.status === "completed").length === 2 || null,
-      30_000,
-      "Y answered",
-    );
-    const parent = sent().filter((r) => !isChild(r));
-    expectAppendOnly(parent);
-    expect(parent.at(-1)?.messages.map((m) => texts(m.content))).toEqual([
-      [LEAD("general-purpose", "now")],
-      ["X"],
-      ["plain answer"],
-      [report[0]?.payload.text],
-      ["Y"],
-    ]);
-  });
-
-  it("I1: the wait sweep never selects a finished fork child (its task message carries the skill record)", async () => {
-    const review = await seedForked("review", "Review it.");
-    const agentId = await createAgent([review.id]);
-    const conv = await createConv(owner, orgId, agentId);
-    await invoke(conv, "review", "");
-    await waitForTerminal(db, conv, 1, 30_000);
-    const [run] = await runsOf(db, conv);
-    const [child] = await childRunsOf(db, conv);
-    await backdateRun(db, (run as { id: string }).id);
-    await backdateRun(db, child?.runId as string);
-    expect(await unreportedForkRuns(db)).toEqual([]);
   });
 
   it("m1: the shell-injection line follows the sub-agent's tools, not the parent's", async () => {

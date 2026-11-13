@@ -242,20 +242,13 @@ const ROUTES: Routes = {
             failedAt: T,
           },
         },
-        {
-          type: "platform_migration",
-          id: "run1",
-          createdAt: T,
-          run: { id: "run1", startedAt: T, finishedAt: null, stuck: true, itemsFailed: [] },
-        },
       ],
       truncated: false,
-      total: 2,
+      total: 1,
       byType: {
         catalog_request: 0,
         permission_confirmation: 0,
         scope_sync_failed: 1,
-        platform_migration: 1,
         ownership_transferred: 0,
         org_upload_pending: 0,
       },
@@ -278,7 +271,9 @@ const ROUTES: Routes = {
         },
       ],
       providers: [],
-      more: { extensions: 0, updates: 0, providers: 0 },
+      outbox: [],
+      queue: [],
+      more: { extensions: 0, updates: 0, providers: 0, outbox: 0, queue: 0 },
       unavailable: [],
     }),
   "GET /api/v1/admin/overview/usage": () =>
@@ -460,7 +455,6 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     expect(box().querySelector("[aria-busy='true']")).not.toBeNull();
     expect(await within(box()).findByText("v1.0.0 → v1.1.0")).toBeTruthy();
     expect(within(box()).getByText(O.inboxTypes.scope_sync_failed)).toBeTruthy();
-    expect(within(box()).getByText(O.inboxTypes.platform_migration)).toBeTruthy();
   });
 
   it("/admin: 运行状况 shows its skeleton, then the replicas and queues", async () => {
@@ -571,12 +565,12 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     await release();
   });
 
-  it("/admin/settings: the loading sections are the page's own (four card radios, the currency)", async () => {
+  it("/admin/settings: the loading sections are the page's own (five card radios, the currency)", async () => {
     const { release } = await renderHeld("/admin/settings", "GET /api/v1/admin/settings");
     await expectLoading("FormPage", en.admin.settings.orgCreation.anyone);
-    // three policies and 外观's theme cards, then 插件界面代码's switch row
-    expect(document.querySelectorAll('[data-part="loading-radios"]')).toHaveLength(4);
-    expect(document.querySelectorAll(".cb-form-section")).toHaveLength(6);
+    // three policies, 沙箱级别's level cards and 外观's theme cards, then 插件界面代码's switch row
+    expect(document.querySelectorAll('[data-part="loading-radios"]')).toHaveLength(5);
+    expect(document.querySelectorAll(".cb-form-section")).toHaveLength(7);
     await release();
   });
 
@@ -893,7 +887,6 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     const browser = expectNoFirstPaintFetch();
     await renderRouteWithCache("/admin/inbox", ROUTES);
     expect(screen.getAllByText(`${en.admin.inbox.sync.label} · crm`).length).toBeGreaterThan(0);
-    expect(screen.getByText(en.admin.inbox.migration.label)).toBeTruthy();
     // the first item is selected: its message, and the way to where it is acted on
     expect(screen.getByText("A skill named pdf already exists")).toBeTruthy();
     await settle();

@@ -1,15 +1,15 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { PlatformComponents } from "../../src/catalog/platform-components.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { SKILL_MD } from "../skills/zip.js";
 import { importPlugin, type OrgEnv, resetOrgCatalog, startOrgEnv } from "./org-env.js";
 import { bundlePlugin, mcpTemplate, skillFiles } from "./packages.js";
+import { syncPlatformComponents } from "./platform-sync.js";
 
 /**
  * Plugin scope phase 2, Task 2: the platform components of a plugin version. The confirm that
  * creates a catalog item writes one platform row per skill, agent template and connector template
  * (files under `deployment/platform/…`); a new version of the item leaves them alone (updates go
- * through the platform plugin update); `syncFromVersion` adds a version only when content changed.
+ * through the platform plugin update); a sync adds a version only when content changed.
  */
 
 let env: OrgEnv;
@@ -81,7 +81,8 @@ describe("platform components from a plugin version", () => {
         current_version: 1,
         scope_mode: "follow",
         catalog_version: "1.0.0",
-        object_prefix: `platform/skills/${s.id}/1-1.0.0/`,
+        // keyed by content: a retried import copies nothing again
+        object_prefix: expect.stringMatching(/^platform\/skills\/sha256-[0-9a-f]{64}\/$/),
       });
       expect(await readText(`${s.object_prefix}SKILL.md`)).toContain(`name: ${s.name}`);
       expect(await readText(`${s.object_prefix}scripts/run.py`)).toBe("print(1)\n");
@@ -121,7 +122,7 @@ describe("platform components from a plugin version", () => {
       current_version: 1,
       scope_mode: "follow",
       catalog_version: "1.0.0",
-      object_prefix: `platform/agent-templates/${tpl?.id}/1-1.0.0/`,
+      object_prefix: expect.stringMatching(/^platform\/agent-templates\/sha256-[0-9a-f]{64}\/$/),
       definition: expect.objectContaining({
         name: "reviewer",
         instructions: "Review the change.\n",
@@ -161,8 +162,9 @@ describe("platform components from a plugin version", () => {
     expect(t.current_version).toBe(1);
   });
 
-  it("syncFromVersion adds a version only for changed content", async () => {
+  it("a sync adds a version only for changed content", async () => {
     const itemId = await importPlugin(env, await kit("1.0.0"));
+    const first = (await skillRows()).find((s) => s.name === "alpha");
     await importPlugin(
       env,
       await kit("1.1.0", {
@@ -170,8 +172,7 @@ describe("platform components from a plugin version", () => {
         reviewer: reviewerMd("Review harder."),
       }),
     );
-    const sync = env.k.app.get(PlatformComponents);
-    const r = await sync.syncFromVersion(itemId, "1.1.0", { initial: false });
+    const r = await syncPlatformComponents(env.k.app, itemId, "1.1.0");
     const alpha = (await skillRows()).find((s) => s.name === "alpha");
     expect(r.skills).toEqual([{ kind: "skill", id: alpha?.id, name: "alpha", from: 1, to: 2 }]);
     expect(r.agentTemplates).toEqual([
@@ -182,18 +183,17 @@ describe("platform components from a plugin version", () => {
       current_version: 2,
       description: "Alpha, changed.",
       catalog_version: "1.1.0",
-      object_prefix: `platform/skills/${alpha?.id}/2-1.1.0/`,
+      object_prefix: expect.stringMatching(/^platform\/skills\/sha256-[0-9a-f]{64}\/$/),
     });
+    expect(alpha?.object_prefix).not.toBe(first?.object_prefix);
     expect(await readText(`${alpha?.object_prefix}SKILL.md`)).toContain("Alpha, changed.");
     // the first version's files stay
-    expect(await readText(`platform/skills/${alpha?.id}/1-1.0.0/SKILL.md`)).toContain(
-      "Alpha things.",
-    );
+    expect(await readText(`${first?.object_prefix}SKILL.md`)).toContain("Alpha things.");
     const beta = (await skillRows()).find((s) => s.name === "beta");
     expect(beta?.current_version).toBe(1);
 
     // the same version again changes nothing
-    expect(await sync.syncFromVersion(itemId, "1.1.0", { initial: false })).toEqual({
+    expect(await syncPlatformComponents(env.k.app, itemId, "1.1.0")).toEqual({
       skills: [],
       agentTemplates: [],
       connectorTemplates: [],

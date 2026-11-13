@@ -1,0 +1,13 @@
+diff --git a/dist/sandbox/macos-sandbox-utils.js b/dist/sandbox/macos-sandbox-utils.js
+index 0e598b612d84d24b09ec2ab0d7ccc9b009c9457b..a43f8f264bf4efa3bce1726089b629237ed56341 100644
+--- a/dist/sandbox/macos-sandbox-utils.js
++++ b/dist/sandbox/macos-sandbox-utils.js
+@@ -851,6 +851,8 @@ function generateSandboxProfile({ readConfig, libraryDenyEntries, writeConfig, h
+         '  (sysctl-name "hw.logicalcpu")',
+         '  (sysctl-name "hw.logicalcpu_max")',
+         '  (sysctl-name "hw.machine")',
++        '  (sysctl-name "hw.product")',
++        '  (sysctl-name "kern.hv_vmm_present")',
+         '  (sysctl-name "hw.memsize")',
+         '  (sysctl-name "hw.ncpu")',
+         '  (sysctl-name "hw.nperflevels")',

@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { Inject, Injectable } from "@nestjs/common";
 import { ApiError } from "../errors.js";
 import type { SingleProviderNote } from "../extensions/single-provider.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
 import { canonicalJson } from "../tools/canonical-json.js";
 import type { ActorOpts, CatalogItemView } from "./catalog.service.js";
 import { CatalogScopeService } from "./catalog-scope.service.js";
@@ -60,8 +62,8 @@ const reviewStale = (name: string, version: string) =>
  * An org admin's plugin upload (spec §14.1 item 1, rulings P3-7, P3-8, P3-12, P3-13 to P3-15'): a
  * `.tgz` prepared and confirmed through {@link PluginImport} in owner mode (the org's own staging,
  * its admin re-checked under the org row lock), owned by the org with scope `named: [owner]`. After
- * the confirm's commit the item's scope sync is enqueued here (as `CatalogScopeService.confirmImport`
- * does; `PluginImport` cannot reach the scope service, which depends on it), and installs it in the
+ * the confirm the item's scope sync is owed here (as `CatalogScopeService.confirmImport` does;
+ * `PluginImport` cannot reach the scope service, which depends on it), and installs it in the
  * owner org.
  *
  * A new version of the org's own plugin without an extension (P3-12, P3-12') is reviewed with the
@@ -77,6 +79,7 @@ export class OrgPluginUploads {
     @Inject(PluginImport) private readonly pluginImport: PluginImport,
     @Inject(CatalogScopeService) private readonly scope: CatalogScopeService,
     @Inject(PlatformPluginUpdater) private readonly updater: PlatformPluginUpdater,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
 
   /** Reads, checks and stages the uploaded tgz for the org (see `PluginImport.prepare`). */
@@ -101,7 +104,7 @@ export class OrgPluginUploads {
     return this.withUpdate(orgId, r.stagingId, r.review);
   }
 
-  /** Confirms the org's staged upload (applying a new version), then enqueues the scope sync. */
+  /** Confirms the org's staged upload (applying a new version), then owes the scope sync. */
   async confirm(
     actor: string,
     orgId: string,
@@ -117,7 +120,7 @@ export class OrgPluginUploads {
       });
       // A version waiting for the super admin is synced by their confirmation (P3-10)
       if (r.pending) return { item: r.item, outcome: "pending" };
-      await this.scope.enqueueSync(r.item.id);
+      await this.oweSync(r.item.id);
       return { item: r.item, outcome: r.firstVersion ? "installed" : "updated" };
     }
     // The one hash covers the review and the update (P3-12): both recomputed now
@@ -150,6 +153,15 @@ export class OrgPluginUploads {
         extensionLeftDisabled: u.extensionLeftDisabled,
       }),
     };
+  }
+
+  /**
+   * Owes the confirmed item's scope sync in a transaction of its own: the confirm's writes span
+   * more than one transaction (`PluginImport.confirm`), and the sync follows the last of them.
+   */
+  @Transactional()
+  private async oweSync(itemId: string): Promise<void> {
+    await this.scope.enqueueSync(itemId);
   }
 
   /** The review with the update preview of a new version and the combined hash (P3-12). */

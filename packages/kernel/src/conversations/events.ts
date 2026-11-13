@@ -1,4 +1,5 @@
 import {
+  CONTEXT_LIMITS,
   type ContentBlock,
   DOCUMENT_MEDIA_TYPES,
   type Effort,
@@ -309,6 +310,24 @@ const ev = <T extends string, P extends z.ZodType>(type: T, payload: P) =>
   z.object({ type: z.literal(type), payload });
 
 /**
+ * The most UTF-8 bytes a `plugin_context` event's text may hold (memory spec §6.1): the providers'
+ * limit, so the log takes every text a provider may return.
+ */
+export const PLUGIN_CONTEXT_MAX_BYTES: number = CONTEXT_LIMITS.maxBytes;
+
+/**
+ * `plugin_context` (memory spec §6.1): the text a `context@1` provider added at a run start. Empty
+ * text means the provider has nothing (any more); `hash` is the sha256 (hex) of `text`.
+ */
+export const PluginContextSchema = z.object({
+  plugin: z.string().min(1).max(64),
+  text: z.string().refine((t) => Buffer.byteLength(t, "utf8") <= PLUGIN_CONTEXT_MAX_BYTES, {
+    message: `at most ${PLUGIN_CONTEXT_MAX_BYTES} UTF-8 bytes`,
+  }),
+  hash: z.string().regex(/^[0-9a-f]{64}$/),
+});
+
+/**
  * An agent definition frozen into a log (`subagent_started`): the current schema, with the
  * selected and pinned skills of older logs still accepted (skills default-on spec §4: history
  * keeps the old fields; new definitions never carry them).
@@ -589,6 +608,13 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
    */
   ev("run_context", RunContextSchema),
   /**
+   * Text a `context@1` provider added at a run start (memory spec §6.1), written only when its
+   * hash differs from the plugin's previous one in the conversation. **Model-visible**: rendered
+   * at its position as a system message (`pluginContextText`, nothing for empty text); a summary
+   * covering it is followed by the latest non-empty one per plugin again.
+   */
+  ev("plugin_context", PluginContextSchema),
+  /**
    * The step's resolved tool set differs from the one the conversation's previous model request
    * offered (`toolSetChange`): tool names as the model sees them, sorted. Written before that
    * step's request, never before a conversation's first one. **Model-visible**: rendered at its
@@ -599,11 +625,12 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
     z.object({ step: count, added: z.array(z.string()), removed: z.array(z.string()) }),
   ),
   /**
-   * The directories of the instance a sandbox tool call entered, when they differ from the
-   * defaults (environments spec §13.1: a connected machine's real paths). Written once per
-   * conversation and roots, before that call's result. **Model-visible**: rendered at its position
-   * as a system message (`devicePathsText`); a summary covering it is followed by the latest
-   * one again.
+   * The directories of the instance a sandbox tool call entered and the device's sandbox level
+   * (environments spec §13.1; sandbox dev tiers spec §11.5: `tier`, `isolation`, and when they
+   * apply `network: "none"`, a local device's `localhost` / `unixSockets` and `unattended`; all
+   * absent on events recorded before tiers). Written on a conversation's first sandbox call and whenever
+   * they change, before that call's result. **Model-visible**: rendered at its position as a
+   * system message (`devicePathsText`); a summary covering it is followed by the latest one again.
    */
   ev(
     "device_paths",
@@ -613,6 +640,12 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
         skills: z.string().min(1).max(4096),
         tmp: z.string().min(1).max(4096),
       }),
+      tier: z.enum(["strict", "dev", "open"]).optional(),
+      isolation: z.enum(["sandbox", "none"]).optional(),
+      network: z.literal("none").optional(),
+      localhost: z.enum(["on", "off-proxy-detected", "off"]).optional(),
+      unixSockets: z.enum(["roots", "all-masked", "off"]).optional(),
+      unattended: z.literal(true).optional(),
     }),
   ),
   /** 工具调用开始执行之前写入（续跑时「有开始无结果」的调用记为结果未知，不再执行）。 */
@@ -727,6 +760,12 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       reason: z.string().max(APPROVAL_DENY_REASON_MAX_CHARS).optional(),
     }),
   ),
+  /**
+   * A still-pending approval changed without a decision: a network ask's 「这台设备一直允许」 whose
+   * device change was not applied or not confirmed (`detail.attempt`, transactional outbox spec
+   * §7). Display only, never model-visible: the page reads the approval again.
+   */
+  ev("approval_updated", z.object({ approvalId: z.string(), callId: z.string() })),
   /**
    * 工具调用需要用户输入（`AskUserQuestion`、插件工具的 `input_required`、MCP elicitation）：输入请求已建，
    * run 暂停等待回答。界面据此显示表单卡片（不进模型请求）。
@@ -933,7 +972,8 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
        * naming a template's skills the child loads first (skills default-on spec §6.1).
        */
       preamble: z.string(),
-      maxSteps: z.number().int().positive(),
+      /** The child's step limit; 0 = no limit (`runtime.maxSteps` 0, no template limit). */
+      maxSteps: z.number().int().nonnegative(),
       warnings: z.array(z.string()).optional(),
     }),
   ),

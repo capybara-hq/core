@@ -308,6 +308,25 @@ describe("network requests", () => {
     expect((await file(memberReq, { hosts: ["h0.example.com"] })).statusCode).toBe(201);
   });
 
+  it("an admin's API token cannot approve a network request (it widens the org's list); it can reject", async () => {
+    const r = await fileOk({ hosts: ["files.slack.com"] });
+    const { token: pat } = await tokens.createPersonal(owner.id, { name: "ci" });
+    const byPat = (payload: Record<string, unknown>) =>
+      k.http.inject({
+        method: "POST",
+        url: `/api/v1/orgs/${orgId}/catalog-requests/${r.id}/decide`,
+        payload,
+        headers: { authorization: `Bearer ${pat}` },
+      });
+    const approved = await byPat({ approve: true });
+    expect(approved.statusCode, approved.body).toBe(400);
+    expect(errCode(approved)).toBe("org.sandbox_egress_not_allowed");
+    expect(await orgEgress()).toBeUndefined();
+    const rejected = await byPat({ approve: false, reason: "no" });
+    expect(rejected.statusCode, rejected.body).toBe(200);
+    expect((rejected.json() as { request: RequestView }).request.status).toBe("rejected");
+  });
+
   it("a member cannot decide; a PAT and a service token cannot file", async () => {
     const r = await fileOk({ hosts: ["files.slack.com"] });
     const res = await decide(memberReq, r.id, { approve: true });

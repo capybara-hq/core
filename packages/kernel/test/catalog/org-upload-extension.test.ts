@@ -6,7 +6,6 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { CatalogScopeService } from "../../src/catalog/catalog-scope.service.js";
 import { OwnedPluginCleanup } from "../../src/catalog/owned-plugin-cleanup.js";
 import { PlatformComponents } from "../../src/catalog/platform-components.js";
-import { PlatformMigration } from "../../src/catalog/platform-migration.js";
 import {
   PLUGIN_SCOPE_QUEUE,
   PluginScopeSync,
@@ -17,6 +16,7 @@ import { ExtensionAdmin } from "../../src/extensions/admin-view.js";
 import { ExtensionInstalls } from "../../src/extensions/installs.js";
 import { PluginInstallLock } from "../../src/extensions/locks.js";
 import { ExtensionRegistry } from "../../src/extensions/registry.js";
+import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { usableSkills } from "../../src/skills/usable.js";
 import { lifePkg, pluginTgz } from "../helpers/plugin-packages.js";
 import { createOrg, type Req, waitFor } from "../helpers/runs.js";
@@ -225,7 +225,9 @@ async function sharedWithB(itemId: string, skill: string): Promise<void> {
     .set({ scope_version: sql<number>`scope_version + 1` })
     .where("id", "=", itemId)
     .execute();
-  await env.k.app.get(CatalogScopeService).enqueueSync(itemId);
+  await env.k.app
+    .get(TransactionHost)
+    .run(() => env.k.app.get(CatalogScopeService).enqueueSync(itemId));
   await waitFor(async () => (await usable(orgB)).includes(skill), 30_000, `${skill} usable in B`);
 }
 
@@ -265,7 +267,7 @@ describe("org uploads with an extension", { timeout: 180_000 }, () => {
     ).toBeUndefined();
     expect(loaded("ext-a")).toBe(false);
     expect(imported("ext-a", "1.0.0")).toBe(false);
-    // no platform components, nothing usable; the scope sync and the migration job change nothing
+    // no platform components, nothing usable; the scope sync changes nothing
     const comps = () =>
       env.db
         .selectFrom("platform_skills")
@@ -275,7 +277,6 @@ describe("org uploads with an extension", { timeout: 180_000 }, () => {
     expect(await comps()).toEqual([]);
     await env.k.app.get(PluginScopeSync).process({ kind: "item", itemId });
     await env.k.app.get(PluginScopeSync).process({ kind: "org", orgId: orgA });
-    await env.k.app.get(PlatformMigration).runOnce();
     expect(await comps()).toEqual([]);
     expect(await usable(orgA)).not.toContain("ext-a-notes");
     expect(
@@ -625,20 +626,37 @@ describe("fix round 1: applied versions only, the confirm lock (P3-34 to P3-37)"
       .where("name", "=", name)
       .executeTakeFirst();
 
-  it("a pending version never becomes the effective one, even before the first sync", async () => {
+  it("a failed component write rolls the confirmation back; a pending version never becomes the effective one", async () => {
     const itemId = await uploaded(
       env.boss,
       orgA,
       await lifePkg({ name: "ext-ns", version: "1.0.0", skills: ["ext-ns-notes"] }),
       "pending",
     );
-    // the confirm's component write fails (logged): platform_synced_version stays null
-    vi.spyOn(PlatformComponents.prototype, "syncFromVersion").mockRejectedValueOnce(
-      new Error("injected sync failure"),
+    // the confirming commit's component write fails: nothing of it commits, the extension the
+    // confirmation installed is taken out again, the upload still waits
+    vi.spyOn(PlatformComponents.prototype, "applySyncIn").mockRejectedValueOnce(
+      new Error("injected component write failure"),
     );
+    const failed = await superConfirm(itemId, await digestOf(itemId));
+    expect(failed.statusCode, failed.body).toBe(500);
+    expect(await itemRow("ext-ns")).toMatchObject({
+      awaiting_confirmation: true,
+      pending_version: "1.0.0",
+      platform_synced_version: null,
+    });
+    expect(
+      await env.db
+        .selectFrom("platform_skills")
+        .select("id")
+        .where("catalog_item_id", "=", itemId)
+        .execute(),
+    ).toEqual([]);
+    expect(await installRow("ext-ns")).toBeUndefined();
+    // confirmed again: the components are there when it returns
     const c = await superConfirm(itemId, await digestOf(itemId));
     expect(c.statusCode, c.body).toBe(200);
-    expect((await itemRow("ext-ns"))?.platform_synced_version).toBeNull();
+    expect((await itemRow("ext-ns"))?.platform_synced_version).toBe("1.0.0");
     await uploaded(
       env.boss,
       orgA,
@@ -649,7 +667,6 @@ describe("fix round 1: applied versions only, the confirm lock (P3-34 to P3-37)"
       latest_version: "1.0.0",
       pending_version: "2.0.0",
     });
-    await env.k.app.get(PlatformMigration).runOnce();
     await env.k.app.get(PluginScopeSync).process({ kind: "item", itemId });
     expect((await itemRow("ext-ns"))?.platform_synced_version).toBe("1.0.0");
     const installs = await env.db
@@ -808,15 +825,22 @@ describe("fix round 2: the scope sync waits for its replica to load the extensio
     );
     const c = await superConfirm(itemId, await digestOf(itemId));
     expect(c.statusCode, c.body).toBe(200);
-    // the sync defers (no install, no failure) and queues a delayed retry of the item
+    // the sync defers (no install, no failure) and owes a delayed retry of the item (an outbox
+    // row due in a few seconds, then the queued job)
     const row = await itemRow("ext-late");
+    const retryId = scopeRetryJobId(itemId, row?.scope_version ?? 0, 1);
     await waitFor(
       async () =>
-        (await env.k.app
-          .get<Queue>(getQueueToken(PLUGIN_SCOPE_QUEUE))
-          .getJob(scopeRetryJobId(itemId, row?.scope_version ?? 0, 1))) !== undefined,
+        (await env.db
+          .selectFrom("outbox")
+          .select("id")
+          .where("queue", "=", PLUGIN_SCOPE_QUEUE)
+          .where("job_id", "=", retryId)
+          .executeTakeFirst()) !== undefined ||
+        (await env.k.app.get<Queue>(getQueueToken(PLUGIN_SCOPE_QUEUE)).getJob(retryId)) !==
+          undefined,
       15_000,
-      "retry job queued",
+      "retry job owed",
     );
     expect(
       await env.db
@@ -909,7 +933,7 @@ describe("final review fixes: package identity and version applicability (P3-51,
       })
       .execute();
     expect(await installRow("pk-a")).toBeDefined();
-    await env.k.app.get(OwnedPluginCleanup).sweep();
+    await env.k.app.get(OwnedPluginCleanup).run(itemA);
     expect(await installRow("pk-a")).toBeUndefined();
     expect(await claimOf("pk-a")).toBeUndefined();
   });

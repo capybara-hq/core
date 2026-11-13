@@ -1,7 +1,9 @@
 import { Inject, Injectable } from "@nestjs/common";
+import { envOverrides } from "../../config/env.js";
 import { changedPaths, configFields, getPath, secretValues, setPath } from "../../config/fields.js";
 import { resolveConfig } from "../../config/load.js";
 import { type KernelConfig, KernelConfigSchema } from "../../config/schema.js";
+import { configSourceKind } from "../../config/sources.js";
 import type { KernelLogger } from "../../log.js";
 import { KERNEL_CONFIG_INPUT, KERNEL_LOGGER } from "../tokens.js";
 
@@ -28,6 +30,10 @@ const HOT_APPLIERS: Record<string, (k: { log: KernelLogger }, value: unknown) =>
   "models.embedTimeoutMs": () => {},
   // SandboxService reads the shared-lease cap at every acquisition.
   "sandbox.maxConcurrentCommands": () => {},
+  // Sandbox tiers are read at every device use, org settings read and Platform call.
+  "sandbox.tiers.max": () => {},
+  "sandbox.tiers.default": () => {},
+  "sandbox.tiers.allowUnsandboxed": () => {},
   // The devices service reads the personal limit at every create.
   "devices.maxPersonal": () => {},
   // The local device relay reads the reconnect grace at every disconnect and token response.
@@ -107,6 +113,23 @@ export class KernelConfigService {
 
   get(): KernelConfig {
     return this.current;
+  }
+
+  /**
+   * Where the current value of a field without a schema default comes from: `env` when an
+   * environment variable sets it, else the config source (`file` / `nacos`) when it is set at all;
+   * undefined when nothing sets it (a layer below the startup config decides, e.g. the deployment
+   * settings for `sandbox.tiers.*`). Such fields are read-only in the admin console.
+   */
+  fieldSource(path: string): "env" | "file" | "nacos" | undefined {
+    if (getPath(this.current, path) === undefined) return undefined;
+    let fromEnv = false;
+    try {
+      fromEnv = getPath(envOverrides(this.env), path) !== undefined;
+    } catch {
+      // conflicting variables fail the start; a later change here only loses the label
+    }
+    return fromEnv ? "env" : configSourceKind(this.env);
   }
 
   /** Subscribes to applied changes (hot fields only); returns the unsubscribe function. */
