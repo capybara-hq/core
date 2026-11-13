@@ -10,16 +10,14 @@ import { EVAL_QUEUE_NAME, evalJobId } from "../../src/evals/jobs.js";
 import type { EvalEstimate, EvalResultView, EvalRunView } from "../../src/evals/runs.service.js";
 import type { EvalSetView } from "../../src/evals/sets.service.js";
 import { ExtensionUnloadedError } from "../../src/extensions/inflight.js";
-import {
-  OUTBOX_DISPATCH_FAILS,
-  OutboxDispatcher,
-} from "../../src/infra/outbox/outbox.dispatcher.js";
+import { OUTBOX_DISPATCH_FAILS } from "../../src/infra/outbox/outbox.dispatcher.js";
 import { evalModelState, resetEvalModel } from "../fixtures/plugins/model-eval/index.js";
 import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
+import { drainOutbox } from "../helpers/outbox.js";
 import {
   createAgent,
   createConv,
@@ -636,7 +634,7 @@ describe("运行", () => {
       expect((await getRun(run.id)).status).toBe("queued");
       failEvals = false;
       await db.updateTable("outbox").set({ next_attempt_at: new Date() }).execute();
-      await k.app.get(OutboxDispatcher).dispatchDue(500);
+      await drainOutbox(k.app, { queue: EVAL_QUEUE_NAME });
       const rs = await settled(run.id);
       expect(rs.map((r) => r.status)).toEqual(["done", "done", "done", "done"]);
     } finally {

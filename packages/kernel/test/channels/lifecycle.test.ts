@@ -19,12 +19,10 @@ import { CHANNEL_QUEUE_NAME, inboundJobId } from "../../src/channels/outbound.js
 import { channelLeaseKey } from "../../src/channels/supervisor.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import {
-  OUTBOX_DISPATCH_FAILS,
-  OutboxDispatcher,
-} from "../../src/infra/outbox/outbox.dispatcher.js";
+import { OUTBOX_DISPATCH_FAILS } from "../../src/infra/outbox/outbox.dispatcher.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
+import { drainOutbox } from "../helpers/outbox.js";
 import {
   createAgent,
   createOrg,
@@ -315,7 +313,7 @@ describe("渠道连接生命周期", () => {
       failChannels = false;
     }
     await db.updateTable("outbox").set({ next_attempt_at: new Date() }).execute();
-    await a.app.get(OutboxDispatcher).dispatchDue(500);
+    await drainOutbox(a.app, { queue: CHANNEL_QUEUE_NAME, jobName: "channel-resume" });
     await waitFor(async () => toChat().length > before, 10_000, "backlog delivered");
   }, 60_000);
 
