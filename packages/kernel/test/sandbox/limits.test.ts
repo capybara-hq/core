@@ -176,7 +176,8 @@ describe("创建沙箱时按组织覆盖 cpu / memoryMb", () => {
       cpu: 2.5,
       memoryMb: 3072,
       diskMb: config.sandbox.limits.diskMb,
-      egress: config.sandbox.limits.egress,
+      mode: "auto",
+      network: { kind: "open-public" },
     });
     expect(await limitsOf(s, await newDevice(other), other)).toMatchObject({
       cpu: config.sandbox.limits.cpu,
@@ -201,6 +202,25 @@ describe("创建沙箱时按组织覆盖 cpu / memoryMb", () => {
     expect(again).toEqual(first);
     expect((await fakeSandboxMeta(root, again.id))?.limits.cpu).toBe(config.sandbox.limits.cpu);
     expect(await limitsOf(s, await newDevice())).toMatchObject({ cpu: 4 });
+  });
+
+  it("the platform kill switch (egress none) forces an empty allowlist on read (R20)", async () => {
+    config = KernelConfigSchema.parse({
+      db: { url: pgc.url },
+      redis: { url: rdc.url },
+      masterKey: Buffer.alloc(32, 7).toString("base64"),
+      sandbox: { limits: { egress: "none" } },
+    });
+    expect(await limitsOf(service(), await newDevice())).toMatchObject({
+      network: { kind: "allowlist", hosts: [] },
+    });
+    // the org cannot widen it back
+    await sql`UPDATE capybara.orgs SET settings = ${JSON.stringify({
+      cloudNetwork: { mode: "open", allowHosts: ["a.com"] },
+    })}::jsonb WHERE id = ${orgId}`.execute(raw);
+    expect(await limitsOf(service(), await newDevice())).toMatchObject({
+      network: { kind: "allowlist", hosts: [] },
+    });
   });
 });
 

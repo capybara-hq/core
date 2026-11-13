@@ -78,7 +78,7 @@ describe("start without the OS sandbox", () => {
       unavailableReason?: string;
     };
     ex.available = available;
-    ex.unavailableReason = available ? undefined : "bwrap is missing";
+    if (!available) ex.unavailableReason = "bwrap is missing";
     return ex;
   };
   const run = async (ex: FakeExecutor) => {

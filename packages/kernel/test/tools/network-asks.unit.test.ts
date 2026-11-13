@@ -11,7 +11,6 @@ import {
   allowedOnceNote,
   clipKept,
   deniedNote,
-  localOnlyNote,
   NETWORK_ASK_CLIPPED_NOTE,
   NETWORK_ASK_KEPT_MAX_BYTES,
   planNetworkAsk,
@@ -31,14 +30,7 @@ const run = (over: Partial<NetworkRunState> = {}): NetworkRunState => ({
 });
 const owner = {
   features: ["networkReport", "policyOp", "policyOpId"] as const,
-  policy: {
-    effectiveTier: "strict" as const,
-    isolation: "sandbox" as const,
-    localhost: "off" as const,
-    unixSockets: "off" as const,
-    allowedDomains: [],
-    remoteGrants: "owner" as const,
-  },
+  policy: { mode: "auto" as const, allowedDomains: [] },
 };
 const attended = { device: { ...owner, features: [...owner.features] }, unattended: null };
 const unattended = (mode: "fail" | "wait", trial = false): UnattendedRun => ({
@@ -89,20 +81,6 @@ describe("planNetworkAsk", () => {
       "[network] 10.0.0.5 is a private or local address, which commands can never reach.",
     ]);
     expect(p.missingGrants).toEqual([]);
-  });
-
-  it("a device that takes no remote grants: no ask, the allow-it-locally note", () => {
-    const p = planNetworkAsk([dev("a.com"), dev("b.com")], run(), {
-      device: { ...attended.device, policy: { ...owner.policy, remoteGrants: "off" } },
-      unattended: null,
-    });
-    expect(p.ask).toEqual([]);
-    expect(p.notes).toEqual([
-      "[network] a.com, b.com were blocked by this device's network policy, and this device does not accept network changes from the conversation. The device owner can allow them locally: capybara-device policy add allowedDomains a.com and capybara-device policy add allowedDomains b.com. Continue without them or tell the user.",
-    ]);
-    expect(localOnlyNote(["a.com"])).toBe(
-      "[network] a.com was blocked by this device's network policy, and this device does not accept network changes from the conversation. The device owner can allow it locally: capybara-device policy add allowedDomains a.com. Continue without it or tell the user.",
-    );
   });
 
   it("a host granted in the run tree but still refused is asked again", () => {

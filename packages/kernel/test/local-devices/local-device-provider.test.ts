@@ -1,10 +1,9 @@
 import { randomUUID } from "node:crypto";
-import {
-  type DeviceExecGrants,
-  type ExtensionContext,
-  type KernelReq,
-  type SandboxLimits,
-  UNSANDBOXED_NOT_ALLOWED_MESSAGE,
+import type {
+  DeviceExecGrants,
+  ExtensionContext,
+  KernelReq,
+  SandboxLimits,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
@@ -17,31 +16,31 @@ import type { KernelConfigService } from "../../src/infra/config/kernel-config.s
 import { LockService } from "../../src/infra/lock/lock.service.js";
 import { deviceReqKey } from "../../src/local-devices/keys.js";
 import {
+  AUTO_MODE_NOT_ALLOWED_TEXT,
   FRAME_ENVELOPE_BYTES,
   LocalDeviceProvider,
   maxReadBytes,
-  UNSANDBOXED_NOT_ALLOWED_ERROR,
 } from "../../src/local-devices/local-device-provider.js";
 import type { NetworkGrants } from "../../src/local-devices/network-grants.js";
 import { LocalDeviceRelay } from "../../src/local-devices/relay.js";
 import type { DeviceTargets } from "../../src/local-devices/targets.js";
 import { createLogger } from "../../src/log.js";
+import {
+  type DeploymentDevicePolicy,
+  type EffectiveDevicePolicy,
+  effectiveDevicePolicy,
+  type OrgDeviceSettings,
+} from "../../src/sandbox/modes.js";
 import { LOCAL_PROVIDER, SandboxProviders } from "../../src/sandbox/providers.js";
 import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
-import {
-  type DeploymentSandboxPolicy,
-  effectiveSandboxPolicy,
-  limitsForTier,
-  type OrgSandboxSettings,
-} from "../../src/sandbox/tiers.js";
-import { UNATTENDED_UNSANDBOXED_ERROR } from "../../src/schedules/unattended.js";
 import { mapSandboxError } from "../../src/tools/builtins/sandbox/common.js";
 import { type Answer, TestHolder } from "./test-holder.js";
 
 /**
  * The kernel-internal `@local` provider (environments spec §13.5): `sandbox@2` over the relay,
  * handles keyed by the device id (ruling R1), cleanup paths safe while offline (ruling R9),
- * the files never touched (ruling R24), the org's current limits on every exec (ruling R27).
+ * the files never touched (ruling R24), the org's current limits and mode on every exec (ruling
+ * R27, auto mode spec §4.2).
  */
 
 let rd: TestContainer;
@@ -55,40 +54,32 @@ const LIMITS: SandboxLimits = {
   cpu: 2,
   memoryMb: 1024,
   diskMb: 2048,
-  egress: "allowlist",
-  allowHosts: ["example.com"],
-  tier: "strict",
-  devHosts: [],
+  mode: "sandbox",
+  network: { kind: "allowlist", hosts: ["example.com"] },
 };
 const ROOTS = {
   workspace: "/home/me/env/workspace",
   skills: "/home/me/env/skills",
   tmp: "/home/me/env/tmp",
 };
-/** The deployment's tiers and network (ceiling dev unless a test raises it). */
-const DEPLOYMENT: DeploymentSandboxPolicy = {
-  limits: { egress: "allowlist", allowHosts: ["example.com"], devHosts: ["registry.npmjs.org"] },
-  tiers: { max: "dev", default: "dev", allowUnsandboxed: true },
+/** The deployment's switch and network (auto allowed, the allowlist unless a test changes it). */
+const DEPLOYMENT: DeploymentDevicePolicy = {
+  autoMode: "allowed",
+  limits: { egress: "allowlist", allowHosts: ["example.com"] },
 };
-/** The limits of the dev ceiling under {@link DEPLOYMENT} (what every exec carries by default). */
+/** The limits every local exec carries by default: the allowed mode and the sandbox allowlist. */
 const DEV_LIMITS: SandboxLimits = {
   cpu: 2,
   memoryMb: 1024,
   diskMb: 2048,
-  egress: "allowlist",
-  allowHosts: ["example.com", "registry.npmjs.org"],
-  tier: "dev",
-  defaultTier: "dev",
-  devHosts: ["registry.npmjs.org"],
-  allowUnsandboxed: false,
+  mode: "auto",
+  network: { kind: "allowlist", hosts: ["example.com"] },
 };
-/** What the stubbed PG reads answer: the platform and org policy, the machine's roots, the org. */
-let deployment: DeploymentSandboxPolicy;
-let orgSettings: OrgSandboxSettings;
-/** The tier rule of an unattended run (null: attended), and the machine's isolation. */
-let unattended: { taskRunId: string; openGranted: boolean } | null;
-let unsandboxed: boolean;
-let missing: { taskRunId: string; key: string }[];
+/** What the stubbed PG reads answer: the platform policy and the org's settings. */
+let deployment: DeploymentDevicePolicy;
+let orgSettings: OrgDeviceSettings;
+/** The mode the machine last reported (null: unknown). */
+let reportedMode: EffectiveDevicePolicy["mode"] | null;
 let machineRoots: typeof ROOTS | null;
 let orgOfEnv: string | null;
 let maxFrameBytes: number;
@@ -100,9 +91,7 @@ let execResult: Record<string, unknown>;
 beforeEach(() => {
   deployment = structuredClone(DEPLOYMENT);
   orgSettings = {};
-  unattended = null;
-  unsandboxed = false;
-  missing = [];
+  reportedMode = "sandbox";
   machineRoots = ROOTS;
   orgOfEnv = "org-1";
   maxFrameBytes = 16 * 1024 * 1024;
@@ -171,17 +160,15 @@ beforeAll(async () => {
       machineRoots: async () => machineRoots,
     },
     {
-      devicePolicy: async () => effectiveSandboxPolicy(deployment, orgSettings, null),
+      devicePolicy: async () => effectiveDevicePolicy(deployment, orgSettings, null),
       deviceLimits: async (_d, o = {}) => {
-        const p = o.policy ?? effectiveSandboxPolicy(deployment, orgSettings, null);
-        const tier = o.tier ?? p.tier;
+        const p = o.policy ?? effectiveDevicePolicy(deployment, orgSettings, null);
         return {
           cpu: 2,
           memoryMb: 1024,
           diskMb: 2048,
-          ...limitsForTier(p, tier),
-          tier,
-          devHosts: p.devHosts,
+          mode: p.allowedMode,
+          network: { kind: "allowlist", hosts: [...p.localAllowedDomains] },
         };
       },
     } as Pick<SandboxService, "devicePolicy" | "deviceLimits">,
@@ -193,10 +180,8 @@ beforeAll(async () => {
         grantCalls.push(input);
         return runGrants;
       },
-      unattendedTier: async () => unattended,
-      unsandboxed: async () => unsandboxed,
-      recordMissing: async (taskRunId, key) => void missing.push({ taskRunId, key }),
-    } as Pick<NetworkGrants, "forExec" | "unattendedTier" | "unsandboxed" | "recordMissing">,
+      reportedMode: async () => reportedMode,
+    } as Pick<NetworkGrants, "forExec" | "reportedMode">,
     log,
   );
 }, 120_000);
@@ -363,12 +348,14 @@ describe("LocalDeviceProvider", () => {
       actor: { accountId: "a", conversationId: "c" },
     };
     await provider.exec(handle, { ...args, signal: signal() });
-    expect((h.frames[0] as KernelReq).args).toMatchObject({ limits: { egress: "allowlist" } });
+    expect((h.frames[0] as KernelReq).args).toMatchObject({
+      limits: { mode: "auto", network: { kind: "allowlist" } },
+    });
     // the org's egress is turned off: the next exec carries it
-    orgSettings = { sandboxEgress: { mode: "none" } };
+    deployment.limits.egress = "none";
     await provider.exec(handle, { ...args, signal: signal() });
     expect((h.frames[1] as KernelReq).args).toMatchObject({
-      limits: { egress: "none", allowHosts: [] },
+      limits: { network: { kind: "allowlist", hosts: [] } },
     });
     await h.disconnect();
   });
@@ -411,7 +398,7 @@ describe("LocalDeviceProvider", () => {
     expect((h.frames[3] as KernelReq).args).toMatchObject({
       grants: { ...runGrants, hosts: ["example.com"] },
     });
-    orgSettings = { sandboxEgress: { mode: "none" } };
+    deployment.limits.egress = "none";
     await provider.exec(handle, { ...base, actor, signal: signal() });
     expect((h.frames[4] as KernelReq).args).not.toHaveProperty("grants");
     await h.disconnect();
@@ -447,7 +434,7 @@ describe("LocalDeviceProvider", () => {
       { host: "other.org", port: 80, layer: "org" },
     ]);
     // the org closes its egress before the next exec: every device-layer host is the org's
-    orgSettings = { sandboxEgress: { mode: "none" } };
+    deployment.limits.egress = "none";
     const r2 = await provider.exec(handle, {
       command: "curl",
       timeoutMs: 1000,
@@ -555,7 +542,7 @@ describe("LocalDevicesModule", () => {
   );
 });
 
-describe("LocalDeviceProvider: sandbox tiers (sandbox dev tiers spec §4.2, §4.3, §11.4)", () => {
+describe("LocalDeviceProvider: modes (auto mode spec §4.2, §4.3)", () => {
   const base = { command: "ls", timeoutMs: 1000, maxOutputBytes: 10, tag: "t" };
   const attended = { accountId: "a", conversationId: "c" };
   const scheduled = { ...attended, runId: "run-1" };
@@ -580,142 +567,53 @@ describe("LocalDeviceProvider: sandbox tiers (sandbox dev tiers spec §4.2, §4.
     }
   }
 
-  it("carries the ceiling's network, the ceiling as tier, the org's default and the dev hosts", async () => {
+  it("carries `mode: allowedMode` and the org's sandbox allowlist, even when the ceiling is auto", async () => {
     expect((await execOnce(attended)).args?.limits).toEqual(DEV_LIMITS);
-    // an open ceiling: open egress, the org's default stays dev
-    deployment.tiers.max = "open";
-    orgSettings = { sandboxTier: { max: "open" } };
-    expect((await execOnce(attended)).args?.limits).toEqual({
-      ...DEV_LIMITS,
-      egress: "open",
-      allowHosts: [],
-      tier: "open",
-      defaultTier: "dev",
-      allowUnsandboxed: true,
-    });
-    // an org ceiling at strict: the base list only, the default cut to it
-    orgSettings = { sandboxTier: { max: "strict" } };
-    expect((await execOnce(attended)).args?.limits).toEqual({
-      ...DEV_LIMITS,
-      allowHosts: ["example.com"],
-      tier: "strict",
-      defaultTier: "strict",
-    });
-  });
-
-  it("caps an unattended run at dev without the task's tier:open grant; the grant lifts the cap", async () => {
-    deployment.tiers.max = "open";
-    deployment.tiers.default = "open";
-    unattended = { taskRunId: "tr-1", openGranted: false };
-    expect((await execOnce(scheduled)).args?.limits).toEqual(DEV_LIMITS);
-    // an attended exec of the same device is not capped
+    // the org allows only sandbox mode
+    orgSettings = { autoMode: "off" };
     expect((await execOnce(attended)).args?.limits).toMatchObject({
-      tier: "open",
-      defaultTier: "open",
-      egress: "open",
+      mode: "sandbox",
+      network: { kind: "allowlist", hosts: ["example.com"] },
     });
-    unattended = { taskRunId: "tr-1", openGranted: true };
-    expect((await execOnce(scheduled)).args?.limits).toMatchObject({
-      tier: "open",
-      egress: "open",
+    // the org's cloud allowlist is the sandbox-mode list too
+    orgSettings = { cloudNetwork: { mode: "allowlist", allowHosts: ["a.com"] } };
+    expect((await execOnce(attended)).args?.limits).toMatchObject({
+      mode: "auto",
+      network: { kind: "allowlist", hosts: ["a.com"] },
     });
-    // the cap never records a missing grant (nothing was refused)
-    expect(missing).toEqual([]);
-  });
-
-  it("runs on an unsandboxed machine only where the org allows it", async () => {
-    unsandboxed = true;
-    // ceiling dev: unsandboxed is not allowed
-    const refused = (await execOnce(attended)).error;
-    expect(refused).toBeInstanceOf(ApiError);
-    expect((refused as ApiError).code).toBe("device.unsandboxed_not_allowed");
-    expect((refused as ApiError).message).toBe(
-      "This device runs commands without a sandbox, which your organization does not allow. Its owner can turn the sandbox back on with `capybara-device policy set isolation sandbox`.",
-    );
-    // an open ceiling with unsandboxed allowed: relayed
-    deployment.tiers.max = "open";
-    orgSettings = { sandboxTier: { max: "open" } };
-    expect((await execOnce(attended)).args).toBeDefined();
-    // the org forbids it
-    orgSettings = { sandboxTier: { max: "open", allowUnsandboxed: false } };
-    expect(((await execOnce(attended)).error as ApiError).code).toBe(
-      "device.unsandboxed_not_allowed",
-    );
-    // the platform forbids it
-    orgSettings = { sandboxTier: { max: "open" } };
-    deployment.tiers.allowUnsandboxed = false;
-    expect(((await execOnce(attended)).error as ApiError).code).toBe(
-      "device.unsandboxed_not_allowed",
-    );
-    // a sandboxed machine (or one without a summary) is never refused
-    unsandboxed = false;
-    expect((await execOnce(attended)).args).toBeDefined();
-  });
-
-  it("refuses an unattended run on an unsandboxed machine without tier:open and records it", async () => {
-    deployment.tiers.max = "open";
-    orgSettings = { sandboxTier: { max: "open" } };
-    unsandboxed = true;
-    unattended = { taskRunId: "tr-1", openGranted: false };
-    const e = (await execOnce(scheduled)).error as ApiError;
-    expect(e.code).toBe("device.unsandboxed_not_allowed");
-    expect(e.message).toBe(UNATTENDED_UNSANDBOXED_ERROR);
-    expect((mapSandboxError(e, undefined) as Error).message).toBe(UNATTENDED_UNSANDBOXED_ERROR);
-    expect(missing).toEqual([{ taskRunId: "tr-1", key: "tier:open" }]);
-    unattended = { taskRunId: "tr-1", openGranted: true };
-    expect((await execOnce(scheduled)).args?.limits).toMatchObject({ tier: "open" });
-  });
-
-  it("tells the machine whether this command may run without a sandbox", async () => {
-    // the kernel may not know the machine is unsandboxed (a local policy change since the last
-    // hello): the machine enforces the decision itself
-    const allow = async (actor: typeof attended & { runId?: string }) =>
-      ((await execOnce(actor)).args?.limits as SandboxLimits | undefined)?.allowUnsandboxed;
-    // ceiling dev
-    expect(await allow(attended)).toBe(false);
-    deployment.tiers.max = "open";
-    orgSettings = { sandboxTier: { max: "open" } };
-    expect(await allow(attended)).toBe(true);
-    // an unattended run without the tier:open grant
-    unattended = { taskRunId: "tr-1", openGranted: false };
-    expect(await allow(scheduled)).toBe(false);
-    unattended = { taskRunId: "tr-1", openGranted: true };
-    expect(await allow(scheduled)).toBe(true);
-    // the org or the platform forbids it
-    orgSettings = { sandboxTier: { max: "open", allowUnsandboxed: false } };
-    expect(await allow(attended)).toBe(false);
-    orgSettings = { sandboxTier: { max: "open" } };
-    deployment.tiers.allowUnsandboxed = false;
-    expect(await allow(attended)).toBe(false);
-  });
-
-  it("maps the machine's own unsandboxed refusal to device.unsandboxed_not_allowed", async () => {
-    const refusing = (): Answer => ({
-      ok: false,
-      error: { kind: "policy", message: UNSANDBOXED_NOT_ALLOWED_MESSAGE },
+    // the platform kill switch empties it
+    deployment.limits.egress = "none";
+    expect((await execOnce(attended)).args?.limits).toMatchObject({
+      mode: "auto",
+      network: { kind: "allowlist", hosts: [] },
     });
-    const e = (await execOnce(attended, refusing)).error as ApiError;
-    expect(e).toBeInstanceOf(ApiError);
-    expect(e.code).toBe("device.unsandboxed_not_allowed");
-    expect(e.message).toBe(UNSANDBOXED_NOT_ALLOWED_ERROR);
-    expect(missing).toEqual([]);
-    // an unattended run without the grant: the run's text, and the missing grant recorded
-    deployment.tiers.max = "open";
-    orgSettings = { sandboxTier: { max: "open" } };
-    unattended = { taskRunId: "tr-1", openGranted: false };
-    const u = (await execOnce(scheduled, refusing)).error as ApiError;
-    expect(u.code).toBe("device.unsandboxed_not_allowed");
-    expect(u.message).toBe(UNATTENDED_UNSANDBOXED_ERROR);
-    expect((mapSandboxError(u, undefined) as Error).message).toBe(UNATTENDED_UNSANDBOXED_ERROR);
-    expect(missing).toEqual([{ taskRunId: "tr-1", key: "tier:open" }]);
-    // any other policy refusal stays the machine's text
-    const other = (
-      await execOnce(attended, () => ({
-        ok: false,
-        error: { kind: "policy", message: "its tier is dev" },
-      }))
-    ).error as Error;
-    expect(other).not.toBeInstanceOf(ApiError);
-    expect(other.message).toContain("its tier is dev");
+  });
+
+  it("a scheduled run gets the same mode: no separate grant caps it", async () => {
+    expect((await execOnce(scheduled)).args?.limits).toEqual(DEV_LIMITS);
+    orgSettings = { autoMode: "off" };
+    expect((await execOnce(scheduled)).args?.limits).toMatchObject({ mode: "sandbox" });
+  });
+
+  it("refuses a machine that reports auto mode while the org allows only sandbox, at every exec", async () => {
+    reportedMode = "sandbox";
+    orgSettings = { autoMode: "off" };
+    expect((await execOnce(attended)).args?.limits).toMatchObject({ mode: "sandbox" });
+    // the owner switches the machine to auto mode; the next exec is refused
+    reportedMode = "auto";
+    const { error } = await execOnce(attended);
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).code).toBe("device.auto_mode_not_allowed");
+    expect((error as ApiError).status).toBe(403);
+    expect((error as Error).message).toBe(AUTO_MODE_NOT_ALLOWED_TEXT);
+    expect(AUTO_MODE_NOT_ALLOWED_TEXT).toContain("capybara-device mode sandbox");
+    const tool = mapSandboxError(error, undefined) as Error;
+    expect(tool.message).toContain(AUTO_MODE_NOT_ALLOWED_TEXT);
+    // the machine switched back: the next exec runs
+    reportedMode = "sandbox";
+    expect((await execOnce(attended)).args?.limits).toMatchObject({ mode: "sandbox" });
+    // an unknown reported mode is not refused (an older program has no auto mode)
+    reportedMode = null;
+    expect((await execOnce(attended)).args?.limits).toMatchObject({ mode: "sandbox" });
   });
 });

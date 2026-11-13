@@ -1920,10 +1920,10 @@ describe("reconstructRequest: UI refresh B tool views", { timeout: 120_000 }, ()
   });
 });
 
-describe("reconstructRequest: sandbox level (sandbox dev tiers spec §11.5)", {
+describe("reconstructRequest: the device mode (auto mode spec §4.2)", {
   timeout: 120_000,
 }, () => {
-  it("a device whose tier changes between runs: two device_paths lines, each in the requests, zero drift", async () => {
+  it("a device narrowed between runs: two device_paths lines, each in the requests, zero drift", async () => {
     reset();
     const agentId = await createAgent(
       { provider: "model-fake", model: "fake-1" },
@@ -1941,19 +1941,19 @@ describe("reconstructRequest: sandbox level (sandbox dev tiers spec §11.5)", {
     const patched = await owner({
       method: "PATCH",
       url: `/api/v1/orgs/${orgId}/devices/${deviceId}`,
-      payload: { tier: "strict" },
+      payload: { mode: "sandbox" },
     });
     expect(patched.statusCode, patched.body).toBe(200);
     const again = { command: "echo two", description: "Two" };
     await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(again)}`);
     await waitForTerminal(db, conv, 2, 30_000);
-    const levels = (await eventsOf(db, conv)).flatMap((e) =>
-      e.type === "device_paths" ? [e.payload.tier] : [],
+    const modes = (await eventsOf(db, conv)).flatMap((e) =>
+      e.type === "device_paths" ? [e.payload.mode] : [],
     );
-    expect(levels).toEqual(["dev", "strict"]);
+    expect(modes).toEqual(["auto", "sandbox"]);
     const last = JSON.stringify(sent.at(-1));
-    expect(last).toContain("Sandbox level: development.");
-    expect(last).toContain("Sandbox level: strict.");
+    expect(last).toContain("Mode: auto. Commands run in the device's container;");
+    expect(last).toContain("Mode: sandbox. Commands run in the device's container;");
     const snap = await snapshotOf(conv);
     await expectZeroDrift(conv, snap);
   });
