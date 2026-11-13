@@ -48,6 +48,7 @@
     "check:plugin-pack": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/plugin-pack.ts",
     "check:config-forms": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/config-forms.ts",
     "check:test-plugins": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/test-plugins.ts",
+    "check:test-portfolio": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/test-portfolio.ts",
     "check:synced-skills": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/synced-skills.ts",
     "check:skills-frontmatter": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/skills-frontmatter.ts",
     "check:compose-haproxy": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/compose-haproxy.ts",
