@@ -212,6 +212,22 @@ describe("/schedules?view=calendar", () => {
     expect(browser.map((c) => c.url)).toEqual([]);
   });
 
+  it("the bare page is the calendar, its tab first", async () => {
+    await load("/schedules", { cookie: `cb-tz=${encodeURIComponent(ZONE)}` });
+    expect(grid()).not.toBeNull();
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual([
+      E.tabs.calendar,
+      E.tabs.list,
+    ]);
+  });
+
+  it("the cookie restores the list on a document load of the bare page", async () => {
+    await load("/schedules", { cookie: "cap_schedules_view=list.week" });
+    expect(screen.getByRole("tab", { name: E.tabs.list }).getAttribute("aria-selected")).toBe(
+      "true",
+    );
+  });
+
   it("the cookie restores the calendar on a document load of the bare page", async () => {
     const browser = expectNoFirstPaintFetch();
     await load("/schedules");
@@ -262,11 +278,11 @@ describe("/schedules?view=calendar", () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole("tab", { name: E.tabs.list }));
     expect(screen.getAllByRole("row").length).toBeGreaterThan(1);
-    expect(window.location.search).toBe("");
+    expect(window.location.search).toBe("?view=list");
     expect(document.cookie).toContain("cap_schedules_view=list.week");
     await user.click(screen.getByRole("tab", { name: E.tabs.calendar }));
     expect(block("run=tr1")).not.toBeNull();
-    expect(window.location.search).toBe("?view=calendar");
+    expect(window.location.search).toBe("");
     expect(document.cookie).toContain("cap_schedules_view=calendar.week");
     await settle();
     expect(calls.filter((c) => c.method === "GET")).toEqual([]);
@@ -280,7 +296,7 @@ describe("/schedules?view=calendar", () => {
     await vi.waitFor(() => expect(calendarReads(calls)).toHaveLength(1));
     const next = addDays(TODAY, 7);
     expect(calendarReads(calls)[0]).toEqual({ ...rangeBounds("week", next, ZONE), timeZone: ZONE });
-    expect(window.location.search).toBe(`?view=calendar&date=${next}`);
+    expect(window.location.search).toBe(`?date=${next}`);
     await user.click(screen.getByRole("radio", { name: "Month" }));
     await vi.waitFor(() => expect(calendarReads(calls)).toHaveLength(2));
     expect(calendarReads(calls)[1]).toEqual({
@@ -479,7 +495,7 @@ describe("/schedules?view=calendar", () => {
     await user.click(screen.getByRole("radio", { name: C.all }));
     await vi.waitFor(() => expect(block("run=tr9")).not.toBeNull());
     expect(calendarReads(calls).at(-1)).toMatchObject({ all: "true" });
-    expect(window.location.search).toBe("?view=calendar&scope=all");
+    expect(window.location.search).toBe("?scope=all");
     expect(block("run=tr9")?.getAttribute("aria-label")).toContain("Helper · Mei");
     await user.click(block("run=tr9") as HTMLElement);
     const sheet = await screen.findByRole("dialog");
