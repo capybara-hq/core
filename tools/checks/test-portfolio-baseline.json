@@ -1,17 +1,5 @@
 {
   "files": {
-    "packages/kernel/test/admin/admin-items.http.test.ts": "timeout override; removed by the T1 batch",
-    "packages/kernel/test/admin/admin.http.test.ts": "setTimeout wait; timeout override; double boot; removed by the T1 batch",
-    "packages/kernel/test/admin/attention.http.test.ts": "timeout override; removed by the T1 batch",
-    "packages/kernel/test/admin/audit.http.test.ts": "timeout override; small app file; removed by the T1 batch",
-    "packages/kernel/test/admin/health.http.test.ts": "timeout override; small app file; removed by the T1 batch",
-    "packages/kernel/test/admin/health.test.ts": "timeout override; small app file; removed by the T1 batch",
-    "packages/kernel/test/admin/m6-segment2.dual.test.ts": "timeout override; removed by the T1 batch",
-    "packages/kernel/test/admin/outbox-dead.test.ts": "timeout override; removed by the T1 batch",
-    "packages/kernel/test/admin/platform-audit.test.ts": "timeout override; removed by the T1 batch",
-    "packages/kernel/test/admin/setup.test.ts": "timeout override; removed by the T1 batch",
-    "packages/kernel/test/admin/usage.http.test.ts": "timeout override; small app file; double boot; removed by the T1 batch",
-    "packages/kernel/test/admin/usage.test.ts": "timeout override; removed by the T1 batch",
     "packages/kernel/test/agents/avatar.test.ts": "double boot: the second kernel runs without an object store, and the avatar upload guard it exercises is the subject",
     "packages/kernel/test/agents/from-template.test.ts": "setTimeout wait: created_at has millisecond resolution, so a 5 ms gap orders a template's connectors as \"the first by creation\"",
     "packages/kernel/test/agents/readiness.http.test.ts": "small app file kept on purpose: each test boots a kernel with its own extension set (model-needs-config pending or configured), which is the readiness subject",
@@ -244,6 +232,10 @@
     "packages/kernel/test/ui/slots-catalog.http.test.ts": "timeout override; small app file; removed by the T1 batch",
     "packages/kernel/test/ui/slots.http.test.ts": "timeout override; removed by the T1 batch",
     "packages/kernel/test/ui/ui-stream.dual.test.ts": "timeout override; removed by the T1 batch",
-    "packages/kernel/test/ui/views.http.test.ts": "timeout override; removed by the T1 batch"
+    "packages/kernel/test/ui/views.http.test.ts": "timeout override; removed by the T1 batch",
+    "packages/kernel/test/admin/admin.http.test.ts": "setTimeout race: an 8 s upper bound turns a concurrent setup into a failure instead of a hang on a 2-connection pool; double boot: the second kernel with poolMax 2 is the subject",
+    "packages/kernel/test/admin/health.http.test.ts": "small app file kept on purpose: its api+worker role counts are the assertion, and no sibling kernel boots that role set",
+    "packages/kernel/test/admin/health.test.ts": "small app file kept on purpose: its api+gateway kernel with a 200 ms presence interval and seeded queues is the subject",
+    "packages/kernel/test/admin/usage.http.test.ts": "small app file with a double boot: two api replicas with different ADMIN_USAGE_TIMINGS seams are the subject (shared cache and the 503)"
   }
 }

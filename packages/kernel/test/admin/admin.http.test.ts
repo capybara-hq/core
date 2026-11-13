@@ -52,7 +52,7 @@ beforeAll(async () => {
   accounts = accountsFor(db);
   tokens = apiTokensFor(db);
   orgs = orgsFor(db, settingsFor(db), tokens);
-}, 120_000);
+});
 afterAll(async () => {
   await k?.close();
   redis?.disconnect();
@@ -255,7 +255,7 @@ describe("初始化向导（配置了 auth.setupToken）", () => {
     } finally {
       await k2.close();
     }
-  }, 20_000);
+  });
 });
 
 describe("超级管理员端点", () => {

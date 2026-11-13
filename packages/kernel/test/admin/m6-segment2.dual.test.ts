@@ -79,7 +79,7 @@ interface View {
 }
 type ToolResult = Extract<ConversationEvent, { type: "tool_result" }>["payload"];
 
-describe("M6 第二段双副本验收（管理后台与免重启插件生命周期）", { timeout: 180_000 }, () => {
+describe("M6 第二段双副本验收（管理后台与免重启插件生命周期）", () => {
   let pgc: TestContainer;
   let rdc: TestContainer;
   let s3: TestS3;
@@ -264,7 +264,7 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
       100,
     );
     bootPids.push(h.replicas[0].pid, h.replicas[1].pid);
-  }, 600_000);
+  });
 
   afterAll(async () => {
     await h?.stop();
@@ -272,7 +272,7 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
     await Promise.all([pgc?.stop(), rdc?.stop(), s3?.stop()]);
     await bootstrap?.cleanup();
     for (const d of [pluginsDir, sandboxRoot]) if (d) await rm(d, { recursive: true, force: true });
-  }, 120_000);
+  });
 
   let orgId: string;
   let base: string;

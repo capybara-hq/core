@@ -43,7 +43,7 @@ beforeAll(async () => {
   k = await startKernel(runConfig({ pg: pgc.url, redis: rdc.url }, { roles: ["api", "gateway"] }), {
     overrides: [{ provide: PRESENCE_INTERVAL_MS, useValue: 200 }],
   });
-}, 180_000);
+});
 
 afterAll(async () => {
   await Promise.all(queues.map((q) => q.close()));
@@ -204,7 +204,7 @@ describe("AdminHealthService.read", () => {
     const text = JSON.stringify(h);
     expect(text).not.toContain(SECRET);
     expect(text).not.toContain(FAILURE);
-  }, 60_000);
+  });
 
   it("reads the queue instances their owners registered (no queue connection of its own)", () => {
     const names = k.app
@@ -271,5 +271,5 @@ describe("AdminHealthService.read", () => {
       await pause.call("CLIENT", "UNPAUSE");
       pause.disconnect();
     }
-  }, 30_000);
+  });
 });
