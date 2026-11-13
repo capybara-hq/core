@@ -300,6 +300,14 @@ type EventBody =
         hosts: { host: string; port: number; layer: NetworkBlockedLayer }[];
       };
     }
+  /**
+   * A `gh auth login --web` device-code prompt a command printed (auto mode spec §6, P-D13):
+   * display only, never model-visible. The thread draws its card under the command's group.
+   */
+  | {
+      type: "device_code";
+      payload: { step: number; callId: string; url: string; code: string };
+    }
   | {
       type: "question_asked";
       payload: {

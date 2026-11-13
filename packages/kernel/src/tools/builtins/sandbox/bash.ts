@@ -29,6 +29,7 @@ import {
   unavailableWhenNoSandbox,
   withNotices,
 } from "./common.js";
+import { parseDeviceCode } from "./device-code.js";
 
 /** The command timeout in seconds when `timeout` is not given, at most `sandbox.limits.maxCommandSeconds`. */
 export const BASH_DEFAULT_TIMEOUT_SECONDS = 120;
@@ -452,6 +453,9 @@ export function sandboxBashTool(deps: SandboxToolDeps): BuiltinTool {
         });
       });
       const blocked = r.network?.blocked ?? [];
+      // kernel-internal (auto mode spec §6, P-D13): `gh auth login --web`'s device code, which the
+      // pipeline shows to the person. It never becomes part of the result the model sees.
+      const loginCode = parseDeviceCode(`${r.stdout}\n${r.stderr}`);
       const seconds = ms / 1000;
       const clamped = ms < askedMs;
       const shown = clip(command, 120);
@@ -483,6 +487,8 @@ export function sandboxBashTool(deps: SandboxToolDeps): BuiltinTool {
               ),
         // kernel-internal: the pipeline asks the device owner or writes notes (spec §6.2)
         ...(blocked.length > 0 && deviceId !== "" && { networkReport: { deviceId, blocked } }),
+        // kernel-internal: the pipeline writes the display-only `device_code` event (auto mode §6)
+        ...(loginCode !== null && { loginCode }),
       };
     },
   };

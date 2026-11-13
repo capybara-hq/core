@@ -85,6 +85,11 @@ import { Breaker, breakerOpenMessage } from "./breaker.js";
 import { SEND_MESSAGE, SUBAGENT_HANDBACK, TOOL_SEARCH } from "./builtin-names.js";
 import { AGENT_TOOL, AgentToolInput } from "./builtins/agent.js";
 import { HandbackInput } from "./builtins/handback.js";
+import {
+  DEVICE_CODE_PATTERN,
+  deviceCodeIdemKey,
+  GITHUB_DEVICE_LOGIN_URL,
+} from "./builtins/sandbox/device-code.js";
 import { SendMessageInput } from "./builtins/send-message.js";
 import { isAlwaysLoaded, notLoadedText } from "./builtins/tool-search.js";
 import { canonicalJson } from "./canonical-json.js";
@@ -655,6 +660,26 @@ function networkReportOf(
       ["device", "org", "address", "unknown"].includes((b as NetworkBlockedHost).layer),
   );
   return blocked.length === 0 ? undefined : { deviceId: r.deviceId, blocked };
+}
+
+/**
+ * A builtin result's kernel-internal device code (see `BuiltinResult.loginCode`): the shape is
+ * checked again here so a malformed value never reaches the log (the event schema would throw).
+ */
+function loginCodeOf(result: unknown): { url: string; code: string } | undefined {
+  const r = (result as { loginCode?: unknown } | null)?.loginCode as
+    | { url?: unknown; code?: unknown }
+    | undefined;
+  if (
+    r === undefined ||
+    typeof r.url !== "string" ||
+    typeof r.code !== "string" ||
+    r.url !== GITHUB_DEVICE_LOGIN_URL ||
+    !DEVICE_CODE_PATTERN.test(r.code)
+  ) {
+    return undefined;
+  }
+  return { url: r.url, code: r.code };
 }
 
 /** 审批的等待时长（小时，四舍五入，至少 1）。 */
@@ -1327,6 +1352,12 @@ export class ToolPipeline {
       outcome.kind === "result" && tool.source.kind === "plugin"
         ? this.cardOf(outcome.result, tool.source.plugin, tool.key)
         : undefined;
+    // a `gh auth login --web` device code (`Bash`; auto mode spec §6): display only, written under
+    // this call before its result, never part of the result or the request the model sees
+    const loginCode =
+      outcome.kind === "result" && tool.source.kind === "builtin"
+        ? loginCodeOf(outcome.result)
+        : undefined;
     const cfg = this.config.get().tools;
     const spilled = await spillIfLarge(
       rendered.text,
@@ -1360,6 +1391,15 @@ export class ToolPipeline {
             },
           ]
         : [];
+    if (loginCode !== undefined) {
+      // the deterministic id makes a retry or a resumed run append it once (P-D13)
+      pre.push({
+        type: "device_code",
+        runId: ctx.runId,
+        idemKey: deviceCodeIdemKey(ctx.runId, call.id),
+        payload: { step: ctx.step, callId: call.id, ...loginCode },
+      });
+    }
     const callAudit: CallAudit = {
       durationMs,
       connectorId: tool.source.kind === "connector" ? tool.source.connectorId : null,

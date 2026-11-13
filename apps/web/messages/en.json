@@ -1399,6 +1399,14 @@
     },
     "stats": "Turn {n} · {elapsed} elapsed",
     "contextPct": "Context {n}%",
+    "deviceCode": {
+      "title": "Sign in to GitHub",
+      "body": "Open GitHub and enter this one-time code to finish signing in. The sign-in runs inside this device; the token never leaves it.",
+      "codeLabel": "One-time code",
+      "copy": "Copy code",
+      "copied": "Copied",
+      "copyManual": "Select the code and copy it"
+    },
     "toolLines": "lines {from}–{to}",
     "pickModel": "Switch model",
     "pickDevice": "Device",

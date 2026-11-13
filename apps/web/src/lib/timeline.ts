@@ -32,7 +32,8 @@ import { toolLabel, toolLabelOfKey, toolLabelText } from "./tool-label";
  *   human-in-the-loop item or a divider ends the group. Prose is never folded into a group.
  * - A call's `artifact_created` files and its inline card (`tool_result.card`) land right after the
  *   group that holds the call (files first), then its network facts (`network_blocked` hosts of the
- *   `org` and `address` layers; `device`-layer hosts are asked about in an approval instead).
+ *   `org` and `address` layers; `device`-layer hosts are asked about in an approval instead), then
+ *   a `device_code` card (`gh auth login --web`).
  * - `hook_denied` with a `callId` marks that row as blocked by the extension.
  * - Every run that ended (`run_finished`, `run_failed`, `run_aborted`) becomes a `run` entry at its
  *   terminal event: its model (the last `model_call`, else `run_started`), duration and tokens (its
@@ -361,6 +362,17 @@ export type TimelineEntry =
       key: string;
       callId: string;
       hosts: { host: string; layer: "org" | "address" }[];
+    }
+  | {
+      /**
+       * A `gh auth login --web` device-code prompt (`device_code`, auto mode spec §6): the URL to
+       * open and the one-time code, under the group that holds the command.
+       */
+      kind: "device-code";
+      key: string;
+      callId: string;
+      url: string;
+      code: string;
     }
   | { kind: "files"; key: string; files: FileRef[] }
   | ({ kind: "divider"; key: string } & DividerData)
@@ -734,6 +746,7 @@ export function buildEventTimeline(
   const groupCards = new Map<string, Extract<TimelineEntry, { kind: "card" }>[]>();
   /** Group key → the network facts of its calls. */
   const groupFacts = new Map<string, Extract<TimelineEntry, { kind: "network-facts" }>[]>();
+  const groupDeviceCodes = new Map<string, Extract<TimelineEntry, { kind: "device-code" }>[]>();
   /** The last user message (Retry repeats it). */
   let lastUser: RetryMessage | null = null;
   /** Plain user bubbles by seq, and the fork invocations (phase D: who waits for a sub-agent). */
@@ -1186,6 +1199,22 @@ export function buildEventTimeline(
         } else out.push(fact);
         break;
       }
+      case "device_code": {
+        const entry: Extract<TimelineEntry, { kind: "device-code" }> = {
+          kind: "device-code",
+          key: `${key}:device-code`,
+          callId: e.payload.callId,
+          url: e.payload.url,
+          code: e.payload.code,
+        };
+        const c = calls.get(callKey(e.runId, e.payload.callId));
+        if (c) {
+          const list = groupDeviceCodes.get(c.group) ?? [];
+          list.push(entry);
+          groupDeviceCodes.set(c.group, list);
+        } else out.push(entry);
+        break;
+      }
       case "hook_denied":
         if (e.payload.mount === "tool.preExecute" && e.payload.callId !== undefined) {
           const c = calls.get(callKey(e.runId, e.payload.callId));
@@ -1615,7 +1644,12 @@ export function buildEventTimeline(
     (entry) => entry.kind !== "connect" || lastConnect.get(entry.item.connectorId) === entry.key,
   );
 
-  if (groupFiles.size === 0 && groupCards.size === 0 && groupFacts.size === 0)
+  if (
+    groupFiles.size === 0 &&
+    groupCards.size === 0 &&
+    groupFacts.size === 0 &&
+    groupDeviceCodes.size === 0
+  )
     return { entries: shown, modelOf };
   const withExtras: TimelineEntry[] = [];
   for (const entry of shown) {
@@ -1625,6 +1659,7 @@ export function buildEventTimeline(
     if (files) withExtras.push({ kind: "files", key: `${entry.key}:files`, files });
     for (const card of groupCards.get(entry.key) ?? []) withExtras.push(card);
     for (const fact of groupFacts.get(entry.key) ?? []) withExtras.push(fact);
+    for (const device of groupDeviceCodes.get(entry.key) ?? []) withExtras.push(device);
   }
   return { entries: withExtras, modelOf };
 }
