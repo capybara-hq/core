@@ -109,7 +109,10 @@ Vitest projects are declared in `vitest.config.ts`:
 - `unit`: includes the file list in `test/unit-tests.json` (checked in, reviewed); **no**
   `globalSetup`, `testTimeout: 5_000`, `hookTimeout: 10_000`.
 - `integration`: the current `node` project minus the unit list and the container list;
-  `globalSetup` (shared PG/Valkey), `testTimeout: 30_000`, `hookTimeout: 120_000`.
+  `globalSetup` (shared PG/Valkey), `testTimeout: 60_000`, `hookTimeout: 120_000`. (Raised from
+  30 s during T1: converged integration tests keep internal waits of 30–40 s for legitimate
+  terminal conditions, and a bound below them turns a slow CI host into a flake. 60 s still
+  catches a hang, and no test may sit at its bound with zero headroom.)
 - `container`: includes `test/*-container-tests.json` (the `.dual.test.ts` files, 42 files /
   88 tests, and process tests); `testTimeout: 240_000`, `hookTimeout: 300_000`. These tests run
   two replicas against real Redis and PostgreSQL and legitimately take 20–30 s (one measured

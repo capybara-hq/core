@@ -117,7 +117,7 @@ const containerTests = JSON.parse(readFileSync(new URL("./packages/kernel/test/c
 ```
 
 - `kernel-unit`: `include: unitTests.map(kernelTest)`, no `globalSetup`, `testTimeout: 5_000`, `hookTimeout: 10_000`.
-- `kernel-integration`: `include: ["packages/kernel/test/**/*.test.ts"]`, `exclude: [...unitTests, ...containerTests].map(kernelTest)`, the same `globalSetup`, `testTimeout: 30_000`, `hookTimeout: 120_000`.
+- `kernel-integration`: `include: ["packages/kernel/test/**/*.test.ts"]`, `exclude: [...unitTests, ...containerTests].map(kernelTest)`, the same `globalSetup`, `testTimeout: 60_000`, `hookTimeout: 120_000`.
 - `kernel-container`: `include: containerTests.map(kernelTest)`, the same `globalSetup`, `testTimeout: 240_000`, `hookTimeout: 300_000`.
 - The `node` project keeps its globs but adds `"packages/kernel/test/**"` to `exclude`.
 
@@ -438,7 +438,9 @@ Test count, files, app-booting files, fixed waits, timeout overrides (three form
 Run: `pnpm coverage && pnpm coverage:baseline` and commit the new
 `docs/testing/coverage-baseline.md` once, with the deliberate drops named in the commit message.
 Then run `pnpm check` and `pnpm exec vitest run packages/kernel`.
-Expected: PASS; `test-portfolio-baseline.json` is `{"files": []}`.
+Expected: PASS; every entry left in `tools/checks/test-portfolio-baseline.json` carries a reason
+(`{ "files": { "<path>": "<reason>" } }`), and no entry is there without one. An empty list is
+acceptable but not required: the close-out goal is that every exception is explicit.
 
 - [ ] **Step 4: Commit and open the PR**
 
