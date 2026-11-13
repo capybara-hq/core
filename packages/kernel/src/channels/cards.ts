@@ -9,6 +9,7 @@ import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import type {
   ApprovalsService,
   ApprovalView,
+  CommandAskDetail,
   GitAskView,
   NetworkAskView,
 } from "../tools/approvals.service.js";
@@ -212,7 +213,7 @@ async function displayName(
 export interface NetworkCardText {
   title: string;
   inputPreview: string;
-  scopeLabels: Partial<Record<"once" | "always", string>>;
+  scopeLabels: Partial<Record<"once" | "session" | "always", string>>;
 }
 
 /**
@@ -274,9 +275,36 @@ export function gitCardText(
 }
 
 /**
+ * A command review ask's card text (auto mode spec §5.4): the title asks to run the command (a
+ * write: to write the file), the preview is the review's reason and the held command clipped to
+ * {@link CARD_SUMMARY_MAX} (a write: its target path). The scopes are the approval's; `session` is
+ * labelled only when offered. Model-controlled values are redacted by `redact`.
+ */
+export function commandCardText(
+  detail: Pick<CommandAskDetail, "kind" | "command" | "reason"> & { path?: string },
+  scopes: readonly string[],
+  locale: ChannelLocale,
+  redact: (s: string) => string = (s) => s,
+): NetworkCardText {
+  const write = detail.kind === "write";
+  const text = write ? (detail.path ?? detail.command) : detail.command;
+  const shown = cut(redact(text.trim()), CARD_SUMMARY_MAX);
+  const reason = cut(redact(detail.reason.trim()), CARD_SUMMARY_MAX);
+  return {
+    title: phrase(write ? "commandWriteTitle" : "commandTitle", locale),
+    inputPreview: [reason, ...(shown !== "" ? ["", shown] : [])].join("\n"),
+    scopeLabels: {
+      ...(scopes.includes("once") ? { once: phrase("commandAllowOnce", locale) } : {}),
+      ...(scopes.includes("session") ? { session: phrase("commandAllowSession", locale) } : {}),
+    },
+  };
+}
+
+/**
  * The approval card in the approval's current state; undefined when the approval does not exist.
  * A role escalation offers only "once". A network ask names its hosts and command and labels its
- * scopes ({@link networkCardText}). `webUrl` = `http.publicUrl` + the conversation path.
+ * scopes ({@link networkCardText}); a command review ask names the review's reason and the held
+ * command (a write: its path) and labels its scopes ({@link commandCardText}). `webUrl` = `http.publicUrl` + the conversation path.
  */
 export async function approvalCard(
   d: CardDeps,
@@ -288,34 +316,40 @@ export async function approvalCard(
   const v = await d.approvals.describe(approvalId);
   if (!v) return undefined;
   const decidedBy = await displayName(d.db, v.decidedBy);
-  // a network or git ask names what it asks about instead of a tool call (same card shape)
+  // a network, git or command ask names what it asks about instead of a tool call (same shape)
   const network =
     v.kind === "network" && v.detail !== null
       ? networkCardText(v.detail, locale, redact)
       : v.kind === "git" && v.git != null
         ? gitCardText(v.git, locale, redact)
         : null;
+  // a command review ask: the reason and the held command (or a write's path), its own scopes
+  const command =
+    v.kind === "command" && v.command !== null
+      ? commandCardText(v.command, v.scopes, locale, redact)
+      : null;
+  const special = network ?? command;
   const display =
-    v.summary === null && network === null
+    v.summary === null && special === null
       ? (await toolInfo({ db: d.db, registry: d.registry }, v.orgId, [v.toolKey]))[0]
       : undefined;
   return {
     kind: "approval",
     id: v.id,
-    title: network?.title ?? phrase("approvalTitle", locale),
+    title: network?.title ?? command?.title ?? phrase("approvalTitle", locale),
     // the label carries the source, so no separate appName (renderers would repeat it); a
-    // network ask's command ran in Bash
-    toolName: network !== null ? "Bash" : approvalToolName(v, locale),
+    // network or command ask's command ran in Bash
+    toolName: special !== null ? "Bash" : approvalToolName(v, locale),
     agentName: v.agent.name || "Agent",
     // the field keeps its contract name; it carries the call line (a network ask's hosts and
-    // command), never the raw input
-    inputPreview: network?.inputPreview ?? callSummary(v, display, locale, redact),
+    // command, a command ask's reason and command), never the raw input
+    inputPreview: special?.inputPreview ?? callSummary(v, display, locale, redact),
     // the scopes the approval allows (the kernel stores them for per-call policies)
     scopes: v.scopes,
     // the labels of the scopes offered only
-    ...(network !== null && {
+    ...(special !== null && {
       scopeLabels: Object.fromEntries(
-        Object.entries(network.scopeLabels).filter(([k]) => (v.scopes as string[]).includes(k)),
+        Object.entries(special.scopeLabels).filter(([k]) => (v.scopes as string[]).includes(k)),
       ),
     }),
     expiresAt: v.expiresAt,

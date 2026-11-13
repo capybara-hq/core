@@ -1763,6 +1763,15 @@
     "otherApprover": "等待审批人处理。",
     "otherApproverFor": "{tool}（{key}）需要审批，等待审批人处理。",
     "otherApproverNamed": "{tool}（{key}）需要审批，等待 {who} 处理。",
+    "command": {
+      "title": "智能体想运行这条命令，允许吗？",
+      "titleWrite": "智能体想写入这个文件，允许吗？",
+      "device": "设备",
+      "reason": "需要审批的原因",
+      "path": "文件",
+      "otherApprover": "智能体想运行一条命令，等待设备所有者处理。",
+      "otherApproverWrite": "智能体想写入一个文件，等待设备所有者处理。"
+    },
     "policy": {
       "agent": "智能体的设置要求审批",
       "connector": "连接器的策略要求审批",
