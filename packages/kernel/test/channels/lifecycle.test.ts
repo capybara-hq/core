@@ -312,7 +312,10 @@ describe("渠道连接生命周期", () => {
     } finally {
       failChannels = false;
     }
-    await db.updateTable("outbox").set({ next_attempt_at: new Date() }).execute();
+    await db
+      .updateTable("outbox")
+      .set({ next_attempt_at: sql<Date>`now()` as unknown as Date })
+      .execute();
     await drainOutbox(a.app, { queue: CHANNEL_QUEUE_NAME, jobName: "channel-resume" });
     await waitFor(async () => toChat().length > before, 10_000, "backlog delivered");
   }, 60_000);

@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { ModelError } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { EventLog } from "../../src/conversations/event-log.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
@@ -633,7 +634,10 @@ describe("运行", () => {
       }
       expect((await getRun(run.id)).status).toBe("queued");
       failEvals = false;
-      await db.updateTable("outbox").set({ next_attempt_at: new Date() }).execute();
+      await db
+        .updateTable("outbox")
+        .set({ next_attempt_at: sql<Date>`now()` as unknown as Date })
+        .execute();
       await drainOutbox(k.app, { queue: EVAL_QUEUE_NAME });
       const rs = await settled(run.id);
       expect(rs.map((r) => r.status)).toEqual(["done", "done", "done", "done"]);
