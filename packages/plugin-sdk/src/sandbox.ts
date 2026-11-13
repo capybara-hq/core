@@ -18,70 +18,25 @@ export const SANDBOX_ROOTS = ["/workspace", "/skills", "/tmp"] as const;
 const MAX_PATH_LENGTH = 4096;
 
 /**
- * A sandbox tier, ordered `strict` < `dev` < `open`: how much a device's commands may reach.
- * `strict` is the org's allowlist only; `dev` adds the dev hosts (`DEV_HOSTS`) and local
- * development affordances; `open` reaches any public host.
+ * Sandbox resource and network limits. A provider that ignores `mode` and `network` still runs:
+ * it then behaves as an allowlisted sandbox (the safe direction).
  */
-export type SandboxTier = "strict" | "dev" | "open";
-
-/** Every tier, lowest first. */
-export const SANDBOX_TIERS: readonly SandboxTier[] = Object.freeze(["strict", "dev", "open"]);
-
-/** Whether `v` is a {@link SandboxTier}. */
-export function isSandboxTier(v: unknown): v is SandboxTier {
-  return typeof v === "string" && (SANDBOX_TIERS as readonly string[]).includes(v);
-}
-
-/** Negative when `a` is lower than `b`, 0 when equal, positive when higher. */
-export function compareTiers(a: SandboxTier, b: SandboxTier): number {
-  return SANDBOX_TIERS.indexOf(a) - SANDBOX_TIERS.indexOf(b);
-}
-
-/** Whether `a` is at most `b`. */
-export function tierAtMost(a: SandboxTier, b: SandboxTier): boolean {
-  return compareTiers(a, b) <= 0;
-}
-
-/** The lowest of the given tiers. */
-export function minTier(first: SandboxTier, ...rest: SandboxTier[]): SandboxTier {
-  let out = first;
-  for (const t of rest) if (compareTiers(t, out) < 0) out = t;
-  return out;
-}
-
-/** Sandbox resource and egress limits. */
 export interface SandboxLimits {
   cpu: number;
   memoryMb: number;
   diskMb: number;
-  egress: "none" | "allowlist" | "open";
-  /** Egress allowlist (used when `egress` is `allowlist`); each entry passes {@link validateAllowHost}. */
-  allowHosts: string[];
   /**
-   * The effective tier (cloud `create`) or the ceiling the device may reach (local exec args). A
-   * provider that ignores it behaves as `strict` plus whatever `egress` says.
+   * `auto`: no OS sandbox (local: the owner; cloud: the container is the boundary);
+   * `sandbox`: the OS sandbox with the network limited by {@link SandboxLimits.network}.
    */
-  tier: SandboxTier;
-  /** Local exec args only: the org's default tier, used when the device chose none. */
-  defaultTier?: SandboxTier;
+  mode: "auto" | "sandbox";
   /**
-   * Local exec args only: whether this command may run without a sandbox (the platform and the
-   * org allow it, the ceiling is `open`, and an unattended run has the `tier:open` grant). A device
-   * whose local policy asks for no sandbox refuses the command unless this is `true` (absent counts
-   * as `false`), with {@link UNSANDBOXED_NOT_ALLOWED_MESSAGE}.
+   * The network the instance (cloud) must enforce, or the allowlist a local device's sandbox mode
+   * intersects with its own list (`open-public` is for cloud instances only). Each entry of
+   * `hosts` passes {@link validateAllowHost}.
    */
-  allowUnsandboxed?: boolean;
-  /** The dev hosts preset; cloud providers ignore it (`allowHosts` is final for them). */
-  devHosts: string[];
+  network: { kind: "open-public" | "allowlist"; hosts: string[] };
 }
-
-/**
- * The refusal of a command that would run without a sandbox where the org does not allow it
- * (sandbox dev tiers spec §4.3): the kernel's `device.unsandboxed_not_allowed` text, and the
- * message a device sends with a `policy` error when `allowUnsandboxed` is not `true`.
- */
-export const UNSANDBOXED_NOT_ALLOWED_MESSAGE =
-  "This device runs commands without a sandbox, which your organization does not allow. Its owner can turn the sandbox back on with `capybara-device policy set isolation sandbox`.";
 
 /** The absolute roots inside one instance (a device may place them anywhere on its host). */
 export interface SandboxRoots {
