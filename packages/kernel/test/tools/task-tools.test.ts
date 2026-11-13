@@ -419,7 +419,7 @@ describe("TaskOutput", () => {
     expect((await store.get(t.id))?.status).toBe("running");
   }, 60_000);
 
-  it("a sub-agent's agentId gets the sub-agent text (no polling); other ids stay not found", async () => {
+  it("a sub-agent's agentId gets the sub-agent text (TaskOutput as an answer, TaskStop as an error); other ids stay not found", async () => {
     const parent = await conversation();
     const child = randomUUID();
     const grandchild = randomUUID();
@@ -442,13 +442,18 @@ describe("TaskOutput", () => {
       ],
     ];
     for (const [ctx, id] of asks) {
-      for (const name of ["TaskOutput", "TaskStop"]) {
-        const e = await tool(name)
-          .run({ task_id: id }, ctx)
-          .catch((x: unknown) => x);
-        expect(e).toBeInstanceOf(ToolError);
-        expect((e as Error).message).toBe(subagentNotTaskText(id));
-      }
+      // TaskOutput answers (not a failed call); TaskStop refuses (it cannot stop a sub-agent)
+      const r = (await tool("TaskOutput").run({ task_id: id }, ctx)) as {
+        isError: boolean;
+        content: { text: string }[];
+      };
+      expect(r.isError).toBe(false);
+      expect(r.content[0]?.text).toBe(subagentNotTaskText(id));
+      const e = await tool("TaskStop")
+        .run({ task_id: id }, ctx)
+        .catch((x: unknown) => x);
+      expect(e).toBeInstanceOf(ToolError);
+      expect((e as Error).message).toBe(subagentNotTaskText(id));
     }
     // an unrelated conversation (another tree) and a random uuid are just not found
     const other = await conversation();
