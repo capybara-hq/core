@@ -3,12 +3,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DeviceExecArgs, SandboxLimits } from "@capybara-hq/plugin-sdk";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { SwitchingExecutor } from "../src/exec/switch.js";
 import { DEFAULT_POLICY, type Policy } from "../src/state.js";
+import { FakeExecutor } from "./fake-kernel.js";
 
 // A stand-in for sandbox-runtime: commands run unsandboxed, the test controls the violations.
 const sbx = vi.hoisted(() => {
   const state = {
     askCallbackDenyReason: true as boolean,
+    /** Whether the runtime reports a supported platform (tests flip it). */
+    supported: true as boolean,
     initialize: vi.fn(async (_config: unknown, _ask?: unknown) => {}),
     updateConfig: vi.fn((_config: unknown) => {}),
     commandIds: [] as string[],
@@ -28,7 +32,7 @@ vi.mock("@anthropic-ai/sandbox-runtime", () => ({
     get askCallbackDenyReason() {
       return sbx.askCallbackDenyReason;
     },
-    isSupportedPlatform: () => true,
+    isSupportedPlatform: () => sbx.supported,
     checkDependencies: () => ({ errors: [], warnings: [] }),
     initialize: sbx.initialize,
     updateConfig: sbx.updateConfig,
@@ -95,6 +99,7 @@ beforeEach(() => {
   mkdirSync(join(base, "env"));
   policy = { ...DEFAULT_POLICY };
   sbx.askCallbackDenyReason = true;
+  sbx.supported = true;
   sbx.initialize.mockClear();
   sbx.updateConfig.mockClear();
   sbx.commandIds.length = 0;
@@ -364,5 +369,45 @@ describe("OsExecutor network explanations (mocked runtime)", () => {
     await ex.killAll();
     expect(sbx.unregistered).toContain(id);
     await ex.dispose();
+  });
+
+  it("serves auto mode when the OS sandbox is unavailable and refuses sandbox commands", async () => {
+    sbx.supported = false;
+    try {
+      // start keeps working: an unavailable executor, not a thrown error.
+      const ex = await make();
+      expect(sbx.initialize).not.toHaveBeenCalled();
+      expect(ex.available).toBe(false);
+      expect(ex.unavailableReason).toMatch(/does not support/);
+      await ex.ensureRoot();
+      const refused = /OS sandbox is unavailable on this machine.*mode auto/s;
+      await expect(ex.exec(execArgs("true"), never)).rejects.toMatchObject({
+        kind: "error",
+        message: expect.stringMatching(refused),
+      });
+      await expect(ex.readFile(join(ex.roots.workspace, "a.txt"), 10)).rejects.toMatchObject({
+        kind: "error",
+      });
+      // Auto mode still runs commands and file operations on the host, and never silently
+      // falls back for a sandbox ceiling.
+      policy = { ...policy, mode: "auto" };
+      const host = new FakeExecutor();
+      host.files.set("/f", Buffer.from("host"));
+      const sw = new SwitchingExecutor(ex, host, () => policy);
+      try {
+        await sw.exec(execArgs("now", { limits: { ...LIMITS, mode: "auto" } }), never);
+        expect(host.started).toEqual(["now"]);
+        expect(Buffer.from((await sw.readFile("/f", 100))?.data ?? []).toString()).toBe("host");
+        await expect(sw.exec(execArgs("now"), never)).rejects.toMatchObject({
+          kind: "error",
+          message: expect.stringMatching(refused),
+        });
+      } finally {
+        sw.dispose();
+      }
+      await ex.dispose();
+    } finally {
+      sbx.supported = true;
+    }
   });
 });

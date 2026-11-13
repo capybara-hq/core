@@ -21,6 +21,7 @@ import type { Policy } from "../state.js";
 import { FS_HELPER_SCRIPT } from "./fs-helper.js";
 import { EXEC_MARKER, killMarked } from "./procs.js";
 import { Reaper, type ReaperDeps } from "./reap.js";
+import { sandboxUnavailableMessage } from "./sandbox-messages.js";
 import {
   ENV_NAME_RE,
   HostFiles,
@@ -66,6 +67,13 @@ export function sandboxAvailability(): { ok: true } | { ok: false; reason: strin
   }
   return { ok: true };
 }
+
+/** How to fix an unavailable OS sandbox (shared by the command refusal and the mode switch). */
+export {
+  SANDBOX_INSTALL_HINT,
+  sandboxUnavailableMessage,
+  sandboxUnavailableSwitchRefusal,
+} from "./sandbox-messages.js";
 
 /**
  * One command's process group. It is tracked after the command's main process exits, as long as
@@ -151,8 +159,17 @@ export class OsExecutor implements Executor {
    * the launch returned. Checked on the prune tick.
    */
   private readonly backgroundNet = new Map<string, number>();
+  /** Whether the OS sandbox can run here; false means sandbox-mode operations are refused. */
+  readonly available: boolean;
+  /** Why the OS sandbox is unavailable (when {@link available} is false). */
+  readonly unavailableReason: string | undefined;
 
-  constructor(private readonly opts: OsExecutorOptions) {
+  constructor(
+    private readonly opts: OsExecutorOptions,
+    state: { unavailable?: string } = {},
+  ) {
+    this.available = state.unavailable === undefined;
+    this.unavailableReason = state.unavailable;
     this.reaper = new Reaper(opts.reaper);
     const dir = resolve(opts.dir);
     // The roots are reported as real paths, so what commands print matches what the kernel sends.
@@ -161,6 +178,13 @@ export class OsExecutor implements Executor {
     this.guard = new RootGuard(this.dir, this.roots);
     this.files = new HostFiles(this.roots, "sandbox");
     this.dirKey = createHash("sha256").update(this.dir).digest("hex").slice(0, 16);
+  }
+
+  /** Throws the actionable refusal when the OS sandbox is unavailable. */
+  private requireSandbox(): void {
+    if (!this.available) {
+      throw new DeviceOpError("error", sandboxUnavailableMessage(this.unavailableReason ?? ""));
+    }
   }
 
   /** The sandbox configuration (no domains: those are per command). */
@@ -357,6 +381,7 @@ export class OsExecutor implements Executor {
 
   async exec(args: DeviceExecArgs, signal: AbortSignal): Promise<ExecResult> {
     signal.throwIfAborted();
+    this.requireSandbox();
     const cwd = await this.files.inside(args.cwd ?? this.roots.workspace, "cwd");
     // Read once: the command's lists and the explanation of its refusals use the same policy.
     const policy = this.opts.policy();
@@ -542,6 +567,7 @@ export class OsExecutor implements Executor {
     path: string,
     maxBytes: number,
   ): Promise<{ data: Uint8Array; truncated: boolean } | null> {
+    this.requireSandbox();
     const p = this.files.lexical(path);
     if (isUnder(p, this.roots.skills)) return this.files.read(path, maxBytes);
     const r = (await this.helper("read", p, maxBytes)) as {
@@ -552,12 +578,14 @@ export class OsExecutor implements Executor {
   }
 
   async writeFile(path: string, data: Uint8Array): Promise<void> {
+    this.requireSandbox();
     const p = this.files.lexical(path);
     if (isUnder(p, this.roots.skills)) return this.files.write(path, data);
     await this.helper("write", p, 0, data);
   }
 
   async stat(path: string): Promise<{ size: number; isDir: boolean } | null> {
+    this.requireSandbox();
     const p = this.files.lexical(path);
     if (isUnder(p, this.roots.skills)) {
       return this.files.stat(path);
@@ -594,7 +622,7 @@ export class OsExecutor implements Executor {
     await this.killAll();
     if (this.pruneTimer !== undefined) clearInterval(this.pruneTimer);
     this.pruneTimer = undefined;
-    await SandboxManager.reset();
+    if (this.available) await SandboxManager.reset();
   }
 }
 
@@ -613,10 +641,15 @@ export function launchedGroup(stdout: string, platform: NodeJS.Platform = proces
  * The OS sandbox executor: checks the platform and dependencies, starts the sandbox's proxies
  * once for this process, and kills what a previous run of this device left running.
  * Network is denied unless a command's own list allows it.
+ *
+ * When the OS sandbox is unavailable (an unsupported platform or missing dependencies) this still
+ * returns an executor, marked unavailable, so `start` keeps serving: auto mode works, and every
+ * sandbox-mode command or file operation is refused with the actionable reason
+ * ({@link sandboxUnavailableMessage}) instead of running unsandboxed or stopping the device.
  */
 export async function createOsExecutor(opts: OsExecutorOptions): Promise<OsExecutor> {
   const available = sandboxAvailability();
-  if (!available.ok) throw new Error(available.reason);
+  if (!available.ok) return new OsExecutor(opts, { unavailable: available.reason });
   const executor = new OsExecutor(opts);
   // The ask callback never allows: a destination outside the lists is refused, with a reason
   // when this runtime carries one (an older runtime would read any answer object as an allow).

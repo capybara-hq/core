@@ -71,6 +71,55 @@ describe("start: legacy policy notice", () => {
   });
 });
 
+describe("start without the OS sandbox", () => {
+  const fake = (available: boolean) => {
+    const ex = new FakeExecutor() as FakeExecutor & {
+      available?: boolean;
+      unavailableReason?: string;
+    };
+    ex.available = available;
+    ex.unavailableReason = available ? undefined : "bwrap is missing";
+    return ex;
+  };
+  const run = async (ex: FakeExecutor) => {
+    const proc = Object.assign(new EventEmitter(), { pid: 4251 });
+    const out: string[] = [];
+    const errs: string[] = [];
+    const conn: Connection = { done: Promise.resolve(0), drain: () => {}, stop: () => {} };
+    const code = await start({
+      stateDir: dir,
+      out: (l) => out.push(l),
+      err: (l) => errs.push(l),
+      proc: proc as never,
+      createExecutor: () => ex,
+      connect: () => conn,
+    });
+    return { code, out, errs: errs.join("\n") };
+  };
+
+  it("serves auto mode silently, and logs the reason for a sandbox policy", async () => {
+    writeCredential(dir, cred);
+    writePolicy(dir, { ...DEFAULT_POLICY, mode: "auto" });
+    const auto = await run(fake(false));
+    // The device starts and serves: no error, and the client is connected.
+    expect(auto.code).toBe(0);
+    expect(auto.errs).not.toContain("OS sandbox is unavailable");
+    writePolicy(dir, { ...DEFAULT_POLICY, mode: "sandbox" });
+    const sandbox = await run(fake(false));
+    expect(sandbox.code).toBe(0);
+    expect(sandbox.errs).toContain("OS sandbox is unavailable");
+    expect(sandbox.errs).toContain("bwrap is missing");
+  });
+
+  it("says nothing when the sandbox is available", async () => {
+    writeCredential(dir, cred);
+    writePolicy(dir, { ...DEFAULT_POLICY, mode: "sandbox" });
+    const ok = await run(fake(true));
+    expect(ok.code).toBe(0);
+    expect(ok.errs).not.toContain("OS sandbox is unavailable");
+  });
+});
+
 describe("start, stop, drain", () => {
   it("start writes the pid file, maps signals, and removes the pid file at the end", async () => {
     writeCredential(dir, cred);

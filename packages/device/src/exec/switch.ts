@@ -45,6 +45,11 @@ export class SwitchingExecutor implements Executor {
   readonly roots: SandboxRoots;
   /** The policy said auto mode when last checked. */
   private auto = false;
+  /**
+   * Whether the OS sandbox can run here. When it cannot, sandbox-mode operations go to the
+   * sandboxed executor and are refused there with the reason; auto mode keeps working.
+   */
+  private readonly sandboxReady: boolean;
   private watch: NodeJS.Timeout | undefined;
   /** The latest command's limits and when they came (file operations follow their decision). */
   private lastLimits: Pick<SandboxLimits, "mode"> | undefined;
@@ -58,6 +63,7 @@ export class SwitchingExecutor implements Executor {
     private readonly onSwitch?: (mode: "auto" | "sandbox") => void,
   ) {
     this.roots = sandboxed.roots;
+    this.sandboxReady = (sandboxed as { available?: boolean }).available !== false;
   }
 
   /**
@@ -103,14 +109,21 @@ export class SwitchingExecutor implements Executor {
    * The executor for file operations now. File operations carry no limits and never pass command
    * review, so they only follow an exec's decision when it is fresh: the sandboxed helper before
    * any exec and once those limits are stale (the safe default for an organization whose ceiling
-   * is sandbox), else `effectiveMode(policy, limits)`.
+   * is sandbox), else `effectiveMode(policy, limits)`. On a machine without the OS sandbox, auto
+   * mode still works: without a fresh sandbox decision the host runs them (a sandbox decision is
+   * refused by the sandboxed executor with the reason).
    */
   private async files(): Promise<Executor> {
     const policy = this.policy();
     await this.sync(policy);
-    if (policy.mode === "sandbox" || this.lastLimits === undefined) return this.sandboxed;
-    if (Date.now() - this.lastLimitsAt > FILE_OPS_DECISION_TTL_MS) return this.sandboxed;
-    return effectiveMode(policy, this.lastLimits) === "auto" ? this.host : this.sandboxed;
+    if (policy.mode === "sandbox") return this.sandboxed;
+    if (
+      this.lastLimits === undefined ||
+      Date.now() - this.lastLimitsAt > FILE_OPS_DECISION_TTL_MS
+    ) {
+      return this.sandboxReady ? this.sandboxed : this.host;
+    }
+    return this.lastLimits.mode === "sandbox" ? this.sandboxed : this.host;
   }
 
   async exec(args: DeviceExecArgs, signal: AbortSignal): Promise<ExecResult> {
