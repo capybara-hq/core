@@ -155,7 +155,9 @@ that means.
 
 When auto mode is off for the org, local devices run in sandbox mode and the kernel refuses a
 device that reports auto (`device.auto_mode_not_allowed`, as `device.unsandboxed_not_allowed` today);
-cloud devices keep the container but the network becomes the allowlist.
+cloud devices keep the container and follow the org's `cloudNetwork` setting (开放挡内网 by
+default; the allowlist when the org sets one) — a closed network is the org's choice there, not an
+automatic consequence of the platform switch (2026-11-14).
 
 ### 4.4 What goes away
 
