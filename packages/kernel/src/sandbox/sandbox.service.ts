@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import {
-  compareTiers,
   type ExecResult,
   type FileSystemHandle,
   isFileSystemGoneError,
@@ -11,7 +10,6 @@ import {
   type SandboxLimits,
   type SandboxProvider,
   type SandboxRoots,
-  type SandboxTier,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
@@ -32,14 +30,9 @@ import { readSandboxLimitOverride } from "../identity/settings.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
+import { localPolicyOf } from "../local-devices/policy-summary.js";
 import type { KernelLogger } from "../log.js";
 import { effectiveSandboxLimits, readOrgSettings } from "../orgs/settings.service.js";
-import {
-  appendMissingGrant,
-  TIER_OPEN_GRANT_KEY,
-  UNATTENDED_OPEN_TIER_ERROR,
-  unattendedTierOf,
-} from "../schedules/unattended.js";
 import { canonicalJson } from "../tools/canonical-json.js";
 import {
   type SandboxLease,
@@ -49,23 +42,23 @@ import {
   sandboxBusy,
 } from "./leases.js";
 import {
+  type AppliedLimits,
+  appliedOf,
+  type DeviceNetwork,
+  type EffectiveDevicePolicy,
+  effectiveDevicePolicy,
+  instanceLimitsJson,
+  readDeploymentDevicePolicy,
+  readInstanceLimits,
+  sameApplied,
+} from "./modes.js";
+import {
   isInternalProvider,
   LOCAL_PROVIDER,
   providerForDevice,
   type SandboxProviderEntry,
   SandboxProviders,
 } from "./providers.js";
-import {
-  type AppliedLimits,
-  appliedOf,
-  type EffectiveSandboxPolicy,
-  effectiveSandboxPolicy,
-  instanceLimitsJson,
-  limitsForTier,
-  readDeploymentSandboxPolicy,
-  readInstanceLimits,
-  sameApplied,
-} from "./tiers.js";
 import { SandboxProviderUnreachableError } from "./unreachable.js";
 
 // Moved to leases.ts (phase C); re-exported for existing importers
@@ -178,9 +171,9 @@ export type IfRunningResult<T> =
 
 /** {@link SandboxService.limitsState}: the limits of a device's instance, for its page. */
 export interface DeviceLimitsState {
-  /** The tier and egress mode the instance (or its file system) runs with; null = unknown. */
+  /** The mode and network kind the instance (or its file system) runs with; null = unknown. */
   applied: AppliedLimits | null;
-  /** The tier and egress mode it should run with now (the device's effective policy). */
+  /** The mode and network kind it should run with now (the device's effective policy). */
   effective: AppliedLimits;
   /** A cloud instance differs: its next use updates or recreates it, files kept. */
   pendingNextUse: boolean;
@@ -227,16 +220,15 @@ export const deviceFilesLost = (local = false): ApiError =>
       );
 
 /**
- * A cloud sandbox provider refused to make (or move) an instance with open egress, the open tier
- * (409; sandbox dev tiers spec §5.3): above all a provider set to refuse it (sandbox-docker /
- * sandbox-e2b `openEgress: "off"`). Details `[{ tier }]`. The provider's own error goes only to
- * the log: it may name the provider's settings.
+ * A cloud sandbox provider refused to make (or move) an instance with the open public network
+ * (409; auto mode spec §4.2): above all a provider set to refuse it (sandbox-docker /
+ * sandbox-e2b `openEgress: "off"`). The provider's own error goes only to the log: it may name
+ * the provider's settings.
  */
-export const sandboxTierRefused = (tier: SandboxTier): ApiError =>
+export const sandboxOpenNetworkRefused = (): ApiError =>
   new ApiError(
-    "sandbox.tier_refused",
-    `The cloud sandbox can't run this device at the ${tier} tier: the sandbox provider refused to create it there. An org admin can lower the tier on the device page or in the org's sandbox settings, or a super admin can allow it in the sandbox extension's settings.`,
-    [{ tier }],
+    "sandbox.open_network_refused",
+    "The cloud sandbox provider cannot give this device the open network: it refused to create the sandbox. An org admin can switch the organization's cloud network to the allowlist, or a super admin can allow the open network in the sandbox extension's settings.",
   );
 
 /**
@@ -254,9 +246,10 @@ export const sandboxCreateFailed = (): ApiError =>
  * What a failed `createFileSystem` / `create` / `update` of a cloud provider becomes: an abort,
  * a gone error, an unreachable provider and a kernel error stay as they are (their callers and the
  * tools handle them); any other error is logged (warn, redacted) and replaced by
- * {@link sandboxTierRefused} when `limits` ask for open egress (the only egress a provider's
- * config refuses), else (a create) by {@link sandboxCreateFailed}; a failed `update` below open
- * stays as it is. A kernel-internal provider (`@local`) keeps its own errors.
+ * {@link sandboxOpenNetworkRefused} when `limits` ask for the open public network (the only
+ * network a provider's config refuses), else (a create) by {@link sandboxCreateFailed}; a failed
+ * `update` below the open network stays as it is. A kernel-internal provider (`@local`) keeps its
+ * own errors.
  */
 function providerRefusal(
   log: Pick<KernelLogger, "warn">,
@@ -275,13 +268,13 @@ function providerRefusal(
   ) {
     return err;
   }
-  if (limits.egress === "open") {
-    // spec §5.3: a provider set to refuse open egress (`openEgress: "off"`) fails here
+  if (limits.mode === "auto" && limits.network.kind === "open-public") {
+    // a provider set to refuse the open network (`openEgress: "off"`) fails here
     log.warn(
-      "the sandbox provider refused an instance in the open tier; check its openEgress setting or lower sandbox.tiers.max",
-      { ...facts, tier: limits.tier, err },
+      "the sandbox provider refused an instance with the open public network; check its openEgress setting or switch the org's cloud network to the allowlist",
+      { ...facts, err },
     );
-    return sandboxTierRefused(limits.tier);
+    return sandboxOpenNetworkRefused();
   }
   if (facts.op === "update") return err;
   log.warn("the sandbox provider failed to create a device's sandbox", { ...facts, err });
@@ -326,23 +319,25 @@ function tagged<P>(
  * Sandbox config problems to tell operators at startup (English log lines):
  * - `runtime.maxRunSeconds` below `sandbox.limits.maxCommandSeconds`: long commands are cut by the
  *   run time limit (Ruling M20);
- * - `sandbox.tiers.max` is open but the current provider plugin sets `openEgress: "off"`: every
- *   creation of an open-tier instance is refused.
+ * - auto mode is allowed but the current provider plugin sets `openEgress: "off"`: every creation
+ *   of a cloud device with the open public network is refused.
  * No run duration limit (`runtime.maxRunSeconds` 0, the default) cuts no command, so there is
- * nothing to tell.
+ * nothing to tell. `autoAllowed`: whether the deployment allows auto mode now (read live; the
+ * startup config alone when absent).
  */
 export function sandboxConfigWarnings(
-  cfg: Pick<KernelConfig, "runtime" | "sandbox" | "extensionConfig">,
+  cfg: Pick<KernelConfig, "runtime" | "sandbox" | "devices" | "extensionConfig">,
   providerPlugin?: string,
+  autoAllowed: boolean = cfg.devices.autoMode !== "off",
 ): { level: "warn"; message: string }[] {
   const out: { level: "warn"; message: string }[] = [];
-  if (cfg.sandbox.tiers.max === "open" && providerPlugin !== undefined) {
+  if (autoAllowed && providerPlugin !== undefined) {
     // absent means the plugin's default ("proxy"), which creates open instances
     const pc = cfg.extensionConfig[providerPlugin] as { openEgress?: unknown } | undefined;
     if (pc?.openEgress === "off") {
       out.push({
         level: "warn",
-        message: `sandbox.tiers.max is "open" but extensionConfig."${providerPlugin}".openEgress is "off": the ${providerPlugin} plugin refuses to create cloud devices in the open tier; set openEgress to "proxy" (or "direct" for trusted deployments only), or lower sandbox.tiers.max to "dev"`,
+        message: `auto mode is allowed but extensionConfig."${providerPlugin}".openEgress is "off": the ${providerPlugin} plugin refuses to create cloud devices with the open public network; set openEgress to "proxy" (or "direct" for trusted deployments only), or switch the organization's cloud network to the allowlist`,
       });
     }
   }
@@ -476,7 +471,8 @@ export class SandboxService {
     /** The providers (read at every call: providers are ready after the extension load). */
     @Inject(SandboxProviders)
     private readonly providers: Pick<SandboxProviders, "cloud" | "forName">,
-    @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
+    @Inject(KernelConfigService)
+    private readonly config: Pick<KernelConfigService, "get" | "fieldSource">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "info" | "warn">,
     /** Background tasks lost while their process may live on (killed after a resume). */
     @Inject(BackgroundTaskStore)
@@ -533,92 +529,127 @@ export class SandboxService {
   }
 
   /**
-   * The effective sandbox policy of a device (sandbox dev tiers spec §4.2): the platform's and
-   * the org's tiers and network with the device's own tier (`devices.tier`, read fresh; a local
-   * device and a missing one have none). Without `deviceId`: a device that follows the org's
-   * default.
+   * The effective device policy of a device (auto mode spec §4.3): the platform's switch and the
+   * org's settings with the device's own mode (a local device's reported one, read fresh; a cloud
+   * device and a missing one have none). Without `deviceId`: an org-level policy with no choice.
    */
-  async devicePolicy(device: {
-    orgId: string;
-    deviceId?: string;
-  }): Promise<EffectiveSandboxPolicy> {
-    const [deployment, settings, tier] = await Promise.all([
-      readDeploymentSandboxPolicy(this.db.db, this.config),
+  async devicePolicy(device: { orgId: string; deviceId?: string }): Promise<EffectiveDevicePolicy> {
+    const [deployment, settings, mode] = await Promise.all([
+      readDeploymentDevicePolicy(this.db.db, this.config),
       readOrgSettings(this.db.db, device.orgId),
-      device.deviceId === undefined ? null : this.deviceTier(device.orgId, device.deviceId),
+      device.deviceId === undefined ? null : this.deviceChosenMode(device.orgId, device.deviceId),
     ]);
-    return effectiveSandboxPolicy(deployment, settings, tier);
-  }
-
-  /** The device's own tier (`devices.tier`); null when it follows the org or is not there. */
-  private async deviceTier(orgId: string, deviceId: string): Promise<SandboxTier | null> {
-    const row = await this.db
-      .selectFrom("devices")
-      .select("tier")
-      .where("id", "=", deviceId)
-      .where("org_id", "=", orgId)
-      .executeTakeFirst();
-    return row?.tier ?? null;
+    return effectiveDevicePolicy(deployment, settings, mode);
   }
 
   /**
-   * The device's effective sandbox limits (spec §8.4; sandbox dev tiers spec §4.2): the
-   * deployment's `sandbox.limits`, cpu / memory per the super admin's org override (C19 / Ruling
-   * M16), and the network of the effective tier ({@link devicePolicy}): egress narrowed by the
-   * org setting `sandboxEgress` (Ruling M19), widened by the tier. `opts.policy`: a policy the
-   * caller already read; `opts.tier`: limits for that tier instead (a local device's ceiling, an
-   * unattended run's cap). Cloud instances are created with them.
+   * The mode a device chose: a local device's reported one (its machine's policy summary); a cloud
+   * device's narrowing switch (`devices.mode`, `sandbox` only); null for a cloud device that
+   * follows the platform and the org, a local device with no connected machine, or an unreadable
+   * summary.
+   */
+  private async deviceChosenMode(
+    orgId: string,
+    deviceId: string,
+  ): Promise<EffectiveDevicePolicy["mode"] | null> {
+    const row = await this.db
+      .selectFrom("devices as e")
+      .leftJoin("device_machines as m", (j) =>
+        j.onRef("m.device_id", "=", "e.id").on("m.revoked_at", "is", null),
+      )
+      .select(["e.source", "e.mode", "m.local_policy"])
+      .where("e.id", "=", deviceId)
+      .where("e.org_id", "=", orgId)
+      .where("e.deleted_at", "is", null)
+      .executeTakeFirst();
+    if (row === undefined) return null;
+    if (row.source === "local") return localPolicyOf(row.local_policy)?.mode ?? null;
+    return row.mode === "sandbox" ? "sandbox" : null;
+  }
+
+  /** The device's source (`local` for a connected machine, else `cloud`); cloud when unknown. */
+  private async deviceIsLocal(device: { orgId: string; deviceId?: string }): Promise<boolean> {
+    if (device.deviceId === undefined) return false;
+    const row = await this.db
+      .selectFrom("devices")
+      .select("source")
+      .where("id", "=", device.deviceId)
+      .where("org_id", "=", device.orgId)
+      .executeTakeFirst();
+    return row?.source === "local";
+  }
+
+  /**
+   * The device's effective sandbox limits (spec §8.4; auto mode spec §4.2): the deployment's
+   * `sandbox.limits` resources, cpu / memory per the super admin's org override (C19 / Ruling
+   * M16), the effective mode and the network ({@link devicePolicy}). A local device always gets the
+   * sandbox-mode allowlist: its device intersects it with its own list in sandbox mode and ignores
+   * it in auto mode. `opts.policy`: a policy the caller already read.
    */
   async deviceLimits(
     device: { orgId: string; deviceId?: string },
-    opts: { policy?: EffectiveSandboxPolicy; tier?: SandboxTier } = {},
+    opts: { policy?: EffectiveDevicePolicy } = {},
   ): Promise<SandboxLimits> {
     const cfg = this.config.get().sandbox;
-    const [policy, override] = await Promise.all([
+    const [policy, override, local] = await Promise.all([
       opts.policy ?? this.devicePolicy(device),
       readSandboxLimitOverride(this.db.db, device.orgId),
+      this.deviceIsLocal(device),
     ]);
-    const tier = opts.tier ?? policy.tier;
-    const net = limitsForTier(policy, tier);
-    const sized = effectiveSandboxLimits(
-      { ...cfg.limits, ...net, tier, devHosts: policy.devHosts },
+    const network: DeviceNetwork = local
+      ? { kind: "allowlist", hosts: [...policy.localAllowedDomains] }
+      : policy.network;
+    return effectiveSandboxLimits(
+      {
+        cpu: cfg.limits.cpu,
+        memoryMb: cfg.limits.memoryMb,
+        diskMb: cfg.limits.diskMb,
+        // a local exec carries the allowed mode (the machine cuts its own choice to it); a cloud
+        // instance runs its device's mode (the narrowing switch included)
+        mode: local ? policy.allowedMode : policy.mode,
+        network: { kind: network.kind, hosts: [...network.hosts] },
+      },
       override,
     );
-    return {
-      cpu: sized.cpu,
-      memoryMb: sized.memoryMb,
-      diskMb: sized.diskMb,
-      egress: sized.egress,
-      allowHosts: sized.allowHosts,
-      tier: sized.tier,
-      devHosts: [...policy.devHosts],
-    };
   }
 
   /**
-   * The limits of the org's ceiling (its highest tier, {@link deviceLimits} at `ceiling`): what a
-   * local device's exec may reach at most, so what a network grant or approval is checked
-   * against.
+   * The org's sandbox-mode limits ({@link deviceLimits} with the sandbox-mode allowlist and mode
+   * `sandbox`): what a local device's sandbox mode may reach at most, so what a network grant,
+   * approval or request is checked against.
    */
   async ceilingLimits(orgId: string): Promise<SandboxLimits> {
-    const policy = await this.devicePolicy({ orgId });
-    return await this.deviceLimits({ orgId }, { policy, tier: policy.ceiling });
+    const [policy, override] = await Promise.all([
+      this.devicePolicy({ orgId }),
+      readSandboxLimitOverride(this.db.db, orgId),
+    ]);
+    const cfg = this.config.get().sandbox;
+    return effectiveSandboxLimits(
+      {
+        cpu: cfg.limits.cpu,
+        memoryMb: cfg.limits.memoryMb,
+        diskMb: cfg.limits.diskMb,
+        mode: "sandbox",
+        network: { kind: "allowlist", hosts: [...policy.localAllowedDomains] },
+      },
+      override,
+    );
   }
 
   /**
-   * The limits state of a device's instance for its page (sandbox dev tiers spec §7.1, §11.1),
-   * read without a lease: `applied` is what the instance or file system was made with or updated
-   * to (null: unknown, or no instance yet), `effective` what it should run with now.
+   * The limits state of a device's instance for its page (auto mode spec §4.2), read without a
+   * lease: `applied` is what the instance or file system was made with or updated to (null:
+   * unknown, or no instance yet), `effective` what it should run with now.
    * `pendingNextUse`: a cloud instance exists and differs; its next use applies the new limits
    * (files kept). `pendingFilesReset`: the provider fixes limits at its file system
    * (`limitsApplyAt: "fileSystem"`) and cannot `update` them, so only a file reset applies them.
-   * A local device (its machine applies the tier at each command) is never pending, and its
-   * `applied` is null. `opts.policy`: the device's effective policy when the caller already read
-   * it ({@link devicePolicy}).
+   * A local device (its machine gets the mode and network with each command) is never pending, and
+   * its `applied` is null. `opts.policy`: the device's effective policy when the caller already
+   * read it ({@link devicePolicy}).
    */
   async limitsState(
     device: { orgId: string; deviceId: string },
-    opts: { policy?: EffectiveSandboxPolicy } = {},
+    opts: { policy?: EffectiveDevicePolicy } = {},
   ): Promise<DeviceLimitsState> {
     const [policy, row, p] = await Promise.all([
       opts.policy ?? this.devicePolicy(device),
@@ -630,7 +661,10 @@ export class SandboxService {
         .executeTakeFirst(),
       this.providerOf(device.deviceId, device.orgId),
     ]);
-    const effective: AppliedLimits = { tier: policy.tier, egress: policy.egress };
+    const effective = appliedOf({
+      mode: policy.mode,
+      network: policy.network,
+    });
     if (p === undefined || p.plugin === LOCAL_PROVIDER || row === undefined) {
       return { applied: null, effective, pendingNextUse: false, pendingFilesReset: false };
     }
@@ -661,9 +695,9 @@ export class SandboxService {
   }
 
   /**
-   * Whether the running instance of `row` must get `want` before use (spec §7.1): a cloud
-   * instance whose recorded tier or egress mode differs, unless only a file reset could apply it
-   * ({@link fsBound}). `want` null: a local device (the tier travels with each command).
+   * Whether the running instance of `row` must get `want` before use (auto mode spec §4.2): a
+   * cloud instance whose recorded mode or network kind differs, unless only a file reset could
+   * apply it ({@link fsBound}). `want` null: a local device (the mode travels with each command).
    */
   private mustApply(row: Row, p: SandboxProviderEntry, want: SandboxLimits | null): boolean {
     if (want === null) return false;
@@ -850,66 +884,17 @@ export class SandboxService {
   }
 
   /**
-   * The limits a cloud device's instance must run with for this use (sandbox dev tiers spec
-   * §7.1), read fresh; null for a local device (its machine gets the tier with each command).
-   * `row`: the instance row read under the exclusive lease (read here when absent).
-   *
-   * A scheduled run without a person on a cloud device that may run in the open tier, without the
-   * task's `tier:open` grant, is refused (`device.tier_not_granted`, recorded in the task run's
-   * `missing_grants`): the tier belongs to the shared instance, so it is not switched under the
-   * device's attended sessions (spec §11.4). The tier it may run in is the effective one, or for a
-   * provider whose limits are fixed at its file system the higher of that and the recorded one
-   * (a NULL record there counts as open: nothing says the file system is narrower).
+   * The limits a cloud device's instance must run with for this use (auto mode spec §4.2), read
+   * fresh; null for a local device (its machine gets the mode and network with each command).
+   * A scheduled run has no separate mode grant: the effective policy applies to it as to any use.
    */
   private async wantedLimits(
-    ctx: SandboxUseContext,
+    _ctx: SandboxUseContext,
     p: SandboxProviderEntry,
-    row?: Row,
+    _row?: Row,
   ): Promise<SandboxLimits | null> {
     if (p.plugin === LOCAL_PROVIDER) return null;
-    const policy = await this.devicePolicy(ctx);
-    const runId = ctx.actor.runId;
-    if (runId !== undefined && (await this.mayRunOpen(ctx, p, policy.tier, row))) {
-      const u = await unattendedTierOf(this.db.db, runId, ctx.deviceId);
-      if (u !== null && !u.openGranted) {
-        await appendMissingGrant(this.db.db, u.taskRunId, TIER_OPEN_GRANT_KEY).catch(
-          (err: unknown) =>
-            this.log.warn("cannot record a missing task grant", { taskRunId: u.taskRunId, err }),
-        );
-        this.log.warn("scheduled run refused on a cloud device in the open tier", {
-          deviceId: ctx.deviceId,
-          taskRunId: u.taskRunId,
-        });
-        throw new ApiError("device.tier_not_granted", UNATTENDED_OPEN_TIER_ERROR);
-      }
-    }
-    return await this.deviceLimits(ctx, { policy });
-  }
-
-  /**
-   * Whether the device's instance may run in the open tier during this use (see
-   * {@link wantedLimits}): the effective tier is open, or the provider fixes limits at its file
-   * system and the recorded tier is open or unknown.
-   */
-  private async mayRunOpen(
-    ctx: SandboxUseContext,
-    p: SandboxProviderEntry,
-    tier: SandboxTier,
-    row?: Row,
-  ): Promise<boolean> {
-    if (tier === "open") return true;
-    if (p.impl.limitsApplyAt !== "fileSystem") return false;
-    const r =
-      row ??
-      (await this.db
-        .selectFrom("device_instances")
-        .selectAll()
-        .where("device_id", "=", ctx.deviceId)
-        .where("org_id", "=", ctx.orgId)
-        .executeTakeFirst());
-    if (r === undefined || r.fs_status !== "ready" || r.provider !== p.plugin) return false;
-    const applied = readInstanceLimits(r.instance_limits).applied;
-    return applied === null || compareTiers(applied.tier, "open") >= 0;
+    return await this.deviceLimits(_ctx);
   }
 
   /**
@@ -1004,7 +989,7 @@ export class SandboxService {
    * An instance recorded `running` (with the current provider, not the `gone` instance) is used
    * under a shared lease; otherwise the exclusive lease (with intent) makes it run and is
    * downgraded. One token serves both, so the waiter passes its own intent. `wantNow` reads the
-   * limits this use wants ({@link wantedLimits}), again after each wait, so a tier narrowed
+   * limits this use wants ({@link wantedLimits}), again after each wait, so a mode narrowed
    * during the wait is never used with the old, wider limits.
    */
   private async enter(
@@ -1024,7 +1009,7 @@ export class SandboxService {
         if (signal.aborted) throw abortReason(signal);
         if (waited) want = await wantNow();
         const row = await this.readRow(ctx);
-        // an instance whose tier or egress must change goes through the exclusive lease
+        // an instance whose mode or network must change goes through the exclusive lease
         const ready = (r: Row | undefined): r is Row & { handle: SandboxHandle } =>
           this.usable(r, p, gone) && !this.mustApply(r, p, want);
         if (ready(row)) {
@@ -1032,7 +1017,7 @@ export class SandboxService {
           if (lease) {
             if (intent) await this.clearIntent(env, token);
             intent = false;
-            // after a wait, the limits again under the lease: a tier narrowed just before the
+            // after a wait, the limits again under the lease: a mode narrowed just before the
             // holder we waited for let go is applied now (asShared checks `ready` with them)
             if (waited) {
               try {
@@ -1706,7 +1691,7 @@ export class SandboxService {
       await this.dropUnrecordedFiles(id, row.provider, signal);
     }
     // read under the lease, after the fence moved: a value read before the wait may be stale
-    // (another replica may have changed the tier meanwhile)
+    // (another replica may have changed the mode meanwhile)
     const want = await this.wantedLimits(ctx, p, row);
     const handle = row.handle;
     const createdAt = row.created_at.getTime();
@@ -1800,7 +1785,7 @@ export class SandboxService {
       destroyed_at: null,
       sweep_failed_at: null,
     });
-    // the device's effective limits apply at creation (a changed tier or egress mode is applied
+    // the device's effective limits apply at creation (a changed mode or network kind is applied
     // on use, see applyLimits; other changes reach only instances created afterwards)
     const limits = want ?? (await this.deviceLimits(ctx));
     // the record says what is in force: a provider whose limits are fixed at its file system
@@ -1890,8 +1875,8 @@ export class SandboxService {
   }
 
   /**
-   * Under the exclusive lease, on the running instance `handle` of `row` whose tier or egress
-   * mode differs from `want` (sandbox dev tiers spec §7.1): the provider's `update` when it has
+   * Under the exclusive lease, on the running instance `handle` of `row` whose mode or network
+   * kind differs from `want` (auto mode spec §4.2): the provider's `update` when it has
    * one; `updated` records `want`. Otherwise (`recreate`, no `update`, or the instance found gone
    * by `update`) the instance is destroyed and created again on the kept files, which records
    * `want` and is returned (the caller reports a restart). A provider whose limits are fixed at
@@ -1932,7 +1917,7 @@ export class SandboxService {
           // the instance may run with half-applied limits and cannot be recreated here: stop it,
           // so the next use resumes it and applies them again
           await this.quarantine(held, id, handle, p, fence);
-          // a provider bound to its file system that refuses the new tier (E2B, `openEgress: "off"`)
+          // a provider bound to its file system that refuses the new network (E2B, `openEgress: "off"`)
           throw providerRefusal(
             this.log,
             err,

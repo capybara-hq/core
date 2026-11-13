@@ -3,7 +3,7 @@ import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
-import type { DeviceSandboxLevel } from "../runtime/context/device-paths.js";
+import type { DeviceModeLevel } from "../runtime/context/device-paths.js";
 import { isInternalProvider, SandboxProviders } from "../sandbox/providers.js";
 import { deviceNotFound, sandboxUnavailable } from "../sandbox/sandbox.service.js";
 import { DeviceAccess } from "./access.js";
@@ -46,20 +46,15 @@ export class ConversationDevices {
       Partial<Pick<SandboxProviders, "forName">>,
     @Inject(DeviceAccess) private readonly access: Pick<DeviceAccess, "usable">,
     @Inject(DevicesService)
-    private readonly devices: Pick<DevicesService, "ensureDefault" | "sandboxLevel">,
+    private readonly devices: Pick<DevicesService, "ensureDefault" | "modeLevel">,
   ) {}
 
   /**
-   * The sandbox level a call in the device runs at now ({@link DevicesService.sandboxLevel}),
-   * recorded for the model in `device_paths` (sandbox dev tiers spec §11.5); `runId`: the calling
-   * run, whose scheduled-run cap applies.
+   * The mode and network a call in the device runs at now ({@link DevicesService.modeLevel}),
+   * recorded for the model in `device_paths` (auto mode spec §4.2).
    */
-  sandboxLevel(
-    orgId: string,
-    deviceId: string,
-    runId?: string,
-  ): Promise<DeviceSandboxLevel | null> {
-    return this.devices.sandboxLevel(orgId, deviceId, runId);
+  modeLevel(orgId: string, deviceId: string): Promise<DeviceModeLevel | null> {
+    return this.devices.modeLevel(orgId, deviceId);
   }
 
   /**

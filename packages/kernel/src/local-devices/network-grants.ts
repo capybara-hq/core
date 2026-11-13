@@ -8,8 +8,9 @@ import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { budgetRunOf } from "../runtime/subagents/limits.js";
-import { appendMissingGrant, taskGrantsRunOf, unattendedTierOf } from "../schedules/unattended.js";
-import { deviceFeaturesOf, isolationOf } from "./policy-summary.js";
+import type { SandboxMode } from "../sandbox/modes.js";
+import { appendMissingGrant, taskGrantsRunOf } from "../schedules/unattended.js";
+import { deviceFeaturesOf, localPolicyOf } from "./policy-summary.js";
 
 /** The most hosts one exec's grants carry (the device protocol's limit). */
 export const MAX_GRANT_HOSTS = 100;
@@ -218,41 +219,26 @@ export class NetworkGrants {
   }
 
   /**
-   * The tier rule of an unattended run on `deviceId` (sandbox dev tiers spec §11.4), read fresh:
-   * null for an attended run; otherwise the task run and whether the task grants `tier:open` on
-   * this device (`unattendedTierOf`).
+   * The mode a local device's connected machine last reported (its policy summary), read fresh at
+   * each exec: null when no machine is connected or the program has no summary. A program without
+   * the `mode` feature behaves as an allowlisted sandbox, so it reports `sandbox`.
    */
-  async unattendedTier(input: {
-    runId: string;
-    deviceId: string;
-  }): Promise<{ taskRunId: string; openGranted: boolean } | null> {
-    return await unattendedTierOf(this.db.db, input.runId, input.deviceId);
-  }
-
-  /** Records `key` in the task run's `missing_grants` (once). */
-  async recordMissing(taskRunId: string, key: string): Promise<void> {
-    await appendMissingGrant(this.db.db, taskRunId, key);
-  }
-
-  /**
-   * Whether the device's active machine runs commands without a sandbox
-   * (`device_machines.local_policy.isolation`, read fresh at each exec, spec §4.3), read from the
-   * stored JSON's isolation field alone ({@link isolationOf}). Fails closed for a program that
-   * applies tiers (feature `tiers`, which always sends a summary): no summary or any isolation but
-   * `sandbox` counts as unsandboxed. False without a machine, or for an older program without
-   * tiers (it has no unsandboxed mode).
-   */
-  async unsandboxed(deviceId: string): Promise<boolean> {
+  async reportedMode(deviceId: string): Promise<SandboxMode | null> {
     const row = await this.db
       .selectFrom("device_machines")
       .select(["local_policy", "features"])
       .where("device_id", "=", deviceId)
       .where("revoked_at", "is", null)
       .executeTakeFirst();
-    if (row === undefined) return false;
-    const isolation = isolationOf(row.local_policy);
-    if (isolation !== null) return isolation === "none";
-    return deviceFeaturesOf(row.features).includes("tiers");
+    if (row === undefined) return null;
+    const summary = localPolicyOf(row.local_policy);
+    if (summary !== null) return summary.mode;
+    return deviceFeaturesOf(row.features).includes("mode") ? null : "sandbox";
+  }
+
+  /** Records `key` in the task run's `missing_grants` (once). */
+  async recordMissing(taskRunId: string, key: string): Promise<void> {
+    await appendMissingGrant(this.db.db, taskRunId, key);
   }
 
   /** The runs of the tree whose budget run is `root`. */
@@ -273,26 +259,22 @@ const normalize = (host: string): string => {
 const covers = (pattern: string, host: string): boolean =>
   pattern === host || (pattern.startsWith("*.") && host.endsWith(pattern.slice(1)));
 
-/** Whether the org's effective egress lets a command reach `host`. */
-export function orgAllows(
-  host: string,
-  limits: Pick<SandboxLimits, "egress" | "allowHosts">,
-): boolean {
-  if (limits.egress === "none") return false;
-  if (limits.egress === "open") return true;
+/** Whether the org's sandbox-mode network lets a command reach `host`. */
+export function orgAllows(host: string, limits: Pick<SandboxLimits, "network">): boolean {
+  if (limits.network.kind === "open-public") return true;
   const h = normalize(host);
-  return limits.allowHosts.some((p) => covers(p.toLowerCase(), h));
+  return limits.network.hosts.some((p) => covers(p.toLowerCase(), h));
 }
 
 /**
- * The kernel's own layer for a device's report (spec §4.1 item 3): it trusts the device's word that
- * a host was refused, never its word that the org allows it. A host the device calls `device` that
- * the org's effective egress (`limits`, read for this exec) does not allow becomes `org`; one that
- * is no valid host name becomes `address`. Other layers are kept.
+ * The kernel's own layer for a device's report (auto mode spec §4.2): it trusts the device's word
+ * that a host was refused, never its word that the org allows it. A host the device calls `device`
+ * that the org's sandbox network (`limits`, read for this exec) does not allow becomes `org`; one
+ * that is no valid host name becomes `address`. Other layers are kept.
  */
 export function relayer(
   blocked: NetworkBlockedHost[],
-  limits: Pick<SandboxLimits, "egress" | "allowHosts">,
+  limits: Pick<SandboxLimits, "network">,
 ): NetworkBlockedHost[] {
   return blocked.map((b) => {
     if (b.layer !== "device") return b;
@@ -305,13 +287,13 @@ export function relayer(
 }
 
 /**
- * `grants` cut to the hosts the org's effective egress (`limits`, read for this exec) admits, or
- * undefined when none is left. The device intersects them with the limits too; the kernel does
- * it first so a grant never reaches a device beyond what the org allows.
+ * `grants` cut to the hosts the org's sandbox network (`limits`, read for this exec) admits, or
+ * undefined when none is left. The device intersects them with the limits too; the kernel does it
+ * first so a grant never reaches a device beyond what the org allows.
  */
 export function grantsWithin(
   grants: DeviceExecGrants | undefined,
-  limits: Pick<SandboxLimits, "egress" | "allowHosts">,
+  limits: Pick<SandboxLimits, "network">,
 ): DeviceExecGrants | undefined {
   if (grants === undefined) return undefined;
   const hosts = grants.hosts.filter((h) => orgAllows(h, limits));

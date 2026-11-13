@@ -63,8 +63,8 @@ export class OrgSettingsOperations implements OnModuleInit {
             next: "Through this tool the org's sandbox network may only be narrowed (no new hosts, not back from none); if the deployment disables sandbox network access, sandboxEgress can only be none. To widen it, ask an org admin to change it in the organization settings on the web.",
           },
           {
-            code: "org.sandbox_tier_not_allowed",
-            next: "Through this tool the org's sandbox level may only be lowered, never above the platform's sandbox.tiers (org-settings.get shows both); to raise it, ask an org admin to change it in the organization settings on the web.",
+            code: "org.auto_mode_not_allowed",
+            next: "Through this tool the org's auto mode may only be turned off, never on (the platform may turn it off too; org-settings.get shows both); to allow it, ask an org admin to change it in the organization settings on the web.",
           },
           {
             code: "theme.not_available",
@@ -107,9 +107,7 @@ export class OrgSettingsOperations implements OnModuleInit {
           const warn = i.platformTool === "off" || i.platformTool === "read-only";
           return {
             zh: `修改组织设置：${zhParts.join("，")}${
-              warn
-                ? "（之后智能体不能再用平台工具" + (i.platformTool === "off" ? "" : "写入") + "）"
-                : ""
+              warn ? `（之后智能体不能再用平台工具${i.platformTool === "off" ? "" : "写入"}）` : ""
             }`,
             en: `Update the org settings: ${enParts.join(", ")}${
               warn

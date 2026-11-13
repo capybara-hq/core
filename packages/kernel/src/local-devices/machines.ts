@@ -24,7 +24,6 @@ import { deviceRevokedTopic } from "./keys.js";
 import { DEVICE_OP_RESOLVE_JOB, deviceOpReportedJobId } from "./policy-op-jobs.js";
 import {
   deviceFeaturesOf,
-  isolationOf,
   localPolicyDiff,
   localPolicyOf,
   opExplains,
@@ -207,13 +206,9 @@ export class MachinesService {
    * decision 2026-11-08), so conversations get the files-reset notice. A previous machine that
    * never said hello has no known roots: nothing to compare. The reported features (known ones
    * only) and local policy summary (null when absent or malformed) replace the stored ones, so a
-   * program downgraded to one without them is no longer sent what it cannot do. A summary the
-   * kernel cannot read (`hello.policy` dropped by the frame parser) is kept as its isolation
-   * alone, read from `rawPolicy` (the frame's raw `policy`; {@link isolationOf}: anything but
-   * `sandbox` is `none`), so it never hides that commands run without a sandbox. A reported
-   * isolation that differs from the stored one (none stored counts as `sandbox`) is audited
-   * `device.isolation_reported` (sandbox dev tiers spec §10.4), once per change; a change of what
-   * the owner sets, made on the machine while it was away, is audited `device.policy_changed`
+   * program downgraded to one without them is no longer sent what it cannot do. The summary is the
+   * device's mode and sandbox-mode allowlist; a change of what the owner sets, made on the machine
+   * while it was away, is audited `device.policy_changed` / `device.mode_changed`
    * ({@link reportedPolicy}). The outcomes of its recent policy ops (`recentOps`) backfill the
    * platform's ops still pending on the row ({@link backfillOps}).
    */
@@ -344,12 +339,11 @@ export class MachinesService {
 
   /**
    * Stores the local policy summary a connected program pushed after its hello (a `policy` frame:
-   * its policy file changed on the machine, its localhost proxy guard flipped, a new tier
-   * ceiling), read and audited as the hello's ({@link recordHello}): an unreadable summary keeps
-   * its isolation alone (`rawPolicy`); a change the owner made on the machine is audited
-   * `device.policy_changed` (`via: "device"`), else a changed isolation `device.isolation_reported`.
-   * The next sandbox call then records a new `device_paths` event when the facts the model is told
-   * changed. A revoked machine is left alone.
+   * its policy file changed on the machine: its mode or its sandbox-mode allowlist), read and
+   * audited as the hello's ({@link recordHello}). A change the owner made on the machine is
+   * audited `device.policy_changed` / `device.mode_changed`. The next sandbox call then records a
+   * new `device_paths` event when the facts the model is told changed. A revoked machine is left
+   * alone.
    */
   @Transactional()
   async recordPolicy(
@@ -375,15 +369,15 @@ export class MachinesService {
   }
 
   /**
-   * The summary to store for one a program reported (hello or `policy` frame): the parsed one,
-   * else its raw isolation alone, else null. When both the stored and the reported summary are
-   * readable and what the owner sets changed ({@link localPolicyDiff}) by no `policy` op the
-   * platform sent ({@link opExplains}: its answer may come after the machine's own report), the
-   * owner changed it on the machine (`capybara-device policy ...`): audited
-   * `device.policy_changed` with `via: "device"`, the isolation with it, so the device page lists
-   * it beside the platform's changes; one an op explains is not audited here (the op's answer
-   * is). Otherwise a reported isolation that differs from the stored one (none stored counts as
-   * `sandbox`) is audited `device.isolation_reported`. A summary reported again is no change. Runs in the caller's transaction, with the machine's row locked.
+   * The summary to store for one a program reported (hello or `policy` frame): the parsed one, else
+   * null. When both the stored and the reported summary are readable and what the owner sets
+   * changed ({@link localPolicyDiff}) by no `policy` op the platform sent ({@link opExplains}: its
+   * answer may come after the machine's own report), the owner changed it on the machine
+   * (`capybara-device mode` / `capybara-device policy ...`): the host changes are audited
+   * `device.policy_changed` and the mode change `device.mode_changed`, both `via: "device"`, so the
+   * device page lists them beside the platform's changes; one an op explains is not audited here
+   * (the op's answer is). A summary reported again is no change. Runs in the caller's transaction,
+   * with the machine's row locked.
    */
   private async reportedPolicy(
     machineId: string,
@@ -395,8 +389,8 @@ export class MachinesService {
       pending_policy_ops: unknown;
     },
     reported: DeviceLocalPolicySummary | undefined,
-    rawPolicy: unknown,
-  ): Promise<DeviceLocalPolicySummary | { isolation: "sandbox" | "none" } | null> {
+    _rawPolicy: unknown,
+  ): Promise<DeviceLocalPolicySummary | null> {
     const summary = localPolicyOf(reported);
     const prev = localPolicyOf(self.local_policy);
     const diff = summary !== null && prev !== null ? localPolicyDiff(prev, summary) : null;
@@ -405,40 +399,42 @@ export class MachinesService {
       const byOp = pendingPolicyOpsOf(self.pending_policy_ops).some(
         (op) => op.until > now && opExplains(op, diff),
       );
-      // the platform's op: its answer lists it (the isolation with it)
       if (byOp) return summary;
-      await audit(this.db.db, {
+      const base = {
         actorAccountId: self.account_id,
         orgId: self.org_id,
-        action: "device.policy_changed",
         target: self.device_id,
-        detail: {
-          add: diff.add,
-          remove: diff.remove,
-          ...(diff.tier !== undefined && { tier: diff.tier.to, tierFrom: diff.tier.from }),
-          ...(diff.localhost !== undefined && { localhost: diff.localhost }),
-          ...(diff.isolation !== undefined && { isolation: diff.isolation }),
-          ...(diff.remoteGrants !== undefined && { remoteGrants: diff.remoteGrants }),
-          by: self.account_id,
-          via: "device",
-          machineId,
-          approvalId: null,
-        },
-      });
+      };
+      if (diff.add.length > 0 || diff.remove.length > 0) {
+        await audit(this.db.db, {
+          ...base,
+          action: "device.policy_changed",
+          detail: {
+            add: diff.add,
+            remove: diff.remove,
+            by: self.account_id,
+            via: "device",
+            machineId,
+            approvalId: null,
+          },
+        });
+      }
+      if (diff.mode !== undefined) {
+        await audit(this.db.db, {
+          ...base,
+          action: "device.mode_changed",
+          detail: {
+            from: diff.mode.from,
+            to: diff.mode.to,
+            by: self.account_id,
+            via: "device",
+            machineId,
+          },
+        });
+      }
       return summary;
     }
-    const isolation = summary?.isolation ?? isolationOf(rawPolicy);
-    const before = isolationOf(self.local_policy) ?? "sandbox";
-    if (isolation !== null && isolation !== before) {
-      await audit(this.db.db, {
-        actorAccountId: self.account_id,
-        orgId: self.org_id,
-        action: "device.isolation_reported",
-        target: self.device_id,
-        detail: { machineId, isolation, previous: before },
-      });
-    }
-    return summary ?? (isolation === null ? null : { isolation });
+    return summary;
   }
 
   /** Marks the machine seen (a ping); writes at most once every 60 seconds. */

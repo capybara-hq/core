@@ -37,11 +37,8 @@ export const ERROR_CODES = {
   "org.sandbox_egress_not_allowed": 400,
   /** The org asked for auto mode where the platform turned it off, or widened it through a token. */
   "org.auto_mode_not_allowed": 400,
-  "org.sandbox_tier_not_allowed": 400,
   /** A deployment setting set in the startup config (file, Nacos or env): read-only in the admin console. */
   "deployment.setting_readonly": 409,
-  /** Raising the platform's sandbox tiers through an API token or the Platform tool (only narrowing). */
-  "deployment.sandbox_tier_not_allowed": 400,
   /** Turning the platform's auto mode on through an API token or the Platform tool (only off). */
   "deployment.auto_mode_not_allowed": 400,
   "member.not_found": 404,
@@ -335,8 +332,8 @@ export const ERROR_CODES = {
   "attachment.too_many_pending": 429,
   "sandbox.unavailable": 503,
   "sandbox.busy": 409,
-  /** A cloud sandbox provider refused the device's tier (its config refuses open egress). */
-  "sandbox.tier_refused": 409,
+  /** A cloud sandbox provider refused an instance with the open public network (its `openEgress` is `off`). */
+  "sandbox.open_network_refused": 409,
   /** A cloud sandbox provider failed to create a device's sandbox for another reason. */
   "sandbox.create_failed": 502,
   /** A sandbox file path the kernel reads is not absolute or not under the sandbox roots. */
@@ -377,20 +374,16 @@ export const ERROR_CODES = {
   /** The device cannot change its network policy from the platform (cloud, or an older program). */
   "device.policy_unsupported": 409,
   /**
-   * The device runs commands without a sandbox (its owner set it locally), which the org or the
-   * platform does not allow, or a scheduled run without the task's `tier:open` grant uses it
-   * (sandbox dev tiers spec §4.3, §11.4); checked at each command.
+   * The device's machine reports auto mode while the organization (or the platform) allows only
+   * sandbox mode (auto mode spec §4.3); checked at each command. The message names
+   * `capybara-device mode sandbox`.
    */
-  "device.unsandboxed_not_allowed": 403,
+  "device.auto_mode_not_allowed": 403,
   /**
-   * A scheduled run uses a cloud device whose sandbox tier is open without the task's `tier:open`
-   * grant (sandbox dev tiers spec §11.4).
+   * A device's mode is not a stored setting: a local device's mode lives on its machine
+   * (`capybara-device mode` or the device page's policy op), and a cloud device has none to choose.
    */
-  "device.tier_not_granted": 403,
-  /** A device's sandbox tier above the org's or the platform's highest (sandbox dev tiers §4.1). */
-  "device.tier_not_allowed": 400,
-  /** A local device's tier is kept on its machine (`policy` op or the local CLI), not the row. */
-  "device.tier_on_device": 409,
+  "device.mode_on_device": 409,
   /** Device sign-in (RFC 8628 style): the person has not approved the code yet; keep polling. */
   "device_sign_in.authorization_pending": 400,
   /** Device sign-in: the program polls faster than the interval; add 5 seconds and keep polling. */

@@ -642,10 +642,23 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       }),
       tier: z.enum(["strict", "dev", "open"]).optional(),
       isolation: z.enum(["sandbox", "none"]).optional(),
-      network: z.literal("none").optional(),
+      /** The current network (`none` on events recorded before auto mode). */
+      network: z
+        .union([
+          z.literal("none"),
+          z.object({
+            kind: z.enum(["open-public", "allowlist"]),
+            hosts: z.array(z.string()),
+          }),
+        ])
+        .optional(),
       localhost: z.enum(["on", "off-proxy-detected", "off"]).optional(),
       unixSockets: z.enum(["roots", "all-masked", "off"]).optional(),
       unattended: z.literal(true).optional(),
+      /** Auto mode: the mode and its ceiling, and whether the device is a connected machine. */
+      mode: z.enum(["auto", "sandbox"]).optional(),
+      allowedMode: z.enum(["auto", "sandbox"]).optional(),
+      local: z.boolean().optional(),
     }),
   ),
   /** 工具调用开始执行之前写入（续跑时「有开始无结果」的调用记为结果未知，不再执行）。 */

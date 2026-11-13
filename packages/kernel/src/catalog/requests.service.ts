@@ -22,7 +22,7 @@ import {
   OrgSettingsService,
   readOrgSettings,
 } from "../orgs/settings.service.js";
-import { baseSandboxEgress } from "../sandbox/tiers.js";
+import { orgSandboxNetwork } from "../sandbox/modes.js";
 import { CatalogService, type MarketplaceImportResult } from "./catalog.service.js";
 import { CatalogScopeService } from "./catalog-scope.service.js";
 import { assertEntryNotDeprecated, loadMarketplaceEntry } from "./marketplaces.service.js";
@@ -349,21 +349,11 @@ export class CatalogRequestsService {
     const t = this.db;
     await this.orgLock.lockAndAuthorize(orgId, actor, "catalog.request");
     const hosts = [...new Set(input.hosts.map((h) => h.toLowerCase()))].sort();
-    const deployment = (await this.orgSettings.deployment()).sandboxEgress;
-    if (deployment.mode === "none") throw deploymentEgressNone();
+    if (this.config.get().sandbox.limits.egress === "none") throw deploymentEgressNone();
+    const deployment = (await this.orgSettings.deployment()).cloudNetwork;
     const settings = await readOrgSettings(t, orgId);
-    if (settings.sandboxEgress?.mode === "none") {
-      throw new ApiError(
-        "catalog.request_invalid",
-        "The organization has sandbox network turned off; ask an admin to turn it on first.",
-      );
-    }
-    // the org's base list: the hosts a strict device reaches (the tiers only widen it)
-    const effective = baseSandboxEgress(
-      { egress: deployment.mode, allowHosts: deployment.allowHosts },
-      settings.sandboxEgress,
-    );
-    if (hosts.every((h) => orgAllows(h, effective))) {
+    const network = orgSandboxNetwork(deployment, settings.cloudNetwork);
+    if (hosts.every((h) => orgAllows(h, { network }))) {
       throw new ApiError(
         "catalog.request_invalid",
         "This organization's sandbox network already allows these hosts; nothing to request",
@@ -848,21 +838,12 @@ export class CatalogRequestsService {
     opts: RequestActorOpts,
   ): Promise<void> {
     const hosts = (detail as Partial<NetworkRequestDetail> | null)?.hosts ?? [];
-    const deployment = (await this.orgSettings.deployment()).sandboxEgress;
-    if (deployment.mode === "none") throw deploymentEgressNone();
-    const current = (await readOrgSettings(this.db, orgId)).sandboxEgress;
-    if (current?.mode === "none") {
-      throw new ApiError(
-        "catalog.request_invalid",
-        "The organization has sandbox network turned off; turn it on in the organization settings first",
-      );
-    }
-    // the org's base list: the hosts a strict device reaches (the tiers only widen it)
-    const effective = baseSandboxEgress(
-      { egress: deployment.mode, allowHosts: deployment.allowHosts },
-      current,
-    );
-    const missing = hosts.filter((h) => !orgAllows(h, effective));
+    if (this.config.get().sandbox.limits.egress === "none") throw deploymentEgressNone();
+    const deployment = (await this.orgSettings.deployment()).cloudNetwork;
+    const current = (await readOrgSettings(this.db, orgId)).cloudNetwork;
+    // the org's sandbox network: the hosts its sandboxed devices reach now
+    const network = orgSandboxNetwork(deployment, current);
+    const missing = hosts.filter((h) => !orgAllows(h, { network }));
     if (missing.length === 0) return;
     const base = current?.allowHosts ?? deployment.allowHosts;
     const allowHosts = [...new Set([...base, ...missing])];
@@ -872,11 +853,11 @@ export class CatalogRequestsService {
         `The organization's sandbox allowlist would exceed ${ORG_SANDBOX_ALLOW_HOSTS_MAX} hosts; remove some in the organization settings first`,
       );
     }
-    // approving widens the org's base list: only a person in a session does that, never an API
-    // token (sandbox dev tiers spec §7.2; the Platform tool has no decide operation at all)
+    // approving widens the org's network allowlist: only a person in a session does that, never an
+    // API token (auto mode spec §4.3; the Platform tool has no decide operation at all)
     await this.orgSettings.update(
       orgId,
-      { sandboxEgress: { mode: "allowlist", allowHosts } },
+      { cloudNetwork: { mode: "allowlist", allowHosts } },
       actor,
       opts.actorTokenId,
       { requestId },

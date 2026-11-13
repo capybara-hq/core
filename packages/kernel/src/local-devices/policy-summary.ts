@@ -1,15 +1,10 @@
-import {
-  type DeviceFeature,
-  type DeviceLocalPolicySummary,
-  isSandboxTier,
-  type SandboxTier,
-} from "@capybara-hq/plugin-sdk";
+import type { DeviceFeature, DeviceLocalPolicySummary } from "@capybara-hq/plugin-sdk";
 
 const KNOWN_FEATURES: readonly DeviceFeature[] = [
   "networkReport",
   "policyOp",
   "policyOpId",
-  "tiers",
+  "mode",
 ];
 
 /**
@@ -22,65 +17,28 @@ export function deviceFeaturesOf(v: unknown): DeviceFeature[] {
 }
 
 /**
- * `v` as a local policy summary (network ask-to-allow spec §5.4), or null when it is absent or not
- * a valid one. The device is the authority on its policy: the kernel only keeps what it last said,
- * for the device page and to pick a card's options, never to decide what a command may reach.
+ * `v` as a local policy summary (auto mode spec §4.1), or null when it is absent or not a valid
+ * one. The device is the authority on its policy: the kernel only keeps what it last said, for the
+ * device page and the `device_paths` event, never to decide what a command may reach.
  */
 export function localPolicyOf(v: unknown): DeviceLocalPolicySummary | null {
   if (typeof v !== "object" || v === null || Array.isArray(v)) return null;
   const o = v as Record<string, unknown>;
-  if (o.tier !== undefined && !isSandboxTier(o.tier)) return null;
-  if (!isSandboxTier(o.effectiveTier)) return null;
-  if (o.isolation !== "sandbox" && o.isolation !== "none") return null;
-  if (o.localhost !== "on" && o.localhost !== "off-proxy-detected" && o.localhost !== "off") {
-    return null;
-  }
-  if (o.unixSockets !== "roots" && o.unixSockets !== "all-masked" && o.unixSockets !== "off") {
-    return null;
-  }
-  if (o.remoteGrants !== "owner" && o.remoteGrants !== "off") return null;
+  if (o.mode !== "auto" && o.mode !== "sandbox") return null;
   if (!Array.isArray(o.allowedDomains)) return null;
   if (!o.allowedDomains.every((d): d is string => typeof d === "string")) return null;
-  return {
-    ...(o.tier !== undefined && { tier: o.tier }),
-    effectiveTier: o.effectiveTier,
-    isolation: o.isolation,
-    localhost: o.localhost,
-    unixSockets: o.unixSockets,
-    allowedDomains: [...o.allowedDomains],
-    remoteGrants: o.remoteGrants,
-  };
-}
-
-/**
- * The isolation a policy summary states, read from its `isolation` field alone (a hello's raw
- * `policy` or the stored column), so a summary the kernel cannot otherwise read (a newer program's
- * new value elsewhere, a broken one) still tells whether commands run without a sandbox: `sandbox`
- * only when it says exactly that, `none` for any other present summary (fail closed), null when
- * there is none.
- */
-export function isolationOf(v: unknown): "sandbox" | "none" | null {
-  if (v === undefined || v === null) return null;
-  if (typeof v === "object" && !Array.isArray(v)) {
-    return (v as { isolation?: unknown }).isolation === "sandbox" ? "sandbox" : "none";
-  }
-  return "none";
+  return { mode: o.mode, allowedDomains: [...o.allowedDomains] };
 }
 
 /**
  * What changed between two local policy summaries, in the owner's terms (the device page's change
- * list, sandbox dev tiers spec §10.4): hosts added to and removed from the allowlist, the chosen
- * tier (`null`: follows the org's default), the localhost access, the isolation and whether the
- * machine accepts the platform's changes. Facts the owner does not set (the effective tier, unix
- * sockets) are left out. Each field is present only when it changed.
+ * list): hosts added to and removed from the allowlist, and the mode. Each field is present only
+ * when it changed.
  */
 export interface LocalPolicyDiff {
   add: string[];
   remove: string[];
-  tier?: { from: SandboxTier | null; to: SandboxTier | null };
-  localhost?: DeviceLocalPolicySummary["localhost"];
-  isolation?: DeviceLocalPolicySummary["isolation"];
-  remoteGrants?: DeviceLocalPolicySummary["remoteGrants"];
+  mode?: { from: "auto" | "sandbox"; to: "auto" | "sandbox" };
 }
 
 /** The {@link LocalPolicyDiff} from `prev` to `next`; null when nothing the owner sets changed. */
@@ -94,19 +52,8 @@ export function localPolicyDiff(
     add: [...after].filter((h) => !before.has(h)).sort(),
     remove: [...before].filter((h) => !after.has(h)).sort(),
   };
-  const fromTier = prev.tier ?? null;
-  const toTier = next.tier ?? null;
-  if (fromTier !== toTier) d.tier = { from: fromTier, to: toTier };
-  if (prev.localhost !== next.localhost) d.localhost = next.localhost;
-  if (prev.isolation !== next.isolation) d.isolation = next.isolation;
-  if (prev.remoteGrants !== next.remoteGrants) d.remoteGrants = next.remoteGrants;
-  const changed =
-    d.add.length > 0 ||
-    d.remove.length > 0 ||
-    d.tier !== undefined ||
-    d.localhost !== undefined ||
-    d.isolation !== undefined ||
-    d.remoteGrants !== undefined;
+  if (prev.mode !== next.mode) d.mode = { from: prev.mode, to: next.mode };
+  const changed = d.add.length > 0 || d.remove.length > 0 || d.mode !== undefined;
   return changed ? d : null;
 }
 
@@ -139,9 +86,8 @@ export interface PendingPolicyOp {
   id: string;
   add: string[];
   remove: string[];
-  /** Present when the op set the tier (null: follow the org's default). */
-  tier?: SandboxTier | null;
-  isolation?: "sandbox";
+  /** Present when the op turned the sandbox back on (the only mode the platform may set). */
+  mode?: "sandbox";
   source: PolicyOpSource;
   actorTokenId?: string;
   status: "sent" | "unknown";
@@ -182,8 +128,7 @@ export function pendingPolicyOpsOf(v: unknown): PendingPolicyOp[] {
       id: o.id,
       add: hosts(o.add),
       remove: hosts(o.remove),
-      ...("tier" in o && { tier: isSandboxTier(o.tier) ? o.tier : null }),
-      ...(o.isolation === "sandbox" && { isolation: "sandbox" as const }),
+      ...(o.mode === "sandbox" && { mode: "sandbox" as const }),
       source: {
         accountId: src.accountId,
         via: src.via,
@@ -201,30 +146,24 @@ export function pendingPolicyOpsOf(v: unknown): PendingPolicyOp[] {
 }
 
 /**
- * Whether the change of `op` is in `policy`: its hosts added and removed, its tier and isolation
- * set. Tells an op the machine logged only as `started` (it stopped between the log and the
- * answer) that was written from one that was not.
+ * Whether the change of `op` is in `policy`: its hosts added and removed, and its mode. Tells an
+ * op the machine logged only as `started` (it stopped between the log and the answer) that was
+ * written from one that was not.
  */
 export function opVisibleIn(op: PendingPolicyOp, policy: DeviceLocalPolicySummary): boolean {
   if (!op.add.every((h) => policy.allowedDomains.includes(h))) return false;
   if (op.remove.some((h) => policy.allowedDomains.includes(h))) return false;
-  if (op.tier !== undefined && (policy.tier ?? null) !== op.tier) return false;
-  return op.isolation === undefined || policy.isolation === op.isolation;
+  return op.mode === undefined || policy.mode === op.mode;
 }
 
 /**
  * Whether `diff` is what the platform's `op` did (its answer, or the machine's own report of it
- * before the answer was recorded): hosts within the op's, the tier the op set, and only what a
- * tier change moves with it (the isolation back to `sandbox`, the localhost access). The device
- * page then lists the change once, as the platform's.
+ * before the answer was recorded): hosts within the op's, and the mode the op set. The device page
+ * then lists the change once, as the platform's.
  */
 export function opExplains(op: PendingPolicyOp, diff: LocalPolicyDiff): boolean {
   if (!diff.add.every((h) => op.add.includes(h))) return false;
   if (!diff.remove.every((h) => op.remove.includes(h))) return false;
-  if (diff.tier !== undefined && (op.tier === undefined || diff.tier.to !== op.tier)) return false;
-  if (diff.isolation !== undefined && op.isolation === undefined && op.tier === undefined) {
-    return false;
-  }
-  if (diff.localhost !== undefined && op.tier === undefined) return false;
-  return diff.remoteGrants === undefined;
+  if (diff.mode !== undefined && (op.mode === undefined || diff.mode.to !== op.mode)) return false;
+  return true;
 }

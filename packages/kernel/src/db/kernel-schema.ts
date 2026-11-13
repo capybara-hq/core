@@ -991,6 +991,8 @@ export interface DevicesTable {
   provider: ColumnType<string | null, string | null | undefined, string | null>;
   /** 0096: the provider a demoted default was demoted from; null for every other device. */
   demoted_from_provider: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0131: a cloud device's narrowing switch (`sandbox`); null follows the platform and the org. */
+  mode: ColumnType<"sandbox" | null, "sandbox" | null | undefined, "sandbox" | null>;
   created_at: Ts;
   updated_at: Ts;
   deleted_at: TsNullable;

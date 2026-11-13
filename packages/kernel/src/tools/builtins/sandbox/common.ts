@@ -3,7 +3,6 @@ import {
   DeviceProtocolError,
   isFileSystemGoneError,
   isSandboxGoneError,
-  isSandboxTier,
   type Logger,
   type SandboxHandle,
   type SandboxRoots,
@@ -24,7 +23,7 @@ import {
 } from "../../../devices/conversation-devices.js";
 import { ApiError } from "../../../errors.js";
 import type { KernelConfigService } from "../../../infra/config/kernel-config.service.js";
-import { UNSANDBOXED_NOT_ALLOWED_ERROR } from "../../../local-devices/local-device-provider.js";
+import { AUTO_MODE_NOT_ALLOWED_TEXT } from "../../../local-devices/local-device-provider.js";
 import { devicePathsChange } from "../../../runtime/context/device-paths.js";
 import { SandboxPathBusyError } from "../../../sandbox/leases.js";
 import {
@@ -33,10 +32,6 @@ import {
   type SandboxService,
 } from "../../../sandbox/sandbox.service.js";
 import { SandboxProviderUnreachableError } from "../../../sandbox/unreachable.js";
-import {
-  UNATTENDED_OPEN_TIER_ERROR,
-  UNATTENDED_UNSANDBOXED_ERROR,
-} from "../../../schedules/unattended.js";
 import type { StorageService } from "../../../storage/storage.service.js";
 import type { BuiltinCallContext, ToolListingScope } from "../../registry.js";
 
@@ -55,7 +50,7 @@ export interface SandboxToolDeps {
    * conversation's device can run without a cloud provider (ruling R8).
    */
   devices: Pick<ConversationDevices, "forTool"> &
-    Partial<Pick<ConversationDevices, "usableNow" | "sandboxLevel">>;
+    Partial<Pick<ConversationDevices, "usableNow" | "modeLevel">>;
   /** Background `Bash` tasks; absent in test stubs, where `run_in_background` is refused. */
   background?: Pick<
     BackgroundTaskStore,
@@ -179,11 +174,11 @@ const DEVICE_REVOKED_TEXT =
 const deviceProtocolText = (detail: string): string =>
   `The device's machine sent an answer the platform cannot read (${detail}). Ask the person to update capybara-device on that machine, then retry.`;
 /**
- * A cloud provider refused the device's tier (`sandbox.tier_refused`, spec §5.3): the tier the
- * device asks for, never the provider's own message (it may name its settings).
+ * A cloud provider refused the device's open public network (`sandbox.open_network_refused`): the
+ * fixed text, never the provider's own message (it may name its settings).
  */
-export const sandboxTierRefusedText = (tier: string): string =>
-  `The cloud sandbox can't run this device at the ${tier} tier: the sandbox provider refused to create it there, so nothing ran in the sandbox and retrying won't help. Ask the person to lower the device's sandbox tier on its device page, or to have an org admin lower the org's highest tier in the sandbox settings, or a super admin to allow that tier in the sandbox extension's settings (Admin console → Extensions). Continue without the sandbox meanwhile.`;
+export const SANDBOX_OPEN_NETWORK_REFUSED_TEXT =
+  "The cloud sandbox provider cannot give this device the open public network and refused to create it, so nothing ran in the sandbox and retrying won't help. Ask the person to have an org admin switch the organization's cloud network to the allowlist, or a super admin allow the open network in the sandbox extension's settings (Admin console → Extensions). Continue without the sandbox meanwhile.";
 /** A cloud provider failed to create the device's sandbox otherwise (`sandbox.create_failed`). */
 export const SANDBOX_CREATE_FAILED_TEXT =
   "The cloud sandbox provider could not create this device's sandbox, so nothing ran in it. Retry once; if it fails again, continue without the sandbox and ask the person to have a super admin check the sandbox extension's settings (Admin console → Extensions).";
@@ -498,10 +493,10 @@ async function copyAttachments(
 }
 
 /**
- * A device that runs commands without a sandbox the org does not allow (sandbox dev tiers spec
- * §4.3): the kernel's `device.unsandboxed_not_allowed` text plus what the model can do.
+ * A machine that reports auto mode while the organization allows only sandbox mode (auto mode
+ * spec §4.3): the kernel's refusal text plus what the model can do.
  */
-const UNSANDBOXED_TEXT = `${UNSANDBOXED_NOT_ALLOWED_ERROR} Ask the user to do that, or to start a new conversation on another device.`;
+const AUTO_MODE_TOOL_TEXT = `${AUTO_MODE_NOT_ALLOWED_TEXT} Ask the user to switch it on the machine, or to start a new conversation on another device.`;
 
 /**
  * Sandbox service errors → actionable text for the model; anything else is returned unchanged
@@ -538,14 +533,9 @@ export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefine
     if (e.code === "device.files_lost") return new ToolError(ENV_FILES_LOST_TEXT);
     if (e.code === "device.offline") return new ToolError(DEVICE_OFFLINE_TEXT);
     if (e.code === "device.program_outdated") return new ToolError(DEVICE_OUTDATED_TEXT);
-    if (e.code === "device.unsandboxed_not_allowed" && detail?.reason === "unattended") {
-      return new ToolError(UNATTENDED_UNSANDBOXED_ERROR);
-    }
-    if (e.code === "device.unsandboxed_not_allowed") return new ToolError(UNSANDBOXED_TEXT);
-    if (e.code === "device.tier_not_granted") return new ToolError(UNATTENDED_OPEN_TIER_ERROR);
-    if (e.code === "sandbox.tier_refused") {
-      const tier = (detail as { tier?: unknown } | undefined)?.tier;
-      return new ToolError(sandboxTierRefusedText(isSandboxTier(tier) ? tier : "requested"));
+    if (e.code === "device.auto_mode_not_allowed") return new ToolError(AUTO_MODE_TOOL_TEXT);
+    if (e.code === "sandbox.open_network_refused") {
+      return new ToolError(SANDBOX_OPEN_NETWORK_REFUSED_TEXT);
     }
     if (e.code === "sandbox.create_failed") return new ToolError(SANDBOX_CREATE_FAILED_TEXT);
   }
@@ -609,12 +599,12 @@ export async function inSandbox<T>(
 }
 
 /**
- * Environments spec §13.1, ruling R22; sandbox dev tiers spec §11.5: the calling conversation's
- * log (the log its model reads; a sub-agent's own too) gets a `device_paths` event on its first
- * sandbox call, the default roots included, and again whenever the held instance's roots or the
- * device's sandbox level (tier, isolation) differ from the latest recorded ones; always before the
- * call's result. Two indexed reads per call (migration 0094, the device's row); parallel calls
- * that saw the same latest event write one event (its idempotency key).
+ * Environments spec §13.1, ruling R22; auto mode spec §4.2: the calling conversation's log (the
+ * log its model reads; a sub-agent's own too) gets a `device_paths` event on its first sandbox
+ * call, the default roots included, and again whenever the held instance's roots or the device's
+ * mode and network differ from the latest recorded ones; always before the call's result. Two
+ * indexed reads per call (migration 0094, the device's row); parallel calls that saw the same
+ * latest event write one event (its idempotency key).
  */
 async function recordDevicePaths(
   deps: Pick<SandboxToolDeps, "eventLog" | "devices">,
@@ -625,7 +615,7 @@ async function recordDevicePaths(
   if (!deps.eventLog.latestOfType) return;
   const [latest, level] = await Promise.all([
     deps.eventLog.latestOfType(ctx.conversationId, "device_paths"),
-    deps.devices.sandboxLevel?.(ctx.orgId, deviceId, ctx.runId) ?? null,
+    deps.devices.modeLevel?.(ctx.orgId, deviceId) ?? null,
   ]);
   const change = devicePathsChange(latest, roots, ctx.runId, level ?? undefined);
   if (change) await deps.eventLog.append(ctx.conversationId, [change]);

@@ -178,7 +178,6 @@ export function planNetworkAsk(
   const address: string[] = [];
   const org: string[] = [];
   const refused: string[] = [];
-  const localOnly: string[] = [];
   const unattended: string[] = [];
   const taskIgnored: string[] = [];
   const candidates: { host: string; port: number }[] = [];
@@ -188,8 +187,6 @@ export function planNetworkAsk(
   const canAsk =
     ctx.device?.features.includes("networkReport") === true &&
     ctx.device.features.includes("policyOpId");
-  // no run grant or policy change reaches a device whose owner turned remote grants off
-  const remote = ctx.device?.policy?.remoteGrants !== "off";
   for (const b of hostsOf(blocked)) {
     if (b.layer === "address") address.push(b.host);
     else if (b.layer === "org") {
@@ -205,13 +202,11 @@ export function planNetworkAsk(
       else if (unattendedFails(ctx.unattended)) {
         unattended.push(b.host);
         missingGrants.push(networkGrantKey(b.host));
-      } else if (!remote) localOnly.push(b.host);
-      else candidates.push({ host: b.host, port: b.port });
+      } else candidates.push({ host: b.host, port: b.port });
     }
   }
   const notes: string[] = [];
   if (refused.length > 0) notes.push(deniedNote(refused));
-  if (localOnly.length > 0) notes.push(localOnlyNote(localOnly));
   if (taskIgnored.length > 0) notes.push(taskGrantIgnoredNote(taskIgnored));
   if (unattended.length > 0) notes.push(unattendedNetworkNote(unattended));
   let ask: { host: string; port: number }[] = [];

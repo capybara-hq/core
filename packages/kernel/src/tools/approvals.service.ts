@@ -1685,9 +1685,8 @@ export class ApprovalsService {
       .executeTakeFirst();
     if (task?.account_id !== decidedBy) return;
     const limits = await this.sandbox.ceilingLimits(a.orgId);
-    const summary = await this.policies.summary(a.detail.deviceId);
     for (const host of hosts) {
-      if (networkGrantRefusal(host, { limits, deviceSummary: summary?.policy ?? null }) !== null) {
+      if (networkGrantRefusal(host, { limits }) !== null) {
         continue;
       }
       await this.schedules.addGrant(t, served.taskId, {
