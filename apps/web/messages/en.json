@@ -2465,6 +2465,30 @@
       "allowUnsandboxedHint": "Allowed by default when the highest level is open. Members still turn the sandbox off by running a command on their own computer. Without it, commands can read and write every file and credential on that computer."
     }
   },
+  "compaction": {
+    "title": "Conversation compaction",
+    "description": "Long conversations are summarized before they fill the model's context window, so a long-running conversation keeps going with the recent turns in full.",
+    "follow": "Follow the platform settings",
+    "followHint": "Turn this off to set the compaction values for this organization only.",
+    "enabled": "Compact long conversations automatically",
+    "enabledHint": "When off, early compaction does not run here; approaching the context window still trims or compacts the request so it fits.",
+    "threshold": {
+      "label": "Trigger threshold",
+      "help": "The share of the model's context window at which a compaction starts (0.5–0.95; 0.8 is the default)."
+    },
+    "keepRecentTurns": {
+      "label": "Recent turns kept in full",
+      "help": "How many of the latest user turns the summary leaves untouched (0–20; 4 is the default)."
+    },
+    "reserveTokens": {
+      "label": "Reserved tokens",
+      "help": "Room left below the context window for the reply and the next request (0–50,000; 8,000 is the default)."
+    },
+    "maxOutputTokens": {
+      "label": "Summary output cap",
+      "help": "The most tokens the summary may produce (1,024–32,000; 20,000 is the default)."
+    }
+  },
   "configForm": {
     "none": "—",
     "issues": "The config has problems:",

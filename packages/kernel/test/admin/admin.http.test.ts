@@ -668,6 +668,57 @@ describe("超级管理员端点", () => {
     });
   });
 
+  it("PUT /admin/settings compaction: a partial merges into the stored platform settings; out of range or unknown fields → 400", async () => {
+    const adminReq = await session("admin");
+    const put = (compaction: Record<string, unknown>) =>
+      adminReq({ method: "PUT", url: "/api/v1/admin/settings", payload: { compaction } });
+    const read = async () =>
+      (
+        (await adminReq({ method: "GET", url: "/api/v1/admin/settings" })).json() as {
+          compaction: unknown;
+        }
+      ).compaction;
+
+    const ok = await put({ threshold: 0.7 });
+    expect(ok.statusCode).toBe(200);
+    expect((ok.json() as { compaction: unknown }).compaction).toEqual({
+      ...DEFAULT_COMPACTION,
+      threshold: 0.7,
+    });
+    expect(await read()).toEqual({ ...DEFAULT_COMPACTION, threshold: 0.7 });
+    // a second partial keeps what the first set and changes only its own field
+    const second = await put({ keepRecentTurns: 2 });
+    expect(second.statusCode).toBe(200);
+    expect(await read()).toEqual({
+      ...DEFAULT_COMPACTION,
+      threshold: 0.7,
+      keepRecentTurns: 2,
+    });
+
+    for (const compaction of [
+      { threshold: 0.49 },
+      { threshold: 0.96 },
+      { keepRecentTurns: 21 },
+      { keepRecentTurns: 1.5 },
+      { reserveTokens: -1 },
+      { reserveTokens: 50_001 },
+      { maxOutputTokens: 1023 },
+      { maxOutputTokens: 32_001 },
+      { enabled: "yes" },
+      { treshold: 0.6 },
+    ]) {
+      const res = await put(compaction);
+      expect(res.statusCode, JSON.stringify(compaction)).toBe(400);
+      expect(errCode(res)).toBe("validation_failed");
+    }
+    // the refused writes changed nothing
+    expect(await read()).toEqual({
+      ...DEFAULT_COMPACTION,
+      threshold: 0.7,
+      keepRecentTurns: 2,
+    });
+  });
+
   it("PUT /admin/settings sandboxLimitOverrides：合并后可读回；cpu / memoryMb 越界 → 400", async () => {
     const adminReq = await session("admin");
     const put = async (payload: Record<string, unknown>) =>

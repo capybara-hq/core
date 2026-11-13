@@ -12,6 +12,9 @@ import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import {
   COMPACTION_SETTINGS_PARTIAL,
+  COMPACTION_SETTINGS_PATCH,
+  type CompactionSettings,
+  readPlatformCompactionSettings,
   readSandboxLimitOverride,
   type SandboxLimitOverride,
 } from "../identity/settings.js";
@@ -253,9 +256,9 @@ export const OrgSettingsPatchSchema = z
     /**
      * Conversation compaction overrides (context compaction spec §4.8): a partial object merges
      * into the stored fields (absent fields keep their value); null clears the whole override
-     * (follow the platform again).
+     * (follow the platform again). Strict: a misspelled field is a 400, not a silent no-op.
      */
-    compaction: COMPACTION_SETTINGS_PARTIAL.nullable().optional(),
+    compaction: COMPACTION_SETTINGS_PATCH.nullable().optional(),
   })
   .strict();
 
@@ -302,6 +305,8 @@ export interface OrgSettingsDeployment {
     allowUnsandboxed: boolean;
     devHosts: string[];
   };
+  /** The platform's conversation compaction settings (what "follow the platform" means). */
+  compaction: CompactionSettings;
 }
 
 /** 按值比较（`sandboxEgress` 是对象）；键序由 schema 固定。 */
@@ -370,7 +375,10 @@ export class OrgSettingsService {
   /** 部署默认值（设置页展示「跟随部署」时的实际取值）。 */
   async deployment(): Promise<OrgSettingsDeployment> {
     const lim = this.config.get().sandbox.limits;
-    const tiers = await this.platformTiers();
+    const [tiers, compaction] = await Promise.all([
+      this.platformTiers(),
+      readPlatformCompactionSettings(this.db.db),
+    ]);
     return {
       sandboxEgress: { mode: lim.egress, allowHosts: [...lim.allowHosts] },
       sandboxTiers: {
@@ -379,6 +387,7 @@ export class OrgSettingsService {
         allowUnsandboxed: tiers.allowUnsandboxed,
         devHosts: [...lim.devHosts],
       },
+      compaction,
     };
   }
 

@@ -1,4 +1,5 @@
 import { apiFetch } from "./api";
+import type { CompactionSettings, CompactionSettingsPatch } from "./compaction";
 import type { SandboxTier } from "./devices";
 import type { ScheduledTasksSettings } from "./schedules";
 import type { UiArrangementEntry } from "./ui";
@@ -47,6 +48,11 @@ export interface OrgSettings {
   theme?: OrgThemeSetting;
   /** Scheduled tasks (scheduled tasks spec §9); an older kernel leaves it out (the defaults). */
   scheduledTasks?: ScheduledTasksSettings;
+  /**
+   * The organization's conversation compaction overrides (context compaction spec §4.8); absent
+   * follows the platform. An older kernel leaves it out too.
+   */
+  compaction?: CompactionSettingsPatch;
 }
 
 /** The org level of the themes (`orgs.settings.theme`). */
@@ -65,6 +71,8 @@ export interface OrgSettingsDeployment {
     allowUnsandboxed: boolean;
     devHosts: string[];
   };
+  /** The platform's conversation compaction settings; absent from an older kernel. */
+  compaction?: CompactionSettings;
 }
 
 /** 组织实际生效的沙箱 cpu / 内存（只读：超级管理员在部署设置里按组织覆盖；旧内核不返回）。 */
@@ -82,7 +90,10 @@ export interface OrgSettingsResponse {
 
 /** PATCH 体：`sandboxEgress: null` 恢复跟随部署默认。 */
 export type OrgSettingsPatch = Partial<
-  Omit<OrgSettings, "sandboxEgress" | "sandboxTier" | "timeZone" | "theme" | "scheduledTasks">
+  Omit<
+    OrgSettings,
+    "sandboxEgress" | "sandboxTier" | "timeZone" | "theme" | "scheduledTasks" | "compaction"
+  >
 > & {
   /** The scheduled-task fields to change; the rest keep their value. */
   scheduledTasks?: Partial<ScheduledTasksSettings>;
@@ -95,6 +106,8 @@ export type OrgSettingsPatch = Partial<
   timeZone?: string | null;
   /** Per slot: the entry replaces the org's, null removes it (follow the platform). */
   uiArrangement?: Record<string, UiArrangementEntry | null>;
+  /** The fields to override; null clears the whole override (follow the platform again). */
+  compaction?: CompactionSettingsPatch | null;
 };
 
 const path = (orgId: string) => `/api/v1/orgs/${encodeURIComponent(orgId)}/settings`;

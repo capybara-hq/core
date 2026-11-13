@@ -24,6 +24,7 @@ import { useState } from "react";
 import { platformOwned } from "../../../../components/AdminComponents";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
+import { CompactionSection } from "../../../../components/settings/CompactionSection";
 import { usePagePath } from "../../../../components/shell/path";
 import { builtinChoice, type ThemeChoice, ThemePicker } from "../../../../components/ThemePicker";
 import {
@@ -42,6 +43,11 @@ import {
   type PlatformTiersView,
   updateDeploymentSettings,
 } from "../../../../lib/admin";
+import {
+  COMPACTION_DEFAULTS,
+  type CompactionSettings,
+  type CompactionSettingsPatch,
+} from "../../../../lib/compaction";
 import { componentName, type PlatformComponent } from "../../../../lib/components";
 import { SANDBOX_TIERS, type SandboxTier, tierAbove } from "../../../../lib/devices";
 import { extensionLabel, labelLocale } from "../../../../lib/extension-label";
@@ -111,6 +117,7 @@ function AdminSettingsRead() {
   const read = usePageQuery(deploymentSettingsQuery());
   const ta = useTranslations("appearance.platform");
   const tk = useTranslations("admin.settings.clientCode");
+  const tcp = useTranslations("compaction");
   const header = { path: [...scope, { label: "settings" }], title: t("title") };
   if (read.kind === "notFound") return <NotFound />;
   if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
@@ -145,6 +152,20 @@ function AdminSettingsRead() {
               { control: "radio-cards", options: 3 },
               { control: "select", help: true },
               { control: "switch", help: true },
+            ],
+          }}
+        />
+        <FormSection
+          id="compaction"
+          title={tcp("title")}
+          description={tcp("description")}
+          loading={{
+            fields: [
+              { control: "switch", help: true },
+              { control: "input", help: true },
+              { control: "input", help: true },
+              { control: "input", help: true },
+              { control: "input", help: true },
             ],
           }}
         />
@@ -200,6 +221,7 @@ function AdminSettings({
   const [themeDraft, setThemeDraft] = useState<string | null | undefined>(undefined);
   const [clientDraft, setClientDraft] = useState<ClientExtensionsSetting | undefined>(undefined);
   const [tiersDraft, setTiersDraft] = useState<TiersDraft>({});
+  const [compactionDraft, setCompactionDraft] = useState<CompactionSettingsPatch>({});
   const cq = adminComponentsQuery("theme");
   const eligible = (
     useQuery({ ...cq, retryOnMount: retryOnMountOf(cq.queryKey) }).data?.components ?? []
@@ -232,6 +254,10 @@ function AdminSettings({
   if (clientPatch !== null) patch.clientExtensions = clientPatch;
   const tiers = saved.sandboxTiers === undefined ? null : tiersOf(saved.sandboxTiers, tiersDraft);
   if (tiers !== null && tiers.patch !== null) patch.sandboxTiers = tiers.patch;
+  const savedCompaction = saved.compaction ?? COMPACTION_DEFAULTS;
+  const compaction: CompactionSettings = { ...savedCompaction, ...compactionDraft };
+  const compactionPatch = compactionChange(savedCompaction, compaction);
+  if (compactionPatch !== null) patch.compaction = compactionPatch;
   const unsaved = Object.keys(patch).length;
 
   async function save() {
@@ -242,6 +268,7 @@ function AdminSettings({
       setThemeDraft(undefined);
       setClientDraft(undefined);
       setTiersDraft({});
+      setCompactionDraft({});
       toast.success(t("saved"));
     } catch (e) {
       const off = themeOffOrgs(e);
@@ -284,6 +311,7 @@ function AdminSettings({
             setThemeDraft(undefined);
             setClientDraft(undefined);
             setTiersDraft({});
+            setCompactionDraft({});
           },
         },
         primary: {
@@ -340,6 +368,10 @@ function AdminSettings({
           onChange={(d) => setTiersDraft((cur) => ({ ...cur, ...d }))}
         />
       )}
+      <CompactionSection
+        value={compaction}
+        onChange={(d) => setCompactionDraft((cur) => ({ ...cur, ...d }))}
+      />
       <FormSection
         id="appearance"
         title={ta("platform.title")}
@@ -357,6 +389,24 @@ function AdminSettings({
       <UiPlacementSection scope={{ kind: "platform" }} canEdit />
     </FormPage>
   );
+}
+
+/** The compaction patch: only the fields that differ from the saved platform settings, or null. */
+function compactionChange(
+  saved: CompactionSettings,
+  next: CompactionSettings,
+): CompactionSettingsPatch | null {
+  const change: CompactionSettingsPatch = {};
+  for (const f of [
+    "enabled",
+    "threshold",
+    "keepRecentTurns",
+    "reserveTokens",
+    "maxOutputTokens",
+  ] as const) {
+    if (next[f] !== saved[f]) Object.assign(change, { [f]: next[f] });
+  }
+  return Object.keys(change).length > 0 ? change : null;
 }
 
 /** The kill switch patch: only the fields that differ from the saved setting, or null. */

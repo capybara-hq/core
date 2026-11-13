@@ -185,6 +185,13 @@ export type CompactionSettings = z.infer<typeof COMPACTION_SETTINGS>;
  */
 export const COMPACTION_SETTINGS_PARTIAL = z.object(COMPACTION_FIELDS).partial();
 
+/**
+ * The patch form both settings writers take: the partial form above, strict, so a misspelled
+ * field (`treshold`) is a 400 instead of being silently stripped into an empty no-op. Stored
+ * values stay lenient ({@link COMPACTION_SETTINGS_PARTIAL}); only the request bodies are strict.
+ */
+export const COMPACTION_SETTINGS_PATCH = COMPACTION_SETTINGS_PARTIAL.strict();
+
 export type CompactionSettingsPatch = z.infer<typeof COMPACTION_SETTINGS_PARTIAL>;
 
 /**
@@ -319,7 +326,7 @@ export const DEPLOYMENT_SETTINGS_PATCH = z
      * Conversation compaction (context compaction spec §4.8): each given field replaces the stored
      * one, fields left out keep their value.
      */
-    compaction: COMPACTION_SETTINGS_PARTIAL.strict().optional(),
+    compaction: COMPACTION_SETTINGS_PATCH.optional(),
   })
   .strict();
 export type DeploymentSettingsPatch = z.infer<typeof DEPLOYMENT_SETTINGS_PATCH>;
@@ -367,6 +374,23 @@ export async function readSubagentLimitOverride(
   }
   const parsed = SUBAGENT_LIMIT_OVERRIDE.safeParse((all as Record<string, unknown>)[orgId]);
   return parsed.success ? parsed.data : undefined;
+}
+
+/**
+ * The platform's conversation compaction settings, read live from PG (the org settings page shows
+ * what an organization that follows the platform gets): missing or invalid -> the built-in
+ * defaults, as {@link SettingsService.get} reads them.
+ */
+export async function readPlatformCompactionSettings(
+  db: KernelSchemaDb,
+): Promise<CompactionSettings> {
+  const row = await db
+    .selectFrom("deployment_settings")
+    .select("value")
+    .where("key", "=", "compaction")
+    .executeTakeFirst();
+  const parsed = COMPACTION_SETTINGS.safeParse(row?.value ?? {});
+  return parsed.success ? parsed.data : DEFAULTS.compaction;
 }
 
 /**

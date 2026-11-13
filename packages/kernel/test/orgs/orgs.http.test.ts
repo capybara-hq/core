@@ -121,6 +121,51 @@ describe("组织 HTTP", () => {
     expect(errCode(mem)).toBe("forbidden");
   });
 
+  it("PATCH /orgs/:id/settings compaction: a partial override merges, null clears it, an unknown field → 400", async () => {
+    const req = await session("owner");
+    const id = await createOrg(req);
+    const url = `/api/v1/orgs/${id}/settings`;
+    const patch = (payload: Record<string, unknown>) => req({ method: "PATCH", url, payload });
+    const read = async () =>
+      (await req({ method: "GET", url })).json() as {
+        settings: { compaction?: unknown };
+        deployment: { compaction: unknown };
+      };
+
+    // no override: the org follows the platform, whose values the page shows
+    const initial = await read();
+    expect(initial.settings.compaction).toBeUndefined();
+    expect(initial.deployment.compaction).toEqual({
+      enabled: true,
+      threshold: 0.8,
+      keepRecentTurns: 4,
+      reserveTokens: 8000,
+      maxOutputTokens: 20_000,
+    });
+
+    const set = await patch({ compaction: { threshold: 0.6 } });
+    expect(set.statusCode).toBe(200);
+    expect((set.json() as { settings: { compaction: unknown } }).settings.compaction).toEqual({
+      threshold: 0.6,
+    });
+    expect((await read()).settings.compaction).toEqual({ threshold: 0.6 });
+
+    // a typo is refused, not silently stripped (the patch schema is strict)
+    const typo = await patch({ compaction: { treshold: 0.6 } });
+    expect(typo.statusCode).toBe(400);
+    expect(errCode(typo)).toBe("validation_failed");
+
+    // a second partial merges into the stored override
+    const merged = await patch({ compaction: { keepRecentTurns: 2 } });
+    expect(merged.statusCode).toBe(200);
+    expect((await read()).settings.compaction).toEqual({ threshold: 0.6, keepRecentTurns: 2 });
+
+    // null clears the whole override: the org follows the platform again
+    const clear = await patch({ compaction: null });
+    expect(clear.statusCode).toBe(200);
+    expect((await read()).settings.compaction).toBeUndefined();
+  });
+
   it("member 能看成员、不能改角色（403）；owner 能改", async () => {
     const ownerReq = await session("owner");
     const id = await createOrg(ownerReq);

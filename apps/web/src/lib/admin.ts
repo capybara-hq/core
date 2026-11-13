@@ -1,6 +1,7 @@
 import type { ExtensionStatus } from "./admin-extensions";
 import { apiFetch } from "./api";
 import type { LocalizedName } from "./catalog";
+import type { CompactionSettings, CompactionSettingsPatch } from "./compaction";
 import type { SandboxTier } from "./devices";
 import type { UiArrangementEntry } from "./ui";
 
@@ -313,6 +314,11 @@ export interface DeploymentSettings {
    * console's choice, `default`. Absent from a kernel before the setting.
    */
   sandboxTiers?: PlatformTiersView;
+  /**
+   * Conversation compaction (context compaction spec §4.8): the platform defaults an organization
+   * may override. Absent from a kernel before the setting (read as the built-in defaults).
+   */
+  compaction?: CompactionSettings;
 }
 
 /** Where a platform sandbox level field comes from. */
@@ -351,6 +357,7 @@ export type DeploymentSettingsPatch = Partial<
     | "subagentLimitOverrides"
     | "clientExtensions"
     | "sandboxTiers"
+    | "compaction"
   >
 > & {
   subagentLimitOverrides?: Record<string, SubagentLimitOverride | null>;
@@ -361,6 +368,8 @@ export type DeploymentSettingsPatch = Partial<
   /** Each given field replaces the stored one (`disabled` is the whole list). */
   clientExtensions?: Partial<ClientExtensionsSetting>;
   sandboxTiers?: PlatformTiersPatch;
+  /** Each given field replaces the stored one; fields left out keep their value. */
+  compaction?: CompactionSettingsPatch;
 };
 
 export interface NewAccountInput {
