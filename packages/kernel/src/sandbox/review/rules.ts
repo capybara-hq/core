@@ -20,7 +20,10 @@
  * read; an alias defined outside the reviewed line (`git pwn` alone) runs as a plain git command;
  * LESSOPEN and similar interpreter hooks on non-git programs are not inspected; tar still needs
  * `-c` before `-f` for the archive target; and variable state is tracked linearly across `&&` /
- * `||`.
+ * `||`. The standard credential producers (`env`, `printenv`, `set`, `export -p`, `declare -x`,
+ * `gh auth token`, `git credential fill`) ask when printed and are denied when piped into a network
+ * command, but a secret the environment already handed to a variable, printed by any other command
+ * (`echo $TOKEN | curl …`) or by a program the table does not know, is not tracked.
  */
 import type {
   ParsedCommand,
@@ -160,6 +163,15 @@ function tokenize(text: string, depth: number): ParseSuccess<Token[]> | ParseFai
     if (operator !== null) {
       if (operator.text === "<<" || operator.text === "<<-") {
         unsure ??= "heredoc";
+        tokens.push({ kind: "op", op: ";" });
+      } else if (
+        (operator.op === "<" || operator.op === ">") &&
+        text[i + operator.text.length] === "("
+      ) {
+        // `cat <(env)` / `tee >(…)` is a process substitution: its command output feeds this one.
+        // The tokenizer does not model it, and reading it as a redirect to a file named `env` would
+        // let a credential producer print without review.
+        unsure ??= "process substitution";
         tokens.push({ kind: "op", op: ";" });
       } else {
         tokens.push({ kind: "op", op: operator.op });
@@ -2251,7 +2263,51 @@ function commandHasUnresolvedSecret(command: SimpleCommand, ctx: RuleContext): b
   });
 }
 
+/** Whether a short-option argument (`-pe`, `-x`) carries the letter `letter`. */
+function shortOptionHas(args: string[], letter: string): boolean {
+  return args.some((a) => /^-[A-Za-z]+$/.test(a) && a.includes(letter));
+}
+
+/**
+ * Whether an invocation prints credentials to its stdout: the environment (`env`, `set`,
+ * `export -p`, `declare -x`, `printenv`) or a stored credential (`gh auth token`,
+ * `git credential fill`). Plain shell reads allow these programs, yet their output is the owner's
+ * exported cloud keys and tokens (auto mode) or a stored login. Printing one asks; piping it into a
+ * network command is a secret exfiltration (see `readsSecret`).
+ *
+ * Only the printing forms count: `env VAR=1 cmd` never reaches here (the parser unwraps it),
+ * `export VAR=1` / `set -e` / `declare -x VAR=1` print nothing, and `printenv` in an argument
+ * position of another program is that program's argument, not a producer.
+ */
+function credentialProducer(inv: Invocation): boolean {
+  const { program, args } = inv;
+  if (program === "env") return args.length === 0;
+  if (program === "printenv") return true;
+  if (program === "set") return args.length === 0;
+  if (program === "export") return args.length === 0 || shortOptionHas(args, "p");
+  if (program === "declare" || program === "typeset") {
+    // `-p` prints the named values; a bare `declare` / `declare -x` lists every variable. `-f` /
+    // `-F` list functions, which hold no values, and `declare -x VAR=1` only sets one.
+    if (shortOptionHas(args, "p")) return true;
+    if (shortOptionHas(args, "f") || shortOptionHas(args, "F")) return false;
+    return nonOptionArgs(args).length === 0;
+  }
+  if (program === "gh") {
+    const words = args.filter((a) => !a.startsWith("-"));
+    return words[0] === "auth" && words[1] === "token";
+  }
+  if (program === "git") {
+    // `git credential fill` and every `git credential-<helper> get` print the stored password.
+    return (
+      (args[0] === "credential" || (args[0] ?? "").startsWith("credential-")) &&
+      ["fill", "get"].includes(args[1] ?? "")
+    );
+  }
+  return false;
+}
+
 function readsSecret(command: SimpleCommand, ctx: RuleContext): boolean {
+  if (eachInvocation([command], (inv) => credentialProducer(inv)).length > 0) return true;
   const tokens = secretTokens(command, ctx.facts);
   if (tokens.length > 0) {
     const owner = eachInvocation([command], (inv) => isSecretOwner(inv.program, tokens, ctx.facts));
@@ -3098,7 +3154,7 @@ const RULES: readonly Rule[] = [
         if (!READ_PROGRAMS.has(inv.program)) return false;
         if (inv.program === "sed" && hasInPlace(inv.args)) return false;
         if (inv.program === "kill" && !inv.args.includes("-l")) return false;
-        if (inv.program === "env" && inv.args.length > 0) return false;
+        if (credentialProducer(inv)) return false;
         if (
           inv.program === "crontab" &&
           (!inv.args.includes("-l") || nonOptionArgs(inv.args).length > 0)
@@ -3160,6 +3216,7 @@ const RULES: readonly Rule[] = [
     outcome: "allow",
     check: (ctx) => {
       const matched = eachInvocation(ctx.commands, (inv) => {
+        if (credentialProducer(inv)) return false;
         if (globalInstallOf(inv.program, inv.args, ctx.venv || venvBinary(inv.raw))) return false;
         const local = inv.raw.startsWith("./") || inv.raw.startsWith("../");
         const isDev =
@@ -3185,6 +3242,8 @@ const RULES: readonly Rule[] = [
     check: (ctx) => {
       const matched = eachInvocation(ctx.commands, (inv, command) => {
         if (inv.program !== "git") return false;
+        // Printing a stored credential (`git credential fill`) is not a plain git command.
+        if (credentialProducer(inv)) return false;
         // A config value or environment override that makes git run another program is not a
         // plain git command (`ask.git-exec`).
         if (gitRunsArbitraryProgram(command)) return false;
@@ -3208,6 +3267,8 @@ const RULES: readonly Rule[] = [
     check: (ctx) => {
       const matched = eachInvocation(ctx.commands, (inv) => {
         if (inv.program !== "gh") return false;
+        // `gh auth token` prints the login token; it is not an ordinary gh read.
+        if (credentialProducer(inv)) return false;
         const cleaned = inv.args.filter((a) => !a.startsWith("-"));
         if (cleaned[0] === "pr" && cleaned[1] === "merge") return false;
         if (cleaned[0] === "repo" && cleaned[1] === "delete") return false;
@@ -3501,6 +3562,20 @@ const RULES: readonly Rule[] = [
         why ??= "Prints a macOS keychain item; this needs approval.";
       }
       return why === null ? null : { reason: why, commands: matched };
+    },
+  },
+  {
+    id: "ask.credential-print",
+    outcome: "ask",
+    check: (ctx) => {
+      const matched = eachInvocation(ctx.commands, (inv) => credentialProducer(inv));
+      return matched.length > 0
+        ? {
+            reason:
+              "Prints environment variables or a stored credential (`env`, `printenv`, `set`, `export -p`, `gh auth token`, `git credential fill`); the output reaches the model, so this needs approval.",
+            commands: matched,
+          }
+        : null;
     },
   },
   {

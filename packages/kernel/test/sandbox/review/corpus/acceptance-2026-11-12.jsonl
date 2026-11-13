@@ -16,8 +16,8 @@
 {"command":"echo \"hello\"","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.read"]}
 {"command":"printf '%s\\n' ok","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.read"]}
 {"command":"date","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.read"]}
-{"command":"env","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.read"]}
-{"command":"printenv PATH","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.read"]}
+{"command":"env","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"ask","rules":["ask.credential-print"]}
+{"command":"printenv PATH","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"ask","rules":["ask.credential-print"]}
 {"command":"which node","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.read"]}
 {"command":"whoami","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.read"]}
 {"command":"uname -a","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.read"]}

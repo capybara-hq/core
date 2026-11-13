@@ -4,9 +4,10 @@ import { describe, expect, it } from "vitest";
 import { type RuleOutcome, reviewRules } from "../../src/sandbox/review/index.js";
 
 /**
- * The acceptance corpus (auto-mode spec §5.2, §10): the acceptance conversations' `Bash` commands
- * plus a hand-written bypass file, each line hand-labelled with the decision and the rule ids in
- * rule order. Adding or changing a rule updates the labels in the same commit.
+ * The acceptance corpus (auto-mode spec §5.2, §10): the acceptance conversations' `Bash` commands,
+ * a hand-written bypass file and the credential-producer file, each line hand-labelled with the
+ * decision and the rule ids in rule order. Adding or changing a rule updates the labels in the same
+ * commit.
  */
 
 interface CorpusLine {
@@ -26,6 +27,7 @@ const FILES = [
   "acceptance-2026-11-12.jsonl",
   "acceptance-2026-11-13.jsonl",
   "bypass.jsonl",
+  "credentials.jsonl",
 ] as const;
 
 function load(file: string): CorpusLine[] {
