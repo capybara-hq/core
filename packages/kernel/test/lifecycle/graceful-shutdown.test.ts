@@ -5,7 +5,7 @@ import type { NestFastifyApplication } from "@nestjs/platform-fastify";
 import { Redis } from "ioredis";
 import { Kysely, PostgresDialect } from "kysely";
 import pg from "pg";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { closeKernelApp, createKernelApp, startKernelApp } from "../../src/app.js";
 import { ChannelConnections } from "../../src/channels/connections.service.js";
 import { ChannelJobs } from "../../src/channels/jobs.js";
@@ -95,14 +95,14 @@ async function kernelPgConnections(): Promise<number> {
   }
 }
 
-async function eventually(fn: () => Promise<boolean>, timeoutMs = 2_000): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    if (await fn()) return true;
-    if (Date.now() > deadline) return false;
-    await new Promise((r) => setTimeout(r, 20));
-  }
-}
+/** Waits until `fn` is true (the old polling loop's 2 s budget); a false result fails the call. */
+const eventually = (fn: () => Promise<boolean>, timeoutMs = 2_000): Promise<boolean> =>
+  vi.waitFor(
+    async () => {
+      if (!(await fn())) throw new Error("condition not met yet");
+    },
+    { timeout: timeoutMs },
+  ).then(() => true);
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
@@ -111,7 +111,7 @@ beforeAll(async () => {
       pool: new pg.Pool({ connectionString: pgc.url, max: 3, application_name: "test" }),
     }),
   });
-}, 120_000);
+});
 afterEach(async () => {
   await Promise.all(apps.splice(0).map((a) => closeKernelApp(a)));
 });
@@ -162,7 +162,7 @@ describe("startKernelApp signal handling", () => {
       gate.resolve();
       g[SLOW_GATES_KEY]?.delete(key);
     }
-  }, 30_000);
+  });
 
   it("SIGTERM while a conversation runs: the run stops at a step boundary and goes back to the queue within the budget", async () => {
     const p = fakeProcess();
@@ -202,7 +202,7 @@ describe("startKernelApp signal handling", () => {
     expect((await eventsOf(db, convId)).some((e) => e.type === "run_finished")).toBe(false);
     expect((await runsOf(db, convId))[0]?.status).toBe("running");
     expect(await kernelPgConnections()).toBe(0);
-  }, 60_000);
+  });
 
   it("an event stream opened after the shutdown began ends at once; readiness answers 503", async () => {
     const p = fakeProcess();
@@ -258,7 +258,7 @@ describe("startKernelApp signal handling", () => {
     expect(ui.status).toBe(200);
     expect(await ui.text()).toBe("");
     expect(Date.now() - t0).toBeLessThan(2_000);
-  }, 60_000);
+  });
 
   it("in-process event subscriptions still receive events emitted while the runs phase drains", async () => {
     const app = await createKernelApp(
@@ -297,7 +297,7 @@ describe("startKernelApp signal handling", () => {
       })();
     await closeKernelApp(app);
     expect(seen).toEqual(expect.arrayContaining(["delivery:c1", "orphaned:r2", "org:o2"]));
-  }, 60_000);
+  });
 
   it("listen() after the shutdown began rejects and opens no port", async () => {
     const app = await createKernelApp(runConfig({ pg: pgc.url, redis: rd.url }), {
@@ -309,7 +309,7 @@ describe("startKernelApp signal handling", () => {
     app.get(GracefulShutdown).begin();
     await expect(lifecycle.listen(0)).rejects.toThrow(/stopped during start/);
     expect(lifecycle.port).toBeUndefined();
-  }, 60_000);
+  });
 
   it("a hanging webhooks unsubscribe does not hold the stop beyond its budget", async () => {
     const app = await createKernelApp(runConfig({ pg: pgc.url, redis: rd.url }), {
@@ -324,7 +324,7 @@ describe("startKernelApp signal handling", () => {
     const t0 = Date.now();
     await closeKernelApp(app);
     expect(Date.now() - t0).toBeLessThan(6_000);
-  }, 60_000);
+  });
 
   it("createKernelApp installs no process-wide handler", async () => {
     const events = ["SIGTERM", "SIGINT", "unhandledRejection", "uncaughtException"] as const;
@@ -335,5 +335,5 @@ describe("startKernelApp signal handling", () => {
     });
     apps.push(app);
     expect(events.map((e) => process.listenerCount(e))).toEqual(before);
-  }, 60_000);
+  });
 });
