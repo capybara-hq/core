@@ -519,6 +519,86 @@ export class Credentials {
     );
   }
 
+  /**
+   * The `Authorization` value one git gateway request presents upstream (sandbox git credentials
+   * spec §5, §6.1): `Basic base64(<username>:<token>)` with the connector's token for the actor,
+   * built here so the raw token never reaches a caller. `username` is the git host's basic user
+   * from the connector's `git_hosts` (GitHub: `x-access-token`). An OAuth token is refreshed as
+   * {@link injection} does (cross-replica lock); a `basic` connector presents its stored pair as
+   * it is. The header, its base64 and decoded forms are registered for log redaction. Missing (or
+   * a refresh refused) -> {@link CredentialMissing}; `none` / `headers` auth cannot authenticate
+   * git (git sources exclude them) and throw.
+   */
+  async gitAuthorization(
+    orgId: string,
+    connectorId: string,
+    auth: ConnectorAuth,
+    accountId: string,
+    username: string,
+  ): Promise<string> {
+    if (auth.type === "none" || auth.type === "headers") {
+      throw new Error(`credentials: auth type ${auth.type} cannot authenticate git`);
+    }
+    const owner = ownerOf(auth, accountId);
+    let user = username;
+    let password: string;
+    if (isOAuth(auth)) {
+      password = await this.oauthCall(connectorId, auth, () =>
+        this.oauth().accessToken(orgId, connectorId, auth, owner),
+      );
+    } else {
+      const missing = () => new CredentialMissing(connectorId, auth.ownership);
+      const value = (await this.readJson(
+        orgId,
+        keyOf(connectorId, owner),
+        connectorId,
+      )) as Partial<{
+        token: unknown;
+        username: unknown;
+        password: unknown;
+      }> | null;
+      if (value === null || typeof value !== "object") throw missing();
+      if (auth.type === "basic") {
+        if (typeof value.username !== "string" || typeof value.password !== "string") {
+          throw missing();
+        }
+        user = value.username;
+        password = value.password;
+      } else {
+        if (typeof value.token !== "string" || value.token === "") throw missing();
+        password = value.token;
+      }
+    }
+    const header = `Basic ${Buffer.from(`${user}:${password}`).toString("base64")}`;
+    this.log.addOrgSecrets(injectionSecrets({ headers: { Authorization: header } }));
+    return header;
+  }
+
+  /**
+   * The git host answered 401 to `stale` (a value {@link gitAuthorization} returned): an OAuth
+   * connector force-refreshes in the refresh lock, unless another request already replaced that
+   * token, so the next {@link gitAuthorization} presents a new one; a refused refresh deletes the
+   * credential and throws {@link CredentialMissing}. Static credentials: nothing to do.
+   */
+  async gitUnauthorized(
+    orgId: string,
+    connectorId: string,
+    auth: ConnectorAuth,
+    accountId: string,
+    stale: string,
+  ): Promise<void> {
+    if (!isOAuth(auth)) return;
+    let token: string | undefined;
+    if (stale.startsWith("Basic ")) {
+      const decoded = Buffer.from(stale.slice("Basic ".length), "base64").toString("utf8");
+      const colon = decoded.indexOf(":");
+      if (colon >= 0) token = decoded.slice(colon + 1);
+    }
+    await this.oauthCall(connectorId, auth, () =>
+      this.oauth().forceRefresh(orgId, connectorId, auth, ownerOf(auth, accountId), token),
+    );
+  }
+
   /** 「需要重新连接」→ CredentialMissing（个人凭据由管线转成 connection_required）。 */
   private async oauthCall<T>(
     connectorId: string,

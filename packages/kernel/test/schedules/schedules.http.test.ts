@@ -5,7 +5,7 @@ import { createDb } from "../../src/db/pool.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
 import { truncateTables } from "../helpers/db.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
-import { accountsFor } from "../helpers/identity.js";
+import { accountsFor, apiTokensFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -183,6 +183,43 @@ describe("schedules API", () => {
     expect(res.statusCode, res.body).toBe(204);
     res = await alice({ method: "GET", url: `${base()}/${t.id}/grants` });
     expect((res.json() as { items: unknown[] }).items).toEqual([]);
+  });
+
+  it("git push grants: a person adds git:push and git:push:<owner>/<repo>; bad keys and tokens are refused", async () => {
+    const t = await create(alice);
+    const add = (toolKey: string, req: Req = alice) =>
+      req({ method: "POST", url: `${base()}/${t.id}/grants`, payload: { grants: [{ toolKey }] } });
+    let res = await add("git:push:Acme/App.git");
+    expect(res.statusCode, res.body).toBe(200);
+    res = await add("git:push");
+    expect(res.statusCode, res.body).toBe(200);
+    res = await alice({ method: "GET", url: `${base()}/${t.id}/grants` });
+    // stored normalized, with spec hash git and no connector; a repository is never stale
+    expect((res.json() as { items: unknown[] }).items).toEqual([
+      { toolKey: "git:push", specHash: "git", connectorId: null, stale: false },
+      { toolKey: "git:push:acme/app", specHash: "git", connectorId: null, stale: false },
+    ]);
+    for (const bad of ["git:push:acme", "git:push:acme/app/x", "git:push:../x"]) {
+      res = await add(bad);
+      expect(res.statusCode, bad).toBe(400);
+      expect(codeOf(res)).toBe("schedule.grant_not_allowed");
+      expect(res.body).toContain("git:push:<owner>/<repo>");
+    }
+    // a push is approved by a person on the task page, never with a token
+    const pat = await apiTokensFor(db).createPersonal(aliceId, { name: "cli" });
+    res = await k.http.inject({
+      method: "POST",
+      url: `${base()}/${t.id}/grants`,
+      headers: { authorization: `Bearer ${pat.token}`, "x-capybara-csrf": "1" },
+      payload: { grants: [{ toolKey: "git:push:acme/other" }] },
+    });
+    expect(res.statusCode, res.body).toBe(400);
+    expect(res.body).toContain("Git pushes are approved on the task page by a person.");
+    res = await alice({
+      method: "DELETE",
+      url: `${base()}/${t.id}/grants/${encodeURIComponent("git:push:acme/app")}`,
+    });
+    expect(res.statusCode).toBe(204);
   });
 
   it("admin lists every task with all=true; a member may not", async () => {

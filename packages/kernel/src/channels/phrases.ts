@@ -99,6 +99,15 @@ export const CHANNEL_PHRASES = {
   networkAllowOnce: { zh: "这次允许", en: "Allow this time" },
   /** A network ask's 「always」 button. */
   networkAllowAlways: { zh: "这台设备一直允许", en: "Always allow on this device" },
+  /** A git push ask's card title (`{repo}`; sandbox git credentials spec §7). */
+  gitTitle: {
+    zh: "智能体想推送到 {repo}，允许吗？",
+    en: "The agent wants to push to {repo}. Allow?",
+  },
+  /** A git push ask's 「once」 button. */
+  gitAllowOnce: { zh: "这次允许", en: "Allow this time" },
+  /** A git push ask's 「always」 button: the person's standing allow for the repository. */
+  gitAllowAlways: { zh: "这个仓库一直允许", en: "Always allow this repository" },
   /** 提问卡片的随附文本。 */
   questionTitle: { zh: "需要你的回答", en: "Your input is needed" },
   /** 连接卡片的随附文本。 */

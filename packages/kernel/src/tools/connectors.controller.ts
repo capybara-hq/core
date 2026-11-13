@@ -1,4 +1,4 @@
-import { ConnectorAuthSchema } from "@capybara-hq/plugin-sdk";
+import { ConnectorAuthSchema, GitSourceSchema } from "@capybara-hq/plugin-sdk";
 import { Controller, Delete, Get, HttpCode, Inject, Param, Patch, Post, Put } from "@nestjs/common";
 import { z } from "zod";
 import type { ConnectionGuideState } from "../extensions/plugin-guides.js";
@@ -60,6 +60,8 @@ const CreateBody = z
     endpoint: z.record(z.string(), z.unknown()),
     auth: ConnectorAuthSchema,
     credential: CredentialValue.optional(),
+    /** The git hosts the credential serves in sandboxes (sandbox git credentials spec §6.1). */
+    git: GitSourceSchema.optional(),
   })
   .strict();
 
@@ -93,6 +95,8 @@ const UpdateBody = z
       .refine((v) => Object.keys(v).length <= 1000, { message: "Too many tools" })
       .optional(),
     allowUnannotated: z.boolean().optional(),
+    /** Use an org-credential connector for git in sandboxes (spec 2026-11-12 §6.2). */
+    useForGit: z.boolean().optional(),
   })
   .strict();
 

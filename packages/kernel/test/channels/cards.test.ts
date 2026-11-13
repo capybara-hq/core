@@ -7,6 +7,7 @@ import {
   CARD_SUMMARY_MAX,
   callSummary,
   connectUrl,
+  gitCardText,
   KEY_ARG_MAX,
   keyArgument,
   maskSecrets,
@@ -349,5 +350,66 @@ describe("a network ask card (network ask-to-allow spec §6.4, §6.5)", () => {
     expect(renderCardAsText(zh as NonNullable<typeof zh>, "zh")).toContain(
       "这次允许 / 这台设备一直允许",
     );
+  });
+});
+
+describe("a git push ask card (sandbox git credentials spec §7)", () => {
+  const view = {
+    id: "ga1",
+    kind: "git",
+    detail: null,
+    git: {
+      host: "github.com",
+      repo: "acme/app",
+      refs: ["refs/heads/feat/x", "refs/tags/v1"],
+      command: "git push https://x-access-token:s3cr3t@github.com/acme/app feat/x",
+    },
+    toolKey: "Bash",
+    toolName: "Bash",
+    connector: { id: "c1", name: "GitHub", slug: "github" },
+    extension: null,
+    agent: { id: "ag1", name: "Helper" },
+    input: {},
+    summary: null,
+    scopes: ["once", "always"],
+    requestedFor: "a1",
+    expiresAt: "2026-11-13T12:00:00.000Z",
+    status: "pending",
+    decidedBy: null,
+    denyReason: null,
+    conversationPath: "/chat/c1",
+  };
+  const deps = (v: object) =>
+    ({
+      db: {} as never,
+      approvals: { describe: async () => v },
+      registry: {
+        builtinSpecs: () => {
+          throw new Error("a git ask needs no tool display");
+        },
+        extensionToolSpecs: () => [],
+      },
+    }) as never;
+  const redact = (s: string) => s.replaceAll("s3cr3t", "***");
+
+  it("names the repository, the refs and the redacted command; labels its scopes", async () => {
+    expect(gitCardText(view.git, "zh").title).toBe("智能体想推送到 acme/app，允许吗？");
+    const en = await approvalCard(deps(view), "ga1", "https://cap.example", "en", redact);
+    expect(en).toMatchObject({
+      kind: "approval",
+      title: "The agent wants to push to acme/app. Allow?",
+      toolName: "Bash",
+      scopes: ["once", "always"],
+      scopeLabels: { once: "Allow this time", always: "Always allow this repository" },
+    });
+    expect(en?.inputPreview.split("\n")).toEqual([
+      "github.com/acme/app",
+      "feat/x, refs/tags/v1",
+      "",
+      "git push https://x-access-token:***@github.com/acme/app feat/x",
+    ]);
+    // an org connector's ask offers once only, and labels only that
+    const zh = await approvalCard(deps({ ...view, scopes: ["once"] }), "ga1", "https://x", "zh");
+    expect(zh?.scopeLabels).toEqual({ once: "这次允许" });
   });
 });

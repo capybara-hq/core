@@ -6,6 +6,7 @@ import type { NestFastifyApplication } from "@nestjs/platform-fastify";
 import type { ConfigSource } from "./config/load.js";
 import type { KernelConfig } from "./config/schema.js";
 import type { ConfigSourceKind } from "./config/sources.js";
+import { GitGateway } from "./git/gateway.js";
 import { createKernelAdapter } from "./http/adapter.js";
 import { createHttpApp, type KernelHttp } from "./http/app.js";
 import { NestLogAdapter } from "./http/nest-logger.js";
@@ -83,6 +84,7 @@ export async function buildKernelApp(
           log: logger,
           servePlugins: config.roles.includes("api") || config.roles.includes("gateway"),
           ...(gateway !== undefined && { gateway }),
+          ...(config.roles.includes("api") && { git: app.get(GitGateway, { strict: false }) }),
           replicaId:
             config.http.replicaId === undefined ? undefined : String(config.http.replicaId),
           packageMaxBytes: config.packages.maxBytes,

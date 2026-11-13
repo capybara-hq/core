@@ -97,6 +97,38 @@
             ]
           }
         },
+        "git": {
+          "type": "object",
+          "properties": {
+            "hosts": {
+              "minItems": 1,
+              "maxItems": 8,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "host": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "username": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9._-]{1,64}$"
+                  }
+                },
+                "required": [
+                  "host",
+                  "username"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "hosts"
+          ],
+          "additionalProperties": false
+        },
         "icon": {
           "type": "string",
           "maxLength": 512

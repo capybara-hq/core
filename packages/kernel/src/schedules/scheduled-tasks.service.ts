@@ -42,10 +42,14 @@ import {
   targetInvalid,
 } from "./errors.js";
 import {
+  GIT_GRANT_SPEC_HASH,
+  GIT_PUSH_GRANT,
   type GrantContext,
   type GrantRefusalCode,
+  gitGrantRefusal,
   grantRefusal,
   grantRefusalOf,
+  isGitGrantKey,
   isNetworkGrantKey,
   isPolicyGrantKey,
   isTierGrantKey,
@@ -54,6 +58,7 @@ import {
   type NetworkGrantContext,
   networkGrantHost,
   networkGrantRefusal,
+  normalizeGitGrantKey,
   TIER_GRANT_SPEC_HASH,
   tierGrantRefusal,
 } from "./grant-rules.js";
@@ -187,8 +192,17 @@ export interface GrantWriteSource {
 /** The refusal of a network grant written outside a person's web session. */
 const NETWORK_GRANT_NEEDS_PERSON = "Network domains are approved on the task page by a person.";
 
+/** Why a git push grant needs a person (sandbox git credentials spec §7). */
+const GIT_GRANT_NEEDS_PERSON = "Git pushes are approved on the task page by a person.";
+
 /** The refusal of a sandbox tier grant written outside a person's web session. */
 const TIER_GRANT_NEEDS_PERSON = "A sandbox level is approved on the task page by a person.";
+
+/**
+ * A grant that belongs to no tool: a network domain, a git push or a sandbox tier (never stale,
+ * never re-resolved).
+ */
+const isNonToolGrantKey = (key: string): boolean => isPolicyGrantKey(key) || isGitGrantKey(key);
 
 /** Who acts on a task: the service reads their live role itself and decides by that one. */
 export interface ScheduleActor {
@@ -414,9 +428,9 @@ export class ScheduledTasksService {
       changes.agentId = agent.id;
       // the grants were approved for the old agent's tools: each must hold for the new agent
       // too (refused, so the creator sees which), and takes the new agent's definition; network
-      // and sandbox tier grants belong to no tool and stay as they are
+      // and git and sandbox tier grants belong to no tool and stay as they are
       const held = (await this.store.listGrants(t, task.id)).filter(
-        (g) => !isPolicyGrantKey(g.toolKey),
+        (g) => !isNonToolGrantKey(g.toolKey),
       );
       const regranted = await this.resolveGrants(
         orgId,
@@ -841,13 +855,13 @@ export class ScheduledTasksService {
     if (grants.length === 0) return [];
     // the creator's view of the agent's tools: a grant whose tool changed or left is stale;
     // unknown (null) when the tools cannot be read now, rather than failing the task page
-    const current = grants.every((g) => isPolicyGrantKey(g.toolKey))
+    const current = grants.every((g) => isNonToolGrantKey(g.toolKey))
       ? new Map()
       : await this.agentToolFacts(orgId, task.accountId, task.agentId);
     return grants.map((g) => ({
       ...g,
-      // a network or sandbox tier grant names no tool definition: never stale
-      stale: isPolicyGrantKey(g.toolKey)
+      // a network, git or sandbox tier grant names no tool definition: never stale
+      stale: isNonToolGrantKey(g.toolKey)
         ? false
         : current === null
           ? null
@@ -1021,8 +1035,9 @@ export class ScheduledTasksService {
       // a refused tool granted since drops out, unless its grant no longer matches the tool's
       // definition (stale: it would be refused again); a refused domain granted since drops out
       // while the org's network allowlist admits it (network ask-to-allow spec §8.3)
+      // a refused git push drops out once the task holds a grant for it or for every repository;
       // a refused sandbox level granted since drops out while the org's ceiling is still open
-      const isTool = (k: string) => !k.startsWith("connection:") && !isPolicyGrantKey(k);
+      const isTool = (k: string) => !k.startsWith("connection:") && !isNonToolGrantKey(k);
       const facts = refused.some(isTool) ? await toolsOf(task.agentId) : null;
       const limits = refused.some(isNetworkGrantKey) ? await orgLimits() : null;
       const open = refused.some(isTierGrantKey) ? await openReachable() : false;
@@ -1031,6 +1046,7 @@ export class ScheduledTasksService {
       const missing = refused.filter((k) => {
         const hash = have?.get(k);
         if (isPolicyGrantKey(k)) return hash === undefined || !admits(k);
+        if (isGitGrantKey(k)) return hash === undefined && have?.get(GIT_PUSH_GRANT) === undefined;
         if (hash === undefined) return true;
         const current = facts?.get(k);
         return facts !== null && current?.specHash !== hash;
@@ -1378,7 +1394,9 @@ export class ScheduledTasksService {
    * `deviceId`, the task's device (null: none can be determined, the device rule is skipped),
    * stored with `spec_hash` `network` and no connector (plan P-D7), and only when
    * `source.fromSession` (a person on the task page; never a token, the Platform tool or the
-   * schedule tools). Duplicates keep the last.
+   * schedule tools). Each git push key (`git:push`, `git:push:<owner>/<repo>`, the repository
+   * lower-cased) is refused by {@link gitGrantRefusal} and stored with `spec_hash` `git` and no
+   * connector, also only when `source.fromSession`. Duplicates keep the last.
    */
   private async resolveGrants(
     orgId: string,
@@ -1406,6 +1424,20 @@ export class ScheduledTasksService {
         out.set(toolKey, { toolKey, specHash: NETWORK_GRANT_SPEC_HASH, connectorId: null });
       }
     }
+    const git = grants.filter((g) => isGitGrantKey(g.toolKey));
+    if (git.length > 0) {
+      // a push is the creator's decision, never an agent's or a token's (as network domains)
+      if (source.fromSession !== true) throw grantNotAllowed(GIT_GRANT_NEEDS_PERSON);
+      for (const g of git) {
+        if (g.connectorId !== undefined) {
+          throw grantNotAllowed(`${g.toolKey} is a git push and comes from no connector`);
+        }
+        const toolKey = normalizeGitGrantKey(g.toolKey);
+        const why = gitGrantRefusal(toolKey, { forbiddenTools: settings.forbiddenTools });
+        if (why !== null) throw grantNotAllowed(why.message);
+        out.set(toolKey, { toolKey, specHash: GIT_GRANT_SPEC_HASH, connectorId: null });
+      }
+    }
     const tiers = grants.filter((g) => isTierGrantKey(g.toolKey));
     if (tiers.length > 0) {
       if (source.fromSession !== true) throw grantNotAllowed(TIER_GRANT_NEEDS_PERSON);
@@ -1428,7 +1460,7 @@ export class ScheduledTasksService {
         });
       }
     }
-    const toolGrants = grants.filter((g) => !isPolicyGrantKey(g.toolKey));
+    const toolGrants = grants.filter((g) => !isNonToolGrantKey(g.toolKey));
     if (toolGrants.length === 0) return [...out.values()];
     const d = agent.definition;
     const { tools } = await this.tools.forAgent(orgId, {

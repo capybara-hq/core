@@ -5,6 +5,8 @@ import type { NestFastifyApplication } from "@nestjs/platform-fastify";
 import type { FastifyInstance, FastifyReply, InjectOptions, LightMyRequestResponse } from "fastify";
 import type { Route } from "../ctx/create-ctx.js";
 import { ApiError, errorBody } from "../errors.js";
+import type { GitGateway } from "../git/gateway.js";
+import { registerGitGatewayRoute } from "../git/gateway.route.js";
 import { AccountsService } from "../identity/accounts.js";
 import { ApiTokenService } from "../identity/api-tokens.js";
 import {
@@ -60,6 +62,11 @@ export interface CreateHttpAppOptions {
    * when `roles` includes `gateway` (`serveGateway`).
    */
   gateway?: GatewayRoutes;
+  /**
+   * The git gateway (`/git/v1/*`, a raw route outside Nest), registered only when given: the
+   * kernel passes it when `roles` includes `api`.
+   */
+  git?: Pick<GitGateway, "handle">;
   /** 副本标识（`http.replicaId`）：设置时每个响应带 `x-capybara-replica` 头。 */
   replicaId?: string | undefined;
   /**
@@ -247,6 +254,7 @@ export async function createHttpApp(
     ? await registerPluginDispatch(fastify, () => table, opts.log)
     : undefined;
   if (opts.gateway) await registerGatewayRoutes(fastify, opts.gateway, opts.log);
+  if (opts.git) await registerGitGatewayRoute(fastify, opts.git, opts.log);
 
   return {
     inject: (o) => fastify.inject(o),

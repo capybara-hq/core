@@ -3,6 +3,8 @@ import { sql } from "kysely";
 import { type AppendEvent, EventLog } from "../conversations/event-log.js";
 import type { ConversationEvent } from "../conversations/events.js";
 import { pauseQueueIn } from "../conversations/queue.js";
+import { GitRunEnd } from "../git/run-end.js";
+import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
@@ -48,6 +50,8 @@ export class RunFinish {
     /** A scheduled task's run follows its kernel run's end in the same transaction (spec §6). */
     @Inject(ScheduledTaskRunTracker)
     private readonly taskRuns: Pick<ScheduledTaskRunTracker, "onRunFinished">,
+    /** The run's git tickets are revoked and its fetch summaries written after the commit. */
+    @Inject(GitRunEnd) private readonly gitRunEnd: Pick<GitRunEnd, "onRunFinished">,
     /** The run's end owes the conversation's ensure-run backstop (transactional outbox spec §6). */
     @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
     /** A finished run's pending approvals are cancelled in its terminal transaction. */
@@ -127,6 +131,8 @@ export class RunFinish {
       .where("id", "=", a.runId)
       .execute();
     await this.taskRuns.onRunFinished(a.runId, a.status, failureMessage(a.event));
+    // the terminal status is committed first, then the tickets go (the one place runs end)
+    afterCommit(() => this.gitRunEnd.onRunFinished(a.runId));
     // a failed or stopped run pauses the queued messages until the person resumes (spec §5.7)
     if (a.status !== "completed") await pauseQueueIn(t, a.conversationId);
     const seq = (ev as ConversationEvent).seq;

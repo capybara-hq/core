@@ -4,6 +4,7 @@ import {
   type SandboxTier,
   validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
+import { GIT_REPO_MAX_CHARS } from "../conversations/events.js";
 import { orgAllows } from "../local-devices/network-grants.js";
 import { type OrgRole, roleAtLeast } from "../orgs/roles.js";
 import { isFixedAsk } from "../tools/fixed-ask.js";
@@ -56,6 +57,8 @@ export function grantRefusalOf(
   tool: ResolvedTool | undefined,
   ctx: GrantContext,
 ): { code: GrantRefusalCode; message: string } | null {
+  // a git push grant belongs to no tool (sandbox git credentials spec §7)
+  if (isGitGrantKey(toolKey)) return gitGrantRefusal(toolKey, ctx);
   if (
     ctx.forbiddenTools.includes(toolKey) ||
     (tool !== undefined && ctx.forbiddenTools.includes(tool.key))
@@ -163,6 +166,71 @@ export function networkGrantRefusal(
   return null;
 }
 
+/**
+ * A git push grant (sandbox git credentials spec §7): `git:push` lets the task's unattended runs
+ * push to any repository the creator's git source reaches, `git:push:<owner>/<repo>` to that one.
+ */
+export const GIT_PUSH_GRANT = "git:push";
+
+/** The prefix of a per-repository git push grant (`git:push:<owner>/<repo>`). */
+export const GIT_PUSH_REPO_GRANT_PREFIX = `${GIT_PUSH_GRANT}:`;
+
+/** The `spec_hash` a git push grant is stored with (no tool definition behind it). */
+export const GIT_GRANT_SPEC_HASH = "git";
+
+/** The shape of `<owner>/<repo>` (one owner segment, one repository segment). */
+const GIT_REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+
+/**
+ * A repository as policies, grants and asks key it: `<owner>/<repo>` lower-cased (hosts compare
+ * repositories without case), a trailing `.git` dropped; null when it is not of that shape or a
+ * segment is `.` / `..`.
+ */
+export function normalizeGitRepo(repo: string): string | null {
+  const r = repo
+    .trim()
+    .replace(/\.git$/i, "")
+    .toLowerCase();
+  if (r.length > GIT_REPO_MAX_CHARS || !GIT_REPO_PATTERN.test(r)) return null;
+  if (r.split("/").some((seg) => seg === "." || seg === "..")) return null;
+  return r;
+}
+
+/** Whether a grant key is a git push grant (`git:push` or `git:push:<owner>/<repo>`). */
+export const isGitGrantKey = (key: string): boolean =>
+  key === GIT_PUSH_GRANT || key.startsWith(GIT_PUSH_REPO_GRANT_PREFIX);
+
+/** The grant key of pushes to `repo` (normalized by the caller), or to any repository. */
+export const gitPushGrantKey = (repo?: string): string =>
+  repo === undefined ? GIT_PUSH_GRANT : `${GIT_PUSH_REPO_GRANT_PREFIX}${repo}`;
+
+/**
+ * Why a git push grant key cannot be one of a task's grants, or null when it can: the org forbids
+ * it (`forbiddenTools` lists the key or `git:push`) or the repository is not `<owner>/<repo>`
+ * (`not_grantable`). The key is compared as given (callers normalize it with
+ * {@link normalizeGitGrantKey} first).
+ */
+export function gitGrantRefusal(
+  key: string,
+  ctx: Pick<GrantContext, "forbiddenTools">,
+): { code: GrantRefusalCode; message: string } | null {
+  if (gitPushForbidden(ctx.forbiddenTools, key)) {
+    return {
+      code: "forbidden",
+      message: `The organization does not allow ${key} in scheduled runs`,
+    };
+  }
+  if (key === GIT_PUSH_GRANT) return null;
+  const repo = key.slice(GIT_PUSH_REPO_GRANT_PREFIX.length);
+  if (normalizeGitRepo(repo) !== repo) {
+    return {
+      code: "not_grantable",
+      message: `${key} cannot be approved for a scheduled task: name one repository as git:push:<owner>/<repo>`,
+    };
+  }
+  return null;
+}
+
 /** The prefix of a sandbox tier grant's key (sandbox dev tiers spec §11.4): only `tier:open` exists. */
 export const TIER_GRANT_PREFIX = "tier:";
 
@@ -205,4 +273,28 @@ export function tierGrantRefusal(
     };
   }
   return null;
+}
+
+/**
+ * Whether the org's `forbiddenTools` forbid the git push grant `key` (normalized): it lists
+ * `git:push` or the key, each entry compared normalized (`git:push:Acme/App` forbids
+ * `git:push:acme/app`).
+ */
+export function gitPushForbidden(forbiddenTools: readonly string[], key: string): boolean {
+  return forbiddenTools.some((entry) => {
+    const lowered = entry.trim().toLowerCase();
+    if (!isGitGrantKey(lowered)) return false;
+    const e = normalizeGitGrantKey(lowered);
+    return e === GIT_PUSH_GRANT || e === key;
+  });
+}
+
+/**
+ * A git push grant key as stored: the repository normalized ({@link normalizeGitRepo}); the key
+ * unchanged when its repository is not of the shape (then {@link gitGrantRefusal} refuses it).
+ */
+export function normalizeGitGrantKey(key: string): string {
+  if (key === GIT_PUSH_GRANT || !key.startsWith(GIT_PUSH_REPO_GRANT_PREFIX)) return key;
+  const repo = normalizeGitRepo(key.slice(GIT_PUSH_REPO_GRANT_PREFIX.length));
+  return repo === null ? key : gitPushGrantKey(repo);
 }

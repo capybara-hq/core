@@ -179,7 +179,10 @@ export class ChannelCardActions {
     await this.deps.outbound.enqueue(card.conversation_id);
   }
 
-  /** Whether the approval `id` of the org is a network ask. */
+  /**
+   * Whether the approval `id` of the org is a network or git push ask (each the asked person's
+   * own, decided by them in person).
+   */
   private async isNetworkAsk(orgId: string, id: string): Promise<boolean> {
     const r = await this.deps.db
       .selectFrom("approvals")
@@ -187,6 +190,6 @@ export class ChannelCardActions {
       .where("id", "=", id)
       .where("org_id", "=", orgId)
       .executeTakeFirst();
-    return r?.kind === "network";
+    return r?.kind === "network" || r?.kind === "git";
   }
 }

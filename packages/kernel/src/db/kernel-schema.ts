@@ -1,6 +1,7 @@
 import type {
   ConversationSource,
   FileSystemHandle,
+  GitHostEntry,
   ParsedTheme,
   SandboxTier,
   SkillInvocation,
@@ -513,6 +514,12 @@ export interface ConnectorsTable {
    * hash, mode: null }`); null when unknown (custom connectors, connectors before 0106).
    */
   guide_ack: ColumnType<GuideAckJson | null, string | null | undefined, string | null>;
+  /** 0126: the git hosts this connector declares (null: none). */
+  git_hosts: ColumnType<GitHostEntry[] | null, string | null | undefined, string | null>;
+  /** 0126: an org-owned connector serves as a git gateway source (personal ones always do). */
+  use_for_git: Generated<boolean>;
+  /** 0127: the org's policy for pushes through this connector (virtual tool `git_push`). */
+  git_push_policy: Generated<"allow" | "ask" | "deny">;
 }
 
 /**
@@ -604,9 +611,12 @@ export interface ApprovalsTable {
     ("once" | "session" | "always")[] | null | undefined,
     ("once" | "session" | "always")[] | null
   >;
-  /** 0114: what is asked: a tool call ('tool') or a refused network domain ('network'). */
-  kind: Generated<"tool" | "network">;
-  /** 0114: a network ask's hosts, command, kept result and outcome (null for tool approvals). */
+  /**
+   * 0114: what is asked: a tool call ('tool') or a refused network domain ('network'); 0126: a
+   * git push the gateway held ('git').
+   */
+  kind: Generated<"tool" | "network" | "git">;
+  /** 0114: a network or git ask's facts, kept result and outcome (null for tool approvals). */
   detail: ColumnType<unknown | null, string | null | undefined, string | null>;
 }
 

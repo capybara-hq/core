@@ -77,6 +77,7 @@ export {
   type FakeGitCommitOptions,
   type FakeGitRequest,
   type FakeGitServer,
+  type FakeGitServerOptions,
   startFakeGitServer,
 } from "./fake-git-server.js";
 export {

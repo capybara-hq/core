@@ -8,6 +8,8 @@ import { EVAL_REPLAY_HOOKS } from "./evals/worker.js";
 import { BOOTSTRAP_LOCK_TTL } from "./extensions/bootstrap.js";
 import { USAGE_SUBSCRIBERS_CLOCK } from "./extensions/usage-subscribers.js";
 import { FILE_PREVIEW_TIMEOUT } from "./files/previewers.js";
+import { GIT_UPSTREAM_ORIGIN, type GitUpstreamOrigin } from "./git/gateway.js";
+import { GIT_IDENTITY_API_BASE, type GitIdentityApiBase } from "./git/identity.js";
 import { OUTBOX_DISPATCH_FAILS } from "./infra/outbox/outbox.dispatcher.js";
 import { OUTBOX_FAST_PATH_SETTLED } from "./infra/outbox/outbox.module.js";
 import { OUTBOX_STRICT_CONFLICTS } from "./infra/outbox/outbox.service.js";
@@ -44,6 +46,8 @@ import { EMBED_TOKEN_CLOCK } from "./ui/embed-token.js";
  * - `EMBED_TOKEN_CLOCK`: the clock embed tokens are issued and checked with;
  * - `RUN_CONTEXT_CLOCK`: the clock run start reads the run context's date from, and the
  *   `CurrentTime` builtin the time;
+ * - `GIT_IDENTITY_API_BASE`: the API base of a git host for the commit identity (a loopback fake);
+ * - `GIT_UPSTREAM_ORIGIN`: the origin the git gateway relays a git host to (a loopback fake);
  * - `OUTBOX_STRICT_CONFLICTS`: a reused outbox job id with different data throws (tests) instead
  *   of logging an error;
  * - `OUTBOX_DISPATCH_FAILS`: returns true to make the outbox dispatcher's adds to the given queue
@@ -73,6 +77,8 @@ interface KernelSeams {
   [ADMIN_USAGE_TIMINGS]: Partial<AdminUsageTimings>;
   [EMBED_TOKEN_CLOCK]: () => number;
   [RUN_CONTEXT_CLOCK]: () => number;
+  [GIT_IDENTITY_API_BASE]: GitIdentityApiBase;
+  [GIT_UPSTREAM_ORIGIN]: GitUpstreamOrigin;
   [OUTBOX_STRICT_CONFLICTS]: boolean;
   [OUTBOX_DISPATCH_FAILS]: (queue: KernelQueueName) => boolean;
   [USAGE_SUBSCRIBERS_CLOCK]: () => number;
@@ -110,6 +116,8 @@ const SEAM_TOKENS = [
   ADMIN_USAGE_TIMINGS,
   EMBED_TOKEN_CLOCK,
   RUN_CONTEXT_CLOCK,
+  GIT_IDENTITY_API_BASE,
+  GIT_UPSTREAM_ORIGIN,
   OUTBOX_STRICT_CONFLICTS,
   OUTBOX_DISPATCH_FAILS,
   OUTBOX_FAST_PATH_SETTLED,

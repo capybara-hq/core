@@ -7,6 +7,7 @@ import { AttachmentsModule } from "../conversations/attachments.module.js";
 import { EventLogModule } from "../conversations/event-log.js";
 import { TitlesModule } from "../conversations/titles.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
+import { GitModule } from "../git/git.module.js";
 import { IdentityModule } from "../identity/identity.module.js";
 import { LockService } from "../infra/lock/lock.service.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
@@ -51,6 +52,7 @@ import { Waits } from "./waits.js";
     IdentityModule,
     SkillsModule,
     ToolsModule,
+    GitModule,
     ProvidersModule,
     RunJobsModule,
     SubagentsModule,
