@@ -91,8 +91,9 @@ export async function modeCommand(
   }
   out(
     next === "auto"
-      ? "This machine now runs agent commands in auto mode (from the next command)."
-      : "This machine now runs agent commands in the sandbox (from the next command).",
+      ? "This machine's local policy is now auto mode (from the next command); the deployment's " +
+          "ceiling still applies."
+      : "This machine's local policy is now sandbox mode (from the next command).",
   );
   return 0;
 }

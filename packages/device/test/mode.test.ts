@@ -49,7 +49,7 @@ describe("capybara-device mode", () => {
     const r = await run(["sandbox"]);
     expect(r.code).toBe(0);
     expect(readPolicy(dir).mode).toBe("sandbox");
-    expect(r.out).toMatch(/in the sandbox \(from the next command\)/);
+    expect(r.out).toMatch(/local policy is now sandbox mode \(from the next command\)/);
     expect((await run([])).out).toContain("Mode: sandbox.");
   });
 
@@ -121,6 +121,6 @@ describe("capybara-device mode", () => {
       err: () => {},
     });
     expect(code).toBe(0);
-    expect(out.join("\n")).toContain("now runs agent commands in auto mode");
+    expect(out.join("\n")).toContain("local policy is now auto mode");
   });
 });

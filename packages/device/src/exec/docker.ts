@@ -23,6 +23,7 @@ import {
   policyError,
   RootGuard,
 } from "./shared.js";
+import { FILE_OPS_DECISION_TTL_MS } from "./switch.js";
 import { DeviceOpError, type Executor } from "./types.js";
 
 /** The version of the published sandbox images this program runs commands in. */
@@ -246,6 +247,8 @@ export class DockerExecutor implements Executor {
   private dirty = false;
   /** The limits of the latest command: the kernel's mode ceiling for file operations. */
   private lastLimits: Pick<SandboxLimits, "mode"> | undefined;
+  /** When {@link lastLimits} came (file operations follow it only inside the window). */
+  private lastLimitsAt = 0;
   /** The spec hash of the container in use (set when it is created or reused). */
   private spec: string | undefined;
 
@@ -287,9 +290,16 @@ export class DockerExecutor implements Executor {
     ];
   }
 
-  /** The mode file operations use now: the owner's choice cut to the latest command's ceiling. */
+  /**
+   * The mode file operations use now. File operations carry no limits and never pass command
+   * review, so they use the sandboxed result before any exec and once the latest decision is stale
+   * (the safe default for an organization whose ceiling is sandbox), else
+   * `effectiveMode(policy, limits)`.
+   */
   private modeNow(policy: Policy = this.opts.policy()): SandboxMode {
-    return this.lastLimits === undefined ? policy.mode : effectiveMode(policy, this.lastLimits);
+    if (policy.mode === "sandbox" || this.lastLimits === undefined) return "sandbox";
+    if (Date.now() - this.lastLimitsAt > FILE_OPS_DECISION_TTL_MS) return "sandbox";
+    return effectiveMode(policy, this.lastLimits);
   }
 
   /** Every `docker run` flag of the container except its name and spec label. */
@@ -543,6 +553,7 @@ export class DockerExecutor implements Executor {
         throw policyError(`invalid environment variable name ${JSON.stringify(k)}`);
     }
     this.lastLimits = args.limits;
+    this.lastLimitsAt = Date.now();
     // Auto: the container on its default bridge. Sandbox: no network at all (spec P-D7).
     const open = effectiveMode(this.opts.policy(), args.limits) === "auto";
     await this.acquire(open, signal);

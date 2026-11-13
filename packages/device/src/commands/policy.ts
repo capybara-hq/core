@@ -97,7 +97,6 @@ export function describeMode(policy: Policy, runMode: "os" | "docker" = "os"): s
         "Mode: auto. Commands run in the device's container on its default bridge, and the " +
           "platform's file tools reach any path in the container; the deployment reviews every " +
           "command and blocks or asks about dangerous ones.",
-        "Allowed domains apply in OS mode's sandbox only (capybara-device mode sandbox).",
       ];
     }
     return [
@@ -109,7 +108,7 @@ export function describeMode(policy: Policy, runMode: "os" | "docker" = "os"): s
   if (runMode === "docker") {
     return [
       "Mode: sandbox. Commands run in the device's container with no network; only the " +
-        "workspace, skills and temporary files are reachable.",
+        "workspace, skills and temporary files are writable.",
     ];
   }
   return [

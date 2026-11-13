@@ -413,7 +413,10 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
       kind: "policy",
     });
     expect(existsSync("/etc/x")).toBe(false);
-    // Auto mode: any absolute path in the container.
+    // Before any exec decision, file operations use the sandboxed result (safe default).
+    await expect(ex.readFile("/etc/passwd", 5)).rejects.toMatchObject({ kind: "policy" });
+    // Auto mode: any absolute path in the container, once its decision is fresh.
+    await ex.exec(execArgs("true", { limits: { ...LIMITS, mode: "auto" } }), live);
     expect(Buffer.from((await ex.readFile("/etc/passwd", 5))?.data ?? []).toString()).toBe("root:");
   });
 
