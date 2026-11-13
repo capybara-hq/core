@@ -1,7 +1,8 @@
 # Test portfolio design: fewer, better-placed, deterministic tests
 
 - date: 2026-11-14
-- status: draft for maintainer review
+- status: approved by the maintainer, 2026-11-14; implementation plan:
+  `docs/superpowers/plans/2026-11-14-test-portfolio.md`
 - input: findings `governance-load` and `test-timeout-ladder` in
   `docs/reviews/2026-11-12-2-design-review.md`, plus this pass's measurements; the follow-up
   review report `docs/reviews/2026-11-14-design-review.md` is not merged yet
@@ -118,8 +119,8 @@ Vitest projects are declared in `vitest.config.ts`:
 - The `design`, `plugin-client` and `web` projects are unchanged.
 
 Membership is a checked-in list, not a naming convention or import detection: renaming 578 files
-is churn, and detecting "boots an app" at config time is unreliable. New unit tests are added to
-the list in the same PR; the check below flags a changed file whose category is missing.
+is churn, and detecting "boots an app" at config time is unreliable. Integration is the default
+category: a new test belongs there unless it is added to the unit list in the same PR.
 
 All per-test override forms (object property and third argument) are removed. Files that still
 need a longer wait (the dual tests) get it from the `container` project, not from per-test
@@ -173,7 +174,8 @@ coverage has no effect on normal test runs.
 ### 6. Enforcement
 
 - `AGENTS.md` gains a short "Tests" bullet: the level policy, no fixed sleeps, no per-test
-  timeouts, one app boot per file, a new test's category in the checked-in list.
+  timeouts, one app boot per file, a new unit or container test's list entry in the same change
+  (integration is the default).
 - A diff-scoped check (`check:test-portfolio`) flags in **changed** kernel test files:
   `sleep(<number>)`, `new Promise(… setTimeout(… <number> …))`, a `timeout:` property or
   third-argument timeout, an app-booting file with ≤5 tests, and a file booting the app more than
