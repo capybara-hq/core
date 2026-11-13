@@ -875,10 +875,29 @@ export interface OrgCatalogTemplate {
    */
   on?: boolean;
   /**
+   * The org already has a live connector made from this template (a switch-off kept it because an
+   * agent uses it): the install takes it back, so the wizard does not ask for its input.
+   */
+  connected: boolean;
+  /**
    * The template's setup guide in the item's latest version (setup guides v2 spec §9.3): the
    * wizard shows it above the template's input. Null without one (older kernels: absent).
    */
   guide?: { itemId: string; guideId: string } | null;
+}
+
+/**
+ * The templates the install asks for: the default-on ones, and a default-off one an admin turned on
+ * in this org (the install is what creates its connector, so its input is needed too), except one
+ * whose connector the org already has (`connected`): the install reuses that connector.
+ */
+export function installTemplates(templates: OrgCatalogTemplate[]): OrgCatalogTemplate[] {
+  return templates.filter((c) => (!c.defaultOff || c.on === true) && c.connected !== true);
+}
+
+/** The templates whose existing connector the install keeps instead of asking for input. */
+export function keptTemplates(templates: OrgCatalogTemplate[]): OrgCatalogTemplate[] {
+  return templates.filter((c) => (!c.defaultOff || c.on === true) && c.connected === true);
 }
 
 /** `GET /orgs/:orgId/catalog/:itemId` (kernel `OrgCatalogDetail`, latest version). */

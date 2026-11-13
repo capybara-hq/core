@@ -84,9 +84,9 @@ const display = (spec: ToolSpec | undefined) => ({
  * - Extension tools resolve deployment-wide (from the loaded host), not per org: a tool of an
  *   extension that is not enabled in this org still answers `source: extension` with its title.
  *   That is deliberate: old conversation logs keep their labels, and the data is not sensitive.
- * - A key whose prefix is both a loaded extension's name and a connector slug resolves to the
- *   extension. When an agent's tools are built, the registry's `claim()` reports that collision;
- *   here it only changes the label.
+ * - Extension and connector keys never compete for one key: extension tools are
+ *   `plugin__<plugin>__<tool>` and connector tools `mcp__<slug>__<tool>`, so an extension name and
+ *   a connector slug may be the same.
  */
 export async function toolInfo(
   deps: ToolInfoDeps,

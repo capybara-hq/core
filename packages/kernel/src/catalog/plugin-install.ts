@@ -657,8 +657,13 @@ export class PluginInstaller {
       });
     } catch (e) {
       if (!(e instanceof InstallFailure)) throw e;
-      // A dependency another install is still installing: retryable, a 409 as it is
-      if (e.cause instanceof ApiError && e.cause.code === "plugin.install_in_progress") {
+      // Retryable: a dependency another install is still installing, or the connector this install
+      // would reuse went away meanwhile: a 409 as it is, with the message saying what to do
+      if (
+        e.cause instanceof ApiError &&
+        (e.cause.code === "plugin.install_in_progress" ||
+          e.cause.code === "catalog.connector_removed")
+      ) {
         throw e.cause;
       }
       const dep = e.dependency.length > 0 ? ` in dependency ${e.dependency.join(" > ")}` : "";
@@ -1181,9 +1186,15 @@ export class PluginInstaller {
           continue;
         }
         const ci = plan.connectors.get(ct.id);
-        // No input was needed (a live connector was taken back above, or the template was skipped
-        // at plan time): nothing to create
-        if (!ci) continue;
+        if (!ci) {
+          // The plan skipped this template's input because a live connector existed, and it went
+          // away since (deleted between planning and this step): fail honestly, so the person
+          // retries and the new plan asks for the input
+          throw new ApiError(
+            "catalog.connector_removed",
+            `The connector this install would reuse for connector template ${ct.id} was removed meanwhile; start the install again`,
+          );
+        }
         if (actor === null) throw systemNeedsInput(manifest.name);
         const r = await this.connectors.create(orgId, actor, ci, opts.actorTokenId);
         await record({
@@ -2270,25 +2281,45 @@ export class PluginInstaller {
   }
 
   /**
-   * The org's live connector made from one of the plugin's connector templates, if any: an
-   * uninstall keeps a connector its agents use, and the plugin's next switch-on reuses it.
+   * The org's live connectors made from one of the item's connector templates, oldest first
+   * (`templateId` picks one): an uninstall keeps a connector its agents use, and the plugin's next
+   * switch-on reuses it.
    */
+  private async liveTemplateConnectors(
+    orgId: string,
+    itemId: string,
+    templateId?: string,
+  ): Promise<{ templateId: string; connectorId: string }[]> {
+    let q = this.db
+      .selectFrom("connectors as c")
+      .innerJoin("platform_connector_templates as p", "p.id", "c.platform_template_id")
+      .select(["p.template_id", "c.id"])
+      .where("c.org_id", "=", orgId)
+      .where("c.deleted_at", "is", null)
+      .where("p.catalog_item_id", "=", itemId);
+    if (templateId !== undefined) q = q.where("p.template_id", "=", templateId);
+    const rows = await q.orderBy("c.created_at").orderBy("c.id").execute();
+    return rows.map((r) => ({ templateId: r.template_id, connectorId: r.id }));
+  }
+
+  /** {@link liveTemplateConnectors} for one template. */
   private async liveTemplateConnector(
     orgId: string,
     itemId: string,
     templateId: string,
   ): Promise<string | undefined> {
-    const row = await this.db
-      .selectFrom("connectors as c")
-      .innerJoin("platform_connector_templates as p", "p.id", "c.platform_template_id")
-      .select("c.id")
-      .where("c.org_id", "=", orgId)
-      .where("c.deleted_at", "is", null)
-      .where("p.catalog_item_id", "=", itemId)
-      .where("p.template_id", "=", templateId)
-      .orderBy("c.created_at")
-      .executeTakeFirst();
-    return row?.id;
+    const [row] = await this.liveTemplateConnectors(orgId, itemId, templateId);
+    return row?.connectorId;
+  }
+
+  /**
+   * The org's connector templates it already has a live connector for, by template id: the install
+   * takes that connector back instead of creating one, so the org item detail tells the wizard not
+   * to ask for their input (the same join as {@link liveTemplateConnector}).
+   */
+  async connectedTemplates(orgId: string, itemId: string): Promise<Set<string>> {
+    const rows = await this.liveTemplateConnectors(orgId, itemId);
+    return new Set(rows.map((r) => r.templateId));
   }
 
   /**

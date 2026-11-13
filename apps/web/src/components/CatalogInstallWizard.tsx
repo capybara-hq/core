@@ -22,7 +22,9 @@ import {
   displayNameOf,
   endpointLeaves,
   getPath,
+  installTemplates,
   isOAuth,
+  keptTemplates,
   type OrgCatalogDetail,
   type OrgCatalogTemplate,
   type OrgInstallBody,
@@ -108,13 +110,9 @@ export function slugOf(id: string): string {
 export const defaultSlug = (t: Pick<OrgCatalogTemplate, "id">, itemName: string): string =>
   slugOf(t.id === "connector" ? itemName : t.id);
 
-/**
- * The templates the install asks for: the default-on ones, and a default-off one an admin turned on
- * in this org (the install is what creates its connector, so its input is needed too).
- */
-export function installTemplates(templates: OrgCatalogTemplate[]): OrgCatalogTemplate[] {
-  return templates.filter((c) => !c.defaultOff || c.on === true);
-}
+// The wizard asks for `installTemplates` only; the helper lives in lib/catalog so the route table's
+// server-side prefetch uses the same filter (a "use client" module cannot be called from there).
+export { installTemplates } from "../lib/catalog";
 
 export const initialTemplateDraft = (
   t: OrgCatalogTemplate,
@@ -336,11 +334,16 @@ function Wizard({
   const catalogLines = useCatalogErrorLines();
   const item = detail.item;
   const name = displayNameOf(item, locale);
+  const templateName = (c: OrgCatalogTemplate) =>
+    c.displayName ? displayNameOf({ name: c.id, displayName: c.displayName }, locale) : c.connector;
   // A default-off template starts switched off in every org: it is set up when an org admin
   // switches it on, so the wizard does not ask for it.
   // A default-off template is not asked for, unless an admin switched it on in this org: the
-  // install is what creates its connector, so its input is needed like any other
+  // install is what creates its connector, so its input is needed like any other.
+  // A template whose connector this org already has is not asked either: the install takes that
+  // connector back (its endpoint and credentials), so an input here would be discarded.
   const templates = installTemplates(detail.templates);
+  const kept = keptTemplates(detail.templates);
   // The plugin's own extension in this org: its org config is asked only when this install enables it
   const own =
     detail.extension === null
@@ -350,13 +353,7 @@ function Wizard({
     own !== undefined && !own.enabled && hasConfigFields(own.orgConfigSchema) ? own : undefined;
   const hasExtensionStep = detail.extension !== null;
   const steps = [
-    ...templates.map((c) =>
-      t("connectorStep", {
-        name: c.displayName
-          ? displayNameOf({ name: c.id, displayName: c.displayName }, locale)
-          : c.connector,
-      }),
-    ),
+    ...templates.map((c) => t("connectorStep", { name: templateName(c) })),
     ...(hasExtensionStep ? [t("extensionStep")] : []),
     t("confirmStep"),
   ];
@@ -543,12 +540,20 @@ function Wizard({
                 detail.extension !== null
                   ? t("summaryExtension", { name: detail.extension })
                   : null,
-                templates.length > 0 ? t("summaryTemplates", { n: templates.length }) : null,
+                templates.length + kept.length > 0
+                  ? t("summaryTemplates", { n: templates.length + kept.length })
+                  : null,
                 detail.skills.length > 0 ? t("summarySkills", { n: detail.skills.length }) : null,
               ]
                 .filter((s) => s !== null)
                 .join(" · ")}
             </Text>
+            {/* A template the org already has a connector for: it is kept, not asked for again */}
+            {kept.map((c) => (
+              <Text key={c.id} variant="small" tone="muted">
+                {t("connectorKept", { name: templateName(c) })}
+              </Text>
+            ))}
             {detail.dependencies.length > 0 && (
               <Stack gap={4}>
                 <Text variant="small" tone="muted">
