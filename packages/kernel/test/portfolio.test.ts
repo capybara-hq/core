@@ -13,7 +13,10 @@ describe("test portfolio lists", () => {
 
   it("lists only files that exist", () => {
     for (const p of [...list("unit-tests.json"), ...list("container-tests.json")]) {
-      expect(() => readFileSync(new URL(`./${p}`, import.meta.url))).not.toThrow();
+      expect(
+        () => readFileSync(new URL(`./${p}`, import.meta.url)),
+        `missing list entry ${p}`,
+      ).not.toThrow();
     }
   });
 });

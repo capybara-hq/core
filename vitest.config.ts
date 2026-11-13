@@ -5,9 +5,10 @@ import { defineConfig } from "vitest/config";
 // 其余是 Vite 服务端默认条件（设置 conditions 会替换默认值，所以要写全）。
 const conditions = ["@capybara-hq/source", "module", "node", "development|production"];
 
-// Kernel test projects. Membership is a checked-in list, not a naming convention: unit tests start
-// no database, no HTTP, no queue and no app; container tests drive real processes or two replicas.
-// Everything else in packages/kernel/test is integration (the default category). See
+// Kernel test projects. Membership is a checked-in list, not a naming convention: unit tests are
+// pure functions (no database, no container, no HTTP server, no queue and no Nest app); container
+// tests drive real processes or two replicas. Everything else in packages/kernel/test is
+// integration (the default category). See
 // docs/superpowers/specs/2026-11-14-test-portfolio-design.md.
 const kernelTest = (p: string) => `packages/kernel/test/${p}`;
 const unitTests = JSON.parse(
@@ -46,7 +47,8 @@ export default defineConfig({
           globalSetup: ["packages/testing/src/global-setup.ts"],
         },
       },
-      // Kernel unit tests: no database, no HTTP, no queue, no app, so no globalSetup.
+      // Kernel unit tests: pure functions, so no database, no HTTP server, no queue, no app and no
+      // globalSetup.
       {
         extends: true,
         test: {
