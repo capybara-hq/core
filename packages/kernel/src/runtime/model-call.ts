@@ -45,7 +45,9 @@ import {
   compactionBackoff,
   compactionInputBudget,
   compactionPlan,
+  extractSummary,
   shouldCompact,
+  summarySavedTokens,
 } from "./context/compaction.js";
 import {
   applyFit,
@@ -971,7 +973,13 @@ async function maybeCompact(
 
   const { runId, step, signal, conversationId } = input;
   const ref = input.agent.model;
-  const request = buildCompactionRequest(plan.transcript, info.id);
+  // the summary call's output cap: the org's effective setting, never above the model's own cap
+  // (context compaction spec §4.8)
+  const request = buildCompactionRequest(
+    plan.transcript,
+    info.id,
+    Math.min(compaction.maxOutputTokens, info.maxOutputTokens),
+  );
   const attemptNo = consecutiveCompactionFailures(events) + 1;
   // hooks see compaction calls like step attempts (I-1): same scope, chat runs only
   const scope = hookScope(deps.hooks, input);
@@ -1064,7 +1072,8 @@ async function maybeCompact(
       );
     }
     const final = out.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
-    summary = (final || partial).trim();
+    // store only the <summary> block: the <analysis> scratchpad must not enter later requests
+    summary = extractSummary(final || partial);
     if (!acceptSummary(summary, plan.transcript)) {
       failure = `summary too short (${summary.length} chars)`;
     }
@@ -1095,7 +1104,13 @@ async function maybeCompact(
       ? {
           type: "compaction_summary",
           runId,
-          payload: { coversUpToSeq: plan.coversUpToSeq, text: summary },
+          payload: {
+            coversUpToSeq: plan.coversUpToSeq,
+            text: summary,
+            // what compaction saved: the estimated transcript input minus the stored summary
+            // output (context compaction spec §4.9)
+            savedTokens: summarySavedTokens(plan.transcript, summary),
+          },
         }
       : {
           type: "compaction_failed",

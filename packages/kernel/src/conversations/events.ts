@@ -571,7 +571,8 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
         /**
          * The hard fit guard's plan (context compaction spec §4.3): indexes into the assembled
          * request's message list that were dropped, and text / tool_result blocks replaced by the
-         * truncation note. `buildRequest` applies it, so the request replays byte-for-byte; absent
+         * truncation note. `assembleModelRequest` applies it (the runtime `buildRequest` calls it,
+         * and `evals/reconstruct` calls it directly), so the request replays byte-for-byte; absent
          * when the request fit (and in older recordings). A candidate model with another window
          * recomputes it and reports `context_fit`.
          */
@@ -1135,7 +1136,19 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       stoppedBy: z.enum(["person", "deletion", "subagent_end"]).optional(),
     }),
   ),
-  ev("compaction_summary", z.object({ coversUpToSeq: seqNo, text: z.string() })),
+  ev(
+    "compaction_summary",
+    z.object({
+      coversUpToSeq: seqNo,
+      text: z.string(),
+      /**
+       * The estimated transcript input minus the stored summary output (context compaction spec
+       * §4.9), so the UI needs no chunked usage to show what compaction saved. Optional: older
+       * logs have none.
+       */
+      savedTokens: count.optional(),
+    }),
+  ),
   ev("compaction_failed", z.object({ attempt: count, reason: z.string() })),
   ev(
     "run_finished",

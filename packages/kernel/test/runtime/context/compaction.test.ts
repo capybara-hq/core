@@ -3,10 +3,13 @@ import {
   acceptSummary,
   buildCompactionRequest,
   COMPACTION_MARKER,
+  COMPACTION_MAX_OUTPUT_TOKENS,
   compactionBackoff,
   compactionInputBudget,
   compactionPlan,
+  extractSummary,
   shouldCompact,
+  summarySavedTokens,
 } from "../../../src/runtime/context/compaction.js";
 import { Log, NO_TAIL_LIMIT as NO_LIMIT, compactionSettings as settings } from "./fixtures.js";
 
@@ -147,6 +150,68 @@ describe("buildCompactionRequest", () => {
     expect(req.messages[0]?.role).toBe("user");
     expect(JSON.stringify(req.messages[0])).toContain("Assistant: hello");
     expect(req.maxOutputTokens).toBeGreaterThan(0);
+  });
+
+  it("uses Claude Code's structured template: nine sections, analysis and summary wrappers", () => {
+    const req = buildCompactionRequest("User: hi", "fake-1", 12_000);
+    const instruction = req.system[0]?.text ?? "";
+    for (const section of [
+      "Primary Request and Intent",
+      "Key Technical Concepts",
+      "Files and Code Sections",
+      "Errors and fixes",
+      "Problem Solving",
+      "All user messages",
+      "Pending Tasks",
+      "Current Work",
+      "Optional Next Step",
+    ]) {
+      expect(instruction).toContain(section);
+    }
+    expect(instruction).toContain("<analysis>");
+    expect(instruction).toContain("</analysis>");
+    expect(instruction).toContain("<summary>");
+    expect(instruction).toContain("</summary>");
+    // the two Capybara adaptations
+    expect(instruction).toContain("Write in the same language as the conversation");
+    expect(instruction).toContain(
+      "If the transcript starts with an earlier summary, merge it into your summary",
+    );
+    expect(req.maxOutputTokens).toBe(12_000);
+  });
+
+  it("defaults the output cap to COMPACTION_MAX_OUTPUT_TOKENS (20000)", () => {
+    expect(COMPACTION_MAX_OUTPUT_TOKENS).toBe(20_000);
+    expect(buildCompactionRequest("User: hi", "fake-1").maxOutputTokens).toBe(20_000);
+  });
+});
+
+describe("extractSummary", () => {
+  it("returns the summary block and drops the analysis scratchpad", () => {
+    expect(extractSummary("<analysis>x</analysis><summary>\nS\n</summary>")).toBe("S");
+  });
+
+  it("returns a plain answer without tags, trimmed", () => {
+    expect(extractSummary("  plain summary  ")).toBe("plain summary");
+  });
+
+  it("returns an empty string when only analysis remains, so the attempt fails", () => {
+    expect(extractSummary("<analysis>only thinking</analysis>")).toBe("");
+  });
+
+  it("removes an analysis block from an untagged answer", () => {
+    expect(extractSummary("<analysis>t</analysis>\nThe summary.")).toBe("The summary.");
+  });
+});
+
+describe("summarySavedTokens", () => {
+  it("is the transcript estimate minus the stored summary estimate", () => {
+    // 400 ASCII characters ≈ 100 tokens, 40 ≈ 10 tokens
+    expect(summarySavedTokens("x".repeat(400), "y".repeat(40))).toBe(90);
+  });
+
+  it("is never negative when the summary is longer than the transcript", () => {
+    expect(summarySavedTokens("x".repeat(40), "y".repeat(400))).toBe(0);
   });
 });
 

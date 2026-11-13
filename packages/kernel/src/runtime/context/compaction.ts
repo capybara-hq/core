@@ -11,20 +11,45 @@ import { toolsChangedText } from "./tool-changes.js";
 /** 压缩请求的标记：放在 system 中，便于识别（model-fake 据此返回摘要）。 */
 export const COMPACTION_MARKER = "CAPYBARA_COMPACTION";
 
-/** 压缩请求的输出上限。 */
-export const COMPACTION_MAX_OUTPUT_TOKENS = 4096;
+/**
+ * The summary request's output cap when the caller gives none: the built-in default of the
+ * `compaction.maxOutputTokens` setting (context compaction spec §4.8). The effective setting is
+ * what the request uses, capped by the model's own max output.
+ */
+export const COMPACTION_MAX_OUTPUT_TOKENS = 20_000;
 
-/** 摘要的最短长度：200 字符或原文的 5%，取较小者。 */
+/** The shortest accepted summary: 200 characters or 5% of the transcript, whichever is smaller. */
 const MIN_SUMMARY_CHARS = 200;
 const MIN_SUMMARY_RATIO = 0.05;
 
-/** 摘要指令（模型可见，英文）。 */
+/**
+ * The summary instruction (model-facing English): Claude Code's structured template (context
+ * compaction spec §4.2.1). The model first writes an `<analysis>` scratchpad, then a `<summary>`
+ * with nine sections; only the `<summary>` is stored and sent again in later requests.
+ */
 const COMPACTION_INSTRUCTION = [
   COMPACTION_MARKER,
   "You are summarizing the earlier part of a conversation between people and an AI agent, so the agent can continue without the full history.",
-  "Write a concise but complete summary that preserves: the users' goals and requests, decisions made, facts and data established (names, numbers, identifiers, file names, links), work completed and its results, and open questions or pending tasks.",
   "If the transcript starts with an earlier summary, merge it into your summary.",
-  "Write in the same language as the conversation. Output only the summary text.",
+  "Write in the same language as the conversation.",
+  "",
+  "Your task is to create a detailed summary of the conversation so far, paying close attention to the users' explicit requests and the agent's previous actions. This summary must be thorough: it is the only record the agent keeps of everything before it.",
+  "Before providing your final summary, wrap your analysis in <analysis>...</analysis> tags to organize your thoughts and make sure every point below is covered. In your <analysis> block, go through the conversation chronologically and identify, for each part: the users' explicit requests and intents; the agent's approach to addressing them; key decisions, technical concepts and code patterns; specific details such as file names, full code snippets, function signatures and file edits; errors that came up and how they were fixed; and specific feedback that told the agent to do something differently.",
+  "",
+  "Then write the summary inside <summary>...</summary> tags, with these sections:",
+  "1. Primary Request and Intent: capture every explicit request and intent of the users in detail.",
+  "2. Key Technical Concepts: list the important technical concepts, technologies and frameworks discussed.",
+  "3. Files and Code Sections: enumerate the files and code sections examined, modified or created. Include full snippets where they matter and say why each file or edit is important.",
+  "4. Errors and fixes: list the errors that came up and how they were fixed, including specific feedback that told the agent to do something differently.",
+  "5. Problem Solving: document the problems solved and any troubleshooting still open.",
+  "6. All user messages: list all user messages (not tool results), since they carry the users' feedback and changing intent.",
+  "7. Pending Tasks: outline the tasks the users explicitly asked for that are still open.",
+  "8. Current Work: describe in detail exactly what was being worked on immediately before this summary request, with file names and code snippets where applicable, and quote the most recent messages.",
+  "9. Optional Next Step: the next step directly in line with the most recent work, quoting the most recent conversation verbatim so the task does not drift. If the last task was concluded, only list a next step the users' requests explicitly call for; do not start tangential work.",
+  "",
+  'If a section does not apply to the conversation, write "Not applicable" or leave it out.',
+  "There may be additional summarization instructions in the transcript; follow them too.",
+  "Output the <analysis> block followed by the <summary> block and nothing else.",
 ].join("\n");
 
 /**
@@ -246,8 +271,29 @@ function renderBlocks(blocks: EventPayload<"user_message">["content"]): string {
   return out.join("\n");
 }
 
-/** 摘要请求：system 为带标记的英文摘要指令，对话记录作为唯一一条 user 消息。 */
-export function buildCompactionRequest(transcript: string, model: string): ModelRequest {
+/**
+ * The text to store as the compaction summary (context compaction spec §4.2.1): the `<summary>`
+ * block when the model returned one, since the `<analysis>` scratchpad must never be sent in a
+ * later request; otherwise the answer with any `<analysis>` block removed. Trimmed; an empty result
+ * fails the attempt.
+ */
+export function extractSummary(text: string): string {
+  const block = /<summary>([\s\S]*?)<\/summary>/i.exec(text);
+  if (block) return (block[1] ?? "").trim();
+  return text.replace(/<analysis>[\s\S]*?<\/analysis>/gi, "").trim();
+}
+
+/**
+ * The summary request: the marked English instruction as the system prompt and the transcript as
+ * the only user message. `maxOutputTokens` is the effective `compaction.maxOutputTokens` setting,
+ * which the caller narrows to the model's own cap (context compaction spec §4.8); omitted, it is
+ * the built-in default.
+ */
+export function buildCompactionRequest(
+  transcript: string,
+  model: string,
+  maxOutputTokens: number = COMPACTION_MAX_OUTPUT_TOKENS,
+): ModelRequest {
   return {
     model,
     system: [{ text: COMPACTION_INSTRUCTION, cache: false }],
@@ -258,12 +304,26 @@ export function buildCompactionRequest(transcript: string, model: string): Model
       },
     ],
     tools: [],
-    maxOutputTokens: COMPACTION_MAX_OUTPUT_TOKENS,
+    maxOutputTokens,
     params: {},
   };
 }
 
-/** 摘要（去掉首尾空白）至少 min(200, 原文 5%) 个字符才接受；过短视为失败（可靠性清单 A）。 */
+/** Estimated input tokens of a plain text (a user message carries nothing else). */
+function textTokens(text: string): number {
+  return estimateTokens([{ role: "user", content: [{ type: "text", text }] }], []);
+}
+
+/**
+ * What a compaction saved (context compaction spec §4.9): the estimated transcript input minus the
+ * stored summary output. Floored at zero — a summary at least as long as the transcript saved no
+ * tokens, and `savedTokens` is a non-negative count — so the UI can render it as "saved N".
+ */
+export function summarySavedTokens(transcript: string, summary: string): number {
+  return Math.max(0, textTokens(transcript) - textTokens(summary));
+}
+
+/** A summary of at least min(200, 5% of the transcript) characters is accepted; shorter fails. */
 export function acceptSummary(text: string, transcript: string): boolean {
   const min = Math.min(MIN_SUMMARY_CHARS, transcript.length * MIN_SUMMARY_RATIO);
   return text.trim().length >= min;

@@ -808,6 +808,24 @@ describe("runModelStep", () => {
       });
     });
 
+    it("a successful compaction records savedTokens (transcript estimate minus the summary estimate)", async () => {
+      await withSettings({ reserveTokens: 0 }, async () => {
+        for (let i = 0; i < 8; i++) {
+          await say(filler(i));
+          await answer(filler(i));
+        }
+        await say("echo:after compaction");
+        const agent = agentWith({ model: { provider: "model-fake", model: "fake-small" } });
+        const r = await step({ agent });
+        expect(r.content).toEqual([{ type: "text", text: "after compaction" }]);
+
+        const [summary] = await ofType("compaction_summary");
+        expect(summary?.payload.savedTokens).toBeGreaterThan(0);
+        // the stored text is the model's answer, not the analysis scratchpad
+        expect(summary?.payload.text.startsWith("Summary: ")).toBe(true);
+      });
+    });
+
     it("校正按总输入（未缓存 + 缓存读 + 缓存写）计算：大量缓存命中时仍会触发压缩", async () => {
       // 供应商把绝大部分输入报为缓存读，inputTokens 只是未缓存部分；三者之和等于真实输入。
       stubImpl = stub(
