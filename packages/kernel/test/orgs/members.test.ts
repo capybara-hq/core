@@ -44,7 +44,7 @@ beforeAll(async () => {
   orgs = orgsFor(db);
   members = testMembers(db);
   members2 = testMembers(db2);
-}, 120_000);
+});
 afterAll(async () => {
   await raw.destroy();
   await raw2.destroy();

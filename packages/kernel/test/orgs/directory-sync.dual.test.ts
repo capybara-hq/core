@@ -42,7 +42,7 @@ let queueConn: Redis | undefined;
 beforeAll(async () => {
   [pgc, rdc] = await Promise.all([startTestPostgres(), startTestRedis()]);
   fd = await startFakeChannelServer();
-}, 120_000);
+});
 
 afterAll(async () => {
   await queue?.close();
@@ -175,5 +175,5 @@ describe("通讯录同步（双副本）", () => {
       .where("source", "=", "directory:dir-mini")
       .execute();
     expect(rows).toHaveLength(2);
-  }, 90_000);
+  });
 });

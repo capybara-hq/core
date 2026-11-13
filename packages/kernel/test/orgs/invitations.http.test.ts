@@ -47,7 +47,7 @@ beforeAll(async () => {
   accounts = accountsFor(db);
   members = testMembers(db);
   tokens = apiTokensFor(db);
-}, 120_000);
+});
 afterAll(async () => {
   await k?.close();
   redis?.disconnect();
