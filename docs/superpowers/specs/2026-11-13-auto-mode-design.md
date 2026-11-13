@@ -278,9 +278,11 @@ since it is new content in new results **(to confirm in the plan with the zero-d
 - **Local auto mode**: the owner's own credentials, untouched (decided): `git push`, `gh pr create`,
   `npm publish` work as in the owner's terminal, reviewed by §5.
 - **Cloud**: `gh`'s own login (decided). The agent runs `gh auth login --web` (device code) in the
-  container; the kernel recognises the device-code prompt in the output and shows it to the person
-  as a card (open the URL, the code, a copy button); the token stays in the container's persistent
-  file system, under the device owner's account only. `gh auth setup-git` makes `git push` use it.
+  container; the kernel recognises the device-code prompt in the output it reads — the command's
+  result, or a background task's output read with `TaskOutput` while the login waits (there is no
+  streaming stage, so the login belongs in the background) — and shows it to the person as a card
+  (open the URL, the code, a copy button); the token stays in the container's persistent file
+  system, under the device owner's account only. `gh auth setup-git` makes `git push` use it.
   Recognising the prompt is a small parser for `gh`'s fixed output; other CLIs' device flows can be
   added the same way later **(designer's call)**.
 - The git gateway (core#198) is not needed for these paths.
