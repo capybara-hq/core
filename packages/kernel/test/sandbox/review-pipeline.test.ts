@@ -138,7 +138,10 @@ beforeAll(async () => {
         name: "Scheduled coder",
         instructions: "Use the device.",
         model: { provider: "model-script", model: "script-1" },
-        disabledTools: onlyBuiltins([{ kind: "builtin", name: "Bash" }]),
+        disabledTools: onlyBuiltins([
+          { kind: "builtin", name: "Bash" },
+          { kind: "builtin", name: "Write" },
+        ]),
       },
       visibility: "org",
     },
@@ -238,6 +241,76 @@ const conversationOfTaskRun = async (taskId: string): Promise<string> => {
   );
   return r.id;
 };
+
+/**
+ * Inserts an active scheduled task with a due run, scripts the first reply of its prompt to call
+ * `toolCalls`, fires the run and waits for its terminal event.
+ */
+async function fireScheduled(
+  prompt: string,
+  toolCalls: { name: string; input: Record<string, unknown> }[],
+): Promise<ConversationEvent[]> {
+  const task = await store.insertTask(db, {
+    id: randomUUID(),
+    orgId,
+    accountId: ownerId,
+    agentId: taskAgentId,
+    name: prompt,
+    prompt,
+    trigger: { kind: "cron", expr: "*/5 * * * *", timeZone: "UTC" },
+    mode: "new",
+    conversationId: null,
+    chat: null,
+    model: null,
+    effort: null,
+    deviceId: null,
+    status: "active",
+    nextRunAt: new Date(Date.now() + 86_400_000),
+    jitterSeconds: 0,
+    expiresAt: null,
+  } satisfies ScheduledTaskInsert);
+  const run = await store.insertRun(db, {
+    id: randomUUID(),
+    taskId: task.id,
+    orgId,
+    scheduledFor: new Date(),
+    trial: false,
+  });
+  if (!run) throw new Error("tick taken");
+  scriptRules([{ when: { lastUserIncludes: prompt, assistantTurns: 0 }, reply: { toolCalls } }]);
+  await k.app.get(ScheduledTaskFirer).fire(run.id);
+  const conv = await conversationOfTaskRun(task.id);
+  const terminal = await waitFor(
+    async () => {
+      const e = await eventsOf(db, conv);
+      return e.some((x) => x.type === "run_finished" || x.type === "run_failed") ? e : null;
+    },
+    30_000,
+    "the scheduled run ended",
+  );
+  scriptRules([]);
+  return terminal;
+}
+
+/** The unattended ask turned deny: no card, the reason in the result, the run finishes. */
+function expectUnattendedDeny(
+  terminal: ConversationEvent[],
+  rule: string,
+  kind: "command" | "write" = "command",
+): Extract<ConversationEvent, { type: "tool_result" }> {
+  expect(terminal.filter((e) => e.type === "approval_requested")).toEqual([]);
+  expect(terminal.some((e) => e.type === "tool_call_started")).toBe(false);
+  expect(terminal.some((e) => e.type === "run_finished")).toBe(true);
+  const r = terminal.find(
+    (e): e is Extract<ConversationEvent, { type: "tool_result" }> => e.type === "tool_result",
+  );
+  expect(r, "the call's result").toBeDefined();
+  expect(r?.payload.isError).toBe(true);
+  expect(r?.payload.content).toContain(`This ${kind} needs approval`);
+  expect(r?.payload.content).toContain("no one can approve it now");
+  expect(r?.payload.review).toMatchObject({ decision: "deny", by: "rule", rule });
+  return r as Extract<ConversationEvent, { type: "tool_result" }>;
+}
 
 describe("the command review in the pipeline", { timeout: 120_000 }, () => {
   it("an allowed command runs and its result records the rule's decision", async () => {
@@ -626,6 +699,23 @@ describe("the command review in the pipeline", { timeout: 120_000 }, () => {
     const taskRun = (await store.updateRun(db, run.id, {})) as TaskRun;
     // no `missing_grants` entry: command asks are not a task grant class (P-D3)
     expect(taskRun.missingGrants ?? []).toEqual([]);
+  });
+
+  it("a scheduled task hitting sudo gets no approval and no wait: the ask is a deny, the run continues", async () => {
+    const terminal = await fireScheduled("Update the system packages", [
+      { name: "Bash", input: { command: "sudo apt-get update", description: "Update packages" } },
+    ]);
+    expectUnattendedDeny(terminal, "ask.sudo");
+  });
+
+  it("a scheduled task writing outside the workspace is denied at once with ask.outside-write", async () => {
+    const terminal = await fireScheduled("Write the shared config", [
+      {
+        name: "Write",
+        input: { file_path: "/etc/capybara-t15/note.txt", content: "x" },
+      },
+    ]);
+    expectUnattendedDeny(terminal, "ask.outside-write", "write");
   });
 
   it("an IM run by the device owner is attended: the ask waits for the card", async () => {

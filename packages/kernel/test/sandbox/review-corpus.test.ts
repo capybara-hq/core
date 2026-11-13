@@ -48,6 +48,13 @@ describe("the review corpus", () => {
     expect(load("bypass.jsonl").length).toBeGreaterThanOrEqual(200);
   });
 
+  it("covers every outcome label at least once", () => {
+    // the acceptance corpus is the first gate of the review: a label no command exercises would
+    // let a rule change pass the table test unnoticed
+    const outcomes = new Set(FILES.flatMap((file) => load(file).map((line) => line.outcome)));
+    expect([...outcomes].sort()).toEqual(["allow", "ask", "deny", "unsure"]);
+  });
+
   for (const file of FILES) {
     describe(file, () => {
       const lines = load(file);
