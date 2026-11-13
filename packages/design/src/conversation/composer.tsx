@@ -83,7 +83,7 @@ export type PickerItem = {
   /** An attention mark after the tag, as a `warn` Badge (a device's 「开放」). */
   badge?: string;
   /** The badge's tone: `fail` for a danger mark (a device's 「不使用沙箱」); default `warn`. */
-  badgeTone?: "warn" | "fail";
+  badgeTone?: "default" | "warn" | "fail";
 };
 
 export type PickerProps = {
