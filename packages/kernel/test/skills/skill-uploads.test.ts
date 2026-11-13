@@ -76,7 +76,8 @@ const orgUpload = async (zip: Uint8Array): Promise<string> => {
   return c.id;
 };
 
-const zipOf = (name: string) => new Uint8Array(makeZip([{ name: "SKILL.md", data: SKILL_MD(name) }]));
+const zipOf = (name: string) =>
+  new Uint8Array(makeZip([{ name: "SKILL.md", data: SKILL_MD(name) }]));
 
 describe("create a skill from an upload", () => {
   it.each([

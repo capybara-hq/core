@@ -97,12 +97,14 @@ async function kernelPgConnections(): Promise<number> {
 
 /** Waits until `fn` is true (the old polling loop's 2 s budget); a false result fails the call. */
 const eventually = (fn: () => Promise<boolean>, timeoutMs = 2_000): Promise<boolean> =>
-  vi.waitFor(
-    async () => {
-      if (!(await fn())) throw new Error("condition not met yet");
-    },
-    { timeout: timeoutMs },
-  ).then(() => true);
+  vi
+    .waitFor(
+      async () => {
+        if (!(await fn())) throw new Error("condition not met yet");
+      },
+      { timeout: timeoutMs },
+    )
+    .then(() => true);
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);

@@ -418,9 +418,12 @@ describe("nacos auth", () => {
     const stop = src.watch?.(() => {}) ?? (() => {});
     try {
       // The listener request carries the token from the login performed by load().
-      await vi.waitFor(() => expect(s.requests.some((r) => r.path.endsWith("/listener"))).toBe(true), {
-        timeout: 5_000,
-      });
+      await vi.waitFor(
+        () => expect(s.requests.some((r) => r.path.endsWith("/listener"))).toBe(true),
+        {
+          timeout: 5_000,
+        },
+      );
       const listener = s.requests.find((r) => r.path === "/nacos/v1/cs/configs/listener");
       expect(listener?.token).toBe("tok-1");
       expect(s.logins()).toBe(1);

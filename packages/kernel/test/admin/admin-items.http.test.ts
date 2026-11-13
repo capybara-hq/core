@@ -5,8 +5,8 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
-import { audit } from "../../src/identity/audit.js";
 import { createDb } from "../../src/db/pool.js";
+import { audit } from "../../src/identity/audit.js";
 import type { OperationContext } from "../../src/platform/operation.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
