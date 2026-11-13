@@ -37,15 +37,16 @@ describe("PolicyStore", () => {
     expect(new PolicyStore(dir).current().allowedDomains).toEqual(["a.com"]);
   });
 
-  it("reports a legacy network open and hands out a new object per version only", () => {
-    writeFileSync(policyPath(dir), JSON.stringify({ network: "open" }));
+  it("reports a legacy policy file and hands out a new object per version only", () => {
+    writeFileSync(policyPath(dir), JSON.stringify({ tier: "open" }));
     const store = new PolicyStore(dir);
-    expect(store.legacyNetworkOpen).toBe(true);
+    expect(store.legacy).toBe(true);
+    expect(store.current().mode).toBe("auto");
     const first = store.current();
     expect(store.current()).toBe(first);
     writePolicy(dir, withDomains(["a.com"]));
     expect(store.current()).not.toBe(first);
-    expect(new PolicyStore(dir).legacyNetworkOpen).toBe(false);
+    expect(new PolicyStore(dir).legacy).toBe(false);
   });
 
   it("re-reads policy.json when it changes, without a restart", () => {
@@ -84,36 +85,31 @@ describe("PolicyStore", () => {
     expect(store.current().allowedDomains).toEqual(["c.com"]);
   });
 
-  it("an invalid tier or remoteGrants keeps the last good policy, never a looser one", () => {
-    writePolicy(dir, { ...withDomains(["a.com"]), remoteGrants: "off" });
+  it("an invalid mode keeps the last good policy: a broken file never turns auto on", () => {
+    writePolicy(dir, { ...withDomains(["a.com"]), mode: "sandbox" });
     const errors: string[] = [];
     const store = new PolicyStore(dir, { err: (l) => errors.push(l) });
-    expect(store.current().remoteGrants).toBe("off");
-    writeFileSync(policyPath(dir), JSON.stringify({ remoteGrants: "yes", tier: "open" }));
-    expect(store.current()).toMatchObject({ remoteGrants: "off" });
-    expect(store.current().tier).toBeUndefined();
-    expect(errors[0]).toMatch(/remoteGrants must be "owner" or "off"/);
-    writeFileSync(policyPath(dir), JSON.stringify({ tier: "everything" }));
-    expect(store.current()).toMatchObject({ remoteGrants: "off" });
-    expect(store.current().tier).toBeUndefined();
-    expect(errors[1]).toMatch(/tier must be "strict", "dev" or "open"/);
+    expect(store.current().mode).toBe("sandbox");
+    writeFileSync(policyPath(dir), JSON.stringify({ mode: "maybe" }));
+    expect(store.current()).toMatchObject({ mode: "sandbox", allowedDomains: ["a.com"] });
+    expect(errors[0]).toMatch(/mode must be "auto" or "sandbox"/);
   });
 
-  it("an invalid file turns the sandbox back on when the last good policy had none", () => {
-    writePolicy(dir, { ...withDomains(["a.com"]), tier: "open", isolation: "none" });
+  it("an invalid file keeps the mode the last good policy had", () => {
+    writePolicy(dir, { ...withDomains(["a.com"]), mode: "auto" });
     const errors: string[] = [];
     const store = new PolicyStore(dir, { err: (l) => errors.push(l) });
-    expect(store.current().isolation).toBe("none");
+    expect(store.current().mode).toBe("auto");
     writeFileSync(policyPath(dir), "{nope");
     const kept = store.current();
-    expect(kept).toMatchObject({ tier: "open", isolation: "sandbox", allowedDomains: ["a.com"] });
+    expect(kept).toMatchObject({ mode: "auto", allowedDomains: ["a.com"] });
     // the same object until the file changes (readers tell reloads by identity)
     expect(store.current()).toBe(kept);
     expect(errors).toHaveLength(1);
-    expect(errors[0]).toMatch(/keeping the last valid policy with the sandbox on/);
+    expect(errors[0]).toMatch(/keeping the last valid policy/);
     // a fixed file applies as written
-    writePolicy(dir, { ...withDomains(["a.com"]), tier: "open", isolation: "none" });
-    expect(store.current().isolation).toBe("none");
+    writePolicy(dir, { ...withDomains(["a.com"]), mode: "sandbox" });
+    expect(store.current().mode).toBe("sandbox");
   });
 
   it("a bad version reported once is reported again when it comes back later", () => {

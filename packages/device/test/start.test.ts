@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Connection } from "../src/client.js";
 import { drain, drainAndWait } from "../src/commands/drain.js";
-import { LEGACY_NETWORK_NOTICE, start } from "../src/commands/start.js";
+import { legacyPolicyNotice, start } from "../src/commands/start.js";
 import { stop } from "../src/commands/stop.js";
 import { pidPath, writePid } from "../src/pid.js";
 import type { PolicyStore } from "../src/policy-store.js";
@@ -48,22 +48,26 @@ describe("start: legacy policy notice", () => {
     return out;
   };
 
-  it("says once that network is replaced by tier when policy.json has network open", async () => {
+  it("says once that policy.json now uses mode, and which mode it runs in", async () => {
     writeCredential(dir, cred);
-    writeFileSync(join(dir, "policy.json"), JSON.stringify({ network: "open" }));
+    writeFileSync(join(dir, "policy.json"), JSON.stringify({ isolation: "none", tier: "open" }));
     const out = await run();
-    expect(out.filter((l) => l === LEGACY_NETWORK_NOTICE)).toHaveLength(1);
-    expect(LEGACY_NETWORK_NOTICE).toBe(
-      "policy.json: `network` is replaced by `tier`; run `capybara-device policy set tier open` to keep an unlimited network. Any `capybara-device policy set` removes the old key and this notice.",
+    const notice = legacyPolicyNotice("auto");
+    expect(out.filter((l) => l === notice)).toHaveLength(1);
+    expect(notice).toBe(
+      "policy.json now uses `mode`; this machine runs in auto mode; switch with " +
+        "`capybara-device mode`.",
     );
+    // An older file that did not ask for no sandbox migrates to sandbox.
+    writeFileSync(join(dir, "policy.json"), JSON.stringify({ tier: "dev" }));
+    expect(await run()).toContain(legacyPolicyNotice("sandbox"));
   });
 
-  it("says nothing for a current policy or network allowlist", async () => {
+  it("says nothing for a current policy", async () => {
     writeCredential(dir, cred);
-    writeFileSync(join(dir, "policy.json"), JSON.stringify({ network: "allowlist" }));
-    expect(await run()).not.toContain(LEGACY_NETWORK_NOTICE);
     writePolicy(dir, DEFAULT_POLICY);
-    expect(await run()).not.toContain(LEGACY_NETWORK_NOTICE);
+    expect(await run()).not.toContain(legacyPolicyNotice("auto"));
+    expect(await run()).not.toContain(legacyPolicyNotice("sandbox"));
   });
 });
 
