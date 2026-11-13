@@ -315,6 +315,7 @@ describe("registry without a sandbox provider", () => {
       { offKeys: async () => new Set() },
     );
     const got = await registry.forAgent("org", {
+      source: "web",
       disabledTools: onlyBuiltins([{ kind: "builtin", name: "Bash" }]),
     });
     expect(got.tools).toEqual([]);

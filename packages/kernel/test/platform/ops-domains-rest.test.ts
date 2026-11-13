@@ -144,7 +144,9 @@ describe("registration", () => {
 
 /** A finished run with one step in a conversation of `agentId`: what a case snapshot is taken of. */
 async function seedFinishedRun(agentId: string, accountId: string) {
-  const conv = await env.k.app.get(ConversationsService).create(env.orgId, accountId, agentId, {});
+  const conv = await env.k.app
+    .get(ConversationsService)
+    .create(env.orgId, accountId, agentId, {}, { source: "web" });
   const log = env.k.app.get(EventLog);
   const runId = randomUUID();
   const [msg] = await log.append(conv.id, [
@@ -537,7 +539,7 @@ describe("agents: delete, versions, readiness and pending connectors", () => {
     // a sub-agent runs under its parent's agent: that one stays too
     const parent = await env.k.app
       .get(ConversationsService)
-      .create(env.orgId, env.memId, shared, {});
+      .create(env.orgId, env.memId, shared, {}, { source: "web" });
     const childId = randomUUID();
     await env.db
       .insertInto("conversations")
@@ -548,6 +550,7 @@ describe("agents: delete, versions, readiness and pending connectors", () => {
         account_id: env.memId,
         title: "Child",
         kind: "subagent",
+        source: "subagent",
         parent_conversation_id: parent.id,
         subagent_type: "general-purpose",
         subagent_depth: 1,
@@ -671,7 +674,9 @@ describe("org models", () => {
 describe("background tasks and previewers", () => {
   it("lists the background tasks of my conversation and refuses a task that is not there", async () => {
     const agent = await agentOf(env.memId, "private");
-    const conv = await env.k.app.get(ConversationsService).create(env.orgId, env.memId, agent, {});
+    const conv = await env.k.app
+      .get(ConversationsService)
+      .create(env.orgId, env.memId, agent, {}, { source: "web" });
     const c = ctxOf(env.memId, agent);
     expect(await run("conversations.background-tasks", { conversationId: conv.id }, c)).toEqual({
       items: [],
@@ -695,7 +700,7 @@ describe("background tasks and previewers", () => {
     const other = await agentOf(env.bossId, "private", "Other");
     const theirs = await env.k.app
       .get(ConversationsService)
-      .create(env.orgId, env.bossId, other, {});
+      .create(env.orgId, env.bossId, other, {}, { source: "web" });
     await expect(
       run("conversations.background-tasks", { conversationId: theirs.id }, c),
     ).rejects.toThrow(/conversations\.list/);

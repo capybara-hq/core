@@ -14,7 +14,8 @@ release runbook is in [release.md](release.md). Every configuration key is liste
 
 | Component | Version | Notes |
 |---|---|---|
-| PostgreSQL | **15 or newer** | `capybara migrate` refuses older servers (`PostgreSQL 15 or newer is required`): migration 0029 uses `UNIQUE NULLS NOT DISTINCT`. Development, CI and the compose file use 17. |
+| PostgreSQL | **15 or newer** | `capybara migrate` refuses older servers (`PostgreSQL 15 or newer is required`): migration 0029 uses `UNIQUE NULLS NOT DISTINCT`. The compose files and the test containers use 17 with pgvector (`pgvector/pgvector:pg17`); the web e2e setup and the image smoke tests (`docker/test/kernel-image.sh`, `web-image.sh`) deliberately run plain `postgres:17` to cover the fallback without pgvector. |
+| pgvector | recommended, not required | Migration 0123 runs `CREATE EXTENSION IF NOT EXISTS vector SCHEMA public` when the server offers the extension and none is installed yet. Without it (not offered, or CREATE EXTENSION refused because the migrating role may not create extensions or a managed server's allow-list refuses it: a notice, the migration still succeeds) plugins fall back: the memory plugin stores embeddings as `real[]` and computes similarity in the plugin instead of with `<=>`. On a managed PostgreSQL, enable pgvector before the first `capybara migrate`, or have a DBA run `CREATE EXTENSION vector SCHEMA public` later; an extension installed in another schema is not visible to plugin schemas and counts as absent. |
 | Valkey or Redis | 7 or newer | Queues (BullMQ), leases, rate limits, caches. Turn on persistence (AOF) so queued jobs survive a restart. The compose file uses Valkey 8 with `--appendonly yes`. |
 | S3-compatible object storage | any | Used by the `object-store-s3` extension (a bootstrap plugin, installed by `init`) for attachments, artifacts, skills and extension packages installed through the admin console. AWS S3, MinIO, Ceph, SeaweedFS and S3-compatible services such as Alibaba OSS or Volcengine TOS work. Without it, the kernel starts, but features that need storage answer `storage.unavailable` (503). |
 
@@ -128,7 +129,7 @@ starting. Read its output with `docker compose logs init`.
 
 | Service | Image | Role |
 |---|---|---|
-| `postgres` | `postgres:17` | Database (volume `pgdata`) |
+| `postgres` | `pgvector/pgvector:pg17` | Database: PostgreSQL 17 with pgvector (volume `pgdata`) |
 | `valkey` | `valkey/valkey:8` | Queues and coordination, AOF on (volume `valkeydata`) |
 | `seaweedfs` | `chrislusf/seaweedfs` | SeaweedFS master, volume server and filer (volume `seaweedfsdata`) |
 | `seaweedfs-s3` | `chrislusf/seaweedfs` | The S3 gateway (signed requests only) |

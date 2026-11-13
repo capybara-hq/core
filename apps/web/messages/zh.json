@@ -2735,6 +2735,7 @@
         "identity_source": "决定谁能登录成哪个账号",
         "sandbox": "在部署里执行任意命令",
         "object_store": "保管全部附件与扩展包",
+        "context": "在启用它的组织的对话中，向模型上下文加入文本",
         "migration_warnings": "迁移警告变了（见下方迁移警告），须重新批准"
       },
       "warnings": "迁移警告",
@@ -3644,7 +3645,8 @@
           "pluginScope": "插件范围同步",
           "titles": "会话标题",
           "usageReport": "用量上报",
-          "evals": "评测"
+          "evals": "评测",
+          "lifecycle": "生命周期通知"
         },
         "connections": {
           "channels": "渠道",

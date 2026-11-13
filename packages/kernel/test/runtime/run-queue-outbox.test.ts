@@ -294,6 +294,7 @@ describe("RunQueue.ensureRun through the outbox", () => {
         account_id: ownerId,
         title: "Child",
         kind: "subagent",
+        source: "subagent",
         parent_conversation_id: convId,
         subagent_type: "general-purpose",
         subagent_depth: 1,

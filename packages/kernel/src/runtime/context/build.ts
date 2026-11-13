@@ -21,6 +21,7 @@ import type { ResolvedTool } from "../../tools/registry.js";
 import { renderSubagentDelivery } from "../subagents/render.js";
 import { devicePathsAt, devicePathsText } from "./device-paths.js";
 import { LEGACY_CATALOG_HEADER, LEGACY_SKILL_TEXTS, usesLegacyToolNames } from "./legacy-text.js";
+import { pluginContextsAfterSummary, pluginContextText } from "./plugin-context.js";
 import {
   currentRunContext,
   runContextEvents,
@@ -550,6 +551,9 @@ export function summaryText(summary: string): string {
  *   summary: the latest one follows the summary) /
  *   `run_context` (`role: "system"` at its position, `runContextText`; covered by the summary: the
  *   current context follows the summary whole; a user message's sender line by `senderLines`) /
+ *   `plugin_context` (`role: "system"` at its position, `pluginContextText`, nothing for empty
+ *   text; covered by the summary: the latest non-empty one per plugin, in plugin-name order,
+ *   follows the summary after `device_paths`) /
  *   `background_task_finished`（`role: "system"`, the text of
  *   {@link renderBackgroundFinished}, placed like a user_message）/ `subagent_delivery` (likewise,
  *   the text of {@link renderSubagentDelivery})；`tool_result` 事件还原为紧随其 assistant 消息之后的一条 user 消息
@@ -765,6 +769,10 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     if (paths) {
       messages.push({ role: "system", content: devicePathsText(paths.payload) });
     }
+    // memory spec §6.1: each plugin's context in effect at the boundary follows the summary again
+    for (const text of pluginContextsAfterSummary(events, after)) {
+      messages.push({ role: "system", content: text });
+    }
     // 被摘要覆盖的变更提醒不再发送：摘要时生效的目录与 system 里的不同 → 紧随摘要补上完整的当前目录
     const covered = skillSnaps.filter((e) => e.seq <= after).at(-1);
     // (phase B: plus the current pinned skills and tool-name map when they differ from system's)
@@ -837,6 +845,12 @@ export function buildModelRequest(input: BuildModelRequestInput): {
       case "device_paths":
         messages.push({ role: "system", content: devicePathsText(e.payload) });
         break;
+      // a context@1 provider's text (memory spec §6.1); empty text (nothing any more) renders nothing
+      case "plugin_context": {
+        const text = pluginContextText(e.payload);
+        if (text !== "") messages.push({ role: "system", content: text });
+        break;
+      }
       // hook_denied is not model-visible: the model sees only the denied tool call's tool_result
       // (and nothing for a denied model request), so request building skips it
       case "hook_denied":

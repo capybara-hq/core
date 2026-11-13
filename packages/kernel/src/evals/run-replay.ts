@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   type ContentBlock,
+  type ConversationSource,
   type Logger,
   ModelError,
   type ModelRequest,
@@ -24,6 +25,7 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import type { KyselyCheckpointSaver } from "../runtime/checkpointer.js";
+import { pluginContextIdemKey } from "../runtime/context/plugin-context.js";
 import { estimateTokens } from "../runtime/context/tokens.js";
 import type { LoopDeps } from "../runtime/langgraph-loop.js";
 import { runDeadline, tightestLimit } from "../runtime/limits.js";
@@ -142,6 +144,8 @@ export interface ReplaySeed {
   evalRunId: string;
   orgId: string;
   agentId: string;
+  /** The original conversation's source: the replay offers the tools of this source. */
+  source: ConversationSource;
   accountId: string;
   conversationId: string;
   runId: string;
@@ -161,12 +165,17 @@ export interface ReplaySeed {
    * the original date, names and org, never the eval day's.
    */
   runContext: { payload: unknown } | undefined;
+  /**
+   * The original run's `plugin_context` events (memory spec §6.1), in log order, copied as is:
+   * replays never call context providers.
+   */
+  pluginContexts: { payload: { plugin: string } }[];
 }
 
 /**
  * The seed of a full-run replay (C6): the `kind = 'eval'` conversation with the events before the
  * original run at their original seqs, the run row and its `run_started` (and the original
- * `skills_catalog`), in one transaction of its own.
+ * `skills_catalog`, `run_context` and `plugin_context` events), in one transaction of its own.
  */
 @Injectable()
 export class EvalReplaySeeder {
@@ -206,6 +215,7 @@ export class EvalReplaySeeder {
         consumed_seq: p.consumed,
         kind: "eval",
         eval_run_id: evalRunId,
+        source: p.source,
       })
       .execute();
     for (let i = 0; i < p.seeds.length; i += SEED_BATCH) {
@@ -267,6 +277,12 @@ export class EvalReplaySeeder {
             },
           ]
         : []),
+      ...p.pluginContexts.map((c) => ({
+        type: "plugin_context" as const,
+        runId,
+        idemKey: pluginContextIdemKey(runId, c.payload.plugin),
+        payload: c.payload,
+      })),
     ]);
     if (onSeeded && !(await onSeeded(conversationId))) throw new ReplayClaimLost();
   }
@@ -479,6 +495,9 @@ export async function replayRun(
   const runContext = s.events.find(
     (e) => e.runId === s.runId && e.type === "run_context" && e.seq > R,
   );
+  const pluginContexts = s.events
+    .filter((e) => e.runId === s.runId && e.type === "plugin_context" && e.seq > R)
+    .map((e) => ({ payload: e.payload as { plugin: string } }));
 
   // a sub-agent's case (spec §15.3) runs the effective definition frozen in its subagent_started
   // (the request renders that event's preamble and instructions; its tools come from it too), with
@@ -501,6 +520,10 @@ export async function replayRun(
     (triggerEvent.payload as { skill?: unknown; dispatch?: unknown }).skill !== undefined &&
     (triggerEvent.payload as { dispatch?: unknown }).dispatch !== undefined;
 
+  // the original conversation's source (recorded in the case); a case taken before it was
+  // recorded replays as its run did by default: a web conversation, or a sub-agent's for a child
+  const source: ConversationSource = s.source ?? (subagent === undefined ? "web" : "subagent");
+
   const conversationId = randomUUID();
   const runId = randomUUID();
   await d.seeder.seed(
@@ -508,6 +531,7 @@ export async function replayRun(
       evalRunId,
       orgId: s.orgId,
       agentId: s.agentId,
+      source,
       accountId,
       conversationId,
       runId,
@@ -519,6 +543,7 @@ export async function replayRun(
       model: agent.model,
       catalog,
       runContext,
+      pluginContexts,
     },
     d.onSeeded,
   );
@@ -703,6 +728,13 @@ export async function replayRun(
     s.events.filter((e) => e.runId === s.runId),
   );
   const loop = d.loop({ toolPipeline: pipeline, registry, skillForks, ...(media && { media }) });
+  // a replay never executes a tool, so the role only completes the context
+  const membership = await db
+    .selectFrom("memberships")
+    .select("role")
+    .where("org_id", "=", s.orgId)
+    .where("account_id", "=", accountId)
+    .executeTakeFirst();
   let outcome: LoopOutcome;
   try {
     outcome = await loop.run({
@@ -711,6 +743,10 @@ export async function replayRun(
       runId,
       agentId: s.agentId,
       triggerAccountId: accountId,
+      // the seeded conversation's source (the original's): its tools are the original's
+      source,
+      ownerAccountId: accountId,
+      role: membership?.role ?? "guest",
       agent,
       agentVersion: candidate.agentVersion,
       signal: loopSignal,

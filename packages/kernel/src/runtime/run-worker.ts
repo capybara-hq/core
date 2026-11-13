@@ -1,4 +1,4 @@
-import type { ExtensionContext, Logger } from "@capybara-hq/plugin-sdk";
+import type { ConversationSource, ExtensionContext, Logger } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { DelayedError, type Job, type Worker } from "bullmq";
 import { sql } from "kysely";
@@ -31,12 +31,14 @@ import type { LeaseHandle } from "../infra/lock/lock.service.js";
 import { KERNEL_BUS, KERNEL_LOGGER } from "../infra/tokens.js";
 import { SkillsCatalogService } from "../skills/catalog.js";
 import { normalizeStoredDefinitionIn } from "../tools/legacy-data.js";
+import { ToolRegistry } from "../tools/registry.js";
 import { RunAbort, type RunAbortBy, type RunAbortDetail } from "./abort.js";
 import { KyselyCheckpointSaver } from "./checkpointer.js";
 import { ConversationLock, type Lease } from "./conversation-lock.js";
 import { runDeadline, tightestLimit } from "./limits.js";
 import type { AgentLoop, LoopOutcome, SubagentParent, WaitingFor } from "./loop.js";
 import { RunError, type StreamSink } from "./model-call.js";
+import { PluginContextService } from "./plugin-context.service.js";
 import { ProviderListError, ProviderRegistry } from "./providers.js";
 import { ORG_QUOTA_LEASE_MS, type OrgQuota, orgRunLimit, RUN_QUOTA } from "./quota.js";
 import { RunContextService } from "./run-context.service.js";
@@ -122,6 +124,16 @@ async function requeue(
   throw new DelayedError();
 }
 
+/** An account's display name ("" when it is gone). */
+async function accountName(db: KernelSchemaDb, accountId: string): Promise<string> {
+  const row = await db
+    .selectFrom("accounts")
+    .select("display_name")
+    .where("id", "=", accountId)
+    .executeTakeFirst();
+  return row?.display_name ?? "";
+}
+
 /**
  * 运行 worker（只在含 `worker` 角色的进程消费）：领取 `cap-kernel-runs` 与 `cap-kernel-subagent-runs` 的任务
  * （两个 `@Processor`，见 run-processors.ts），取会话锁与组织配额，调用 AgentLoop，按结果写终态事件并推进
@@ -172,6 +184,11 @@ export class RunWorker {
     private readonly skillsCatalog: Pick<SkillsCatalogService, "record">,
     /** Run start's run context (run context spec §5): who the agent is, the day, the person. */
     @Inject(RunContextService) private readonly runContext: Pick<RunContextService, "record">,
+    /** Run start's plugin context (memory plugin spec §6.1): the `context@1` providers' text. */
+    @Inject(PluginContextService)
+    private readonly pluginContext: Pick<PluginContextService, "record">,
+    /** The run's resolved tools, for the plugin context's `tools` (chat runs with providers). */
+    @Inject(ToolRegistry) private readonly tools: Pick<ToolRegistry, "forAgent">,
     @Inject(RunFinish) private readonly finisher: Pick<RunFinish, "finish">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     /** The steps' live drafts this process writes for the runs it executes. */
@@ -445,7 +462,7 @@ export class RunWorker {
     await this.hooks?.afterRunRead?.(runId, conversationId);
     const conv = await this.db
       .selectFrom("conversations")
-      .select(["org_id", "agent_id", "kind", "subagent_depth"])
+      .select(["org_id", "agent_id", "kind", "subagent_depth", "source", "account_id"])
       .where("id", "=", conversationId)
       .executeTakeFirst();
     if (!conv) return;
@@ -580,6 +597,8 @@ export class RunWorker {
       agent_id: string;
       kind: ConversationKind;
       subagent_depth: number;
+      source: ConversationSource;
+      account_id: string;
     },
     state: ActiveRun,
   ): Promise<ExecResult> {
@@ -662,6 +681,18 @@ export class RunWorker {
       agent = saved;
     }
 
+    // the trigger account's role, read once per run for the plugin context and plugin tool
+    // handlers (memory plugin spec §6.2); an account no longer in the org counts as a guest
+    const role =
+      (
+        await this.db
+          .selectFrom("memberships")
+          .select("role")
+          .where("org_id", "=", conv.org_id)
+          .where("account_id", "=", run.trigger_account_id)
+          .executeTakeFirst()
+      )?.role ?? "guest";
+
     let startedAt = run.started_at;
     // The model / effort switch in effect (UI refresh B): the latest `model_switched` before this
     // run's `run_started`, read under the conversation lock when the run starts, so a replay
@@ -713,6 +744,25 @@ export class RunWorker {
             name: childName ?? agent.name,
           },
         }),
+      });
+      // plugin context (memory plugin spec §6.1): after the run context, still before the run is
+      // running; the providers are asked outside any transaction, a chat run only
+      await this.pluginContext.record({
+        orgId: conv.org_id,
+        conversationId,
+        runId,
+        agentId: conv.agent_id,
+        agentName: agent.name,
+        ownerAccountId: conv.account_id,
+        // only a chat run asks the providers
+        ownerName: conv.kind === "chat" ? await accountName(this.db, conv.account_id) : "",
+        triggerAccountId: run.trigger_account_id,
+        source: conv.source,
+        role,
+        kind: conv.kind,
+        toolKeysByPlugin: () => this.pluginToolKeys(conv, agent),
+        // the run's own abort watch starts with its execution below: until then, the shutdown
+        signal: state.shutdown.signal,
       });
       await this.hooks?.beforeRunning?.(runId, conversationId);
       // never over a terminal status: a run finished meanwhile stays finished
@@ -799,6 +849,9 @@ export class RunWorker {
           runId,
           agentId: conv.agent_id,
           triggerAccountId: run.trigger_account_id,
+          source: conv.source,
+          ownerAccountId: conv.account_id,
+          role,
           agent,
           agentVersion: run.agent_version,
           signal: ac.signal,
@@ -903,6 +956,31 @@ export class RunWorker {
   private completed(conversationId: string): void {
     // a completed run enqueues the conversation's title job (never throws)
     void this.titles.maybeEnqueue(conversationId);
+  }
+
+  /**
+   * The run's extension tool keys by plugin, resolved as a chat run's first step lists them
+   * (disabled tools, org switches, the conversation's source): a provider's `tools`.
+   */
+  private async pluginToolKeys(
+    conv: { id: string; org_id: string; source: ConversationSource },
+    agent: AgentDefinition,
+  ): Promise<Map<string, string[]>> {
+    const { tools } = await this.tools.forAgent(conv.org_id, {
+      disabledTools: agent.disabledTools,
+      subagentTools: agent.subagentTools,
+      subagents: agent.subagents,
+      sandboxConversationId: conv.id,
+      source: conv.source,
+    });
+    const out = new Map<string, string[]>();
+    for (const t of tools) {
+      if (t.source.kind !== "plugin") continue;
+      const keys = out.get(t.source.plugin) ?? [];
+      keys.push(t.key);
+      out.set(t.source.plugin, keys);
+    }
+    return out;
   }
 
   /**

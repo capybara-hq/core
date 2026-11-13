@@ -82,7 +82,7 @@ x-kernel: &kernel
 
 services:
   postgres:
-    image: postgres:17
+    image: pgvector/pgvector:pg17
     restart: unless-stopped
     environment:
       POSTGRES_USER: capybara

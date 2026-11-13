@@ -258,6 +258,7 @@ export async function dispatchSubagent(d: DispatchDeps, a: DispatchArgs): Promis
         parent_conversation_id: ctx.conversationId,
         subagent_type: entry.type,
         subagent_depth: childDepth,
+        source: "subagent",
       })
       .execute();
     const [, task] = await d.eventLog.appendIn(childId, [

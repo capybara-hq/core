@@ -242,6 +242,24 @@ export const OUTBOX_JOBS = {
       removeOnFail: true,
     },
   },
+  // `extensions/lifecycle-hooks.ts` LIFECYCLE_JOB: owed by the transaction that removes a member,
+  // deletes an agent or deletes an org, once per subscribing plugin, under `lifecycleJobId`
+  // (memory plugin spec §6.3)
+  lifecycle: {
+    queue: "cap-kernel-lifecycle",
+    idempotent:
+      "lifecycle handlers must be idempotent (the SDK contract): they delete what the plugin holds for the removed member, agent or org, and deleting it again is a no-op",
+    processedIn: "packages/kernel/src/extensions/lifecycle-hooks.ts",
+    // retried while the plugin is not loaded on the replica that took the job (a rolling deploy)
+    // or its handler fails: 15 attempts from 2 s, doubling (about 18 h in all); removed once done;
+    // a job that failed every attempt is kept a week (the failure must stay visible)
+    opts: {
+      attempts: 15,
+      backoff: { type: "exponential", delay: 2_000 },
+      removeOnComplete: true,
+      removeOnFail: { age: 7 * 86_400, count: 1_000 },
+    },
+  },
 } as const satisfies Record<string, OutboxJobSpec>;
 
 export type OutboxJobName = keyof typeof OUTBOX_JOBS;

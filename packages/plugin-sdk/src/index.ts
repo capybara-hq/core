@@ -8,6 +8,7 @@ export * from "./client-section.js";
 export * from "./config-ui.js";
 export * from "./connector.js";
 export * from "./connector-auth.js";
+export * from "./context.js";
 export * from "./ctx.js";
 export * from "./define-extension.js";
 export * from "./dev-hosts.js";

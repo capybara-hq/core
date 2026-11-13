@@ -55,7 +55,7 @@ export default defineExtension({
   // …
   setup(ctx) {
     ctx.tools.register(SPEC, async (input, call) => {
-      // call: { orgId, accountId, agentId, conversationId, callId, signal, resume? }
+      // call: { orgId, accountId, ownerAccountId, role, source, agentId, conversationId, callId, signal, resume? }
       // …validate, write ctx.db…
       return { content: [{ type: "text", text: "Todo list updated (3 items): …" }] };
     });
@@ -63,6 +63,7 @@ export default defineExtension({
 });
 ```
 
+- **Source and identity in the handler.** `ToolSpec.sources` limits a tool to conversation sources (`ConversationSource`; absent = all): in any other source the tool is hidden from the model and listed as unavailable with the reason `Not available in <source> conversations` (`tools/registry.ts`). The handler's `ToolCallContext` carries `source`, `ownerAccountId` (the conversation's owner, `conversations.account_id`), `accountId` (the account that triggered this run: in a group or channel conversation it can differ from the owner) and `role` (the trigger account's org role, `guest` without membership). **Per-member data must be keyed by `ownerAccountId`, and the handler must refuse when it differs from `accountId`**: otherwise a participant could read or write the owner's data.
 - **Register only during `setup`**; calling it afterwards throws; names must be unique within an extension; `validateToolSpec` validates at registration (name, non-empty description, inputSchema is an object, `defaultPolicy` may only be `allow` / `ask`).
 - **An extension tool is available only in orgs that have enabled the extension** (Ruling A5, unlike model providers): an org admin needs `PUT /api/v1/orgs/:orgId/extensions/<plugin> {"enabled": true}`. When not enabled, an agent can still save the reference (only that the extension is registered is checked), and at runtime it is treated as "unavailable" (see above). Connectors are deployment-level and need no per-org enabling. Two more org reasons make an extension tool unavailable: "Plugin <p> needs configuration in this organization" (the org's effective config is invalid) and "Tool <key> is turned off in this organization" (an org admin switched it off: `GET …/orgs/:orgId/extensions/:extension/tools`, `PUT …/tools/:tool`, previewed with the org's agents that selected it and confirmed with a hash, audit `extension.tool_switched`, 404 `extension.tool_not_found`; the agent editor marks it `switchedOff`). The pipeline also refuses a call to a turned-off tool (backstop), and a tool call carries the effective `config` in its context.
 - State in the handler follows the multi-replica discipline: persistent data goes in `ctx.db` (todo upserts one row per `conversationId`), not in a module-level Map.

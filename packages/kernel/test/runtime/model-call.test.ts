@@ -254,6 +254,7 @@ const step = (
   } = {},
 ) =>
   runModelStep(deps, {
+    source: "web",
     orgId,
     conversationId,
     runId,
@@ -642,6 +643,7 @@ describe("runModelStep", () => {
     const r = await runModelStep(
       { ...deps, registry },
       {
+        source: "web",
         orgId,
         conversationId,
         runId,
@@ -686,6 +688,7 @@ describe("runModelStep", () => {
     const p = runModelStep(
       { ...deps, registry },
       {
+        source: "web",
         orgId,
         conversationId,
         runId,
@@ -832,7 +835,7 @@ describe("runModelStep", () => {
         sink: () => {},
         parentRunId,
       };
-      await runModelStep(deps, input);
+      await runModelStep(deps, { ...input, source: "web" });
       const usage = await ofType("usage");
       expect(usage.map((u) => u.payload.purpose ?? "step")).toEqual(["compaction", "step"]);
       const sum = usage.reduce(
@@ -857,7 +860,7 @@ describe("runModelStep", () => {
       expect(sum).toBeGreaterThan(0);
       expect(await counter()).toBe(sum);
       // the same step again (a resume after a crash) hits the log and counts nothing more
-      await runModelStep(deps, input);
+      await runModelStep(deps, { ...input, source: "web" });
       expect(await counter()).toBe(sum);
     });
 
@@ -885,7 +888,7 @@ describe("runModelStep", () => {
         sink: () => {},
         parentRunId,
       };
-      const r = await runModelStep(deps, input);
+      const r = await runModelStep(deps, { ...input, source: "web" });
       expect(r.budget).toBe(true);
       expect((await ofType("usage")).map((u) => u.payload.purpose ?? "step")).toEqual([
         "compaction",
@@ -893,7 +896,7 @@ describe("runModelStep", () => {
       expect((await ofType("assistant_message")).filter((e) => e.runId === runId)).toHaveLength(0);
       // the loop then hands back in the budget wrap-up at the same step: the one call over the
       // cap, with the budget reminder logged last
-      const w = await runFinalWrapUp(deps, input, "budget");
+      const w = await runFinalWrapUp(deps, { ...input, source: "web" }, "budget");
       expect(w.budget).toBeUndefined();
       expect((await ofType("assistant_message")).filter((e) => e.runId === runId)).toHaveLength(1);
       expect((await ofType("reminder")).at(-1)?.payload.text).toBe(BUDGET_WRAP_UP_REMINDER);
@@ -994,6 +997,7 @@ describe("runModelStep", () => {
     await runModelStep(
       { ...deps, eventLog: racing },
       {
+        source: "web",
         orgId,
         conversationId,
         runId,
@@ -1025,6 +1029,7 @@ describe("runModelStep", () => {
     stubImpl = s;
     await say("hi");
     const r = await runFinalWrapUp(deps, {
+      source: "web",
       orgId,
       conversationId,
       runId,
@@ -1059,6 +1064,7 @@ describe("runModelStep", () => {
       });
     const wrapUp = (agent: AgentDefinition) =>
       runFinalWrapUp(deps, {
+        source: "web",
         orgId,
         conversationId,
         runId,
@@ -1162,6 +1168,7 @@ describe("runModelStep", () => {
       };
       await say("hi");
       await runModelStep(searchDeps, {
+        source: "web",
         orgId,
         conversationId,
         runId,
@@ -1222,6 +1229,7 @@ describe("tool set changes (tool naming spec §9.1)", () => {
         },
       },
       {
+        source: "web",
         orgId,
         conversationId,
         runId: over.runId ?? runId,
@@ -1351,6 +1359,7 @@ describe("model.request hooks", () => {
     let err: unknown;
     try {
       await runModelStep(hooked, {
+        source: "web",
         orgId,
         conversationId,
         runId,
@@ -1401,6 +1410,7 @@ describe("model.request hooks: stickiness, compaction (M-4, M-2, I-1)", () => {
   };
   const hookedStep = (d: ModelStepDeps, agent = agentWith(), n = 1) =>
     runModelStep(d, {
+      source: "web",
       orgId,
       conversationId,
       runId,

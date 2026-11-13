@@ -45,14 +45,14 @@ describe("BuiltinTool.unavailable", () => {
         return orgId === ORG_A ? "Probe is not configured for this organization." : null;
       }),
     );
-    const a = await registry.forAgent(ORG_A, def);
+    const a = await registry.forAgent(ORG_A, { ...def, source: "web" });
     expect(a.tools).toEqual([]);
     // never asked for by the agent: explained only if the model names it (hidden)
     expect(a.unavailable).toEqual([]);
     expect(a.hidden).toEqual([
       { ref: "CurrentTime", reason: "Probe is not configured for this organization." },
     ]);
-    const b = await registry.forAgent(ORG_B, def);
+    const b = await registry.forAgent(ORG_B, { ...def, source: "web" });
     expect(b.tools.map((t) => t.key)).toEqual(["CurrentTime"]);
     expect(b.hidden).toEqual([]);
     expect(seen).toEqual([ORG_A, ORG_B]);
@@ -60,7 +60,7 @@ describe("BuiltinTool.unavailable", () => {
 
   it("still accepts a synchronous implementation", async () => {
     const registry = registryOf(probe(() => "nope"));
-    expect((await registry.forAgent(ORG_A, def)).hidden).toEqual([
+    expect((await registry.forAgent(ORG_A, { ...def, source: "web" })).hidden).toEqual([
       { ref: "CurrentTime", reason: "nope" },
     ]);
   });

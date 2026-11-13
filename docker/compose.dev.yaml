@@ -2,7 +2,7 @@ name: capybara-dev
 
 services:
   postgres:
-    image: postgres:17
+    image: pgvector/pgvector:pg17
     environment:
       POSTGRES_USER: capybara
       POSTGRES_PASSWORD: capybara

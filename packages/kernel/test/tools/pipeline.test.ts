@@ -54,6 +54,7 @@ import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
 import { eventsOf } from "../helpers/runs.js";
+import { webCaller } from "../helpers/step-context.js";
 import { seedConnector, seedConversation } from "../helpers/tool-fixtures.js";
 import {
   approvalsFor,
@@ -353,6 +354,7 @@ const stepCtx = (over: Partial<ToolStepContext> = {}): ToolStepContext => ({
   agentVersion: 3,
   agent,
   accountId: seed.accountId,
+  ...webCaller(seed.accountId),
   signal: new AbortController().signal,
   ...over,
 });
