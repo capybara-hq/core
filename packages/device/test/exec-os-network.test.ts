@@ -29,6 +29,7 @@ const sbx = vi.hoisted(() => {
     throwOnLookup: false,
     lookups: [] as string[],
     registered: [] as Array<{ id: string; allowedDomains: string[] }>,
+    unregistered: [] as string[],
   };
   return state;
 });
@@ -57,7 +58,9 @@ vi.mock("@anthropic-ai/sandbox-runtime", () => ({
     registerCommandNetworkLists: (id: string, lists: { allowedDomains: string[] }) => {
       sbx.registered.push({ id, allowedDomains: [...lists.allowedDomains] });
     },
-    unregisterCommandNetworkLists: () => {},
+    unregisterCommandNetworkLists: (id: string) => {
+      sbx.unregistered.push(id);
+    },
     cleanupAfterCommand: () => {},
     reset: async () => {},
     getSandboxViolationStore: () => ({
@@ -70,7 +73,8 @@ vi.mock("@anthropic-ai/sandbox-runtime", () => ({
   },
 }));
 
-const { createOsExecutor } = await import("../src/exec/os.js");
+const { createOsExecutor, launchedGroup } = await import("../src/exec/os.js");
+const { BACKGROUND_LAUNCH_LINE } = await import("@capybara-hq/plugin-sdk");
 
 const LIMITS: SandboxLimits = {
   cpu: 1,
@@ -113,6 +117,7 @@ beforeEach(() => {
   sbx.pending = undefined;
   sbx.lookups.length = 0;
   sbx.registered.length = 0;
+  sbx.unregistered.length = 0;
 });
 afterEach(() => rmSync(base, { recursive: true, force: true }));
 
@@ -344,6 +349,58 @@ describe("OsExecutor network explanations (mocked runtime)", () => {
     await running;
     // The command ended: nothing open runs any more.
     expect(await ask({ host: "anything.example.org", port: 443 })).toMatchObject(denied);
+    await ex.dispose();
+  });
+
+  it("a background task keeps its launch's network until its process group ends (macOS)", async () => {
+    expect(launchedGroup("started\n4242\n", "darwin")).toBe(4242);
+    expect(launchedGroup("4242\n", "linux")).toBeUndefined();
+    expect(launchedGroup("no sid here\n", "darwin")).toBeUndefined();
+    if (process.platform !== "darwin") return;
+    const ex = await make();
+    await ex.ensureRoot();
+    const ask = sbx.initialize.mock.calls[0]?.[1] as (p: {
+      host: string;
+      port: number;
+    }) => Promise<unknown>;
+    policy = { ...policy, tier: "open" };
+    const open = { ...LIMITS, egress: "open" as const, allowHosts: [] };
+    const listed = { ...LIMITS, tier: "open" as const };
+    // A launch like the kernel's: the task leads a group of its own and outlives the launch,
+    // whose last line is the group id.
+    // (like the kernel's launcher it reports the group id only once the group exists).
+    let n = 0;
+    const launch = (seconds: number) => {
+      const f = join(base, `sid${n++}`);
+      return (
+        `${BACKGROUND_LAUNCH_LINE}\n` +
+        `perl -e 'use POSIX; POSIX::setsid(); open(F, ">", "${f}.tmp"); print F $$; close F; ` +
+        `rename("${f}.tmp", "${f}"); sleep ${seconds}' > /dev/null 2>&1 < /dev/null &\n` +
+        `while [ ! -s ${f} ]; do sleep 0.02; done; cat ${f}; echo`
+      );
+    };
+    const r = await ex.exec(execArgs(launch(30), { limits: open }), never);
+    expect(r.exitCode).toBe(0);
+    const id = sbx.commandIds.at(-1) as string;
+    // The launch returned, the task runs: public hosts stay reachable, nothing was unregistered.
+    expect(await ask({ host: "anything.example.org", port: 443 })).toBe(true);
+    expect(sbx.unregistered).not.toContain(id);
+    // A listed launch keeps its list the same way; a short task releases it once its group ends.
+    const short = await ex.exec(execArgs(launch(1.5), { limits: listed }), never);
+    expect(short.exitCode).toBe(0);
+    const shortId = sbx.commandIds.at(-1) as string;
+    expect(sbx.unregistered).not.toContain(shortId);
+    await new Promise((res) => setTimeout(res, 2000));
+    (ex as unknown as { prune(): void }).prune();
+    expect(sbx.unregistered).toContain(shortId);
+    expect(sbx.unregistered).not.toContain(id);
+    // A foreground command still releases at its end.
+    await ex.exec(execArgs("true", { limits: open }), never);
+    expect(sbx.unregistered).toContain(sbx.commandIds.at(-1));
+    // Stopping everything (drain, dispose) releases the rest.
+    await ex.killAll();
+    expect(sbx.unregistered).toContain(id);
+    expect(await ask({ host: "anything.example.org", port: 443 })).toMatchObject({ allow: false });
     await ex.dispose();
   });
 
