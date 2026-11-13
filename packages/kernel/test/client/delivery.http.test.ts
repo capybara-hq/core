@@ -89,7 +89,7 @@ beforeAll(async () => {
   await importClientPlugin(env, pageBytes, PAGE);
   await importClientPlugin(env, plainBytes, PLAIN);
   await enableExtensions(env.db, env.orgId, PAGE, PLAIN);
-}, 240_000);
+});
 
 afterAll(async () => {
   await env?.stop();
@@ -139,7 +139,7 @@ const expectNotFound = (r: { status: number; headers: Record<string, unknown> },
   expect(code).toBe("client.not_found");
 };
 
-describe("client delivery", { timeout: 120_000 }, () => {
+describe("client delivery", () => {
   it("a member of an org where the plugin is on gets the bundle", async () => {
     const r = await rawGet(env, url(PAGE, pageSha, "client.mjs"), mem.cookie());
     expect(r.status, r.body.toString()).toBe(200);

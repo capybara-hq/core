@@ -76,7 +76,7 @@ beforeAll(async () => {
   await importClientPlugin(env, page, PAGE);
   await importClientPlugin(env, plain, PLAIN);
   await enableExtensions(env.db, env.orgId, PAGE, PLAIN);
-}, 240_000);
+});
 
 afterAll(async () => {
   await env?.stop();
@@ -95,7 +95,7 @@ const post = (p: Person, orgId: string, b: unknown) =>
 const rows = () =>
   env.db.selectFrom("extension_client_reports").selectAll().orderBy("last_at", "desc").execute();
 
-describe("client reports", { timeout: 120_000 }, () => {
+describe("client reports", () => {
   it("a report upserts one row and counts", async () => {
     const first = await post(mem, env.orgId, body({ message: "first" }));
     expect(first.statusCode, first.body).toBe(204);

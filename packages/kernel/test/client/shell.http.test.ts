@@ -65,7 +65,7 @@ beforeAll(async () => {
   await importClientPlugin(env, page, PAGE);
   await importClientPlugin(env, plain, PLAIN);
   await enableExtensions(env.db, env.orgId, PAGE, PLAIN);
-}, 240_000);
+});
 
 afterAll(async () => {
   await env?.stop();
@@ -106,7 +106,7 @@ const signInIds = (s: Shell) => Object.fromEntries(s.items.map((i) => [i.plugin,
 const componentsOf = (s: Shell) =>
   Object.fromEntries(s.items.map((i) => [i.plugin, i.components.map((c) => c.id)]));
 
-describe("client shell reads", { timeout: 120_000 }, () => {
+describe("client shell reads", () => {
   it("the org read lists enabled running plugins with urls and integrity", async () => {
     const s = await orgRead(env.mem);
     const page = await integrity(pageSha);
