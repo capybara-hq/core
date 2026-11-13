@@ -37,12 +37,12 @@ beforeAll(async () => {
   await sql`insert into capybara.orgs (id, slug, name) values ('o1', 'o1', 'O')`.execute(db);
   await sql`insert into capybara.agents (id, org_id, owner_account_id, visibility, current_version)
     values ('ag1', 'o1', 'a1', 'org', 1)`.execute(db);
-}, 120_000);
+});
 
 afterAll(async () => {
   await db?.destroy();
   await pg?.stop();
-}, 120_000);
+});
 
 describe("0053_subagents", () => {
   it("0053 applies twice without error and widens conversations.kind", async () => {

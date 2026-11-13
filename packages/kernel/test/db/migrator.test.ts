@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { startTestPostgres } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import pgLib from "pg";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 
@@ -38,13 +38,13 @@ async function tableExists(d: ReturnType<typeof createDb>, schema: string, table
 
 beforeAll(async () => {
   pg = await startTestPostgres();
-}, 120_000);
+});
 
 afterAll(async () => {
   await Promise.all(dbs.map((d) => d.destroy()));
   await Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true })));
   await pg?.stop();
-}, 120_000);
+});
 
 describe("migrate", () => {
   it("unqualified table lands in the owner schema, not public", async () => {
@@ -161,7 +161,7 @@ describe("createDb", () => {
       ?.pid;
     const admin = db();
     await sql`select pg_terminate_backend(${pid})`.execute(admin);
-    await new Promise((r) => setTimeout(r, 500));
+    await vi.waitFor(() => expect(errors.length).toBeGreaterThan(0), { timeout: 5_000 });
     expect(errors.length).toBeGreaterThan(0);
     expect((await sql<{ x: number }>`select 1 as x`.execute(d)).rows[0]?.x).toBe(1);
   });
@@ -215,10 +215,7 @@ describe("createDb", () => {
         { schema: schemaName(), dir },
         { signal: ac.signal, connectTimeoutMs: 30_000 },
       );
-      await new Promise<void>((r) => {
-        const check = () => (sockets.length > 0 ? r() : setTimeout(check, 10));
-        check();
-      });
+      await vi.waitFor(() => expect(sockets.length).toBeGreaterThan(0), { timeout: 5_000 });
       ac.abort();
       const outcome = await Promise.race([
         p.then(
@@ -231,9 +228,7 @@ describe("createDb", () => {
       // connectTimeoutMs is 30 s; 4 s still proves the abort cut it short and tolerates CI load.
       expect(Date.now() - t0).toBeLessThan(4_000);
       // 客户端已主动断开正在建立的连接
-      const until = Date.now() + 1_000;
-      while (closed < sockets.length && Date.now() < until)
-        await new Promise((r) => setTimeout(r, 10));
+      await vi.waitFor(() => expect(closed).toBe(sockets.length), { timeout: 1_000 });
       expect(closed).toBe(sockets.length);
     } finally {
       for (const s of sockets) s.destroy();

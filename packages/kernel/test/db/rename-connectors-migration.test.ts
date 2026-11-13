@@ -49,13 +49,13 @@ beforeAll(async () => {
   await sql`insert into capybara.conversation_tool_grants (conversation_id, tool_key, spec_hash, app_id)
     values ('c1', 'docs__search', 'h', 'x1')`.execute(db);
   await migrate(pg.url, { schema: "capybara", dir: KERNEL_MIGRATIONS_DIR });
-}, 120_000);
+});
 
 afterAll(async () => {
   await db?.destroy();
   await pg?.stop();
   if (before) rmSync(before, { recursive: true, force: true });
-}, 120_000);
+});
 
 describe("0033 应用 → 连接器", () => {
   it("表改名：旧表不在，新表带着原有数据", async () => {

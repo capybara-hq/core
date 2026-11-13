@@ -63,13 +63,13 @@ beforeAll(async () => {
   await sql`insert into capybara.audit_events (actor_account_id, action, target, detail)
     values ('a1', 'account.updated', 'a2', '{"isEnterpriseAdmin": true}')`.execute(db);
   await migrate(pg.url, { schema: "capybara", dir: copyMigrations((f) => f <= FILE) });
-}, 120_000);
+});
 
 afterAll(async () => {
   await db?.destroy();
   await pg?.stop();
   for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
-}, 120_000);
+});
 
 describe("0080 enterprise admin -> super admin", () => {
   it("renames the column and keeps its values and default", async () => {
