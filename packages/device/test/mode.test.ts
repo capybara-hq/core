@@ -9,7 +9,7 @@ import {
   MODE_AUTO_PROMPT,
   modeCommand,
 } from "../src/commands/mode.js";
-import { DEFAULT_POLICY, readPolicy, writePolicy } from "../src/state.js";
+import { DEFAULT_POLICY, readPolicy, writeCredential, writePolicy } from "../src/state.js";
 
 let dir: string;
 beforeEach(() => {
@@ -17,7 +17,11 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-const run = (argv: string[], ask?: (q: string) => Promise<string>) => {
+const run = (
+  argv: string[],
+  ask?: (q: string) => Promise<string>,
+  sandboxAvailable?: () => { ok: true } | { ok: false; reason: string },
+) => {
   const out: string[] = [];
   const err: string[] = [];
   const cmd = { command: "mode" as const, ...parse(argv) };
@@ -26,6 +30,7 @@ const run = (argv: string[], ask?: (q: string) => Promise<string>) => {
     out: (l) => out.push(l),
     err: (l) => err.push(l),
     ...(ask && { ask }),
+    ...(sandboxAvailable && { sandboxAvailable }),
   }).then((code) => ({ code, out: out.join("\n"), err: err.join("\n") }));
 };
 
@@ -46,7 +51,7 @@ describe("capybara-device mode", () => {
 
   it("sets sandbox mode without a question", async () => {
     writePolicy(dir, { ...DEFAULT_POLICY, mode: "auto" });
-    const r = await run(["sandbox"]);
+    const r = await run(["sandbox"], undefined, () => ({ ok: true }));
     expect(r.code).toBe(0);
     expect(readPolicy(dir).mode).toBe("sandbox");
     expect(r.out).toMatch(/local policy is now sandbox mode \(from the next command\)/);
@@ -81,7 +86,7 @@ describe("capybara-device mode", () => {
     expect(questions).toEqual([MODE_AUTO_PROMPT]);
     expect(yes.out).toContain(AUTO_MODE_RISK_TEXT);
     expect(readPolicy(dir).mode).toBe("auto");
-    const no = await run(["sandbox"]);
+    const no = await run(["sandbox"], undefined, () => ({ ok: true }));
     expect(no.code).toBe(0);
     const refused = await run(["auto"], async () => "n");
     expect(refused.code).toBe(1);
@@ -122,5 +127,42 @@ describe("capybara-device mode", () => {
     });
     expect(code).toBe(0);
     expect(out.join("\n")).toContain("local policy is now auto mode");
+  });
+
+  it("refuses mode sandbox when the OS sandbox is unavailable and leaves auto mode", async () => {
+    writePolicy(dir, { ...DEFAULT_POLICY, mode: "auto" });
+    const r = await run(["sandbox"], undefined, () => ({
+      ok: false,
+      reason: "the OS sandbox is missing dependencies: bwrap",
+    }));
+    expect(r.code).toBe(1);
+    expect(r.err).toMatch(/OS sandbox is unavailable.*bwrap/);
+    expect(r.err).toMatch(/Stay in auto mode|mode auto/);
+    expect(readPolicy(dir).mode).toBe("auto");
+  });
+
+  it("switches to sandbox when available; Docker run mode skips the OS check", async () => {
+    writePolicy(dir, { ...DEFAULT_POLICY, mode: "auto" });
+    expect((await run(["sandbox"], undefined, () => ({ ok: true }))).code).toBe(0);
+    expect(readPolicy(dir).mode).toBe("sandbox");
+    // In Docker mode the container, not the OS sandbox, is the boundary.
+    writePolicy(dir, { ...DEFAULT_POLICY, mode: "auto" });
+    writeCredential(dir, {
+      url: "https://x.test",
+      connectUrl: "wss://x.test/device/connect",
+      credential: "cap_dev_abc",
+      orgId: "o",
+      deviceId: "e",
+      dir: "/tmp/d",
+      mode: "docker",
+      reconnectGraceSeconds: 120,
+      maxFrameBytes: 1_000_000,
+    });
+    const docker = await run(["sandbox"], undefined, () => ({
+      ok: false,
+      reason: "not checked in Docker mode",
+    }));
+    expect(docker.code).toBe(0);
+    expect(readPolicy(dir).mode).toBe("sandbox");
   });
 });

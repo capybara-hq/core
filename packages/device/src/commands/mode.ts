@@ -1,6 +1,7 @@
 import type { Command } from "../args.js";
+import { sandboxUnavailableSwitchRefusal } from "../exec/sandbox-messages.js";
 import { PolicyStore } from "../policy-store.js";
-import { policyPath, type SandboxMode } from "../state.js";
+import { policyPath, readCredential, type SandboxMode } from "../state.js";
 
 /**
  * Shown once before auto mode is turned on, and once at login in an organization that allows it
@@ -40,6 +41,20 @@ export interface ModeDeps {
    * `--yes`, `mode auto` changes nothing.
    */
   ask?: (question: string) => Promise<string>;
+  /**
+   * Whether the OS sandbox can run here (default: the runtime's check). `mode sandbox` is refused
+   * when it cannot; injectable for tests.
+   */
+  sandboxAvailable?: () => { ok: true } | { ok: false; reason: string };
+}
+
+/** Whether this machine is logged in in Docker mode (false when unknown). */
+function dockerRunMode(stateDir: string): boolean {
+  try {
+    return readCredential(stateDir)?.mode === "docker";
+  } catch {
+    return false;
+  }
 }
 
 /** `mode` prints the current mode; `mode auto|sandbox` sets it (auto asks first). */
@@ -83,6 +98,16 @@ export async function modeCommand(
     }
   }
   let next: SandboxMode;
+  if (mode === "sandbox" && !dockerRunMode(stateDir)) {
+    // Sandbox mode cannot run a command without the OS sandbox; refuse the switch on such a
+    // machine and leave the policy as it is (auto mode keeps working).
+    const os = await import("../exec/os.js");
+    const available = deps.sandboxAvailable?.() ?? os.sandboxAvailability();
+    if (!available.ok) {
+      err(sandboxUnavailableSwitchRefusal(available.reason));
+      return 1;
+    }
+  }
   try {
     next = store.update((p) => ({ ...p, mode })).mode;
   } catch (e) {

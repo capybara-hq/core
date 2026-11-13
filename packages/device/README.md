@@ -76,6 +76,12 @@ with `capybara-device mode`):
   allowlist also admits (with an empty list, no network at all). Commands keep their package
   caches in the workspace like any other file.
 
+If the OS sandbox is unavailable on the machine (an unsupported platform or missing dependencies,
+such as `bwrap` / `socat` on Linux), the device still starts and serves: auto mode works, and every
+sandbox-mode command is refused with the reason and how to fix it (`capybara-device mode auto`, or
+install the dependencies and restart). `capybara-device mode sandbox` is refused on such a machine
+and the policy stays in auto; nothing ever runs unsandboxed by falling back.
+
 ```bash
 capybara-device mode                            # print the current mode
 capybara-device mode sandbox                    # switch to the sandbox

@@ -1,5 +1,6 @@
 import { type Connection, connect } from "../client.js";
 import { CommandLog } from "../command-log.js";
+import { sandboxUnavailableMessage } from "../exec/sandbox-messages.js";
 import type { Executor } from "../exec/types.js";
 import { readRunningPid, removePid, writePid } from "../pid.js";
 import { PolicyStore } from "../policy-store.js";
@@ -80,6 +81,12 @@ export async function start(deps: StartDeps): Promise<number> {
       policy = new PolicyStore(stateDir, { err });
       if (policy.legacy) out(legacyPolicyNotice(policy.current().mode));
       executor = await deps.createExecutor(cred, policy);
+      // Without the OS sandbox the device keeps serving: auto mode works, and sandbox mode
+      // refuses every command with this reason. A policy set to sandbox says so at start.
+      const sandbox = executor as { available?: boolean; unavailableReason?: string };
+      if (sandbox.available === false && policy.current().mode === "sandbox") {
+        err(sandboxUnavailableMessage(sandbox.unavailableReason ?? ""));
+      }
     } catch (e) {
       err(`Cannot start: ${(e as Error).message}`);
       return 1;

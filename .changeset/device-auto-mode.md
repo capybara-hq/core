@@ -9,4 +9,6 @@ loses `set tier|isolation|localhost|remoteGrants` and keeps `show` and the allow
 `status` prints the mode. In auto mode file operations reach any absolute path on the machine. A
 legacy `policy.json` (`isolation: none` or `tier: open`) migrates to auto, anything else to
 sandbox, and `start` says so once. The policy op may only narrow to `sandbox`; a deployment may
-never turn auto mode on.
+never turn auto mode on. When the OS sandbox is unavailable the device still serves auto mode, and
+sandbox mode refuses every command with the reason (and refuses the `mode sandbox` switch) instead
+of running unsandboxed.
