@@ -306,7 +306,7 @@ function buildRun(
         assistants.set(e.payload.step, [...(assistants.get(e.payload.step) ?? []), e]);
         break;
       case "usage":
-        // a compaction, title or web_fetch call's usage is not a step call's: counted in the totals only (I-1)
+        // a compaction, title, web_fetch or review call's usage is not a step call's: counted in the totals only (I-1)
         if (e.payload.purpose !== undefined) {
           compactions.push(e);
           break;

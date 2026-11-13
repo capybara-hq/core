@@ -585,7 +585,9 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
    * reported, but no step consumer may pair it with the step's `model_call`); `title` = the
    * conversation title call (UI refresh B: no run, `step` 0, not model-visible, billed and reported);
    * `web_fetch` = a `WebFetch` extraction call (web tools spec §5: the tool call's run and step,
-   * `callId` = the call; not model-visible, billed and reported, counted on a sub-agent's parent).
+   * `callId` = the call; not model-visible, billed and reported, counted on a sub-agent's parent);
+   * `review` = the command-review classifier's call (auto mode spec §5.3: not model-visible, billed
+   * and reported, `callId` = the reviewed tool call).
    */
   ev(
     "usage",
@@ -594,8 +596,8 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       provider: z.string(),
       model: z.string(),
       ...ModelUsageShape,
-      purpose: z.enum(["compaction", "title", "web_fetch"]).optional(),
-      /** The tool call a `web_fetch` usage belongs to. */
+      purpose: z.enum(["compaction", "title", "web_fetch", "review"]).optional(),
+      /** The tool call a `web_fetch` or `review` usage belongs to. */
       callId: z.string().optional(),
     }),
   ),
