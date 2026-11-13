@@ -40,7 +40,7 @@ const config = (roles: ("api" | "worker")[]) =>
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   // A runs only the api role: no relay of its own competes with B's (a failed pass of A's would
-  // push the row's backoff out), as in test/infra/outbox.relay.test.ts
+  // push the row's backoff out), as in test/infra/outbox.dispatcher.test.ts's relay section
   a = await startKernel(config(["api"]), {
     overrides: [
       { provide: OUTBOX_DISPATCH_FAILS, useValue: (queue: string) => queue === LIFECYCLE_QUEUE },

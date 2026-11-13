@@ -22,12 +22,12 @@ beforeAll(async () => {
   await sql`create table if not exists capybara.tx_probe (id text primary key)`.execute(pool);
   host = new TransactionHost(pool, createLogger("error"));
   kdb = new KernelDb(pool, host);
-}, 120_000);
+});
 
 afterAll(async () => {
   await pool?.destroy();
   await pgc?.stop();
-}, 120_000);
+});
 
 const ids = async () =>
   (await sql<{ id: string }>`select id from capybara.tx_probe`.execute(pool)).rows.map((r) => r.id);

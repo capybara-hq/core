@@ -1,11 +1,12 @@
 import "reflect-metadata";
+import { connect, createServer, type Socket } from "node:net";
 import { startTestPostgres, startTestRedis } from "@capybara-hq/testing";
 import { Body, Controller, Get, Module, Param, Post, Req } from "@nestjs/common";
 import { APP_FILTER, NestFactory } from "@nestjs/core";
 import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fastify";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { KernelConfigSchema } from "../../src/config/schema.js";
+import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
 import { ErrorFilter } from "../../src/http/error.filter.js";
 import { dtoRef, setupSwagger } from "../../src/infra/swagger/swagger.js";
 import { KERNEL_LOGGER } from "../../src/infra/tokens.js";
@@ -15,6 +16,161 @@ import { ValidationModule } from "../../src/infra/validation/validation.module.j
 import { ZBody, ZParam, ZQuery } from "../../src/infra/validation/zod-params.js";
 import { createLogger } from "../../src/log.js";
 import { startKernel } from "../helpers/runs.js";
+
+/**
+ * The kernel's HTTP surface as it boots: the terminus health and readiness endpoints on every role,
+ * the global zod validation pipe with its error body, and swagger's optional /docs.
+ */
+
+const masterKey = Buffer.alloc(32, 7).toString("base64");
+const ROLES = [["api"], ["worker"], ["gateway"]] as const;
+
+const cfg = (
+  roles: readonly string[],
+  pgUrl: string,
+  redisUrl: string,
+  http: Record<string, unknown> = {},
+): KernelConfig =>
+  KernelConfigSchema.parse({
+    roles,
+    db: { url: pgUrl, poolMax: 3 },
+    redis: { url: redisUrl },
+    masterKey,
+    marketplaces: { official: { enabled: false } },
+    http: { port: 0, ...http },
+  });
+
+/** One kernel over the given containers and roles: the file's single startKernel call. */
+const bootKernel = (
+  roles: readonly string[],
+  pgUrl: string,
+  redisUrl: string,
+  http: Record<string, unknown> = {},
+) =>
+  startKernel(cfg(roles, pgUrl, redisUrl, http), {
+    env: {},
+    logger: createLogger("error", { write: () => {} }),
+  });
+
+/**
+ * A TCP proxy in front of Redis that can play "Redis down" and recover. Stopping the Redis container
+ * instead leaves the kernel's queues unable to close, so every close waited out the whole 30 s stop
+ * budget; with Redis back before the close, the close is quick.
+ */
+async function redisProxy(redisUrl: string) {
+  const target = new URL(redisUrl);
+  const live = new Set<Socket>();
+  let down = false;
+  const server = createServer((client) => {
+    if (down) {
+      client.destroy();
+      return;
+    }
+    const upstream = connect(Number(target.port), target.hostname);
+    for (const s of [client, upstream]) {
+      live.add(s);
+      s.on("close", () => live.delete(s));
+      s.on("error", () => {});
+    }
+    client.pipe(upstream).pipe(client);
+    client.on("close", () => upstream.destroy());
+    upstream.on("close", () => client.destroy());
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (address === null || typeof address === "string") throw new Error("no proxy port");
+  const url = new URL(redisUrl);
+  url.hostname = "127.0.0.1";
+  url.port = String(address.port);
+  return {
+    url: url.toString(),
+    down() {
+      down = true;
+      // end, not destroy: a stopping Redis closes its connections, it doesn't reset them
+      for (const s of live) s.end();
+    },
+    up() {
+      down = false;
+    },
+    close: () =>
+      new Promise<void>((resolve) => {
+        for (const s of live) s.destroy();
+        server.close(() => resolve());
+      }),
+  };
+}
+
+describe.each(ROLES)("terminus health on roles %j", (...roles) => {
+  async function boot() {
+    const pgc = await startTestPostgres();
+    const rd = await startTestRedis();
+    const k = await bootKernel(roles, pgc.url, rd.url);
+    const get = (url: string) => k.http.inject({ method: "GET", url });
+    return { pgc, rd, k, get };
+  }
+
+  it("healthz is 200 { ok: true }; readyz is 200 with pg / redis ok", async () => {
+    const { pgc, rd, k, get } = await boot();
+    try {
+      const h = await get("/healthz");
+      expect(h.statusCode).toBe(200);
+      expect(h.json()).toEqual({ ok: true });
+      const r = await get("/readyz");
+      expect(r.statusCode).toBe(200);
+      expect(r.json()).toEqual({ ok: true, pg: "ok", redis: "ok" });
+    } finally {
+      await k.close();
+      await Promise.all([pgc.stop(), rd.stop()]);
+    }
+  });
+
+  it("database down: readyz 503 naming pg, healthz stays 200", async () => {
+    const { pgc, rd, k, get } = await boot();
+    try {
+      await pgc.stop();
+      const r = await get("/readyz");
+      expect(r.statusCode).toBe(503);
+      expect(r.json()).toEqual({ ok: false, pg: "error", redis: "ok" });
+      expect(r.body).not.toContain("postgres://");
+      expect((await get("/healthz")).statusCode).toBe(200);
+    } finally {
+      await k.close().catch(() => {});
+      await rd.stop();
+    }
+  });
+
+  it("redis down: readyz 503 naming redis", async () => {
+    const pgc = await startTestPostgres();
+    const rd = await startTestRedis();
+    const proxy = await redisProxy(rd.url);
+    const k = await bootKernel(roles, pgc.url, proxy.url);
+    try {
+      proxy.down();
+      const r = await k.http.inject({ method: "GET", url: "/readyz" });
+      expect(r.statusCode).toBe(503);
+      expect(r.json()).toEqual({ ok: false, pg: "ok", redis: "error" });
+      expect(r.body).not.toContain("redis://");
+    } finally {
+      proxy.up();
+      await k.close().catch(() => {});
+      await proxy.close();
+      await Promise.all([pgc.stop(), rd.stop()]);
+    }
+  });
+
+  it("shutting down: readyz 503 { ok: false, stopping: true } at once", async () => {
+    const { pgc, rd, k, get } = await boot();
+    try {
+      const stopping = k.close();
+      const r = await get("/readyz");
+      expect(r.statusCode).toBe(503);
+      expect(r.json()).toEqual({ ok: false, stopping: true });
+      await stopping;
+    } finally {
+      await Promise.all([pgc.stop(), rd.stop()]);
+    }
+  });
+});
 
 const BodySchema = z.object({
   name: z.string().min(2),
@@ -195,29 +351,14 @@ describe("http.swagger on the kernel", () => {
   it("/docs is 404 by default and served when http.swagger is true", async () => {
     const pgc = await startTestPostgres();
     const rd = await startTestRedis();
-    const masterKey = Buffer.alloc(32, 7).toString("base64");
-    const boot = async (swagger?: boolean) => {
-      const k = await startKernel(
-        KernelConfigSchema.parse({
-          roles: ["api"],
-          db: { url: pgc.url, poolMax: 3 },
-          redis: { url: rd.url },
-          masterKey,
-          marketplaces: { official: { enabled: false } },
-          http: { port: 0, ...(swagger === undefined ? {} : { swagger }) },
-        }),
-        { env: {}, logger: createLogger("error", { write: () => {} }) },
-      );
-      return k;
-    };
     try {
-      const off = await boot();
+      const off = await bootKernel(["api"], pgc.url, rd.url);
       try {
         expect((await off.http.inject({ method: "GET", url: "/docs" })).statusCode).toBe(404);
       } finally {
         await off.close();
       }
-      const on = await boot(true);
+      const on = await bootKernel(["api"], pgc.url, rd.url, { swagger: true });
       try {
         expect((await on.http.inject({ method: "GET", url: "/docs" })).statusCode).toBe(200);
         expect((await on.http.inject({ method: "GET", url: "/docs-json" })).statusCode).toBe(200);
@@ -227,5 +368,5 @@ describe("http.swagger on the kernel", () => {
     } finally {
       await Promise.all([pgc.stop(), rd.stop()]);
     }
-  }, 180_000);
+  });
 });

@@ -59,12 +59,12 @@ beforeAll(async () => {
   db = kernelDb(pool);
   host = new TransactionHost(pool, createLogger("error", { write: () => {} }));
   kdb = new KernelDb(pool, host);
-}, 120_000);
+});
 
 afterAll(async () => {
   await pool?.destroy();
   await pgc?.stop();
-}, 120_000);
+});
 
 beforeEach(async () => {
   await truncateTables(pool, "capybara.outbox, capybara.accounts, capybara.orgs");

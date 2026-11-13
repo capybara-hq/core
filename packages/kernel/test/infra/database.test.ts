@@ -2,7 +2,7 @@ import { startTestPostgres, type TestContainer } from "@capybara-hq/testing";
 import { NestFactory } from "@nestjs/core";
 import { type Kysely, sql } from "kysely";
 import pg from "pg";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { resolveConfig } from "../../src/config/load.js";
 import { ConfigModule } from "../../src/infra/config/config.module.js";
 import { DatabaseModule } from "../../src/infra/database/database.module.js";
@@ -15,10 +15,10 @@ import { createLogger } from "../../src/log.js";
 let pgc: TestContainer;
 beforeAll(async () => {
   pgc = await startTestPostgres();
-}, 120_000);
+});
 afterAll(async () => {
   await pgc?.stop();
-}, 120_000);
+});
 
 describe("DatabaseModule", () => {
   it("provides the pool, TransactionHost and KernelDb, and closes the pool on shutdown", async () => {
@@ -94,7 +94,10 @@ describe("DatabaseModule client errors", () => {
             sql<{ pid: number }>`select pg_backend_pid() as pid`.compile(pool),
           );
           await killer.query("select pg_terminate_backend($1)", [mine.rows[0]?.pid]);
-          await new Promise((r) => setTimeout(r, 500));
+          // the killed backend surfaces as a client error while the connection is still checked out
+          await vi.waitFor(() => expect(lines.join("\n")).toContain("pg client error"), {
+            timeout: 10_000,
+          });
         });
       } finally {
         await killer.end();
