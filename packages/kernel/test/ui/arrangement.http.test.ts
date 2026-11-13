@@ -76,7 +76,7 @@ beforeAll(async () => {
   await enableExtensions(raw, orgId, "ui-slots");
   await enableExtensions(raw, otherOrgId, "ui-slots");
   ui = `/api/v1/orgs/${orgId}/ui`;
-}, 180_000);
+});
 afterAll(async () => {
   await k?.close();
   await raw?.destroy();

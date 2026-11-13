@@ -55,7 +55,7 @@ beforeAll(async () => {
     { ...base, extensions: [...base.extensions, UI_PROBE, EMBED] },
     { env: {}, logger: createLogger("error", { write: () => {} }) },
   );
-}, 120_000);
+});
 afterAll(async () => {
   await k?.close();
   redis?.disconnect();

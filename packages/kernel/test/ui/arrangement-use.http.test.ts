@@ -70,7 +70,7 @@ beforeAll(async () => {
   await members.add(orgId, ids.member as string, "member", ids.owner as string);
   await enableExtensions(raw, orgId, "ui-components", "ui-components-b");
   ui = `/api/v1/orgs/${orgId}/ui`;
-}, 180_000);
+});
 afterAll(async () => {
   await k?.close();
   await raw?.destroy();

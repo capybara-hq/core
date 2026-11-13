@@ -305,7 +305,7 @@ describe("ExtensionHost.load: an extension upgrade adds a view / embed (review f
       runWorkers: false,
       log: { info: at("info"), warn: at("warn"), error: at("error") },
     };
-  }, 120_000);
+  });
   afterAll(async () => {
     await sub?.close();
     redis?.disconnect();

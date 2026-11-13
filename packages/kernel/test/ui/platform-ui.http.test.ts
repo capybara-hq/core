@@ -109,7 +109,7 @@ beforeAll(async () => {
   rootCookie = r.cookie;
   orgId = await createOrg(owner);
   await testMembers(db).add(orgId, ids.member as string, "member", ids.owner as string);
-}, 180_000);
+});
 afterAll(async () => {
   await k?.close();
   await raw?.destroy();
