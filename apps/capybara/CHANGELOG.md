@@ -1,5 +1,54 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.29
+
+### Patch Changes
+
+- 87f0426: Turning a plugin back on no longer asks for the input of a connector template whose connector an
+  earlier switch-off kept: the org item detail marks such a template `connected` and the enable wizard
+  skips its step, saying the existing connector is kept (the install reuses it unchanged); an install
+  whose kept connector is deleted between planning and running now fails with
+  `catalog.connector_removed` (retry it) instead of finishing without a connector.
+- 3414c94: Switching a plugin off now switches off the connectors recorded on its install (migration 0129 adds
+  `connectors.disabled_by_plugin_id`): their endpoint and credentials stay, their tools stop being
+  offered, and the switch-off preview lists them as disabled with the plugin instead of kept on.
+  Switching the plugin back on reuses those connectors and switches them back on, except one an org
+  admin disabled by hand; deleting a connector stays possible and permanent, and a failed install's
+  rollback still deletes the connectors it created.
+- 59f82a3: The api role serves the git gateway `GET` / `POST /git/v1/<host>/<owner>/<repo>/…`: git smart-HTTP
+  for sandboxes, authenticated by a run ticket (`Authorization: Bearer`), relayed to the host with the
+  actor's connector credential (re-resolved per request), streamed both ways with no redirects, only
+  the spec's headers, a byte cap per run, a per-org concurrency cap and an idle timeout. Pushes follow
+  the `git_push` policy before any byte reaches the host; a held or refused push is answered in git's
+  own protocol (`remote: Capybara: …`) and recorded for the exec.
+- 233af93: Git pushes through the gateway follow a per-connector policy `git_push` (default ask, migration
+  0127 `connectors.git_push_policy`). An ask is an approval of kind `git` (`approval_requested.git`,
+  display only): 「这次允许」 is a run grant, 「这个仓库一直允许」 the member's
+  `git_push:<host>/<owner>/<repo>` allow. Scheduled tasks accept `git:push` and
+  `git:push:<owner>/<repo>` grants; an unattended run without one is refused and records the missing
+  grant.
+- 907f908: Connectors carry a git source: the create body accepts `git` (the SDK's `GitSourceSchema`), a
+  template's `git` is stored at install and on template updates (`connectors.git_hosts`), and an org
+  admin can turn on `useForGit` for an org-credential connector. `GitSources.sourcesFor` picks one
+  connector per git host for an actor (own personal credential, org connectors only with
+  `useForGit`, the org's `gitGateway.hostSources` pick, else OAuth, else the oldest; nothing for
+  anonymous guests). `Credentials.gitAuthorization` builds the Basic value inside `Credentials`;
+  `GitIdentities` reads the GitHub name and noreply address once (cached 24 h). An invalid stored
+  `gitGateway` org setting now reads as off.
+- f453e56: Scheduled-task tools can deliver to an IM chat: `ScheduleCreate` / `ScheduleUpdate` take
+  `mode: "chat"` with `chat { connectionId, chatId, chatType?, agentId? }` (the chat's agent is
+  nested, defaulting to the run's agent), and the new `ScheduleTargets` tool lists the chats the
+  caller can deliver to (the same data as `schedules.chat-targets`). A chat whose channel extension
+  is disabled in the org is no longer offered or accepted at create or update, and a run skipped for
+  it records `plugin_disabled` instead of `target_gone`.
+- Updated dependencies [87f0426]
+- Updated dependencies [3414c94]
+- Updated dependencies [59f82a3]
+- Updated dependencies [233af93]
+- Updated dependencies [907f908]
+- Updated dependencies [f453e56]
+  - @capybara-hq/kernel@0.1.0-rc.28
+
 ## 0.1.0-rc.28
 
 ### Patch Changes
