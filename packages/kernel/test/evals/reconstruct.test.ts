@@ -167,7 +167,7 @@ beforeAll(async () => {
   owner = await session(k, "owner");
   orgId = await createOrg(owner);
   await enableProbe(true);
-}, 180_000);
+});
 
 afterAll(async () => {
   capture.restore();
@@ -448,7 +448,7 @@ const reset = () => capture.reset();
 const oldPins = (pinned: string[]) =>
   ({ orgSkills: [], pinned }) as unknown as NonNullable<AgentDefinition["skills"]>;
 
-describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
+describe("reconstructRequest：基线零漂移", () => {
   it("多步工具、ToolSearch 加载、审批续跑、技能目录快照与变更、提醒、跨运行插话、工具不可用", async () => {
     reset();
     const alpha = await seedSkill("alpha", "Alpha body.");
@@ -1772,7 +1772,7 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
   });
 });
 
-describe("reconstructRequest: UI refresh B model switches", { timeout: 120_000 }, () => {
+describe("reconstructRequest: UI refresh B model switches", () => {
   it("two mid-conversation switches (model, then back with an effort): zero drift, equal to what the provider received", async () => {
     reset();
     const agentId = await createAgent(
@@ -1810,7 +1810,7 @@ describe("reconstructRequest: UI refresh B model switches", { timeout: 120_000 }
   });
 });
 
-describe("reconstructRequest: UI refresh B tool views", { timeout: 120_000 }, () => {
+describe("reconstructRequest: UI refresh B tool views", () => {
   it("Bash with description, a failing exit and an edit diff: zero drift, views not in requests", async () => {
     reset();
     const agentId = await createAgent(
@@ -1920,9 +1920,7 @@ describe("reconstructRequest: UI refresh B tool views", { timeout: 120_000 }, ()
   });
 });
 
-describe("reconstructRequest: sandbox level (sandbox dev tiers spec §11.5)", {
-  timeout: 120_000,
-}, () => {
+describe("reconstructRequest: sandbox level (sandbox dev tiers spec §11.5)", () => {
   it("a device whose tier changes between runs: two device_paths lines, each in the requests, zero drift", async () => {
     reset();
     const agentId = await createAgent(
@@ -1959,7 +1957,7 @@ describe("reconstructRequest: sandbox level (sandbox dev tiers spec §11.5)", {
   });
 });
 
-describe("reconstructRequest: scheduled tasks", { timeout: 120_000 }, () => {
+describe("reconstructRequest: scheduled tasks", () => {
   const store = new ScheduledTaskStore();
   const task = (
     agentId: string,
@@ -2065,7 +2063,7 @@ describe("reconstructRequest: scheduled tasks", { timeout: 120_000 }, () => {
   });
 });
 
-describe("reconstructRequest：漂移原因", { timeout: 60_000 }, () => {
+describe("reconstructRequest：漂移原因", () => {
   let snap: CaseSnapshot;
   let seq: number;
   let info: ModelInfo;
@@ -2084,7 +2082,7 @@ describe("reconstructRequest：漂移原因", { timeout: 60_000 }, () => {
     seq = last.seq;
     info = await modelInfo("model-fake", "fake-1");
     expect(reconstructRequest(snap, seq, { model: info }).drift).toEqual([]);
-  }, 60_000);
+  });
 
   const clone = () => structuredClone(snap);
 
@@ -2286,7 +2284,7 @@ describe("reconstructRequest：漂移原因", { timeout: 60_000 }, () => {
   });
 });
 
-describe("takeSnapshot", { timeout: 60_000 }, () => {
+describe("takeSnapshot", () => {
   it("运行未到终态 → eval.run_not_finished 409；超过上限 → eval.case_too_large 413", async () => {
     reset();
     const agentId = await createAgent({ provider: "model-fake", model: "fake-1" });

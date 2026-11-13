@@ -52,7 +52,7 @@ beforeAll(async () => {
   });
   raw = createDb(pgc.url, 5);
   db = legacyDbFor(raw);
-}, 120_000);
+});
 
 afterEach(async () => {
   for (const k of kernels) await k.close();
@@ -326,7 +326,7 @@ describe("token 上限与组织并发（双副本）", () => {
     expect(state.maxInflight).toBe(1);
     expect(state.seenBy.every((r) => r === "r0" || r === "r1")).toBe(true);
     expectCapped(run, results, 3, 1);
-  }, 120_000);
+  });
 
   it("orgConcurrency = 2：两个副本同时执行，超出 ≤ 在途数 × 一次请求", async () => {
     // 每个副本一次只做一个任务：并发达到 2 就说明两个副本都在执行
@@ -336,5 +336,5 @@ describe("token 上限与组织并发（双副本）", () => {
     expect(state.maxInflight).toBe(2);
     expect(new Set(state.seenBy)).toEqual(new Set(["r0", "r1"]));
     expectCapped(run, results, 4, 2);
-  }, 120_000);
+  });
 });
