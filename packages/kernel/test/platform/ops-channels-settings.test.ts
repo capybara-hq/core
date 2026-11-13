@@ -247,123 +247,89 @@ describe("org settings", () => {
     expect(a?.detail).toMatchObject({ via: "agent", operation: "org-settings.update" });
     expect(() => op("org-settings.update").input.parse({})).toThrow();
     const pre = await op("org-settings.update").precheck?.(
-      { sandboxEgress: { mode: "allowlist", allowHosts: [] } },
+      { cloudNetwork: { mode: "allowlist", allowHosts: [] } },
       ctxOf(ownerId),
     );
-    // the deployment default egress here is not none, so the shared check passes
-    expect(pre).toBeDefined();
+    // following the deployment (open), an allowlist narrows: the shared check passes
+    expect(pre).toEqual({ ok: true });
   });
 
-  it("sandboxTier changes only when they narrow the org's sandbox level (a person raises it)", async () => {
+  it("autoMode may only be turned off through the tool; a person turns it on", async () => {
     const o = op("org-settings.update");
     const pre = (input: unknown) => o.precheck?.(o.input.parse(input), ctxOf(ownerId));
-    // the platform defaults (max dev, default dev): lowering is fine, raising is not
-    expect(await pre({ sandboxTier: { max: "strict" } })).toEqual({ ok: true });
-    const r = (await run("org-settings.update", { sandboxTier: { max: "strict" } })) as {
-      settings: { sandboxTier?: unknown };
+    // the platform allows auto mode: turning it off narrows
+    expect(await pre({ autoMode: "off" })).toEqual({ ok: true });
+    const r = (await run("org-settings.update", { autoMode: "off" })) as {
+      settings: { autoMode?: unknown };
     };
-    expect(r.settings.sandboxTier).toEqual({ max: "strict" });
-    for (const input of [
-      { sandboxTier: null },
-      { sandboxTier: { max: "dev" } },
-      { sandboxTier: { default: "dev" } },
-    ]) {
+    expect(r.settings.autoMode).toBe("off");
+    // back on, or clearing it back to the (allowed) deployment, widens: a person does that
+    for (const input of [{ autoMode: "allowed" }, { autoMode: null }]) {
       expect(await pre(input), JSON.stringify(input)).toMatchObject({
         ok: false,
-        code: "org.sandbox_tier_not_allowed",
+        code: "org.auto_mode_not_allowed",
         message: expect.stringMatching(
-          /^Raising the sandbox level needs a person in the organization settings\./,
+          /^Turning auto mode on needs a person in the organization settings\./,
         ),
       });
       await expect(run("org-settings.update", input)).rejects.toThrow(/needs a person/);
     }
-    // the same effective level in another shape is no raise
-    await run("org-settings.update", { sandboxTier: { max: "strict", default: "strict" } });
-    // above the platform: the shared refusal
-    expect(await pre({ sandboxTier: { max: "open" } })).toMatchObject({
-      ok: false,
-      code: "org.sandbox_tier_not_allowed",
-    });
-    // a person may raise it again
+    // an org admin turns it back on in the web settings
     const back = await owner({
       method: "PATCH",
       url: `/api/v1/orgs/${orgId}/settings`,
-      payload: { sandboxTier: null },
+      payload: { autoMode: "allowed" },
     });
     expect(back.statusCode, back.body).toBe(200);
-    expect(back.json().settings).not.toHaveProperty("sandboxTier");
+    expect(back.json().settings.autoMode).toBe("allowed");
   });
 
-  it("an explicit tier cap equal to the platform's cannot be cleared or loosened (it would widen with the platform later)", async () => {
+  it("cloudNetwork may only narrow through the tool; a person widens it", async () => {
     const o = op("org-settings.update");
     const pre = (input: unknown) => o.precheck?.(o.input.parse(input), ctxOf(ownerId));
-    const set = (sandboxTier: unknown) =>
-      owner({ method: "PATCH", url: `/api/v1/orgs/${orgId}/settings`, payload: { sandboxTier } });
-    // the platform is max dev, default dev, unsandboxed allowed
-    expect((await set({ max: "dev", default: "dev", allowUnsandboxed: false })).statusCode).toBe(
-      200,
-    );
-    for (const input of [
-      { sandboxTier: null },
-      { sandboxTier: {} },
-      { sandboxTier: { default: "dev", allowUnsandboxed: false } },
-      { sandboxTier: { max: "dev", default: "dev" } },
-    ]) {
-      expect(await pre(input), JSON.stringify(input)).toMatchObject({
-        ok: false,
-        code: "org.sandbox_tier_not_allowed",
-      });
-      await expect(run("org-settings.update", input)).rejects.toThrow(/needs a person/);
-    }
-    // the refusal names what a whole replacement would clear
-    expect(await pre({ sandboxTier: { max: "dev", default: "dev" } })).toMatchObject({
-      message: expect.stringContaining("this change clears allowUnsandboxed"),
-    });
-    // a cleared default under a max no higher than it never exceeds the old default
-    expect(await pre({ sandboxTier: { max: "dev", allowUnsandboxed: false } })).toEqual({
-      ok: true,
-    });
-    expect(await pre({ sandboxTier: { max: "strict", allowUnsandboxed: false } })).toEqual({
-      ok: true,
-    });
-    // narrower stays fine
-    await run("org-settings.update", {
-      sandboxTier: { max: "dev", default: "strict", allowUnsandboxed: false },
-    });
-    expect((await set(null)).statusCode).toBe(200);
-  });
-
-  it("sandboxEgress changes only when they narrow the base list", async () => {
-    const o = op("org-settings.update");
-    const pre = (input: unknown) => o.precheck?.(o.input.parse(input), ctxOf(ownerId));
-    const set = (sandboxEgress: unknown) =>
-      owner({ method: "PATCH", url: `/api/v1/orgs/${orgId}/settings`, payload: { sandboxEgress } });
     const refused = async (input: unknown) => {
       expect(await pre(input), JSON.stringify(input)).toMatchObject({
         ok: false,
         code: "org.sandbox_egress_not_allowed",
-        message: "Widening the sandbox network needs a person in the organization settings.",
+        message: "Widening the cloud network needs a person in the organization settings.",
       });
       await expect(run("org-settings.update", input)).rejects.toThrow(/needs a person/);
     };
-    // following the deployment: a subset or none narrows, a new host widens
-    await refused({ sandboxEgress: { mode: "allowlist", allowHosts: ["example.com"] } });
-    await run("org-settings.update", {
-      sandboxEgress: { mode: "allowlist", allowHosts: ["github.com"] },
+    // following the deployment (open): an allowlist narrows
+    expect(await pre({ cloudNetwork: { mode: "allowlist", allowHosts: [] } })).toEqual({
+      ok: true,
     });
-    // a stored list: back to the (wider) deployment list or another host widens
-    await refused({ sandboxEgress: null });
-    await refused({ sandboxEgress: { mode: "allowlist" } });
-    await refused({ sandboxEgress: { mode: "allowlist", allowHosts: ["github.com", "x.com"] } });
-    await run("org-settings.update", { sandboxEgress: { mode: "none" } });
-    // from none, anything else widens
-    await refused({ sandboxEgress: { mode: "allowlist", allowHosts: [] } });
-    await refused({ sandboxEgress: null });
-    expect(await pre({ sandboxEgress: { mode: "none" } })).toEqual({ ok: true });
-    expect((await set(null)).statusCode).toBe(200);
+    const r = (await run("org-settings.update", {
+      cloudNetwork: { mode: "allowlist", allowHosts: ["github.com"] },
+    })) as { settings: { cloudNetwork?: unknown } };
+    expect(r.settings.cloudNetwork).toEqual({ mode: "allowlist", allowHosts: ["github.com"] });
+    // from an allowlist: open, a new host, or clearing back to the (open) deployment widens
+    await refused({ cloudNetwork: { mode: "open" } });
+    await refused({ cloudNetwork: { mode: "allowlist", allowHosts: ["github.com", "x.com"] } });
+    await refused({ cloudNetwork: { mode: "allowlist", allowHosts: ["x.com"] } });
+    await refused({ cloudNetwork: null });
+    // dropping hosts stays fine
+    await run("org-settings.update", { cloudNetwork: { mode: "allowlist", allowHosts: [] } });
+    // an org admin widens it in the web settings
+    const back = await owner({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/settings`,
+      payload: { cloudNetwork: { mode: "open" } },
+    });
+    expect(back.statusCode, back.body).toBe(200);
+    expect(back.json().settings.cloudNetwork).toEqual({ mode: "open" });
+    expect(
+      (
+        await owner({
+          method: "PATCH",
+          url: `/api/v1/orgs/${orgId}/settings`,
+          payload: { cloudNetwork: null },
+        })
+      ).statusCode,
+    ).toBe(200);
   });
 
-  it("an API token may narrow the sandbox but not widen it; a session may", async () => {
+  it("an API token may narrow auto mode and the cloud network but not widen them; a session may", async () => {
     const made = await owner({
       method: "POST",
       url: "/api/v1/me/tokens",
@@ -378,25 +344,30 @@ describe("org settings", () => {
         headers: { authorization: `Bearer ${token}` },
         payload: payload as object,
       });
-    const narrowed = await viaToken({ sandboxTier: { max: "strict" } });
-    expect(narrowed.statusCode, narrowed.body).toBe(200);
-    const raised = await viaToken({ sandboxTier: null });
-    expect(raised.statusCode).toBe(400);
-    expect(raised.json().error.code).toBe("org.sandbox_tier_not_allowed");
-    const widened = await viaToken({
-      sandboxEgress: { mode: "allowlist", allowHosts: ["example.com"] },
+    const off = await viaToken({ autoMode: "off" });
+    expect(off.statusCode, off.body).toBe(200);
+    const on = await viaToken({ autoMode: "allowed" });
+    expect(on.statusCode).toBe(400);
+    expect(on.json().error.code).toBe("org.auto_mode_not_allowed");
+    // the org follows the deployment (open): a token may move it to an allowlist
+    const narrowed = await viaToken({
+      cloudNetwork: { mode: "allowlist", allowHosts: ["example.com"] },
     });
-    expect(widened.statusCode).toBe(400);
-    expect(widened.json().error.code).toBe("org.sandbox_egress_not_allowed");
+    expect(narrowed.statusCode, narrowed.body).toBe(200);
+    // but never back to open, nor to a new host
+    const opened = await viaToken({ cloudNetwork: { mode: "open" } });
+    expect(opened.statusCode).toBe(400);
+    expect(opened.json().error.code).toBe("org.sandbox_egress_not_allowed");
+    const added = await viaToken({ cloudNetwork: { mode: "allowlist", allowHosts: ["x.com"] } });
+    expect(added.statusCode).toBe(400);
+    expect(added.json().error.code).toBe("org.sandbox_egress_not_allowed");
     // a token still changes other settings
     expect((await viaToken({ toolSearch: "on" })).statusCode).toBe(200);
+    // a person in a session widens both, then follows the deployment again
     const bySession = await owner({
       method: "PATCH",
       url: `/api/v1/orgs/${orgId}/settings`,
-      payload: {
-        sandboxTier: null,
-        sandboxEgress: { mode: "allowlist", allowHosts: ["example.com"] },
-      },
+      payload: { autoMode: "allowed", cloudNetwork: { mode: "open" } },
     });
     expect(bySession.statusCode, bySession.body).toBe(200);
     expect(
@@ -404,7 +375,7 @@ describe("org settings", () => {
         await owner({
           method: "PATCH",
           url: `/api/v1/orgs/${orgId}/settings`,
-          payload: { sandboxEgress: null },
+          payload: { cloudNetwork: null },
         })
       ).statusCode,
     ).toBe(200);

@@ -297,7 +297,7 @@ export class AdminOperations implements OnModuleInit {
             ctx.actorAccountId,
             undefined,
             viaAgent("admin.update-settings", ctx),
-            // a person raises the platform's sandbox levels, never an agent (dev tiers spec §2)
+            // a person turns the platform's auto mode on, never an agent (auto mode spec §4.3)
             { onlyNarrows: true },
           ),
       }),
