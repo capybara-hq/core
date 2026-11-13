@@ -1,5 +1,35 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.26
+
+### Patch Changes
+
+- fc46148: Call `context@1` providers at a chat run's start: every provider enabled in the org with a valid
+  config is asked in parallel (2 s each, outside any transaction), and a `plugin_context` event is
+  appended when its text changed; a throw, a timeout or text over 32 KB is skipped and logged, and a
+  provider switched off in the org gets an empty event. The import review shows `provides
+  context@1` as adding text to the model's context. Tool step contexts now always carry the source,
+  the owner and the role. `@capybara-hq/testing` gains the `fake-context` fixture.
+- b4d2b44: Plugin scope syncs follow the transactional outbox: a scope change, a deployment-level disable or
+  enable, a 可共享 switch-off that narrows a plugin, an approved access request, an ownership
+  transfer, a platform plugin update and a new org owe their `scope-item` / `scope-org` job in the
+  transaction that makes the change, and a confirmed import or org upload owes it right after its
+  extension is deployed. The removal of an org-owned plugin owes its `owned-plugin-cleanup` job with
+  the removal. A crash or a Redis outage after the commit no longer loses the sync, so the worker no
+  longer re-enqueues every plugin's sync at start and the daily owned-plugin cleanup sweep is gone. A
+  migration that changes a scope inserts the outbox rows itself.
+  
+  A plugin import writes its platform components (skills, agent templates, connector templates,
+  themes) in the import's transaction, and so does the super admin's confirmation of an org upload's
+  first version: their files are copied before it under a key made from their content, so a failed
+  import leaves no item and a retry copies nothing again. The worker job
+  `platform-components-migrate` and its retry after a failed post-import sync are gone. Removing an
+  org upload still awaiting confirmation owes its cleanup too.
+  
+  With the job gone, the platform inbox no longer has a "platform components migration" item and
+  the org inbox no longer has the `skill_renamed` notice (only that job wrote it): migration 0121
+  drops `platform_migration_runs`, deletes those notices and narrows the notice kind check.
+
 ## 0.1.0-rc.25
 
 ### Patch Changes

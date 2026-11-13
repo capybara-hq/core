@@ -1,5 +1,76 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.25
+
+### Minor Changes
+
+- b4d2b44: Plugin scope syncs follow the transactional outbox: a scope change, a deployment-level disable or
+  enable, a 可共享 switch-off that narrows a plugin, an approved access request, an ownership
+  transfer, a platform plugin update and a new org owe their `scope-item` / `scope-org` job in the
+  transaction that makes the change, and a confirmed import or org upload owes it right after its
+  extension is deployed. The removal of an org-owned plugin owes its `owned-plugin-cleanup` job with
+  the removal. A crash or a Redis outage after the commit no longer loses the sync, so the worker no
+  longer re-enqueues every plugin's sync at start and the daily owned-plugin cleanup sweep is gone. A
+  migration that changes a scope inserts the outbox rows itself.
+  
+  A plugin import writes its platform components (skills, agent templates, connector templates,
+  themes) in the import's transaction, and so does the super admin's confirmation of an org upload's
+  first version: their files are copied before it under a key made from their content, so a failed
+  import leaves no item and a retry copies nothing again. The worker job
+  `platform-components-migrate` and its retry after a failed post-import sync are gone. Removing an
+  org upload still awaiting confirmation owes its cleanup too.
+  
+  With the job gone, the platform inbox no longer has a "platform components migration" item and
+  the org inbox no longer has the `skill_renamed` notice (only that job wrote it): migration 0121
+  drops `platform_migration_runs`, deletes those notices and narrows the notice kind check.
+- 240801c: Scheduled task fires follow the transactional outbox: the transaction that writes a pending task
+  run (the scan's tick, a person's "Run now") owes its `sched-fire-<taskRunId>` job in the outbox, so
+  a crash or a Redis outage after the commit no longer loses a tick. The scan's repair is gone (no
+  re-enqueue after 10 minutes, no give-up after an hour, no recheck of started runs) and with it the
+  `scheduled_task_runs.rechecked_at` column (migration 0122). A tick whose fire job runs more than 10
+  minutes past the org's catch-up window (workers down for long) is still skipped as `missed`, now by
+  the fire job itself; a "Run now" still runs. The fire job's claim owes a settle check 10 minutes on
+  (`sched-settle`): a run claimed but never started (its start failed for good) is linked, settled or
+  released as the scan's recheck did, so a once task's last run never stays pending. The tick and "Run
+  now" also owe an unfired check: a run whose fire job failed for good before claiming it is skipped
+  (`missed`, or `removed` for a "Run now") instead of blocking every later tick as an overlap.
+  
+  Offboarding follows the transactional outbox: removing a member, a member leaving and a directory
+  sync offboarding owe a `run-stop` job for each of the person's active runs in the org and a
+  `sandbox-destroy-for` job for each of their devices, in the offboarding's transaction. Deleting a
+  device owes its destroy the same way, under `device-destroy-<deviceId>`. A crash or a Redis outage
+  after the commit no longer leaves a departed member's runs going or their devices standing, so the
+  10-minute offboarding sweep is gone; the session revocation markers stay hints (`revoked_at` in
+  PG decides). Offboarding locks the conversations it touches tree by tree, root first, so it no
+  longer deadlocks with a reply that skips a sub-agent's network ask.
+
+### Patch Changes
+
+- fc46148: Call `context@1` providers at a chat run's start: every provider enabled in the org with a valid
+  config is asked in parallel (2 s each, outside any transaction), and a `plugin_context` event is
+  appended when its text changed; a throw, a timeout or text over 32 KB is skipped and logged, and a
+  provider switched off in the org gets an empty event. The import review shows `provides
+  context@1` as adding text to the model's context. Tool step contexts now always carry the source,
+  the owner and the role. `@capybara-hq/testing` gains the `fake-context` fixture.
+- 23c16d8: Conversations record where they come from (`conversations.source`: `web`, `channel_dm`,
+  `channel_group` or `subagent`), set at creation and never changed. Migration 0124 adds the column
+  and backfills existing conversations from their kind, their channel thread rows (archived ones
+  included) and, for a group run whose thread is not bound yet, their delivery target.
+- b7e70f7: Deliver the lifecycle hooks `org.member_removed`, `agent.deleted` and `org.deleted` durably: one
+  job per subscribing plugin is owed through the transactional outbox in the deleting transaction and
+  delivered through the `cap-kernel-lifecycle` queue, with retries (shown in the admin overview's
+  queues). Add the fake extension `fake-lifecycle`.
+- b177905: The compose files and test containers run PostgreSQL 17 with pgvector (`pgvector/pgvector:pg17`),
+  and migration 0123 creates the `vector` extension in `public` when the server offers it and the
+  migrating role may create it; otherwise it only raises a notice, and plugins fall back to `real[]`.
+  `@capybara-hq/testing` exports `startPostgresContainer` (with an `image` option) and `TEST_PG_IMAGE`.
+- fcfabb4: Offer an extension tool only in the conversation sources its `spec.sources` lists (hidden with the
+  reason elsewhere, a resumed call refused), and give plugin tool handlers the conversation's
+  `source`, its owner (`ownerAccountId`) and the trigger account's `role`. `fake-tools-ui` gains the
+  tool `web-only`.
+- Updated dependencies [da677b6]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.19
+
 ## 0.1.0-rc.24
 
 ### Minor Changes
