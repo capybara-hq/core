@@ -4940,6 +4940,7 @@
         "extensionHint": "插件会在本组织启用它的扩展；有组织配置的请填写（已启用的扩展不改配置）。",
         "extensionNone": "没有需要填写的扩展配置。",
         "extensionEnabled": "{name}：已在本组织启用，保持现有配置。",
+        "connectorKept": "{name}：本组织已有它的连接器，将保留现有连接器，无需填写。",
         "summary": "启用后本组织会得到：",
         "summaryExtension": "扩展 {name}",
         "summaryTemplates": "{n} 个连接器",

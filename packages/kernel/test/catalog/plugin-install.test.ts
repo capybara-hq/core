@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { PluginInstaller } from "../../src/catalog/plugin-install.js";
+import { InstallFailure, PluginInstaller, planActions } from "../../src/catalog/plugin-install.js";
 import { ApiError } from "../../src/errors.js";
 import { runOutsideTransaction } from "../../src/infra/database/transaction-host.js";
 import { SkillsService } from "../../src/skills/skills.service.js";
@@ -57,6 +57,18 @@ async function enabledPlugins(withConnector = false): Promise<string[]> {
 
 const liveConnectors = () =>
   env.db.selectFrom("connectors").select("id").where("deleted_at", "is", null).execute();
+
+/** The org item detail's connector templates as `[id, connected]` pairs. */
+async function templateConnections(itemId: string): Promise<[string, boolean][]> {
+  const d = await env.boss({
+    method: "GET",
+    url: `/api/v1/orgs/${env.orgId}/catalog/${itemId}`,
+  });
+  expect(d.statusCode, d.body).toBe(200);
+  return (d.json() as { templates: { id: string; connected: boolean }[] }).templates.map(
+    (t) => [t.id, t.connected] as const,
+  );
+}
 const liveSkills = () =>
   env.db.selectFrom("skills").select(["id", "name"]).where("deleted_at", "is", null).execute();
 /** The org's usable skills as `<origin>:<name>` (phase 2: platform skills on in the org included). */
@@ -70,6 +82,53 @@ async function enable(plugin: string): Promise<void> {
     payload: { enabled: true },
   });
   expect(r.statusCode, r.body).toBe(200);
+}
+
+/** Installs `fake-connector` (its extension too) and returns the item and its connector id. */
+async function installConnectorPlugin(): Promise<{ itemId: string; connectorId: string }> {
+  const itemId = await seedPlugin(env, { name: "fake-connector", extension: true });
+  await env.db
+    .deleteFrom("extension_org_configs")
+    .where("org_id", "=", env.orgId)
+    .where("plugin", "=", "fake-connector")
+    .execute();
+  const r = await install(env.boss, env, itemId, pluginBody());
+  expect(r.statusCode, r.body).toBe(201);
+  const [conn] = await liveConnectors();
+  return { itemId, connectorId: conn?.id as string };
+}
+
+/**
+ * Leaves an agent on (it implicitly uses every connector), switches the plugin off and confirms
+ * the preview: the connector is kept for the agent, so the next install would reuse it.
+ */
+async function switchOffKeepingConnector(itemId: string): Promise<void> {
+  const agent = await env.boss({
+    method: "POST",
+    url: `/api/v1/orgs/${env.orgId}/agents`,
+    payload: {
+      definition: {
+        name: "Helper",
+        instructions: "x",
+        model: { provider: "model-fake", model: "fake-1" },
+      },
+      visibility: "org",
+    },
+  });
+  expect(agent.statusCode, agent.body).toBe(201);
+  const preview = await env.boss({
+    method: "PUT",
+    url: `/api/v1/orgs/${env.orgId}/catalog/${itemId}/switch`,
+    payload: { enabled: false },
+  });
+  expect(preview.statusCode, preview.body).toBe(200);
+  const done = await env.boss({
+    method: "PUT",
+    url: `/api/v1/orgs/${env.orgId}/catalog/${itemId}/switch`,
+    payload: { enabled: false, confirm: (preview.json() as { confirm: string }).confirm },
+  });
+  expect(done.statusCode, done.body).toBe(200);
+  expect(await liveConnectors()).toHaveLength(1);
 }
 
 async function uninstallOf(
@@ -277,6 +336,62 @@ describe("org plugin uninstall", { timeout: 60_000 }, () => {
     });
     expect(on.statusCode, on.body).toBe(200);
     expect((await liveConnectors()).map((c) => c.id)).toEqual([conn?.id]);
+  });
+
+  it("the item detail marks the template whose connector a switch-off kept (connected), and stops once that connector is deleted", async () => {
+    const { itemId, connectorId } = await installConnectorPlugin();
+    expect(await templateConnections(itemId)).toEqual([["gh", true]]);
+    await switchOffKeepingConnector(itemId);
+    // The kept connector is what the next install reuses: the wizard can skip the template's input
+    expect(await templateConnections(itemId)).toEqual([["gh", true]]);
+    const del = await env.boss({
+      method: "DELETE",
+      url: `/api/v1/orgs/${env.orgId}/connectors/${connectorId}`,
+    });
+    expect(del.statusCode, del.body).toBe(204);
+    // Nothing is left to reuse: the template asks for input again
+    expect(await templateConnections(itemId)).toEqual([["gh", false]]);
+  });
+
+  it("a reused connector deleted between plan and execute fails with catalog.connector_removed (not a silent install)", async () => {
+    const { itemId, connectorId } = await installConnectorPlugin();
+    await switchOffKeepingConnector(itemId);
+    const installer = env.k.app.get(PluginInstaller);
+    const plan = await installer.plan(
+      env.orgId,
+      env.bossId,
+      itemId,
+      "1.0.0",
+      pluginBody(),
+      "",
+      undefined,
+    );
+    // The kept connector is reused, so the plan carries no input for the template
+    expect(plan.connectors.size).toBe(0);
+    const del = await env.boss({
+      method: "DELETE",
+      url: `/api/v1/orgs/${env.orgId}/connectors/${connectorId}`,
+    });
+    expect(del.statusCode, del.body).toBe(204);
+    const failure = await installer
+      .execute(env.orgId, env.bossId, plan, {}, { actions: planActions(plan) })
+      .then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+    expect(failure).toBeInstanceOf(InstallFailure);
+    expect((failure as InstallFailure).cause).toMatchObject({ code: "catalog.connector_removed" });
+    // The install is recorded failed, and no connector was silently skipped
+    const row = await env.db
+      .selectFrom("plugin_installs")
+      .select(["status", "error"])
+      .where("item_id", "=", itemId)
+      .executeTakeFirstOrThrow();
+    expect(row).toEqual({
+      status: "failed",
+      error: { step: "connectors", code: "catalog.connector_removed" },
+    });
+    expect(await liveConnectors()).toHaveLength(0);
   });
 
   it("中途崩溃留下的 installing：未超时 409；超过 catalog.staleInstallMinutes 后经卸载回滚清理；failed 随时可清", async () => {

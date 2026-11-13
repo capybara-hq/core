@@ -115,10 +115,18 @@ export interface OrgCatalogTemplate {
    */
   defaultOff: boolean;
   /**
-   * The template is on in this org right now (a default-off one an admin switched on): the install
-   * asks for its input too, since the install is what creates its connector.
+   * On for this org if the plugin is installed (or wanted on by its scope): the template's own
+   * switch, its scope and `defaultEnabled` evaluated with the plugin installed, so a default-on
+   * template of a plugin this org has not installed reads true too (the install creates its
+   * connector).
    */
   on: boolean;
+  /**
+   * The org already has a live connector made from this template (a switch-off kept it because an
+   * agent uses it): the install takes that connector back instead of creating one, so it does not
+   * ask for the template's input.
+   */
+  connected: boolean;
   /**
    * The template's setup guide in the item's latest version (`GET …/catalog/:itemId/guides/
    * :guideId`), null without one (spec 2026-11-09-setup-guides-v2-design.md §9.3).
@@ -158,8 +166,7 @@ export interface OrgCatalogDetail {
 export function orgTemplateView(
   id: string,
   file: ConnectorTemplateFile,
-  guide: OrgCatalogTemplate["guide"] = null,
-  on = true,
+  o: { guide?: OrgCatalogTemplate["guide"]; on?: boolean; connected?: boolean } = {},
 ): OrgCatalogTemplate {
   const t = file.template;
   return {
@@ -175,8 +182,9 @@ export function orgTemplateView(
       t.ownership ??
       (typeof t.auth.ownership === "string" ? (t.auth.ownership as "org" | "personal") : null),
     defaultOff: file.defaultEnabled === false,
-    on,
-    guide,
+    on: o.on ?? true,
+    connected: o.connected ?? false,
+    guide: o.guide ?? null,
   };
 }
 

@@ -3,7 +3,7 @@ import type { AdminExtension } from "../admin-extensions";
 import { connectorStatusOf } from "../admin-items";
 import { type Agent, type AgentTemplateView, setupReady } from "../agents";
 import type { ApiClientError } from "../api";
-import type { OrgCatalogDetail } from "../catalog";
+import { installTemplates, type OrgCatalogDetail } from "../catalog";
 import type { ChannelConnection } from "../channels";
 import {
   maybeOwnTemplate,
@@ -185,20 +185,25 @@ const pluginsHead = () => [q(pendingPluginsQuery()), q(deploymentRequestsQuery()
  * Patterns are string literals: the query checks read them statically.
  */
 /**
- * The admin text of the setup guide of a catalog item's first connector template (setup guides v2
- * spec §9.3): the install wizards (`templates`) and 补充配置 (`missingTemplates`) open on that
- * template's step, with the guide above its input.
+ * The admin text of the setup guide of the first connector template the install wizard asks about
+ * (setup guides v2 spec §9.3): the install wizards (`templates`, filtered by the same
+ * `installTemplates` the wizard uses) and 补充配置 (`missingTemplates`) open on that template's
+ * step, with the guide above its input.
  */
 async function prefetchFirstTemplateGuide(
   qc: QueryClient,
   orgId: string,
   itemId: string,
   locale: UiLocale,
-  list: "templates" | "missingTemplates",
+  from: "templates" | "missingTemplates",
 ): Promise<void> {
   const detail = qc.getQueryData<OrgCatalogDetail>(orgCatalogItemQuery(orgId, itemId).queryKey);
-  if (detail === undefined || (list === "templates" && detail.item.state === "on")) return;
-  const guide = detail[list]?.[0]?.guide;
+  if (detail === undefined || (from === "templates" && detail.item.state === "on")) return;
+  const first =
+    from === "templates"
+      ? installTemplates(detail.templates)[0]
+      : (detail.missingTemplates ?? [])[0];
+  const guide = first?.guide;
   if (!guide) return;
   await qc.prefetchQuery({
     ...setupGuideQuery(orgId, guide, { audience: "admin", locale: labelLocale(locale) }),

@@ -6,6 +6,7 @@ import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import { defaultSlug, installTemplates, slugOf } from "../src/components/CatalogInstallWizard";
 import {
+  keptTemplates,
   MARKETPLACE_ERROR_KINDS,
   MARKETPLACE_SKIP_REASONS,
   marketplaceErrorKind,
@@ -1843,6 +1844,61 @@ describe("/plugins/[itemId]/enable (WizardPage)", () => {
     expect(switchInputs(calls)).toEqual({ connectors: { gh: { name: "gh", slug: "gh" } } });
   });
 
+  it("a template the org already has a connector for has no step, says the connector is kept, and is not submitted", async () => {
+    params.current = { itemId: ID };
+    const t = en.catalog.org.install;
+    const tpl = (id: string, extra: Record<string, unknown>) => ({
+      id,
+      displayName: { zh: id, en: id },
+      description: "",
+      plugin: "connector-mcp",
+      connector: "mcp",
+      endpoint: { url: "https://mcp.example.com" },
+      editableEndpoint: [],
+      ...extra,
+    });
+    const calls = stubApi({
+      [`GET ${ORG}/catalog/${ID}`]: () =>
+        json(200, {
+          item: orgItem({ name: "github" }),
+          hasIcon: false,
+          extension: null,
+          templates: [
+            tpl("gh", {
+              auth: { type: "none" },
+              ownership: "org",
+              defaultOff: false,
+              connected: false,
+            }),
+            tpl("github-pat", {
+              auth: { type: "bearer", ownership: "personal" },
+              ownership: "personal",
+              defaultOff: false,
+              connected: true,
+            }),
+          ],
+          dependencies: [],
+          skills: [],
+        }),
+      [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
+      [`PUT ${ORG}/catalog/${ID}/switch`]: () =>
+        json(200, { item: orgItem({ name: "github", state: "on" }) }),
+    });
+    await renderInstall();
+    // Only the template without a connector has a step; the kept one asks for nothing
+    expect(await screen.findByText(fill(t.connectorStep, { name: "gh" }))).toBeTruthy();
+    expect(screen.queryByText(fill(t.connectorStep, { name: "github-pat" }))).toBeNull();
+    expect(screen.queryByText(t.personalHint)).toBeNull();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: t.next }));
+    // The confirm step says the existing connector is kept; both connectors count in the summary
+    expect(screen.getByText(fill(t.connectorKept, { name: "github-pat" }))).toBeTruthy();
+    expect(screen.getByText(fill(t.summaryTemplates, { n: 2 }))).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: t.submit }));
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/plugins/${ID}`));
+    expect(switchInputs(calls)).toEqual({ connectors: { gh: { name: "gh", slug: "gh" } } });
+  });
+
   it("a 409 catalog.dependency_unresolved names the dependency and its range", async () => {
     params.current = { itemId: ID };
     const t = en.catalog.org.install;
@@ -3072,8 +3128,13 @@ describe("/extensions: switching on refused by the plugin", () => {
 });
 
 describe("安装向导会问哪些连接器模板", () => {
-  const tpl = (id: string, defaultOff: boolean, on?: boolean) =>
-    ({ id, defaultOff, ...(on !== undefined && { on }) }) as never;
+  const tpl = (id: string, defaultOff: boolean, on?: boolean, connected?: boolean) =>
+    ({
+      id,
+      defaultOff,
+      ...(on !== undefined && { on }),
+      ...(connected !== undefined && { connected }),
+    }) as never;
   it("默认开着的模板问；默认关的模板只有在组织里被打开后才问", () => {
     expect(
       installTemplates([tpl("gh", false), tpl("pat", true), tpl("slack", true)]).map((t) => t.id),
@@ -3081,6 +3142,14 @@ describe("安装向导会问哪些连接器模板", () => {
     expect(installTemplates([tpl("slack", true, true)]).map((t) => t.id)).toEqual(["slack"]);
     // an older kernel without `on`: a default-off template is not asked for
     expect(installTemplates([tpl("pat", true)]).map((t) => t.id)).toEqual([]);
+  });
+
+  it("the template whose connector this org already has (connected) is not asked for, and is listed as kept", () => {
+    const templates = [tpl("gh", false, false, true), tpl("pat", false)];
+    expect(installTemplates(templates).map((t) => t.id)).toEqual(["pat"]);
+    expect(keptTemplates(templates).map((t) => t.id)).toEqual(["gh"]);
+    // a default-off template that was not switched on here is neither asked for nor kept
+    expect(keptTemplates([tpl("slack", true, false, true)]).map((t) => t.id)).toEqual([]);
   });
 });
 

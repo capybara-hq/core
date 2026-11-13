@@ -4952,6 +4952,7 @@
         "extensionHint": "This plugin enables its extension in this organization. Fill in the organization settings if it has any (an extension already enabled keeps its settings).",
         "extensionNone": "No extension settings to fill in.",
         "extensionEnabled": "{name}: already enabled in this organization; settings unchanged.",
+        "connectorKept": "{name}: this organization already has its connector, which is kept as it is; nothing to fill in.",
         "summary": "Turning it on gives this organization:",
         "summaryExtension": "extension {name}",
         "summaryTemplates": "{n} connectors",

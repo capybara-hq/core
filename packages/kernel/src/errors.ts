@@ -191,6 +191,11 @@ export const ERROR_CODES = {
   "catalog.marketplace_browse_disabled": 409,
   "catalog.custom_disabled": 403,
   "catalog.not_deployed": 409,
+  /**
+   * The connector an install planned to reuse (a template it asked no input for) was removed before
+   * the install ran: retry it, so the new plan asks for the input.
+   */
+  "catalog.connector_removed": 409,
   "catalog.icon_not_found": 404,
   "catalog.guide_not_found": 404,
   /** The check is not in the setup guide rendered for that mode and audience (setup guides v2 §10.3). */

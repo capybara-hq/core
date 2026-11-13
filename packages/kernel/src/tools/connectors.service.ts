@@ -352,7 +352,10 @@ export class ConnectorsService {
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
     @Inject(ToolRegistry) private readonly registry: ToolRegistry,
-    /** Extension manifests (a slug may not take an extension's name). */
+    /**
+     * Extension manifests: a derived default slug avoids an extension's name (an explicit slug may
+     * take one; connector and extension tool keys live in separate namespaces).
+     */
     @Inject(ExtensionRegistry) private readonly extensions: Pick<ExtensionRegistry, "manifests">,
     @Inject(Credentials) private readonly credentials: Credentials,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,

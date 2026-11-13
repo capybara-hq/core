@@ -321,11 +321,14 @@ export class OrgCatalogService {
       itemId,
       templates.map((t) => t.id),
     );
-    // where each template's page finds its setup guide (spec 2026-11-09-setup-guides-v2 §9.3)
+    // Where each template's page finds its setup guide (spec 2026-11-09-setup-guides-v2 §9.3)
     const guideOf = (templateId: string) => {
       const g = templateGuideOf(m, templateId);
       return g ? { itemId, guideId: g.id } : null;
     };
+    // A template whose connector an earlier switch-off kept: the install reuses it, so the wizard
+    // does not ask for its input
+    const connected = await this.pluginInstaller.connectedTemplates(orgId, itemId);
     // Providers the install would switch on first (a refusal is the install's to report)
     const implied = await this.pluginInstaller
       .impliedProviders(orgId, m, templates, m.dependencies ?? [])
@@ -337,7 +340,13 @@ export class OrgCatalogService {
       item,
       hasIcon: m.icon !== undefined,
       extension: m.extension ? m.name : null,
-      templates: templates.map((t) => orgTemplateView(t.id, t.file, guideOf(t.id), on.has(t.id))),
+      templates: templates.map((t) =>
+        orgTemplateView(t.id, t.file, {
+          guide: guideOf(t.id),
+          on: on.has(t.id),
+          connected: connected.has(t.id),
+        }),
+      ),
       dependencies: [
         ...(m.dependencies ?? []).map((d) => ({ name: d.name, range: d.version })),
         ...implied.map((d) => ({ name: d.name, range: d.range, implied: true as const })),
@@ -347,7 +356,7 @@ export class OrgCatalogService {
       missingTemplates:
         item.installed !== null && item.state === "needs_config"
           ? ((await this.pluginInstaller.missingConnectors(orgId, itemId))?.templates ?? []).map(
-              (t) => orgTemplateView(t.id, t.file, guideOf(t.id), true),
+              (t) => orgTemplateView(t.id, t.file, { guide: guideOf(t.id), on: true }),
             )
           : [],
     };
