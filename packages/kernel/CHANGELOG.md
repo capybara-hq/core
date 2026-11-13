@@ -1,5 +1,71 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.26
+
+### Minor Changes
+
+- 3c7c8bf: Device policy changes record their intent before the call. Before a `policy` op is sent, one
+  transaction writes the op on the machine's row (who asked, for which network ask), audits
+  `device.policy_requested` and owes a `device-op-resolve` job for when the op can no longer reach the
+  machine; the outcome is recorded after the call: `device.policy_changed` when applied,
+  `device.policy_failed` when refused or never received, `device.policy_unknown` when no answer came.
+  A crash between the call and the record no longer leaves a changed device without an audit: the
+  job asks the machine what became of the op (`policyStatus`, never sending the change again), and
+  a machine that is offline reports it in its next hello (`recentOps`), recorded late. Policy changes
+  now need a `capybara-device` that announces `policyOpId`; an older one is told to update.
+  `device.policy_changed` no longer carries `confirmed`.
+  
+  Network asks decide on that intent. 「这台设备一直允许」 records the intent (naming the ask) before
+  the device is called, and the ask's decision and the op's outcome are written in one transaction;
+  a change applied after the ask closed is audited `device.network_allowed` with `late: true` in that
+  same transaction. When the process stops between the call and the record, the resolve job approves
+  the still-pending ask (`always`, by the person who chose it) and resumes its run if the device
+  applied the change; otherwise the ask stays pending with the reason (`detail.attempt`, an
+  `approval_updated` event) and the card says why. A device is asked only when its program announces
+  `policyOpId`. The device page lists changes the machine did not confirm or that did not take
+  effect (the view's `confirmed` is replaced by `outcome`).
+
+### Patch Changes
+
+- 76828c0: Device policy ops carry an op id. The device protocol's `policy` op now requires `opId` (non-empty,
+  no `:`, at most 128 characters); the new `policyStatus` op asks a device what became of an op id
+  (`applied`, `refused`, `started` or `unknown`, with its policy summary now); a hello may carry
+  `recentOps`, the outcomes of the latest 100 policy ops; the new feature `policyOpId` announces all
+  three. `capybara-device` logs each policy op in `policy-ops.json` next to `policy.json` (`started`
+  before the change, then `applied` or `refused`; the last 100 kept), answers a repeated op id from
+  that log without applying it again, and reports the log in every hello. The kernel sends its op id
+  with each `policy` op.
+  
+  The SDK's hello parser keeps one `recentOps` entry per op id (the last one listed). `capybara-device`
+  keeps a refusal's message in the log cut to 500 characters, never logs an applied op as refused
+  when releasing the policy lock fails after the write, and keeps an op the log already says was
+  applied as applied.
+- 47ef322: A person's stop of a conversation now stops every running sub-agent below it too, and the
+  conversation stays stopped: no sub-agent finish or report starts it again until the next message,
+  whose run sees what they delivered. The conversation's own background Bash tasks keep running.
+- b6b8d13: TaskOutput given a sub-agent's agentId answers where its report arrives instead of failing the call; TaskStop still refuses it.
+- a9f726b: The last direct job adds follow the transactional outbox or say why they need not. An eval run's
+  start owes one case job per case in the transaction that writes the run, so a crash after the
+  start no longer leaves a run waiting for jobs that were never added (the "enqueue failed" path
+  that marked such a run failed is gone). A background task finish or delivery inside a
+  conversation's wake window owes the delayed `bg-wake` job in the transaction that found it, so the
+  wake is no longer lost when the process dies or Redis is down. A channel connection that is
+  re-enabled, or gets new credentials while active, owes its catch-up (`channel-resume`) in the
+  update's transaction, so the replies held back meanwhile are no longer left unsent by a crash. The eval queue's jobs are named
+  `eval-case`.
+- bb931fd: Transactional outbox follow-ups. Retrying a dead outbox row that is owed again twice while it is
+  retried answers 409 `conflict` instead of an internal error, and its audit detail always names the
+  row's own queue and job. A run job that read a run as queued before a stop ended it records no
+  skills catalog or run context for it. Allowing hosts always on a device no longer reports success
+  when the request was approved meanwhile with other hosts and the device did not confirm this
+  change. On the admin overview, a dead outbox list that cannot be read shows the group's
+  unavailable state with retry instead of a bare count.
+  A stop that lands while the context providers are asked appends no plugin context after the run
+  ended; a deleted org's runs are no "queue lost jobs" report and its usage is still reported; a
+  worker fails a maintenance job it does not know so a newer replica retries it.
+- Updated dependencies [76828c0]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.20
+
 ## 0.1.0-rc.25
 
 ### Minor Changes

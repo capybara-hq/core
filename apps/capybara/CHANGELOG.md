@@ -1,5 +1,52 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.27
+
+### Patch Changes
+
+- 8770eeb: The scheduled tasks page opens on the calendar: 日历 is the first tab and the default (`/schedules`), the list moves to `?view=list`; a remembered choice still wins.
+- 47ef322: A person's stop of a conversation now stops every running sub-agent below it too, and the
+  conversation stays stopped: no sub-agent finish or report starts it again until the next message,
+  whose run sees what they delivered. The conversation's own background Bash tasks keep running.
+- b6b8d13: TaskOutput given a sub-agent's agentId answers where its report arrives instead of failing the call; TaskStop still refuses it.
+- 3c7c8bf: Device policy changes record their intent before the call. Before a `policy` op is sent, one
+  transaction writes the op on the machine's row (who asked, for which network ask), audits
+  `device.policy_requested` and owes a `device-op-resolve` job for when the op can no longer reach the
+  machine; the outcome is recorded after the call: `device.policy_changed` when applied,
+  `device.policy_failed` when refused or never received, `device.policy_unknown` when no answer came.
+  A crash between the call and the record no longer leaves a changed device without an audit: the
+  job asks the machine what became of the op (`policyStatus`, never sending the change again), and
+  a machine that is offline reports it in its next hello (`recentOps`), recorded late. Policy changes
+  now need a `capybara-device` that announces `policyOpId`; an older one is told to update.
+  `device.policy_changed` no longer carries `confirmed`.
+  
+  Network asks decide on that intent. 「这台设备一直允许」 records the intent (naming the ask) before
+  the device is called, and the ask's decision and the op's outcome are written in one transaction;
+  a change applied after the ask closed is audited `device.network_allowed` with `late: true` in that
+  same transaction. When the process stops between the call and the record, the resolve job approves
+  the still-pending ask (`always`, by the person who chose it) and resumes its run if the device
+  applied the change; otherwise the ask stays pending with the reason (`detail.attempt`, an
+  `approval_updated` event) and the card says why. A device is asked only when its program announces
+  `policyOpId`. The device page lists changes the machine did not confirm or that did not take
+  effect (the view's `confirmed` is replaced by `outcome`).
+- bb931fd: Transactional outbox follow-ups. Retrying a dead outbox row that is owed again twice while it is
+  retried answers 409 `conflict` instead of an internal error, and its audit detail always names the
+  row's own queue and job. A run job that read a run as queued before a stop ended it records no
+  skills catalog or run context for it. Allowing hosts always on a device no longer reports success
+  when the request was approved meanwhile with other hosts and the device did not confirm this
+  change. On the admin overview, a dead outbox list that cannot be read shows the group's
+  unavailable state with retry instead of a bare count.
+  A stop that lands while the context providers are asked appends no plugin context after the run
+  ended; a deleted org's runs are no "queue lost jobs" report and its usage is still reported; a
+  worker fails a maintenance job it does not know so a newer replica retries it.
+- Updated dependencies [76828c0]
+- Updated dependencies [47ef322]
+- Updated dependencies [b6b8d13]
+- Updated dependencies [a9f726b]
+- Updated dependencies [3c7c8bf]
+- Updated dependencies [bb931fd]
+  - @capybara-hq/kernel@0.1.0-rc.26
+
 ## 0.1.0-rc.26
 
 ### Patch Changes
