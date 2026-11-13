@@ -68,10 +68,17 @@ describe("LockService", () => {
     const b = new LockService(r2, log);
     const key = k("wait");
     const h = await a.acquire(key, { ttlMs: 5000 });
-    setTimeout(() => void h?.release(), 100);
-    const h2 = await b.acquire(key, { ttlMs: 5000, waitMs: 2000, retryMs: 20 });
+    const tries = vi.spyOn(r2, "set");
+    const waiting = b.acquire(key, { ttlMs: 5000, waitMs: 2000, retryMs: 20 });
+    // the waiter made a second attempt before the release: waitMs, not the first try, got the lock
+    await vi.waitFor(() => expect(tries.mock.calls.length).toBeGreaterThanOrEqual(2), {
+      timeout: 3000,
+    });
+    await h?.release();
+    const h2 = await waiting;
     expect(h2).toBeDefined();
     await h2?.release();
+    tries.mockRestore();
   });
 
   it("waitMs Infinity waits until the holder releases; signal aborts the wait", async () => {
@@ -440,12 +447,13 @@ describe("LockService shared leases", () => {
     s?.abandon();
     const b = new LockService(r2, log);
     expect(await b.tryExclusive(keys, "x", 5000)).toBeUndefined();
-    // the 300 ms lease must expire: poll until the exclusive try gets it
+    // the 300 ms lease must expire: poll for it, but inside a 1 s ceiling (the old 400 ms sleep),
+    // so a regression that reclaims the lease only seconds later still fails
     let x: Awaited<ReturnType<typeof b.tryExclusive>>;
     await until(async () => {
       x = await b.tryExclusive(keys, "x", 5000);
       return x !== undefined;
-    });
+    }, 1_000);
     expect(x).toBeDefined();
     await x?.release();
   });
