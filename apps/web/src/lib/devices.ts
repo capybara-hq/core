@@ -39,19 +39,8 @@ export interface DeviceMachine {
 }
 
 /**
- * The old sandbox levels (sandbox dev tiers spec §5): only the settings pages still read them
- * until their auto-mode pass; a device itself is 自动 or 沙箱 ({@link DeviceMode}).
+ * A local device's policy as its machine last reported it (kernel `DeviceLocalPolicySummary`).
  */
-export type SandboxTier = "strict" | "dev" | "open";
-
-/** The tiers from the narrowest up. */
-export const SANDBOX_TIERS: readonly SandboxTier[] = ["strict", "dev", "open"];
-
-/** Whether tier `a` is above tier `b`. */
-export const tierAbove = (a: SandboxTier, b: SandboxTier): boolean =>
-  SANDBOX_TIERS.indexOf(a) > SANDBOX_TIERS.indexOf(b);
-
-/** A local device's policy as its machine last reported it (kernel `DeviceLocalPolicySummary`). */
 export interface DeviceNetworkPolicy {
   /** The mode the machine runs at: no OS sandbox, or the sandbox with the allowlist below. */
   mode: DeviceMode;

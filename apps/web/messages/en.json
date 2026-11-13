@@ -122,12 +122,12 @@
     },
     "org": {
       "not_found": "The organization does not exist or you are no longer a member.",
-      "sandbox_egress_not_allowed": "This deployment disables sandbox network access; the organization can only choose No network.",
+      "sandbox_egress_not_allowed": "Widening the organization's cloud network needs a person in the organization settings.",
       "last_owner": "An organization must keep at least one org owner.",
       "owner_required": "Only an org owner can do this.",
       "creation_disabled": "Creating organizations is turned off on this deployment.",
       "slug_taken": "This slug is already used by another organization.",
-      "sandbox_tier_not_allowed": "The platform doesn't allow this sandbox level setting."
+      "auto_mode_not_allowed": "The platform does not allow auto mode."
     },
     "setup": {
       "already_completed": "Setup has already been completed.",
@@ -341,9 +341,7 @@
       "program_outdated": "The device program on this computer is out of date. Update it and connect again.",
       "credential_invalid": "This computer's connection credential is no longer valid. Connect again on the computer.",
       "policy_refused": "This device does not accept this change from the platform. Change it on the machine.",
-      "policy_unsupported": "This device can't change its network settings from the platform. Upgrade the device program on the machine.",
-      "tier_not_allowed": "This sandbox level is above the highest the organization or the platform allows.",
-      "tier_not_granted": "This scheduled task has no grant for the open level, so it can't use a device at the open level."
+      "policy_unsupported": "This device can't change its network settings from the platform. Upgrade the device program on the machine."
     },
     "device_sign_in": {
       "authorization_pending": "The connection is not confirmed yet. Confirm it on the web page and wait a moment.",
@@ -507,8 +505,8 @@
       "once_in_past": "That time has already passed."
     },
     "deployment": {
-      "setting_readonly": "This sandbox level is set in the deployment's startup config (environment, file or Nacos) and can only be changed there.",
-      "sandbox_tier_not_allowed": "An API token or the Platform tool can only lower the platform's sandbox levels; a super admin raises them on the admin settings page."
+      "setting_readonly": "This setting is set in the deployment's startup config (environment, file or Nacos) and can only be changed there.",
+      "auto_mode_not_allowed": "An API token or the Platform tool can only turn the platform's auto mode off; a super admin turns it on in the admin console."
     }
   },
   "agents": {
@@ -1699,11 +1697,6 @@
         "platform": "The platform sets this."
       },
       "cloudEmpty": "No domains are allowed."
-    },
-    "tier": {
-      "strict": "Strict",
-      "dev": "Development",
-      "open": "Open"
     }
   },
   "nav": {
@@ -2361,23 +2354,28 @@
       "ask": "Ask first",
       "askHint": "Every call except the read-only tools needs the user's approval."
     },
-    "egress": {
-      "title": "Sandbox network",
-      "description": "Which hosts commands in the sandbox may reach. The allowlist blocks internal networks but does not stop data from being sent to an allowed host (for example git push to github.com); choose No network for sensitive organizations.",
-      "default": "Deployment default",
-      "defaultHint": {
-        "allowlist": "Allowlist set by the deployment ({count} hosts).",
-        "none": "The deployment disables sandbox network access."
-      },
-      "allowlist": "Custom allowlist",
-      "allowlistHint": "Only the hosts below; replaces the deployment list.",
-      "none": "No network",
-      "noneHint": "Sandboxes can only reach themselves (loopback).",
+    "autoMode": {
+      "title": "Auto mode",
+      "description": "In auto mode the organization's devices run commands with the environment's own capability, guarded by command review; in sandbox mode they are limited to the workspace and an allowlist.",
+      "allowed": "Allow auto mode",
+      "allowedHint": "Devices may run in auto mode; each owner still chooses on the machine.",
+      "off": "Turn auto mode off",
+      "offHint": "Local devices run in sandbox mode; their owners cannot turn it back on from the machine.",
+      "platformClosed": "Not enabled by the platform"
+    },
+    "cloudNetwork": {
+      "title": "Cloud devices' network",
+      "description": "The network cloud devices use in sandbox mode; in auto mode there is no network restriction.",
+      "open": "Open (internal blocked)",
+      "openHint": "Any public address and port.",
+      "allowlist": "Allowlist",
+      "allowlistHint": "Only the hosts below; replaces the platform's list.",
+      "platformClosed": "The platform turned the network off: only the platform can turn it back on.",
       "hosts": "Allowed hosts",
       "hostsHelp": "One host per line, such as registry.npmjs.org or *.example.com (subdomains only). No IP addresses, ports or internal names; at most 200.",
-      "newOnly": "Changes apply to sandboxes created afterwards; existing sandboxes keep their network settings until they are destroyed.",
+      "invalidHost": "{host} is not a valid host: lowercase, no scheme, port or path, and not an internal-only name.",
       "prefilled": "Added {hosts} from a blocked command. Save to allow it.",
-      "devHosts": "The development level also allows common developer hosts ({count})"
+      "publicOnly": "Only public addresses are reachable; loopback, private and cloud metadata addresses are blocked outside the container."
     },
     "limits": {
       "title": "Sandbox resources",
@@ -2397,19 +2395,6 @@
       "title": "Default time zone",
       "description": "Agents use this time zone to tell what day it is for messages without a time zone of their own: members who set none and write from an IM, and anonymous guests.",
       "label": "Default time zone"
-    },
-    "tiers": {
-      "title": "Sandbox levels",
-      "description": "The highest level devices in the organization may use, and the level new devices start at. Members can choose any level up to the highest on their own devices.",
-      "max": "Highest level",
-      "strictHint": "Only the hosts the network setting below allows; no local ports or unix sockets.",
-      "devHint": "Also common developer hosts, local ports and unix sockets; for everyday development.",
-      "openHint": "Any public address and port. Agent commands can send files and data to any outside site, and prompt injection can make an agent do that. Allow it only with agents and material you fully trust.",
-      "platformClosed": "Not enabled by the platform",
-      "default": "Default for new devices",
-      "defaultHelp": "Used by devices that choose no level; at most the highest level.",
-      "allowUnsandboxed": "Let members' devices run without a sandbox",
-      "allowUnsandboxedHint": "Allowed by default when the highest level is open. Members still turn the sandbox off by running a command on their own computer. Without it, commands can read and write every file and credential on that computer."
     }
   },
   "configForm": {
@@ -3449,7 +3434,8 @@
       "hint": {
         "eval": "The eval judge uses it to compare baseline and candidate and give pass / fail. When it is not set, evals cannot use a judge.",
         "titles": "Generates titles for new conversations. When it is not set, the model of the conversation's latest run is used.",
-        "webFetch": "The web fetch tool uses it to extract what is asked from a fetched page. When it is not set, the model of the calling conversation's latest run is used (for a sub-agent's call, the sub-agent's)."
+        "webFetch": "The web fetch tool uses it to extract what is asked from a fetched page. When it is not set, the model of the calling conversation's latest run is used (for a sub-agent's call, the sub-agent's).",
+        "review": "The command-review classifier uses it to judge commands before they run. When it is not set, no classifier runs and a command it would be unsure about is asked about."
       }
     },
     "catalog": {
@@ -3948,22 +3934,22 @@
         "allowHint": "Organizations can create and import skills themselves or install them from the catalog.",
         "denyHint": "Organizations can only install skills from the catalog."
       },
-      "sandboxTiers": {
-        "title": "Sandbox levels",
-        "description": "The highest level devices on the platform may use, and the level new devices start with. Organizations may narrow it further; after lowering it, organizations and devices above the new highest run at it automatically.",
-        "max": "Highest level",
-        "strictHint": "Only the hosts the network settings allow; no local ports or Unix sockets.",
-        "devHint": "Also common developer hosts (package managers, code hosting, browser downloads), local ports and Unix sockets; suited to everyday development.",
-        "openHint": "Any public address and port. Agents' commands can send files and data to any outside site, and prompt injection can make them do so.",
-        "belowDefault": "Below the default fixed in the startup config",
-        "default": "Default level",
-        "defaultHelp": "Used when neither the organization nor the device chooses a level; at most the highest level.",
-        "allowUnsandboxed": "Allow devices without a sandbox",
-        "allowUnsandboxedHint": "Applies only where an organization's highest level is Open, and an organization may forbid it. Members still have to run a command on their own computer to turn the sandbox off; then commands can read and write every file and sign-in credential on that computer.",
-        "openConfirmTitle": "Set the platform's highest level to Open?",
-        "openConfirmBody": "Organization admins can then let devices reach any public address and port. Agents' commands can upload files and data to any outside site, and prompt injection can make them do so. Open it only if you trust the organizations, agents and material on the platform.",
-        "openConfirmSubmit": "Set to Open",
-        "cancel": "Cancel"
+      "autoMode": {
+        "title": "Auto mode",
+        "description": "Whether devices on the platform may run in auto mode: commands run with the environment's own capability, guarded by command review.",
+        "label": "Auto mode",
+        "allowed": "Allowed",
+        "allowedHint": "Organizations may allow auto mode; each device owner still chooses on the machine.",
+        "off": "Off",
+        "offHint": "Off forces local devices to sandbox mode; cloud devices keep the container and follow the organization's cloud network (open by default). Turning it back on needs a super admin in this console.",
+        "source": "Source: {source}",
+        "sources": {
+          "env": "From an environment variable (read-only)",
+          "file": "From the config file (read-only)",
+          "nacos": "From Nacos (read-only)",
+          "db": "Set in this console",
+          "default": "Default (allowed)"
+        }
       },
       "clientCode": {
         "title": "Plugin interface code",
