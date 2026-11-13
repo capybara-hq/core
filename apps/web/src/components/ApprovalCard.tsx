@@ -308,7 +308,7 @@ export function ApprovalCard({
       return (
         <div data-role="approval" data-approval-id={item.approvalId}>
           <Text variant="small" tone="muted">
-            {t("command.otherApprover")}
+            {t(command.kind === "write" ? "command.otherApproverWrite" : "command.otherApprover")}
           </Text>
         </div>
       );

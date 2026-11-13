@@ -1,4 +1,4 @@
-import { cleanup, screen } from "@testing-library/react";
+import { act, cleanup, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import zh from "../messages/zh.json";
@@ -253,6 +253,34 @@ describe("ApprovalCard: a command review ask (auto mode §5.4)", () => {
     expect(screen.getByText("Deletes files outside the workspace")).toBeTruthy();
   });
 
+  it("while the approval read is pending: the event's clipped command, disabled buttons, no session scope", async () => {
+    let answer!: (r: Response) => void;
+    const read = new Promise<Response>((resolve) => {
+      answer = resolve;
+    });
+    const clipped = `rm -rf build ${"x".repeat(400)}`;
+    stubApi({ "GET /api/v1/orgs/o1/approvals/ap1": () => read });
+    const { container } = renderPage(
+      <ApprovalCard orgId="o1" item={item({ command: eventCommand({ command: clipped }) })} />,
+      { locale: "zh" },
+    );
+    // before the authoritative read answers: the log's clipped copy, only one scope, all disabled
+    const once = await screen.findByRole("button", { name: "允许一次" });
+    expect(once).toHaveProperty("disabled", true);
+    expect(screen.queryByRole("button", { name: "本会话允许同类" })).toBeNull();
+    const code = container.querySelector('[data-part="code-block"]') as Element;
+    expect(Array.from(code.textContent ?? "")).toHaveLength(300);
+    expect(code.textContent?.endsWith("…")).toBe(true);
+
+    // the read answers: both scopes become offered and the buttons interactive
+    await act(async () => {
+      answer(json(200, { approval: APPROVAL_COMMAND() }));
+    });
+    expect(await screen.findByRole("button", { name: "本会话允许同类" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "允许一次" })).toHaveProperty("disabled", false);
+    expect(container.querySelector('[data-part="code-block"]')?.textContent).toBe("rm -rf build");
+  });
+
   it("a viewer who cannot decide waits for the device owner", async () => {
     stubApi({
       "GET /api/v1/orgs/o1/approvals/ap1": () =>
@@ -260,5 +288,21 @@ describe("ApprovalCard: a command review ask (auto mode §5.4)", () => {
     });
     renderPage(<ApprovalCard orgId="o1" item={item()} />, { locale: "zh" });
     expect(await screen.findByText(zh.approval.command.otherApprover)).toBeTruthy();
+  });
+
+  it("a non-decider of a write reads the write wording, not 'run a command'", async () => {
+    stubApi({
+      "GET /api/v1/orgs/o1/approvals/ap1": () =>
+        json(404, { error: { code: "approval.not_found", message: "Not found" } }),
+    });
+    renderPage(
+      <ApprovalCard
+        orgId="o1"
+        item={item({ toolKey: "Write", command: eventCommand({ kind: "write", path: "/x" }) })}
+      />,
+      { locale: "zh" },
+    );
+    expect(await screen.findByText(zh.approval.command.otherApproverWrite)).toBeTruthy();
+    expect(screen.queryByText(zh.approval.command.otherApprover)).toBeNull();
   });
 });

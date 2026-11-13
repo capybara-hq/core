@@ -1783,7 +1783,13 @@
     "otherApproverFor": "{tool} ({key}) needs approval; waiting for an approver.",
     "otherApproverNamed": "{tool} ({key}) needs approval; waiting for {who}.",
     "command": {
-      "otherApprover": "The agent wants to run a command; waiting for the device owner."
+      "title": "The agent wants to run this command. Allow?",
+      "titleWrite": "The agent wants to write this file. Allow?",
+      "device": "Device",
+      "reason": "Why it is held",
+      "path": "File",
+      "otherApprover": "The agent wants to run a command; waiting for the device owner.",
+      "otherApproverWrite": "The agent wants to write a file; waiting for the device owner."
     },
     "policy": {
       "agent": "The agent's settings ask for approval",
