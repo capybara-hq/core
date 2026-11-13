@@ -66,7 +66,7 @@ const SPEC: ToolSpec = {
     "You can use the run_in_background parameter to run the command in the background, which " +
     "allows you to continue working while the command runs, e.g. a dev server, a long build or a " +
     "test suite. The call returns at once with a task id and the command's output goes to a file " +
-    "under .capybara/tasks in the workspace directory. Read the output with TaskOutput (or Read) and stop the " +
+    "under .capybara/tasks in the workspace directory. Read the output with TaskOutput and stop the " +
     "task with TaskStop; you will be told when it finishes. TaskList lists this conversation's " +
     "background tasks and their ids, running ones first. You do not need to use '&' at the end " +
     "of the command when using this parameter. A command that waits for a person (an interactive " +
