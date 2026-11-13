@@ -11,6 +11,7 @@ import { type RuleOutcome, reviewRules } from "../../src/sandbox/review/index.js
 
 interface CorpusLine {
   command: string;
+  workspace?: string;
   cwd?: string;
   mode?: "auto" | "sandbox";
   attended?: boolean;
@@ -59,7 +60,7 @@ describe("the review corpus", () => {
         "line $index: $line.command",
         ({ line, index }) => {
           const result = reviewRules(line.command, {
-            workspace: WORKSPACE,
+            workspace: line.workspace ?? WORKSPACE,
             mode: line.mode ?? "auto",
             attended: line.attended ?? true,
             ...(line.cwd === undefined ? {} : { cwd: line.cwd }),

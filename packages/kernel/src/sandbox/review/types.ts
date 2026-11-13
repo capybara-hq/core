@@ -59,6 +59,11 @@ export interface SimpleCommand {
    * relative paths of the commands after it.
    */
   cwd?: string;
+  /**
+   * Where this command's stdout flows when it is inside an unwrapped wrapper: the wrapper's own
+   * pipeline. Unset for ordinary commands, whose stdout flows into their own {@link pipeline}.
+   */
+  flow?: number;
 }
 
 /** The parsed command line: every simple command, in execution order. */

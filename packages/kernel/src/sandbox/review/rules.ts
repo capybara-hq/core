@@ -446,7 +446,7 @@ function buildCommands(tokens: Token[]): DetailedParse {
   let redirects: Redirect[] = [];
   let subs: SimpleCommand[] = [];
   let pending: { op: Redirect["op"] } | null = null;
-  let pendingDup = false;
+  let pendingDup: ">&" | "<&" | null = null;
   let pipeline = 0;
 
   const flush = (): void => {
@@ -457,7 +457,7 @@ function buildCommands(tokens: Token[]): DetailedParse {
     redirects = [];
     subs = [];
     pending = null;
-    pendingDup = false;
+    pendingDup = null;
   };
 
   for (const token of tokens) {
@@ -467,15 +467,18 @@ function buildCommands(tokens: Token[]): DetailedParse {
         continue;
       }
       if (token.op === ">&" || token.op === "<&") {
-        pendingDup = true;
+        pendingDup = token.op;
         continue;
       }
       flush();
       if (token.op !== "|") pipeline += 1;
       continue;
     }
-    if (pendingDup) {
-      pendingDup = false;
+    if (pendingDup !== null) {
+      // `2>&1` / `>&-` duplicate or close a descriptor; `echo x >& file` is `&> file`, a write.
+      pendingDup = null;
+      if (/^\d+$/.test(token.value) || token.value === "-") continue;
+      redirects.push({ op: ">", target: token.value });
       continue;
     }
     if (pending !== null) {
@@ -573,8 +576,52 @@ function stripNeutral(argv: string[]): Invocation | null {
       rest = skipXargs(rest.slice(1));
       continue;
     }
+    // `git -C dir clone ...`: the subcommand follows the global options.
+    if (program === "git") {
+      return { program, raw: head, args: gitSubcommandArgs(rest.slice(1)), argv: rest };
+    }
     return { program, raw: head, args: rest.slice(1), argv: rest };
   }
+}
+
+/** Git's global options before the subcommand, with their values removed. */
+function gitSubcommandArgs(args: string[]): string[] {
+  let i = 0;
+  while (i < args.length) {
+    const a = args[i] as string;
+    if (
+      [
+        "-C",
+        "-c",
+        "--git-dir",
+        "--work-tree",
+        "--namespace",
+        "--exec-path",
+        "--config-env",
+      ].includes(a)
+    ) {
+      i += 2;
+      continue;
+    }
+    if (
+      a.startsWith("--git-dir=") ||
+      a.startsWith("--work-tree=") ||
+      a.startsWith("--namespace=") ||
+      a.startsWith("--exec-path=") ||
+      a.startsWith("--config-env=") ||
+      (a.startsWith("-C") && a.length > 2) ||
+      (a.startsWith("-c") && a.length > 2)
+    ) {
+      i += 1;
+      continue;
+    }
+    if (a.startsWith("-")) {
+      i += 1;
+      continue;
+    }
+    break;
+  }
+  return args.slice(i);
 }
 
 function skipEnv(args: string[]): string[] {
@@ -738,6 +785,7 @@ function wrapperScript(inv: Invocation): { kind: "shell" | "eval" | "su"; script
 
 function unwrapOneLevel(commands: SimpleCommand[]): DetailedParse {
   const out: SimpleCommand[] = [];
+  let wrapperBlock = 0;
   for (const command of commands) {
     const inv = stripNeutral(command.argv);
     let wrapper = inv === null ? null : wrapperScript(inv);
@@ -762,7 +810,14 @@ function unwrapOneLevel(commands: SimpleCommand[]): DetailedParse {
         return { ok: false, unsure: "nested shell wrapper" };
       }
     }
-    for (const nested of inner.value) nested.pipeline = command.pipeline;
+    // Keep the script's own pipes apart from the rest of the line (a unique block per wrapper),
+    // and remember that the wrapper's stdout feeds its outer pipeline.
+    const block = wrapperBlock;
+    wrapperBlock += 1;
+    for (const nested of inner.value) {
+      nested.pipeline = block * 1_000_000 + nested.pipeline;
+      nested.flow = command.pipeline;
+    }
     if (inv !== null && ["su", "sudo", "doas", "pkexec"].includes(inv.program)) {
       // Keep the privilege command itself so the `ask.sudo` rule still sees it.
       out.push({ argv: [inv.program], redirects: [], pipeline: command.pipeline });
@@ -827,17 +882,20 @@ function normalizePath(path: string): string {
 function expandPath(path: string, facts: ResolvedFacts, cwd: string = facts.cwd): string | null {
   let p = path;
   if (p === "~" || p.startsWith("~/")) {
-    if (facts.home === null) return normalizePath(p);
-    p = facts.home + p.slice(1);
+    if (facts.home !== null) p = facts.home + p.slice(1);
   } else {
     const homeRef = /^\$(?:\{HOME\}|HOME)(?=\/|$)/.exec(p);
     if (homeRef !== null) {
-      if (facts.home === null) return normalizePath(p);
-      p = facts.home + p.slice(homeRef[0].length);
+      const rest = p.slice(homeRef[0].length);
+      // Without a known home, keep the path in `~` form so the secret/persistence checks match it
+      // symbolically (`$HOME/.ssh/...` is the same file as `~/.ssh/...`).
+      p = facts.home === null ? `~${rest}` : facts.home + rest;
     }
   }
+  // An unresolved variable anywhere in the path (including command substitution) cannot be
+  // resolved: never treat `$HOME/$(echo .ssh)/id_rsa` as a harmless absolute path.
+  if (/[$`]/.test(p)) return null;
   if (p.startsWith("/") || p.startsWith("~")) return normalizePath(p);
-  if (/[$()`]/.test(p)) return null;
   return normalizePath(`${cwd}/${p}`);
 }
 
@@ -1283,6 +1341,81 @@ function nonOptionArgs(args: string[]): string[] {
   return out;
 }
 
+/** Options of cp/mv/install/ln/git-clone that consume the next word as their value. */
+const VALUE_OPTIONS: ReadonlySet<string> = new Set([
+  "-t",
+  "--target-directory",
+  "-S",
+  "--suffix",
+  "-m",
+  "--mode",
+  "-o",
+  "--owner",
+  "-g",
+  "--group",
+  "--depth",
+  "--branch",
+  "-b",
+  "--origin",
+  "--upload-pack",
+  "-u",
+  "--reference",
+  "--separate-git-dir",
+  "--config",
+  "--filter",
+  "--jobs",
+  "--template",
+  "--shallow-since",
+  "--shallow-exclude",
+  "--revision",
+  "--recurse-submodules",
+]);
+
+/**
+ * The positional operands of an argument list, skipping options and the values of
+ * {@link VALUE_OPTIONS} (`cp -t /etc/profile.d evil.sh` has one operand, `evil.sh`).
+ */
+function operands(args: string[], valueOptions: ReadonlySet<string> = VALUE_OPTIONS): string[] {
+  const out: string[] = [];
+  let afterDashDash = false;
+  for (let i = 0; i < args.length; i += 1) {
+    const a = args[i] as string;
+    if (afterDashDash) {
+      out.push(a);
+      continue;
+    }
+    if (a === "--") {
+      afterDashDash = true;
+      continue;
+    }
+    if (a.startsWith("--")) {
+      // `--target-directory=/etc` carries its value inline; `--depth 1` does not.
+      if (!a.includes("=") && valueOptions.has(a)) i += 1;
+      continue;
+    }
+    if (a.startsWith("-") && a.length > 1) {
+      const last = `-${a[a.length - 1] as string}`;
+      if (!a.includes("=") && valueOptions.has(last) && a.length <= 2) i += 1;
+      continue;
+    }
+    out.push(a);
+  }
+  return out;
+}
+
+/** `cp -t DIR` / `cp --target-directory=DIR`: the destination of a copy-like command. */
+function targetDirectory(args: string[]): string | null {
+  for (let i = 0; i < args.length; i += 1) {
+    const a = args[i] as string;
+    if ((a === "-t" || a === "--target-directory") && args[i + 1] !== undefined) {
+      return args[i + 1] as string;
+    }
+    if (a.startsWith("--target-directory=")) return a.slice("--target-directory=".length);
+    if (a.startsWith("-t") && a.length > 2) return a.slice(2);
+  }
+  return null;
+}
+
 function venvBinary(raw: string): boolean {
   return /(^|\/)\.?venv\/bin\//.test(raw) || /(^|\/)env\/bin\//.test(raw);
 }
@@ -1476,19 +1609,12 @@ function isSecurityToolDisable(inv: Invocation): boolean {
 }
 
 function isDeviceServiceCommand(inv: Invocation): boolean {
-  if (!inv.argv.join(" ").includes("capybara-device")) return false;
-  return [
-    "launchctl",
-    "systemctl",
-    "service",
-    "pkill",
-    "killall",
-    "kill",
-    "rm",
-    "mv",
-    "chmod",
-    "chown",
-  ].includes(inv.program);
+  if (!["launchctl", "systemctl", "service", "pkill", "killall", "kill"].includes(inv.program)) {
+    return false;
+  }
+  // Match the device's own program or launch agent, not a substring of an unrelated name.
+  const exact = /(^|\/)capybara-device(\.plist)?$/;
+  return inv.args.some((arg) => exact.test(arg));
 }
 
 /* -------------------------------------------------------------------------------------------- *
@@ -1564,13 +1690,20 @@ function writeTargetsOf(inv: Invocation): string[] {
     case "chown":
     case "chgrp":
       return positional.slice(1);
-    case "mv":
+    case "mv": {
       // The sources are deleted as well as the destination being written.
-      return positional;
+      const destination = targetDirectory(args);
+      const sources = operands(args);
+      return destination === null ? sources : [...sources, destination];
+    }
     case "cp":
     case "install":
-    case "ln":
-      return positional.length > 0 ? [positional[positional.length - 1] as string] : [];
+    case "ln": {
+      const destination = targetDirectory(args);
+      if (destination !== null) return [destination];
+      const ops = operands(args);
+      return ops.length > 0 ? [ops[ops.length - 1] as string] : [];
+    }
     case "dd":
       return args.filter((a) => a.startsWith("of=")).map((a) => a.slice(3));
     case "sed":
@@ -1619,7 +1752,9 @@ function writeTargetsOf(inv: Invocation): string[] {
     }
     case "git": {
       if (args[0] !== "clone") return [];
-      const pos = nonOptionArgs(args.slice(1));
+      // `git clone [opts] <url> [dest]`: option values are skipped, so `--depth 1` does not shift
+      // the destination into the URL's place.
+      const pos = operands(args.slice(1));
       return pos.length >= 2 ? [pos[1] as string] : [];
     }
     default:
@@ -1667,7 +1802,6 @@ function writeTargets(command: SimpleCommand): string[] {
  * -------------------------------------------------------------------------------------------- */
 
 interface RuleContext {
-  command: string;
   facts: ResolvedFacts;
   commands: SimpleCommand[];
   unsure: string | null;
@@ -1744,6 +1878,22 @@ function readsSecret(command: SimpleCommand, ctx: RuleContext): boolean {
       (inv) => inv.program === "security" && inv.args.some((a) => KEYCHAIN_DUMP.test(a)),
     ).length > 0
   );
+}
+
+/**
+ * Whether a secret read *earlier* in the line reaches the command at `index` through a pipe: the
+ * commands share a pipeline, or the earlier one is inside a wrapper whose stdout feeds it.
+ */
+function secretFlowsInto(ctx: RuleContext, index: number): boolean {
+  const target = ctx.commands[index];
+  if (target === undefined) return false;
+  for (let i = 0; i < index; i += 1) {
+    const other = ctx.commands[i] as SimpleCommand;
+    if (!readsSecret(other, ctx)) continue;
+    const output = other.flow ?? other.pipeline;
+    if (other.pipeline === target.pipeline || output === target.pipeline) return true;
+  }
+  return false;
 }
 
 /** Flags whose value names a credential file the network tool uses (it is not sent as data). */
@@ -1887,8 +2037,15 @@ function isDangerousDelete(resolved: string, ctx: RuleContext): boolean {
   return isAncestor(base, ctx.facts.workspace);
 }
 
-function modifiesDevice(command: SimpleCommand): boolean {
-  if (command.redirects.some((r) => r.op !== "<")) return true;
+function modifiesDevice(command: SimpleCommand, ctx: RuleContext): boolean {
+  // Only a write redirect that really lands on a device path counts (`2>/dev/null`, a listing to
+  // /tmp and a read of the device files are not edits).
+  const redirectsDevice = command.redirects.some((redirect) => {
+    if (redirect.op === "<" || isIgnoredDevice(redirect.target)) return false;
+    const resolved = expandPath(redirect.target, ctx.facts, cwdOf(command, ctx.facts));
+    return resolved !== null && isDevicePath(resolved, ctx.facts);
+  });
+  if (redirectsDevice) return true;
   return (
     eachInvocation([command], (inv) =>
       [
@@ -1937,6 +2094,17 @@ const RULES: readonly Rule[] = [
         ) {
           return false;
         }
+        // A path-like word or redirection target with an unresolved variable is not a confident
+        // read; the line falls to `unsure` instead of `allow`.
+        const unresolved = [
+          ...inv.argv,
+          ...command.redirects.map((redirect) => redirect.target),
+        ].some((token) =>
+          pathCandidates(token).some(
+            (candidate) => expandPath(candidate, ctx.facts, cwdOf(command, ctx.facts)) === null,
+          ),
+        );
+        if (unresolved) return false;
         // Reading a secret path is not "reading anything except the secret paths".
         return (
           secretTokens(
@@ -2018,23 +2186,25 @@ const RULES: readonly Rule[] = [
     id: "allow.network",
     outcome: "allow",
     check: (ctx) => {
-      const matched = eachInvocation(ctx.commands, (inv, command) => {
-        if (!NETWORK_PROGRAMS.has(inv.program)) return false;
-        if (networkSendsSecret(inv, command, ctx)) return false;
-        if (writesOutside(inv, command, ctx)) return false;
-        // `nc host < ~/.ssh/id_rsa`: the command sends what it reads from a secret.
-        const readsSecretRedirect = command.redirects.some((redirect) => {
-          if (redirect.op !== "<") return false;
-          const resolved = expandPath(redirect.target, ctx.facts, cwdOf(command, ctx.facts));
-          return resolved !== null && isSecretPath(resolved, ctx.facts);
+      const matched: SimpleCommand[] = [];
+      for (let index = 0; index < ctx.commands.length; index += 1) {
+        const command = ctx.commands[index] as SimpleCommand;
+        const allowed = invocationsOf(command).some((inv) => {
+          if (!NETWORK_PROGRAMS.has(inv.program)) return false;
+          if (networkSendsSecret(inv, command, ctx)) return false;
+          if (writesOutside(inv, command, ctx)) return false;
+          // `nc host < ~/.ssh/id_rsa`: the command sends what it reads from a secret.
+          const readsSecretRedirect = command.redirects.some((redirect) => {
+            if (redirect.op !== "<") return false;
+            const resolved = expandPath(redirect.target, ctx.facts, cwdOf(command, ctx.facts));
+            return resolved !== null && isSecretPath(resolved, ctx.facts);
+          });
+          if (readsSecretRedirect) return false;
+          // Only a secret read *before* this command can flow into it.
+          return !secretFlowsInto(ctx, index);
         });
-        if (readsSecretRedirect) return false;
-        const upstream = ctx.commands.some(
-          (other) =>
-            other.pipeline === command.pipeline && other !== command && readsSecret(other, ctx),
-        );
-        return !upstream;
-      });
+        if (allowed) matched.push(command);
+      }
       return matched.length > 0
         ? {
             reason:
@@ -2368,15 +2538,18 @@ const RULES: readonly Rule[] = [
         };
       }
       const matched: SimpleCommand[] = [];
-      for (const command of ctx.commands) {
+      for (let index = 0; index < ctx.commands.length; index += 1) {
+        const command = ctx.commands[index] as SimpleCommand;
         const network =
           eachInvocation([command], (inv) => NETWORK_PROGRAMS.has(inv.program)).length > 0;
         if (!network) continue;
-        const sources = ctx.commands.filter(
-          (other) =>
-            other.pipeline === command.pipeline && other !== command && readsSecret(other, ctx),
-        );
-        if (sources.length > 0) matched.push(command, ...sources);
+        // Only a secret read earlier in the line can be piped into this command.
+        if (!secretFlowsInto(ctx, index)) continue;
+        matched.push(command);
+        for (let source = 0; source < index; source += 1) {
+          const other = ctx.commands[source] as SimpleCommand;
+          if (readsSecret(other, ctx)) matched.push(other);
+        }
       }
       return matched.length > 0
         ? {
@@ -2413,7 +2586,7 @@ const RULES: readonly Rule[] = [
     check: (ctx) => {
       const matched: SimpleCommand[] = [];
       for (const command of ctx.commands) {
-        if (deviceTokens(command, ctx.facts).length > 0 && modifiesDevice(command))
+        if (deviceTokens(command, ctx.facts).length > 0 && modifiesDevice(command, ctx))
           matched.push(command);
       }
       matched.push(
@@ -2602,7 +2775,6 @@ export function reviewRules(command: string, facts: ReviewFacts): ReviewResult {
     else unsure = withCwds.unsure;
   }
   const ctx: RuleContext = {
-    command,
     facts: resolved,
     commands,
     unsure,
