@@ -235,6 +235,14 @@ Without a `review` model the classifier step is skipped and **unsure** becomes *
 Deny rules apply in auto and sandbox mode alike; no org policy, tool policy or approval turns a
 **deny** into an allow **(2026-11-14)**.
 
+What an organization can and cannot do with its own tool policy (verified in
+`packages/kernel/src/tools/policy.ts`, 2026-11-14): it can switch an extension's tools off
+(unavailable), set a default **deny** for a connector's tools, forbid builtin tools in unattended
+runs (`forbiddenTools`), and raise the side-effecting sandbox tools to **ask**
+(`sandboxToolPolicy`). In an attended run it has no lever to deny a builtin tool: the person's
+presence is the approval. So the org's ceiling over builtin tools is partial rather than absent —
+describe it that way, and never say the org can govern nothing.
+
 - **Allow**: the command runs. Nothing is shown; the decision is in the tool call's record.
 - **Ask**, attended run: the run waits on an approval card in the conversation (the existing
   approval flow, kind `command`): the command, the reason, 允许一次 / 本会话允许同类 / 拒绝.
