@@ -172,6 +172,7 @@ export class RunQueue {
         "queue_paused",
         "account_id",
         "deleted_at",
+        "tree_stopped_at",
       ])
       .where("id", "=", conversationId)
       .forUpdate()
@@ -306,13 +307,14 @@ export class RunQueue {
     // the task run its message started follows this run from now on (spec §6)
     if (taskRunId !== null) await linkStartedRunIn(t, taskRunId, runId, conversationId);
     // the root runs again: a person's stop of its tree no longer holds the tree's wakes
-    // (agent map spec §6)
-    await t
-      .updateTable("conversations")
-      .set({ tree_stopped_at: null })
-      .where("id", "=", conversationId)
-      .where("tree_stopped_at", "is not", null)
-      .execute();
+    // (agent map spec §6); read with the row lock above, so the hot path issues no statement
+    if (conv.tree_stopped_at !== null) {
+      await t
+        .updateTable("conversations")
+        .set({ tree_stopped_at: null })
+        .where("id", "=", conversationId)
+        .execute();
+    }
     return runId;
   }
 

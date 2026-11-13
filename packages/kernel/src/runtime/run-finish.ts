@@ -106,9 +106,14 @@ export class RunFinish {
     const [ev] = await this.eventLog.appendIn(a.conversationId, [
       { ...a.event, runId: a.runId, idemKey: `${a.event.type}:${a.runId}` },
     ]);
+    // a root run a person stopped holds the root's tree (agent map spec §6, acceptance
+    // 2026-11-13): marked with its terminal state, under the same row lock, so no wake decided
+    // after this commit starts the root from a sub-agent's delivery
+    const holdTree = conv?.kind === "chat" && personStopped(a.event);
     await t
       .updateTable("conversations")
       .set({
+        ...(holdTree && { tree_stopped_at: sql<Date>`now()` }),
         consumed_seq:
           a.floorToTrigger === false
             ? sql`GREATEST(consumed_seq, ${a.consumed ?? 0}::bigint)`

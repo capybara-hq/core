@@ -373,9 +373,12 @@ The builder's choices for §11 and the rulings of the build that change behaviou
   rebuild byte for byte; the switch is the delivery's absence in the log, so no `DriftReason`. The
   web shows the "<name> 已完成" entry of a handed-back run from `subagent_finished` (once per child
   run, also when an older log's delivery follows).
-- A person's stop of the root holds its tree (acceptance 2026-11-13, §6): it first sets
-  `conversations.tree_stopped_at` on the root (its own committed transaction, under the root's row
-  lock), then stops the root's run and every active sub-agent run (`stopTree`). While it is set, no
+- A person's stop of the root holds its tree (acceptance 2026-11-13, §6): it sets
+  `conversations.tree_stopped_at` on the root under the root's row lock (with the stopped run's
+  terminal state for a waiting, queued or orphaned run, so the stop keeps the lock order of
+  decisions and stops; before the stop is asked for when a worker holds the run, which stays active
+  until then; on its own when nothing of the root ran), then stops every active sub-agent run
+  (`stopTree`). While it is set, no
   `subagent_delivery` wakes the root (`wakeDecisionIn`, read under the root's row lock, so a
   delivery committed at any time after the mark is held whatever its status) and no sub-agent of
   the tree starts a run by a wake or a parent's message (`childWakeIn`); the root's next run (a
