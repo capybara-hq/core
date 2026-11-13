@@ -300,8 +300,7 @@ describe("schedule tools (spec §11)", { timeout: 120_000 }, () => {
       prompt: "Summarize the build.",
       cron: "0 9 * * *",
       mode: "chat",
-      chat: { connectionId, chatId: "chat-dm-1" },
-      agentId,
+      chat: { connectionId, chatId: "chat-dm-1", agentId },
     };
     const p = await policyOf("ScheduleCreate", input, aliceId, conv);
     expect(p).toMatchObject({ key: "ScheduleCreate", policy: "ask", remember: false });
@@ -316,6 +315,35 @@ describe("schedule tools (spec §11)", { timeout: 120_000 }, () => {
       conversationId: null,
       chat: { connectionId, chatId: "chat-dm-1", chatType: "dm" },
     });
+  });
+
+  it("agentId is a chat property; the old top-level form is rejected", async () => {
+    type Schema = { properties: Record<string, { properties?: Record<string, unknown> }> };
+    const create = tool("ScheduleCreate").spec.inputSchema as Schema;
+    expect(create.properties.agentId).toBeUndefined();
+    expect(create.properties.chat?.properties?.agentId).toBeDefined();
+    const update = tool("ScheduleUpdate").spec.inputSchema as Schema;
+    expect(update.properties.agentId).toBeUndefined();
+    expect(update.properties.chat?.properties?.agentId).toBeDefined();
+    // a direct call parses with the tool's strict schema: the former top-level form no longer does
+    const conv = await createConv(alice, orgId, agentId);
+    const connectionId = await seedDm(conv, aliceId);
+    const old = {
+      name: "Old shape",
+      prompt: "Say hi.",
+      cron: "0 9 * * *",
+      mode: "chat",
+      chat: { connectionId, chatId: "chat-dm-1" },
+      agentId,
+    };
+    expect(await refusal(tool("ScheduleCreate").run(old, callCtx(aliceId, conv)))).toContain(
+      "Invalid input",
+    );
+    const task = await dailyTask(aliceId);
+    expect(
+      await refusal(tool("ScheduleUpdate").run({ id: task.id, agentId }, callCtx(aliceId, conv))),
+    ).toContain("Invalid input");
+    expect((await tasksOf(aliceId)).map((t) => t.id)).toEqual([task.id]);
   });
 
   it("a chat task for another agent is refused", async () => {
@@ -336,8 +364,7 @@ describe("schedule tools (spec §11)", { timeout: 120_000 }, () => {
       prompt: "Say hi.",
       cron: "0 9 * * *",
       mode: "chat",
-      chat: { connectionId, chatId: "chat-dm-1" },
-      agentId: otherAgentId,
+      chat: { connectionId, chatId: "chat-dm-1", agentId: otherAgentId },
     };
     expect(await refusal(tool("ScheduleCreate").run(input, callCtx(aliceId, conv)))).toContain(
       "The chat belongs to another agent",
@@ -401,8 +428,7 @@ describe("schedule tools (spec §11)", { timeout: 120_000 }, () => {
     const input = {
       id: task.id,
       mode: "chat" as const,
-      chat: { connectionId, chatId: "chat-dm-1" },
-      agentId,
+      chat: { connectionId, chatId: "chat-dm-1", agentId },
     };
     const p = await policyOf("ScheduleUpdate", input, aliceId, conv);
     expect(p.summary?.en).toContain(

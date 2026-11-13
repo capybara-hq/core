@@ -168,18 +168,17 @@ const CHAT_SCHEMA = {
       description:
         'The kind of chat: "dm" (the default) or "group". A group needs a channel with threads.',
     },
+    agentId: {
+      type: "string",
+      minLength: 1,
+      maxLength: 100,
+      description:
+        "The agent the chat belongs to; defaults to this run's agent. A chat target must use " +
+        "the connection's agent.",
+    },
   },
   required: ["connectionId", "chatId"],
   additionalProperties: false,
-} as const;
-
-const AGENT_ID_SCHEMA = {
-  type: "string",
-  minLength: 1,
-  maxLength: 100,
-  description:
-    "For mode chat: the agent the chat's connection runs; omit it to use this conversation's " +
-    "agent. A chat target must use the connection's agent.",
 } as const;
 
 const CREATE_SPEC: ToolSpec = {
@@ -216,7 +215,6 @@ const CREATE_SPEC: ToolSpec = {
         ...CHAT_SCHEMA,
         description: 'For mode "chat": the IM chat every run posts into.',
       },
-      agentId: AGENT_ID_SCHEMA,
       approvedTools: TOOL_KEYS_SCHEMA,
     },
     required: ["name", "prompt", "mode"],
@@ -250,7 +248,6 @@ const UPDATE_SPEC: ToolSpec = {
         ...CHAT_SCHEMA,
         description: 'For mode "chat": the IM chat every run posts into; replaces the target.',
       },
-      agentId: AGENT_ID_SCHEMA,
       approvedTools: {
         ...TOOL_KEYS_SCHEMA,
         description: `${TOOL_KEYS_SCHEMA.description} Replaces the task's whole list; pass [] to remove every approved tool, omit it to keep the list.`,
@@ -302,6 +299,7 @@ const Chat = z
     connectionId: z.string().min(1).max(100),
     chatId: z.string().min(1).max(500),
     chatType: z.enum(["dm", "group"]).optional(),
+    agentId: z.string().min(1).max(100).optional(),
   })
   .strict();
 type ChatInput = z.infer<typeof Chat>;
@@ -314,7 +312,6 @@ const CreateInput = z
     runAt: z.string().min(1).max(40).optional(),
     mode: Mode,
     chat: Chat.optional(),
-    agentId: z.string().min(1).max(100).optional(),
     approvedTools: ToolKeys.optional(),
   })
   .strict();
@@ -329,7 +326,6 @@ const UpdateInput = z
     runAt: z.string().min(1).max(40).optional(),
     mode: Mode.optional(),
     chat: Chat.optional(),
-    agentId: z.string().min(1).max(100).optional(),
     approvedTools: ToolKeys.optional(),
   })
   .strict();
@@ -341,22 +337,22 @@ const IdInput = z.object({ id: z.string().min(1).max(100) }).strict();
 
 const INVALID_CREATE_TEXT =
   "Invalid input; pass name, prompt, mode (new, here or chat), exactly one of cron or runAt, " +
-  "chat with mode chat, and optionally agentId and approvedTools as an array of tool keys.";
+  "chat with mode chat (connectionId, chatId, chatType, agentId), and optionally approvedTools " +
+  "as an array of tool keys.";
 const INVALID_UPDATE_TEXT =
   "Invalid input; pass the task id and the fields to change (name, prompt, cron or runAt, mode, " +
-  "chat, agentId, approvedTools).";
+  "chat, approvedTools).";
 const INVALID_ID_TEXT = "Invalid input; pass the task id from ScheduleList.";
 const ONE_TRIGGER_TEXT =
   "Pass exactly one of cron (a repeating schedule) or runAt (a single run), not both and not neither.";
 const BOTH_TRIGGERS_TEXT =
   "Pass at most one of cron or runAt: cron makes the task repeat, runAt makes it run once.";
 const NOTHING_TO_UPDATE_TEXT =
-  "Nothing to change; pass at least one of name, prompt, cron, runAt, mode, chat, agentId or " +
+  "Nothing to change; pass at least one of name, prompt, cron, runAt, mode, chat or " +
   "approvedTools with the id.";
 const CHAT_NEEDS_CHAT_TEXT =
-  'mode "chat" needs a chat; pass chat with connectionId and chatId (and optionally chatType).';
-const CHAT_ONLY_TEXT =
-  'chat and agentId apply only to mode "chat"; pass mode "chat" with them, or omit them.';
+  'mode "chat" needs a chat; pass chat with connectionId and chatId (and optionally chatType and agentId).';
+const CHAT_ONLY_TEXT = 'chat applies only to mode "chat"; pass mode "chat" with it, or omit it.';
 export const SCHEDULES_UNAVAILABLE_TEXT =
   "Scheduled tasks are not available on this server; ask the user to manage the task on the scheduled tasks page instead.";
 export const SCHEDULES_OFF_TEXT =
@@ -568,28 +564,23 @@ function triggerOf(i: { cron?: string | undefined; runAt?: string | undefined })
   return undefined;
 }
 
-/** `chat` / `agentId` against the mode on create, as a refusal; null when they agree. */
+/** `chat` against the mode on create, as a refusal; null when they agree. */
 function createChatError(i: {
   mode: z.infer<typeof Mode>;
   chat?: ChatInput | undefined;
-  agentId?: string | undefined;
 }): ToolError | null {
-  if (i.mode !== "chat" && (i.chat !== undefined || i.agentId !== undefined)) {
-    return new ToolError(CHAT_ONLY_TEXT);
-  }
+  if (i.mode !== "chat" && i.chat !== undefined) return new ToolError(CHAT_ONLY_TEXT);
   if (i.mode === "chat" && i.chat === undefined) return new ToolError(CHAT_NEEDS_CHAT_TEXT);
   return null;
 }
 
-/** `chat` / `agentId` against the mode on update; null when they agree (or are absent). */
+/** `chat` against the mode on update; null when they agree (or chat is absent). */
 function updateChatError(i: {
   mode?: z.infer<typeof Mode> | undefined;
   chat?: ChatInput | undefined;
-  agentId?: string | undefined;
 }): ToolError | null {
-  if (i.chat === undefined && i.agentId === undefined) return null;
-  if (i.mode !== "chat") return new ToolError(CHAT_ONLY_TEXT);
-  return i.chat === undefined ? new ToolError(CHAT_NEEDS_CHAT_TEXT) : null;
+  if (i.chat === undefined) return null;
+  return i.mode !== "chat" ? new ToolError(CHAT_ONLY_TEXT) : null;
 }
 
 const withZone = (t: TriggerInput, timeZone: string): ScheduleTrigger =>
@@ -760,7 +751,7 @@ export function scheduleTools(deps: ScheduleToolsDeps): BuiltinTool[] {
       zone,
       target,
       tools: uniqueSorted(input.approvedTools ?? []),
-      agentId: input.agentId ?? ctx.agentId,
+      agentId: input.chat?.agentId ?? ctx.agentId,
     };
   }
 
@@ -904,9 +895,9 @@ export function scheduleTools(deps: ScheduleToolsDeps): BuiltinTool[] {
         en.push(`runs in ${b.en} → ${a.en}`);
       }
     }
-    if (input.agentId !== undefined && input.agentId !== task.agentId) {
-      zh.push(`智能体 ${clip(task.agentId, 80)} → ${clip(input.agentId, 80)}`);
-      en.push(`agent ${clip(task.agentId, 80)} → ${clip(input.agentId, 80)}`);
+    if (input.chat?.agentId !== undefined && input.chat.agentId !== task.agentId) {
+      zh.push(`智能体 ${clip(task.agentId, 80)} → ${clip(input.chat.agentId, 80)}`);
+      en.push(`agent ${clip(task.agentId, 80)} → ${clip(input.chat.agentId, 80)}`);
     }
     if (input.approvedTools !== undefined) {
       const next = uniqueSorted(input.approvedTools);
@@ -946,7 +937,6 @@ export function scheduleTools(deps: ScheduleToolsDeps): BuiltinTool[] {
     i.runAt === undefined &&
     i.mode === undefined &&
     i.chat === undefined &&
-    i.agentId === undefined &&
     i.approvedTools === undefined;
 
   const update: BuiltinTool = {
@@ -990,7 +980,6 @@ export function scheduleTools(deps: ScheduleToolsDeps): BuiltinTool[] {
       const patch: UpdateTaskInput = {};
       if (input.name !== undefined) patch.name = input.name;
       if (input.prompt !== undefined) patch.prompt = input.prompt;
-      if (input.agentId !== undefined) patch.agentId = input.agentId;
       const trigger = triggerOf(input);
       if (trigger !== undefined) patch.trigger = trigger;
       if (input.mode !== undefined) {
@@ -1004,6 +993,8 @@ export function scheduleTools(deps: ScheduleToolsDeps): BuiltinTool[] {
         patch.mode = f.mode;
         patch.conversationId = f.conversationId ?? null;
         patch.chat = f.chat ?? null;
+        // the chat's agent maps to the service's task agent (the HTTP shape stays flat)
+        if (input.chat?.agentId !== undefined) patch.agentId = input.chat.agentId;
       }
       const zone = task.trigger.timeZone;
       const updated = await call(
