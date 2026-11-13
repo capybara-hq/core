@@ -531,6 +531,8 @@ interface Invocation {
   raw: string;
   args: string[];
   argv: string[];
+  /** A `git -C DIR` directory the subcommand runs in. */
+  dir?: string;
 }
 
 const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
@@ -578,27 +580,38 @@ function stripNeutral(argv: string[]): Invocation | null {
     }
     // `git -C dir clone ...`: the subcommand follows the global options.
     if (program === "git") {
-      return { program, raw: head, args: gitSubcommandArgs(rest.slice(1)), argv: rest };
+      const git = gitSubcommandArgs(rest.slice(1));
+      return git.dir === undefined
+        ? { program, raw: head, args: git.args, argv: rest }
+        : { program, raw: head, args: git.args, argv: rest, dir: git.dir };
     }
     return { program, raw: head, args: rest.slice(1), argv: rest };
   }
 }
 
 /** Git's global options before the subcommand, with their values removed. */
-function gitSubcommandArgs(args: string[]): string[] {
+function gitSubcommandArgs(args: string[]): { args: string[]; dir?: string } {
   let i = 0;
+  let dir: string | undefined;
+  const chdir = (value: string): void => {
+    dir = dir === undefined || value.startsWith("/") ? value : `${dir}/${value}`;
+  };
   while (i < args.length) {
     const a = args[i] as string;
+    if (a === "-C") {
+      const value = args[i + 1];
+      if (value === undefined) return { args: [] };
+      chdir(value);
+      i += 2;
+      continue;
+    }
+    if (a.startsWith("-C") && a.length > 2) {
+      chdir(a.slice(2));
+      i += 1;
+      continue;
+    }
     if (
-      [
-        "-C",
-        "-c",
-        "--git-dir",
-        "--work-tree",
-        "--namespace",
-        "--exec-path",
-        "--config-env",
-      ].includes(a)
+      ["-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--config-env"].includes(a)
     ) {
       i += 2;
       continue;
@@ -609,7 +622,6 @@ function gitSubcommandArgs(args: string[]): string[] {
       a.startsWith("--namespace=") ||
       a.startsWith("--exec-path=") ||
       a.startsWith("--config-env=") ||
-      (a.startsWith("-C") && a.length > 2) ||
       (a.startsWith("-c") && a.length > 2)
     ) {
       i += 1;
@@ -621,7 +633,8 @@ function gitSubcommandArgs(args: string[]): string[] {
     }
     break;
   }
-  return args.slice(i);
+  const rest = args.slice(i);
+  return dir === undefined ? { args: rest } : { args: rest, dir };
 }
 
 function skipEnv(args: string[]): string[] {
@@ -817,6 +830,7 @@ function unwrapOneLevel(commands: SimpleCommand[]): DetailedParse {
     for (const nested of inner.value) {
       nested.pipeline = block * 1_000_000 + nested.pipeline;
       nested.flow = command.pipeline;
+      nested.block = block;
     }
     if (inv !== null && ["su", "sudo", "doas", "pkexec"].includes(inv.program)) {
       // Keep the privilege command itself so the `ask.sudo` rule still sees it.
@@ -985,7 +999,9 @@ const DEVICE_DIRS = [
 
 function isDevicePath(path: string, facts: ResolvedFacts): boolean {
   const t = tildeForm(path, facts);
-  return DEVICE_DIRS.some((dir) => t === dir || t.startsWith(`${dir}/`));
+  if (DEVICE_DIRS.some((dir) => t === dir || t.startsWith(`${dir}/`))) return true;
+  // The device binary, its unit file and its launch agent anywhere on disk.
+  return isDeviceIdentifier(baseName(t));
 }
 
 const isGitHook = (path: string): boolean =>
@@ -1006,14 +1022,48 @@ function looksLikePath(token: string): boolean {
 function pathCandidates(token: string): string[] {
   const out: string[] = [];
   const add = (value: string): void => {
-    const candidate = value.startsWith("@") ? value.slice(1) : value;
-    if (looksLikePath(candidate) && !out.includes(candidate)) out.push(candidate);
+    const fromAt = value.startsWith("@") || value.includes("@");
+    let candidate = value.startsWith("@") ? value.slice(1) : value;
+    // `-F file=@path`, `-d@path`: the file is after the first `@`.
+    const at = candidate.indexOf("@");
+    if (at >= 0) candidate = candidate.slice(at + 1);
+    // An `@file` is a file even without a slash (`@$FILE` names one just as `@./file` does).
+    if (
+      (fromAt || looksLikePath(candidate)) &&
+      candidate.length > 0 &&
+      candidate !== "-" &&
+      !out.includes(candidate)
+    ) {
+      out.push(candidate);
+    }
   };
   if (token.startsWith("@") && token.length > 1) add(token.slice(1));
+  // Attached short-option values that name files: `-d@file`, `-Tfile`, `-Ffile=@path`, `-ofile`.
+  const attached = /^-(?:d|T|F|o|D|O)(.+)$/.exec(token);
+  if (attached !== null && attached[1] !== undefined) add(attached[1]);
   const eq = token.indexOf("=");
   if (eq > 0) add(token.slice(eq + 1));
   if (looksLikePath(token)) out.push(token);
   return out;
+}
+
+/** Secret-looking path components: a dynamic word containing one is never a confident read. */
+const SECRET_LOOKING =
+  /(^|\/)(\.ssh|\.aws|\.config\/gcloud|\.azure|\.kube|\.docker|\.netrc|\.git-credentials|\.env)/;
+
+/**
+ * Whether a word is a concrete file path worth resolving statically for a read. Ordinary shell
+ * patterns (`grep "src/.*$" src/`), command substitutions (`cat $(pwd)/package.json`) and URLs are
+ * not: their unresolved text must not turn routine reads into `unsure`. A `$HOME`-leading word or
+ * one that names a secret component still is.
+ */
+function isConcretePathWord(candidate: string): boolean {
+  if (candidate.startsWith("/") || candidate.startsWith("~")) return true;
+  if (candidate.startsWith("./") || candidate.startsWith("../")) return true;
+  if (/^\$(?:\{HOME\}|HOME)(?=\/|$)/.test(candidate)) return true;
+  if (SECRET_LOOKING.test(candidate)) return true;
+  if (/[*?[\]{}|&;<>()$`\\'"\s]/.test(candidate)) return false;
+  return candidate.includes("/") || /\.[A-Za-z0-9]{1,8}$/.test(candidate);
 }
 
 function cwdOf(command: SimpleCommand, facts: ResolvedFacts): string {
@@ -1362,13 +1412,13 @@ const VALUE_OPTIONS: ReadonlySet<string> = new Set([
   "--reference",
   "--separate-git-dir",
   "--config",
+  "-c",
   "--filter",
   "--jobs",
   "--template",
   "--shallow-since",
   "--shallow-exclude",
   "--revision",
-  "--recurse-submodules",
 ]);
 
 /**
@@ -1394,8 +1444,11 @@ function operands(args: string[], valueOptions: ReadonlySet<string> = VALUE_OPTI
       continue;
     }
     if (a.startsWith("-") && a.length > 1) {
-      const last = `-${a[a.length - 1] as string}`;
-      if (!a.includes("=") && valueOptions.has(last) && a.length <= 2) i += 1;
+      // GNU clustering: in `-rt DIR` / `-Dt DIR` the value-taking letter is last and the next word
+      // is its value; `-tDIR` carries the value inline.
+      const letters = a.slice(1);
+      const index = [...letters].findIndex((letter) => valueOptions.has(`-${letter}`));
+      if (index >= 0 && index === letters.length - 1) i += 1;
       continue;
     }
     out.push(a);
@@ -1403,15 +1456,17 @@ function operands(args: string[], valueOptions: ReadonlySet<string> = VALUE_OPTI
   return out;
 }
 
-/** `cp -t DIR` / `cp --target-directory=DIR`: the destination of a copy-like command. */
+/** `cp -t DIR` / `cp -rt DIR` / `cp --target-directory=DIR`: a copy-like command's destination. */
 function targetDirectory(args: string[]): string | null {
   for (let i = 0; i < args.length; i += 1) {
     const a = args[i] as string;
-    if ((a === "-t" || a === "--target-directory") && args[i + 1] !== undefined) {
-      return args[i + 1] as string;
-    }
+    if (a === "--target-directory" && args[i + 1] !== undefined) return args[i + 1] as string;
     if (a.startsWith("--target-directory=")) return a.slice("--target-directory=".length);
-    if (a.startsWith("-t") && a.length > 2) return a.slice(2);
+    // `-t DIR`, `-rt DIR`, `-Dt DIR` (GNU clustering: the value-taking `t` is last).
+    if (/^-[A-Za-z]*t$/.test(a) && args[i + 1] !== undefined) return args[i + 1] as string;
+    // `-tDIR`, `-rtDIR`: the value is attached.
+    const attached = /^-[A-Za-z]*t(.+)$/.exec(a);
+    if (attached !== null) return attached[1] as string;
   }
   return null;
 }
@@ -1608,13 +1663,18 @@ function isSecurityToolDisable(inv: Invocation): boolean {
   return false;
 }
 
+/** The device's own program, unit and launch-agent names. */
+const DEVICE_IDENTIFIER =
+  /(^|\/)(capybara-device(\.service|\.plist)?|top\.capybara\.device(\.service|\.plist)?)$/;
+
+const isDeviceIdentifier = (value: string): boolean => DEVICE_IDENTIFIER.test(value);
+
 function isDeviceServiceCommand(inv: Invocation): boolean {
   if (!["launchctl", "systemctl", "service", "pkill", "killall", "kill"].includes(inv.program)) {
     return false;
   }
   // Match the device's own program or launch agent, not a substring of an unrelated name.
-  const exact = /(^|\/)capybara-device(\.plist)?$/;
-  return inv.args.some((arg) => exact.test(arg));
+  return inv.args.some((arg) => isDeviceIdentifier(arg));
 }
 
 /* -------------------------------------------------------------------------------------------- *
@@ -1750,12 +1810,74 @@ function writeTargetsOf(inv: Invocation): string[] {
       // `host:path` and `rsync://...` are remote: the command writes there, not here.
       return last !== undefined && !isRemoteSpec(last) ? [last] : [];
     }
+    case "tar": {
+      // `-C DIR` extracts into DIR; `-cf ARCHIVE` writes ARCHIVE. `-C` on create only selects
+      // the files read, so it is not a write target there.
+      const targets: string[] = [];
+      let directory: string | null = null;
+      let extract = false;
+      let create = false;
+      for (let i = 0; i < args.length; i += 1) {
+        const a = args[i] as string;
+        if (a === "-C" || a === "--directory") {
+          directory = args[i + 1] ?? null;
+          i += 1;
+          continue;
+        }
+        if (a.startsWith("--directory=")) {
+          directory = a.slice("--directory=".length);
+          continue;
+        }
+        if (a === "--extract" || a === "--get") extract = true;
+        if (a === "--create") create = true;
+        if (a === "-f" || a === "--file") {
+          const value = args[i + 1];
+          if (value !== undefined && create) targets.push(value);
+          i += 1;
+          continue;
+        }
+        if (a.startsWith("--file=")) {
+          if (create) targets.push(a.slice("--file=".length));
+          continue;
+        }
+        if (a.startsWith("-") && !a.startsWith("--")) {
+          if (a.includes("x")) extract = true;
+          if (a.includes("c")) create = true;
+          const f = a.indexOf("f");
+          if (f > 0) {
+            if (f === a.length - 1) {
+              const value = args[i + 1];
+              if (value !== undefined && create) targets.push(value);
+              i += 1;
+            } else if (create) {
+              targets.push(a.slice(f + 1));
+            }
+          }
+        }
+      }
+      if (extract) targets.push(directory ?? ".");
+      return targets;
+    }
+    case "unzip": {
+      const dir = hostValue(args, "-d");
+      return [dir ?? "."];
+    }
     case "git": {
       if (args[0] !== "clone") return [];
       // `git clone [opts] <url> [dest]`: option values are skipped, so `--depth 1` does not shift
       // the destination into the URL's place.
       const pos = operands(args.slice(1));
-      return pos.length >= 2 ? [pos[1] as string] : [];
+      // `git -C DIR clone <url>` writes `<DIR>/<repo>` when no destination is given; a relative
+      // destination is relative to `-C`, not to the run's cwd.
+      const destination = (dest: string): string => {
+        if (dest.startsWith("/") || dest.startsWith("~") || inv.dir === undefined) return dest;
+        return `${inv.dir.replace(/\/$/, "")}/${dest}`;
+      };
+      if (pos.length >= 2) return [destination(pos[1] as string)];
+      if (inv.dir === undefined) return []; // the default destination is inside cwd (the workspace)
+      const repo = pos[0];
+      const name = repo === undefined ? undefined : repoName(repo);
+      return name === undefined ? [] : [destination(name)];
     }
     default:
       return [];
@@ -1782,6 +1904,14 @@ function isRemoteSpec(path: string): boolean {
     return false;
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(path)) return true;
   return /^[^/]*:/.test(path);
+}
+
+/** The directory `git clone <url>` creates by default (`https://host/x/y.git` -> `y`). */
+function repoName(url: string): string | undefined {
+  const cleaned = url.replace(/\/+$/, "");
+  const tail = cleaned.slice(cleaned.lastIndexOf("/") + 1);
+  const name = tail.slice(tail.lastIndexOf(":") + 1).replace(/\.git$/, "");
+  return name.length > 0 ? name : undefined;
 }
 
 function writeTargets(command: SimpleCommand): string[] {
@@ -1887,11 +2017,16 @@ function readsSecret(command: SimpleCommand, ctx: RuleContext): boolean {
 function secretFlowsInto(ctx: RuleContext, index: number): boolean {
   const target = ctx.commands[index];
   if (target === undefined) return false;
+  const targetFlow = target.flow ?? target.pipeline;
   for (let i = 0; i < index; i += 1) {
     const other = ctx.commands[i] as SimpleCommand;
     if (!readsSecret(other, ctx)) continue;
-    const output = other.flow ?? other.pipeline;
-    if (other.pipeline === target.pipeline || output === target.pipeline) return true;
+    // The same pipe inside the line or a wrapper.
+    if (other.pipeline === target.pipeline) return true;
+    // Output of an earlier command/pipeline feeding the target's wrapper stdin. Commands inside
+    // the target's own wrapper share `flow` too, but their own pipes are `pipeline`; only a
+    // command from another (or no) wrapper feeds this one.
+    if ((other.flow ?? other.pipeline) === targetFlow && other.block !== target.block) return true;
   }
   return false;
 }
@@ -1920,10 +2055,13 @@ function isCredentialFlag(program: string, flag: string): boolean {
 /** A secret path a network command sends (as data), not one it uses as a credential. */
 function networkSendsSecret(inv: Invocation, command: SimpleCommand, ctx: RuleContext): boolean {
   const { args } = inv;
-  const secret = (token: string): boolean => {
+  // An unresolved path-like argument could name any file, including a secret: never certify a
+  // send of it (`curl -d @$HOME/$(echo .ssh)/id_rsa ...` is denied, not allowed).
+  const sends = (token: string): boolean => {
     for (const candidate of pathCandidates(token)) {
       const resolved = expandPath(candidate, ctx.facts, cwdOf(command, ctx.facts));
-      if (resolved !== null && isSecretPath(resolved, ctx.facts)) return true;
+      if (resolved === null) return true;
+      if (isSecretPath(resolved, ctx.facts)) return true;
     }
     return false;
   };
@@ -1934,7 +2072,7 @@ function networkSendsSecret(inv: Invocation, command: SimpleCommand, ctx: RuleCo
       if (!a.includes("=")) i += 1;
       continue;
     }
-    if (secret(a)) return true;
+    if (sends(a)) return true;
     if (
       [
         "--body-file",
@@ -1946,7 +2084,7 @@ function networkSendsSecret(inv: Invocation, command: SimpleCommand, ctx: RuleCo
         "--data",
       ].includes(a) &&
       args[i + 1] !== undefined &&
-      secret(args[i + 1] as string)
+      sends(args[i + 1] as string)
     ) {
       return true;
     }
@@ -2101,7 +2239,9 @@ const RULES: readonly Rule[] = [
           ...command.redirects.map((redirect) => redirect.target),
         ].some((token) =>
           pathCandidates(token).some(
-            (candidate) => expandPath(candidate, ctx.facts, cwdOf(command, ctx.facts)) === null,
+            (candidate) =>
+              isConcretePathWord(candidate) &&
+              expandPath(candidate, ctx.facts, cwdOf(command, ctx.facts)) === null,
           ),
         );
         if (unresolved) return false;
@@ -2197,7 +2337,7 @@ const RULES: readonly Rule[] = [
           const readsSecretRedirect = command.redirects.some((redirect) => {
             if (redirect.op !== "<") return false;
             const resolved = expandPath(redirect.target, ctx.facts, cwdOf(command, ctx.facts));
-            return resolved !== null && isSecretPath(resolved, ctx.facts);
+            return resolved === null || isSecretPath(resolved, ctx.facts);
           });
           if (readsSecretRedirect) return false;
           // Only a secret read *before* this command can flow into it.
@@ -2527,7 +2667,7 @@ const RULES: readonly Rule[] = [
         return command.redirects.some((redirect) => {
           if (redirect.op !== "<") return false;
           const resolved = expandPath(redirect.target, ctx.facts, cwdOf(command, ctx.facts));
-          return resolved !== null && isSecretPath(resolved, ctx.facts);
+          return resolved === null || isSecretPath(resolved, ctx.facts);
         });
       });
       if (direct.length > 0) {

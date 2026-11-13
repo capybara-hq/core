@@ -86,7 +86,7 @@
 {"command":"rm /etc/hosts","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"ask","rules":["ask.outside-write"]}
 {"command":"touch /etc/foo","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"ask","rules":["ask.outside-write"]}
 {"command":"cp report.pdf ~/Desktop/","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"ask","rules":["ask.outside-write"]}
-{"command":"echo \"export PATH=$PATH:/opt/bin\" >> ~/.zshrc","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"ask","rules":["ask.rc-files"]}
+{"command":"echo \"export PATH=$PATH:/opt/bin\" >> ~/.zshrc","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"ask","rules":["allow.read","ask.rc-files"]}
 {"command":"echo \"x\" > ~/.gitconfig","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"ask","rules":["allow.read","ask.rc-files"]}
 {"command":"cat ~/.ssh/id_rsa","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"ask","rules":["ask.rc-files"]}
 {"command":"cp ~/.ssh/id_rsa /tmp/key","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"ask","rules":["allow.tmp-write","ask.rc-files"]}

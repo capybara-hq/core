@@ -105,8 +105,8 @@
 {"command":"bash -c 'git status'","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.git"]}
 {"command":"sh -c 'pnpm test'","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.dev"]}
 {"command":"sudo bash -c 'rm -rf /'","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"deny","rules":["ask.sudo","deny.root-delete"]}
-{"command":"unzip package.zip -d /etc","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"unsure","rules":["unsure.uncovered"]}
-{"command":"tar -xzf package.tar.gz -C /etc","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"unsure","rules":["unsure.uncovered"]}
+{"command":"unzip package.zip -d /etc","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"ask","rules":["ask.outside-write"]}
+{"command":"tar -xzf package.tar.gz -C /etc","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"ask","rules":["ask.outside-write"]}
 {"command":"git clean -fdx","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.git"]}
 {"command":"git reset --hard HEAD","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.git"]}
 {"command":"git rm -rf node_modules","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.git"]}

@@ -64,6 +64,8 @@ export interface SimpleCommand {
    * pipeline. Unset for ordinary commands, whose stdout flows into their own {@link pipeline}.
    */
   flow?: number;
+  /** The unwrapped wrapper a command belongs to (undefined outside any wrapper). */
+  block?: number;
 }
 
 /** The parsed command line: every simple command, in execution order. */
