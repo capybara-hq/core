@@ -219,6 +219,14 @@ The rule set lives in one module with a table-driven test of a few hundred comma
 real sessions (the acceptance conversations of 2026-11-12/13 are the first corpus) **(designer's
 call)**.
 
+**The rule table is best effort, not a boundary (2026-11-14).** It is a table over a hand-written
+parse of the command line: it catches the common shapes of destructive or exfiltrating commands and
+asks about what it cannot decide. A determined command can express the same act in a way no table
+enumerates (a tool's own quoting, flag spellings, aliases, environment-driven execution). The floor
+is: anything carrying a variable, substitution, backtick or quote in a path-like position is at
+least **ask**, never **allow**. High-risk work lands in sandbox mode, where the OS enforces; auto
+mode is a decision the owner makes at the machine.
+
 ### 5.3 Stage 2: the classifier
 
 For **unsure** only. One model call with purpose `review` (a new model purpose, configured like the
