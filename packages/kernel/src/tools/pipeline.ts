@@ -1146,7 +1146,11 @@ export class ToolPipeline {
           ctx,
           call.id,
           outKey,
-          { content: hookDeniedText(verdict.plugin, verdict.reason), isError: true },
+          {
+            content: hookDeniedText(verdict.plugin, verdict.reason),
+            isError: true,
+            ...(review !== undefined && { review }),
+          },
           [event],
           undefined,
           [hookDeniedAudit(site, event.payload, verdict)],
