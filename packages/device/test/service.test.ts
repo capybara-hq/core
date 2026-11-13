@@ -1,5 +1,6 @@
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
@@ -7,7 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runCli } from "../src/cli.js";
 import {
@@ -16,7 +17,13 @@ import {
   SERVICE_POLL_MS,
   serviceCommand,
 } from "../src/commands/service.js";
-import { plistContent, plistPath, rotateServiceLog } from "../src/service/launchd.js";
+import { pidPath, writePid } from "../src/pid.js";
+import {
+  LAUNCHD_THROTTLE_INTERVAL_SECONDS,
+  plistContent,
+  plistPath,
+  rotateServiceLog,
+} from "../src/service/launchd.js";
 import { unitContent, unitPath } from "../src/service/systemd.js";
 
 const spec = {
@@ -34,9 +41,15 @@ describe("service files", () => {
       "<string>/opt/node 22/bin/node</string>\n    <string>/usr/lib/node_modules/@capybara-hq/device/bin/capybara-device.mjs</string>\n    <string>start</string>",
     );
     expect(p).toMatch(/<key>RunAtLoad<\/key>\s*<true\/>/);
+    // Unconditional KeepAlive: a clean exit (not just a crash) restarts the program.
+    expect(p).toMatch(/<key>KeepAlive<\/key>\s*<true\/>/);
+    expect(p).not.toContain("SuccessfulExit");
     expect(p).toMatch(
-      /<key>KeepAlive<\/key>\s*<dict>\s*<key>SuccessfulExit<\/key>\s*<false\/>\s*<\/dict>/,
+      new RegExp(
+        `<key>ThrottleInterval</key>\\s*<integer>${LAUNCHD_THROTTLE_INTERVAL_SECONDS}</integer>`,
+      ),
     );
+    expect(LAUNCHD_THROTTLE_INTERVAL_SECONDS).toBeGreaterThanOrEqual(10);
     expect(p).toContain("<string>/home/u/.config/capybara-device/service.log</string>");
     expect(p).toContain("<key>PATH</key>");
     expect(plistPath("/Users/u")).toBe("/Users/u/Library/LaunchAgents/top.capybara.device.plist");
@@ -174,6 +187,74 @@ describe("service command", () => {
       ["launchctl", "bootstrap", "gui/501", plistPath(home)],
     ]);
     expect(slept).toEqual([SERVICE_POLL_MS, SERVICE_POLL_MS, SERVICE_POLL_MS]);
+  });
+
+  it("macOS install over a loaded agent rewrites the plist and loads the new one", async () => {
+    mkdirSync(dirname(plistPath(home)), { recursive: true });
+    writeFileSync(plistPath(home), "old plist");
+    const launchctl = fakeLaunchctl({ loaded: true });
+    expect(await serviceCommand("install", { ...base(), run: launchctl, platform: "darwin" })).toBe(
+      0,
+    );
+    // bootout before the write, bootstrap after it: launchd reads the new plist at bootstrap.
+    expect(calls.map((c) => c[1])).toEqual(["bootout", "print", "bootstrap"]);
+    const written = readFileSync(plistPath(home), "utf8");
+    expect(written).not.toContain("old plist");
+    expect(written).toMatch(/<key>KeepAlive<\/key>\s*<true\/>/);
+    expect(written).toContain(
+      `<key>ThrottleInterval</key>\n  <integer>${LAUNCHD_THROTTLE_INTERVAL_SECONDS}</integer>`,
+    );
+  });
+
+  it("macOS status says whether the agent is loaded and the process running", async () => {
+    const stateDir = join(home, ".config", "capybara-device");
+    writePid(stateDir, process.pid);
+    expect(
+      await serviceCommand("status", {
+        ...base(),
+        run: fakeLaunchctl({ loaded: true }),
+        platform: "darwin",
+      }),
+    ).toBe(0);
+    expect(lines.join("\n")).toContain(`capybara-device is running (pid ${process.pid})`);
+
+    // The agent is loaded but no pid file: the program is between restarts.
+    rmSync(pidPath(stateDir), { force: true });
+    lines.length = 0;
+    expect(
+      await serviceCommand("status", {
+        ...base(),
+        run: fakeLaunchctl({ loaded: true }),
+        platform: "darwin",
+      }),
+    ).toBe(1);
+    expect(lines.join("\n")).toContain("no capybara-device process is running");
+  });
+
+  it("macOS status reports an agent that is not loaded", async () => {
+    expect(
+      await serviceCommand("status", {
+        ...base(),
+        run: fakeLaunchctl({}),
+        platform: "darwin",
+      }),
+    ).toBe(1);
+    expect(lines.join("\n")).toContain("not loaded");
+  });
+
+  it("Linux status follows systemctl and the pid file", async () => {
+    const stateDir = join(home, ".config", "capybara-device");
+    writePid(stateDir, process.pid);
+    expect(await serviceCommand("status", { ...base(), platform: "linux" })).toBe(0);
+    expect(lines.join("\n")).toContain(`capybara-device is running (pid ${process.pid})`);
+
+    const inactive = (cmd: string, args: string[]): void => {
+      calls.push([cmd, ...args]);
+      if (args.includes("is-active")) throw failed(3, "inactive");
+    };
+    lines.length = 0;
+    expect(await serviceCommand("status", { ...base(), platform: "linux", run: inactive })).toBe(1);
+    expect(lines.join("\n")).toContain("not loaded");
   });
 
   it("macOS install stops waiting for the old service at the time limit", async () => {

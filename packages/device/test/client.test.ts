@@ -505,6 +505,78 @@ describe("client", () => {
     expect(await c.done).toBe(0);
   });
 
+  it("reconnects when the kernel shuts the connection down (1001)", async () => {
+    start();
+    await kernel.waitFor("hello", () => kernel.of("hello")[0]);
+    kernel.sockets[0]?.close(1001, "shutting down");
+    await kernel.waitFor("second hello", () => kernel.of("hello", 1)[0]);
+    expect(errs).toEqual([]);
+  });
+
+  it("keeps retrying a connection failure instead of exiting", async () => {
+    let attempts = 0;
+    let settled: number | undefined;
+    const c = start(
+      {
+        sleep: () => {
+          attempts++;
+          return new Promise((r) => setTimeout(r, 5));
+        },
+      },
+      { connectUrl: "ws://127.0.0.1:1/device/connect" },
+    );
+    void c.done.then((code) => {
+      settled = code;
+    });
+    await kernel.waitFor("5 retries", () => attempts >= 5);
+    expect(settled).toBeUndefined();
+    c.stop();
+    expect(await c.done).toBe(0);
+  });
+
+  it("reports a different failure at once and a repeated one at most once a minute", async () => {
+    let clock = 0;
+    kernel.rejectWith = 404;
+    const c = start({ now: () => clock });
+    await kernel.waitFor("404", () => kernel.headers.length >= 1 && errs.length >= 1);
+    expect(errs[0]).toContain("HTTP 404");
+    kernel.rejectWith = 502;
+    await kernel.waitFor("502", () => kernel.headers.length >= 2 && errs.length >= 2);
+    expect(errs[1]).toBe(`Connecting to ${kernel.url} failed: HTTP 502. Retrying.`);
+    // Same failure, clock unchanged: throttled.
+    await kernel.waitFor("a third attempt", () => kernel.headers.length >= 3);
+    expect(errs).toHaveLength(2);
+    // A minute later the same failure is reported again.
+    clock = 60_001;
+    await kernel.waitFor("fourth", () => kernel.headers.length >= 4 && errs.length >= 3);
+    expect(errs).toHaveLength(3);
+    c.stop();
+    expect(await c.done).toBe(0);
+  });
+
+  it("resets the backoff after a connection stays up", async () => {
+    const sleeps: number[] = [];
+    kernel.rejectWith = 502;
+    const c = start({
+      random: () => 1,
+      now: () => 0,
+      stableMs: 20,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+        if (sleeps.length === 2) kernel.rejectWith = undefined;
+      },
+    });
+    await kernel.waitFor("hello", () => kernel.of("hello")[0]);
+    expect(sleeps).toEqual([1000, 2000]);
+    // Stay connected past stableMs: the next failure starts at the base delay.
+    await new Promise((r) => setTimeout(r, 40));
+    kernel.sockets[0]?.terminate();
+    await kernel.waitFor("second hello", () => kernel.of("hello", 1)[0]);
+    expect(sleeps).toEqual([1000, 2000, 1000]);
+    c.stop();
+    expect(await c.done).toBe(0);
+  });
+
   it("a result larger than the frame limit is answered with an error", async () => {
     start({}, { maxFrameBytes: 200 });
     await kernel.waitFor("hello", () => kernel.of("hello")[0]);
@@ -537,5 +609,20 @@ describe("backoff", () => {
     expect(backoffMs(3, () => 1)).toBe(8000);
     expect(backoffMs(10, () => 1)).toBe(60_000);
     expect(backoffMs(0, () => 0)).toBe(500);
+  });
+
+  it("keeps growing exponentially, caps at 60 s, and stays within the jitter range", () => {
+    for (let attempt = 0; attempt <= 20; attempt++) {
+      const ceiling = Math.min(60_000, 1000 * 2 ** attempt);
+      expect(backoffMs(attempt, () => 1)).toBe(ceiling);
+      expect(backoffMs(attempt, () => 0)).toBe(Math.round(ceiling / 2));
+      const mid = backoffMs(attempt, () => 0.5);
+      expect(mid).toBeGreaterThanOrEqual(Math.round(ceiling / 2));
+      expect(mid).toBeLessThanOrEqual(ceiling);
+      if (attempt > 0) expect(ceiling).toBeGreaterThanOrEqual(1000);
+    }
+    // A very long outage never overflows or exceeds the cap.
+    expect(backoffMs(1000, () => 1)).toBe(60_000);
+    expect(backoffMs(1000, () => 0)).toBe(30_000);
   });
 });
