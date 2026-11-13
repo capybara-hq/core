@@ -17,6 +17,7 @@ import { Inject, Injectable, Optional } from "@nestjs/common";
 import type { AgentDefinition } from "../agents/definition.js";
 import { type AppendEvent, EventLog } from "../conversations/event-log.js";
 import {
+  COMMAND_ASK_MAX_CHARS,
   COMMAND_ASK_TEXT_MAX_CHARS,
   type ReviewRecord,
   type ToolView,
@@ -30,6 +31,7 @@ import { clipText } from "../extensions/hooks.js";
 import { ExtensionHost } from "../extensions/host.js";
 import { ExtensionUnloadedError, PLUGIN_UNLOADED_TOOL_ERROR } from "../extensions/inflight.js";
 import { audit } from "../identity/audit.js";
+import { sha256Hex } from "../identity/hash.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
@@ -55,7 +57,11 @@ import type { DispatchArgs, DispatchOutcome } from "../runtime/subagents/dispatc
 import { type MessageOutcome, SubagentMessages } from "../runtime/subagents/messages.js";
 import { pairStoppedForks } from "../runtime/subagents/skill-fork.js";
 import { SubagentsService } from "../runtime/subagents/subagents.service.js";
-import type { CommandReview, ReviewVerdict } from "../sandbox/review/index.js";
+import {
+  type CommandReview,
+  isSessionGrantableRule,
+  type ReviewVerdict,
+} from "../sandbox/review/index.js";
 import { CommandReviewService } from "../sandbox/review/review.service.js";
 import {
   appendMissingGrant,
@@ -143,6 +149,15 @@ export const commandUnattendedText = (reason: string, kind: "command" | "write")
   kind === "write"
     ? `This write needs approval (${reason}), and no one can approve it now; do it another way or leave it for the person.`
     : `This command needs approval (${reason}), and no one can approve it now; do the work another way or leave it for the person.`;
+/**
+ * A command longer than the ask ceiling (`COMMAND_ASK_MAX_CHARS`): it cannot be shown for approval,
+ * and an approval must bind the whole text, so the call is refused before any approval exists.
+ */
+export const commandTooLongReason = (chars: number): string =>
+  `The command is ${chars} characters long; commands over ${COMMAND_ASK_MAX_CHARS} are too long to review and approve.`;
+/** The model-visible result of a command over the ask ceiling (actionable, English). */
+export const commandTooLongText = (chars: number): string =>
+  `This command is too long to review (${chars} characters; the limit is ${COMMAND_ASK_MAX_CHARS}). Shorten it, or write it to a script file and run that instead.`;
 /** The person declined a held command or write (P-D12); `reason` is what they said, if anything. */
 export const commandDeclinedText = (reason: string | null, kind: "command" | "write"): string => {
   const what = kind === "write" ? "this write" : "to run this command";
@@ -886,12 +901,26 @@ export class ToolPipeline {
         approval?.status === "approved" && approval.specHash === started.payload.specHash
           ? approval
           : null;
+      // a command that ran under the person's `command` approval: its review record and
+      // authorization survive the lost result too (the ask is the whole truth on a resume)
+      const commandAsk = await this.deps.approvals.commandForCall(ctx.runId, call.id);
+      const command = commandAsk?.status === "approved" ? commandAsk : null;
+      const authorization =
+        approved !== null
+          ? approvalAuthorization(approved)
+          : command !== null
+            ? approvalAuthorization(command)
+            : null;
       const source = approved ? null : (await resolve()).tools.find((t) => t.key === key)?.source;
       await this.writeResult(
         ctx,
         call.id,
         key,
-        { content: UNKNOWN_RESULT_TEXT, isError: true },
+        {
+          content: UNKNOWN_RESULT_TEXT,
+          isError: true,
+          ...(command !== null && { review: this.personAllowRecord(command) }),
+        },
         [],
         {
           durationMs: null,
@@ -900,7 +929,7 @@ export class ToolPipeline {
             : source?.kind === "connector"
               ? source.connectorId
               : null,
-          ...(approved && { authorization: approvalAuthorization(approved) }),
+          ...(authorization !== null && { authorization }),
         },
       );
       return undefined;
@@ -1474,6 +1503,17 @@ export class ToolPipeline {
       };
     }
     // ask
+    const command = kind === "command" ? textField(input, "command") : tool.key;
+    // a command over the ceiling cannot be shown in full, and an approval must bind exactly what
+    // runs: refuse it (no approval, no grant) rather than approve a text the person cannot see
+    if (kind === "command" && command.length > COMMAND_ASK_MAX_CHARS) {
+      const reason = commandTooLongReason(command.length);
+      return {
+        kind: "result",
+        content: commandTooLongText(command.length),
+        review: denyRecord(verdict.by, null, reason),
+      };
+    }
     if (!attended) {
       const reason = verdict.reason;
       return {
@@ -1487,10 +1527,8 @@ export class ToolPipeline {
       deviceName: facts.deviceName,
       mode: facts.mode,
       kind,
-      command: clipText(
-        kind === "command" ? textField(input, "command") : tool.key,
-        COMMAND_ASK_TEXT_MAX_CHARS,
-      ),
+      // the whole command the approval covers (the event keeps a clamped copy for display)
+      command,
       ...(kind === "write" && { path: clipText(textField(input, "file_path"), 4096) }),
       rule: verdict.rule,
       reason: clipText(verdict.reason, COMMAND_ASK_TEXT_MAX_CHARS),
@@ -1505,8 +1543,8 @@ export class ToolPipeline {
         callId: call.id,
         requestedFor: facts.ownerAccountId,
         detail,
-        // `once` always; `session` only when the verdict has a rule hit to remember (P-D2)
-        scopes: verdict.rule === null ? ["once"] : ["once", "session"],
+        // `once` always; `session` only for a concrete rule class, never an `unsure.*` catch-all (P-D2)
+        scopes: isSessionGrantableRule(verdict.rule) ? ["once", "session"] : ["once"],
       });
     } catch (err) {
       // fail closed: an ask that cannot be created is a deny, never a run of the held call
@@ -1531,17 +1569,7 @@ export class ToolPipeline {
     const rule = ask.command?.rule ?? null;
     if (ask.status === "pending") return { kind: "wait", wait: approvalWait(ask) };
     if (ask.status === "approved") {
-      return {
-        kind: "continue",
-        commandAsk: ask,
-        review: {
-          decision: "allow",
-          by: "person",
-          rule,
-          reason: ask.command?.reason ?? "The user allowed this call.",
-          ...((ask.scope === "once" || ask.scope === "session") && { scope: ask.scope }),
-        },
-      };
+      return { kind: "continue", commandAsk: ask, review: this.personAllowRecord(ask) };
     }
     if (ask.status === "denied") {
       const reason = ask.denyReason;
@@ -1554,6 +1582,24 @@ export class ToolPipeline {
     const text =
       ask.status === "expired" ? approvalExpiredText(approvalHours(ask)) : APPROVAL_CANCELLED_TEXT;
     return { kind: "result", content: text, review: denyRecord("person", rule, text) };
+  }
+
+  /**
+   * The review record of a command (or write) the person allowed: its scope, and for a shell
+   * command the SHA-256 of the text the ask holds in full, so an audit can match record and text.
+   */
+  private personAllowRecord(ask: ApprovalRecord): ReviewRecord {
+    return {
+      decision: "allow",
+      by: "person",
+      rule: ask.command?.rule ?? null,
+      reason: ask.command?.reason ?? "The user allowed this call.",
+      ...((ask.scope === "once" || ask.scope === "session") && { scope: ask.scope }),
+      ...(ask.command !== null &&
+        ask.command.kind === "command" && {
+          commandHash: sha256Hex(ask.command.command),
+        }),
+    };
   }
 
   /**

@@ -22,6 +22,7 @@ import { estimateTokens } from "../../src/runtime/context/tokens.js";
 import {
   boundMessages,
   CommandReviewService,
+  isSessionGrantableRule,
   parseReviewAnswer,
   REVIEW_ASK_REASON,
   REVIEW_MAX_OUTPUT_TOKENS,
@@ -387,12 +388,33 @@ describe("CommandReviewService", { timeout: 120_000 }, () => {
     expect(usages[0]?.payload.inputTokens).toBeGreaterThan(0);
   });
 
-  it("without a mapped review purpose unsure is an ask, and no classifier call is made", async () => {
+  it("without a mapped review purpose unsure is an ask with no grantable rule, and no classifier call is made", async () => {
     await db.deleteFrom("model_purpose_mappings").where("purpose", "=", "review").execute();
     const verdict = await call();
-    expect(verdict).toMatchObject({ decision: "ask", by: "rule", rule: "unsure.uncovered" });
+    // the deciding hit is a catch-all (`unsure.*`), so it is never offered as a session grant
+    expect(verdict).toMatchObject({ decision: "ask", by: "rule", rule: null });
     expect(reviewChats()).toEqual([]);
     expect(await reviewUsage()).toEqual([]);
+  });
+
+  it("a stored catch-all grant never suppresses an unsure ask, and only concrete rules are grantable", async () => {
+    await db.deleteFrom("model_purpose_mappings").where("purpose", "=", "review").execute();
+    // a grant a deployment could have written before the catch-all was excluded: inert from now on
+    await db
+      .insertInto("conversation_tool_grants")
+      .values({
+        conversation_id: conv,
+        tool_key: "command:unsure.uncovered",
+        spec_hash: "command",
+        connector_id: null,
+      })
+      .execute();
+    await expect(call()).resolves.toMatchObject({ decision: "ask", by: "rule", rule: null });
+    // only a concrete rule class can back 本会话允许同类
+    expect(isSessionGrantableRule("ask.force-push")).toBe(true);
+    expect(isSessionGrantableRule("unsure.uncovered")).toBe(false);
+    expect(isSessionGrantableRule("unsure.unparsed")).toBe(false);
+    expect(isSessionGrantableRule(null)).toBe(false);
   });
 
   it("a session grant suppresses a repeated rule ask, but never a different rule or a deny", async () => {

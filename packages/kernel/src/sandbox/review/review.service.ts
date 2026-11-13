@@ -17,7 +17,7 @@ import {
   runClassifier,
 } from "./classifier.js";
 import { reviewRules, reviewWrite } from "./rules.js";
-import type { RuleHit, RuleOutcome } from "./types.js";
+import { isSessionGrantableRule, type RuleHit, type RuleOutcome } from "./types.js";
 
 /**
  * The command review the tool pipeline calls (auto mode spec §5): stage 1 the pure rule table, stage
@@ -219,17 +219,16 @@ export class CommandReviewService implements CommandReview {
           };
     }
 
-    // unsure: the classifier decides when the purpose is mapped, else the hit itself is an ask
+    // unsure: the classifier decides when the purpose is mapped; without one the deciding hit is a
+    // catch-all (`unsure.*`), which no person can reason about as a class: it is an ask with no
+    // grantable rule (`once` only), exactly as a classifier ask, and no stored grant is consulted.
     if (!(await this.classifierMapped(input.orgId))) {
-      const rule = hit?.id ?? "unsure.uncovered";
-      return (await this.sessionGranted(await rootOf(), rule))
-        ? allow(REVIEW_REASONS.sessionGrant, rule)
-        : {
-            decision: "ask",
-            by: "rule",
-            reason: hit?.reason ?? "This command needs the person's approval.",
-            rule,
-          };
+      return {
+        decision: "ask",
+        by: "rule",
+        reason: hit?.reason ?? "This command needs the person's approval.",
+        rule: null,
+      };
     }
     const answer = await runClassifier(
       {
@@ -317,9 +316,11 @@ export class CommandReviewService implements CommandReview {
   /**
    * Whether the root conversation holds a session grant for this rule class (`command:<ruleId>`).
    * Command grants carry no tool-spec fingerprint: the approval records the rule, not the command.
+   * Only a concrete rule class can match: a catch-all (`unsure.*`) or a missing rule never does,
+   * so a stored `command:unsure.*` row (old data) can cover nothing.
    */
   private async sessionGranted(rootConversationId: string, rule: string | null): Promise<boolean> {
-    if (rule === null) return false;
+    if (!isSessionGrantableRule(rule)) return false;
     const grant = await this.db
       .selectFrom("conversation_tool_grants")
       .select("tool_key")

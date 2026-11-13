@@ -11,6 +11,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import { type Selectable, sql } from "kysely";
 import { EventLog } from "../conversations/event-log.js";
 import {
+  COMMAND_ASK_TEXT_MAX_CHARS,
   GIT_ASK_MAX_REFS,
   GIT_REF_MAX_CHARS,
   NETWORK_ASK_MAX_HOSTS,
@@ -21,7 +22,9 @@ import {
 import { conversationSourceOf } from "../conversations/source.js";
 import type { ApprovalsTable } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { clipText } from "../extensions/hooks.js";
 import { audit } from "../identity/audit.js";
+import { sha256Hex } from "../identity/hash.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -38,6 +41,7 @@ import { type PendingPolicyOp, pendingPolicyOpsOf } from "../local-devices/polic
 import { ORG_ROLES, type OrgRole, roleAtLeast } from "../orgs/roles.js";
 import { RunResume } from "../runtime/run-jobs.js";
 import { rootConversationOf } from "../runtime/subagents/child.js";
+import { isSessionGrantableRule } from "../sandbox/review/types.js";
 import { deviceNotFound, SandboxService } from "../sandbox/sandbox.service.js";
 import { readScheduleSettings } from "../schedules/effective-settings.js";
 import {
@@ -268,7 +272,17 @@ export function publicRecord(r: ApprovalRecord): ApprovalPublicRecord {
     const { result: _result, ...rest } = d;
     return rest;
   };
-  return { ...r, detail: strip(r.detail), git: strip(r.git) };
+  return {
+    ...r,
+    // never offered, even from a row stored before the catch-all was excluded: a `command` ask
+    // remembers one concrete rule class, and a classifier ask (no rule) remembers nothing
+    scopes:
+      r.command !== null && !isSessionGrantableRule(r.command.rule)
+        ? r.scopes.filter((s) => s !== "session")
+        : r.scopes,
+    detail: strip(r.detail),
+    git: strip(r.git),
+  };
 }
 
 /** 审批详情（列表与详情接口返回）。 */
@@ -817,8 +831,10 @@ export class ApprovalsService {
     if (input.scopes.length === 0 || !input.scopes.includes("once")) {
       throw new Error('a command ask offers at least "once"');
     }
-    if (input.scopes.includes("session") && d.rule === null) {
-      throw new Error('a command ask offers "session" only for a rule hit');
+    if (input.scopes.includes("session") && !isSessionGrantableRule(d.rule)) {
+      throw new Error(
+        'a command ask offers "session" only for a concrete rule, never a catch-all or a classifier ask',
+      );
     }
     if (d.command.length === 0 || d.reason.length === 0) {
       throw new Error("a command ask names the command and the review's reason");
@@ -895,10 +911,11 @@ export class ApprovalsService {
           expiresAt: rec.expiresAt,
           command: {
             kind: detail.kind,
-            command: detail.command,
+            // the approval's detail holds the whole command; the event is display only and clamped
+            command: clipText(detail.command, COMMAND_ASK_TEXT_MAX_CHARS),
             ...(detail.path !== undefined && { path: detail.path }),
             rule: detail.rule,
-            reason: detail.reason,
+            reason: clipText(detail.reason, COMMAND_ASK_TEXT_MAX_CHARS),
             mode: detail.mode,
           },
           requestedFor: rec.requestedFor,
@@ -1680,6 +1697,18 @@ export class ApprovalsService {
         `Scope "${scope}" is not allowed for this approval; allowed: ${before.scopes.join(", ")}`,
       );
     }
+    // 本会话允许同类 remembers one concrete rule class: a catch-all (`unsure.*`) or a classifier
+    // ask (no rule) never writes a `command:` grant, even from a row offered it before the fix
+    if (
+      command !== undefined &&
+      scope === "session" &&
+      !isSessionGrantableRule(before.command?.rule ?? null)
+    ) {
+      throw new ApiError(
+        "approval.scope_not_allowed",
+        'Scope "session" is not allowed for a command with no concrete rule',
+      );
+    }
     const updated = await t
       .updateTable("approvals")
       .set({
@@ -1832,6 +1861,10 @@ export class ApprovalsService {
           kind: before.command.kind,
           rule: before.command.rule,
           mode: before.command.mode,
+          // the hash of the whole command the approval holds: an audit can match it to the text
+          ...(before.command.kind === "command" && {
+            commandHash: sha256Hex(before.command.command),
+          }),
           scope,
           by: accountId,
           via: command.via,

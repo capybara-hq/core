@@ -18,6 +18,15 @@ export interface RuleHit {
 }
 
 /**
+ * Whether a rule id may back the person's `本会话允许同类` grant: one concrete rule class, never a
+ * catch-all. The `unsure.*` hits (`unsure.uncovered`, `unsure.unparsed`) stand for "no rule decided
+ * this", so remembering one would allow every future parser-unreadable command for the conversation
+ * — the bucket the review keeps fail-closed. A classifier ask has no rule at all.
+ */
+export const isSessionGrantableRule = (rule: string | null): rule is string =>
+  rule !== null && !rule.startsWith("unsure.");
+
+/**
  * The facts of the run the rules read. Commands run in a device's workspace; `mode` says whether
  * the OS sandbox is on (the rules are the same in both modes), and `attended` says whether a
  * person is present to answer an `ask` (an unattended `ask` becomes a `deny`, spec §5.4).

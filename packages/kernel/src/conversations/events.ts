@@ -72,11 +72,18 @@ export const GIT_REPO_MAX_CHARS = 191;
 export const APPROVAL_DENY_REASON_MAX_CHARS = 500;
 /** The most characters a command ask's command / reason carries (display only). */
 export const COMMAND_ASK_TEXT_MAX_CHARS = 2000;
+/**
+ * The longest command a `command` ask holds in full: the person's approval binds the whole text,
+ * so a longer command is refused rather than clipped (`Bash` accepts an unbounded `command`).
+ */
+export const COMMAND_ASK_MAX_CHARS = 32 * 1024;
 
 /**
  * A command review's decision on a tool call (auto mode spec §5.4): display only, never model-visible
  * beyond the result's own text. `by` says who decided — the rule table, the classifier, or the person
- * through a `command` approval; `scope` is the person's choice (`once` / `session`).
+ * through a `command` approval; `scope` is the person's choice (`once` / `session`);
+ * `commandHash` is the SHA-256 of the command text the approval holds in full, so an audit can
+ * match a record to what ran.
  */
 const ReviewRecordSchema = z
   .object({
@@ -85,6 +92,10 @@ const ReviewRecordSchema = z
     rule: z.string().nullable(),
     reason: z.string(),
     scope: z.enum(["once", "session"]).optional(),
+    commandHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
   })
   .strict();
 

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,7 +14,10 @@ import {
 import { SchedulerRegistry } from "@nestjs/schedule";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { ConversationEvent } from "../../src/conversations/events.js";
+import {
+  COMMAND_ASK_TEXT_MAX_CHARS,
+  type ConversationEvent,
+} from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { Waits } from "../../src/runtime/waits.js";
@@ -479,6 +482,91 @@ describe("the command review in the pipeline", { timeout: 120_000 }, () => {
       scriptRules([]);
       await db.deleteFrom("model_purpose_mappings").where("purpose", "=", "review").execute();
     }
+  });
+
+  it("an unsure ask with no classifier offers only once: a stored catch-all grant covers nothing", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    // a session grant keyed to the `unsure.*` catch-all can no longer be created; an old row must
+    // never suppress the ask (it would whitelist every parser-unreadable command for the conversation)
+    await db
+      .insertInto("conversation_tool_grants")
+      .values({
+        conversation_id: conv,
+        tool_key: "command:unsure.uncovered",
+        spec_hash: "command",
+        connector_id: null,
+      })
+      .execute();
+    const unsure = { command: "some-unknown-binary --flag", description: "Run it" };
+    await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(unsure)}`);
+    const ask = await pendingCommandAsk(conv);
+    await waitRunWaiting(conv);
+    // the catch-all has no grantable rule class: `once` only, as a classifier ask
+    expect(ask.detail as Record<string, unknown>).toMatchObject({ rule: null });
+    expect(ask.scopes).toEqual(["once"]);
+    const refused = await decide(ask.id, { decision: "approve", scope: "session" });
+    expect(refused.statusCode).toBe(409);
+    expect((refused.json() as { error: { code: string } }).error.code).toBe(
+      "approval.scope_not_allowed",
+    );
+    expect((await decide(ask.id, { decision: "deny" })).statusCode).toBe(200);
+    await waitForTerminal(db, conv, 1, 30_000);
+  });
+
+  it("a command over the ask ceiling is refused with an actionable error and never runs", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    // `git push --force` would be an ask; at 40,000 characters it is too long to show for approval
+    const huge = { command: `${PUSH.command}${" ".repeat(40_000)}`, description: "Push" };
+    await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(huge)}`);
+    await waitForTerminal(db, conv, 1, 30_000);
+    const r = (await results(conv)).at(-1) as ToolResult;
+    expect(r.payload.isError).toBe(true);
+    expect(r.payload.content).toContain("too long to review");
+    expect(r.payload.content).toContain("script file");
+    expect(r.payload.review).toMatchObject({ decision: "deny", rule: null });
+    const evs = await eventsOf(db, conv);
+    expect(evs.some((e) => e.type === "tool_call_started")).toBe(false);
+    expect(evs.some((e) => e.type === "approval_requested")).toBe(false);
+    const rows = await db
+      .selectFrom("approvals")
+      .select("id")
+      .where("conversation_id", "=", conv)
+      .execute();
+    expect(rows).toEqual([]);
+  });
+
+  it("a long command's approval holds the full text; the ask event is clamped and the record hashes it", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    const long = `${PUSH.command}${" ".repeat(3_500)}`;
+    await postMessage(
+      owner,
+      orgId,
+      conv,
+      `tool:Bash:${JSON.stringify({ command: long, description: "Push" })}`,
+    );
+    const ask = await pendingCommandAsk(conv);
+    await waitRunWaiting(conv);
+    const detail = ask.detail as { kind: string; command: string; rule: string };
+    // the approval binds the whole command: the person approves exactly what runs
+    expect(detail.command).toBe(long);
+    expect(detail.rule).toBe("ask.force-push");
+    // the timeline event stays clamped (display only)
+    const requested = (await eventsOf(db, conv)).find(
+      (e): e is ApprovalRequested => e.type === "approval_requested",
+    );
+    expect(requested?.payload.command?.command).toHaveLength(COMMAND_ASK_TEXT_MAX_CHARS);
+    expect(requested?.payload.command?.command.endsWith("…")).toBe(true);
+    expect((await decide(ask.id, { decision: "approve", scope: "once" })).statusCode).toBe(200);
+    await waitForTerminal(db, conv, 1, 30_000);
+    const r = (await results(conv)).at(-1) as ToolResult;
+    expect(r.payload.isError).toBe(false);
+    expect(r.payload.review).toMatchObject({
+      decision: "allow",
+      by: "person",
+      rule: "ask.force-push",
+      scope: "once",
+      commandHash: createHash("sha256").update(long).digest("hex"),
+    });
   });
 
   it("an unattended run asks no one: the ask is a deny at once, with no approval and no grant", async () => {

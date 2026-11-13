@@ -76,6 +76,8 @@ export interface ReviewRecord {
   reason: string;
   /** The person's choice (a `session` one covers the rule for the conversation). */
   scope?: "once" | "session";
+  /** SHA-256 of the command text a `command` approval holds in full (person decisions). */
+  commandHash?: string;
 }
 
 /** A `command` ask's facts (auto mode spec §5.4; display only). */
