@@ -1052,6 +1052,13 @@ function looksLikePath(token: string): boolean {
 /** A whole-word variable reference (`$KUBECONFIG`, `${AWS_CONFIG_FILE}`): a dynamic path value. */
 const BARE_VARIABLE = /^\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)$/;
 
+/** Curl strips one matching surrounding `"…"` pair from an `@file` / `<file` / upload value. */
+function stripQuotePair(value: string): string {
+  return value.length >= 2 && value.startsWith('"') && value.endsWith('"')
+    ? value.slice(1, -1)
+    : value;
+}
+
 /** A path argument as written: plain, `@file` (curl), `file=@path`, or `--flag=value`. */
 function pathCandidates(token: string): string[] {
   const out: string[] = [];
@@ -1061,6 +1068,9 @@ function pathCandidates(token: string): string[] {
     // `-F file=@path`, `-d@path`: the file is after the first `@`.
     const at = candidate.indexOf("@");
     if (at >= 0) candidate = candidate.slice(at + 1);
+    // A nested pair of quotes around the value (`@"/home/dev/.ssh/id_rsa"`) is not part of the
+    // path: curl strips it, and a quoted path is what a reviewer must treat as the file it names.
+    candidate = stripQuotePair(candidate);
     // An `@file` is a file even without a slash (`@$FILE` names one just as `@./file` does).
     if (
       (fromAt || looksLikePath(candidate)) &&
@@ -1077,7 +1087,8 @@ function pathCandidates(token: string): string[] {
   if (attached !== null && attached[1] !== undefined) add(attached[1]);
   const eq = token.indexOf("=");
   if (eq > 0) add(token.slice(eq + 1));
-  if (looksLikePath(token)) out.push(token);
+  const literal = stripQuotePair(token);
+  if (looksLikePath(literal)) out.push(literal);
   // A whole-word variable names whatever path it holds (`cat $KUBECONFIG`): dynamic, not a literal
   // word. It is carried as a candidate so the rules can treat an unresolved value as uncertain.
   if (BARE_VARIABLE.test(token) && !out.includes(token)) out.push(token);
@@ -1648,6 +1659,36 @@ function hostValue(args: string[], flag: string): string | null {
   return null;
 }
 
+/** docker/pflag short options that take a value (used to walk a short-option cluster). */
+const DOCKER_SHORT_VALUE_LETTERS: ReadonlySet<string> = new Set([
+  "a",
+  "c",
+  "e",
+  "h",
+  "l",
+  "m",
+  "p",
+  "u",
+  "v",
+  "w",
+]);
+
+/**
+ * The value `-X` carries in a docker short-option cluster: the rest of the cluster (`-vHOST`,
+ * `-itvHOST`, `-v=HOST`) or `""` when the value is the next word (`-v HOST`). `undefined` when the
+ * cluster has no `-X` (its first value-taking letter belongs to another option, e.g. `-eFOO=v`).
+ */
+function dockerShortValue(arg: string, letter: string): string | undefined {
+  const chars = arg.slice(1);
+  for (let i = 0; i < chars.length; i += 1) {
+    const c = chars[i] as string;
+    if (!DOCKER_SHORT_VALUE_LETTERS.has(c)) continue;
+    if (c !== letter) return undefined;
+    return chars.slice(i + 1).replace(/^=/, "");
+  }
+  return undefined;
+}
+
 function volumeHostPaths(args: string[]): Array<string | null> {
   const out: Array<string | null> = [];
   for (let i = 0; i < args.length; i += 1) {
@@ -1656,13 +1697,16 @@ function volumeHostPaths(args: string[]): Array<string | null> {
     let isMount = false;
     if (a === "-v" || a === "--volume") spec = args[i + 1] ?? null;
     else if (a.startsWith("--volume=")) spec = a.slice("--volume=".length);
-    else if (a.startsWith("-v") && a.length > 2) spec = a.slice(2);
     else if (a === "--mount") {
       spec = args[i + 1] ?? null;
       isMount = true;
     } else if (a.startsWith("--mount=")) {
       spec = a.slice("--mount=".length);
       isMount = true;
+    } else if (a.startsWith("-") && !a.startsWith("--")) {
+      // `-vHOST`, `-v=HOST` and clusters (`-itvHOST:CTR`); an empty value means the next word.
+      const short = dockerShortValue(a, "v");
+      if (short !== undefined) spec = short.length > 0 ? short : (args[i + 1] ?? null);
     }
     if (spec === null) continue;
     if (isMount) {
@@ -1943,9 +1987,20 @@ function writeTargetsOf(inv: Invocation): string[] {
           i += 1;
           continue;
         }
-        if (a.startsWith("--directory=")) {
-          directory = a.slice("--directory=".length);
-          continue;
+        if (a.startsWith("--")) {
+          // GNU/bsdtar accept any unambiguous prefix of `--directory` (`--dir`, `--direc`,
+          // `--d`); it takes the next word or an `=`-attached value.
+          const eq = a.indexOf("=");
+          const name = a.slice(2, eq < 0 ? undefined : eq);
+          if (name.length > 0 && "directory".startsWith(name)) {
+            if (eq >= 0) {
+              directory = a.slice(eq + 1);
+            } else {
+              directory = args[i + 1] ?? null;
+              i += 1;
+            }
+            continue;
+          }
         }
         if (a === "--extract" || a === "--get") extract = true;
         if (a === "--create") create = true;
@@ -2171,11 +2226,13 @@ function isUnresolvedSecretWord(
 }
 
 function commandHasUnresolvedSecret(command: SimpleCommand, ctx: RuleContext): boolean {
-  // A write target is not read or printed; its own rule judges it (`ask.outside-write`).
+  // A write target is not read or printed; its own rule judges it (`ask.outside-write`). A value in
+  // a known non-path position (`git commit -m $MSG`, a grep pattern) is text, not a file.
   const written = new Set(writeTargets(command));
+  const nonPath = nonPathTokens(command);
   const tokens = [...command.argv, ...command.redirects.map((redirect) => redirect.target)];
   return tokens.some((token) => {
-    if (written.has(token)) return false;
+    if (written.has(token) || nonPath.has(token)) return false;
     return pathCandidates(token).some((candidate) =>
       isUnresolvedSecretWord(candidate, command, ctx),
     );
@@ -2265,13 +2322,15 @@ const isUrlLike = (value: string): boolean =>
 
 /**
  * The local files a send value names: `@file`, `name=@file`, curl's form `name=<file`, or a file
- * flag's bare value. Form parameters (`;type=...`) follow the file name.
+ * flag's bare value. Form parameters (`;type=...`) follow the file name. Only curl strips a
+ * matching surrounding quote pair from such a value (`@"/path"`); wget and scp do not.
  */
-function sendPathCandidates(value: string, bareIsFile: boolean): string[] {
+function sendPathCandidates(value: string, bareIsFile: boolean, stripQuotes = false): string[] {
   // `@` and curl form's `<` both mark a value read from a local file.
   const marker = value.search(/[@<]/);
-  const candidate =
+  let candidate =
     marker >= 0 ? (value.slice(marker + 1).split(";")[0] ?? "") : bareIsFile ? value : "";
+  if (stripQuotes) candidate = stripQuotePair(candidate);
   if (candidate.length === 0 || candidate === "-") return [];
   if (isUrlLike(candidate) || isRemoteSpec(candidate)) return [];
   if (marker < 0 && !looksLikePath(candidate) && !/\$\{?[A-Za-z_]/.test(candidate)) return [];
@@ -2302,7 +2361,7 @@ function networkSendsSecret(inv: Invocation, command: SimpleCommand, ctx: RuleCo
   const sends = (flag: string, value: string): boolean => {
     const bareIsFile = FILE_SEND_FLAGS.has(flag);
     if (!bareIsFile && !DATA_SEND_FLAGS.has(flag)) return false;
-    return sendPathCandidates(value, bareIsFile).some(sendsPath);
+    return sendPathCandidates(value, bareIsFile, inv.program === "curl").some(sendsPath);
   };
 
   if (["scp", "sftp", "rsync"].includes(inv.program)) {
@@ -2363,6 +2422,471 @@ function credentialSecretTokens(command: SimpleCommand, ctx: RuleContext): Set<s
     }
   }
   return out;
+}
+
+/** docker options that take a value, so its positional operands can be found. */
+const DOCKER_VALUE_OPTIONS: ReadonlySet<string> = new Set([
+  "-a",
+  "--attach",
+  "-c",
+  "--cpu-shares",
+  "--cidfile",
+  "--cpuset-cpus",
+  "--device",
+  "-e",
+  "--env",
+  "--env-file",
+  "--entrypoint",
+  "-f",
+  "--file",
+  "-h",
+  "--hostname",
+  "-l",
+  "--label",
+  "--label-file",
+  "--log-driver",
+  "--log-opt",
+  "-m",
+  "--memory",
+  "--mount",
+  "--name",
+  "--net",
+  "--net-alias",
+  "--network",
+  "-p",
+  "--publish",
+  "--platform",
+  "--restart",
+  "--runtime",
+  "--security-opt",
+  "--stop-signal",
+  "--stop-timeout",
+  "--target",
+  "-t",
+  "--tag",
+  "--tmpfs",
+  "-u",
+  "--user",
+  "-v",
+  "--volume",
+  "--volumes-from",
+  "-w",
+  "--workdir",
+]);
+
+/**
+ * Raw argument values in a clearly non-path position of a known program: a commit message, a
+ * branch/ref name, a script name, a search pattern, a header, a data payload or a URL. An
+ * unresolved variable there is ordinary text, so it must not turn a routine command into ask or
+ * unsure. A value that names a file (`@file`, `<file`) is never listed.
+ */
+function nonPathArguments(inv: Invocation): Set<string> {
+  const out = new Set<string>();
+  const { program, args } = inv;
+  const add = (value: string | undefined): void => {
+    if (value === undefined) return;
+    if (value.includes("@") || value.includes("<")) return;
+    out.add(value);
+  };
+  // `-x VALUE`, `-xVALUE`, `--long VALUE`, `--long=VALUE`.
+  const values = (flags: readonly string[]): void => {
+    for (let i = 0; i < args.length; i += 1) {
+      const a = args[i] as string;
+      for (const flag of flags) {
+        if (a === flag) {
+          add(args[i + 1]);
+        } else if (flag.startsWith("--") && a.startsWith(`${flag}=`)) {
+          add(a.slice(flag.length + 1));
+        } else if (!flag.startsWith("--") && a.startsWith(flag) && a.length > flag.length) {
+          add(a.slice(flag.length));
+        }
+      }
+    }
+  };
+  const positional = (): string[] => args.filter((a) => !a.startsWith("-"));
+
+  if (program === "git") {
+    values(["-m", "--message", "-b", "--branch", "--author"]);
+    // `-c NAME=VALUE` / `--config NAME=VALUE`: a config value, not a local file path.
+    for (let i = 0; i < inv.argv.length; i += 1) {
+      const a = inv.argv[i] as string;
+      if ((a === "-c" || a === "--config") && inv.argv[i + 1] !== undefined) add(inv.argv[i + 1]);
+      else if (a.startsWith("--config=")) add(a.slice("--config=".length));
+      else if (a.startsWith("-c") && a.length > 2) add(a.slice(2));
+    }
+    const sub = positional()[0];
+    // Refs and remotes of these subcommands are not local file paths.
+    if (
+      [
+        "checkout",
+        "switch",
+        "branch",
+        "push",
+        "pull",
+        "fetch",
+        "merge",
+        "rebase",
+        "tag",
+        "remote",
+        "cherry-pick",
+        "revert",
+        "reset",
+      ].includes(sub ?? "")
+    ) {
+      for (const p of positional().slice(1)) add(p);
+    }
+    // `git clone <repo> [dir]`: the repository is a URL or a remote spec.
+    if (sub === "clone") add(operands(args.slice(1))[0]);
+    return out;
+  }
+  if (["npm", "pnpm", "yarn", "bun"].includes(program)) {
+    const pos = positional();
+    const run = pos.indexOf("run") >= 0 ? pos.indexOf("run") : pos.indexOf("run-script");
+    if (run >= 0) add(pos[run + 1]);
+    return out;
+  }
+  if (["grep", "egrep", "fgrep", "rg", "ag", "ack"].includes(program)) {
+    const explicit = args.some(
+      (a) =>
+        ["-e", "--regexp", "-f", "--file"].includes(a) ||
+        a.startsWith("--regexp=") ||
+        a.startsWith("--file="),
+    );
+    values(["-e", "--regexp"]);
+    if (!explicit) add(positional()[0]);
+    return out;
+  }
+  if (program === "sed") {
+    const explicit = args.some(
+      (a) => a === "-e" || a === "--expression" || a.startsWith("--expression="),
+    );
+    values(["-e", "--expression"]);
+    if (!explicit) add(positional()[0]);
+    return out;
+  }
+  if (program === "awk" || program === "gawk") {
+    add(positional()[0]);
+    return out;
+  }
+  if (program === "curl" || program === "wget") {
+    // The last operand is the URL; an earlier one is an option value (`-o FILE`, `-T FILE`).
+    const pos = positional();
+    add(pos[pos.length - 1]);
+    values([
+      "-H",
+      "--header",
+      "-X",
+      "--request",
+      "-A",
+      "--user-agent",
+      "-e",
+      "--referer",
+      "-u",
+      "--user",
+      "-b",
+      "--cookie",
+      "--url",
+      "-w",
+      "--write-out",
+      "--post-data",
+      "--body-data",
+      "--method",
+    ]);
+    values([
+      "-d",
+      "--data",
+      "--data-binary",
+      "--data-raw",
+      "--data-urlencode",
+      "-F",
+      "--form",
+      "--json",
+    ]);
+    return out;
+  }
+  if (program === "gh") {
+    // `--body-file` and other file flags are not listed: they name a file gh reads.
+    values([
+      "-t",
+      "--title",
+      "-b",
+      "--body",
+      "-H",
+      "--head",
+      "-B",
+      "--base",
+      "-R",
+      "--repo",
+      "-l",
+      "--label",
+      "-a",
+      "--assignee",
+      "--reviewer",
+      "-m",
+      "--milestone",
+    ]);
+    return out;
+  }
+  if (program === "docker") {
+    // docker's positional operands are images, container commands and arguments, not local paths.
+    for (const p of operands(args, DOCKER_VALUE_OPTIONS)) add(p);
+    values([
+      "-t",
+      "--tag",
+      "--name",
+      "-e",
+      "--env",
+      "-l",
+      "--label",
+      "-p",
+      "--publish",
+      "-u",
+      "--user",
+      "-w",
+      "--workdir",
+      "--network",
+      "--net",
+      "--platform",
+      "--entrypoint",
+      "--restart",
+    ]);
+    return out;
+  }
+  if (program === "echo" || program === "printf") {
+    for (const a of args) add(a);
+  }
+  return out;
+}
+
+/** Every non-path argument value of a command (the union over its invocations). */
+function nonPathTokens(command: SimpleCommand): Set<string> {
+  const out = new Set<string>();
+  for (const inv of invocationsOf(command)) {
+    for (const value of nonPathArguments(inv)) out.add(value);
+  }
+  return out;
+}
+
+/* -------------------------------------------------------------------------------------------- *
+ * Git commands that run arbitrary programs
+ * -------------------------------------------------------------------------------------------- */
+
+const SHELL_METACHARS = /[|;&<>$`]/;
+
+/** The value is a single plain program from `allowed` (options allowed, no shell syntax). */
+function plainProgram(value: string, allowed: ReadonlySet<string>): boolean {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return false;
+  if (SHELL_METACHARS.test(trimmed)) return false;
+  const first = baseName(trimmed.split(/\s+/)[0] ?? "");
+  if (!allowed.has(first)) return false;
+  // A sub-program named later (`ssh -o ProxyCommand=...`) makes the value an execution surface.
+  if (/(?:^|\s)(?:curl|wget|nc|ncat|netcat|socat|telnet|base64|xxd|eval)(?:\s|$)/.test(trimmed)) {
+    return false;
+  }
+  return !trimmed.includes("/dev/tcp");
+}
+
+const SSH_PROGRAMS: ReadonlySet<string> = new Set(["ssh"]);
+const PAGER_PROGRAMS: ReadonlySet<string> = new Set(["cat", "less", "more", "most", "delta"]);
+const EDITOR_PROGRAMS: ReadonlySet<string> = new Set([
+  "vi",
+  "vim",
+  "nvim",
+  "nano",
+  "emacs",
+  "code",
+  "ed",
+]);
+
+const GIT_ENV_SSH: ReadonlySet<string> = new Set(["GIT_SSH_COMMAND", "GIT_SSH"]);
+const GIT_ENV_ALWAYS: ReadonlySet<string> = new Set([
+  "GIT_ASKPASS",
+  "SSH_ASKPASS",
+  "GIT_CONFIG_PARAMETERS",
+  "GIT_EXTERNAL_DIFF",
+]);
+const GIT_ENV_PAGER: ReadonlySet<string> = new Set(["PAGER", "GIT_PAGER"]);
+const GIT_ENV_EDITOR: ReadonlySet<string> = new Set([
+  "GIT_EDITOR",
+  "GIT_SEQUENCE_EDITOR",
+  "EDITOR",
+  "VISUAL",
+]);
+
+/** An environment assignment whose value is a program git runs on its behalf. */
+function gitEnvIsDangerous(token: string): boolean {
+  const match = ASSIGNMENT.exec(token);
+  if (match === null) return false;
+  const name = match[1] as string;
+  const value = match[2] ?? "";
+  if (GIT_ENV_SSH.has(name)) return !plainProgram(value, SSH_PROGRAMS);
+  if (GIT_ENV_PAGER.has(name)) return !plainProgram(value, PAGER_PROGRAMS);
+  if (GIT_ENV_EDITOR.has(name)) return !plainProgram(value, EDITOR_PROGRAMS);
+  if (GIT_ENV_ALWAYS.has(name)) return true;
+  return (
+    name === "GIT_CONFIG_COUNT" ||
+    name.startsWith("GIT_CONFIG_KEY_") ||
+    name.startsWith("GIT_CONFIG_VALUE_")
+  );
+}
+
+/** A config setting that names a program git runs (or an alias that is a shell command). */
+function gitConfigIsDangerous(key: string, value: string): boolean {
+  const k = key.toLowerCase();
+  if (k.startsWith("alias.")) return value.trimStart().startsWith("!");
+  if (k === "core.sshcommand") return !plainProgram(value, SSH_PROGRAMS);
+  if (k === "core.pager") return !plainProgram(value, PAGER_PROGRAMS);
+  if (k === "core.editor" || k === "sequence.editor") {
+    return !plainProgram(value, EDITOR_PROGRAMS);
+  }
+  if (k === "core.askpass" || k === "diff.external" || /^http\..*\.cmd$/.test(k)) return true;
+  return false;
+}
+
+/**
+ * Whether a git command makes git run a program the review did not see: an executing `-c` config
+ * value (`core.sshCommand`, `core.pager`, `diff.external`, `http.*.cmd`, `alias.*=!…`), a config
+ * write of one, or an environment override (`GIT_SSH_COMMAND`, `GIT_ASKPASS`, `PAGER`, editors).
+ * A value that is a plain ssh/pager/editor command is the tool's own transport and stays allowed.
+ */
+function gitRunsArbitraryProgram(command: SimpleCommand): boolean {
+  let isGit = false;
+  for (const inv of invocationsOf(command)) {
+    if (inv.program !== "git") continue;
+    isGit = true;
+    for (let i = 0; i < inv.argv.length; i += 1) {
+      const a = inv.argv[i] as string;
+      let setting: string | undefined;
+      if ((a === "-c" || a === "--config") && inv.argv[i + 1] !== undefined) {
+        setting = inv.argv[i + 1];
+      } else if (a.startsWith("--config=")) {
+        setting = a.slice("--config=".length);
+      } else if (a.startsWith("-c") && a.length > 2) {
+        setting = a.slice(2);
+      }
+      if (setting === undefined) continue;
+      const eq = setting.indexOf("=");
+      if (eq <= 0) continue;
+      if (gitConfigIsDangerous(setting.slice(0, eq), setting.slice(eq + 1))) return true;
+    }
+    if (inv.args[0] === "config") {
+      const configOperands = inv.args.slice(1).filter((a) => !a.startsWith("-"));
+      const key = configOperands[0];
+      const value = configOperands[1];
+      if (key !== undefined && value !== undefined && gitConfigIsDangerous(key, value)) return true;
+    }
+  }
+  if (!isGit) return false;
+  // Only the environment prefix (before the git program) can override git's subprocesses; a
+  // `PAGER=...` value in `git commit -m PAGER=...` is data.
+  const gitIndex = command.argv.findIndex((token) => baseName(token) === "git");
+  const prefix = gitIndex < 0 ? [] : command.argv.slice(0, gitIndex);
+  return prefix.some((token) => gitEnvIsDangerous(token));
+}
+
+/* -------------------------------------------------------------------------------------------- *
+ * Fail-closed floor for dynamic arguments
+ * -------------------------------------------------------------------------------------------- */
+
+/** Programs whose non-option arguments name files (so a dynamic value there is a path). */
+const FILE_READERS: ReadonlySet<string> = new Set([
+  "cat",
+  "head",
+  "tail",
+  "less",
+  "more",
+  "bat",
+  "grep",
+  "egrep",
+  "fgrep",
+  "rg",
+  "ag",
+  "ack",
+  "sed",
+  "awk",
+  "gawk",
+  "find",
+  "stat",
+  "file",
+  "wc",
+  "sort",
+  "uniq",
+  "cut",
+  "tr",
+  "diff",
+  "cmp",
+  "md5",
+  "md5sum",
+  "shasum",
+  "sha256sum",
+  "strings",
+  "od",
+  "xxd",
+  "hexdump",
+  "jq",
+  "yq",
+  "column",
+  "nl",
+  "realpath",
+  "readlink",
+  "du",
+  "ls",
+  "tree",
+  "unzip",
+  "zip",
+  "gzip",
+  "gunzip",
+  "tar",
+]);
+const FILE_ARGUMENT_PROGRAMS: ReadonlySet<string> = new Set([...FILE_READERS, ...WRITE_PROGRAMS]);
+
+/** A value that, after `$(pwd)` / `$PWD`, has no unresolved part left to fear. */
+function knownPathRoot(candidate: string, cwd: string): boolean {
+  const staticized = candidate.replace(/\$\(\s*pwd\s*\)/g, cwd).replace(/\$\{?PWD\}?/g, cwd);
+  return !/[$`]/.test(staticized);
+}
+
+/** A dynamic value that names a path: a bare variable, a separator, a relative root or a suffix. */
+function isPathLikeDynamic(candidate: string): boolean {
+  if (isUrlLike(candidate) || isRemoteSpec(candidate)) return false;
+  if (BARE_VARIABLE.test(candidate)) return true;
+  if (candidate.includes("/") || candidate.startsWith("~") || candidate.startsWith(".")) {
+    return true;
+  }
+  return /\.[A-Za-z0-9]{1,8}$/.test(candidate);
+}
+
+/**
+ * The generic fail-closed floor: a value with a variable, substitution, backtick or quote that
+ * cannot be resolved is never allowed in a path position. A command whose program reads or writes
+ * files has every non-option value in a file position; any other command needs a path-like value.
+ */
+function dynamicArgumentAsks(command: SimpleCommand, ctx: RuleContext): boolean {
+  const nonPath = nonPathTokens(command);
+  const written = new Set(writeTargets(command));
+  const filePosition = invocationsOf(command).some((inv) =>
+    FILE_ARGUMENT_PROGRAMS.has(inv.program),
+  );
+  const cwd = cwdOf(command, ctx.facts);
+  const tokens = [...command.argv, ...command.redirects.map((redirect) => redirect.target)];
+  for (const token of tokens) {
+    if (!/[$`"']/.test(token)) continue;
+    if (nonPath.has(token) || written.has(token)) continue;
+    // A leading environment assignment is a variable value, not a file argument.
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) continue;
+    // `pathCandidates` drops dynamic words that are not path-shaped (`$A$B`, `$(date).txt`); in a
+    // file position the word itself is still a path.
+    const candidates = pathCandidates(token);
+    const probes = candidates.length > 0 ? candidates : token.startsWith("-") ? [] : [token];
+    for (const candidate of probes) {
+      if (expandPath(candidate, ctx.facts, cwd, command.vars) !== null) continue;
+      if (isUrlLike(candidate) || isRemoteSpec(candidate)) continue;
+      if (knownPathRoot(candidate, cwd)) continue;
+      if (filePosition || isPathLikeDynamic(candidate)) return true;
+    }
+  }
+  return false;
 }
 
 function isServeInvocation(inv: Invocation): boolean {
@@ -2515,17 +3039,20 @@ const RULES: readonly Rule[] = [
           return false;
         }
         // A path-like word or redirection target with an unresolved variable is not a confident
-        // read; the line falls to `unsure` instead of `allow`.
+        // read; the line falls to `unsure` instead of `allow`. A value in a known non-path position
+        // (`git commit -m $MSG`, a grep pattern) does not count.
+        const nonPath = nonPathTokens(command);
         const unresolved = [
           ...inv.argv,
           ...command.redirects.map((redirect) => redirect.target),
-        ].some((token) =>
-          pathCandidates(token).some(
+        ].some((token) => {
+          if (nonPath.has(token)) return false;
+          return pathCandidates(token).some(
             (candidate) =>
               isConcretePathWord(candidate) &&
               expandPath(candidate, ctx.facts, cwdOf(command, ctx.facts), command.vars) === null,
-          ),
-        );
+          );
+        });
         if (unresolved) return false;
         // Reading a secret path is not "reading anything except the secret paths".
         return (
@@ -2568,8 +3095,11 @@ const RULES: readonly Rule[] = [
     id: "allow.git",
     outcome: "allow",
     check: (ctx) => {
-      const matched = eachInvocation(ctx.commands, (inv) => {
+      const matched = eachInvocation(ctx.commands, (inv, command) => {
         if (inv.program !== "git") return false;
+        // A config value or environment override that makes git run another program is not a
+        // plain git command (`ask.git-exec`).
+        if (gitRunsArbitraryProgram(command)) return false;
         if (inv.args[0] === "push" && gitPushKind(inv.args.slice(1)) !== null) return false;
         if (inv.args[0] === "config" && hasArg(inv.args.slice(1), "--global", "--system"))
           return false;
@@ -2949,6 +3479,34 @@ const RULES: readonly Rule[] = [
       return matched.length > 0
         ? {
             reason: "Stops a process the device did not start; this needs approval.",
+            commands: matched,
+          }
+        : null;
+    },
+  },
+  {
+    id: "ask.git-exec",
+    outcome: "ask",
+    check: (ctx) => {
+      const matched = ctx.commands.filter((command) => gitRunsArbitraryProgram(command));
+      return matched.length > 0
+        ? {
+            reason:
+              "Makes git run another program through a config value, config write or environment override; this needs approval.",
+            commands: matched,
+          }
+        : null;
+    },
+  },
+  {
+    id: "ask.dynamic-arg",
+    outcome: "ask",
+    check: (ctx) => {
+      const matched = ctx.commands.filter((command) => dynamicArgumentAsks(command, ctx));
+      return matched.length > 0
+        ? {
+            reason:
+              "Uses a variable, substitution or quoted value as a file path that cannot be resolved statically; this needs approval.",
             commands: matched,
           }
         : null;
