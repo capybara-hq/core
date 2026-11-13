@@ -1049,6 +1049,9 @@ function looksLikePath(token: string): boolean {
   );
 }
 
+/** A whole-word variable reference (`$KUBECONFIG`, `${AWS_CONFIG_FILE}`): a dynamic path value. */
+const BARE_VARIABLE = /^\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)$/;
+
 /** A path argument as written: plain, `@file` (curl), `file=@path`, or `--flag=value`. */
 function pathCandidates(token: string): string[] {
   const out: string[] = [];
@@ -1075,6 +1078,9 @@ function pathCandidates(token: string): string[] {
   const eq = token.indexOf("=");
   if (eq > 0) add(token.slice(eq + 1));
   if (looksLikePath(token)) out.push(token);
+  // A whole-word variable names whatever path it holds (`cat $KUBECONFIG`): dynamic, not a literal
+  // word. It is carried as a candidate so the rules can treat an unresolved value as uncertain.
+  if (BARE_VARIABLE.test(token) && !out.includes(token)) out.push(token);
   return out;
 }
 
@@ -1094,6 +1100,9 @@ function isConcretePathWord(candidate: string): boolean {
   if (candidate.startsWith("/") || candidate.startsWith("~")) return true;
   if (candidate.startsWith("./") || candidate.startsWith("../")) return true;
   if (/^\$(?:\{HOME\}|HOME)(?=\/|$)/.test(candidate)) return true;
+  // A whole-word variable is a path word whose value is dynamic (`cat $KUBECONFIG`); when it cannot
+  // be resolved the read is uncertain, never a confident allow.
+  if (BARE_VARIABLE.test(candidate)) return true;
   if (SECRET_LOOKING.test(candidate)) return true;
   // A path-like word with a simple variable is concrete: if the variable is unresolved, the read
   // falls to `unsure` rather than `allow` (`cat $X/config`).
@@ -1406,6 +1415,7 @@ const LAUNCHCTL_CHANGES = [
   "kickstart",
   "start",
   "stop",
+  "remove",
 ];
 
 function hasArg(args: string[], ...values: string[]): boolean {
@@ -1664,7 +1674,13 @@ function volumeHostPaths(args: string[]): Array<string | null> {
       continue;
     }
     const host = spec.split(":")[0] ?? "";
-    out.push(host.startsWith("/") || host.startsWith("~") || host.startsWith(".") ? host : null);
+    // A named volume (`mydata:/data`) has no host path. Absolute, `~`-, `.`- and `$`-rooted
+    // sources are host paths; a variable is resolved by the caller (`$HOME/.ssh`, `${HOME}/.ssh`).
+    out.push(
+      host.startsWith("/") || host.startsWith("~") || host.startsWith(".") || host.startsWith("$")
+        ? host
+        : null,
+    );
   }
   return out;
 }
@@ -1687,8 +1703,17 @@ function dockerPrivileged(
   if (hasArg(args, "--device")) return "passes a host device into a container (--device)";
   for (const volume of volumeHostPaths(args)) {
     if (volume === null) continue;
-    const resolved = expandPath(volume, facts, cwd, vars);
-    if (resolved !== null && !inside(resolved, facts.workspace)) {
+    // `$(pwd)` is the run's own directory (a run-time substitution, but a known one); `$PWD` is
+    // already in the variable table. Everything else must resolve statically.
+    const ownDirectory = /^\$\(\s*pwd\s*\)(?=\/|$)/;
+    const normalized = ownDirectory.test(volume) ? volume.replace(ownDirectory, cwd) : volume;
+    const resolved = expandPath(normalized, facts, cwd, vars);
+    // A host path that cannot be resolved (`-v $SECRET_DIR:/data`) may point outside the
+    // workspace, so it is never treated as a harmless mount.
+    if (resolved === null) {
+      return `mounts a host path that cannot be resolved (${volume})`;
+    }
+    if (!inside(resolved, facts.workspace)) {
       return `mounts a host path outside the workspace (${volume})`;
     }
   }
@@ -1736,6 +1761,9 @@ const SERVICE_EDIT_ACTIONS: ReadonlySet<string> = new Set([
   "bootout",
   "submit",
   "kickstart",
+  // `systemctl edit UNIT` writes a drop-in; `launchctl remove LABEL` (deprecated) unloads it.
+  "edit",
+  "remove",
 ]);
 
 function isDeviceServiceCommand(inv: Invocation): boolean {
@@ -1806,6 +1834,23 @@ const KNOWN_PROGRAMS: ReadonlySet<string> = new Set([
 function isKnownCommand(command: SimpleCommand): boolean {
   return eachInvocation([command], (inv) => KNOWN_PROGRAMS.has(inv.program)).length > 0;
 }
+
+/** tar short options that consume an argument: the rest of the cluster, or the next word. */
+const TAR_VALUE_LETTERS: ReadonlySet<string> = new Set([
+  "b",
+  "C",
+  "f",
+  "F",
+  "g",
+  "H",
+  "I",
+  "K",
+  "L",
+  "N",
+  "T",
+  "V",
+  "X",
+]);
 
 function writeTargetsOf(inv: Invocation): string[] {
   const { program, args } = inv;
@@ -1902,11 +1947,6 @@ function writeTargetsOf(inv: Invocation): string[] {
           directory = a.slice("--directory=".length);
           continue;
         }
-        // `-C/etc` carries its value attached.
-        if (a.startsWith("-C") && a.length > 2) {
-          directory = a.slice(2);
-          continue;
-        }
         if (a === "--extract" || a === "--get") extract = true;
         if (a === "--create") create = true;
         if (a === "-f" || a === "--file") {
@@ -1920,20 +1960,33 @@ function writeTargetsOf(inv: Invocation): string[] {
           continue;
         }
         if (a.startsWith("-") && !a.startsWith("--")) {
-          // Only the option letters count: `-C/etc` (handled above) must not set create from the
-          // `c` in `/etc`.
-          const letters = a.slice(1).split(/[^A-Za-z]/)[0] ?? "";
-          if (letters.includes("x")) extract = true;
-          if (letters.includes("c")) create = true;
-          const f = a.indexOf("f");
-          if (f > 0) {
-            if (f === a.length - 1) {
-              const value = args[i + 1];
-              if (value !== undefined && create) targets.push(value);
-              i += 1;
-            } else if (create) {
-              targets.push(a.slice(f + 1));
+          // Short options cluster (`-xvf`, `-xC/etc`, `-xvC DIR`). A letter that takes an argument
+          // consumes the rest of the cluster, or the next word when it is last (`-xC/etc` and
+          // `-xC /etc` both put `/etc` in DIR). Later letters are then part of that value, which is
+          // why `-xvfC DIR` makes the archive `C` and does not extract into `DIR`.
+          const cluster = a.slice(1);
+          for (let j = 0; j < cluster.length; j += 1) {
+            const letter = cluster[j] as string;
+            if (letter === "x") {
+              extract = true;
+              continue;
             }
+            if (letter === "c") {
+              create = true;
+              continue;
+            }
+            if (!TAR_VALUE_LETTERS.has(letter)) continue;
+            const attachedValue = cluster.slice(j + 1);
+            let value: string | undefined;
+            if (attachedValue.length > 0) {
+              value = attachedValue;
+            } else {
+              value = args[i + 1];
+              if (value !== undefined) i += 1;
+            }
+            if (letter === "C") directory = value ?? null;
+            if (letter === "f" && create && value !== undefined) targets.push(value);
+            break;
           }
         }
       }
@@ -2072,9 +2125,11 @@ function eachInvocation(
 function isSecretOwner(program: string, paths: string[], facts: ResolvedFacts): boolean {
   for (const path of paths) {
     const t = tildeForm(path, facts);
+    // Only ssh's own use of ~/.ssh is its credential; scp / sftp / rsync treat those files as
+    // ordinary sources (a local copy is printed-then-copied and asks; a remote one is sent).
     if (
       (t === "~/.ssh" || t.startsWith("~/.ssh/")) &&
-      ["git", "ssh", "scp", "sftp", "rsync", "ssh-add"].includes(program)
+      ["git", "ssh", "ssh-add"].includes(program)
     ) {
       return true;
     }
@@ -2103,14 +2158,28 @@ function isUnresolvedSecretWord(
   if (expandPath(candidate, ctx.facts, cwdOf(command, ctx.facts), command.vars) !== null) {
     return false;
   }
+  // A bare variable can hold the path of a credential or config file (`$KUBECONFIG`,
+  // `$AWS_CONFIG_FILE`, `$DOTENV`); its unresolved value is treated as possibly secret. A variable
+  // the line itself assigned (even with an unresolved value) is a shell-local, not evidence of a
+  // credential file, so it stays `unsure` rather than asking.
+  const bare = BARE_VARIABLE.exec(candidate);
+  if (bare !== null) {
+    const name = candidate.replace(/^\$\{?/, "").replace(/\}$/, "");
+    return command.vars === undefined || !command.vars.has(name);
+  }
   return SECRET_LOOKING.test(candidate) || /^(?:\$HOME|\$\{HOME\})(?:\/|$)/.test(candidate);
 }
 
 function commandHasUnresolvedSecret(command: SimpleCommand, ctx: RuleContext): boolean {
+  // A write target is not read or printed; its own rule judges it (`ask.outside-write`).
+  const written = new Set(writeTargets(command));
   const tokens = [...command.argv, ...command.redirects.map((redirect) => redirect.target)];
-  return tokens.some((token) =>
-    pathCandidates(token).some((candidate) => isUnresolvedSecretWord(candidate, command, ctx)),
-  );
+  return tokens.some((token) => {
+    if (written.has(token)) return false;
+    return pathCandidates(token).some((candidate) =>
+      isUnresolvedSecretWord(candidate, command, ctx),
+    );
+  });
 }
 
 function readsSecret(command: SimpleCommand, ctx: RuleContext): boolean {
@@ -2187,18 +2256,25 @@ const DATA_SEND_FLAGS: ReadonlySet<string> = new Set([
   "--data-urlencode",
   "-F",
   "--form",
+  // `--json @file` reads the request body from a local file, like `-d @file`.
+  "--json",
 ]);
 
 const isUrlLike = (value: string): boolean =>
   /^[a-z][a-z0-9+.-]*:\/\//i.test(value) || /^https?:/i.test(value);
 
-/** The local files a send value names (`@file`, `name=@file`, or a file flag's bare value). */
+/**
+ * The local files a send value names: `@file`, `name=@file`, curl's form `name=<file`, or a file
+ * flag's bare value. Form parameters (`;type=...`) follow the file name.
+ */
 function sendPathCandidates(value: string, bareIsFile: boolean): string[] {
-  const at = value.indexOf("@");
-  const candidate = at >= 0 ? value.slice(at + 1) : bareIsFile ? value : "";
+  // `@` and curl form's `<` both mark a value read from a local file.
+  const marker = value.search(/[@<]/);
+  const candidate =
+    marker >= 0 ? (value.slice(marker + 1).split(";")[0] ?? "") : bareIsFile ? value : "";
   if (candidate.length === 0 || candidate === "-") return [];
   if (isUrlLike(candidate) || isRemoteSpec(candidate)) return [];
-  if (at < 0 && !looksLikePath(candidate) && !/\$\{?[A-Za-z_]/.test(candidate)) return [];
+  if (marker < 0 && !looksLikePath(candidate) && !/\$\{?[A-Za-z_]/.test(candidate)) return [];
   return [candidate];
 }
 
@@ -2231,6 +2307,8 @@ function networkSendsSecret(inv: Invocation, command: SimpleCommand, ctx: RuleCo
 
   if (["scp", "sftp", "rsync"].includes(inv.program)) {
     // The local sources are what the command sends; the last operand is the remote destination.
+    // Without a remote last operand (`scp KEY /tmp/`, `rsync -a DIR /tmp/x/`) the command copies
+    // locally: the secret never leaves the machine, so only the secret-read rules apply.
     const sources: string[] = [];
     for (let i = 0; i < inv.args.length; i += 1) {
       const a = inv.args[i] as string;
@@ -2241,6 +2319,8 @@ function networkSendsSecret(inv: Invocation, command: SimpleCommand, ctx: RuleCo
       if (a.startsWith("-")) continue;
       sources.push(a);
     }
+    const destination = sources[sources.length - 1];
+    if (destination === undefined || !isRemoteSpec(destination)) return false;
     sources.pop();
     return sources.some((source) => sendPathCandidates(source, true).some(sendsPath));
   }
@@ -3036,20 +3116,28 @@ function assignmentValue(
 }
 
 /**
- * Track simple assignments for the rule pass: leading `X=v` environment prefixes, standalone
- * `X=v`, and `export/declare/typeset X=v`. Each command snapshots the table visible to it (with
- * `PWD`), so `X=$HOME/.kube cat $X/config` resolves `$X` to the secret path.
+ * Track simple assignments for the rule pass.
+ *
+ * What persists to later commands is only what a real shell persists: a standalone assignment
+ * statement (`X=v`) and `export/declare/typeset X=v`. A leading `X=v` environment prefix on a
+ * command (`X=/tmp cmd ...`) neither changes the shell's variables nor the expansions of that same
+ * command: the shell expands the command words before it runs the command, and the assignment only
+ * reaches that command's environment. So a variable a prefix shadows is unresolved for this
+ * command's expansions (fail closed instead of trusting the prefix value), and no prefix is ever
+ * written to the persistent table. Each command snapshots the table visible to it (with `PWD`).
  */
 function assignVariables(commands: SimpleCommand[], facts: ResolvedFacts): void {
   const vars = new Map<string, string | null>();
   for (const command of commands) {
     const cwd = command.cwd ?? facts.cwd;
     vars.set("PWD", cwd);
-    for (const token of command.argv) {
-      const match = ASSIGNMENT.exec(token);
-      if (match === null) break;
-      const name = match[1] as string;
-      vars.set(name, assignmentValue(match[2] ?? "", facts, vars));
+    const standalone = command.argv.length > 0 && command.argv.every((t) => ASSIGNMENT.test(t));
+    if (standalone) {
+      for (const token of command.argv) {
+        const match = ASSIGNMENT.exec(token);
+        if (match === null) continue;
+        vars.set(match[1] as string, assignmentValue(match[2] ?? "", facts, vars));
+      }
     }
     const inv = stripNeutral(command.argv);
     if (inv !== null && ["export", "declare", "typeset"].includes(inv.program)) {
@@ -3059,7 +3147,14 @@ function assignVariables(commands: SimpleCommand[], facts: ResolvedFacts): void 
         vars.set(match[1] as string, assignmentValue(match[2] ?? "", facts, vars));
       }
     }
-    command.vars = new Map(vars);
+    // Leading `X=v` prefixes of this command: unresolved here, not persisted.
+    const snapshot = new Map(vars);
+    for (const token of command.argv) {
+      const match = ASSIGNMENT.exec(token);
+      if (match === null) break;
+      snapshot.set(match[1] as string, null);
+    }
+    command.vars = snapshot;
   }
 }
 
