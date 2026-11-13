@@ -1,9 +1,9 @@
 # Auto mode: capable devices, guarded by command review
 
 - Date: 2026-11-13.
-- Status: draft for the maintainer's review. The direction is the maintainer's (acceptance
-  2026-11-13), marked **(decided)**; calls made here are marked **(designer's call)**; §11 lists
-  what still needs an answer.
+- Status: reviewed by the maintainer 2026-11-13; the four questions are answered in §11.
+  The direction is the maintainer's (acceptance 2026-11-13), marked **(decided)**; calls made here
+  are marked **(designer's call)**.
 - Amends: the sandbox tiers spec `2026-11-12-sandbox-dev-tiers-design.md` (tiers, unsandboxed
   mode, the settings of §4.1), the network ask-to-allow spec `2026-11-12-network-ask-to-allow-design.md`,
   the environments spec `2026-11-07-environments-design.md` (§8.4 limits and egress), and in
@@ -87,8 +87,9 @@ Anti-goals (would make this a failure even if it works):
 - **Command review**: the kernel step between the model's `Bash` call and the device exec that
   decides **allow**, **ask** or **deny** (§5).
 - **Attended run**: a run started by a person's message in the web or an IM channel while that
-  person is the conversation's owner. **Unattended**: scheduled task runs, sub-agent runs whose
-  root is unattended, runs started by anyone other than the device owner.
+  person is the conversation's owner; the device owner chatting in IM is attended, so an **ask**
+  waits for a card in the IM thread **(decided 2026-11-13)**. **Unattended**: scheduled task runs,
+  sub-agent runs whose root is unattended, runs started by anyone other than the device owner.
 
 ## 4. Modes per environment
 
@@ -110,7 +111,7 @@ Anti-goals (would make this a failure even if it works):
   machine" rule of the tiers spec §5.4)**.
 - The working directory stays the device's `workspace/`; commands may `cd` anywhere. The kernel's
   file tools (`Read`, `Write`, `Edit`) are widened to absolute paths anywhere in auto mode, the way
-  Claude Code's are **(designer's call)**, still passing review for writes outside the workspace
+  Claude Code's are **(decided 2026-11-13)**, still passing review for writes outside the workspace
   (§5.2).
 
 ### 4.2 Cloud device (sandbox-docker, sandbox-e2b)
@@ -146,6 +147,9 @@ Removed (pre-0.1.0, no compatibility): the tiers `strict` / `dev` / `open` as us
 ask-to-allow flow for auto-mode devices, the org's `sandboxTier`, the platform's `sandbox.tiers.*`.
 Sandbox mode keeps the network ask-to-allow flow (it is the only way to widen it).
 `sandbox.limits.allowHosts` becomes the default host list of 白名单 and of sandbox mode.
+Sandbox mode is today's `strict` profile only: the `dev` tier goes away as well **(decided
+2026-11-13)**; a person who wants to develop without the OS sandbox uses auto mode, which covers
+that need and is the default.
 The migration of stored settings: a device whose local policy says `isolation: none` or tier
 `open` becomes auto; anything else becomes sandbox; org and platform settings map `max: open`
 → `autoMode: allowed`, anything lower → `off`, and `sandboxEgress: allowlist` → `cloudNetwork:
@@ -209,7 +213,8 @@ Without a `review` model the classifier step is skipped and **unsure** becomes *
 - **Allow**: the command runs. Nothing is shown; the decision is in the tool call's record.
 - **Ask**, attended run: the run waits on an approval card in the conversation (the existing
   approval flow, kind `command`): the command, the reason, 允许一次 / 本会话允许同类 / 拒绝.
-  本会话允许同类 records the rule hit (not the exact text) for the rest of the conversation.
+  本会话允许同类 records the rule hit (not the exact text) for the rest of the conversation
+  **(decided 2026-11-13)**.
 - **Ask**, unattended run: treated as **deny** at once, no waiting **(decided)**. The model gets
   the reason and "No one can approve this now; do the work another way or leave it for the person."
 - **Deny**: the tool call fails with the reason (model-visible, English, actionable); the person
@@ -282,14 +287,13 @@ switch.
   a local server with Docker's socket proxy running, a background `git clone`, `gh pr create` on a
   local device, `gh auth login` on a cloud device, a scheduled task that hits an **ask** command.
 
-## 11. Questions for the maintainer
+## 11. Decisions of the review (2026-11-13)
 
-1. File tools in auto mode reach absolute paths anywhere (Claude Code's behaviour), with writes
-   outside the workspace reviewed. Or keep them inside the workspace and let `Bash` do the rest?
-   Recommended: anywhere.
-2. 本会话允许同类 on an ask card: remember the rule hit for the conversation (recommended), or only
-   the exact command?
-3. IM-triggered runs by the device owner themselves (the owner chatting in Lark): attended, so an
-   **ask** waits for a card in the IM thread (recommended), or unattended?
-4. Sandbox mode keeps today's `strict` profile only (recommended), or keep `dev` as a second
-   sandbox level for people who want a sandbox that can still develop?
+The four questions this draft put to the maintainer, answered:
+
+1. File tools in auto mode reach absolute paths anywhere, as in Claude Code; writes outside the
+   workspace pass review. (§4.1)
+2. 本会话允许同类 remembers the rule hit for the conversation, not the exact command. (§5.4)
+3. A run the device owner themselves triggers in IM is attended: an **ask** waits for a card in
+   the IM thread. (§3)
+4. Sandbox mode keeps today's `strict` profile only; `dev` goes away. (§4.4)
