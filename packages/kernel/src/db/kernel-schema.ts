@@ -3,7 +3,6 @@ import type {
   FileSystemHandle,
   GitHostEntry,
   ParsedTheme,
-  SandboxTier,
   SkillInvocation,
 } from "@capybara-hq/plugin-sdk";
 import type { ColumnType, Generated, Kysely } from "kysely";
@@ -992,8 +991,6 @@ export interface DevicesTable {
   provider: ColumnType<string | null, string | null | undefined, string | null>;
   /** 0096: the provider a demoted default was demoted from; null for every other device. */
   demoted_from_provider: ColumnType<string | null, string | null | undefined, string | null>;
-  /** 0117: a cloud device's own sandbox tier; null follows the org's default. */
-  tier: ColumnType<SandboxTier | null, SandboxTier | null | undefined, SandboxTier | null>;
   created_at: Ts;
   updated_at: Ts;
   deleted_at: TsNullable;
