@@ -29,6 +29,7 @@ const EXPECTED: Record<OrgAction, OrgRole[]> = {
   "agents.create": [M, A, O],
   "agents.use": [G, M, A, O],
   "agents.manage": [A, O],
+  "conversations.compact": [M, A, O],
   "connectors.manage": [A, O],
   "connectors.use": [G, M, A, O],
   "approvals.decide": [G, M, A, O],
@@ -58,7 +59,7 @@ describe("roles", () => {
     expect(roleAtLeast("guest", "member")).toBe(false);
   });
 
-  it("ACTION_MIN_ROLE covers all 29 actions", () => {
+  it("ACTION_MIN_ROLE covers all 30 actions", () => {
     expect(Object.keys(ACTION_MIN_ROLE).sort()).toEqual(Object.keys(EXPECTED).sort());
   });
 
@@ -67,8 +68,8 @@ describe("roles", () => {
       (action) => [role, action, EXPECTED[action].includes(role)] as const,
     ),
   );
-  it("the truth table has 4×29 = 116 combinations", () => {
-    expect(cases.length).toBe(116);
+  it("the truth table has 4×30 = 120 combinations", () => {
+    expect(cases.length).toBe(120);
   });
   it.each(cases)("can(%s, %s) = %s", (role, action, allowed) => {
     expect(can(role, action)).toBe(allowed);

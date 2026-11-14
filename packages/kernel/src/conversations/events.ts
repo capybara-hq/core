@@ -479,9 +479,11 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
        * What started the run (display only): absent or `message` = a person's message (or a
        * sub-agent's task), `background_task` = a finished background task woke the conversation
        * (spec 2026-11-05-background-bash-design §3), `subagent` = a sub-agent's delivery woke it
-       * (agent map spec §5.3), `schedule` = a scheduled task's message (scheduled tasks spec §6).
+       * (agent map spec §5.3), `schedule` = a scheduled task's message (scheduled tasks spec §6),
+       * `compact` = a manual compaction run (context compaction spec §4.7): no message, no model
+       * step, only the summary and its usage.
        */
-      trigger: z.enum(["message", "background_task", "subagent", "schedule"]).optional(),
+      trigger: z.enum(["message", "background_task", "subagent", "schedule", "compact"]).optional(),
       /**
        * A wake run's boundary: the seq of the finish or delivery that woke it (full-run replay
        * seeds from it).

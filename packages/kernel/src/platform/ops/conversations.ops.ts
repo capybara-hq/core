@@ -476,6 +476,45 @@ export class ConversationsOperations implements OnModuleInit {
         }),
       }),
       defineOperation({
+        id: "conversations.compact",
+        description:
+          "Compact one of your conversations now: an earlier part of its history is replaced by a summary, saving context for the next runs (it does not delete the conversation or stop it). A run already compacting the conversation is reused; a conversation with a run in progress cannot be compacted. The person may remember this permission.",
+        input: Id,
+        example: { conversationId: "3f2b8a40-6c1d-4e0b-9a77-5d1e2c8b9f10" },
+        authz: { orgAction: "conversations.compact" },
+        mirrors: ["POST /api/v1/orgs/:orgId/conversations/:id/compact"],
+        // the tool call itself is the request: a retry id has no meaning here
+        omits: ["clientRequestId"],
+        renames: { conversationId: "id" },
+        errors: [
+          {
+            code: "conversation.not_found",
+            next: "Check the id with conversations.list: only your own conversations can be read or changed.",
+          },
+          {
+            code: "conversation.busy",
+            next: "A run is active in that conversation: check conversations.list for its state and compact once it is idle.",
+          },
+          {
+            code: "conversation.read_only",
+            next: "That is a sub-agent's conversation and is compacted by its own runs; compact the conversation it belongs to.",
+          },
+        ],
+        confirm: "personal",
+        precheck: (i, ctx) => this.precheckWritable(i.conversationId, ctx),
+        summary: async (i, ctx) => {
+          const t = await this.titleOf(ctx, i.conversationId);
+          return { zh: `压缩对话「${t}」的早期历史`, en: `Compact the earlier history of "${t}"` };
+        },
+        run: async (input, ctx) => ({
+          runId: await this.conversations.compact(
+            ctx.orgId,
+            input.conversationId,
+            ctx.actorAccountId,
+          ),
+        }),
+      }),
+      defineOperation({
         id: "conversations.delete",
         description:
           "Delete one of your conversations: a running run in it is stopped and the conversation disappears from every list. This cannot be undone from the tool. The person confirms every delete; it is never remembered. The conversation you are working in cannot be deleted.",

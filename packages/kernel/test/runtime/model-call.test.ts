@@ -1634,6 +1634,84 @@ describe("runModelStep", () => {
           expect(usage.every((u) => u.payload.chunks === calls.length)).toBe(true);
         });
       });
+
+      it("a failed compaction publishes no writing phase and clears the progress", async () => {
+        stubImpl = stub([chunked()], (req) => {
+          if (req.system.some((x) => x.text.includes(COMPACTION_MARKER))) {
+            throw new ModelError("server", "summary call failed");
+          }
+          return "answer";
+        });
+        const agent = agentWith({ model: { provider: "stub", model: "chunked" } });
+        const phases: string[] = [];
+        const cleared: string[] = [];
+        deps.compactionProgress = {
+          update: (u) => phases.push(u.progress.phase),
+          clear: (runId) => cleared.push(runId),
+        };
+        try {
+          await withSettings(settings, async () => {
+            await history();
+            await say("go");
+            // the step continues without the summary
+            expect((await step({ agent })).content).toEqual([{ type: "text", text: "answer" }]);
+          });
+        } finally {
+          delete deps.compactionProgress;
+        }
+        expect(await ofType("compaction_failed")).toHaveLength(1);
+        // nothing was written, so there is no writing phase to show
+        expect(phases).not.toContain("writing");
+        expect(cleared).toHaveLength(1);
+      });
+
+      it("an aborted compaction clears the progress key (no writing phase, no summary)", async () => {
+        const ac = new AbortController();
+        const calls: ModelRequest[] = [];
+        stubImpl = {
+          async listModels() {
+            return [chunked()];
+          },
+          async *stream(req): AsyncGenerator<ModelStreamEvent> {
+            calls.push(req);
+            if (req.system.some((x) => x.text.includes(COMPACTION_MARKER))) {
+              yield { type: "text_delta", text: "Summary so far" };
+              // the person stops the run while the summary streams
+              ac.abort();
+              await new Promise((r) => setTimeout(r, 20));
+              return;
+            }
+            const text = "answer";
+            yield { type: "text_delta", text };
+            yield {
+              type: "message_complete",
+              content: [{ type: "text", text }],
+              stopReason: "end_turn",
+              usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
+            };
+          },
+        };
+        const agent = agentWith({ model: { provider: "stub", model: "chunked" } });
+        const phases: string[] = [];
+        const cleared: string[] = [];
+        deps.compactionProgress = {
+          update: (u) => phases.push(u.progress.phase),
+          clear: (runId) => cleared.push(runId),
+        };
+        try {
+          await withSettings(settings, async () => {
+            await history();
+            await say("go");
+            expect((await step({ agent, signal: ac.signal })).aborted).toBe(true);
+          });
+        } finally {
+          delete deps.compactionProgress;
+        }
+        expect(await ofType("compaction_summary")).toEqual([]);
+        expect(phases).not.toContain("writing");
+        // the throttle map entry and the Redis key are dropped on the abort path too
+        expect(cleared).toHaveLength(1);
+      });
     });
   });
 

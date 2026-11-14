@@ -107,6 +107,7 @@ describe("registration", () => {
       "conversations.agent-tree",
       "conversations.archive",
       "conversations.background-tasks",
+      "conversations.compact",
       "conversations.delete",
       "conversations.device",
       "conversations.events",

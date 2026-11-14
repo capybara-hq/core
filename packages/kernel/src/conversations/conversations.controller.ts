@@ -32,6 +32,7 @@ import {
   ConversationArtifacts,
 } from "./artifacts.js";
 import {
+  CompactBody,
   EventsQuery,
   FilesQuery,
   IdParams,
@@ -208,6 +209,7 @@ class ConversationQueueEditBodyDto extends createZodDto(
   QueueEditBody,
   "ConversationQueueEditBody",
 ) {}
+class ConversationCompactBodyDto extends createZodDto(CompactBody, "ConversationCompactBody") {}
 
 /**
  * 会话（`/api/v1/orgs/:orgId/conversations`）：`agents.use`（访客以上），只接受人类用户；
@@ -744,5 +746,26 @@ export class ConversationsController {
   ): Promise<{ runId: string }> {
     const p = requireUser(principal);
     return { runId: await this.conversations.abort(org.orgId, id, p.account.id) };
+  }
+
+  /**
+   * Manual compaction (context compaction spec §4.7): starts a compact run that summarizes the
+   * conversation's earlier history and returns its id (`202 { runId }`); while one is queued or
+   * running the same run id comes back (the request is idempotent). Member and above, the caller's
+   * own chat conversation: an eval or someone else's is `conversation.not_found`, a sub-agent's is
+   * `conversation.read_only`, and an active ordinary run is `409 conversation.busy`.
+   */
+  @Post(":id/compact")
+  @HttpCode(202)
+  @OrgAction("conversations.compact")
+  async compact(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @ZParam(ConversationIdParamsDto) { id }: z.infer<typeof IdParams>,
+    // the body is validated for shape only: the queued/running compact run is the idempotency key
+    @ZBody(ConversationCompactBodyDto) _body: z.infer<typeof CompactBody>,
+  ): Promise<{ runId: string }> {
+    const p = requireUser(principal);
+    return { runId: await this.conversations.compact(org.orgId, id, p.account.id) };
   }
 }

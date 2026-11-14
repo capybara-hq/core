@@ -332,11 +332,82 @@ export const MAX_STEP_MODEL_CALLS = MAX_MODEL_ATTEMPTS + 2;
 export const REACTIVE_TRIM_FACTORS = [0.9, 0.8, 0.7] as const;
 
 /** 本步解析出的工具与是否启用 ToolSearch（见 `ToolRegistry.forAgent`），以及本步已取的附件字节。 */
-interface StepTools {
+export interface StepTools {
   list: RequestTool[];
   toolSearch: boolean;
   /** 本步已取到的附件信息与字节；同一步的多次构建（压缩估算、各次尝试）共用。只缓存成功的结果。 */
   media: StepMedia;
+}
+
+/** What `ToolRegistry.forAgent` resolved for one request: the tools, ToolSearch and unavailable ones. */
+export interface ResolvedAgentTools {
+  tools: RequestTool[];
+  toolSearch: boolean;
+  unavailable: UnavailableTool[];
+}
+
+/**
+ * The agent's tools for one request, resolved now (connectors and extensions can change between
+ * steps): disabled tools and disabled sub-agent tools, a sub-agent's narrower roster, sandbox
+ * scoping and replay mode, with `Skill` offered when the log has a catalog snapshot or an
+ * invocation. The automatic step path and a manual compact run resolve them the same way, so the
+ * compaction sees the same history a step would.
+ */
+export async function resolveAgentTools(
+  deps: Pick<ModelStepDeps, "tools">,
+  input: Pick<
+    ModelStepInput,
+    | "orgId"
+    | "conversationId"
+    | "agent"
+    | "parent"
+    | "parentRunId"
+    | "subagent"
+    | "source"
+    | "conversationKind"
+  >,
+  events: readonly ConversationEvent[],
+): Promise<ResolvedAgentTools> {
+  const resolved = await deps.tools.forAgent(input.orgId, {
+    disabledTools: input.agent.disabledTools,
+    subagentTools: input.agent.subagentTools,
+    subagents: input.agent.subagents,
+    child: input.parent !== undefined || input.parentRunId !== undefined || input.subagent === true,
+    forkChild: input.parent?.forSkill === true,
+    sandboxConversationId: input.parent?.rootConversationId ?? input.conversationId,
+    replay: input.conversationKind === "eval",
+    source: input.source,
+    skillLoad: skillLoadOffered(
+      events.findLast(
+        (e): e is Extract<ConversationEvent, { type: "skills_catalog" }> =>
+          e.type === "skills_catalog",
+      ),
+      hasInvocation(events),
+    ),
+  });
+  return {
+    tools: resolved.tools,
+    toolSearch: resolved.toolSearch === true,
+    unavailable: resolved.unavailable,
+  };
+}
+
+/** The step's {@link StepTools} from resolved tools: a fresh attachment cache unless one is shared. */
+export function stepToolsOf(
+  resolved: ResolvedAgentTools,
+  input: Pick<ModelStepInput, "mediaCache">,
+  deps: Pick<ModelStepDeps, "config">,
+): StepTools {
+  return {
+    list: resolved.tools,
+    toolSearch: resolved.toolSearch,
+    media: {
+      looked: new Set(),
+      info: new Map(),
+      bytes: new Map(),
+      run: input.mediaCache ?? new MediaCache(deps.config.get().attachments.requestMediaBytes),
+    },
+  };
 }
 
 /**
@@ -373,6 +444,15 @@ const idem = {
     chunk === undefined
       ? `usage_compaction:${runId}:${step}:${n}`
       : `usage_compaction:${runId}:${step}:${n}:${chunk}`,
+  /**
+   * The outcome of one compaction attempt: `n` is the attempt (consecutive failures + 1). Retrying
+   * the same attempt after a crash writes nothing new; a manual compact run is keyed by its run id
+   * and step 0 (context compaction spec §4.7).
+   */
+  compactionSummary: (runId: string, step: number, n: number) =>
+    `compaction_summary:${runId}:${step}:${n}`,
+  compactionFailed: (runId: string, step: number, n: number) =>
+    `compaction_failed:${runId}:${step}:${n}`,
   mediaExcluded: (runId: string, step: number, attempt: number, part: number) =>
     `media_excluded:${runId}:${step}:${attempt}:${part}`,
 };
@@ -446,7 +526,7 @@ async function runStep(
   const streamed = { text: "" };
   try {
     if (signal.aborted) throw new StepAborted();
-    let events = await readAll(deps.eventLog, conversationId);
+    let events = await readAllEvents(deps.eventLog, conversationId);
     // an earlier execution of this run already sent this step (it streamed, then crashed or was
     // handed over): this one starts at offset 0, so viewers drop that attempt's draft first
     if (
@@ -469,34 +549,8 @@ async function runStep(
     // 每步实时解析（连接器 / 插件状态可能在步骤之间变化），解析结果记在 model_call；收尾调用同样带工具
     // a skills catalog snapshot (Ruling M17; an empty one too) or a person's skill invocation in the
     // log → Skill is offered (see skillLoadOffered)
-    const resolved = await deps.tools.forAgent(input.orgId, {
-      disabledTools: input.agent.disabledTools,
-      subagentTools: input.agent.subagentTools,
-      subagents: input.agent.subagents,
-      child:
-        input.parent !== undefined || input.parentRunId !== undefined || input.subagent === true,
-      forkChild: input.parent?.forSkill === true,
-      sandboxConversationId: input.parent?.rootConversationId ?? input.conversationId,
-      replay: input.conversationKind === "eval",
-      source: input.source,
-      skillLoad: skillLoadOffered(
-        events.findLast(
-          (e): e is Extract<ConversationEvent, { type: "skills_catalog" }> =>
-            e.type === "skills_catalog",
-        ),
-        hasInvocation(events),
-      ),
-    });
-    const tools: StepTools = {
-      list: resolved.tools,
-      toolSearch: resolved.toolSearch === true,
-      media: {
-        looked: new Set(),
-        info: new Map(),
-        bytes: new Map(),
-        run: input.mediaCache ?? new MediaCache(deps.config.get().attachments.requestMediaBytes),
-      },
-    };
+    const resolved = await resolveAgentTools(deps, input, events);
+    const tools: StepTools = stepToolsOf(resolved, input, deps);
     const beforeCompaction = events.length;
     // the org's effective compaction settings, once for this step (org > platform > built-in)
     const compaction = await deps.compactionSettings.resolve(input.orgId);
@@ -711,8 +765,11 @@ function lastToolsReminder(events: ConversationEvent[], runId: string): string |
   return text;
 }
 
-/** 读会话的全部事件（读到当前 last_seq），按 seq 升序。 */
-async function readAll(eventLog: EventLog, conversationId: string): Promise<ConversationEvent[]> {
+/** 读会话的全部事件（读到当前 last_seq），按 seq 升序。A manual compact run reads it the same way. */
+export async function readAllEvents(
+  eventLog: Pick<EventLog, "readAfter">,
+  conversationId: string,
+): Promise<ConversationEvent[]> {
   const out: ConversationEvent[] = [];
   let after = 0;
   for (;;) {
@@ -726,14 +783,9 @@ async function readAll(eventLog: EventLog, conversationId: string): Promise<Conv
 
 /**
  * Appends one event and merges it into the step's local event list (an idempotent hit already in
- * the list is not added twice).
- *
- * Events written elsewhere after `readAll` (an interjection, a fork report the wait sweep wrote)
- * have a lower seq than this one: when the written seq is more than one above the local maximum,
- * the gap is read from the log and merged first (batch 5 review I2). So every event with
- * seq ≤ the request's `toSeq` is in hand when the request is built, exactly as `reconstruct`
- * (evals) reads the log; gap user_messages above `absorbedUpToSeq` are skipped by placement in
- * both.
+ * the list is not added twice). The gap merge is {@link mergeWritten}'s: events written elsewhere
+ * after `readAll` have a lower seq than this one, and a list that skipped them would claim to
+ * include them through the request's `toSeq`.
  */
 async function appendLocal(
   eventLog: EventLog,
@@ -742,23 +794,8 @@ async function appendLocal(
   event: AppendEvent,
 ): Promise<ConversationEvent[]> {
   const [written] = await eventLog.append(conversationId, [event]);
-  if (!written || events.some((e) => e.seq === written.seq)) return events;
-  const localMax = events.reduce((m, e) => Math.max(m, e.seq), 0);
-  const gap: ConversationEvent[] = [];
-  let after = localMax;
-  while (written.seq > after + 1) {
-    const page = await eventLog.readAfter(
-      conversationId,
-      after,
-      Math.min(READ_PAGE, written.seq - after - 1),
-    );
-    const inGap = page.filter((e) => e.seq < written.seq);
-    gap.push(...inGap);
-    const last = inGap.at(-1);
-    if (!last || inGap.length < page.length) break;
-    after = last.seq;
-  }
-  return [...events, ...gap, written];
+  if (!written) return events;
+  return mergeWritten(eventLog, conversationId, events, [written]);
 }
 
 /**
@@ -966,6 +1003,16 @@ interface CompactOptions {
   fallback?: boolean;
 }
 
+/** What one compaction execution wrote: the events, the summary's seq and whether it failed. */
+export interface CompactionOutcome {
+  /** The step's event list with what the compaction wrote merged in (unchanged when it wrote none). */
+  events: ConversationEvent[];
+  /** The seq of the `compaction_summary` written; null when none was (skipped or failed). */
+  summarySeq: number | null;
+  /** Whether a `compaction_failed` was written (a failed call, a denial or a failed acceptance). */
+  failed: boolean;
+}
+
 /**
  * Compaction: summarize the earlier conversation with the main model (consumed non-streaming) when
  * the calibrated estimate crosses the trigger (context compaction spec §4.1). The hard line
@@ -975,10 +1022,14 @@ interface CompactOptions {
  * unchanged. When the main model cannot be resolved right now, compaction is skipped and the
  * fallback ladder handles the step.
  *
- * `opts.force` (the reactive path, spec §4.4) bypasses the trigger, `enabled` and the backoff, and
- * `opts.ref` makes it summarise with the rung's model rather than the agent's main model.
+ * `opts.force` (the reactive path, spec §4.4, and a manual compact run, spec §4.7) bypasses the
+ * trigger, `enabled` and the backoff, and `opts.ref` makes it summarise with the rung's model rather
+ * than the agent's main model.
+ *
+ * The one execution both paths run: the automatic step path through {@link maybeCompact} and a
+ * manual compact run through `CompactionService.force`.
  */
-async function maybeCompact(
+export async function runCompaction(
   deps: ModelStepDeps,
   input: ModelStepInput,
   events: ConversationEvent[],
@@ -986,7 +1037,13 @@ async function maybeCompact(
   compaction: CompactionSettings,
   tools: StepTools,
   opts: CompactOptions = {},
-): Promise<ConversationEvent[]> {
+): Promise<CompactionOutcome> {
+  /** Nothing was written (the compaction was skipped): the step's own path just continues. */
+  const skipped = (evs: ConversationEvent[]): CompactionOutcome => ({
+    events: evs,
+    summarySeq: null,
+    failed: false,
+  });
   const modelRef = opts.ref ?? input.agent.model;
   let provider: BoundProvider;
   let info: ModelInfo;
@@ -994,7 +1051,7 @@ async function maybeCompact(
     ({ provider, info } = await deps.registry.resolve(input.orgId, modelRef));
   } catch (err) {
     deps.log.warn("compaction skipped: model unavailable", { model: modelRef, err });
-    return events;
+    return skipped(events);
   }
   try {
     await loadMedia(deps, input, events, info, tools);
@@ -1006,7 +1063,7 @@ async function maybeCompact(
       conversationId: input.conversationId,
       err,
     });
-    return events;
+    return skipped(events);
   }
   const { request: built, estimate: raw } = buildRequest(
     deps,
@@ -1026,9 +1083,10 @@ async function maybeCompact(
   // and backoff only delays proactive attempts (context compaction spec §4.1). The reactive path
   // (`force`) ignores the trigger entirely (spec §4.4).
   if (!opts.force) {
-    if (estimate + output <= info.contextWindow && compactionBackoff(events)) return events;
+    if (estimate + output <= info.contextWindow && compactionBackoff(events))
+      return skipped(events);
     if (!shouldCompact(estimate, info.contextWindow, { ...compaction, maxOutputTokens: output })) {
-      return events;
+      return skipped(events);
     }
   }
   // the input room left for the kept tail: the window minus the output cap and the reserve
@@ -1037,7 +1095,7 @@ async function maybeCompact(
     compactionInputBudget(info.contextWindow, output, compaction.reserveTokens) -
     estimateTokens([], built.system, built.tools);
   const plan = compactionPlan(events, compaction, tailBudget);
-  if (!plan) return events;
+  if (!plan) return skipped(events);
 
   const { runId, step, signal, conversationId } = input;
   const ref = modelRef;
@@ -1152,7 +1210,12 @@ async function maybeCompact(
         );
       } catch (e) {
         // run() rejects only when the run's signal aborted: an abort, never a deny
-        if (signal.aborted) throw new StepAborted();
+        if (signal.aborted) {
+          // an aborted attempt leaves no partial summary: drop the progress key now rather than
+          // leaving the writer-local throttle entry behind until the TTL (folded review Minor)
+          deps.compactionProgress?.clear(runId);
+          throw new StepAborted();
+        }
         throw e;
       }
       if (!verdict.allowed) {
@@ -1214,7 +1277,12 @@ async function maybeCompact(
         failedChunk = multiChunk ? chunkNo : null;
       }
     } catch (err) {
-      if (err instanceof StepAborted) throw err;
+      if (err instanceof StepAborted) {
+        // aborted mid-call: clear the progress key here (the success and failure paths clear at
+        // the end; the abort path throws past them)
+        deps.compactionProgress?.clear(runId);
+        throw err;
+      }
       if (hookBase && deps.hooks) {
         fireObserve(
           deps.hooks,
@@ -1241,7 +1309,11 @@ async function maybeCompact(
     if (remaining === null) break;
   }
 
-  progressOf({ phase: "writing", step, startedAt });
+  // only a compaction that still has something to write shows the writing phase: a failed or denied
+  // one jumps straight to its failure event (folded review Minor)
+  if (failure === null && denial === null) {
+    progressOf({ phase: "writing", step, startedAt });
+  }
 
   /** The chunk a failure stopped at, for the reason (empty when the compaction was not chunked). */
   const chunkNote = (chunk: number | null): string => (chunk === null ? "" : ` (chunk ${chunk})`);
@@ -1280,6 +1352,7 @@ async function maybeCompact(
     const failed: AppendEvent = {
       type: "compaction_failed",
       runId,
+      idemKey: idem.compactionFailed(runId, step, attemptNo),
       payload: {
         attempt: attemptNo,
         reason: `compaction request blocked by the "${verdict.plugin}" policy hook (${verdict.cause})${chunkNote(multiChunk ? denial.chunk : null)}`,
@@ -1296,12 +1369,12 @@ async function maybeCompact(
     if (written.length > 0) {
       await deps.eventLog.notify(conversationId, Math.max(...written.map((e) => e.seq)));
     }
-    const merged = await mergeAfterWrite(deps.eventLog, conversationId, events, [
+    const merged = await mergeWritten(deps.eventLog, conversationId, events, [
       ...billed,
       ...written,
     ]);
     deps.compactionProgress?.clear(runId);
-    return merged;
+    return { events: merged, summarySeq: null, failed: true };
   }
 
   if (failure !== null) {
@@ -1312,6 +1385,8 @@ async function maybeCompact(
       ? {
           type: "compaction_summary",
           runId,
+          // the manual compact run's run id is in it; a crash-retried attempt writes nothing twice
+          idemKey: idem.compactionSummary(runId, step, attemptNo),
           payload: {
             coversUpToSeq: plan.coversUpToSeq,
             text: summary,
@@ -1323,6 +1398,7 @@ async function maybeCompact(
       : {
           type: "compaction_failed",
           runId,
+          idemKey: idem.compactionFailed(runId, step, attemptNo),
           payload: { attempt: attemptNo, reason: `${failure}${chunkNote(failedChunk)}` },
         };
   // the compaction calls' usage (I-1): logged with the outcome in one append (one transaction),
@@ -1330,19 +1406,40 @@ async function maybeCompact(
   // skip it; a chunked compaction writes one per call, each keyed by its chunk
   const batch: AppendEvent[] = [event, ...usageEvents()];
   const written = await appendCounted(deps, input, batch);
-  const merged = await mergeAfterWrite(deps.eventLog, conversationId, events, written);
+  const merged = await mergeWritten(deps.eventLog, conversationId, events, written);
   deps.compactionProgress?.clear(runId);
-  return merged;
+  return {
+    events: merged,
+    summarySeq:
+      failure === null ? (written.find((e) => e.type === "compaction_summary")?.seq ?? null) : null,
+    failed: failure !== null,
+  };
+}
+
+/**
+ * The automatic path's compaction: {@link runCompaction} under the trigger's gates, returning only
+ * the step's event list (the step does not care whether a summary was written).
+ */
+async function maybeCompact(
+  deps: ModelStepDeps,
+  input: ModelStepInput,
+  events: ConversationEvent[],
+  runtime: Runtime,
+  compaction: CompactionSettings,
+  tools: StepTools,
+  opts: CompactOptions = {},
+): Promise<ConversationEvent[]> {
+  return (await runCompaction(deps, input, events, runtime, compaction, tools, opts)).events;
 }
 
 /**
  * Merges events we just wrote into the step's local list, reading any gap first (the guarantee
- * `appendLocal` gives): another writer may have appended an event between the local maximum and a
- * seq we wrote, and a request built from a list that skipped it would claim (through its `toSeq`)
- * to include an event it does not carry. Idempotent hits already in the list are not added twice;
- * the result is ordered by seq.
+ * {@link appendLocal} gives): another writer may have appended an event between the local maximum
+ * and a seq we wrote, and a request built from a list that skipped it would claim (through its
+ * `toSeq`) to include an event it does not carry. Idempotent hits already in the list are not added
+ * twice; the result is ordered by seq.
  */
-async function mergeAfterWrite(
+async function mergeWritten(
   eventLog: Pick<EventLog, "readAfter">,
   conversationId: string,
   events: ConversationEvent[],
@@ -1714,7 +1811,7 @@ async function ladder(
             // forced compaction instead.
             let recorded = false;
             try {
-              evs = await mergeAfterWrite(
+              evs = await mergeWritten(
                 deps.eventLog,
                 conversationId,
                 evs,

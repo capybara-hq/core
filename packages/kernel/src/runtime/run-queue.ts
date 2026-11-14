@@ -8,6 +8,7 @@ import { EventLog } from "../conversations/event-log.js";
 import { dispatchQueuedIn, pauseQueueWith } from "../conversations/queue.js";
 import { conversationTree } from "../conversations/tree.js";
 import type { ConversationKind, KernelSchemaDb } from "../db/kernel-schema.js";
+import { ApiError } from "../errors.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
@@ -141,6 +142,79 @@ export class RunQueue {
       if (dispatchedUnarchived) await this.eventLog.publishChanged(conversationId, "archived");
     }
     return created;
+  }
+
+  /**
+   * Starts a manual compaction run (context compaction spec §4.7): a `queued` run marked
+   * `compact` whose worker path calls the shared compaction execution and finishes without a model
+   * step. Returns its id.
+   *
+   * Under the conversation row lock (the one `ensureRun` takes), so a concurrent start serializes:
+   * a compact run already queued or running is returned as is (a second request is a no-op), and
+   * an ordinary active run is `conversation.busy` — the compact run must not share the
+   * conversation with a model step. The run's boundary (`trigger_seq`) is the current
+   * `consumed_seq`: it consumes no message.
+   */
+  async startCompaction(conversationId: string, accountId: string): Promise<string> {
+    return this.startCompactionIn(conversationId, accountId);
+  }
+
+  /** {@link startCompaction}'s transaction: the active-run check, the run row and its owed job. */
+  @Transactional({ propagation: "requires_new" })
+  private async startCompactionIn(conversationId: string, accountId: string): Promise<string> {
+    const t = this.db;
+    const conv = await t
+      .selectFrom("conversations")
+      .select(["org_id", "agent_id", "kind", "consumed_seq", "deleted_at"])
+      .where("id", "=", conversationId)
+      .forUpdate()
+      .executeTakeFirst();
+    // a deleted conversation, or a sub-agent's / eval one, has no manual compaction
+    if (!conv || conv.deleted_at !== null || conv.kind !== "chat") {
+      throw new ApiError("conversation.not_found", "Conversation not found");
+    }
+    const active = await t
+      .selectFrom("runs")
+      .select(["id", "compact"])
+      .where("conversation_id", "=", conversationId)
+      .where("status", "in", ACTIVE_RUN_STATUSES)
+      .orderBy("created_at", "desc")
+      .execute();
+    // a compact run already queued or running: the same request again
+    const compact = active.find((r) => r.compact);
+    if (compact) return compact.id;
+    if (active.length > 0) {
+      throw new ApiError("conversation.busy", "A run is active in this conversation");
+    }
+    const agent = await t
+      .selectFrom("agents")
+      .select(["current_version", "deleted_at"])
+      .where("id", "=", conv.agent_id)
+      .executeTakeFirst();
+    if (!agent || agent.deleted_at !== null) {
+      throw new ApiError("conversation.not_found", "Conversation not found");
+    }
+    // the compact run's own job id: a later run of the same trigger has `<runJobId>-<n>` (R34), so
+    // it never collides with the ordinary run of that seq nor with an earlier compact run
+    const jobId = await this.jobIdFor(conversationId, Number(conv.consumed_seq));
+    const runId = randomUUID();
+    if (!(await this.oweJob(conversationId, runId, jobId.id, "chat", conv.org_id))) {
+      throw new ApiError("conversation.busy", "A run is already queued for this conversation");
+    }
+    await t
+      .insertInto("runs")
+      .values({
+        id: runId,
+        conversation_id: conversationId,
+        status: "queued",
+        agent_version: agent.current_version,
+        trigger_account_id: accountId,
+        trigger_seq: Number(conv.consumed_seq),
+        job_id: jobId.recorded,
+        compact: true,
+      })
+      .execute();
+    return runId;
   }
 
   /** {@link ensureRun}'s transaction: what it decided goes back through `st`. */

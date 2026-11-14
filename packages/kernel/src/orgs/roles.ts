@@ -22,6 +22,7 @@ export type OrgAction =
   | "agents.create"
   | "agents.use"
   | "agents.manage"
+  | "conversations.compact"
   | "connectors.manage"
   | "connectors.use"
   | "approvals.decide"
@@ -54,6 +55,8 @@ export const ACTION_MIN_ROLE: Record<OrgAction, OrgRole> = {
   "org.transfer": "owner",
   "agents.create": "member",
   "agents.use": "guest",
+  // 手动压缩自己可见的会话（context compaction spec §4.7）：成员及以上
+  "conversations.compact": "member",
   // 管理他人的 agent（如离职后重新指派负责人）
   "agents.manage": "admin",
   // 安装 / 配置连接器与审阅工具

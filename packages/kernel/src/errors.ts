@@ -272,6 +272,8 @@ export const ERROR_CODES = {
   /** An org template was saved since the editor read it (`expectedVersion` is stale, P4-12). */
   "agent_template.version_conflict": 409,
   "conversation.not_found": 404,
+  /** A manual compaction asked for while an ordinary run is active (context compaction §4.7). */
+  "conversation.busy": 409,
   "conversation.output_not_found": 404,
   "conversation.artifact_not_found": 404,
   "conversation.artifact_not_previewable": 400,

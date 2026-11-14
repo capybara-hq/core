@@ -34,6 +34,7 @@ import { normalizeStoredDefinitionIn } from "../tools/legacy-data.js";
 import { ToolRegistry } from "../tools/registry.js";
 import { RunAbort, type RunAbortBy, type RunAbortDetail } from "./abort.js";
 import { KyselyCheckpointSaver } from "./checkpointer.js";
+import { CompactionService } from "./compaction.service.js";
 import { ConversationLock, type Lease } from "./conversation-lock.js";
 import { runDeadline, tightestLimit } from "./limits.js";
 import type { AgentLoop, LoopOutcome, SubagentParent, WaitingFor } from "./loop.js";
@@ -161,6 +162,7 @@ export class RunWorker {
     @Inject(SettingsService) private readonly settings: Pick<SettingsService, "get">,
     @Inject(AgentLoops) loops: AgentLoops,
     @Inject(RunSteps) steps: RunSteps,
+    @Inject(CompactionService) private readonly compaction: Pick<CompactionService, "force">,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
     @Inject(KERNEL_LOGGER) private readonly log: Logger,
     @Inject(KERNEL_BUS) private readonly bus: ExtensionContext["bus"],
@@ -453,6 +455,7 @@ export class RunWorker {
         "started_at",
         "waited_ms",
         "budget_run_id",
+        "compact",
       ])
       .where("id", "=", runId)
       .executeTakeFirst();
@@ -597,6 +600,7 @@ export class RunWorker {
       started_at: Date | null;
       waited_ms: string;
       budget_run_id: string | null;
+      compact: boolean;
     },
     conv: {
       id: string;
@@ -711,6 +715,11 @@ export class RunWorker {
         saved,
         await readSelection(this.db, conversationId, existingStart.seq),
       );
+    }
+    // a manual compaction run (context compaction spec §4.7): the shared compaction execution
+    // instead of the agent loop, no model step, nothing absorbed
+    if (run.compact) {
+      return this.executeCompaction(run, conv, agent, saved, startedAt, state);
     }
     if (run.status === "queued" || startedAt === null) {
       if (!existingStart) {
@@ -968,6 +977,129 @@ export class RunWorker {
     }
   }
 
+  /**
+   * A manual compaction run (context compaction spec §4.7): starts it (`run_started` with
+   * `trigger: "compact"`, no skills/run/plugin context — nothing reaches the model as a request),
+   * runs the shared compaction execution with the conversation's effective definition, and writes
+   * the terminal state. The run records the summary and its usage only; nothing is absorbed and no
+   * model step runs. A person's stop aborts it (`run_aborted`, no partial summary); a shutdown or a
+   * lost lease leaves it to another replica.
+   */
+  private async executeCompaction(
+    run: {
+      id: string;
+      status: string;
+      agent_version: number;
+      trigger_account_id: string;
+      trigger_seq: string;
+      started_at: Date | null;
+    },
+    conv: {
+      id: string;
+      org_id: string;
+      agent_id: string;
+      source: ConversationSource;
+    },
+    agent: AgentDefinition,
+    saved: AgentDefinition | undefined,
+    startedAt: Date | null,
+    state: ActiveRun,
+  ): Promise<ExecResult> {
+    const runId = run.id;
+    const conversationId = conv.id;
+    const existingStart = await this.eventLog.findByIdem(conversationId, `run_started:${runId}`);
+    if (run.status === "queued" || startedAt === null) {
+      if (!existingStart) {
+        await this.hooks?.beforeRunStarted?.(runId, conversationId);
+        const started = await this.appendRunStarted(conversationId, run, agent, saved, true);
+        // a stop that ended the run meanwhile (a queued run's direct abort) wins
+        if (started.terminal) return "finished";
+        agent = started.agent;
+        if (started.toSeq !== undefined) await this.eventLog.notify(conversationId, started.toSeq);
+      }
+      await this.hooks?.beforeRunning?.(runId, conversationId);
+      // never over a terminal status: a run finished meanwhile stays finished
+      const updated = await this.db
+        .updateTable("runs")
+        .set({ status: "running", started_at: sql<Date>`COALESCE(started_at, now())` })
+        .where("id", "=", runId)
+        .where("status", "in", ["queued", "running"])
+        .returning("started_at")
+        .executeTakeFirst();
+      if (updated === undefined) return "finished";
+    }
+    // the conversation lock is held: nothing absorbed the trigger seq meanwhile, and the summary
+    // request's boundary is the current consumed position
+    const { consumed_seq } = await this.db
+      .selectFrom("conversations")
+      .select("consumed_seq")
+      .where("id", "=", conversationId)
+      .executeTakeFirstOrThrow();
+
+    const ac = new AbortController();
+    let abortedBy: string | null | undefined;
+    let abortDetail: RunAbortDetail | undefined;
+    const unwatch = await this.abort.watch(runId, (by, detail) => {
+      abortedBy = by;
+      abortDetail = detail;
+      ac.abort();
+    });
+    // a shutdown (or a lost lease, which aborts this signal too) stops at the stream boundary
+    const stopForShutdown = () => ac.abort();
+    state.shutdown.signal.addEventListener("abort", stopForShutdown, { once: true });
+    // the shutdown may have begun before the listener was added (it would never fire): leave the
+    // run to another replica instead of compacting through the stop
+    if (state.shutdown.signal.aborted) {
+      state.shutdown.signal.removeEventListener("abort", stopForShutdown);
+      await unwatch().catch((err) => this.log.warn("abort unwatch failed", { runId, err }));
+      return "interrupted";
+    }
+    try {
+      await this.compaction.force({
+        orgId: conv.org_id,
+        conversationId,
+        runId,
+        accountId: run.trigger_account_id,
+        agentId: conv.agent_id,
+        agent,
+        agentVersion: run.agent_version,
+        source: conv.source,
+        conversationKind: "chat",
+        absorbedUpToSeq: Number(consumed_seq),
+        signal: ac.signal,
+      });
+    } catch (err) {
+      if (state.abandoned) return "abandoned";
+      if (state.leaseLost) return "interrupted";
+      if (abortedBy === undefined) {
+        // a shutdown abort: nothing terminal, the job goes back for another replica
+        if (state.shutdown.signal.aborted) return "interrupted";
+        throw err;
+      }
+      await this.finish(conversationId, runId, "aborted", null, {
+        type: "run_aborted",
+        payload: {
+          byAccountId: abortedBy,
+          reason: "user",
+          ...(abortDetail !== undefined && { detail: abortDetail }),
+        },
+      });
+      return "finished";
+    } finally {
+      await unwatch().catch((err) => this.log.warn("abort unwatch failed", { runId, err }));
+      state.shutdown.signal.removeEventListener("abort", stopForShutdown);
+    }
+    if (state.abandoned) return "abandoned";
+    if (state.leaseLost) return "interrupted";
+    // a failed compaction is still a finished compact run: it wrote `compaction_failed` and the
+    // next step falls back to the fit guard, exactly as after an automatic one
+    await this.finish(conversationId, runId, "completed", null, {
+      type: "run_finished",
+      payload: { reason: "completed", consumedUpToSeq: Number(consumed_seq) },
+    });
+    return "finished";
+  }
+
   private completed(conversationId: string): void {
     // a completed run enqueues the conversation's title job (never throws)
     void this.titles.maybeEnqueue(conversationId);
@@ -1054,7 +1186,8 @@ export class RunWorker {
 
   /**
    * `run_started` under the conversation row lock, with the model / effort switch in effect then
-   * (a chat run's `saved` version under the conversation's selection): what the run uses.
+   * (a chat run's `saved` version under the conversation's selection): what the run uses. A
+   * `compact` run is marked `trigger: "compact"` (context compaction spec §4.7).
    */
   @Transactional({ propagation: "requires_new" })
   private async appendRunStarted(
@@ -1063,6 +1196,7 @@ export class RunWorker {
     /** The definition so far (a sub-agent's frozen one is final). */
     current: AgentDefinition,
     saved: AgentDefinition | undefined,
+    compact = false,
   ): Promise<{ toSeq: number | undefined; agent: AgentDefinition; terminal?: true }> {
     const t = this.db;
     if (await this.endedUnderLocks(conversationId, run.id)) {
@@ -1089,19 +1223,23 @@ export class RunWorker {
           agentVersion: run.agent_version,
           model: agent.model,
           triggerAccountId: run.trigger_account_id,
-          ...(boundary?.type === "background_task_finished" && {
-            trigger: "background_task" as const,
-            triggerSeq: Number(run.trigger_seq),
-          }),
-          ...(boundary?.type === "subagent_delivery" && {
-            trigger: "subagent" as const,
-            triggerSeq: Number(run.trigger_seq),
-          }),
-          // a scheduled task's message (scheduled tasks spec §6); display only
-          ...(boundary?.type === "user_message" &&
-            (boundary.payload as { schedule?: unknown }).schedule !== undefined && {
-              trigger: "schedule" as const,
-            }),
+          ...(compact
+            ? { trigger: "compact" as const }
+            : {
+                ...(boundary?.type === "background_task_finished" && {
+                  trigger: "background_task" as const,
+                  triggerSeq: Number(run.trigger_seq),
+                }),
+                ...(boundary?.type === "subagent_delivery" && {
+                  trigger: "subagent" as const,
+                  triggerSeq: Number(run.trigger_seq),
+                }),
+                // a scheduled task's message (scheduled tasks spec §6); display only
+                ...(boundary?.type === "user_message" &&
+                  (boundary.payload as { schedule?: unknown }).schedule !== undefined && {
+                    trigger: "schedule" as const,
+                  }),
+              }),
         },
       },
     ]);
