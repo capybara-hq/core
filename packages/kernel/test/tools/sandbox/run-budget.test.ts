@@ -85,10 +85,9 @@ describe("运行时限与命令超时（纯函数）", () => {
       extensionConfig: { "sandbox-docker": { refuseOpenNetwork: true } },
     };
     for (const autoMode of [undefined, "allowed", "off"] as const) {
-      const [w, ...rest] = sandboxConfigWarnings(
-        { ...refusing, devices: { ...refusing.devices, autoMode } },
-        "sandbox-docker",
-      );
+      // the whole config, whatever its devices.autoMode says
+      const whole = { ...refusing, devices: { ...refusing.devices, autoMode } };
+      const [w, ...rest] = sandboxConfigWarnings(whole, "sandbox-docker");
       expect(rest).toEqual([]);
       expect(w?.level).toBe("warn");
       expect(w?.message).toContain('extensionConfig."sandbox-docker".refuseOpenNetwork');
