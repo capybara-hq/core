@@ -142,7 +142,14 @@ describe("validatePermissions", () => {
         'permissions.http route "GET /orgs/:orgId/x" must not contain :orgId (the org comes from the mount)',
       );
       expect(errs({ method: "GET", path: "/a/:orgId", access: "admin" })).toHaveLength(1);
-      for (const path of ["/x/:orgId.json", "/:orgId-:y", "/x/:orgId(\\d+)"]) {
+      // anywhere in the path: find-my-way lets a later duplicate `:orgId` (`/x-:orgId`) win
+      for (const path of [
+        "/x/:orgId.json",
+        "/:orgId-:y",
+        "/x/:orgId(\\d+)",
+        "/x-:orgId",
+        "/a.:orgId",
+      ]) {
         expect(errs({ method: "GET", path, access: "member" })).toHaveLength(1);
       }
       expect(errs({ method: "GET", path: "/x/:orgIdent", access: "member" })).toEqual([]);

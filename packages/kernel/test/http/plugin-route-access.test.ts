@@ -26,11 +26,15 @@ import {
  * runs, and the handler never sees kernel credentials. One kernel with the `route-access` fixture
  * (one route per level; `baseUrl` is a required overridable field the platform leaves empty, so an
  * org without its own copy needs configuration). The public write limit is lowered to 3 through
- * the `PLUGIN_PUBLIC_WRITE_LIMIT` seam.
+ * the `PLUGIN_PUBLIC_WRITE_LIMIT` seam. `route-access-other` only issues embed tokens of another
+ * extension.
  */
 
 const ROUTE_ACCESS = fileURLToPath(
   new URL("../fixtures/plugins/route-access/index.ts", import.meta.url),
+);
+const OTHER = fileURLToPath(
+  new URL("../fixtures/plugins/route-access-other/index.ts", import.meta.url),
 );
 const LIMIT = 3;
 
@@ -46,7 +50,7 @@ beforeAll(async () => {
   db = kernelDb(raw);
   const base = runConfig({ pg: pgc.url, redis: rd.url }, { roles: ["api", "worker"] });
   k = await startKernel(
-    { ...base, extensions: [...base.extensions, ROUTE_ACCESS] },
+    { ...base, extensions: [...base.extensions, ROUTE_ACCESS, OTHER] },
     {
       env: {},
       logger: createLogger("error", { write: () => {} }),
@@ -118,7 +122,7 @@ beforeAll(async () => {
   orgA = await createOrg(owner, "A");
   orgB = await createOrg(owner, "B");
   orgOff = await createOrg(owner, "Off");
-  await enableExtensions(raw, orgA, "route-access");
+  await enableExtensions(raw, orgA, "route-access", "route-access-other");
   await enableExtensions(raw, orgB, "route-access");
   // org A keeps its own copy of the required overridable field; org B follows the empty platform
   const copy = await owner({
@@ -315,10 +319,10 @@ describe("member and admin routes", () => {
 });
 
 describe("embed routes", () => {
-  const issue = async (orgId: string) => {
-    const r = await owner({
+  const issue = async (orgId: string, plugin = "route-access", as: Req = owner) => {
+    const r = await as({
       method: "POST",
-      url: `/api/v1/orgs/${orgId}/ui/embeds/route-access/page/token`,
+      url: `/api/v1/orgs/${orgId}/ui/embeds/${plugin}/page/token`,
       payload: {},
     });
     expect(r.statusCode, r.body).toBe(200);
@@ -379,6 +383,43 @@ describe("embed routes", () => {
     const token = (r0.json() as { token: string }).token;
     expect((await call({ url: "/plugins/route-access/ui/data", token })).statusCode).toBe(200);
     await sql`DELETE FROM capybara.memberships WHERE account_id = ${member.id}`.execute(raw);
+    const r = await call({ url: "/plugins/route-access/ui/data", token });
+    expect(r.statusCode).toBe(401);
+    expect(errCode(r)).toBe("auth.required");
+  });
+
+  it("a token issued for another extension: 401", async () => {
+    const token = await issue(orgA, "route-access-other");
+    const r = await call({ url: "/plugins/route-access/ui/data", token });
+    expect(r.statusCode).toBe(401);
+    expect(errCode(r)).toBe("auth.required");
+    expect(routeAccessCalls()).toEqual([]);
+  });
+
+  it("a token issued before the extension was switched off in the org: 401", async () => {
+    const orgD = await createOrg(owner, "D");
+    await enableExtensions(raw, orgD, "route-access");
+    const copy = await owner({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgD}/extensions/route-access/overrides`,
+      payload: { values: { baseUrl: "https://org-d.test" } },
+    });
+    expect(copy.statusCode, copy.body).toBe(200);
+    const token = await issue(orgD);
+    expect((await call({ url: "/plugins/route-access/ui/data", token })).statusCode).toBe(200);
+    await sql`UPDATE capybara.extension_org_configs SET enabled = false
+      WHERE plugin = 'route-access' AND org_id = ${orgD}`.execute(raw);
+    const r = await call({ url: "/plugins/route-access/ui/data", token });
+    expect(r.statusCode).toBe(401);
+    expect(errCode(r)).toBe("auth.required");
+  });
+
+  it("a token whose holder's current role is below the slot's minRole (org.page: member): 401", async () => {
+    const member = await person("member", orgA);
+    const token = await issue(orgA, "route-access", await session(k, `member${seq}`));
+    expect((await call({ url: "/plugins/route-access/ui/data", token })).statusCode).toBe(200);
+    await sql`UPDATE capybara.memberships SET role = 'guest'
+      WHERE account_id = ${member.id} AND org_id = ${orgA}`.execute(raw);
     const r = await call({ url: "/plugins/route-access/ui/data", token });
     expect(r.statusCode).toBe(401);
     expect(errCode(r)).toBe("auth.required");

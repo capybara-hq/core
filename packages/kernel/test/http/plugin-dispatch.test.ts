@@ -416,7 +416,15 @@ describe("route access in the dispatch", () => {
   });
 
   it("stripKernelAuthorization drops kernel tokens and keeps everything else", () => {
-    for (const v of ["Bearer cap_pat_abc", "bearer  cap_svc_x", "cap_pat_bare"]) {
+    for (const v of [
+      "Bearer cap_pat_abc",
+      "bearer  cap_svc_x",
+      "cap_pat_bare",
+      'Bearer "cap_pat_x"',
+      "Bearer,cap_pat_x",
+      "Token=cap_svc_x",
+      "Basic x, Bearer cap_pat_y",
+    ]) {
       expect(stripKernelAuthorization(v), v).toBeUndefined();
     }
     for (const v of ["Bearer eyJ.abc", "Signature x", "Bearer cap_at_lookalike"]) {
@@ -505,6 +513,59 @@ describe("route access in the dispatch", () => {
     expect(calls).toEqual([]);
   });
 
+  it("the unavailable gate decodes the plugin segment: /plugins/%70/... is still 503", async () => {
+    const { r, calls } = resolver(() => ({ access: "public" }));
+    const a = await app(undefined, r);
+    a.mountPlugins({
+      routes: () => [route("GET", "/plugins/p/:a/:b", echo, "public")],
+      revision: () => 0,
+      unavailable: (plugin) => plugin === "p",
+    });
+    for (const url of ["/plugins/p/x/y", "/plugins/%70/x/y"]) {
+      const res = await a.inject({ method: "GET", url });
+      expect(res.statusCode, url).toBe(503);
+      expect(res.json().error.code).toBe("extension.unavailable");
+    }
+    expect(calls).toEqual([]);
+  });
+
+  it("a malformed escape in the plugin segment is refused before access is resolved", async () => {
+    const { r, calls } = resolver(() => ({ access: "public" }));
+    const a = await app(undefined, r);
+    a.mountPlugins([route("GET", "/plugins/p/*", echo, "public")]);
+    const res = await a.inject({ method: "GET", url: "/plugins/%E0%A4%A/x" });
+    // Fastify refuses a malformed URL before the dispatch; the dispatch's own decode guard is a backstop
+    expect(res.statusCode, res.body).toBe(400);
+    expect(calls).toEqual([]);
+  });
+
+  it("a public or embed route never catches the org mount, however the path is spelled", async () => {
+    const { r, calls } = resolver(() => ({ access: "public" }));
+    const a = await app(undefined, r);
+    a.mountPlugins([
+      route("GET", "/plugins/p/*", echo, "public"),
+      route("POST", "/plugins/p/:a/:b/:c", echo, "public"),
+    ]);
+    for (const [method, url] of [
+      ["GET", "/plugins/p/orgs"],
+      ["GET", "/plugins/p/orgs/"],
+      ["GET", "/plugins/p/orgs/o1/items"],
+      ["GET", "/plugins/p/%6Frgs/o1/items"],
+      ["GET", "/plugins/p/orgs%2Fo1/items"],
+      ["GET", "/plugins/%70/orgs/o1/items"],
+      ["POST", "/plugins/p/orgs/o1/items"],
+      ["POST", "/plugins/p/%6frgs/o1/items"],
+    ] as const) {
+      const res = await a.inject({ method, url });
+      expect(res.statusCode, `${method} ${url}`).toBe(404);
+      expect(res.json().error.code).toBe("not_found");
+    }
+    expect(calls).toEqual([]);
+    // the same routes still serve everything else
+    expect((await a.inject({ method: "GET", url: "/plugins/p/orgsx/1" })).statusCode).toBe(200);
+    expect((await a.inject({ method: "POST", url: "/plugins/p/a/b/c" })).statusCode).toBe(200);
+  });
+
   it("kernel tokens never reach the handler; an embed token and other cookies do", async () => {
     const { r } = resolver((rt) => (rt.access === "member" ? member("o1") : { access: "public" }));
     const a = await app(undefined, r);
@@ -528,7 +589,7 @@ describe("route access in the dispatch", () => {
 
   it("routes follow the table revision: a route whose access changed is matched by its new record", async () => {
     let revision = 0;
-    let routes = [route("GET", "/plugins/p/orgs/x", echo, "public")];
+    let routes = [route("GET", "/plugins/p/x", echo, "public")];
     const table: PluginRouteTable = {
       routes: () => routes,
       revision: () => revision,
@@ -539,13 +600,13 @@ describe("route access in the dispatch", () => {
     );
     const a = await app(undefined, r);
     a.mountPlugins(table);
-    expect((await a.inject({ method: "GET", url: "/plugins/p/orgs/x" })).json().caller).toEqual({
+    expect((await a.inject({ method: "GET", url: "/plugins/p/x" })).json().caller).toEqual({
       access: "public",
     });
     // the extension reloaded with the route as a member route: the stale public record is gone
     routes = [route("GET", "/plugins/p/orgs/:orgId/x", echo, "member")];
     revision = 1;
-    expect((await a.inject({ method: "GET", url: "/plugins/p/orgs/x" })).statusCode).toBe(404);
+    expect((await a.inject({ method: "GET", url: "/plugins/p/x" })).statusCode).toBe(404);
     const now = await a.inject({ method: "GET", url: "/plugins/p/orgs/o9/x" });
     expect(now.json().caller).toEqual(member("o9"));
     expect(calls.map((c) => c.access)).toEqual(["public", "member"]);

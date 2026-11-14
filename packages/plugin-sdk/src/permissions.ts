@@ -194,7 +194,9 @@ export function validatePermissions(plugin: string, p: unknown): string[] {
         }
         if (
           (r.access === "member" || r.access === "admin") &&
-          /(^|\/):orgId(?![A-Za-z0-9_])/.test(r.path)
+          // anywhere, not only after a slash: find-my-way lets a later duplicate param win, so
+          // `/x-:orgId` would override the mount's `:orgId`
+          /:orgId(?![A-Za-z0-9_])/.test(r.path)
         ) {
           errs.push(
             `permissions.http route "${key}" must not contain :orgId (the org comes from the mount)`,

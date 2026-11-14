@@ -36,15 +36,17 @@ the token's expiry (Unix seconds), so a long-lived response (SSE) can end when t
 
 `config` is the extension's effective config for that org (platform deployment config plus the org's
 copy of overridable fields), as on every other org-bound extension call; an org whose effective config
-is invalid gets no call (409 `extension.needs_config`).
+is invalid gets no call (409 `extension.needs_config`; 503 `extension.unavailable` when the extension
+is not running on the replica).
 
 `public?: boolean` is removed; `access` is required (pre-0.1.0: no compatibility reading).
 
 ### Manifest rules (SDK validator, so an undeclared route cannot be imported or approved)
 
 - `access` is one of the four values; a missing or unknown value is refused.
-- `embed` paths start with `/ui/`; `member` / `admin` paths contain no `:orgId` parameter.
-- No path of any access level may start with `/orgs/` (that segment is reserved for the org mount; the validator rejects it for `public`, `embed`, `member` and `admin` alike).
+- `embed` paths start with `/ui/`; `member` / `admin` paths contain no `:orgId` parameter anywhere
+  (not only after a slash: find-my-way lets a later duplicate parameter such as `/x-:orgId` win).
+- No path of any access level may start with `/orgs/` (that segment is reserved for the org mount; the validator rejects it for `public`, `embed`, `member` and `admin` alike; as defence in depth the dispatch treats a `public` / `embed` record that matches the decoded `/plugins/<name>/orgs[/...]` anyway, e.g. a `/*` pattern, as no match: 404).
 - An embed UI contribution's `path` must be declared as a `GET` with `access: "public"`: the
   sandboxed iframe loads the page before it holds a token.
 
@@ -71,10 +73,11 @@ is invalid gets no call (409 `extension.needs_config`).
   `auth.password_change_required`; a disabled account `auth.account_disabled`; no or an invalid token
   `auth.required` (401).
 - **The handler never sees kernel credentials**: the dispatch keeps stripping `cap_at` / `cap_rt`
-  and also removes an `Authorization` header that carries a kernel token (`cap_pat_` / `cap_svc_`);
+  and also removes an `Authorization` header that carries a kernel token (`cap_pat_` / `cap_svc_`
+  anywhere in the value);
   an embed token stays.
 - **Order**: the 503 `extension.unavailable` gate runs first (a revoked extension's routes are gone,
-  so its access is unknown), then route matching, authentication, authorization, throttling, all in
+  so its access is unknown; it reads the decoded plugin segment, as the router matches decoded paths), then route matching, authentication, authorization, throttling, all in
   the plugin scope's `onRequest` hook before the body is read (as the org upload hook does), then the
   handler. A refusal never reaches the handler.
 - **Matching**: the route record carries its `access` and the dispatch uses the matched record's

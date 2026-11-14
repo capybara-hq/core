@@ -53,10 +53,12 @@ const authRequired = () => new ApiError("auth.required", "Authentication require
  * - `embed`: an embed token of this extension as `Authorization: Bearer` (not a `cap_` kernel
  *   token) or `?token=`, verified by the route's own `verifyEmbed` (signature, TTL, scope, live
  *   membership, slot role, extension enabled); missing or invalid -> 401 `auth.required`. An org
- *   token also needs a valid effective config (409 `extension.needs_config`).
+ *   token also needs a valid effective config (409 `extension.needs_config`; 503
+ *   `extension.unavailable` when the extension is not running on this replica).
  * - `member` / `admin`: a personal API token only (`authenticatePersonalToken`; a cookie is no
  *   credential); not a member, the extension off, or the org gone -> 404 `org.not_found`; a role
- *   below `member` / `admin` -> 403 `forbidden`; an invalid effective config -> 409.
+ *   below `member` / `admin` -> 403 `forbidden`; an invalid effective config -> 409 (503 when the
+ *   extension is not running on this replica).
  * Everything is read live (PG / Redis) per request; nothing is kept in the process.
  */
 @Injectable()
@@ -165,10 +167,19 @@ export class PluginRouteAccess implements RouteAccessResolver {
     };
   }
 
-  /** The extension's effective config for the org, or 409 `extension.needs_config`. */
+  /**
+   * The extension's effective config for the org; 503 `extension.unavailable` when the extension
+   * is not running on this replica (not a configuration problem), else 409 `extension.needs_config`.
+   */
   private async config(orgId: string, plugin: string): Promise<unknown> {
     const effective = await this.effective.get(orgId, plugin);
     if (!effective.ok) {
+      if (effective.notRunning) {
+        throw new ApiError(
+          "extension.unavailable",
+          `Extension ${plugin} is not available right now`,
+        );
+      }
       throw new ApiError("extension.needs_config", `Extension ${plugin} ${NEEDS_CONFIG_REASON}`);
     }
     return effective.config;

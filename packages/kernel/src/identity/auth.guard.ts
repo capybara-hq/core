@@ -37,30 +37,37 @@ function requireCsrf(req: FastifyRequest): void {
   }
 }
 
-/** 解析凭据；无凭据返回 undefined，凭据无效抛对应的 ApiError。 */
-async function resolvePrincipal(req: FastifyRequest, s: AuthServices): Promise<Resolved> {
+/**
+ * The API token of an `Authorization: Bearer` header as a principal: a service token, or a
+ * personal token with its account read live (disabled -> `auth.account_disabled`). Undefined
+ * without a Bearer header; an unknown token or a missing account -> `auth.required`. Shared by
+ * {@link resolvePrincipal} and {@link authenticatePersonalToken}.
+ */
+async function resolveBearer(
+  req: FastifyRequest,
+  s: Pick<AuthServices, "accounts" | "tokens">,
+): Promise<Principal | undefined> {
   const bearer = BEARER_RE.exec(req.headers.authorization ?? "")?.[1];
-  if (bearer !== undefined) {
-    const rec = await s.tokens.authenticate(bearer);
-    if (!rec) throw new ApiError("auth.required", "Authentication required");
-    if (rec.kind === "service") {
-      return {
-        principal: {
-          kind: "service",
-          tokenId: rec.id,
-          orgId: rec.orgId as string,
-          role: rec.role as "admin" | "member" | "guest",
-        },
-        cookie: false,
-      };
-    }
-    const account = await s.accounts.get(rec.accountId as string);
-    if (!account) throw new ApiError("auth.required", "Authentication required");
+  if (bearer === undefined) return undefined;
+  const rec = await s.tokens.authenticate(bearer);
+  if (!rec) throw new ApiError("auth.required", "Authentication required");
+  if (rec.kind === "service") {
     return {
-      principal: { kind: "user", account: requireActive(account), via: "pat", tokenId: rec.id },
-      cookie: false,
+      kind: "service",
+      tokenId: rec.id,
+      orgId: rec.orgId as string,
+      role: rec.role as "admin" | "member" | "guest",
     };
   }
+  const account = await s.accounts.get(rec.accountId as string);
+  if (!account) throw new ApiError("auth.required", "Authentication required");
+  return { kind: "user", account: requireActive(account), via: "pat", tokenId: rec.id };
+}
+
+/** 解析凭据；无凭据返回 undefined，凭据无效抛对应的 ApiError。 */
+async function resolvePrincipal(req: FastifyRequest, s: AuthServices): Promise<Resolved> {
+  const viaToken = await resolveBearer(req, s);
+  if (viaToken !== undefined) return { principal: viaToken, cookie: false };
   const at = req.cookies[ACCESS_COOKIE];
   if (at) {
     // 一条查询同时完成吊销检查与账号读取
@@ -121,18 +128,13 @@ export async function authenticatePersonalToken(
   req: FastifyRequest,
   s: Pick<AuthServices, "accounts" | "tokens">,
 ): Promise<Account> {
-  const bearer = BEARER_RE.exec(req.headers.authorization ?? "")?.[1];
-  if (bearer === undefined) throw new ApiError("auth.required", "Authentication required");
-  const rec = await s.tokens.authenticate(bearer);
-  if (!rec) throw new ApiError("auth.required", "Authentication required");
-  if (rec.kind === "service") {
+  const p = await resolveBearer(req, s);
+  if (p === undefined) throw new ApiError("auth.required", "Authentication required");
+  if (p.kind === "service") {
     throw new ApiError("forbidden", "Service tokens cannot access this endpoint");
   }
-  const account = await s.accounts.get(rec.accountId as string);
-  if (!account) throw new ApiError("auth.required", "Authentication required");
-  requireActive(account);
-  if (account.mustChangePassword) throw passwordChangeRequired();
-  return account;
+  if (p.account.mustChangePassword) throw passwordChangeRequired();
+  return p.account;
 }
 
 /**

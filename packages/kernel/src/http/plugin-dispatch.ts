@@ -96,8 +96,11 @@ export function createPluginRouter(routes: Route[]): PluginRouter {
  * Before the body is read (the scope's `onRequest` hook), in this order:
  * - the extension belongs to this deployment but is not in the registry (revoked and so on) -> 503
  *   `extension.unavailable` (its routes are gone, so their access is unknown);
+ *   The gate reads the plugin segment decoded (the router decodes too); a malformed escape -> 400
+ *   `validation_failed`;
  * - not mounted or no match -> 404 `not_found`; HEAD without its own route uses the GET record
- *   (its access and params) and answers with no body;
+ *   (its access and params) and answers with no body; a `public` / `embed` record matching the
+ *   org mount `/plugins/<plugin>/orgs[/...]` (decoded) counts as no match;
  * - the matched record's access is resolved by `access` (authentication, authorization, effective
  *   config, the public write throttle, see plugin-route-access.ts): an `ApiError` answers its
  *   status and envelope, any other failure is logged and answers 500 `internal`. A refusal never
@@ -152,15 +155,22 @@ export async function registerPluginDispatch(
 
   const authorize = async (req: FastifyRequest, reply: FastifyReply) => {
     const path = req.url.split("?")[0] as string;
+    // the router matches decoded paths (`/plugins/%70/x` is `/plugins/p/x`), so the gate and the
+    // org-mount guard read them decoded too; a malformed escape matches nothing
+    const decoded = safeDecode(path);
+    const rawPlugin = pluginOfPath(path);
+    const plugin = rawPlugin === undefined ? undefined : safeDecode(rawPlugin);
+    if (decoded === undefined || (rawPlugin !== undefined && plugin === undefined)) {
+      return reply.code(400).send(errorBody("validation_failed", "Malformed request"));
+    }
     const table = getTable();
-    const plugin = pluginOfPath(path);
     if (table && plugin !== undefined && (await table.unavailable(plugin))) {
       return reply
         .code(503)
         .send(errorBody("extension.unavailable", `Extension ${plugin} is not available right now`));
     }
     const match = table ? routerOf(table).find(req.method, path) : undefined;
-    if (!match) {
+    if (!match || catchesOrgMount(match.route, decoded)) {
       return reply.code(404).send(errorBody("not_found", `Route ${req.method} ${path} not found`));
     }
     let caller: RouteCaller;
@@ -253,6 +263,26 @@ export async function registerPluginDispatch(
   };
 }
 
+/** `decodeURIComponent`, or undefined for a malformed escape. */
+function safeDecode(s: string): string | undefined {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Defence in depth: `/plugins/<plugin>/orgs[/...]` belongs to the org mount of `member` / `admin`
+ * routes (the SDK keeps every declared path out of `/orgs/`), so a `public` / `embed` record
+ * that matches it anyway (a `/*` or `/:a/:b/...` pattern) is treated as no match.
+ */
+function catchesOrgMount(route: Route, decodedPath: string): boolean {
+  if (route.access === "member" || route.access === "admin") return false;
+  const mount = `${PLUGIN_PREFIX}${route.plugin}/orgs`;
+  return decodedPath === mount || decodedPath.startsWith(`${mount}/`);
+}
+
 const KERNEL_COOKIES: ReadonlySet<string> = new Set([ACCESS_COOKIE, REFRESH_COOKIE]);
 
 /**
@@ -268,8 +298,11 @@ export function stripKernelCookies(cookie: string): string | undefined {
   return kept.length > 0 ? kept.join("; ") : undefined;
 }
 
-/** A kernel API token anywhere in an Authorization value (`Bearer cap_pat_…`, a bare token, ...). */
-const KERNEL_TOKEN_RE = /(^|\s)cap_(pat|svc)_/i;
+/**
+ * A kernel API token anywhere in an Authorization value (`Bearer cap_pat_…`, a bare token, a quoted
+ * or comma / `=` separated one, ...): matched as a substring, never by its position.
+ */
+const KERNEL_TOKEN_RE = /cap_(pat|svc)_/i;
 
 /**
  * An `Authorization` header value as the extension handler may see it: undefined (dropped) when it
@@ -277,7 +310,7 @@ const KERNEL_TOKEN_RE = /(^|\s)cap_(pat|svc)_/i;
  * kernel API as its owner; anything else (an embed token, a webhook signature) is kept.
  */
 export function stripKernelAuthorization(value: string): string | undefined {
-  return KERNEL_TOKEN_RE.test(value.trim()) ? undefined : value;
+  return KERNEL_TOKEN_RE.test(value) ? undefined : value;
 }
 
 /**
