@@ -1,5 +1,33 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.30
+
+### Minor Changes
+
+- 059fa71: Agent-created git commits and pull requests now carry a configurable attribution line. The
+  deployment defaults live in the startup config `attribution` (commit, pr, sessionUrl) and in the
+  admin console's settings; an agent's definition may follow them, use its own values or turn
+  attribution off. The effective values are recorded at run start in the conversation's run context,
+  so replay reproduces the instruction exactly; the kernel instructs the model and never rewrites git
+  history.
+- caa4575: Auto mode: a device runs in `auto` (commands with the environment's own capability, guarded by
+  command review) or `sandbox`. The platform's `devices.autoMode` switch and the org's `autoMode` and
+  `cloudNetwork` settings replace the sandbox tiers and the org egress setting; `/admin/settings`
+  shows the platform's switch with where it comes from, `/settings/sandbox` holds the org's auto mode
+  and the cloud devices' sandbox-mode network, and a device page shows its mode, the 自动 / 沙箱
+  switch and its network (sandbox mode only). A command the review holds appears as its own approval
+  card in the conversation and in the inbox.
+  
+  Migration 0130 drops `devices.tier` and the `sandboxTiers` setting, so this is not a rolling update:
+  on a deployment with more than one replica, drain or stop the old `api`, `worker`, `gateway` and
+  `web` replicas before running `capybara migrate`.
+
+### Patch Changes
+
+- Updated dependencies [059fa71]
+- Updated dependencies [caa4575]
+  - @capybara-hq/kernel@0.1.0-rc.29
+
 ## 0.1.0-rc.29
 
 ### Patch Changes
