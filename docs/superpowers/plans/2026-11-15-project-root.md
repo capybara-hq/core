@@ -188,21 +188,35 @@ git add packages/device
 git commit -m "feat(device): projects in the local policy and four project operations"
 ```
 
-### Task 3: Device: `list`
+### Task 3: The `list` device operation and `LocalDeviceProvider.list`
+
+Re-scoped during execution: the opus re-review of Task 1 found that `packages/device/src` has no
+`SandboxProvider`; the kernel's `LocalDeviceProvider` forwards each file method to the machine as one
+`DeviceOp`. Task 1's fix round adds the `list` op to the contract; this task implements both ends.
 
 **Files:**
-- Modify: the device's `SandboxProvider` implementation
-- Test: beside the existing provider test
+- Modify: `packages/device/src/server-ops.ts` (serve the `list` op beside `readFile` / `stat`)
+- Modify: the device's executors that answer `stat` (`packages/device/src/exec/*`), so `list` follows
+  the same mode and root rules as `stat`
+- Modify: `packages/kernel/src/local-devices/local-device-provider.ts` (`list`, beside `stat`)
+- Test: `packages/device/test/` beside the existing `stat` tests; `packages/kernel/test/local-devices/local-device-provider.test.ts`
 
-**Interfaces:** Consumes `SandboxProvider.list` from T1; produces the implementation.
+**Interfaces:**
+- Consumes (from Task 1's fix): `DeviceOp "list"`, args `{ path: string; limit: number }`, result
+  `{ entries: { name: string; isDir: boolean }[]; truncated: boolean } | null`;
+  `SandboxProvider.list?(h, path, { limit, signal })`; the `"projects"` feature.
+- Produces: a local device that answers `list`, and a kernel provider whose `list` T6 calls.
 
-- [ ] **Step 1: Write the failing test** — listing a directory returns `{ name, isDir }` per entry, sorted, and a missing directory returns `[]` (never throws).
+- [ ] **Step 1: Write the failing tests** — the device answers `list` with entries sorted by code
+  unit, `truncated: true` past `limit`, `null` for a missing path, a thrown error for a file or an
+  unreadable path; in sandbox mode a path outside the roots is refused exactly as `stat` refuses it.
+  The kernel provider forwards `list` and returns the parsed result.
 
-- [ ] **Step 2: Run it to see it fail** — `pnpm exec vitest run packages/device/test` → FAIL.
+- [ ] **Step 2: Run them to see them fail** — `pnpm exec vitest run packages/device/test packages/kernel/test/local-devices` → FAIL.
 
-- [ ] **Step 3: Implement** over the same file helper `readFile` uses.
+- [ ] **Step 3: Implement** both ends; the device reuses the executor routing `stat` uses.
 
-- [ ] **Step 4: Run the tests and commit** — `feat(device): list a directory`.
+- [ ] **Step 4: Run the tests and `pnpm typecheck`; commit** — `feat(device): list a directory over the device protocol`.
 
 ### Task 4: Kernel: the `project_root` event
 
