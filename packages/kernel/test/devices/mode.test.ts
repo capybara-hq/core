@@ -91,7 +91,6 @@ const HELLO: DeviceHello = {
 const SUMMARY = (p: Partial<DeviceLocalPolicySummary> = {}): DeviceLocalPolicySummary => ({
   mode: "auto",
   allowedDomains: [],
-  projects: [],
   ...p,
 });
 
@@ -207,11 +206,7 @@ describe("DevicesService.modeLevel", () => {
       "Mode: auto. Commands run as the user on this machine",
     );
     // the owner ran `capybara-device mode sandbox` and allowed a host: the program pushes it
-    const summary: DeviceLocalPolicySummary = {
-      mode: "sandbox",
-      allowedDomains: ["a.com"],
-      projects: [],
-    };
+    const summary: DeviceLocalPolicySummary = { mode: "sandbox", allowedDomains: ["a.com"] };
     await machines.recordPolicy(machineId, summary);
     expect((await machines.activeFor(deviceId))?.localPolicy).toEqual(summary);
     const after = await devices.modeLevel(orgId, deviceId);

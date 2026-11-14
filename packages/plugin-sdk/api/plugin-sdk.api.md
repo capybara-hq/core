@@ -804,6 +804,7 @@ export type DeviceFrame = DeviceHello | DeviceRes | DevicePolicyChanged | Kernel
 export interface DeviceHello {
     arch: string;
     features?: DeviceFeature[];
+    home?: string;
     mode: "os" | "docker";
     os: "darwin" | "linux";
     policy?: DeviceLocalPolicySummary;
@@ -826,6 +827,7 @@ export interface DeviceKillTaggedArgs {
 // @public
 export interface DeviceListArgs {
     limit: number;
+    limits: DeviceRequestCeiling;
     path: string;
 }
 
@@ -845,11 +847,10 @@ export type DeviceListResult = {
 export interface DeviceLocalPolicySummary {
     allowedDomains: string[];
     mode: "auto" | "sandbox";
-    projects: DeviceProject[];
 }
 
 // @public
-export type DeviceOp = "create" | "exec" | "readFile" | "writeFile" | "stat" | "killTagged" | "killAll" | "stop" | "policy" | "policyStatus" | "projectList" | "projectCandidates" | "projectAdd" | "projectRemove" | "list";
+export type DeviceOp = "create" | "exec" | "readFile" | "writeFile" | "stat" | "killTagged" | "killAll" | "stop" | "policy" | "policyStatus" | "list" | "scan";
 
 // @public
 export interface DeviceOpResults {
@@ -860,11 +861,8 @@ export interface DeviceOpResults {
     list: DeviceListResult;
     policy: DevicePolicyResult;
     policyStatus: DevicePolicyStatus;
-    projectAdd: DeviceProjectAddResult;
-    projectCandidates: DeviceProjectCandidate[];
-    projectList: DeviceProject[];
-    projectRemove: null;
     readFile: DeviceReadFileResult;
+    scan: DeviceScanResult;
     stat: DeviceStatResult;
     stop: null;
     writeFile: DeviceWriteFileResult;
@@ -917,39 +915,9 @@ export interface DevicePolicyStatusArgs {
 }
 
 // @public
-export interface DeviceProject {
-    name: string;
-    path: string;
-}
-
-// @public
-export interface DeviceProjectAddArgs {
-    name?: string;
-    path: string;
-}
-
-// @public
-export type DeviceProjectAddResult = {
-    project: DeviceProject;
-} | {
-    refused: string;
-};
-
-// @public
 export interface DeviceProjectCandidate {
     path: string;
     suggestedName: string;
-}
-
-// @public
-export type DeviceProjectCandidatesArgs = Record<string, never>;
-
-// @public
-export type DeviceProjectListArgs = Record<string, never>;
-
-// @public
-export interface DeviceProjectRemoveArgs {
-    name: string;
 }
 
 // @public
@@ -970,6 +938,9 @@ export type DeviceReadFileResult = {
 } | null;
 
 // @public
+export type DeviceRequestCeiling = Pick<SandboxLimits, "mode">;
+
+// @public
 export type DeviceRes = {
     type: "res";
     id: string;
@@ -984,6 +955,15 @@ export type DeviceRes = {
         message: string;
     };
 };
+
+// @public
+export interface DeviceScanArgs {
+    base: string;
+    limits: DeviceRequestCeiling;
+}
+
+// @public
+export type DeviceScanResult = DeviceProjectCandidate[];
 
 // @public
 export interface DeviceStatArgs {
@@ -1761,9 +1741,6 @@ export function isChannelSendError(e: unknown): e is ChannelSendError;
 export function isDeviceProjectName(v: unknown): v is string;
 
 // @public
-export function isDeviceProjectPath(v: unknown): v is string;
-
-// @public
 export function isDisallowedSkillRef(v: unknown): v is string;
 
 // @public
@@ -1962,7 +1939,10 @@ export const MAX_DEVICE_LIST_ENTRIES = 1000;
 export const MAX_DEVICE_PROJECT_NAME_LENGTH = 64;
 
 // @public
-export const MAX_DEVICE_PROJECTS = 100;
+export const MAX_DEVICE_SCAN_DEPTH = 2;
+
+// @public
+export const MAX_DEVICE_SCAN_RESULTS = 50;
 
 // @public
 export const MAX_NETWORK_BLOCKED_HOSTS = 20;
@@ -2787,6 +2767,7 @@ export interface SandboxProvider {
     readonly limitsApplyAt?: "instance" | "fileSystem";
     list?(h: SandboxHandle, path: string, opts: {
         limit: number;
+        limits: Pick<SandboxLimits, "mode">;
         signal: AbortSignal;
     }): Promise<{
         entries: {
@@ -2803,6 +2784,13 @@ export interface SandboxProvider {
         truncated: boolean;
     } | null>;
     resume(h: SandboxHandle, signal: AbortSignal): Promise<"resumed" | "gone">;
+    scan?(h: SandboxHandle, base: string, opts: {
+        limits: Pick<SandboxLimits, "mode">;
+        signal: AbortSignal;
+    }): Promise<{
+        path: string;
+        suggestedName: string;
+    }[]>;
     readonly sessionIsolation?: boolean;
     stat(h: SandboxHandle, path: string, signal: AbortSignal): Promise<{
         size: number;

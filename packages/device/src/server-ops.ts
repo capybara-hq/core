@@ -5,9 +5,6 @@ import {
   type DevicePolicyArgs,
   type DevicePolicyStatus,
   type DevicePolicyStatusArgs,
-  type DeviceProjectAddArgs,
-  type DeviceProjectAddResult,
-  type DeviceProjectRemoveArgs,
   type DeviceReadFileArgs,
   type DeviceRes,
   type DeviceStatArgs,
@@ -22,15 +19,6 @@ import { DeviceOpError, type ExecMode, type Executor } from "./exec/types.js";
 import { effectiveMode, grantedHosts } from "./policy.js";
 import type { PolicyOpRecord } from "./policy-ops.js";
 import type { PolicyStore } from "./policy-store.js";
-import {
-  addProject,
-  candidates,
-  listProjects,
-  MAX_CANDIDATES,
-  type ProjectScope,
-  projectScope,
-  removeProject,
-} from "./projects.js";
 import { publicSuffixWildcard } from "./public-suffix.js";
 import { DEFAULT_POLICY, type Policy, type SandboxMode } from "./state.js";
 
@@ -105,14 +93,12 @@ export function summaryMode(p: Policy, facts: SummaryFacts): SandboxMode {
 
 /**
  * The summary the kernel keeps of a local policy (hello, `policy` op result): the effective mode
- * (the owner's choice cut to the latest ceiling seen), the device's sandbox-mode allowlist, and
- * the projects it serves.
+ * (the owner's choice cut to the latest ceiling seen) and the device's sandbox-mode allowlist.
  */
 export function policySummary(p: Policy, facts: SummaryFacts): DeviceLocalPolicySummary {
   return {
     mode: summaryMode(p, facts),
     allowedDomains: [...p.allowedDomains],
-    projects: listProjects(p, summaryScope(p, facts)),
   };
 }
 
@@ -124,19 +110,6 @@ export function summaryFacts(executor: Executor, ctx: OpContext): SummaryFacts {
     workspace: executor.roots.workspace,
     home: ctx.home,
   };
-}
-
-/**
- * The scope the project operations and the summary follow: the summary's mode and what it may
- * offer (§4.2).
- */
-export function summaryScope(p: Policy, facts: SummaryFacts): ProjectScope {
-  return projectScope(
-    summaryMode(p, facts),
-    { workspace: facts.workspace },
-    facts.mode === "docker",
-    facts.home,
-  );
 }
 
 /** A refused `policy` op, with the local audit line that records the attempt. */
@@ -307,27 +280,14 @@ function servePolicyOp(
 }
 
 /** The operations answered from the local policy file. */
-type LocalPolicyOp =
-  | "policy"
-  | "policyStatus"
-  | "projectList"
-  | "projectCandidates"
-  | "projectAdd"
-  | "projectRemove";
+type LocalPolicyOp = "policy" | "policyStatus";
 
 /**
  * Whether `op` is answered from the local policy file: it lives in the state directory, so these
  * work while the device directory is gone, like the `policy` ops.
  */
 function isLocalPolicyOp(op: KernelReq["op"]): op is LocalPolicyOp {
-  return (
-    op === "policy" ||
-    op === "policyStatus" ||
-    op === "projectList" ||
-    op === "projectCandidates" ||
-    op === "projectAdd" ||
-    op === "projectRemove"
-  );
+  return op === "policy" || op === "policyStatus";
 }
 
 /** The answer to an operation this program does not serve (it has no policy store). */
@@ -338,99 +298,6 @@ function unsupported(req: KernelReq): DeviceRes {
     ok: false,
     error: { kind: "error", message: "unsupported operation" },
   };
-}
-
-/** A request field that must be a non-empty string (the frame parser may have been bypassed). */
-function requiredString(v: unknown, key: string): string {
-  if (typeof v !== "string" || v === "") {
-    throw new DeviceOpError("error", `invalid request: field "${key}" must be a non-empty string`);
-  }
-  return v;
-}
-
-/**
- * One project operation. The device is the authority on what it may offer (spec §4.2): the path
- * must lie inside what the mode can read, exist, and be a directory, and its name must be free. A
- * refused add is an `ok` answer carrying `{ refused }`, never a failed frame: the caller asked a
- * question and the device answered it. Add and remove change the local policy file under its lock.
- */
-async function serveProjectOp(
-  req: KernelReq,
-  store: PolicyStore,
-  facts: SummaryFacts,
-  executor: Executor,
-): Promise<{ res: DeviceRes; detail?: string }> {
-  const ok = (result: unknown): DeviceRes => ({ type: "res", id: req.id, ok: true, result });
-  switch (req.op) {
-    case "projectList": {
-      const policy = store.current();
-      return { res: ok(listProjects(policy, summaryScope(policy, facts))) };
-    }
-    case "projectCandidates": {
-      // A container device's file system is the container's: this process cannot scan it, and a
-      // host directory of the same name is not it.
-      if (executor.mode === "docker") return { res: ok([]) };
-      const scope = summaryScope(store.current(), facts);
-      return { res: ok(candidates(scope.base, MAX_CANDIDATES)) };
-    }
-    case "projectAdd": {
-      const args = req.args as Partial<DeviceProjectAddArgs>;
-      const path = requiredString(args.path, "path");
-      const name = args.name === undefined ? undefined : requiredString(args.name, "name");
-      const input = name === undefined ? { path } : { path, name };
-      const scope = summaryScope(store.current(), facts);
-      const checked = addProject(store.current(), input, scope);
-      if ("refused" in checked) {
-        return { res: ok(checked), detail: `project refused ${checked.refused}` };
-      }
-      let st: { size: number; isDir: boolean } | null;
-      try {
-        // Read as the scope's mode, not by the latest command's decision: an auto-mode device
-        // checks a project outside its workspace with the owner's rights even before its first
-        // command (a container device, always sandbox scope, uses its own stat).
-        st =
-          executor.statAs !== undefined
-            ? await executor.statAs(scope.mode, checked.project.path)
-            : await executor.stat(checked.project.path);
-      } catch (e) {
-        // An unreadable path is a refusal like any other, not a failed request.
-        const refused = `${checked.project.path} cannot be read (${e instanceof Error ? e.message : String(e)})`;
-        return { res: ok({ refused }), detail: `project refused ${refused}` };
-      }
-      if (st === null) {
-        const refused = `${checked.project.path} does not exist`;
-        return { res: ok({ refused }), detail: `project refused ${refused}` };
-      }
-      if (!st.isDir) {
-        const refused = `${checked.project.path} is not a directory`;
-        return { res: ok({ refused }), detail: `project refused ${refused}` };
-      }
-      // The name is checked again under the policy lock: a change on the machine meanwhile must
-      // not make two projects share a name.
-      let result: DeviceProjectAddResult = checked;
-      store.update((p) => {
-        const again = addProject(
-          p,
-          { path: checked.project.path, ...(name !== undefined && { name }) },
-          scope,
-        );
-        result = again;
-        return "refused" in again ? p : { ...p, projects: [...p.projects, again.project] };
-      });
-      return "refused" in result
-        ? { res: ok(result), detail: `project refused ${result.refused}` }
-        : { res: ok(result), detail: `project add ${result.project.name} ${result.project.path}` };
-    }
-    case "projectRemove": {
-      const name = requiredString((req.args as Partial<DeviceProjectRemoveArgs>).name, "name");
-      // Idempotent: an unknown name changes nothing and is not an error.
-      if (!removeProject(store.current(), name)) return { res: ok(null) };
-      store.update((p) => ({ ...p, projects: p.projects.filter((proj) => proj.name !== name) }));
-      return { res: ok(null), detail: `project remove ${name}` };
-    }
-    default:
-      return { res: unsupported(req) };
-  }
 }
 
 /** What the log says of an op id, with the summary now. Read-only. */
@@ -482,8 +349,7 @@ export async function serveOp(
       if (ctx.policy === undefined) return { res: unsupported(req) };
       const facts = summaryFacts(executor, ctx);
       if (req.op === "policyStatus") return { res: ok(policyStatus(ctx.policy, req.args, facts)) };
-      if (req.op === "policy") return servePolicyOp(req, ctx.policy, facts);
-      return serveProjectOp(req, ctx.policy, facts, executor);
+      return servePolicyOp(req, ctx.policy, facts);
     }
     if ((await executor.ensureRoot()) === "gone") {
       return {
@@ -552,7 +418,8 @@ export async function serveOp(
         await executor.killAll();
         return { res: ok(null) };
       case "list":
-        // not served yet: the device-side `list` handler comes with the provider's `list`
+      case "scan":
+        // not served yet: the device answers them in the request's ceiling once it implements them
         return { res: unsupported(req) };
     }
   } catch (e) {

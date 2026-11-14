@@ -54,7 +54,6 @@ import type { Answer } from "./test-holder.js";
 const POLICY: DeviceLocalPolicySummary = {
   mode: "auto",
   allowedDomains: ["pypi.org"],
-  projects: [],
 };
 const GRACE_S = 2;
 /** How long after the intent the op can no longer reach the machine. */

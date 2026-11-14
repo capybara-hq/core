@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { MAX_DEVICE_PROJECT_NAME_LENGTH, MAX_DEVICE_PROJECTS } from "@capybara-hq/plugin-sdk";
+import { MAX_DEVICE_PROJECT_NAME_LENGTH } from "@capybara-hq/plugin-sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   addProject,
@@ -12,7 +12,7 @@ import {
   projectScope,
   removeProject,
 } from "../src/projects.js";
-import type { Policy } from "../src/state.js";
+import { MAX_DEVICE_PROJECTS, type Policy } from "../src/state.js";
 
 /** A policy that serves `projects` (the only field the project store reads). */
 const policy = (projects: Policy["projects"] = []): Pick<Policy, "projects"> => ({ projects });

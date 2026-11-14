@@ -28,11 +28,8 @@ export type DeviceOp =
   | "stop"
   | "policy"
   | "policyStatus"
-  | "projectList"
-  | "projectCandidates"
-  | "projectAdd"
-  | "projectRemove"
-  | "list";
+  | "list"
+  | "scan";
 
 const DEVICE_OPS: readonly DeviceOp[] = [
   "create",
@@ -45,11 +42,8 @@ const DEVICE_OPS: readonly DeviceOp[] = [
   "stop",
   "policy",
   "policyStatus",
-  "projectList",
-  "projectCandidates",
-  "projectAdd",
-  "projectRemove",
   "list",
+  "scan",
 ];
 
 /**
@@ -57,10 +51,10 @@ const DEVICE_OPS: readonly DeviceOp[] = [
  * op; `policyOpId`: it also logs each `policy` op's outcome by its `opId`, answers `policyStatus`
  * and reports recent outcomes in its hello (`recentOps`); `networkReport` means exec results may
  * carry `network`; `mode` means the device applies `limits.mode` / `limits.network` (without it
- * the device behaves as an allowlisted sandbox); `projects` means the device serves the four
- * project ops (`projectList`, `projectCandidates`, `projectAdd`, `projectRemove`) and `list`. The
- * kernel gates each op on its feature, as it gates `policy` on `policyOp` / `policyOpId`: it never
- * sends a project op or `list` to a device that did not announce `projects`.
+ * the device behaves as an allowlisted sandbox); `projects` means the device serves `list` and
+ * `scan` (the kernel keeps a device's projects itself and asks the device only what it can read).
+ * The kernel gates each op on its feature, as it gates `policy` on `policyOp` / `policyOpId`: it
+ * never sends `list` or `scan` to a device that did not announce `projects`.
  */
 export type DeviceFeature = "networkReport" | "policyOp" | "policyOpId" | "mode" | "projects";
 const DEVICE_FEATURES: readonly DeviceFeature[] = [
@@ -71,24 +65,24 @@ const DEVICE_FEATURES: readonly DeviceFeature[] = [
   "projects",
 ];
 
-/** The most projects a summary or a `projectList` / `projectCandidates` result carries. */
-export const MAX_DEVICE_PROJECTS = 100;
-
 /** The longest project name, in characters. */
 export const MAX_DEVICE_PROJECT_NAME_LENGTH = 64;
 
 /** The most entries a `list` op may ask for and its result may carry. */
 export const MAX_DEVICE_LIST_ENTRIES = 1000;
 
-// The same bounds `validateSandboxPathShape` (sandbox.ts) applies to a path: at most this many
-// characters, and no control characters.
-const MAX_PATH_LENGTH = 4096;
+/** The most candidates a `scan` result carries. */
+export const MAX_DEVICE_SCAN_RESULTS = 50;
+
+/** How far below its base a `scan` looks: the base's children and their children. */
+export const MAX_DEVICE_SCAN_DEPTH = 2;
+
 // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what it refuses
 const CONTROL = /[\u0000-\u001f\u007f]/;
 
 /**
  * Whether `v` is a valid project name: non-empty, at most {@link MAX_DEVICE_PROJECT_NAME_LENGTH}
- * characters, no control characters and no `/`.
+ * characters, no control characters and no `/`. A `scan` candidate's `suggestedName` obeys it.
  */
 export function isDeviceProjectName(v: unknown): v is string {
   return (
@@ -100,48 +94,30 @@ export function isDeviceProjectName(v: unknown): v is string {
   );
 }
 
-/**
- * Whether `v` is a valid project directory as a device reports it (in a summary or an op result):
- * absolute, at most 4096 characters, no control characters. Only `projectAdd`'s args
- * may carry a relative path.
- */
-export function isDeviceProjectPath(v: unknown): v is string {
-  return (
-    typeof v === "string" && v.startsWith("/") && v.length <= MAX_PATH_LENGTH && !CONTROL.test(v)
-  );
-}
-
-/**
- * One project a device serves: the name its owner knows it by (the directory's basename unless
- * the owner picked another) and the directory's path on the machine. The device is the only
- * writer; the kernel keeps a conversation's binding as the name and the path it resolved.
- */
-export interface DeviceProject {
-  name: string;
-  path: string;
-}
-
-/** What the kernel knows of a device's local policy (from the hello or a `policy` op). */
+/** What a device knows of its local policy and reports (in the hello or a `policy` op). */
 export interface DeviceLocalPolicySummary {
   /** `auto` = no OS sandbox (the owner's machine); `sandbox` = the OS sandbox. */
   mode: "auto" | "sandbox";
   /** The device's sandbox-mode allowlist; meaningful in sandbox mode only. */
   allowedDomains: string[];
-  /**
-   * The projects the device serves. The parser always fills it (`[]` when the device reports
-   * none, including a program that predates the project ops).
-   */
-  projects: DeviceProject[];
 }
 
 /**
- * A directory that looks like a project (a `projectCandidates` entry): a suggestion, not a served
- * project. `path` is absolute; `suggestedName` is a guess from its basename the owner may change.
+ * A directory a `scan` found that looks like a project (it holds `.git` or `AGENTS.md`): a
+ * suggestion, not a project. `path` is absolute ({@link validateSandboxPathShape});
+ * `suggestedName` is a guess from its basename ({@link isDeviceProjectName}) the owner may change.
  */
 export interface DeviceProjectCandidate {
   path: string;
   suggestedName: string;
 }
+
+/**
+ * The kernel's current ceiling on a request that reads the device's file system outside a command
+ * (`list`, `scan`): the device answers in the mode it would run this request in, the owner's
+ * choice cut to `mode`, never by a ceiling it saw on an earlier command.
+ */
+export type DeviceRequestCeiling = Pick<SandboxLimits, "mode">;
 
 /**
  * The first line of the kernel's background task launch command (`Bash` `run_in_background`), a
@@ -199,6 +175,11 @@ export interface DeviceHello {
    * the parser).
    */
   recentOps?: DevicePolicyOpReport[];
+  /**
+   * The owner's home directory, an absolute path (a local device; the base of an auto-mode
+   * project's relative path). A malformed value is dropped by the parser.
+   */
+  home?: string;
 }
 
 /** Error kinds a device reports for a failed request. */
@@ -326,53 +307,41 @@ export interface DevicePolicyStatus {
   message?: string;
 }
 /**
- * Lists the projects the device serves. No args: the result is the {@link DeviceProject} list, at
- * most {@link MAX_DEVICE_PROJECTS}.
- */
-export type DeviceProjectListArgs = Record<string, never>;
-/**
- * Asks which directories look like projects (a `.git` or an `AGENTS.md`), scanned at most two
- * levels under what the device may offer and bounded to a page of entries. No args: the result is
- * a {@link DeviceProjectCandidate} list, at most {@link MAX_DEVICE_PROJECTS}.
- */
-export type DeviceProjectCandidatesArgs = Record<string, never>;
-/** Serves `path` as a project. */
-export interface DeviceProjectAddArgs {
-  /**
-   * The project's directory, relative to the device's base or absolute. The device refuses a path
-   * it cannot read in its current mode, or one that is not a directory.
-   */
-  path: string;
-  /** The name to serve it under; the device uses the directory's basename when absent. */
-  name?: string;
-}
-/**
- * The added project, or the reason the device refused it (an unreadable path, a directory outside
- * what the mode may offer, a name already served).
- */
-export type DeviceProjectAddResult = { project: DeviceProject } | { refused: string };
-/** Stops serving the project with this name; the device keeps the directory untouched. */
-export interface DeviceProjectRemoveArgs {
-  name: string;
-}
-/**
- * Lists one directory (absolute `path`): at most `limit` entries (at most
- * {@link MAX_DEVICE_LIST_ENTRIES}). See `SandboxProvider.list` for the semantics.
+ * Lists one directory (absolute `path`, {@link validateSandboxPathShape}): at most `limit` entries
+ * (at most {@link MAX_DEVICE_LIST_ENTRIES}), read in the mode `limits` gives. See
+ * `SandboxProvider.list` for the semantics.
  */
 export interface DeviceListArgs {
   path: string;
   limit: number;
+  limits: DeviceRequestCeiling;
 }
-/** One entry of a listed directory. */
+/**
+ * One entry of a listed directory: `name` is never empty, `.` or `..` and holds no `/`. `isDir`
+ * follows symbolic links (stat semantics): a link to a directory is `true`, a dangling link `false`.
+ */
 export interface DeviceListEntry {
   name: string;
   isDir: boolean;
 }
 /**
  * The directory's entries sorted by code unit, `truncated` when more than `limit` exist; null when
- * the path does not exist (like `stat` / `readFile`).
+ * the path does not exist (like `stat` / `readFile`). A file or an unreadable path is an error.
  */
 export type DeviceListResult = { entries: DeviceListEntry[]; truncated: boolean } | null;
+/**
+ * Looks for project-like directories under `base` (absolute, {@link validateSandboxPathShape}),
+ * read in the mode `limits` gives. See `SandboxProvider.scan` for the semantics.
+ */
+export interface DeviceScanArgs {
+  base: string;
+  limits: DeviceRequestCeiling;
+}
+/**
+ * The directories at most {@link MAX_DEVICE_SCAN_DEPTH} levels below `base` that hold `.git` or
+ * `AGENTS.md`, at most {@link MAX_DEVICE_SCAN_RESULTS}. Never file contents.
+ */
+export type DeviceScanResult = DeviceProjectCandidate[];
 
 /** A frame that is not valid protocol v1 (or came from the wrong side). */
 export class DeviceProtocolError extends Error {
@@ -510,46 +479,17 @@ function projectName(v: unknown, what: string): string {
   return v;
 }
 
-/** A project directory a device reports (see {@link isDeviceProjectPath}). */
-function projectPath(v: unknown, what: string): string {
-  if (!isDeviceProjectPath(v)) {
-    throw new DeviceProtocolError(
-      `${what} must be an absolute path without control characters, at most ${MAX_PATH_LENGTH} characters`,
-    );
-  }
+/** An absolute path field ({@link validateSandboxPathShape}), named by `what` in the message. */
+function absolutePath(v: unknown, what: string): string {
+  if (typeof v !== "string") throw new DeviceProtocolError(`${what} must be a string`);
+  const problems = validateSandboxPathShape(v);
+  if (problems.length > 0) throw new DeviceProtocolError(`${what}: ${problems.join("; ")}`);
   return v;
 }
 
-/**
- * One project entry: an object with a valid `name` and an absolute `path`; anything else is
- * refused, under `what` so the message names the field. Unknown fields are dropped.
- */
-function parseProject(v: unknown, what: string): DeviceProject {
-  if (!isRecord(v)) throw new DeviceProtocolError(`${what} must be an object`);
-  return { name: projectName(v.name, `${what}.name`), path: projectPath(v.path, `${what}.path`) };
-}
-
-/**
- * The entries of a projects list (a summary's `projects` or a `projectList` result), at most
- * {@link MAX_DEVICE_PROJECTS}.
- */
-function parseProjects(v: unknown, label: string = "projects"): DeviceProject[] {
-  return boundedArray(v, label, MAX_DEVICE_PROJECTS, "projects").map((e, i) =>
-    parseProject(e, `field "${label}[${i}]"`),
-  );
-}
-
-/** A `projectCandidates` result: at most {@link MAX_DEVICE_PROJECTS} candidates. */
-function parseCandidates(v: unknown): DeviceProjectCandidate[] {
-  const label = "projectCandidates result";
-  return boundedArray(v, label, MAX_DEVICE_PROJECTS, "candidates").map((e, i) => {
-    const what = `field "${label}[${i}]"`;
-    if (!isRecord(e)) throw new DeviceProtocolError(`${what} must be an object`);
-    return {
-      path: projectPath(e.path, `${what}.path`),
-      suggestedName: projectName(e.suggestedName, `${what}.suggestedName`),
-    };
-  });
+/** A request's ceiling (`limits` of `list` / `scan`): only its mode. */
+function parseCeiling(v: unknown): DeviceRequestCeiling {
+  return { mode: oneOf(obj(v, 'field "limits"'), "mode", ["auto", "sandbox"] as const) };
 }
 
 /** A `list` result: null, or at most {@link MAX_DEVICE_LIST_ENTRIES} named entries. */
@@ -560,13 +500,35 @@ function parseListResult(result: unknown): DeviceListResult {
     (e, i) => {
       const what = `field "entries[${i}]"`;
       if (!isRecord(e)) throw new DeviceProtocolError(`${what} must be an object`);
-      if (typeof e.name !== "string" || e.name === "" || e.name.includes("/")) {
-        throw new DeviceProtocolError(`${what}.name must be a non-empty string without "/"`);
+      const name = e.name;
+      if (
+        typeof name !== "string" ||
+        name === "" ||
+        name === "." ||
+        name === ".." ||
+        name.includes("/")
+      ) {
+        throw new DeviceProtocolError(
+          `${what}.name must be a non-empty string without "/", other than "." and ".."`,
+        );
       }
-      return { name: e.name, isDir: bool(e, "isDir") };
+      return { name, isDir: bool(e, "isDir") };
     },
   );
   return { entries, truncated: bool(r, "truncated") };
+}
+
+/** A `scan` result: at most {@link MAX_DEVICE_SCAN_RESULTS} candidates. */
+function parseScanResult(v: unknown): DeviceScanResult {
+  const label = "scan result";
+  return boundedArray(v, label, MAX_DEVICE_SCAN_RESULTS, "candidates").map((e, i) => {
+    const what = `field "${label}[${i}]"`;
+    if (!isRecord(e)) throw new DeviceProtocolError(`${what} must be an object`);
+    return {
+      path: absolutePath(e.path, `${what}.path`),
+      suggestedName: projectName(e.suggestedName, `${what}.suggestedName`),
+    };
+  });
 }
 
 function parsePolicySummary(v: unknown): DeviceLocalPolicySummary {
@@ -574,7 +536,6 @@ function parsePolicySummary(v: unknown): DeviceLocalPolicySummary {
   return {
     mode: oneOf(o, "mode", ["auto", "sandbox"] as const),
     allowedDomains: strArray(o, "allowedDomains"),
-    projects: o.projects === undefined ? [] : parseProjects(o.projects),
   };
 }
 
@@ -619,12 +580,15 @@ function parseRecentOps(v: unknown[]): DevicePolicyOpReport[] {
 /** Optional hello fields: malformed values are ignored so old and new peers interoperate. */
 function optionalHelloFields(
   o: Record<string, unknown>,
-): Pick<DeviceHello, "features" | "policy" | "recentOps"> {
-  const out: Pick<DeviceHello, "features" | "policy" | "recentOps"> = {};
+): Pick<DeviceHello, "features" | "policy" | "recentOps" | "home"> {
+  const out: Pick<DeviceHello, "features" | "policy" | "recentOps" | "home"> = {};
   if (Array.isArray(o.features)) {
     out.features = DEVICE_FEATURES.filter((f) => (o.features as unknown[]).includes(f));
   }
   if (Array.isArray(o.recentOps)) out.recentOps = parseRecentOps(o.recentOps);
+  if (typeof o.home === "string" && validateSandboxPathShape(o.home).length === 0) {
+    out.home = o.home;
+  }
   return { ...out, ...optionalPolicy(o.policy) };
 }
 
@@ -790,32 +754,19 @@ function validateArgs(op: DeviceOp, a: Record<string, unknown>): void {
     case "policyStatus":
       opId(a);
       return;
-    case "projectList":
-    case "projectCandidates":
-      return;
-    case "projectAdd": {
-      // the only place a project path may be relative (to the device's base)
-      const path = nonEmptyStr(a, "path");
-      if (path.length > MAX_PATH_LENGTH || CONTROL.test(path)) {
-        throw new DeviceProtocolError(
-          `field "path" must be at most ${MAX_PATH_LENGTH} characters without control characters`,
-        );
-      }
-      if (a.name !== undefined) projectName(a.name, 'field "name"');
-      return;
-    }
-    case "projectRemove":
-      projectName(a.name, 'field "name"');
-      return;
     case "list": {
-      const path = str(a, "path");
-      if (!path.startsWith("/")) throw new DeviceProtocolError('field "path" must be absolute');
+      absolutePath(a.path, 'field "path"');
       const limit = posInt(a, "limit");
       if (limit > MAX_DEVICE_LIST_ENTRIES) {
         throw new DeviceProtocolError(`field "limit" must be at most ${MAX_DEVICE_LIST_ENTRIES}`);
       }
+      parseCeiling(a.limits);
       return;
     }
+    case "scan":
+      absolutePath(a.base, 'field "base"');
+      parseCeiling(a.limits);
+      return;
   }
 }
 
@@ -831,11 +782,8 @@ export interface DeviceOpResults {
   stop: null;
   policy: DevicePolicyResult;
   policyStatus: DevicePolicyStatus;
-  projectList: DeviceProject[];
-  projectCandidates: DeviceProjectCandidate[];
-  projectAdd: DeviceProjectAddResult;
-  projectRemove: null;
   list: DeviceListResult;
+  scan: DeviceScanResult;
 }
 
 /** Validates the `result` of a successful `res` for `op`; throws {@link DeviceProtocolError}. */
@@ -860,9 +808,6 @@ export function parseOpResult(op: DeviceOp, result: unknown): DeviceOpResults[De
       if (network) out.network = network;
       return out;
     }
-    // A malformed `projects` fails the whole `policy` / `policyStatus` result although a network
-    // change may already have taken effect on the device: acceptable, the device is the only
-    // writer of its projects, so a bad list is a device bug and the next hello reports the truth.
     case "policy":
       return { policy: parsePolicySummary(obj(result, "policy result").policy) };
     case "policyStatus": {
@@ -886,17 +831,10 @@ export function parseOpResult(op: DeviceOp, result: unknown): DeviceOpResults[De
     }
     case "create":
       return { roots: parseRoots(obj(result, "create result").roots) };
-    case "projectList":
-      return parseProjects(result, "projectList result");
-    case "projectCandidates":
-      return parseCandidates(result);
-    case "projectAdd": {
-      const r = obj(result, "projectAdd result");
-      if (r.refused !== undefined) return { refused: nonEmptyStr(r, "refused") };
-      return { project: parseProject(r.project, 'field "project"') };
-    }
     case "list":
       return parseListResult(result);
+    case "scan":
+      return parseScanResult(result);
     default:
       if (result !== null) throw new DeviceProtocolError(`${op} result must be null`);
       return null;

@@ -36,7 +36,6 @@ import type { Answer } from "./test-holder.js";
 const POLICY: DeviceLocalPolicySummary = {
   mode: "auto",
   allowedDomains: ["pypi.org"],
-  projects: [],
 };
 
 let pgc: TestContainer;

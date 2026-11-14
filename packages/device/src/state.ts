@@ -16,13 +16,25 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import {
-  type DeviceProject,
-  isDeviceProjectName,
-  isDeviceProjectPath,
-  MAX_DEVICE_PROJECTS,
-} from "@capybara-hq/plugin-sdk";
+import { isDeviceProjectName } from "@capybara-hq/plugin-sdk";
 import type { DeviceMode } from "./args.js";
+
+/** A project the local policy file lists: a name its owner knows and a directory on this machine. */
+export interface DeviceProject {
+  name: string;
+  path: string;
+}
+
+/** The most projects the local policy file may list. */
+export const MAX_DEVICE_PROJECTS = 100;
+
+// biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what it refuses
+const CONTROL = /[\u0000-\u001f\u007f]/;
+
+/** Whether `v` is a project directory: absolute, at most 4096 characters, no control characters. */
+export function isDeviceProjectPath(v: unknown): v is string {
+  return typeof v === "string" && v.startsWith("/") && v.length <= 4096 && !CONTROL.test(v);
+}
 
 /** What `login` stores: how to reach the deployment and who this machine is there. */
 export interface Credential {
@@ -169,8 +181,6 @@ const isProject = (v: unknown): v is DeviceProject => {
   const { name, path } = v as { name?: unknown; path?: unknown };
   return isDeviceProjectName(name) && isDeviceProjectPath(path);
 };
-// The bounds the protocol puts on a summary's projects, so the summary this file yields is one the
-// kernel accepts.
 const isProjectList = (v: unknown): v is DeviceProject[] =>
   Array.isArray(v) && v.length <= MAX_DEVICE_PROJECTS && v.every(isProject);
 

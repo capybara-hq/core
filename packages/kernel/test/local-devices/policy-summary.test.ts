@@ -1,4 +1,3 @@
-import { MAX_DEVICE_PROJECTS } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import { deviceFeaturesOf, localPolicyOf } from "../../src/local-devices/policy-summary.js";
 
@@ -7,69 +6,20 @@ import { deviceFeaturesOf, localPolicyOf } from "../../src/local-devices/policy-
  * §4.1): the device is the authority, so the kernel keeps what it reads and never throws over it.
  */
 describe("localPolicyOf", () => {
-  it("keeps the projects a device reports", () => {
+  it("keeps the mode and the allowlist, and nothing else a device reports", () => {
     expect(
       localPolicyOf({
         mode: "auto",
-        allowedDomains: [],
+        allowedDomains: ["a.com"],
         projects: [{ name: "core", path: "/w/core" }],
       }),
-    ).toEqual({
-      mode: "auto",
-      allowedDomains: [],
-      projects: [{ name: "core", path: "/w/core" }],
-    });
+    ).toEqual({ mode: "auto", allowedDomains: ["a.com"] });
   });
 
-  it("defaults projects to [] when the device reports none (an older program)", () => {
-    expect(localPolicyOf({ mode: "sandbox", allowedDomains: ["a.com"] })).toEqual({
-      mode: "sandbox",
-      allowedDomains: ["a.com"],
-      projects: [],
-    });
-  });
-
-  it("fails an unreadable projects value closed to [] rather than throwing", () => {
-    expect(localPolicyOf({ mode: "auto", allowedDomains: [], projects: "core" })).toEqual({
-      mode: "auto",
-      allowedDomains: [],
-      projects: [],
-    });
-    // an entry that is not a name and an absolute path is dropped, the readable ones kept
-    expect(
-      localPolicyOf({
-        mode: "auto",
-        allowedDomains: [],
-        projects: [{ name: "core", path: "/w/core" }, { name: "" }, null],
-      }),
-    ).toEqual({
-      mode: "auto",
-      allowedDomains: [],
-      projects: [{ name: "core", path: "/w/core" }],
-    });
-  });
-
-  it("applies the protocol's bounds: relative or control-character paths, bad names, the cap", () => {
-    const core = { name: "core", path: "/w/core" };
-    expect(
-      localPolicyOf({
-        mode: "auto",
-        allowedDomains: [],
-        projects: [
-          core,
-          { name: "rel", path: "w/rel" },
-          { name: "ctl", path: "/w/c\ntl" },
-          { name: "a/b", path: "/w/ab" },
-          { name: "x".repeat(65), path: "/w/long" },
-        ],
-      })?.projects,
-    ).toEqual([core]);
-    const many = Array.from({ length: MAX_DEVICE_PROJECTS + 5 }, (_, i) => ({
-      name: `p${i}`,
-      path: `/w/p${i}`,
-    }));
-    const kept = localPolicyOf({ mode: "auto", allowedDomains: [], projects: many })?.projects;
-    expect(kept).toEqual(many.slice(0, MAX_DEVICE_PROJECTS));
+  it("refuses a summary without a valid mode or allowlist", () => {
+    expect(localPolicyOf({ mode: "open", allowedDomains: [] })).toBeNull();
+    expect(localPolicyOf({ mode: "sandbox", allowedDomains: [1] })).toBeNull();
+    expect(localPolicyOf(null)).toBeNull();
   });
 });
 

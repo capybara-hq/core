@@ -334,17 +334,32 @@ export interface SandboxProvider {
   /**
    * Lists one directory's entries — each entry's `name` and whether it `isDir` — sorted by code
    * unit (locale-independent), at most `limit` of them; `truncated` is true when the directory has
-   * more. Entries only: never file contents, never a recursive walk. Returns null when the path
-   * does not exist; a path that is a file, or a directory that cannot be read, throws. Whether a
-   * project root exists is answered by {@link SandboxProvider.stat}, not by `list`.
+   * more. Entries only: never file contents, never a recursive walk. A `name` is never `.` or `..`;
+   * `isDir` follows symbolic links (stat semantics: a link to a directory is `true`, a dangling link
+   * `false`). Returns null when the path does not exist; a path that is a file, or a directory that
+   * cannot be read, throws. `limits` is the kernel's current ceiling: read in the mode it gives,
+   * never in one an earlier command saw.
    *
-   * Optional: a provider without it serves no projects, and its conversations stay in free mode.
+   * Optional: a provider without it (or without {@link SandboxProvider.scan}) offers no projects,
+   * and its conversations stay in free mode.
    */
   list?(
     h: SandboxHandle,
     path: string,
-    opts: { limit: number; signal: AbortSignal },
+    opts: { limit: number; limits: Pick<SandboxLimits, "mode">; signal: AbortSignal },
   ): Promise<{ entries: { name: string; isDir: boolean }[]; truncated: boolean } | null>;
+  /**
+   * Looks for project-like directories under `base`: those at most two levels below it (its
+   * children and their children) that hold `.git` or `AGENTS.md`, at most 50, each with an absolute
+   * `path` and a `suggestedName` from its basename (non-empty, at most 64 characters, no `/` or
+   * control characters). Directory entries only, never file contents. `limits` as for
+   * {@link SandboxProvider.list}. Optional, like `list`.
+   */
+  scan?(
+    h: SandboxHandle,
+    base: string,
+    opts: { limits: Pick<SandboxLimits, "mode">; signal: AbortSignal },
+  ): Promise<{ path: string; suggestedName: string }[]>;
 }
 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: 正是要拦控制字符

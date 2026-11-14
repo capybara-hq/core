@@ -2,16 +2,18 @@
 "@capybara-hq/plugin-sdk": minor
 ---
 
-A device reports the projects it serves, and a sandbox provider can list a directory.
+A device answers which directories it can read, so the kernel can keep a device's projects itself.
 
-`DeviceLocalPolicySummary.projects` (`DeviceProject[]`: a name and an absolute directory on the
-machine) is always present after parsing, `[]` when the device serves none or predates projects, so
-a project can be added and picked from the web instead of a terminal. Projects are bounded
-(`MAX_DEVICE_PROJECTS`, `MAX_DEVICE_PROJECT_NAME_LENGTH`, `isDeviceProjectName`,
-`isDeviceProjectPath`). `DeviceOp` gains `projectList`, `projectCandidates` (answering
-`DeviceProjectCandidate` suggestions), `projectAdd`, `projectRemove` and `list` (one directory's
-entries, `MAX_DEVICE_LIST_ENTRIES`), with their args and results; a device announces them with the
-new `projects` feature, and the kernel sends them only to a device that did.
-`SandboxProvider.list(h, path, { limit, signal })` (optional) lists a directory's entries sorted by
-code unit, with `truncated`, and returns null for a path that does not exist; a provider without it
-serves no projects, and its conversations stay in free mode.
+`DeviceOp` gains `list` (`DeviceListArgs` `{ path, limit, limits }`: one directory's entries,
+sorted by code unit, at most `MAX_DEVICE_LIST_ENTRIES`, with `truncated`, or null for a path that
+does not exist) and `scan` (`DeviceScanArgs` `{ base, limits }`: the directories at most
+`MAX_DEVICE_SCAN_DEPTH` levels below `base` that hold `.git` or `AGENTS.md`, at most
+`MAX_DEVICE_SCAN_RESULTS`, as `DeviceProjectCandidate` `{ path, suggestedName }`). Both carry the
+kernel's current ceiling (`DeviceRequestCeiling`, `{ mode }`) and are answered in the mode it gives.
+Entry names are never `.` or `..`; `isDir` follows symbolic links (a dangling link is `false`);
+paths are absolute and checked with `validateSandboxPathShape`; a `suggestedName` obeys
+`isDeviceProjectName` (`MAX_DEVICE_PROJECT_NAME_LENGTH`). A device announces both with the new
+`projects` feature, and the kernel sends them only to a device that did. `DeviceHello` gains
+`home?: string`, the owner's home directory. `SandboxProvider` gains optional
+`list(h, path, { limit, limits, signal })` and `scan(h, base, { limits, signal })` with the same
+results; a provider without them offers no projects, and its conversations stay in free mode.

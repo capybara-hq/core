@@ -30,7 +30,7 @@ const run = (over: Partial<NetworkRunState> = {}): NetworkRunState => ({
 });
 const owner = {
   features: ["networkReport", "policyOp", "policyOpId"] as const,
-  policy: { mode: "auto" as const, allowedDomains: [], projects: [] },
+  policy: { mode: "auto" as const, allowedDomains: [] },
 };
 const attended = { device: { ...owner, features: [...owner.features] }, unattended: null };
 const unattended = (mode: "fail" | "wait", trial = false): UnattendedRun => ({

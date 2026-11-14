@@ -4,15 +4,13 @@ import {
   DEFAULT_SANDBOX_ROOTS,
   type DeviceHello,
   type DeviceLocalPolicySummary,
-  type DeviceOp,
   type DevicePolicyStatus,
   DeviceProtocolError,
   isBackgroundLaunch,
   isDeviceProjectName,
-  isDeviceProjectPath,
   MAX_DEVICE_LIST_ENTRIES,
   MAX_DEVICE_PROJECT_NAME_LENGTH,
-  MAX_DEVICE_PROJECTS,
+  MAX_DEVICE_SCAN_RESULTS,
   MAX_NETWORK_BLOCKED_HOSTS,
   MAX_POLICY_OP_ID_LENGTH,
   MAX_RECENT_POLICY_OPS,
@@ -314,7 +312,6 @@ describe("device protocol", () => {
     const summary = {
       mode: "sandbox",
       allowedDomains: ["files.slack.com", "*.github.com"],
-      projects: [],
     };
     const parseHello = (o: unknown) => parseDeviceFrame(JSON.stringify(o), "device") as DeviceHello;
 
@@ -378,184 +375,83 @@ describe("device protocol", () => {
     });
   });
 
-  describe("projects on the policy summary", () => {
+  describe("no projects on the policy summary", () => {
     const summary = { mode: "sandbox", allowedDomains: ["files.slack.com"] };
-    const core = { name: "core", path: "/w/core" };
     const parseHello = (o: unknown) => parseDeviceFrame(JSON.stringify(o), "device") as DeviceHello;
 
-    it("defaults projects to [] for a device that predates them", () => {
-      const withProjects = { ...summary, projects: [] };
-      expect(parseHello({ ...hello, policy: summary }).policy).toEqual(withProjects);
-      expect(
-        parseDeviceFrame(JSON.stringify({ type: "policy", policy: summary }), "device"),
-      ).toEqual({ type: "policy", policy: withProjects });
-      expect(parseOpResult("policy", { policy: summary })).toEqual({ policy: withProjects });
-      expect(parseOpResult("policyStatus", { outcome: "applied", policy: summary }).policy).toEqual(
-        withProjects,
-      );
+    it("drops a projects field a device still reports: the kernel keeps the projects", () => {
+      const policy = { ...summary, projects: [{ name: "core", path: "/w/core" }] };
+      expect(parseHello({ ...hello, policy }).policy).toEqual(summary);
+      expect(parseDeviceFrame(JSON.stringify({ type: "policy", policy }), "device")).toEqual({
+        type: "policy",
+        policy: summary,
+      });
+      expect(parseOpResult("policy", { policy })).toEqual({ policy: summary });
+      expect(parseOpResult("policyStatus", { outcome: "applied", policy }).policy).toEqual(summary);
     });
 
-    it("round-trips the projects the device serves", () => {
-      const policy = { ...summary, projects: [core, { name: "web", path: "/Users/u/web" }] };
-      expect(parseHello({ ...hello, policy }).policy).toEqual(policy);
-      expect(parseOpResult("policy", { policy })).toEqual({ policy });
-      expect(parseOpResult("policyStatus", { outcome: "applied", policy }).policy).toEqual(policy);
-    });
-
-    it("tolerates a summary field this SDK does not know, and refuses a malformed projects list", () => {
-      // a device of another version may carry more; the fields it does not know are dropped
-      expect(
-        parseOpResult("policy", { policy: { ...summary, projects: [core], later: 1 } }),
-      ).toEqual({ policy: { ...summary, projects: [core] } });
-      for (const projects of [
-        "core",
-        null,
-        {},
-        [1],
-        [null],
-        [{ name: "core" }],
-        [{ path: "/w/core" }],
-        [{ name: "", path: "/w/core" }],
-        [{ name: 1, path: "/w/core" }],
-        [{ name: "core", path: "" }],
-        [{ name: "core", path: 1 }],
-        // a reported path is absolute and free of control characters
-        [{ name: "core", path: "w/core" }],
-        [{ name: "core", path: "/w/co\nre" }],
-        [{ name: "core", path: `/${"a".repeat(4096)}` }],
-        // a name is bounded, without "/" or control characters
-        [{ name: "a/b", path: "/w/core" }],
-        [{ name: "co\u0000re", path: "/w/core" }],
-        [{ name: "x".repeat(MAX_DEVICE_PROJECT_NAME_LENGTH + 1), path: "/w/core" }],
-        // at most MAX_DEVICE_PROJECTS entries
-        Array.from({ length: MAX_DEVICE_PROJECTS + 1 }, (_, i) => ({
-          name: `p${i}`,
-          path: `/w/p${i}`,
-        })),
-      ]) {
-        expect(
-          parseHello({ ...hello, policy: { ...summary, projects } }).policy,
-          JSON.stringify(projects),
-        ).toBeUndefined();
-        expect(() => parseOpResult("policy", { policy: { ...summary, projects } })).toThrow(
-          DeviceProtocolError,
-        );
+    it("refuses the removed project ops", () => {
+      for (const op of ["projectList", "projectCandidates", "projectAdd", "projectRemove"]) {
+        expect(parse(req(op, {}), "kernel"), op).toThrow(/unknown op/);
       }
     });
   });
 
-  describe("the project ops", () => {
-    const core = { name: "core", path: "/w/core" };
+  describe("the hello's home", () => {
+    const parseHello = (o: unknown) => parseDeviceFrame(JSON.stringify(o), "device") as DeviceHello;
 
-    it("parses the requests", () => {
-      const goods: [string, unknown][] = [
-        ["projectList", {}],
-        ["projectCandidates", {}],
-        ["projectAdd", { path: "workspace/core" }],
-        ["projectAdd", { path: "/w/core", name: "core" }],
-        ["projectAdd", { path: "/w/core", name: "x".repeat(MAX_DEVICE_PROJECT_NAME_LENGTH) }],
-        ["projectRemove", { name: "core" }],
-      ];
-      for (const [op, args] of goods) {
-        expect(parse(req(op, args), "kernel")(), op).toMatchObject({ op, args });
-      }
-    });
-
-    it("rejects malformed args", () => {
-      const bads: [string, unknown][] = [
-        ["projectAdd", {}],
-        ["projectAdd", { path: "" }],
-        ["projectAdd", { path: 1 }],
-        ["projectAdd", { path: "/w/core", name: "" }],
-        ["projectAdd", { path: "/w/core", name: 1 }],
-        ["projectAdd", { path: "/w/co\nre" }],
-        ["projectAdd", { path: "/w/core", name: "a/b" }],
-        ["projectAdd", { path: "/w/core", name: "x".repeat(MAX_DEVICE_PROJECT_NAME_LENGTH + 1) }],
-        ["projectRemove", {}],
-        ["projectRemove", { name: "" }],
-        ["projectRemove", { name: 1 }],
-        ["projectRemove", { name: "co\tre" }],
-      ];
-      for (const [op, args] of bads) {
-        expect(parse(req(op, args), "kernel"), `${op} ${JSON.stringify(args)}`).toThrow(
-          DeviceProtocolError,
-        );
-      }
-    });
-
-    it("parses the results", () => {
-      expect(parseOpResult("projectList", [core])).toEqual([core]);
-      expect(parseOpResult("projectCandidates", [])).toEqual([]);
-      const candidate = { path: "/w/core", suggestedName: "core" };
-      expect(parseOpResult("projectCandidates", [{ ...candidate, later: 1 }])).toEqual([candidate]);
-      expect(parseOpResult("projectAdd", { project: core })).toEqual({ project: core });
-      const refused = { refused: "That directory is not a project." };
-      expect(parseOpResult("projectAdd", refused)).toEqual(refused);
-      expect(parseOpResult("projectRemove", null)).toBeNull();
-      const bads: [DeviceOp, unknown][] = [
-        ["projectList", null],
-        ["projectList", { projects: [core] }],
-        ["projectList", [1]],
-        ["projectCandidates", null],
-        ["projectCandidates", [{ name: "core" }]],
-        // a candidate is a suggestion, not a served project
-        ["projectCandidates", [core]],
-        ["projectCandidates", [{ path: "core", suggestedName: "core" }]],
-        ["projectCandidates", [{ path: "/w/core", suggestedName: "a/b" }]],
-        [
-          "projectCandidates",
-          Array.from({ length: MAX_DEVICE_PROJECTS + 1 }, (_, i) => ({
-            path: `/w/p${i}`,
-            suggestedName: `p${i}`,
-          })),
-        ],
-        ["projectList", [{ name: "core", path: "w/core" }]],
-        ["projectAdd", { project: { name: "core", path: "w/core" } }],
-        ["projectAdd", null],
-        ["projectAdd", {}],
-        ["projectAdd", { refused: 1 }],
-        ["projectRemove", {}],
-      ];
-      for (const [op, result] of bads) {
-        expect(() => parseOpResult(op, result), `${op} ${JSON.stringify(result)}`).toThrow(
-          DeviceProtocolError,
-        );
+    it("keeps an absolute home and drops a malformed one", () => {
+      expect(parseHello({ ...hello, home: "/Users/ann" }).home).toBe("/Users/ann");
+      expect(parseHello(hello).home).toBeUndefined();
+      for (const home of ["Users/ann", "", "/Users/../ann", "/Users/a\nn", 1, null]) {
+        const h = parseHello({ ...hello, home });
+        expect(h.home, JSON.stringify(home)).toBeUndefined();
+        expect(h.type).toBe("hello");
       }
     });
   });
 
-  describe("project names and paths", () => {
-    it("bounds a name and requires an absolute reported path", () => {
+  describe("project names", () => {
+    it("bounds a name: non-empty, at most 64 characters, no / or control characters", () => {
+      expect(MAX_DEVICE_PROJECT_NAME_LENGTH).toBe(64);
       expect(isDeviceProjectName("core")).toBe(true);
       expect(isDeviceProjectName("x".repeat(MAX_DEVICE_PROJECT_NAME_LENGTH))).toBe(true);
       for (const v of ["", "a/b", "a\u007fb", "x".repeat(MAX_DEVICE_PROJECT_NAME_LENGTH + 1), 1]) {
         expect(isDeviceProjectName(v), JSON.stringify(v)).toBe(false);
       }
-      expect(isDeviceProjectPath("/w/core")).toBe(true);
-      for (const v of ["", "w/core", "/w/\u001fcore", `/${"a".repeat(4096)}`, null]) {
-        expect(isDeviceProjectPath(v), JSON.stringify(v)).toBe(false);
-      }
     });
   });
 
   describe("the list op", () => {
-    it("parses the request", () => {
-      const args = { path: "/w/core/.agents/skills", limit: 200 };
+    const limits = { mode: "sandbox" };
+
+    it("parses the request, which carries the kernel's current ceiling", () => {
+      const args = { path: "/w/core/.agents/skills", limit: 200, limits };
       expect(parse(req("list", args), "kernel")()).toMatchObject({ op: "list", args });
       expect(
-        parse(req("list", { path: "/w", limit: MAX_DEVICE_LIST_ENTRIES }), "kernel")(),
+        parse(
+          req("list", { path: "/w", limit: MAX_DEVICE_LIST_ENTRIES, limits: { mode: "auto" } }),
+          "kernel",
+        )(),
       ).toMatchObject({ op: "list" });
     });
 
     it("rejects malformed args", () => {
       for (const args of [
         {},
-        { path: "/w" },
-        { limit: 10 },
-        { path: "w", limit: 10 },
-        { path: "/w", limit: 0 },
-        { path: "/w", limit: 1.5 },
-        { path: "/w", limit: MAX_DEVICE_LIST_ENTRIES + 1 },
+        { path: "/w", limits },
+        { limit: 10, limits },
+        { path: "w", limit: 10, limits },
+        { path: "/w/../etc", limit: 10, limits },
+        { path: "/w//a", limit: 10, limits },
+        { path: "/w", limit: 0, limits },
+        { path: "/w", limit: 1.5, limits },
+        { path: "/w", limit: MAX_DEVICE_LIST_ENTRIES + 1, limits },
+        // the ceiling is required
+        { path: "/w", limit: 10 },
+        { path: "/w", limit: 10, limits: {} },
+        { path: "/w", limit: 10, limits: { mode: "open" } },
+        { path: "/w", limit: 10, limits: "sandbox" },
       ]) {
         expect(parse(req("list", args), "kernel"), JSON.stringify(args)).toThrow(
           DeviceProtocolError,
@@ -586,6 +482,8 @@ describe("device protocol", () => {
         { entries: [], truncated: "no" },
         { entries: [{ name: "", isDir: true }], truncated: false },
         { entries: [{ name: "a/b", isDir: true }], truncated: false },
+        { entries: [{ name: ".", isDir: true }], truncated: false },
+        { entries: [{ name: "..", isDir: true }], truncated: false },
         { entries: [{ name: "a" }], truncated: false },
         {
           entries: Array.from({ length: MAX_DEVICE_LIST_ENTRIES + 1 }, (_, i) => ({
@@ -596,6 +494,67 @@ describe("device protocol", () => {
         },
       ]) {
         expect(() => parseOpResult("list", bad), JSON.stringify(bad).slice(0, 80)).toThrow(
+          DeviceProtocolError,
+        );
+      }
+      // a dotfile is an ordinary entry
+      expect(
+        parseOpResult("list", { entries: [{ name: ".git", isDir: true }], truncated: false }),
+      ).toEqual({ entries: [{ name: ".git", isDir: true }], truncated: false });
+    });
+  });
+
+  describe("the scan op", () => {
+    const limits = { mode: "auto" };
+
+    it("parses the request, which carries the kernel's current ceiling", () => {
+      const args = { base: "/Users/ann", limits };
+      expect(parse(req("scan", args), "kernel")()).toMatchObject({ op: "scan", args });
+    });
+
+    it("rejects malformed args", () => {
+      for (const args of [
+        {},
+        { limits },
+        { base: "", limits },
+        { base: "Users/ann", limits },
+        { base: "/Users/../ann", limits },
+        { base: "/Users/a\nn", limits },
+        { base: "/Users/ann" },
+        { base: "/Users/ann", limits: { mode: "wide" } },
+      ]) {
+        expect(parse(req("scan", args), "kernel"), JSON.stringify(args)).toThrow(
+          DeviceProtocolError,
+        );
+      }
+    });
+
+    it("parses the result: at most 50 candidates with absolute paths and usable names", () => {
+      expect(MAX_DEVICE_SCAN_RESULTS).toBe(50);
+      const candidate = { path: "/Users/ann/code/core", suggestedName: "core" };
+      expect(parseOpResult("scan", [])).toEqual([]);
+      expect(parseOpResult("scan", [{ ...candidate, later: 1 }])).toEqual([candidate]);
+      const full = Array.from({ length: MAX_DEVICE_SCAN_RESULTS }, (_, i) => ({
+        path: `/w/p${i}`,
+        suggestedName: `p${i}`,
+      }));
+      expect(parseOpResult("scan", full)).toEqual(full);
+      for (const bad of [
+        null,
+        {},
+        [1],
+        [{ path: "/w/core" }],
+        [{ suggestedName: "core" }],
+        [{ path: "w/core", suggestedName: "core" }],
+        [{ path: "/w/../core", suggestedName: "core" }],
+        [{ path: "/w/co\nre", suggestedName: "core" }],
+        [{ path: "/w/core", suggestedName: "" }],
+        [{ path: "/w/core", suggestedName: "a/b" }],
+        [{ path: "/w/core", suggestedName: "co\tre" }],
+        [{ path: "/w/core", suggestedName: "x".repeat(MAX_DEVICE_PROJECT_NAME_LENGTH + 1) }],
+        [...full, { path: "/w/one-more", suggestedName: "one-more" }],
+      ]) {
+        expect(() => parseOpResult("scan", bad), JSON.stringify(bad).slice(0, 80)).toThrow(
           DeviceProtocolError,
         );
       }
@@ -670,7 +629,6 @@ describe("device protocol", () => {
       const policy: DeviceLocalPolicySummary = {
         mode: "sandbox",
         allowedDomains: ["a.example.com"],
-        projects: [],
       };
       const goods: DevicePolicyStatus[] = [
         { outcome: "applied", policy },
@@ -754,7 +712,6 @@ describe("device protocol", () => {
       const policy = {
         mode: "auto",
         allowedDomains: ["a.example.com"],
-        projects: [],
       };
       expect(parseOpResult("policy", { policy })).toEqual({ policy });
       for (const bad of [

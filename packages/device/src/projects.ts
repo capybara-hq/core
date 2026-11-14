@@ -2,16 +2,19 @@ import { readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import {
-  type DeviceProject,
   type DeviceProjectCandidate,
   isDeviceProjectName,
-  isDeviceProjectPath,
   MAX_DEVICE_PROJECT_NAME_LENGTH,
-  MAX_DEVICE_PROJECTS,
   type SandboxRoots,
 } from "@capybara-hq/plugin-sdk";
 import { isUnder } from "./exec/shared.js";
-import type { Policy, SandboxMode } from "./state.js";
+import {
+  type DeviceProject,
+  isDeviceProjectPath,
+  MAX_DEVICE_PROJECTS,
+  type Policy,
+  type SandboxMode,
+} from "./state.js";
 
 /** The most candidates a `projectCandidates` answer carries. */
 export const MAX_CANDIDATES = 50;

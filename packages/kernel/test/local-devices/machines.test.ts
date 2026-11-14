@@ -187,7 +187,6 @@ describe("MachinesService", () => {
     const policy = {
       mode: "auto" as const,
       allowedDomains: ["pypi.org"],
-      projects: [],
     };
     await machines.recordHello(m.machineId, {
       ...hello,
@@ -243,7 +242,7 @@ describe("MachinesService", () => {
       sessionIsolation: false,
       features: ["networkReport", "policyOp", "mode"],
     };
-    const policy = (mode: "auto" | "sandbox") => ({ mode, allowedDomains: [], projects: [] });
+    const policy = (mode: "auto" | "sandbox") => ({ mode, allowedDomains: [] });
     const reported = () =>
       db
         .selectFrom("audit_events")
@@ -286,7 +285,6 @@ describe("MachinesService", () => {
     const base: DeviceLocalPolicySummary = {
       mode: "auto",
       allowedDomains: ["pypi.org"],
-      projects: [],
     };
     const changes = (action: string) =>
       db

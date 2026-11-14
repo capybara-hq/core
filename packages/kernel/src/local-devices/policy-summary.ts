@@ -1,11 +1,4 @@
-import {
-  type DeviceFeature,
-  type DeviceLocalPolicySummary,
-  type DeviceProject,
-  isDeviceProjectName,
-  isDeviceProjectPath,
-  MAX_DEVICE_PROJECTS,
-} from "@capybara-hq/plugin-sdk";
+import type { DeviceFeature, DeviceLocalPolicySummary } from "@capybara-hq/plugin-sdk";
 import type { SandboxMode } from "../sandbox/modes.js";
 
 const KNOWN_FEATURES: readonly DeviceFeature[] = [
@@ -26,30 +19,9 @@ export function deviceFeaturesOf(v: unknown): DeviceFeature[] {
 }
 
 /**
- * The projects `v` lists, within the protocol's bounds: an entry is a valid project name and an
- * absolute path (`isDeviceProjectName` / `isDeviceProjectPath`), at most `MAX_DEVICE_PROJECTS` of
- * them. Anything else (a missing or unreadable list, a malformed entry, entries past the cap) is
- * dropped, so an older program and a bad report both leave the device with fewer or no projects
- * rather than failing the summary.
- */
-function projectsOf(v: unknown): DeviceProject[] {
-  if (!Array.isArray(v)) return [];
-  const out: DeviceProject[] = [];
-  for (const e of v) {
-    if (out.length >= MAX_DEVICE_PROJECTS) break;
-    if (typeof e !== "object" || e === null) continue;
-    const o = e as Record<string, unknown>;
-    if (!isDeviceProjectName(o.name) || !isDeviceProjectPath(o.path)) continue;
-    out.push({ name: o.name, path: o.path });
-  }
-  return out;
-}
-
-/**
  * `v` as a local policy summary (auto mode spec §4.1), or null when it is absent or not a valid
  * one. The device is the authority on its policy: the kernel only keeps what it last said, for the
- * device page and the `device_paths` event, never to decide what a command may reach. Its
- * `projects` are defaulted to `[]`, as the SDK parser does.
+ * device page and the `device_paths` event, never to decide what a command may reach.
  */
 export function localPolicyOf(v: unknown): DeviceLocalPolicySummary | null {
   if (typeof v !== "object" || v === null || Array.isArray(v)) return null;
@@ -57,7 +29,7 @@ export function localPolicyOf(v: unknown): DeviceLocalPolicySummary | null {
   if (o.mode !== "auto" && o.mode !== "sandbox") return null;
   if (!Array.isArray(o.allowedDomains)) return null;
   if (!o.allowedDomains.every((d): d is string => typeof d === "string")) return null;
-  return { mode: o.mode, allowedDomains: [...o.allowedDomains], projects: projectsOf(o.projects) };
+  return { mode: o.mode, allowedDomains: [...o.allowedDomains] };
 }
 
 /** The isolation of a summary recorded before auto mode, if `v` is one (no `mode` field). */

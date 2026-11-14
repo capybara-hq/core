@@ -48,11 +48,7 @@ import type { Answer } from "../local-devices/test-holder.js";
  * it, and the call's tool approvals are left alone.
  */
 
-const POLICY: DeviceLocalPolicySummary = {
-  mode: "auto",
-  allowedDomains: ["pypi.org"],
-  projects: [],
-};
+const POLICY: DeviceLocalPolicySummary = { mode: "auto", allowedDomains: ["pypi.org"] };
 
 let pgc: TestContainer;
 let rd: TestContainer;
