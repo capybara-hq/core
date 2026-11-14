@@ -48,9 +48,10 @@ export const TOOL_SEARCH_SPEC: ToolSpec = {
 
 /** 目录（system 第二个块）的开头说明（模型可见，英文）。 */
 export const CATALOG_HEADER =
-  "More tools are available but not loaded. To use one, first call ToolSearch with keywords; " +
-  "it returns the full definitions and loads the matching tools for your next step. " +
-  "Calling a tool that is not loaded returns an error. Tool catalog:";
+  "More tools are available but not loaded, even when your instructions name them. Your tool " +
+  "list is the only set you can call: any other tool is not loaded and calling it returns an " +
+  "error. To use one, call ToolSearch first with keywords (the app, object or action); it " +
+  "returns the full definitions and loads the matching tools for your next step. Tool catalog:";
 
 /** 调用目录里尚未加载的工具（模型可见，英文；spec 5.5：不自动加载）。 */
 export const notLoadedText = (key: string): string =>

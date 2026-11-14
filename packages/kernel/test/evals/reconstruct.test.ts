@@ -573,7 +573,7 @@ describe("reconstructRequest：基线零漂移", () => {
     ].join("\n");
     expect(systemTexts).toContain("call Skill with the skill's name");
     expect(systemTexts).toContain("call Skill again before relying on earlier instructions");
-    expect(systemTexts).toContain("first call ToolSearch with keywords");
+    expect(systemTexts).toContain("call ToolSearch first with keywords");
     expect(systemTexts).not.toMatch(/skill_load|tool_search/);
 
     const snap = await snapshotOf(conv);
