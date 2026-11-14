@@ -488,6 +488,11 @@ describe("a cloud device's mode switch (auto mode spec §4.3, hardening D2)", ()
       allowedBy: "platform",
     });
     expect(env.limits).toMatchObject({ mode: "auto", network: { kind: "open-public" } });
+    // the network sandbox mode would give it, named before the switch (hardening spec D3)
+    expect(env.mode.sandboxNetwork).toEqual({
+      kind: "allowlist",
+      hosts: expect.arrayContaining(["registry.npmjs.org"]),
+    });
 
     const set = await patch(me.req, env.id, { mode: "sandbox" });
     expect(set.statusCode, set.body).toBe(200);
@@ -551,6 +556,20 @@ describe("a cloud device's mode switch (auto mode spec §4.3, hardening D2)", ()
       .where("id", "=", env.id)
       .executeTakeFirstOrThrow();
     expect(stored.mode).toBeNull();
+  });
+
+  it("on the default open cloud network, sandbox mode keeps the open network (spec D3)", async () => {
+    await setOrgNetwork(null);
+    const me = await member();
+    const env = await create(me.req, "Open");
+    expect(env.mode.sandboxNetwork).toEqual({ kind: "open-public", hosts: [] });
+    const set = await patch(me.req, env.id, { mode: "sandbox" });
+    const view = (set.json() as { device: DeviceView }).device;
+    expect(view.mode).toMatchObject({
+      mode: "sandbox",
+      network: { kind: "open-public" },
+      sandboxNetwork: { kind: "open-public", hosts: [] },
+    });
   });
 
   it("mode null while the org allows only sandbox clears the choice and widens nothing", async () => {

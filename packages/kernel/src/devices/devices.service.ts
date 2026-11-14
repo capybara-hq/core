@@ -24,6 +24,7 @@ import type { DeviceModeLevel } from "../runtime/context/device-paths.js";
 import { oweDeviceDestroy, SandboxJobs } from "../sandbox/jobs.js";
 import {
   type DeviceNetwork,
+  deviceNetwork,
   type EffectiveDevicePolicy,
   effectiveDevicePolicy,
   type NetworkKind,
@@ -111,6 +112,12 @@ export interface DeviceModeView {
   network: { kind: NetworkKind; hosts: string[]; source: "org" | "platform" };
   /** A local device: the mode its machine reported and its own sandbox-mode allowlist; null for cloud. */
   local: { reported: SandboxMode | null; allowedDomains: string[] } | null;
+  /**
+   * A cloud device: the network sandbox mode gives it, whatever mode it runs at now (the org's
+   * `cloudNetwork`, open by default; the kill switch empties it), so the page names what a switch
+   * to sandbox reaches before it is made (hardening spec D3). Null for a local device.
+   */
+  sandboxNetwork: { kind: NetworkKind; hosts: string[] } | null;
   /**
    * A cloud device's instance runs another mode or network kind: its next use updates or recreates
    * it, files kept (「下次使用时生效，文件保留」).
@@ -1093,6 +1100,7 @@ export class DevicesService {
       r.source === "local" ? localModeOf(r.machine_features, r.machine_local_policy) : r.mode;
     const policyOf = (r: (typeof all)[number]): EffectiveDevicePolicy =>
       effectiveDevicePolicy(deployment, settings, chosenOf(r));
+    const sandboxNetwork = deviceNetwork(deployment, settings, "sandbox");
     // each device's limits and its instance's pending change
     const perDevice = new Map(
       await Promise.all(
@@ -1171,6 +1179,7 @@ export class DevicesService {
             pendingNextUse: perDevice.get(r.id)?.state.pendingNextUse ?? false,
             pendingFilesReset: perDevice.get(r.id)?.state.pendingFilesReset ?? false,
             recent: recent.get(r.id) ?? [],
+            sandboxNetwork,
           },
           this.config.get().sandbox.limits.egress === "none",
         ),
@@ -1382,10 +1391,17 @@ export function deviceModeViewOf(
   settings: OrgDeviceSettings,
   local: boolean,
   summary: DeviceLocalPolicySummary | null,
-  extra: { pendingNextUse: boolean; pendingFilesReset: boolean; recent: DeviceModeChangeView[] },
+  extra: {
+    pendingNextUse: boolean;
+    pendingFilesReset: boolean;
+    recent: DeviceModeChangeView[];
+    /** The network sandbox mode gives a cloud device ({@link deviceNetwork} for `sandbox`). */
+    sandboxNetwork: DeviceNetwork;
+  },
   /** The platform kill switch (`sandbox.limits.egress: none`): the network is the platform's. */
   killSwitch = false,
 ): DeviceModeView {
+  const { sandboxNetwork, ...rest } = extra;
   const networkKind = local ? "allowlist" : policy.network.kind;
   const org = settings.cloudNetwork;
   // "org" only when the org supplied what is in effect: the kill switch always wins; auto mode
@@ -1421,6 +1437,7 @@ export function deviceModeViewOf(
           allowedDomains: [...(summary?.allowedDomains ?? [])],
         }
       : null,
-    ...extra,
+    sandboxNetwork: local ? null : { kind: sandboxNetwork.kind, hosts: [...sandboxNetwork.hosts] },
+    ...rest,
   };
 }
