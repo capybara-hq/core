@@ -52,9 +52,11 @@ layers and duplicated derivations are the follow-up "A" and are out of scope her
 
 All in `packages/kernel/src/sandbox/review/**` and the review service; no protocol change.
 
-**R1 Interpreters (D4).** New rule `unsure.interpreter-inline` for `-c` / `-e` / `--eval` / `eval`
+**R1 Interpreters (D4).** New rule `unsure.interpreter` for `-c` / `-e` / `--eval` / `eval`
 / a heredoc or pipe into `python|node|perl|ruby|php|deno|bun|osascript|sh|bash|zsh`, and for
-`npx|pnpm dlx|yarn dlx|bunx|uvx|pipx run`. `unsure.interpreter-written` for `<interpreter> <file>`
+`npx|pnpm dlx|yarn dlx|bunx|uvx|pipx run` (a package that is a development tool the table already
+allows stays allowed — `npx tsc`; one that is itself a script runner is judged as one — `npx tsx
+x.ts`; accepted 2026-11-15), and for `<interpreter> <file>`
 or `./<file>` when `<file>` is in the run facts' `writtenPaths`: the workspace-relative paths that
 `Write`/`Edit` calls of this conversation wrote (read once per review from the conversation's
 tool calls; bounded to the last 200). `DEV_PROGRAMS` no longer covers these forms. The commandline
@@ -76,8 +78,11 @@ hit's id is granted and **no** `unsure` hit remains; otherwise the remaining ung
 **R5 Grant classes the person can reason about.** `ask.rc-files` splits into `ask.shell-config`
 (shell rc files, `~/.gitconfig` and `git config --global`), `ask.persistence` (crontab, launch
 agents and daemons, systemd user units, git hooks) and `ask.ssh` (writes under `~/.ssh`,
-`ssh-keygen`, `authorized_keys`). Not grantable for the session (always asked once):
-`ask.credential-print`, `ask.credential-link`, `ask.dynamic-arg`, `ask.sudo`. The card's
+`ssh-keygen`, `authorized_keys`); credential files other than SSH become `ask.secret-file`. Not
+grantable for the session (always asked once): `ask.credential-print`, `ask.secret-file`,
+`ask.ssh`, `ask.credential-link`, `ask.outside-link`, `ask.dynamic-arg`, `ask.sudo` (`ask.ssh` and
+`ask.outside-link` joined after the second review of #297: an SSH key read and a link to a broad
+directory could otherwise ride on one grant). The card's
 「本会话允许同类」 is shown only for grantable ids (it already is, via `isSessionGrantableRule`,
 which gains the list).
 
@@ -228,3 +233,21 @@ Four PRs, P0 first and alone (trust boundary: reviewed alone on the most capable
 
 Each PR states its tests; release after 1–3 merge (version PR), then plugins and the bootstrap pin.
 The B acceptance on a real machine follows on the released versions.
+
+## 9. Second review of the P0 change (2026-11-15)
+
+An adversarial review of #297 before merge reproduced routes the first version still allowed;
+all are closed in the same PR, each with a case in `review-guarantees.test.ts`: inline code through
+launchers (`uv run python -c`, `pnpm exec node -e`, `bundle exec ruby -e`, …); package-runner
+spellings (`npx @evil/tsc`, `npx tsc@npm:evil`, `--package`, `--registry`, options before the
+subcommand, `deno run npm:`, `deno x`, `deno install`, `go run module@v`); written files run past
+option parsing (per-runner value options, `tsx watch`, preloads, `python -m`, globs, letter case);
+writes by downloads, copies into a directory and clones; a sub-agent's writes (the review reads
+the whole conversation tree); links resolved from the link's directory and `cp -s` / `-l`; the
+workspace root, `tar --remove-files`, `rsync --remove-source-files`, `git -C … checkout`,
+`git clean <path>`, `find -L`; `gh api -fkey=value` and GraphQL bodies from files; `awk system()`,
+`sed e`, `make -f -`; git config keys that run programs (`core.fsmonitor`, `core.hooksPath`,
+filter / diff / merge drivers). Everyday locally installed tools (`npx playwright`, `npx prisma`,
+`uv run pytest`, …) stay allowed. Residual, by design (spec §5.2 "best effort, not a boundary"):
+a script the agent writes into a project file that a development command later runs (`package.json`
+scripts, a `Makefile` it edits, test files) is reviewed as that development command.
