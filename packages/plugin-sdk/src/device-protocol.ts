@@ -27,7 +27,11 @@ export type DeviceOp =
   | "killAll"
   | "stop"
   | "policy"
-  | "policyStatus";
+  | "policyStatus"
+  | "projectList"
+  | "projectCandidates"
+  | "projectAdd"
+  | "projectRemove";
 
 const DEVICE_OPS: readonly DeviceOp[] = [
   "create",
@@ -40,6 +44,10 @@ const DEVICE_OPS: readonly DeviceOp[] = [
   "stop",
   "policy",
   "policyStatus",
+  "projectList",
+  "projectCandidates",
+  "projectAdd",
+  "projectRemove",
 ];
 
 /**
@@ -57,12 +65,27 @@ const DEVICE_FEATURES: readonly DeviceFeature[] = [
   "mode",
 ];
 
+/**
+ * One project a device serves: the name its owner knows it by (the directory's basename unless
+ * the owner picked another) and the directory's path on the machine. The device is the only
+ * writer; the kernel keeps a conversation's binding as the name and the path it resolved.
+ */
+export interface DeviceProject {
+  name: string;
+  path: string;
+}
+
 /** What the kernel knows of a device's local policy (from the hello or a `policy` op). */
 export interface DeviceLocalPolicySummary {
   /** `auto` = no OS sandbox (the owner's machine); `sandbox` = the OS sandbox. */
   mode: "auto" | "sandbox";
   /** The device's sandbox-mode allowlist; meaningful in sandbox mode only. */
   allowedDomains: string[];
+  /**
+   * The projects the device serves. The parser always fills it (`[]` when the device reports
+   * none, including a program that predates the project ops).
+   */
+  projects: DeviceProject[];
 }
 
 /**
@@ -247,6 +270,32 @@ export interface DevicePolicyStatus {
   policy?: DeviceLocalPolicySummary;
   message?: string;
 }
+/** Lists the projects the device serves. No args: the result is the {@link DeviceProject} list. */
+export type DeviceProjectListArgs = Record<string, never>;
+/**
+ * Asks which directories look like projects (a `.git` or an `AGENTS.md`), scanned at most two
+ * levels under what the device may offer and bounded to a page of entries. No args.
+ */
+export type DeviceProjectCandidatesArgs = Record<string, never>;
+/** Serves `path` as a project. */
+export interface DeviceProjectAddArgs {
+  /**
+   * The project's directory, relative to the device's base or absolute. The device refuses a path
+   * it cannot read in its current mode, or one that is not a directory.
+   */
+  path: string;
+  /** The name to serve it under; the device uses the directory's basename when absent. */
+  name?: string;
+}
+/**
+ * The added project, or the reason the device refused it (an unreadable path, a directory outside
+ * what the mode may offer, a name already served).
+ */
+export type DeviceProjectAddResult = { project: DeviceProject } | { refused: string };
+/** Stops serving the project with this name; the device keeps the directory untouched. */
+export interface DeviceProjectRemoveArgs {
+  name: string;
+}
 
 /** A frame that is not valid protocol v1 (or came from the wrong side). */
 export class DeviceProtocolError extends Error {
@@ -363,11 +412,36 @@ function hostArray(o: Record<string, unknown>, k: string): string[] {
   return v;
 }
 
+/**
+ * One project entry: an object with a non-empty `name` and `path`; anything else is refused, under
+ * `what` so the message names the field.
+ */
+function parseProject(v: unknown, what: string): DeviceProject {
+  if (!isRecord(v)) throw new DeviceProtocolError(`${what} must be an object`);
+  const { name, path } = v;
+  if (typeof name !== "string" || name === "") {
+    throw new DeviceProtocolError(`${what}.name must be a non-empty string`);
+  }
+  if (typeof path !== "string" || path === "") {
+    throw new DeviceProtocolError(`${what}.path must be a non-empty string`);
+  }
+  return { name, path };
+}
+
+/** The entries of a projects list (a summary's `projects` or a project op's result). */
+function parseProjects(v: unknown, label: string = "projects"): DeviceProject[] {
+  if (!Array.isArray(v)) {
+    throw new DeviceProtocolError(`field "${label}" must be an array of projects`);
+  }
+  return v.map((e, i) => parseProject(e, `field "${label}[${i}]"`));
+}
+
 function parsePolicySummary(v: unknown): DeviceLocalPolicySummary {
   const o = obj(v, 'field "policy"');
   return {
     mode: oneOf(o, "mode", ["auto", "sandbox"] as const),
     allowedDomains: strArray(o, "allowedDomains"),
+    projects: o.projects === undefined ? [] : parseProjects(o.projects),
   };
 }
 
@@ -583,6 +657,16 @@ function validateArgs(op: DeviceOp, a: Record<string, unknown>): void {
     case "policyStatus":
       opId(a);
       return;
+    case "projectList":
+    case "projectCandidates":
+      return;
+    case "projectAdd":
+      nonEmptyStr(a, "path");
+      if (a.name !== undefined) nonEmptyStr(a, "name");
+      return;
+    case "projectRemove":
+      nonEmptyStr(a, "name");
+      return;
   }
 }
 
@@ -598,6 +682,10 @@ export interface DeviceOpResults {
   stop: null;
   policy: DevicePolicyResult;
   policyStatus: DevicePolicyStatus;
+  projectList: DeviceProject[];
+  projectCandidates: DeviceProject[];
+  projectAdd: DeviceProjectAddResult;
+  projectRemove: null;
 }
 
 /** Validates the `result` of a successful `res` for `op`; throws {@link DeviceProtocolError}. */
@@ -645,6 +733,15 @@ export function parseOpResult(op: DeviceOp, result: unknown): DeviceOpResults[De
     }
     case "create":
       return { roots: parseRoots(obj(result, "create result").roots) };
+    case "projectList":
+      return parseProjects(result, "projectList result");
+    case "projectCandidates":
+      return parseProjects(result, "projectCandidates result");
+    case "projectAdd": {
+      const r = obj(result, "projectAdd result");
+      if (r.refused !== undefined) return { refused: nonEmptyStr(r, "refused") };
+      return { project: parseProject(r.project, 'field "project"') };
+    }
     default:
       if (result !== null) throw new DeviceProtocolError(`${op} result must be null`);
       return null;

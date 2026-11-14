@@ -331,6 +331,18 @@ export interface SandboxProvider {
     path: string,
     signal: AbortSignal,
   ): Promise<{ size: number; isDir: boolean } | null>;
+  /**
+   * Lists one directory's entries — each entry's `name` and whether it `isDir` — sorted by name. A
+   * directory that does not exist returns `[]`, never an error. Entries only: never file contents,
+   * never a recursive walk.
+   *
+   * Optional: a provider without it serves no projects, and its conversations stay in free mode.
+   */
+  list?(
+    h: SandboxHandle,
+    path: string,
+    signal: AbortSignal,
+  ): Promise<{ name: string; isDir: boolean }[]>;
 }
 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: 正是要拦控制字符

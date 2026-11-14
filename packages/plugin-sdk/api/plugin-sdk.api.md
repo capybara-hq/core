@@ -827,10 +827,11 @@ export interface DeviceKillTaggedArgs {
 export interface DeviceLocalPolicySummary {
     allowedDomains: string[];
     mode: "auto" | "sandbox";
+    projects: DeviceProject[];
 }
 
 // @public
-export type DeviceOp = "create" | "exec" | "readFile" | "writeFile" | "stat" | "killTagged" | "killAll" | "stop" | "policy" | "policyStatus";
+export type DeviceOp = "create" | "exec" | "readFile" | "writeFile" | "stat" | "killTagged" | "killAll" | "stop" | "policy" | "policyStatus" | "projectList" | "projectCandidates" | "projectAdd" | "projectRemove";
 
 // @public
 export interface DeviceOpResults {
@@ -840,6 +841,10 @@ export interface DeviceOpResults {
     killTagged: null;
     policy: DevicePolicyResult;
     policyStatus: DevicePolicyStatus;
+    projectAdd: DeviceProjectAddResult;
+    projectCandidates: DeviceProject[];
+    projectList: DeviceProject[];
+    projectRemove: null;
     readFile: DeviceReadFileResult;
     stat: DeviceStatResult;
     stop: null;
@@ -890,6 +895,36 @@ export interface DevicePolicyStatus {
 // @public
 export interface DevicePolicyStatusArgs {
     opId: string;
+}
+
+// @public
+export interface DeviceProject {
+    name: string;
+    path: string;
+}
+
+// @public
+export interface DeviceProjectAddArgs {
+    name?: string;
+    path: string;
+}
+
+// @public
+export type DeviceProjectAddResult = {
+    project: DeviceProject;
+} | {
+    refused: string;
+};
+
+// @public
+export type DeviceProjectCandidatesArgs = Record<string, never>;
+
+// @public
+export type DeviceProjectListArgs = Record<string, never>;
+
+// @public
+export interface DeviceProjectRemoveArgs {
+    name: string;
 }
 
 // @public
@@ -2710,6 +2745,10 @@ export interface SandboxProvider {
     killAll(h: SandboxHandle, signal: AbortSignal): Promise<void>;
     killTagged(h: SandboxHandle, tags: string[], signal: AbortSignal): Promise<void>;
     readonly limitsApplyAt?: "instance" | "fileSystem";
+    list?(h: SandboxHandle, path: string, signal: AbortSignal): Promise<{
+        name: string;
+        isDir: boolean;
+    }[]>;
     readFile(h: SandboxHandle, path: string, opts: {
         maxBytes: number;
         signal: AbortSignal;

@@ -4,6 +4,7 @@ import {
   DEFAULT_SANDBOX_ROOTS,
   type DeviceHello,
   type DeviceLocalPolicySummary,
+  type DeviceOp,
   type DevicePolicyStatus,
   DeviceProtocolError,
   isBackgroundLaunch,
@@ -308,6 +309,7 @@ describe("device protocol", () => {
     const summary = {
       mode: "sandbox",
       allowedDomains: ["files.slack.com", "*.github.com"],
+      projects: [],
     };
     const parseHello = (o: unknown) => parseDeviceFrame(JSON.stringify(o), "device") as DeviceHello;
 
@@ -368,6 +370,119 @@ describe("device protocol", () => {
       expect(() =>
         parseDeviceFrame(JSON.stringify({ type: "policy", policy: summary }), "kernel"),
       ).toThrow(DeviceProtocolError);
+    });
+  });
+
+  describe("projects on the policy summary", () => {
+    const summary = { mode: "sandbox", allowedDomains: ["files.slack.com"] };
+    const core = { name: "core", path: "/w/core" };
+    const parseHello = (o: unknown) => parseDeviceFrame(JSON.stringify(o), "device") as DeviceHello;
+
+    it("defaults projects to [] for a device that predates them", () => {
+      const withProjects = { ...summary, projects: [] };
+      expect(parseHello({ ...hello, policy: summary }).policy).toEqual(withProjects);
+      expect(
+        parseDeviceFrame(JSON.stringify({ type: "policy", policy: summary }), "device"),
+      ).toEqual({ type: "policy", policy: withProjects });
+      expect(parseOpResult("policy", { policy: summary })).toEqual({ policy: withProjects });
+      expect(parseOpResult("policyStatus", { outcome: "applied", policy: summary }).policy).toEqual(
+        withProjects,
+      );
+    });
+
+    it("round-trips the projects the device serves", () => {
+      const policy = { ...summary, projects: [core, { name: "web", path: "/Users/u/web" }] };
+      expect(parseHello({ ...hello, policy }).policy).toEqual(policy);
+      expect(parseOpResult("policy", { policy })).toEqual({ policy });
+      expect(parseOpResult("policyStatus", { outcome: "applied", policy }).policy).toEqual(policy);
+    });
+
+    it("keeps a summary field this SDK does not know, and refuses a malformed projects list", () => {
+      // a device of another version may carry more; the fields it does not know are dropped
+      expect(
+        parseOpResult("policy", { policy: { ...summary, projects: [core], later: 1 } }),
+      ).toEqual({ policy: { ...summary, projects: [core] } });
+      for (const projects of [
+        "core",
+        null,
+        {},
+        [1],
+        [null],
+        [{ name: "core" }],
+        [{ path: "/w/core" }],
+        [{ name: "", path: "/w/core" }],
+        [{ name: 1, path: "/w/core" }],
+        [{ name: "core", path: "" }],
+        [{ name: "core", path: 1 }],
+      ]) {
+        expect(
+          parseHello({ ...hello, policy: { ...summary, projects } }).policy,
+          JSON.stringify(projects),
+        ).toBeUndefined();
+        expect(() => parseOpResult("policy", { policy: { ...summary, projects } })).toThrow(
+          DeviceProtocolError,
+        );
+      }
+    });
+  });
+
+  describe("the project ops", () => {
+    const core = { name: "core", path: "/w/core" };
+
+    it("parses the requests", () => {
+      const goods: [string, unknown][] = [
+        ["projectList", {}],
+        ["projectCandidates", {}],
+        ["projectAdd", { path: "workspace/core" }],
+        ["projectAdd", { path: "/w/core", name: "core" }],
+        ["projectRemove", { name: "core" }],
+      ];
+      for (const [op, args] of goods) {
+        expect(parse(req(op, args), "kernel")(), op).toMatchObject({ op, args });
+      }
+    });
+
+    it("rejects malformed args", () => {
+      const bads: [string, unknown][] = [
+        ["projectAdd", {}],
+        ["projectAdd", { path: "" }],
+        ["projectAdd", { path: 1 }],
+        ["projectAdd", { path: "/w/core", name: "" }],
+        ["projectAdd", { path: "/w/core", name: 1 }],
+        ["projectRemove", {}],
+        ["projectRemove", { name: "" }],
+        ["projectRemove", { name: 1 }],
+      ];
+      for (const [op, args] of bads) {
+        expect(parse(req(op, args), "kernel"), `${op} ${JSON.stringify(args)}`).toThrow(
+          DeviceProtocolError,
+        );
+      }
+    });
+
+    it("parses the results", () => {
+      expect(parseOpResult("projectList", [core])).toEqual([core]);
+      expect(parseOpResult("projectCandidates", [])).toEqual([]);
+      expect(parseOpResult("projectAdd", { project: core })).toEqual({ project: core });
+      const refused = { refused: "That directory is not a project." };
+      expect(parseOpResult("projectAdd", refused)).toEqual(refused);
+      expect(parseOpResult("projectRemove", null)).toBeNull();
+      const bads: [DeviceOp, unknown][] = [
+        ["projectList", null],
+        ["projectList", { projects: [core] }],
+        ["projectList", [1]],
+        ["projectCandidates", null],
+        ["projectCandidates", [{ name: "core" }]],
+        ["projectAdd", null],
+        ["projectAdd", {}],
+        ["projectAdd", { refused: 1 }],
+        ["projectRemove", {}],
+      ];
+      for (const [op, result] of bads) {
+        expect(() => parseOpResult(op, result), `${op} ${JSON.stringify(result)}`).toThrow(
+          DeviceProtocolError,
+        );
+      }
     });
   });
 
@@ -439,6 +554,7 @@ describe("device protocol", () => {
       const policy: DeviceLocalPolicySummary = {
         mode: "sandbox",
         allowedDomains: ["a.example.com"],
+        projects: [],
       };
       const goods: DevicePolicyStatus[] = [
         { outcome: "applied", policy },
@@ -522,6 +638,7 @@ describe("device protocol", () => {
       const policy = {
         mode: "auto",
         allowedDomains: ["a.example.com"],
+        projects: [],
       };
       expect(parseOpResult("policy", { policy })).toEqual({ policy });
       for (const bad of [
