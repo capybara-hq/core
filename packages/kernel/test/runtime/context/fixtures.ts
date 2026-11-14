@@ -99,8 +99,12 @@ export class Log {
     return this.add({ type: "reminder", payload: { step, text } });
   }
 
-  summary(coversUpToSeq: number, text: string): ConversationEvent {
-    return this.add({ type: "compaction_summary", payload: { coversUpToSeq, text } });
+  /** A summary; `openingSeqs` names the covered messages it re-renders (spec §4.2). */
+  summary(coversUpToSeq: number, text: string, openingSeqs?: number[]): ConversationEvent {
+    return this.add({
+      type: "compaction_summary",
+      payload: { coversUpToSeq, text, ...(openingSeqs !== undefined && { openingSeqs }) },
+    });
   }
 
   compactionFailed(attempt: number): ConversationEvent {

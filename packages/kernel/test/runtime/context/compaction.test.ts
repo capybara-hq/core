@@ -136,13 +136,153 @@ describe("compactionPlan: size-aware tail", () => {
     expect(plan?.coversUpToSeq).toBe(lastUserSeq(log) - 1);
   });
 
-  it("keeps the latest turn even when it alone exceeds the budget, leaving the trim to the fit guard", () => {
+  it("keeps a latest turn without tool pairs even when it alone exceeds the budget, leaving the trim to the fit guard", () => {
     const log = longLog();
     const plan = compactionPlan(log.events, settings(), 50);
     expect(plan).not.toBeNull();
     expect(plan?.transcript).toContain("question 5");
     expect(plan?.transcript).not.toContain("question 6");
     expect(plan?.coversUpToSeq).toBe(lastUserSeq(log) - 1);
+  });
+});
+
+describe("compactionPlan: inside the latest user turn (spec §4.2, revision 2026-11-15)", () => {
+  /** An assistant step calling one tool, then its result (`result N: ` + `size` chars). */
+  const pair = (log: Log, n: number, size = 400, input: unknown = { n }) => {
+    const call = log.assistant(
+      [{ type: "tool_call", id: `call-${n}`, name: "Read", input }],
+      "tool_use",
+      n,
+    );
+    const result = log.add({
+      type: "tool_result",
+      payload: {
+        step: n,
+        callId: `call-${n}`,
+        toolKey: "Read",
+        content: `result ${n}: ${"y".repeat(size)}`,
+        isError: false,
+      },
+    });
+    return { call, result };
+  };
+  /** The first kept event of a plan: the smallest seq above `coversUpToSeq`, summaries apart. */
+  const firstKept = (log: Log, coversUpToSeq: number) =>
+    log.events.find((e) => e.seq > coversUpToSeq && e.type !== "compaction_summary");
+  /** Every tool call's result is on the same side of the cut as the call. */
+  const pairsIntact = (log: Log, coversUpToSeq: number) => {
+    const at = new Map<string, number>();
+    for (const e of log.events) if (e.type === "tool_result") at.set(e.payload.callId, e.seq);
+    for (const e of log.events) {
+      if (e.type !== "assistant_message") continue;
+      for (const b of e.payload.content) {
+        if (b.type !== "tool_call") continue;
+        const r = at.get(b.id);
+        if (r !== undefined && e.seq <= coversUpToSeq !== r <= coversUpToSeq) return false;
+      }
+    }
+    return true;
+  };
+
+  it("cuts at a tool-pair boundary when one user turn's tool loop is over the budget", () => {
+    // one user message, five pairs of ≈125 tokens: only the latest two fit 300
+    const log = new Log();
+    log.user("task: migrate the ledger");
+    const pairs = [1, 2, 3, 4, 5].map((n) => pair(log, n));
+    const plan = compactionPlan(log.events, settings(), 300);
+    expect(plan).not.toBeNull();
+    const covers = plan?.coversUpToSeq ?? 0;
+    expect(covers).toBe((pairs[3]?.call.seq ?? 0) - 1);
+    expect(plan?.transcript).toContain("User: task: migrate the ledger");
+    expect(plan?.transcript).toContain("result 1:");
+    expect(plan?.transcript).toContain("result 3:");
+    expect(plan?.transcript).not.toContain("result 4:");
+    const kept = firstKept(log, covers);
+    expect(kept?.type).toBe("assistant_message");
+    expect(
+      kept?.type === "assistant_message" &&
+        kept.payload.content.some((b) => b.type === "tool_call"),
+    ).toBe(true);
+    expect(pairsIntact(log, covers)).toBe(true);
+  });
+
+  it("never separates a tool call from its result across a mid-run interjection", () => {
+    // the interjection arrives while call 2 runs; call 2's input is large, so the tail from the
+    // interjection fits and the tail from call 2 does not, but no cut between them is allowed
+    const log = new Log();
+    log.user("task");
+    pair(log, 1);
+    const call2 = log.assistant(
+      [{ type: "tool_call", id: "call-2", name: "Read", input: { pad: "z".repeat(1200) } }],
+      "tool_use",
+      2,
+    );
+    log.user("interjection: also check the totals");
+    log.add({
+      type: "tool_result",
+      payload: { step: 2, callId: "call-2", toolKey: "Read", content: "result 2", isError: false },
+    });
+    const last = pair(log, 3, 40);
+    const plan = compactionPlan(log.events, settings(), 200);
+    expect(plan).not.toBeNull();
+    const covers = plan?.coversUpToSeq ?? 0;
+    expect(covers).toBeGreaterThanOrEqual(call2.seq);
+    expect(covers).toBe(last.call.seq - 1);
+    expect(plan?.transcript).toContain("interjection: also check the totals");
+    expect(plan?.transcript).toContain("result 2");
+    expect(pairsIntact(log, covers)).toBe(true);
+  });
+
+  it("covers everything before a single tool pair that alone is over the budget", () => {
+    const log = new Log();
+    log.user("task");
+    const only = pair(log, 1, 4000);
+    const plan = compactionPlan(log.events, settings(), 50);
+    expect(plan?.coversUpToSeq).toBe(only.call.seq - 1);
+    expect(plan?.transcript).toBe("User: task");
+  });
+
+  it("returns null when nothing precedes the single pair over the budget", () => {
+    const log = new Log();
+    const task = log.user("task");
+    log.summary(task.seq, "They asked for a task.");
+    pair(log, 1, 4000);
+    expect(compactionPlan(log.events, settings(), 50)).toBeNull();
+  });
+
+  it("keeps cutting inside the turn after a summary that covers its user message", () => {
+    const log = new Log();
+    const task = log.user("task");
+    log.summary(task.seq, "They asked for a task.");
+    const pairs = [1, 2, 3, 4].map((n) => pair(log, n));
+    const plan = compactionPlan(log.events, settings(), 300);
+    expect(plan).not.toBeNull();
+    expect(plan?.coversUpToSeq).toBe((pairs[2]?.call.seq ?? 0) - 1);
+    expect(plan?.transcript.startsWith("[Earlier summary]\nThey asked for a task.")).toBe(true);
+    expect(plan?.transcript).toContain("result 2:");
+    expect(plan?.transcript).not.toContain("result 3:");
+  });
+
+  it("keeps the latest pair when it alone is over the budget", () => {
+    const log = new Log();
+    log.user("task");
+    pair(log, 1);
+    pair(log, 2);
+    const last = pair(log, 3, 4000);
+    const plan = compactionPlan(log.events, settings(), 50);
+    expect(plan?.coversUpToSeq).toBe(last.call.seq - 1);
+    expect(plan?.transcript).toContain("result 2:");
+  });
+
+  it("does not move inside the turn while earlier turns can still go", () => {
+    // the latest turn with its pair fits; only the earlier turn is summarised
+    const log = new Log();
+    log.user(`question 1: ${"x".repeat(1200)}`);
+    log.assistant("answer 1");
+    const task = log.user("task");
+    pair(log, 1, 40);
+    const plan = compactionPlan(log.events, settings({ keepRecentTurns: 2 }), 300);
+    expect(plan?.coversUpToSeq).toBe(task.seq - 1);
   });
 });
 

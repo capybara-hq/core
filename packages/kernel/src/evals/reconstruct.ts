@@ -25,7 +25,15 @@ import {
   planMedia,
   type RequestTool,
 } from "../runtime/context/build.js";
-import { applyFit, clampOutput, type FitPlan, planFit } from "../runtime/context/fit.js";
+import {
+  applyFit,
+  estimateAfterFit,
+  type FitPlan,
+  planFit,
+  planningBounds,
+  planSqueezedFit,
+  sentOutputCap,
+} from "../runtime/context/fit.js";
 import { estimateTokens } from "../runtime/context/tokens.js";
 import { assembleModelRequest, type MediaSourceDeps } from "../runtime/model-call.js";
 import { CHILD_REMOVED_TOOLS } from "../runtime/subagents/definition.js";
@@ -377,25 +385,31 @@ export function reconstructRequest(
   const { request, meta, mediaTokens } = built;
 
   if (!baseline) {
-    // The hard fit guard against the candidate's window (spec §4.9): clamp the output cap and the
-    // reserve to that window, apply the fit the candidate would have used, and report
-    // `context_fit` when the plan differs from the recorded one.
+    // The hard fit guard against the candidate's window (spec §4.9), as the runtime runs it: plan
+    // against the planning target `W - O_p - R_p` (squeezed to `W - 1 - R_p` when out of reach),
+    // apply the fit the candidate would have used, then clamp the output cap from the post-fit
+    // estimate keeping the reserve; report `context_fit` when the plan differs from the recorded
+    // one. A forced compaction the runtime would run first is not modelled (step replay writes
+    // nothing).
     const reserve = opts.reserveTokens ?? DEFAULT_RESERVE_TOKENS;
     const estimate = estimateTokens(request.messages, request.system, request.tools, mediaTokens);
-    request.maxOutputTokens = clampOutput(
-      opts.model.contextWindow,
-      request.maxOutputTokens,
-      estimate,
-    );
-    const recomputed = planFit({
+    const output = request.maxOutputTokens;
+    const fitInput = {
       events: inputEvents(all, call),
       request,
       model: opts.model,
-      maxOutputTokens: request.maxOutputTokens,
+      maxOutputTokens: output,
       reserveTokens: reserve,
       estimate,
-    });
+    };
+    const { target } = planningBounds(opts.model.contextWindow, output, reserve);
+    let recomputed = planFit(fitInput);
+    if (recomputed !== null && estimateAfterFit(request, estimate, recomputed) > target) {
+      recomputed = planSqueezedFit(fitInput).plan;
+    }
     if (!samePlan(recomputed, rec.fit)) drift.add("context_fit");
+    const after = recomputed === null ? estimate : estimateAfterFit(request, estimate, recomputed);
+    request.maxOutputTokens = sentOutputCap(opts.model.contextWindow, output, after, reserve);
     if (recomputed !== null) {
       request.messages = applyFit(request, recomputed).messages;
     }

@@ -24,38 +24,37 @@ export interface FitPlan {
 export const FIT_TRUNCATION_NOTE = "[content truncated to fit the model's context window]";
 
 /**
- * The output cap actually sent (`O'`, spec §4.3 point 2): the configured cap, lowered so the
- * provider-visible total (`input + O'`) fits the window. At least one output token is always left.
- * When the window is smaller than the requested cap this is what keeps the plan's target reachable.
+ * The planning bounds of a window (context compaction spec §4.1, revision 2026-11-15): every plan
+ * (the trigger, the compaction tail, the fit guard, the reactive trim) uses `O_p = min(O, ⌊W/2⌋)`
+ * (at least 1) and `R_p = min(R, ⌊W/8⌋)` in place of the output cap and the reserve, so the input
+ * target `W - O_p - R_p` is at least `3W/8` on any model. Without them a model whose output cap is
+ * about its window, or whose window is smaller than the reserve, had a target of about one token.
+ * Common models are unchanged (W 200k, O 32k, R 8k: `O_p = O`, `R_p = R`).
  */
-export function clampOutput(
+export function planningBounds(
   contextWindow: number,
   maxOutputTokens: number,
-  estimate: number,
-): number {
-  return Math.max(1, Math.min(maxOutputTokens, Math.max(1, contextWindow - estimate)));
+  reserveTokens: number,
+): { output: number; reserve: number; target: number } {
+  const output = Math.max(1, Math.min(maxOutputTokens, Math.floor(contextWindow / 2)));
+  const reserve = Math.max(0, Math.min(reserveTokens, Math.floor(contextWindow / 8)));
+  return { output, reserve, target: contextWindow - output - reserve };
 }
 
 /**
- * The reserve actually kept (`R_eff`, spec §4.3 point 2): the configured reserve, reduced to what
- * the clamped output leaves below the window. A reserve larger than the window is sacrificed
- * (the hard bound is what must hold), so the target keeps at least one token of room.
+ * The output cap actually sent (`O'`, spec §4.1 / §4.3 point 4): `clamp(O, 1, W - input - R_p)`,
+ * from the input actually sent (after the fit plan). The configured cap whenever it fits beside the
+ * input and the reserve; otherwise what is left, the reserve kept. Every path (ordinary, squeezed,
+ * reactive) clamps with it.
  */
-export function effectiveReserve(
+export function sentOutputCap(
   contextWindow: number,
-  clampedOutput: number,
+  maxOutputTokens: number,
+  inputSent: number,
   reserveTokens: number,
 ): number {
-  return Math.min(reserveTokens, Math.max(0, contextWindow - clampedOutput - 1));
-}
-
-/** The input room left below the window: `W - O' - R_eff` with the clamped output and reserve. */
-export function fitTarget(
-  contextWindow: number,
-  clampedOutput: number,
-  reserveTokens: number,
-): number {
-  return contextWindow - clampedOutput - reserveTokens;
+  const { reserve } = planningBounds(contextWindow, maxOutputTokens, reserveTokens);
+  return Math.max(1, Math.min(maxOutputTokens, contextWindow - inputSent - reserve));
 }
 
 export interface PlanFitInput {
@@ -65,9 +64,9 @@ export interface PlanFitInput {
   request: ModelRequest;
   /** The model the request is for: its context window is the hard bound. */
   model: ModelInfo;
-  /** `O`: the requested output cap (`ModelRequest.maxOutputTokens`, before the clamp). */
+  /** `O`: the requested output cap (`ModelRequest.maxOutputTokens`, unclamped; bounded here). */
   maxOutputTokens: number;
-  /** `R`: the safety reserve in effect for the run's organization, before the clamp. */
+  /** `R`: the safety reserve in effect for the run's organization (unreduced; bounded here). */
   reserveTokens: number;
   /** The request's input-token estimate (uncalibrated, as recorded). */
   estimate: number;
@@ -79,9 +78,22 @@ const NOTE_TOKENS = estimateTokens(
   [],
 );
 
-/** A typed user turn (a person's message), not a tool-result carrier and not the summary. */
+/** The summary text block (never truncated: it is the retained history). */
+const isSummaryText = (b: ContentBlock): boolean =>
+  b.type === "text" && b.text.startsWith(SUMMARY_OPEN);
+
+/**
+ * The conversation summary message (never dropped; its summary text is never truncated, the
+ * re-rendered opening user message after it may be: spec §4.3 point 5).
+ */
+const isSummary = (m: ModelMessage): boolean => m.role === "user" && m.content.some(isSummaryText);
+
+/**
+ * A typed user turn (a person's message): not a tool-result carrier and not the summary, which may
+ * cover the latest typed message (spec §4.2, revision 2026-11-15).
+ */
 const isTypedUser = (m: ModelMessage): boolean =>
-  m.role === "user" && m.content.some((b) => b.type !== "tool_result");
+  m.role === "user" && m.content.some((b) => b.type !== "tool_result") && !isSummary(m);
 
 /** A message that carries only tool results (the answer to a tool call). */
 const isResults = (m: ModelMessage): boolean =>
@@ -89,10 +101,6 @@ const isResults = (m: ModelMessage): boolean =>
 
 const hasToolCall = (m: ModelMessage): boolean =>
   m.role === "assistant" && m.content.some((b) => b.type === "tool_call");
-
-/** The conversation summary message (never dropped or truncated: it is the retained history). */
-const isSummary = (m: ModelMessage): boolean =>
-  m.role === "user" && m.content.some((b) => b.type === "text" && b.text.startsWith(SUMMARY_OPEN));
 
 const messageTokens = (m: ModelMessage): number => estimateTokens([m], [], []);
 
@@ -104,30 +112,39 @@ const truncatable = (b: ContentBlock): boolean =>
   (b.type === "tool_result" && b.content !== FIT_TRUNCATION_NOTE);
 
 /**
- * The deterministic fit plan for a request over `W - O' - R_eff` (the output cap and reserve first
- * clamped to the window, {@link clampOutput} / {@link effectiveReserve}), or null when it already
- * fits. A plan that cannot reach the target even after dropping every droppable message and
- * truncating every kept text / `tool_result` block is still returned: the caller raises
- * `run.context_too_large` before any provider call.
+ * The deterministic fit plan for a request over the planning target `W - O_p - R_p`
+ * ({@link planningBounds}), or null when it already fits. A plan that cannot reach the target even after dropping every droppable
+ * message and truncating every kept text / `tool_result` block is still returned: the caller decides
+ * (the ordinary guard fails before any provider call).
  *
- * Drops, in this order, every droppable message before the latest user turn until the estimate is
- * at or below the target: complete tool pairs first (a tool call with the results message that
- * follows it), then assistant text, then complete older user turns. Never a pair's half, never the
- * summary. If that is not enough, it truncates the kept tail's largest text / `tool_result` blocks
- * (replacing the content with {@link FIT_TRUNCATION_NOTE}).
+ * Drops, in this order, until the estimate is at or below the target: before the latest user turn,
+ * complete tool pairs first (a tool call with the results message that follows it), then assistant
+ * text, then complete older user turns; then the complete tool pairs inside the latest user turn,
+ * oldest first, stopping before the latest complete pair (spec §4.3, revision 2026-11-15). The
+ * latest typed message stays (when the summary covers it, the turn starts after the summary). Never
+ * a pair's half, never the summary or a system message. If that is not enough, it truncates the kept
+ * messages' largest text / `tool_result` blocks (replacing the content with
+ * {@link FIT_TRUNCATION_NOTE}); in the summary message only the blocks after the summary text (the
+ * re-rendered opening user message) are candidates.
  */
 export function planFit(input: PlanFitInput): FitPlan | null {
-  const { request, model, maxOutputTokens, reserveTokens, estimate } = input;
-  const output = clampOutput(model.contextWindow, maxOutputTokens, estimate);
-  const reserve = effectiveReserve(model.contextWindow, output, reserveTokens);
-  const target = fitTarget(model.contextWindow, output, reserve);
+  const { model, maxOutputTokens, reserveTokens } = input;
+  return planFitTo(
+    input,
+    planningBounds(model.contextWindow, maxOutputTokens, reserveTokens).target,
+  );
+}
+
+/** {@link planFit} against an explicit input target (the squeezed fit, the reactive trim). */
+function planFitTo(input: PlanFitInput, target: number): FitPlan | null {
+  const { request, estimate } = input;
   if (target <= 0 || estimate <= target) return null;
 
   const messages = request.messages;
-  // the latest user turn and everything after it are kept (the turn being answered); older
-  // messages may go
+  // the latest user turn starts at the latest typed message, or (when the summary covers it) at the
+  // start: older messages may go whole, the turn itself only as complete tool pairs
   const lastTyped = messages.findLastIndex(isTypedUser);
-  const keepFrom = lastTyped < 0 ? messages.length : lastTyped;
+  const keepFrom = lastTyped < 0 ? 0 : lastTyped;
   const droppable = (i: number): boolean => {
     const m = messages[i];
     return i < keepFrom && m !== undefined && m.role !== "system" && !isSummary(m);
@@ -171,16 +188,37 @@ export function planFit(input: PlanFitInput): FitPlan | null {
     if (!isTypedUser(messages[i] as ModelMessage)) continue;
     drop([i]);
   }
+  // complete tool pairs inside the latest user turn, oldest first, keeping the latest complete pair
+  // (the one the next step answers)
+  const isPairAt = (i: number): boolean => {
+    const m = messages[i];
+    const next = messages[i + 1];
+    return m !== undefined && hasToolCall(m) && next !== undefined && isResults(next);
+  };
+  let latestPair = -1;
+  for (let i = messages.length - 2; i >= keepFrom; i--) {
+    if (isPairAt(i)) {
+      latestPair = i;
+      break;
+    }
+  }
+  for (let i = keepFrom; i < latestPair && current > target; i++) {
+    if (!isPairAt(i)) continue;
+    drop([i, i + 1]);
+    i++;
+  }
   if (current <= target) return plan;
 
-  // the latest turn alone is too large: replace its largest text / tool_result blocks (and those of
-  // the kept tail) with the note, largest first, ties by position
+  // still too large: replace the kept messages' largest text / tool_result blocks with the note,
+  // largest first, ties by position. In the summary message only the summary text is protected:
+  // the turn's opening message re-rendered after it (spec §4.2) is a kept block like any other
   const candidates: { messageIndex: number; block: number; tokens: number }[] = [];
-  for (let i = keepFrom; i < messages.length; i++) {
+  for (let i = 0; i < messages.length; i++) {
     const m = messages[i];
-    if (m === undefined || m.role === "system" || isSummary(m)) continue;
+    if (m === undefined || dropped.has(i) || m.role === "system") continue;
+    if (i < keepFrom && !isSummary(m)) continue;
     m.content.forEach((b, block) => {
-      if (!truncatable(b)) return;
+      if (!truncatable(b) || isSummaryText(b)) return;
       const tokens = blockTokens(b);
       if (tokens > NOTE_TOKENS) candidates.push({ messageIndex: i, block, tokens });
     });
@@ -198,6 +236,44 @@ export function planFit(input: PlanFitInput): FitPlan | null {
     });
   }
   return plan;
+}
+
+/**
+ * The fallback when {@link planFit} cannot reach its target, even after one forced compaction
+ * (spec §4.3 point 5): plan against `W - 1 - R_p`, giving the output whatever the input leaves
+ * while the reserve stays. The caller sends the cap {@link sentOutputCap} gives from the post-fit
+ * estimate. A plan that cannot reach this target either means the system prompt, tools, summary and
+ * latest pair are too large (`run.context_too_large`).
+ */
+export function planSqueezedFit(input: PlanFitInput): { plan: FitPlan | null; target: number } {
+  const { model, maxOutputTokens, reserveTokens } = input;
+  const { reserve } = planningBounds(model.contextWindow, maxOutputTokens, reserveTokens);
+  const target = model.contextWindow - 1 - reserve;
+  return { plan: planFitTo(input, target), target };
+}
+
+/** The reactive trim's fractions of the fit target, most aggressive first (spec §4.3 point 6). */
+export const REACTIVE_TRIM_FACTORS = [0.7, 0.8, 0.9] as const;
+
+/**
+ * The deterministic plan for a reactive trim (spec §4.3 point 6 / §4.4): the provider rejected a
+ * request the estimate thought fit, so the retry is trimmed against 70%, 80% or 90% of the fit
+ * target `W - O_p - R_p`, the most aggressive one the plan actually reaches (its estimate after the
+ * plan at or below it). Null when none is reached (a plan that cannot reach even 90% would replace
+ * every kept block with notes) or when the request already fits 70% (nothing to trim, the same
+ * request would be rejected again): no trim retry, the step surfaces `model.context_overflow`. The
+ * plan is ordinary and replays byte-for-byte like any other.
+ */
+export function planReactiveTrim(input: PlanFitInput): FitPlan | null {
+  const { request, model, maxOutputTokens, reserveTokens, estimate } = input;
+  const { target } = planningBounds(model.contextWindow, maxOutputTokens, reserveTokens);
+  for (const factor of REACTIVE_TRIM_FACTORS) {
+    const t = Math.floor(factor * target);
+    const plan = planFitTo(input, t);
+    if (plan === null) return null;
+    if (estimateAfterFit(request, estimate, plan) <= t) return plan;
+  }
+  return null;
 }
 
 /**

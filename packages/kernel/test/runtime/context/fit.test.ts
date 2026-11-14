@@ -3,12 +3,14 @@ import { describe, expect, it } from "vitest";
 import { buildModelRequest } from "../../../src/runtime/context/build.js";
 import {
   applyFit,
-  clampOutput,
-  effectiveReserve,
   estimateAfterFit,
   FIT_TRUNCATION_NOTE,
   type FitPlan,
   planFit,
+  planningBounds,
+  planReactiveTrim,
+  planSqueezedFit,
+  sentOutputCap,
 } from "../../../src/runtime/context/fit.js";
 import { estimateTokens } from "../../../src/runtime/context/tokens.js";
 import { AGENT, Log, MODEL } from "./fixtures.js";
@@ -37,16 +39,17 @@ function build(log: Log): { request: ModelRequest; estimate: number } {
   };
 }
 
-/** A reserve that, with `WINDOW` and `OUTPUT` under their clamps, makes the target equal `target`. */
-const reserveFor = (target: number): number => WINDOW - OUTPUT - target;
-
+/**
+ * A plan against exactly `target`: a window of `2 × target` with an unbounded output cap and no
+ * reserve plans with `O_p = W/2`, so `W - O_p - R_p = target` (the planning bounds).
+ */
 const plan = (log: Log, request: ModelRequest, estimate: number, target: number): FitPlan | null =>
   planFit({
     events: log.events,
     request,
-    model: MODEL_FIT,
-    maxOutputTokens: OUTPUT,
-    reserveTokens: reserveFor(target),
+    model: { ...MODEL_FIT, contextWindow: 2 * target },
+    maxOutputTokens: Number.MAX_SAFE_INTEGER,
+    reserveTokens: 0,
     estimate,
   });
 
@@ -66,61 +69,291 @@ function pairsIntact(messages: readonly ModelMessage[]): boolean {
   return calls.size === results.size && [...calls].every((id) => results.has(id));
 }
 
-describe("clampOutput / effectiveReserve", () => {
-  it("lowers the output cap so input + output fits the window, and keeps at least one token", () => {
-    expect(clampOutput(1_000, 5_000, 200)).toBe(800);
-    expect(clampOutput(1_000, 5_000, 999)).toBe(1);
-    expect(clampOutput(1_000, 5_000, 1_200)).toBe(1);
-    // a cap that fits the window is unchanged
-    expect(clampOutput(10_000, 1_000, 200)).toBe(1_000);
+describe("planningBounds / sentOutputCap", () => {
+  it("plans with O_p = min(O, W/2) and R_p = min(R, W/8): common models are unchanged", () => {
+    expect(planningBounds(200_000, 32_000, 8_000)).toEqual({
+      output: 32_000,
+      reserve: 8_000,
+      target: 160_000,
+    });
+    // a model whose output cap is about its window, or a window under the reserve: the target
+    // stays at least 3W/8 instead of about one token
+    expect(planningBounds(2_000, 4_096, 8_000)).toEqual({
+      output: 1_000,
+      reserve: 250,
+      target: 750,
+    });
+    expect(planningBounds(1_000, 999, 0)).toEqual({ output: 500, reserve: 0, target: 500 });
+    // at least one output token
+    expect(planningBounds(1, 1_000, 0).output).toBe(1);
   });
 
-  it("keeps the reserve only when the clamped output leaves room below the window", () => {
-    // W - O' - 1 = 8_999, so the configured 8_000 is kept
-    expect(effectiveReserve(10_000, 1_000, 8_000)).toBe(8_000);
-    // W - O' - 1 = 199, so the configured 8_000 is reduced to 199
-    expect(effectiveReserve(1_000, 800, 8_000)).toBe(199);
-    expect(effectiveReserve(1_000, 999, 8_000)).toBe(0);
+  it("sends clamp(O, 1, W - input - R_p): the configured cap whenever it fits, the reserve kept", () => {
+    expect(sentOutputCap(200_000, 32_000, 100_000, 8_000)).toBe(32_000);
+    // O above W/2 is still sent when the input leaves room for it (O_p only plans)
+    expect(sentOutputCap(2_000, 4_096, 100, 8_000)).toBe(2_000 - 100 - 250);
+    expect(sentOutputCap(2_000, 4_096, 1_900, 8_000)).toBe(1);
+    expect(sentOutputCap(10_000, 1_000, 200, 0)).toBe(1_000);
   });
 
-  it("a large requested cap on a small window still yields a plan (the trim runs)", () => {
+  it("a request over the window is planned against W - O_p - R_p, so the cap sent stays O", () => {
     const log = new Log();
-    log.user(`a huge latest message ${"word ".repeat(2_000)}`);
+    log.user("question one");
+    log.assistant("answer one ".repeat(400));
+    log.user("question two");
+    log.assistant("answer two ".repeat(400));
+    log.user(`latest ${"word ".repeat(400)}`);
     const { request, estimate } = build(log);
-    // W = 4_000, O = 5_000, R = 0: O' = 4_000 - estimate, the target is the estimate, so it fits;
-    // with a reserve the target is below the input and the tail is truncated
-    const wide: ModelInfo = { ...MODEL_FIT, contextWindow: 4_000 };
-    expect(
-      planFit({
-        events: log.events,
-        request,
-        model: wide,
-        maxOutputTokens: 5_000,
-        reserveTokens: 0,
-        estimate,
-      }),
-    ).toBeNull();
+    const small: ModelInfo = { ...MODEL_FIT, contextWindow: 2_000 };
+    const { target } = planningBounds(small.contextWindow, 1_000, 500);
+    expect(estimate).toBeGreaterThan(small.contextWindow);
     const trimmed = planFit({
       events: log.events,
       request,
-      model: wide,
-      maxOutputTokens: 5_000,
+      model: small,
+      maxOutputTokens: 1_000,
       reserveTokens: 500,
       estimate,
     }) as FitPlan;
-    expect(trimmed.truncated).toHaveLength(1);
+    expect(trimmed).not.toBeNull();
+    const after = estimateAfterFit(request, estimate, trimmed);
+    expect(after).toBeLessThanOrEqual(target);
+    // the caller clamps after the plan, from the post-fit estimate: the full cap, not 1
+    expect(sentOutputCap(small.contextWindow, 1_000, after, 500)).toBe(1_000);
     const fitted = applyFit(request, trimmed);
     expect(estimateTokens(fitted.messages, fitted.system, fitted.tools)).toBeLessThanOrEqual(
-      fitTargetOf(wide.contextWindow, 5_000, 500, estimate),
+      target,
     );
   });
 });
 
-/** The target planFit uses for `estimate` (clamped output and effective reserve). */
-const fitTargetOf = (window: number, output: number, reserve: number, estimate: number): number => {
-  const clamped = clampOutput(window, output, estimate);
-  return window - clamped - effectiveReserve(window, clamped, reserve);
-};
+describe("planSqueezedFit (the target is out of reach)", () => {
+  it("plans against W - 1 - R_p: the output takes what the input leaves, the reserve stays", () => {
+    const log = new Log();
+    log.user("question one");
+    log.assistant("answer one ".repeat(100));
+    log.user("latest");
+    const { request, estimate } = build(log);
+    // a window whose planning target the request is over, but below W - 1 - R_p
+    const W = estimate + 200;
+    const small: ModelInfo = { ...MODEL_FIT, contextWindow: W };
+    const input = {
+      events: log.events,
+      request,
+      model: small,
+      maxOutputTokens: 4_096,
+      reserveTokens: 100,
+      estimate,
+    };
+    const R_p = Math.min(100, Math.floor(W / 8));
+    expect(planSqueezedFit(input)).toEqual({ plan: null, target: W - 1 - R_p });
+    // the cap sent keeps the reserve: input + cap + R_p = W
+    expect(sentOutputCap(W, 4_096, estimate, 100)).toBe(W - estimate - R_p);
+  });
+
+  it("trims to W - 1 - R_p when the request is over it", () => {
+    const log = new Log();
+    log.user("question one");
+    log.assistant("answer one ".repeat(100));
+    log.user("latest");
+    const { request, estimate } = build(log);
+    const W = estimate - 50;
+    const squeezed = planSqueezedFit({
+      events: log.events,
+      request,
+      model: { ...MODEL_FIT, contextWindow: W },
+      maxOutputTokens: 4_096,
+      reserveTokens: 100,
+      estimate,
+    });
+    expect(squeezed.target).toBe(W - 1 - Math.min(100, Math.floor(W / 8)));
+    expect(squeezed.plan?.droppedMessageIndexes).toEqual([1]);
+    expect(estimateAfterFit(request, estimate, squeezed.plan as FitPlan)).toBeLessThanOrEqual(
+      squeezed.target,
+    );
+  });
+});
+
+describe("planReactiveTrim (spec §4.3 point 6)", () => {
+  /** A request whose summary text (never dropped or truncated) takes `summaryTokens`. */
+  function withSummary(summaryChars: number): {
+    log: Log;
+    request: ModelRequest;
+    estimate: number;
+  } {
+    const log = new Log();
+    log.user("old question");
+    const covered = log.assistant("old answer");
+    log.summary(covered.seq, "s".repeat(summaryChars));
+    log.user(`latest ${"word ".repeat(200)}`);
+    log.assistant("answer ".repeat(200));
+    log.user("go on");
+    return { log, ...build(log) };
+  }
+
+  const trim = (log: Log, request: ModelRequest, estimate: number, W: number) =>
+    planReactiveTrim({
+      events: log.events,
+      request,
+      model: { ...MODEL_FIT, contextWindow: W },
+      maxOutputTokens: 100,
+      reserveTokens: 0,
+      estimate,
+    });
+
+  it("targets 70/80/90% of W - O_p - R_p and takes the most aggressive one it reaches", () => {
+    const { log, request, estimate } = withSummary(4 * 1_300);
+    // fit target W - 100: the ~1300-token summary is over 70% of it but under 80%
+    const W = 2_000;
+    const target = W - 100;
+    expect(estimate).toBeGreaterThan(Math.floor(0.7 * target));
+    const plan = trim(log, request, estimate, W) as FitPlan;
+    expect(plan).not.toBeNull();
+    const after = estimateAfterFit(request, estimate, plan);
+    expect(after).toBeGreaterThan(Math.floor(0.7 * target));
+    expect(after).toBeLessThanOrEqual(Math.floor(0.8 * target));
+  });
+
+  it("no target reachable: no trim (never a request whose kept text is all notes)", () => {
+    // the summary alone is over 90% of the fit target: every plan would replace the kept user
+    // text and results with notes and still not fit
+    const { log, request, estimate } = withSummary(4 * 2_000);
+    expect(trim(log, request, estimate, 2_000)).toBeNull();
+  });
+
+  it("nothing to trim (the request already fits 70%): no trim retry", () => {
+    const { log, request, estimate } = withSummary(40);
+    expect(trim(log, request, estimate, 100_000)).toBeNull();
+  });
+});
+
+/** A tool pair in the log: the assistant's call and its result. */
+function pair(log: Log, id: string, size: number): void {
+  log.assistant([{ type: "tool_call", id, name: "echo", input: {} }], "tool_use");
+  log.add({
+    type: "tool_result",
+    payload: {
+      step: 0,
+      callId: id,
+      toolKey: "echo",
+      content: `result ${id} `.padEnd(size * 4, "r"),
+      isError: false,
+    },
+  });
+}
+
+describe("planFit inside the latest user turn", () => {
+  it("drops the turn's tool pairs oldest first, keeping the typed message and the latest pair", () => {
+    const log = new Log();
+    log.user("the task");
+    pair(log, "a", 300);
+    pair(log, "b", 300);
+    pair(log, "c", 300);
+    const { request, estimate } = build(log);
+    // messages: 0 task, 1 call a, 2 result a, 3 call b, 4 result b, 5 call c, 6 result c
+    expect(request.messages.map((m) => m.role)).toEqual([
+      "user",
+      "assistant",
+      "user",
+      "assistant",
+      "user",
+      "assistant",
+      "user",
+    ]);
+    const pairA =
+      tokens(request.messages[1] as ModelMessage) + tokens(request.messages[2] as ModelMessage);
+    // room for dropping pair A only
+    const one = plan(log, request, estimate, estimate - pairA) as FitPlan;
+    expect(one).toEqual({ droppedMessageIndexes: [1, 2], truncated: [] });
+    // room only after dropping A and B: C (the latest pair) and the task stay
+    const two = plan(log, request, estimate, estimate - pairA - 1) as FitPlan;
+    expect(two.droppedMessageIndexes).toEqual([1, 2, 3, 4]);
+    const fitted = applyFit(request, two);
+    expect(pairsIntact(fitted.messages)).toBe(true);
+    expect(JSON.stringify(fitted.messages[0])).toContain("the task");
+    expect(JSON.stringify(fitted.messages)).toContain("result c");
+    // far over: the pairs before the latest go, then the kept tail is truncated; C is never dropped
+    const all = plan(log, request, estimate, 1) as FitPlan;
+    expect(all.droppedMessageIndexes).toEqual([1, 2, 3, 4]);
+    expect(pairsIntact(applyFit(request, all).messages)).toBe(true);
+  });
+
+  it("drops older turns before the latest turn's pairs", () => {
+    const log = new Log();
+    log.user("old question");
+    log.assistant("old answer ".repeat(100));
+    log.user("the task");
+    pair(log, "a", 300);
+    pair(log, "b", 300);
+    const { request, estimate } = build(log);
+    // messages: 0 old q, 1 old a, 2 task, 3 call a, 4 result a, 5 call b, 6 result b
+    const trimmed = plan(
+      log,
+      request,
+      estimate,
+      estimate -
+        tokens(request.messages[1] as ModelMessage) -
+        tokens(request.messages[0] as ModelMessage) -
+        1,
+    ) as FitPlan;
+    expect(trimmed.droppedMessageIndexes).toEqual([1, 0, 3, 4]);
+  });
+
+  it("does not treat the summary as the latest user turn when it covers the typed message", () => {
+    const log = new Log();
+    const task = log.user("the task");
+    pair(log, "a", 300);
+    log.summary(task.seq + 2, "Earlier: the user asked for the task; call a ran.");
+    pair(log, "b", 300);
+    pair(log, "c", 300);
+    pair(log, "d", 300);
+    const { request, estimate } = build(log);
+    // messages: 0 summary, 1 call b, 2 result b, 3 call c, 4 result c, 5 call d, 6 result d
+    expect(JSON.stringify(request.messages[0])).toContain("<conversation_summary>");
+    expect(request.messages).toHaveLength(7);
+    const trimmed = plan(log, request, estimate, 1) as FitPlan;
+    expect(trimmed.droppedMessageIndexes).toEqual([1, 2, 3, 4]);
+    const fitted = applyFit(request, trimmed);
+    expect(JSON.stringify(fitted.messages[0])).toContain("<conversation_summary>");
+    // the latest pair (d) is kept, truncated at most
+    expect(JSON.stringify(fitted.messages)).toContain('"callId":"d"');
+    expect(fitted.messages).toHaveLength(3);
+    expect(pairsIntact(fitted.messages)).toBe(true);
+    // the summary is never truncated
+    expect(trimmed.truncated.every((t) => t.messageIndex !== 0)).toBe(true);
+  });
+
+  it("truncates a huge re-rendered opening message after the summary, never the summary text", () => {
+    const log = new Log();
+    const task = log.user(`the task ${"t".repeat(40_000)}`);
+    log.runStarted();
+    pair(log, "a", 300);
+    log.summary(task.seq + 3, "Earlier: the user asked for the task; call a ran.", [task.seq]);
+    pair(log, "b", 300);
+    pair(log, "c", 300);
+    const { request, estimate } = build(log);
+    // messages: 0 summary (block 0 the summary text, block 1 the opening message), 1 call b,
+    // 2 result b, 3 call c, 4 result c
+    const summary = request.messages[0] as ModelMessage;
+    expect(summary.content).toHaveLength(2);
+    expect(JSON.stringify(summary.content[0])).toContain("<conversation_summary>");
+    expect(JSON.stringify(summary.content[1])).toContain("the task ttt");
+    // room for the summary text, the latest pair and little else: the opening message must go
+    const target = estimate - 9_000;
+    const trimmed = plan(log, request, estimate, target) as FitPlan;
+    expect(trimmed.truncated).toContainEqual({
+      messageIndex: 0,
+      block: 1,
+      note: FIT_TRUNCATION_NOTE,
+    });
+    expect(trimmed.truncated).not.toContainEqual(expect.objectContaining({ block: 0 }));
+    expect(estimateAfterFit(request, estimate, trimmed)).toBeLessThanOrEqual(target);
+    const fitted = applyFit(request, trimmed);
+    expect(JSON.stringify(fitted.messages[0])).toContain("Earlier: the user asked for the task");
+    expect(JSON.stringify(fitted.messages)).not.toContain("tttttttttt");
+    expect(pairsIntact(fitted.messages)).toBe(true);
+  });
+});
 
 describe("planFit", () => {
   it("returns null when the request already fits", () => {
@@ -177,9 +410,7 @@ describe("planFit", () => {
     const target = estimate - tokens(request.messages[3] as ModelMessage);
     const one = plan(log, request, estimate, target);
     expect(one).toEqual({ droppedMessageIndexes: [3, 4], truncated: [] });
-    expect(estimateAfterFit(request, estimate, one as FitPlan)).toBeLessThanOrEqual(
-      fitTargetOf(WINDOW, OUTPUT, reserveFor(target), estimate),
-    );
+    expect(estimateAfterFit(request, estimate, one as FitPlan)).toBeLessThanOrEqual(target);
     expect(pairsIntact(applyFit(request, one as FitPlan).messages)).toBe(true);
 
     // room for the pair and the oldest assistant text, not the second one
@@ -297,7 +528,7 @@ describe("planFit", () => {
     });
     log.user("latest");
     const { request, estimate } = build(log);
-    const target = estimate - 600;
+    const target = Math.floor(estimate / 2);
     const first = plan(log, request, estimate, target);
     expect(first).not.toBeNull();
     expect(plan(log, request, estimate, target)).toEqual(first);
@@ -312,9 +543,7 @@ describe("planFit", () => {
     const systemTokens = estimate - tokens(request.messages[0] as ModelMessage);
     const target = systemTokens - 1;
     const trimmed = plan(log, request, estimate, target) as FitPlan;
-    expect(estimateAfterFit(request, estimate, trimmed)).toBeGreaterThan(
-      fitTargetOf(WINDOW, OUTPUT, reserveFor(target), estimate),
-    );
+    expect(estimateAfterFit(request, estimate, trimmed)).toBeGreaterThan(target);
     expect(applyFit(request, trimmed).messages).toHaveLength(1);
   });
 });

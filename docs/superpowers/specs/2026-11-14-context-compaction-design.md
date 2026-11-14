@@ -49,6 +49,8 @@ Compaction stays synchronous at the step boundary (the user explicitly chose not
 
 Let `W = model.contextWindow`, `O = min(agent maxOutputTokens, model.maxOutputTokens)`, `R = reserveTokens` (default 8000).
 
+**Planning bounds (revision 2026-11-15).** Every formula below plans with `O_p = min(O, floor(W / 2))` and `R_p = min(R, floor(W / 8))` in place of `O` and `R`, so the input target `W - O_p - R_p` is at least `3W/8` on any model. A model whose output cap is close to or above its window (some local models) or whose window is smaller than the default reserve otherwise had a target of about one token: every step compacted, the guard always failed or squeezed, and the reactive trim replaced the whole request with notes. Common models are unchanged (W 200k, O 32k, R 8k gives `O_p = O`, `R_p = R`). The cap actually sent is `clamp(O, 1, W - inputSent - R_p)`: the configured cap whenever it fits beside the input and the reserve.
+
 - Trigger when `calibratedEstimate >= min(threshold * W, W - O - R)`.
 - Always trigger when `calibratedEstimate + O > W` (hard line), regardless of backoff.
 - `threshold` is a preference, not a guarantee: a late threshold cannot cause an overflow because of 4.3.
@@ -59,9 +61,10 @@ Let `W = model.contextWindow`, `O = min(agent maxOutputTokens, model.maxOutputTo
 
 Keep the current plan and tool-pair guard. Add a size budget:
 
-- Compute the kept tail (`keepRecentTurns` turns) plus system prompt and tools; if `tail + system + tools + O + R > W`, move the boundary earlier (keep fewer turns), down to the latest user turn.
+- Compute the kept tail (`keepRecentTurns` turns) plus system prompt and tools; if `tail + system + tools + O + R > W`, move the boundary later (keep fewer turns).
 - The configured `keepRecentTurns` is a maximum, not a hard rule.
-- If even one turn does not fit, 4.3 handles the remaining content.
+- **The latest user turn can be compacted too (revision 2026-11-15, maintainer decision: like Claude Code).** When the latest user turn alone does not fit, the boundary moves inside it, to a tool-pair boundary: a position where every tool call before it has its result before it. The kept tail shrinks pair by pair, down to the latest complete tool pair (the assistant tool calls and their results the next step answers); it never splits a pair. The summary still covers a contiguous prefix (`coversUpToSeq`), so the turn's opening user message is inside it, but the request keeps that message **verbatim**: when the latest summary's `coversUpToSeq` falls inside a user turn, request building re-renders the turn's opening user message(s) (as an ordinary user message renders: sender line, schedule header, media) after the summary text, in the summary's own user message. Which messages is decided when the summary is written and recorded in it: `compaction_summary.openingSeqs` (optional, additive) lists the seqs of the user messages that started the run being compacted when the summary covers them (all of them if a person sent several before the run's first call); request building re-renders exactly those and nothing else, so the request never depends on events written after the summary (it stays append-only from one step to the next), and a summary without the field (every log written before this revision) re-renders nothing. The model therefore always sees the task in the person's words, the summary of the earlier steps of this turn, and the latest steps verbatim. The re-rendered text is derived from the log, so it needs no `DriftReason`; logs written before this revision carry no `openingSeqs` and rebuild unchanged. Interjections inside the turn that the summary covers stay in the summary only. The re-rendered message carries no skill fork report (a report whose invocation is covered follows the existing covered-invocation rule, so it is never shown twice); a run started by a background task, a sub-agent delivery or a manual compact has no opening user message to re-render. A long agent loop inside one user turn (sub-agents, scheduled tasks, one prompt with hundreds of tool calls) is compacted like any other history instead of only trimmed.
+- If even the latest tool pair does not fit, 4.3 handles the remaining content.
 
 ### 4.2.1 Summary instruction (Claude Code template)
 
@@ -79,13 +82,16 @@ Adopt Claude Code's structured summary prompt (2.1.183), not the current free-fo
 Applied to every request after compaction and before sending:
 
 1. Build the request and estimate its input.
-2. Fit target: `W - O - R`, not merely `< W`. Clamp output: `O' = clamp(O, 1, W - input)`. If `input <= W - O - R`, the provider-visible total fits with the safety reserve (providers that count `max_tokens` included).
-3. If `input > W - O - R`, apply a deterministic fit plan:
-   - Drop the oldest complete turns / tool pairs outside the latest user turn, preferring tool results, then assistant text, until the input is at or below the fit target.
-   - If the latest user turn alone is too large, truncate its largest text / `tool_result` blocks and insert the English note `[content truncated to fit the model's context window]`.
+2. Fit target: `W - O_p - R_p` (planning bounds above), not merely `< W`. If `input <= target`, the provider-visible total fits with the safety reserve (providers that count `max_tokens` included).
+3. If `input > target`, apply a deterministic fit plan:
+   - Drop the oldest complete turns / tool pairs before the latest user turn, preferring tool results, then assistant text, until the input is at or below the fit target.
+   - Then the oldest complete tool pairs inside the latest user turn (revision 2026-11-15), keeping the latest user message (when it is not inside the summary) and the latest complete tool pair. Never a pair's half, never the summary.
+   - If that is still too large, truncate the kept messages' largest text / `tool_result` blocks and insert the English note `[content truncated to fit the model's context window]`.
    - Record the plan in `model_call.request.fit` (dropped seqs, truncated block identifiers). `buildRequest` applies a recorded plan, so reconstruction is byte-for-byte and old logs (no `fit`) rebuild as before. No `DriftReason`: it is in the log.
-4. If system prompt + tools + the latest user message still exceed the fit target, fail with a clear kernel error (`run.context_too_large`) before any provider call. This is a configuration/input problem, not a history overflow.
-5. Estimator error: a provider may still reject a request the estimate thought fits. On `context_overflow`, re-trim to progressively smaller targets (70%, then 80%, then 90% of `W`; most aggressive first, applying the first target the plan actually reaches) and retry, bounded; this is the real backstop, not the estimate.
+4. Clamp output **after** the plan, from the input actually sent: `O' = clamp(O, 1, W - inputAfterFit - R_p)` (revision 2026-11-15: clamping from the pre-trim estimate sent a trimmed request with `maxOutputTokens: 1`, and a later draft gave the reserve away to the output). The recorded `maxOutputTokens` is this `O'`.
+5. If the plan cannot reach the target, compact once with `force: true` (4.4, the rung's model) and fit again. If it still cannot, fall back to the squeezed fit: plan against `W - 1 - R_p` and send the cap point 4 gives (the output shrinks to what is left, the reserve stays). Only if that cannot be reached either (system prompt + tools + summary + the kept latest pair too large), fail with `run.context_too_large` before any provider call. This is a configuration/input problem, not a history overflow.
+   - Inside the summary message only the summary text is protected: the re-rendered opening user message (4.2) after it may be truncated like any kept text block.
+6. Estimator error: a provider may still reject a request the estimate thought fits. On `context_overflow`, re-trim against 70%, then 80%, then 90% of the fit target (`W - O_p - R_p`) and use the most aggressive target the plan actually reaches (estimate after the plan at or below it). When none is reached there is no trim retry (a plan that cannot reach even 90% would replace every kept block with notes); the step surfaces `model.context_overflow`. Bounded; this is the real backstop, not the estimate.
 
 ### 4.4 Reactive compaction
 
@@ -97,6 +103,8 @@ Applied to every request after compaction and before sending:
   4. Then surface `model.context_overflow`; never loop.
 - Compaction in the reactive path uses the model of the rung that failed (`info`), not necessarily the agent's model; a fallback rung may have a smaller window, and the summary must fit it.
 - Each overflow fix-up (media exclusion, compaction, trim) consumes one attempt; the ladder's three rungs are unchanged, so a step may write up to five `model_call` rows. Overflow fix-ups are bounded to one of each per rung.
+- A fallback rung whose smaller window the local guard cannot reach (4.3 point 5) gets the same forced compaction with its own model before `run.context_too_large`; that forced compaction counts as the rung's one compaction fix-up.
+- Every compaction a step runs has its own idempotency keys (revision 2026-11-15): the ordinal of the compaction among the step's `compaction_summary` / `compaction_failed` events, not the failure count. A proactive summary followed by a forced one in the same step therefore writes two summaries and two usage records; before, the second reused the first's key and was silently dropped while its call was still billed. Backoff keeps counting consecutive failures.
 
 ### 4.5 Chunked compaction fallback
 
@@ -164,11 +172,13 @@ UI: a "Conversation compaction" section on the platform settings page and the or
 |---|---|
 | Proactive compaction fails | `compaction_failed` + backoff; step sends if it fits, else 4.3 |
 | Hard guard trims | request sent with `fit`; no error |
-| Provider rejects despite the estimate | progressive trim (70 → 80 → 90% of W) + retry, bounded |
+| Provider rejects despite the estimate | progressive trim (most aggressive reachable of 70 / 80 / 90% of W) + retry, bounded |
 | Reactive compaction fails | trim + retry; then `model.context_overflow` |
 | Media rejection with bytes | `media_excluded` + in-step retry |
 | Chunk fails | one `compaction_failed` with the chunk; no partial summary |
-| Prompt + tools alone too large | `run.context_too_large` before any provider call |
+| One user turn with a long tool loop outgrows the window | compacted inside the turn at a tool-pair boundary (4.2) |
+| Guard cannot reach the target (incl. a smaller fallback window) | forced compaction once, fit again (4.3 point 5) |
+| Prompt + tools + summary + latest pair too large | `run.context_too_large` before any provider call |
 | Manual compact while busy | `409 conversation.busy` |
 | Abort during compaction | run aborted; no partial summary event |
 | `enabled: false` | no proactive early compaction; hard line/guard/reactive stay armed |

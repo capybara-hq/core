@@ -52,17 +52,19 @@ import {
   extractSummary,
   MIN_COMPACTION_CHUNK_TOKENS,
   nextTranscriptChunk,
+  openingSeqs,
   shouldCompact,
   summarySavedTokens,
 } from "./context/compaction.js";
 import {
   applyFit,
-  clampOutput,
-  effectiveReserve,
   estimateAfterFit,
   type FitPlan,
-  fitTarget,
   planFit,
+  planningBounds,
+  planReactiveTrim,
+  planSqueezedFit,
+  sentOutputCap,
 } from "./context/fit.js";
 import { guardToolPairs } from "./context/pairing.js";
 import { TOOLS_UNSUPPORTED_REMINDER, turnLimitReminder } from "./context/reminders.js";
@@ -322,15 +324,6 @@ export const MAX_MODEL_ATTEMPTS = 3;
  */
 export const MAX_STEP_MODEL_CALLS = MAX_MODEL_ATTEMPTS + 2;
 
-/**
- * The progressively smaller fit targets of a reactive trim, as fractions of the model's window
- * (context compaction spec §4.3 point 5 / §4.4 point 3). The trim fix-up tries them most
- * aggressive first (70%, then 80%, then 90% of the window) and uses the first target a fit plan
- * actually reaches, so the retry really shrinks a request the provider rejected. `null` when the
- * request already fits every target (nothing to trim).
- */
-export const REACTIVE_TRIM_FACTORS = [0.9, 0.8, 0.7] as const;
-
 /** 本步解析出的工具与是否启用 ToolSearch（见 `ToolRegistry.forAgent`），以及本步已取的附件字节。 */
 export interface StepTools {
   list: RequestTool[];
@@ -436,18 +429,19 @@ const idem = {
   hookDenied: (runId: string, step: number, attempt: number) =>
     `hook_denied:${runId}:${step}:${attempt}`,
   /**
-   * Usage of a compaction call: `n` is the compaction attempt (consecutive failures + 1). A
-   * chunked compaction sends one call per chunk, so the chunk index (1-based) is part of the key
-   * (context compaction spec §4.5).
+   * Usage of a compaction call: `n` is the compaction's ordinal in the step
+   * ({@link compactionOrdinal}). A chunked compaction sends one call per chunk, so the chunk index
+   * (1-based) is part of the key (context compaction spec §4.5).
    */
   compactionUsage: (runId: string, step: number, n: number, chunk?: number) =>
     chunk === undefined
       ? `usage_compaction:${runId}:${step}:${n}`
       : `usage_compaction:${runId}:${step}:${n}:${chunk}`,
   /**
-   * The outcome of one compaction attempt: `n` is the attempt (consecutive failures + 1). Retrying
-   * the same attempt after a crash writes nothing new; a manual compact run is keyed by its run id
-   * and step 0 (context compaction spec §4.7).
+   * The outcome of one compaction: `n` is its ordinal in the step ({@link compactionOrdinal}), so a
+   * proactive summary and a forced one in the same step are two events (spec §4.4, revision
+   * 2026-11-15). Retrying the same compaction after a crash writes nothing new; a manual compact run
+   * is keyed by its run id and step 0 (context compaction spec §4.7).
    */
   compactionSummary: (runId: string, step: number, n: number) =>
     `compaction_summary:${runId}:${step}:${n}`,
@@ -457,7 +451,52 @@ const idem = {
     `media_excluded:${runId}:${step}:${attempt}:${part}`,
 };
 
-/** 外部 signal 已触发：本步按「中止」收尾。 */
+/** The step result of a sub-agent whose budget a compaction call used up: no step request. */
+const BUDGET_STOP: ModelStepResult = {
+  content: [],
+  stopReason: "end_turn",
+  reused: false,
+  aborted: false,
+  usage: null,
+  budget: true,
+};
+
+/** A forced compaction in the ladder used up the sub-agent's budget (see {@link BUDGET_STOP}). */
+class BudgetUsedUp extends Error {
+  constructor() {
+    super("sub-agent budget used up by a compaction call");
+    this.name = "BudgetUsedUp";
+  }
+}
+
+/**
+ * A sub-agent checks its budget again after a compaction call, so the step's own request is not a
+ * second call over the cap (review M5; the loop checks before each step); the budget wrap-up is the
+ * one call allowed over it.
+ */
+async function budgetUsedUpAfterCompaction(
+  deps: ModelStepDeps,
+  input: ModelStepInput,
+  wrapUpReason: WrapUpReason | null,
+): Promise<boolean> {
+  if (wrapUpReason === "budget" || input.parentRunId === undefined) return false;
+  return subagentBudgetUsedUp(
+    deps.db,
+    deps.config,
+    input.orgId,
+    input.parent?.budgetRunId ?? (await budgetRunOf(deps.db, input.parentRunId)),
+  );
+}
+
+/** The reactive trim cannot reach any of its targets: no trim retry (spec §4.3 point 6). */
+class NoReactiveTrim extends Error {
+  constructor() {
+    super("no reachable reactive trim");
+    this.name = "NoReactiveTrim";
+  }
+}
+
+/** The external signal fired: the step ends as aborted. */
 class StepAborted extends Error {
   constructor() {
     super("model step aborted");
@@ -559,24 +598,10 @@ async function runStep(
     // not a second call over the cap (review M5; the loop checks before each step); the budget
     // wrap-up is the one call allowed over it
     if (
-      wrapUpReason !== "budget" &&
-      input.parentRunId !== undefined &&
       events.length !== beforeCompaction &&
-      (await subagentBudgetUsedUp(
-        deps.db,
-        deps.config,
-        input.orgId,
-        input.parent?.budgetRunId ?? (await budgetRunOf(deps.db, input.parentRunId)),
-      ))
+      (await budgetUsedUpAfterCompaction(deps, input, wrapUpReason))
     ) {
-      return {
-        content: [],
-        stopReason: "end_turn",
-        reused: false,
-        aborted: false,
-        usage: null,
-        budget: true,
-      };
+      return BUDGET_STOP;
     }
 
     // the tool set changed since the previous request (an extension switched on, a sub-agent
@@ -615,16 +640,25 @@ async function runStep(
       }
     }
 
-    const { outcome, ref } = await ladder(
-      deps,
-      input,
-      events,
-      runtime,
-      compaction,
-      tools,
-      wrapUpReason,
-      streamed,
-    );
+    let laddered: Awaited<ReturnType<typeof ladder>>;
+    try {
+      laddered = await ladder(
+        deps,
+        input,
+        events,
+        runtime,
+        compaction,
+        tools,
+        wrapUpReason,
+        streamed,
+      );
+    } catch (e) {
+      // a forced compaction inside the ladder used up a sub-agent's budget (the same check as
+      // after the proactive compaction above)
+      if (e instanceof BudgetUsedUp) return BUDGET_STOP;
+      throw e;
+    }
+    const { outcome, ref } = laddered;
     // assistant_message and usage in one append = one transaction, which also owes the usage's
     // usage.report delivery (transactional outbox spec §8.1)
     await appendCounted(deps, input, [
@@ -991,6 +1025,42 @@ function consecutiveCompactionFailures(events: ConversationEvent[]): number {
   return n;
 }
 
+/** The step an event of a run belongs to, when its payload names one. */
+function stepOf(e: ConversationEvent): number | undefined {
+  const step = (e.payload as { step?: unknown }).step;
+  return typeof step === "number" ? step : undefined;
+}
+
+/**
+ * The ordinal of the next compaction of this run's `step`: 1 + the `compaction_summary` /
+ * `compaction_failed` events the step already wrote (context compaction spec §4.4, revision
+ * 2026-11-15). It keys the compaction's events (summary, failure, usage, hook denial), so every
+ * compaction of a step writes its own, while a crash-retried compaction (nothing written yet) gets
+ * the same keys again. Outcome events record their step, so they are counted by it. Older ones
+ * have none: a run's step N compacts after every event of its earlier steps, so those are counted
+ * from the run's last event of an earlier step on. The backoff keeps counting consecutive failures
+ * ({@link consecutiveCompactionFailures}).
+ */
+function compactionOrdinal(
+  events: readonly ConversationEvent[],
+  runId: string,
+  step: number,
+): number {
+  let recorded = 0;
+  let legacy = 0;
+  for (const e of events) {
+    if (e.runId !== runId) continue;
+    const of = stepOf(e);
+    if (e.type === "compaction_summary" || e.type === "compaction_failed") {
+      if (of === undefined) legacy++;
+      else if (of === step) recorded++;
+      continue;
+    }
+    if (of !== undefined && of < step) legacy = 0;
+  }
+  return recorded + legacy + 1;
+}
+
 /** Estimated input tokens of a plain text (a user message's only content). */
 function textTokens(text: string): number {
   return estimateTokens([{ role: "user", content: [{ type: "text", text }] }], []);
@@ -1088,23 +1158,25 @@ export async function runCompaction(
   // The trigger's output cap is the step's own cap, min(agent max, model max) (spec §4.1), not the
   // settings' maxOutputTokens — that one caps the summary call (spec §4.8).
   const output = built.maxOutputTokens;
+  // planned with the bounds every step request uses (spec §4.1): O_p and R_p
+  const bounds = planningBounds(info.contextWindow, output, compaction.reserveTokens);
   // The hard line ignores both gates: enabled: false turns proactive early compaction off only,
   // and backoff only delays proactive attempts (context compaction spec §4.1). The reactive path
   // (`force`) ignores the trigger entirely (spec §4.4).
   if (!opts.force) {
-    if (estimate + output <= info.contextWindow && compactionBackoff(events))
+    if (estimate + bounds.output <= info.contextWindow && compactionBackoff(events))
       return skipped(events);
     if (!shouldCompact(estimate, info.contextWindow, { ...compaction, maxOutputTokens: output })) {
       return skipped(events);
     }
   }
-  // the input room left for the kept tail: the window minus the output cap and the reserve
-  // (compactionInputBudget), minus the system prompt and tool definitions every request carries
-  const tailBudget =
-    compactionInputBudget(info.contextWindow, output, compaction.reserveTokens) -
-    estimateTokens([], built.system, built.tools);
+  // the input room left for the kept tail: the planning target `W - O_p - R_p`, minus the system
+  // prompt and tool definitions every request carries
+  const tailBudget = bounds.target - estimateTokens([], built.system, built.tools);
   const plan = compactionPlan(events, compaction, tailBudget);
   if (!plan) return skipped(events);
+  // decided now and recorded in the summary (spec §4.2): the request never depends on later events
+  const opening = openingSeqs(events, input.runId, plan.coversUpToSeq, input.absorbedUpToSeq);
 
   const { runId, step, signal, conversationId } = input;
   const ref = modelRef;
@@ -1123,7 +1195,9 @@ export async function runCompaction(
   // the summary call's output cap: the org's effective setting, never above the model's own cap
   // (context compaction spec §4.8)
   const summaryCap = Math.min(compaction.maxOutputTokens, info.maxOutputTokens);
+  // the payload's attempt drives the backoff; the keys use the compaction's ordinal in the step
   const attemptNo = consecutiveCompactionFailures(events) + 1;
+  const ordinal = compactionOrdinal(events, runId, step);
   // hooks see compaction calls like step attempts (I-1): same scope, chat runs only
   const scope = hookScope(deps.hooks, input);
   const hookBase = scope && {
@@ -1335,7 +1409,7 @@ export async function runCompaction(
     usages.map(({ chunk, usage }) => ({
       type: "usage" as const,
       runId,
-      idemKey: idem.compactionUsage(runId, step, attemptNo, chunk),
+      idemKey: idem.compactionUsage(runId, step, ordinal, chunk),
       payload: {
         step,
         provider: ref.provider,
@@ -1356,7 +1430,7 @@ export async function runCompaction(
       runId,
       ...(input.accountId !== undefined && { accountId: input.accountId }),
       ...(input.agentId !== undefined && { agentId: input.agentId }),
-      idemKey: `hook_denied_compaction:${runId}:${step}:${attemptNo}`,
+      idemKey: `hook_denied_compaction:${runId}:${step}:${ordinal}`,
     };
     const denied = hookDeniedEvent(site, "model.request", verdict, { step, attempt: 1 });
     const entry = hookDeniedAudit(site, denied.payload, verdict);
@@ -1364,9 +1438,10 @@ export async function runCompaction(
     const failed: AppendEvent = {
       type: "compaction_failed",
       runId,
-      idemKey: idem.compactionFailed(runId, step, attemptNo),
+      idemKey: idem.compactionFailed(runId, step, ordinal),
       payload: {
         attempt: attemptNo,
+        step,
         reason: `compaction request blocked by the "${verdict.plugin}" policy hook (${verdict.cause})${chunkNote(multiChunk ? denial.chunk : null)}`,
       },
     };
@@ -1398,20 +1473,23 @@ export async function runCompaction(
           type: "compaction_summary",
           runId,
           // the manual compact run's run id is in it; a crash-retried attempt writes nothing twice
-          idemKey: idem.compactionSummary(runId, step, attemptNo),
+          idemKey: idem.compactionSummary(runId, step, ordinal),
           payload: {
             coversUpToSeq: plan.coversUpToSeq,
             text: summary,
+            // the run's opening messages the summary covers: request building re-renders them
+            ...(opening.length > 0 && { openingSeqs: opening }),
             // what compaction saved: the estimated transcript input minus the stored summary
             // output (context compaction spec §4.9)
             savedTokens: summarySavedTokens(plan.transcript, summary),
+            step,
           },
         }
       : {
           type: "compaction_failed",
           runId,
-          idemKey: idem.compactionFailed(runId, step, attemptNo),
-          payload: { attempt: attemptNo, reason: `${failure}${chunkNote(failedChunk)}` },
+          idemKey: idem.compactionFailed(runId, step, ordinal),
+          payload: { attempt: attemptNo, step, reason: `${failure}${chunkNote(failedChunk)}` },
         };
   // the compaction calls' usage (I-1): logged with the outcome in one append (one transaction),
   // marked `purpose: "compaction"` so step consumers (calibration, trajectory steps, replay plans)
@@ -1578,11 +1656,15 @@ async function ladder(
         if (forceCompact) {
           forceCompact = false;
           // the rung's model, not the agent's: a fallback may have a smaller window (spec §4.4)
+          const before = evs;
           evs = await maybeCompact(deps, input, evs, runtime, compaction, tools, {
             force: true,
             ref: rung.ref,
             fallback: rung.fallback,
           });
+          if (evs !== before && (await budgetUsedUpAfterCompaction(deps, input, wrapUpReason))) {
+            throw new BudgetUsedUp();
+          }
         }
         if (tools.list.length > 0 && !info.capabilities.tools) {
           evs = await appendLocal(deps.eventLog, conversationId, evs, {
@@ -1601,55 +1683,85 @@ async function ladder(
           });
         }
         const params = attemptParams(agent, info, rung.fallback);
-        await loadMedia(deps, input, evs, info, tools);
-        const { request, meta, estimate } = buildRequest(
-          deps,
-          evs,
-          input,
-          info,
-          params.value,
-          runtime,
-          tools,
-          wrapUp,
-        );
-        // the hard fit guard (context compaction spec §4.3): the output cap is first clamped to what
-        // the window leaves after the input, the reserve to what the clamped cap leaves, and a request
-        // over the resulting target is trimmed deterministically. The plan is recorded and replayed
-        // byte-for-byte; a request the system prompt, tools and latest turn cannot bring under the
-        // target fails before any provider call.
-        request.maxOutputTokens = clampOutput(
-          info.contextWindow,
-          request.maxOutputTokens,
-          estimate,
-        );
-        const reserve = effectiveReserve(
-          info.contextWindow,
-          request.maxOutputTokens,
-          compaction.reserveTokens,
-        );
-        const target = fitTarget(info.contextWindow, request.maxOutputTokens, reserve);
-        const planned = trimForAttempt
-          ? reactiveTrimPlan(evs, request, info, request.maxOutputTokens, reserve, estimate)
-          : planFit({
-              events: evs,
-              request,
-              model: info,
-              maxOutputTokens: request.maxOutputTokens,
-              reserveTokens: reserve,
-              estimate,
-            });
-        let sentRequest = request;
+        // the hard fit guard (context compaction spec §4.3): the target is `W - O_p - R_p` (the
+        // planning bounds, §4.1), a request over it is trimmed deterministically, and only then is
+        // the cap clamped from the input actually sent, keeping the reserve (`clamp(O, 1, W - input
+        // - R_p)`). The plan is recorded and replayed byte-for-byte. The last resorts, in order
+        // (§4.3 point 5): one forced compaction with this rung's model, the squeezed fit, then
+        // `run.context_too_large` before any call.
+        const fit = async () => {
+          await loadMedia(deps, input, evs, info, tools);
+          const built = buildRequest(deps, evs, input, info, params.value, runtime, tools, wrapUp);
+          const { request, estimate } = built;
+          const fitInput = {
+            events: evs,
+            request,
+            model: info,
+            maxOutputTokens: request.maxOutputTokens,
+            reserveTokens: compaction.reserveTokens,
+            estimate,
+          };
+          const { target } = planningBounds(
+            info.contextWindow,
+            request.maxOutputTokens,
+            compaction.reserveTokens,
+          );
+          const planned = trimForAttempt ? planReactiveTrim(fitInput) : planFit(fitInput);
+          const reached =
+            planned === null || estimateAfterFit(request, estimate, planned) <= target;
+          return { ...built, fitInput, target, planned, reached };
+        };
+        let fitted = await fit();
+        // the reactive trim reaches none of its targets (or there is nothing to trim): no retry,
+        // the overflow surfaces (spec §4.3 point 6)
+        if (trimForAttempt && fitted.planned === null) throw new NoReactiveTrim();
+        if (!trimForAttempt && !fitted.reached && !compactFixup) {
+          // the strict plan cannot reach the target (a fallback rung with a smaller window, a huge
+          // latest turn): compact once with this rung's model (a fallback's window may be smaller,
+          // spec §4.4), rebuild and plan again within this attempt. It is the rung's compaction
+          // fix-up, so a later context_overflow on this rung goes to the trim.
+          compactFixup = true;
+          const before = evs;
+          evs = await maybeCompact(deps, input, evs, runtime, compaction, tools, {
+            force: true,
+            ref: rung.ref,
+            fallback: rung.fallback,
+          });
+          if (evs !== before) {
+            if (await budgetUsedUpAfterCompaction(deps, input, wrapUpReason)) {
+              throw new BudgetUsedUp();
+            }
+            fitted = await fit();
+          }
+        }
+        const { request, meta, estimate, fitInput } = fitted;
+        /** `O`: the configured cap (min of the agent's and the model's), before the clamp. */
+        const output = request.maxOutputTokens;
+        let target = fitted.target;
+        let planned = fitted.planned;
+        if (!trimForAttempt && !fitted.reached) {
+          // still out of reach: plan against `W - 1 - R_p` (the output takes what is left, the
+          // reserve stays); the cap sent is clamped after it like any other
+          ({ plan: planned, target } = planSqueezedFit(fitInput));
+        }
         let sentEstimate = estimate;
         if (planned !== null) {
           const after = estimateAfterFit(request, estimate, planned);
-          // a reactive trim is best effort (the estimate may be wrong; the provider is the backstop);
-          // the ordinary hard-fit guard stays strict and fails before any provider call
+          // a reactive trim plan reached its target; the ordinary guard stays strict and fails
+          // before any provider call
           if (!trimForAttempt && after > target) {
             throw new RunError("run.context_too_large", contextTooLargeText(info, target, after));
           }
-          sentRequest = applyFit(request, planned);
           sentEstimate = after;
         }
+        // O' = clamp(O, 1, W - inputAfterFit - R_p): recorded as the request's maxOutputTokens
+        request.maxOutputTokens = sentOutputCap(
+          info.contextWindow,
+          output,
+          sentEstimate,
+          compaction.reserveTokens,
+        );
+        const sentRequest = planned === null ? request : applyFit(request, planned);
         sentMedia = (meta.media ?? []).flatMap((m) =>
           m.outcome === "bytes" ? [m.attachmentId] : [],
         );
@@ -1768,6 +1880,18 @@ async function ladder(
         if (signal.aborted) throw new StepAborted();
         // a hook denial is final (not retried, not reclassified)
         if (err instanceof RunError) throw err;
+        if (err instanceof BudgetUsedUp) throw err;
+        if (err instanceof NoReactiveTrim) {
+          // nothing was sent for this attempt: it takes no number, and the overflow that asked for
+          // the trim is what the rung ends with (a fallback model, a different window, may remain)
+          attempt--;
+          if (!rung.fallback && agent.fallback) {
+            skipToFallback = true;
+            break;
+          }
+          const f = last as Failure;
+          throw new RunError(f.code, f.message);
+        }
         const f = classify(err);
         if (scope && deps.hooks && sentAt !== undefined) {
           fireObserve(
@@ -1890,40 +2014,6 @@ async function ladder(
   }
   const f = last as Failure;
   throw new RunError(f.code, f.message);
-}
-
-/**
- * The deterministic fit plan for a reactive trim (context compaction spec §4.3 point 5 / §4.4): the
- * request is trimmed to fit 70%, then 80%, then 90% of the model's window, applying the first target
- * a plan actually reaches. Most aggressive first: the provider rejected a request the estimate
- * thought fit, so the retry must really shrink it, not leave the optimistic request unchanged.
- * Returns null only when the request already fits every target (nothing to trim). The plan is
- * ordinary and replays byte-for-byte like any other.
- */
-function reactiveTrimPlan(
-  events: ConversationEvent[],
-  request: ModelRequest,
-  model: ModelInfo,
-  maxOutputTokens: number,
-  reserveTokens: number,
-  estimate: number,
-): FitPlan | null {
-  for (let i = REACTIVE_TRIM_FACTORS.length - 1; i >= 0; i--) {
-    const window = Math.max(
-      1,
-      Math.floor((REACTIVE_TRIM_FACTORS[i] as number) * model.contextWindow),
-    );
-    const plan = planFit({
-      events,
-      request,
-      model: { ...model, contextWindow: window },
-      maxOutputTokens,
-      reserveTokens,
-      estimate,
-    });
-    if (plan !== null) return plan;
-  }
-  return null;
 }
 
 /** 不可重试、且可能由请求里的媒体引起的失败：带了媒体字节时写 `media_excluded`（Ruling M8）。 */
