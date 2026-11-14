@@ -105,15 +105,18 @@ describe("permissionGroups", () => {
         { value: "PUT /s (admin)", sensitive: false },
       ],
     });
-    // public and embed routes take no sign-in: both sensitive
+    // public routes take no sign-in, embed routes need an embed token: separate sensitive groups
     expect(by.publicRoutes).toEqual({
       category: "publicRoutes",
       sensitive: true,
-      items: ["POST /events (public)", "GET /ui/data (embed)"],
-      entries: [
-        { value: "POST /events (public)", sensitive: true, reason: "public_routes" },
-        { value: "GET /ui/data (embed)", sensitive: true, reason: "public_routes" },
-      ],
+      items: ["POST /events (public)"],
+      entries: [{ value: "POST /events (public)", sensitive: true, reason: "public_routes" }],
+    });
+    expect(by.embedRoutes).toEqual({
+      category: "embedRoutes",
+      sensitive: true,
+      items: ["GET /ui/data (embed)"],
+      entries: [{ value: "GET /ui/data (embed)", sensitive: true, reason: "embed_routes" }],
     });
     expect(by.tools?.sensitive).toBe(true);
     expect(by.hooks?.sensitive).toBe(true);
@@ -170,7 +173,7 @@ describe("permissionGroups", () => {
     expect(isSensitivePermissionKey("permissions.http.member:GET /items")).toBe(false);
     expect(isSensitivePermissionKey("permissions.http.admin:PUT /settings")).toBe(false);
     expect(permissionKeyItems(["permissions.http.embed:GET /ui/data"])).toEqual([
-      { value: "permissions.http.embed:GET /ui/data", sensitive: true, reason: "public_routes" },
+      { value: "permissions.http.embed:GET /ui/data", sensitive: true, reason: "embed_routes" },
     ]);
   });
 });

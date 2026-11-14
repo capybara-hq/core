@@ -1655,8 +1655,8 @@ export interface PluginReviewAgentTemplate {
   skills?: string[];
 }
 
-/** Route access levels reachable without signing in: public, and embed (an embed token). */
-const noSignIn = (access: string): boolean => access === "public" || access === "embed";
+/** Routes of the `http` group: member and admin (the kernel authenticates a person). */
+const signedIn = (access: string): boolean => access === "member" || access === "admin";
 
 const routeItem = (r: { method: string; path: string; access: string }): string =>
   `${r.method} ${r.path} (${r.access})`;
@@ -1682,8 +1682,9 @@ export function declaredPermissions(
     { category: "secrets", items: p.secrets ? ["secrets"] : [] },
     { category: "storage", items: p.storage ? ["storage"] : [] },
     // routes show their access; public and embed routes take no sign-in (the kernel's grouping)
-    { category: "http", items: http.filter((r) => !noSignIn(r.access)).map(routeItem) },
-    { category: "publicRoutes", items: http.filter((r) => noSignIn(r.access)).map(routeItem) },
+    { category: "http", items: http.filter((r) => signedIn(r.access)).map(routeItem) },
+    { category: "publicRoutes", items: http.filter((r) => r.access === "public").map(routeItem) },
+    { category: "embedRoutes", items: http.filter((r) => r.access === "embed").map(routeItem) },
     { category: "tools", items: p.tools ?? [] },
     {
       category: "hooks",

@@ -383,7 +383,7 @@ describe("declaredPermissions (the org-upload confirm)", () => {
     ]);
   });
 
-  it("routes show their access; public and embed routes form the public group", () => {
+  it("routes show their access; public and embed routes form their own groups", () => {
     const groups = declaredPermissions(
       manifest({
         http: [
@@ -402,7 +402,12 @@ describe("declaredPermissions (the org-upload confirm)", () => {
       },
       {
         category: "publicRoutes",
-        items: ["POST /hook (public)", "GET /ui/data (embed)"],
+        items: ["POST /hook (public)"],
+        sensitive: false,
+      },
+      {
+        category: "embedRoutes",
+        items: ["GET /ui/data (embed)"],
         sensitive: false,
       },
     ]);

@@ -2752,6 +2752,7 @@
       "storage": "对象存储",
       "http": "HTTP 路由",
       "publicRoutes": "公开路由（无需登录）",
+      "embedRoutes": "嵌入页路由（嵌入令牌）",
       "tools": "智能体工具",
       "hooks": "Hook",
       "models": "模型",
@@ -2780,6 +2781,7 @@
       "reason": {
         "secrets": "可以读写密钥",
         "public_routes": "这些路由不需要登录就能访问",
+        "embed_routes": "嵌入页带令牌即可访问（成员身份由内核校验）",
         "tools": "组织里的智能体可以调用这些工具",
         "hooks": "可以介入内核流程",
         "ui_embed": "会把扩展自己的页面嵌入网页",
@@ -2861,6 +2863,7 @@
     "categoryShort": {
       "ui": "界面",
       "publicRoutes": "公开路由",
+      "embedRoutes": "嵌入页路由",
       "provides": "扩展点"
     },
     "missingRequired": "缺少必填项：{fields}",
