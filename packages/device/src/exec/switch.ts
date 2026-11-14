@@ -5,7 +5,7 @@ import type {
   SandboxRoots,
 } from "@capybara-hq/plugin-sdk";
 import { effectiveMode } from "../policy.js";
-import type { Policy } from "../state.js";
+import type { Policy, SandboxMode } from "../state.js";
 import { DeviceOpError, type ExecMode, type Executor } from "./types.js";
 
 export type { ExecMode } from "./types.js";
@@ -164,6 +164,20 @@ export class SwitchingExecutor implements Executor {
 
   async stat(path: string) {
     return (await this.files()).stat(path);
+  }
+
+  /**
+   * {@link stat} as a device in `mode` reads, without the file-operation window: the project
+   * operations judge their scope's mode themselves (the owner's choice cut to the latest ceiling
+   * seen), so an auto-mode device checks a project outside its workspace with the owner's rights
+   * even before its first command. Sandbox mode, or a policy that says sandbox, reads through the
+   * sandboxed helper.
+   */
+  async statAs(mode: SandboxMode, path: string) {
+    const policy = this.policy();
+    await this.sync(policy);
+    const auto = mode === "auto" && policy.mode === "auto";
+    return (auto ? this.host : this.sandboxed).stat(path);
   }
 
   async killTagged(tags: string[]): Promise<void> {

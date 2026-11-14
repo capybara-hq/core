@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -91,6 +91,27 @@ describe("addProject", () => {
     });
   });
 
+  it("treats a workspace child whose name starts with .. as inside, and a sibling as outside", () => {
+    expect(addProject(policy(), { path: "/w/..foo" }, sandbox("/w"))).toEqual({
+      project: { name: "..foo", path: "/w/..foo" },
+    });
+    expect(addProject(policy(), { path: "/wx/core" }, sandbox("/w"))).toEqual({
+      refused: expect.stringContaining("outside the device's workspace"),
+    });
+    expect(addProject(policy(), { path: "/w/../etc" }, sandbox("/w"))).toEqual({
+      refused: expect.stringContaining("outside the device's workspace"),
+    });
+  });
+
+  it("refuses a name containing / and a path with no basename", () => {
+    expect(addProject(policy(), { path: "/w/core", name: "a/b" }, sandbox("/w"))).toEqual({
+      refused: expect.stringContaining("no usable directory name"),
+    });
+    expect(addProject(policy(), { path: "/" }, auto("/home/me"))).toEqual({
+      refused: expect.stringContaining("no usable directory name"),
+    });
+  });
+
   it("does not change the policy it is given", () => {
     const served = policy();
     addProject(served, { path: "/w/core" }, sandbox("/w"));
@@ -110,9 +131,19 @@ describe("removeProject", () => {
 describe("listProjects", () => {
   it("returns the served projects as a copy", () => {
     const served = policy([{ name: "core", path: "/w/core" }]);
-    const list = listProjects(served);
+    const list = listProjects(served, sandbox("/w"));
     expect(list).toEqual([{ name: "core", path: "/w/core" }]);
     expect(list).not.toBe(served.projects);
+  });
+
+  it("offers only what the current mode can read, keeping the rest in the policy", () => {
+    const served = policy([
+      { name: "core", path: "/w/core" },
+      { name: "home", path: "/home/me/code/home" },
+    ]);
+    expect(listProjects(served, sandbox("/w"))).toEqual([{ name: "core", path: "/w/core" }]);
+    expect(listProjects(served, auto("/home/me"))).toEqual(served.projects);
+    expect(served.projects).toHaveLength(2);
   });
 });
 
@@ -160,6 +191,18 @@ describe("candidates", () => {
     dir(".hidden", ".git");
     dir(".config", "app", ".git");
     expect(candidates(root, MAX_CANDIDATES)).toEqual([]);
+  });
+
+  it("skips symbolic links, to directories that look like projects too", () => {
+    const target = mkdtempSync(join(tmpdir(), "device-project-link-target-"));
+    try {
+      mkdirSync(join(target, "proj", ".git"), { recursive: true });
+      symlinkSync(join(target, "proj"), join(root, "linked"));
+      symlinkSync(target, join(root, "linkdir"));
+      expect(candidates(root, MAX_CANDIDATES)).toEqual([]);
+    } finally {
+      rmSync(target, { recursive: true, force: true });
+    }
   });
 
   it("is capped at the limit", () => {

@@ -412,12 +412,16 @@ describe("modes in the summary and the command log", () => {
   });
 
   it("reports the owner's mode before any exec", () => {
-    expect(policySummary({ ...DEFAULT_POLICY, mode: "auto" }, { mode: "os" })).toEqual({
+    expect(
+      policySummary({ ...DEFAULT_POLICY, mode: "auto" }, { mode: "os", workspace: "/w" }),
+    ).toEqual({
       mode: "auto",
       allowedDomains: [],
       projects: [],
     });
-    expect(policySummary({ ...DEFAULT_POLICY, mode: "sandbox" }, { mode: "docker" })).toEqual({
+    expect(
+      policySummary({ ...DEFAULT_POLICY, mode: "sandbox" }, { mode: "docker", workspace: "/w" }),
+    ).toEqual({
       mode: "sandbox",
       allowedDomains: [],
       projects: [],
@@ -425,7 +429,7 @@ describe("modes in the summary and the command log", () => {
     expect(
       policySummary(
         { ...DEFAULT_POLICY, mode: "auto" },
-        { mode: "os", limits: { mode: "sandbox" } },
+        { mode: "os", limits: { mode: "sandbox" }, workspace: "/w" },
       ),
     ).toEqual({ mode: "sandbox", allowedDomains: [], projects: [] });
   });

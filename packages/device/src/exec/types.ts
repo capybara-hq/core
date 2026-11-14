@@ -38,6 +38,13 @@ export interface Executor {
   writeFile(path: string, data: Uint8Array): Promise<void>;
   /** null when the path does not exist. */
   stat(path: string): Promise<{ size: number; isDir: boolean } | null>;
+  /**
+   * OS mode, an executor that can run without a sandbox: {@link stat} as a device in `mode` reads
+   * (auto: the owner's rights; sandbox: the sandboxed helper), for a caller that judged the mode
+   * itself instead of following the latest command's decision. The policy still wins: a sandbox
+   * turned on on the machine reads through the sandboxed helper whatever `mode` says.
+   */
+  statAs?(mode: SandboxMode, path: string): Promise<{ size: number; isDir: boolean } | null>;
   killTagged(tags: string[]): Promise<void>;
   killAll(): Promise<void>;
   /**

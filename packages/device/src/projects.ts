@@ -1,7 +1,8 @@
 import { readdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import type { DeviceProject, SandboxRoots } from "@capybara-hq/plugin-sdk";
+import { isUnder } from "./exec/shared.js";
 import type { Policy, SandboxMode } from "./state.js";
 
 /** The most candidates a `projectCandidates` answer carries. */
@@ -45,15 +46,26 @@ export function projectPath(scope: ProjectScope, raw: string): string {
   return resolve(scope.base, raw);
 }
 
-/** Whether `path` is `root` or lies under it (lexically, like the device's other path checks). */
-function isUnder(path: string, root: string): boolean {
-  const rel = relative(root, path);
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+/**
+ * Whether the scope may offer `path` (an absolute, normalized path): anything in auto mode, only
+ * the workspace and what lies under it in sandbox mode.
+ */
+function inScope(path: string, scope: ProjectScope): boolean {
+  return scope.mode === "auto" || isUnder(path, scope.base);
 }
 
-/** The projects the policy serves, as a copy: the policy file is the source of truth. */
-export function listProjects(policy: Pick<Policy, "projects">): DeviceProject[] {
-  return policy.projects.map(({ name, path }) => ({ name, path }));
+/**
+ * The projects the device offers now, as a copy: the stored ones its current scope can read
+ * (spec §4.2). A project added in auto mode stays in the policy file while the mode is sandbox,
+ * and is offered again once auto mode is back.
+ */
+export function listProjects(
+  policy: Pick<Policy, "projects">,
+  scope: ProjectScope,
+): DeviceProject[] {
+  return policy.projects
+    .filter((p) => inScope(p.path, scope))
+    .map(({ name, path }) => ({ name, path }));
 }
 
 /**
@@ -68,7 +80,7 @@ export function addProject(
   scope: ProjectScope,
 ): { project: DeviceProject } | { refused: string } {
   const path = projectPath(scope, input.path);
-  if (scope.mode === "sandbox" && !isUnder(path, scope.base)) {
+  if (!inScope(path, scope)) {
     return {
       refused: `${path} is outside the device's workspace; this device can offer only what is inside it`,
     };

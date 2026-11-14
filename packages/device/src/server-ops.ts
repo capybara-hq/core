@@ -89,6 +89,10 @@ export interface SummaryFacts {
   mode: Executor["mode"];
   /** The latest exec's mode ceiling; undefined before the first exec. */
   limits?: Pick<SandboxLimits, "mode"> | undefined;
+  /** The device's workspace: all a sandbox-mode (or container) device offers as projects. */
+  workspace: string;
+  /** The owner's home (auto mode's project base); defaults to the user's home. */
+  home?: string | undefined;
 }
 
 /**
@@ -108,7 +112,7 @@ export function policySummary(p: Policy, facts: SummaryFacts): DeviceLocalPolicy
   return {
     mode: summaryMode(p, facts),
     allowedDomains: [...p.allowedDomains],
-    projects: p.projects.map(({ name, path }) => ({ name, path })),
+    projects: listProjects(p, summaryScope(p, facts)),
   };
 }
 
@@ -117,7 +121,22 @@ export function summaryFacts(executor: Executor, ctx: OpContext): SummaryFacts {
   return {
     mode: executor.mode,
     limits: ctx.seen?.limits,
+    workspace: executor.roots.workspace,
+    home: ctx.home,
   };
+}
+
+/**
+ * The scope the project operations and the summary follow: the summary's mode and what it may
+ * offer (§4.2).
+ */
+export function summaryScope(p: Policy, facts: SummaryFacts): ProjectScope {
+  return projectScope(
+    summaryMode(p, facts),
+    { workspace: facts.workspace },
+    facts.mode === "docker",
+    facts.home,
+  );
 }
 
 /** A refused `policy` op, with the local audit line that records the attempt. */
@@ -329,21 +348,6 @@ function requiredString(v: unknown, key: string): string {
   return v;
 }
 
-/** The scope the project operations follow: the effective mode and what it may offer (§4.2). */
-function projectScopeNow(
-  executor: Executor,
-  policy: Policy,
-  facts: SummaryFacts,
-  ctx: OpContext,
-): ProjectScope {
-  return projectScope(
-    summaryMode(policy, facts),
-    executor.roots,
-    executor.mode === "docker",
-    ctx.home,
-  );
-}
-
 /**
  * One project operation. The device is the authority on what it may offer (spec §4.2): the path
  * must lie inside what the mode can read, exist, and be a directory, and its name must be free. A
@@ -355,17 +359,18 @@ async function serveProjectOp(
   store: PolicyStore,
   facts: SummaryFacts,
   executor: Executor,
-  ctx: OpContext,
 ): Promise<{ res: DeviceRes; detail?: string }> {
   const ok = (result: unknown): DeviceRes => ({ type: "res", id: req.id, ok: true, result });
   switch (req.op) {
-    case "projectList":
-      return { res: ok(listProjects(store.current())) };
+    case "projectList": {
+      const policy = store.current();
+      return { res: ok(listProjects(policy, summaryScope(policy, facts))) };
+    }
     case "projectCandidates": {
       // A container device's file system is the container's: this process cannot scan it, and a
       // host directory of the same name is not it.
       if (executor.mode === "docker") return { res: ok([]) };
-      const scope = projectScopeNow(executor, store.current(), facts, ctx);
+      const scope = summaryScope(store.current(), facts);
       return { res: ok(candidates(scope.base, MAX_CANDIDATES)) };
     }
     case "projectAdd": {
@@ -373,14 +378,20 @@ async function serveProjectOp(
       const path = requiredString(args.path, "path");
       const name = args.name === undefined ? undefined : requiredString(args.name, "name");
       const input = name === undefined ? { path } : { path, name };
-      const scope = projectScopeNow(executor, store.current(), facts, ctx);
+      const scope = summaryScope(store.current(), facts);
       const checked = addProject(store.current(), input, scope);
       if ("refused" in checked) {
         return { res: ok(checked), detail: `project refused ${checked.refused}` };
       }
       let st: { size: number; isDir: boolean } | null;
       try {
-        st = await executor.stat(checked.project.path);
+        // Read as the scope's mode, not by the latest command's decision: an auto-mode device
+        // checks a project outside its workspace with the owner's rights even before its first
+        // command (a container device, always sandbox scope, uses its own stat).
+        st =
+          executor.statAs !== undefined
+            ? await executor.statAs(scope.mode, checked.project.path)
+            : await executor.stat(checked.project.path);
       } catch (e) {
         // An unreadable path is a refusal like any other, not a failed request.
         const refused = `${checked.project.path} cannot be read (${e instanceof Error ? e.message : String(e)})`;
@@ -472,7 +483,7 @@ export async function serveOp(
       const facts = summaryFacts(executor, ctx);
       if (req.op === "policyStatus") return { res: ok(policyStatus(ctx.policy, req.args, facts)) };
       if (req.op === "policy") return servePolicyOp(req, ctx.policy, facts);
-      return serveProjectOp(req, ctx.policy, facts, executor, ctx);
+      return serveProjectOp(req, ctx.policy, facts, executor);
     }
     if ((await executor.ensureRoot()) === "gone") {
       return {
