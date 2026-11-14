@@ -1,5 +1,23 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.31
+
+### Patch Changes
+
+- 42ed68e: Bootstrap pins move to the plugin versions the official marketplace lists at capybara-hq/plugins
+  ce9c71ed, the release that ships the auto-mode sandbox network policy (openai-compatible rc.10,
+  object-store-s3 rc.9, sandbox-docker rc.14, skills-core rc.1, the rest likewise). The compose
+  sandbox build contexts point at the same commit.
+- 73afa8f: The device page is one head and two views: its name band is the page's head (a new `DetailPage`
+  form, `header.titleHidden`) with the 概览 / 设置 tab row under it, 概览 shows values only (network
+  hosts, resources, the machine's system, files, recent changes) and 设置 holds every control as
+  settings sections — the run mode as card radios with one consequence each, the network allowlist
+  with an add dialog, disconnect, and a danger zone for delete. The page's one-off mode scale is gone,
+  and the sandbox mode reason reads as a statement instead of repeating the mode it already shows.
+- Updated dependencies [42ed68e]
+- Updated dependencies [5e232e6]
+  - @capybara-hq/kernel@0.1.0-rc.30
+
 ## 0.1.0-rc.30
 
 ### Minor Changes
