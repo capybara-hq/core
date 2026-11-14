@@ -55,6 +55,7 @@
   "infra/process-guards.test.ts",
   "infra/queue-names.test.ts",
   "infra/queue-shutdown.test.ts",
+  "local-devices/policy-summary.test.ts",
   "log-config.test.ts",
   "log.test.ts",
   "net/public-address.test.ts",

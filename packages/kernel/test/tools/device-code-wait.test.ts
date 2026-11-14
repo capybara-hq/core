@@ -135,7 +135,7 @@ function pipeline(): ToolPipeline {
     devicePolicy: {
       summary: async () => ({
         features: ["networkReport", "policyOpId"] as DeviceFeature[],
-        policy: { mode: "auto" as const, allowedDomains: [] },
+        policy: { mode: "auto" as const, allowedDomains: [], projects: [] },
       }),
     },
   });

@@ -169,6 +169,7 @@ describe("the hello's policy summary and the reported mode", () => {
   const SUMMARY = {
     mode: "auto" as const,
     allowedDomains: [],
+    projects: [],
   };
 
   /** Connects a machine of a new device that says `hello`; resolves once it is recorded. */

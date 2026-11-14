@@ -36,6 +36,7 @@ import type { Answer } from "../local-devices/test-holder.js";
 const POLICY: DeviceLocalPolicySummary = {
   mode: "auto",
   allowedDomains: ["pypi.org"],
+  projects: [],
 };
 const FEATURES: Partial<DeviceHello> = {
   features: ["networkReport", "policyOp", "policyOpId", "mode"],
@@ -215,7 +216,11 @@ describe("POST /devices/:id/policy", () => {
     const narrowed = await post(d.req, d.deviceId, { mode: "sandbox" });
     expect(narrowed.statusCode, narrowed.body).toBe(200);
     expect(narrowed.json()).toEqual({
-      policy: { mode: "sandbox", allowedDomains: ["files.slack.com", "*.npmjs.org"] },
+      policy: {
+        mode: "sandbox",
+        allowedDomains: ["files.slack.com", "*.npmjs.org"],
+        projects: [],
+      },
     });
     expect(policyReqs(machine).at(-1)?.args).toMatchObject({ mode: "sandbox" });
 

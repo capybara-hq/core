@@ -52,7 +52,11 @@ import type { Answer } from "../local-devices/test-holder.js";
  * are asserted, the resolver is called with the owed row's data, no sleeps.
  */
 
-const POLICY: DeviceLocalPolicySummary = { mode: "auto", allowedDomains: ["pypi.org"] };
+const POLICY: DeviceLocalPolicySummary = {
+  mode: "auto",
+  allowedDomains: ["pypi.org"],
+  projects: [],
+};
 const FEATURES: DeviceHello["features"] = ["networkReport", "policyOp", "policyOpId"];
 
 let pgc: TestContainer;

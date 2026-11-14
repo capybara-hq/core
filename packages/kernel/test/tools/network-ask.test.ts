@@ -63,7 +63,7 @@ import { FakeMachine, HELLO } from "../local-devices/fake-machine.js";
  * again. Model-fake drives the runs; a fake machine answers the exec with `network.blocked`.
  */
 
-const POLICY: DeviceLocalPolicySummary = { mode: "auto", allowedDomains: [] };
+const POLICY: DeviceLocalPolicySummary = { mode: "auto", allowedDomains: [], projects: [] };
 const CURL_ERR = "curl: (56) CONNECT tunnel failed, response 403";
 
 let pgc: TestContainer;

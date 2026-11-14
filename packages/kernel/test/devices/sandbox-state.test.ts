@@ -16,6 +16,7 @@ const deployment = (
 const summary = (s: Partial<DeviceLocalPolicySummary> = {}): DeviceLocalPolicySummary => ({
   mode: "auto",
   allowedDomains: [],
+  projects: [],
   ...s,
 });
 
