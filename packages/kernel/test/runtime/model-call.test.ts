@@ -1299,6 +1299,68 @@ describe("runModelStep", () => {
           expect(await ofType("media_excluded")).toHaveLength(1);
         });
       });
+
+      it("a reactive trim really shrinks a request the estimate thought fit (records a fit plan)", async () => {
+        // W 2000, output cap 100: a ~1700 estimate stays below the hard line (1900), so proactive
+        // compaction never runs, yet the provider rejects it. The trim retry must actually drop
+        // history rather than leave the optimistic request unchanged.
+        const s = stub(
+          [stubInfo("trimmed", { contextWindow: 2000, maxOutputTokens: 100 })],
+          (req) => {
+            if (req.system.some((x) => x.text.includes(COMPACTION_MARKER))) return "too short";
+            if (estimateTokens(req.messages, req.system, req.tools) > 1500) {
+              throw new ModelError("context_overflow", "estimate said it fit");
+            }
+            return "trimmed answer";
+          },
+        );
+        stubImpl = s;
+        for (let i = 0; i < 8; i++) {
+          await say(filler(i));
+          await answer(filler(i));
+        }
+        await say("go");
+        const agent = agentWith({ model: { provider: "stub", model: "trimmed" } });
+        await withSettings({ enabled: false, reserveTokens: 0 }, async () => {
+          expect((await step({ agent })).content).toEqual([
+            { type: "text", text: "trimmed answer" },
+          ]);
+          const calls = await ofType("model_call");
+          // initial request, the (failed) forced-compaction retry, then the trim retry
+          expect(calls).toHaveLength(3);
+          expect(await ofType("compaction_failed")).toHaveLength(1);
+          // the optimistic request carried no fit; the trim retry is trimmed to 70% of W
+          expect(calls[0]?.payload.request.fit).toBeUndefined();
+          expect(calls[2]?.payload.request.fit?.droppedMessageIndexes.length ?? 0).toBeGreaterThan(
+            0,
+          );
+          expect(calls[2]?.payload.request.estimatedInputTokens).toBeLessThan(
+            calls[0]?.payload.request.estimatedInputTokens as number,
+          );
+        });
+      });
+
+      it("a persistent overflow across a fallback stops at five model_call rows with model.context_overflow", async () => {
+        const s = stub([stubInfo("main"), stubInfo("fb", { contextWindow: 4000 })], (req) => {
+          if (req.system.some((x) => x.text.includes(COMPACTION_MARKER))) {
+            return `Summary: ${"s".repeat(300)}`;
+          }
+          throw new ModelError("context_overflow", "always too long");
+        });
+        stubImpl = s;
+        await history();
+        await say("go");
+        const agent = agentWith({
+          model: { provider: "stub", model: "main" },
+          fallback: { provider: "stub", model: "fb" },
+        });
+        await withSettings({ enabled: false, reserveTokens: 0 }, async () => {
+          expect(await runErrorCode(step({ agent }))).toBe("model.context_overflow");
+          // main: initial + compaction + trim (3 rows); fallback: initial + compaction (2 rows) = 5,
+          // and the step ceiling stops before a sixth
+          expect(await ofType("model_call")).toHaveLength(5);
+        });
+      });
     });
   });
 

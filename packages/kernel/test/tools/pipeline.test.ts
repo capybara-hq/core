@@ -1556,6 +1556,16 @@ describe("ToolSearch 模式", () => {
     expect(handlerCalls.echo).toHaveLength(1);
   });
 
+  it("按最高一次尝试的 model_call 判断（尝试可达 5 次）：第 4 次已加载 → 照常执行", async () => {
+    await modelCall(["ToolSearch"], true, 1);
+    await modelCall(["ToolSearch"], true, 2);
+    await modelCall(["ToolSearch"], true, 3);
+    await modelCall(["ToolSearch", "plugin__probe__echo"], true, 4);
+    const evs = await runCalls([{ id: "c1", name: "plugin__probe__echo", input: { text: "x" } }]);
+    expect(resultsOf(evs)[0]).toMatchObject({ isError: false });
+    expect(handlerCalls.echo).toHaveLength(1);
+  });
+
   it("请求不在 ToolSearch 模式（没有 catalog，全部工具已发送）→ 不做加载检查", async () => {
     await modelCall(["ToolSearch"], false);
     const evs = await runCalls([{ id: "c1", name: "plugin__probe__echo", input: { text: "x" } }]);

@@ -1582,9 +1582,11 @@ async function ladder(
 
 /**
  * The deterministic fit plan for a reactive trim (context compaction spec §4.3 point 5 / §4.4): the
- * request is trimmed to fit 90%, then 80%, then 70% of the model's window, using the first target the
- * plan reaches. Returns null when the request already fits the 90% target (nothing to trim). The
- * plan is ordinary and replays byte-for-byte like any other.
+ * request is trimmed to fit 70%, then 80%, then 90% of the model's window, applying the first target
+ * a plan actually reaches. Most aggressive first: the provider rejected a request the estimate
+ * thought fit, so the retry must really shrink it, not leave the optimistic request unchanged.
+ * Returns null only when the request already fits every target (nothing to trim). The plan is
+ * ordinary and replays byte-for-byte like any other.
  */
 function reactiveTrimPlan(
   events: ConversationEvent[],
@@ -1594,9 +1596,11 @@ function reactiveTrimPlan(
   reserveTokens: number,
   estimate: number,
 ): FitPlan | null {
-  let best: FitPlan | null = null;
-  for (const factor of REACTIVE_TRIM_FACTORS) {
-    const window = Math.max(1, Math.floor(factor * model.contextWindow));
+  for (let i = REACTIVE_TRIM_FACTORS.length - 1; i >= 0; i--) {
+    const window = Math.max(
+      1,
+      Math.floor((REACTIVE_TRIM_FACTORS[i] as number) * model.contextWindow),
+    );
     const plan = planFit({
       events,
       request,
@@ -1605,11 +1609,9 @@ function reactiveTrimPlan(
       reserveTokens,
       estimate,
     });
-    if (plan === null) return null;
-    best = plan;
-    if (estimateAfterFit(request, estimate, plan) <= window) break;
+    if (plan !== null) return plan;
   }
-  return best;
+  return null;
 }
 
 /** 不可重试、且可能由请求里的媒体引起的失败：带了媒体字节时写 `media_excluded`（Ruling M8）。 */
