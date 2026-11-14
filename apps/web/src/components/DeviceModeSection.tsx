@@ -118,10 +118,13 @@ export function DeviceOverview({
 /**
  * 设置: the device's controls, and the only place they live (2026-11-14). 运行模式 is card radios —
  * the app's choice-with-consequences control (§6.3), as the org sandbox page draws the same kind of
- * choice: a local machine switches to auto itself, the page narrows to sandbox through the policy
- * op, and a cloud device narrows once (the web never widens a mode back). 网络 edits a local
- * device's allowlist in sandbox mode through the machine. The page's danger zone follows this
- * block, and 断开这台机器 lives with the machine.
+ * choice. A local machine switches to auto itself, and the page narrows it to sandbox through the
+ * policy op. A cloud device's owner switches both ways (hardening spec D2), each after a
+ * confirmation naming the effect (W1): the network it will reach (the 沙箱 card and the dialog name
+ * the org's actual cloud network, D3), that running processes may end, and how to switch back
+ * (sandbox → auto clears the choice, `mode: null`). A card that cannot be chosen is disabled and
+ * carries its reason (W2). 网络 edits a local device's allowlist in sandbox mode through the
+ * machine. The page's danger zone follows this block, and 断开这台机器 lives with the machine.
  */
 export function DeviceSettings({
   orgId,
@@ -135,24 +138,20 @@ export function DeviceSettings({
   const t = useTranslations("devices");
   const toast = useToast();
   const [failure, setFailure] = useState<unknown>(null);
+  const [confirming, setConfirming] = useState<DeviceMode | null>(null);
   const change = useAppMutation({
     fn: (patch: DevicePolicyPatch) => updateDevicePolicy(orgId, e.id, patch),
     invalidates: () => [keys.org(orgId).devices(), keys.org(orgId).device(e.id)],
   });
-  const narrow = useAppMutation({
-    fn: () => setDeviceMode(orgId, e.id, "sandbox"),
+  const cloudMode = useAppMutation({
+    fn: (next: DeviceMode) => setDeviceMode(orgId, e.id, next === "sandbox" ? "sandbox" : null),
     invalidates: () => [keys.org(orgId).devices(), keys.org(orgId).device(e.id)],
   });
   const m = e.mode;
   const local = e.source === "local";
-  const pending = change.isPending || narrow.isPending;
+  const pending = change.isPending || cloudMode.isPending;
   const canApply =
     local && e.online === true && (e.network?.features.includes("policyOpId") ?? false);
-  // A cloud device may narrow here; once sandbox it is locked (no widening on the web).
-  const cloudNarrowable = !local && m.mode === "auto" && m.allowedMode === "auto";
-  const locked = !local && !cloudNarrowable;
-  const lockedReason =
-    m.allowedMode === "sandbox" ? t("mode.lockedSandbox") : t("mode.lockedNarrowed");
   const disabledReason = !local
     ? undefined
     : e.machine === null
@@ -174,61 +173,75 @@ export function DeviceSettings({
       return false;
     }
   };
-  const narrowToSandbox = async () => {
+  const applyCloud = async (next: DeviceMode) => {
     if (pending) return;
     setFailure(null);
     try {
-      await narrow.mutateAsync(undefined);
-      toast.success(t("mode.changedSandbox"));
+      await cloudMode.mutateAsync(next);
+      setConfirming(null);
+      toast.success(next === "sandbox" ? t("mode.changedSandbox") : t("mode.changedAuto"));
     } catch (err) {
+      setConfirming(null);
       setFailure(err);
     }
   };
   const switchMode = (next: DeviceMode) => {
-    if (pending) return;
-    // Auto mode is switched on only at the machine: choosing it sends nothing.
-    if (next !== "sandbox") return;
+    if (pending || next === m.mode) return;
     if (local) {
-      if (canApply) void send({ mode: "sandbox" }, t("mode.changedSandbox"));
+      // Auto mode is switched on only at the machine: choosing it sends nothing.
+      if (next === "sandbox" && canApply) void send({ mode: "sandbox" }, t("mode.changedSandbox"));
       return;
     }
-    void narrowToSandbox();
+    // a cloud device's switch, either way, is confirmed first
+    setConfirming(next);
   };
 
-  const autoBlocked = local && m.mode === "sandbox";
-  const autoReason = m.allowedMode === "sandbox" ? t("mode.unavailable") : t("mode.autoOnMachine");
+  // The auto card: a local machine in sandbox turns auto on itself; a cloud device needs auto to
+  // be allowed. The sandbox card: a local device needs its machine connected, online and current.
+  const autoReason =
+    m.allowedMode === "sandbox"
+      ? local
+        ? t("mode.unavailable")
+        : t("mode.lockedSandbox")
+      : local && m.mode === "sandbox"
+        ? t("mode.autoOnMachine")
+        : undefined;
+  const sandboxReason = local && m.mode !== "sandbox" ? disabledReason : undefined;
+  const net = m.sandboxNetwork;
+  const sandboxDescription = local
+    ? t("mode.description.sandbox")
+    : net === null || net.kind === "open-public"
+      ? t("mode.cloudSandboxNetwork.open")
+      : t("mode.cloudSandboxNetwork.allowlist", { count: net.hosts.length });
 
   return (
     <>
       <FormSection
         id="mode"
         title={t("mode.title")}
-        description={locked ? lockedReason : local ? t("mode.overviewHint") : t("mode.cloudHint")}
+        description={local ? t("mode.section.local") : t("mode.section.cloud")}
       >
         <Stack gap={12}>
           <RadioGroup
             label={t("mode.title")}
             variant="card"
             value={m.mode}
-            disabled={pending || locked || disabledReason !== undefined}
+            disabled={pending}
             onChange={(v) => switchMode(v as DeviceMode)}
             options={[
               {
                 value: "auto",
                 label: t("mode.name.auto"),
-                description: autoBlocked
-                  ? autoReason
-                  : local
-                    ? t("mode.description.auto")
-                    : t("mode.cloudDescription.auto"),
-                disabled: autoBlocked,
+                description:
+                  autoReason ??
+                  (local ? t("mode.description.auto") : t("mode.cloudDescription.auto")),
+                disabled: autoReason !== undefined,
               },
               {
                 value: "sandbox",
                 label: t("mode.name.sandbox"),
-                description: local
-                  ? t("mode.description.sandbox")
-                  : t("mode.cloudDescription.sandbox"),
+                description: sandboxReason ?? sandboxDescription,
+                disabled: sandboxReason !== undefined,
               },
             ]}
           />
@@ -242,14 +255,18 @@ export function DeviceSettings({
               {t("mode.pendingFilesReset")}
             </Text>
           )}
-          {disabledReason !== undefined && (
-            <Text variant="small" tone="muted">
-              {disabledReason}
-            </Text>
-          )}
           {local && <KeycapCommand command={MODE_COMMAND} hint={t("mode.commandHint")} />}
         </Stack>
       </FormSection>
+      {confirming !== null && (
+        <ModeConfirmDialog
+          next={confirming}
+          sandboxNetwork={net}
+          pending={cloudMode.isPending}
+          onCancel={() => setConfirming(null)}
+          onConfirm={() => void applyCloud(confirming)}
+        />
+      )}
       {local && m.mode === "sandbox" && (
         <LocalAllowlist device={e} pending={pending} onSend={send} />
       )}
@@ -264,6 +281,60 @@ export function DeviceSettings({
       )}
       {failure !== null && <ApiErrorDetail error={failure} open />}
     </>
+  );
+}
+
+/**
+ * The confirmation of a cloud device's mode switch (hardening spec W1): the network it will reach
+ * (sandbox: the org's actual cloud network, D3), that its running processes may end, and how to
+ * switch back (D2).
+ */
+function ModeConfirmDialog({
+  next,
+  sandboxNetwork,
+  pending,
+  onCancel,
+  onConfirm,
+}: {
+  next: DeviceMode;
+  sandboxNetwork: Device["mode"]["sandboxNetwork"];
+  pending: boolean;
+  onCancel(): void;
+  onConfirm(): void;
+}) {
+  const t = useTranslations("devices.mode.confirm");
+  const network =
+    next === "auto"
+      ? t("network.auto")
+      : sandboxNetwork === null || sandboxNetwork.kind === "open-public"
+        ? t("network.open")
+        : t("network.allowlist", { count: sandboxNetwork.hosts.length });
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open && !pending) onCancel();
+      }}
+      title={t(`title.${next}`)}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onCancel} disabled={pending}>
+            {t("cancel")}
+          </Button>
+          <Button variant="primary" loading={pending} disabled={pending} onClick={onConfirm}>
+            {t(`submit.${next}`)}
+          </Button>
+        </>
+      }
+    >
+      <Stack gap={8}>
+        <Text variant="prose">{network}</Text>
+        <Text variant="prose">{t("processes")}</Text>
+        <Text variant="prose" tone="muted">
+          {t(`back.${next}`)}
+        </Text>
+      </Stack>
+    </Dialog>
   );
 }
 

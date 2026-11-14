@@ -1664,8 +1664,7 @@
         "sandbox": "Runs in a sandbox; reaches the workspace and allowed hosts only."
       },
       "cloudDescription": {
-        "auto": "Runs in the container and can reach public addresses; private networks are blocked.",
-        "sandbox": "Runs in the container; its network follows the organization's setting."
+        "auto": "Runs in the container and can reach public addresses; private networks are blocked."
       },
       "name": {
         "auto": "Auto",
@@ -1674,7 +1673,6 @@
       "commandHint": "Switch it on the machine:",
       "changedSandbox": "The device is in sandbox mode.",
       "pendingNextUse": "Takes effect at the next use; files are kept.",
-      "lockedNarrowed": "Sandbox mode can't be switched back to auto on the web.",
       "lockedSandbox": "Auto mode is not enabled, so cloud devices run in sandbox mode.",
       "unavailable": "Auto mode is not enabled",
       "autoOnMachine": "It can only be switched on at the machine.",
@@ -1683,8 +1681,36 @@
       "upgrade": "The device program on this machine can't change its mode from the platform. Upgrade capybara-device on the machine.",
       "pendingFilesReset": "Takes effect after the files are reset.",
       "title": "Run mode",
-      "overviewHint": "Auto runs on this machine as you; sandbox limits commands to the workspace and the allowed hosts.",
-      "cloudHint": "A cloud device runs in its container; the mode follows whether the organization allows auto."
+      "cloudSandboxNetwork": {
+        "open": "Runs in the container. The organization's cloud network is open, so it still reaches public addresses; private networks stay blocked.",
+        "allowlist": "Runs in the container and reaches only the organization's allowlist: {count, plural, =0 {no host} one {# host} other {# hosts}}."
+      },
+      "section": {
+        "local": "The machine keeps its mode: a switch to sandbox here is sent to it.",
+        "cloud": "A switch takes effect at the device's next use; its files are kept."
+      },
+      "changedAuto": "The device is back in auto mode.",
+      "confirm": {
+        "title": {
+          "sandbox": "Switch to sandbox mode?",
+          "auto": "Switch back to auto mode?"
+        },
+        "network": {
+          "open": "The organization's cloud network is open, so in sandbox mode this device still reaches public addresses (private networks stay blocked). Only an org admin switching the network to an allowlist narrows it.",
+          "allowlist": "In sandbox mode this device reaches only the organization's allowlist: {count, plural, =0 {no host at all} one {# host} other {# hosts}}.",
+          "auto": "In auto mode this device reaches any public address; private networks stay blocked, and every command is still reviewed."
+        },
+        "processes": "It takes effect at the next use: the device's instance may restart, which ends its running commands and processes. Its files are kept.",
+        "back": {
+          "sandbox": "You can switch back to auto here at any time.",
+          "auto": "You can switch to sandbox again here at any time."
+        },
+        "submit": {
+          "sandbox": "Switch to sandbox",
+          "auto": "Switch to auto"
+        },
+        "cancel": "Cancel"
+      }
     },
     "recent": {
       "title": "Recent changes",
