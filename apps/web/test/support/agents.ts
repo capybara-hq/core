@@ -21,6 +21,20 @@ export function agentFormDefaults(agentId = "ag1"): Routes {
     [`GET ${ORG}/components`]: ok({ components: [] }),
     [`GET ${ORG}/agents/${agentId}/skills`]: ok({ skills: [] }),
     [`GET ${ORG}/channels`]: ok({ channels: [] }),
+    // the attribution section's help text (the platform's effective defaults)
+    [`GET ${ORG}/settings`]: ok({
+      settings: { toolSearch: "on", locale: "en" },
+      deployment: {
+        sandboxEgress: { mode: "none", allowHosts: [] },
+        sandboxTiers: { max: "dev", default: "dev", allowUnsandboxed: true, devHosts: [] },
+        attribution: {
+          commit: "Co-Authored-By: Capybara <noreply@capybarahq.com>",
+          pr: "🤖 Generated with [Capybara](https://github.com/capybara-hq/core)",
+          sessionUrl: false,
+        },
+      },
+      sandboxLimits: { cpu: 1, memoryMb: 1024, source: "deployment" },
+    }),
     [`GET ${ORG}/ui/contributions`]: ok({ items: [] }),
     [`GET ${ORG}/extension-points/available`]: ok({ points: [] }),
     [`GET ${ORG}/tools/extensions`]: ok({ extensions: [] }),

@@ -980,6 +980,11 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
           date: "2026-11-08",
           timeZone: "Asia/Shanghai",
           locale: "zh",
+          attribution: {
+            commit: "Co-Authored-By: Capybara <noreply@capybarahq.com>",
+            pr: "🤖 Generated with [Capybara](https://github.com/capybara-hq/core)",
+            sessionUrl: null,
+          },
         },
         { agent: { name: "Grant 2", description: "Answers HR questions." } },
         { date: "2026-11-09" },

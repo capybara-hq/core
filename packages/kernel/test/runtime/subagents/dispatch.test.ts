@@ -355,7 +355,7 @@ describe("dispatch", () => {
     expect(first.messages).toHaveLength(2);
     expect(first.messages[1]?.role).toBe("system");
     expect(first.messages[1]?.content).toMatch(
-      /^Context from the platform:\n- You are "general-purpose", dispatched by the agent "Lead" working for O\.\n- Today is \d{4}-\d{2}-\d{2} \(\w+day\), time zone UTC\.\nA later context update replaces these facts\.$/,
+      /^Context from the platform:\n- You are "general-purpose", dispatched by the agent "Lead" working for O\.\n- Today is \d{4}-\d{2}-\d{2} \(\w+day\), time zone UTC\.\n- When you create a git commit, end the commit message with this trailer: .*\n- When you open a pull request, end the body with this line: .*\nA later context update replaces these facts\.$/,
     );
     const ctx = cev.find((e) => e.type === "run_context") as Ev<"run_context">;
     expect(ctx.payload).toMatchObject({

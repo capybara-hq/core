@@ -37,6 +37,7 @@ const SettingsInput = DEPLOYMENT_SETTINGS_PATCH.pick({
   uiArrangement: true,
   clientExtensions: true,
   sandboxTiers: true,
+  attribution: true,
 }).strict();
 
 const ProviderId = ModelProviderParams.shape.provider.describe(
@@ -196,7 +197,7 @@ export class AdminOperations implements OnModuleInit {
       defineOperation({
         id: "admin.settings",
         description:
-          "Read the deployment settings (super admin): who may create orgs (orgCreation), the price currency, whether orgs may create their own connectors and skills, whether org admins may browse the marketplaces, the per-org limit overrides keyed by org id (orgs.get reads one org's), and the platform's sandbox levels in effect (sandboxTiers: max, default, allowUnsandboxed, with sources: env, file or nacos are set in the startup config and read-only, db chosen in the admin console, default).",
+          "Read the deployment settings (super admin): who may create orgs (orgCreation), the price currency, whether orgs may create their own connectors and skills, whether org admins may browse the marketplaces, the per-org limit overrides keyed by org id (orgs.get reads one org's), the platform's sandbox levels in effect (sandboxTiers: max, default, allowUnsandboxed), and the platform's attribution defaults for agent-created git commits and pull requests (attribution: commit, pr, sessionUrl); each with sources: env, file or nacos are set in the startup config and read-only, db chosen in the admin console, default.",
         input: z.object({}).strict(),
         example: {},
         authz: { superAdmin: true },
@@ -207,7 +208,7 @@ export class AdminOperations implements OnModuleInit {
       defineOperation({
         id: "admin.update-settings",
         description:
-          "Change deployment settings (super admin); give only the keys to change: orgCreation (anyone or super_admin), priceCurrency (ISO 4217 code), customConnectors / customSkills (allow or deny: whether orgs may create their own instead of installing from the catalog), orgMarketplaceBrowse (true or false), uiTheme ({ id }: the platform default theme, a platform theme whose scope is all, or null for the built-in theme; it is what every org falls back to and what the sign-in pages show), uiArrangement ({ <slot>: { hidden, order } } for a list slot, { <slot>: { use } } for a single slot: the platform default arrangement of UI slots, with contribution keys <extension>/<contribution>; hidden ones are not listed but still open by URL; use names the contribution that replaces the built-in, null for the built-in; null for a slot removes its entry), clientExtensions ({ enabled?, disabled? }: the kill switch of plugin client code; enabled false stops every plugin's interface code in every browser, disabled is the whole list of plugins whose interface code alone is stopped while their tools keep working; read the current list from admin.settings first), sandboxTiers ({ max?, default?, allowUnsandboxed? }: the platform's sandbox levels strict < dev < open; null clears a field back to its default; through this tool they may only be lowered, never raised, and fields set in the startup config are read-only). Per-org limits are orgs.set-limits.",
+          "Change deployment settings (super admin); give only the keys to change: orgCreation (anyone or super_admin), priceCurrency (ISO 4217 code), customConnectors / customSkills (allow or deny: whether orgs may create their own instead of installing from the catalog), orgMarketplaceBrowse (true or false), uiTheme ({ id }: the platform default theme, a platform theme whose scope is all, or null for the built-in theme; it is what every org falls back to and what the sign-in pages show), uiArrangement ({ <slot>: { hidden, order } } for a list slot, { <slot>: { use } } for a single slot: the platform default arrangement of UI slots, with contribution keys <extension>/<contribution>; hidden ones are not listed but still open by URL; use names the contribution that replaces the built-in, null for the built-in; null for a slot removes its entry), clientExtensions ({ enabled?, disabled? }: the kill switch of plugin client code; enabled false stops every plugin's interface code in every browser, disabled is the whole list of plugins whose interface code alone is stopped while their tools keep working; read the current list from admin.settings first), sandboxTiers ({ max?, default?, allowUnsandboxed? }: the platform's sandbox levels strict < dev < open; null clears a field back to its default; through this tool they may only be lowered, never raised, and fields set in the startup config are read-only), attribution ({ commit?, pr?, sessionUrl? }: the platform's defaults for agent-created git commits and pull requests; null clears a field back to its default, an empty string turns that line off, and fields set in the startup config are read-only). Per-org limits are orgs.set-limits.",
         input: SettingsInput.refine((b) => Object.keys(b).length > 0, {
           message: "at least one setting is required",
         }),
@@ -250,7 +251,8 @@ export class AdminOperations implements OnModuleInit {
             : precheckBy(() => this.settings.checkSandboxTiers(tiers, { onlyNarrows: true }));
         },
         summary: async (i) => {
-          const { uiTheme, uiArrangement, clientExtensions, sandboxTiers, ...rest } = i;
+          const { uiTheme, uiArrangement, clientExtensions, sandboxTiers, attribution, ...rest } =
+            i;
           const parts = Object.entries(rest).map(([k, v]) => `${k}=${String(v)}`);
           if (sandboxTiers !== undefined) {
             parts.push(
@@ -262,6 +264,10 @@ export class AdminOperations implements OnModuleInit {
           }
           const zh = [...parts];
           const en = [...parts];
+          if (attribution !== undefined) {
+            zh.push(`署名（${Object.keys(attribution).join("、")}）`);
+            en.push(`attribution (${Object.keys(attribution).join(", ")})`);
+          }
           if (uiTheme !== undefined) {
             // the theme by its name (the super admin sees every theme), the built-in one by name
             const name = uiTheme.id === null ? null : await this.themes.nameOf(uiTheme.id);

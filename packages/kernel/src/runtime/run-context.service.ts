@@ -1,13 +1,22 @@
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { sql } from "kysely";
 import type { AgentDefinition } from "../agents/definition.js";
+import {
+  conversationLink,
+  effectiveAttribution,
+  type RunAttribution,
+  readPlatformAttribution,
+} from "../attribution/platform-attribution.js";
 import { EventLog } from "../conversations/event-log.js";
 import type { ConversationEvent } from "../conversations/events.js";
 import { latestWebLocale } from "../conversations/message-context.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
+import type { KernelLogger } from "../log.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
 import { isTimeZone } from "../time-zone.js";
 import {
@@ -62,7 +71,10 @@ export class RunContextService {
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(EventLog) private readonly eventLog: Pick<EventLog, "appendIn" | "notify">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
+    /** The deployment's effective attribution defaults (startup config over the admin console). */
+    @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     @Optional() @Inject(RUN_CONTEXT_CLOCK) private readonly now: () => number = Date.now,
+    @Optional() @Inject(KERNEL_LOGGER) private readonly log?: Pick<KernelLogger, "warn">,
   ) {}
 
   private clock(): Date {
@@ -97,10 +109,11 @@ export class RunContextService {
       .executeTakeFirst();
     if (await runEndedIn(t, input.runId)) return "ended";
     const prev = await foldOf(t, input.conversationId);
+    const attribution = await this.attributionOf(t, input);
     const next =
       input.subagent === undefined
-        ? await this.rootContext(t, input)
-        : await this.childContext(t, input, input.subagent);
+        ? await this.rootContext(t, input, attribution)
+        : await this.childContext(t, input, input.subagent, attribution);
     const change = runContextChange(prev, next);
     if (change === null) return null;
     const written = await this.eventLog.appendIn(input.conversationId, [
@@ -115,7 +128,11 @@ export class RunContextService {
   }
 
   /** A root run: agent, org, and the date, zone and language of the run's person (§3.4). */
-  private async rootContext(t: KernelSchemaDb, input: RunContextInput): Promise<RunContext> {
+  private async rootContext(
+    t: KernelSchemaDb,
+    input: RunContextInput,
+    attribution: RunAttribution,
+  ): Promise<RunContext> {
     const org = await t
       .selectFrom("orgs")
       .select("name")
@@ -164,6 +181,7 @@ export class RunContextService {
       date: dateIn(this.clock(), zone),
       timeZone: zone,
       locale,
+      attribution,
     };
   }
 
@@ -175,6 +193,7 @@ export class RunContextService {
     t: KernelSchemaDb,
     input: RunContextInput,
     child: NonNullable<RunContextInput["subagent"]>,
+    attribution: RunAttribution,
   ): Promise<RunContext> {
     const parent = await foldOf(t, child.parentConversationId);
     const parentAgent =
@@ -190,7 +209,22 @@ export class RunContextService {
       dispatchedBy: { agent: cut(parentAgent, 130), person },
       date: dateIn(this.clock(), zone),
       timeZone: zone,
+      attribution,
     };
+  }
+
+  /**
+   * The attribution a run's requests carry (spec 2026-11-14-agent-attribution): the platform's
+   * effective defaults (startup config over the admin console, read live) merged with the run's
+   * own definition, plus the conversation link when the deployment has `http.publicUrl`.
+   */
+  private async attributionOf(t: KernelSchemaDb, input: RunContextInput): Promise<RunAttribution> {
+    const platform = await readPlatformAttribution(t, this.config, this.log);
+    return effectiveAttribution(
+      platform,
+      input.agent.attribution,
+      conversationLink(this.config.get().http.publicUrl, input.conversationId),
+    );
   }
 }
 

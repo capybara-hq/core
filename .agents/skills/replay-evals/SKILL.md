@@ -60,8 +60,12 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   Rendered at its position as a system message (`runtime/context/run-context.ts`); covered by a summary, the fold at
   the boundary follows the summary whole; left out of the compaction transcript. `user_message.sender` (display name
   and role at send time) renders as a separate first text block `From <name> (<role>)` only when the sender changes,
-  and again on the first message after a summary (`senderLines`, log only). Both are in the log: no `DriftReason`;
-  old logs (no event, no field) rebuild byte for byte. Full-run replay copies the run's `run_context` as recorded.
+  and again on the first message after a summary (`senderLines`, log only). Also `attribution` (spec
+  `2026-11-14-agent-attribution`): the effective attribution line of agent-created commits and pull requests
+  (platform defaults or the agent's override, with the resolved conversation link), fixed at the run start that
+  wrote the event; the instruction is rendered from it, a later change renders the new values, and turning it off
+  renders the explicit off line. Both are in the log: no `DriftReason`; old logs (no event, no field) rebuild byte
+  for byte. Full-run replay copies the run's `run_context` as recorded.
 - **`plugin_context`** (memory spec §6.1, `runtime/context/plugin-context.ts`): a `context@1` provider's text `{ plugin, text, hash }`, rendered at its position as `<plugin-context plugin="…">` (empty text: nothing), the latest non-empty one per plugin again after a summary (name order, after `device_paths`), left out of the compaction transcript; in the log, so no `DriftReason`; full-run replay copies the run's events as recorded.
 - **Conversation source in a replay** (memory spec §6.2): a case records the original conversation's `source`; a full-run replay seeds its eval conversation with it and lists that source's tools (a `channel_group` case never offers a `sources: ["web", ...]` tool). A case taken before the field existed replays as `web` (a child case as `subagent`).
 - **Scheduled task messages** (scheduled tasks spec §6, §12): a task's `user_message` carries `schedule { taskId,

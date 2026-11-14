@@ -1319,6 +1319,41 @@ export const KernelConfigSchema = z.object({
         ),
     })
     .prefault({} as never),
+  attribution: z
+    .object({
+      commit: z
+        .string()
+        .max(500)
+        .refine((s) => !/[\r\n]/.test(s), { message: "one line" })
+        .optional()
+        .meta(
+          meta({
+            description:
+              "The trailer an agent ends the message of a git commit it creates with; an empty string turns it off. Overridable per agent; unset follows the admin console's value, else 'Co-Authored-By: Capybara <noreply@capybarahq.com>'",
+          }),
+        ),
+      pr: z
+        .string()
+        .max(500)
+        .refine((s) => !/[\r\n]/.test(s), { message: "one line" })
+        .optional()
+        .meta(
+          meta({
+            description:
+              "The line an agent ends the body of a pull request it opens with; an empty string turns it off. Overridable per agent; unset follows the admin console's value, else '🤖 Generated with [Capybara](https://github.com/capybara-hq/core)'",
+          }),
+        ),
+      sessionUrl: z
+        .boolean()
+        .optional()
+        .meta(
+          meta({
+            description:
+              "Whether agent-created pull requests also carry a link to the conversation; it needs http.publicUrl set, and unset follows the admin console's value, else false",
+          }),
+        ),
+    })
+    .prefault({} as never),
   web: z
     .object({
       search: z

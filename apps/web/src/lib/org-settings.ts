@@ -65,6 +65,11 @@ export interface OrgSettingsDeployment {
     allowUnsandboxed: boolean;
     devHosts: string[];
   };
+  /**
+   * The platform's effective attribution defaults for agent-created commits and pull requests
+   * (spec 2026-11-14-agent-attribution); absent from older kernels the org settings are read from.
+   */
+  attribution?: { commit: string; pr: string; sessionUrl: boolean };
 }
 
 /** 组织实际生效的沙箱 cpu / 内存（只读：超级管理员在部署设置里按组织覆盖；旧内核不返回）。 */

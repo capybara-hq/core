@@ -12,6 +12,7 @@ export const AGENT_SECTIONS = [
   "tools",
   "skills",
   "subagents",
+  "attribution",
   "channels",
 ] as const;
 
@@ -21,7 +22,12 @@ export type AgentSection = (typeof AGENT_SECTIONS)[number];
  * What someone who may use but not change the agent sees (§3.2, builder check B3), read-only:
  * the prompt files, tools, skills, sub-agents and channels stay hidden from them.
  */
-export const READ_ONLY_SECTIONS: readonly AgentSection[] = ["basics", "quick-actions", "model"];
+export const READ_ONLY_SECTIONS: readonly AgentSection[] = [
+  "basics",
+  "quick-actions",
+  "model",
+  "attribution",
+];
 
 const isSection = (s: string): s is AgentSection =>
   (AGENT_SECTIONS as readonly string[]).includes(s);
@@ -83,6 +89,12 @@ export const SECTION_FIELDS: Record<AgentSection, FieldShape[]> = {
   tools: [{ control: "item-group", options: 2 }],
   skills: [{ control: "item-group", options: 2 }],
   subagents: [{ control: "item-group", options: 1 }],
+  attribution: [
+    { control: "radios", options: 3 },
+    { control: "input" },
+    { control: "input" },
+    { control: "switch" },
+  ],
   // not drawn: 渠道 has no card; it draws its own frame with skeleton cards (AgentChannels loading)
   channels: [],
 };
@@ -101,6 +113,7 @@ export const READ_ONLY_FIELDS: Partial<Record<AgentSection, SectionShape>> = {
   basics: [{ control: "text" }, { control: "key-value" }],
   "quick-actions": { items: [{ lines: 2 }, { lines: 2 }] },
   model: [{ control: "key-value" }],
+  attribution: [{ control: "key-value" }],
 };
 
 /**

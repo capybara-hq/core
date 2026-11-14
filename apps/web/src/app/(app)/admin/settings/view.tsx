@@ -31,12 +31,17 @@ import {
   UiReplacementsSection,
 } from "../../../../components/UiArrangementSection";
 import {
+  ATTRIBUTION_DEFAULTS,
+  ATTRIBUTION_FIELDS,
+  type AttributionField,
+  type AttributionPatch,
   CLIENT_EXTENSIONS_DEFAULT,
   type ClientExtensionsSetting,
   type CustomPolicy,
   type DeploymentSettings,
   type DeploymentSettingsPatch,
   isCurrencyCode,
+  type PlatformAttributionView,
   type PlatformTierSource,
   type PlatformTiersPatch,
   type PlatformTiersView,
@@ -48,6 +53,7 @@ import { extensionLabel, labelLocale } from "../../../../lib/extension-label";
 import {
   adminExtensionsQuery,
   deploymentSettingsQuery,
+  invalidateAttribution,
   invalidateSandboxTiers,
   settingsChangeKeys,
 } from "../../../../lib/query/admin";
@@ -191,6 +197,8 @@ function AdminSettings({
       if (patch.clientExtensions !== undefined) await invalidateClientSets(qc);
       // the platform's sandbox levels cap every org's levels and devices
       if (patch.sandboxTiers !== undefined) await invalidateSandboxTiers(qc);
+      // the attribution defaults ride on every org's settings (the agent page's help text)
+      if (patch.attribution !== undefined) await invalidateAttribution(qc);
       return r;
     },
     invalidates: (patch) => settingsChangeKeys(patch),
@@ -200,6 +208,7 @@ function AdminSettings({
   const [themeDraft, setThemeDraft] = useState<string | null | undefined>(undefined);
   const [clientDraft, setClientDraft] = useState<ClientExtensionsSetting | undefined>(undefined);
   const [tiersDraft, setTiersDraft] = useState<TiersDraft>({});
+  const [attributionDraft, setAttributionDraft] = useState<AttributionDraft>({});
   const cq = adminComponentsQuery("theme");
   const eligible = (
     useQuery({ ...cq, retryOnMount: retryOnMountOf(cq.queryKey) }).data?.components ?? []
@@ -232,6 +241,9 @@ function AdminSettings({
   if (clientPatch !== null) patch.clientExtensions = clientPatch;
   const tiers = saved.sandboxTiers === undefined ? null : tiersOf(saved.sandboxTiers, tiersDraft);
   if (tiers !== null && tiers.patch !== null) patch.sandboxTiers = tiers.patch;
+  const attribution =
+    saved.attribution === undefined ? null : attributionOf(saved.attribution, attributionDraft);
+  if (attribution !== null && attribution.patch !== null) patch.attribution = attribution.patch;
   const unsaved = Object.keys(patch).length;
 
   async function save() {
@@ -242,6 +254,7 @@ function AdminSettings({
       setThemeDraft(undefined);
       setClientDraft(undefined);
       setTiersDraft({});
+      setAttributionDraft({});
       toast.success(t("saved"));
     } catch (e) {
       const off = themeOffOrgs(e);
@@ -284,6 +297,7 @@ function AdminSettings({
             setThemeDraft(undefined);
             setClientDraft(undefined);
             setTiersDraft({});
+            setAttributionDraft({});
           },
         },
         primary: {
@@ -338,6 +352,13 @@ function AdminSettings({
           saved={saved.sandboxTiers}
           value={tiers.value}
           onChange={(d) => setTiersDraft((cur) => ({ ...cur, ...d }))}
+        />
+      )}
+      {saved.attribution !== undefined && attribution !== null && (
+        <AttributionSection
+          saved={saved.attribution}
+          value={attribution.value}
+          onChange={(d) => setAttributionDraft((cur) => ({ ...cur, ...d }))}
         />
       )}
       <FormSection
@@ -473,6 +494,31 @@ function tiersOf(
 const lockedSource = (s: PlatformTierSource): "env" | "file" | "nacos" | null =>
   s === "env" || s === "file" || s === "nacos" ? s : null;
 
+/** The attribution section's edits over the saved values. */
+type AttributionDraft = Partial<Pick<PlatformAttributionView, AttributionField>>;
+
+/**
+ * The values the attribution section shows (the draft over the saved ones) and the patch: the
+ * changed fields only, never one set in the startup config.
+ */
+function attributionOf(
+  saved: PlatformAttributionView,
+  draft: AttributionDraft,
+): { value: Omit<PlatformAttributionView, "sources">; patch: AttributionPatch | null } {
+  const value = {
+    commit: draft.commit ?? saved.commit,
+    pr: draft.pr ?? saved.pr,
+    sessionUrl: draft.sessionUrl ?? saved.sessionUrl,
+  };
+  const patch: AttributionPatch = {};
+  for (const f of ATTRIBUTION_FIELDS) {
+    if (value[f] !== saved[f] && lockedSource(saved.sources[f]) === null) {
+      Object.assign(patch, { [f]: value[f] });
+    }
+  }
+  return { value, patch: Object.keys(patch).length > 0 ? patch : null };
+}
+
 /**
  * 沙箱级别 (sandbox dev tiers spec §4.1): 最高级别 as three cards, 默认级别 (at most the highest)
  * and 允许设备不使用沙箱. A field the startup config sets is disabled with its source. Choosing
@@ -584,6 +630,83 @@ function SandboxTiersSection({
           <Text variant="prose">{t("openConfirmBody")}</Text>
         </Dialog>
       )}
+    </FormSection>
+  );
+}
+
+/**
+ * 提交与 PR 署名 (spec 2026-11-14-agent-attribution): the trailer ending an agent-created commit
+ * message, the line ending an agent-created pull-request body, and whether a pull request also
+ * carries the conversation link (needs `http.publicUrl`, off by default). A field the startup
+ * config sets is read-only with its source. The preview shows what a commit and a pull request end
+ * with. 恢复默认 puts the built-in values back into the draft; the page's ActionRow saves it.
+ */
+function AttributionSection({
+  saved,
+  value,
+  onChange,
+}: {
+  saved: PlatformAttributionView;
+  value: Omit<PlatformAttributionView, "sources">;
+  onChange(d: AttributionDraft): void;
+}) {
+  const t = useTranslations("admin.settings.attribution");
+  const tf = useTranslations("configForm");
+  const locked = (f: AttributionField) => lockedSource(saved.sources[f]);
+  const lockedNote = (f: AttributionField) => {
+    const source = locked(f);
+    return source === null ? null : `${tf("readonly", { source })} · attribution.${f}`;
+  };
+  const off = t("off");
+  return (
+    <FormSection id="attribution" title={t("title")} description={t("description")}>
+      <Stack gap={12}>
+        <Field label={t("commitLabel")} help={lockedNote("commit") ?? t("commitHelp")}>
+          <Input
+            value={value.commit}
+            maxLength={500}
+            disabled={locked("commit") !== null}
+            onChange={(e) => onChange({ commit: e.target.value })}
+          />
+        </Field>
+        <Field label={t("prLabel")} help={lockedNote("pr") ?? t("prHelp")}>
+          <Input
+            value={value.pr}
+            maxLength={500}
+            disabled={locked("pr") !== null}
+            onChange={(e) => onChange({ pr: e.target.value })}
+          />
+        </Field>
+        <Stack gap={4}>
+          <SwitchField
+            label={t("sessionUrlLabel")}
+            checked={value.sessionUrl}
+            disabled={locked("sessionUrl") !== null}
+            onChange={(next) => onChange({ sessionUrl: next })}
+          />
+          <Text variant="small" tone="muted">
+            {lockedNote("sessionUrl") ?? t("sessionUrlHelp")}
+          </Text>
+        </Stack>
+        <Stack gap={4}>
+          <Text variant="small" tone="muted">
+            {t("previewTitle")}
+          </Text>
+          <Text variant="small" tone="muted">
+            {t("previewCommit")}
+          </Text>
+          <Text pre>{value.commit === "" ? off : value.commit}</Text>
+          <Text variant="small" tone="muted">
+            {t("previewPr")}
+          </Text>
+          <Text pre>{value.pr === "" ? off : value.pr}</Text>
+        </Stack>
+        <div>
+          <Button variant="ghost" onClick={() => onChange({ ...ATTRIBUTION_DEFAULTS })}>
+            {t("restore")}
+          </Button>
+        </div>
+      </Stack>
     </FormSection>
   );
 }

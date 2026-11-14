@@ -168,6 +168,19 @@ export function invalidateSandboxTiers(qc: QueryClient): Promise<void> {
   });
 }
 
+/**
+ * After a change of the platform's attribution defaults: every cached org's settings are stale
+ * (the agent page shows the defaults in its attribution section), like the sandbox levels.
+ */
+export function invalidateAttribution(qc: QueryClient): Promise<void> {
+  const under = (k: readonly unknown[], prefix: readonly unknown[]) =>
+    prefix.every((p, i) => k[i] === p);
+  return qc.invalidateQueries({
+    predicate: ({ queryKey: k }) =>
+      k[0] === "org" && typeof k[1] === "string" && under(k, keys.org(k[1]).orgSettings()),
+  });
+}
+
 /** The providers with their models and the price table. */
 export const adminModelsQuery = () =>
   defineQuery({ key: d().adminModels(), fn: () => getAdminModels(), freshness: "deployment" });

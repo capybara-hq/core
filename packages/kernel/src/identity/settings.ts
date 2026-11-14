@@ -1,6 +1,18 @@
 import { EXTENSION_NAME_RE } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { z } from "zod";
+import {
+  applyPlatformAttributionPatch,
+  PLATFORM_ATTRIBUTION_FIELDS,
+  PLATFORM_ATTRIBUTION_PATCH,
+  PLATFORM_ATTRIBUTION_SETTING,
+  type PlatformAttributionPatch,
+  type PlatformAttributionSource,
+  type PlatformAttributionStored,
+  type PlatformAttributionView,
+  readStoredPlatformAttribution,
+  resolvePlatformAttribution,
+} from "../attribution/platform-attribution.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
@@ -190,11 +202,15 @@ export type DeploymentSettings = z.infer<typeof DEPLOYMENT_SETTINGS>;
 const DEFAULTS: DeploymentSettings = DEPLOYMENT_SETTINGS.parse({});
 
 /**
- * What `GET /api/v1/admin/settings` answers: the stored settings, and the platform's sandbox tiers
- * as they are in effect with where each field comes from (`env` / `file` / `nacos`: the startup
- * config, read-only here; `db`: chosen in the admin console; `default`).
+ * What `GET /api/v1/admin/settings` answers: the stored settings, the platform's sandbox tiers as
+ * they are in effect with where each field comes from (`env` / `file` / `nacos`: the startup
+ * config, read-only here; `db`: chosen in the admin console; `default`), and the platform's
+ * effective attribution defaults with their sources the same way.
  */
-export type DeploymentSettingsView = DeploymentSettings & { sandboxTiers: PlatformTiersView };
+export type DeploymentSettingsView = DeploymentSettings & {
+  sandboxTiers: PlatformTiersView;
+  attribution: PlatformAttributionView;
+};
 
 const tierWidenRefused = (): ApiError =>
   new ApiError(
@@ -255,6 +271,13 @@ export const DEPLOYMENT_SETTINGS_PATCH = z
      * `deployment.sandbox_tier_not_allowed`).
      */
     sandboxTiers: PLATFORM_TIERS_PATCH.optional(),
+    /**
+     * The platform's attribution defaults for agent-created git commits and pull requests (spec
+     * 2026-11-14-agent-attribution): each given field replaces the stored one, null clears it
+     * (back to the default), `""` turns that line off. A field set in the startup config is
+     * read-only (409 `deployment.setting_readonly`).
+     */
+    attribution: PLATFORM_ATTRIBUTION_PATCH.optional(),
   })
   .strict();
 export type DeploymentSettingsPatch = z.infer<typeof DEPLOYMENT_SETTINGS_PATCH>;
@@ -439,13 +462,18 @@ export class SettingsService {
     private readonly config: Pick<KernelConfigService, "get" | "fieldSource">,
   ) {}
 
-  /** The settings with the platform's sandbox tiers in effect and their sources. */
+  /** The settings with the platform's sandbox tiers and attribution defaults in effect. */
   async view(): Promise<DeploymentSettingsView> {
-    const [settings, stored] = await Promise.all([
+    const [settings, stored, attribution] = await Promise.all([
       this.get(),
       readStoredPlatformTiers(this.db.db, this.log),
+      readStoredPlatformAttribution(this.db.db, this.log),
     ]);
-    return { ...settings, sandboxTiers: this.tiersView(stored) };
+    return {
+      ...settings,
+      sandboxTiers: this.tiersView(stored),
+      attribution: this.attributionView(attribution),
+    };
   }
 
   private tiersView(stored: PlatformTiersStored): PlatformTiersView {
@@ -458,6 +486,17 @@ export class SettingsService {
       ]),
     ) as PlatformTiersView["sources"];
     return { ...resolvePlatformTiers(config, stored), sources };
+  }
+
+  private attributionView(stored: PlatformAttributionStored): PlatformAttributionView {
+    const config = this.config.get().attribution;
+    const sources = Object.fromEntries(
+      PLATFORM_ATTRIBUTION_FIELDS.map((f): [string, PlatformAttributionSource] => [
+        f,
+        this.config.fieldSource(`attribution.${f}`) ?? (stored[f] !== undefined ? "db" : "default"),
+      ]),
+    ) as PlatformAttributionView["sources"];
+    return { ...resolvePlatformAttribution(config, stored), sources };
   }
 
   /**
@@ -508,6 +547,28 @@ export class SettingsService {
       }
     }
     return { next, before, after };
+  }
+
+  /**
+   * The refusals of an `attribution` change against the stored choice: a field set in the startup
+   * config (`deployment.setting_readonly`). Returns the next stored choice.
+   */
+  async checkAttribution(patch: PlatformAttributionPatch): Promise<PlatformAttributionStored> {
+    const readonly = PLATFORM_ATTRIBUTION_FIELDS.filter(
+      (f) => patch[f] !== undefined && this.config.fieldSource(`attribution.${f}`) !== undefined,
+    );
+    if (readonly.length > 0) {
+      throw new ApiError(
+        "deployment.setting_readonly",
+        `These attribution settings are set in the startup config (file, Nacos or environment) and are read-only here: ${readonly.map((f) => `attribution.${f}`).join(", ")}`,
+        readonly.map((f) => ({
+          path: `attribution.${f}`,
+          source: this.config.fieldSource(`attribution.${f}`),
+        })),
+      );
+    }
+    const stored = await readStoredPlatformAttribution(this.db.db, this.log);
+    return applyPlatformAttributionPatch(stored, patch);
   }
 
   /**
@@ -637,6 +698,10 @@ export class SettingsService {
       const r = await this.checkSandboxTiers(patch.sandboxTiers, opts);
       tiersChange = { before: r.before, after: r.after };
       writes.push([PLATFORM_TIERS_SETTING, r.next]);
+    }
+    // the platform's attribution defaults: a field set in the startup config is read-only
+    if (patch.attribution !== undefined) {
+      writes.push([PLATFORM_ATTRIBUTION_SETTING, await this.checkAttribution(patch.attribution)]);
     }
     for (const [key, value] of writes) {
       if (value === undefined) continue;

@@ -313,7 +313,47 @@ export interface DeploymentSettings {
    * console's choice, `default`. Absent from a kernel before the setting.
    */
   sandboxTiers?: PlatformTiersView;
+  /**
+   * The platform's attribution defaults for agent-created git commits and pull requests (spec
+   * 2026-11-14-agent-attribution), with where each comes from (`env` / `file` / `nacos` are the
+   * startup config, read-only here; `db` the admin console's choice; `default`). Absent from a
+   * kernel before the setting.
+   */
+  attribution?: PlatformAttributionView;
 }
+
+/** The attribution fields, in display order. */
+export const ATTRIBUTION_FIELDS = ["commit", "pr", "sessionUrl"] as const;
+export type AttributionField = (typeof ATTRIBUTION_FIELDS)[number];
+
+/** Where a platform attribution field's value comes from (as the sandbox tiers'). */
+export type AttributionSource = PlatformTierSource;
+
+/** The platform's effective attribution defaults (`GET /api/v1/admin/settings` `attribution`). */
+export interface PlatformAttributionView {
+  /** The commit trailer; `""` = off. */
+  commit: string;
+  /** The pull-request line; `""` = off. */
+  pr: string;
+  /** Whether a pull request also carries the conversation link. */
+  sessionUrl: boolean;
+  sources: Record<AttributionField, AttributionSource>;
+}
+
+/** A change of the platform's attribution defaults: each given field replaces it, null clears it. */
+export interface AttributionPatch {
+  commit?: string | null;
+  pr?: string | null;
+  sessionUrl?: boolean | null;
+}
+
+/** What an unset field falls back to (the kernel's defaults). */
+export const ATTRIBUTION_DEFAULTS: Readonly<Omit<PlatformAttributionView, "sources">> =
+  Object.freeze({
+    commit: "Co-Authored-By: Capybara <noreply@capybarahq.com>",
+    pr: "🤖 Generated with [Capybara](https://github.com/capybara-hq/core)",
+    sessionUrl: false,
+  });
 
 /** Where a platform sandbox level field comes from. */
 export type PlatformTierSource = "env" | "file" | "nacos" | "db" | "default";
@@ -351,6 +391,7 @@ export type DeploymentSettingsPatch = Partial<
     | "subagentLimitOverrides"
     | "clientExtensions"
     | "sandboxTiers"
+    | "attribution"
   >
 > & {
   subagentLimitOverrides?: Record<string, SubagentLimitOverride | null>;
@@ -361,6 +402,8 @@ export type DeploymentSettingsPatch = Partial<
   /** Each given field replaces the stored one (`disabled` is the whole list). */
   clientExtensions?: Partial<ClientExtensionsSetting>;
   sandboxTiers?: PlatformTiersPatch;
+  /** Each given field replaces the stored one; null clears it (back to the default). */
+  attribution?: AttributionPatch;
 };
 
 export interface NewAccountInput {

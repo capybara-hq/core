@@ -7,6 +7,10 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Module, Optional } from "@nestjs/common";
 import { z } from "zod";
+import {
+  type PlatformAttribution,
+  readPlatformAttribution,
+} from "../attribution/platform-attribution.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
@@ -287,6 +291,8 @@ export interface OrgSettingsDeployment {
     allowUnsandboxed: boolean;
     devHosts: string[];
   };
+  /** The platform's effective attribution defaults for agent-created commits and pull requests. */
+  attribution: PlatformAttribution;
 }
 
 /** 按值比较（`sandboxEgress` 是对象）；键序由 schema 固定。 */
@@ -355,7 +361,10 @@ export class OrgSettingsService {
   /** 部署默认值（设置页展示「跟随部署」时的实际取值）。 */
   async deployment(): Promise<OrgSettingsDeployment> {
     const lim = this.config.get().sandbox.limits;
-    const tiers = await this.platformTiers();
+    const [tiers, attribution] = await Promise.all([
+      this.platformTiers(),
+      readPlatformAttribution(this.db.db, this.config, this.log),
+    ]);
     return {
       sandboxEgress: { mode: lim.egress, allowHosts: [...lim.allowHosts] },
       sandboxTiers: {
@@ -364,6 +373,7 @@ export class OrgSettingsService {
         allowUnsandboxed: tiers.allowUnsandboxed,
         devHosts: [...lim.devHosts],
       },
+      attribution,
     };
   }
 

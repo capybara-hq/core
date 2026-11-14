@@ -188,7 +188,7 @@ describe("the agent page by section (agent profile design §3)", () => {
     expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
   });
 
-  it("a non-editor sees only basics, quick actions and model, read-only", async () => {
+  it("a non-editor sees only basics, quick actions, model and attribution, read-only", async () => {
     const browser = expectNoFirstPaintFetch();
     const a = agent({ owner: "someone", quickActions: [{ title: "Summarize", body: "Sum it." }] });
     const view = await renderEditAgent({
@@ -199,7 +199,12 @@ describe("the agent page by section (agent profile design §3)", () => {
       within(nav())
         .getAllByRole("link")
         .map((l) => l.textContent),
-    ).toEqual([P_.sections.basics, P_.sections["quick-actions"], P_.sections.model]);
+    ).toEqual([
+      P_.sections.basics,
+      P_.sections["quick-actions"],
+      P_.sections.model,
+      P_.sections.attribution,
+    ]);
     expect(screen.getByText(en.agents.readOnly)).toBeTruthy();
     expect(screen.queryByRole("textbox")).toBeNull();
     expect(screen.queryByRole("radiogroup")).toBeNull();
