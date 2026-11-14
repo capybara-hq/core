@@ -36,7 +36,7 @@ const SettingsInput = DEPLOYMENT_SETTINGS_PATCH.pick({
   uiTheme: true,
   uiArrangement: true,
   clientExtensions: true,
-  sandboxTiers: true,
+  devicesAutoMode: true,
   attribution: true,
 }).strict();
 
@@ -197,7 +197,7 @@ export class AdminOperations implements OnModuleInit {
       defineOperation({
         id: "admin.settings",
         description:
-          "Read the deployment settings (super admin): who may create orgs (orgCreation), the price currency, whether orgs may create their own connectors and skills, whether org admins may browse the marketplaces, the per-org limit overrides keyed by org id (orgs.get reads one org's), the platform's sandbox levels in effect (sandboxTiers: max, default, allowUnsandboxed), and the platform's attribution defaults for agent-created git commits and pull requests (attribution: commit, pr, sessionUrl); each with sources: env, file or nacos are set in the startup config and read-only, db chosen in the admin console, default.",
+          "Read the deployment settings (super admin): who may create orgs (orgCreation), the price currency, whether orgs may create their own connectors and skills, whether org admins may browse the marketplaces, the per-org limit overrides keyed by org id (orgs.get reads one org's), the platform's auto-mode switch in effect (devicesAutoMode: mode allowed or off), and the platform's attribution defaults for agent-created git commits and pull requests (attribution: commit, pr, sessionUrl); each with sources: env, file or nacos are set in the startup config and read-only, db chosen in the admin console, default.",
         input: z.object({}).strict(),
         example: {},
         authz: { superAdmin: true },
@@ -208,7 +208,7 @@ export class AdminOperations implements OnModuleInit {
       defineOperation({
         id: "admin.update-settings",
         description:
-          "Change deployment settings (super admin); give only the keys to change: orgCreation (anyone or super_admin), priceCurrency (ISO 4217 code), customConnectors / customSkills (allow or deny: whether orgs may create their own instead of installing from the catalog), orgMarketplaceBrowse (true or false), uiTheme ({ id }: the platform default theme, a platform theme whose scope is all, or null for the built-in theme; it is what every org falls back to and what the sign-in pages show), uiArrangement ({ <slot>: { hidden, order } } for a list slot, { <slot>: { use } } for a single slot: the platform default arrangement of UI slots, with contribution keys <extension>/<contribution>; hidden ones are not listed but still open by URL; use names the contribution that replaces the built-in, null for the built-in; null for a slot removes its entry), clientExtensions ({ enabled?, disabled? }: the kill switch of plugin client code; enabled false stops every plugin's interface code in every browser, disabled is the whole list of plugins whose interface code alone is stopped while their tools keep working; read the current list from admin.settings first), sandboxTiers ({ max?, default?, allowUnsandboxed? }: the platform's sandbox levels strict < dev < open; null clears a field back to its default; through this tool they may only be lowered, never raised, and fields set in the startup config are read-only), attribution ({ commit?, pr?, sessionUrl? }: the platform's defaults for agent-created git commits and pull requests; null clears a field back to its default, an empty string turns that line off, and fields set in the startup config are read-only). Per-org limits are orgs.set-limits.",
+          "Change deployment settings (super admin); give only the keys to change: orgCreation (anyone or super_admin), priceCurrency (ISO 4217 code), customConnectors / customSkills (allow or deny: whether orgs may create their own instead of installing from the catalog), orgMarketplaceBrowse (true or false), uiTheme ({ id }: the platform default theme, a platform theme whose scope is all, or null for the built-in theme; it is what every org falls back to and what the sign-in pages show), uiArrangement ({ <slot>: { hidden, order } } for a list slot, { <slot>: { use } } for a single slot: the platform default arrangement of UI slots, with contribution keys <extension>/<contribution>; hidden ones are not listed but still open by URL; use names the contribution that replaces the built-in, null for the built-in; null for a slot removes its entry), clientExtensions ({ enabled?, disabled? }: the kill switch of plugin client code; enabled false stops every plugin's interface code in every browser, disabled is the whole list of plugins whose interface code alone is stopped while their tools keep working; read the current list from admin.settings first), devicesAutoMode ({ mode }: the platform's auto-mode switch, allowed or off; null clears it back to the default, allowed; through this tool it may only be turned off, never on, and a value set in the startup config is read-only), attribution ({ commit?, pr?, sessionUrl? }: the platform's defaults for agent-created git commits and pull requests; null clears a field back to its default, an empty string turns that line off, and fields set in the startup config are read-only). Per-org limits are orgs.set-limits.",
         input: SettingsInput.refine((b) => Object.keys(b).length > 0, {
           message: "at least one setting is required",
         }),
@@ -224,8 +224,8 @@ export class AdminOperations implements OnModuleInit {
             next: "Fix the values as the message says (admin.settings shows the current ones).",
           },
           {
-            code: "deployment.sandbox_tier_not_allowed",
-            next: "Through this tool the platform's sandbox levels may only be lowered; to raise them, ask a super admin to change them in the admin console settings on the web.",
+            code: "deployment.auto_mode_not_allowed",
+            next: "Through this tool the platform's auto-mode switch may only be turned off; to turn it on, ask a super admin to change it in the admin console settings on the web.",
           },
           {
             code: "deployment.setting_readonly",
@@ -245,22 +245,23 @@ export class AdminOperations implements OnModuleInit {
               message: r.error.issues[0]?.message ?? "",
             };
           }
-          const tiers = i.sandboxTiers;
-          return tiers === undefined
+          const autoMode = i.devicesAutoMode;
+          return autoMode === undefined
             ? { ok: true }
-            : precheckBy(() => this.settings.checkSandboxTiers(tiers, { onlyNarrows: true }));
+            : precheckBy(() => this.settings.checkDevicesAutoMode(autoMode, { onlyNarrows: true }));
         },
         summary: async (i) => {
-          const { uiTheme, uiArrangement, clientExtensions, sandboxTiers, attribution, ...rest } =
-            i;
+          const {
+            uiTheme,
+            uiArrangement,
+            clientExtensions,
+            devicesAutoMode,
+            attribution,
+            ...rest
+          } = i;
           const parts = Object.entries(rest).map(([k, v]) => `${k}=${String(v)}`);
-          if (sandboxTiers !== undefined) {
-            parts.push(
-              `sandboxTiers=${Object.entries(sandboxTiers)
-                .filter(([, v]) => v !== undefined)
-                .map(([k, v]) => `${k}:${String(v)}`)
-                .join(" ")}`,
-            );
+          if (devicesAutoMode !== undefined) {
+            parts.push(`devicesAutoMode=${String(devicesAutoMode.mode)}`);
           }
           const zh = [...parts];
           const en = [...parts];
@@ -308,7 +309,7 @@ export class AdminOperations implements OnModuleInit {
             ctx.actorAccountId,
             undefined,
             viaAgent("admin.update-settings", ctx),
-            // a person raises the platform's sandbox levels, never an agent (dev tiers spec §2)
+            // a person turns the platform's auto mode on, never an agent (auto mode spec §4.3)
             { onlyNarrows: true },
           ),
       }),

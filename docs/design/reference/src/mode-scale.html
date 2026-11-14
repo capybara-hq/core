@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>ModeScale · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>ModeScale</h1>
+<p>How much power a device gives an agent's commands (spec §6.42, auto mode design §4): one horizontal two-state scale, 自动 | 沙箱, each with one sentence and a 2 px marker under the effective one — never four stacked option cards and never a full-bleed fill. Selection inside the control is neutral (ink), not the accent. A mode the org or the platform forbids is disabled with its reason under it; a cloud device is locked and says why; the whole scale can be off. The command slot holds the local device's KeycapCommand (spec §6.43).</p>
+<div class="r-blocks">
+<section data-ref-block="mode-scale-auto" style="width:560px" data-pad>
+  <div class="r-mode-scale" data-part="mode-scale" data-mode="auto">
+    <div class="r-mode-scale-head">
+      <span class="r-mode-scale-label" data-part="mode-scale-label">运行模式</span>
+    </div>
+    <div class="r-mode-scale-options" role="radiogroup" aria-label="运行模式">
+      <span class="r-mode-scale-track" data-part="mode-scale-track" aria-hidden="true"></span>
+      <span class="r-mode-scale-option" data-part="mode-scale-option" data-mode="auto" data-state="selected" role="radio" aria-checked="true">
+        <span class="r-mode-scale-name" data-part="mode-scale-name">自动</span>
+        <span class="r-mode-scale-marker" data-part="mode-scale-marker" aria-hidden="true"></span>
+        <span class="r-mode-scale-description" data-part="mode-scale-description">命令以你的身份在这台机器上运行，可以联网；每条命令都经过审查。</span>
+      </span>
+      <span class="r-mode-scale-option" data-part="mode-scale-option" data-mode="sandbox" data-state="default" role="radio" aria-checked="false">
+        <span class="r-mode-scale-name" data-part="mode-scale-name">沙箱</span>
+        <span class="r-mode-scale-marker" data-part="mode-scale-marker" aria-hidden="true"></span>
+        <span class="r-mode-scale-description" data-part="mode-scale-description">命令在沙箱里运行，只能访问工作区、临时目录和设备允许的域名。</span>
+      </span>
+    </div>
+    <div class="r-keycap" data-part="keycap-command">
+      <p class="r-keycap-hint" data-part="keycap-command-hint">在这台机器的终端里运行，切换模式。</p>
+      <div class="r-keycap-line">
+        <span class="r-keycap-caps" data-part="keycap-command-caps"><kbd class="r-keycap-cap" data-part="keycap-command-cap">capybara-device</kbd><kbd class="r-keycap-cap" data-part="keycap-command-cap">mode</kbd><kbd class="r-keycap-cap" data-part="keycap-command-cap">auto|sandbox</kbd></span>
+        <span class="r-keycap-copy"><i data-icon="copy" data-size="14"></i>复制</span>
+      </div>
+    </div>
+  </div>
+</section>
+<section data-ref-block="mode-scale-sandbox" style="width:560px" data-pad>
+  <div class="r-mode-scale" data-part="mode-scale" data-mode="sandbox">
+    <div class="r-mode-scale-head">
+      <span class="r-mode-scale-label" data-part="mode-scale-label">运行模式</span>
+    </div>
+    <div class="r-mode-scale-options" role="radiogroup" aria-label="运行模式">
+      <span class="r-mode-scale-track" data-part="mode-scale-track" aria-hidden="true"></span>
+      <span class="r-mode-scale-option" data-part="mode-scale-option" data-mode="auto" data-state="default" role="radio" aria-checked="false">
+        <span class="r-mode-scale-name" data-part="mode-scale-name">自动</span>
+        <span class="r-mode-scale-marker" data-part="mode-scale-marker" aria-hidden="true"></span>
+        <span class="r-mode-scale-description" data-part="mode-scale-description">命令以你的身份在这台机器上运行，可以联网；每条命令都经过审查。</span>
+      </span>
+      <span class="r-mode-scale-option" data-part="mode-scale-option" data-mode="sandbox" data-state="selected" role="radio" aria-checked="true">
+        <span class="r-mode-scale-name" data-part="mode-scale-name">沙箱</span>
+        <span class="r-mode-scale-marker" data-part="mode-scale-marker" aria-hidden="true"></span>
+        <span class="r-mode-scale-description" data-part="mode-scale-description">命令在沙箱里运行，只能访问工作区、临时目录和设备允许的域名。</span>
+      </span>
+    </div>
+    <div class="r-keycap" data-part="keycap-command">
+      <p class="r-keycap-hint" data-part="keycap-command-hint">在这台机器的终端里运行，切换模式。</p>
+      <div class="r-keycap-line">
+        <span class="r-keycap-caps" data-part="keycap-command-caps"><kbd class="r-keycap-cap" data-part="keycap-command-cap">capybara-device</kbd><kbd class="r-keycap-cap" data-part="keycap-command-cap">mode</kbd><kbd class="r-keycap-cap" data-part="keycap-command-cap">auto|sandbox</kbd></span>
+        <span class="r-keycap-copy"><i data-icon="copy" data-size="14"></i>复制</span>
+      </div>
+    </div>
+  </div>
+</section>
+<section data-ref-block="mode-scale-locked" style="width:560px" data-pad>
+  <div class="r-mode-scale" data-part="mode-scale" data-mode="sandbox" data-locked="true">
+    <div class="r-mode-scale-head">
+      <span class="r-mode-scale-label" data-part="mode-scale-label">运行模式</span>
+      <span class="r-mode-scale-note" data-part="mode-scale-note">云端设备不能选择模式：组织允许自动模式时运行自动，否则运行沙箱。</span>
+    </div>
+    <div class="r-mode-scale-options" role="radiogroup" aria-label="运行模式">
+      <span class="r-mode-scale-track" data-part="mode-scale-track" aria-hidden="true"></span>
+      <span class="r-mode-scale-option" data-part="mode-scale-option" data-mode="auto" data-state="default" role="radio" aria-checked="false" aria-disabled="true">
+        <span class="r-mode-scale-name" data-part="mode-scale-name">自动</span>
+        <span class="r-mode-scale-marker" data-part="mode-scale-marker" aria-hidden="true"></span>
+        <span class="r-mode-scale-description" data-part="mode-scale-description">命令以你的身份在这台机器上运行，可以联网；每条命令都经过审查。</span>
+      </span>
+      <span class="r-mode-scale-option" data-part="mode-scale-option" data-mode="sandbox" data-state="selected" role="radio" aria-checked="true" aria-disabled="true">
+        <span class="r-mode-scale-name" data-part="mode-scale-name">沙箱</span>
+        <span class="r-mode-scale-marker" data-part="mode-scale-marker" aria-hidden="true"></span>
+        <span class="r-mode-scale-description" data-part="mode-scale-description">命令在沙箱里运行，只能访问工作区、临时目录和设备允许的域名。</span>
+      </span>
+    </div>
+  </div>
+</section>
+<section data-ref-block="mode-scale-capped" style="width:560px" data-pad>
+  <div class="r-mode-scale" data-part="mode-scale" data-mode="sandbox">
+    <div class="r-mode-scale-head">
+      <span class="r-mode-scale-label" data-part="mode-scale-label">运行模式</span>
+    </div>
+    <div class="r-mode-scale-options" role="radiogroup" aria-label="运行模式">
+      <span class="r-mode-scale-track" data-part="mode-scale-track" aria-hidden="true"></span>
+      <span class="r-mode-scale-option" data-part="mode-scale-option" data-mode="auto" data-state="default" role="radio" aria-checked="false" aria-disabled="true">
+        <span class="r-mode-scale-name" data-part="mode-scale-name">自动</span>
+        <span class="r-mode-scale-marker" data-part="mode-scale-marker" aria-hidden="true"></span>
+        <span class="r-mode-scale-description" data-part="mode-scale-description">命令以你的身份在这台机器上运行，可以联网；每条命令都经过审查。</span>
+        <span class="r-mode-scale-reason" data-part="mode-scale-reason">组织不允许</span>
+      </span>
+      <span class="r-mode-scale-option" data-part="mode-scale-option" data-mode="sandbox" data-state="selected" role="radio" aria-checked="true">
+        <span class="r-mode-scale-name" data-part="mode-scale-name">沙箱</span>
+        <span class="r-mode-scale-marker" data-part="mode-scale-marker" aria-hidden="true"></span>
+        <span class="r-mode-scale-description" data-part="mode-scale-description">命令在沙箱里运行，只能访问工作区、临时目录和设备允许的域名。</span>
+      </span>
+    </div>
+  </div>
+</section>
+<section data-ref-block="mode-scale-disabled" style="width:560px" data-pad>
+  <div class="r-mode-scale" data-part="mode-scale" data-mode="auto" data-disabled="true">
+    <div class="r-mode-scale-head">
+      <span class="r-mode-scale-label" data-part="mode-scale-label">运行模式</span>
+      <span class="r-mode-scale-note" data-part="mode-scale-note">这台设备离线，暂时不能修改。</span>
+    </div>
+    <div class="r-mode-scale-options" role="radiogroup" aria-label="运行模式">
+      <span class="r-mode-scale-track" data-part="mode-scale-track" aria-hidden="true"></span>
+      <span class="r-mode-scale-option" data-part="mode-scale-option" data-mode="auto" data-state="selected" role="radio" aria-checked="true" aria-disabled="true">
+        <span class="r-mode-scale-name" data-part="mode-scale-name">自动</span>
+        <span class="r-mode-scale-marker" data-part="mode-scale-marker" aria-hidden="true"></span>
+        <span class="r-mode-scale-description" data-part="mode-scale-description">命令以你的身份在这台机器上运行，可以联网；每条命令都经过审查。</span>
+      </span>
+      <span class="r-mode-scale-option" data-part="mode-scale-option" data-mode="sandbox" data-state="default" role="radio" aria-checked="false" aria-disabled="true">
+        <span class="r-mode-scale-name" data-part="mode-scale-name">沙箱</span>
+        <span class="r-mode-scale-marker" data-part="mode-scale-marker" aria-hidden="true"></span>
+        <span class="r-mode-scale-description" data-part="mode-scale-description">命令在沙箱里运行，只能访问工作区、临时目录和设备允许的域名。</span>
+      </span>
+    </div>
+  </div>
+</section>
+</div>
+</main>
+<script src="fill.js"></script>
+</body>
+</html>

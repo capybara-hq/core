@@ -1,8 +1,8 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { homedir, constants as osConstants } from "node:os";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import {
   type SandboxAskCallback,
   SandboxManager,
@@ -14,33 +14,15 @@ import {
   isBackgroundLaunch,
   type SandboxLimits,
   type SandboxRoots,
-  type SandboxTier,
 } from "@capybara-hq/plugin-sdk";
-import {
-  type BlockedHost,
-  blockedHosts,
-  denyReason,
-  isPublicName,
-  networkTrailer,
-} from "../network.js";
-import {
-  ANY_HOST,
-  deviceTier,
-  type EgressLimits,
-  effectiveEgress,
-  grantedHosts,
-  srtConfig,
-  type TierFacts,
-  tierFacts,
-} from "../policy.js";
-import { detectLocalProxy, PROXY_GUARD_TTL_MS, type ProxyGuardResult } from "../proxy-guard.js";
+import { type BlockedHost, blockedHosts, denyReason, networkTrailer } from "../network.js";
+import { effectiveEgress, grantedHosts, srtConfig } from "../policy.js";
 import type { Policy } from "../state.js";
 import { FS_HELPER_SCRIPT } from "./fs-helper.js";
 import { EXEC_MARKER, killMarked } from "./procs.js";
 import { Reaper, type ReaperDeps } from "./reap.js";
+import { sandboxUnavailableMessage } from "./sandbox-messages.js";
 import {
-  cacheEnv,
-  cacheRoot,
   ENV_NAME_RE,
   HostFiles,
   isUnder,
@@ -48,10 +30,8 @@ import {
   osRoots,
   PIPE_GRACE_MS,
   policyError,
-  prepareSocketDir,
   RootGuard,
   shellQuote,
-  socketDirPath,
   toolHomeEnv,
 } from "./shared.js";
 import { DeviceOpError, type Executor } from "./types.js";
@@ -87,6 +67,13 @@ export function sandboxAvailability(): { ok: true } | { ok: false; reason: strin
   }
   return { ok: true };
 }
+
+/** How to fix an unavailable OS sandbox (shared by the command refusal and the mode switch). */
+export {
+  SANDBOX_INSTALL_HINT,
+  sandboxUnavailableMessage,
+  sandboxUnavailableSwitchRefusal,
+} from "./sandbox-messages.js";
 
 /**
  * One command's process group. It is tracked after the command's main process exits, as long as
@@ -129,10 +116,6 @@ export interface OsExecutorOptions {
   home?: string;
   /** More paths commands may not read (this program's state directory). */
   denyRead?: string[];
-  /** The localhost proxy guard (default: {@link detectLocalProxy}); injectable for tests. */
-  detectProxy?: () => Promise<ProxyGuardResult>;
-  /** Where the macOS short socket directory is made (default `/private/tmp`). */
-  socketBase?: string;
   /** The reaper's process operations (default: the real ones); injectable for tests. */
   reaper?: Partial<ReaperDeps>;
 }
@@ -143,11 +126,12 @@ interface Spawned {
 }
 
 /**
- * Runs every command inside `@anthropic-ai/sandbox-runtime` (macOS Seatbelt, Linux bubblewrap):
- * writes only under the workspace and tmp roots, the secret paths unreadable, network only to
- * the intersection of the local policy and the device's egress. File operations in the
- * workspace and tmp roots run in a sandboxed helper too. Construct it with
- * {@link createOsExecutor}; the constructor alone serves only `ensureRoot` and the skills root.
+ * Runs every command inside `@anthropic-ai/sandbox-runtime` (macOS Seatbelt, Linux bubblewrap),
+ * today's strict profile (spec §4.4): writes only under the workspace and tmp roots, the secret
+ * paths unreadable, no local binding or unix sockets, network only to the intersection of the
+ * device's allowlist and the kernel's. File operations in the workspace, tmp and skills roots run
+ * in a sandboxed helper too. Construct it with {@link createOsExecutor}; the constructor alone
+ * serves only `ensureRoot`.
  */
 export class OsExecutor implements Executor {
   readonly mode = "os" as const;
@@ -162,87 +146,61 @@ export class OsExecutor implements Executor {
   private readonly guard: RootGuard;
   private readonly files: HostFiles;
   /**
-   * The limits of the latest command. The ask callback has no command id; a device belongs to one
-   * org, so these stand for the org's egress when it explains a refusal.
+   * The network limits of the latest command. The ask callback has no command id; a device belongs
+   * to one organization, so these stand for its allowlist when it explains a refusal.
    */
-  private lastLimits: EgressLimits | undefined;
-  /** macOS: the short socket directory (TMPDIR in `dev` / `open`); undefined elsewhere. */
-  private socketDir: string | undefined;
-  /** The device's package caches (`<dir>/cache`). */
-  private readonly cacheDir: string;
-  /** The latest proxy guard result, and the policy object it was taken for. */
-  private proxy: ProxyGuardResult = { detected: false, reasons: [] };
-  private guardedPolicy: Policy | undefined;
-  private guardedAt = 0;
+  private lastLimits: Pick<SandboxLimits, "mode" | "network"> | undefined;
   /** The configuration the sandbox runs with now, as JSON (see {@link applyConfig}). */
   private installed: string | undefined;
   /**
-   * Commands spawned while nothing narrowed them (policy `open`, their limits `open`) and still
-   * running. The ask callback allows any public name only while one runs.
-   */
-  private readonly openCommands = new Set<string>();
-  /**
    * Background tasks launched on macOS that still run, by the command id of their launch, with
    * the task's process group id (its sid). A task keeps its launch's network permissions (the
-   * per-command list and {@link openCommands}) until its group is gone: it uses the launch's proxy
-   * credentials long after the launch returned. Checked on the prune tick.
+   * per-command list) until its group is gone: it uses the launch's proxy credentials long after
+   * the launch returned. Checked on the prune tick.
    */
   private readonly backgroundNet = new Map<string, number>();
+  /** Whether the OS sandbox can run here; false means sandbox-mode operations are refused. */
+  readonly available: boolean;
+  /** Why the OS sandbox is unavailable (when {@link available} is false). */
+  readonly unavailableReason: string | undefined;
 
-  constructor(private readonly opts: OsExecutorOptions) {
+  constructor(
+    private readonly opts: OsExecutorOptions,
+    state: { unavailable?: string } = {},
+  ) {
+    this.available = state.unavailable === undefined;
+    this.unavailableReason = state.unavailable;
     this.reaper = new Reaper(opts.reaper);
     const dir = resolve(opts.dir);
     // The roots are reported as real paths, so what commands print matches what the kernel sends.
     this.dir = existsSync(dir) ? realpathSync(dir) : dir;
     this.roots = osRoots(this.dir);
     this.guard = new RootGuard(this.dir, this.roots);
-    this.files = new HostFiles(this.roots);
+    this.files = new HostFiles(this.roots, "sandbox");
     this.dirKey = createHash("sha256").update(this.dir).digest("hex").slice(0, 16);
-    this.cacheDir = cacheRoot(this.dir);
   }
 
-  /**
-   * The tier of work that has no limits of its own (the file helper): the device's choice cut to
-   * the latest exec's ceiling, `strict` before any exec (no ceiling known yet).
-   */
-  tier(policy: Policy = this.opts.policy()): SandboxTier {
-    return this.lastLimits === undefined ? "strict" : deviceTier(policy, this.lastLimits);
+  /** Throws the actionable refusal when the OS sandbox is unavailable. */
+  private requireSandbox(): void {
+    if (!this.available) {
+      throw new DeviceOpError("error", sandboxUnavailableMessage(this.unavailableReason ?? ""));
+    }
   }
 
-  /** What the tier gives on this machine now (for the policy summary). */
-  tierFacts(policy: Policy = this.opts.policy()): TierFacts {
-    return tierFacts(policy, this.lastLimits, {
-      proxyDetected: this.proxy.detected,
-      mode: "os",
-    });
-  }
-
-  /** The latest proxy guard result. */
-  proxyGuard(): ProxyGuardResult {
-    return this.proxy;
-  }
-
-  /** The sandbox configuration for the policy at `tier` (no domains: those are per command). */
-  config(
-    policy: Policy = this.opts.policy(),
-    tier: SandboxTier = this.tier(policy),
-  ): SandboxRuntimeConfig {
-    return srtConfig(policy, this.roots, [], {
-      tier,
+  /** The sandbox configuration (no domains: those are per command). */
+  config(): SandboxRuntimeConfig {
+    return srtConfig(this.roots, [], {
       ...(this.opts.home !== undefined && { home: this.opts.home }),
       ...(this.opts.denyRead !== undefined && { denyRead: this.opts.denyRead }),
-      proxyDetected: this.proxy.detected,
-      ...(this.socketDir !== undefined && { socketDir: this.socketDir }),
-      cacheDir: this.cacheDir,
     });
   }
 
   /**
-   * Installs {@link config} when the policy or the tier changed it, so the change applies at the
-   * next command without a restart. The runtime reads its global configuration at each wrap.
+   * Installs {@link config} when it changed, so a policy change applies at the next command
+   * without a restart. The runtime reads its global configuration at each wrap.
    */
-  private applyConfig(policy: Policy, tier: SandboxTier): void {
-    const config = this.config(policy, tier);
+  private applyConfig(): void {
+    const config = this.config();
     const json = JSON.stringify(config);
     if (json === this.installed) return;
     if (this.installed !== undefined) SandboxManager.updateConfig(config);
@@ -254,62 +212,18 @@ export class OsExecutor implements Executor {
     this.installed = JSON.stringify(config);
   }
 
-  /**
-   * macOS: makes the short socket directory (0700) at creation, and again before a `dev` / `open`
-   * command when it is gone (macOS prunes /tmp). A path taken by something else leaves the
-   * device without one: commands then use the tmp root.
-   */
-  prepareSocketDir(): void {
-    if (process.platform !== "darwin") return;
-    this.socketDir = prepareSocketDir(socketDirPath(this.dirKey, this.opts.socketBase));
-  }
-
-  /**
-   * Runs the localhost proxy guard at creation, when the policy was reloaded since the last run
-   * (the store returns a new object for each new version of policy.json), and when the last result
-   * is older than {@link PROXY_GUARD_TTL_MS} (a proxy started after this program). A guard that
-   * fails counts as a proxy found (fail safe; `localhost: allow` still overrides).
-   */
-  async refreshProxyGuard(policy: Policy): Promise<void> {
-    const now = Date.now();
-    if (policy === this.guardedPolicy && now - this.guardedAt < PROXY_GUARD_TTL_MS) return;
-    this.guardedPolicy = policy;
-    this.guardedAt = now;
-    try {
-      this.proxy = await (this.opts.detectProxy ?? (() => detectLocalProxy()))();
-    } catch (e) {
-      this.proxy = {
-        detected: true,
-        reasons: [`the localhost proxy guard failed: ${(e as Error).message}`],
-      };
-    }
-  }
-
   async ensureRoot(): Promise<"ok" | "gone"> {
     return this.guard.ensure();
   }
 
   /**
-   * The sandbox's ask callback, reached only for a host no list allows. sandbox-runtime refuses `*`
-   * in a per-command list, so a command that may reach any host (device policy `open`, its limits
-   * `open`) is allowed here: a public name is allowed while such a command runs and the policy
-   * and latest limits still say so (narrowing takes effect at once). The callback has no command
-   * id, so a concurrent command of the same device may ride along meanwhile; the file helper never
-   * opens it. Otherwise it refuses, with a reason clients that print the proxy's status phrase
-   * show (spec §9.1).
+   * The sandbox's ask callback, reached only for a host no list allows: it refuses, with a reason
+   * clients that print the proxy's status phrase show (spec §9.1). Sandbox mode has no
+   * "any host" state (auto mode runs without the OS sandbox and has the machine's network), so
+   * this never allows.
    */
   readonly askCallback: SandboxAskCallback = async ({ host }) => {
-    const policy = this.opts.policy();
-    const limits = this.lastLimits;
-    if (
-      this.openCommands.size > 0 &&
-      limits !== undefined &&
-      effectiveEgress(policy, limits).includes(ANY_HOST) &&
-      isPublicName(host)
-    ) {
-      return true;
-    }
-    return { allow: false, reason: denyReason(host, limits, policy) };
+    return { allow: false, reason: denyReason(host, this.lastLimits, this.opts.policy()) };
   };
 
   /** The classified network refusals of one command (read before it unregisters). */
@@ -318,20 +232,6 @@ export class OsExecutor implements Executor {
       .getViolationsForCommand(commandId)
       .map((v) => v.line);
     return blockedHosts(lines, limits, policy);
-  }
-
-  /**
-   * `<dir>/git-template`, an empty directory commands can read but not write (it is outside the
-   * roots), made on demand; undefined when it cannot be made.
-   */
-  private gitTemplate(): string | undefined {
-    const path = join(this.dir, "git-template");
-    try {
-      mkdirSync(path, { recursive: true, mode: 0o755 });
-      return lstatSync(path).isDirectory() ? path : undefined;
-    } catch {
-      return undefined;
-    }
   }
 
   /**
@@ -359,20 +259,11 @@ export class OsExecutor implements Executor {
       /** The marker value every process of the command carries. */
       marker: string;
       egress: string[];
-      policy: Policy;
-      tier: SandboxTier;
       signal?: AbortSignal;
       stdin?: boolean;
     },
   ): Promise<Spawned> {
     const exports: string[] = [];
-    const dev = o.tier !== "strict";
-    // Re-checked before every dev / open command (macOS prunes /tmp, and a path swapped for a
-    // link or another user's directory must not be used): prepareSocketDir never follows links.
-    if (dev && process.platform === "darwin") this.prepareSocketDir();
-    // dev / open on macOS: the short socket directory, where unix sockets are allowed.
-    const tmp = dev && this.socketDir !== undefined ? this.socketDir : this.roots.tmp;
-    const gitTemplate = dev ? this.gitTemplate() : undefined;
     const inner: Record<string, string> = {
       // The user's PATH applies inside the sandbox only (the wrapper runs with OUTER_ENV).
       PATH: process.env.PATH ?? "/usr/bin:/bin:/usr/sbin:/sbin",
@@ -381,18 +272,12 @@ export class OsExecutor implements Executor {
       TERM: "dumb",
       HOME: this.roots.workspace,
       ...(process.env.USER !== undefined && { USER: process.env.USER }),
-      // Version managers (asdf, nvm, pyenv, ...) read their data under the real home, at every
-      // tier: HOME is the workspace here. Read only; the request's values win.
+      // Version managers (asdf, nvm, pyenv, ...) read their data under the real home: HOME is the
+      // workspace here. Read only; the request's values win.
       ...toolHomeEnv(this.opts.home ?? homedir()),
-      // dev / open: package caches under <dir>/cache; the command's own values win.
-      ...(dev && cacheEnv(this.cacheDir, { create: true })),
-      // dev / open may write .git/config but never .git/hooks: init and clone copy no sample hooks.
-      ...(dev && gitTemplate !== undefined && { GIT_TEMPLATE_DIR: gitTemplate }),
       ...o.env,
       // The runtime points TMPDIR at its own /tmp/claude (denied by the config): use ours.
-      TMPDIR: tmp,
-      // Chromium on macOS ignores TMPDIR and reads this instead (its singleton socket).
-      ...(process.platform === "darwin" && { MAC_CHROMIUM_TMPDIR: tmp }),
+      TMPDIR: this.roots.tmp,
       [EXEC_MARKER]: o.marker,
     };
     for (const [k, v] of Object.entries(inner)) {
@@ -400,7 +285,7 @@ export class OsExecutor implements Executor {
         throw policyError(`invalid environment variable name ${JSON.stringify(k)}`);
       exports.push(`export ${k}=${shellQuote(v)}`);
     }
-    this.applyConfig(o.policy, o.tier);
+    this.applyConfig();
     const commandId = randomBytes(16).toString("base64url");
     const wrapped = await SandboxManager.wrapWithSandbox(
       `${exports.join("\n")}\n${script}`,
@@ -411,10 +296,8 @@ export class OsExecutor implements Executor {
     );
     // The kernel may have cancelled while the wrap was prepared.
     o.signal?.throwIfAborted();
-    // "*" (any host) is refused in a per-command list: the ask callback allows those hosts.
-    const listed = o.egress.filter((d) => d !== ANY_HOST);
-    if (listed.length > 0) {
-      SandboxManager.registerCommandNetworkLists(commandId, { allowedDomains: listed });
+    if (o.egress.length > 0) {
+      SandboxManager.registerCommandNetworkLists(commandId, { allowedDomains: o.egress });
     }
     let child: ChildProcess;
     try {
@@ -433,10 +316,9 @@ export class OsExecutor implements Executor {
     return { child, commandId };
   }
 
-  /** Drops a command's network permissions (its per-command list and any-host membership). */
+  /** Drops a command's network permissions (its per-command list). */
   private releaseNet(commandId: string): void {
     this.backgroundNet.delete(commandId);
-    this.openCommands.delete(commandId);
     SandboxManager.unregisterCommandNetworkLists(commandId);
   }
 
@@ -499,15 +381,15 @@ export class OsExecutor implements Executor {
 
   async exec(args: DeviceExecArgs, signal: AbortSignal): Promise<ExecResult> {
     signal.throwIfAborted();
+    this.requireSandbox();
     const cwd = await this.files.inside(args.cwd ?? this.roots.workspace, "cwd");
     // Read once: the command's lists and the explanation of its refusals use the same policy.
     const policy = this.opts.policy();
     this.lastLimits = args.limits;
-    await this.refreshProxyGuard(policy);
     // A granted host the command still could not reach is not the device's doing.
     const judged: Policy = {
       ...policy,
-      allowedDomains: [...policy.allowedDomains, ...grantedHosts(policy, args.limits, args.grants)],
+      allowedDomains: [...policy.allowedDomains, ...grantedHosts(args.limits, args.grants)],
     };
     const egress = effectiveEgress(policy, args.limits, args.grants);
     const marker = this.execMarker(args.tag);
@@ -518,11 +400,8 @@ export class OsExecutor implements Executor {
       ...(args.env !== undefined && { env: args.env }),
       marker,
       egress,
-      policy,
-      tier: deviceTier(policy, args.limits),
       signal,
     });
-    if (egress.includes(ANY_HOST)) this.openCommands.add(commandId);
     return new Promise<ExecResult>((resolvePromise, reject) => {
       const cap = new OutputCap(args.maxOutputBytes);
       let timedOut = false;
@@ -628,6 +507,7 @@ export class OsExecutor implements Executor {
       process.execPath,
       "-e",
       FS_HELPER_SCRIPT,
+      "sandbox",
       op,
       path,
       String(maxBytes),
@@ -640,8 +520,6 @@ export class OsExecutor implements Executor {
       cwd: this.roots.workspace,
       marker: this.markerOf("fs-helper"),
       egress: [],
-      policy: this.opts.policy(),
-      tier: this.tier(),
       stdin: data !== undefined,
     });
     const chunks: Buffer[] = [];
@@ -689,6 +567,7 @@ export class OsExecutor implements Executor {
     path: string,
     maxBytes: number,
   ): Promise<{ data: Uint8Array; truncated: boolean } | null> {
+    this.requireSandbox();
     const p = this.files.lexical(path);
     if (isUnder(p, this.roots.skills)) return this.files.read(path, maxBytes);
     const r = (await this.helper("read", p, maxBytes)) as {
@@ -699,12 +578,14 @@ export class OsExecutor implements Executor {
   }
 
   async writeFile(path: string, data: Uint8Array): Promise<void> {
+    this.requireSandbox();
     const p = this.files.lexical(path);
     if (isUnder(p, this.roots.skills)) return this.files.write(path, data);
     await this.helper("write", p, 0, data);
   }
 
   async stat(path: string): Promise<{ size: number; isDir: boolean } | null> {
+    this.requireSandbox();
     const p = this.files.lexical(path);
     if (isUnder(p, this.roots.skills)) {
       return this.files.stat(path);
@@ -741,7 +622,7 @@ export class OsExecutor implements Executor {
     await this.killAll();
     if (this.pruneTimer !== undefined) clearInterval(this.pruneTimer);
     this.pruneTimer = undefined;
-    await SandboxManager.reset();
+    if (this.available) await SandboxManager.reset();
   }
 }
 
@@ -760,17 +641,19 @@ export function launchedGroup(stdout: string, platform: NodeJS.Platform = proces
  * The OS sandbox executor: checks the platform and dependencies, starts the sandbox's proxies
  * once for this process, and kills what a previous run of this device left running.
  * Network is denied unless a command's own list allows it.
+ *
+ * When the OS sandbox is unavailable (an unsupported platform or missing dependencies) this still
+ * returns an executor, marked unavailable, so `start` keeps serving: auto mode works, and every
+ * sandbox-mode command or file operation is refused with the actionable reason
+ * ({@link sandboxUnavailableMessage}) instead of running unsandboxed or stopping the device.
  */
 export async function createOsExecutor(opts: OsExecutorOptions): Promise<OsExecutor> {
   const available = sandboxAvailability();
-  if (!available.ok) throw new Error(available.reason);
+  if (!available.ok) return new OsExecutor(opts, { unavailable: available.reason });
   const executor = new OsExecutor(opts);
-  executor.prepareSocketDir();
-  const policy = opts.policy();
-  await executor.refreshProxyGuard(policy);
   // The ask callback never allows: a destination outside the lists is refused, with a reason
   // when this runtime carries one (an older runtime would read any answer object as an allow).
-  const config = executor.config(policy);
+  const config = executor.config();
   await SandboxManager.initialize(
     config,
     SandboxManager.askCallbackDenyReason === true ? executor.askCallback : undefined,

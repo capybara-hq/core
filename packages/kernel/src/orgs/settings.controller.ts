@@ -53,7 +53,7 @@ export class OrgSettingsController {
   ): Promise<SettingsResponse> {
     const p = requireUser(principal);
     return {
-      // an API token may narrow the sandbox, never widen it (sandbox dev tiers spec §2)
+      // an API token may narrow auto mode and the cloud network, never widen them (auto mode spec §4.3)
       settings: await this.settings.update(
         org.orgId,
         body,

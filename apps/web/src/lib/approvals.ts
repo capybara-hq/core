@@ -40,12 +40,33 @@ export interface NetworkApprovalDetail {
   attempt?: { outcome: "failed" | "unknown" | "applied_undecided"; message: string };
 }
 
+/**
+ * A command review ask's detail (auto mode spec §5.4): a shell command, or a file write outside
+ * the workspace, held until the device owner allows it. `command` holds the full command here (the
+ * timeline event keeps only a clipped copy).
+ */
+export interface CommandAskDetail {
+  deviceId: string;
+  deviceName: string;
+  mode: "auto" | "sandbox";
+  kind: "command" | "write";
+  /** The command text (or the tool key of a write). */
+  command: string;
+  /** A write's target path. */
+  path?: string;
+  /** The rule that asked, or null for a classifier ask (offers `once` only). */
+  rule: string | null;
+  reason: string;
+}
+
 export interface Approval {
   id: string;
-  /** `network`: a device refused a command network hosts (absent in older kernels = `tool`). */
-  kind?: "tool" | "network";
-  /** A network ask's detail; null for tool approvals. */
+  /** `network`: a device refused a command network hosts; `command`: a command review ask. */
+  kind?: "tool" | "network" | "git" | "command";
+  /** A network ask's detail; null for other approvals. */
   detail?: NetworkApprovalDetail | null;
+  /** A command review ask's detail; null for other approvals. */
+  command?: CommandAskDetail | null;
   conversationId: string;
   runId: string;
   callId: string;

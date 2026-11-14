@@ -1,5 +1,6 @@
 import { type Connection, connect } from "../client.js";
 import { CommandLog } from "../command-log.js";
+import { sandboxUnavailableMessage } from "../exec/sandbox-messages.js";
 import type { Executor } from "../exec/types.js";
 import { readRunningPid, removePid, writePid } from "../pid.js";
 import { PolicyStore } from "../policy-store.js";
@@ -21,11 +22,13 @@ export interface StartDeps {
   connect?: typeof connect;
 }
 
-/** Printed at start while policy.json still has the legacy `network: "open"` (spec §12). */
-export const LEGACY_NETWORK_NOTICE =
-  "policy.json: `network` is replaced by `tier`; run `capybara-device policy set tier open` " +
-  "to keep an unlimited network. Any `capybara-device policy set` removes the old key and this " +
-  "notice.";
+/** Printed once when policy.json was written before auto mode (spec §4.4). */
+export function legacyPolicyNotice(mode: "auto" | "sandbox"): string {
+  return (
+    "policy.json now uses `mode`; this machine runs in " +
+    `${mode} mode; switch with \`capybara-device mode\`.`
+  );
+}
 
 /** `start`: connect and serve in the foreground until stopped, drained, revoked or replaced. */
 export async function start(deps: StartDeps): Promise<number> {
@@ -76,8 +79,14 @@ export async function start(deps: StartDeps): Promise<number> {
     try {
       // An invalid policy.json stops the start; later, a broken edit keeps the last good policy.
       policy = new PolicyStore(stateDir, { err });
-      if (policy.legacyNetworkOpen) out(LEGACY_NETWORK_NOTICE);
+      if (policy.legacy) out(legacyPolicyNotice(policy.current().mode));
       executor = await deps.createExecutor(cred, policy);
+      // Without the OS sandbox the device keeps serving: auto mode works, and sandbox mode
+      // refuses every command with this reason. A policy set to sandbox says so at start.
+      const sandbox = executor as { available?: boolean; unavailableReason?: string };
+      if (sandbox.available === false && policy.current().mode === "sandbox") {
+        err(sandboxUnavailableMessage(sandbox.unavailableReason ?? ""));
+      }
     } catch (e) {
       err(`Cannot start: ${(e as Error).message}`);
       return 1;

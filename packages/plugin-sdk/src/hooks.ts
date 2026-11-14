@@ -53,9 +53,10 @@ export interface HookScope {
  * that summarizes earlier history before a step when the context grows too large, `title` is the call
  * that writes a conversation's title after its first completed run (no run: `runId` is "", `step` 0,
  * `attempt` 1), `web_fetch` is the call that extracts an answer from a fetched web page for the
- * `WebFetch` tool.
+ * `WebFetch` tool, `review` is the command-review classifier's call (`review` purpose, no run
+ * step; absent = no classifier).
  */
-export type ModelCallPurpose = "step" | "compaction" | "title" | "web_fetch";
+export type ModelCallPurpose = "step" | "compaction" | "title" | "web_fetch" | "review";
 
 /**
  * What a reported or requested model call was for: the {@link ModelCallPurpose} values, or

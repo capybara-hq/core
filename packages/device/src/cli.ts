@@ -3,13 +3,8 @@ import { parseCommandLine, USAGE, UsageError } from "./args.js";
 import { drain, drainAndWait } from "./commands/drain.js";
 import { login } from "./commands/login.js";
 import { logout } from "./commands/logout.js";
-import {
-  confirmRisk,
-  isolationRefusal,
-  needsConfirmation,
-  policyCommand,
-  policyRisk,
-} from "./commands/policy.js";
+import { modeCommand } from "./commands/mode.js";
+import { policyCommand } from "./commands/policy.js";
 import { serviceCommand } from "./commands/service.js";
 import { start } from "./commands/start.js";
 import { status } from "./commands/status.js";
@@ -48,27 +43,25 @@ async function askOnTerminal(question: string): Promise<string> {
   }
 }
 
-/** Shown once when a Docker-mode device's policy says `isolation: none` (it is ignored there). */
-export const DOCKER_ISOLATION_IGNORED =
-  "policy.json says isolation none, which works in OS mode only: this device runs commands in " +
-  "Docker mode, always in a container.";
-
-/** Logged when commands start or stop running without a sandbox. */
-export const UNSANDBOXED_ON = "Commands on this device now run without a sandbox (isolation none).";
-export const UNSANDBOXED_OFF =
-  "Commands on this device run in the sandbox again; commands still running without one were " +
-  "stopped.";
+/**
+ * Logged when the local policy switches between auto and sandbox. It names the local choice, not
+ * the effective mode: the organization's ceiling still cuts it (a device whose org forbids auto
+ * runs in the sandbox even with this policy).
+ */
+export const AUTO_MODE_ON =
+  "This machine's local policy is auto mode; the deployment's ceiling applies.";
+export const AUTO_MODE_OFF =
+  "This machine's local policy is sandbox mode; commands still running in auto mode were stopped.";
 
 /**
  * The executor for the credential's mode; the program's state directory is unreadable to
- * sandboxed commands. OS mode serves a {@link SwitchingExecutor}: the OS sandbox, or no sandbox
- * when the owner set `isolation none` locally and the command's tier is `open` (spec §5.4).
+ * sandboxed commands. OS mode serves a {@link SwitchingExecutor}: the host (auto mode) or the OS
+ * sandbox (sandbox mode), chosen per command from the policy and the kernel's ceiling (spec §4.1).
  */
 function defaultCreateExecutor(stateDir: string, home: string, err: (line: string) => void) {
   return async (cred: Credential, store: PolicyStore): Promise<Executor> => {
     const policy = () => store.current();
     if (cred.mode === "docker") {
-      if (policy().isolation === "none") err(DOCKER_ISOLATION_IGNORED);
       const { createDockerExecutor } = await import("./exec/docker.js");
       return createDockerExecutor({
         dir: cred.dir,
@@ -88,8 +81,8 @@ function defaultCreateExecutor(stateDir: string, home: string, err: (line: strin
       home,
       denyRead: [stateDir],
     });
-    return new SwitchingExecutor(sandboxed, new HostExecutor({ dir: cred.dir }), policy, (i) =>
-      err(i === "none" ? UNSANDBOXED_ON : UNSANDBOXED_OFF),
+    return new SwitchingExecutor(sandboxed, new HostExecutor({ dir: cred.dir }), policy, (mode) =>
+      err(mode === "auto" ? AUTO_MODE_ON : AUTO_MODE_OFF),
     );
   };
 }
@@ -149,25 +142,15 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
         ...(io.sleep && { sleep: io.sleep }),
         ...(cmd.timeoutSeconds !== undefined && { timeoutMs: cmd.timeoutSeconds * 1000 }),
       });
-    case "policy": {
-      // `set isolation none` that cannot apply (Docker mode, no local tier open): refused before
-      // any risk text or question (policyCommand refuses it too, under the lock).
-      const refusal = isolationRefusal(cmd, dir);
-      if (refusal !== undefined) {
-        err(refusal);
-        return 2;
-      }
-      // `set tier open` / `set isolation none` without --yes: ask on a terminal (after printing
-      // the risk text); elsewhere policyCommand refuses them.
-      if (needsConfirmation(cmd) && (io.stdinIsTTY ?? process.stdin.isTTY === true)) {
-        if (!(await confirmRisk(cmd, { out, ask: io.ask ?? askOnTerminal }))) {
-          err(policyRisk(cmd)?.needsYes ?? "Nothing changed.");
-          return 1;
-        }
-        return policyCommand(cmd, { stateDir: dir, out, err, confirmed: true });
-      }
+    case "policy":
       return policyCommand(cmd, { stateDir: dir, out, err });
-    }
+    case "mode":
+      return modeCommand(cmd, {
+        stateDir: dir,
+        out,
+        err,
+        ...((io.stdinIsTTY ?? process.stdin.isTTY === true) && { ask: io.ask ?? askOnTerminal }),
+      });
     case "service":
       return serviceCommand(cmd.action, {
         stateDir: dir,

@@ -3,6 +3,7 @@
 import {
   ApprovalBlock,
   type ApprovalState,
+  type CommandAsk as CommandAskBlock,
   type NetworkAsk,
   type NetworkFallback,
   RadioGroup,
@@ -282,6 +283,7 @@ export function ApprovalCard({
     ((platformKey ?? item.toolKey) === `${PLATFORM_PREFIX}${CREATE_ACCOUNT_OPERATION}` ||
       (item.toolKey === "Platform" && input.operation === CREATE_ACCOUNT_OPERATION));
   const network = networkAskOf(item, view);
+  const command = commandAskOf(item, view);
   const detail = view?.kind === "network" ? (view.detail ?? null) : null;
   let state: ApprovalState;
   if (outcome !== null) {
@@ -302,6 +304,15 @@ export function ApprovalCard({
       ...(outcome.reason !== undefined ? { reason: outcome.reason } : {}),
     };
   } else if (view === null) {
+    if (command !== undefined) {
+      return (
+        <div data-role="approval" data-approval-id={item.approvalId}>
+          <Text variant="small" tone="muted">
+            {t(command.kind === "write" ? "command.otherApproverWrite" : "command.otherApprover")}
+          </Text>
+        </div>
+      );
+    }
     if (network !== undefined) {
       return (
         <div data-role="approval" data-approval-id={item.approvalId}>
@@ -334,10 +345,11 @@ export function ApprovalCard({
         input={input}
         keyArgs={info?.keyArgs ?? []}
         scopes={view ? scopesFor(view) : ["once"]}
-        {...(item.policy !== undefined && network === undefined
+        {...(item.policy !== undefined && network === undefined && command === undefined
           ? { policy: t(`policy.${item.policy}`) }
           : {})}
         {...(network !== undefined ? { network } : {})}
+        {...(command !== undefined ? { command } : {})}
         state={state}
         onApprove={(scope, hosts) =>
           void onDecide("approve", scope, undefined, network !== undefined ? hosts : undefined)
@@ -363,6 +375,27 @@ const stringField = (input: unknown, key: string): string | undefined => {
   const v = (input as Record<string, unknown>)[key];
   return typeof v === "string" ? v : undefined;
 };
+
+/**
+ * The command review ask of an approval (auto mode spec §5.4): from the approval's detail once
+ * read (the full command), else from the log's display-only event field (a clipped copy clipped
+ * again to the card's 300 characters); undefined for any other approval.
+ */
+export function commandAskOf(
+  item: Pick<ApprovalItem, "command">,
+  view: Approval | null | undefined,
+): CommandAskBlock | undefined {
+  const detail = view?.kind === "command" ? view.command : null;
+  if (detail) {
+    return {
+      kind: detail.kind,
+      command: detail.command,
+      ...(detail.path !== undefined ? { path: detail.path } : {}),
+      reason: detail.reason,
+    };
+  }
+  return item.command;
+}
 
 /**
  * The network ask of an approval: from its detail once read, else from the log (the hosts of

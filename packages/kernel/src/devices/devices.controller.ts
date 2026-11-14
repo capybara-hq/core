@@ -31,24 +31,23 @@ import {
  * - `GET /` → `{ items, defaultId, lastUsedId, cloudAvailable }` (`cloudAvailable`: there is a
  *   current sandbox provider; ruling R4);
  * - `POST / { name }` → 201 `{ device }`; `GET /:id` → `{ device }`;
- * - `PATCH /:id { name?, tier? }` → `{ device }`: renames it and, for a cloud device, sets its
- *   sandbox tier (sandbox dev tiers spec §7.2; null follows the org's default). The tier is set in
- *   a web session only (an API token → 403 `auth.session_required`); above the org's or the
- *   platform's ceiling → 400 `device.tier_not_allowed`; a local device → 409
- *   `device.tier_on_device` (its tier is its machine's: `POST /:id/policy { tier }`). Audited
- *   `device.tier_changed`;
+ * - `PATCH /:id { name?, mode? }` → `{ device }`: renames it and narrows a cloud device to sandbox
+ *   mode (`mode: "sandbox"` only, auto mode spec §4.3; its network then follows the org's
+ *   `cloudNetwork`). A local device's mode lives on its machine (`device.mode_on_device`; change it
+ *   with `POST /:id/policy { mode }` or the local CLI). The mode is set in a web session only
+ *   (an API token → 403 `auth.session_required`);
  * - `DELETE /:id` → 202 (destroyed by a job after the response);
  * - `POST /:id/files/reset` → 202 (the reset is enqueued: a worker empties the files, the next use
  *   starts empty);
  * - `DELETE /:id/machine` → 204: a local device's machine is disconnected (its credential
  *   revoked; it must sign in again);
- * - `POST /:id/policy { add?, remove?, tier?, isolation? }` → `{ policy }`: the owner changes the
- *   local device's policy on its machine (network ask-to-allow spec §7, sandbox dev tiers spec
- *   §7.3; `isolation` is only ever `sandbox`). Web session only
+ * - `POST /:id/policy { add?, remove?, mode? }` → `{ policy }`: the owner changes the local
+ *   device's policy on its machine (network ask-to-allow spec §7; auto mode spec §4.1;
+ *   `mode` is only ever `sandbox`). Web session only
  *   (`@SessionOnly`: a personal access token → 403 `auth.session_required`, a service token → 403):
- *   a person changes their own machine's network policy, nothing model-driven does. Widening needs
- *   the machine's `remoteGrants: "owner"` (409 `device.policy_refused`); offline → 503
- *   `device.offline`; cloud or an older program → 409 `device.policy_unsupported`.
+ *   a person changes their own machine's network policy, nothing model-driven does. Offline → 503
+ *   `device.offline`; cloud or an older program → 409 `device.policy_unsupported`; the machine's
+ *   refusal → 409 `device.policy_refused`.
  */
 @Controller("api/v1/orgs/:orgId/devices")
 export class DevicesController {
@@ -103,11 +102,11 @@ export class DevicesController {
   ): Promise<{ device: DeviceView }> {
     const p = requireUser(principal);
     const tokenId = patTokenId(p);
-    // a person decides their device's sandbox level, in a session (spec §7.2)
-    if (body.tier !== undefined && tokenId !== undefined) {
+    // a person changes their device's mode in a session (auto mode spec §4.3)
+    if (body.mode !== undefined && tokenId !== undefined) {
       throw new ApiError(
         "auth.session_required",
-        "A device's sandbox level is set by its owner on the web, not with an API token",
+        "A device's mode is changed by its owner on the web, not with an API token",
       );
     }
     return {
@@ -117,7 +116,7 @@ export class DevicesController {
         params.id,
         {
           ...(body.name !== undefined && { name: body.name }),
-          ...(body.tier !== undefined && { tier: body.tier }),
+          ...(body.mode !== undefined && { mode: body.mode }),
         },
         tokenId,
       ),

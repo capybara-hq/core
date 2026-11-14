@@ -93,6 +93,14 @@ Anti-goals (would make this a failure even if it works):
 
 ## 4. Modes per environment
 
+**The two modes are defined by guarantees, not mechanisms (2026-11-14).** Auto: commands run with
+the environment's own capability and no additional restriction, guarded by command review (§5).
+Sandbox: writes limited to the workspace and temporary files, reads limited to the workspace, and
+the network limited to an allowlist. The same words are interpreted by the environment: auto on a
+local device reaches the whole machine; auto on a cloud device reaches one container. One logic is
+not one risk profile; a description of a mode says what it guarantees, and the environment says what
+that means.
+
 ### 4.1 Local device
 
 | | Auto (default) | Sandbox |
@@ -109,7 +117,13 @@ Anti-goals (would make this a failure even if it works):
   may switch to sandbox (narrowing) but never to auto: turning auto on is a decision made at the
   machine, as unsandboxed mode is today **(designer's call: keeps "the platform can't widen the
   machine" rule of the tiers spec §5.4)**.
-- The working directory stays the device's `workspace/`; commands may `cd` anywhere. The kernel's
+- **If the OS sandbox is unavailable** on the machine, sandbox mode refuses the command with a clear
+  error (`sandbox.unavailable`); it never runs unsandboxed silently. Getting the work done then means
+  switching the device to auto, a decision at the machine **(2026-11-14)**.
+- The working directory stays the device's `workspace/`; commands may `cd` anywhere. The workspace
+  root is supplied per run, not hardcoded: today the device's workspace, and a project root once
+  projects land (2026-11-14).
+- The kernel's
   file tools (`Read`, `Write`, `Edit`) are widened to absolute paths anywhere in auto mode, the way
   Claude Code's are **(decided 2026-11-13)**, still passing review for writes outside the workspace
   (§5.2).
@@ -118,12 +132,15 @@ Anti-goals (would make this a failure even if it works):
 
 - **No sandbox inside the container (decided).** The container is the boundary; commands run as the
   container user with the image's tools.
-- **Network: 开放（挡内网） by default (decided).** Any public host on any port; refused: loopback of
-  the host, private ranges (`10/8`, `172.16/12`, `192.168/16`, `fc00::/7`), link-local and cloud
+- **Network in auto mode: 开放（挡内网） (decided).** Any public host on any port; refused: loopback
+  of the host, private ranges (`10/8`, `172.16/12`, `192.168/16`, `fc00::/7`), link-local and cloud
   metadata (`169.254/16`, `fe80::/10`), the deployment's own internal addresses. Enforced outside the
   container (Docker: the egress proxy / network policy the provider already runs; E2B: its network
   filter) **(designer's call: keep enforcement where it is today, change only the default list)**.
-- **白名单** stays for orgs that need it: the org's host list, as `sandboxEgress: allowlist` today.
+- **Sandbox mode on a cloud device is the same container with the allowlist network** (the container
+  already gives the write and read limits, since those are the environment's). Its only additional
+  guarantee over auto is the network. **白名单** is therefore sandbox mode's network, the org's host
+  list as `sandboxEgress: allowlist` today.
 - Command review runs the same way as on local devices.
 
 ### 4.3 Who may choose what
@@ -132,13 +149,22 @@ Anti-goals (would make this a failure even if it works):
 |---|---|---|---|
 | Super admin | `devices.autoMode` (deployment config) | `allowed` / `off` | `allowed` |
 | Org admin | org setting `autoMode` | `allowed` / `off` (only when the platform allows) | follow the platform |
-| Org admin | org setting `cloudNetwork` | `open` / `allowlist` + hosts | `open` |
+| Org admin | org setting `cloudNetwork` (the cloud device's **sandbox-mode** network) | `open` / `allowlist` + hosts | `open` |
 | Device owner (local) | `capybara-device mode` | `auto` / `sandbox` | `auto` |
-| Device owner (cloud) | device page | nothing to choose: auto when allowed, else sandbox | |
+| Device owner (cloud) | device page | auto / sandbox (sandbox only narrows the network) | auto when allowed, else sandbox |
 
 When auto mode is off for the org, local devices run in sandbox mode and the kernel refuses a
 device that reports auto (`device.auto_mode_not_allowed`, as `device.unsandboxed_not_allowed` today);
-cloud devices keep the container but the network becomes the allowlist.
+cloud devices keep the container and follow the org's `cloudNetwork` setting (开放挡内网 by
+default; the allowlist when the org sets one) — a closed network is the org's choice there, not an
+automatic consequence of the platform switch (2026-11-14).
+
+The org's `cloudNetwork` hosts are also the ceiling a local device in sandbox mode may reach: the
+device intersects them with its own list (§4.4). An org on `open` still caps local devices at the
+deployment's `sandbox.limits.allowHosts`, so switching to an allowlist that carries a host outside
+that list raises the local ceiling — that is why only a person may widen the network, never the
+Platform tool or an API token, and why a token's open → allowlist switch is accepted only for hosts
+the deployment already allows (2026-11-14).
 
 ### 4.4 What goes away
 
@@ -146,6 +172,8 @@ Removed (pre-0.1.0, no compatibility): the tiers `strict` / `dev` / `open` as us
 `isolation`, `localhost`, `remoteGrants`, the device's own domain list and the network
 ask-to-allow flow for auto-mode devices, the org's `sandboxTier`, the platform's `sandbox.tiers.*`.
 Sandbox mode keeps the network ask-to-allow flow (it is the only way to widen it).
+A device in auto mode has no network settings at all: on a local device the machine's network is a
+fact, and a cloud auto device is 开放（挡内网）. The device network page exists in sandbox mode only.
 `sandbox.limits.allowHosts` becomes the default host list of 白名单 and of sandbox mode.
 Sandbox mode is today's `strict` profile only: the `dev` tier goes away as well **(decided
 2026-11-13)**; a person who wants to develop without the OS sandbox uses auto mode, which covers
@@ -190,12 +218,23 @@ attended or not). Each rule returns **allow**, **ask**, **deny** or **unsure**; 
   macOS keychain dumps (`security find-*-password -w`, `dump-keychain`), `.env*` files outside the
   workspace. Reading them for use by their own tool is allowed (`git push` reads `~/.ssh` itself);
   printing or copying them is **ask**, sending them is **deny**.
+- **Wrappers**: a command is unwrapped before matching — `timeout`, `nice`, `nohup`, `stdbuf`,
+  `command`, `builtin`, `noglob` and a bare `xargs`; `watch`, `setsid`, `flock`, `ionice` and a
+  `find` with `-exec`, `-delete` or `-fprint` are never allowed by prefix **(2026-11-14)**.
 - **Unsure**: anything the parser cannot read with confidence (heredocs that build scripts, long
   pipelines into an interpreter, obfuscation such as base64 into `sh`), and commands no rule covers.
 
 The rule set lives in one module with a table-driven test of a few hundred command lines taken from
 real sessions (the acceptance conversations of 2026-11-12/13 are the first corpus) **(designer's
 call)**.
+
+**The rule table is best effort, not a boundary (2026-11-14).** It is a table over a hand-written
+parse of the command line: it catches the common shapes of destructive or exfiltrating commands and
+asks about what it cannot decide. A determined command can express the same act in a way no table
+enumerates (a tool's own quoting, flag spellings, aliases, environment-driven execution). The floor
+is: anything carrying a variable, substitution, backtick or quote in a path-like position is at
+least **ask**, never **allow**. High-risk work lands in sandbox mode, where the OS enforces; auto
+mode is a decision the owner makes at the machine.
 
 ### 5.3 Stage 2: the classifier
 
@@ -209,6 +248,17 @@ of messages, a 10 s timeout; a timeout, an error or an unparseable answer is **a
 Without a `review` model the classifier step is skipped and **unsure** becomes **ask**.
 
 ### 5.4 Outcomes
+
+Deny rules apply in auto and sandbox mode alike; no org policy, tool policy or approval turns a
+**deny** into an allow **(2026-11-14)**.
+
+What an organization can and cannot do with its own tool policy (verified in
+`packages/kernel/src/tools/policy.ts`, 2026-11-14): it can switch an extension's tools off
+(unavailable), set a default **deny** for a connector's tools, forbid builtin tools in unattended
+runs (`forbiddenTools`), and raise the side-effecting sandbox tools to **ask**
+(`sandboxToolPolicy`). In an attended run it has no lever to deny a builtin tool: the person's
+presence is the approval. So the org's ceiling over builtin tools is partial rather than absent —
+describe it that way, and never say the org can govern nothing.
 
 - **Allow**: the command runs. Nothing is shown; the decision is in the tool call's record.
 - **Ask**, attended run: the run waits on an approval card in the conversation (the existing
@@ -235,9 +285,11 @@ since it is new content in new results **(to confirm in the plan with the zero-d
 - **Local auto mode**: the owner's own credentials, untouched (decided): `git push`, `gh pr create`,
   `npm publish` work as in the owner's terminal, reviewed by §5.
 - **Cloud**: `gh`'s own login (decided). The agent runs `gh auth login --web` (device code) in the
-  container; the kernel recognises the device-code prompt in the output and shows it to the person
-  as a card (open the URL, the code, a copy button); the token stays in the container's persistent
-  file system, under the device owner's account only. `gh auth setup-git` makes `git push` use it.
+  container; the kernel recognises the device-code prompt in the output it reads — the command's
+  result, or a background task's output read with `TaskOutput` while the login waits (there is no
+  streaming stage, so the login belongs in the background) — and shows it to the person as a card
+  (open the URL, the code, a copy button); the token stays in the container's persistent file
+  system, under the device owner's account only. `gh auth setup-git` makes `git push` use it.
   Recognising the prompt is a small parser for `gh`'s fixed output; other CLIs' device flows can be
   added the same way later **(designer's call)**.
 - The git gateway (core#198) is not needed for these paths.
@@ -259,9 +311,12 @@ since it is new content in new results **(to confirm in the plan with the zero-d
 
 ## 8. Security review
 
-- **Trust model change**: in auto mode the device owner's machine is reachable by the agent; the
-  boundary against prompt injection is command review, not the OS. Same as Claude Code's auto mode.
-  The risk text of today's unsandboxed mode is shown once at login and on the device page.
+- **Trust model change**: in auto mode the device owner's machine is reachable by the agent. Command
+  review is the first gate, not an OS boundary: it sees text and intent, not what a command does
+  once it runs. Sandbox mode is the recommended landing for high-risk work, and auto mode is a
+  decision the owner makes at the machine. The risk text is shown once at login and on the device
+  page. (Reworded 2026-11-14: Claude Code documents its permission rules as not a security
+  boundary too.)
 - **Threats and answers**: exfiltration of secrets (§5.2 deny), destructive deletes (ask/deny),
   persistence (rc files, launch agents, hooks: ask), lateral movement from cloud devices (private
   ranges and metadata blocked outside the container), a review the agent games (classifier never

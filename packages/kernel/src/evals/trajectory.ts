@@ -45,6 +45,11 @@ export interface TrajectoryToolCall {
   /** `tool_result` − 最后一次 `tool_call_started`；不含等待审批 / 用户输入的时间。 */
   durationMs: number | null;
   result: { content: string; isError: boolean; outputId?: string } | null;
+  /**
+   * The command review's decision on the call (auto mode spec §5.4; display only): the recorded
+   * `tool_result.review`, never re-derived.
+   */
+  review?: EventPayload<"tool_result">["review"];
   /** 最近一次审批（定义变了会重新审批）。 */
   approval: {
     approvalId: string;
@@ -306,7 +311,7 @@ function buildRun(
         assistants.set(e.payload.step, [...(assistants.get(e.payload.step) ?? []), e]);
         break;
       case "usage":
-        // a compaction, title or web_fetch call's usage is not a step call's: counted in the totals only (I-1)
+        // a compaction, title, web_fetch or review call's usage is not a step call's: counted in the totals only (I-1)
         if (e.payload.purpose !== undefined) {
           compactions.push(e);
           break;
@@ -451,6 +456,7 @@ function buildRun(
                   isError: res.payload.isError,
                   ...(res.payload.outputId !== undefined && { outputId: res.payload.outputId }),
                 },
+          ...(res?.payload.review !== undefined && { review: res.payload.review }),
           approval:
             ap === undefined
               ? null

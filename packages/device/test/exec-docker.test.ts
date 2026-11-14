@@ -16,13 +16,11 @@ import { join } from "node:path";
 import type { DeviceExecArgs, SandboxLimits } from "@capybara-hq/plugin-sdk";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
-  bridgeNetwork,
   containerName,
   containerUser,
   DockerExecutor,
   SANDBOX_IMAGE,
   SANDBOX_IMAGE_TAG,
-  shmSize,
 } from "../src/exec/docker.js";
 import { prepareDeviceDir } from "../src/exec/shared.js";
 import { DeviceOpError } from "../src/exec/types.js";
@@ -35,13 +33,8 @@ const LIMITS: SandboxLimits = {
   cpu: 1,
   memoryMb: 512,
   diskMb: 1024,
-  egress: "none",
-  allowHosts: [],
-  // What the kernel sends by default: the dev ceiling and default (the dev hosts never open the
-  // bridge in Docker mode).
-  tier: "dev",
-  defaultTier: "dev",
-  devHosts: ["registry.npmjs.org"],
+  mode: "sandbox",
+  network: { kind: "allowlist", hosts: [] },
 };
 
 function execArgs(command: string, over: Partial<DeviceExecArgs> = {}): DeviceExecArgs {
@@ -61,43 +54,6 @@ describe("docker executor constants", () => {
     expect(SANDBOX_IMAGE_TAG).toBe("0.1.0-rc.5");
     expect(SANDBOX_IMAGE).toBe("ghcr.io/capybara-hq/capybara-sandbox:0.1.0-rc.5");
     expect(containerName("env_1")).toBe("capybara-device-env_1");
-  });
-});
-
-describe("docker tiers", () => {
-  it("shm: default in strict; a quarter of memory up to 1 GiB in dev and open", () => {
-    expect(shmSize("strict", 4096)).toBeUndefined();
-    expect(shmSize("dev", null)).toBe("1g");
-    expect(shmSize("dev", 2048)).toBe("512m");
-    expect(shmSize("open", 8192)).toBe("1024m");
-    // never below Docker's own default
-    expect(shmSize("dev", 128)).toBe("64m");
-  });
-
-  it("the bridge only for explicit local domains or tier open; dev hosts never count", () => {
-    const allow = {
-      ...LIMITS,
-      egress: "allowlist" as const,
-      allowHosts: ["a.com", "registry.npmjs.org"],
-    };
-    expect(bridgeNetwork(DEFAULT_POLICY, allow)).toBe(false);
-    expect(bridgeNetwork({ ...DEFAULT_POLICY, allowedDomains: ["a.com"] }, allow)).toBe(true);
-    // a local domain the ceiling refuses does not count
-    expect(bridgeNetwork({ ...DEFAULT_POLICY, allowedDomains: ["b.com"] }, allow)).toBe(false);
-    const openCeiling = { ...allow, tier: "open" as const };
-    // open under an allowlist ceiling: the bridge would reach past the list, so only explicit
-    // local domains count
-    expect(bridgeNetwork({ ...DEFAULT_POLICY, tier: "open" }, openCeiling)).toBe(false);
-    expect(
-      bridgeNetwork({ ...DEFAULT_POLICY, tier: "open", allowedDomains: ["a.com"] }, openCeiling),
-    ).toBe(true);
-    const anyHost = { ...openCeiling, egress: "open" as const };
-    expect(bridgeNetwork({ ...DEFAULT_POLICY, tier: "open" }, anyHost)).toBe(true);
-    // tier open asked for but the ceiling is dev: as dev
-    expect(bridgeNetwork({ ...DEFAULT_POLICY, tier: "open" }, allow)).toBe(false);
-    expect(bridgeNetwork({ ...DEFAULT_POLICY, tier: "open" }, { ...anyHost, egress: "none" })).toBe(
-      false,
-    );
   });
 });
 
@@ -255,7 +211,7 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
     const stamp = "date +%s%N";
     const a = open.exec(execArgs(`${stamp}; sleep 2`, { tag: "a" }), live);
     await sleep(800);
-    const b = open.exec(execArgs(stamp, { tag: "b", limits: { ...LIMITS, egress: "open" } }), live);
+    const b = open.exec(execArgs(stamp, { tag: "b", limits: { ...LIMITS, mode: "auto" } }), live);
     await sleep(300);
     const abortC = new AbortController();
     const c = open.exec(execArgs(stamp, { tag: "c" }), live);
@@ -275,7 +231,7 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
     await open.exec(execArgs("true"), live); // container exists, network closed
     const ac = new AbortController();
     // The head waiter needs a network switch (docker call); abort it while it is being served.
-    const head = open.exec(execArgs("true", { limits: { ...LIMITS, egress: "open" } }), ac.signal);
+    const head = open.exec(execArgs("true", { limits: { ...LIMITS, mode: "auto" } }), ac.signal);
     const next = open.exec(execArgs("echo next"), live);
     await sleep(20);
     ac.abort();
@@ -283,7 +239,7 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
     expect((await next).stdout).toBe("next\n");
     // The aborted head's slot was given back: another switch still goes through.
     const again = await open.exec(
-      execArgs("echo again", { limits: { ...LIMITS, egress: "open" } }),
+      execArgs("echo again", { limits: { ...LIMITS, mode: "auto" } }),
       live,
     );
     expect(again.stdout).toBe("again\n");
@@ -303,21 +259,6 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
     ).trim();
     expect(out).toBe(`1500000000 ${256 * 1024 * 1024}`);
   });
-
-  it("sizes /dev/shm per tier and recreates the container when the tier changes", async () => {
-    let policy = { ...DEFAULT_POLICY, memoryMb: 2048 };
-    const tiered = new DockerExecutor({ dir, deviceId: envId, policy: () => policy });
-    const shm = () =>
-      execFileSync("docker", ["inspect", "-f", "{{.HostConfig.ShmSize}}", containerName(envId)], {
-        encoding: "utf8",
-      }).trim();
-    await tiered.exec(execArgs("true"), live);
-    expect(shm()).toBe(String(512 * 1024 * 1024));
-    policy = { ...policy, tier: "strict" };
-    await tiered.exec(execArgs("true"), live);
-    expect(shm()).toBe(String(64 * 1024 * 1024));
-    await tiered.dispose();
-  }, 30_000);
 
   it("killTagged stops only that tag", async () => {
     const a = ex.exec(execArgs("sleep 60", { tag: "a", timeoutMs: 60_000 }), live);
@@ -387,19 +328,18 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
     await expect(ex.exec(execArgs("true", { cwd: "/etc" }), live)).rejects.toMatchObject({
       kind: "policy",
     });
+    // Auto mode reaches any absolute path in the container.
+    expect(
+      (await ex.exec(execArgs("pwd", { cwd: "/etc", limits: { ...LIMITS, mode: "auto" } }), live))
+        .stdout,
+    ).toBe("/etc\n");
     await expect(
       ex.exec(execArgs("true", { env: { "BAD-NAME": "x" } }), live),
     ).rejects.toMatchObject({ kind: "policy" });
   });
 
-  it("has no network unless the effective egress is non-empty", async () => {
+  it("auto mode gets the default bridge; sandbox mode has no network", async () => {
     const probe = "getent hosts example.com >/dev/null 2>&1 && echo net || echo nonet";
-    expect((await ex.exec(execArgs(probe), live)).stdout).toBe("nonet\n");
-    const open = new DockerExecutor({
-      dir,
-      deviceId: envId,
-      policy: () => ({ ...DEFAULT_POLICY, allowedDomains: ["example.com"] }),
-    });
     const state = async () =>
       execFileSync(
         "docker",
@@ -411,10 +351,19 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
         ],
         { encoding: "utf8" },
       ).trim();
+    // The device's own sandbox mode wins over an auto ceiling.
+    const sandboxed = new DockerExecutor({
+      dir,
+      deviceId: envId,
+      policy: () => ({ ...DEFAULT_POLICY, mode: "sandbox" }),
+    });
+    expect((await sandboxed.exec(execArgs(probe), live)).stdout).toBe("nonet\n");
+    await sandboxed.exec(execArgs("true", { limits: { ...LIMITS, mode: "auto" } }), live);
     expect(await state()).toBe("");
-    await open.exec(execArgs("true", { limits: { ...LIMITS, egress: "open" } }), live);
+    // An auto-mode device has the container's own network.
+    await ex.exec(execArgs("true", { limits: { ...LIMITS, mode: "auto" } }), live);
     expect(await state()).toBe("bridge");
-    await open.exec(execArgs("true"), live);
+    await ex.exec(execArgs("true"), live);
     expect(await state()).toBe("");
   });
 
@@ -436,22 +385,39 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
     expect(await ex.stat("/tmp/t.bin")).toEqual({ size: 0, isDir: false });
   });
 
-  it("refuses paths outside the roots and links that leave them", async () => {
-    await expect(ex.readFile("/etc/passwd", 10)).rejects.toMatchObject({ kind: "policy" });
-    await expect(ex.writeFile("/workspace/../etc/x", Buffer.from("x"))).rejects.toMatchObject({
+  it("refuses paths outside the roots and links that leave them (sandbox mode)", async () => {
+    const sandboxed = new DockerExecutor({
+      dir,
+      deviceId: envId,
+      policy: () => ({ ...DEFAULT_POLICY, mode: "sandbox" }),
+    });
+    await expect(sandboxed.readFile("/etc/passwd", 10)).rejects.toMatchObject({ kind: "policy" });
+    await expect(
+      sandboxed.writeFile("/workspace/../etc/x", Buffer.from("x")),
+    ).rejects.toMatchObject({
       kind: "policy",
     });
-    await expect(ex.readFile("relative", 10)).rejects.toBeInstanceOf(DeviceOpError);
-    await ex.exec(execArgs("ln -s /etc/passwd leak; ln -s /etc etc; ln -s /skills sk"), live);
-    await expect(ex.readFile("/workspace/leak", 10)).rejects.toMatchObject({ kind: "policy" });
-    await expect(ex.stat("/workspace/leak")).rejects.toMatchObject({ kind: "policy" });
-    await expect(ex.writeFile("/workspace/leak", Buffer.from("x"))).rejects.toMatchObject({
+    await expect(sandboxed.readFile("relative", 10)).rejects.toBeInstanceOf(DeviceOpError);
+    await sandboxed.exec(
+      execArgs("ln -s /etc/passwd leak; ln -s /etc etc; ln -s /skills sk"),
+      live,
+    );
+    await expect(sandboxed.readFile("/workspace/leak", 10)).rejects.toMatchObject({
       kind: "policy",
     });
-    await expect(ex.writeFile("/workspace/etc/x", Buffer.from("x"))).rejects.toMatchObject({
+    await expect(sandboxed.stat("/workspace/leak")).rejects.toMatchObject({ kind: "policy" });
+    await expect(sandboxed.writeFile("/workspace/leak", Buffer.from("x"))).rejects.toMatchObject({
+      kind: "policy",
+    });
+    await expect(sandboxed.writeFile("/workspace/etc/x", Buffer.from("x"))).rejects.toMatchObject({
       kind: "policy",
     });
     expect(existsSync("/etc/x")).toBe(false);
+    // Before any exec decision, file operations use the sandboxed result (safe default).
+    await expect(ex.readFile("/etc/passwd", 5)).rejects.toMatchObject({ kind: "policy" });
+    // Auto mode: any absolute path in the container, once its decision is fresh.
+    await ex.exec(execArgs("true", { limits: { ...LIMITS, mode: "auto" } }), live);
+    expect(Buffer.from((await ex.readFile("/etc/passwd", 5))?.data ?? []).toString()).toBe("root:");
   });
 
   it("skills are read and written through the host directory, with link checks", async () => {

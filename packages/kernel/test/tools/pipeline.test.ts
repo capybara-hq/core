@@ -25,6 +25,7 @@ import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { HookRegistry } from "../../src/extensions/hooks.js";
 import { PLUGIN_UNLOADED_TOOL_ERROR } from "../../src/extensions/inflight.js";
+import { sha256Hex } from "../../src/identity/hash.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
 import { createLogger } from "../../src/log.js";
 import { UNKNOWN_RESULT_TEXT } from "../../src/runtime/context/pairing.js";
@@ -1483,6 +1484,86 @@ describe("ToolPipeline.runStep", () => {
     const evs = await eventsOf(db, seed.conversationId);
     expect(handlerCalls.echo).toHaveLength(1);
     expect(resultsOf(evs).map((r) => r.content)).toEqual([UNKNOWN_RESULT_TEXT]);
+  });
+
+  it("有开始无结果 + 已批准的命令审批：结果未知也带 review 记录与该审批的授权", async () => {
+    await insertRun();
+    const askId = randomUUID();
+    const command = "git push --force origin main";
+    const detail = {
+      deviceId: randomUUID(),
+      deviceName: "Laptop",
+      mode: "auto",
+      kind: "command",
+      command,
+      rule: "ask.force-push",
+      reason: "A force push needs approval.",
+    };
+    // the person allowed the command; the replica crashed after `tool_call_started`
+    await db
+      .insertInto("approvals")
+      .values({
+        id: askId,
+        org_id: seed.orgId,
+        conversation_id: seed.conversationId,
+        run_id: runId,
+        call_id: "c1",
+        attempt: 1,
+        kind: "command",
+        detail: JSON.stringify(detail),
+        tool_key: "Bash",
+        spec_hash: "command",
+        connector_id: null,
+        input: JSON.stringify({}),
+        requested_for: seed.accountId,
+        approver_role: null,
+        scopes: ["once"],
+        expires_at: sql<Date>`now() + interval '1 hour'`,
+      })
+      .execute();
+    // `status` is a generated column for inserts: the decision is set afterwards
+    await db
+      .updateTable("approvals")
+      .set({
+        status: "approved",
+        scope: "once",
+        decided_by: seed.accountId,
+        decided_at: sql<Date>`now()`,
+      })
+      .where("id", "=", askId)
+      .execute();
+    await assistant([{ id: "c1", name: "plugin__probe__echo", input: { text: "1" } }]);
+    await eventLog.append(seed.conversationId, [
+      {
+        type: "tool_call_started",
+        runId,
+        idemKey: `tool_started:${runId}:c1`,
+        payload: { step: 1, callId: "c1", toolKey: "plugin__probe__echo", specHash: "h" },
+      },
+    ]);
+    await pipeline().runStep(stepCtx());
+    const evs = await eventsOf(db, seed.conversationId);
+    expect(handlerCalls.echo).toBeUndefined();
+    const [res] = resultsOf(evs);
+    expect(res?.content).toBe(UNKNOWN_RESULT_TEXT);
+    expect(res?.review).toMatchObject({
+      decision: "allow",
+      by: "person",
+      rule: "ask.force-push",
+      scope: "once",
+      commandHash: sha256Hex(command),
+    });
+    const row = await db
+      .selectFrom("audit_events")
+      .select("detail")
+      .where("action", "=", "tool.called")
+      .executeTakeFirstOrThrow();
+    expect(row.detail).toMatchObject({
+      callId: "c1",
+      approvalId: askId,
+      approvedByAccountId: seed.accountId,
+      scope: "once",
+    });
   });
 });
 

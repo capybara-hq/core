@@ -67,13 +67,8 @@ beforeEach(async () => {
   await redis.flushdb();
 });
 
-/** The platform's sandbox tiers when neither the startup config nor the admin console sets them. */
-const DEFAULT_TIERS = {
-  max: "dev",
-  default: "dev",
-  allowUnsandboxed: true,
-  sources: { max: "default", default: "default", allowUnsandboxed: "default" },
-};
+/** The platform's auto-mode switch when neither the startup config nor the admin console sets it. */
+const DEFAULT_AUTO_MODE = { mode: "allowed", source: "default" };
 
 /** The platform's attribution defaults when neither the startup config nor the admin console sets them. */
 const DEFAULT_ATTRIBUTION = {
@@ -541,7 +536,7 @@ describe("超级管理员端点", () => {
       orgMarketplaceBrowse: true,
       uiTheme: { id: null },
       clientExtensions: { enabled: true, disabled: [] },
-      sandboxTiers: DEFAULT_TIERS,
+      devicesAutoMode: DEFAULT_AUTO_MODE,
       attribution: DEFAULT_ATTRIBUTION,
     });
     const put = await adminReq({
@@ -562,7 +557,7 @@ describe("超级管理员端点", () => {
       orgMarketplaceBrowse: true,
       uiTheme: { id: null },
       clientExtensions: { enabled: true, disabled: [] },
-      sandboxTiers: DEFAULT_TIERS,
+      devicesAutoMode: DEFAULT_AUTO_MODE,
       attribution: DEFAULT_ATTRIBUTION,
     });
     const bad = await adminReq({
@@ -603,7 +598,7 @@ describe("超级管理员端点", () => {
       orgMarketplaceBrowse: true,
       uiTheme: { id: null },
       clientExtensions: { enabled: true, disabled: [] },
-      sandboxTiers: DEFAULT_TIERS,
+      devicesAutoMode: DEFAULT_AUTO_MODE,
       attribution: DEFAULT_ATTRIBUTION,
     });
 
@@ -632,7 +627,7 @@ describe("超级管理员端点", () => {
       orgMarketplaceBrowse: true,
       uiTheme: { id: null },
       clientExtensions: { enabled: true, disabled: [] },
-      sandboxTiers: DEFAULT_TIERS,
+      devicesAutoMode: DEFAULT_AUTO_MODE,
       attribution: DEFAULT_ATTRIBUTION,
     });
     expect(await limit("orgA")).toBe(k.app.get(KernelConfigService).get().runtime.orgConcurrency);
@@ -662,7 +657,7 @@ describe("超级管理员端点", () => {
       orgMarketplaceBrowse: true,
       uiTheme: { id: null },
       clientExtensions: { enabled: true, disabled: [] },
-      sandboxTiers: DEFAULT_TIERS,
+      devicesAutoMode: DEFAULT_AUTO_MODE,
       attribution: DEFAULT_ATTRIBUTION,
     });
   });
@@ -699,74 +694,38 @@ describe("超级管理员端点", () => {
     );
   });
 
-  it("PUT /admin/settings sandboxTiers: validated, default at most max, read back with sources, audited; orgs are capped without a rewrite", async () => {
+  it("PUT /admin/settings devicesAutoMode: validated, read back with its source, audited; null clears it", async () => {
     const adminReq = await session("admin");
     const put = (payload: Record<string, unknown>) =>
       adminReq({ method: "PUT", url: "/api/v1/admin/settings", payload });
     for (const payload of [
-      { sandboxTiers: {} },
-      { sandboxTiers: { max: "wide" } },
-      { sandboxTiers: { allowUnsandboxed: "yes" } },
-      { sandboxTiers: { extra: 1 } },
-      // the default may not be above the max, in the patch or against the stored max
-      { sandboxTiers: { max: "strict" } },
-      { sandboxTiers: { max: "dev", default: "open" } },
+      { devicesAutoMode: {} },
+      { devicesAutoMode: { mode: "wide" } },
+      { devicesAutoMode: { mode: "off", extra: 1 } },
     ]) {
       const res = await put(payload);
       expect(res.statusCode, JSON.stringify(payload)).toBe(400);
       expect(errCode(res)).toBe("validation_failed");
     }
-    const open = await put({ sandboxTiers: { max: "open", allowUnsandboxed: false } });
-    expect(open.statusCode, open.body).toBe(200);
-    expect(open.json().sandboxTiers).toEqual({
-      max: "open",
-      default: "dev",
-      allowUnsandboxed: false,
-      sources: { max: "db", default: "default", allowUnsandboxed: "db" },
-    });
+    const off = await put({ devicesAutoMode: { mode: "off" } });
+    expect(off.statusCode, off.body).toBe(200);
+    expect(off.json().devicesAutoMode).toEqual({ mode: "off", source: "db" });
     const audit = await db
       .selectFrom("audit_events")
       .select(["action", "detail"])
       .where("action", "=", "deployment.settings.updated")
       .executeTakeFirstOrThrow();
     expect(audit.detail).toMatchObject({
-      sandboxTiers: { max: "open", allowUnsandboxed: false },
-      sandboxTiersEffective: {
-        before: { max: "dev", default: "dev", allowUnsandboxed: true },
-        after: { max: "open", default: "dev", allowUnsandboxed: false },
-      },
+      devicesAutoMode: { mode: "off" },
+      devicesAutoModeEffective: { before: DEFAULT_AUTO_MODE, after: "off" },
     });
-
-    // an org that raised its own ceiling to open while the platform allowed it
-    const org = await orgs.create({ name: "Tier Org" }, admin);
-    const orgSettings = (payload?: Record<string, unknown>) =>
-      adminReq({
-        method: payload === undefined ? "GET" : "PATCH",
-        url: `/api/v1/orgs/${org.id}/settings`,
-        ...(payload !== undefined && { payload }),
-      });
-    const raised = await orgSettings({ sandboxTier: { max: "open", default: "open" } });
-    expect(raised.statusCode, raised.body).toBe(200);
-    // lowering the platform needs both fields together; the org row is not rewritten
-    const lowered = await put({ sandboxTiers: { max: "strict", default: "strict" } });
-    expect(lowered.statusCode, lowered.body).toBe(200);
-    const read = await orgSettings();
-    expect(read.json().settings.sandboxTier).toEqual({ max: "open", default: "open" });
-    expect(read.json().deployment.sandboxTiers).toMatchObject({ max: "strict", default: "strict" });
-    // the org cannot go above the platform any more
-    const again = await orgSettings({ sandboxTier: { max: "open" } });
-    expect(again.statusCode).toBe(400);
-    expect(errCode(again)).toBe("org.sandbox_tier_not_allowed");
-
-    // null clears a field back to its default
-    const cleared = await put({
-      sandboxTiers: { max: null, default: null, allowUnsandboxed: null },
-    });
+    // null clears it back to the default
+    const cleared = await put({ devicesAutoMode: { mode: null } });
     expect(cleared.statusCode, cleared.body).toBe(200);
-    expect(cleared.json().sandboxTiers).toEqual(DEFAULT_TIERS);
+    expect(cleared.json().devicesAutoMode).toEqual(DEFAULT_AUTO_MODE);
   });
 
-  it("PUT /admin/settings sandboxTiers through a personal access token only narrows", async () => {
+  it("PUT /admin/settings devicesAutoMode through a personal access token may only turn it off", async () => {
     const pat = await tokens.createPersonal(admin.id, { name: "automation" });
     const viaToken = (payload: Record<string, unknown>) =>
       k.http.inject({
@@ -775,70 +734,59 @@ describe("超级管理员端点", () => {
         headers: { authorization: `Bearer ${pat.token}` },
         payload,
       });
-    for (const sandboxTiers of [
-      { max: "open" },
-      { allowUnsandboxed: true, max: "dev" },
-      { default: null, max: null },
-    ]) {
-      // from max strict, default strict, unsandboxed off: each of these widens
-      await settingsFor(db).update(
-        { sandboxTiers: { max: "strict", default: "strict", allowUnsandboxed: false } },
-        admin.id,
-      );
-      const res = await viaToken({ sandboxTiers });
-      expect(res.statusCode, JSON.stringify(sandboxTiers)).toBe(400);
-      expect(errCode(res)).toBe("deployment.sandbox_tier_not_allowed");
-    }
-    const narrowed = await viaToken({ sandboxTiers: { allowUnsandboxed: false } });
-    expect(narrowed.statusCode, narrowed.body).toBe(200);
-    // a person in a session raises it
+    // from allowed, off narrows
+    const off = await viaToken({ devicesAutoMode: { mode: "off" } });
+    expect(off.statusCode, off.body).toBe(200);
+    expect((off.json() as { devicesAutoMode: unknown }).devicesAutoMode).toEqual({
+      mode: "off",
+      source: "db",
+    });
+    // turning it back on widens: refused for a token, allowed for a person in a session
+    const widened = await viaToken({ devicesAutoMode: { mode: "allowed" } });
+    expect(widened.statusCode).toBe(400);
+    expect(errCode(widened)).toBe("deployment.auto_mode_not_allowed");
     const adminReq = await session("admin");
-    const raised = await adminReq({
+    const on = await adminReq({
       method: "PUT",
       url: "/api/v1/admin/settings",
-      payload: { sandboxTiers: { max: "open", default: "dev", allowUnsandboxed: true } },
+      payload: { devicesAutoMode: { mode: "allowed" } },
     });
-    expect(raised.statusCode, raised.body).toBe(200);
-    const lowered = await viaToken({ sandboxTiers: { max: "dev" } });
-    expect(lowered.statusCode, lowered.body).toBe(200);
-    expect(lowered.json().sandboxTiers).toMatchObject({ max: "dev", default: "dev" });
+    expect(on.statusCode, on.body).toBe(200);
+    expect(on.json().devicesAutoMode).toEqual({ mode: "allowed", source: "db" });
   });
 
-  it("PUT /admin/settings sandboxTiers: a field set in the startup config is read-only and wins", async () => {
+  it("PUT /admin/settings devicesAutoMode: a value set in the startup config is read-only and wins", async () => {
     const service = k.app.get(KernelConfigService);
-    const rawConfig = (tiers: Record<string, unknown>) => ({
+    const rawConfig = (autoMode?: "allowed" | "off") => ({
       db: { url: pgc.url, poolMax: 5 },
       redis: { url: rd.url },
       masterKey: Buffer.alloc(32, 7).toString("base64"),
       marketplaces: { official: { enabled: false } },
       http: { port: 0 },
       auth: { setupToken: SETUP_TOKEN },
-      sandbox: { tiers },
+      devices: { autoMode },
     });
     const adminReq = await session("admin");
     const put = (payload: Record<string, unknown>) =>
       adminReq({ method: "PUT", url: "/api/v1/admin/settings", payload });
-    expect((await put({ sandboxTiers: { max: "open" } })).statusCode).toBe(200);
-    service.apply(rawConfig({ max: "strict" }));
+    expect((await put({ devicesAutoMode: { mode: "allowed" } })).statusCode).toBe(200);
+    service.apply(rawConfig("off"));
     try {
       const view = await adminReq({ method: "GET", url: "/api/v1/admin/settings" });
-      // the config wins over the stored open and cuts the default
-      expect(view.json().sandboxTiers).toEqual({
-        max: "strict",
-        default: "strict",
-        allowUnsandboxed: true,
-        sources: { max: "file", default: "default", allowUnsandboxed: "default" },
-      });
-      const locked = await put({ sandboxTiers: { max: "dev" } });
+      // the startup config wins over the stored allowed and reports itself read-only
+      expect(view.json().devicesAutoMode).toEqual({ mode: "off", source: "file" });
+      const locked = await put({ devicesAutoMode: { mode: "allowed" } });
       expect(locked.statusCode).toBe(409);
       expect(errCode(locked)).toBe("deployment.setting_readonly");
-      expect(locked.json().error.details).toEqual([{ path: "sandboxTiers.max", source: "file" }]);
-      // the other fields stay editable, within the config's max
-      expect((await put({ sandboxTiers: { allowUnsandboxed: false } })).statusCode).toBe(200);
-      expect((await put({ sandboxTiers: { default: "dev" } })).statusCode).toBe(400);
+      expect(locked.json().error.details).toEqual([
+        { path: "devicesAutoMode.mode", source: "file" },
+      ]);
     } finally {
-      service.apply(rawConfig({}));
+      service.apply(rawConfig(undefined));
     }
+    // with the startup config silent again, the stored choice applies
+    const back = await adminReq({ method: "GET", url: "/api/v1/admin/settings" });
+    expect(back.json().devicesAutoMode).toEqual({ mode: "allowed", source: "db" });
   });
 
   it('PUT /admin/settings attribution: saved, read back with sources, "" turns a line off, null clears, a startup-config field is read-only', async () => {

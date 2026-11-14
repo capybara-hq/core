@@ -55,6 +55,8 @@ export const keys = {
       devices: (): readonly unknown[] => [...all, "devices"],
       /** One of the person's devices. */
       device: (id: string): readonly unknown[] => [...all, "device", id],
+      /** Every device detail read (an invalidation prefix). */
+      deviceAll: (): readonly unknown[] => [...all, "device"],
       /** Scheduled task lists (an invalidation prefix: mine and the org's). */
       schedulesAll: (): readonly unknown[] => [...all, "schedules"],
       /** My scheduled tasks (`all`: every task of the org, org admins). */

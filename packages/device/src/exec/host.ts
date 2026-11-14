@@ -24,16 +24,16 @@ export interface HostExecutorOptions {
 }
 
 /**
- * Runs commands without a sandbox (spec §5.4): `/bin/bash -c` directly on this machine as the
+ * Runs commands without a sandbox (spec §4.1): `/bin/bash -c` directly on this machine as the
  * user, with this program's own environment plus the request's, so commands see the real `HOME`,
- * `PATH`, credentials, Docker and network. Only the device owner turns it on, locally
- * (`isolation: "none"` with tier `open`, OS mode); the program picks this executor per command
- * (see `exec/switch.ts`).
+ * `PATH`, credentials, Docker and network. That is auto mode; the program picks this executor per
+ * command (see `exec/switch.ts`) when no sandbox is in force.
  *
- * What stays the same as the OS sandbox: the working directory is checked inside the device's
- * roots, file operations are confined to the roots (direct host IO), and every command leads its
- * own process group and carries {@link EXEC_MARKER}, so timeouts, aborts, `killTagged` and
- * `killAll` reach it and what it leaves running.
+ * What stays the same as the OS sandbox: the working directory defaults to the device's workspace,
+ * every command leads its own process group and carries {@link EXEC_MARKER}, so timeouts, aborts,
+ * `killTagged` and `killAll` reach it and what it leaves running. File operations reach any
+ * absolute path on the machine (the kernel's `Read` / `Write` / `Edit` / `Glob` / `Grep` do, and
+ * the deployment reviews writes outside the workspace, spec §5.1).
  */
 export class HostExecutor implements Executor {
   readonly mode = "os" as const;
@@ -50,7 +50,7 @@ export class HostExecutor implements Executor {
     this.dir = existsSync(dir) ? realpathSync(dir) : dir;
     this.roots = osRoots(this.dir);
     this.guard = new RootGuard(this.dir, this.roots);
-    this.files = new HostFiles(this.roots);
+    this.files = new HostFiles(this.roots, "auto");
     this.dirKey = dirKeyOf(this.dir);
   }
 

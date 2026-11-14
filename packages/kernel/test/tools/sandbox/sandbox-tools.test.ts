@@ -11,7 +11,6 @@ import {
   type TestContainer,
   type TestS3,
 } from "@capybara-hq/testing";
-import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { ARTIFACT_PREVIEW_MAX_LINES } from "../../../src/conversations/artifacts.js";
 import { EventLog } from "../../../src/conversations/event-log.js";
@@ -24,10 +23,10 @@ import { StorageService } from "../../../src/storage/storage.service.js";
 import {
   SANDBOX_CONNECTION_DROPPED_TEXT,
   SANDBOX_FILES_RESET_NOTICE,
+  SANDBOX_OPEN_NETWORK_REFUSED_TEXT,
   SANDBOX_RESTARTED_NOTICE,
   SANDBOX_STARTED_NOTICE,
   SANDBOX_UNREACHABLE_TEXT,
-  sandboxTierRefusedText,
 } from "../../../src/tools/builtins/sandbox/common.js";
 import {
   FAKE_REFUSAL_SECRET,
@@ -286,7 +285,7 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
 
   it("bash: a non-zero exit is not isError, the view carries the exit code and description", async () => {
     const conv = await sandboxConversation();
-    const r = await call(conv, "Bash", { command: "exit 1", description: "Check the build" }, 1);
+    const r = await call(conv, "Bash", { command: "false", description: "Check the build" }, 1);
     expect(r.isError).toBe(false);
     expect(r.content).toContain("[exit code: 1]");
     expect(r.view).toEqual({
@@ -636,6 +635,13 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
   });
 
   it("paths outside the sandbox roots are rejected", async () => {
+    // sandbox mode keeps the root checks; auto mode accepts any path (auto mode spec §4.1)
+    const off = await owner({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/settings`,
+      payload: { autoMode: "off" },
+    });
+    expect(off.statusCode, off.body).toBe(200);
     const conv = await sandboxConversation();
     const a = await call(conv, "Read", { file_path: "/etc/passwd" }, 1);
     expect(a.isError).toBe(true);
@@ -1205,17 +1211,14 @@ describe("a sandbox provider that refuses the open tier", { timeout: 90_000 }, (
     const conv = await sandboxConversation();
     const ok = await call(conv, "Bash", { description: "Test step", command: "echo dev" }, 1);
     expect(ok.isError).toBe(false);
-    // the org allows open and the device asks for it; the provider refuses open egress
-    await sql`UPDATE capybara.orgs SET settings = ${JSON.stringify({ sandboxTier: { max: "open" } })}::jsonb
-      WHERE id = ${orgId}`.execute(db);
-    await sql`UPDATE capybara.devices SET tier = 'open' WHERE id = ${await envOf(conv)}`.execute(
-      db,
-    );
+    // the device's instance is recreated in auto mode (the open public network); the provider
+    // refuses it
+    await k.app.get(SandboxService).resetFileSystem(await envOf(conv));
     await setFakeSandboxRefuseOpenEgress(root, true);
     const failedBefore = logLines.filter((l) => l.includes('"msg":"tool call failed"')).length;
     const r = await call(conv, "Bash", { description: "Test step", command: "echo open" }, 2);
     expect(r.isError).toBe(true);
-    expect(r.content).toBe(sandboxTierRefusedText("open"));
+    expect(r.content).toBe(SANDBOX_OPEN_NETWORK_REFUSED_TEXT);
     expect(r.content).not.toContain(FAKE_REFUSAL_SECRET);
     expect(logLines.filter((l) => l.includes('"msg":"tool call failed"'))).toHaveLength(
       failedBefore,
@@ -1223,7 +1226,9 @@ describe("a sandbox provider that refuses the open tier", { timeout: 90_000 }, (
     // the kernel log keeps the provider's reason for the operator
     expect(
       logLines.some(
-        (l) => l.includes("refused an instance in the open tier") && l.includes("openEgress"),
+        (l) =>
+          l.includes("refused an instance with the open public network") &&
+          l.includes("openEgress"),
       ),
     ).toBe(true);
   });

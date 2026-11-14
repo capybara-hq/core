@@ -497,18 +497,15 @@ describe("the device picker (environments design §4.1)", () => {
     expect(online.textContent).toContain(en.devices.state.online);
   });
 
-  it("the picker marks 开放 (warn) and 不使用沙箱 (danger) devices", async () => {
+  it("the picker marks 自动 (warn) and 沙箱 (quiet) local devices", async () => {
     resetNavigation("/");
-    const sandbox = (effectiveTier: string, isolation = "sandbox") => ({
-      tier: effectiveTier,
-      effectiveTier,
-      ceiling: "open",
-      cappedBy: null,
-      defaultTier: "dev",
-      allowUnsandboxed: true,
-      isolation,
+    const mode = (m: string, allowed = "auto") => ({
+      mode: m,
+      allowedMode: allowed,
+      allowedBy: allowed === "auto" ? "org" : null,
+      network: { kind: "allowlist", hosts: [], source: "platform" },
+      local: { reported: m, allowedDomains: [] },
       pendingNextUse: false,
-      pendingFilesReset: false,
       recent: [],
     });
     const local = { source: "local", provider: "@local", online: true };
@@ -516,9 +513,8 @@ describe("the device picker (environments design §4.1)", () => {
       ...DEVICES,
       items: [
         ...DEVICES.items,
-        envView("d1", "Laptop", { ...local, sandbox: sandbox("open") }),
-        envView("d2", "Server", { ...local, sandbox: sandbox("dev") }),
-        envView("d3", "Bare", { ...local, sandbox: sandbox("open", "none") }),
+        envView("d1", "Laptop", { ...local, mode: mode("auto") }),
+        envView("d2", "Server", { ...local, mode: mode("sandbox") }),
       ],
     };
     await renderRouteWithCache("/", withDevices(devices));
@@ -526,12 +522,11 @@ describe("the device picker (environments design §4.1)", () => {
     await user.click(picker() as HTMLElement);
     const open = await screen.findByRole("menuitemradio", { name: /Laptop/ });
     const mark = (item: HTMLElement) => item.querySelector(".cb-badge");
-    expect(mark(open)?.textContent).toBe(en.devices.mark.open);
+    expect(mark(open)?.textContent).toBe(en.devices.mark.auto);
     expect(mark(open)?.getAttribute("data-tone")).toBe("warn");
-    expect(mark(screen.getByRole("menuitemradio", { name: /Server/ }))).toBeNull();
-    const bare = mark(screen.getByRole("menuitemradio", { name: /Bare/ }));
-    expect(bare?.textContent).toBe(en.devices.mark.unsandboxed);
-    expect(bare?.getAttribute("data-tone")).toBe("fail");
+    const quiet = mark(screen.getByRole("menuitemradio", { name: /Server/ }));
+    expect(quiet?.textContent).toBe(en.devices.mark.sandbox);
+    expect(quiet?.getAttribute("data-tone")).toBe("default");
   });
 
   it("without a cloud sandbox the picker still lists the local devices", async () => {

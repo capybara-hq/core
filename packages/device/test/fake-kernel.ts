@@ -87,10 +87,8 @@ export function execArgs(command: string, tag = "t1"): DeviceExecArgs {
       cpu: 1,
       memoryMb: 512,
       diskMb: 1024,
-      egress: "none",
-      allowHosts: [],
-      tier: "strict",
-      devHosts: [],
+      mode: "sandbox",
+      network: { kind: "allowlist", hosts: [] },
     },
   };
 }

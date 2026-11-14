@@ -3,7 +3,6 @@
 import {
   Button,
   Callout,
-  Dialog,
   Field,
   FormPage,
   FormSection,
@@ -11,7 +10,6 @@ import {
   ItemList,
   ItemListItem,
   RadioGroup,
-  Select,
   Stack,
   Switch,
   SwitchField,
@@ -42,19 +40,16 @@ import {
   type DeploymentSettingsPatch,
   isCurrencyCode,
   type PlatformAttributionView,
-  type PlatformTierSource,
-  type PlatformTiersPatch,
-  type PlatformTiersView,
   updateDeploymentSettings,
 } from "../../../../lib/admin";
 import { componentName, type PlatformComponent } from "../../../../lib/components";
-import { SANDBOX_TIERS, type SandboxTier, tierAbove } from "../../../../lib/devices";
 import { extensionLabel, labelLocale } from "../../../../lib/extension-label";
+import type { DevicesAutoModeSource, DevicesAutoModeView } from "../../../../lib/org-settings";
 import {
   adminExtensionsQuery,
   deploymentSettingsQuery,
   invalidateAttribution,
-  invalidateSandboxTiers,
+  invalidateDeviceModes,
   settingsChangeKeys,
 } from "../../../../lib/query/admin";
 import { retryOnMountOf } from "../../../../lib/query/client";
@@ -75,10 +70,9 @@ import NotFound from "../../not-found";
  * (themes spec §7, §10), 内置主题 or a platform-owned theme whose scope is `all` and that is not
  * disabled; the kernel refuses one off in some org with the orgs (shown). 插件界面代码: the client
  * code kill switch and the plugins whose client code alone is stopped (client extensions spec
- * §10.2); a save that changes it marks every cached client set stale. 沙箱级别: the platform's
- * highest and default sandbox level and whether devices may run unsandboxed (sandbox dev tiers spec
- * §4.1); a field set in the startup config is shown read-only with its source, raising the highest
- * level to 开放 asks first. 按组织的限额在「组织」页；
+ * §10.2); a save that changes it marks every cached client set stale. 自动模式: the platform's
+ * auto-mode switch (auto mode spec §4.3), read with where it comes from; a value set in the startup
+ * config is shown read-only with its source. 按组织的限额在「组织」页；
  * 组织自己的设置仍在 `/settings/*`。有改动时出现 ActionRow，只提交改过的项。
  * From the query cache (the layout prefetched it on a first load); a save writes the answered
  * settings into the cache.
@@ -143,16 +137,10 @@ function AdminSettingsRead() {
         {section("customConnectors", "customConnectors", RADIOS)}
         {section("customSkills", "customSkills", RADIOS)}
         <FormSection
-          id="sandbox-tiers"
-          title={t("sandboxTiers.title")}
-          description={t("sandboxTiers.description")}
-          loading={{
-            fields: [
-              { control: "radio-cards", options: 3 },
-              { control: "select", help: true },
-              { control: "switch", help: true },
-            ],
-          }}
+          id="auto-mode"
+          title={t("autoMode.title")}
+          description={t("autoMode.description")}
+          loading={{ fields: [{ control: "radio-cards", options: 2 }, { control: "text" }] }}
         />
         <FormSection
           id="appearance"
@@ -195,8 +183,8 @@ function AdminSettings({
       if (patch.uiTheme !== undefined) await invalidatePlatformTheme(qc);
       // the kill switch: open pages drop (or pick up) client code at their next shell read
       if (patch.clientExtensions !== undefined) await invalidateClientSets(qc);
-      // the platform's sandbox levels cap every org's levels and devices
-      if (patch.sandboxTiers !== undefined) await invalidateSandboxTiers(qc);
+      // the platform's auto-mode switch decides every org's and device's mode
+      if (patch.devicesAutoMode !== undefined) await invalidateDeviceModes(qc);
       // the attribution defaults ride on every org's settings (the agent page's help text)
       if (patch.attribution !== undefined) await invalidateAttribution(qc);
       return r;
@@ -207,8 +195,8 @@ function AdminSettings({
   const [draft, setDraft] = useState<Partial<Simple>>({});
   const [themeDraft, setThemeDraft] = useState<string | null | undefined>(undefined);
   const [clientDraft, setClientDraft] = useState<ClientExtensionsSetting | undefined>(undefined);
-  const [tiersDraft, setTiersDraft] = useState<TiersDraft>({});
   const [attributionDraft, setAttributionDraft] = useState<AttributionDraft>({});
+  const [autoDraft, setAutoDraft] = useState<"allowed" | "off" | undefined>(undefined);
   const cq = adminComponentsQuery("theme");
   const eligible = (
     useQuery({ ...cq, retryOnMount: retryOnMountOf(cq.queryKey) }).data?.components ?? []
@@ -239,11 +227,18 @@ function AdminSettings({
   const client = clientDraft ?? savedClient;
   const clientPatch = clientChange(savedClient, client);
   if (clientPatch !== null) patch.clientExtensions = clientPatch;
-  const tiers = saved.sandboxTiers === undefined ? null : tiersOf(saved.sandboxTiers, tiersDraft);
-  if (tiers !== null && tiers.patch !== null) patch.sandboxTiers = tiers.patch;
   const attribution =
     saved.attribution === undefined ? null : attributionOf(saved.attribution, attributionDraft);
   if (attribution !== null && attribution.patch !== null) patch.attribution = attribution.patch;
+  const autoMode = saved.devicesAutoMode;
+  if (
+    autoMode !== undefined &&
+    !autoLocked(autoMode.source) &&
+    autoDraft !== undefined &&
+    autoDraft !== autoMode.mode
+  ) {
+    patch.devicesAutoMode = { mode: autoDraft };
+  }
   const unsaved = Object.keys(patch).length;
 
   async function save() {
@@ -253,8 +248,8 @@ function AdminSettings({
       setDraft({});
       setThemeDraft(undefined);
       setClientDraft(undefined);
-      setTiersDraft({});
       setAttributionDraft({});
+      setAutoDraft(undefined);
       toast.success(t("saved"));
     } catch (e) {
       const off = themeOffOrgs(e);
@@ -296,8 +291,8 @@ function AdminSettings({
             setDraft({});
             setThemeDraft(undefined);
             setClientDraft(undefined);
-            setTiersDraft({});
             setAttributionDraft({});
+            setAutoDraft(undefined);
           },
         },
         primary: {
@@ -347,12 +342,8 @@ function AdminSettings({
       </FormSection>
       {policy("customConnectors")}
       {policy("customSkills")}
-      {saved.sandboxTiers !== undefined && tiers !== null && (
-        <SandboxTiersSection
-          saved={saved.sandboxTiers}
-          value={tiers.value}
-          onChange={(d) => setTiersDraft((cur) => ({ ...cur, ...d }))}
-        />
+      {saved.devicesAutoMode !== undefined && (
+        <AutoModeSection value={saved.devicesAutoMode} draft={autoDraft} onChange={setAutoDraft} />
       )}
       {saved.attribution !== undefined && attribution !== null && (
         <AttributionSection
@@ -464,34 +455,12 @@ function ClientCodeSection({
   );
 }
 
-/** The fields of the platform's sandbox levels the person changed. */
-type TiersDraft = Partial<Pick<PlatformTiersView, "max" | "default" | "allowUnsandboxed">>;
-
-/**
- * The levels shown (the draft over the saved ones; the default comes down with a lower highest
- * level) and the patch: the changed fields only, never one set in the startup config.
- */
-function tiersOf(
-  saved: PlatformTiersView,
-  draft: TiersDraft,
-): { value: Omit<PlatformTiersView, "sources">; patch: PlatformTiersPatch | null } {
-  const max = draft.max ?? saved.max;
-  const chosen = draft.default ?? saved.default;
-  const value = {
-    max,
-    default: tierAbove(chosen, max) ? max : chosen,
-    allowUnsandboxed: draft.allowUnsandboxed ?? saved.allowUnsandboxed,
-  };
-  const patch: PlatformTiersPatch = {};
-  for (const f of ["max", "default", "allowUnsandboxed"] as const) {
-    if (value[f] !== saved[f] && !lockedSource(saved.sources[f]))
-      Object.assign(patch, { [f]: value[f] });
-  }
-  return { value, patch: Object.keys(patch).length > 0 ? patch : null };
-}
+/** Whether a startup config source makes the platform's auto-mode switch read-only here. */
+const autoLocked = (source: DevicesAutoModeSource | undefined): boolean =>
+  source === "env" || source === "file" || source === "nacos";
 
 /** The startup config's source of a field (read-only here), or null when it can be changed. */
-const lockedSource = (s: PlatformTierSource): "env" | "file" | "nacos" | null =>
+const lockedSource = (s: string): "env" | "file" | "nacos" | null =>
   s === "env" || s === "file" || s === "nacos" ? s : null;
 
 /** The attribution section's edits over the saved values. */
@@ -523,116 +492,46 @@ function attributionOf(
 }
 
 /**
- * 沙箱级别 (sandbox dev tiers spec §4.1): 最高级别 as three cards, 默认级别 (at most the highest)
- * and 允许设备不使用沙箱. A field the startup config sets is disabled with its source. Choosing
- * 开放 above a lower saved level asks first with the risk text. Saved with the page's ActionRow.
+ * 自动模式 (auto mode spec §4.3): one control, allowed or off, with where the value comes from. A
+ * value set in the startup config is disabled with its source. Off forces local devices to sandbox
+ * mode; cloud devices keep the container and follow the organization's cloud network. The kernel
+ * refuses a raise through an API token or the Platform tool, which may only turn it off; a signed-in
+ * super admin here may set it either way. Saved with the page's ActionRow.
  */
-function SandboxTiersSection({
-  saved,
+function AutoModeSection({
   value,
+  draft,
   onChange,
 }: {
-  saved: PlatformTiersView;
-  value: Omit<PlatformTiersView, "sources">;
-  onChange(d: TiersDraft): void;
+  value: DevicesAutoModeView;
+  draft: "allowed" | "off" | undefined;
+  onChange(mode: "allowed" | "off"): void;
 }) {
-  const t = useTranslations("admin.settings.sandboxTiers");
-  const td = useTranslations("devices.tier");
+  const t = useTranslations("admin.settings.autoMode");
   const tf = useTranslations("configForm");
-  const [confirming, setConfirming] = useState(false);
-  const locked = {
-    max: lockedSource(saved.sources.max),
-    default: lockedSource(saved.sources.default),
-    allowUnsandboxed: lockedSource(saved.sources.allowUnsandboxed),
-  };
-  const lockedNote = (f: keyof typeof locked) => {
-    const source = locked[f];
-    return source === null ? null : `${tf("readonly", { source })} · sandbox.tiers.${f}`;
-  };
+  const locked = autoLocked(value.source);
+  const mode = draft ?? value.mode;
   return (
-    <FormSection id="sandbox-tiers" title={t("title")} description={t("description")}>
-      <Stack gap={12}>
-        <Stack gap={4}>
-          <RadioGroup
-            label={t("max")}
-            variant="card"
-            value={value.max}
-            disabled={locked.max !== null}
-            onChange={(v) => {
-              const next = v as SandboxTier;
-              // raising the platform to open asks first; going back to a saved open does not
-              if (next === "open" && saved.max !== "open") setConfirming(true);
-              else onChange({ max: next });
-            }}
-            options={SANDBOX_TIERS.map((tier) => {
-              // a default fixed in the startup config may not end up above the highest level
-              const below = locked.default !== null && tierAbove(saved.default, tier);
-              return {
-                value: tier,
-                label: td(tier),
-                description: below ? t("belowDefault") : t(`${tier}Hint`),
-                ...(below && { disabled: true }),
-              };
-            })}
-          />
-          {locked.max !== null && (
-            <Text variant="small" tone="muted">
-              {lockedNote("max")}
-            </Text>
-          )}
-        </Stack>
-        <Field label={t("default")} help={lockedNote("default") ?? t("defaultHelp")}>
-          <Select
-            value={value.default}
-            disabled={locked.default !== null}
-            onChange={(ev) => onChange({ default: ev.target.value as SandboxTier })}
-            options={SANDBOX_TIERS.filter((tier) => !tierAbove(tier, value.max)).map((tier) => ({
-              value: tier,
-              label: td(tier),
-            }))}
-          />
-        </Field>
-        <Stack gap={4}>
-          <SwitchField
-            label={t("allowUnsandboxed")}
-            checked={value.allowUnsandboxed}
-            disabled={locked.allowUnsandboxed !== null}
-            onChange={(next) => onChange({ allowUnsandboxed: next })}
-          />
-          <Text variant="small" tone="muted">
-            {lockedNote("allowUnsandboxed") ?? t("allowUnsandboxedHint")}
-          </Text>
-        </Stack>
+    <FormSection id="auto-mode" title={t("title")} description={t("description")}>
+      <Stack gap={8}>
+        <RadioGroup
+          label={t("label")}
+          variant="card"
+          value={mode}
+          disabled={locked}
+          onChange={(v) => onChange(v as "allowed" | "off")}
+          options={(["allowed", "off"] as const).map((v) => ({
+            value: v,
+            label: t(v),
+            description: t(`${v}Hint`),
+          }))}
+        />
+        <Text variant="small" tone="muted">
+          {locked
+            ? `${tf("readonly", { source: value.source })} · devices.autoMode`
+            : t("source", { source: t(`sources.${value.source}`) })}
+        </Text>
       </Stack>
-      {confirming && (
-        <Dialog
-          open
-          danger
-          initialFocus="cancel"
-          onOpenChange={(o) => {
-            if (!o) setConfirming(false);
-          }}
-          title={t("openConfirmTitle")}
-          footer={
-            <>
-              <Button variant="ghost" onClick={() => setConfirming(false)}>
-                {t("cancel")}
-              </Button>
-              <Button
-                variant="danger-solid"
-                onClick={() => {
-                  onChange({ max: "open" });
-                  setConfirming(false);
-                }}
-              >
-                {t("openConfirmSubmit")}
-              </Button>
-            </>
-          }
-        >
-          <Text variant="prose">{t("openConfirmBody")}</Text>
-        </Dialog>
-      )}
     </FormSection>
   );
 }

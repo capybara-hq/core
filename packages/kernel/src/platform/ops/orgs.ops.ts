@@ -163,7 +163,7 @@ export class OrgsOperations implements OnModuleInit {
           "uiTheme",
           "uiArrangement",
           "clientExtensions",
-          "sandboxTiers",
+          "devicesAutoMode",
         ],
         extras: ["orgId", "runConcurrency", "sandbox", "subagents"],
         confirm: "platform",

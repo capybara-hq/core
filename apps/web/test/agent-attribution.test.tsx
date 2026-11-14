@@ -73,13 +73,8 @@ const routes = (
         json(200, {
           settings: { toolSearch: "on", locale: "en" },
           deployment: {
-            sandboxEgress: { mode: "none", allowHosts: [] },
-            sandboxTiers: {
-              max: "dev",
-              default: "dev",
-              allowUnsandboxed: true,
-              devHosts: [],
-            },
+            autoMode: { mode: "allowed", source: "default" },
+            cloudNetwork: { mode: "open", allowHosts: [] },
             attribution: {
               commit: PLATFORM_COMMIT,
               pr: PLATFORM_PR,

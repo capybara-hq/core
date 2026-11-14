@@ -52,13 +52,13 @@ const agentCall = (description: string, prompt: string) => ({
 
 const RULES: ScriptRule[] = [
   {
-    // a command whose output (40000 chars) is archived
+    // a command the command review allows whose output is archived
     when: { systemIncludes: CHILD, lastUserIncludes: "task-tool", assistantTurns: 0 },
     reply: {
       toolCalls: [
         {
           name: "Bash",
-          input: { description: "Print a lot", command: "yes a | head -c 40000" },
+          input: { description: "Print a lot", command: "seq 1 40000" },
         },
       ],
     },
@@ -389,7 +389,7 @@ describe("child conversations through the conversation routes", () => {
       url: `${base()}/${child}/outputs/${archived?.payload.outputId}`,
     });
     expect(out.statusCode, out.body).toBe(200);
-    expect(out.json().output.text).toContain("a\na\na\n");
+    expect(out.json().output.text).toContain("1\n2\n3\n");
 
     // nobody else: the member gets 404 on every child route
     const someArtifact = "00000000-0000-4000-8000-000000000000";

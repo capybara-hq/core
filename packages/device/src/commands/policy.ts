@@ -1,110 +1,27 @@
-import { isSandboxTier, type SandboxTier, validateAllowHost } from "@capybara-hq/plugin-sdk";
+import { validateAllowHost } from "@capybara-hq/plugin-sdk";
 import type { Command } from "../args.js";
-import { type TierFacts, tierFacts } from "../policy.js";
 import { PolicyStore } from "../policy-store.js";
-import { detectLocalProxy, type ProxyGuardResult } from "../proxy-guard.js";
 import { type Policy, policyPath, readCredential } from "../state.js";
 
 export interface PolicyDeps {
   stateDir: string;
   out: (line: string) => void;
   err: (line: string) => void;
-  /**
-   * The person already read the risk text and answered `y` at the prompt ({@link confirmRisk});
-   * otherwise `set tier open` and `set isolation none` need `--yes`.
-   */
-  confirmed?: boolean;
-  /** The localhost proxy guard `show` runs (default: {@link detectLocalProxy}). */
-  detectProxy?: () => Promise<ProxyGuardResult>;
-  platform?: NodeJS.Platform;
 }
 
-const KEYS = [
-  "allowedDomains",
-  "allowCredentials",
-  "cpu",
-  "memoryMb",
-  "tier",
-  "isolation",
-  "localhost",
-  "remoteGrants",
-] as const;
+/** The fields `show` prints and `set` may replace. */
+const KEYS = ["allowedDomains", "allowCredentials", "cpu", "memoryMb", "mode"] as const;
 
-/** Shown before `set tier open` takes effect (adapted from the network ask-to-allow spec §7). */
-export const OPEN_TIER_RISK =
-  "At tier open, agent commands on this device can reach any address the organization allows " +
-  "(any public address if the organization has no limit), including uploading files to " +
-  "outside sites. Prompt injection can make an agent do that. Turn it on only on your own " +
-  "development machine, with agents and material you trust.";
-
-/** Printed when a local tier change turned the sandbox back on. */
-export const TIER_CHANGE_SANDBOX_ON =
-  "The tier changed, so the sandbox is back on. To run commands without a sandbox again, set " +
-  "tier open and run: capybara-device policy set isolation none";
-
-/** Shown before `set isolation none` takes effect (spec §5.4). */
-export const UNSANDBOXED_RISK_TEXT =
-  "Without a sandbox, agent commands run on this computer as you: they can read and write all " +
-  "your files, use your credentials (SSH keys, cloud accounts, keychain), Docker and any " +
-  "network. Prompt injection can make an agent delete files or send your credentials away. " +
-  "Turn it on only on your own development machine, with agents and material you fully trust. " +
-  "Such commands can also read this program's own credential: if you suspect misuse, run " +
-  "capybara-device logout and log in again.";
-
-/** A change that asks first: its risk text, the prompt, and the refusal without a confirmation. */
-export interface PolicyRisk {
-  risk: string;
-  prompt: string;
-  needsYes: string;
-}
-
-const OPEN_TIER: PolicyRisk = {
-  risk: OPEN_TIER_RISK,
-  prompt: "Let commands on this device reach any address the organization allows? [y/N] ",
-  needsYes: "Nothing changed. To set tier open, run: capybara-device policy set tier open --yes",
-};
-
-const UNSANDBOXED: PolicyRisk = {
-  risk: UNSANDBOXED_RISK_TEXT,
-  prompt: "Run agent commands on this computer without a sandbox? [y/N] ",
-  needsYes:
-    "Nothing changed. To run commands without a sandbox, run: " +
-    "capybara-device policy set isolation none --yes",
-};
-
-/** The risk of a `policy` command line, when it is one of the changes that ask first. */
-export function policyRisk(cmd: Extract<Command, { command: "policy" }>): PolicyRisk | undefined {
-  if (cmd.action !== "set") return undefined;
-  const value = cmd.value.trim().toLowerCase();
-  if (cmd.key === "tier" && value === "open") return OPEN_TIER;
-  if (cmd.key === "isolation" && value === "none") return UNSANDBOXED;
-  return undefined;
-}
-
-/** `set tier open` or `set isolation none` without `--yes`: the changes that ask first. */
-export function needsConfirmation(cmd: Extract<Command, { command: "policy" }>): boolean {
-  return cmd.action === "set" && policyRisk(cmd) !== undefined && cmd.yes !== true;
-}
-
-/**
- * Asks on a terminal before a change that needs it: prints its risk text and the prompt; true
- * only for an answer of `y` or `yes`.
- */
-export async function confirmRisk(
-  cmd: Extract<Command, { command: "policy" }>,
-  deps: { out: (line: string) => void; ask: (question: string) => Promise<string> },
-): Promise<boolean> {
-  const r = policyRisk(cmd);
-  if (r === undefined) return true;
-  deps.out(r.risk);
-  const answer = (await deps.ask(r.prompt)).trim().toLowerCase();
-  return answer === "y" || answer === "yes";
-}
-
-/** What the OS mode does not enforce yet, shown with every `show` and `set`. */
+/** What OS mode does not enforce yet, shown with `show` and with a limits change. */
 export const NOT_ENFORCED_NOTE =
-  "Note: in OS mode cpu and memoryMb are not enforced yet, and allowCredentials is not used: " +
-  "commands get no local credentials.";
+  "Note: in OS mode cpu and memoryMb are not enforced yet; allowCredentials is ignored (auto " +
+  "mode already has the owner's credentials, sandbox mode gets none).";
+
+/** Shown when a Docker-mode device's policy is shown or given allowed domains. */
+export const DOCKER_DOMAIN_NOTE =
+  "Note: this device runs commands in Docker mode, where the mode alone decides network " +
+  "access (auto: the default bridge; sandbox: no network). Allowed domains apply in OS mode's " +
+  "sandbox only.";
 
 function list(value: string): string[] {
   return value
@@ -120,45 +37,6 @@ function ceiling(key: string, value: string): number | null {
     throw new Error(`${key} must be a positive number or none, got "${value}"`);
   }
   return n;
-}
-
-/** Shown when a docker-mode device is given an allowed domain. */
-export const DOCKER_NETWORK_NOTE =
-  "Note: this device runs commands in Docker mode, which cannot limit network access per " +
-  "domain: while any domain is allowed or the tier is open (and the organization allows " +
-  "network), commands reach the whole internet. Use OS mode to allow single domains.";
-
-/** Shown when a Docker-mode device is told to run commands without a sandbox. */
-export const DOCKER_ISOLATION_REFUSED =
-  "This device runs commands in Docker mode, where they always run in a container; " +
-  "isolation none works in OS mode only.";
-
-/** Refusal of `set isolation none` while the local tier is not explicitly `open`. */
-export const ISOLATION_NEEDS_OPEN =
-  "Nothing changed. Running without a sandbox needs tier open set on this device first: " +
-  "capybara-device policy set tier open --yes";
-
-/** A refusal found under the policy lock, reported as a usage refusal (exit 2). */
-class LockedRefusal extends Error {}
-
-/**
- * Why `set isolation none` cannot apply on this machine now (Docker mode, or the local tier is
- * not explicitly `open`), checked before any risk text or question; undefined for every other
- * command line. The tier is checked again under the policy lock when the change is written.
- */
-export function isolationRefusal(
-  cmd: Extract<Command, { command: "policy" }>,
-  stateDir: string,
-): string | undefined {
-  if (cmd.action !== "set" || cmd.key !== "isolation") return undefined;
-  if (cmd.value.trim().toLowerCase() !== "none") return undefined;
-  if (dockerMode(stateDir)) return DOCKER_ISOLATION_REFUSED;
-  try {
-    if (new PolicyStore(stateDir).current().tier !== "open") return ISOLATION_NEEDS_OPEN;
-  } catch {
-    // An unreadable policy file is reported by the command itself.
-  }
-  return undefined;
 }
 
 /** Whether this machine is logged in in Docker mode (false when unknown). */
@@ -211,59 +89,41 @@ function edit(
   return current.filter((x) => !has(values, x));
 }
 
-function tierValue(value: string): SandboxTier | undefined {
-  const v = value.trim().toLowerCase();
-  if (v === "default") return undefined;
-  if (!isSandboxTier(v))
-    throw new Error(`tier must be strict, dev, open or default, got "${value}"`);
-  return v;
-}
-
-/** What `policy show` says the tier gives on this machine (English, one line each). */
-export function describeTier(policy: Policy, facts: TierFacts, proxy: ProxyGuardResult): string[] {
-  const chosen =
-    policy.tier !== undefined
-      ? `${policy.tier} (set on this device; the organization's ceiling may lower it)`
-      : "the organization's default (dev unless the organization changed it)";
-  const lines = [`Tier: ${chosen}.`];
-  const localhost =
-    facts.localhost === "on"
-      ? "commands can listen on local ports and reach this machine's localhost"
-      : facts.localhost === "off-proxy-detected"
-        ? `off: a local proxy was detected (${proxy.reasons.join("; ")}). Commands could ` +
-          "reach past the network allowlist through it. To allow localhost anyway, run: " +
-          "capybara-device policy set localhost allow"
-        : "off";
-  lines.push(`At tier ${facts.effectiveTier} on this machine: localhost ${localhost}.`);
-  const sockets =
-    facts.unixSockets === "roots"
-      ? "allowed under the device's workspace, tmp and socket directories only"
-      : facts.unixSockets === "all-masked"
-        ? "the container's own"
-        : "blocked";
-  lines.push(`Unix sockets: ${sockets}.`);
-  if (facts.effectiveTier !== "strict") {
-    lines.push("Package caches are kept in the device directory's cache folder.");
+/** What `policy show` says the mode gives on this machine (English, one line each). */
+export function describeMode(policy: Policy, runMode: "os" | "docker" = "os"): string[] {
+  if (policy.mode === "auto") {
+    if (runMode === "docker") {
+      return [
+        "Mode: auto. Commands run in the device's container on its default bridge, and the " +
+          "platform's file tools reach any path in the container; the deployment reviews every " +
+          "command and blocks or asks about dangerous ones.",
+      ];
+    }
+    return [
+      "Mode: auto. Commands run as you on this machine, with their files, credentials and " +
+        "network; the deployment reviews every command and blocks or asks about dangerous ones.",
+      "Allowed domains apply in sandbox mode only (capybara-device mode sandbox).",
+    ];
   }
-  if (policy.isolation === "none") {
-    lines.push(
-      "Isolation: none. While the tier is open, commands run directly on this computer as you, " +
-        "without a sandbox. To turn the sandbox back on, run: " +
-        "capybara-device policy set isolation sandbox",
-    );
+  if (runMode === "docker") {
+    return [
+      "Mode: sandbox. Commands run in the device's container with no network; only the " +
+        "workspace, skills and temporary files are writable.",
+    ];
   }
-  return lines;
+  return [
+    "Mode: sandbox. Only the workspace, skills and temporary files are writable; the network " +
+      "reaches the allowed hosts.",
+  ];
 }
 
 /**
- * `policy show` prints the local policy and what its tier gives on this machine;
- * `policy set <key> <value>` replaces one field (`set tier open` and `set isolation none` print
- * their risk and need `--yes` or a confirmation at the prompt); `policy add|remove <key> <value>`
- * adds or removes entries of a list field. `tier default` removes the key (follow the org's
- * default). The machine's user edits this file; the deployment changes it only through the
- * `policy` op, on the device owner's decision and only while `remoteGrants` is `owner`
- * (narrowing always; never `isolation none`). Writes take policy.json.lock, and a running program
- * applies the change at its next command.
+ * `policy show` prints the local policy and what its mode gives on this machine;
+ * `policy set <key> <value>` replaces one field; `policy add|remove <key> <value>` adds or removes
+ * entries of a list field. The mode is set with `capybara-device mode`. The machine's user edits
+ * this file; the deployment changes it only through the `policy` op (narrowing only: hosts and
+ * `mode: "sandbox"`, never auto). Writes take policy.json.lock, and a running program applies the
+ * change at its next command.
  */
 export async function policyCommand(
   cmd: Extract<Command, { command: "policy" }>,
@@ -277,16 +137,12 @@ export async function policyCommand(
     err(`Cannot read ${policyPath(stateDir)}: ${(e as Error).message}`);
     return 1;
   }
+  const docker = dockerMode(stateDir);
   if (cmd.action === "show") {
     const policy = store.current();
     out(JSON.stringify(policy, null, 2));
-    const proxy = await (deps.detectProxy ?? (() => detectLocalProxy()))();
-    const facts = tierFacts(policy, undefined, {
-      ...(deps.platform !== undefined && { platform: deps.platform }),
-      proxyDetected: proxy.detected,
-      mode: dockerMode(stateDir) ? "docker" : "os",
-    });
-    for (const l of describeTier(policy, facts, proxy)) out(l);
+    for (const l of describeMode(policy, docker ? "docker" : "os")) out(l);
+    if (docker) out(DOCKER_DOMAIN_NOTE);
     out(NOT_ENFORCED_NOTE);
     return 0;
   }
@@ -312,69 +168,19 @@ export async function policyCommand(
           change = (p) => ({ ...p, [key]: next });
           break;
         }
-        case "tier": {
-          const next = tierValue(value);
-          change = (p, say) => {
-            const { tier: old, ...rest } = p;
-            // Any tier change turns the sandbox back on (spec §5.4: running without one starts
-            // only with a confirmed set isolation none, never by a later tier change).
-            const isolation = p.isolation === "none" && next !== old ? "sandbox" : p.isolation;
-            if (isolation !== p.isolation) say(TIER_CHANGE_SANDBOX_ON);
-            return next === undefined ? { ...rest, isolation } : { ...rest, tier: next, isolation };
-          };
-          break;
-        }
-        case "isolation": {
-          const v = value.trim().toLowerCase();
-          if (v !== "sandbox" && v !== "none") {
-            throw new Error(`isolation must be sandbox or none, got "${value}"`);
-          }
-          if (v === "none" && dockerMode(stateDir)) {
-            err(DOCKER_ISOLATION_REFUSED);
-            return 2;
-          }
-          // Only an explicit local tier open: the org's default can change under the device.
-          if (v === "none" && store.current().tier !== "open") {
-            err(ISOLATION_NEEDS_OPEN);
-            return 2;
-          }
-          change = (p) => {
-            // Judged again on the file as it is under the lock (the tier may have changed).
-            if (v === "none" && p.tier !== "open") throw new LockedRefusal(ISOLATION_NEEDS_OPEN);
-            return { ...p, isolation: v };
-          };
-          break;
-        }
-        case "localhost": {
-          const v = value.trim().toLowerCase();
-          if (v !== "auto" && v !== "allow") {
-            throw new Error(`localhost must be auto or allow, got "${value}"`);
-          }
-          change = (p) => ({ ...p, localhost: v });
-          break;
-        }
-        case "remoteGrants": {
-          if (value !== "owner" && value !== "off") {
-            throw new Error(`remoteGrants must be owner or off, got "${value}"`);
-          }
-          change = (p) => ({ ...p, remoteGrants: value });
-          break;
-        }
+        case "mode":
+          throw new Error("the mode is set with: capybara-device mode auto|sandbox");
         case "network":
+        case "tier":
+        case "isolation":
+        case "localhost":
+        case "remoteGrants":
           throw new Error(
-            "network is replaced by tier: use capybara-device policy set tier strict|dev|open",
+            `"${key}" is gone: the mode is set with capybara-device mode auto|sandbox; ` +
+              `allowedDomains with capybara-device policy add allowedDomains <host>`,
           );
         default:
           throw new Error(`unknown policy key "${key}"; one of ${KEYS.join(", ")}`);
-      }
-      // Widening to tier open or isolation none needs a confirmation; narrowing never does.
-      const risk = policyRisk(cmd);
-      if (risk !== undefined && deps.confirmed !== true) {
-        out(risk.risk);
-        if (cmd.yes !== true) {
-          err(risk.needsYes);
-          return 2;
-        }
       }
     } else {
       if (!(LIST_KEYS as readonly string[]).includes(key)) {
@@ -400,51 +206,20 @@ export async function policyCommand(
   try {
     next = store.update((p) => change(p, (l) => lines.push(l)));
   } catch (e) {
-    if (e instanceof LockedRefusal) {
-      err(e.message);
-      return 2;
-    }
     err(`Cannot change ${policyPath(stateDir)}: ${(e as Error).message}`);
     return 1;
   }
   for (const l of lines) out(l);
   out(`Saved ${policyPath(stateDir)}. A running capybara-device applies it at the next command.`);
-  const docker = dockerMode(stateDir);
-  if (key === "allowedDomains" && action !== "remove" && docker) {
-    if (next.allowedDomains.length > 0) out(DOCKER_NETWORK_NOTE);
-  }
-  if (key === "tier") {
+  if (key === "allowedDomains") {
     out(
-      next.tier === undefined
-        ? "This device now follows the organization's default tier."
-        : `This device now asks for tier ${next.tier}; the organization's ceiling may lower it.`,
-    );
-    if (next.tier === "open" && docker) out(DOCKER_NETWORK_NOTE);
-  }
-  if (key === "isolation") {
-    out(
-      next.isolation === "none"
-        ? "While the tier is open, commands run on this computer without a sandbox."
-        : "Commands run in the sandbox.",
+      docker
+        ? DOCKER_DOMAIN_NOTE
+        : next.mode === "auto"
+          ? "Allowed domains apply in sandbox mode only; switch with: capybara-device mode sandbox"
+          : "Sandboxed commands may reach these domains when the organization allows them too.",
     );
   }
-  if (key === "localhost") {
-    out(
-      next.localhost === "allow"
-        ? "At tier dev or open, commands can reach this machine's localhost even when a local " +
-            "proxy runs (it may forward past the network allowlist)."
-        : "At tier dev or open, commands reach localhost unless a local proxy is detected.",
-    );
-  }
-  if (key === "remoteGrants") {
-    out(
-      value === "owner"
-        ? "The device owner can now widen this device's network from the web or a chat card."
-        : "The deployment can no longer widen this device's network; it can still narrow it.",
-    );
-  }
-  if (!["allowedDomains", "tier", "isolation", "localhost", "remoteGrants"].includes(key)) {
-    out(NOT_ENFORCED_NOTE);
-  }
+  if (key === "cpu" || key === "memoryMb" || key === "allowCredentials") out(NOT_ENFORCED_NOTE);
   return 0;
 }

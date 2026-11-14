@@ -131,7 +131,8 @@ export function narrowPending(stored: readonly string[] | undefined, failed: rea
  * Handlers must be idempotent by `eventId` (`<conversationId>/<seq>`, or a `model_usage` row id).
  * Nothing is written to the event log (never model-visible). Compaction calls log usage too (`purpose: "compaction"`) and are reported,
  * as are conversation title calls (`purpose: "title"`, no run: `runId` is "") and `WebFetch`
- * extraction calls (`purpose: "web_fetch"`).
+ * extraction calls (`purpose: "web_fetch"`). Command-review classifier calls log usage with
+ * `purpose: "review"` and the reviewed tool call's `callId`.
  * Single-step eval replays and judge requests log no usage: not reported (M7).
  * - **Model usage outside conversations** (spec B §5.4): each `ctx.models.embed` call writes a
  *   `model_usage` row and owes job `usage-model-<rowId>` with it; the payload
@@ -332,7 +333,7 @@ export class UsageReporter {
       .executeTakeFirst();
     if (row?.type !== "usage") return null;
     const p = row.payload as {
-      purpose?: "compaction" | "title" | "web_fetch";
+      purpose?: "compaction" | "title" | "web_fetch" | "review";
       provider: string;
       model: string;
       inputTokens: number;

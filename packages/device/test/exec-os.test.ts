@@ -147,10 +147,8 @@ const LIMITS: SandboxLimits = {
   cpu: 1,
   memoryMb: 512,
   diskMb: 1024,
-  egress: "none",
-  allowHosts: [],
-  tier: "strict",
-  devHosts: [],
+  mode: "sandbox",
+  network: { kind: "allowlist", hosts: [] },
 };
 
 function execArgs(command: string, over: Partial<DeviceExecArgs> = {}): DeviceExecArgs {
@@ -553,15 +551,17 @@ describe.skipIf(!availability.ok)(
       const curl = (host: string) =>
         `curl -sS --max-time 10 -o /dev/null -w '%{http_code}' https://${host}/`;
 
-      it("egress none denies every host", async () => {
+      it("an empty allowlist denies every host", async () => {
         const r = await ex.exec(execArgs(curl("one.example.com")), never);
         expect(r.exitCode).not.toBe(0);
         expect(r.stderr).toMatch(/403/);
       });
 
-      it("open egress still denies a host outside the local policy", async () => {
+      it("an open-public ceiling still denies a host outside the local policy", async () => {
         const r = await ex.exec(
-          execArgs(curl("github.com"), { limits: { ...LIMITS, egress: "open" } }),
+          execArgs(curl("github.com"), {
+            limits: { ...LIMITS, network: { kind: "open-public", hosts: [] } },
+          }),
           never,
         );
         expect(r.exitCode).not.toBe(0);
@@ -570,7 +570,9 @@ describe.skipIf(!availability.ok)(
 
       it("a host the device does not allow gets the device trailer", async () => {
         const r = await ex.exec(
-          execArgs(curl("github.com"), { limits: { ...LIMITS, egress: "open" } }),
+          execArgs(curl("github.com"), {
+            limits: { ...LIMITS, network: { kind: "open-public", hosts: [] } },
+          }),
           never,
         );
         expect(r.stderr).toContain(
@@ -590,7 +592,9 @@ describe.skipIf(!availability.ok)(
       });
 
       it("a policy change applies at the next command, without a restart", async () => {
-        const open = { limits: { ...LIMITS, egress: "open" as const } };
+        const open = {
+          limits: { ...LIMITS, network: { kind: "open-public" as const, hosts: [] } },
+        };
         // `.invalid` never resolves: once allowed, the proxy fails the lookup, connecting nowhere.
         const before = await ex.exec(execArgs(curl("allowed.invalid"), open), never);
         expect(before.stderr).toContain("- allowed.invalid:443: not in this device's allowed");
@@ -607,8 +611,7 @@ describe.skipIf(!availability.ok)(
       it("two concurrent commands each get only their own allow list", async () => {
         const allow = (h: string): SandboxLimits => ({
           ...LIMITS,
-          egress: "allowlist",
-          allowHosts: [h],
+          network: { kind: "allowlist", hosts: [h] },
         });
         const [a, b] = await Promise.all([
           ex.exec(
@@ -653,122 +656,5 @@ describe.skipIf(!availability.ok || process.platform !== "linux")(
         async () => (await findMarked((v) => v.startsWith(`${ex.markerOf("ns")}.`))).length === 0,
       );
     }, 20_000);
-  },
-);
-
-describe.skipIf(!availability.ok || process.platform !== "darwin")(
-  "OsExecutor on macOS: tier dev",
-  () => {
-    let base: string;
-    let ex: OsExecutor;
-    const never = new AbortController().signal;
-    const DEV: SandboxLimits = { ...LIMITS, tier: "dev", defaultTier: "dev" };
-    const node = `'${process.execPath}'`;
-    // Listens on `addr` (a port 0 on loopback, or a socket path), connects back, prints the reply.
-    const echo = (addr: string) =>
-      `${node} -e "const n=require('net');const s=n.createServer(c=>c.end('hi')).on('error',e=>{console.log('ERR '+e.code);process.exit(0)});s.listen(${addr},()=>{const a=s.address();n.connect(typeof a==='string'?a:a.port,'127.0.0.1').on('data',d=>{console.log(String(d));process.exit(0)}).on('error',e=>{console.log('ERR '+e.code);process.exit(0)})})"`;
-
-    beforeAll(async () => {
-      base = tmp("device-dev-");
-      mkdirSync(join(base, "env"));
-      mkdirSync(join(base, "s"));
-      ex = await createOsExecutor({
-        dir: join(base, "env"),
-        policy: () => DEFAULT_POLICY,
-        // Not the real /private/tmp: a test leaves nothing behind there.
-        socketBase: join(base, "s"),
-        detectProxy: async () => ({ detected: false, reasons: [] }),
-      });
-      await ex.ensureRoot();
-    }, 60_000);
-    afterAll(async () => {
-      await ex?.dispose();
-      if (base) rmSync(base, { recursive: true, force: true });
-    });
-
-    it("TMPDIR is the short socket directory, where a unix socket works", async () => {
-      const r = await ex.exec(execArgs('printf "%s" "$TMPDIR"', { limits: DEV }), never);
-      expect(r.stdout).toMatch(new RegExp(`^${join(base, "s")}/cap-[0-9a-f]{8}$`));
-      const s = await ex.exec(
-        execArgs(echo(`process.env.TMPDIR+'/s.sock'`), { limits: DEV }),
-        never,
-      );
-      expect(s.stdout.trim()).toBe("hi");
-    }, 30_000);
-
-    it("a local server listens and answers on loopback; strict refuses it", async () => {
-      const r = await ex.exec(execArgs(echo("0,'127.0.0.1'"), { limits: DEV }), never);
-      expect(r.stdout.trim()).toBe("hi");
-      const strict = await ex.exec(execArgs(echo("0,'127.0.0.1'")), never);
-      expect(strict.stdout.trim()).toMatch(/^ERR/);
-    }, 30_000);
-
-    it("package caches are writable under the device's cache folder", async () => {
-      const r = await ex.exec(
-        execArgs('mkdir -p "$npm_config_cache/x" && echo ok > "$npm_config_cache/x/f" && echo ok', {
-          limits: DEV,
-        }),
-        never,
-      );
-      expect(r.stdout.trim()).toBe("ok");
-      expect(readFileSync(join(base, "env", "cache", "npm", "x", "f"), "utf8")).toBe("ok\n");
-    }, 30_000);
-
-    it("git works at dev (init, config, commit); .git/hooks stays unwritable", async () => {
-      const r = await ex.exec(
-        execArgs(
-          "rm -rf repo && git init -q repo && cd repo && git config user.name x && " +
-            "git config user.email x@example.com && git commit -q --allow-empty -m t && " +
-            "git remote add origin https://example.com/r.git && git log --format=%s && ls .git/hooks 2>/dev/null | wc -l",
-          { limits: DEV },
-        ),
-        never,
-      );
-      // /usr/bin/git is an xcrun shim whose cache lives outside the sandbox's writable paths
-      const stderr = r.stderr
-        .split("\n")
-        .filter((l) => l !== "" && !l.includes("xcrun_db"))
-        .join("\n");
-      expect(stderr).toBe("");
-      expect(r.exitCode).toBe(0);
-      // the commit's subject, and no sample hooks copied (the device's empty template)
-      expect(r.stdout.split("\n").map((l) => l.trim())).toEqual(["t", "0", ""]);
-      const hook = await ex.exec(
-        execArgs("mkdir -p repo/.git/hooks; echo 'echo pwned' > repo/.git/hooks/pre-commit", {
-          limits: DEV,
-        }),
-        never,
-      );
-      expect(hook.exitCode).not.toBe(0);
-      expect(existsSync(join(ex.roots.workspace, "repo/.git/hooks/pre-commit"))).toBe(false);
-      // a clone writes its config (origin, branch tracking) too
-      const clone = await ex.exec(
-        execArgs("rm -rf copy && git clone -q repo copy && git -C copy config remote.origin.url", {
-          limits: DEV,
-        }),
-        never,
-      );
-      expect(clone.exitCode).toBe(0);
-      expect(clone.stdout.trim()).toMatch(/\/repo$/);
-      // a hook path through a nested repository is denied too
-      const nested = await ex.exec(
-        execArgs("mkdir -p a/b/.git/hooks 2>/dev/null; echo x > a/b/.git/hooks/post-checkout", {
-          limits: DEV,
-        }),
-        never,
-      );
-      expect(nested.exitCode).not.toBe(0);
-    }, 30_000);
-
-    it("strict keeps .git/config unwritable", async () => {
-      const r = await ex.exec(
-        execArgs("rm -rf srepo && mkdir -p srepo/.git && echo '[core]' > srepo/.git/config"),
-        never,
-      );
-      expect(r.exitCode).not.toBe(0);
-      expect(existsSync(join(ex.roots.workspace, "srepo/.git/config"))).toBe(false);
-      const init = await ex.exec(execArgs("rm -rf srepo2 && git init -q srepo2"), never);
-      expect(init.exitCode).not.toBe(0);
-    }, 30_000);
   },
 );

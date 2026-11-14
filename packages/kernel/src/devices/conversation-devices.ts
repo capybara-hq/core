@@ -1,9 +1,12 @@
+import { DEFAULT_SANDBOX_ROOTS } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
+import { sql } from "kysely";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
-import type { DeviceSandboxLevel } from "../runtime/context/device-paths.js";
+import type { DeviceModeLevel } from "../runtime/context/device-paths.js";
+import type { SandboxMode } from "../sandbox/modes.js";
 import { isInternalProvider, SandboxProviders } from "../sandbox/providers.js";
 import { deviceNotFound, sandboxUnavailable } from "../sandbox/sandbox.service.js";
 import { DeviceAccess } from "./access.js";
@@ -28,6 +31,18 @@ export interface NewConversationDevice {
   im?: boolean;
 }
 
+/** What the command review needs to know about a call's device (auto mode spec §5.1, §5.4). */
+export interface CommandReviewFacts {
+  deviceId: string;
+  deviceName: string;
+  /** The device owner: a run the owner started itself is attended (spec §3, decision 3). */
+  ownerAccountId: string;
+  mode: SandboxMode;
+  allowedMode: SandboxMode;
+  /** The workspace root commands start in; absent: no device bound (the review is skipped). */
+  workspace: string | undefined;
+}
+
 /**
  * Which device a conversation works in (spec 2026-11-07-environments-design §4.1 items 1, 3;
  * §4.2 items 8, 9, 12). A conversation is bound once, to a device of its owner
@@ -46,20 +61,95 @@ export class ConversationDevices {
       Partial<Pick<SandboxProviders, "forName">>,
     @Inject(DeviceAccess) private readonly access: Pick<DeviceAccess, "usable">,
     @Inject(DevicesService)
-    private readonly devices: Pick<DevicesService, "ensureDefault" | "sandboxLevel">,
+    private readonly devices: Pick<DevicesService, "ensureDefault" | "modeLevel">,
   ) {}
 
   /**
-   * The sandbox level a call in the device runs at now ({@link DevicesService.sandboxLevel}),
-   * recorded for the model in `device_paths` (sandbox dev tiers spec §11.5); `runId`: the calling
-   * run, whose scheduled-run cap applies.
+   * The mode and network a call in the device runs at now ({@link DevicesService.modeLevel}),
+   * recorded for the model in `device_paths` (auto mode spec §4.2).
    */
-  sandboxLevel(
+  modeLevel(orgId: string, deviceId: string): Promise<DeviceModeLevel | null> {
+    return this.devices.modeLevel(orgId, deviceId);
+  }
+
+  /**
+   * The facts the command review reads for a call in the conversation tree rooted at
+   * `rootConversationId` (auto mode spec §5.1): the device `forTool` would enter, its mode and
+   * ceiling, its owner and the workspace root. The workspace is the latest `device_paths` roots
+   * recorded in `conversationId` (the calling conversation: a sub-agent records its own), else the
+   * root's, else the machine's reported roots, else the default. Null when no device can be
+   * resolved (none bound, the owner may no longer use it, no provider): there is nothing to review,
+   * and the tool call fails on its own.
+   */
+  async reviewFacts(
     orgId: string,
-    deviceId: string,
-    runId?: string,
-  ): Promise<DeviceSandboxLevel | null> {
-    return this.devices.sandboxLevel(orgId, deviceId, runId);
+    rootConversationId: string,
+    conversationId: string = rootConversationId,
+  ): Promise<CommandReviewFacts | null> {
+    const conv = await this.db
+      .selectFrom("conversations")
+      .select(["account_id", "device_id"])
+      .where("id", "=", rootConversationId)
+      .where("org_id", "=", orgId)
+      .executeTakeFirst();
+    if (!conv) return null;
+    let deviceId: string;
+    try {
+      deviceId = await this.forTool(orgId, rootConversationId);
+    } catch (e) {
+      // the tool reports the reason itself (nothing to review)
+      if (e instanceof ApiError) return null;
+      throw e;
+    }
+    const [device, level] = await Promise.all([
+      this.db
+        .selectFrom("devices")
+        .select("name")
+        .where("id", "=", deviceId)
+        .where("org_id", "=", orgId)
+        .executeTakeFirst(),
+      this.modeLevel(orgId, deviceId),
+    ]);
+    if (device === undefined) return null;
+    const workspace =
+      (await this.recordedWorkspace(conversationId)) ??
+      (conversationId === rootConversationId
+        ? null
+        : await this.recordedWorkspace(rootConversationId)) ??
+      (await this.machineWorkspace(deviceId)) ??
+      DEFAULT_SANDBOX_ROOTS.workspace;
+    return {
+      deviceId,
+      deviceName: device.name ?? deviceId,
+      ownerAccountId: conv.account_id,
+      mode: level?.mode ?? "sandbox",
+      allowedMode: level?.allowedMode ?? "sandbox",
+      workspace,
+    };
+  }
+
+  /** The workspace root of a conversation's latest `device_paths` event, or null. */
+  private async recordedWorkspace(conversationId: string): Promise<string | null> {
+    const row = await this.db
+      .selectFrom("conversation_events")
+      .select(sql<string | null>`payload->'roots'->>'workspace'`.as("workspace"))
+      .where("conversation_id", "=", conversationId)
+      .where("type", "=", "device_paths")
+      .orderBy("seq", "desc")
+      .limit(1)
+      .executeTakeFirst();
+    return row?.workspace ?? null;
+  }
+
+  /** The workspace root the device's active machine last reported, or null (cloud: none). */
+  private async machineWorkspace(deviceId: string): Promise<string | null> {
+    const row = await this.db
+      .selectFrom("device_machines")
+      .select(sql<string | null>`roots->>'workspace'`.as("workspace"))
+      .where("device_id", "=", deviceId)
+      .where("revoked_at", "is", null)
+      .executeTakeFirst();
+    return row?.workspace ?? null;
   }
 
   /**
