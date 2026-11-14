@@ -867,24 +867,24 @@ describe("runModelStep", () => {
       });
     });
 
-    it("hard fit guard: a small window clamps the output cap, then trims, without overflowing", async () => {
-      // W 2000, requested O 4096, R 500: the cap is clamped to the room left after the input, the
-      // reserve to what the clamp leaves, and the oversized latest turn is truncated
-      const model = stubInfo("capped", { contextWindow: 2000, maxOutputTokens: 4096 });
+    it("hard fit guard: a request over the window is trimmed and sent with the full output cap", async () => {
+      // W 3000, O 1000, R 500 -> target 1500; the ~4000-token latest turn is over W itself. The cap
+      // is clamped after the plan, from the post-fit input, so it stays min(O, W - 1) = 1000
+      // (clamping from the pre-trim estimate used to send the trimmed request with a cap of 1)
+      const model = stubInfo("capped", { contextWindow: 3000, maxOutputTokens: 1000 });
       stubImpl = stub([model], () => "ok");
       const agent = agentWith({ model: { provider: "stub", model: "capped" } });
       await withSettings({ enabled: false, reserveTokens: 500 }, async () => {
-        await say("x".repeat(4000));
+        await say("x".repeat(16_000));
         const r = await step({ agent });
         expect(r.content).toEqual([{ type: "text", text: "ok" }]);
         const sent = (stubImpl as Stub).calls.at(-1) as ModelRequest;
         const input = estimateTokens(sent.messages, sent.system, sent.tools);
-        expect(sent.maxOutputTokens).toBeGreaterThan(0);
-        expect(sent.maxOutputTokens).toBeLessThan(4096);
-        expect(input + sent.maxOutputTokens).toBeLessThanOrEqual(2000);
-        // the clamped cap is what was recorded, and the trim is in the log
+        expect(sent.maxOutputTokens).toBe(1000);
+        expect(input + sent.maxOutputTokens).toBeLessThanOrEqual(3000 - 500);
+        // the sent cap is what was recorded, and the trim is in the log
         const [call] = await ofType("model_call");
-        expect(call?.payload.request.maxOutputTokens).toBe(sent.maxOutputTokens);
+        expect(call?.payload.request.maxOutputTokens).toBe(1000);
         expect(call?.payload.request.fit?.truncated).toEqual([
           {
             messageIndex: 0,
@@ -1351,6 +1351,48 @@ describe("runModelStep", () => {
           expect(calls[2]?.payload.request.estimatedInputTokens).toBeLessThan(
             calls[0]?.payload.request.estimatedInputTokens as number,
           );
+        });
+      });
+
+      it("a reactive trim uses the most aggressive target it reaches (80% when 70% is out of reach)", async () => {
+        // W 20000, O 100, R 0: the reactive targets are 13900 (70%), 15900 (80%), 17900 (90%). The
+        // ~14500-token system prompt alone is over the 70% target, so only the 80% plan reaches its
+        // target; the unreachable 70% plan would drop the whole history for nothing.
+        let calls = 0;
+        stubImpl = stub(
+          [stubInfo("aggressive", { contextWindow: 20_000, maxOutputTokens: 100 })],
+          (req) => {
+            if (req.system.some((x) => x.text.includes(COMPACTION_MARKER))) return "too short";
+            calls++;
+            if (calls <= 2) throw new ModelError("context_overflow", "estimate said it fit");
+            return "trimmed answer";
+          },
+        );
+        for (let i = 0; i < 10; i++) {
+          await say(filler(i));
+          await answer(filler(i));
+        }
+        await say("go");
+        const agent = agentWith({
+          instructions: "x".repeat(4 * 14_500),
+          model: { provider: "stub", model: "aggressive" },
+        });
+        await withSettings({ enabled: false, reserveTokens: 0 }, async () => {
+          expect((await step({ agent })).content).toEqual([
+            { type: "text", text: "trimmed answer" },
+          ]);
+          const rows = await ofType("model_call");
+          // initial request, the (failed) forced-compaction retry, then the trim retry
+          expect(rows).toHaveLength(3);
+          const trim = rows[2]?.payload.request;
+          const dropped = trim?.fit?.droppedMessageIndexes ?? [];
+          expect(dropped.length).toBeGreaterThan(0);
+          // the 80% plan: at or below its target, and part of the history is still sent
+          expect(trim?.estimatedInputTokens).toBeLessThanOrEqual(15_900);
+          expect(dropped.length).toBeLessThan(20);
+          const sent = (stubImpl as Stub).calls.at(-1) as ModelRequest;
+          expect(JSON.stringify(sent.messages)).toContain("turn 9 ");
+          expect(trim?.maxOutputTokens).toBe(100);
         });
       });
 

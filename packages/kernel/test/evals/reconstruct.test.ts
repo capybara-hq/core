@@ -1951,10 +1951,11 @@ describe("reconstructRequest：基线零漂移", () => {
       expect(calls).toHaveLength(5);
       // an over-window request is refused, not summarized, and the step trims instead
       expect(events.filter((e) => e.type === "compaction_failed").length).toBeGreaterThan(0);
-      // the knob is recorded as a parameter and the clamp lowered the cap below it
+      // the knob is recorded as a parameter; the cap is clamped after the trim, so the trimmed
+      // request keeps the knob's full cap (it used to be clamped from the pre-trim input to 1)
       const last = calls[4];
       expect(last?.payload.request.params).toEqual({ maxOutputTokens: 4000 });
-      expect(last?.payload.request.maxOutputTokens).toBe(1);
+      expect(last?.payload.request.maxOutputTokens).toBe(4000);
       // the latest turn fits once the older messages are gone: a trim, no truncation note
       const fit = last?.payload.request.fit;
       expect(fit?.droppedMessageIndexes.length).toBeGreaterThan(0);

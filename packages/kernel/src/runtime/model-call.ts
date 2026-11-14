@@ -58,11 +58,11 @@ import {
 import {
   applyFit,
   clampOutput,
-  effectiveReserve,
   estimateAfterFit,
   type FitPlan,
-  fitTarget,
+  fitTargetFor,
   planFit,
+  planSqueezedFit,
 } from "./context/fit.js";
 import { guardToolPairs } from "./context/pairing.js";
 import { TOOLS_UNSUPPORTED_REMINDER, turnLimitReminder } from "./context/reminders.js";
@@ -1612,33 +1612,46 @@ async function ladder(
           tools,
           wrapUp,
         );
-        // the hard fit guard (context compaction spec §4.3): the output cap is first clamped to what
-        // the window leaves after the input, the reserve to what the clamped cap leaves, and a request
-        // over the resulting target is trimmed deterministically. The plan is recorded and replayed
-        // byte-for-byte; a request the system prompt, tools and latest turn cannot bring under the
-        // target fails before any provider call.
-        request.maxOutputTokens = clampOutput(
-          info.contextWindow,
-          request.maxOutputTokens,
+        // the hard fit guard (context compaction spec §4.3): the target is `W - O1 - R_eff` with the
+        // output cap bounded by the window only (never by the input), a request over it is trimmed
+        // deterministically, and only then is the cap clamped to what the window leaves after the
+        // input actually sent (a plan that reached its target keeps O1). The plan is recorded and
+        // replayed byte-for-byte; a request the system prompt, tools and latest turn cannot bring
+        // under the target fails before any provider call.
+        const fitInput = {
+          events: evs,
+          request,
+          model: info,
+          maxOutputTokens: request.maxOutputTokens,
+          reserveTokens: compaction.reserveTokens,
           estimate,
-        );
-        const reserve = effectiveReserve(
+        };
+        const bound = fitTargetFor(
           info.contextWindow,
           request.maxOutputTokens,
           compaction.reserveTokens,
         );
-        const target = fitTarget(info.contextWindow, request.maxOutputTokens, reserve);
-        const planned = trimForAttempt
-          ? reactiveTrimPlan(evs, request, info, request.maxOutputTokens, reserve, estimate)
-          : planFit({
-              events: evs,
+        const output = bound.output;
+        let target = bound.target;
+        let planned = trimForAttempt
+          ? reactiveTrimPlan(
+              evs,
               request,
-              model: info,
-              maxOutputTokens: request.maxOutputTokens,
-              reserveTokens: reserve,
+              info,
+              request.maxOutputTokens,
+              compaction.reserveTokens,
               estimate,
-            });
-        let sentRequest = request;
+            )
+          : planFit(fitInput);
+        if (
+          !trimForAttempt &&
+          planned !== null &&
+          estimateAfterFit(request, estimate, planned) > target
+        ) {
+          // the target is out of reach (a window about the size of the output cap): plan against
+          // the output the pre-trim input leaves instead; the cap sent is still clamped after it
+          ({ plan: planned, target } = planSqueezedFit(fitInput));
+        }
         let sentEstimate = estimate;
         if (planned !== null) {
           const after = estimateAfterFit(request, estimate, planned);
@@ -1647,9 +1660,11 @@ async function ladder(
           if (!trimForAttempt && after > target) {
             throw new RunError("run.context_too_large", contextTooLargeText(info, target, after));
           }
-          sentRequest = applyFit(request, planned);
           sentEstimate = after;
         }
+        // O' = clamp(O1, 1, W - inputAfterFit): recorded as the request's maxOutputTokens
+        request.maxOutputTokens = clampOutput(info.contextWindow, output, sentEstimate);
+        const sentRequest = planned === null ? request : applyFit(request, planned);
         sentMedia = (meta.media ?? []).flatMap((m) =>
           m.outcome === "bytes" ? [m.attachmentId] : [],
         );
@@ -1893,12 +1908,13 @@ async function ladder(
 }
 
 /**
- * The deterministic fit plan for a reactive trim (context compaction spec §4.3 point 5 / §4.4): the
- * request is trimmed to fit 70%, then 80%, then 90% of the model's window, applying the first target
- * a plan actually reaches. Most aggressive first: the provider rejected a request the estimate
- * thought fit, so the retry must really shrink it, not leave the optimistic request unchanged.
- * Returns null only when the request already fits every target (nothing to trim). The plan is
- * ordinary and replays byte-for-byte like any other.
+ * The deterministic fit plan for a reactive trim (context compaction spec §4.3 point 6 / §4.4): the
+ * plan for the most aggressive of 70%, 80% and 90% of the model's window whose target the plan
+ * actually reaches (its estimate after the plan at or below that target). The provider rejected a
+ * request the estimate thought fit, so the retry must really shrink it. When no target is reached,
+ * the 70% plan (the most trimming possible) is sent. A target the request already fits without a
+ * plan is no trim at all, so it is passed over. Returns null only when the request already fits
+ * every target (nothing to trim). The plan is ordinary and replays byte-for-byte like any other.
  */
 function reactiveTrimPlan(
   events: ConversationEvent[],
@@ -1908,6 +1924,7 @@ function reactiveTrimPlan(
   reserveTokens: number,
   estimate: number,
 ): FitPlan | null {
+  let mostTrimming: FitPlan | null = null;
   for (let i = REACTIVE_TRIM_FACTORS.length - 1; i >= 0; i--) {
     const window = Math.max(
       1,
@@ -1921,9 +1938,12 @@ function reactiveTrimPlan(
       reserveTokens,
       estimate,
     });
-    if (plan !== null) return plan;
+    if (plan === null) continue;
+    const { target } = fitTargetFor(window, maxOutputTokens, reserveTokens);
+    if (estimateAfterFit(request, estimate, plan) <= target) return plan;
+    mostTrimming ??= plan;
   }
-  return null;
+  return mostTrimming;
 }
 
 /** 不可重试、且可能由请求里的媒体引起的失败：带了媒体字节时写 `media_excluded`（Ruling M8）。 */
