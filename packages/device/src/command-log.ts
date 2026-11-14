@@ -1,6 +1,6 @@
 import { appendFileSync, mkdirSync, renameSync, statSync } from "node:fs";
 import { join } from "node:path";
-import type { SandboxTier } from "@capybara-hq/plugin-sdk";
+import type { SandboxMode } from "./state.js";
 
 export const COMMAND_LOG_MAX_BYTES = 10 * 1024 * 1024;
 
@@ -10,10 +10,8 @@ export interface CommandLogEntry {
   tag: string | null;
   actor: { accountId: string } | null;
   exitCode: number | null;
-  /** An exec's tier (the owner's choice cut to the org's ceiling). */
-  tier?: SandboxTier;
-  /** An exec's isolation: `none` = it ran (or was refused for running) without a sandbox. */
-  isolation?: "sandbox" | "none";
+  /** An exec's mode: auto (no OS sandbox) or sandbox. */
+  mode?: SandboxMode;
   /**
    * An audit line: a policy change from the deployment (`policy add a.com by <name> (<id>) via
    * web, approval <id>`) or the grants an exec was given (`grants run <id> by <id>: a.com`).

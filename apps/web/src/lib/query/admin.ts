@@ -152,10 +152,10 @@ export const settingsChangeKeys = (patch: DeploymentSettingsPatch): (readonly un
 };
 
 /**
- * After a change of the platform's sandbox levels: every cached org's settings (the platform's
- * levels ride on them) and devices (their effective level) are stale.
+ * After a change of the platform's auto-mode switch: every cached org's settings (the platform's
+ * answer rides on them) and devices (their allowed and effective mode) are stale.
  */
-export function invalidateSandboxTiers(qc: QueryClient): Promise<void> {
+export function invalidateDeviceModes(qc: QueryClient): Promise<void> {
   const under = (k: readonly unknown[], prefix: readonly unknown[]) =>
     prefix.every((p, i) => k[i] === p);
   return qc.invalidateQueries({
@@ -165,6 +165,19 @@ export function invalidateSandboxTiers(qc: QueryClient): Promise<void> {
       (under(k, keys.org(k[1]).orgSettings()) ||
         under(k, keys.org(k[1]).devices()) ||
         under(k, keys.org(k[1]).device(String(k[3])))),
+  });
+}
+
+/**
+ * After a change of the platform's attribution defaults: every cached org's settings are stale
+ * (the agent page shows the defaults in its attribution section), like the sandbox levels.
+ */
+export function invalidateAttribution(qc: QueryClient): Promise<void> {
+  const under = (k: readonly unknown[], prefix: readonly unknown[]) =>
+    prefix.every((p, i) => k[i] === p);
+  return qc.invalidateQueries({
+    predicate: ({ queryKey: k }) =>
+      k[0] === "org" && typeof k[1] === "string" && under(k, keys.org(k[1]).orgSettings()),
   });
 }
 

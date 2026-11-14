@@ -980,6 +980,11 @@ describe("reconstructRequest：基线零漂移", () => {
           date: "2026-11-08",
           timeZone: "Asia/Shanghai",
           locale: "zh",
+          attribution: {
+            commit: "Co-Authored-By: Capybara <noreply@capybarahq.com>",
+            pr: "🤖 Generated with [Capybara](https://github.com/capybara-hq/core)",
+            sessionUrl: null,
+          },
         },
         { agent: { name: "Grant 2", description: "Answers HR questions." } },
         { date: "2026-11-09" },
@@ -1820,7 +1825,7 @@ describe("reconstructRequest: UI refresh B tool views", () => {
       },
     );
     const conv = await createConv(owner, orgId, agentId);
-    const bash = { command: "echo hi && exit 3", description: "Greet and fail" };
+    const bash = { command: "echo hi && false", description: "Greet and fail" };
     await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(bash)}`);
     await waitForTerminal(db, conv, 1, 30_000);
     const write = { file_path: "/workspace/n.txt", content: "a\nb\n" };
@@ -1920,8 +1925,8 @@ describe("reconstructRequest: UI refresh B tool views", () => {
   });
 });
 
-describe("reconstructRequest: sandbox level (sandbox dev tiers spec §11.5)", () => {
-  it("a device whose tier changes between runs: two device_paths lines, each in the requests, zero drift", async () => {
+describe("reconstructRequest: the device mode (auto mode spec §4.2)", () => {
+  it("a device narrowed between runs: two device_paths lines, each in the requests, zero drift", async () => {
     reset();
     const agentId = await createAgent(
       { provider: "model-fake", model: "fake-1" },
@@ -1939,19 +1944,46 @@ describe("reconstructRequest: sandbox level (sandbox dev tiers spec §11.5)", ()
     const patched = await owner({
       method: "PATCH",
       url: `/api/v1/orgs/${orgId}/devices/${deviceId}`,
-      payload: { tier: "strict" },
+      payload: { mode: "sandbox" },
     });
     expect(patched.statusCode, patched.body).toBe(200);
     const again = { command: "echo two", description: "Two" };
     await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(again)}`);
     await waitForTerminal(db, conv, 2, 30_000);
-    const levels = (await eventsOf(db, conv)).flatMap((e) =>
-      e.type === "device_paths" ? [e.payload.tier] : [],
+    const modes = (await eventsOf(db, conv)).flatMap((e) =>
+      e.type === "device_paths" ? [e.payload.mode] : [],
     );
-    expect(levels).toEqual(["dev", "strict"]);
+    expect(modes).toEqual(["auto", "sandbox"]);
     const last = JSON.stringify(sent.at(-1));
-    expect(last).toContain("Sandbox level: development.");
-    expect(last).toContain("Sandbox level: strict.");
+    expect(last).toContain("Mode: auto. Commands run in the device's container;");
+    expect(last).toContain("Mode: sandbox. Commands run in the device's container;");
+    const snap = await snapshotOf(conv);
+    await expectZeroDrift(conv, snap);
+  });
+});
+
+describe("reconstructRequest: the command review (auto mode spec §5.4–§5.5)", () => {
+  it("a denied command's result replays with zero drift; the review record is not in requests", async () => {
+    reset();
+    const agentId = await createAgent(
+      { provider: "model-fake", model: "fake-1" },
+      { tools: [{ kind: "builtin", name: "Bash" }] },
+    );
+    const conv = await createConv(owner, orgId, agentId);
+    const bash = { command: "rm -rf /", description: "Clean the root" };
+    await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(bash)}`);
+    await waitForTerminal(db, conv, 1, 30_000);
+    const results = (await eventsOf(db, conv)).filter(
+      (e): e is Extract<ConversationEvent, { type: "tool_result" }> => e.type === "tool_result",
+    );
+    const denied = results.at(-1);
+    expect(denied?.payload.isError).toBe(true);
+    // the reason is part of the result the model sees (new content in a new result: no DriftReason)
+    expect(denied?.payload.content).toContain("Command blocked by review:");
+    expect(denied?.payload.review).toMatchObject({ decision: "deny", by: "rule" });
+    // the record itself is display only: the request carries the result text, never `review`
+    expect(JSON.stringify(sent)).toContain("Command blocked by review:");
+    expect(JSON.stringify(sent)).not.toContain('"review"');
     const snap = await snapshotOf(conv);
     await expectZeroDrift(conv, snap);
   });

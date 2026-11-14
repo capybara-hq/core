@@ -61,6 +61,12 @@ export { CheckRow, type CheckRowProps, type CheckRowState } from "./check-row";
 export { ContentSection, type ContentSectionProps } from "./content-section";
 export { DangerZone, DangerZoneItem, type DangerZoneItemProps } from "./danger-zone";
 export { DateTime, formatDateTime, formatRelative, versionLabel } from "./date-time";
+export {
+  DeviceNameplate,
+  type DeviceNameplateOrigin,
+  type DeviceNameplateProps,
+  type DeviceNameplateState,
+} from "./device-nameplate";
 export { Disclosure, type DisclosureProps } from "./disclosure";
 export { type DurationOptions, formatDuration } from "./duration";
 export { EMBED_SANDBOX, EmbedFrame, type EmbedFrameProps } from "./embed";
@@ -86,6 +92,7 @@ export {
   type ItemListRow,
 } from "./item-list";
 export { KeyValue, type KeyValueProps } from "./key-value";
+export { KeycapCommand, type KeycapCommandProps } from "./keycap-command";
 export { LinkCard, TextLink } from "./link";
 export { CAPYBARA_BITMAP, Logo } from "./logo";
 export {
@@ -94,6 +101,7 @@ export {
   Markdown,
   type MarkdownProps,
 } from "./markdown";
+export { type DeviceMode, ModeScale, type ModeScaleProps } from "./mode-scale";
 export { ObjectList, ObjectRow, type ObjectRowProps } from "./object-list";
 export { ObjectMark, type ObjectMarkSize } from "./object-mark";
 export { Pagination, type PaginationProps } from "./pagination";

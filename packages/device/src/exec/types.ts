@@ -3,18 +3,12 @@ import type {
   DeviceExecArgs,
   ExecResult,
   SandboxRoots,
-  SandboxTier,
 } from "@capybara-hq/plugin-sdk";
-import type { ProxyGuardResult } from "../proxy-guard.js";
-import type { Policy } from "../state.js";
+import type { Policy, SandboxMode } from "../state.js";
 
-/** How one command runs: its tier and whether it runs in the sandbox (see `exec/switch.ts`). */
-export interface ExecIsolation {
-  tier: SandboxTier;
-  /** `none`: without a sandbox. */
-  isolation: "sandbox" | "none";
-  /** Set when the policy asks for no sandbox but the tiers do not allow it: the command is refused. */
-  refusal?: string;
+/** How one command runs: in auto mode (no OS sandbox) or in the sandbox. */
+export interface ExecMode {
+  mode: SandboxMode;
 }
 
 /** Hooks of one command. */
@@ -26,7 +20,7 @@ export interface ExecHooks {
   beforeSpawn?: () => void;
 }
 
-/** What runs the operations on this machine: the OS sandbox (os) or a container (docker). */
+/** What runs the operations on this machine: the OS sandbox / host (os) or a container (docker). */
 export interface Executor {
   readonly mode: "os" | "docker";
   readonly roots: SandboxRoots;
@@ -52,13 +46,8 @@ export interface Executor {
    */
   ensureRoot(): Promise<"ok" | "gone">;
   /**
-   * OS mode: the latest localhost proxy guard result (a local forwarding proxy turns localhost
-   * off for `dev` / `open`, spec §5.2.3). Absent: none found.
-   */
-  proxyGuard?(): ProxyGuardResult;
-  /**
    * OS mode, an executor that can run without a sandbox: records an exec's limits, also of one
-   * refused before it reaches the executor, so file operations follow the latest decision.
+   * the policy sent to the sandbox, so file operations follow the latest decision.
    */
   noteLimits?(limits: DeviceExecArgs["limits"]): void;
   /**
@@ -68,7 +57,7 @@ export interface Executor {
   execDecided?(
     args: DeviceExecArgs,
     signal: AbortSignal,
-    how: ExecIsolation,
+    how: ExecMode,
     policy: Policy,
   ): Promise<ExecResult>;
 }

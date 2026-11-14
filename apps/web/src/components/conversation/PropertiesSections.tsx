@@ -21,7 +21,7 @@ import type {
   SubagentView,
   ToolInfo,
 } from "../../lib/conversations";
-import { deviceSandboxMark, deviceState } from "../../lib/devices";
+import { deviceModeMark, deviceState } from "../../lib/devices";
 import type { FileOutput } from "../../lib/files";
 import { myRole, roleAtLeast } from "../../lib/members";
 import { retryOnMountOf } from "../../lib/query/client";
@@ -189,7 +189,7 @@ export function ContextSection({
             name: nameOf(device.data),
             state: te(`state.${deviceState(device.data)}`),
           });
-  const mark = device.data != null ? deviceSandboxMark(device.data) : null;
+  const mark = device.data != null ? deviceModeMark(device.data) : null;
   return (
     <ContextBlock
       ratio={contextPct ?? 0}

@@ -140,6 +140,10 @@ The profile has three fields: `avatar`, `description` and `quickActions`.
 | 子 Agent Sub-agents | as today | a new agent version |
 | 渠道 Channels | as today | as today (channel bindings) |
 
+- **提交与 PR 署名** (added by [spec 2026-11-14-agent-attribution](2026-11-14-agent-attribution.md)):
+  the agent's `attribution` override (follow the platform / custom / off), an extra section; people
+  who can use but not edit the agent read its effective values there.
+
 - **Visibility** (my call, builder check B2) lives in Basics, as today. Rules in other sections
   that depend on it (`skills.writePolicy` applies only to private agents, sub-agent
   `dispatchable` rules) read the **saved** visibility, never Basics' draft. A section whose saved

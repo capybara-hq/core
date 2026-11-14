@@ -43,7 +43,7 @@ const MAINTENANCE_QUEUE_MODULE = QueueModule.registerQueue(MAINTENANCE_QUEUE_NAM
     ExtensionsModule,
     SuperAdminLockModule,
     OrgLockModule,
-    // approving a network request writes the org's sandboxEgress
+    // approving a network request writes the org's cloudNetwork allowlist
     OrgSettingsModule,
     StorageModule,
     SkillsModule,

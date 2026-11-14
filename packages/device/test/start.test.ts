@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Connection } from "../src/client.js";
 import { drain, drainAndWait } from "../src/commands/drain.js";
-import { LEGACY_NETWORK_NOTICE, start } from "../src/commands/start.js";
+import { legacyPolicyNotice, start } from "../src/commands/start.js";
 import { stop } from "../src/commands/stop.js";
 import { pidPath, writePid } from "../src/pid.js";
 import type { PolicyStore } from "../src/policy-store.js";
@@ -48,22 +48,75 @@ describe("start: legacy policy notice", () => {
     return out;
   };
 
-  it("says once that network is replaced by tier when policy.json has network open", async () => {
+  it("says once that policy.json now uses mode, and which mode it runs in", async () => {
     writeCredential(dir, cred);
-    writeFileSync(join(dir, "policy.json"), JSON.stringify({ network: "open" }));
+    writeFileSync(join(dir, "policy.json"), JSON.stringify({ isolation: "none", tier: "open" }));
     const out = await run();
-    expect(out.filter((l) => l === LEGACY_NETWORK_NOTICE)).toHaveLength(1);
-    expect(LEGACY_NETWORK_NOTICE).toBe(
-      "policy.json: `network` is replaced by `tier`; run `capybara-device policy set tier open` to keep an unlimited network. Any `capybara-device policy set` removes the old key and this notice.",
+    const notice = legacyPolicyNotice("auto");
+    expect(out.filter((l) => l === notice)).toHaveLength(1);
+    expect(notice).toBe(
+      "policy.json now uses `mode`; this machine runs in auto mode; switch with " +
+        "`capybara-device mode`.",
     );
+    // An older file that did not ask for no sandbox migrates to sandbox.
+    writeFileSync(join(dir, "policy.json"), JSON.stringify({ tier: "dev" }));
+    expect(await run()).toContain(legacyPolicyNotice("sandbox"));
   });
 
-  it("says nothing for a current policy or network allowlist", async () => {
+  it("says nothing for a current policy", async () => {
     writeCredential(dir, cred);
-    writeFileSync(join(dir, "policy.json"), JSON.stringify({ network: "allowlist" }));
-    expect(await run()).not.toContain(LEGACY_NETWORK_NOTICE);
     writePolicy(dir, DEFAULT_POLICY);
-    expect(await run()).not.toContain(LEGACY_NETWORK_NOTICE);
+    expect(await run()).not.toContain(legacyPolicyNotice("auto"));
+    expect(await run()).not.toContain(legacyPolicyNotice("sandbox"));
+  });
+});
+
+describe("start without the OS sandbox", () => {
+  const fake = (available: boolean) => {
+    const ex = new FakeExecutor() as FakeExecutor & {
+      available?: boolean;
+      unavailableReason?: string;
+    };
+    ex.available = available;
+    if (!available) ex.unavailableReason = "bwrap is missing";
+    return ex;
+  };
+  const run = async (ex: FakeExecutor) => {
+    const proc = Object.assign(new EventEmitter(), { pid: 4251 });
+    const out: string[] = [];
+    const errs: string[] = [];
+    const conn: Connection = { done: Promise.resolve(0), drain: () => {}, stop: () => {} };
+    const code = await start({
+      stateDir: dir,
+      out: (l) => out.push(l),
+      err: (l) => errs.push(l),
+      proc: proc as never,
+      createExecutor: () => ex,
+      connect: () => conn,
+    });
+    return { code, out, errs: errs.join("\n") };
+  };
+
+  it("serves auto mode silently, and logs the reason for a sandbox policy", async () => {
+    writeCredential(dir, cred);
+    writePolicy(dir, { ...DEFAULT_POLICY, mode: "auto" });
+    const auto = await run(fake(false));
+    // The device starts and serves: no error, and the client is connected.
+    expect(auto.code).toBe(0);
+    expect(auto.errs).not.toContain("OS sandbox is unavailable");
+    writePolicy(dir, { ...DEFAULT_POLICY, mode: "sandbox" });
+    const sandbox = await run(fake(false));
+    expect(sandbox.code).toBe(0);
+    expect(sandbox.errs).toContain("OS sandbox is unavailable");
+    expect(sandbox.errs).toContain("bwrap is missing");
+  });
+
+  it("says nothing when the sandbox is available", async () => {
+    writeCredential(dir, cred);
+    writePolicy(dir, { ...DEFAULT_POLICY, mode: "sandbox" });
+    const ok = await run(fake(true));
+    expect(ok.code).toBe(0);
+    expect(ok.errs).not.toContain("OS sandbox is unavailable");
   });
 });
 

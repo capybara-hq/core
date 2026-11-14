@@ -52,18 +52,14 @@ import type { Answer } from "./test-holder.js";
  */
 
 const POLICY: DeviceLocalPolicySummary = {
-  effectiveTier: "strict",
-  isolation: "sandbox",
-  localhost: "off",
-  unixSockets: "off",
+  mode: "auto",
   allowedDomains: ["pypi.org"],
-  remoteGrants: "owner",
 };
 const GRACE_S = 2;
 /** How long after the intent the op can no longer reach the machine. */
 const T = POLICY_DEADLINE_MS + GRACE_S * 1000 + LIST_TTL_MARGIN_MS + 5000;
 const FEATURES: Partial<DeviceHello> = {
-  features: ["networkReport", "policyOp", "policyOpId"],
+  features: ["networkReport", "policyOp", "policyOpId", "mode"],
   policy: POLICY,
 };
 
@@ -484,7 +480,7 @@ describe("device policy intents", () => {
       "files.slack.com",
     ]);
     // the device page lists the change once applied, after the unconfirmed attempt
-    const recent = (await devices.get(orgId, d.accountId, d.deviceId)).sandbox.recent;
+    const recent = (await devices.get(orgId, d.accountId, d.deviceId)).mode.recent;
     expect(recent).toEqual([
       expect.objectContaining({
         kind: "policy",
@@ -567,6 +563,7 @@ describe("device policy intents", () => {
       "networkReport",
       "policyOp",
       "policyOpId",
+      "mode",
     ]);
   });
 
@@ -574,7 +571,7 @@ describe("device policy intents", () => {
     const d = await device();
     const sim = new Sim();
     sim.refuse = "This device does not accept network changes from the deployment";
-    await connect(d, sim, { policy: { ...POLICY, remoteGrants: "off" } });
+    await connect(d, sim, { policy: { ...POLICY, mode: "sandbox" as const } });
     expect(await apply(d)).toEqual({ applied: false, reason: "refused", message: sim.refuse });
     expect(await entries(d.machineId)).toEqual([]);
     const audits = await auditsOf(d.deviceId);
@@ -583,9 +580,9 @@ describe("device policy intents", () => {
       "device.policy_failed",
     ]);
     expect(audits[1]?.detail).toMatchObject({ reason: "refused", message: sim.refuse });
-    expect((await policies.summary(d.deviceId))?.policy?.remoteGrants).toBe("off");
+    expect((await policies.summary(d.deviceId))?.policy?.mode).toBe("sandbox");
     // the device page lists the change that did not take effect
-    const recent = (await devices.get(orgId, d.accountId, d.deviceId)).sandbox.recent;
+    const recent = (await devices.get(orgId, d.accountId, d.deviceId)).mode.recent;
     expect(recent).toEqual([
       expect.objectContaining({ kind: "policy", add: ["files.slack.com"], outcome: "failed" }),
     ]);

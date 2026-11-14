@@ -5,7 +5,9 @@ import {
   Button,
   Card,
   CellTitle,
+  CodeBlock,
   type Column,
+  clipCommand,
   DataTable,
   DateTime,
   Field,
@@ -732,6 +734,12 @@ function toolApprovalDetail({
   t: Translate;
   ta: Translate;
 }): Detail {
+  // A command review ask (auto mode spec §5.4): an empty argument box would let its owner allow
+  // the held command without ever reading it, so the ask draws what runs instead.
+  const command = approval.kind === "command" ? (approval.command ?? null) : null;
+  const write = command?.kind === "write";
+  const shown =
+    command === null ? null : write ? (command.path ?? command.command) : command.command;
   return {
     inspector: (
       <Stack gap={16}>
@@ -766,7 +774,11 @@ function toolApprovalDetail({
     content: (
       <div data-approval-id={approval.id}>
         <Card
-          title={toolLabelText(approvalToolLabel(approval, locale))}
+          title={
+            command === null
+              ? toolLabelText(approvalToolLabel(approval, locale))
+              : ta(write ? "command.titleWrite" : "command.title")
+          }
           actions={<StatusMark status="waiting" label={ta("waiting")} />}
         >
           <Stack gap={12}>
@@ -775,14 +787,28 @@ function toolApprovalDetail({
               rows={[
                 { k: ta("tool"), v: approval.toolKey },
                 ...(approval.connector ? [{ k: ta("connector"), v: approval.connector.name }] : []),
+                ...(command === null
+                  ? []
+                  : [
+                      { k: ta("command.device"), v: command.deviceName },
+                      { k: ta("command.reason"), v: command.reason },
+                    ]),
               ]}
             />
-            <Stack gap={4}>
-              <Text variant="small" tone="muted">
-                {ta("input")}
-              </Text>
-              <ApprovalInput input={approval.input} />
-            </Stack>
+            {command === null ? (
+              <Stack gap={4}>
+                <Text variant="small" tone="muted">
+                  {ta("input")}
+                </Text>
+                <ApprovalInput input={approval.input} />
+              </Stack>
+            ) : (
+              <CodeBlock
+                text={clipCommand(shown ?? "")}
+                framed={false}
+                {...(write ? { title: ta("command.path") } : {})}
+              />
+            )}
             <ScopePicker
               approval={approval}
               value={scope}

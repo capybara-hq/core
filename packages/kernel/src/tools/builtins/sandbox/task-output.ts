@@ -36,6 +36,7 @@ import {
   sandboxUsable,
   unavailableWhenNoSandbox,
 } from "./common.js";
+import { type DeviceCode, parseDeviceCode } from "./device-code.js";
 
 /** How long `TaskOutput` waits with `block` when `timeout` is not given (ms). */
 export const TASK_OUTPUT_DEFAULT_TIMEOUT_MS = 30_000;
@@ -57,8 +58,9 @@ const SPEC: ToolSpec = {
     "call for it. With block (the default) it waits until the task finishes or timeout " +
     "milliseconds pass, checking every 2 seconds; prefer this over sleeping in Bash. Each call " +
     "returns a bounded slice of new output; the task's whole output file (its path is in the Bash " +
-    "result) can also be read with Read. You are told when a task finishes, so there is no need " +
-    "to poll for that.",
+    "result) can also be read with Read. A background task that waits for a person (an " +
+    "interactive login, a prompt) prints its prompt here; read it while the task waits. You are " +
+    "told when a task finishes, so there is no need to poll for that.",
   inputSchema: {
     type: "object",
     properties: {
@@ -285,6 +287,37 @@ function parseRead(id: string, stdout: string): Seen {
 }
 
 /**
+ * How many bytes before the read offset a `TaskOutput` read also reads again, so a prompt split
+ * across reads still matches: `gh auth login --web` prints its one-time code and its URL line
+ * separately, and a read that lands between them (or a read cap that splits them) otherwise sees
+ * only one half, and no later read sees both. The tail only ever holds this many already-delivered
+ * bytes, whatever the task's output size: a read's buffer stays bounded.
+ */
+export const READ_TAIL_BYTES = 4096;
+
+/** The byte window one `TaskOutput` read covers. */
+export interface ReadWindow {
+  /** Where the read exec starts (the output offset minus at most {@link READ_TAIL_BYTES}). */
+  offset: number;
+  /** How many bytes the exec reads from there. */
+  cap: number;
+  /** How many of the returned bytes were already delivered by earlier reads. */
+  skip: number;
+}
+
+/**
+ * The window of a read at `offset` (the output bytes already delivered) with `cap` new bytes: it
+ * starts up to {@link READ_TAIL_BYTES} earlier, and the first `skip` bytes of what it returns were
+ * delivered already, so the parser can match a pattern spanning the boundary. Bounded: the window
+ * is `cap + READ_TAIL_BYTES` bytes at most, never more as the output grows.
+ */
+export function readWindow(offset: number, cap: number): ReadWindow {
+  const start = Math.max(0, offset - READ_TAIL_BYTES);
+  const skip = offset - start;
+  return { offset: start, cap: cap + skip, skip };
+}
+
+/**
  * The bytes of `buf` up to its last whole UTF-8 character: a character cut by the read's cap is
  * left for the next read.
  */
@@ -464,7 +497,13 @@ export function taskOutputTool(deps: SandboxToolDeps): BuiltinTool {
       }
       const offset = task.readOffset;
       const cap = deps.config.get().tools.outputSpillChars;
-      const seen = await lookOrGone(env, task, { offset, cap }, ctx.signal);
+      const window = readWindow(offset, cap);
+      const seen = await lookOrGone(
+        env,
+        task,
+        { offset: window.offset, cap: window.cap },
+        ctx.signal,
+      );
       if (seen === null) {
         return result(task, [statusLine(task), unavailableText(task, { kind: "other_instance" })]);
       }
@@ -474,9 +513,11 @@ export function taskOutputTool(deps: SandboxToolDeps): BuiltinTool {
         return result(task, [statusLine(task), unavailableText(task, seen)]);
       }
       const { data, size } = seen.value;
+      // the window's first bytes were delivered already: only the rest is new output
+      const fresh = data.subarray(window.skip);
       // an ended task's output is complete: only a read cut by the cap can end inside a character
       const ended = task.status !== "running" || end !== null;
-      const used = ended && data.length < cap ? data.length : wholeUtf8Length(data);
+      const used = ended && data.length < window.cap ? fresh.length : wholeUtf8Length(fresh);
       if (used > 0) await env.store.advanceOffset(task.id, offset + used);
       task = await settle(env, task, end);
       const parts: string[] = [];
@@ -486,17 +527,27 @@ export function taskOutputTool(deps: SandboxToolDeps): BuiltinTool {
           `[${more} more bytes of output after this; call TaskOutput again to read them, or Read ${outputFile(task)}.]`,
         );
       }
-      parts.push(used === 0 ? "[No new output.]" : data.subarray(0, used).toString("utf8"));
-      return result(task, [statusLine(task), ...parts]);
+      const text = used === 0 ? "" : fresh.subarray(0, used).toString("utf8");
+      parts.push(used === 0 ? "[No new output.]" : text);
+      // A background command that waits for a person (`gh auth login --web`, any interactive
+      // login) prints its prompt while TaskOutput reads it (auto mode spec §6, P-D13): this is
+      // the path that shows the device-code card while the login is still pending. The parser sees
+      // the tail the window re-read plus the new bytes, so a prompt split across reads matches; it
+      // takes the newest prompt in the window, so a retried login's code is not hidden by an older
+      // prompt sitting in the tail.
+      const loginCode = used > 0 ? parseDeviceCode(data.toString("utf8")) : null;
+      return result(task, [statusLine(task), ...parts], loginCode);
     },
   };
 }
 
-function result(task: BackgroundTaskRow, lines: string[]) {
+function result(task: BackgroundTaskRow, lines: string[], loginCode: DeviceCode | null = null) {
   const d = clip(task.description, 120);
   return {
     content: [{ type: "text" as const, text: lines.join("\n") }],
     isError: false,
     display: display(`读取后台任务输出：${d}`, `Read background task output: ${d}`),
+    // kernel-internal (see `BuiltinResult.loginCode`): never part of the content above
+    ...(loginCode !== null && { loginCode }),
   };
 }

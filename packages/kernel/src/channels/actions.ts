@@ -144,9 +144,10 @@ export class ChannelCardActions {
         await reply("cannotHandle");
         return;
       }
-      // a network ask is the device owner's, decided by them in person (network ask-to-allow
-      // spec §5.2): the shared guest account never decides one, whoever clicks
-      if (a.cardKind === "approval" && (await this.isNetworkAsk(row.orgId, a.cardId))) {
+      // a network, git push or command review ask is the device owner's, decided by them in
+      // person (network ask-to-allow spec §5.2, auto mode spec §5.4): the shared guest account
+      // never decides one, whoever clicks
+      if (a.cardKind === "approval" && (await this.isOwnerDecidedAsk(row.orgId, a.cardId))) {
         await reply("cannotHandle");
         return;
       }
@@ -180,16 +181,16 @@ export class ChannelCardActions {
   }
 
   /**
-   * Whether the approval `id` of the org is a network or git push ask (each the asked person's
-   * own, decided by them in person).
+   * Whether the approval `id` of the org is a network ask, a git push ask or a command review ask
+   * (each the asked person's own, decided by them in person).
    */
-  private async isNetworkAsk(orgId: string, id: string): Promise<boolean> {
+  private async isOwnerDecidedAsk(orgId: string, id: string): Promise<boolean> {
     const r = await this.deps.db
       .selectFrom("approvals")
       .select("kind")
       .where("id", "=", id)
       .where("org_id", "=", orgId)
       .executeTakeFirst();
-    return r?.kind === "network" || r?.kind === "git";
+    return r?.kind === "network" || r?.kind === "git" || r?.kind === "command";
   }
 }

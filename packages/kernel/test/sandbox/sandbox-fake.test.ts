@@ -30,10 +30,8 @@ const limits = {
   cpu: 1,
   memoryMb: 1,
   diskMb: 1,
-  egress: "none" as const,
-  allowHosts: [],
-  tier: "strict" as const,
-  devHosts: [],
+  mode: "sandbox" as const,
+  network: { kind: "allowlist" as const, hosts: [] },
 };
 const sig = () => AbortSignal.timeout(10_000);
 const actor = { accountId: "acc-1", conversationId: "conv-1" };

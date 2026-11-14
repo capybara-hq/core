@@ -414,9 +414,6 @@ export function clientCssProblem(css: string, assets: ReadonlySet<string>): stri
 export function clipMediaName(name: string, max?: number): string;
 
 // @public
-export function compareTiers(a: SandboxTier, b: SandboxTier): number;
-
-// @public
 export function compositeOver(color: string, ground: string): string | undefined;
 
 // @public
@@ -756,9 +753,6 @@ export const DEFAULT_SANDBOX_ROOTS: Readonly<SandboxRoots>;
 export function defineExtension(m: ExtensionManifest): ExtensionManifest;
 
 // @public
-export const DEV_HOSTS: readonly string[];
-
-// @public
 export const DEVICE_PROTOCOL_VERSION = 1;
 
 // @public
@@ -801,7 +795,7 @@ export interface DeviceExecGrants {
 export type DeviceExecResult = ExecResult;
 
 // @public
-export type DeviceFeature = "networkReport" | "policyOp" | "policyOpId" | "tiers";
+export type DeviceFeature = "networkReport" | "policyOp" | "policyOpId" | "mode";
 
 // @public
 export type DeviceFrame = DeviceHello | DeviceRes | DevicePolicyChanged | KernelReq | KernelCancel;
@@ -832,12 +826,7 @@ export interface DeviceKillTaggedArgs {
 // @public
 export interface DeviceLocalPolicySummary {
     allowedDomains: string[];
-    effectiveTier: SandboxTier;
-    isolation: "sandbox" | "none";
-    localhost: "on" | "off-proxy-detected" | "off";
-    remoteGrants: DeviceRemoteGrants;
-    tier?: SandboxTier;
-    unixSockets: "roots" | "all-masked" | "off";
+    mode: "auto" | "sandbox";
 }
 
 // @public
@@ -860,7 +849,7 @@ export interface DeviceOpResults {
 // @public
 export interface DevicePolicyArgs {
     add?: string[];
-    isolation?: "sandbox";
+    mode?: "sandbox";
     opId: string;
     remove?: string[];
     source: {
@@ -869,7 +858,6 @@ export interface DevicePolicyArgs {
         accountName: string;
         via: "web" | "im";
     };
-    tier?: SandboxTier | null;
 }
 
 // @public
@@ -920,9 +908,6 @@ export type DeviceReadFileResult = {
     dataB64: string;
     truncated: boolean;
 } | null;
-
-// @public
-export type DeviceRemoteGrants = "owner" | "off";
 
 // @public
 export type DeviceRes = {
@@ -1737,9 +1722,6 @@ export function isSafePackagePath(p: string): boolean;
 export function isSandboxGoneError(e: unknown): e is SandboxGoneError;
 
 // @public
-export function isSandboxTier(v: unknown): v is SandboxTier;
-
-// @public
 export function isSecret(schema: z.ZodTypeAny): boolean;
 
 // @public
@@ -1946,9 +1928,6 @@ export type MergedScheme = {
 export function mergeThemeSchemes(theme: Pick<ThemeFile, "schemes">): Partial<Record<ThemeScheme, MergedScheme>>;
 
 // @public
-export function minTier(first: SandboxTier, ...rest: SandboxTier[]): SandboxTier;
-
-// @public
 export function missingInboundModeFields(schema: JsonSchema, mode: ChannelInboundMode, has: (field: string) => boolean): string[];
 
 // @public
@@ -1964,7 +1943,7 @@ export interface ModelCallOptions {
 }
 
 // @public
-export type ModelCallPurpose = "step" | "compaction" | "title" | "web_fetch";
+export type ModelCallPurpose = "step" | "compaction" | "title" | "web_fetch" | "review";
 
 // @public
 export interface ModelCallRequestHookPayload extends HookScope {
@@ -2667,9 +2646,6 @@ export const SANDBOX_ROOTS: readonly ["/workspace", "/skills", "/tmp"];
 export const SANDBOX_TAG_RE: RegExp;
 
 // @public
-export const SANDBOX_TIERS: readonly SandboxTier[];
-
-// @public
 export interface SandboxActor {
     accountId: string;
     conversationId: string;
@@ -2692,15 +2668,14 @@ export interface SandboxHandle {
 
 // @public
 export interface SandboxLimits {
-    allowHosts: string[];
-    allowUnsandboxed?: boolean;
     cpu: number;
-    defaultTier?: SandboxTier;
-    devHosts: string[];
     diskMb: number;
-    egress: "none" | "allowlist" | "open";
     memoryMb: number;
-    tier: SandboxTier;
+    mode: "auto" | "sandbox";
+    network: {
+        kind: "open-public" | "allowlist";
+        hosts: string[];
+    };
 }
 
 // @public
@@ -2761,9 +2736,6 @@ export interface SandboxRoots {
 }
 
 // @public
-export type SandboxTier = "strict" | "dev" | "open";
-
-// @public
 export function sanitizeParams(decl: ModelParameter[], params: Record<string, unknown>): {
     value: Record<string, ParamValue>;
     dropped: string[];
@@ -2777,7 +2749,7 @@ export function sanitizeThemeSvg(bytes: Uint8Array): {
 };
 
 // @public
-export const SDK_VERSION = "0.1.0-rc.21";
+export const SDK_VERSION = "0.1.0-rc.22";
 
 // @public
 export function secret<T extends z.ZodTypeAny>(schema: T): T;
@@ -3390,9 +3362,6 @@ export interface ThemeSchemeOverride {
 export const THINKING_VALUES: readonly string[];
 
 // @public
-export function tierAtMost(a: SandboxTier, b: SandboxTier): boolean;
-
-// @public
 export const TOOL_KEY_ARGS_MAX = 3;
 
 // @public
@@ -3783,9 +3752,6 @@ export interface UiView {
     data?: JsonValue;
     open?: UiOpen;
 }
-
-// @public
-export const UNSANDBOXED_NOT_ALLOWED_MESSAGE = "This device runs commands without a sandbox, which your organization does not allow. Its owner can turn the sandbox back on with `capybara-device policy set isolation sandbox`.";
 
 // @public
 export type UsagePurpose = ModelCallPurpose | "embedding";

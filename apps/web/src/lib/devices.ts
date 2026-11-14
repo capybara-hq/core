@@ -7,12 +7,23 @@ import { extensionLabel } from "./extension-label";
  * fields the UI uses). Web code never imports kernel code.
  */
 
+/** How much power a device gives an agent's commands (auto mode spec §4). */
+export type DeviceMode = "auto" | "sandbox";
+
+/** A device network: the open public network (private ranges and loopback blocked) or an allowlist. */
+export type DeviceNetworkKind = "open-public" | "allowlist";
+
 export interface DeviceLimits {
   cpu: number;
   memoryMb: number;
   diskMb: number;
-  egress: "none" | "allowlist" | "open";
-  allowHosts: string[];
+  /** The mode the limits were made with. Mirrored from the kernel view; the web reads it nowhere. */
+  mode: DeviceMode;
+  /**
+   * `open-public` for a cloud device in auto mode; the allowlist in sandbox mode. Mirrored from the
+   * kernel view; the web reads `mode.network` (the effective network) instead.
+   */
+  network: { kind: DeviceNetworkKind; hosts: string[] };
 }
 
 /** The machine connected to a local device (its unrevoked one). */
@@ -27,96 +38,66 @@ export interface DeviceMachine {
   lastSeenAt: string | null;
 }
 
-/** A sandbox level (sandbox dev tiers spec §5): 严格 / 开发 / 开放. */
-export type SandboxTier = "strict" | "dev" | "open";
-
-/** The tiers from the narrowest up. */
-export const SANDBOX_TIERS: readonly SandboxTier[] = ["strict", "dev", "open"];
-
-/** Whether tier `a` is above tier `b`. */
-export const tierAbove = (a: SandboxTier, b: SandboxTier): boolean =>
-  SANDBOX_TIERS.indexOf(a) > SANDBOX_TIERS.indexOf(b);
-
-/** A local device's policy as its machine last reported it (kernel `DeviceLocalPolicySummary`). */
+/**
+ * A local device's policy as its machine last reported it (kernel `DeviceLocalPolicySummary`).
+ */
 export interface DeviceNetworkPolicy {
-  /** The tier the device owner chose on the machine (absent = follows the org's default). */
-  tier?: SandboxTier;
-  /** The tier the device ran its last command at. */
-  effectiveTier: SandboxTier;
-  isolation: "sandbox" | "none";
-  /**
-   * Whether `dev` lets commands reach local servers on this machine: `off-proxy-detected` when a
-   * local proxy or Docker TCP port was found (the proxy guard), `off` in `strict`.
-   */
-  localhost: "on" | "off-proxy-detected" | "off";
-  /** Unix sockets: `roots` under the device's roots, `all-masked` (Linux: masked), `off`. */
-  unixSockets: "roots" | "all-masked" | "off";
+  /** The mode the machine runs at: no OS sandbox, or the sandbox with the allowlist below. */
+  mode: DeviceMode;
+  /** The machine's sandbox-mode allowlist (meaningful in sandbox mode only). */
   allowedDomains: string[];
-  /** `off`: the machine refuses every widening from the deployment (set only on the machine). */
-  remoteGrants: "owner" | "off";
 }
 
 /**
- * A local device's network facts (network ask-to-allow spec §5.4, §7): the program's features
- * (`policyOpId`: it takes policy changes from the deployment under op ids; `tiers`: it knows the
- * sandbox levels)
- * and its policy summary (null when it reported none).
+ * A local device's network facts when a machine is connected: the program's features (`policyOpId`:
+ * it takes policy changes from the deployment under op ids) and its policy summary (null when it
+ * reported none).
  */
 export interface DeviceNetwork {
   features: string[];
   policy: DeviceNetworkPolicy | null;
 }
 
-/** One sandbox change of a device (kernel `DeviceSandboxChangeView`), newest first. */
-export interface DeviceSandboxChange {
+/** One mode or policy change of a device (kernel `DeviceModeChangeView`), newest first. */
+export interface DeviceModeChange {
   at: string;
-  /** `policy`: a local policy change; `tier`: a cloud device's tier; `isolation`: reported. */
-  kind: "policy" | "tier" | "isolation";
+  /** `policy`: a local allowlist change; `mode`: the device switched between auto and sandbox. */
+  kind: "policy" | "mode";
   add: string[];
   remove: string[];
   /**
-   * The tier set (`to: null`: follow the org's default; `from` only for a change made on the
-   * machine); null when it did not change.
+   * The mode change (`from` only for a change made on the machine); null when it did not change.
    */
-  tier: { from?: SandboxTier | null; to: SandboxTier | null } | null;
-  isolation: "sandbox" | "none" | null;
-  /** The localhost access now (changed on the machine); null when it did not change. */
-  localhost: "on" | "off-proxy-detected" | "off" | null;
-  /** Whether the machine takes the platform's changes now; null when it did not change. */
-  remoteGrants: "owner" | "off" | null;
+  mode: { from?: DeviceMode | null; to: DeviceMode } | null;
   /** The deciding account's display name (null once the account is gone). */
   by: string | null;
-  /** `device`: made on the machine itself (`capybara-device policy ...`, or reported). */
+  /** `device`: made or reported on the machine itself. */
   via: "web" | "im" | "device";
   /**
-   * What became of a change sent to the machine: `unknown`, its answer never came (an `applied`
-   * row follows once the machine reports it); `failed`, it did not take effect. Every other row is
-   * `applied`.
+   * What became of a change sent to the machine: `unknown`, its answer never came; `failed`, it
+   * did not take effect. Every other row is `applied`.
    */
   outcome: "applied" | "unknown" | "failed";
 }
 
-/** A device's sandbox level as its owner sees it (kernel `DeviceSandboxView`, spec §11.1). */
-export interface DeviceSandbox {
-  /** The tier the owner chose; null follows the org's default. */
-  tier: SandboxTier | null;
-  /** The tier its commands run at. */
-  effectiveTier: SandboxTier;
-  /** The highest tier the device may reach (the org's and the platform's max). */
-  ceiling: SandboxTier;
-  /** Which ceiling lowered the chosen tier; null when none did. */
-  cappedBy: "org" | "platform" | null;
-  /** The org's default tier for devices that choose none. */
-  defaultTier: SandboxTier;
-  /** The org and the platform let a local device run without a sandbox. */
-  allowUnsandboxed: boolean;
-  /** `none`: a local device runs its commands without a sandbox (set on the machine). */
-  isolation: "sandbox" | "none";
-  /** A cloud device's new tier applies at its next use, files kept. */
+/** A device's mode and network as its owner sees it (kernel `DeviceModeView`, auto mode spec §4.3). */
+export interface DeviceModeView {
+  /** The mode its commands run at. */
+  mode: DeviceMode;
+  /** `auto` only while the platform's and the org's `autoMode` allow it. */
+  allowedMode: DeviceMode;
+  /** Which layer allows auto mode; null when only sandbox mode is allowed. */
+  allowedBy: "org" | "platform" | null;
+  /** A cloud device's effective network; a local device's sandbox-mode allowlist. */
+  network: { kind: DeviceNetworkKind; hosts: string[]; source: "org" | "platform" };
+  /** A local device: the mode its machine reported and its own allowlist; null for cloud. */
+  local: { reported: DeviceMode | null; allowedDomains: string[] } | null;
+  /** A cloud device's instance runs an older mode or network: its next use applies this one. */
   pendingNextUse: boolean;
-  /** A cloud device's new tier waits for a file reset. */
+  /** Its provider applies limits at a file reset, so only that applies the new mode or network. */
   pendingFilesReset: boolean;
-  recent: DeviceSandboxChange[];
+  /** Its last mode and policy changes, newest first. */
+  recent: DeviceModeChange[];
 }
 
 export interface Device {
@@ -145,11 +126,12 @@ export interface Device {
   machine: DeviceMachine | null;
   /**
    * A local device's network facts while a machine is connected; null for a cloud device or
-   * none connected (absent from older kernels).
+   * none connected.
    */
   network?: DeviceNetwork | null;
-  /** Its sandbox level (absent from older kernels). */
-  sandbox?: DeviceSandbox;
+  /** Its mode and network (auto mode spec §4.3). */
+  mode: DeviceModeView;
+  /** Mirrored from the kernel view; isolation is gone from the device page, the web reads it nowhere. */
   sessionIsolation: boolean;
   /** Its file system is gone at the provider; resetting the files makes it usable again. */
   filesLost: boolean;
@@ -249,59 +231,48 @@ export const resetDeviceFiles = (orgId: string, id: string) =>
   apiFetch<void>(`${org(orgId)}/${enc(id)}/files/reset`, { method: "POST" });
 
 /**
- * Whether the machine itself is set to run without a sandbox (its reported raw value) while the
- * platform no longer counts it as unsandboxed because the level is below open: the device refuses
- * every command then (spec §11.1).
+ * The mark a device carries in lists and pickers (auto mode spec §4): a local device says its mode
+ * (自动 `warn`, 沙箱 quiet); a cloud device says its network (开放（挡内网） `warn`, 白名单 quiet).
  */
-export const deviceUnsandboxedRefused = (e: Pick<Device, "sandbox" | "network">): boolean =>
-  e.sandbox !== undefined &&
-  e.sandbox.isolation !== "none" &&
-  e.network?.policy?.isolation === "none";
+export type DeviceMarkKind = "auto" | "sandbox" | "open" | "allowlist";
 
-/**
- * The mark a device carries in lists and pickers (spec §11.1): 不使用沙箱 (`fail`) when it runs
- * without a sandbox (or is set to and refuses its commands), 开放 (`warn`) when its commands run at
- * the open level; none otherwise.
- */
-export function deviceSandboxMark(
-  e: Pick<Device, "sandbox" | "network">,
-): { kind: "unsandboxed"; tone: "fail" } | { kind: "open"; tone: "warn" } | null {
-  const s = e.sandbox;
-  if (s === undefined) return null;
-  if (s.isolation === "none" || deviceUnsandboxedRefused(e))
-    return { kind: "unsandboxed", tone: "fail" };
-  if (s.effectiveTier === "open") return { kind: "open", tone: "warn" };
-  return null;
+export function deviceModeMark(e: Pick<Device, "source" | "mode">): {
+  kind: DeviceMarkKind;
+  tone: "warn" | "default";
+} {
+  const mode = e.mode;
+  if (e.source === "local") {
+    return mode.mode === "auto"
+      ? { kind: "auto", tone: "warn" }
+      : { kind: "sandbox", tone: "default" };
+  }
+  return mode.network.kind === "open-public"
+    ? { kind: "open", tone: "warn" }
+    : { kind: "allowlist", tone: "default" };
 }
-
-/** Whether a device has a level card above its ceiling (the page then says who caps it). */
-export const deviceCapped = (e: Pick<Device, "sandbox"> | undefined): boolean =>
-  e?.sandbox !== undefined && e.sandbox.ceiling !== "open";
 
 /** A change of a local device's policy by its owner (`POST …/devices/:id/policy`). */
 export interface DevicePolicyPatch {
   /** Hosts to allow (wildcards `*.` allowed); at most {@link MAX_POLICY_HOSTS}. */
   add?: string[];
   remove?: string[];
-  /** The tier to set; null follows the org's default. */
-  tier?: SandboxTier | null;
-  /** Only ever `sandbox`: turning the sandbox off happens on the machine alone. */
-  isolation?: "sandbox";
+  /** The only mode the web may set: the sandbox. Auto mode is switched on at the machine. */
+  mode?: "sandbox";
 }
 
 /** The most hosts one policy change adds. */
 export const MAX_POLICY_HOSTS = 20;
+
+/** Narrows a cloud device to sandbox mode (`PATCH …/devices/:id`). Auto mode is never set here. */
+export const setDeviceMode = (orgId: string, id: string, mode: "sandbox") =>
+  apiFetch<{ device: Device }>(`${org(orgId)}/${enc(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ mode }),
+  });
 
 /** Sent to the machine, which writes it and answers with the policy as written. */
 export const updateDevicePolicy = (orgId: string, id: string, patch: DevicePolicyPatch) =>
   apiFetch<{ policy: DeviceNetworkPolicy }>(`${org(orgId)}/${enc(id)}/policy`, {
     method: "POST",
     body: JSON.stringify(patch),
-  });
-
-/** Sets a cloud device's tier (`PATCH …/devices/:id`; null follows the org's default). */
-export const setDeviceTier = (orgId: string, id: string, tier: SandboxTier | null) =>
-  apiFetch<{ device: Device }>(`${org(orgId)}/${enc(id)}`, {
-    method: "PATCH",
-    body: JSON.stringify({ tier }),
   });

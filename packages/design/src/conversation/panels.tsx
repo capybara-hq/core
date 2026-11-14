@@ -232,10 +232,10 @@ export function ContextSection({
   ratio: number;
   model: string;
   sandbox?: string;
-  /** An attention mark after the model · sandbox line, as a `warn` Badge (「开放」). */
+  /** A mode mark after the model · sandbox line, as a `warn` Badge (「自动」). */
   sandboxBadge?: string;
-  /** The mark's tone: `fail` for a danger mark (「不使用沙箱」); default `warn`. */
-  sandboxBadgeTone?: "warn" | "fail";
+  /** The mark's tone: `fail` for a danger mark, `default` for a quiet one; default `warn`. */
+  sandboxBadgeTone?: "default" | "warn" | "fail";
   connectors: string[];
   /** The last run's line ("上次运行 · <model> · <duration> · <tokens>"), worded by the page. */
   lastRun?: string;

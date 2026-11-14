@@ -196,6 +196,7 @@ describe("replaceable slots on /admin/settings", () => {
           sandboxLimitOverrides: {},
           customConnectors: "allow",
           customSkills: "allow",
+          devicesAutoMode: { mode: "allowed", source: "default" },
         }),
       "GET /api/v1/admin/components?kind=theme": () => json(200, { components: [] }),
       "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),

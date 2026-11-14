@@ -574,6 +574,13 @@ importers:
       '@capybara-hq/ci':
         specifier: workspace:*
         version: link:../ci
+      pg:
+        specifier: ^8.23.1
+        version: 8.23.1
+    devDependencies:
+      '@types/pg':
+        specifier: ^8.23.1
+        version: 8.23.1
 
   tools/release:
     devDependencies:

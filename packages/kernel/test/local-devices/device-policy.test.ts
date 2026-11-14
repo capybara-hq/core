@@ -34,12 +34,8 @@ import type { Answer } from "./test-holder.js";
  */
 
 const POLICY: DeviceLocalPolicySummary = {
-  effectiveTier: "strict",
-  isolation: "sandbox",
-  localhost: "off",
-  unixSockets: "off",
+  mode: "auto",
   allowedDomains: ["pypi.org"],
-  remoteGrants: "owner",
 };
 
 let pgc: TestContainer;
@@ -144,7 +140,7 @@ async function connect(
 }
 
 const FEATURES: Partial<DeviceHello> = {
-  features: ["networkReport", "policyOp", "policyOpId"],
+  features: ["networkReport", "policyOp", "policyOpId", "mode"],
   policy: POLICY,
 };
 
@@ -153,11 +149,15 @@ function applying(policy: DeviceLocalPolicySummary): (req: KernelReq) => Answer 
   let now = policy;
   return (req) => {
     if (req.op !== "policy") return { ok: true, result: null };
-    const a = req.args as { add?: string[]; remove?: string[] };
+    const a = req.args as { add?: string[]; remove?: string[]; mode?: "sandbox" };
     const domains = new Set(now.allowedDomains);
     for (const h of a.add ?? []) domains.add(h);
     for (const h of a.remove ?? []) domains.delete(h);
-    now = { ...now, allowedDomains: [...domains] };
+    now = {
+      ...now,
+      allowedDomains: [...domains],
+      ...(a.mode !== undefined && { mode: a.mode }),
+    };
     return { ok: true, result: { policy: now } };
   };
 }
@@ -196,7 +196,7 @@ describe("DevicePolicyService.apply", () => {
       source: source(d.accountId),
     });
     expect(await policies.summary(d.deviceId)).toEqual({
-      features: ["networkReport", "policyOp", "policyOpId"],
+      features: ["networkReport", "policyOp", "policyOpId", "mode"],
       policy: want,
     });
     expect(await auditsOf(d.deviceId)).toEqual([
@@ -217,14 +217,14 @@ describe("DevicePolicyService.apply", () => {
     // the owner's device page shows it
     const view = await devices.get(orgId, d.accountId, d.deviceId);
     expect(view.network).toEqual({
-      features: ["networkReport", "policyOp", "policyOpId"],
+      features: ["networkReport", "policyOp", "policyOpId", "mode"],
       policy: want,
     });
-    expect(view.sandbox.recent).toEqual([
+    expect(view.mode.recent).toEqual([
       expect.objectContaining({
         kind: "policy",
         add: ["files.slack.com"],
-        tier: null,
+        mode: null,
         via: "web",
         outcome: "applied",
       }),
@@ -254,20 +254,17 @@ describe("DevicePolicyService.apply", () => {
     const applied = { ...POLICY, allowedDomains: ["pypi.org", "files.slack.com"] };
     // reported again after the answer: no change
     machine.send({ type: "policy", policy: applied });
-    // the owner on the machine: `policy set tier open`, `policy set remoteGrants off`,
+    // the owner on the machine: `capybara-device mode sandbox`,
     // `policy add allowedDomains github.com`, `policy remove allowedDomains pypi.org`
     const own: DeviceLocalPolicySummary = {
       ...applied,
-      tier: "open",
-      effectiveTier: "open",
-      localhost: "on",
-      remoteGrants: "off",
+      mode: "sandbox",
       allowedDomains: ["files.slack.com", "github.com"],
     };
     machine.send({ type: "policy", policy: own });
     machine.send({ type: "policy", policy: own });
     await waitFor(
-      async () => (await policies.summary(d.deviceId))?.policy?.remoteGrants === "off",
+      async () => (await policies.summary(d.deviceId))?.policy?.mode === "sandbox",
       10_000,
       "own change recorded",
     );
@@ -284,10 +281,6 @@ describe("DevicePolicyService.apply", () => {
       {
         add: ["github.com"],
         remove: ["pypi.org"],
-        tier: "open",
-        tierFrom: null,
-        localhost: "on",
-        remoteGrants: "off",
         by: d.accountId,
         via: "device",
         machineId: d.machineId,
@@ -295,26 +288,42 @@ describe("DevicePolicyService.apply", () => {
       },
     ]);
     expect(audits[1]?.actor_account_id).toBe(d.accountId);
-    // the device page lists both, newest first, with where each was made
-    const recent = (await devices.get(orgId, d.accountId, d.deviceId)).sandbox.recent;
+    // the owner's mode change is its own audit row
+    const modeAudits = await db
+      .selectFrom("audit_events")
+      .select("detail")
+      .where("target", "=", d.deviceId)
+      .where("action", "=", "device.mode_changed")
+      .execute();
+    expect(modeAudits).toEqual([
+      {
+        detail: {
+          from: "auto",
+          to: "sandbox",
+          by: d.accountId,
+          via: "device",
+          machineId: d.machineId,
+        },
+      },
+    ]);
+    // the device page lists the change and the mode separately, newest first
+    const recent = (await devices.get(orgId, d.accountId, d.deviceId)).mode.recent;
     expect(recent).toEqual([
       expect.objectContaining({
-        kind: "policy",
-        add: ["github.com"],
-        remove: ["pypi.org"],
-        tier: { from: null, to: "open" },
-        localhost: "on",
-        remoteGrants: "off",
-        isolation: null,
+        kind: "mode",
+        mode: { from: "auto", to: "sandbox" },
         via: "device",
         outcome: "applied",
       }),
       expect.objectContaining({
         kind: "policy",
+        add: ["github.com"],
+        remove: ["pypi.org"],
+        via: "device",
+      }),
+      expect.objectContaining({
+        kind: "policy",
         add: ["files.slack.com"],
-        tier: null,
-        localhost: null,
-        remoteGrants: null,
         via: "web",
       }),
     ]);
@@ -420,7 +429,7 @@ describe("DevicePolicyService.apply", () => {
         req.op === "policy"
           ? { ok: false, error: { kind: "policy", message } }
           : { ok: true, result: null },
-      { ...FEATURES, policy: { ...POLICY, remoteGrants: "off" } },
+      { ...FEATURES, policy: { ...POLICY, mode: "sandbox" as const } },
     );
     const out = await policies.apply({
       orgId,
@@ -431,7 +440,7 @@ describe("DevicePolicyService.apply", () => {
     expect(out).toEqual({ applied: false, reason: "refused", message });
     expect((await policies.summary(d.deviceId))?.policy).toEqual({
       ...POLICY,
-      remoteGrants: "off",
+      mode: "sandbox",
     });
     expect(await auditsOf(d.deviceId)).toEqual([]);
   });

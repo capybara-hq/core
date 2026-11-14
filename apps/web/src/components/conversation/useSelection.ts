@@ -8,8 +8,8 @@ import type { ModelRef, Selection } from "../../lib/conversations";
 import {
   type Device,
   type DeviceList,
+  deviceModeMark,
   devicePickable,
-  deviceSandboxMark,
   deviceState,
 } from "../../lib/devices";
 import { extensionLabel } from "../../lib/extension-label";
@@ -235,10 +235,10 @@ export function useDeviceChoice(list: DeviceList | undefined): DeviceChoice {
     usable(list.defaultId) ??
     list.items.find(devicePickable)?.id;
   const current = list.items.find((e) => e.id === id);
-  // 开放 (warn) or 不使用沙箱 (danger) after the tag (sandbox dev tiers spec §11.1)
+  // 自动 (warn) / 沙箱, or a cloud device's 开放（挡内网） (warn) / 白名单, after the tag
   const markOf = (e: Device) => {
-    const mark = deviceSandboxMark(e);
-    return mark === null ? {} : { badge: te(`mark.${mark.kind}`), badgeTone: mark.tone };
+    const mark = deviceModeMark(e);
+    return { badge: te(`mark.${mark.kind}`), badgeTone: mark.tone };
   };
   const tagOf = (e: Device) => {
     const state = deviceState(e);

@@ -29,7 +29,6 @@ import {
   alwaysRefusedNote,
   deniedNote,
   expiredNote,
-  localOnlyNote,
   orgLayerNote,
   skippedNote,
   tooManyNote,
@@ -64,14 +63,7 @@ import { FakeMachine, HELLO } from "../local-devices/fake-machine.js";
  * again. Model-fake drives the runs; a fake machine answers the exec with `network.blocked`.
  */
 
-const POLICY: DeviceLocalPolicySummary = {
-  effectiveTier: "strict",
-  isolation: "sandbox",
-  localhost: "off",
-  unixSockets: "off",
-  allowedDomains: [],
-  remoteGrants: "owner",
-};
+const POLICY: DeviceLocalPolicySummary = { mode: "auto", allowedDomains: [] };
 const CURL_ERR = "curl: (56) CONNECT tunnel failed, response 403";
 
 let pgc: TestContainer;
@@ -523,16 +515,6 @@ describe("not asked", () => {
     expect(r?.content).not.toContain("[network]");
     expect(await asks()).toEqual([]);
     expect(ofType(await eventsOf(db, s.conversationId), "network_blocked")).toHaveLength(1);
-  });
-
-  it("a device without remote grants is not asked: the allow-it-locally note", async () => {
-    s = await setup({ policy: { ...POLICY, remoteGrants: "off" } });
-    s.dev.blocking.set("files.example.com", "device");
-    await post([curl(["files.example.com"])]);
-    await waitForTerminal(db, s.conversationId, 1, 20_000);
-    const [r] = await results();
-    expect(r?.content.endsWith(`\n\n${localOnlyNote(["files.example.com"])}`)).toBe(true);
-    expect(await asks()).toEqual([]);
   });
 
   it("a Docker-mode machine (policyOp, no networkReport) is not asked", async () => {

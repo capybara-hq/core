@@ -4,13 +4,11 @@
  */
 import {
   type ExecResult,
-  isSandboxTier,
   type NetworkBlockedHost,
   type NetworkBlockLayer,
   type SandboxActor,
   type SandboxLimits,
   type SandboxRoots,
-  type SandboxTier,
   validateAllowHost,
   validateSandboxPathShape,
 } from "./sandbox.js";
@@ -48,38 +46,23 @@ const DEVICE_OPS: readonly DeviceOp[] = [
  * Optional capabilities a device announces in its hello. `policyOp`: the device takes the `policy`
  * op; `policyOpId`: it also logs each `policy` op's outcome by its `opId`, answers `policyStatus`
  * and reports recent outcomes in its hello (`recentOps`); `networkReport` means exec results may
- * carry `network`; `tiers` means the device applies `limits.tier` / `defaultTier` / `devHosts`
- * (without it the device behaves as `strict`).
+ * carry `network`; `mode` means the device applies `limits.mode` / `limits.network` (without it
+ * the device behaves as an allowlisted sandbox).
  */
-export type DeviceFeature = "networkReport" | "policyOp" | "policyOpId" | "tiers";
+export type DeviceFeature = "networkReport" | "policyOp" | "policyOpId" | "mode";
 const DEVICE_FEATURES: readonly DeviceFeature[] = [
   "networkReport",
   "policyOp",
   "policyOpId",
-  "tiers",
+  "mode",
 ];
-
-/**
- * Whether the device accepts widening its local policy from the kernel (the `policy` op's `add`
- * and a higher `tier`, run and task grants): `owner` (default, decided by the device owner in a
- * signed-in session) or `off` (only the machine's user widens it, with the CLI).
- */
-export type DeviceRemoteGrants = "owner" | "off";
 
 /** What the kernel knows of a device's local policy (from the hello or a `policy` op). */
 export interface DeviceLocalPolicySummary {
-  /** The tier the device owner chose; absent = follows the org's default. */
-  tier?: SandboxTier;
-  /** The tier the device ran its last command at (its choice cut to the org's ceiling). */
-  effectiveTier: SandboxTier;
-  /** `none` = the device runs commands without a sandbox (only with tier `open`, OS mode). */
-  isolation: "sandbox" | "none";
-  /** Whether sandboxed commands may bind and reach localhost on this machine. */
-  localhost: "on" | "off-proxy-detected" | "off";
-  /** Unix socket access: within the roots, every socket masked, or none. */
-  unixSockets: "roots" | "all-masked" | "off";
+  /** `auto` = no OS sandbox (the owner's machine); `sandbox` = the OS sandbox. */
+  mode: "auto" | "sandbox";
+  /** The device's sandbox-mode allowlist; meaningful in sandbox mode only. */
   allowedDomains: string[];
-  remoteGrants: DeviceRemoteGrants;
 }
 
 /**
@@ -164,10 +147,10 @@ export interface KernelCancel {
 }
 
 /**
- * The device's local policy changed while connected (its file was edited on the machine, the
- * localhost proxy guard flipped, a new tier ceiling): the summary as it is now, sent only when it
- * differs from the last one sent on this connection. `policy` is absent when the frame's summary
- * was unreadable; the kernel then keeps only its isolation, from the raw frame, as for the hello.
+ * The device's local policy changed while connected (its file was edited on the machine, the owner
+ * switched mode): the summary as it is now, sent only when it differs from the last one sent on
+ * this connection. `policy` is absent when the frame's summary was unreadable; the kernel then
+ * learns the policy later, as for the hello.
  */
 export interface DevicePolicyChanged {
   type: "policy";
@@ -187,8 +170,8 @@ export interface DeviceExecArgs {
   limits: SandboxLimits;
   /**
    * Hosts the kernel allows for this command beyond the local policy (a run's 「这次允许」 or a
-   * scheduled task's grants). A device applies them only when its `remoteGrants` is `owner` and
-   * only within `limits`; a device without the feature ignores the field.
+   * scheduled task's grants). A device applies them only in sandbox mode, within `limits`; a
+   * device without the feature ignores the field.
    */
   grants?: DeviceExecGrants;
 }
@@ -226,9 +209,9 @@ export interface DeviceStopArgs {
   reason: "revoked" | "deleted";
 }
 /**
- * Edits the device's local policy. The device refuses widening (`add`, a higher `tier`) unless
- * its `remoteGrants` is `owner`; narrowing is always accepted. `isolation` may only turn the
- * sandbox back on: turning it off is decided on the machine.
+ * Edits the device's local policy. The kernel may only narrow: `mode` may turn the sandbox back on
+ * (`"sandbox"`), never off (turning auto mode on is decided on the machine), and `add` extends the
+ * sandbox-mode allowlist only. Narrowing is always accepted.
  */
 export interface DevicePolicyArgs {
   /**
@@ -241,10 +224,8 @@ export interface DevicePolicyArgs {
   add?: string[];
   /** Hosts to remove from `allowedDomains`. */
   remove?: string[];
-  /** The device's tier; null = follow the org's default. */
-  tier?: SandboxTier | null;
-  /** Only `sandbox`: the kernel never turns the sandbox off. */
-  isolation?: "sandbox";
+  /** Only `"sandbox"`: the kernel may narrow, never turn auto mode on. */
+  mode?: "sandbox";
   /** Who decided, for the device's local audit line. */
   source: { approvalId?: string; accountId: string; accountName: string; via: "web" | "im" };
 }
@@ -310,45 +291,32 @@ function bool(o: Record<string, unknown>, k: string): boolean {
   return v;
 }
 
-function strArray(o: Record<string, unknown>, k: string): string[] {
+function strArray(o: Record<string, unknown>, k: string, label: string = k): string[] {
   const v = o[k];
   if (!Array.isArray(v) || v.some((x) => typeof x !== "string")) {
-    throw new DeviceProtocolError(`field "${k}" must be an array of strings`);
+    throw new DeviceProtocolError(`field "${label}" must be an array of strings`);
   }
   return v as string[];
 }
 
 function parseLimits(v: unknown): SandboxLimits {
   const o = obj(v, 'field "limits"');
-  const egress = str(o, "egress");
-  if (egress !== "none" && egress !== "allowlist" && egress !== "open") {
-    throw new DeviceProtocolError(`unknown egress "${egress}"`);
-  }
-  const devHosts = strArray(o, "devHosts");
-  for (const h of devHosts) {
+  const network = obj(o.network, 'field "network"');
+  const kind = oneOf(network, "kind", ["open-public", "allowlist"] as const);
+  const hosts = strArray(network, "hosts", "network.hosts");
+  for (const h of hosts) {
     const problems = validateAllowHost(h);
     if (problems.length > 0) {
-      throw new DeviceProtocolError(`invalid dev host "${h}": ${problems.join("; ")}`);
+      throw new DeviceProtocolError(`invalid network host "${h}": ${problems.join("; ")}`);
     }
   }
-  const out: SandboxLimits = {
+  return {
     cpu: num(o, "cpu"),
     memoryMb: num(o, "memoryMb"),
     diskMb: num(o, "diskMb"),
-    egress,
-    allowHosts: strArray(o, "allowHosts"),
-    tier: parseTier(o, "tier"),
-    devHosts,
+    mode: oneOf(o, "mode", ["auto", "sandbox"] as const),
+    network: { kind, hosts },
   };
-  if (o.defaultTier !== undefined) out.defaultTier = parseTier(o, "defaultTier");
-  if (o.allowUnsandboxed !== undefined) out.allowUnsandboxed = bool(o, "allowUnsandboxed");
-  return out;
-}
-
-function parseTier(o: Record<string, unknown>, k: string): SandboxTier {
-  const v = str(o, k);
-  if (!isSandboxTier(v)) throw new DeviceProtocolError(`unknown tier "${v}"`);
-  return v;
 }
 
 function oneOf<T extends string>(o: Record<string, unknown>, k: string, values: readonly T[]): T {
@@ -397,20 +365,10 @@ function hostArray(o: Record<string, unknown>, k: string): string[] {
 
 function parsePolicySummary(v: unknown): DeviceLocalPolicySummary {
   const o = obj(v, 'field "policy"');
-  const remoteGrants = str(o, "remoteGrants");
-  if (remoteGrants !== "owner" && remoteGrants !== "off") {
-    throw new DeviceProtocolError(`unknown remoteGrants "${remoteGrants}"`);
-  }
-  const out: DeviceLocalPolicySummary = {
-    effectiveTier: parseTier(o, "effectiveTier"),
-    isolation: oneOf(o, "isolation", ["sandbox", "none"] as const),
-    localhost: oneOf(o, "localhost", ["on", "off-proxy-detected", "off"] as const),
-    unixSockets: oneOf(o, "unixSockets", ["roots", "all-masked", "off"] as const),
+  return {
+    mode: oneOf(o, "mode", ["auto", "sandbox"] as const),
     allowedDomains: strArray(o, "allowedDomains"),
-    remoteGrants,
   };
-  if (o.tier !== undefined) out.tier = parseTier(o, "tier");
-  return out;
 }
 
 /**
@@ -611,9 +569,8 @@ function validateArgs(op: DeviceOp, a: Record<string, unknown>): void {
       opId(a);
       if (a.add !== undefined) hostArray(a, "add");
       if (a.remove !== undefined) hostArray(a, "remove");
-      if (a.tier !== undefined && a.tier !== null) parseTier(a, "tier");
-      if (a.isolation !== undefined && a.isolation !== "sandbox") {
-        throw new DeviceProtocolError('field "isolation" may only be "sandbox"');
+      if (a.mode !== undefined && a.mode !== "sandbox") {
+        throw new DeviceProtocolError('field "mode" may only be "sandbox"');
       }
       const src = obj(a.source, 'field "source"');
       nonEmptyStr(src, "accountId");

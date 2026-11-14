@@ -233,9 +233,25 @@ describe("devices", () => {
       operation: "devices.rename",
     });
     const got = (await run("devices.get", { deviceId: created.device.id }, ctx)) as {
-      device: { name: string; provider: string };
+      device: {
+        name: string;
+        provider: string;
+        mode: {
+          mode: string;
+          allowedMode: string;
+          allowedBy: string | null;
+          network: { kind: string; source: string };
+        };
+      };
     };
     expect(got.device.name).toBe("Reports");
+    // a cloud device follows what the org allows; the default deployment allows auto mode
+    expect(got.device.mode).toMatchObject({
+      mode: "auto",
+      allowedMode: "auto",
+      allowedBy: "platform",
+      network: { kind: "open-public", source: "platform" },
+    });
   });
 
   it("denies known failures before the card: taken name, the limit, another person's device", async () => {

@@ -16,9 +16,9 @@ function versionOf(file: string): string {
 /**
  * The device's local policy as the running program sees it. Commands read {@link current} at
  * each exec, so a change applies at the next command without a restart, whether this program
- * wrote it ({@link update}) or someone ran `capybara-device policy` meanwhile. Each new version
- * is a new object, so a reader can tell a reload by identity (the OS executor reruns its
- * localhost proxy guard then).
+ * wrote it ({@link update}) or someone ran `capybara-device mode` / `capybara-device policy`
+ * meanwhile. Each new version is a new object, so a reader can tell a reload by identity (the
+ * switching executor kills auto-mode commands when the policy turns the sandbox back on).
  */
 export class PolicyStore {
   private policy: Policy;
@@ -28,10 +28,10 @@ export class PolicyStore {
   private readonly file: string;
   private readonly err: (line: string) => void;
   /**
-   * policy.json had the legacy `network: "open"` when the store was made (start prints a notice;
-   * the key is dropped at the next write).
+   * policy.json was written before auto mode (no `mode`) when the store was made: `start` prints
+   * one notice, and the key is dropped at the next write.
    */
-  readonly legacyNetworkOpen: boolean;
+  readonly legacy: boolean;
   /** The outcomes of the `policy` ops this machine served, by op id (next to policy.json). */
   readonly ops: PolicyOpLog;
 
@@ -46,18 +46,17 @@ export class PolicyStore {
     // Without an initial policy, an unreadable file throws here: the program does not start.
     if (opts.initial !== undefined) {
       this.policy = opts.initial;
-      this.legacyNetworkOpen = false;
+      this.legacy = false;
     } else {
       const read = readPolicyFile(dir);
       this.policy = read.policy;
-      this.legacyNetworkOpen = read.legacyNetworkOpen;
+      this.legacy = read.legacy;
     }
   }
 
   /**
    * The policy now: re-reads policy.json when it changed (or appeared, or vanished: defaults).
-   * An invalid file keeps the last good policy, never a looser one, with the sandbox turned back
-   * on (a broken file never keeps commands running unsandboxed), and is reported once per version.
+   * An invalid file keeps the last good policy and is reported once per version.
    */
   current(): Policy {
     const version = versionOf(this.file);
@@ -68,14 +67,10 @@ export class PolicyStore {
       this.version = version;
       this.reportedBad = undefined;
     } catch (e) {
-      // A new object only when it narrows: readers tell a reload by identity.
-      if (this.policy.isolation === "none") this.policy = { ...this.policy, isolation: "sandbox" };
+      // A broken file never changes the mode: the last good policy stands.
       if (this.reportedBad !== version) {
         this.reportedBad = version;
-        this.err(
-          `${(e as Error).message}; keeping the last valid policy with the sandbox on until the ` +
-            "file is fixed",
-        );
+        this.err(`${(e as Error).message}; keeping the last valid policy until the file is fixed`);
       }
     }
     return this.policy;

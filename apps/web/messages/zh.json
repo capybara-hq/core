@@ -122,12 +122,12 @@
     },
     "org": {
       "not_found": "组织不存在或你已不是成员。",
-      "sandbox_egress_not_allowed": "本部署已禁止沙箱联网，组织只能选择「不联网」。",
+      "sandbox_egress_not_allowed": "扩大组织的云设备网络需要由人在组织设置里操作。",
       "last_owner": "组织至少要保留一个组织所有者。",
       "owner_required": "只有组织所有者可以执行这个操作。",
       "creation_disabled": "本部署关闭了新建组织。",
       "slug_taken": "该 slug 已被其他组织使用。",
-      "sandbox_tier_not_allowed": "平台不允许这个沙箱级别设置。"
+      "auto_mode_not_allowed": "平台不允许自动模式。"
     },
     "setup": {
       "already_completed": "系统已完成初始化。",
@@ -326,7 +326,7 @@
       "file_not_found": "沙箱里没有这个文件。",
       "file_is_directory": "这个路径是目录，请指定一个文件。",
       "file_too_large": "文件过大。",
-      "tier_refused": "云端沙箱无法以该设备的沙箱级别运行。请降低设备的级别，或联系组织管理员或超级管理员。",
+      "open_network_refused": "云端沙箱无法为该设备提供开放网络，已拒绝创建。组织管理员可以把组织对云设备的网络改为白名单，或由超级管理员在沙箱扩展设置中允许开放网络。",
       "create_failed": "无法创建云端沙箱。请重试；如果一直失败，请让超级管理员检查沙箱扩展的设置。"
     },
     "device": {
@@ -342,10 +342,8 @@
       "credential_invalid": "这台电脑的连接凭据已失效，请在电脑上重新连接。",
       "policy_refused": "这台设备不接受平台的这次修改，请在机器上修改。",
       "policy_unsupported": "这台设备不支持从平台修改网络设置，请在机器上升级设备程序。",
-      "tier_not_allowed": "这个沙箱级别超出了组织或平台允许的最高级别。",
-      "tier_on_device": "本地设备的沙箱级别保存在机器上，请在设备页面修改，或在机器上运行 capybara-device policy set tier。",
-      "unsandboxed_not_allowed": "这台设备不使用沙箱运行命令，组织不允许这样做。设备所有者可以在机器上运行 capybara-device policy set isolation sandbox 恢复沙箱。",
-      "tier_not_granted": "这个定时任务没有开放级别的授权，不能使用开放级别的设备。"
+      "auto_mode_not_allowed": "该设备的机器以自动模式运行，但你的组织不允许自动模式。请在那台机器上运行 capybara-device mode sandbox 切换到沙箱模式。",
+      "mode_on_device": "该设备的模式保存在它所连接的机器上：请在设备页面切换到沙箱模式，或在那台机器上运行 capybara-device mode sandbox。"
     },
     "device_sign_in": {
       "authorization_pending": "还未确认连接，请在网页上确认后稍候。",
@@ -509,8 +507,8 @@
       "once_in_past": "这个时间已经过去了。"
     },
     "deployment": {
-      "setting_readonly": "这项沙箱级别由部署的启动配置（环境变量、配置文件或 Nacos）设定，只能在那里修改。",
-      "sandbox_tier_not_allowed": "通过 API 令牌或平台工具只能调低平台的沙箱级别；要调高，请超级管理员在后台设置页修改。"
+      "setting_readonly": "这项设置由部署的启动配置（环境变量、配置文件或 Nacos）设定，只能在那里修改。",
+      "auto_mode_not_allowed": "通过 API 令牌或平台工具只能关闭平台的自动模式；要重新开放，请超级管理员在后台设置。"
     }
   },
   "agents": {
@@ -706,7 +704,26 @@
       "sheetHint": "默认全部开启，取消勾选即对这个智能体关闭；全部取消即整体关闭（之后新增的工具也关闭）。策略只能收紧。修改随本页的保存一起生效。",
       "connectorPolicyHint": "连接器工具也可以对这个智能体设为允许，覆盖组织默认和成员自己的「询问」；成员在自己的连接上设为「禁止」的工具，对他仍然禁止。",
       "loadingTools": "正在读取工具…",
-      "connectorToolsUnreadable": "暂时读不到这个连接器的工具，稍后重试。"
+      "connectorToolsUnreadable": "暂时读不到这个连接器的工具，稍后重试。",
+      "attributionSection": "提交与 PR 署名",
+      "attributionSectionHint": "智能体创建的 git 提交和它打开的 PR 所附带的内容。",
+      "attributionMode": "署名方式",
+      "attributionMode_inherit": "跟随平台",
+      "attributionModeHint_inherit": "使用下方显示的平台默认值。",
+      "attributionMode_custom": "自定义",
+      "attributionModeHint_custom": "使用该智能体自己的署名行。",
+      "attributionMode_off": "关闭",
+      "attributionModeHint_off": "不添加署名行。",
+      "attributionCommit": "提交署名行",
+      "attributionCommitHelp": "加在智能体创建的 git 提交信息末尾；留空则不加。",
+      "attributionPr": "PR 署名行",
+      "attributionPrHelp": "加在智能体打开的 PR 正文末尾；留空则不加。",
+      "attributionSessionUrl": "附加会话链接",
+      "attributionSessionUrlHint": "需要部署设置 http.publicUrl；默认关闭。",
+      "attributionSessionUrlOn": "是",
+      "attributionSessionUrlNeedsPublicUrl": "已开启，但不会加链接：部署未设置 http.publicUrl",
+      "attributionDefaults": "平台默认：提交 {commit}；PR {pr}。",
+      "attributionNone": "无"
     },
     "params": {
       "default": "默认",
@@ -780,7 +797,8 @@
         "tools": "工具",
         "skills": "技能",
         "subagents": "子智能体",
-        "channels": "渠道"
+        "channels": "渠道",
+        "attribution": "署名"
       },
       "startChat": "开始对话",
       "reassign": "更改所有者",
@@ -1401,6 +1419,14 @@
     },
     "stats": "第 {n} 轮 · 已用 {elapsed}",
     "contextPct": "上下文 {n}%",
+    "deviceCode": {
+      "title": "登录 GitHub",
+      "body": "打开 GitHub 并输入下面的一次性代码，完成登录。登录在设备内进行，令牌不会离开设备。",
+      "codeLabel": "一次性代码",
+      "copy": "复制代码",
+      "copied": "已复制",
+      "copyManual": "请选中代码后复制"
+    },
     "toolLines": "第 {from}–{to} 行",
     "pickModel": "切换模型",
     "pickDevice": "设备",
@@ -1537,14 +1563,19 @@
       "online": "在线",
       "offline": "离线"
     },
-    "isolation": {
-      "isolated": "会话之间隔离进程",
-      "shared": "会话之间不隔离进程"
+    "runMode": {
+      "os": "系统沙箱",
+      "docker": "Docker"
     },
-    "egress": {
-      "none": "无网络",
-      "allowlist": "仅允许名单内的主机",
-      "open": "开放网络"
+    "mark": {
+      "auto": "自动",
+      "sandbox": "沙箱",
+      "open": "开放（挡内网）",
+      "allowlist": "白名单"
+    },
+    "networkKind": {
+      "open-public": "开放（挡内网）",
+      "allowlist": "白名单"
     },
     "empty": "你还没有设备。",
     "noCloud": {
@@ -1574,23 +1605,9 @@
       "startStep": "3. 启动连接，保持设备在线（开机自动连接：capybara-device service install）"
     },
     "detail": {
-      "tabsLabel": "设备分区",
-      "tabs": {
-        "summary": "概要"
-      },
-      "source": "来源",
-      "provider": "提供方",
-      "state": "状态",
-      "isolation": "隔离",
-      "limits": "限制",
-      "limitsValue": "{cpu} CPU · 内存 {memory} · 磁盘 {disk} · {egress}",
-      "files": "文件",
-      "filesNote": "文件保留到设备被删除。",
-      "suspendNote": "暂停会结束正在运行的进程。",
       "demotedNote": "这是平台更换沙箱提供方之前你的个人设备。平台换回{provider}后，它会重新成为你的默认设备，文件也随之回来。",
       "filesLostNote": "该设备的文件已在提供方丢失。重建文件后才能再次使用。",
       "localFilesLostNote": "这个本地设备在机器上的文件目录已丢失。在这台机器上先运行 capybara-device logout，再运行 capybara-device login 并连接到这个设备，即可重建目录后继续使用。",
-      "created": "创建时间",
       "rename": "重命名",
       "renameTitle": "重命名设备",
       "renameSubmit": "保存",
@@ -1606,36 +1623,71 @@
       "resetSubmit": "重建文件",
       "resetScheduled": "已安排重建 {name} 的文件，完成后此页会更新。",
       "localFilesNote": "文件保存在这台机器上，不会上传到平台。",
-      "deleteLocalHint": "删除 {name} 会断开它的机器，且无法恢复。机器上的文件会保留。输入设备名称以确认。"
+      "deleteLocalHint": "删除 {name} 会断开它的机器，且无法恢复。机器上的文件会保留。输入设备名称以确认。",
+      "provider": "提供方",
+      "resources": "资源",
+      "resourcesValue": "{cpu} CPU · 内存 {memory} · 磁盘 {disk}",
+      "network": "网络",
+      "filesAndSuspendNote": "文件保留到设备被删除。暂停会结束正在运行的进程。",
+      "created": "创建时间"
     },
     "mode": {
-      "os": "系统沙箱",
-      "docker": "Docker"
+      "description": {
+        "auto": "命令以你的身份在这台机器上运行，可以联网；每条命令都经过审查。",
+        "sandbox": "命令在沙箱里运行，只能访问工作区、临时目录和设备允许的域名。"
+      },
+      "cloudDescription": {
+        "auto": "命令在容器里运行，可以访问公网，内网地址被挡住。",
+        "sandbox": "命令在容器里运行，网络按组织的沙箱网络设置。"
+      },
+      "name": {
+        "auto": "自动",
+        "sandbox": "沙箱"
+      },
+      "commandHint": "在这台机器的终端里运行，切换模式。",
+      "changedSandbox": "已切换到沙箱模式。",
+      "pendingNextUse": "下次使用时生效，文件保留。",
+      "lockedNarrowed": "这台云端设备已设为沙箱模式；这里只能收窄，不能切回自动。",
+      "lockedSandbox": "未开放自动模式，云端设备运行沙箱。",
+      "unavailable": "未开放自动模式",
+      "autoOnMachine": "在机器上切换到自动：运行下面的命令。",
+      "noMachine": "连接机器后才能在这里切换模式。",
+      "offline": "这台设备离线；在机器上运行下面的命令即可切换。",
+      "upgrade": "这台机器上的设备程序不支持从平台修改模式。请在机器上升级 capybara-device。",
+      "pendingFilesReset": "重置文件后生效。"
+    },
+    "recent": {
+      "title": "最近的修改",
+      "add": "添加 {hosts}",
+      "remove": "移除 {hosts}",
+      "mode": "模式改为{mode}",
+      "modeFrom": "模式从{from}改为{to}",
+      "none": "没有改动",
+      "unknownBy": "未知账号",
+      "via": {
+        "web": "网页",
+        "im": "IM",
+        "device": "本机"
+      },
+      "outcome": {
+        "unknown": "机器未确认",
+        "failed": "未生效"
+      }
     },
     "machine": {
       "title": "机器",
       "description": "运行这个设备命令的机器。",
       "name": "名称",
       "os": "系统",
-      "mode": "运行方式",
-      "programVersion": "程序版本",
-      "lastSeen": "最近在线",
-      "never": "从未",
       "none": "没有连接的机器。在机器上运行 capybara-device login 连接。",
       "revoke": "断开这台机器",
       "revokeTitle": "断开 {name}？",
       "revokeHint": "这台机器的连接凭据会被撤销，正在运行的命令会结束。机器上的文件会保留。要再次连接，在机器上运行 capybara-device login。",
       "revokeSubmit": "断开",
-      "revoked": "已断开 {name}。"
+      "revoked": "已断开 {name}。",
+      "runMode": "运行方式"
     },
     "network": {
-      "title": "网络",
-      "description": "在组织允许的范围内，这台机器上的命令还能访问哪些域名。",
-      "remoteGrants": "接受平台修改",
-      "remoteGrantsOwner": "接受你的修改",
-      "remoteGrantsOff": "不接受",
-      "remoteGrantsHint": "只能在机器上设置：capybara-device policy set remoteGrants owner|off",
-      "remoteGrantsOffHint": "这台机器不接受平台放宽网络，添加域名和不限网络都要在机器上操作：capybara-device policy add allowedDomains files.example.com；或运行 capybara-device policy set remoteGrants owner 允许在这里修改。",
       "domains": "允许的域名",
       "domainsEmpty": "这台机器还没有允许任何域名。",
       "remove": "移除",
@@ -1643,108 +1695,26 @@
       "removed": "已移除 {host}。",
       "add": "添加域名",
       "addHelp": "完整主机名（files.example.com）或通配符（*.example.com）。",
-      "addDisabled": "这台机器不接受平台添加域名。",
+      "addDisabled": "这台机器不能从平台添加域名。",
       "addSubmit": "添加",
       "added": "已添加 {host}。",
       "hostInvalid": "请输入小写主机名，不带协议、端口或路径，例如 files.example.com 或 *.example.com。",
       "hostPresent": "这个域名已经允许。",
       "upgrade": "这台机器上的设备程序不支持从平台修改网络设置。请在机器上升级 capybara-device。",
       "dockerNote": "这台机器用 Docker 运行命令，无法按域名限制，因此不接受平台放宽网络。",
-      "unknown": "机器还没有上报它的网络设置。"
-    },
-    "tier": {
-      "strict": "严格",
-      "dev": "开发",
-      "open": "开放"
-    },
-    "mark": {
-      "open": "开放",
-      "unsandboxed": "不使用沙箱"
-    },
-    "sandbox": {
-      "title": "沙箱级别",
-      "description": "这台设备上的命令在多宽的沙箱里运行，不超过组织和平台允许的最高级别。",
-      "follow": "跟随组织默认（{tier}）",
-      "followHint": "组织修改默认级别时，这台设备随之改变。",
-      "hint": {
-        "strict": "只能访问允许的域名，不能访问本机端口和 Unix 套接字。",
-        "dev": "还能访问常用开发域名、本机端口和 Unix 套接字，适合日常开发。",
-        "open": "可以访问任何公网地址和端口。"
+      "unknown": "机器还没有上报它的网络设置。",
+      "title": "网络",
+      "description": "沙箱模式下，命令只能访问这台机器允许的域名。添加或移除会发送到机器。",
+      "cloudTitle": "网络",
+      "cloudDescription": {
+        "open-public": "沙箱模式下，这台云端设备可以访问公网，内网地址被挡住。",
+        "allowlist": "沙箱模式下，这台云端设备只能访问组织允许的域名。"
       },
-      "capped": {
-        "org": "组织最高允许：{tier}",
-        "platform": "平台最高允许：{tier}",
-        "any": "最高允许：{tier}"
+      "cloudHint": {
+        "org": "组织在设置里修改这里。",
+        "platform": "由平台设置。"
       },
-      "effective": "实际级别",
-      "lower": {
-        "org": "组织最高只允许{tier}。",
-        "platform": "平台最高只允许{tier}。",
-        "program": "这台机器上的设备程序不支持沙箱级别，命令按严格级别运行。请在机器上升级 capybara-device。"
-      },
-      "pendingNextUse": "下次使用时生效，文件保留。",
-      "pendingFilesReset": "重置文件后生效。",
-      "changed": "沙箱级别已改为{tier}。",
-      "followed": "已改为跟随组织默认。",
-      "remoteOff": "这台机器不接受平台提高级别。要提高级别，在机器上运行：",
-      "unknown": "机器还没有上报它的沙箱级别。",
-      "noMachine": "连接机器后才能修改沙箱级别。",
-      "upgrade": "这台机器上的设备程序不支持从平台修改沙箱级别。请在机器上升级 capybara-device。",
-      "localhost": "本机端口",
-      "localhostValue": {
-        "on": "可访问",
-        "off-proxy-detected": "已关闭：检测到本机代理或 Docker 端口",
-        "off": "不可访问"
-      },
-      "localhostOverride": "要仍然允许访问本机端口，在机器上运行：",
-      "unixSockets": "Unix 套接字",
-      "unixSocketsValue": {
-        "roots": "设备目录内可用",
-        "all-masked": "可用，系统守护进程的套接字已隐藏",
-        "off": "不可用"
-      },
-      "linuxNote": "在 Linux 上，只有设备程序能隐藏系统守护进程的套接字时，开发级别才开放 Unix 套接字；否则保持关闭。",
-      "openConfirmTitle": "把这台设备设为开放级别？",
-      "openConfirmSubmit": "设为开放",
-      "openRisk": "开放级别下，智能体在这台设备上运行的命令可以访问任何公网地址和端口，包括把文件上传到外部网站。提示注入能让智能体这样做。只在你自己的开发机上、并且信任所用的智能体和资料时开启。",
-      "cancel": "取消",
-      "unsandboxed": "不使用沙箱",
-      "unsandboxedOffHint": "只能在这台机器上开启，平台无法替你打开。在机器上运行：",
-      "unsandboxedRisk": "不使用沙箱时，智能体的命令直接以你的身份在这台电脑上运行：能读写你的所有文件、使用你的登录凭据（SSH 密钥、云账号、钥匙串）、Docker 和任意网络。提示注入能让智能体删除文件或把凭据发出去。只在你自己的开发机上、并且完全信任所用的智能体和资料时开启。",
-      "unsandboxedOn": "这台设备的命令直接以你的身份在这台电脑上运行，没有沙箱。",
-      "unsandboxedNotAllowed": "组织不允许不使用沙箱的设备，智能体暂时不能使用这台设备。恢复沙箱后即可继续使用。",
-      "restore": "恢复沙箱",
-      "restored": "已恢复沙箱。",
-      "recent": {
-        "title": "最近的修改",
-        "add": "添加 {hosts}",
-        "remove": "移除 {hosts}",
-        "tier": "级别改为{tier}",
-        "tierFollow": "改为跟随组织默认",
-        "tierFrom": "级别从{from}改为{to}",
-        "followDefault": "组织默认",
-        "localhost": "本机端口：{value}",
-        "remoteGrants": "接受平台修改：{value}",
-        "isolation": {
-          "none": "不使用沙箱",
-          "sandbox": "恢复沙箱"
-        },
-        "none": "没有改动",
-        "unknownBy": "未知账号",
-        "via": {
-          "web": "网页",
-          "im": "IM",
-          "device": "本机"
-        },
-        "outcome": {
-          "unknown": "机器未确认",
-          "failed": "未生效"
-        }
-      },
-      "openRiskCloud": "开放级别下，智能体在这台云端设备上运行的命令可以访问任何公网地址和端口，包括把文件和数据上传到外部网站。提示注入能让智能体这样做。只在信任所用的智能体和资料时开启。",
-      "unsandboxedOnMark": "已开启",
-      "unsandboxedRefused": "这台设备在本机上被设为不使用沙箱，但当前级别低于开放，命令会被拒绝。恢复沙箱后才能使用。",
-      "isolationResetNote": "这台设备现在不使用沙箱。在这里修改级别会同时恢复沙箱。"
+      "cloudEmpty": "没有允许的域名。"
     }
   },
   "nav": {
@@ -1823,6 +1793,15 @@
     "otherApprover": "等待审批人处理。",
     "otherApproverFor": "{tool}（{key}）需要审批，等待审批人处理。",
     "otherApproverNamed": "{tool}（{key}）需要审批，等待 {who} 处理。",
+    "command": {
+      "title": "智能体想运行这条命令，允许吗？",
+      "titleWrite": "智能体想写入这个文件，允许吗？",
+      "device": "设备",
+      "reason": "需要审批的原因",
+      "path": "文件",
+      "otherApprover": "智能体想运行一条命令，等待设备所有者处理。",
+      "otherApproverWrite": "智能体想写入一个文件，等待设备所有者处理。"
+    },
     "policy": {
       "agent": "智能体的设置要求审批",
       "connector": "连接器的策略要求审批",
@@ -2402,23 +2381,28 @@
       "ask": "需要审批",
       "askHint": "除只读工具外，每次调用都要用户批准。"
     },
-    "egress": {
-      "title": "沙箱网络",
-      "description": "沙箱里的命令能访问哪些主机。白名单能挡住内网，但挡不住把数据发到允许的主机（例如 git push 到 github.com）；敏感组织请选「不联网」。",
-      "default": "跟随部署默认",
-      "defaultHint": {
-        "allowlist": "部署设置的白名单（{count} 个主机）。",
-        "none": "部署已禁止沙箱联网。"
-      },
-      "allowlist": "自定义白名单",
-      "allowlistHint": "只放行下面的主机，替换部署的清单。",
-      "none": "不联网",
-      "noneHint": "沙箱只能访问自身（回环）。",
+    "autoMode": {
+      "title": "自动模式",
+      "description": "自动模式下，组织内的设备以环境自身的权限运行命令，由命令审核把关；沙箱模式下，设备只能写入工作区和临时目录，网络只走白名单。",
+      "allowed": "允许自动模式",
+      "allowedHint": "设备可以使用自动模式，成员仍要在自己的设备上选择。",
+      "off": "关闭自动模式",
+      "offHint": "成员的本地设备改用沙箱模式，不能在设备上切回自动模式。",
+      "platformClosed": "平台未开放"
+    },
+    "cloudNetwork": {
+      "title": "云设备网络",
+      "description": "云设备在沙箱模式下使用的网络；自动模式没有网络限制。这份主机清单同时是本地设备在沙箱模式下的上限（设备会与自己的清单取交集），收紧它也会限制本地沙箱设备。",
+      "open": "开放（挡内网）",
+      "openHint": "任何公网地址和端口。",
+      "allowlist": "白名单",
+      "allowlistHint": "只放行下面的主机，替换平台的清单。",
+      "platformClosed": "平台已关闭网络：只有平台能重新开放。",
       "hosts": "允许的主机",
       "hostsHelp": "每行一个，如 registry.npmjs.org 或 *.example.com（只匹配子域）。不能填 IP、端口或内网名称；最多 200 个。",
-      "newOnly": "改动只对之后新建的沙箱生效；已有的沙箱沿用原来的网络设置，直到被销毁。",
+      "invalidHost": "{host} 不是有效的主机：小写，不带协议、端口或路径，也不是内网名称。",
       "prefilled": "已从被拦截的命令添加 {hosts}，保存后生效。",
-      "devHosts": "开发级别还会放行常用开发域名（{count} 个）"
+      "publicOnly": "只放行公网地址；回环、内网和云元数据地址在容器外一律拦截。"
     },
     "limits": {
       "title": "沙箱资源",
@@ -2438,19 +2422,6 @@
       "title": "默认时区",
       "description": "成员没有设置自己的时区、又不是从浏览器发消息时（如 IM 里的消息、匿名访客），智能体按这个时区判断「今天」。",
       "label": "默认时区"
-    },
-    "tiers": {
-      "title": "沙箱级别",
-      "description": "组织内设备最高能用到哪个级别，以及新设备默认用哪个级别。成员可以在自己的设备上选择不超过最高级别的级别。",
-      "max": "最高级别",
-      "strictHint": "只能访问下面网络设置允许的主机，不能访问本机端口和 Unix 套接字。",
-      "devHint": "还能访问常用开发域名、本机端口和 Unix 套接字，适合日常开发。",
-      "openHint": "可以访问任何公网地址和端口。智能体的命令能把文件和数据发到任何外部网站，提示注入能让智能体这样做。只在完全信任所用的智能体和资料时开放。",
-      "platformClosed": "平台未开放",
-      "default": "新设备默认",
-      "defaultHelp": "设备没有自选级别时使用，不能高于最高级别。",
-      "allowUnsandboxed": "允许成员的设备不使用沙箱",
-      "allowUnsandboxedHint": "最高级别为开放时默认允许。成员仍要在自己的电脑上运行命令才能关闭沙箱。关闭后，命令能读写他们电脑上的所有文件和登录凭据。"
     }
   },
   "configForm": {
@@ -3490,7 +3461,8 @@
       "hint": {
         "eval": "评测的评委用它比较基线与候选，给出通过 / 不通过。未设置时，评测不能开评委。",
         "titles": "为新会话生成标题。未设置时，使用会话最近一次运行的模型。",
-        "webFetch": "网页读取工具用它从抓到的网页里提取需要的内容。未设置时，使用调用它的会话最近一次运行的模型（子智能体调用时用子智能体的）。"
+        "webFetch": "网页读取工具用它从抓到的网页里提取需要的内容。未设置时，使用调用它的会话最近一次运行的模型（子智能体调用时用子智能体的）。",
+        "review": "命令审查的分类器用它判断命令。未设置时不运行分类器，原本不确定的命令会改为询问。"
       }
     },
     "catalog": {
@@ -3989,22 +3961,22 @@
         "allowHint": "组织可以自己新建、导入技能，也可以从平台目录安装。",
         "denyHint": "组织只能从平台目录安装技能。"
       },
-      "sandboxTiers": {
-        "title": "沙箱级别",
-        "description": "整个平台的设备最高能用到哪个级别，以及新设备默认用哪个级别。组织可以在此范围内再收紧；调低后，高于新上限的组织和设备会自动按新上限运行。",
-        "max": "最高级别",
-        "strictHint": "只能访问网络设置允许的主机，不能访问本机端口和 Unix 套接字。",
-        "devHint": "还能访问常用开发域名（包管理器、代码托管、浏览器下载等）、本机端口和 Unix 套接字，适合日常开发。",
-        "openHint": "可以访问任何公网地址和端口。智能体的命令能把文件和数据发到任何外部网站，提示注入能让智能体这样做。",
-        "belowDefault": "低于配置文件固定的默认级别",
-        "default": "默认级别",
-        "defaultHelp": "组织和设备都没有自选级别时使用，不能高于最高级别。",
-        "allowUnsandboxed": "允许设备不使用沙箱",
-        "allowUnsandboxedHint": "只在组织最高级别为开放时生效，组织也可以禁止。成员仍要在自己的电脑上运行命令才能关闭沙箱；关闭后，命令能读写他们电脑上的所有文件和登录凭据。",
-        "openConfirmTitle": "把平台最高级别设为开放？",
-        "openConfirmBody": "开放后，各组织的管理员可以让设备访问任何公网地址和端口。智能体的命令能把文件和数据上传到任何外部网站，提示注入能让智能体这样做。只在信任平台上的组织、智能体和资料时开放。",
-        "openConfirmSubmit": "设为开放",
-        "cancel": "取消"
+      "autoMode": {
+        "title": "自动模式",
+        "description": "平台上的设备是否可以使用自动模式：命令以环境自身的权限运行，由命令审核把关。",
+        "label": "自动模式",
+        "allowed": "允许",
+        "allowedHint": "组织可以允许自动模式，成员仍要在自己的设备上选择。",
+        "off": "关闭",
+        "offHint": "关闭后，本地设备改用沙箱模式；云设备仍保留容器，按组织的云设备网络运行（默认开放，挡内网）。重新开放需要超级管理员在此设置。",
+        "source": "来源：{source}",
+        "sources": {
+          "env": "来自环境变量（只读）",
+          "file": "来自配置文件（只读）",
+          "nacos": "来自 Nacos（只读）",
+          "db": "在管理后台设置",
+          "default": "默认（允许）"
+        }
       },
       "clientCode": {
         "title": "插件界面代码",
@@ -4016,6 +3988,21 @@
         "pluginOnHint": "运行中",
         "pluginAllOffHint": "已停用：上面的总开关停用了所有插件界面代码。",
         "pluginOffHint": "已停用：只停用界面代码，服务端功能照常运行。"
+      },
+      "attribution": {
+        "title": "提交与 PR 署名",
+        "description": "智能体创建的 git 提交和它打开的 PR 所附带的署名行；留空即关闭该行。智能体可自行覆盖；这只是对模型的指示，不是强制。",
+        "commitLabel": "提交署名行",
+        "commitHelp": "加在智能体创建的 git 提交信息末尾；留空则不加。",
+        "prLabel": "PR 署名行",
+        "prHelp": "加在智能体打开的 PR 正文末尾；留空则不加。",
+        "sessionUrlLabel": "附加会话链接",
+        "sessionUrlHelp": "在智能体创建的 PR 中加上会话链接；需要设置 http.publicUrl，默认关闭。",
+        "previewTitle": "预览",
+        "previewCommit": "提交信息结尾",
+        "previewPr": "PR 结尾",
+        "off": "（关闭）",
+        "restore": "恢复默认"
       }
     },
     "extensions": {

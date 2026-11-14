@@ -18,10 +18,8 @@ const LIMITS: SandboxLimits = {
   cpu: 1,
   memoryMb: 512,
   diskMb: 1024,
-  egress: "none",
-  allowHosts: [],
-  tier: "strict",
-  devHosts: [],
+  mode: "sandbox",
+  network: { kind: "allowlist", hosts: [] },
 };
 
 const tmp = (prefix: string) => realpathSync(mkdtempSync(join(tmpdir(), prefix)));
@@ -48,7 +46,7 @@ describe.skipIf(!availability.ok || process.platform !== "darwin")(
     let base: string;
     let ex: OsExecutor;
     const never = new AbortController().signal;
-    const DEV: SandboxLimits = { ...LIMITS, tier: "dev", defaultTier: "dev" };
+    const DEV: SandboxLimits = LIMITS;
 
     beforeAll(async () => {
       base = tmp("device-bg-");
@@ -57,8 +55,6 @@ describe.skipIf(!availability.ok || process.platform !== "darwin")(
       ex = await createOsExecutor({
         dir: join(base, "env"),
         policy: () => DEFAULT_POLICY,
-        socketBase: join(base, "s"),
-        detectProxy: async () => ({ detected: false, reasons: [] }),
       });
       await ex.ensureRoot();
     });

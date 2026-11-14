@@ -1822,3 +1822,263 @@ a.cb-attachment:hover {
   line-height: var(--cb-type-prose-small-line);
   overflow-wrap: anywhere;
 }
+
+/*
+ * DeviceNameplate (spec §6.41): one flat band, the name as a nameplate on the left, the program
+ * version and last seen as mono figures on the right. The status light is the page's one bright
+ * element (accent while running); the band itself stays quiet. On a phone the figures go under
+ * the name, both ends aligned.
+ */
+.cb-nameplate {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--cb-space-4);
+  min-width: 0;
+  padding: var(--cb-space-3) var(--cb-space-4);
+  border: 1px solid var(--cb-line-card);
+  border-radius: var(--cb-radius-md);
+  background: var(--cb-panel);
+}
+.cb-nameplate-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+  min-width: 0;
+}
+.cb-nameplate-name {
+  overflow: hidden;
+  color: var(--cb-ink);
+  font-size: var(--cb-type-h2-size);
+  line-height: var(--cb-type-h2-line);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-nameplate-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--cb-space-2);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-nameplate-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cb-space-1);
+}
+.cb-nameplate-light {
+  flex: none;
+  width: var(--cb-space-2);
+  height: var(--cb-space-2);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-muted);
+}
+.cb-nameplate-light[data-state="running"] {
+  background: var(--cb-accent);
+}
+.cb-nameplate-light[data-state="online"] {
+  background: var(--cb-ok);
+}
+.cb-nameplate-light[data-state="suspended"] {
+  background: var(--cb-warn);
+}
+.cb-nameplate-light[data-state="offline"] {
+  background: var(--cb-muted);
+}
+.cb-nameplate-badge {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+}
+.cb-nameplate-figures {
+  display: flex;
+  flex: none;
+  gap: var(--cb-space-5);
+  font-variant-numeric: tabular-nums;
+}
+.cb-nameplate-figure {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0;
+}
+.cb-nameplate-label {
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-nameplate-value {
+  color: var(--cb-ink);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+@media (max-width: 639px) {
+  .cb-nameplate {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--cb-space-2);
+  }
+  .cb-nameplate-figures {
+    justify-content: space-between;
+    width: 100%;
+  }
+  .cb-nameplate-figure {
+    align-items: flex-start;
+  }
+}
+
+/*
+ * ModeScale (spec §6.42): a two-state horizontal scale — the thin track, two stations with one
+ * sentence each, and a 2px marker under the effective one (a marker, never a full-bleed fill).
+ * Selection inside the control is neutral: the marker and the name are `ink`, not the accent.
+ * A mode the org or the platform forbids is disabled with its reason under it; a locked scale
+ * (a cloud device) says why under the track; the whole scale can be off.
+ */
+.cb-mode-scale {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-3);
+  min-width: 0;
+}
+.cb-mode-scale-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--cb-space-2);
+  min-width: 0;
+}
+.cb-mode-scale-label {
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-mode-scale-note {
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-prose-small-size);
+  line-height: var(--cb-type-prose-small-line);
+  overflow-wrap: anywhere;
+}
+.cb-mode-scale-options {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--cb-space-3);
+  min-width: 0;
+}
+.cb-mode-scale-track {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 1px;
+  background: var(--cb-line-soft);
+}
+.cb-mode-scale-option {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--cb-space-1);
+  min-width: 0;
+  min-height: var(--cb-row-default);
+  padding: var(--cb-space-3) 0 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.cb-mode-scale-option:disabled {
+  cursor: default;
+}
+.cb-mode-scale-option:focus-visible {
+  outline: 2px solid var(--cb-accent);
+  outline-offset: 2px;
+}
+.cb-mode-scale-name {
+  color: var(--cb-muted);
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
+  font-weight: 500;
+}
+.cb-mode-scale-option[data-state="selected"] .cb-mode-scale-name {
+  color: var(--cb-ink);
+  font-weight: 600;
+}
+.cb-mode-scale-marker {
+  display: block;
+  width: 100%;
+  height: 2px;
+  background: transparent;
+}
+.cb-mode-scale-option[data-state="selected"] .cb-mode-scale-marker {
+  background: var(--cb-ink);
+}
+.cb-mode-scale-description {
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  overflow-wrap: anywhere;
+}
+.cb-mode-scale-reason {
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-mode-scale-option[aria-disabled="true"] .cb-mode-scale-name,
+.cb-mode-scale-option[aria-disabled="true"] .cb-mode-scale-description {
+  color: var(--cb-disabled);
+}
+.cb-mode-scale-command {
+  padding-top: var(--cb-space-1);
+}
+
+/*
+ * KeycapCommand (spec §6.43): the command's words as keycaps, a copy button at the end, an
+ * optional hint above them in prose.
+ */
+.cb-keycap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+  min-width: 0;
+}
+.cb-keycap-hint {
+  margin: 0;
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-prose-small-size);
+  line-height: var(--cb-type-prose-small-line);
+}
+.cb-keycap-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--cb-space-2);
+}
+.cb-keycap-caps {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--cb-space-1);
+}
+.cb-keycap-cap {
+  display: inline-block;
+  padding: 0 var(--cb-space-1);
+  border: 1px solid var(--cb-line);
+  border-bottom-width: 2px;
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-panel);
+  color: var(--cb-ink);
+  font: inherit;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-keycap-copy {
+  margin-left: auto;
+}

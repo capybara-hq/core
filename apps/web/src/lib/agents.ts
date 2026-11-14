@@ -115,6 +115,23 @@ export interface AgentDefinitionInput {
   skills?: { writePolicy?: "allow" | "ask" };
   /** Sub-agents (phase C); absent unless set (no new version for agents without it). */
   subagents?: AgentSubagents;
+  /**
+   * The attribution of git commits and pull requests this agent creates (spec
+   * 2026-11-14-agent-attribution): `inherit` (or absent) follows the platform defaults, `custom`
+   * uses its own values, `off` adds nothing.
+   */
+  attribution?: AgentAttribution;
+}
+
+/** An agent's attribution override (kernel `AgentAttribution`). */
+export interface AgentAttribution {
+  mode: "inherit" | "custom" | "off";
+  /** `custom` only: the commit trailer; `""` turns it off. Absent: the platform's. */
+  commit?: string;
+  /** `custom` only: the pull-request line; `""` turns it off. Absent: the platform's. */
+  pr?: string;
+  /** `custom` only: add the conversation link to pull requests. Absent: the platform's. */
+  sessionUrl?: boolean;
 }
 
 /** A sub-agent model tier (`subagent_<tier>` purposes; `inherit` = the parent's model). */

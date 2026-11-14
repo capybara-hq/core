@@ -76,30 +76,23 @@ describe("运行时限与命令超时（纯函数）", () => {
     ).toEqual([]);
   });
 
-  it('warns when sandbox.tiers.max is open and the provider plugin sets openEgress "off" (absent is the plugin default, proxy)', () => {
+  it('warns when auto mode is allowed and the provider plugin sets openEgress "off" (absent is the plugin default, proxy)', () => {
     const long = { ...cfg, runtime: { ...cfg.runtime, maxRunSeconds: 7200 } };
-    const open = {
-      ...long,
-      sandbox: { ...long.sandbox, tiers: { ...long.sandbox.tiers, max: "open" as const } },
-    };
-    const off = { ...open, extensionConfig: { "sandbox-docker": { openEgress: "off" } } };
-    const [w] = sandboxConfigWarnings(off, "sandbox-docker");
+    const off = { ...long, extensionConfig: { "sandbox-docker": { openEgress: "off" } } };
+    const [w] = sandboxConfigWarnings(off, "sandbox-docker", true);
     expect(w?.level).toBe("warn");
     expect(w?.message).toContain('extensionConfig."sandbox-docker".openEgress is "off"');
-    expect(w?.message).toContain("sandbox.tiers.max");
-    expect(sandboxConfigWarnings(open, "sandbox-docker")).toEqual([]);
+    expect(w?.message).toContain("auto mode is allowed");
+    expect(sandboxConfigWarnings(off, "sandbox-docker", false)).toEqual([]);
     for (const openEgress of ["proxy", "direct"]) {
       expect(
         sandboxConfigWarnings(
-          { ...open, extensionConfig: { "sandbox-docker": { openEgress } } },
+          { ...off, extensionConfig: { "sandbox-docker": { openEgress } } },
           "sandbox-docker",
+          true,
         ),
       ).toEqual([]);
     }
-    // below open, the plugin's setting does not matter
-    expect(
-      sandboxConfigWarnings({ ...long, extensionConfig: off.extensionConfig }, "sandbox-docker"),
-    ).toEqual([]);
     expect(sandboxConfigWarnings(off)).toEqual([]);
   });
 });

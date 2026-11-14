@@ -446,7 +446,13 @@ describe("waking on sub-agent deliveries", () => {
     // ruling R22: the step's first sandbox call recorded the device's directories
     expect(systemTexts(sent[2])).toEqual([
       renderSubagentDelivery(delivery.payload),
-      devicePathsText({ roots: DEFAULT_SANDBOX_ROOTS, tier: "dev", isolation: "sandbox" }),
+      devicePathsText({
+        roots: DEFAULT_SANDBOX_ROOTS,
+        mode: "auto",
+        allowedMode: "auto",
+        network: { kind: "open-public", hosts: [] },
+        local: false,
+      }),
     ]);
     expect(
       ((end as ConversationEvent).payload as EventPayload<"run_finished">).consumedUpToSeq,
@@ -484,7 +490,13 @@ describe("waking on sub-agent deliveries", () => {
     expect(systemTexts(wakeRequests[1])).toEqual([
       ...all.map((d) => renderSubagentDelivery(d.payload)),
       // ruling R22: the wake run's first sandbox call recorded the device's directories
-      devicePathsText({ roots: DEFAULT_SANDBOX_ROOTS, tier: "dev", isolation: "sandbox" }),
+      devicePathsText({
+        roots: DEFAULT_SANDBOX_ROOTS,
+        mode: "auto",
+        allowedMode: "auto",
+        network: { kind: "open-public", hosts: [] },
+        local: false,
+      }),
     ]);
     expect(await consumedSeq(db, conv)).toBeGreaterThanOrEqual(all[2]?.seq ?? 0);
     // everything consumed: no delayed wake waits for this conversation (its ensure-run backstops

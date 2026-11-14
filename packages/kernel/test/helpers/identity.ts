@@ -99,9 +99,9 @@ export function settingsFor(
   log: Pick<KernelLogger, "warn"> = quiet,
 ): SettingsService {
   const h = handlesFor(db);
-  // no startup config sets the sandbox tiers: the stored choice decides
+  // no startup config sets the auto-mode switch or the attribution: the stored choice decides
   const config = {
-    get: () => ({ sandbox: { tiers: {} } }) as unknown as KernelConfig,
+    get: () => ({ devices: { autoMode: undefined }, attribution: {} }) as unknown as KernelConfig,
     fieldSource: () => undefined,
   };
   return new SettingsService(h.db, h.txHost, adminLockFor(db), log, config);
@@ -249,7 +249,10 @@ export function inTransaction<T>(db: Kysely<any>, fn: () => Promise<T>): Promise
 
 export function orgSettingsFor(db: Kysely<any>, config: () => unknown): OrgSettingsService {
   const h = handlesFor(db);
-  return new OrgSettingsService(h.db, h.txHost, orgLockFor(db), { get: () => config() as never });
+  return new OrgSettingsService(h.db, h.txHost, orgLockFor(db), {
+    get: () => config() as never,
+    fieldSource: () => undefined,
+  });
 }
 
 /** Runs `fn` in a transaction of a running kernel (for its `mandatory` providers). */

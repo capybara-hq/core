@@ -419,6 +419,11 @@ export async function effectiveDefinition(
     toolPolicies,
     disabledSkills,
     ...(parent.subagents !== undefined && { subagents: parent.subagents }),
+    // attribution (spec 2026-11-14-agent-attribution): a general-purpose or inline child follows
+    // the parent agent's setting; a plugin template uses the platform defaults for now
+    ...(entry.source !== "plugin" && parent.attribution !== undefined
+      ? { attribution: parent.attribution }
+      : {}),
   };
   return {
     definition,

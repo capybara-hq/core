@@ -34,10 +34,8 @@ const execArgs = {
     cpu: 1,
     memoryMb: 512,
     diskMb: 1024,
-    egress: "none",
-    allowHosts: [],
-    tier: "strict",
-    devHosts: [],
+    mode: "sandbox" as const,
+    network: { kind: "allowlist" as const, hosts: [] },
   },
 };
 

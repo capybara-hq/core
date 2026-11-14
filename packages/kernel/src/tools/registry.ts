@@ -129,6 +129,12 @@ export type BuiltinResult =
        * pipeline turns it into `network_blocked`, an ask to the device owner or notes.
        */
       networkReport?: { deviceId: string; blocked: NetworkBlockedHost[] };
+      /**
+       * Kernel-internal (never written to the log or sent to the model): `gh auth login --web`'s
+       * device code an exec printed (`Bash`; auto mode spec §6, P-D13). The pipeline turns it into
+       * the display-only `device_code` event the web draws as a card.
+       */
+      loginCode?: { url: string; code: string };
     })
   | InputRequired;
 

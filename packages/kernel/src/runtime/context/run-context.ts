@@ -105,6 +105,11 @@ const sameAgent = (a: RunContext["agent"], b: RunContext["agent"]) =>
   a?.name === b?.name && a?.description === b?.description;
 const sameDispatcher = (a: RunContext["dispatchedBy"], b: RunContext["dispatchedBy"]) =>
   a?.agent === b?.agent && a?.person === b?.person;
+const sameAttribution = (a: RunContext["attribution"], b: RunContext["attribution"]) =>
+  a?.commit === b?.commit && a?.pr === b?.pr && a?.sessionUrl === b?.sessionUrl;
+/** Does an attribution say anything (a line or the link)? An all-empty one is "no attribution". */
+const hasAttribution = (a: RunContext["attribution"]): boolean =>
+  a !== undefined && (a.commit !== "" || a.pr !== "" || a.sessionUrl !== null);
 
 /**
  * What a run start appends: the fields of `next` that differ from the fold `prev` (all of them
@@ -130,6 +135,15 @@ export function runContextChange(prev: RunContext, next: RunContext): RunContext
   if (next.dispatchedBy !== undefined && !sameDispatcher(prev.dispatchedBy, next.dispatchedBy)) {
     out.dispatchedBy = next.dispatchedBy;
   }
+  if (
+    next.attribution !== undefined &&
+    !sameAttribution(prev.attribution, next.attribution) &&
+    // an all-empty value writes nothing when there was nothing to turn off (absence means "none",
+    // so a conversation that never has an attribution stays as old logs are)
+    (hasAttribution(next.attribution) || hasAttribution(prev.attribution))
+  ) {
+    out.attribution = next.attribution;
+  }
   return Object.keys(out).length === 0 ? null : out;
 }
 
@@ -146,6 +160,64 @@ function dayLine(date: string | undefined, timeZone: string | undefined, prevZon
     return `Today is ${date} (${weekdayOf(date)})${zone}.`;
   }
   return timeZone !== undefined ? `Your time zone is ${timeZone}${was}.` : null;
+}
+
+/**
+ * The attribution instruction of a run (spec 2026-11-14-agent-attribution), rendered from the
+ * values fixed in the log. The platform instructs, it does not enforce: the model is told what to
+ * end commits and pull requests with. Empty values render nothing (that line is off).
+ */
+export function attributionLines(a: RunContext["attribution"]): string[] {
+  if (a === undefined) return [];
+  const lines: string[] = [];
+  if (a.commit !== "") {
+    lines.push(
+      `- When you create a git commit, end the commit message with this trailer: ${a.commit}`,
+    );
+  }
+  if (a.pr !== "" && a.sessionUrl !== null) {
+    lines.push(
+      `- When you open a pull request, end the body with this line: ${a.pr} Then add this link to the conversation on a new line: ${a.sessionUrl}`,
+    );
+  } else if (a.pr !== "") {
+    lines.push(`- When you open a pull request, end the body with this line: ${a.pr}`);
+  } else if (a.sessionUrl !== null) {
+    lines.push(
+      `- When you open a pull request, add this link to the conversation: ${a.sessionUrl}`,
+    );
+  }
+  return lines;
+}
+
+/** The line that turns the whole attribution off after a run's context had one. */
+export const ATTRIBUTION_OFF_TEXT =
+  "- Do not add an attribution line to git commits or pull requests.";
+
+/** The line that retracts the commit trailer while the pull-request line stays on. */
+export const ATTRIBUTION_COMMIT_OFF_TEXT =
+  "- Do not end git commit messages with an attribution trailer.";
+
+/** The line that retracts the pull-request line while other surfaces stay on. */
+export const ATTRIBUTION_PR_OFF_TEXT = "- Do not end pull request bodies with an attribution line.";
+
+/** The line that retracts the conversation link while the pull-request line stays on. */
+export const ATTRIBUTION_LINK_OFF_TEXT = "- Do not add the conversation link to pull requests.";
+
+/**
+ * The retraction lines of the surfaces `prev` had and `next` no longer has. An update's header
+ * says it replaces the earlier values, but the run-context design leaves unchanged fields unmentioned
+ * (as `locale` and `timeZone` are), so a removed surface must be named or the model keeps using it.
+ */
+function attributionRetractions(
+  prev: RunContext["attribution"],
+  next: RunContext["attribution"],
+): string[] {
+  if (prev === undefined || next === undefined) return [];
+  const lines: string[] = [];
+  if (prev.commit !== "" && next.commit === "") lines.push(ATTRIBUTION_COMMIT_OFF_TEXT);
+  if (prev.pr !== "" && next.pr === "") lines.push(ATTRIBUTION_PR_OFF_TEXT);
+  if (prev.sessionUrl !== null && next.sessionUrl === null) lines.push(ATTRIBUTION_LINK_OFF_TEXT);
+  return lines;
 }
 
 /**
@@ -175,6 +247,7 @@ export function runContextFullText(ctx: RunContext): string {
       `- The person's language is ${LANGUAGE[ctx.locale]}. Reply in the language the person writes in.`,
     );
   }
+  lines.push(...attributionLines(ctx.attribution));
   if (ctx.dispatchedBy === undefined) lines.push(SENDER_NOTE);
   return [
     "Context from the platform:",
@@ -220,6 +293,19 @@ export function runContextUpdateText(prev: RunContext, change: RunContext): stri
     lines.push(
       `- You now work for ${change.dispatchedBy.person}, dispatched by the agent ${q(change.dispatchedBy.agent)}.`,
     );
+  }
+  if (change.attribution !== undefined) {
+    const attribution = attributionLines(change.attribution);
+    // the run had an instruction before and now has none: one line covers every surface, or the
+    // model would keep using it
+    if (attribution.length === 0 && prev.attribution !== undefined) {
+      lines.push(ATTRIBUTION_OFF_TEXT);
+    } else {
+      // a surface that was on and is now off must be retracted by name; the header replaces the
+      // earlier values, but a field left unmentioned reads as unchanged
+      lines.push(...attributionRetractions(prev.attribution, change.attribution));
+      lines.push(...attribution);
+    }
   }
   return ["Context update (replaces the earlier values):", ...lines].join("\n");
 }
