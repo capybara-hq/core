@@ -13,7 +13,11 @@ kernel's current ceiling (`DeviceRequestCeiling`, `{ mode }`) and are answered i
 Entry names are never `.` or `..`; `isDir` follows symbolic links (a dangling link is `false`);
 paths are absolute and checked with `validateSandboxPathShape`; a `suggestedName` obeys
 `isDeviceProjectName` (`MAX_DEVICE_PROJECT_NAME_LENGTH`). A device announces both with the new
-`projects` feature, and the kernel sends them only to a device that did. `DeviceHello` gains
+`projects` feature, and the kernel sends them only to a device that did. A path the request's mode
+cannot reach is an error, never null; a missing scan `base` answers `[]`. `scan` includes `base`
+itself, follows no symbolic links, enters no hidden directories, keeps descending past a hit, skips a
+directory whose basename is not a valid name, and keeps the first results by path in code-unit order.
+`isDeviceProjectName` also refuses `.`, `..` and leading or trailing whitespace. `DeviceHello` gains
 `home?: string`, the owner's home directory. `SandboxProvider` gains optional
 `list(h, path, { limit, limits, signal })` and `scan(h, base, { limits, signal })` with the same
 results; a provider without them offers no projects, and its conversations stay in free mode.

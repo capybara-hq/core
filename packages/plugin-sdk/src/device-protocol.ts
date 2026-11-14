@@ -4,6 +4,10 @@
  */
 import {
   type ExecResult,
+  isDeviceProjectName,
+  MAX_DEVICE_PROJECT_NAME_LENGTH,
+  MAX_DEVICE_SCAN_DEPTH,
+  MAX_DEVICE_SCAN_RESULTS,
   type NetworkBlockedHost,
   type NetworkBlockLayer,
   type SandboxActor,
@@ -65,34 +69,8 @@ const DEVICE_FEATURES: readonly DeviceFeature[] = [
   "projects",
 ];
 
-/** The longest project name, in characters. */
-export const MAX_DEVICE_PROJECT_NAME_LENGTH = 64;
-
 /** The most entries a `list` op may ask for and its result may carry. */
 export const MAX_DEVICE_LIST_ENTRIES = 1000;
-
-/** The most candidates a `scan` result carries. */
-export const MAX_DEVICE_SCAN_RESULTS = 50;
-
-/** How far below its base a `scan` looks: the base's children and their children. */
-export const MAX_DEVICE_SCAN_DEPTH = 2;
-
-// biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what it refuses
-const CONTROL = /[\u0000-\u001f\u007f]/;
-
-/**
- * Whether `v` is a valid project name: non-empty, at most {@link MAX_DEVICE_PROJECT_NAME_LENGTH}
- * characters, no control characters and no `/`. A `scan` candidate's `suggestedName` obeys it.
- */
-export function isDeviceProjectName(v: unknown): v is string {
-  return (
-    typeof v === "string" &&
-    v !== "" &&
-    v.length <= MAX_DEVICE_PROJECT_NAME_LENGTH &&
-    !CONTROL.test(v) &&
-    !v.includes("/")
-  );
-}
 
 /** What a device knows of its local policy and reports (in the hello or a `policy` op). */
 export interface DeviceLocalPolicySummary {
@@ -325,21 +303,26 @@ export interface DeviceListEntry {
   isDir: boolean;
 }
 /**
- * The directory's entries sorted by code unit, `truncated` when more than `limit` exist; null when
- * the path does not exist (like `stat` / `readFile`). A file or an unreadable path is an error.
+ * The directory's entries sorted by code unit, `truncated` when more than `limit` exist; null only
+ * when the path does not exist and the request's mode could reach it (like `stat` / `readFile`).
+ * A file, an unreadable directory, or a path the request's mode cannot reach is an error (the
+ * latter a `policy` refusal), never null.
  */
 export type DeviceListResult = { entries: DeviceListEntry[]; truncated: boolean } | null;
 /**
  * Looks for project-like directories under `base` (absolute, {@link validateSandboxPathShape}),
- * read in the mode `limits` gives. See `SandboxProvider.scan` for the semantics.
+ * read in the mode `limits` gives. A `base` that does not exist answers `[]`; a `base` that is a
+ * file, unreadable, or outside the request's mode is an error. See `SandboxProvider.scan` for the
+ * traversal.
  */
 export interface DeviceScanArgs {
   base: string;
   limits: DeviceRequestCeiling;
 }
 /**
- * The directories at most {@link MAX_DEVICE_SCAN_DEPTH} levels below `base` that hold `.git` or
- * `AGENTS.md`, at most {@link MAX_DEVICE_SCAN_RESULTS}. Never file contents.
+ * `base` itself and the directories at most {@link MAX_DEVICE_SCAN_DEPTH} levels below it that
+ * hold a `.git` entry or an `AGENTS.md` file, sorted by `path` in code-unit order and cut to the
+ * first {@link MAX_DEVICE_SCAN_RESULTS}. Never file contents. See `SandboxProvider.scan`.
  */
 export type DeviceScanResult = DeviceProjectCandidate[];
 
@@ -473,7 +456,7 @@ function boundedArray(v: unknown, label: string, max: number, what: string): unk
 function projectName(v: unknown, what: string): string {
   if (!isDeviceProjectName(v)) {
     throw new DeviceProtocolError(
-      `${what} must be a non-empty string of at most ${MAX_DEVICE_PROJECT_NAME_LENGTH} characters without "/" or control characters`,
+      `${what} must be a non-empty name of at most ${MAX_DEVICE_PROJECT_NAME_LENGTH} UTF-16 code units, not "." or "..", without "/", control characters or leading or trailing whitespace`,
     );
   }
   return v;

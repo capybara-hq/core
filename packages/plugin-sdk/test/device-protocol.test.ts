@@ -412,11 +412,24 @@ describe("device protocol", () => {
   });
 
   describe("project names", () => {
-    it("bounds a name: non-empty, at most 64 characters, no / or control characters", () => {
+    it("bounds a name: at most 64 code units, not . or .., no /, control characters or edge spaces", () => {
       expect(MAX_DEVICE_PROJECT_NAME_LENGTH).toBe(64);
-      expect(isDeviceProjectName("core")).toBe(true);
-      expect(isDeviceProjectName("x".repeat(MAX_DEVICE_PROJECT_NAME_LENGTH))).toBe(true);
-      for (const v of ["", "a/b", "a\u007fb", "x".repeat(MAX_DEVICE_PROJECT_NAME_LENGTH + 1), 1]) {
+      for (const v of ["core", "my project", ".dotfiles", "..x", "x".repeat(64), "核心"]) {
+        expect(isDeviceProjectName(v), JSON.stringify(v)).toBe(true);
+      }
+      for (const v of [
+        "",
+        ".",
+        "..",
+        " core",
+        "core ",
+        " core",
+        "a/b",
+        "a\u007fb",
+        "a\tb",
+        "x".repeat(MAX_DEVICE_PROJECT_NAME_LENGTH + 1),
+        1,
+      ]) {
         expect(isDeviceProjectName(v), JSON.stringify(v)).toBe(false);
       }
     });
@@ -551,6 +564,9 @@ describe("device protocol", () => {
         [{ path: "/w/core", suggestedName: "" }],
         [{ path: "/w/core", suggestedName: "a/b" }],
         [{ path: "/w/core", suggestedName: "co\tre" }],
+        // a name that breaks the rule is a provider bug: such a directory is skipped, never sent
+        [{ path: "/w/..", suggestedName: ".." }],
+        [{ path: "/w/core ", suggestedName: "core " }],
         [{ path: "/w/core", suggestedName: "x".repeat(MAX_DEVICE_PROJECT_NAME_LENGTH + 1) }],
         [...full, { path: "/w/one-more", suggestedName: "one-more" }],
       ]) {

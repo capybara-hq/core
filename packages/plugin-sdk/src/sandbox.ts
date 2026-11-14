@@ -336,9 +336,10 @@ export interface SandboxProvider {
    * unit (locale-independent), at most `limit` of them; `truncated` is true when the directory has
    * more. Entries only: never file contents, never a recursive walk. A `name` is never `.` or `..`;
    * `isDir` follows symbolic links (stat semantics: a link to a directory is `true`, a dangling link
-   * `false`). Returns null when the path does not exist; a path that is a file, or a directory that
-   * cannot be read, throws. `limits` is the kernel's current ceiling: read in the mode it gives,
-   * never in one an earlier command saw.
+   * `false`). `limits` is the kernel's current ceiling: read in the mode it gives, never in one an
+   * earlier command saw. Returns null only when the path does not exist and that mode could reach
+   * it; a path the mode cannot reach throws (a policy refusal), as does a path that is a file or a
+   * directory that cannot be read.
    *
    * Optional: a provider without it (or without {@link SandboxProvider.scan}) offers no projects,
    * and its conversations stay in free mode.
@@ -349,11 +350,22 @@ export interface SandboxProvider {
     opts: { limit: number; limits: Pick<SandboxLimits, "mode">; signal: AbortSignal },
   ): Promise<{ entries: { name: string; isDir: boolean }[]; truncated: boolean } | null>;
   /**
-   * Looks for project-like directories under `base`: those at most two levels below it (its
-   * children and their children) that hold `.git` or `AGENTS.md`, at most 50, each with an absolute
-   * `path` and a `suggestedName` from its basename (non-empty, at most 64 characters, no `/` or
-   * control characters). Directory entries only, never file contents. `limits` as for
-   * {@link SandboxProvider.list}. Optional, like `list`.
+   * Looks for project-like directories, read in the mode `limits` gives (as for
+   * {@link SandboxProvider.list}). Every provider traverses the same way:
+   *
+   * - Candidates are `base` itself and the directories at most {@link MAX_DEVICE_SCAN_DEPTH}
+   *   levels below it that hold a `.git` entry (directory or file) or an `AGENTS.md` file.
+   * - The walk does not follow symbolic links and does not enter hidden directories (names
+   *   starting with `.`); a candidate does not stop the descent (a monorepo's sub-projects are
+   *   candidates too). A provider may also skip well-known noise directories (`node_modules`,
+   *   macOS `Library`). Paths under `base` the mode cannot reach are skipped, never an error.
+   * - A directory whose basename does not satisfy {@link isDeviceProjectName} is skipped, never
+   *   returned with a changed name.
+   * - Each candidate is its absolute `path` and its basename as `suggestedName`; the list is sorted
+   *   by `path` in code-unit order and cut to the first {@link MAX_DEVICE_SCAN_RESULTS}.
+   *
+   * Directory entries only, never file contents. A `base` that does not exist answers `[]`; a
+   * `base` that is a file, cannot be read, or lies outside the mode throws. Optional, like `list`.
    */
   scan?(
     h: SandboxHandle,
@@ -364,6 +376,34 @@ export interface SandboxProvider {
 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: 正是要拦控制字符
 const CONTROL = /[\u0000-\u001f\u007f]/;
+
+/** The longest project name, in UTF-16 code units. */
+export const MAX_DEVICE_PROJECT_NAME_LENGTH = 64;
+
+/** The most candidates a `scan` answers ({@link SandboxProvider.scan}). */
+export const MAX_DEVICE_SCAN_RESULTS = 50;
+
+/** How far below its base a `scan` looks: the base's children and their children. */
+export const MAX_DEVICE_SCAN_DEPTH = 2;
+
+/**
+ * Whether `v` is a valid project name (a project's identity on its device, and a `scan`
+ * candidate's `suggestedName`): non-empty, at most {@link MAX_DEVICE_PROJECT_NAME_LENGTH} UTF-16
+ * code units, not `.` or `..`, no `/`, no control characters, and no leading or trailing
+ * whitespace.
+ */
+export function isDeviceProjectName(v: unknown): v is string {
+  return (
+    typeof v === "string" &&
+    v !== "" &&
+    v !== "." &&
+    v !== ".." &&
+    v.length <= MAX_DEVICE_PROJECT_NAME_LENGTH &&
+    !CONTROL.test(v) &&
+    !v.includes("/") &&
+    !/^\s|\s$/.test(v)
+  );
+}
 
 /**
  * The root-independent checks of a path inside an instance (non-empty, at most 4096 characters, no
