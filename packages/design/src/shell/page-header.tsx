@@ -40,6 +40,13 @@ export type PageHeaderProps = {
   path: { label: string; href?: string }[];
   /** Row 2: an h1, one line with an ellipsis, the full text in `title`. */
   title: string;
+  /**
+   * A page whose first block is its own name band (the device page's `DeviceNameplate`) leaves
+   * the title row out (spec §4.2 "A title-less head"): the path and the actions share one row and
+   * `title` stays as a visually hidden h1 for assistive tech. The description, count, status and
+   * avatar have no row of their own in this variant.
+   */
+  titleHidden?: boolean;
   /** Row 2, before the title and description: the object's avatar (an `Avatar` at 40). */
   avatar?: ReactNode;
   /** One line under the title (`prose-small`, `muted`), with an ellipsis. */
@@ -222,6 +229,55 @@ export function PageHeader(p: PageHeaderProps) {
   const loading = p.loading;
   const actionSlots = actions.length === 0 ? (loading?.actions ?? 0) : 0;
   const tabSlots = tabItems.length === 0 ? (loading?.tabs ?? 0) : 0;
+  const navNode =
+    segments.length > 0 ? (
+      <nav className="cb-pageheader-path" data-part="path" aria-label={t("shell.path")}>
+        {segments.map((c, i) => {
+          const last = i === segments.length - 1;
+          return (
+            // biome-ignore lint/suspicious/noArrayIndexKey: segments are positional (labels may repeat)
+            <Fragment key={`${i}-${c.label}`}>
+              {i > 0 ? (
+                <span className="cb-pageheader-path-sep" aria-hidden="true">
+                  /
+                </span>
+              ) : null}
+              {c.href !== undefined && !last ? (
+                <Link href={c.href} className="cb-pageheader-path-seg">
+                  {c.label}
+                  <LinkPendingMark />
+                </Link>
+              ) : (
+                <span
+                  className="cb-pageheader-path-seg"
+                  data-current={last ? "true" : undefined}
+                  aria-current={last ? "page" : undefined}
+                >
+                  {c.label}
+                </span>
+              )}
+            </Fragment>
+          );
+        })}
+      </nav>
+    ) : null;
+  const actionsNode =
+    actions.length > 0 ? (
+      <div
+        className="cb-pageheader-actions"
+        data-part="page-header-actions"
+        data-responsive={pre && more ? "true" : undefined}
+      >
+        {drawn}
+      </div>
+    ) : actionSlots > 0 ? (
+      <div className="cb-pageheader-actions" data-part="page-header-action-slots">
+        {Array.from({ length: actionSlots }, (_, i) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
+          <SkeletonBox key={i} part="default" width={72} />
+        ))}
+      </div>
+    ) : null;
   return (
     <header
       className="cb-pageheader"
@@ -230,92 +286,59 @@ export function PageHeader(p: PageHeaderProps) {
       aria-busy={loading && announces ? "true" : undefined}
     >
       {loading && announces ? <SkeletonAnnouncement /> : null}
-      {segments.length > 0 ? (
-        <nav className="cb-pageheader-path" data-part="path" aria-label={t("shell.path")}>
-          {segments.map((c, i) => {
-            const last = i === segments.length - 1;
-            return (
-              // biome-ignore lint/suspicious/noArrayIndexKey: segments are positional (labels may repeat)
-              <Fragment key={`${i}-${c.label}`}>
-                {i > 0 ? (
-                  <span className="cb-pageheader-path-sep" aria-hidden="true">
-                    /
-                  </span>
-                ) : null}
-                {c.href !== undefined && !last ? (
-                  <Link href={c.href} className="cb-pageheader-path-seg">
-                    {c.label}
-                    <LinkPendingMark />
-                  </Link>
-                ) : (
-                  <span
-                    className="cb-pageheader-path-seg"
-                    data-current={last ? "true" : undefined}
-                    aria-current={last ? "page" : undefined}
-                  >
-                    {c.label}
-                  </span>
-                )}
-              </Fragment>
-            );
-          })}
-        </nav>
-      ) : null}
-      <div
-        className="cb-pageheader-row"
-        data-part="page-header-row"
-        data-avatar={shown(p.avatar) || loading?.avatar ? "true" : undefined}
-      >
-        {shown(p.avatar) ? (
-          <span className="cb-pageheader-avatar" data-part="page-header-avatar">
-            {p.avatar}
-          </span>
-        ) : loading?.avatar ? (
-          <span className="cb-pageheader-avatar" data-part="page-header-avatar">
-            <SkeletonBox part="block" width={40} height={40} />
-          </span>
-        ) : null}
-        <div className="cb-pageheader-text">
-          <div className="cb-pageheader-titleline">
-            {loading?.title ? (
-              <span className="cb-pageheader-title-bar" data-part="page-header-title-bar">
-                <SkeletonText width="30%" size="title" />
-              </span>
-            ) : (
-              <h1 className="cb-pageheader-title" data-part="page-header-title" title={p.title}>
-                {p.title}
-              </h1>
-            )}
-            {shown(p.count) ? <span className="cb-pageheader-count">{p.count}</span> : null}
-            {shown(p.status) ? <span className="cb-pageheader-count">{p.status}</span> : null}
-          </div>
-          {p.description ? (
-            <p
-              className="cb-pageheader-description"
-              data-part="page-header-description"
-              title={p.description}
-            >
-              {p.description}
-            </p>
-          ) : null}
+      {p.titleHidden === true ? (
+        // The page draws its own name band as the first block (spec §4.2 "A title-less head"):
+        // the path and the actions share one row and the name stays an h1 for assistive tech.
+        <div className="cb-pageheader-titleless" data-part="page-header-titleless">
+          <h1 className="cb-sr-only">{p.title}</h1>
+          {navNode}
+          {actionsNode}
         </div>
-        {actions.length > 0 ? (
+      ) : (
+        <>
+          {navNode}
           <div
-            className="cb-pageheader-actions"
-            data-part="page-header-actions"
-            data-responsive={pre && more ? "true" : undefined}
+            className="cb-pageheader-row"
+            data-part="page-header-row"
+            data-avatar={shown(p.avatar) || loading?.avatar ? "true" : undefined}
           >
-            {drawn}
+            {shown(p.avatar) ? (
+              <span className="cb-pageheader-avatar" data-part="page-header-avatar">
+                {p.avatar}
+              </span>
+            ) : loading?.avatar ? (
+              <span className="cb-pageheader-avatar" data-part="page-header-avatar">
+                <SkeletonBox part="block" width={40} height={40} />
+              </span>
+            ) : null}
+            <div className="cb-pageheader-text">
+              <div className="cb-pageheader-titleline">
+                {loading?.title ? (
+                  <span className="cb-pageheader-title-bar" data-part="page-header-title-bar">
+                    <SkeletonText width="30%" size="title" />
+                  </span>
+                ) : (
+                  <h1 className="cb-pageheader-title" data-part="page-header-title" title={p.title}>
+                    {p.title}
+                  </h1>
+                )}
+                {shown(p.count) ? <span className="cb-pageheader-count">{p.count}</span> : null}
+                {shown(p.status) ? <span className="cb-pageheader-count">{p.status}</span> : null}
+              </div>
+              {p.description ? (
+                <p
+                  className="cb-pageheader-description"
+                  data-part="page-header-description"
+                  title={p.description}
+                >
+                  {p.description}
+                </p>
+              ) : null}
+            </div>
+            {actionsNode}
           </div>
-        ) : actionSlots > 0 ? (
-          <div className="cb-pageheader-actions" data-part="page-header-action-slots">
-            {Array.from({ length: actionSlots }, (_, i) => (
-              // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
-              <SkeletonBox key={i} part="default" width={72} />
-            ))}
-          </div>
-        ) : null}
-      </div>
+        </>
+      )}
       {shown(p.notice) ? <div className="cb-pageheader-notice">{p.notice}</div> : null}
       {hasTabRow(p) ? (
         <div className="cb-pageheader-tabs" data-part="page-header-tabs">

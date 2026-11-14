@@ -13,7 +13,7 @@ export type KeycapCommandProps = {
 };
 
 /**
- * A CLI line drawn as keycaps and copyable (spec §6.43, auto mode design §4): each word of the
+ * A CLI line drawn as keycaps and copyable (spec §6.42, auto mode design §4): each word of the
  * command in its own keycap, a copy button at the end that reads 已复制 for two seconds. It is the
  * only place the command appears on a page. Without a usable clipboard the keycaps are selected
  * for a manual copy and the button says so.

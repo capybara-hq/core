@@ -57,6 +57,18 @@ describe("DeviceNameplate", () => {
     expect(screen.getByText("从未连接")).toBeTruthy();
   });
 
+  it("adds the creation time as a third figure when the page has one", () => {
+    plate({ created: "2026-11-02T10:04:00Z" });
+    expect(screen.getByText("创建时间")).toBeTruthy();
+    const figures = document.querySelectorAll('[data-part="device-nameplate-figure"]');
+    expect(figures).toHaveLength(3);
+    // a page without one leaves the figure out
+    cleanup();
+    plate();
+    expect(screen.queryByText("创建时间")).toBeNull();
+    expect(document.querySelectorAll('[data-part="device-nameplate-figure"]')).toHaveLength(2);
+  });
+
   it("takes the page's own labels", () => {
     plate({
       state: "suspended",
