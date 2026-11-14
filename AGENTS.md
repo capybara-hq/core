@@ -188,7 +188,8 @@ pnpm dev:web     # the web app, output copied to /tmp/capybara-dev-web.log
 pnpm wt:new <branch>   # start a task worktree
 pnpm doctor:env  # check your environment
 pnpm verify      # the required checks for this branch; full-suite diffs run only the touched packages' tests (--full: all)
-pnpm verify --fast   # lint, typecheck, custom checks and kernel unit tests, ~25 s: fast advisory signal, not the gate; no tests of web/design/tools changes
+pnpm verify --fast   # lint, typecheck, custom checks, kernel unit tests and the design/plugin-client tests, ~30 s: advisory signal, not the gate; no kernel integration/container tests, no apps/web or tools tests
+CAPYBARA_TEST_WORKERS=4 pnpm verify   # cap vitest's workers to keep the machine usable (unset: one per core)
 docker compose -f docker/compose.dev.yaml up -d   # local postgres + valkey
 ```
 
