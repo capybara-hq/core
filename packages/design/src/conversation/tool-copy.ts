@@ -20,6 +20,13 @@ export type ToolKind =
  */
 export type ToolGuard = "not_read" | "modified";
 
+/**
+ * A protocol notice on a done call (§6.16.9): `not_loaded`, the call named a tool that the step's
+ * request did not carry (the catalog holds it), so the kernel answered "load it first" and the
+ * model retried in the next step. Expected behaviour, not a failure: the row adds a neutral word.
+ */
+export type ToolNotice = "not_loaded";
+
 /** What a call waits for from a person (§6.16.9): an approval, an answer or a connection. */
 export type ToolWaiting = "approval" | "input" | "connect";
 
@@ -35,6 +42,8 @@ export type SummaryRow = {
   status: "pending" | "running" | "done" | "failed" | "cancelled";
   /** A done call the read-before-write check refused (§6.16.9): counted apart, never failed. */
   guard?: ToolGuard;
+  /** A done call with a protocol notice (§6.16.9): never failed, not counted apart either. */
+  notice?: ToolNotice;
   /** The call waits for a person (only read while it runs). */
   waiting?: ToolWaiting;
   /** Who it waits for when that is not the viewer (a name or a role); absent = "you". */

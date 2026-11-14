@@ -1019,10 +1019,11 @@ export class ToolPipeline {
   ): Promise<WaitingFor | undefined> {
     // the command review's record for this call's result (absent: not reviewed, or no device)
     let review: ReviewRecord | undefined;
-    const fail = async (content: string, key = call.name): Promise<undefined> => {
+    const fail = async (content: string, key = call.name, view?: ToolView): Promise<undefined> => {
       await this.writeResult(ctx, call.id, key, {
         content,
         isError: true,
+        ...(view !== undefined && { view }),
         ...(review !== undefined && { review }),
       });
       return undefined;
@@ -1059,9 +1060,11 @@ export class ToolPipeline {
     const outKey = legacy ? call.name : tool.key;
     // ToolSearch 模式下，模型只能调用请求里带了完整定义的工具：目录里有、但发出本次调用的请求没加载 →
     // 明确错误，不自动加载（spec 5.5 / 6.3）。同一步里先 ToolSearch 再调用刚加载的工具同样报错。
+    // This is the protocol working, not a failure: the `not_loaded` view lets the row read neutral.
     if (!legacy && resolved.toolSearch === true && !isAlwaysLoaded(tool.key)) {
       const sent = await this.sentTools(ctx);
-      if (sent !== null && !sent.has(tool.key)) return fail(notLoadedText(tool.key), outKey);
+      if (sent !== null && !sent.has(tool.key))
+        return fail(notLoadedText(tool.key), outKey, { kind: "not_loaded" });
     }
 
     const rawInput = legacy ? legacyToolInput(call.name, call.input) : call.input;

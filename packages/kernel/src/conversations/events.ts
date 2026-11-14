@@ -215,6 +215,9 @@ const FileStateViewSchema = z.object({
  * `guard`: `Edit` / `Write` refused by the read-before-write check (`not_read`: the file was never
  * read in the conversation, `modified`: it changed since). The result stays `isError: true` for
  * the model; the web shows the refusal as a neutral outcome, not a failure.
+ * `not_loaded`: a call to a tool the catalog holds but the step's request did not carry
+ * (ToolSearch mode, spec 5.5): expected behaviour, the model is told to load it first. The result
+ * stays `isError: true` for the model; the web shows it as a neutral outcome too.
  */
 export const ToolViewSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -259,6 +262,7 @@ export const ToolViewSchema = z.discriminatedUnion("kind", [
     kind: z.literal("guard"),
     reason: z.enum(["not_read", "modified"]),
   }),
+  z.object({ kind: z.literal("not_loaded") }),
 ]);
 export type ToolView = z.infer<typeof ToolViewSchema>;
 
