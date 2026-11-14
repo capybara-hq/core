@@ -75,12 +75,14 @@ export interface SummaryFacts {
 }
 
 /**
- * The summary the kernel keeps of a local policy (hello, `policy` op result): the effective mode
- * (the owner's choice cut to the latest ceiling seen) and the device's sandbox-mode allowlist.
+ * The summary the kernel keeps of a local policy (hello, `policy` op result): the owner's mode and
+ * the device's sandbox-mode allowlist. The mode is never cut by the latest exec's ceiling: the
+ * kernel takes min(allowed, reported) itself, so an organization that later allows auto mode is
+ * followed at once instead of at the next command (the exec path still applies its ceiling).
  */
-export function policySummary(p: Policy, facts: SummaryFacts): DeviceLocalPolicySummary {
+export function policySummary(p: Policy, _facts: SummaryFacts): DeviceLocalPolicySummary {
   return {
-    mode: facts.limits === undefined ? p.mode : effectiveMode(p, facts.limits),
+    mode: p.mode,
     allowedDomains: [...p.allowedDomains],
   };
 }

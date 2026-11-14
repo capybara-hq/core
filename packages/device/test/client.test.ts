@@ -137,13 +137,14 @@ describe("client", () => {
       ...DEFAULT_POLICY,
       allowedDomains: ["a.com", "files.slack.com"],
     });
-    // An exec meanwhile tells the device its ceiling: the next hello reports the mode it runs in.
+    // An exec meanwhile brings a sandbox ceiling: the next hello still reports the owner's mode
+    // (the kernel cuts it to the ceiling itself).
     kernel.send(0, req("e1", "exec", execArgs("now")));
     await kernel.waitFor("exec", () => kernel.of("res").find((x) => x.id === "e1"));
     kernel.sockets[0]?.close(1001);
     const again = await kernel.waitFor("reconnect", () => kernel.of("hello", 1)[0]);
     expect(again.policy).toEqual({
-      mode: "sandbox",
+      mode: "auto",
       allowedDomains: ["a.com", "files.slack.com"],
     });
   });
@@ -177,10 +178,11 @@ describe("client", () => {
     await new Promise((r) => setTimeout(r, 100));
     expect(kernel.of("policy")).toHaveLength(1);
 
-    // an exec brings a sandbox ceiling: the mode it runs in changes, pushed right after its result
+    // an exec brings a sandbox ceiling: the owner's mode is unchanged, so nothing is pushed
     kernel.send(0, req("e1", "exec", execArgs("now")));
-    const frame = await kernel.waitFor("exec push", () => kernel.of("policy")[1]);
-    expect(frame.policy).toMatchObject({ mode: "sandbox" });
+    await kernel.waitFor("exec", () => kernel.of("res").find((x) => x.id === "e1"));
+    await new Promise((r) => setTimeout(r, 100));
+    expect(kernel.of("policy")).toHaveLength(1);
   });
 
   it("a docker-mode hello offers the policy op but no network report", async () => {
@@ -347,10 +349,10 @@ describe("client", () => {
     expect(exec.started).toEqual([]);
   });
 
-  it("426 exits 0 (terminal) with the upgrade message", async () => {
+  it("426 exits 1 with the upgrade message: the service retries, and an upgrade in place recovers", async () => {
     kernel.rejectWith = 426;
     const c = start();
-    expect(await c.done).toBe(0);
+    expect(await c.done).toBe(1);
     expect(errs).toEqual([
       "This capybara-device is too old for the deployment. Upgrade it: npm install -g @capybara-hq/device@next",
     ]);

@@ -19,8 +19,11 @@ import {
   AUTO_MODE_LOGIN_LINE,
   AUTO_MODE_RISK_TEXT,
   AUTO_POLICY_REFUSED_LOGIN_LINE,
+  DOCKER_AUTO_MODE_LOGIN_LINE,
+  DOCKER_SANDBOX_MODE_LOGIN_LINE,
   SANDBOX_MODE_LOGIN_LINE,
   SANDBOX_POLICY_LOGIN_LINE,
+  sandboxUnavailableLoginLine,
 } from "../src/commands/mode.js";
 import { pidPath, writePid } from "../src/pid.js";
 import { PolicyStore } from "../src/policy-store.js";
@@ -92,6 +95,15 @@ afterEach(async () => {
   rmSync(home, { recursive: true, force: true });
 });
 
+/** What the OS sandbox check answers (login and mode never run the real one in tests). */
+let sandbox: { ok: true } | { ok: false; reason: string } = { ok: true };
+beforeEach(() => {
+  sandbox = { ok: true };
+});
+
+/** `ps` for a test: every pid is a capybara-device that started long ago. */
+const ourPs = () => ({ command: "node /x/bin/capybara-device.mjs start", started: new Date(0) });
+
 const run = (
   argv: string[],
   platform: NodeJS.Platform = "linux",
@@ -99,6 +111,8 @@ const run = (
 ) =>
   runCli(argv, {
     ...(kill && { kill }),
+    ps: ourPs,
+    sandboxAvailable: () => sandbox,
     env: { XDG_CONFIG_HOME: join(home, "cfg") },
     home,
     platform,
@@ -282,6 +296,41 @@ describe("login", () => {
     expect(existsSync(join(dir, "skills"))).toBe(true);
   });
 
+  it("writes no sandbox policy when the OS sandbox is unavailable, and says what to do", async () => {
+    sandbox = { ok: false, reason: "bubblewrap is missing" };
+    tokenAnswers = [{ status: 200, body: { ...granted.body, autoMode: "off" } }];
+    expect(await run(["login", "--url", base])).toBe(0);
+    expect(existsSync(policyPath(stateDir()))).toBe(false);
+    expect(out).toContain(sandboxUnavailableLoginLine("bubblewrap is missing"));
+    expect(out).not.toContain(SANDBOX_MODE_LOGIN_LINE);
+    expect(JSON.parse(readFileSync(credFile(), "utf8")).deviceId).toBe("env-1");
+  });
+
+  it("words the lines for --mode docker: the container, not this computer", async () => {
+    sandbox = { ok: false, reason: "not needed in docker" };
+    tokenAnswers = [granted];
+    expect(await run(["login", "--url", base, "--mode", "docker"])).toBe(0);
+    expect(out).toContain(DOCKER_AUTO_MODE_LOGIN_LINE);
+    expect(out).not.toContain(AUTO_MODE_LOGIN_LINE);
+    expect(out).not.toContain(AUTO_MODE_RISK_TEXT);
+    expect(await run(["logout"])).toBe(0);
+    out.length = 0;
+    // An auto-forbidden org: Docker needs no OS sandbox, so sandbox mode is written.
+    tokenAnswers = [{ status: 200, body: { ...granted.body, autoMode: "off" } }];
+    expect(await run(["login", "--url", base, "--mode", "docker"])).toBe(0);
+    expect(readPolicy(stateDir()).mode).toBe("sandbox");
+    expect(out).toContain(DOCKER_SANDBOX_MODE_LOGIN_LINE);
+    expect(out).not.toContain(SANDBOX_MODE_LOGIN_LINE);
+  });
+
+  it("points at the installed login service instead of start", async () => {
+    mkdirSync(join(home, ".config", "systemd", "user"), { recursive: true });
+    writeFileSync(join(home, ".config", "systemd", "user", "capybara-device.service"), "unit");
+    tokenAnswers = [granted];
+    expect(await run(["login", "--url", base])).toBe(0);
+    expect(out.join("\n")).toContain("capybara-device service restart");
+  });
+
   it("does not open the browser with --no-browser and honours --dir / --mode", async () => {
     tokenAnswers = [granted];
     const dir = join(home, "custom");
@@ -427,6 +476,7 @@ describe("status and logout", () => {
       out: (l) => lines.push(l),
       err: (l) => errs.push(l),
       kill,
+      ps: ourPs,
       sleep: async () => {},
       waitMs: 300,
     });

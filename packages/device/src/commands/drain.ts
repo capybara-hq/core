@@ -1,4 +1,4 @@
-import { isAlive, readRunningPid } from "../pid.js";
+import { isAlive, type ProcessChecks, readRunningPid } from "../pid.js";
 import { signalRunning } from "./signal.js";
 
 /** How often `drain --wait` checks whether the program has exited. */
@@ -11,9 +11,9 @@ export function drain(
   stateDir: string,
   out: (line: string) => void,
   err: (line: string) => void,
-  kill?: typeof process.kill,
+  checks: ProcessChecks = {},
 ): number {
-  return signalRunning(stateDir, "SIGUSR2", "Draining capybara-device.", out, err, kill);
+  return signalRunning(stateDir, "SIGUSR2", "Draining capybara-device.", out, err, checks);
 }
 
 /**
@@ -24,8 +24,7 @@ export async function drainAndWait(
   stateDir: string,
   out: (line: string) => void,
   err: (line: string) => void,
-  o: {
-    kill?: typeof process.kill;
+  o: ProcessChecks & {
     sleep?: (ms: number) => Promise<void>;
     timeoutMs?: number;
   } = {},
@@ -33,8 +32,9 @@ export async function drainAndWait(
   const kill = o.kill ?? process.kill;
   const sleep = o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const timeoutMs = o.timeoutMs ?? DRAIN_WAIT_DEFAULT_SECONDS * 1000;
-  const pid = readRunningPid(stateDir, kill);
-  const code = drain(stateDir, out, err, kill);
+  const checks: ProcessChecks = { kill, ...(o.ps && { ps: o.ps }) };
+  const pid = readRunningPid(stateDir, checks);
+  const code = drain(stateDir, out, err, checks);
   if (code !== 0 || pid === undefined) return code;
   for (let waited = 0; isAlive(pid, kill); waited += DRAIN_POLL_MS) {
     if (waited >= timeoutMs) {

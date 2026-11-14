@@ -17,7 +17,6 @@ import {
   SERVICE_POLL_MS,
   serviceCommand,
 } from "../src/commands/service.js";
-import { pidPath, writePid } from "../src/pid.js";
 import {
   LAUNCHD_THROTTLE_INTERVAL_SECONDS,
   plistContent,
@@ -25,7 +24,6 @@ import {
   rotateServiceLog,
 } from "../src/service/launchd.js";
 import { SYSTEMD_UNIT, unitContent, unitPath } from "../src/service/systemd.js";
-import { PROGRAM_VERSION } from "../src/version.js";
 
 const spec = {
   nodePath: "/opt/node 22/bin/node",
@@ -42,9 +40,11 @@ describe("service files", () => {
       "<string>/opt/node 22/bin/node</string>\n    <string>/usr/lib/node_modules/@capybara-hq/device/bin/capybara-device.mjs</string>\n    <string>start</string>",
     );
     expect(p).toMatch(/<key>RunAtLoad<\/key>\s*<true\/>/);
-    // Unconditional KeepAlive: a clean exit (not just a crash) restarts the program.
-    expect(p).toMatch(/<key>KeepAlive<\/key>\s*<true\/>/);
-    expect(p).not.toContain("SuccessfulExit");
+    // Only a failing exit restarts the program: exit 0 is a deliberate stop (logout, revoked,
+    // drain, not logged in) and stays stopped.
+    expect(p).toMatch(
+      /<key>KeepAlive<\/key>\s*<dict>\s*<key>SuccessfulExit<\/key>\s*<false\/>\s*<\/dict>/,
+    );
     expect(p).toMatch(
       new RegExp(
         `<key>ThrottleInterval</key>\\s*<integer>${LAUNCHD_THROTTLE_INTERVAL_SECONDS}</integer>`,
@@ -98,7 +98,10 @@ describe("service command", () => {
   let calls: string[][];
   let lines: string[];
   let slept: number[];
-  const run = (cmd: string, args: string[]) => void calls.push([cmd, ...args]);
+  const run = (cmd: string, args: string[]): string => {
+    calls.push([cmd, ...args]);
+    return "";
+  };
   const sleep = async (ms: number) => void slept.push(ms);
   const label = "gui/501/top.capybara.device";
   const base = () => ({
@@ -122,25 +125,26 @@ describe("service command", () => {
   afterEach(() => rmSync(home, { recursive: true, force: true }));
 
   /**
-   * A fake launchctl: `print` answers while the service is loaded; `bootout` unloads it only after
-   * `printsUntilGone` more prints (bootout is asynchronous); `bootstrap` fails with `failures`
-   * first, then loads it.
+   * A fake launchctl: `print` answers while the service is loaded, naming the program's pid; `bootout`
+   * unloads it only after `printsUntilGone` more prints (bootout is asynchronous); `bootstrap` fails
+   * with `failures` first, then loads it with a running program; `kickstart` runs a new one.
    */
   function fakeLaunchctl(o: { loaded?: boolean; printsUntilGone?: number; failures?: Error[] }) {
     let loaded = o.loaded ?? false;
+    let pid = 4000;
     let goneAfter: number | undefined;
     const failures = [...(o.failures ?? [])];
-    return (cmd: string, args: string[]): void => {
+    return (cmd: string, args: string[]): string => {
       calls.push([cmd, ...args]);
       if (args[0] === "print") {
         if (goneAfter !== undefined && goneAfter-- <= 0) loaded = false;
         if (!loaded) throw failed(113, `Could not find service "top.capybara.device" in domain`);
-        return;
+        return `\tstate = running\n\tpid = ${pid}\n`;
       }
       if (args[0] === "bootout") {
         if (!loaded) throw failed(3, "Boot-out failed: 3: No such process");
         goneAfter = o.printsUntilGone ?? 0;
-        return;
+        return "";
       }
       if (args[0] === "bootstrap") {
         const f = failures.shift();
@@ -148,6 +152,8 @@ describe("service command", () => {
         loaded = true;
         goneAfter = undefined;
       }
+      if (args[0] === "kickstart") pid++;
+      return "";
     };
   }
 
@@ -201,7 +207,7 @@ describe("service command", () => {
     expect(calls.map((c) => c[1])).toEqual(["bootout", "print", "bootstrap"]);
     const written = readFileSync(plistPath(home), "utf8");
     expect(written).not.toContain("old plist");
-    expect(written).toMatch(/<key>KeepAlive<\/key>\s*<true\/>/);
+    expect(written).toMatch(/<key>SuccessfulExit<\/key>\s*<false\/>/);
     expect(written).toContain(
       `<key>ThrottleInterval</key>\n  <integer>${LAUNCHD_THROTTLE_INTERVAL_SECONDS}</integer>`,
     );
@@ -215,89 +221,6 @@ describe("service command", () => {
     mkdirSync(dirname(unitPath(home)), { recursive: true });
     writeFileSync(unitPath(home), unitContent(spec));
   };
-
-  it("macOS status names the running version, and a restart when it is older", async () => {
-    const stateDir = join(home, ".config", "capybara-device");
-    installPlist();
-    writePid(stateDir, process.pid, PROGRAM_VERSION);
-    expect(
-      await serviceCommand("status", {
-        ...base(),
-        run: fakeLaunchctl({ loaded: true }),
-        platform: "darwin",
-      }),
-    ).toBe(0);
-    expect(lines.join("\n")).toContain(`running (pid ${process.pid}, ${PROGRAM_VERSION})`);
-    // current: no restart line
-    expect(lines.join("\n")).not.toContain("service restart");
-
-    // An older daemon after an upgrade: still running, and the line says how to make it current.
-    writePid(stateDir, process.pid, "0.1.0-rc.7");
-    lines.length = 0;
-    expect(
-      await serviceCommand("status", {
-        ...base(),
-        run: fakeLaunchctl({ loaded: true }),
-        platform: "darwin",
-      }),
-    ).toBe(0);
-    expect(lines.join("\n")).toContain(
-      `installed ${PROGRAM_VERSION} — restart it: capybara-device service restart`,
-    );
-
-    // A pid file from a program that wrote no version.
-    writeFileSync(pidPath(stateDir), `${process.pid}\n`);
-    lines.length = 0;
-    await serviceCommand("status", {
-      ...base(),
-      run: fakeLaunchctl({ loaded: true }),
-      platform: "darwin",
-    });
-    expect(lines.join("\n")).toContain(`running (pid ${process.pid}, version unknown)`);
-  });
-
-  it("macOS status separates not installed from installed but stopped", async () => {
-    const stateDir = join(home, ".config", "capybara-device");
-    expect(
-      await serviceCommand("status", { ...base(), run: fakeLaunchctl({}), platform: "darwin" }),
-    ).toBe(1);
-    expect(lines.join("\n")).toContain("is not installed");
-
-    installPlist();
-    lines.length = 0;
-    expect(
-      await serviceCommand("status", { ...base(), run: fakeLaunchctl({}), platform: "darwin" }),
-    ).toBe(1);
-    expect(lines.join("\n")).toContain("installed, but nothing is running");
-
-    // loaded but the program is between restarts
-    writePid(stateDir, process.pid, PROGRAM_VERSION);
-    lines.length = 0;
-    const inactive = (cmd: string, args: string[]): void => {
-      calls.push([cmd, ...args]);
-      if (args[0] === "print") throw failed(113, "Could not find service");
-    };
-    expect(await serviceCommand("status", { ...base(), run: inactive, platform: "darwin" })).toBe(
-      1,
-    );
-    expect(lines.join("\n")).toContain("installed, but nothing is running");
-  });
-
-  it("Linux status follows systemctl and the pid file", async () => {
-    const stateDir = join(home, ".config", "capybara-device");
-    installUnit();
-    writePid(stateDir, process.pid, PROGRAM_VERSION);
-    expect(await serviceCommand("status", { ...base(), platform: "linux" })).toBe(0);
-    expect(lines.join("\n")).toContain(`running (pid ${process.pid}, ${PROGRAM_VERSION})`);
-
-    const inactive = (cmd: string, args: string[]): void => {
-      calls.push([cmd, ...args]);
-      if (args.includes("is-active")) throw failed(3, "inactive");
-    };
-    lines.length = 0;
-    expect(await serviceCommand("status", { ...base(), platform: "linux", run: inactive })).toBe(1);
-    expect(lines.join("\n")).toContain("installed, but nothing is running");
-  });
 
   it("macOS start: refuses without an install, bootstraps an installed one, no-ops when loaded", async () => {
     const launchctl = fakeLaunchctl({});
@@ -385,9 +308,20 @@ describe("service command", () => {
 
   it("Linux start, stop and restart are systemctl verbs", async () => {
     /** Records the call; answers `is-active` with `active`. */
-    const systemctl = (active: boolean) => (cmd: string, args: string[]) => {
-      calls.push([cmd, ...args]);
-      if (args.includes("is-active") && !active) throw failed(3, "inactive");
+    const systemctl = (initial: boolean) => {
+      let active = initial;
+      let pid = 4000;
+      return (cmd: string, args: string[]): string => {
+        calls.push([cmd, ...args]);
+        if (args.includes("is-active") && !active) throw failed(3, "inactive");
+        if (args.includes("MainPID")) return active ? `${pid}\n` : "0\n";
+        if (args.includes("start") || args.includes("restart")) {
+          active = true;
+          pid++;
+        }
+        if (args.includes("stop")) active = false;
+        return "";
+      };
     };
     const inactive = systemctl(false);
     const running = systemctl(true);
@@ -409,8 +343,9 @@ describe("service command", () => {
 
   it("macOS install stops waiting for the old service at the time limit", async () => {
     // print keeps answering: the bootout never takes
-    const launchctl = (cmd: string, args: string[]): void => {
+    const launchctl = (cmd: string, args: string[]): string => {
       calls.push([cmd, ...args]);
+      return "";
     };
     expect(await serviceCommand("install", { ...base(), run: launchctl, platform: "darwin" })).toBe(
       0,

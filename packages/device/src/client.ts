@@ -65,9 +65,11 @@ export interface ConnectOptions {
 }
 
 /**
- * A running connection. `done` resolves with the exit code once the program should end: 0 for the
- * terminal conditions (revoked, outdated, replaced, deleted, stopped, drained), so a service
- * manager that restarts on failure leaves it stopped.
+ * A running connection. `done` resolves with the exit code once the program should end: 0 for a
+ * deliberate stop (revoked, replaced by a newer connection of this device, deleted, stopped,
+ * drained), which a service manager that restarts on failure leaves stopped; 1 when the deployment
+ * needs a newer program (426), which an upgrade in place recovers once the service starts it again.
+ * Connection failures never end it: they reconnect with backoff.
  */
 export interface Connection {
   readonly done: Promise<number>;
@@ -157,9 +159,9 @@ export function connect(
 
   /**
    * Pushes the policy summary when it differs from the one the deployment last got: the owner
-   * changed the mode or the policy on the machine (`capybara-device mode` / `policy ...`), or an
-   * exec brought a new mode ceiling. Without it the deployment would learn the change only at the
-   * next connect.
+   * changed the mode or the policy on the machine (`capybara-device mode` / `policy ...`). Without
+   * it the deployment would learn the change only at the next connect. An exec's ceiling changes
+   * nothing here: the summary reports the owner's mode, which the kernel cuts itself.
    */
   const pushPolicy = (): void => {
     if (!isOpen()) return;
@@ -272,8 +274,6 @@ export function connect(
           sentPolicy = JSON.stringify((res.result as { policy: unknown }).policy);
         }
         deliver(res);
-        // an exec may have changed the ceiling (the effective mode)
-        pushPolicy();
       }
       maybeFinishDrain();
     });
@@ -314,7 +314,7 @@ export function connect(
   /**
    * The hello, built at each (re)connect: the OS mode reports blocked hosts per command (Docker
    * mode has no per-host view); the device applies `limits.mode` / `limits.network` (`mode`); the
-   * policy summary is the store's policy now, with the effective mode and the latest ceiling seen;
+   * policy summary is the store's policy now (the owner's mode, not cut by any ceiling);
    * then the outcomes of the latest policy ops by op id.
    */
   const hello = (): DeviceHello => {
@@ -416,7 +416,9 @@ export function connect(
         res.resume();
         sock.terminate();
         if (status === 401) return endSession({ exit: 0, message: DISCONNECTED_MESSAGE });
-        if (status === 426) return endSession({ exit: 0, message: OUTDATED_MESSAGE });
+        // Not a deliberate stop: upgrading the package in place recovers it, so the exit is
+        // non-zero and the service manager starts the (new) program again.
+        if (status === 426) return endSession({ exit: 1, message: OUTDATED_MESSAGE });
         reportFailure(
           status === 404
             ? `Connecting to ${cred.connectUrl} failed: HTTP 404. The deployment must route ` +
