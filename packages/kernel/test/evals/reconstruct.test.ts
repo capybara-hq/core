@@ -888,6 +888,55 @@ describe("reconstructRequest：基线零漂移", () => {
     await expectZeroDrift(conv, await snapshotOf(conv));
   });
 
+  it("a summary inside the current turn (context compaction spec §4.2, revision 2026-11-15): the turn's message follows the summary, zero drift", async () => {
+    reset();
+    const audit = await seedSkill("ledger-audit", "Audit the ledgers.");
+    const agentId = await createAgent(
+      { provider: "model-fake", model: "fake-small" },
+      { skills: [audit] },
+    );
+    const conv = await createConv(owner, orgId, agentId);
+    let n = 0;
+    const turn = async (text: string) => {
+      await postMessage(owner, orgId, conv, text);
+      await waitForTerminal(db, conv, ++n, 30_000);
+    };
+    await turn("echo:first");
+    const ask = 'tool:Skill:{"skill":"ledger-audit"}';
+    await turn(ask);
+
+    // the small window leaves no room for the turn's tool pair and its message: before step 2 the
+    // summary covers the message and its step 1 runs on with the pair
+    const events = await eventsOf(db, conv);
+    const runId = await lastRunId(conv);
+    const message = events.findLast((e) => e.type === "user_message");
+    const call = events.find(
+      (e) =>
+        e.type === "assistant_message" &&
+        e.runId === runId &&
+        e.payload.content.some((b) => b.type === "tool_call"),
+    );
+    const inside = events.find(
+      (e) =>
+        e.type === "compaction_summary" &&
+        e.payload.coversUpToSeq >= (message?.seq ?? 0) &&
+        e.payload.coversUpToSeq < (call?.seq ?? 0),
+    );
+    expect(inside).toBeDefined();
+    const after = modelCalls(events).find((c) => c.seq > (inside?.seq ?? 0));
+    expect(after?.payload.request.summarySeq).toBe(inside?.seq);
+    const request = sent[modelCalls(events).indexOf(after as ModelCallEvent)];
+    const head = request?.messages[0];
+    expect(head?.role).toBe("user");
+    const blocks = Array.isArray(head?.content) ? head.content : [];
+    expect(blocks[0]?.type === "text" && blocks[0].text).toMatch(/^<conversation_summary>/);
+    expect(blocks.slice(1).some((b) => b.type === "text" && b.text === ask)).toBe(true);
+    // after the system texts that follow a summary (run context, skills), the kept tool pair
+    const rest = (request?.messages ?? []).slice(1).filter((m) => m.role !== "system");
+    expect(rest.map((m) => m.role)).toEqual(["assistant", "user"]);
+    await expectZeroDrift(conv, await snapshotOf(conv));
+  });
+
   it("plugin_context events before and after a summary (memory spec §6.1): zero drift", async () => {
     reset();
     const agentId = await createAgent({ provider: "model-fake", model: "fake-small" });
