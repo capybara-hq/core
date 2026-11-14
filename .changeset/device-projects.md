@@ -17,6 +17,8 @@ paths are absolute and checked with `validateSandboxPathShape`; a `suggestedName
 cannot reach is an error, never null; a missing scan `base` answers `[]`. `scan` includes `base`
 itself, follows no symbolic links, enters no hidden directories, keeps descending past a hit, skips a
 directory whose basename is not a valid name, and keeps the first results by path in code-unit order.
+It visits directories breadth-first, each level in code-unit order of path with `base` first, and
+stops after `MAX_DEVICE_SCAN_DIRS` (500) visits, so every provider answers the same for a huge tree.
 `isDeviceProjectName` also refuses `.`, `..` and leading or trailing whitespace. `DeviceHello` gains
 `home?: string`, the owner's home directory. `SandboxProvider` gains optional
 `list(h, path, { limit, limits, signal })` and `scan(h, base, { limits, signal })` with the same

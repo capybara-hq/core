@@ -5,9 +5,9 @@ import type { DeviceRes, KernelReq } from "@capybara-hq/plugin-sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CommandLog } from "../src/command-log.js";
 import { HostExecutor } from "../src/exec/host.js";
-import { listDirectory, type ReadArea, scanDirectory } from "../src/exec/listing.js";
+import { listDirectory, scanDirectory } from "../src/exec/listing.js";
 import { SwitchingExecutor } from "../src/exec/switch.js";
-import type { Executor } from "../src/exec/types.js";
+import { DeviceOpError, type Executor } from "../src/exec/types.js";
 import { PolicyStore } from "../src/policy-store.js";
 import { type OpContext, runOp, serveOp } from "../src/server-ops.js";
 import { DEFAULT_POLICY, type SandboxMode, writePolicy } from "../src/state.js";
@@ -23,16 +23,20 @@ class SandboxedReader extends FakeExecutor {
   constructor(private readonly workspace: string) {
     super();
   }
-  private area(): ReadArea {
-    return { root: { path: this.workspace, describe: "the device's workspace" } };
+  private inside(path: string): void {
+    if (path !== this.workspace && !path.startsWith(`${this.workspace}/`)) {
+      throw new DeviceOpError("policy", `${path} is outside the device's workspace`);
+    }
   }
   async list(mode: SandboxMode, path: string, limit: number) {
     this.reads.push(mode);
-    return listDirectory(path, limit, this.area());
+    this.inside(path);
+    return listDirectory(path, limit);
   }
   async scan(mode: SandboxMode, base: string) {
     this.reads.push(mode);
-    return scanDirectory(base, this.area());
+    this.inside(base);
+    return scanDirectory(base);
   }
 }
 

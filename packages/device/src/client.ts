@@ -55,7 +55,8 @@ export interface ConnectOptions {
   programVersion?: string;
   /**
    * The owner's home directory, reported in the hello (the base of an auto-mode project path).
-   * Defaults to the user's home; left out of the hello when it is not a clean absolute path.
+   * Defaults to the user's home; left out of the hello when it is not a clean absolute path, and
+   * by a docker-mode device (it offers its container's workspace only).
    */
   home?: string;
   /** A connection must stay up this long before the backoff resets (default 10 s). */
@@ -324,8 +325,12 @@ export function connect(
    * policy summary is the store's policy now, with the effective mode and the latest ceiling seen;
    * then the outcomes of the latest policy ops by op id.
    */
+  // A container device offers only its container's workspace: the host's home is not its base.
   const ownerHome = opts.home ?? homedir();
-  const home = validateSandboxPathShape(ownerHome).length === 0 ? ownerHome : undefined;
+  const home =
+    executor.mode === "os" && validateSandboxPathShape(ownerHome).length === 0
+      ? ownerHome
+      : undefined;
   const hello = (): DeviceHello => {
     const summary = summaryNow();
     sentPolicy = summary === undefined ? undefined : JSON.stringify(summary);

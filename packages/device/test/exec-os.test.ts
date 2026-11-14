@@ -58,6 +58,17 @@ describe("OsExecutor: roots, ensureRoot and the skills root", () => {
   });
   afterEach(() => rmSync(base, { recursive: true, force: true }));
 
+  it("answers list null and scan [] while the device directory is gone, starting no helper", async () => {
+    rmSync(dir, { recursive: true, force: true });
+    const ws = ex.roots.workspace;
+    expect(await ex.list("sandbox", ws, 10)).toBeNull();
+    expect(await ex.list("sandbox", join(ws, "proj"), 10)).toBeNull();
+    expect(await ex.scan("sandbox", ws)).toEqual([]);
+    // outside the workspace is still refused
+    const e = await ex.list("sandbox", base, 10).catch((err: unknown) => err);
+    expect((e as DeviceOpError).kind).toBe("policy");
+  });
+
   it("reports <dir>/workspace, <dir>/skills and <dir>/tmp as its roots", () => {
     expect(ex.mode).toBe("os");
     expect(ex.roots).toEqual(osRoots(dir));
@@ -323,34 +334,48 @@ describe.skipIf(!availability.ok)(
     });
 
     describe("list and scan (in the sandboxed helper, the workspace only)", () => {
-      it("lists and scans the workspace and refuses the tmp root, the state directory and links out", async () => {
-        const ws = ex.roots.workspace;
+      let ws: string;
+      beforeAll(() => {
+        ws = ex.roots.workspace;
         mkdirSync(join(ws, "proj/.git"), { recursive: true });
         symlinkSync(state, join(ws, "to-state"));
-        try {
-          const listed = await ex.list("sandbox", ws, 1000);
-          expect(listed?.entries).toEqual(
-            expect.arrayContaining([
-              { name: "proj", isDir: true },
-              { name: "to-state", isDir: false },
-            ]),
-          );
-          expect(await ex.scan("sandbox", ws)).toEqual(
-            expect.arrayContaining([{ path: join(ws, "proj"), suggestedName: "proj" }]),
-          );
-          expect(await ex.list("sandbox", join(ws, "no-such-dir"), 10)).toBeNull();
-          for (const path of [ex.roots.tmp, state, join(ws, "to-state"), fakeHome]) {
-            const e = await ex.list("auto", path, 10).catch((err: unknown) => err);
-            expect(e, path).toBeInstanceOf(DeviceOpError);
-            expect((e as DeviceOpError).kind, path).toBe("policy");
-          }
-          const s = await ex.scan("auto", state).catch((err: unknown) => err);
-          expect((s as DeviceOpError).kind).toBe("policy");
-        } finally {
-          unlinkSync(join(ws, "to-state"));
-          rmSync(join(ws, "proj"), { recursive: true });
+      });
+      afterAll(() => {
+        unlinkSync(join(ws, "to-state"));
+        rmSync(join(ws, "proj"), { recursive: true });
+      });
+
+      it("lists the workspace; a link out of it is not a directory", async () => {
+        expect((await ex.list("sandbox", ws, 1000))?.entries).toEqual(
+          expect.arrayContaining([
+            { name: "proj", isDir: true },
+            { name: "to-state", isDir: false },
+          ]),
+        );
+        expect(await ex.list("sandbox", join(ws, "no-such-dir"), 10)).toBeNull();
+      });
+
+      it("scans the workspace", async () => {
+        expect(await ex.scan("sandbox", ws)).toEqual(
+          expect.arrayContaining([{ path: join(ws, "proj"), suggestedName: "proj" }]),
+        );
+      });
+
+      it("refuses the tmp root, the state directory, a link out and the home", async () => {
+        for (const path of [ex.roots.tmp, state, join(ws, "to-state"), fakeHome]) {
+          const e = await ex.list("auto", path, 10).catch((err: unknown) => err);
+          expect((e as DeviceOpError).kind, path).toBe("policy");
         }
-      }, 30_000);
+        const s = await ex.scan("auto", state).catch((err: unknown) => err);
+        expect((s as DeviceOpError).kind).toBe("policy");
+      });
+
+      it("stops the helper when the request is cancelled", async () => {
+        const ac = new AbortController();
+        const p = ex.scan("sandbox", ws, ac.signal);
+        ac.abort();
+        await expect(p).rejects.toThrow();
+      });
     });
 
     it("runs a command in the workspace with HOME and TMPDIR set", async () => {

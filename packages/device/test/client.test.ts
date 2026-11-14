@@ -202,6 +202,8 @@ describe("client", () => {
     const hello = await kernel.waitFor("hello", () => kernel.of("hello")[0]);
     expect(hello.mode).toBe("docker");
     expect(hello.features).toEqual(["policyOp", "policyOpId", "mode", "projects"]);
+    // a container device offers its container's workspace only: no host home
+    expect(hello.home).toBeUndefined();
     expect(hello.policy).toMatchObject({ mode: "auto" });
   });
 

@@ -1,5 +1,5 @@
-import { MAX_DEVICE_SCAN_DEPTH } from "@capybara-hq/plugin-sdk";
-import { MAX_SCAN_DIRS, SCAN_SKIP_ANYWHERE, SCAN_SKIP_AT_BASE } from "./listing.js";
+import { MAX_DEVICE_SCAN_DEPTH, MAX_DEVICE_SCAN_DIRS } from "@capybara-hq/plugin-sdk";
+import { SCAN_SKIP_ANYWHERE, SCAN_SKIP_AT_BASE } from "./listing.js";
 
 /**
  * The file-operation helper the OS executor runs **inside the sandbox** (`node -e`), so a
@@ -140,24 +140,28 @@ export const FS_HELPER_SCRIPT = `
       const skipAny = ${JSON.stringify(SCAN_SKIP_ANYWHERE)};
       const skipBase = ${JSON.stringify(SCAN_SKIP_AT_BASE)};
       const found = [];
-      let budget = ${MAX_SCAN_DIRS} - 1;
-      const queue = [{ dir: r, rep: q, depth: 0, ents }];
-      while (queue.length > 0) {
-        const it = queue.shift();
-        let es = it.ents;
-        if (es === undefined) {
-          if (budget <= 0) break;
-          budget -= 1;
-          try { es = fs.readdirSync(it.dir, { withFileTypes: true }); } catch { continue; }
-          es.sort((a, b) => cmp(a.name, b.name));
+      let visits = 1;
+      // a hit is recorded; the directories to visit below are returned
+      const below = (node, es, depth) => {
+        if (es.some((e) => e.name === ".git" || (e.name === "AGENTS.md" && !e.isDirectory()))) found.push(node.rep);
+        if (depth >= ${MAX_DEVICE_SCAN_DEPTH}) return [];
+        return es
+          .filter((e) => e.isDirectory() && !e.name.startsWith(".") && !skipAny.includes(e.name) && !(depth === 0 && skipBase.includes(e.name)))
+          .map((e) => ({ dir: path.join(node.dir, e.name), rep: path.join(node.rep, e.name) }));
+      };
+      let level = below({ dir: r, rep: q }, ents, 0);
+      // breadth-first, each level in code-unit order of path, until the visit budget is spent
+      walk: for (let depth = 1; level.length > 0; depth++) {
+        level.sort((a, b) => cmp(a.rep, b.rep));
+        const next = [];
+        for (const node of level) {
+          if (visits >= ${MAX_DEVICE_SCAN_DIRS}) break walk;
+          visits += 1;
+          let es;
+          try { es = fs.readdirSync(node.dir, { withFileTypes: true }); } catch { continue; }
+          next.push(...below(node, es, depth));
         }
-        if (es.some((e) => e.name === ".git" || (e.name === "AGENTS.md" && !e.isDirectory()))) found.push(it.rep);
-        if (it.depth >= ${MAX_DEVICE_SCAN_DEPTH}) continue;
-        for (const e of es) {
-          if (!e.isDirectory() || e.name.startsWith(".") || skipAny.includes(e.name)) continue;
-          if (it.depth === 0 && skipBase.includes(e.name)) continue;
-          queue.push({ dir: path.join(it.dir, e.name), rep: path.join(it.rep, e.name), depth: it.depth + 1 });
-        }
+        level = next;
       }
       return out({ r: found });
     }

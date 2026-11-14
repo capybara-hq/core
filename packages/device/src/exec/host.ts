@@ -198,14 +198,14 @@ export class HostExecutor implements Executor {
   async list(mode: SandboxMode, path: string, limit: number): Promise<DeviceListResult> {
     this.files.lexical(path);
     if (mode !== "auto") throw policyError(UNSANDBOXED_READ);
-    return listDirectory(path, limit, {});
+    return listDirectory(path, limit);
   }
 
   /** Scans with the owner's rights: auto mode only ({@link list}). */
   async scan(mode: SandboxMode, base: string, signal: AbortSignal): Promise<DeviceScanResult> {
     this.files.lexical(base);
     if (mode !== "auto") throw policyError(UNSANDBOXED_READ);
-    return scanDirectory(base, {}, { signal });
+    return scanDirectory(base, { signal });
   }
 
   async killTagged(tags: string[]): Promise<void> {

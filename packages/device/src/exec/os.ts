@@ -506,7 +506,9 @@ export class OsExecutor implements Executor {
     maxBytes: number,
     data?: Uint8Array,
     roots: string[] = [this.roots.workspace, this.roots.tmp],
+    signal?: AbortSignal,
   ): Promise<unknown> {
+    signal?.throwIfAborted();
     const script = [process.execPath, "-e", FS_HELPER_SCRIPT, "sandbox", op, path, String(maxBytes)]
       .concat(roots)
       .map(shellQuote)
@@ -530,6 +532,11 @@ export class OsExecutor implements Executor {
       timedOut = true;
       if (child.pid !== undefined) killGroupId(child.pid);
     }, HELPER_TIMEOUT_MS);
+    // the kernel cancelled: the helper's whole process group goes at once
+    const onAbort = (): void => {
+      if (child.pid !== undefined) killGroupId(child.pid);
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
     try {
       await new Promise<void>((res, rej) => {
         child.once("error", rej);
@@ -537,10 +544,12 @@ export class OsExecutor implements Executor {
       });
     } finally {
       clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
       if (child.pid !== undefined) killGroupId(child.pid);
       SandboxManager.unregisterCommandNetworkLists(commandId);
       SandboxManager.cleanupAfterCommand();
     }
+    signal?.throwIfAborted();
     if (timedOut) throw new DeviceOpError("error", `${op} ${path} timed out`);
     const text = Buffer.concat(chunks).toString("utf8");
     let res: { r?: unknown; e?: "policy" | "error"; m?: string };
@@ -607,10 +616,18 @@ export class OsExecutor implements Executor {
    * Lists a workspace directory in the sandboxed helper (sandbox mode whatever `_mode` says: this
    * executor has no other). A path outside the workspace is refused, also after resolving links.
    */
-  async list(_mode: SandboxMode, path: string, limit: number): Promise<DeviceListResult> {
+  async list(
+    _mode: SandboxMode,
+    path: string,
+    limit: number,
+    signal?: AbortSignal,
+  ): Promise<DeviceListResult> {
     this.requireSandbox();
     const p = this.workspacePath(path);
-    const r = await this.helper("list", p, limit, undefined, [this.roots.workspace]);
+    // the device directory is gone: nothing under the workspace exists (and no helper can start
+    // there, its working directory being the workspace)
+    if (!existsSync(this.roots.workspace)) return null;
+    const r = await this.helper("list", p, limit, undefined, [this.roots.workspace], signal);
     if (r !== null && !Array.isArray((r as { entries?: unknown }).entries)) {
       throw new DeviceOpError("error", `list ${path} answered an invalid result`);
     }
@@ -618,10 +635,11 @@ export class OsExecutor implements Executor {
   }
 
   /** Scans a workspace directory in the sandboxed helper ({@link list}'s rules). */
-  async scan(_mode: SandboxMode, base: string): Promise<DeviceScanResult> {
+  async scan(_mode: SandboxMode, base: string, signal?: AbortSignal): Promise<DeviceScanResult> {
     this.requireSandbox();
     const p = this.workspacePath(base);
-    const r = await this.helper("scan", p, 0, undefined, [this.roots.workspace]);
+    if (!existsSync(this.roots.workspace)) return [];
+    const r = await this.helper("scan", p, 0, undefined, [this.roots.workspace], signal);
     if (!Array.isArray(r) || !r.every((x) => typeof x === "string")) {
       throw new DeviceOpError("error", `scan ${base} answered an invalid result`);
     }

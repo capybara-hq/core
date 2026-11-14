@@ -28,6 +28,10 @@ import { DEFAULT_POLICY } from "../src/state.js";
 
 const hasDocker = spawnSync("docker", ["info"], { stdio: "ignore" }).status === 0;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** Polls `cond` until it holds; the test's own timeout bounds the wait. */
+const until = async (cond: () => boolean): Promise<void> => {
+  while (!cond()) await sleep(50);
+};
 
 const LIMITS: SandboxLimits = {
   cpu: 1,
@@ -63,6 +67,19 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
   let envId: string;
   let ex: DockerExecutor;
   const live = new AbortController().signal;
+
+  /**
+   * How many `sleep` processes run in the container (its PID 1 is `sleep infinity`); empty while
+   * the container is not there yet.
+   */
+  const sleeps = (): string => {
+    const r = spawnSync(
+      "docker",
+      ["exec", containerName(envId), "sh", "-c", "pgrep -c -x sleep; true"],
+      { encoding: "utf8" },
+    );
+    return r.status === 0 ? r.stdout.trim() : "";
+  };
 
   beforeAll(() => {
     const have = spawnSync("docker", ["image", "inspect", SANDBOX_IMAGE], { stdio: "ignore" });
@@ -262,8 +279,9 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
 
   it("killTagged stops only that tag", async () => {
     const a = ex.exec(execArgs("sleep 60", { tag: "a", timeoutMs: 60_000 }), live);
-    const b = ex.exec(execArgs("sleep 3; echo done", { tag: "b", timeoutMs: 60_000 }), live);
-    await sleep(1500);
+    const b = ex.exec(execArgs("sleep 2; echo done", { tag: "b", timeoutMs: 60_000 }), live);
+    // both commands run (next to the container's own `sleep infinity`): wait for that
+    await until(() => sleeps() === "3");
     await ex.killTagged(["a"]);
     const ra = await a;
     expect(ra.exitCode).toBeNull();
@@ -272,24 +290,75 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
     expect(rb.stdout).toBe("done\n");
   });
 
-  it("killTagged reaches background children; killAll stops everything", async () => {
-    const r = await ex.exec(execArgs("(sleep 300 &) ; echo started", { tag: "bg" }), live);
+  it("lists and scans the workspace inside the container, never the host behind the mount", async () => {
+    const ws = join(dir, "workspace");
+    mkdirSync(join(ws, "proj/.git"), { recursive: true });
+    mkdirSync(join(ws, "proj/src"), { recursive: true });
+    mkdirSync(join(base, "host-only/.git"), { recursive: true });
+    // a link to a host path: in the container that path does not exist
+    symlinkSync(join(base, "host-only"), join(ws, "leak"));
+    // a link to a container path: a directory in the container, not on the host
+    symlinkSync("/workspace/proj", join(ws, "inner"));
+    for (const mode of ["auto", "sandbox"] as const) {
+      expect(await ex.list(mode, "/workspace", 10, live)).toEqual({
+        entries: [
+          { name: "inner", isDir: true },
+          { name: "leak", isDir: false },
+          { name: "proj", isDir: true },
+        ],
+        truncated: false,
+      });
+    }
+    expect(await ex.list("auto", "/workspace/inner", 10, live)).toEqual({
+      entries: [
+        { name: ".git", isDir: true },
+        { name: "src", isDir: true },
+      ],
+      truncated: false,
+    });
+    expect(await ex.list("auto", "/workspace/leak", 10, live)).toBeNull();
+    expect(await ex.list("auto", "/workspace/none", 10, live)).toBeNull();
+    expect(await ex.scan("auto", "/workspace", live)).toEqual([
+      { path: "/workspace/proj", suggestedName: "proj" },
+    ]);
+    expect(await ex.scan("auto", "/workspace/none", live)).toEqual([]);
+  });
+
+  it("refuses list and scan outside the container's workspace", async () => {
+    writeFileSync(join(dir, "workspace", "f"), "x");
+    symlinkSync("/etc", join(dir, "workspace", "etc"));
+    for (const path of ["/", "/etc", "/skills", "/tmp", "/workspace/../etc"]) {
+      const e = await ex.list("auto", path, 10, live).catch((err: unknown) => err);
+      expect((e as DeviceOpError).kind, path).toBe("policy");
+    }
+    // a link out is resolved in the container, then refused
+    const out = await ex.list("auto", "/workspace/etc", 10, live).catch((err: unknown) => err);
+    expect((out as DeviceOpError).kind).toBe("policy");
+    const file = await ex.list("auto", "/workspace/f", 10, live).catch((err: unknown) => err);
+    expect((file as DeviceOpError).message).toMatch(/not a directory/);
+    const s = await ex.scan("sandbox", "/home", live).catch((err: unknown) => err);
+    expect((s as DeviceOpError).kind).toBe("policy");
+  });
+
+  // The background children let go of the output, so the command's docker session ends with it
+  // (one still attached is killed, and the daemon then takes seconds to release the session).
+  it("killTagged reaches background children", async () => {
+    const r = await ex.exec(
+      execArgs("(sleep 300 >/dev/null 2>&1 &) ; echo started", { tag: "bg" }),
+      live,
+    );
     expect(r.stdout).toBe("started\n");
-    const count = () =>
-      execFileSync(
-        "docker",
-        ["exec", containerName(envId), "sh", "-c", "pgrep -c -x sleep; true"],
-        { encoding: "utf8" },
-      ).trim();
-    // The container's own PID 1 is `sleep infinity`; the background child makes two.
-    expect(count()).toBe("2");
+    expect(sleeps()).toBe("2");
     await ex.killTagged(["bg"]);
-    await sleep(300);
-    expect(count()).toBe("1");
-    await ex.exec(execArgs("(sleep 300 &)", { tag: "bg2" }), live);
+    // a killed process lingers until the container's init reaps it: wait for that, not a fixed time
+    await until(() => sleeps() === "1");
+  });
+
+  it("killAll stops everything, background children included", async () => {
+    await ex.exec(execArgs("(sleep 300 >/dev/null 2>&1 &)", { tag: "bg2" }), live);
+    expect(sleeps()).toBe("2");
     await ex.killAll();
-    await sleep(300);
-    expect(count()).toBe("1");
+    await until(() => sleeps() === "1");
   });
 
   it("times out, aborts, and refuses to start on an aborted signal", async () => {

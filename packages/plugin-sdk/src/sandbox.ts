@@ -361,8 +361,12 @@ export interface SandboxProvider {
    *   macOS `Library`). Paths under `base` the mode cannot reach are skipped, never an error.
    * - A directory whose basename does not satisfy {@link isDeviceProjectName} is skipped, never
    *   returned with a changed name.
-   * - Each candidate is its absolute `path` and its basename as `suggestedName`; the list is sorted
-   *   by `path` in code-unit order and cut to the first {@link MAX_DEVICE_SCAN_RESULTS}.
+   * - Directories are visited breadth-first, each level in code-unit order of `path`, `base`
+   *   counting as the first visit (visiting a directory reads its entries); the walk stops after
+   *   {@link MAX_DEVICE_SCAN_DIRS} visits, so a huge tree answers what was found by then.
+   * - Each candidate is its absolute `path` and its basename as `suggestedName`; the candidates
+   *   found are sorted by `path` in code-unit order and cut to the first
+   *   {@link MAX_DEVICE_SCAN_RESULTS}.
    *
    * Directory entries only, never file contents. A `base` that does not exist answers `[]`; a
    * `base` that is a file, cannot be read, or lies outside the mode throws. Optional, like `list`.
@@ -385,6 +389,12 @@ export const MAX_DEVICE_SCAN_RESULTS = 50;
 
 /** How far below its base a `scan` looks: the base's children and their children. */
 export const MAX_DEVICE_SCAN_DEPTH = 2;
+
+/**
+ * The most directories one `scan` visits (reads the entries of), its `base` included
+ * ({@link SandboxProvider.scan}): breadth-first, each level in code-unit order of path.
+ */
+export const MAX_DEVICE_SCAN_DIRS = 500;
 
 /**
  * Whether `v` is a valid project name (a project's identity on its device, and a `scan`

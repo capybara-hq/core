@@ -1942,6 +1942,9 @@ export const MAX_DEVICE_PROJECT_NAME_LENGTH = 64;
 export const MAX_DEVICE_SCAN_DEPTH = 2;
 
 // @public
+export const MAX_DEVICE_SCAN_DIRS = 500;
+
+// @public
 export const MAX_DEVICE_SCAN_RESULTS = 50;
 
 // @public
