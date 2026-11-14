@@ -12,10 +12,10 @@ import { createLogger } from "../../src/log.js";
 let rd: TestContainer;
 beforeAll(async () => {
   rd = await startTestRedis();
-}, 120_000);
+});
 afterAll(async () => {
   await rd?.stop();
-}, 120_000);
+});
 
 describe("RedisModule", () => {
   it("provides REDIS, REDIS_SUBSCRIBER and KERNEL_BUS; the bus delivers; shutdown closes both", async () => {
@@ -42,14 +42,16 @@ describe("RedisModule", () => {
     const redis = app.get<Redis>(REDIS);
     expect(app.get(REDIS_SUBSCRIBER)).toBeDefined();
     const bus = app.get(KERNEL_BUS);
+    let resolveGot!: (v: unknown) => void;
     const got = new Promise<unknown>((resolve) => {
-      void bus.subscribe("t", resolve);
+      resolveGot = resolve;
     });
-    await new Promise((r) => setTimeout(r, 200));
+    // subscribe resolves once the SUBSCRIBE reached Redis: no fixed delay before publish
+    await bus.subscribe("t", resolveGot);
     await bus.publish("t", { a: 1 });
     expect(await got).toEqual({ a: 1 });
     await app.close();
-    await vi.waitFor(() => expect(["end", "close"]).toContain(redis.status));
+    await vi.waitFor(() => expect(["end", "close"]).toContain(redis.status), { timeout: 10_000 });
   });
 
   it("a ready main connection closes with QUIT: a command sent just before shutdown completes", async () => {
@@ -81,6 +83,6 @@ describe("RedisModule", () => {
     const closing = app.close();
     expect(await inFlight).toBeNull();
     await closing;
-    await vi.waitFor(() => expect(["end", "close"]).toContain(redis.status));
+    await vi.waitFor(() => expect(["end", "close"]).toContain(redis.status), { timeout: 10_000 });
   });
 });

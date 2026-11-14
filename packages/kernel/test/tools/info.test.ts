@@ -57,7 +57,7 @@ beforeAll(async () => {
   redis = new Redis(rd.url);
   accounts = accountsFor(db);
   members = testMembers(db);
-}, 120_000);
+});
 afterAll(async () => {
   await k?.close();
   redis?.disconnect();

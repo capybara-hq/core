@@ -74,7 +74,7 @@ beforeAll(async () => {
   ).id;
   root = await session(k, "root");
   owner = await session(k, "owner");
-}, 180_000);
+});
 
 afterAll(async () => {
   await queue?.close();
@@ -118,7 +118,7 @@ const auditOf = (action: string) =>
     .where("action", "=", action)
     .execute();
 
-describe("dead outbox rows", { timeout: 60_000 }, () => {
+describe("dead outbox rows", () => {
   it("a dead row appears in the overview attention list", async () => {
     const older = new Date(Date.now() - 3_600_000);
     await deadRow("dead-1", { deadAt: older });

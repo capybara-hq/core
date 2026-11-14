@@ -160,7 +160,7 @@ let agentId: string;
 let itemId: string;
 const lines: string[] = [];
 
-describe("kernel channel checks over the routes", { timeout: 60_000 }, () => {
+describe("kernel channel checks over the routes", () => {
   beforeAll(async () => {
     [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
     im = await startFakeChannelServer();
@@ -198,7 +198,7 @@ describe("kernel channel checks over the routes", { timeout: 60_000 }, () => {
     });
     expect(en.statusCode, en.body).toBe(200);
     itemId = await seedFakeImGuideItem(db, DOC);
-  }, 120_000);
+  });
 
   afterAll(async () => {
     await k?.close();

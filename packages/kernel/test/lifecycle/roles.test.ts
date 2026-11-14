@@ -131,7 +131,7 @@ const absent = (a: NestFastifyApplication, token: Parameters<NestFastifyApplicat
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   queues = KERNEL_QUEUES.map((name) => new Queue(name, { connection: { url: rd.url } }));
-}, 120_000);
+});
 afterEach(async () => {
   if (app) await closeKernelApp(app);
   app = undefined;
@@ -154,7 +154,7 @@ describe("role modules", () => {
     absent(a, GatewayRole);
     absent(a, ChannelSupervisor);
     expect(await bullWorkers()).toBe(0);
-  }, 60_000);
+  });
 
   it("api only consumes nothing: a job on every kernel queue stays waiting until a worker-role process takes it", async () => {
     const BOUND_MS = 2_000;
@@ -183,7 +183,7 @@ describe("role modules", () => {
       { timeout: BOUND_MS, interval: 50 },
     );
     expect(Date.now() - t0).toBeLessThan(BOUND_MS);
-  }, 60_000);
+  });
 
   it("gateway only: runs the supervisor, the webhook and device routes, no cron and no BullMQ worker", async () => {
     const a = await start(["gateway"]);
@@ -202,7 +202,7 @@ describe("role modules", () => {
     absent(a, LockedIntervalScheduler);
     absent(a, WorkerRole);
     expect(await bullWorkers()).toBe(0);
-  }, 60_000);
+  });
 
   it("worker only: exposes only the health routes, runs the crons and every queue consumer", async () => {
     const a = await start(["worker"]);
@@ -241,7 +241,7 @@ describe("role modules", () => {
     ]);
     expect(processors).toHaveLength(KERNEL_QUEUES.length);
     for (const q of queues) expect(await q.getWorkersCount(), q.name).toBeGreaterThan(0);
-  }, 60_000);
+  });
 
   it("all roles in one process: the same crons and consumers, once each", async () => {
     const a = await start(["api", "worker", "gateway"]);
@@ -256,7 +256,7 @@ describe("role modules", () => {
     expect(routes(a)).toContain("GET /api/v1/setup");
     expect(routes(a)).toContain("POST /channels/webhook/:connectionId");
     expect(routes(a)).toContain("GET /device/connect");
-  }, 60_000);
+  });
 
   it("no cron or interval tick runs before the worker role started (after the extension load)", async () => {
     const r = new Redis(rd.url);
@@ -321,5 +321,5 @@ describe("role modules", () => {
       release?.();
       g[SLOW_GATES_KEY]?.delete(key);
     }
-  }, 60_000);
+  });
 });

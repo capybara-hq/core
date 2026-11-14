@@ -108,7 +108,7 @@ beforeAll(async () => {
   root = await session(k, "root");
   orgA = await createOrg(root, "A");
   orgB = await createOrg(root, "B");
-}, 180_000);
+});
 
 afterAll(async () => {
   capture.restore();
@@ -273,7 +273,7 @@ async function promotedReport() {
   return { ...r, platformId: res.json().id as string };
 }
 
-describe("promote on share", { timeout: 120_000 }, () => {
+describe("promote on share", () => {
   it("toggle only on owned rows", async () => {
     const own = await seedOrgSkill(orgA, "mine", ["Mine."]);
     const ok = await setShareable(orgA, "skills", own.id);

@@ -98,7 +98,7 @@ beforeAll(async () => {
     .id;
   orgId = await createOrg(await session(k, "owner"));
   url = `ws://127.0.0.1:${k.port}/device/connect`;
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -509,7 +509,7 @@ describe("GET /device/connect", () => {
     // without it: an ordinary keep-alive request
     const plain = await rawUpgrade("/healthz", "h2c", "keep-alive");
     expect(plain.data.startsWith("HTTP/1.1 200"), plain.data).toBe(true);
-  }, 15_000);
+  });
 
   it("an upgrade request to another path is answered 404 and its socket closed", async () => {
     for (const path of ["/healthz", "/api/v1/setup"]) {
@@ -537,7 +537,7 @@ describe("GET /device/connect", () => {
     expect(await redis.get(deviceLeaseKey(m.deviceId))).not.toBeNull();
     a.close();
     b.close();
-  }, 20_000);
+  });
 
   it("a lease held elsewhere that is never handed back closes the claim with 4409", async () => {
     const m = await connected();
@@ -546,7 +546,7 @@ describe("GET /device/connect", () => {
     await machine.opened;
     expect((await machine.closed).code).toBe(4409);
     await redis.del(deviceLeaseKey(m.deviceId));
-  }, 20_000);
+  });
 
   it("a lost lease closes the socket with 4001", async () => {
     const m = await connected();
@@ -558,7 +558,7 @@ describe("GET /device/connect", () => {
     expect((await machine.closed).code).toBe(4001);
     expect(await redis.get(deviceLeaseKey(m.deviceId))).toBe("someone-else");
     await redis.del(deviceLeaseKey(m.deviceId));
-  }, 20_000);
+  });
 
   it("a machine that misses two pongs is terminated", async () => {
     const gw = k.app.get(LocalDeviceGateway);

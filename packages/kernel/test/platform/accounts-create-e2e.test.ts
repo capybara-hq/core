@@ -120,7 +120,7 @@ beforeAll(async () => {
   });
   expect(res.statusCode, res.body).toBe(201);
   agentId = (res.json() as { agent: { id: string } }).agent.id;
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -149,7 +149,7 @@ async function signIn(login: string, password: string) {
   return { req, res };
 }
 
-describe("accounts.create through the super admin's private agent", { timeout: 180_000 }, () => {
+describe("accounts.create through the super admin's private agent", () => {
   it("shows the generated password once to the approver and nowhere else", async () => {
     const convId = await createConv(root, orgId, agentId);
     await postMessage(

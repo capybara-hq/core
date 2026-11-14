@@ -131,7 +131,7 @@ beforeAll(async () => {
   db = kernelDb(raw);
   subQueue = new Queue(SUBAGENT_RUN_QUEUE_NAME, { connection: redisClient() });
   runQueue = new Queue(RUN_QUEUE_NAME, { connection: redisClient() });
-}, 180_000);
+});
 
 afterAll(async () => {
   for (const k of kernels.splice(0)) await k.close();
@@ -236,7 +236,7 @@ describe("forked skills across two replicas", () => {
       { type: "text", text: "parent answered" },
     ]);
     expect(a2).toBeDefined();
-  }, 120_000);
+  });
 
   it("a sub-agent job the queue lost: both replicas run the run-orphan-check, it runs once and the parent answers", async () => {
     const a = await boot();
@@ -268,5 +268,5 @@ describe("forked skills across two replicas", () => {
     expect(ofType(events, "assistant_message").at(-1)?.payload.content).toEqual([
       { type: "text", text: "parent answered" },
     ]);
-  }, 90_000);
+  });
 });

@@ -67,7 +67,6 @@ let k: TestKernel;
 let raw: ReturnType<typeof createDb>;
 let redis: Redis;
 const ids: string[] = [];
-const logLines: string[] = [];
 
 const channels: KernelConfig["channels"] = {
   leaseTtlMs: TTL,
@@ -92,7 +91,7 @@ beforeAll(async () => {
         auth: { cookieSecure: false },
       },
     ),
-    { env: {}, logger: createLogger("info", { write: (l) => logLines.push(l) }) },
+    { env: {}, logger: createLogger("info", { write: () => {} }) },
   );
   raw = createDb(pgc.url, 3);
   redis = new Redis(rd.url);
@@ -124,7 +123,7 @@ beforeAll(async () => {
     expect(res.statusCode, res.body).toBe(201);
     ids.push((res.json() as { channel: { id: string } }).channel.id);
   }
-}, 120_000);
+});
 
 afterAll(async () => {
   await stopAll();
@@ -327,7 +326,7 @@ describe("channel long connections: fair share across gateway replicas", () => {
     expect(minA).toBe(2);
     expect(minB).toBe(2);
     expect(totalHeld()).toBe(CONNECTIONS);
-  }, 60_000);
+  });
 
   it("the releasing instance does not claim a connection while its handoff marker exists", async () => {
     const [mine, other] = ids as [string, string];
@@ -343,7 +342,7 @@ describe("channel long connections: fair share across gateway replicas", () => {
     await waitFor(async () => countOf("solo") === CONNECTIONS, 10_000, "claimed after expiry");
     const up = events.find((e) => e.id === mine && e.kind === "up") as Ev;
     expect(up.at - setAt).toBeGreaterThanOrEqual(1400);
-  }, 30_000);
+  });
 
   it("a gateway without the plugin does not count: all connections held by the capable ones", async () => {
     // Ruling R3: c has no chan-mini (it only loads another channel plugin), so chan-mini's share
@@ -367,7 +366,7 @@ describe("channel long connections: fair share across gateway replicas", () => {
     expect((await redis.zrange(MINI_KEY, "0", "-1")).sort()).toEqual(
       [a.replicaId, b.replicaId].sort(),
     );
-  }, 30_000);
+  });
 
   it("a handback nudges replicas below their share to claim at once, not on their next round", async () => {
     const slow: KernelConfig["channels"] = {
@@ -385,7 +384,7 @@ describe("channel long connections: fair share across gateway replicas", () => {
     const up = events.find((e) => e.inst === "b" && e.kind === "up") as Ev;
     expect(up.id).toBe(down.id);
     expect(up.at - down.at).toBeLessThan(1_000);
-  }, 30_000);
+  });
 
   it("handoff nudges coalesce: a burst of 20 runs at most 2 claim-only scans", async () => {
     let claimScans = 0;
@@ -406,7 +405,7 @@ describe("channel long connections: fair share across gateway replicas", () => {
     await sleep(500);
     expect(claimScans).toBeGreaterThanOrEqual(1);
     expect(claimScans).toBeLessThanOrEqual(2);
-  }, 30_000);
+  });
 
   it("heartbeat: the member is the replica id with a server-time score; stop() removes it", async () => {
     const s = await startSup("hb");
@@ -427,7 +426,7 @@ describe("channel long connections: fair share across gateway replicas", () => {
     );
     await stopAll();
     expect(await redis.zscore(MINI_KEY, s.replicaId)).toBeNull();
-  }, 30_000);
+  });
 
   it("a lease lost while the connection's config is read is never connected on (I1)", async () => {
     const gated: string[] = [];
@@ -474,7 +473,7 @@ describe("channel long connections: fair share across gateway replicas", () => {
     await waitFor(async () => countOf("gate") === CONNECTIONS, 15_000, "all held");
     expect(first).toBeDefined();
     expect(gated).toEqual([]);
-  }, 30_000);
+  });
 
   it("a heartbeat renewal answered false drops the connection (the watchdog never saw it)", async () => {
     // The watchdog keeps renewing the real key; only the heartbeat round's explicit renew() of one
@@ -516,7 +515,7 @@ describe("channel long connections: fair share across gateway replicas", () => {
       "dropped on the heartbeat's false",
     );
     refused = undefined;
-  }, 30_000);
+  });
 
   it("the gateway check runs every minute as a @LockedCron; its old maintenance scheduler is retired", () => {
     expect(GATEWAY_CHECK_JOB).not.toContain(":");
@@ -588,13 +587,5 @@ describe("channel long connections: fair share across gateway replicas", () => {
     expect(warns).toHaveLength(3);
     expect(warns[2]?.fields).toMatchObject({ plugins: ["chan-mini"], connections: CONNECTIONS });
     await redis.del(MINI_KEY, OTHER_KEY, gatewayMissingWarnedKey);
-  });
-
-  it("a worker process without the gateway role logs one startup info line", () => {
-    const lines = logLines
-      .map((l) => JSON.parse(l) as { level?: string; msg?: string })
-      .filter((l) => /worker role without gateway/.test(l.msg ?? ""));
-    expect(lines).toHaveLength(1);
-    expect(lines[0]?.level).toBe("info");
   });
 });

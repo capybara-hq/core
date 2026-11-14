@@ -86,7 +86,7 @@ beforeAll(async () => {
   db = kernelDb(raw);
   maintRedis = new Redis(rd.url);
   maint = new Queue(MAINTENANCE_QUEUE_NAME, { connection: maintRedis });
-}, 120_000);
+});
 
 afterAll(async () => {
   await maint?.close();
@@ -150,11 +150,9 @@ async function waitingApproval(req: Req, convId: string): Promise<{ runId: strin
 }
 
 describe("双副本续跑", () => {
-  // Boots two kernels in turn and stops one, with a run before and after: about 3 s alone, so the
-  // default 5 s timeout fails under load; no fixed sleeps, every wait polls its real condition.
-  it("A 副本暂停（随后停机），B 副本收到审批决定并从 checkpoint 续跑", {
-    timeout: 30_000,
-  }, async () => {
+  // Boots two kernels in turn and stops one, with a run before and after: about 3 s alone; no fixed
+  // sleeps, every wait polls its real condition.
+  it("A 副本暂停（随后停机），B 副本收到审批决定并从 checkpoint 续跑", async () => {
     const ka = await boot();
     const jar = cookieJar();
     const reqA = await login(ka, jar);
@@ -235,5 +233,5 @@ describe("双副本续跑", () => {
       outcomes.push(decided[0]?.payload.decision ?? "");
     }
     expect(outcomes.slice(0, 2)).toEqual(["approved", "expired"]);
-  }, 30_000);
+  });
 });

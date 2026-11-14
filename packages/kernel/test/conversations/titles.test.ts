@@ -80,7 +80,7 @@ beforeAll(async () => {
       },
     ),
   );
-}, 120_000);
+});
 afterAll(async () => {
   await k?.close();
   await raw?.destroy();
@@ -162,7 +162,7 @@ describe("titleExcerpt / cleanTitle", () => {
   });
 });
 
-describe("title job (kernel, fake model)", { timeout: 60_000 }, () => {
+describe("title job (kernel, fake model)", () => {
   it("after the first completed run: generated title, usage purpose title, SSE changed", async () => {
     const conv = await createConv(owner.req, orgId, agentId);
     const sse = await openSse(
@@ -223,7 +223,7 @@ describe("title job (kernel, fake model)", { timeout: 60_000 }, () => {
     const usage = await waitFor(async () => {
       const u = await titleUsage(conv);
       return u.length === 1 ? u : null;
-    }, 20_000);
+    });
     expect(usage[0]?.payload).toMatchObject({ provider: "model-fake", model: "fake-2" });
   });
 
@@ -234,7 +234,7 @@ describe("title job (kernel, fake model)", { timeout: 60_000 }, () => {
     const usage = await waitFor(async () => {
       const u = await titleUsage(conv);
       return u.length === 1 ? u : null;
-    }, 20_000);
+    });
     expect(usage[0]?.payload).toMatchObject({ provider: "model-fake", model: "fake-1" });
   });
 
@@ -283,7 +283,7 @@ describe("title job (kernel, fake model)", { timeout: 60_000 }, () => {
   });
 });
 
-describe("runTitleJob (direct)", { timeout: 60_000 }, () => {
+describe("runTitleJob (direct)", () => {
   /** A conversation with one finished exchange and no title job run yet. */
   async function seeded(
     user: Record<string, unknown> = { content: [{ type: "text", text: "plan the offsite" }] },

@@ -32,7 +32,7 @@ beforeAll(async () => {
   raw = createDb(box.url, 10);
   db = kernelDb(raw);
   svc = accountsFor(db);
-}, 120_000);
+});
 afterAll(async () => {
   await raw.destroy();
   await box.stop();

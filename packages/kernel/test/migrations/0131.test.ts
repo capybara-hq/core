@@ -43,7 +43,7 @@ beforeAll(async () => {
   await sql`INSERT INTO capybara.devices (id, org_id, owner_kind, owner_account_id, source)
     VALUES ('d', 'o', 'personal', 'a', 'cloud')`.execute(db);
   await runFile();
-}, 120_000);
+});
 
 afterAll(async () => {
   await db?.destroy();

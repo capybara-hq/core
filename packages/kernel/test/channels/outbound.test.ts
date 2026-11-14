@@ -15,7 +15,7 @@ import {
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { CHANNEL_QUEUE_NAME, idempotencyKey } from "../../src/channels/outbound.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
@@ -78,6 +78,8 @@ let anonId: string;
 let slowId: string;
 let plainId: string;
 let redis: Redis;
+/** The channel queue, to watch a conversation's delivery jobs (see `deliverySettled`). */
+let channelQueue: Queue<{ conversationId?: string }>;
 /** 出站投递任务空闲多久结束（测试缩短到 1s）。 */
 const IDLE_MS = 1000;
 
@@ -106,6 +108,7 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
   redis = new Redis(rd.url);
+  channelQueue = new Queue(CHANNEL_QUEUE_NAME, { connection: new Redis(rd.url) });
   const accounts = accountsFor(db);
   ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "Owner" })).id;
   const member = await accounts.createLocal({ login: "mem", password: PW, displayName: "Mem" });
@@ -198,9 +201,10 @@ beforeAll(async () => {
   anonId = await mk("chan-mini", "cli_anon", agentId, "anonymous");
   slowId = await mk("chan-slowedit", "cli_slow");
   plainId = await mk("chan-plain", "cli_plain");
-}, 120_000);
+});
 
 afterAll(async () => {
+  await channelQueue?.close();
   redis?.disconnect();
   await k?.close();
   await im?.stop();
@@ -271,6 +275,28 @@ async function settled(conversationId: string): Promise<void> {
   );
 }
 
+/**
+ * The conversation's delivery is over for good: `settled`, and no job of the conversation left in
+ * the channel queue. A delivery job records a non-retryable failure on the connection
+ * (`last_error`, `fail_count`) only after it releases the conversation lock, so the delivery row
+ * can look settled while that write is still to come — an assertion right after `settled` reads
+ * the state without it (or, on a shared connection, reads a previous test's error). The job stays
+ * `active` until `process` returns, after the write.
+ */
+async function deliverySettled(conversationId: string): Promise<void> {
+  await settled(conversationId);
+  await waitFor(
+    async () => {
+      const jobs = await channelQueue.getJobs(["active", "waiting", "prioritized", "delayed"]);
+      return jobs.every(
+        (j) => (j.data as { conversationId?: string }).conversationId !== conversationId,
+      );
+    },
+    15_000,
+    "no delivery job of the conversation left",
+  );
+}
+
 async function failCountOf(conversationId: string): Promise<number> {
   const r = await db
     .selectFrom("channel_deliveries")
@@ -300,7 +326,7 @@ async function approvalStatus(id: string): Promise<string> {
 
 const LONG = "The quick brown fox jumps over the lazy dog while streaming tokens to IM. ".repeat(2);
 
-describe("出站投递：流式回复", { timeout: 40_000 }, () => {
+describe("出站投递：流式回复", () => {
   it("首个增量发草稿，之后至多每秒更新一次，定稿为完整文本；不发 thinking；进度推进且清草稿", async () => {
     const chat = "dm-u-owner";
     im.push(connId, dm("s1", "u-owner", `slow:60:${LONG}`));
@@ -435,7 +461,7 @@ describe("出站投递：流式回复", { timeout: 40_000 }, () => {
   });
 });
 
-describe("出站投递：卡片与卡片操作", { timeout: 40_000 }, () => {
+describe("出站投递：卡片与卡片操作", () => {
   let target: ChannelTarget;
   let conv: string;
 
@@ -928,7 +954,7 @@ describe("出站投递：卡片与卡片操作", { timeout: 40_000 }, () => {
   });
 });
 
-describe("network asks in IM (network ask-to-allow spec §6.4, §6.5)", { timeout: 40_000 }, () => {
+describe("network asks in IM (network ask-to-allow spec §6.4, §6.5)", () => {
   /**
    * A network ask on a run that waits on an echo approval (the echo keeps the run waiting while
    * the ask is decided), for the device owner `requestedFor`. Returns the ask's card message.
@@ -1173,9 +1199,7 @@ describe("network asks in IM (network ask-to-allow spec §6.4, §6.5)", { timeou
   });
 });
 
-describe("cards speak the requester's language (run context spec §3.4)", {
-  timeout: 40_000,
-}, () => {
+describe("cards speak the requester's language (run context spec §3.4)", () => {
   it("a person whose latest web message is Chinese gets a Chinese approval card in an en org", async () => {
     const mem = await session(k, "mem");
     const web = await mem({
@@ -1226,7 +1250,7 @@ describe("cards speak the requester's language (run context spec §3.4)", {
   });
 });
 
-describe("T5a: cards are recorded before they are sent", { timeout: 40_000 }, () => {
+describe("T5a: cards are recorded before they are sent", () => {
   const cardRow = async (approvalId: string) =>
     (
       await sql<{ message_id: string | null; status: string }>`SELECT message_id, status
@@ -1340,7 +1364,7 @@ describe("T5a: cards are recorded before they are sent", { timeout: 40_000 }, ()
   });
 });
 
-describe("卡片操作：eventId 去重与缺 threadId（Ruling A26）", { timeout: 40_000 }, () => {
+describe("卡片操作：eventId 去重与缺 threadId（Ruling A26）", () => {
   it("平台用同一 eventId 重投卡片点击 → 只处理一次（不回「已处理」）", async () => {
     const chat = "grp-evt";
     im.push(connId, group("ev1", "u-owner", ECHO, { chatId: chat }));
@@ -1418,7 +1442,7 @@ describe("卡片操作：eventId 去重与缺 threadId（Ruling A26）", { timeo
   });
 });
 
-describe("features.cards / threads = false 的渠道（Ruling A33）", { timeout: 40_000 }, () => {
+describe("features.cards / threads = false 的渠道（Ruling A33）", () => {
   it("卡片按 renderCardAsText 拼进正文、不传 cards；群聊回复与卡片的目标都不带 threadId", async () => {
     const chat = "grp-plain";
     im.push(plainId, group("pl1", "u-owner", ECHO, { chatId: chat }));
@@ -1446,7 +1470,17 @@ describe("features.cards / threads = false 的渠道（Ruling A33）", { timeout
   });
 });
 
-describe("出站投递：发送失败", { timeout: 40_000 }, () => {
+describe("出站投递：发送失败", () => {
+  // The tests below share the two connections; a failing test must not leave its `last_error`
+  // behind for the next one (the reset inside each test only runs when its assertions pass).
+  afterEach(async () => {
+    await db
+      .updateTable("channel_connections")
+      .set({ last_error: null })
+      .where("id", "in", [noEditId, connId])
+      .execute();
+  });
+
   it("Ruling A14：同一事件不可重试地失败 3 次 → 跳过它并提示去网页查看，之后的回复照常投递", async () => {
     const chat = "grp-poison";
     im.failNext("/send", 400, 3, undefined, undefined, undefined, chat);
@@ -1474,7 +1508,9 @@ describe("出站投递：发送失败", { timeout: 40_000 }, () => {
         group(`p${i}`, "u-owner", `echo:reply ${i}`, { chatId: chat, threadId: "p1" }),
       );
       i++;
-      await sleep(300);
+      // The new message pulls the next retry of the stuck event: wait for that attempt to fail
+      // before pushing the next message (one failure per message).
+      await waitFor(async () => (await failCount(conv)) >= i - 1 || phraseSent(), 15_000, "fail");
     }
     await waitFor(async () => phraseSent(), 15_000, "skip notice");
     im.push(
@@ -1486,7 +1522,7 @@ describe("出站投递：发送失败", { timeout: 40_000 }, () => {
       15_000,
       "later reply delivered",
     );
-    await settled(conv);
+    await deliverySettled(conv);
     expect(sentTo("cli_noedit", chat).some((s) => s.message.text === "poison one")).toBe(false);
     expect(await failCount(conv)).toBe(0);
     await db
@@ -1501,7 +1537,7 @@ describe("出站投递：发送失败", { timeout: 40_000 }, () => {
     im.failNext("/send", 429, 2, 100, undefined, undefined, chat);
     im.push(connId, group("r1", "u-owner", "echo:rate limited reply", { chatId: chat }));
     const conv = await convOf(connId, chat);
-    await settled(conv);
+    await deliverySettled(conv);
     const msgs = sentTo("cli_out", chat).filter((s) => finalText(s) === "rate limited reply");
     expect(msgs).toHaveLength(1);
     expect(msgs[0]?.target.threadId).toBe("r1");
@@ -1519,7 +1555,7 @@ describe("出站投递：发送失败", { timeout: 40_000 }, () => {
     im.failNext("/update", 400, 1, undefined, undefined, undefined, chat);
     im.push(connId, group("er1", "u-owner", "slow:50:Draft then rejected", { chatId: chat }));
     const conv = await convOf(connId, chat);
-    await settled(conv);
+    await deliverySettled(conv);
     const msgs = sentTo("cli_out", chat);
     expect(msgs).toHaveLength(2);
     expect(msgs[1]?.message.text).toBe("Draft then rejected");
@@ -1534,7 +1570,7 @@ describe("出站投递：发送失败", { timeout: 40_000 }, () => {
     im.failNext("/update", 400, 1, undefined, undefined, undefined, chat);
     im.push(connId, group("mr1", "u-owner", `slow:150:${LONG}`, { chatId: chat }));
     const conv = await convOf(connId, chat);
-    await settled(conv);
+    await deliverySettled(conv);
     const msgs = sentTo("cli_out", chat);
     expect(msgs).toHaveLength(2);
     expect(LONG.startsWith(msgs[0]?.message.text as string)).toBe(true);
@@ -1562,7 +1598,7 @@ describe("出站投递：发送失败", { timeout: 40_000 }, () => {
       15_000,
       "failure marker as a new message",
     );
-    await settled(conv);
+    await deliverySettled(conv);
     const msgs = sentTo("cli_out", chat);
     expect(msgs).toHaveLength(2);
     expect(updatesOf(msgs[0]?.messageId as string)).toEqual([]);
@@ -1580,7 +1616,13 @@ describe("出站投递：发送失败", { timeout: 40_000 }, () => {
       sentTo("cli_out", chat).some((s) => s.message.text.startsWith("A request is waiting"));
     let n = 2;
     while (!notice() && n <= 5) {
-      await sleep(1500);
+      // Each rejection of the stuck event is counted in fail_count; wait for the previous
+      // attempt before pushing the next message (the skip notice ends the round).
+      await waitFor(
+        async () => notice() || (await failCountOf(conv)) >= n - 1,
+        15_000,
+        "rejected finalization",
+      );
       if (notice()) break;
       im.push(
         connId,
@@ -1594,7 +1636,7 @@ describe("出站投递：发送失败", { timeout: 40_000 }, () => {
       10_000,
       "draft closed before the skip",
     );
-    await settled(conv);
+    await deliverySettled(conv);
     expect(sentTo("cli_out", chat).some((s) => s.message.text === "Poisoned draft text")).toBe(
       false,
     );
@@ -1610,22 +1652,36 @@ describe("出站投递：发送失败", { timeout: 40_000 }, () => {
     im.failNext("/send", 403, 3, undefined, "auth", undefined, chat);
     im.push(noEditId, group("au1", "u-owner", "echo:after auth", { chatId: chat }));
     const conv = await convOf(noEditId, chat);
-    const err = await waitFor(() => lastError(noEditId), 15_000, "last_error");
+    // The connection is shared with the other delivery tests: wait for the error this test causes,
+    // not for any error the connection may still carry from an earlier exchange.
+    const err = await waitFor(
+      async () => {
+        const e = await lastError(noEditId);
+        return e?.includes("403") ? e : undefined;
+      },
+      15_000,
+      "last_error 403",
+    );
     expect(err).toMatch(/403/);
     const delivered = () => sentTo("cli_noedit", chat).some((s) => s.message.text === "after auth");
+    // Each new message pulls one retry of the stuck event; auth stops the round without a poison
+    // count, so the marker is the message itself reaching the conversation log.
+    const logged = async (text: string) =>
+      (await eventsOf(db, conv)).some((e) => {
+        if (e.type !== "user_message") return false;
+        const block = e.payload.content[0];
+        return block?.type === "text" && block.text === text;
+      });
     // 每条新消息触发一次续投；按毒事件计数的话第 3 次失败就会跳过它
     let n = 2;
     while (!delivered() && n <= 6) {
-      await sleep(800);
-      if (delivered()) break;
-      im.push(
-        noEditId,
-        group(`au${n}`, "u-owner", `echo:auth more ${n}`, { chatId: chat, threadId: "au1" }),
-      );
+      const text = `echo:auth more ${n}`;
+      im.push(noEditId, group(`au${n}`, "u-owner", text, { chatId: chat, threadId: "au1" }));
       n++;
+      await waitFor(async () => logged(text), 15_000, "message logged");
     }
     await waitFor(async () => delivered(), 15_000, "delivered after the credentials recovered");
-    await settled(conv);
+    await deliverySettled(conv);
     expect(
       sentTo("cli_noedit", chat).some((s) => s.message.text.startsWith("A request is waiting")),
     ).toBe(false);
@@ -1648,7 +1704,7 @@ describe("出站投递：发送失败", { timeout: 40_000 }, () => {
       15_000,
       "delivered on a later job",
     );
-    await settled(conv);
+    await deliverySettled(conv);
     expect(
       sentTo("cli_noedit", chat).filter((s) => s.message.text === "bot was removed"),
     ).toHaveLength(1);
@@ -1667,7 +1723,7 @@ describe("出站投递：发送失败", { timeout: 40_000 }, () => {
       15_000,
       "delivered by the follow-up after the stopped job",
     );
-    await settled(conv);
+    await deliverySettled(conv);
     expect(
       sentTo("cli_noedit", chat).filter((s) => s.message.text === "removed while slow"),
     ).toHaveLength(1);
@@ -1680,17 +1736,14 @@ describe("出站投递：发送失败", { timeout: 40_000 }, () => {
     im.failNext("/send", 400, 1, undefined, undefined, undefined, chat);
     im.push(connId, group("f1", "u-owner", "echo:delivered later", { chatId: chat }));
     const conv = await convOf(connId, chat);
+    // The shared connection may still carry an earlier exchange's error: wait for this one's 400.
     const err = await waitFor(
-      async () =>
-        (
-          await db
-            .selectFrom("channel_connections")
-            .select("last_error")
-            .where("id", "=", connId)
-            .executeTakeFirstOrThrow()
-        ).last_error,
+      async () => {
+        const e = await lastError(connId);
+        return e?.includes("400") ? e : undefined;
+      },
       15_000,
-      "last_error",
+      "last_error 400",
     );
     expect(err).toMatch(/400/);
     // 不需要等下一条消息：同一运行之后写入的事件就会触发新任务从 last_seq 续投
@@ -1699,7 +1752,7 @@ describe("出站投递：发送失败", { timeout: 40_000 }, () => {
       15_000,
       "delivered on a later job",
     );
-    await settled(conv);
+    await deliverySettled(conv);
     expect(sentTo("cli_out", chat).filter((s) => finalText(s) === "delivered later")).toHaveLength(
       1,
     );

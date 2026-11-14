@@ -78,7 +78,7 @@ beforeAll(async () => {
       },
     ),
   );
-}, 180_000);
+});
 afterAll(async () => {
   await k?.close();
   await raw?.destroy();
@@ -165,7 +165,7 @@ const previewers = async (fileId: string, req: Req = owner) => {
 const preview = (fileId: string, id: string, req: Req = owner) =>
   req({ method: "GET", url: `${base()}/${fileId}/previews/preview-fake/${id}?locale=zh` });
 
-describe("file-preview@1", { timeout: 60_000 }, () => {
+describe("file-preview@1", () => {
   it("lists previewers only once the extension is enabled in the org, and only accepting ones", async () => {
     const docx = await deliver("a.docx", Buffer.from("PK docx bytes"), DOCX);
     const pdf = await deliver("a.pdf", Buffer.from("%PDF"), "application/pdf");
@@ -305,7 +305,7 @@ describe("file-preview@1", { timeout: 60_000 }, () => {
     expect(r.statusCode).toBe(504);
     expect(errCode(r)).toBe("ui.timeout");
     expect(probe().aborted).toBe(before + 1);
-  }, 30_000);
+  });
 
   it("another person cannot list or render the conversation's previews", async () => {
     await enable();

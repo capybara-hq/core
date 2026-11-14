@@ -410,7 +410,7 @@ describe("command ask (dual replica)", () => {
       .where("action", "in", ["device.command_allowed", "device.command_denied"])
       .execute();
     expect(audits.map((x) => x.action)).toEqual(["device.command_allowed"]);
-  }, 180_000);
+  });
 
   it("decided only on the other replica: the parked run resumes once and the command runs once", async () => {
     const scene = await openAskScene();
@@ -437,7 +437,7 @@ describe("command ask (dual replica)", () => {
     expect(count("tool_result")).toBe(1);
     expect(count("run_finished")).toBe(1);
     expect(scene.execs()).toBe(1);
-  }, 180_000);
+  });
 
   it("a session grant written on one replica suppresses the ask on the other", async () => {
     const scene = await openAskScene();
@@ -486,5 +486,5 @@ describe("command ask (dual replica)", () => {
       by: "rule",
       rule: "ask.force-push",
     });
-  }, 180_000);
+  });
 });

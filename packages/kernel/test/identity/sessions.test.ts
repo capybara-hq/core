@@ -46,7 +46,7 @@ beforeAll(async () => {
   db2 = kernelDb(raw2);
   redis = new Redis(rd.url);
   redis2 = new Redis(rd.url);
-}, 120_000);
+});
 afterAll(async () => {
   redis.disconnect();
   redis2.disconnect();

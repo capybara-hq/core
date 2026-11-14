@@ -43,7 +43,7 @@ beforeAll(async () => {
   env = await startOrgEnv();
   orgA = env.orgId;
   orgB = await createOrg(env.root, "B");
-}, 240_000);
+});
 
 afterAll(async () => {
   await env?.stop();
@@ -231,7 +231,7 @@ async function sharedWithB(itemId: string, skill: string): Promise<void> {
   await waitFor(async () => (await usable(orgB)).includes(skill), 30_000, `${skill} usable in B`);
 }
 
-describe("org uploads with an extension", { timeout: 180_000 }, () => {
+describe("org uploads with an extension", () => {
   it("first version stays pending and unusable", async () => {
     const itemId = await uploaded(
       env.boss,
@@ -616,9 +616,7 @@ describe("org uploads with an extension", { timeout: 180_000 }, () => {
   });
 });
 
-describe("fix round 1: applied versions only, the confirm lock (P3-34 to P3-37)", {
-  timeout: 180_000,
-}, () => {
+describe("fix round 1: applied versions only, the confirm lock (P3-34 to P3-37)", () => {
   const claim = (name: string) =>
     env.db
       .selectFrom("extension_name_owners")
@@ -806,9 +804,7 @@ describe("fix round 1: applied versions only, the confirm lock (P3-34 to P3-37)"
   });
 });
 
-describe("fix round 2: the scope sync waits for its replica to load the extension (P3-38)", {
-  timeout: 180_000,
-}, () => {
+describe("fix round 2: the scope sync waits for its replica to load the extension (P3-38)", () => {
   it("a replica that has not loaded the confirmed extension yet retries, then converges", async () => {
     const registry = env.k.app.get(ExtensionRegistry);
     const real = registry.manifests.bind(registry);
@@ -881,9 +877,7 @@ describe("fix round 2: the scope sync waits for its replica to load the extensio
   });
 });
 
-describe("final review fixes: package identity and version applicability (P3-51, P3-52)", {
-  timeout: 180_000,
-}, () => {
+describe("final review fixes: package identity and version applicability (P3-51, P3-52)", () => {
   const nameOwner = (r: { body: string }) =>
     (JSON.parse(r.body) as { error: { details?: unknown[] } }).error.details;
 

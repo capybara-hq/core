@@ -90,7 +90,7 @@ beforeAll(async () => {
     .id;
   orgId = await createOrg(await session(k, "owner"));
   url = `ws://127.0.0.1:${k.port}/device/connect`;
-}, 180_000);
+});
 
 afterEach(() => {
   for (const m of open.splice(0)) m.close();
@@ -288,7 +288,7 @@ describe("local devices through the sandbox tools", () => {
         m.tool("Write").run({ file_path: `${ROOTS_A.workspace}/c.txt`, content: "c" }, m.ctx()),
       ),
     ).toMatch(/workspace/i);
-  }, 60_000);
+  });
 
   it("a new login on the same machine and directory keeps the files; another machine resets them", async () => {
     const m = await member();
@@ -322,7 +322,7 @@ describe("local devices through the sandbox tools", () => {
     expect(JSON.stringify(reset)).toContain(
       JSON.stringify(sandboxFilesResetNotice(ROOTS_A)).slice(1, -1),
     );
-  }, 60_000);
+  });
 
   it("every exec carries the org's sandbox allowlist of the moment (R27)", async () => {
     const m = await member();
@@ -343,7 +343,7 @@ describe("local devices through the sandbox tools", () => {
     } finally {
       await sql`UPDATE capybara.orgs SET settings = '{}'::jsonb WHERE id = ${orgId}`.execute(raw);
     }
-  }, 60_000);
+  });
 
   it("every exec names the call's run in its actor; no grants without approved asks (P-D3)", async () => {
     const m = await member();
@@ -355,7 +355,7 @@ describe("local devices through the sandbox tools", () => {
       actor: { accountId: m.accountId, conversationId: ctx.conversationId, runId: ctx.runId },
     });
     expect(exec.args).not.toHaveProperty("grants");
-  }, 60_000);
+  });
 
   it("a revoked machine: its socket closes, the waiting call fails at once, the credential is refused", async () => {
     const m = await member();
@@ -379,7 +379,7 @@ describe("local devices through the sandbox tools", () => {
       "X-Capybara-Device-Protocol": "1",
     });
     expect(again?.status).toBe(401);
-  }, 60_000);
+  });
 
   it("a deleted device: stop and close, the waiting call fails as not found, the credential is refused", async () => {
     const m = await member();
@@ -401,7 +401,7 @@ describe("local devices through the sandbox tools", () => {
       "X-Capybara-Device-Protocol": "1",
     });
     expect(again?.status).toBe(401);
-  }, 60_000);
+  });
 
   it("a vanished directory: files_lost through the tools, no reset from the platform, a new login recovers (R24)", async () => {
     const m = await member();
@@ -436,5 +436,5 @@ describe("local devices through the sandbox tools", () => {
       JSON.stringify(sandboxFilesResetNotice(ROOTS_A)).slice(1, -1),
     );
     expect((await m.instance())?.fs_status).toBe("ready");
-  }, 60_000);
+  });
 });

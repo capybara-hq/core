@@ -27,7 +27,7 @@ let ops: PlatformOperations;
 beforeAll(async () => {
   env = await startOrgEnv();
   ops = env.k.app.get(PlatformOperations);
-}, 240_000);
+});
 afterAll(async () => {
   await env?.stop();
 });

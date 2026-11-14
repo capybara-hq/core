@@ -136,7 +136,7 @@ beforeAll(async () => {
       { name: "wrong-name", version: "0.1.0", tgz: toolsUi },
     ],
   });
-}, 240_000);
+});
 afterAll(async () => {
   await stopAll();
   await destroyDb?.();
@@ -183,7 +183,7 @@ describe("有对象存储：上传、npm 与包存储", () => {
     await resetData();
     k = await boot({ extensions: [OBJECT_STORE, MODEL_FAKE], extensionConfig: s3Config() });
     await loginUsers(k);
-  }, 120_000);
+  });
   afterAll(stopAll);
 
   it("上传 fake-tools-ui 包：返回审阅结果，包在 deployment/plugins/blobs/ 下，记来源与审计", async () => {
@@ -417,7 +417,7 @@ describe("没有对象存储：包存 PG", () => {
     await resetData();
     k = await boot({ extensions: [MODEL_FAKE] });
     await loginUsers(k);
-  }, 120_000);
+  });
   afterAll(stopAll);
 
   it("after upload it is in extension_blobs; get checks sha256 and throws when tampered with", async () => {
@@ -839,7 +839,7 @@ describe("引导插件（取代内置插件）", () => {
       { bytes: toolsUi },
       { bytes: await packFake("fake-bootstrap-b") },
     ]);
-  }, 120_000);
+  });
   afterAll(async () => {
     await stopAll();
     await fx?.cleanup();

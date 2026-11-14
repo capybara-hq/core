@@ -122,13 +122,13 @@ beforeAll(async () => {
     (id, org_id, slug, name, connector, created_by, catalog_item_id, catalog_version)
     values ('c1', 'o1', 'gh', 'GitHub', 'mcp', 'a1', ${ID(2)}, '1.0.0')`.execute(db);
   await migrate(pg.url, { schema: "capybara", dir: upTo });
-}, 120_000);
+});
 
 afterAll(async () => {
   await db?.destroy();
   await pg?.stop();
   for (const dir of [before, upTo]) if (dir) rmSync(dir, { recursive: true, force: true });
-}, 120_000);
+});
 
 describe("0044 catalog with one kind", () => {
   it("removes every pre-0.1.0 catalog row", async () => {

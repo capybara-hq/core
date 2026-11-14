@@ -137,7 +137,7 @@ beforeAll(async () => {
   redis = new Redis(rd.url);
   sub = createBusSubscriber(() => new Redis(rd.url));
   eventLog = eventLogFor(db, createBus(redis, sub, "kernel"));
-}, 120_000);
+});
 
 afterAll(async () => {
   await sub?.close();

@@ -84,7 +84,7 @@ beforeAll(async () => {
       },
     ),
   );
-}, 180_000);
+});
 afterAll(async () => {
   await k?.close();
   redis?.disconnect();
@@ -486,7 +486,7 @@ describe("agent save", () => {
   });
 });
 
-describe("runs and the switch plan", { timeout: 60_000 }, () => {
+describe("runs and the switch plan", () => {
   it("a model disabled after the agent was saved: the step falls back to the enabled fallback", async () => {
     const id = await agentId(owner, org1, "Saved", FAKE_2, FAKE_1);
     expect((await orgDisable(admin, org1, "model-fake", { disable: ["fake-2"] })).statusCode).toBe(
@@ -560,7 +560,7 @@ describe("runs and the switch plan", { timeout: 60_000 }, () => {
   });
 });
 
-describe("a provider the org turned off (spec A §8)", { timeout: 60_000 }, () => {
+describe("a provider the org turned off (spec A §8)", () => {
   const B1 = { provider: "model-fake-b", model: "b-1" };
   const switchB = (orgId: string, enabled: boolean) =>
     ok(owner, "PUT", `/api/v1/orgs/${orgId}/extensions/model-fake-b`, { enabled });

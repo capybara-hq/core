@@ -86,7 +86,7 @@ beforeAll(async () => {
     ),
     { logger: createLogger("warn", { write: (l) => lines.push(JSON.parse(l) as Line) }) },
   );
-}, 180_000);
+});
 afterAll(async () => {
   await k?.close();
   await raw?.destroy();
@@ -162,7 +162,7 @@ const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 const warned = () =>
   lines.filter((l) => l.level === "warn" && l.context === "PluginContextService");
 
-describe("context@1 providers at run start", { timeout: 60_000 }, () => {
+describe("context@1 providers at run start", () => {
   it("appends the text when it changes, nothing when it does not, an empty event for null", async () => {
     const conv = await createConv(owner, orgId, agentId);
     await run(owner, conv, 1);

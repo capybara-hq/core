@@ -27,7 +27,7 @@ beforeAll(async () => {
   });
   raw = createDb(pgc.url, 3);
   service = new PlatformAuditService(handlesFor(raw).db);
-}, 120_000);
+});
 
 afterAll(async () => {
   await raw?.destroy();

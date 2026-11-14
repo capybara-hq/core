@@ -9,6 +9,7 @@ import { createDb } from "../../src/db/pool.js";
 import { KERNEL_MIGRATIONS_DIR, KERNEL_SCHEMA } from "../../src/kernel.js";
 import { OrgQuota, orgRunLimit } from "../../src/runtime/quota.js";
 import { settingsFor } from "../helpers/identity.js";
+import { waitFor } from "../helpers/runs.js";
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -61,12 +62,14 @@ describe("OrgQuota", () => {
     const q = new OrgQuota(redis);
     expect(await q.tryEnter("o1", "r1", 1, 300)).toBe(true);
     expect(await q.tryEnter("o1", "r2", 1, 300)).toBe(false);
+    // close to the 300 ms lease: renew must still find the member
     await sleep(200);
     expect(await q.renew("o1", "r1", 300)).toBe(true);
+    // past the original expiry: only the renew above keeps the slot
     await sleep(200);
     expect(await q.tryEnter("o1", "r2", 1, 300)).toBe(false);
-    await sleep(250);
-    expect(await q.tryEnter("o1", "r2", 1, 300)).toBe(true);
+    // the renewed lease's TTL must elapse before the slot frees (the lease is 300 ms)
+    await waitFor(async () => q.tryEnter("o1", "r2", 1, 300), 5_000, "the expired lease's slot");
     // r1 已被清理：renew 返回 false
     expect(await q.renew("o1", "r1", 300)).toBe(false);
   });

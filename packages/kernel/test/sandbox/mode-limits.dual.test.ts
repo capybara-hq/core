@@ -50,7 +50,7 @@ beforeAll(async () => {
   [pgc, rdc] = await Promise.all([startTestPostgres(), startTestRedis()]);
   root = await mkdtemp(join(tmpdir(), "cap-sandbox-modes-dual-"));
   raw = createDb(pgc.url, 2);
-}, 120_000);
+});
 
 afterAll(async () => {
   for (const k of kernels) await k.close();
@@ -119,7 +119,7 @@ describe("device modes (two replicas)", () => {
       network: { kind: "allowlist" },
     });
     await setFakeSandboxDelays(root, {});
-  }, 60_000);
+  });
 
   it("a replica that read a mode before waiting applies the mode read under the lease", async () => {
     const [k1, k2] = kernels as [TestKernel, TestKernel];
@@ -171,5 +171,5 @@ describe("device modes (two replicas)", () => {
       mode: "sandbox",
       network: { kind: "allowlist" },
     });
-  }, 60_000);
+  });
 });

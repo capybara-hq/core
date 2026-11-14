@@ -23,7 +23,7 @@ const ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"/>';
  * both end up loading the bootstrap plugins (permission approval is off, so loading proves the
  * bootstrap snapshot).
  */
-describe("bootstrap with two replicas starting together", { timeout: 180_000 }, () => {
+describe("bootstrap with two replicas starting together", () => {
   let h: Harness;
   let raw: ReturnType<typeof createDb>;
   let db: KernelSchemaDb;
@@ -53,7 +53,7 @@ describe("bootstrap with two replicas starting together", { timeout: 180_000 }, 
     });
     raw = createDb(h.dbUrl, 2);
     db = kernelDb(raw);
-  }, 300_000);
+  });
 
   afterAll(async () => {
     await h?.stop();
@@ -61,7 +61,7 @@ describe("bootstrap with two replicas starting together", { timeout: 180_000 }, 
     await fx?.cleanup();
     await reg?.stop();
     if (extensionsDir) await rm(extensionsDir, { recursive: true, force: true });
-  }, 120_000);
+  });
 
   it("runs once, downloads each package once, and both replicas load the plugins", async () => {
     expect(reg.requests.filter((r) => r.includes("/-/")).sort()).toEqual([

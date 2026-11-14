@@ -226,7 +226,7 @@ beforeAll(async () => {
   destroyDb = () => raw.destroy();
   root = await mkdtemp(join(tmpdir(), "cap-subagent-perms-"));
   k = await startKernel();
-}, 180_000);
+});
 
 async function startKernel(): Promise<TestKernel> {
   const { startKernel: start } = await import("../../helpers/runs.js");
@@ -380,7 +380,7 @@ describe("policies and approvals of a sub-agent", () => {
     await waitForTerminal(db, conv, 1, 30_000);
     expect(finalText(await eventsOf(db, conv))).toBe("policy done");
     expect((await finishedDeliveries(db, conv)).map((d) => d.text)).toEqual(["asker done"]);
-  }, 60_000);
+  });
 
   it("a child's approval goes to the starter, appears as subagent_waiting in the parent log and in GET /inbox with parentConversationId", async () => {
     // the member starts the parent run of the owner's agent
@@ -446,7 +446,7 @@ describe("policies and approvals of a sub-agent", () => {
     expect(await finishedDeliveries(db, conv)).toMatchObject([
       { text: "asker done", triggerAccountId: memberId },
     ]);
-  }, 60_000);
+  });
 
   it("approve for this conversation on one child covers a sibling's identical call", async () => {
     const conv = await createConv(owner, orgId, agentId);
@@ -471,7 +471,7 @@ describe("policies and approvals of a sub-agent", () => {
     const second = await eventsOf(db, kids[1] as string);
     const echo = ofType(second, "tool_result").find((r) => r.payload.toolKey === ECHO);
     expect(echo?.payload).toMatchObject({ content: "echo: same", isError: false });
-  }, 60_000);
+  });
 });
 
 describe("approvals across the tree (agent map spec §7)", () => {
@@ -545,7 +545,7 @@ describe("approvals across the tree (agent map spec §7)", () => {
     );
     expect(echo?.payload).toMatchObject({ content: "echo: deep", isError: false });
     expect((await finishedDeliveries(db, d2)).map((d) => d.text)).toEqual(["deep asker done"]);
-  }, 90_000);
+  });
 
   it('"approve for this conversation" on a grandchild applies to its siblings\' later calls', async () => {
     const conv = await createConv(owner, orgId, agentId);
@@ -576,7 +576,7 @@ describe("approvals across the tree (agent map spec §7)", () => {
     const second = await eventsOf(db, twins[1] as string);
     const echo = ofType(second, "tool_result").find((r) => r.payload.toolKey === ECHO);
     expect(echo?.payload).toMatchObject({ content: "echo: twin", isError: false });
-  }, 90_000);
+  });
 
   it("the approver is the trigger account inherited down the chain", async () => {
     // the member starts the root run of the owner's agent
@@ -611,7 +611,7 @@ describe("approvals across the tree (agent map spec §7)", () => {
       30_000,
       "depth-3 run completed",
     );
-  }, 90_000);
+  });
 });
 
 describe("hooks and usage reports of a sub-agent", () => {
@@ -686,7 +686,7 @@ describe("hooks and usage reports of a sub-agent", () => {
       (a) => (a.detail as { toolKey?: string; callId?: string }).callId === call,
     );
     expect(agentAudit?.detail).toMatchObject({ toolKey: "Agent", conversationId: conv });
-  }, 60_000);
+  });
 
   it("a child's usage.report has conversationKind chat and parent", async () => {
     const conv = await createConv(owner, orgId, agentId);
@@ -739,7 +739,7 @@ describe("hooks and usage reports of a sub-agent", () => {
       "parent usage report",
     );
     expect(p).not.toHaveProperty("parent");
-  }, 60_000);
+  });
 
   it("a child's wake run's usage.report has parent: the child's latest dispatch", async () => {
     const conv = await createConv(owner, orgId, agentId);
@@ -806,5 +806,5 @@ describe("hooks and usage reports of a sub-agent", () => {
       runId: wakeRun,
       parent: { conversationId: conv, runId: run.id, callId: call },
     });
-  }, 60_000);
+  });
 });

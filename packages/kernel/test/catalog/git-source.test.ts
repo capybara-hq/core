@@ -21,6 +21,7 @@ import {
 } from "../../src/catalog/plugin-package.js";
 import type { NetPolicy } from "../../src/net/public-address.js";
 import { pluginTgz, tgz } from "../helpers/plugin-packages.js";
+import { waitFor } from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
 
 const NET: NetPolicy = { allowInsecureLoopback: true, allowPrivateHosts: [], trustedOrigins: [] };
@@ -66,12 +67,18 @@ afterEach(async () => {
   // The temp object store is removed after every operation, read or refused. A leak fails this
   // test only: what is left is removed, so later tests do not inherit it.
   let left: string[] = [];
-  for (let i = 0; i < 50; i++) {
-    left = await readdir(tempRoot);
-    if (left.length === 0) break;
-    await new Promise((r) => setTimeout(r, 20));
+  try {
+    await waitFor(
+      async () => {
+        left = await readdir(tempRoot);
+        return left.length === 0;
+      },
+      1_000,
+      "the temp object store removed",
+    );
+  } finally {
+    await Promise.all(left.map((d) => rm(join(tempRoot, d), { recursive: true, force: true })));
   }
-  await Promise.all(left.map((d) => rm(join(tempRoot, d), { recursive: true, force: true })));
   expect(left).toEqual([]);
 });
 afterAll(async () => {
@@ -310,7 +317,7 @@ describe("readGitTree", () => {
     expect(await codeOf(readGitTree({ url: srv.url("many"), commit }, opts()))).toBe(
       "marketplace.git_too_large",
     );
-  }, 60_000);
+  });
 
   it("refuses a tree-only DAG with exponentially many paths", async () => {
     // 11 tree objects, 26^10 paths and no files: bounded by the entry count, not the file count

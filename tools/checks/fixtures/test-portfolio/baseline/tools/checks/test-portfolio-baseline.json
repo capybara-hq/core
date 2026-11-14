@@ -1,0 +1,7 @@
+{
+  "files": {
+    "packages/kernel/test/portfolio/clean.test.ts": "clean fixture: a stale entry the check must report",
+    "packages/kernel/test/portfolio/unjustified.test.ts": "",
+    "packages/kernel/test/portfolio/waits.test.ts": "fixed wait: fixture latency (T1)"
+  }
+}

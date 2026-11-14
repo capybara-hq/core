@@ -107,7 +107,7 @@ beforeAll(async () => {
   purposes = k.app.get(ModelPurposesService);
   realChat = purposes.chat.bind(purposes);
   chatSpy = vi.spyOn(purposes, "chat");
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -264,7 +264,7 @@ describe("the classifier's answer parsing", () => {
   });
 });
 
-describe("CommandReviewService", { timeout: 120_000 }, () => {
+describe("CommandReviewService", () => {
   it("an unsure command: the classifier's allow is the verdict; the request has no agent text", async () => {
     answer("allow", "An unknown helper that only reads.");
     let sent: { target: { provider: string; model: string }; request: ModelRequest } | undefined;

@@ -87,7 +87,7 @@ beforeAll(async () => {
     join(dir, "0001_init.sql"),
     "CREATE TABLE IF NOT EXISTS hits (id serial PRIMARY KEY);\nINSERT INTO hits DEFAULT VALUES;\n",
   );
-}, 120_000);
+});
 afterAll(async () => {
   await destroyDb?.();
   await rm(dir, { recursive: true, force: true });

@@ -4,6 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { LockService } from "../../src/infra/lock/lock.service.js";
 import { createLogger } from "../../src/log.js";
 import { ConversationLock } from "../../src/runtime/conversation-lock.js";
+import { waitFor } from "../helpers/runs.js";
 
 let rd: TestContainer;
 let redisA: Redis;
@@ -52,6 +53,8 @@ describe("ConversationLock", () => {
     const lease = await a.acquire("c2", "run-a", 300);
     expect(lease).not.toBeNull();
     lease?.abandon();
+    // the lock's TTL (300 ms) must elapse: the assertion is about time, and the key's expiry is
+    // the only marker.
     await sleep(450);
     const lb = await b.acquire("c2", "run-b", 300);
     expect(lb).not.toBeNull();
@@ -64,6 +67,8 @@ describe("ConversationLock", () => {
     const a = lockOn(redisA);
     const b = lockOn(redisB);
     const lease = await a.acquire("c3", "run-a", 300);
+    // three renewal periods (TTL / 3 = 100 ms) must pass: the assertion is that the background
+    // renewal keeps the lock, which has no observable marker of its own.
     await sleep(900);
     expect(await b.acquire("c3", "run-b", 300)).toBeNull();
     expect(await b.holder("c3")).toBe("run-a");
@@ -76,7 +81,7 @@ describe("ConversationLock", () => {
     const a = lockOn(redisA);
     const lease = await a.acquire("c4", "run-a", 300);
     await redisB.set("capk:conv-run:c4", "run-x", "PX", 5000);
-    await sleep(250);
+    await waitFor(async () => lease?.lost === true, 5_000, "the lease lost");
     expect(lease?.lost).toBe(true);
     await lease?.release();
     expect(await a.holder("c4")).toBe("run-x");

@@ -106,7 +106,7 @@ beforeAll(async () => {
       },
     ),
   );
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -344,7 +344,7 @@ describe("GET /conversations/:id/subagents", () => {
     const stop = await owner({ method: "POST", url: `${base()}/${write.subagentId}/abort` });
     expect(stop.statusCode, stop.body).toBe(202);
     await finishedDeliveries(db, conv, 2);
-  }, 90_000);
+  });
 });
 
 describe("child conversations through the conversation routes", () => {
@@ -414,7 +414,7 @@ describe("child conversations through the conversation routes", () => {
       expect(r.statusCode, `${method} ${path}`).toBe(404);
       expect(r.body, `${method} ${path}`).not.toContain(conv);
     }
-  }, 60_000);
+  });
 
   it("listMine never lists children", async () => {
     const { conv, child } = await oneChild();
@@ -428,7 +428,7 @@ describe("child conversations through the conversation routes", () => {
     );
     expect(ids).toEqual([conv]);
     expect(ids).not.toContain(child);
-  }, 60_000);
+  });
 });
 
 describe("progress and usage", () => {
@@ -465,7 +465,7 @@ describe("progress and usage", () => {
     for (const id of [conv, c?.conversationId as string]) {
       expect((await eventsOf(db, id)).map((e) => e.type)).not.toContain("subagent_progress");
     }
-  }, 60_000);
+  });
 
   it("conversation usage sums the children", async () => {
     const { conv, child } = await oneChild();
@@ -480,7 +480,7 @@ describe("progress and usage", () => {
     expect(cr.json()).toEqual({ usage: await usageOf(child) });
     // owner only
     expect((await member({ method: "GET", url: `${base()}/${conv}/usage` })).statusCode).toBe(404);
-  }, 60_000);
+  });
 
   it("conversation usage sums every descendant (depth 3), and a sub-agent's covers its subtree", async () => {
     const { conv, child } = await oneChild();
@@ -533,5 +533,5 @@ describe("progress and usage", () => {
     expect(r.json()).toEqual({ usage: await usageOf(conv, child, ...below) });
     const cr = await owner({ method: "GET", url: `${base()}/${child}/usage` });
     expect(cr.json()).toEqual({ usage: await usageOf(child, ...below) });
-  }, 60_000);
+  });
 });

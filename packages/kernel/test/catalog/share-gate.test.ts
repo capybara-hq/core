@@ -30,7 +30,7 @@ beforeAll(async () => {
   env = await startOrgEnv();
   orgA = await createOrg(env.root, "A");
   orgC = await createOrg(env.root, "C");
-}, 240_000);
+});
 
 afterAll(async () => {
   await env?.stop();
@@ -157,7 +157,7 @@ async function grantB(itemId: string): Promise<void> {
   expect(ok.statusCode, ok.body).toBe(200);
 }
 
-describe("share gate", { timeout: 90_000 }, () => {
+describe("share gate", () => {
   it("not shareable: hidden from other orgs even when shown_to_others", async () => {
     const { itemId, skillId } = await ownedPlugin({ shown: true });
     expect((await orgCatalog(env.orgId)).map((i) => i.id)).not.toContain(itemId);

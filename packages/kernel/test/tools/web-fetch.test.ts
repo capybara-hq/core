@@ -63,7 +63,7 @@ beforeAll(async () => {
       },
     ),
   );
-}, 180_000);
+});
 afterAll(async () => {
   await k?.close();
   await raw?.destroy();
@@ -400,7 +400,7 @@ type ToolResultEvent = Extract<ConversationEvent, { type: "tool_result" }>;
 const results = (evs: ConversationEvent[]): ToolResultEvent["payload"][] =>
   evs.flatMap((e) => (e.type === "tool_result" ? [e.payload] : []));
 
-describe("WebFetch: approval", { timeout: 90_000 }, () => {
+describe("WebFetch: approval", () => {
   it("an always grant still applies after the org default moves to another provider", async () => {
     await enable(orgId, "fake-web");
     await enable(orgId, "fake-web-2");

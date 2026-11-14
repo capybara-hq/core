@@ -49,7 +49,7 @@ beforeAll(async () => {
   guest = await session(env.k, "guest");
   await accountsFor(env.db).createLocal({ login: "outsider", password: PW, displayName: "O" });
   outsider = await session(env.k, "outsider");
-}, 240_000);
+});
 
 afterAll(async () => {
   await env?.stop();
@@ -202,7 +202,7 @@ async function preview(req: Req, orgId: string, itemId: string): Promise<DeleteP
 const del = (req: Req, orgId: string, itemId: string, previewHash: string) =>
   req({ method: "POST", url: `${owned(orgId, itemId)}/delete`, payload: { previewHash } });
 
-describe("org-owned plugins", { timeout: 180_000 }, () => {
+describe("org-owned plugins", () => {
   it("shareable toggles the plugin and its components", async () => {
     const itemId = await uploaded(env.boss, orgA, await skillPlugin("share-a"), "installed");
     const put = (req: Req, orgId: string, shareable: boolean) =>

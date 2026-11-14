@@ -161,7 +161,7 @@ beforeAll(async () => {
       },
     ),
   );
-}, 180_000);
+});
 
 afterAll(async () => {
   capture.restore();
@@ -308,7 +308,7 @@ describe("nested sub-agents", () => {
       .where("id", "=", conv)
       .executeTakeFirstOrThrow();
     expect(sandboxes.map((s) => s.device_id)).toEqual([rootEnv]);
-  }, 90_000);
+  });
 
   it("org allowlist, dispatchable and visibility gates are checked at depth 2", async () => {
     const hidden = await createAgent(
@@ -410,7 +410,7 @@ describe("nested sub-agents", () => {
       ...researcherBlock,
       dispatchable: true,
     });
-  }, 90_000);
+  });
 });
 
 describe("the depth limit and gates on a forged call", () => {
@@ -497,7 +497,7 @@ describe("the depth limit and gates on a forged call", () => {
     expect(deep?.subagent_depth).toBe(3);
     const started = ofType(await eventsOf(db, deep?.id as string), "subagent_started")[0];
     expect(started?.payload.definition.subagentTools?.deny).toContain("Agent");
-  }, 60_000);
+  });
 
   it("the allowlist of the dispatching agent's current version is checked below depth 1", async () => {
     const target = await createAgent(owner, {
@@ -529,5 +529,5 @@ describe("the depth limit and gates on a forged call", () => {
       .where("action", "=", "subagent.refused")
       .execute();
     expect(refusals.map((x) => (x.detail as { gate: string }).gate)).toEqual(["allowlist"]);
-  }, 60_000);
+  });
 });

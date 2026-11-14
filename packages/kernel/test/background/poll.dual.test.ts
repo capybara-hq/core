@@ -76,7 +76,7 @@ describe("background task poll (dual replica)", () => {
     });
     const hd = handlesFor(raw);
     store = new BackgroundTaskStore(hd.db, hd.txHost, {} as never);
-  }, 600_000);
+  });
 
   afterAll(async () => {
     if (db) {
@@ -88,7 +88,7 @@ describe("background task poll (dual replica)", () => {
     await raw?.destroy();
     await Promise.all([pgc?.stop(), rdc?.stop()]);
     if (root) await rm(root, { recursive: true, force: true });
-  }, 180_000);
+  });
 
   it("a task finishing while both replicas poll gets exactly one finish event", async () => {
     expect(h.replicas.map((r) => r.roles.includes("worker"))).toEqual([true, true]);
@@ -164,5 +164,5 @@ describe("background task poll (dual replica)", () => {
       status: "completed",
       lastLines: "done\n",
     });
-  }, 120_000);
+  });
 });

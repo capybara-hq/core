@@ -101,13 +101,13 @@ beforeAll(async () => {
     ('subagentLimitOverrides', ${JSON.stringify(OVERRIDES_BEFORE)}::jsonb),
     ('sandboxLimitOverrides', ${JSON.stringify(SANDBOX)}::jsonb)`.execute(db);
   await migrate(pg.url, { schema: "capybara", dir: upTo });
-}, 120_000);
+});
 
 afterAll(async () => {
   await db?.destroy();
   await pg?.stop();
   for (const dir of [before, upTo]) if (dir) rmSync(dir, { recursive: true, force: true });
-}, 120_000);
+});
 
 describe("0074_subagent_tree", () => {
   it("adds the columns with their types and defaults", async () => {

@@ -80,7 +80,7 @@ beforeAll(async () => {
     runWorkers: false,
     log,
   };
-}, 120_000);
+});
 afterAll(async () => {
   await sub?.close();
   redis?.disconnect();

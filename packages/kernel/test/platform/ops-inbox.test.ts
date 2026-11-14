@@ -135,7 +135,7 @@ beforeAll(async () => {
       reason: "org_deleted",
       usedBy: 2,
     })}::jsonb)`.execute(db);
-}, 180_000);
+});
 
 afterAll(async () => {
   await env?.stop();

@@ -131,7 +131,7 @@ beforeAll(async () => {
     const en = await at(i, "PUT", `${base}/extensions/${plugin}`, { enabled: true });
     expect(en.status, JSON.stringify(en.json)).toBe(200);
   }
-}, 180_000);
+});
 
 afterAll(async () => {
   for (const s of sses) s.close();
@@ -233,7 +233,7 @@ describe("M4 第三段验收（双副本）", () => {
     expect(results.map((r) => (r.payload as { display?: unknown }).display)).toEqual([
       { summary: { zh: "更新条目（4 项）", en: "Updated items (4)" } },
     ]);
-  }, 90_000);
+  });
 
   it("批准规则：升级只多 view 照常加载、快照补上；多 embed 待批准，extensions review 标 (sensitive)", async () => {
     // 两个副本以 ui-a 0.1.0 运行（harness 默认 autoApprove，快照已写入共享库）
@@ -322,7 +322,7 @@ describe("M4 第三段验收（双副本）", () => {
     const viewOnly = await runCli(["extensions", "review"], [UI_A_VIEW]);
     expect(viewOnly.code, viewOnly.stderr).toBe(0);
     expect(viewOnly.stdout).toContain("No extensions await permission approval.");
-  }, 120_000);
+  });
 
   it("嵌入令牌：副本 0 签发、副本 1 只对本插件有效；停用插件后失效；调 /api 得 401", async () => {
     const issue = async (i: 0 | 1, plugin: string, id: string) => {
@@ -394,7 +394,7 @@ describe("M4 第三段验收（双副本）", () => {
       bearer: page.token,
     });
     expect(back.status).toBe(200);
-  }, 60_000);
+  });
 });
 
 /** 以子进程执行 `pnpm capybara <args>`（部署级 CLI），连 harness 的库；Redis 给不可达地址（plugins 命令不连它）。 */

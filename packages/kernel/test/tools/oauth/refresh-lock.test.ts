@@ -57,7 +57,7 @@ beforeAll(async () => {
     schema: "capybara",
     dir: fileURLToPath(new URL("../../../src/migrations", import.meta.url)),
   });
-}, 120_000);
+});
 
 afterEach(async () => {
   for (const s of stops.splice(0).reverse()) await s();
@@ -174,7 +174,7 @@ describe("OAuth 刷新加锁（双副本）", () => {
     // 已经过期的旧 token 再报 401（另一个请求迟到）：重读到的已是新 token，不再刷新
     await b.onUnauthorized(ORG, "app_lock_1", AUTH, ACCOUNT, stale);
     expect(refreshes(as)).toHaveLength(1);
-  }, 30_000);
+  });
 
   it("refresh 被拒（invalid_grant）→ 凭据删除，抛 CredentialMissing（personal）", async () => {
     const as = await startFakeOAuthServer({ clients: [pub] });
@@ -225,6 +225,8 @@ describe("OAuth 刷新加锁（双副本）", () => {
     const fresh = await issueTokens(as);
     const pending = a.onUnauthorized(ORG, "app_lock_6", AUTH, ACCOUNT, stale);
     // 模拟锁过期后另一个副本刷新成功并写入（在这次 refresh 请求返回 invalid_grant 之前）
+    // fixed: the fake server records a token request only after its 400 ms delay, so the only
+    // marker that the refresh is in flight is the delay itself (no hook to observe it)
     await new Promise((r) => setTimeout(r, 150));
     await a.setOAuthTokens(
       ORG,

@@ -205,7 +205,7 @@ beforeAll(async () => {
   expect(res.statusCode, res.body).toBe(201);
   connId = (res.json() as { channel: { id: string } }).channel.id;
   await waitFor(async () => im.active(connId).length === 1, 10_000, "long connection");
-}, 180_000);
+});
 
 afterAll(async () => {
   await queue?.close();
@@ -256,7 +256,7 @@ const firstText = (m: UserMessage) => {
   return b?.type === "text" ? b.text : "";
 };
 
-describe("skill invocations from IM (phase D Task 8)", { timeout: 60_000 }, () => {
+describe("skill invocations from IM (phase D Task 8)", () => {
   it("@bot /fix-issue 7 in a group thread invokes the skill with the rest as arguments", async () => {
     const conv = await push(group("g-fix", "u-owner", "/fix-issue 7"));
     const m = await written(conv, "g-fix");

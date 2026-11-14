@@ -31,7 +31,7 @@ beforeAll(async () => {
   });
   raw = createDb(pgc.url, 5);
   actor = new PlatformActor(handlesFor(raw).db);
-}, 120_000);
+});
 afterAll(async () => {
   await raw?.destroy();
   await pgc?.stop();

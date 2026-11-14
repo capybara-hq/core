@@ -46,7 +46,7 @@ beforeAll(async () => {
   k = await startKernel(
     runConfig({ pg: pgc.url, redis: rd.url }, { extensions: [MODEL_FAKE, MODEL_EVAL] }),
   );
-}, 120_000);
+});
 afterAll(async () => {
   await k?.close();
   await raw?.destroy();
@@ -143,4 +143,4 @@ it("停机中止在途的评委请求：按估算计费", async () => {
     .executeTakeFirstOrThrow();
   // 任务回到队列（由别的 worker 补评委）：评委仍是 pending
   expect(judgeRow.judge_status).toBe("pending");
-}, 60_000);
+});

@@ -154,7 +154,7 @@ beforeAll(async () => {
   eventLog = eventLogFor(db, createBus(redis, sub, "kernel"));
   outputs = outputsFor(db, config);
   breaker = breakerFor(redis, config);
-}, 120_000);
+});
 
 afterAll(async () => {
   await sub?.close();
@@ -230,7 +230,7 @@ const ofType = <T extends ConversationEvent["type"]>(evs: ConversationEvent[], t
 
 const codes = async () => ofType(await eventsOf(db, seed.conversationId), "device_code");
 
-describe("the device code under retries and waits", { timeout: 60_000 }, () => {
+describe("the device code under retries and waits", () => {
   it("a real retry that runs the call again keeps one device_code event", async () => {
     await assistant("c1");
     await pipeline().runStep(stepCtx());

@@ -25,7 +25,7 @@ beforeAll(async () => {
   env = await startOrgEnv();
   orgA = await createOrg(env.root, "A");
   orgC = await createOrg(env.root, "C");
-}, 240_000);
+});
 
 afterAll(async () => {
   await env?.stop();
@@ -118,7 +118,7 @@ async function ownerInbox(orgId: string, type: string): Promise<InboxItem[]> {
 const sharedOrgs = async () =>
   (await ownerInbox(orgA, "item_shared")).map((i) => i.notice.detail.org);
 
-describe("owner notices", { timeout: 90_000 }, () => {
+describe("owner notices", () => {
   it("association notifies the owner", async () => {
     const itemId = await ownedPlugin(true);
     await putScope(itemId, { scope: "named", orgs: [orgA, env.orgId] });

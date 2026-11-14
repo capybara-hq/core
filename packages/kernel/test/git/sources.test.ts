@@ -138,7 +138,7 @@ beforeAll(async () => {
     .insertInto("org_anonymous_accounts")
     .values({ org_id: orgId, account_id: guestId })
     .execute();
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();

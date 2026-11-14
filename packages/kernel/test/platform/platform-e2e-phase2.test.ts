@@ -140,13 +140,13 @@ beforeAll(async () => {
   privateAgent = await agent("Mine", "private");
   orgAgent = await agent("Helper", "org");
   itemId = await importKeyedExtension();
-}, 240_000);
+});
 
 afterAll(async () => {
   await env?.stop();
 });
 
-describe("Platform tool end to end, phase 2", { timeout: 180_000 }, () => {
+describe("Platform tool end to end, phase 2", () => {
   describe("(a) an installed extension missing its deployment config: one call, no card", () => {
     it("the super admin is told the admin console path", async () => {
       const conv = await conversation(env.root, privateAgent);

@@ -90,7 +90,7 @@ let otherOrgId: string;
 beforeAll(async () => {
   env = await startOrgEnv();
   otherOrgId = await createOrg(env.root, "Globex");
-}, 240_000);
+});
 
 afterAll(async () => {
   await env?.stop();
@@ -170,7 +170,7 @@ const ack = (connectorId: string, hash: string, req = env.boss) =>
     payload: { hash },
   });
 
-describe("setup guides v2: connector templates", { timeout: 60_000 }, () => {
+describe("setup guides v2: connector templates", () => {
   it("renders the connector guide for admin and member audiences", async () => {
     const itemId = await importPlugin(env, await ghPlugin());
     const connectorId = await installWithConnector(itemId);

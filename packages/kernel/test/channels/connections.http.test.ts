@@ -71,7 +71,7 @@ beforeAll(async () => {
   agentId = await createAgent(owner, orgId);
   await testMembers(db).add(orgId, m.id, "member", o.id);
   member = await session(k, "member");
-}, 120_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -257,7 +257,7 @@ describe("渠道连接 HTTP", () => {
       .where("key", "=", `channels:${id}:config`)
       .execute();
     expect(left).toEqual([]);
-  }, 30_000);
+  });
 
   it("connect 失败 → 记 last_error 并退避重试；平台恢复后连上", async () => {
     im.failConnect(503);
@@ -287,7 +287,7 @@ describe("渠道连接 HTTP", () => {
     await waitFor(async () => im.active(id).length === 1, 10_000, "reconnected after backoff");
     expect(im.maxConcurrent(id)).toBe(1);
     expect((await owner({ method: "DELETE", url: `${base()}/${id}` })).statusCode).toBe(204);
-  }, 30_000);
+  });
 
   it("PATCH 的密钥字段：缺省 = 保留原值，null = 清除（必填密钥清除 → 400）", async () => {
     const res = await owner({
@@ -351,7 +351,7 @@ describe("渠道连接 HTTP", () => {
       appSecret: SECRET,
     });
     expect((await owner({ method: "DELETE", url: `${base()}/${id}` })).statusCode).toBe(204);
-  }, 30_000);
+  });
 
   it("组织设置带 locale（默认 en，可改为 zh）", async () => {
     const get = await owner({ method: "GET", url: `/api/v1/orgs/${orgId}/settings` });
@@ -553,5 +553,5 @@ describe("channel setup guide drift", () => {
     expect(none.statusCode).toBe(404);
     expect(errCode(none)).toBe("catalog.guide_not_found");
     expect((await owner({ method: "DELETE", url: `${base()}/${id}` })).statusCode).toBe(204);
-  }, 30_000);
+  });
 });

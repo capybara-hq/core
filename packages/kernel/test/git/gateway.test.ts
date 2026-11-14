@@ -160,7 +160,7 @@ beforeAll(async () => {
       { kind: "user", accountId: aliceId },
       { token: TOKEN },
     );
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -326,7 +326,7 @@ describe("path parsing and repo allowlists", () => {
   });
 });
 
-describe("clone, fetch and push with a real git client", { timeout: 30_000 }, () => {
+describe("clone, fetch and push with a real git client", () => {
   it("clones and fetches with the actor's token added upstream and the ticket never sent", async () => {
     const { ticket } = await ticketFor();
     const env = await gitEnv(ticket);
@@ -419,7 +419,7 @@ describe("clone, fetch and push with a real git client", { timeout: 30_000 }, ()
   });
 });
 
-describe("refusals", { timeout: 30_000 }, () => {
+describe("refusals", () => {
   it("answers 403 with a git-readable message for an unknown, expired or revoked ticket", async () => {
     const bogus = randomBytes(32).toString("base64url");
     const c1 = await clone(await gitEnv(bogus));
@@ -692,7 +692,7 @@ function rawPost(
   });
 }
 
-describe("pushes the gateway reads before it decides", { timeout: 30_000 }, () => {
+describe("pushes the gateway reads before it decides", () => {
   const receives = () => fake.requests.filter((r) => r.service === "git-receive-pack");
 
   it("holds a direct receive-pack POST under ask and refuses it under deny, upstream untouched", async () => {
@@ -821,7 +821,7 @@ async function finishRun(
   expect(seq).not.toBeNull();
 }
 
-describe("run end, audit and revocation", { timeout: 30_000 }, () => {
+describe("run end, audit and revocation", () => {
   it("revokes the run's tickets when it reaches a terminal status", async () => {
     for (const status of ["completed", "failed", "aborted"] as const) {
       const { ticket, runId, conversationId } = await ticketFor();
@@ -950,7 +950,7 @@ describe("run end, audit and revocation", { timeout: 30_000 }, () => {
   });
 });
 
-describe("the next gateway request fails once access is revoked", { timeout: 30_000 }, () => {
+describe("the next gateway request fails once access is revoked", () => {
   const botPath = `/git/v1/${BOT_HOST}/acme/app.git/info/refs?service=git-upload-pack`;
   let bob: string;
   const made: string[] = [];

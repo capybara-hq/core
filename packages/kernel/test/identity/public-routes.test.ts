@@ -98,7 +98,7 @@ beforeAll(async () => {
     },
   );
   probed = app.get(KernelLifecycle).http;
-}, 120_000);
+});
 afterAll(async () => {
   if (app) await closeKernelApp(app);
   await Promise.all([pgc?.stop(), rd?.stop()]);

@@ -83,7 +83,7 @@ beforeAll(async () => {
     payload: { enabled: true },
   });
   ops = k.app.get(PlatformOperations);
-}, 120_000);
+});
 
 afterAll(async () => {
   await k?.close();

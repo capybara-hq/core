@@ -73,7 +73,7 @@ beforeAll(async () => {
   });
   raw = createDb(pg.url, 5);
   db = kernelDb(raw);
-}, 120_000);
+});
 
 afterAll(async () => {
   await raw.destroy();

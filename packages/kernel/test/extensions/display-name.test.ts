@@ -21,7 +21,7 @@ const FAKE_MODEL = { zh: "模拟模型", en: "Fake model" };
 const MIGRATION = "0066_extension_display_name.sql";
 
 /** 0066: `extension_packages.display_name` is added to a database that already has packages. */
-describe("migration 0066_extension_display_name", { timeout: 120_000 }, () => {
+describe("migration 0066_extension_display_name", () => {
   let pg: TestContainer;
   let raw: ReturnType<typeof createDb>;
   let before: string;
@@ -35,7 +35,7 @@ describe("migration 0066_extension_display_name", { timeout: 120_000 }, () => {
         copyFileSync(join(KERNEL_MIGRATIONS_DIR, f), join(before, f));
       }
     }
-  }, 120_000);
+  });
 
   afterAll(async () => {
     rmSync(before, { recursive: true, force: true });
@@ -62,7 +62,7 @@ describe("migration 0066_extension_display_name", { timeout: 120_000 }, () => {
 });
 
 /** Extension display names (extension config forms spec §2): stored, resolved, served by every API. */
-describe("extension display names", { timeout: 120_000 }, () => {
+describe("extension display names", () => {
   let pgc: TestContainer;
   let rd: TestContainer;
   let db: KernelSchemaDb;
@@ -130,7 +130,7 @@ describe("extension display names", { timeout: 120_000 }, () => {
     );
     admin = await session(k, "root");
     orgId = await createOrg(admin);
-  }, 240_000);
+  });
 
   afterAll(async () => {
     await k?.close();

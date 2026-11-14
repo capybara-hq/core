@@ -40,7 +40,7 @@ beforeAll(async () => {
   destroyDb = () => raw.destroy();
   k = await startKernel(runConfig({ pg: pgc.url, redis: rd.url }, { extensions: [MODEL_FAKE] }));
   ops = k.app.get(PlatformOperations);
-}, 120_000);
+});
 afterAll(async () => {
   await k?.close();
   await destroyDb?.();

@@ -255,9 +255,13 @@ export async function resetOrgCatalog(env: OrgEnv): Promise<void> {
   const scope = env.k.app.get<Queue>(getQueueToken(PLUGIN_SCOPE_QUEUE));
   await scope.drain(true);
   await waitFor(async () => (await scope.getActiveCount()) === 0, 30_000, "idle scope syncs");
+  // Install records, package bytes and the per-install components go with the catalog, so a test
+  // never inherits an extension an earlier test installed. Approval snapshots and name owners stay:
+  // config-declared extensions (loaded from the startup config) own rows there, and the platform
+  // views read them for those extensions.
   await truncateTables(
     env.db,
-    "capybara.plugin_install_components, capybara.plugin_installs, capybara.agent_template_versions, capybara.agent_templates, capybara.extension_catalog_sources, capybara.catalog_requests, capybara.catalog_org_grants, capybara.catalog_item_org_switches, capybara.catalog_item_scope_orgs, capybara.plugin_import_staging, capybara.catalog_item_versions, capybara.catalog_items, capybara.skill_versions, capybara.skills, capybara.platform_skill_versions, capybara.platform_skills, capybara.platform_agent_template_versions, capybara.platform_agent_templates, capybara.platform_connector_templates, capybara.platform_theme_versions, capybara.platform_themes, capybara.component_scope_orgs, capybara.component_org_switches, capybara.connector_tools, capybara.connectors, capybara.extension_org_configs, capybara.deployment_settings, capybara.audit_events",
+    "capybara.plugin_install_components, capybara.plugin_installs, capybara.agent_template_versions, capybara.agent_templates, capybara.extension_catalog_sources, capybara.extension_installs, capybara.extension_packages, capybara.extension_blobs, capybara.catalog_requests, capybara.catalog_org_grants, capybara.catalog_item_org_switches, capybara.catalog_item_scope_orgs, capybara.plugin_import_staging, capybara.catalog_item_versions, capybara.catalog_items, capybara.skill_versions, capybara.skills, capybara.platform_skill_versions, capybara.platform_skills, capybara.platform_agent_template_versions, capybara.platform_agent_templates, capybara.platform_connector_templates, capybara.platform_theme_versions, capybara.platform_themes, capybara.component_scope_orgs, capybara.component_org_switches, capybara.connector_tools, capybara.connectors, capybara.extension_org_configs, capybara.deployment_settings, capybara.audit_events",
   );
   await env.k.app.get(StorageService).deployment().deletePrefix("directory/");
   await env.k.app.get(StorageService).deployment().deletePrefix("platform/");

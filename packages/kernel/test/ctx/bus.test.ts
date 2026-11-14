@@ -15,14 +15,14 @@ const conn = () => {
   return r;
 };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const until = async (cond: () => boolean | Promise<boolean>, ms = 5000) => {
-  const end = Date.now() + ms;
-  while (Date.now() < end) {
-    if (await cond()) return;
-    await sleep(20);
-  }
-  throw new Error("until: timeout");
-};
+/** Waits until `cond` holds (the old polling loop's 5 s budget); an error from `cond` surfaces. */
+const until = (cond: () => boolean | Promise<boolean>, ms = 5000) =>
+  vi.waitFor(
+    async () => {
+      if (!(await cond())) throw new Error("condition not met yet");
+    },
+    { timeout: ms },
+  );
 const numsub = async (ch: string) => Number((await admin.pubsub("NUMSUB", ch))[1]);
 
 beforeAll(async () => {

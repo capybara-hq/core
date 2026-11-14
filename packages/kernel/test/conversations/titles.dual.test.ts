@@ -55,7 +55,7 @@ beforeAll(async () => {
   owner = await session(a, "owner");
   orgId = await createOrg(owner);
   agentId = await createAgent(owner, orgId);
-}, 180_000);
+});
 afterAll(async () => {
   await Promise.all([a?.close(), b?.close()]);
   await Promise.all([rawA?.destroy(), rawB?.destroy()]);
@@ -67,7 +67,7 @@ const titleUsage = async (id: string) =>
     (e) => e.type === "usage" && (e.payload as { purpose?: string }).purpose === "title",
   );
 
-describe("titles on two replicas", { timeout: 90_000 }, () => {
+describe("titles on two replicas", () => {
   it("conversations finishing on either replica get one title and one usage event each", async () => {
     const convs = await Promise.all([1, 2, 3, 4].map(() => createConv(owner, orgId, agentId)));
     await Promise.all(convs.map((c, i) => postMessage(owner, orgId, c, `echo:topic ${i}`)));

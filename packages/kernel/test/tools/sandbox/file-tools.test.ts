@@ -93,7 +93,7 @@ beforeAll(async () => {
   expect(created.statusCode, created.body).toBe(201);
   agentId = (created.json() as { agent: { id: string } }).agent.id;
   expect(ownerId).toBeTruthy();
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -144,7 +144,7 @@ async function call(conv: string, key: string, input: unknown, n: number): Promi
   return (await results(conv)).at(-1) as ToolResult;
 }
 
-describe("file tool paths in the device's mode", { timeout: 120_000 }, () => {
+describe("file tool paths in the device's mode", () => {
   it("auto mode: a write outside the workspace is approved once, then read anywhere", async () => {
     const conv = await createConv(owner, orgId, agentId);
     const written = await callAllowed(

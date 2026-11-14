@@ -105,13 +105,13 @@ beforeAll(async () => {
   await enabledAudit("obj-a", "2026-02-01T00:00:00Z");
   await status("r2", "obj-a", "loaded", "2026-03-02T00:00:00Z");
   await migrate(pg.url, { schema: "capybara", dir: upTo });
-}, 120_000);
+});
 
 afterAll(async () => {
   await db?.destroy();
   await pg?.stop();
   for (const dir of [before, upTo]) if (dir) rmSync(dir, { recursive: true, force: true });
-}, 120_000);
+});
 
 describe("0098_single_provider_running_first", () => {
   it("the provider replicas run gets the earliest enabled_at; other points keep 0097's values", async () => {

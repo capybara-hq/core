@@ -23,12 +23,12 @@ beforeAll(async () => {
     values ('ag1', 'o1', 'a1', 'org', 1)`.execute(db);
   await sql`insert into capybara.conversations (id, org_id, agent_id, account_id)
     values ('c1', 'o1', 'ag1', 'a1')`.execute(db);
-}, 120_000);
+});
 
 afterAll(async () => {
   await db?.destroy();
   await pg?.stop();
-}, 120_000);
+});
 
 describe("0010_tools", () => {
   it("创建全部新表", async () => {

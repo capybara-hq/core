@@ -36,7 +36,7 @@ beforeAll(async () => {
   accounts = accountsFor(db);
   orgs = orgsFor(db);
   setup = setupFor(db, accounts, orgs);
-}, 120_000);
+});
 afterAll(async () => {
   await raw.destroy();
   await pg.stop();

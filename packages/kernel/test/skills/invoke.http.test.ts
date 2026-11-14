@@ -93,7 +93,7 @@ beforeAll(async () => {
       },
     ),
   );
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -321,7 +321,7 @@ describe("parseSlashCommand", () => {
   });
 });
 
-describe("GET …/agents/:agentId/invocable-skills", { timeout: 60_000 }, () => {
+describe("GET …/agents/:agentId/invocable-skills", () => {
   it("lists the agent's selected org skills and own skills by name, with manual and fork flags", async () => {
     const plain = await seedSkill({ name: "plain", body: "P." });
     const manual = await seedSkill({
@@ -460,7 +460,7 @@ describe("GET …/agents/:agentId/invocable-skills", { timeout: 60_000 }, () => 
   });
 });
 
-describe("POST …/messages with skill", { timeout: 60_000 }, () => {
+describe("POST …/messages with skill", () => {
   it("appends one user_message holding the rendered skill, and the model gets it", async () => {
     // manual-only: the model's catalog stays empty, but the invocation makes the run offer
     // Skill (its only tool), which model-fake calls first
@@ -755,9 +755,7 @@ describe("POST …/messages with skill", { timeout: 60_000 }, () => {
   });
 });
 
-describe("Review Focus 2: the skill changes between listing and sending", {
-  timeout: 60_000,
-}, () => {
+describe("Review Focus 2: the skill changes between listing and sending", () => {
   it("a turned-off skill is 400 skill.not_invocable and writes nothing", async () => {
     const s = await seedSkill({ name: "fix-issue", body: FIX_ISSUE });
     const agentId = await createAgent([s.id]);
@@ -833,7 +831,7 @@ describe("Review Focus 2: the skill changes between listing and sending", {
   });
 });
 
-describe("SkillInvoker logging", { timeout: 60_000 }, () => {
+describe("SkillInvoker logging", () => {
   it("logs an unreadable SKILL.md with its skill id, version and source", async () => {
     const s = await seedSkill({ name: "fix-issue", body: FIX_ISSUE });
     const agentId = await createAgent([s.id]);
@@ -864,7 +862,7 @@ describe("SkillInvoker logging", { timeout: 60_000 }, () => {
   });
 });
 
-describe("Review Focus 4: a retry with the same clientMessageId", { timeout: 60_000 }, () => {
+describe("Review Focus 4: a retry with the same clientMessageId", () => {
   it("returns the same event without resolving again, even after the skill changed", async () => {
     const s = await seedSkill({ name: "fix-issue", body: FIX_ISSUE });
     const agentId = await createAgent([s.id]);
@@ -888,7 +886,7 @@ describe("Review Focus 4: a retry with the same clientMessageId", { timeout: 60_
   });
 });
 
-describe("POST /conversations with a skill as the first message", { timeout: 60_000 }, () => {
+describe("POST /conversations with a skill as the first message", () => {
   it("creates the conversation with the invocation; a retry returns it", async () => {
     const s = await seedSkill({ name: "fix-issue", body: FIX_ISSUE });
     const agentId = await createAgent([s.id]);

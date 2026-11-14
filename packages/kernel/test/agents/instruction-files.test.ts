@@ -80,7 +80,7 @@ describe("prompt files over HTTP", () => {
     raw = createDb(pgc.url, 5);
     redis = new Redis(rd.url);
     accounts = accountsFor(kernelDb(raw));
-  }, 120_000);
+  });
   afterAll(async () => {
     await k?.close();
     redis?.disconnect();

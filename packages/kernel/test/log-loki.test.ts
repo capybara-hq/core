@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { secretValues } from "../src/config/fields.js";
 import { resolveConfig } from "../src/config/load.js";
 import { KernelConfigSchema } from "../src/config/schema.js";
@@ -120,9 +120,7 @@ describe("Loki output", () => {
     stream.write(
       `${JSON.stringify({ time: new Date().toISOString(), level: "info", msg: "x" })}\n`,
     );
-    for (let i = 0; i < 100 && loki.pushes.length === 0; i++) {
-      await new Promise((r) => setTimeout(r, 10));
-    }
+    await vi.waitFor(() => expect(loki.pushes).toHaveLength(1), { timeout: 1_000 });
     expect(loki.pushes).toHaveLength(1);
     await stream.close();
   });

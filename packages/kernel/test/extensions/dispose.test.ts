@@ -3,7 +3,7 @@ import { ExtensionPointUnavailableError, staticManifestOf } from "@capybara-hq/p
 import { startTestPostgres, startTestRedis } from "@capybara-hq/testing";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createBusSubscriber } from "../../src/ctx/bus.js";
 import type { KernelDeps } from "../../src/ctx/create-ctx.js";
 import { createKeyring } from "../../src/ctx/secrets.js";
@@ -61,10 +61,15 @@ const host = (cfg: Record<string, unknown> = {}, opts: TestHostOptions = {}) => 
 };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function waitFor(fn: () => boolean | Promise<boolean>, label: string, ms = 10_000) {
-  const end = Date.now() + ms;
-  while (!(await fn())) {
-    if (Date.now() > end) throw new Error(`timed out waiting for ${label}`);
-    await sleep(20);
+  try {
+    await vi.waitFor(
+      async () => {
+        if (!(await fn())) throw new Error(`waiting for ${label}`);
+      },
+      { timeout: ms },
+    );
+  } catch {
+    throw new Error(`timed out waiting for ${label}`);
   }
 }
 
@@ -161,6 +166,7 @@ describe("插件撤销：每一种登记", () => {
     expect(await jobsQueue.getWorkersCount()).toBe(0);
     // 撤销期间入队的任务留在队列里，新实例接着处理
     await jobsQueue.add("jobs", { n: 2 });
+    // Nothing-happened window: the unloaded instance's worker is gone, so this job must stay queued
     await sleep(300);
     expect(probe.jobs).toEqual([{ n: 1 }]);
     expect(probe.messages).toEqual([]);
@@ -197,7 +203,7 @@ describe("插件撤销：每一种登记", () => {
     expect(consumer.ctxs[2]?.extensionPoints.get("counter@1", "everything")).toMatchObject({
       from: "everything",
     });
-  }, 30_000);
+  });
 
   it("requires 的依赖方随提供方卸下（dependency），提供方回来后重新加载", async () => {
     const dep = dependentProbe();
@@ -212,7 +218,7 @@ describe("插件撤销：每一种登记", () => {
     await h.reload("everything");
     expect(h.current("everything-dependent")).toBeDefined();
     expect(dep.setups).toBe(before.setups + 2);
-  }, 30_000);
+  });
 
   it("setup 抛错：已登记的全部撤销", async () => {
     const probe = everythingProbe();
@@ -228,7 +234,7 @@ describe("插件撤销：每一种登记", () => {
     // setup 没有成功，不调用插件的 dispose；ctx.signal 已中止
     expect(probe.disposed).toBe(disposedBefore);
     expect(probe.ctxs.at(-1)?.signal.aborted).toBe(true);
-  }, 30_000);
+  });
 
   it("同一入口的重新加载不算升级、不告警；不同入口数超过 20 时告警一次", async () => {
     const h = host();
@@ -244,7 +250,7 @@ describe("插件撤销：每一种登记", () => {
       if (t.record("p", `file:///p/v${i}.mjs`)) warns.push(t.upgrades);
     }
     expect(warns).toEqual([UPGRADE_WARN_THRESHOLD + 1]);
-  }, 60_000);
+  });
 
   it("理会 ctx.signal 的队列任务在排空时限内正常结束，ctx.signal 不会提前中止", async () => {
     const probe = everythingProbe();
@@ -264,7 +270,7 @@ describe("插件撤销：每一种登记", () => {
       await slow.close();
       conn.disconnect();
     }
-  }, 30_000);
+  });
 
   it("插件 dispose() 卡住：按时限记日志后继续，后续 unload / reload 不被卡住", async () => {
     const h = host({}, { disposeTimeoutMs: () => 200 });
@@ -277,7 +283,7 @@ describe("插件撤销：每一种登记", () => {
     await h.reload("hang-dispose");
     await h.reload("hang-dispose");
     expect(await h.unload("hang-dispose")).toEqual(["hang-dispose"]);
-  }, 30_000);
+  });
 
   it("重新加载时 setup 卡住：按时限失败、旧实例保留；卡住的 reload 不拖住 close()", async () => {
     const p = hangReload();
@@ -293,9 +299,11 @@ describe("插件撤销：每一种登记", () => {
       const h2 = host({}, { reloadSetupTimeoutMs: () => 60_000 });
       await h2.load([fx("hang-reload")]);
       p.hang = true;
+      const setupsBefore = p.setups;
       const pending = h2.reload("hang-reload");
       pending.catch(() => {});
-      await sleep(100);
+      // the reload must be inside the hanging setup before close() is asked to wait for it
+      await waitFor(() => p.setups === setupsBefore + 1, "reload entered setup");
       const t0 = Date.now();
       await h2.close({ lifecycleWaitMs: 200 });
       expect(Date.now() - t0).toBeLessThan(3_000);
@@ -306,7 +314,7 @@ describe("插件撤销：每一种登记", () => {
     } finally {
       p.hang = false;
     }
-  }, 30_000);
+  });
 
   it("菱形依赖：提供方变化时连锁只重新加载每个依赖方一次（拓扑序）", async () => {
     const d = diamondD();
@@ -317,7 +325,7 @@ describe("插件撤销：每一种登记", () => {
     expect(d.setups).toBe(before + 1);
     await h.reload("everything");
     expect(d.setups).toBe(before + 2);
-  }, 30_000);
+  });
 
   it("loadInstance：与包内静态清单核对（不一致抛 manifest_mismatch，不 setup），一致则 setup 出实例", async () => {
     const probe = everythingProbe();
@@ -358,5 +366,5 @@ describe("插件撤销：每一种登记", () => {
     expect(inst.registrations()).toEqual([]);
     expect(await redis.exists(LOCK_KEY)).toBe(0);
     expect(await subscribers()).toBe(0);
-  }, 30_000);
+  });
 });

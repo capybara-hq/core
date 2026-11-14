@@ -31,7 +31,7 @@ beforeAll(async () => {
   svc = externalFor(db, () => ({
     auth: { trustedIdentitySources: trusted },
   }));
-}, 120_000);
+});
 afterAll(async () => {
   await raw.destroy();
   await box.stop();

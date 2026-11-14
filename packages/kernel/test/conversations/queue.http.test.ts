@@ -61,7 +61,7 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 3);
   db = legacyDbFor(raw);
   k = await startKernel(runConfig({ pg: pgc.url, redis: rd.url }, { roles: ["api", "worker"] }));
-}, 120_000);
+});
 afterAll(async () => {
   await k?.close();
   await raw?.destroy();
@@ -118,7 +118,7 @@ const runStatus = async (conv: string, status: string) =>
   );
 const SLOW = `slow:60:${"x".repeat(60)}`;
 
-describe("queued messages", { timeout: 60_000 }, () => {
+describe("queued messages", () => {
   it("a NUL in queued or edited text is stored as U+FFFD, like a direct send (final review m1)", async () => {
     const conv = await createConv(owner, orgId, agentId);
     await postMessage(owner, orgId, conv, SLOW);
@@ -434,7 +434,7 @@ describe("queued messages", { timeout: 60_000 }, () => {
   });
 });
 
-describe("queued messages and the author's access (review I1, M5)", { timeout: 60_000 }, () => {
+describe("queued messages and the author's access (review I1, M5)", () => {
   const queueRows = async (conv: string) =>
     db.selectFrom("conversation_queue").select("id").where("conversation_id", "=", conv).execute();
   const paused = async (conv: string) =>
@@ -531,9 +531,7 @@ describe("queued messages and the author's access (review I1, M5)", { timeout: 6
   });
 });
 
-describe("offboarding and queue dispatch lock in the same order (final review m2)", {
-  timeout: 60_000,
-}, () => {
+describe("offboarding and queue dispatch lock in the same order (final review m2)", () => {
   const queueRows = async (conv: string) =>
     db.selectFrom("conversation_queue").select("id").where("conversation_id", "=", conv).execute();
 
@@ -598,7 +596,7 @@ describe("offboarding and queue dispatch lock in the same order (final review m2
   });
 });
 
-describe("@ resources are read at queue time (decision 15)", { timeout: 30_000 }, () => {
+describe("@ resources are read at queue time (decision 15)", () => {
   it("reads once with the sender's credentials when queued; the sent message carries them", async () => {
     const conv = await createConv(owner, orgId, agentId);
     // Pause the queue so nothing dispatches behind the test's back: a stopped run pauses it only

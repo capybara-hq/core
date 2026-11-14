@@ -61,7 +61,7 @@ beforeAll(async () => {
   [pgc, rdc] = await Promise.all([startTestPostgres(), startTestRedis()]);
   root = await mkdtemp(join(tmpdir(), "cap-sandbox-dual-"));
   raw = createDb(pgc.url, 2);
-}, 120_000);
+});
 
 afterAll(async () => {
   for (const k of kernels) await k.close();
@@ -128,7 +128,7 @@ describe("沙箱（两个副本）", () => {
     }>`SELECT count(*)::int AS n FROM capybara.device_instances`.execute(raw);
     expect(rows.rows[0]?.n).toBe(1);
     // the test boots both kernels itself: under a loaded parallel run that alone can pass 5 s
-  }, 30_000);
+  });
 
   it("两个扫描是 @LockedCron 任务（每分钟 / 每小时）；旧的 job scheduler 已退役（名字不含 `:`）", async () => {
     // the worker kernel of the first case (crons instead of maintenance schedulers)

@@ -42,7 +42,7 @@ beforeAll(async () => {
     dir: fileURLToPath(new URL("../../src/migrations", import.meta.url)),
   });
   raw = createDb(pgc.url, 5);
-}, 180_000);
+});
 
 afterAll(async () => {
   for (const r of redisClients) r.disconnect();

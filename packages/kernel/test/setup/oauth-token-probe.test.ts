@@ -81,7 +81,7 @@ async function fixedServer(
   };
 }
 
-describe("the token endpoint probe", { timeout: 30_000 }, () => {
+describe("the token endpoint probe", () => {
   it("invalid_grant: the client authenticated, the code was bad → ok (Basic and post)", async () => {
     for (const authMethod of ["client_secret_basic", "client_secret_post"] as const) {
       const before = oauth.tokenRequests.length;

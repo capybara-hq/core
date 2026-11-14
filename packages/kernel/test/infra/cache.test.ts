@@ -13,11 +13,11 @@ let redis: Redis;
 beforeAll(async () => {
   rd = await startTestRedis();
   redis = new Redis(rd.url);
-}, 120_000);
+});
 afterAll(async () => {
   redis?.disconnect();
   await rd?.stop();
-}, 120_000);
+});
 
 let n = 0;
 const id = () => `c${++n}-${Math.random().toString(36).slice(2)}`;

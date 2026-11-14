@@ -19,10 +19,10 @@ import { createLogger, type KernelLogger } from "../../src/log.js";
 let rd: TestContainer;
 beforeAll(async () => {
   rd = await startTestRedis();
-}, 120_000);
+});
 afterAll(async () => {
   await rd?.stop();
-}, 120_000);
+});
 
 @Controller()
 class TestController {

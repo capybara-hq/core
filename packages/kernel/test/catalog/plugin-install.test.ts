@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { connectorToolKey } from "@capybara-hq/plugin-sdk";
+import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { InstallFailure, PluginInstaller, planActions } from "../../src/catalog/plugin-install.js";
 import { ApiError } from "../../src/errors.js";
@@ -8,6 +9,7 @@ import { SkillsService } from "../../src/skills/skills.service.js";
 import { usableSkills } from "../../src/skills/usable.js";
 import { ToolRegistry } from "../../src/tools/registry.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
+import { waitFor } from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
 import {
   auditActions,
@@ -25,7 +27,7 @@ let env: OrgEnv;
 
 beforeAll(async () => {
   env = await startOrgEnv();
-}, 240_000);
+});
 
 afterAll(async () => {
   await env?.stop();
@@ -146,7 +148,7 @@ async function uninstallOf(
   return r.json();
 }
 
-describe("org plugin install", { timeout: 60_000 }, () => {
+describe("org plugin install", () => {
   it("enables the plugin's extension, creates the template's connector (credential in secrets, default policies), records each component; its skill is the platform's (no org row)", async () => {
     const appId = await seedPlugin(env, { name: "fake-tools-ui", extension: true });
     const r = await install(env.boss, env, appId, pluginBody());
@@ -231,7 +233,7 @@ describe("org plugin install", { timeout: 60_000 }, () => {
   });
 });
 
-describe("org plugin uninstall", { timeout: 60_000 }, () => {
+describe("org plugin uninstall", () => {
   it("disables the connector it created (keeping its config), keeps the connector extension a connector still uses, removes the rest", async () => {
     const a = await seedPlugin(env, { name: "fake-connector", extension: true });
     const b = await seedPlugin(env, { name: "notes", templates: false, skills: ["notes"] });
@@ -689,9 +691,7 @@ describe("org plugin uninstall", { timeout: 60_000 }, () => {
   });
 });
 
-describe("org plugin install: the template's connector extension is an implied dependency", {
-  timeout: 60_000,
-}, () => {
+describe("org plugin install: the template's connector extension is an implied dependency", () => {
   const offConnector = () =>
     env.db
       .deleteFrom("extension_org_configs")
@@ -749,7 +749,7 @@ describe("org plugin install: the template's connector extension is an implied d
   });
 });
 
-describe("org plugin install: implied providers, scope and state", { timeout: 60_000 }, () => {
+describe("org plugin install: implied providers, scope and state", () => {
   const offConnector = () =>
     env.db
       .deleteFrom("extension_org_configs")
@@ -863,7 +863,7 @@ const skillsPlugin = (
     ...o,
   });
 
-describe("org plugin install: skill name conflicts (spec §9.2)", { timeout: 60_000 }, () => {
+describe("org plugin install: skill name conflicts (spec §9.2)", () => {
   const line = (skill: string, source: string) =>
     `Skill "${skill}" already exists in this org (source: ${source}). Remove or rename it, then install again.`;
   const snapshot = async () => ({
@@ -965,7 +965,7 @@ describe("org plugin install: skill name conflicts (spec §9.2)", { timeout: 60_
   });
 });
 
-describe("org plugin install: one kind per component", { timeout: 60_000 }, () => {
+describe("org plugin install: one kind per component", () => {
   it("a skills-only plugin turns its platform skill on in the org (no org row, no component)", async () => {
     const id = await skillsPlugin("notes");
     const r = await install(env.boss, env, id);
@@ -1063,7 +1063,7 @@ describe("org plugin install: one kind per component", { timeout: 60_000 }, () =
   });
 });
 
-describe("org plugin install: dependencies", { timeout: 60_000 }, () => {
+describe("org plugin install: dependencies", () => {
   it("installs the dependency's platform version first (not a newer import), as a nested install recorded as a plugin component; uninstall removes it", async () => {
     const d = await skillsPlugin("dep");
     // imported ahead of updating: an import does not move the platform version (ruling P2-17)
@@ -1382,7 +1382,7 @@ type Hooked = {
 };
 const proto = PluginInstaller.prototype as unknown as Hooked;
 
-describe("org plugin install: dependency races", { timeout: 60_000 }, () => {
+describe("org plugin install: dependency races", () => {
   it("an uninstall of a pre-existing dependency between the check and the record waits for the install and then keeps it", async () => {
     const d = await skillsPlugin("dep");
     const first = await install(env.boss, env, d);
@@ -1405,7 +1405,17 @@ describe("org plugin install: dependency races", { timeout: 60_000 }, () => {
             url: `/api/v1/orgs/${env.orgId}/plugin-installs/${depId}`,
           }),
         );
-        await new Promise((r) => setTimeout(r, 300));
+        // Wait for the uninstall's transaction to block on the org row lock this one holds, not
+        // for a fixed time: the race is deterministic.
+        await waitFor(
+          async () => {
+            const r = await sql<{ n: number }>`select count(*)::int as n from pg_stat_activity
+              where datname = current_database() and wait_event_type = 'Lock'`.execute(env.db);
+            return (r.rows[0]?.n ?? 0) > 0;
+          },
+          10_000,
+          "the uninstall waiting for the org row lock",
+        );
       }
       return found;
     });

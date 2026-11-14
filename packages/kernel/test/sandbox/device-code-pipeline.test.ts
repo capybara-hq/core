@@ -97,7 +97,7 @@ beforeAll(async () => {
   });
   expect(created.statusCode, created.body).toBe(201);
   agentId = (created.json() as { agent: { id: string } }).agent.id;
-}, 180_000);
+});
 
 afterAll(async () => {
   capture.restore();
@@ -156,7 +156,7 @@ async function outputFileOf(taskId: string): Promise<string | null> {
   return null;
 }
 
-describe("the device code in the pipeline", { timeout: 120_000 }, () => {
+describe("the device code in the pipeline", () => {
   it("writes one display-only device_code event and no loginCode in the result", async () => {
     capture.reset();
     const conv = await signIn();
@@ -231,9 +231,7 @@ describe("the device code in the pipeline", { timeout: 120_000 }, () => {
     expect(result?.payload).not.toHaveProperty("loginCode");
   });
 
-  it("a prompt split across two TaskOutput reads still writes exactly one card", {
-    timeout: 120_000,
-  }, async () => {
+  it("a prompt split across two TaskOutput reads still writes exactly one card", async () => {
     capture.reset();
     // gh prints the code line first and the URL line later; a long pause in between lets the first
     // read land between the two lines — the boundary a non-blocking read can land on (no shell
@@ -279,7 +277,7 @@ describe("the device code in the pipeline", { timeout: 120_000 }, () => {
     expect(codes[0]?.payload.code).toBe("1A2B-C3D4");
   });
 
-  it("two reads of the whole prompt still write one card", { timeout: 120_000 }, async () => {
+  it("two reads of the whole prompt still write one card", async () => {
     capture.reset();
     const { conv, taskId } = await launchBackground(
       `printf '%s\\n' '${GH_OUTPUT[0]}' '${GH_OUTPUT[1]}'; sleep 20`,

@@ -24,6 +24,7 @@ import {
 } from "../../src/tools/builtins/sandbox/task-output.js";
 import type { BuiltinCallContext, BuiltinTool } from "../../src/tools/registry.js";
 import { ToolRegistry } from "../../src/tools/registry.js";
+import { readFakeSandboxOps } from "../fixtures/plugins/sandbox-fake/index.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { builtinsOff, onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -86,7 +87,7 @@ beforeAll(async () => {
   sandbox = k.app.get(SandboxService);
   store = k.app.get(BackgroundTaskStore);
   tools = k.app.get(BuiltinTools).list();
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -256,7 +257,7 @@ describe("offered with Bash", () => {
       },
     });
     expect(res.statusCode, res.body).toBe(201);
-  }, 60_000);
+  });
 });
 
 describe("TaskOutput", () => {
@@ -287,7 +288,7 @@ describe("TaskOutput", () => {
     const events = await finishedEvents(c.conversationId, t.id);
     expect(events).toHaveLength(1);
     expect(events[0]?.payload).toMatchObject({ status: "completed", reported: true });
-  }, 60_000);
+  });
 
   it("block waits for the task to finish", async () => {
     const c = await conversation();
@@ -297,7 +298,7 @@ describe("TaskOutput", () => {
     expect(Date.now() - t0).toBeGreaterThan(1500);
     expect(text).toMatch(/^Status: completed, exit code 0, after \d+s/);
     expect(text).toContain("done");
-  }, 60_000);
+  });
 
   it("block with a timeout returns after about the timeout, still running", async () => {
     const c = await conversation();
@@ -310,7 +311,7 @@ describe("TaskOutput", () => {
     expect(text).toMatch(/^Status: running \(\d+s\)/);
     expect(text).toContain("[No new output.]");
     expect((await store.get(t.id))?.status).toBe("running");
-  }, 60_000);
+  });
 
   it("never waits past the run's time left", async () => {
     const c = await conversation();
@@ -322,7 +323,7 @@ describe("TaskOutput", () => {
     );
     expect(Date.now() - t0).toBeLessThan(6000);
     expect(text).toMatch(/^Status: running/);
-  }, 60_000);
+  });
 
   it("a 20 MB output is read a bounded slice at a time", async () => {
     const c = await conversation();
@@ -339,7 +340,7 @@ describe("TaskOutput", () => {
     const next = textOf(await output(c, { task_id: t.id, block: false }));
     expect(next.match(/x{100,}/)?.[0]).toHaveLength(SPILL);
     expect((await store.get(t.id))?.readOffset).toBe(2 * SPILL);
-  }, 60_000);
+  });
 
   it("the read exec takes a bounded slice: tail -c +<offset+1> | head -c <cap>", () => {
     const s = taskReadScript({ id: "bt_abcdef", sid: "42", running: true }, 1000, SPILL);
@@ -361,7 +362,7 @@ describe("TaskOutput", () => {
     expect((await store.get(t.id))?.readOffset).toBe(16_666 * 3);
     const next = textOf(await output(c, { task_id: t.id, block: false }));
     expect(next.match(/€+/)?.[0]).toHaveLength(17_000 - 16_666);
-  }, 90_000);
+  });
 
   it("a failed task shows its exit code", async () => {
     const c = await conversation();
@@ -369,7 +370,7 @@ describe("TaskOutput", () => {
     const text = textOf(await output(c, { task_id: t.id }));
     expect(text).toMatch(/^Status: failed, exit code 3, after \d+s/);
     expect(text).toContain("oops");
-  }, 60_000);
+  });
 
   it("a task whose sandbox was suspended is lost, its output unavailable, nothing resumed", async () => {
     const c = await conversation();
@@ -390,7 +391,7 @@ describe("TaskOutput", () => {
       .where("device_id", "=", c.deviceId)
       .executeTakeFirstOrThrow();
     expect(st.status).toBe("suspended");
-  }, 60_000);
+  });
 
   it("an unknown id, or a task of another conversation (a sub-agent's), is not found", async () => {
     const parent = await conversation();
@@ -417,7 +418,7 @@ describe("TaskOutput", () => {
       }
     }
     expect((await store.get(t.id))?.status).toBe("running");
-  }, 60_000);
+  });
 
   it("a sub-agent's agentId gets the sub-agent text (TaskOutput as an answer, TaskStop as an error); other ids stay not found", async () => {
     const parent = await conversation();
@@ -463,7 +464,7 @@ describe("TaskOutput", () => {
         expect((e as Error).message).toContain(`No background task ${id} in this conversation`);
       }
     }
-  }, 60_000);
+  });
 });
 
 describe("the device access re-check", () => {
@@ -483,15 +484,20 @@ describe("the device access re-check", () => {
     expect((await store.get(t.id))?.status).toBe("running");
     forTool.mockRestore();
     expect(isError(await output(c, { task_id: t.id, block: false }))).toBe(false);
-  }, 60_000);
+  });
 });
 
 describe("TaskOutput: leases, reservations, reporting", () => {
   it("a blocking TaskOutput holds no lease while it waits: a Bash call runs meanwhile", async () => {
     const c = await conversation();
     const t = await start(ctxOf(c), "sleep 30");
+    const checkExecs = async () =>
+      (await readFakeSandboxOps(root)).filter((l) => l[0] === "exec" && l[6] === c.conversationId)
+        .length;
+    const before = await checkExecs();
     const waiting = output(c, { task_id: t.id, timeout: 8000 });
-    await new Promise((r) => setTimeout(r, 300));
+    // once the blocking call's first check exec is recorded it is in its wait, holding no lease
+    await waitFor(async () => (await checkExecs()) > before, 5_000, "TaskOutput's first check");
     const t0 = Date.now();
     const r = await tool("Bash").run({ command: "echo hi", description: "Say hi" }, ctxOf(c));
     expect(textOf(r)).toContain("hi");
@@ -501,10 +507,10 @@ describe("TaskOutput: leases, reservations, reporting", () => {
     void waiting.then(() => {
       done = true;
     });
-    await new Promise((r) => setTimeout(r, 50));
+    await new Promise((r) => setImmediate(r));
     expect(done).toBe(false);
     expect(textOf(await waiting)).toMatch(/^Status: running/);
-  }, 60_000);
+  });
 
   it("a reservation (no sid yet) is still starting, with and without block", async () => {
     const c = await conversation();
@@ -525,7 +531,7 @@ describe("TaskOutput: leases, reservations, reporting", () => {
     const s = await stop(c, { task_id: id });
     expect(textOf(s)).toContain("had already finished");
     expect(textOf(s)).toContain("[No output: the command never started.]");
-  }, 30_000);
+  });
 
   it("a call that fails after the task finished leaves the finish to the poller, unreported", async () => {
     const c = await conversation();
@@ -542,7 +548,7 @@ describe("TaskOutput: leases, reservations, reporting", () => {
     expect(await k.app.get(BackgroundTaskPollJob).pollOnce()).toBe(1);
     const events = await finishedEvents(c.conversationId, t.id);
     expect(events.map((e) => e.payload)).toMatchObject([{ status: "completed", reported: false }]);
-  }, 60_000);
+  });
 
   it("a sandbox gone under the read gives the status line and output unavailable", async () => {
     const c = await conversation();
@@ -559,7 +565,7 @@ describe("TaskOutput: leases, reservations, reporting", () => {
     const r = await output(c, { task_id: t.id, block: false });
     expect(isError(r)).toBe(false);
     expect(textOf(r)).toMatch(/^Status: running \(\d+s\)\n\[Output unavailable: /);
-  }, 60_000);
+  });
 });
 
 describe("TaskStop", () => {
@@ -581,7 +587,7 @@ describe("TaskStop", () => {
       status: "stopped",
       reported: true,
     });
-  }, 60_000);
+  });
 
   it("a task that already finished: says so, not an error", async () => {
     const c = await conversation();
@@ -593,7 +599,7 @@ describe("TaskStop", () => {
     expect(textOf(r)).toContain(`Background task ${t.id} ("Run it") had already finished.`);
     expect(textOf(r)).toMatch(/Status: completed, exit code 0, after \d+s/);
     expect(textOf(r)).toContain("Last lines:\nfin");
-  }, 60_000);
+  });
 
   it("a task another stop already claimed is stopping, not a failure", async () => {
     const c = await conversation();
@@ -603,7 +609,7 @@ describe("TaskStop", () => {
     expect(isError(r)).toBe(false);
     expect(textOf(r)).toContain(`Background task ${t.id} ("Run it") is stopping`);
     expect((await store.get(t.id))?.status).toBe("running");
-  }, 60_000);
+  });
 
   it("a task still being launched is stopping, not a failure", async () => {
     const c = await conversation();
@@ -612,7 +618,7 @@ describe("TaskStop", () => {
     const r = await stop(c, { task_id: id });
     expect(isError(r)).toBe(false);
     expect(textOf(r)).toContain(`Background task ${id} ("Launching") is stopping`);
-  }, 30_000);
+  });
 });
 
 describe("the Claude Code tool map", () => {
@@ -707,7 +713,7 @@ describe("TaskList", () => {
     expect(textOf(await list(c, { status: "running" }))).toBe(
       "No background tasks or sub-agents are running in this conversation.",
     );
-  }, 30_000);
+  });
 
   it("lists running tasks first, then finished ones with exit code and output path", async () => {
     const c = await conversation();
@@ -739,7 +745,7 @@ describe("TaskList", () => {
     expect(only).toContain(running.id);
     expect(only).not.toContain(failed.id);
     expect(only).toMatch(/^Background tasks: 1 running\./);
-  }, 60_000);
+  });
 
   it("shows every finished status, lost with its reason", async () => {
     const c = await conversation();
@@ -756,7 +762,7 @@ describe("TaskList", () => {
     expect(text).toContain(`- ${ids.stopped} stopped, after 2m00s:`);
     expect(text).toContain(`- ${ids.timed_out} timed_out, after 2m00s:`);
     expect(text).toContain(`- ${lost} lost (the sandbox was suspended), after 2m00s:`);
-  }, 30_000);
+  });
 
   it("never lists another conversation's tasks, nor a sub-agent's", async () => {
     const parent = await conversation();
@@ -787,7 +793,7 @@ describe("TaskList", () => {
     expect(fromOther).toContain(others);
     expect(fromOther).not.toContain(mine);
     expect(fromOther).not.toContain("Sub-agents");
-  }, 30_000);
+  });
 
   it("lists the sub-agents this conversation dispatched, running first", async () => {
     const c = await conversation();
@@ -818,7 +824,7 @@ describe("TaskList", () => {
     expect(only).toContain(running);
     expect(only).not.toContain(done);
     expect(only).toMatch(/Sub-agents: 2 running\./);
-  }, 30_000);
+  });
 
   it(`lists at most ${TASK_LIST_FINISHED_LIMIT} finished tasks, the most recent first`, async () => {
     const c = await conversation();
@@ -837,5 +843,5 @@ describe("TaskList", () => {
     expect(text).toContain("(3 older finished tasks are not listed.)");
     expect(text.indexOf(running)).toBeLessThan(text.indexOf(ids[0] as string));
     expect(text.indexOf(ids[0] as string)).toBeLessThan(text.indexOf(ids[1] as string));
-  }, 30_000);
+  });
 });

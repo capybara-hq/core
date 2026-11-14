@@ -54,7 +54,7 @@ beforeAll(async () => {
   orgs = orgsFor(db);
   agents = k.app.get(AgentsService);
   admin = k.app.get(AdminAgents);
-}, 120_000);
+});
 afterAll(async () => {
   await k?.close();
   redis?.disconnect();

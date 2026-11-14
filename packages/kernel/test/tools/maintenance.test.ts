@@ -64,7 +64,7 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
   probe = new Queue(MAINTENANCE_QUEUE_NAME, { connection: redisClient() });
-}, 120_000);
+});
 afterAll(async () => {
   await probe?.close();
   await Promise.all(redisClients.splice(0).map((c) => c.quit()));
@@ -294,5 +294,5 @@ describe("a periodic job's name on the maintenance queue", () => {
     } finally {
       await k.close();
     }
-  }, 60_000);
+  });
 });

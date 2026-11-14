@@ -132,7 +132,7 @@ beforeAll(async () => {
   expect(ch.statusCode, ch.body).toBe(201);
   connId = (ch.json() as { channel: { id: string } }).channel.id;
   await waitFor(async () => im.active(connId).length === 1, 10_000, "long connection");
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -273,7 +273,7 @@ const dmTask = (name: string) =>
     chat: { connectionId: connId, chatId: "dm-u-owner", chatType: "dm" },
   });
 
-describe("scanning and firing", { timeout: 60_000 }, () => {
+describe("scanning and firing", () => {
   it("new mode creates one conversation per tick", async () => {
     const t = await task();
     const tick1 = tickAt(Date.now());

@@ -153,7 +153,7 @@ beforeAll(async () => {
   db = kernelDb(raw);
   destroyDb = () => raw.destroy();
   extensionsDir = await mkdtemp(join(tmpdir(), "kernel-bootstrap-ext-"));
-}, 240_000);
+});
 afterAll(async () => {
   await stopAll();
   for (const c of cleanups) await c();
@@ -162,7 +162,7 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 
-describe("a fresh deployment", { timeout: 30_000 }, () => {
+describe("a fresh deployment", () => {
   let fx: Awaited<ReturnType<typeof bootstrapFixture>>;
   let k: TestKernel;
   beforeAll(async () => {
@@ -179,7 +179,7 @@ describe("a fresh deployment", { timeout: 30_000 }, () => {
       .execute();
     k = await boot(fx);
     await loginAdmin(k);
-  }, 120_000);
+  });
   afterAll(stopAll);
 
   it("installs, pre-approves and enables every entry, recorded like a marketplace import", async () => {
@@ -387,7 +387,7 @@ describe("a fresh deployment", { timeout: 30_000 }, () => {
   });
 });
 
-describe("a core upgrade (Review Focus 3)", { timeout: 30_000 }, () => {
+describe("a core upgrade (Review Focus 3)", () => {
   it("raises a pinned version, keeps a hand-upgraded plugin, clears required from a removed entry", async () => {
     await reset();
     const v1 = await fixture([
@@ -517,7 +517,7 @@ describe("a core upgrade (Review Focus 3)", { timeout: 30_000 }, () => {
   });
 });
 
-describe("same version, different bytes", { timeout: 30_000 }, () => {
+describe("same version, different bytes", () => {
   it("keeps the installed package and warns naming the plugin", async () => {
     await reset();
     const v1 = await fixture([{ bytes: await lifePkg({ name: "alpha", version: "1.0.0" }) }]);
@@ -557,7 +557,7 @@ describe("same version, different bytes", { timeout: 30_000 }, () => {
   });
 });
 
-describe("a pin whose name an organization holds", { timeout: 30_000 }, () => {
+describe("a pin whose name an organization holds", () => {
   it("warns naming the plugin and the organization (P3-28)", async () => {
     await reset();
     // a later kernel release pins a plugin name an org uploaded meanwhile
@@ -610,7 +610,7 @@ describe("a pin whose name an organization holds", { timeout: 30_000 }, () => {
   });
 });
 
-describe("the confirm's catalog view during bootstrap", { timeout: 30_000 }, () => {
+describe("the confirm's catalog view during bootstrap", () => {
   it("reads only the confirmed plugin's package: another unreadable package logs no admin-view warning", async () => {
     await reset();
     const v1 = await fixture([
@@ -654,7 +654,7 @@ describe("the confirm's catalog view during bootstrap", { timeout: 30_000 }, () 
   });
 });
 
-describe("tampered and missing packages (Review Focus 2)", { timeout: 30_000 }, () => {
+describe("tampered and missing packages (Review Focus 2)", () => {
   const tampered = async (): Promise<{ dir: string; manifest: BootstrapManifest }> => {
     const fx = await fixture([
       { bytes: await lifePkg({ name: "alpha", version: "1.0.0" }) },
@@ -740,9 +740,7 @@ describe("tampered and missing packages (Review Focus 2)", { timeout: 30_000 }, 
   });
 });
 
-describe("obtaining the packages: offline directory, else npm (startup bootstrap spec)", {
-  timeout: 30_000,
-}, () => {
+describe("obtaining the packages: offline directory, else npm (startup bootstrap spec)", () => {
   let reg: FakeNpmRegistry | undefined;
   const tarballs = () => (reg?.requests ?? []).filter((r) => r.includes("/-/"));
   const npmFixture = async () =>
@@ -941,7 +939,7 @@ describe("obtaining the packages: offline directory, else npm (startup bootstrap
   });
 });
 
-describe("a declarative entry", { timeout: 30_000 }, () => {
+describe("a declarative entry", () => {
   afterAll(stopAll);
 
   it("goes to the catalog only, once the object store (a bootstrap plugin itself) has loaded", async () => {
@@ -1027,7 +1025,7 @@ const OBJECT_STORE_CONFIG = {
   extensionConfig: { "fake-bootstrap-b": { bucket: "bootstrap", secretKey: "s3cret" } },
 };
 
-describe("a builtin entry", { timeout: 30_000 }, () => {
+describe("a builtin entry", () => {
   afterAll(stopAll);
   type Item = { id: string; name: string; builtin: boolean; scope: string; disabled: boolean };
   const itemNamed = async (name: string) =>
@@ -1229,9 +1227,7 @@ const imPkg = (version: string, bare = false) =>
     else await writeFile(join(dir, "icon.svg"), ICON);
   });
 
-describe("bootstrap plugins with an icon and setup guides, no object store", {
-  timeout: 60_000,
-}, () => {
+describe("bootstrap plugins with an icon and setup guides, no object store", () => {
   afterAll(stopAll);
 
   /** The item of fake-im, its icon and its guide as the super admin and an org read them. */
@@ -1299,7 +1295,7 @@ describe("bootstrap plugins with an icon and setup guides, no object store", {
   });
 });
 
-describe("config-declared names and the lock", { timeout: 30_000 }, () => {
+describe("config-declared names and the lock", () => {
   beforeEach(reset);
 
   it("an entry also declared in the config extensions list is kept: config wins, no install record", async () => {
@@ -1417,6 +1413,7 @@ describe("config-declared names and the lock", { timeout: 30_000 }, () => {
       });
       const started = k.start();
       started.catch(() => {});
+      // give the start a moment to reach the bootstrap lock wait (no marker exists for it)
       await new Promise((r) => setTimeout(r, 500));
       const t0 = Date.now();
       await k.close();

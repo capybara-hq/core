@@ -96,7 +96,7 @@ beforeAll(async () => {
       },
     ],
   });
-}, 120_000);
+});
 
 afterEach(async () => {
   for (const c of cleanups.splice(0).reverse()) await c();
@@ -429,5 +429,5 @@ describe("M3 第一段双副本验收", () => {
       .where("status", "in", ["queued", "running", "waiting"])
       .execute();
     expect(active).toEqual([]);
-  }, 240_000);
+  });
 });

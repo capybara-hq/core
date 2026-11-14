@@ -58,7 +58,7 @@ beforeAll(async () => {
     runWorkers: false,
     log: quiet,
   };
-}, 120_000);
+});
 
 afterAll(async () => {
   await sub?.close();

@@ -81,7 +81,7 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 8);
   db = kernelDb(raw);
   redis = new Redis(rdc.url);
-}, 120_000);
+});
 
 afterAll(async () => {
   redis?.disconnect();
@@ -138,14 +138,14 @@ const ops = async (op?: string) =>
 const execIntervals = async () =>
   (await ops("exec")).map((o) => ({ tag: o[2], start: Number(o[3]), end: Number(o[4]) }));
 
-/** Polls `check` every 20 ms until it holds; fails after 10 s. */
-const until = async (what: string, check: () => Promise<boolean>) => {
-  const deadline = Date.now() + 10_000;
-  while (!(await check())) {
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
-    await new Promise((r) => setTimeout(r, 20));
-  }
-};
+/** Waits until `check` holds (the old polling loop's 10 s budget); an error surfaces. */
+const until = (what: string, check: () => Promise<boolean>) =>
+  vi.waitFor(
+    async () => {
+      if (!(await check())) throw new Error(`waiting for ${what}`);
+    },
+    { timeout: 10_000 },
+  );
 
 /**
  * A crashed holder of instance `id`: its tagged `sleep 30` is running (waited for: the fake starts

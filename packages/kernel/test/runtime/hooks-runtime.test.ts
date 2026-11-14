@@ -109,7 +109,7 @@ beforeAll(async () => {
   });
   expect(res.statusCode, res.body).toBe(201);
   agentId = (res.json() as { agent: { id: string } }).agent.id;
-}, 180_000);
+});
 
 afterAll(async () => {
   ProviderRegistry.prototype.resolve = originalResolve;
@@ -170,7 +170,7 @@ async function turn(text: string): Promise<{ conv: string; events: ConversationE
 const ofType = <T extends ConversationEvent["type"]>(events: ConversationEvent[], type: T) =>
   events.filter((e): e is Extract<ConversationEvent, { type: T }> => e.type === type);
 
-describe("model hooks", { timeout: 60_000 }, () => {
+describe("model hooks", () => {
   it("model.request: observes exactly the request reconstructed from the model_call", async () => {
     await probe({});
     const before = (await counts()).counts["model.request"] ?? 0;
@@ -261,7 +261,7 @@ describe("model hooks", { timeout: 60_000 }, () => {
   });
 });
 
-describe("tool hooks", { timeout: 60_000 }, () => {
+describe("tool hooks", () => {
   it("tool.preExecute deny: denial text, no tool_call_started, handler not called, run continues", async () => {
     await probe({ denyTools: [TOOL] });
     const handlerBefore = (await counts()).counts.handler ?? 0;
@@ -341,7 +341,7 @@ describe("tool hooks", { timeout: 60_000 }, () => {
   });
 });
 
-describe("scope", { timeout: 60_000 }, () => {
+describe("scope", () => {
   it("after the organization disables the plugin, a turn does not fire its hooks", async () => {
     await probe({});
     await sleep(300); // let earlier observe hooks settle
@@ -406,7 +406,6 @@ describe("scope", { timeout: 60_000 }, () => {
     // the replay made model calls (in the eval conversation), yet no hook fired
     const evalEvents = await eventsOf(db, r?.evalConversationId as string);
     expect(evalEvents.some((e) => e.type === "model_call")).toBe(true);
-    await sleep(300);
     // model and tool hooks never fire in replays; usage.report does (the replay logs usage, P-17),
     // with conversationKind "eval"
     const after = await waitFor(

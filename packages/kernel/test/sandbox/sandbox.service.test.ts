@@ -13,7 +13,7 @@ import {
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
@@ -90,7 +90,7 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
   redis = new Redis(rdc.url);
-}, 120_000);
+});
 
 afterAll(async () => {
   redis?.disconnect();
@@ -164,11 +164,14 @@ const row = (id = envId) =>
 /** Waits until the fake records a running command (`instances/<id>/procs/<pid>`), instead of a fixed wait. */
 async function waitForProc(id: string, timeoutMs = 10_000): Promise<void> {
   const dir = join(root, "instances", id, "procs");
-  const until = Date.now() + timeoutMs;
-  while ((await readdir(dir).catch(() => [])).length === 0) {
-    if (Date.now() > until) throw new Error(`no running command registered for ${id}`);
-    await new Promise((r) => setTimeout(r, 10));
-  }
+  await vi.waitFor(
+    async () => {
+      if ((await readdir(dir).catch(() => [])).length === 0) {
+        throw new Error(`no running command registered for ${id} yet`);
+      }
+    },
+    { timeout: timeoutMs },
+  );
 }
 
 /** Commands run one at a time (the behavior before phase C). */

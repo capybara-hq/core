@@ -49,7 +49,7 @@ beforeAll(async () => {
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
   orgId = await createOrg(await session(k, "owner"));
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();

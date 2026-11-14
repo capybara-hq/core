@@ -50,7 +50,7 @@ beforeAll(async () => {
     },
   });
   raw = createDb(h.dbUrl, 3);
-}, 120_000);
+});
 
 afterAll(async () => {
   await raw?.destroy();
@@ -180,5 +180,5 @@ describe("channel webhook inbound (dual replica, api+worker / gateway)", () => {
 
     await sleep(1500);
     expect(mine().filter((s) => im.finalText(s) === "hello webhook")).toHaveLength(1);
-  }, 120_000);
+  });
 });

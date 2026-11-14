@@ -319,7 +319,7 @@ beforeAll(async () => {
   expect(org.status).toBe(201);
   base = `/api/v1/orgs/${(org.json.org as { id: string }).id}`;
   await enableExtensions(raw, (org.json.org as { id: string }).id, "fake-connector");
-}, 180_000);
+});
 
 afterAll(async () => {
   await h?.stop();
@@ -441,7 +441,7 @@ describe("M3 第二段双副本验收", () => {
     ]);
     expect(pets).toEqual([{ name: "Rex", tag: "dog" }]);
     expect(JSON.stringify(await eventsOf(db, conv.id))).not.toContain(API_KEY);
-  }, 120_000);
+  });
 
   it("2. OAuth 连接器：跨副本连接（cap_oauth cookie）→ 工具可用；两个副本上的运行并发 401 只刷新一次", async () => {
     const app = await at(0, "POST", `${base}/connectors`, {
@@ -505,7 +505,7 @@ describe("M3 第二段双副本验收", () => {
     // 凭据值不进事件
     const evs = JSON.stringify([...(await eventsOf(db, a.id)), ...(await eventsOf(db, b.id))]);
     for (const s of as.issuedSecrets()) expect(evs).not.toContain(s);
-  }, 120_000);
+  });
 
   it("3. 漂移：定时扫描 → 待复核 → 不可用 → 批准 → 可用；路由变化（A21）手动刷新同理", async () => {
     const app = await at(1, "POST", `${base}/connectors`, {
@@ -603,7 +603,7 @@ describe("M3 第二段双副本验收", () => {
     const now = await fetching.run(0, "mcp__docs__fetch", {});
     expect(now.result).toMatchObject({ isError: false, content: "fetched by fetch_v2" });
     expect(seen()).toEqual(["fetch_v2"]);
-  }, 120_000);
+  });
 
   it("4. ToolSearch 阈值：目录模式；未加载 → 明确错误；ToolSearch 加载后调用成功", async () => {
     const app = await at(0, "POST", `${base}/connectors`, {
@@ -652,5 +652,5 @@ describe("M3 第二段双副本验收", () => {
     const call3 = ofType(okCall.evs, "model_call")[0]?.payload.request;
     expect(call3?.tools?.map((t) => t.key)).toContain("mcp__big__op_delta");
     expect(call3?.catalog).toEqual(call1?.catalog);
-  }, 120_000);
+  });
 });

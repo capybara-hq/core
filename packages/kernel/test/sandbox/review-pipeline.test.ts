@@ -170,7 +170,7 @@ beforeAll(async () => {
   expect(channel.statusCode, channel.body).toBe(201);
   connId = (channel.json() as { channel: { id: string } }).channel.id;
   await waitFor(async () => im.active(connId).length === 1, 10_000, "long connection");
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -323,7 +323,7 @@ async function expectUnattendedDeny(
   return r as Extract<ConversationEvent, { type: "tool_result" }>;
 }
 
-describe("the command review in the pipeline", { timeout: 120_000 }, () => {
+describe("the command review in the pipeline", () => {
   it("an allowed command runs and its result records the rule's decision", async () => {
     const conv = await createConv(owner, orgId, agentId);
     const r = await call(conv, "Bash", { command: "echo hi", description: "Greet" }, 1);

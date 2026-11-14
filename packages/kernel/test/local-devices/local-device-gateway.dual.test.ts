@@ -141,7 +141,7 @@ describe("device connections on gateway replicas (dual replica)", () => {
     await sleep(2000);
     expect(second.ws.readyState).toBe(second.ws.OPEN);
     expect(await redis.get(deviceLeaseKey(deviceId))).toBe(secondToken);
-  }, 120_000);
+  });
 
   it("a relayed call from the api replica reaches the socket on the gateway replica", async () => {
     const { harness, redis, call, orgId, credential, deviceId } = await setup();
@@ -186,5 +186,5 @@ describe("device connections on gateway replicas (dual replica)", () => {
       10_000,
       "lease released",
     );
-  }, 120_000);
+  });
 });

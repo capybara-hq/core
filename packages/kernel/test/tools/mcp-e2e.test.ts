@@ -157,7 +157,7 @@ beforeAll(async () => {
   );
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
-}, 120_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -444,7 +444,7 @@ describe("connector end to end (fake-connector)", () => {
     }
     expect(JSON.stringify(evs)).toContain("[REDACTED]");
     expect(logLines.join("\n")).toContain("[REDACTED]");
-  }, 60_000);
+  });
 
   it("destructive 工具触发审批：批准前不执行，批准后执行一次", async () => {
     const { connectorId } = await installConnector();
@@ -487,7 +487,7 @@ describe("connector end to end (fake-connector)", () => {
       { toolKey: "mcp__docs__delete_doc", content: "deleted 42", isError: false },
     ]);
     expect(mcp.calls.filter((c) => c.name === "delete_doc").length).toBe(before + 1);
-  }, 60_000);
+  });
 
   it("刷新改了工具定义之后，早先 model_call 用过的定义仍可按指纹取回（请求可还原）", async () => {
     const opts: FakeMcpServerOptions = {
@@ -544,5 +544,5 @@ describe("connector end to end (fake-connector)", () => {
     } finally {
       await srv.stop();
     }
-  }, 60_000);
+  });
 });

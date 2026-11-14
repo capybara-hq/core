@@ -63,13 +63,13 @@ beforeAll(async () => {
   await migrate(pg.url, { schema: "capybara", dir: copyMigrations((f) => f <= FILE) });
   // idempotent: the file's statements run again without error
   await runFile();
-}, 120_000);
+});
 
 afterAll(async () => {
   await db?.destroy();
   await pg?.stop();
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
-}, 120_000);
+});
 
 describe("0130_auto_mode", () => {
   it("the approvals kind CHECK accepts tool, network, git and command", async () => {

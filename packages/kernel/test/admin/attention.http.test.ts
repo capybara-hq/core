@@ -66,7 +66,7 @@ beforeAll(async () => {
     superAdmin: true,
   });
   root = await session(k, "root");
-}, 180_000);
+});
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -121,7 +121,7 @@ const item = (over: Partial<CatalogItemView>) =>
     ...over,
   }) as unknown as CatalogItemView;
 
-describe("GET /api/v1/admin/overview/attention", { timeout: 60_000 }, () => {
+describe("GET /api/v1/admin/overview/attention", () => {
   it("lists real extensions and providers by category, without error text", async () => {
     const a = await attention();
     // a config-declared extension whose setup throws fails the start, so load_failed is covered
@@ -240,9 +240,7 @@ describe("GET /api/v1/admin/overview/attention", { timeout: 60_000 }, () => {
   });
 });
 
-describe("the dead outbox rows source (transactional outbox spec §3.4)", {
-  timeout: 60_000,
-}, () => {
+describe("the dead outbox rows source (transactional outbox spec §3.4)", () => {
   it("failing alone leaves the other lists and marks the overview partial", async () => {
     vi.spyOn(k.app.get(OutboxDeadService), "summary").mockRejectedValue(
       new Error("outbox unreadable: sk-SECRET"),
@@ -261,7 +259,7 @@ describe("the dead outbox rows source (transactional outbox spec §3.4)", {
   });
 });
 
-describe("the run queue's lost jobs (transactional outbox spec §8.3)", { timeout: 60_000 }, () => {
+describe("the run queue's lost jobs (transactional outbox spec §8.3)", () => {
   it("lists one queue_lost_jobs item with the count and the last loss, counted in attentionTotal", async () => {
     await redis.del(QUEUE_LOST_JOBS_KEY);
     expect((await attention()).queue).toEqual([]);
@@ -291,7 +289,7 @@ describe("the run queue's lost jobs (transactional outbox spec §8.3)", { timeou
   });
 });
 
-describe("GET /api/v1/admin/overview attentionTotal", { timeout: 60_000 }, () => {
+describe("GET /api/v1/admin/overview attentionTotal", () => {
   it("is the inbox total plus every attention list counted in full", async () => {
     vi.spyOn(k.app.get(PlatformInboxService), "count").mockResolvedValue(4);
     vi.spyOn(k.app.get(ExtensionAdmin), "list").mockResolvedValue(

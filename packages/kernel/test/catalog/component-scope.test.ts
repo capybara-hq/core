@@ -31,7 +31,7 @@ let org2: string;
 beforeAll(async () => {
   env = await startOrgEnv();
   org2 = await createOrg(env.root, "Beta");
-}, 240_000);
+});
 
 afterAll(async () => {
   await env?.stop();
@@ -117,7 +117,7 @@ async function previewScope(kind: string, id: string, body: Record<string, unkno
   return r.json();
 }
 
-describe("installs of platform plugins", { timeout: 60_000 }, () => {
+describe("installs of platform plugins", () => {
   it("write no org skill or agent template rows; the platform components are on while the plugin is", async () => {
     const itemId = await seedPlugin(env, {
       name: "crm",
@@ -167,7 +167,7 @@ describe("installs of platform plugins", { timeout: 60_000 }, () => {
   });
 });
 
-describe("org component switches", { timeout: 60_000 }, () => {
+describe("org component switches", () => {
   it("switching a skill off in one org removes it from that org's usable set only, after a preview of its agents", async () => {
     const { skillId } = await crmInBoth();
     const agentId = await agentUsing(skillId);
@@ -282,7 +282,7 @@ describe("org component switches", { timeout: 60_000 }, () => {
   });
 });
 
-describe("component scope (super admin)", { timeout: 60_000 }, () => {
+describe("component scope (super admin)", () => {
   it("own `named` scope: the preview lists the org that loses it with its agents; confirmed, it is on only in the listed org", async () => {
     const { skillId } = await crmInBoth();
     const agentId = await agentUsing(skillId);
@@ -450,7 +450,7 @@ describe("component scope (super admin)", { timeout: 60_000 }, () => {
   });
 });
 
-describe("agent save checks", { timeout: 60_000 }, () => {
+describe("agent save checks", () => {
   it("a linked copy whose platform skill is off in the org is refused, like the platform id", async () => {
     const { skillId } = await crmInBoth();
     const copy = "00000000-0000-4000-8000-000000000003";
@@ -506,7 +506,7 @@ describe("agent save checks", { timeout: 60_000 }, () => {
   });
 });
 
-describe("org uploads next to platform skills", { timeout: 60_000 }, () => {
+describe("org uploads next to platform skills", () => {
   it("an upload to the name of a linked unpinned copy pins the copy to the new version (ruling P2-4)", async () => {
     const { skillId } = await crmInBoth();
     // an org copy from an earlier install, linked by the migration
@@ -549,7 +549,7 @@ describe("org uploads next to platform skills", { timeout: 60_000 }, () => {
 });
 
 /** Fix round 1: rule 10 between platform skills; connector template state (P2-6); 404s. */
-describe("fix round 1", { timeout: 60_000 }, () => {
+describe("fix round 1", () => {
   /** Plugin `a` with skill `notes` installed in org A; plugin `b` with its own skill `notes`. */
   async function twoNotes(): Promise<{ bItem: string; bNotes: string; aNotes: string }> {
     const aItem = await seedPlugin(env, { name: "a", skills: ["notes"], templates: false });
@@ -887,9 +887,7 @@ describe("fix round 1", { timeout: 60_000 }, () => {
   });
 });
 
-describe("the admin component list: builtin and org-owned (Task 9 fix round 1)", {
-  timeout: 60_000,
-}, () => {
+describe("the admin component list: builtin and org-owned (Task 9 fix round 1)", () => {
   it("flags components of a builtin plugin and refuses their scope changes", async () => {
     const { itemId, skillId } = await crmInBoth();
     const list = async () =>
@@ -1001,7 +999,7 @@ describe("the admin component list: builtin and org-owned (Task 9 fix round 1)",
  * Task 10: what the workspace pages read. The org's component list (offered platform components
  * with their state in the org, members included) and the detail of a linked copy.
  */
-describe("the org component list and linked copies (Task 10)", { timeout: 60_000 }, () => {
+describe("the org component list and linked copies (Task 10)", () => {
   const list = (req: OrgEnv["boss"], query: string) =>
     req({ method: "GET", url: `/api/v1/orgs/${env.orgId}/components?${query}` });
 

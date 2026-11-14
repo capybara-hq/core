@@ -153,7 +153,7 @@ describe("checkClientFiles", () => {
   });
 });
 
-describe("client builds", { timeout: 240_000 }, () => {
+describe("client builds", () => {
   let env: OrgEnv;
   let packed: Uint8Array;
   let storage: StorageService;
@@ -167,7 +167,7 @@ describe("client builds", { timeout: 240_000 }, () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
-  }, 240_000);
+  });
 
   afterAll(async () => {
     await env?.stop();

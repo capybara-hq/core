@@ -161,7 +161,7 @@ beforeAll(async () => {
     payload: { login: "owner", password: PW },
   });
   expect(res.statusCode, res.body).toBe(200);
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close().catch(() => {});
@@ -169,7 +169,7 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 
-describe("lifecycle hooks", { timeout: 60_000 }, () => {
+describe("lifecycle hooks", () => {
   it("the job id names the mount, the plugin and the payload's ids, without ':'", () => {
     expect(lifecycleJobId("org.member_removed", "memory", { orgId: "o1", accountId: "a1" })).toBe(
       "lifecycle-org-member_removed-memory-a1-o1",
@@ -191,6 +191,7 @@ describe("lifecycle hooks", { timeout: 60_000 }, () => {
     // delivered: the outbox row is gone, and the handler ran once
     const jobId = lifecycleJobId("org.member_removed", PLUGIN, payload);
     await waitFor(async () => (await owed(jobId)).length === 0, 10_000, "outbox row delivered");
+    // nothing-happened window: a second delivery would land in this gap
     await new Promise((r) => setTimeout(r, 500));
     expect(await calls(payload)).toBe(1);
   });

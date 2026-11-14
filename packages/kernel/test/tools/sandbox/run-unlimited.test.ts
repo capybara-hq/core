@@ -58,7 +58,7 @@ beforeAll(async () => {
       },
     ),
   );
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -69,7 +69,7 @@ afterAll(async () => {
 
 type ToolResultEvent = Extract<ConversationEvent, { type: "tool_result" }>;
 
-describe("Bash under a run without a duration limit", { timeout: 90_000 }, () => {
+describe("Bash under a run without a duration limit", () => {
   it("the command's timeout is the command maximum, with no time-budget sentence", async () => {
     await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
     const owner = await session(k, "owner");

@@ -61,7 +61,7 @@ beforeAll(async () => {
     .id;
   owner = await session(k, "owner");
   orgId = await createOrg(owner);
-}, 180_000);
+});
 
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -147,7 +147,7 @@ async function legacyLocalDevice(isolation: "none" | "sandbox"): Promise<string>
   return deviceId;
 }
 
-describe("DevicesService.modeLevel", { timeout: 30_000 }, () => {
+describe("DevicesService.modeLevel", () => {
   it("a local device carries its reported mode and the org's sandbox-mode allowlist", async () => {
     const deviceId = await localDevice();
     expect(await devices.modeLevel(orgId, deviceId)).toEqual({

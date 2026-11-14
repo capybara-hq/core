@@ -141,7 +141,7 @@ beforeAll(async () => {
     { when: { lastUserIncludes: "tell me more" }, reply: { text: MORE } },
     { when: { lastUserIncludes: "digest please" }, reply: { text: ANSWER } },
   ]);
-}, 180_000);
+});
 
 afterAll(async () => {
   scriptRules([]);
@@ -217,7 +217,7 @@ const approvalsOf = (conversationId: string) =>
     .where("conversation_id", "=", conversationId)
     .execute();
 
-describe("scheduled tasks end to end", { timeout: 120_000 }, () => {
+describe("scheduled tasks end to end", () => {
   it("a daily task to a Telegram DM posts its answer and a reply continues the same conversation", async () => {
     // the owner messages the bot once (a task can only target their own DM with it)
     tg.push(telegramPrivateMessage({ id: 777, first_name: "Owner" }, "hi bot"));

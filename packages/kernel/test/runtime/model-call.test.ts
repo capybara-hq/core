@@ -168,7 +168,7 @@ beforeAll(async () => {
     tools: k.app.get(ToolRegistry),
     log: silent,
   };
-}, 120_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -728,6 +728,7 @@ describe("runModelStep", () => {
   it("中止：尚未流出文本时 abort → content 为 []", async () => {
     await say("stall");
     const ac = new AbortController();
+    // the stall emits no text: there is no delta to hook the abort onto, so it is timed.
     setTimeout(() => ac.abort(), 100);
     const r = await step({ signal: ac.signal });
     expect(r).toMatchObject({ aborted: true, content: [] });
@@ -743,6 +744,8 @@ describe("runModelStep", () => {
     await say("hi");
     const ac = new AbortController();
     const t0 = Date.now();
+    // the abort must land inside the retry wait, after the stub's throw has been handled; no
+    // seam marks that point.
     setTimeout(() => ac.abort(), 100);
     const r = await step({
       signal: ac.signal,
@@ -1531,7 +1534,14 @@ describe("model.request hooks: stickiness, compaction (M-4, M-2, I-1)", () => {
     expect(await ofType("hook_denied")).toEqual([]);
     // the compaction call was never sent: no usage for it, no model.response for it
     expect((await ofType("usage")).map((u) => u.payload.purpose ?? "step")).toEqual(["step"]);
-    await new Promise((res) => setTimeout(res, 50));
+    // wait for the step's own model.response hook, then assert no compaction response was seen
+    await vi.waitFor(
+      () =>
+        expect(seen.some((x) => x.mount === "model.response" && x.payload.purpose === "step")).toBe(
+          true,
+        ),
+      { timeout: 5_000 },
+    );
     expect(seen.filter((x) => x.mount === "model.response").map((x) => x.payload.purpose)).toEqual([
       "step",
     ]);

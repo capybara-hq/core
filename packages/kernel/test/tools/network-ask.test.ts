@@ -97,7 +97,7 @@ beforeAll(async () => {
     .id;
   orgId = await createOrg(await session(k, "owner"));
   wsUrl = `ws://127.0.0.1:${k.port}/device/connect`;
-}, 180_000);
+});
 
 afterEach(() => {
   for (const m of open.splice(0)) m.close();
@@ -321,7 +321,7 @@ const runStatus = async (conversationId = s.conversationId) =>
       .executeTakeFirstOrThrow()
   ).status;
 
-describe("the ask and its outcomes", { timeout: 60_000 }, () => {
+describe("the ask and its outcomes", () => {
   beforeEach(async () => {
     s = await setup();
     s.dev.blocking.set("files.example.com", "device");
@@ -480,7 +480,7 @@ describe("the ask and its outcomes", { timeout: 60_000 }, () => {
   });
 });
 
-describe("not asked", { timeout: 60_000 }, () => {
+describe("not asked", () => {
   it("org and address layers: immediate notes and network_blocked, no ask (the org layer is the kernel's)", async () => {
     s = await setup();
     // the device calls api.foo.com `device`: the org does not allow it, so it is `org`
@@ -552,7 +552,7 @@ describe("not asked", { timeout: 60_000 }, () => {
   });
 });
 
-describe("sub-agents and unattended runs", { timeout: 90_000 }, () => {
+describe("sub-agents and unattended runs", () => {
   it("a sub-agent's ask surfaces in the root (subagent_waiting); deciding resumes the child", async () => {
     s = await setup({}, ["Agent", "Bash"]);
     s.dev.blocking.set("files.example.com", "device");

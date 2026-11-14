@@ -6,10 +6,11 @@ import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { audit } from "../../src/identity/audit.js";
 import type { OperationContext } from "../../src/platform/operation.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
-import { accountsFor } from "../helpers/identity.js";
+import { accountsFor, apiTokensFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createAgent,
@@ -44,9 +45,12 @@ let root: Req;
 let rootId: string;
 /** O, owner of org A. */
 let owner: Req;
+let ownerId: string;
 let memberId: string;
 let orgA: string;
 let orgB: string;
+/** A service token of org A (an admin token that is not a super admin). */
+let serviceToken: string;
 /** A private agent of O in A, and an org agent of the owner of B. */
 let agentA: string;
 let agentB: string;
@@ -71,7 +75,7 @@ beforeAll(async () => {
       superAdmin: true,
     })
   ).id;
-  await accounts.createLocal({ login: "owner", password: PW, displayName: "Owner" });
+  ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "Owner" })).id;
   await accounts.createLocal({ login: "bowner", password: PW, displayName: "B Owner" });
   memberId = (await accounts.createLocal({ login: "mem", password: PW, displayName: "Mem" })).id;
   root = await session(k, "root");
@@ -81,6 +85,13 @@ beforeAll(async () => {
   orgB = await createOrg(bOwner, "Beta");
   await enableConnectorExtensions(k, orgA);
   await enableConnectorExtensions(k, orgB);
+  serviceToken = (
+    await apiTokensFor(db).createService(orgA, {
+      name: "svc",
+      role: "admin",
+      createdBy: ownerId,
+    })
+  ).token;
   await sql`INSERT INTO capybara.memberships (org_id, account_id, role)
     VALUES (${orgA}, ${memberId}, 'member')`.execute(raw);
 
@@ -138,7 +149,7 @@ beforeAll(async () => {
     endpoint: { server: "open" },
     auth: { type: "none" },
   });
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -524,5 +535,78 @@ describe("Platform operations", () => {
     expect((await root({ method: "GET", url: `/api/v1/admin/agents/${agentB}` })).statusCode).toBe(
       200,
     );
+  });
+});
+
+interface Page {
+  events: { id: string; target: string; action: string; [k: string]: unknown }[];
+  next: string | null;
+}
+
+describe("GET /api/v1/admin/audit", () => {
+  beforeAll(async () => {
+    await db.deleteFrom("audit_events").execute();
+    for (let i = 0; i < 25; i++) {
+      await audit(db, {
+        actorAccountId: rootId,
+        action: "deployment.settings.updated",
+        target: `t-${i}`,
+        detail: { secretField: "never-shown" },
+      });
+    }
+    await audit(db, { actorAccountId: rootId, orgId: orgA, action: "org.renamed" });
+  });
+
+  it("pages platform events newest first: 20 by default, then after=next", async () => {
+    const r = await root({ method: "GET", url: "/api/v1/admin/audit" });
+    expect(r.statusCode, r.body).toBe(200);
+    const first = r.json() as Page;
+    expect(first.events).toHaveLength(20);
+    expect(first.events[0]?.target).toBe("t-24");
+    expect(first.next).toBe(first.events[19]?.id);
+    const r2 = await root({
+      method: "GET",
+      url: `/api/v1/admin/audit?after=${first.next}&limit=100`,
+    });
+    const second = r2.json() as Page;
+    expect(second.events.map((e) => e.target)).toEqual(["t-4", "t-3", "t-2", "t-1", "t-0"]);
+    expect(second.next).toBeNull();
+    // no org event, no detail
+    expect([...first.events, ...second.events].some((e) => e.action === "org.renamed")).toBe(false);
+    expect(r.body + r2.body).not.toContain("never-shown");
+    expect(Object.keys(first.events[0] ?? {}).sort()).toEqual([
+      "action",
+      "actor",
+      "at",
+      "id",
+      "target",
+      "viaAgent",
+      "viaToken",
+    ]);
+  });
+
+  it("refuses bad limit and after values", async () => {
+    for (const q of [
+      "limit=0",
+      "limit=101",
+      "after=abc",
+      "after=-1",
+      "after=99999999999999999999",
+      "after=9999999999999999999",
+    ]) {
+      const r = await root({ method: "GET", url: `/api/v1/admin/audit?${q}` });
+      expect(r.statusCode, q).toBe(400);
+      expect((r.json() as { error: { code: string } }).error.code, q).toBe("validation_failed");
+    }
+  });
+
+  it("is for super admins only: an org owner and a service token get 403", async () => {
+    expect((await owner({ method: "GET", url: "/api/v1/admin/audit" })).statusCode).toBe(403);
+    const svc = await k.http.inject({
+      method: "GET",
+      url: "/api/v1/admin/audit",
+      headers: { authorization: `Bearer ${serviceToken}` },
+    });
+    expect(svc.statusCode).toBe(403);
   });
 });

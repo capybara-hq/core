@@ -18,7 +18,7 @@ let svc: AgentSkillsService;
 beforeAll(async () => {
   env = await startOrgEnv();
   svc = env.k.app.get(AgentSkillsService);
-}, 240_000);
+});
 
 afterAll(async () => {
   await env?.stop();

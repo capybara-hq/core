@@ -60,7 +60,7 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
   redis = new Redis(rd.url);
-}, 120_000);
+});
 afterAll(async () => {
   await k?.close();
   redis?.disconnect();

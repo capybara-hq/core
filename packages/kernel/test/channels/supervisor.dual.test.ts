@@ -39,7 +39,7 @@ const cleanups: (() => Promise<unknown> | unknown)[] = [];
 beforeAll(async () => {
   [pgc, rdc] = await Promise.all([startTestPostgres(), startTestRedis()]);
   im = await startFakeChannelServer();
-}, 120_000);
+});
 
 afterEach(async () => {
   for (const c of cleanups.splice(0).reverse()) await c();
@@ -181,5 +181,5 @@ describe("渠道长连接选主（双副本）", () => {
     const threadRows = await sql`SELECT 1 FROM capybara.channel_threads
       WHERE connection_id = ${connId}`.execute(raw);
     expect(threadRows.rows).toHaveLength(1);
-  }, 120_000);
+  });
 });

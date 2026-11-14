@@ -90,13 +90,13 @@ beforeAll(async () => {
   await sql`insert into capybara.plugin_directory_sources (plugin, item_id)
     values ('alpha', ${ITEM})`.execute(db);
   await migrate(pg.url, { schema: "capybara", dir: upTo });
-}, 120_000);
+});
 
 afterAll(async () => {
   await db?.destroy();
   await pg?.stop();
   for (const dir of [before, upTo]) if (dir) rmSync(dir, { recursive: true, force: true });
-}, 120_000);
+});
 
 describe("0041 plugins -> extensions", () => {
   it("renames the nine tables and keeps their rows", async () => {

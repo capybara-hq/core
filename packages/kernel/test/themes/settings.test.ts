@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { sql } from "kysely";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { PlatformOperations } from "../../src/platform/registry.js";
 import { type OrgEnv, resetOrgCatalog, setScope, startOrgEnv } from "../catalog/org-env.js";
 import {
@@ -36,7 +36,7 @@ describe("theme settings", () => {
         .where("key", "=", "uiTheme")
         .executeTakeFirst()
     )?.value;
-  }, 240_000);
+  });
 
   afterAll(async () => {
     await env?.stop();
@@ -227,17 +227,17 @@ describe("theme settings", () => {
           .execute();
         setter = adminSettings({ uiTheme: { id: on } });
         // wait until the setter is blocked on the theme row this transaction holds
-        let blocked = false;
-        for (let i = 0; i < 400 && !blocked; i++) {
-          const w = await sql<{ n: number }>`
+        await vi.waitFor(
+          async () => {
+            const w = await sql<{ n: number }>`
             SELECT count(*)::int AS n FROM pg_stat_activity
             WHERE wait_event_type = 'Lock' AND query ILIKE '%platform_themes%for share%'`.execute(
-            env.db,
-          );
-          blocked = (w.rows[0]?.n ?? 0) > 0;
-          if (!blocked) await new Promise((r) => setTimeout(r, 25));
-        }
-        expect(blocked).toBe(true);
+              env.db,
+            );
+            expect(w.rows[0]?.n ?? 0).toBeGreaterThan(0);
+          },
+          { timeout: 10_000 },
+        );
         await trx
           .selectFrom("deployment_settings")
           .select("key")

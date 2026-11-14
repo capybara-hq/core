@@ -59,7 +59,7 @@ beforeAll(async () => {
       },
     ),
   );
-}, 120_000);
+});
 afterAll(async () => {
   await k?.close();
   redis?.disconnect();
@@ -95,7 +95,7 @@ const selectionOf = async (conv: string) =>
     }
   ).conversation.selection;
 
-describe("model and effort switching", { timeout: 60_000 }, () => {
+describe("model and effort switching", () => {
   it("a message with another model: model_switched before the message, the next run uses it", async () => {
     const conv = await createConv(owner, orgId, agentId);
     expect(await selectionOf(conv)).toEqual({ model: null, effort: null });
@@ -338,9 +338,7 @@ describe("model and effort switching", { timeout: 60_000 }, () => {
   });
 });
 
-describe("a queued message carries its model / effort pick (final review I1)", {
-  timeout: 60_000,
-}, () => {
+describe("a queued message carries its model / effort pick (final review I1)", () => {
   const enqueue = (conv: string, payload: Record<string, unknown>) =>
     seedQueued(k.app, orgId, conv, ownerId, payload as unknown as Parameters<typeof seedQueued>[4]);
 

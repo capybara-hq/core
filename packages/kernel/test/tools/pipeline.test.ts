@@ -259,7 +259,7 @@ beforeAll(async () => {
   eventLog = eventLogFor(db, createBus(redis, sub, "kernel"));
   outputs = outputsFor(db, config);
   breaker = breakerFor(redis, config);
-}, 120_000);
+});
 
 afterAll(async () => {
   await sub?.close();
@@ -1459,7 +1459,8 @@ describe("ToolPipeline.runStep", () => {
     connCall = (_n, _i, signal) =>
       new Promise((_, reject) => {
         signal.addEventListener("abort", () => reject(new Error("aborted")));
-        setTimeout(() => ac.abort(), 50);
+        // abort once the call is in flight, in the same event-loop turn (no fixed delay)
+        setImmediate(() => ac.abort());
       });
     const evs = await runCalls([{ id: "c1", name: "mcp__docs__read", input: {} }], {
       signal: ac.signal,

@@ -80,7 +80,7 @@ beforeAll(async () => {
     .id;
   orgId = await createOrg(await session(k, "owner"));
   url = `ws://127.0.0.1:${k.port}/device/connect`;
-}, 180_000);
+});
 
 afterEach(() => {
   for (const m of open.splice(0)) m.close();
@@ -267,7 +267,7 @@ describe("POST /devices/:id/policy", () => {
     const list = await d.req({ method: "GET", url: base() });
     const item = (list.json() as { items: DeviceView[] }).items.find((i) => i.id === d.deviceId);
     expect(item?.mode.recent).toHaveLength(10);
-  }, 60_000);
+  });
 
   it("another member and an org admin get 404; nothing is sent", async () => {
     const d = await owned();

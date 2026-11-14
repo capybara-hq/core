@@ -41,7 +41,7 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 3);
   db = legacyDbFor(raw);
   k = await startKernel(runConfig({ pg: pgc.url, redis: rd.url }, { roles: ["api", "worker"] }));
-}, 120_000);
+});
 afterAll(async () => {
   await k?.close();
   await raw?.destroy();
@@ -73,7 +73,7 @@ const setRunStatus = async (convId: string, status: string) => {
   );
 };
 
-describe("conversation search, activity, archived count", { timeout: 60_000 }, () => {
+describe("conversation search, activity, archived count", () => {
   it("q matches titles case-insensitively", async () => {
     const a = await createConv(owner, orgId, agentId);
     const b = await createConv(owner, orgId, agentId);

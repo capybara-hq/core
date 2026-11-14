@@ -45,7 +45,7 @@ beforeAll(async () => {
   settings = settingsFor(db);
   tokens = apiTokensFor(db);
   orgs = orgsFor(db, settings, tokens);
-}, 120_000);
+});
 afterAll(async () => {
   await raw.destroy();
   await pg.stop();

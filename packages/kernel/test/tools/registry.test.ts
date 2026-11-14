@@ -85,7 +85,7 @@ beforeAll(async () => {
     k.app.get(EffectiveConfigs),
     k.app.get(OrgToolSwitches),
   );
-}, 120_000);
+});
 afterAll(async () => {
   await k?.close();
   redis?.disconnect();

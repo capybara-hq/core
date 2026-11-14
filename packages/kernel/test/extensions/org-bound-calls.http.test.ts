@@ -113,7 +113,7 @@ beforeAll(async () => {
   await k.app.get(EffectiveConfigs).invalidate(orgC, "orgcalls");
   expect((await k.app.get(EffectiveConfigs).get(orgC, "orgcalls")).ok).toBe(false);
   expect((await k.app.get(EffectiveConfigs).get(orgB, "orgcalls")).ok).toBe(true);
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -238,7 +238,7 @@ describe("extension UI", () => {
   });
 });
 
-describe("tools and hooks in a run", { timeout: 60_000 }, () => {
+describe("tools and hooks in a run", () => {
   async function agentIn(orgId: string): Promise<string> {
     const res = await owner({
       method: "POST",
@@ -298,6 +298,7 @@ describe("tools and hooks in a run", { timeout: 60_000 }, () => {
       .where("org_id", "=", orgC)
       .executeTakeFirst();
     expect(audit?.detail).toMatchObject({ needsConfig: true });
+    // nothing-happened window: the denied policy hook must leave no extension call behind
     await new Promise((res) => setTimeout(res, 200));
     expect(since(from).filter((c) => c.orgId === orgC)).toEqual([]);
   });

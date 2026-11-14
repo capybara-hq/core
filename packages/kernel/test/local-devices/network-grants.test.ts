@@ -34,7 +34,7 @@ beforeAll(async () => {
     values ('o1', 'o1', 'O1'), ('o2', 'o2', 'O2')`.execute(raw);
   await sql`insert into capybara.agents (id, org_id, owner_account_id, visibility, current_version)
     values ('ag1', 'o1', 'owner', 'org', 1), ('ag2', 'o2', 'owner', 'org', 1)`.execute(raw);
-}, 120_000);
+});
 
 afterAll(async () => {
   await raw?.destroy();

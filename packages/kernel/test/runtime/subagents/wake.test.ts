@@ -239,7 +239,7 @@ beforeAll(async () => {
   });
   expect(res.statusCode, res.body).toBe(201);
   agentId = (res.json() as { agent: { id: string } }).agent.id;
-}, 180_000);
+});
 
 afterAll(async () => {
   for (const name of barriers()?.keys() ?? []) release(name);
@@ -355,7 +355,7 @@ async function noteFrom(conv: string, accountId: string): Promise<Delivery> {
   return (await deliveriesOf(conv)).find((d) => d.seq === seq) as Delivery;
 }
 
-describe("waking on sub-agent deliveries", { timeout: 90_000 }, () => {
+describe("waking on sub-agent deliveries", () => {
   it('a delivery to an idle root starts a wake run with trigger "subagent" and the child\'s trigger account', async () => {
     capture.reset();
     const conv = await dispatched("SCENARIO hold");
@@ -908,7 +908,7 @@ const treeStoppedAt = async (conv: string) =>
       .executeTakeFirstOrThrow()
   ).tree_stopped_at;
 
-describe("a person's stop of the root holds its tree", { timeout: 90_000 }, () => {
+describe("a person's stop of the root holds its tree", () => {
   it("stops the running sub-agents; no finish, before or after the stop, wakes the root; the next message's run sees them", async () => {
     capture.reset();
     const before = arrivals("root-hold");

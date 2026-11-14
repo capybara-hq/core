@@ -207,7 +207,7 @@ beforeAll(async () => {
   // the orphan test calls the run-orphan-check itself
   k.app.get(LockedIntervalScheduler).stop(RUN_ORPHAN_CHECK_JOB);
   subQueue = new Queue(SUBAGENT_RUN_QUEUE_NAME, { connection: redisClient() });
-}, 180_000);
+});
 
 afterAll(async () => {
   await subQueue?.close();
@@ -428,7 +428,7 @@ describe("stopping a sub-agent stops its descendants", () => {
     }
     // the sibling outside the stopped subtree keeps working
     expect(await runStatus(db, sibling.runId)).toBe("running");
-  }, 60_000);
+  });
 
   it("the root's owner stops a depth-2 agent with its child; anyone else gets 404", async () => {
     const { conv, t1, t2, t3, sibling } = await startTree();
@@ -471,7 +471,7 @@ describe("stopping a sub-agent stops its descendants", () => {
       url: `/api/v1/orgs/${orgId}/conversations/${t2.conversationId}`,
     });
     expect(gone.statusCode).toBe(404);
-  }, 60_000);
+  });
 
   it("a child that only has working descendants: its stop stops them", async () => {
     const conv = await createConv(owner, orgId, agentId);
@@ -508,7 +508,7 @@ describe("stopping a sub-agent stops its descendants", () => {
       409,
       "run.not_active",
     ]);
-  }, 60_000);
+  });
 
   it("a child stopped by a person mid-dispatch: its end stops the descendants it dispatched", async () => {
     const { t1, t2, t3, sibling } = await startTree();
@@ -517,7 +517,7 @@ describe("stopping a sub-agent stops its descendants", () => {
     await allStopped([t1.runId, t2.runId, t3.runId]);
     expect(await abortedBy(t3.conversationId)).toEqual([ownerId]);
     expect(await runStatus(db, sibling.runId)).toBe("running");
-  }, 60_000);
+  });
 
   it("deleting the root conversation stops the whole tree", async () => {
     const { conv, t1, t2, t3, sibling } = await startTree();
@@ -534,7 +534,7 @@ describe("stopping a sub-agent stops its descendants", () => {
       .where("conversation_id", "=", conv)
       .execute();
     expect(runs).toEqual([{ status: "completed" }]);
-  }, 60_000);
+  });
 
   it("the stop-tree job a delete owed stops the working tree of a deleted root", async () => {
     const { conv, t1, t2, t3, sibling } = await startTree();
@@ -547,7 +547,7 @@ describe("stopping a sub-agent stops its descendants", () => {
       .execute();
     await processStopTree(k.app.get(Waits), { conversationId: conv, byAccountId: null });
     await allStopped([t1.runId, t2.runId, t3.runId, sibling.runId]);
-  }, 60_000);
+  });
 });
 
 describe("a person's stop of the root stops its whole tree", () => {
@@ -603,7 +603,7 @@ describe("a person's stop of the root stops its whole tree", () => {
     expect(runs).toEqual([{ status: "aborted" }]);
     // the root run's end, seen again (a redelivered job, the failure path), finds nothing to stop
     expect(await k.app.get(Waits).stopDescendantsOfStopped(parentRun.id)).toBe(0);
-  }, 60_000);
+  });
 
   it("a root run a person stopped stops, at its end, the sub-agents only it knew of; never a later run's", async () => {
     const conv = await createConv(owner, orgId, agentId);
@@ -625,7 +625,7 @@ describe("a person's stop of the root stops its whole tree", () => {
     await childrenIn([next], {});
     expect(await k.app.get(Waits).stopDescendantsOfStopped(parentRun.id)).toBe(0);
     expect(await runStatus(db, next.runId)).toBe("running");
-  }, 60_000);
+  });
 });
 
 describe("a parent run that ends by itself leaves its background children running", () => {
@@ -657,7 +657,7 @@ describe("a parent run that ends by itself leaves its background children runnin
       .execute();
     expect(runs[0]?.status).toBe("completed");
     for (const wake of runs.slice(1)) expect(wake.budget_run_id).toBe(runs[0]?.id);
-  }, 60_000);
+  });
 
   it("the run-orphan-check's repair of the parent run leaves its child running", async () => {
     const conv = await createConv(owner, orgId, agentId);
@@ -684,7 +684,7 @@ describe("a parent run that ends by itself leaves its background children runnin
     expect(await runStatus(db, child.runId)).toBe("running");
     openBarrier("hang");
     expect((await deliveredFor(conv, [child])).get(child.conversationId)?.text).toBe("hung");
-  }, 60_000);
+  });
 });
 
 describe("stopping one sub-agent", () => {
@@ -717,7 +717,7 @@ describe("stopping one sub-agent", () => {
     }
     const cev = await eventsOf(db, hang.conversationId);
     expect(ofType(cev, "run_aborted").map((e) => e.payload.byAccountId)).toEqual([ownerId]);
-  }, 60_000);
+  });
 });
 
 describe("offboarding", () => {
@@ -732,5 +732,5 @@ describe("offboarding", () => {
     await allStopped(children.map((c) => c.runId));
     const ds = await deliveredFor(conv, children);
     expect([...ds.values()].map((d) => d.status)).toEqual(["aborted"]);
-  }, 60_000);
+  });
 });

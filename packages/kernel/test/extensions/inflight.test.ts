@@ -97,7 +97,7 @@ beforeAll(async () => {
   });
   expect(ag.statusCode, ag.body).toBe(201);
   agentId = (ag.json() as { agent: { id: string } }).agent.id;
-}, 120_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -147,7 +147,7 @@ describe("撤销时的在途工具调用", () => {
     });
     expect((await runsOf(db(), convId)).map((r) => r.status)).toEqual(["completed"]);
     await k.app.get(ExtensionHost).reload("everything");
-  }, 60_000);
+  });
 
   it("理会 signal、在时限内结束的调用：结果照常写入", async () => {
     const probe = everythingProbe();
@@ -160,7 +160,7 @@ describe("撤销时的在途工具调用", () => {
     expect(await toolResult(convId)).toMatchObject({ content: "polite done", isError: false });
     expect((await runsOf(db(), convId)).map((r) => r.status)).toEqual(["completed"]);
     await k.app.get(ExtensionHost).reload("everything");
-  }, 60_000);
+  });
 
   it("撤销后新的调用：工具不可用（不调用旧实例）", async () => {
     await k.app.get(ExtensionHost).unload("everything");
@@ -175,7 +175,7 @@ describe("撤销时的在途工具调用", () => {
     expect((await runsOf(db(), convId)).map((r) => r.status)).toEqual(["completed"]);
     expect(k.app.get(ExtensionHost).current("everything")).toBeUndefined();
     await k.app.get(ExtensionHost).reload("everything");
-  }, 60_000);
+  });
 });
 
 describe("模型供应商在流式输出途中被重新加载", () => {
@@ -203,7 +203,7 @@ describe("模型供应商在流式输出途中被重新加载", () => {
     const calls = (await eventsOf(db(), convId)).filter((e) => e.type === "model_call");
     expect(calls.map((e) => (e.payload as { attempt: number }).attempt)).toEqual([1, 2]);
     expect((await runsOf(db(), convId)).map((r) => r.status)).toEqual(["completed"]);
-  }, 60_000);
+  });
 });
 
 describe("内核侧消费方实时向注册表取", () => {
@@ -222,7 +222,7 @@ describe("内核侧消费方实时向注册表取", () => {
     await k.app.get(ExtensionHost).reload("everything");
     const back = await k.http.inject({ method: "GET", url: "/plugins/everything/hello" });
     expect(back.statusCode).toBe(200);
-  }, 30_000);
+  });
 
   it("界面贡献：撤销后列表里没有，重新加载后回来", async () => {
     const list = async () => {
@@ -235,7 +235,7 @@ describe("内核侧消费方实时向注册表取", () => {
     expect(await list()).not.toContain("everything");
     await k.app.get(ExtensionHost).reload("everything");
     expect(await list()).toContain("everything");
-  }, 30_000);
+  });
 
   it("登录源（identity-source@1）：撤销后不再列出，重新加载后回来", async () => {
     expect(
@@ -253,7 +253,7 @@ describe("内核侧消费方实时向注册表取", () => {
         .sources()
         .map((s) => s.plugin),
     ).toEqual(["fake-idp"]);
-  }, 30_000);
+  });
 
   it("通讯录（directory@1）：撤销后扫描不再投递，重新加载后恢复", async () => {
     const plugins = async () => (await k.app.get(DirectorySync).scan()).map((t) => t.plugin);
@@ -262,7 +262,7 @@ describe("内核侧消费方实时向注册表取", () => {
     expect(await plugins()).toEqual([]);
     await k.app.get(ExtensionHost).reload("dir-mini");
     expect(await plugins()).toEqual(["dir-mini"]);
-  }, 30_000);
+  });
 
   it("插件 SSE：插件实例被替换或撤销时，进行中的请求被中止、流结束", async () => {
     const open = async () => {
@@ -292,5 +292,5 @@ describe("内核侧消费方实时向注册表取", () => {
     const gone = await k.http.inject({ method: "GET", url: "/plugins/sse-hold/hold" });
     expect(gone.statusCode).toBe(503);
     await k.app.get(ExtensionHost).reload("sse-hold");
-  }, 30_000);
+  });
 });

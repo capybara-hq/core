@@ -58,7 +58,7 @@ beforeAll(async () => {
     runWorkers: false,
     log: quiet,
   };
-}, 120_000);
+});
 afterAll(async () => {
   await Promise.all(hosts.map((h) => h.close()));
   await sub?.close();

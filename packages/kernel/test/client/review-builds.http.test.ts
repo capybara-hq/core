@@ -49,7 +49,7 @@ beforeAll(async () => {
   pageSha = sha256(page);
   itemId = await importClientPlugin(env, page, PAGE);
   await enableExtensions(env.db, env.orgId, PAGE);
-}, 240_000);
+});
 
 afterAll(async () => {
   await env?.stop();

@@ -82,7 +82,7 @@ beforeAll(async () => {
     url: `/api/v1/admin/marketplaces/${marketplaceId}/refresh`,
   });
   expect(r.statusCode, r.body).toBe(200);
-}, 240_000);
+});
 
 afterAll(async () => {
   await env?.stop();
@@ -208,7 +208,7 @@ const setShown = (itemId: string, shown: boolean) =>
     .where("id", "=", itemId)
     .execute();
 
-describe("enable: member -> org admin", { timeout: 60_000 }, () => {
+describe("enable: member -> org admin", () => {
   it("an optional item that is off: the org admin approves and it is on in the org", async () => {
     const itemId = await importSkill(env);
     expect((await orgItem(env.mem, itemId))?.state).toBe("off");
@@ -295,7 +295,7 @@ describe("enable: member -> org admin", { timeout: 60_000 }, () => {
   });
 });
 
-describe("access: org admin -> super admin", { timeout: 60_000 }, () => {
+describe("access: org admin -> super admin", () => {
   it("a named item shown to others: approved, the org is on its list and the sync installs it", async () => {
     const itemId = await importSkill(env);
     await setScope(env, itemId, "named", []);
@@ -394,7 +394,7 @@ describe("access: org admin -> super admin", { timeout: 60_000 }, () => {
   });
 });
 
-describe("import: org admin -> super admin", { timeout: 90_000 }, () => {
+describe("import: org admin -> super admin", () => {
   it("org admins browse entries; approval prepares the import and the confirm resolves it", async () => {
     const entries = await env.boss({
       method: "GET",
@@ -503,7 +503,7 @@ describe("import: org admin -> super admin", { timeout: 90_000 }, () => {
   });
 });
 
-describe("hidden items stay unknown to unlisted orgs", { timeout: 120_000 }, () => {
+describe("hidden items stay unknown to unlisted orgs", () => {
   it("entries of a hidden item read as not imported; an import request for it is accepted and approval grants access", async () => {
     const itemId = await adminImport("1.0.0");
     await setScope(env, itemId, "named", []);
@@ -598,7 +598,7 @@ describe("hidden items stay unknown to unlisted orgs", { timeout: 120_000 }, () 
   });
 });
 
-describe("concurrency", { timeout: 60_000 }, () => {
+describe("concurrency", () => {
   it("two requests at once: one pending, the other 409", async () => {
     const itemId = await importSkill(env);
     const [a, b] = await Promise.all([

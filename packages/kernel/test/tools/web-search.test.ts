@@ -70,7 +70,7 @@ beforeAll(async () => {
       },
     ),
   );
-}, 180_000);
+});
 afterAll(async () => {
   await k?.close();
   await raw?.destroy();
@@ -283,7 +283,7 @@ describe("WebSearch: result", () => {
   });
 });
 
-describe("WebSearch: provider errors", { timeout: 90_000 }, () => {
+describe("WebSearch: provider errors", () => {
   it("maps each WebProviderError kind to a fixed text; anything else is rethrown", () => {
     const err = (kind: string) => Object.assign(new Error("x"), { name: "WebProviderError", kind });
     const msg = (e: unknown, t: "search" | "fetch") => {
@@ -360,7 +360,7 @@ describe("WebSearch: provider errors", { timeout: 90_000 }, () => {
   });
 });
 
-describe("WebSearch: approval", { timeout: 90_000 }, () => {
+describe("WebSearch: approval", () => {
   it("asks on the first call; a session grant covers this conversation only", async () => {
     await enable(orgId, "fake-web");
     const agentId = await createWebAgent();
@@ -387,7 +387,7 @@ describe("WebSearch: approval", { timeout: 90_000 }, () => {
   });
 });
 
-describe("WebSearch: availability", { timeout: 90_000 }, () => {
+describe("WebSearch: availability", () => {
   it("no provider / ambiguous → unavailable with the exact reason", async () => {
     const t = tool();
     expect(await t.unavailable?.({ orgId })).toBe(NONE_REASON);

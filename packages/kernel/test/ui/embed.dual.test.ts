@@ -33,7 +33,7 @@ const cleanups: (() => Promise<unknown> | unknown)[] = [];
 
 beforeAll(async () => {
   [pgc, rdc] = await Promise.all([startTestPostgres(), startTestRedis()]);
-}, 120_000);
+});
 afterEach(async () => {
   for (const c of cleanups.splice(0).reverse()) await c();
   await h?.stop();
@@ -203,5 +203,5 @@ describe("嵌入应用（双副本）", () => {
     expect(await subscribed()).toBeGreaterThan(0);
     stream.close();
     await waitFor(async () => ((await subscribed()) === 0 ? true : undefined), 10_000);
-  }, 120_000);
+  });
 });

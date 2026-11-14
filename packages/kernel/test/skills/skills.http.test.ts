@@ -68,7 +68,7 @@ beforeAll(async () => {
       },
     ),
   );
-}, 180_000);
+});
 afterAll(async () => {
   await k?.close();
   await destroyDb?.();
@@ -152,7 +152,7 @@ interface Uploaded {
   created: boolean;
 }
 
-describe("上传技能包", { timeout: 60_000 }, () => {
+describe("上传技能包", () => {
   it("新技能 → 版本 1；对象写在 kernel/<orgId>/skills/<uploadId>/；同名再传 → 版本 2", async () => {
     const zip1 = zipOf("pdf-tools", { "scripts/run.py": "print(1)\n" });
     const up1 = await uploadZip(admin, zip1);
@@ -323,7 +323,7 @@ describe("上传技能包", { timeout: 60_000 }, () => {
   });
 });
 
-describe("权限", { timeout: 30_000 }, () => {
+describe("权限", () => {
   it("非 admin 上传 / 创建 / 删除组织技能 → 403；成员可读；未登录 401", async () => {
     const r = await member({
       method: "POST",
@@ -376,7 +376,7 @@ describe("权限", { timeout: 30_000 }, () => {
   });
 });
 
-describe("删除与 agent 引用", { timeout: 60_000 }, () => {
+describe("删除与 agent 引用", () => {
   async function skill(name: string): Promise<string> {
     const r = await createSkill(admin, await uploadZip(admin, zipOf(name)));
     expect(r.statusCode, r.body).toBe(201);
@@ -581,7 +581,7 @@ describe("删除与 agent 引用", { timeout: 60_000 }, () => {
   });
 });
 
-describe("skill list fields (phase B)", { timeout: 60_000 }, () => {
+describe("skill list fields (phase B)", () => {
   it("GET skills returns plugin, sourceFormat, builtin, manual, fork and no pinning fields; an uploaded skill has plugin null and capybara", async () => {
     const up = await uploadZip(admin, zipOf("pdf-tools"));
     expect((await createSkill(admin, up)).statusCode).toBe(201);
@@ -648,7 +648,7 @@ describe("skill list fields (phase B)", { timeout: 60_000 }, () => {
   });
 });
 
-describe("清理", { timeout: 60_000 }, () => {
+describe("清理", () => {
   it("过期未用掉的技能包：删 zip 与已写的文件；用掉的：删 zip、保留版本引用的文件", async () => {
     const store = k.app.get(StorageService).kernel(orgId);
     // 用掉的

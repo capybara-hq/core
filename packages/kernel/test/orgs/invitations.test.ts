@@ -63,7 +63,7 @@ beforeAll(async () => {
   members = testMembers(db);
   inv = invitationsFor(db, accounts, members);
   inv2 = invitationsFor(db2, accountsFor(db2), testMembers(db2));
-}, 120_000);
+});
 afterAll(async () => {
   await raw.destroy();
   await raw2.destroy();
@@ -360,17 +360,17 @@ describe("InvitationsService.accept", () => {
         codeOf(inv.accept(token, { accountId: B.id })),
         codeOf(inv2.accept(token, { accountId: C.id })),
       ]);
-      const deadline = Date.now() + 4_000;
-      for (;;) {
-        const { rows } = await watcher.query<{ n: string }>(
-          `SELECT count(*) AS n FROM pg_stat_activity
-           WHERE wait_event_type = 'Lock' AND query ILIKE '%"orgs"%for no key update%'
-             AND datname = current_database()`,
-        );
-        if (Number(rows[0]?.n) >= 2) break;
-        if (Date.now() > deadline) throw new Error("accepts did not both block on the org lock");
-        await new Promise((r) => setTimeout(r, 20));
-      }
+      await vi.waitFor(
+        async () => {
+          const { rows } = await watcher.query<{ n: string }>(
+            `SELECT count(*) AS n FROM pg_stat_activity
+             WHERE wait_event_type = 'Lock' AND query ILIKE '%"orgs"%for no key update%'
+               AND datname = current_database()`,
+          );
+          expect(Number(rows[0]?.n)).toBeGreaterThanOrEqual(2);
+        },
+        { timeout: 4_000 },
+      );
       // 两者都已过分类阶段，此时邀请仍未被占用
       expect(await statusOf(invitation.id)).toBe("pending");
       await holder.query("COMMIT");

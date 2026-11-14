@@ -4,7 +4,7 @@ import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { KernelConfig } from "../../src/config/schema.js";
-import { EventLog } from "../../src/conversations/event-log.js";
+import { conversationTopic, EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
@@ -142,7 +142,7 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
   redis = new Redis(rd.url);
-}, 120_000);
+});
 afterAll(async () => {
   await api?.close();
   redis?.disconnect();
@@ -394,44 +394,57 @@ describe.each(LOOPS)("RunWorker（%s）", (_name, loopFactory) => {
     }
     // B 在 A 的第二轮开始之前就开始了
     expect(startedB.createdAt.getTime()).toBeLessThan((spans[1] as [number, number])[0]);
-  }, 40_000);
+  });
 
   it("中止（跨副本）：运行在 worker 实例上，在 api 实例上 abort → 1s 内结束，保存已流出的部分，不再调用模型", async () => {
     await worker();
     const { orgId, convId } = await setup();
-    await postMessage(req, orgId, convId, `slow:100:${"abcd".repeat(100)}`);
-    await waitForEvent(db, convId, (e) => e.type === "model_call");
-    await sleep(350);
-    const t0 = Date.now();
-    const res = await req({
-      method: "POST",
-      url: `/api/v1/orgs/${orgId}/conversations/${convId}/abort`,
+    // the first published text delta is the marker that the stream is under way before the abort
+    const listener = new Redis(rd.url);
+    const deltas: string[] = [];
+    listener.on("message", (_channel: string, message: string) => {
+      const m = JSON.parse(message) as { kind: string; delta: string; text?: string };
+      if (m.kind === "delta" && m.delta === "text") deltas.push(m.text ?? "");
     });
-    expect(res.statusCode).toBe(202);
-    const { runId } = res.json() as { runId: string };
-    const aborted = await waitForEvent(db, convId, (e) => e.type === "run_aborted", 10_000);
-    // The run would otherwise keep streaming for ~40 s; 5 s leaves room for CI load.
-    expect(Date.now() - t0).toBeLessThan(5_000);
-    expect(aborted.runId).toBe(runId);
-    expect(aborted.payload).toEqual({ byAccountId: ownerId, reason: "user" });
-    await sleep(500);
-    const evs = await eventsOf(db, convId);
-    const msg = evs.find((e) => e.type === "assistant_message") as ConversationEvent & {
-      type: "assistant_message";
-    };
-    expect(msg.payload.stopReason).toBe("aborted");
-    expect(textOf(msg).length).toBeGreaterThan(0);
-    expect(textOf(msg).length).toBeLessThan(400);
-    expect(evs.filter((e) => e.type === "model_call" && e.seq > aborted.seq)).toEqual([]);
-    expect(evs.filter((e) => e.type === "model_call")).toHaveLength(1);
-    expect(await runsOf(db, convId)).toEqual([{ id: runId, status: "aborted" }]);
-    expect(await consumedSeq(db, convId)).toBe(1);
-    // 没有活跃运行时再 abort → 409
-    const again = await req({
-      method: "POST",
-      url: `/api/v1/orgs/${orgId}/conversations/${convId}/abort`,
-    });
-    expect(again.statusCode).toBe(409);
+    try {
+      // the bus channel prefix, as in langgraph-loop.test.ts
+      await listener.subscribe(`cap:kernel:${conversationTopic(convId)}`);
+      await postMessage(req, orgId, convId, `slow:100:${"abcd".repeat(100)}`);
+      await waitForEvent(db, convId, (e) => e.type === "model_call");
+      await waitFor(async () => deltas.length > 0, 10_000, "the first text delta");
+      const t0 = Date.now();
+      const res = await req({
+        method: "POST",
+        url: `/api/v1/orgs/${orgId}/conversations/${convId}/abort`,
+      });
+      expect(res.statusCode).toBe(202);
+      const { runId } = res.json() as { runId: string };
+      const aborted = await waitForEvent(db, convId, (e) => e.type === "run_aborted", 10_000);
+      // The run would otherwise keep streaming for ~40 s; 5 s leaves room for CI load.
+      expect(Date.now() - t0).toBeLessThan(5_000);
+      expect(aborted.runId).toBe(runId);
+      expect(aborted.payload).toEqual({ byAccountId: ownerId, reason: "user" });
+      await sleep(500);
+      const evs = await eventsOf(db, convId);
+      const msg = evs.find((e) => e.type === "assistant_message") as ConversationEvent & {
+        type: "assistant_message";
+      };
+      expect(msg.payload.stopReason).toBe("aborted");
+      expect(textOf(msg).length).toBeGreaterThan(0);
+      expect(textOf(msg).length).toBeLessThan(400);
+      expect(evs.filter((e) => e.type === "model_call" && e.seq > aborted.seq)).toEqual([]);
+      expect(evs.filter((e) => e.type === "model_call")).toHaveLength(1);
+      expect(await runsOf(db, convId)).toEqual([{ id: runId, status: "aborted" }]);
+      expect(await consumedSeq(db, convId)).toBe(1);
+      // 没有活跃运行时再 abort → 409
+      const again = await req({
+        method: "POST",
+        url: `/api/v1/orgs/${orgId}/conversations/${convId}/abort`,
+      });
+      expect(again.statusCode).toBe(409);
+    } finally {
+      listener.disconnect();
+    }
   });
 
   it("超时：maxRunSeconds 1 + slow:500 长输出 → run_finished reason max_duration", async () => {
@@ -472,7 +485,7 @@ describe.each(LOOPS)("RunWorker（%s）", (_name, loopFactory) => {
         .map(textOf)
         .at(-1),
     ).toBe("You said: hello");
-  }, 90_000);
+  });
 
   it("步数上限：每步都返回工具调用且 maxSteps 3 → runFinalWrapUp，reason max_steps", async () => {
     await worker({ maxSteps: 3 });
@@ -538,7 +551,11 @@ describe.each(LOOPS)("RunWorker（%s）", (_name, loopFactory) => {
     expect(t?.type).toBe("run_failed");
     expect(t?.payload).toMatchObject({ error: { code: "model.auth" } });
     // 失败也推进 consumed_seq：不会对同一条消息无限重试
-    await sleep(300);
+    await waitFor(
+      async () => (await redis.exists(`capk:conv-run:${convId}`)) === 0,
+      5_000,
+      "the run lock released",
+    );
     expect((await runsOf(db, convId)).map((r) => r.status)).toEqual(["failed"]);
     expect(await consumedSeq(db, convId)).toBe(1);
     expect(await redis.exists(`capk:conv-run:${convId}`)).toBe(0);
@@ -558,7 +575,6 @@ describe.each(LOOPS)("RunWorker（%s）", (_name, loopFactory) => {
     expect(await runsOf(db, convId)).toHaveLength(1);
     await worker();
     await waitForTerminal(db, convId);
-    await sleep(300);
     expect(await runsOf(db, convId)).toMatchObject([{ status: "completed" }]);
     await waitFor(async () => (await redis.exists(`capk:conv-run:${convId}`)) === 0, 2_000);
   });
@@ -617,7 +633,7 @@ describe.each(LOOPS)("RunWorker（%s）", (_name, loopFactory) => {
     } finally {
       delete looperState().beforeComplete;
     }
-  }, 30_000);
+  });
 
   it("loop 在吸收消息前抛错 → run_failed，consumed_seq 推进到触发消息，之后的新消息正常运行（会话不卡住）", async () => {
     let throwNext = true;
@@ -643,7 +659,7 @@ describe.each(LOOPS)("RunWorker（%s）", (_name, loopFactory) => {
     const [t] = await waitForTerminal(db, convId);
     expect(t?.type).toBe("run_failed");
     expect(t?.payload).toMatchObject({ error: { code: "run.test" } });
-    await sleep(300);
+    await waitFor(async () => (await consumedSeq(db, convId)) === first, 5_000, "consumed_seq");
     expect(await consumedSeq(db, convId)).toBe(first);
     expect((await runsOf(db, convId)).map((r) => r.status)).toEqual(["failed"]);
 

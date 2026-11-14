@@ -96,7 +96,7 @@ beforeAll(async () => {
   await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
   await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
   req = await session(api, "owner");
-}, 180_000);
+});
 
 afterAll(async () => {
   pg.Client.prototype.query = pgQuery;
@@ -142,5 +142,5 @@ describe("message → run job added", () => {
       "insert",
       "select",
     ]);
-  }, 60_000);
+  });
 });

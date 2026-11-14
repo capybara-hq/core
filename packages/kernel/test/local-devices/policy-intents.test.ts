@@ -122,7 +122,7 @@ beforeAll(async () => {
     .id;
   orgId = await createOrg(await session(k, "owner"));
   url = `ws://127.0.0.1:${k.port}/device/connect`;
-}, 180_000);
+});
 
 afterEach(() => {
   crashNext = false;
@@ -544,7 +544,7 @@ describe("device policy intents", () => {
       "device.policy_failed",
     ]);
     expect(audits[2]?.detail).toMatchObject({ opId, reason: "not_received" });
-  }, 60_000);
+  });
 
   it("a device without policyOpId is unsupported and sent nothing", async () => {
     const d = await device();
@@ -647,7 +647,7 @@ describe("device policy intents", () => {
       ]);
       expect(policyReqs(machine)).toHaveLength(1);
     }
-  }, 60_000);
+  });
 
   it("an op the machine logged only as started is judged by the policy it reports, past the window", async () => {
     // written before it stopped: applied (by the resolver's policyStatus, then by a hello)
@@ -703,7 +703,7 @@ describe("device policy intents", () => {
       action: "device.policy_failed",
       detail: expect.objectContaining({ opId: op2, reason: "interrupted" }),
     });
-  }, 90_000);
+  });
 
   it("a hello's refusal keeps the machine's message; an op reported meanwhile is not turned unknown", async () => {
     const d = await device();

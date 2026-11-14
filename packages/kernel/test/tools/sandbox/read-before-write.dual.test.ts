@@ -48,7 +48,7 @@ beforeAll(async () => {
   [pgc, rdc] = await Promise.all([startTestPostgres(), startTestRedis()]);
   root = await mkdtemp(join(tmpdir(), "cap-rbw-dual-"));
   raw = createDb(pgc.url, 2);
-}, 120_000);
+});
 
 afterAll(async () => {
   for (const k of kernels) await k.close();
@@ -57,7 +57,7 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rdc?.stop()]);
 });
 
-describe("read before write (two replicas)", { timeout: 90_000 }, () => {
+describe("read before write (two replicas)", () => {
   it("the decision uses only PG: Read on A lets B edit; a change through B is caught on A", async () => {
     const [a, b] = await Promise.all([startKernel(cfg()), startKernel(cfg())]);
     kernels.push(a, b);

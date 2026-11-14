@@ -1,7 +1,7 @@
 import type { ChannelWebhookRequest, InboundEvent } from "@capybara-hq/plugin-sdk";
 import { fakeDm, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type ChannelInbound,
   DEDUPE_DONE,
@@ -63,19 +63,17 @@ function track<T>(p: Promise<T>) {
 const tick = () => new Promise((r) => setTimeout(r, 30));
 /** Polls until a tracked promise settled (a fixed wait races the Redis round trips after it). */
 const waitSettled = async (state: { settled: boolean }) => {
-  for (let i = 0; i < 100 && !state.settled; i++) await tick();
-  expect(state.settled).toBe(true);
+  await vi.waitFor(() => expect(state.settled).toBe(true), { timeout: 3_000 });
 };
 
 const waitCalls = async (q: ReturnType<typeof manualQueue>, n: number) => {
-  for (let i = 0; i < 100 && q.calls.length < n; i++) await tick();
-  expect(q.calls).toHaveLength(n);
+  await vi.waitFor(() => expect(q.calls).toHaveLength(n), { timeout: 3_000 });
 };
 
 beforeAll(async () => {
   rd = await startTestRedis();
   redis = new Redis(rd.url);
-}, 120_000);
+});
 
 afterAll(async () => {
   redis?.disconnect();

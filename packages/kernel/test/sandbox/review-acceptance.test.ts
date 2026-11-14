@@ -193,7 +193,7 @@ beforeAll(async () => {
   await new Promise<void>((resolve) => versionServer.listen(0, "127.0.0.1", resolve));
   const address = versionServer.address();
   versionUrl = `http://127.0.0.1:${typeof address === "object" && address !== null ? address.port : 0}/version`;
-}, 180_000);
+});
 
 afterAll(async () => {
   await new Promise<void>((resolve) => versionServer?.close(() => resolve()));
@@ -252,7 +252,7 @@ async function callIn(
   return (await results(conv)).at(-1) as ToolResult;
 }
 
-describe("acceptance: auto mode on a real kernel", { timeout: 120_000 }, () => {
+describe("acceptance: auto mode on a real kernel", () => {
   it("scenario 1: cloning a repository with protected files succeeds in auto mode and is allowed", async () => {
     const conv = await createConv(owner, orgAuto, agentAuto);
     const cloned = await call(
