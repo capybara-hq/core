@@ -9,7 +9,7 @@ export default defineExtension({
   version: "0.0.0",
   sdk: "^0.1.0-rc.0",
   provides: [],
-  permissions: { http: [{ method: "GET", path: "/ok" }] },
+  permissions: { http: [{ method: "GET", path: "/ok", access: "public" }] },
   setup(ctx) {
     ctx.http.route("GET", "/ok", async () => Response.json({}));
     ctx.http.route("POST", "/ok", async () => Response.json({})); // FLAG

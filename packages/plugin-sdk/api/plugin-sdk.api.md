@@ -1191,7 +1191,7 @@ export interface ExtensionContext {
         on<K extends AvailableHook>(mount: K, handler: HookHandler<K>, opts: HookOptions): void;
     };
     http: {
-        route(method: "GET" | "POST" | "PUT" | "DELETE", path: string, handler: (req: Request) => Promise<Response>): void;
+        route(method: "GET" | "POST" | "PUT" | "DELETE", path: string, handler: (req: Request, caller: RouteCaller) => Promise<Response>): void;
     };
     kv: {
         get(key: string): Promise<string | null>;
@@ -1314,11 +1314,7 @@ export class ExtensionPermissionError extends Error {
 export interface ExtensionPermissions {
     client?: boolean;
     hooks?: HookMountPoint[];
-    http?: {
-        method: "GET" | "POST" | "PUT" | "DELETE";
-        path: string;
-        public?: boolean;
-    }[];
+    http?: HttpPermission[];
     models?: {
         purpose: string;
         kind: "chat" | "embedding";
@@ -1597,6 +1593,19 @@ export const HOST_PROVIDED_PACKAGES: readonly ["@capybara-hq/plugin-sdk", "zod"]
 
 // @public
 export function hostSdkProblem(sdk: string, hostSdkVersion: string): string | undefined;
+
+// @public
+export const HTTP_ACCESS: readonly ["public", "embed", "member", "admin"];
+
+// @public
+export type HttpAccess = (typeof HTTP_ACCESS)[number];
+
+// @public
+export interface HttpPermission {
+    access: HttpAccess;
+    method: "GET" | "POST" | "PUT" | "DELETE";
+    path: string;
+}
 
 // @public
 export const IDENTITY_SOURCE_EXTENSION_POINT = "identity-source@1";
@@ -2635,6 +2644,32 @@ export function resolveUiSlots(ui: readonly UiContribution[] | undefined): {
 
 // @public
 export function rootsOf(h: SandboxHandle): SandboxRoots;
+
+// @public
+export type RouteCaller = {
+    access: "public";
+} | {
+    access: "embed";
+    scope: "org";
+    orgId: string;
+    accountId: string;
+    role: UiRole;
+    contribution: string;
+    conversationId?: string;
+    config: unknown;
+} | {
+    access: "embed";
+    scope: "platform";
+    accountId: string;
+    role: "superAdmin";
+    contribution: string;
+} | {
+    access: "member" | "admin";
+    orgId: string;
+    accountId: string;
+    role: UiRole;
+    config: unknown;
+};
 
 // @public
 export const SANDBOX_EXTENSION_POINT = "sandbox@2";

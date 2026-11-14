@@ -119,6 +119,21 @@ export default defineExtension({
 });
 `;
 
+/** A route declared without `access`: `check` must fail on it. */
+const NO_ACCESS_ROUTE = `import { defineExtension } from "@capybara-hq/plugin-sdk";
+
+export default defineExtension({
+  name: "solo",
+  version: "0.1.0",
+  sdk: "^0.1.0-rc.0",
+  provides: [],
+  permissions: { http: [{ method: "GET", path: "/ping" }] },
+  setup(ctx) {
+    ctx.http.route("GET", "/ping", async () => Response.json({}));
+  },
+});
+`;
+
 let work: string;
 /** A plugin repository that is just one plugin: no plugins/ directory, no workspace. */
 let solo: string;
@@ -209,6 +224,15 @@ describe("capybara-plugin check outside this repository", () => {
       expect(r.out).toContain(` ${rule} `);
     }
     for (const name of CHECKS) expect(r.out).not.toContain(`[${name}] passed`);
+  }, 120_000);
+
+  it("fails check on a route that declares no access", () => {
+    const noAccess = join(work, "no-access");
+    writePlugin(noAccess, NO_ACCESS_ROUTE);
+    const r = cli(work, "check", "--root", "no-access");
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("permissions.http entries need method");
+    expect(r.out).toContain("access public/embed/member/admin");
   }, 120_000);
 
   it("finds plugins/* in a multi-plugin repository, or the ones --plugins names", () => {

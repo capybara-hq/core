@@ -1,6 +1,7 @@
 import type { Kysely } from "kysely";
 import type { ExtensionPointRef } from "./extension-point.js";
 import type { AvailableHook, HookHandler, HookOptions } from "./hooks.js";
+import type { RouteCaller } from "./http-access.js";
 import type { ModelEmbeddingInfo, ModelKind } from "./model.js";
 import type { SetupCheckDefinition } from "./setup-check.js";
 import type { ObjectHead, PresignedUpload, PresignGetOptions } from "./storage.js";
@@ -150,11 +151,15 @@ export interface ExtensionContext {
   // biome-ignore lint/suspicious/noExplicitAny: 插件自带表结构，内核无法静态得知
   db: Kysely<any>;
   http: {
-    /** 实际挂载到 `/plugins/<name><path>`。 */
+    /**
+     * Mounted at `/plugins/<name><path>` (`public`, `embed`) or `/plugins/<name>/orgs/:orgId<path>`
+     * (`member`, `admin`), as `permissions.http` declares. The kernel enforces the access before
+     * the handler runs and passes the resolved caller; trust only `caller`.
+     */
     route(
       method: "GET" | "POST" | "PUT" | "DELETE",
       path: string,
-      handler: (req: Request) => Promise<Response>,
+      handler: (req: Request, caller: RouteCaller) => Promise<Response>,
     ): void;
   };
   tools: {

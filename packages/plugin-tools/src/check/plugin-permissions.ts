@@ -311,7 +311,7 @@ function scanSetup(
             add(
               n,
               "perm-http",
-              `Route "${verb} ${path}" is not declared; add it to permissions.http in the extension manifest`,
+              `Route "${verb} ${path}" is not declared; add it to permissions.http ({ method, path, access }) in the extension manifest`,
             );
           }
         } else if (area === "tools" && method === "register") {
