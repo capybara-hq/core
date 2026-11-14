@@ -21,9 +21,13 @@
  * LESSOPEN and similar interpreter hooks on non-git programs are not inspected; tar still needs
  * `-c` before `-f` for the archive target; and variable state is tracked linearly across `&&` /
  * `||`. The standard credential producers (`env`, `printenv`, `set`, `export -p`, `declare -x`,
- * `gh auth token`, `git credential fill`) ask when printed and are denied when piped into a network
- * command, but a secret the environment already handed to a variable, printed by any other command
- * (`echo $TOKEN | curl …`) or by a program the table does not know, is not tracked.
+ * `gh auth token`, `gh auth status --show-token`, `git credential fill`, `ps e` / `ps -E`,
+ * `launchctl getenv`) ask when printed and are denied when piped into a network command, and
+ * `/proc/<pid>/environ` is a secret path (its glob form too). Two gaps stay open: a secret the
+ * environment already handed to a variable and that another command or an unknown program prints
+ * (`echo $TOKEN | curl …`) is not tracked; and config-value inspection is shallow — `git config
+ * --get` / `--get-all` (including `http.extraheader`), `git config --list`, and `npm` / `pnpm` /
+ * `yarn` / `pip config get` / `config list` can print a token and are not classified as producers.
  */
 import type {
   ParsedCommand,
@@ -1001,7 +1005,11 @@ const SECRET_HOME_PATHS = [
   "~/.config/gh/hosts.yml",
 ];
 
+/** A path under `/proc` naming a process's environment (and its glob form): a secret dump. */
+const PROC_ENVIRON = /^\/proc\/(?:self|thread-self|[^/]+)(?:\/task\/[^/]+)?\/environ[^/]*$/;
+
 function isSecretPath(path: string, facts: ResolvedFacts): boolean {
+  if (PROC_ENVIRON.test(path)) return true;
   const t = tildeForm(path, facts);
   if (SECRET_HOME_PATHS.some((secret) => t === secret || t.startsWith(`${secret}/`))) return true;
   const base = baseName(path);
@@ -2246,6 +2254,8 @@ function isUnresolvedSecretWord(
     const name = candidate.replace(/^\$\{?/, "").replace(/\}$/, "");
     return command.vars === undefined || !command.vars.has(name);
   }
+  // `/proc/$PID/environ` names the same environment dump as the literal path.
+  if (candidate.startsWith("/proc/") && /\/environ[^/]*$/.test(candidate)) return true;
   return SECRET_LOOKING.test(candidate) || /^(?:\$HOME|\$\{HOME\})(?:\/|$)/.test(candidate);
 }
 
@@ -2268,16 +2278,85 @@ function shortOptionHas(args: string[], letter: string): boolean {
   return args.some((a) => /^-[A-Za-z]+$/.test(a) && a.includes(letter));
 }
 
+/** Options of `ps` that take a value, so the next word is not a BSD-style letter cluster. */
+const PS_VALUE_OPTIONS: ReadonlySet<string> = new Set([
+  "-G",
+  "-g",
+  "-p",
+  "-t",
+  "-U",
+  "-u",
+  "-O",
+  "-o",
+  "--Group",
+  "--User",
+  "--user",
+  "--group",
+  "--pid",
+  "--ppid",
+  "--quick-pid",
+  "--session",
+  "--sid",
+  "--tty",
+  "--format",
+  "--sort",
+  "--cols",
+  "--columns",
+  "--width",
+  "--lines",
+  "--rows",
+]);
+
+/**
+ * Whether a `ps` invocation prints each process's environment: `ps eww` / `ps auxe` (the BSD-style
+ * `e` letter), `ps -E`, or a dashed cluster containing `E`. UNIX-syntax `-e` (`ps -e`, `ps -ef`)
+ * only selects every process and stays a plain listing.
+ */
+function psShowsEnvironment(args: string[]): boolean {
+  for (let i = 0; i < args.length; i += 1) {
+    const a = args[i] as string;
+    if (a === "--") break;
+    if (PS_VALUE_OPTIONS.has(a)) {
+      i += 1; // the option's value is not a BSD-style letter cluster (`ps -u user`)
+      continue;
+    }
+    if (a.startsWith("--")) continue;
+    if (a.startsWith("-")) {
+      if (a.slice(1).includes("E")) return true;
+      continue;
+    }
+    // A BSD-style letter cluster (`auxe`, `eww`, `axe`): `e` displays the environment.
+    if (a.includes("e")) return true;
+  }
+  return false;
+}
+
+/** `gh auth status` with `-t` / `--show-token` prints the login token, like `gh auth token`. */
+function ghStatusShowsToken(args: string[]): boolean {
+  const statusAt = args.indexOf("status");
+  if (statusAt < 0) return false;
+  return args
+    .slice(statusAt + 1)
+    .some(
+      (a) =>
+        a === "--show-token" ||
+        a.startsWith("--show-token=") ||
+        (/^-[A-Za-z]+(?:=.*)?$/.test(a) && (a.split("=")[0] ?? "").includes("t")),
+    );
+}
+
 /**
  * Whether an invocation prints credentials to its stdout: the environment (`env`, `set`,
- * `export -p`, `declare -x`, `printenv`) or a stored credential (`gh auth token`,
- * `git credential fill`). Plain shell reads allow these programs, yet their output is the owner's
- * exported cloud keys and tokens (auto mode) or a stored login. Printing one asks; piping it into a
- * network command is a secret exfiltration (see `readsSecret`).
+ * `export -p`, `declare -x`, `printenv`, `ps e`, `ps -E`, `launchctl getenv`) or a stored
+ * credential (`gh auth token`, `gh auth status --show-token`, `git credential fill`). Plain shell
+ * reads allow these programs, yet their output is the owner's exported cloud keys and tokens (auto
+ * mode) or a stored login. Printing one asks; piping it into a network command is a secret
+ * exfiltration (see `readsSecret`).
  *
  * Only the printing forms count: `env VAR=1 cmd` never reaches here (the parser unwraps it),
- * `export VAR=1` / `set -e` / `declare -x VAR=1` print nothing, and `printenv` in an argument
- * position of another program is that program's argument, not a producer.
+ * `export VAR=1` / `set -e` / `declare -x VAR=1` / `ps aux` / `ps -ef` / `launchctl list` print
+ * nothing sensitive, and `printenv` in an argument position of another program is that program's
+ * argument, not a producer.
  */
 function credentialProducer(inv: Invocation): boolean {
   const { program, args } = inv;
@@ -2292,9 +2371,13 @@ function credentialProducer(inv: Invocation): boolean {
     if (shortOptionHas(args, "f") || shortOptionHas(args, "F")) return false;
     return nonOptionArgs(args).length === 0;
   }
+  if (program === "ps") return psShowsEnvironment(args);
+  if (program === "launchctl") return nonOptionArgs(args)[0] === "getenv";
   if (program === "gh") {
     const words = args.filter((a) => !a.startsWith("-"));
-    return words[0] === "auth" && words[1] === "token";
+    if (words[0] !== "auth") return false;
+    if (words[1] === "token") return true;
+    return words[1] === "status" && ghStatusShowsToken(args);
   }
   if (program === "git") {
     // `git credential fill` and every `git credential-<helper> get` print the stored password.
@@ -3572,7 +3655,7 @@ const RULES: readonly Rule[] = [
       return matched.length > 0
         ? {
             reason:
-              "Prints environment variables or a stored credential (`env`, `printenv`, `set`, `export -p`, `gh auth token`, `git credential fill`); the output reaches the model, so this needs approval.",
+              "Prints environment variables or a stored credential (`env`, `printenv`, `set`, `export -p`, `gh auth token`, `gh auth status --show-token`, `ps e`, `launchctl getenv`, `git credential fill`); the output reaches the model, so this needs approval.",
             commands: matched,
           }
         : null;
