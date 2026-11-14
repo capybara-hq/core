@@ -200,7 +200,11 @@ pays for it.
   device lazily.
 
 The result is recorded as one `project_root` event: the project name, the root path, the
-`AGENTS.md` text (or why it is absent), and per skill its name, description and digest. The event
+`AGENTS.md` text when the root has one (omitted otherwise, with no reason recorded), and per skill
+its name, description and digest (at most 100 skills, `skillsTruncated` when more exist; each
+`SKILL.md` read up to 1 MiB). A project the run cannot use records `unavailable: { reason, message }`
+instead, with `reason` one of `gone`, `outside_mode`, `unreadable`, `unsupported` (a device that does
+not announce `projects`), so an earlier snapshot stops applying. The event
 is model-visible and rendered with the run's first system block, before the model's first turn.
 
 A run records the event again when any digest differs from the conversation's latest recorded one;
