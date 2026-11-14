@@ -59,34 +59,43 @@ export function localTestPlan(files: string[], ws: Workspace): Plan {
 }
 
 export type VerifyOptions = {
+  /** Run only the fast checks (`--fast`): lint, typecheck, custom checks and kernel unit tests. */
+  fast?: boolean;
   /** Run the full suite when the plan runs everything (`--full`). */
   full?: boolean;
   /** For a run-everything plan without `full`: the tests to run instead ({@link localTestPlan}). */
   local?: Plan | null;
 };
 
-/** The local equivalent of CI's required jobs for this plan, in run order. */
-export function verifySteps(plan: Plan, base: string, opts: VerifyOptions = {}): VerifyStep[] {
-  const steps: VerifyStep[] = [
+/** The steps every verify run shares, in run order. */
+function checkSteps(): VerifyStep[] {
+  return [
     { id: "lint", title: "Lint", cmd: ["pnpm", "lint"] },
     { id: "typecheck", title: "Typecheck", cmd: ["pnpm", "typecheck"] },
     { id: "check", title: "Custom checks", cmd: ["pnpm", "check"] },
-    // CI runs it in the ci job when bootstrap.json changed (or on a full run); it needs the network
-    ...(plan.bootstrapNetwork
-      ? [
-          {
-            id: "bootstrap-network",
-            title: "Bootstrap manifest against npm and the marketplace",
-            cmd: ["pnpm", "check:bootstrap", "--network"],
-          },
-        ]
-      : []),
-    {
-      id: "commitlint",
-      title: "Commit messages",
-      cmd: ["pnpm", "exec", "commitlint", "--from", base, "--to", "HEAD"],
-    },
   ];
+}
+
+/** The local equivalent of CI's required jobs for this plan, in run order. */
+export function verifySteps(plan: Plan, base: string, opts: VerifyOptions = {}): VerifyStep[] {
+  // A fast check is an advisory signal: the steps that need no containers and no database, and
+  // never an integration test.
+  if (opts.fast) {
+    return [...checkSteps(), { id: "unit", title: "Unit tests", cmd: ["pnpm", "test:unit"] }];
+  }
+  const steps: VerifyStep[] = checkSteps();
+  // CI runs it in the ci job when bootstrap.json changed (or on a full run); it needs the network
+  if (plan.bootstrapNetwork)
+    steps.push({
+      id: "bootstrap-network",
+      title: "Bootstrap manifest against npm and the marketplace",
+      cmd: ["pnpm", "check:bootstrap", "--network"],
+    });
+  steps.push({
+    id: "commitlint",
+    title: "Commit messages",
+    cmd: ["pnpm", "exec", "commitlint", "--from", base, "--to", "HEAD"],
+  });
   const vitest = (dirs: string[]) => ["pnpm", "exec", "vitest", "run", ...dirs.map((d) => `${d}/`)];
   const fullNote = "CI runs the full suite; pnpm verify --full runs it here";
   if (plan.all && opts.full) steps.push({ id: "test", title: "Tests", cmd: ["pnpm", "test"] });

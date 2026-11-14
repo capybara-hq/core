@@ -98,6 +98,42 @@ describe("verifySteps", () => {
     }
     expect(find(basePlan, "web")).toBeUndefined();
   });
+
+  it("--fast runs only lint, typecheck, check and the unit tests", () => {
+    const everything = {
+      ...basePlan,
+      all: true,
+      test: true,
+      testDirs: ["packages/kernel"],
+      web: true,
+      visual: true,
+      e2e: true,
+      docker: true,
+      bootstrapNetwork: true,
+    };
+    const fast = verifySteps(everything, "abc", { fast: true });
+    expect(fast.map((s) => [s.id, s.cmd])).toEqual([
+      ["lint", ["pnpm", "lint"]],
+      ["typecheck", ["pnpm", "typecheck"]],
+      ["check", ["pnpm", "check"]],
+      ["unit", ["pnpm", "test:unit"]],
+    ]);
+    expect(fast.every((s) => s.cmd !== null)).toBe(true);
+
+    // The same plan without --fast keeps the full step list.
+    expect(verifySteps(everything, "abc", { full: true }).map((s) => s.id)).toEqual([
+      "lint",
+      "typecheck",
+      "check",
+      "bootstrap-network",
+      "commitlint",
+      "test",
+      "web",
+      "visual",
+      "e2e",
+      "docker",
+    ]);
+  });
 });
 
 describe("localTestPlan", () => {
