@@ -80,7 +80,7 @@ export interface DeviceProjectCandidates {
 }
 
 /** What a project's scope is read from: the device's mode now and the bases it gives. */
-interface Scope {
+export interface DeviceProjectScope {
   source: "cloud" | "local";
   mode: SandboxMode;
   /** The workspace root as last known (a machine's hello, a cloud instance's handle). */
@@ -90,6 +90,8 @@ interface Scope {
   supported: boolean;
 }
 
+type Scope = DeviceProjectScope;
+
 /** Only the owner's home bounds nothing: auto mode on a machine reads what its owner can. */
 const homeBased = (s: Pick<Scope, "source" | "mode">): boolean =>
   s.source === "local" && s.mode === "auto";
@@ -98,8 +100,11 @@ const homeBased = (s: Pick<Scope, "source" | "mode">): boolean =>
 const baseOf = (s: Scope, workspace: string = s.workspace): string | null =>
   homeBased(s) ? s.home : workspace;
 
-/** `path` lies inside what the mode may read (sandbox mode and cloud: the workspace). */
-const withinMode = (s: Scope, path: string, workspace: string = s.workspace): boolean =>
+/**
+ * `path` lies inside what the scope's mode may read (sandbox mode and cloud: the workspace, as the
+ * held instance reports it when given).
+ */
+export const withinMode = (s: Scope, path: string, workspace: string = s.workspace): boolean =>
   homeBased(s) || path === workspace || path.startsWith(workspace === "/" ? "/" : `${workspace}/`);
 
 /** `path` relative to `base` ("" for the base itself); `path` must lie under it. */
@@ -396,6 +401,15 @@ export class DeviceProjectsService {
     if (row === undefined) throw projectNotFound(name);
     if (!withinMode(scope, row.path)) throw outsideMode(row.path, scope.mode);
     return { name: row.name, path: row.path };
+  }
+
+  /**
+   * The owner's live device's scope now ({@link scope}), for a run start's read of its bound
+   * project (project root §4.4): the mode to read in and whether the device offers projects.
+   * Reads only; anyone else's device (or a missing one) → `device.not_found`.
+   */
+  async scopeFor(orgId: string, accountId: string, deviceId: string): Promise<DeviceProjectScope> {
+    return this.scope(orgId, accountId, deviceId);
   }
 
   /**

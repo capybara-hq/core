@@ -6,12 +6,14 @@ import { ConversationAccessModule } from "../conversations/access.js";
 import { AttachmentsModule } from "../conversations/attachments.module.js";
 import { EventLogModule } from "../conversations/event-log.js";
 import { TitlesModule } from "../conversations/titles.js";
+import { DevicesModule } from "../devices/devices.module.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { GitModule } from "../git/git.module.js";
 import { IdentityModule } from "../identity/identity.module.js";
 import { LockService } from "../infra/lock/lock.service.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
 import { REDIS } from "../infra/tokens.js";
+import { SandboxModule } from "../sandbox/sandbox.module.js";
 import { ScheduledTaskTrackerModule } from "../schedules/run-tracker.js";
 import { SkillsModule } from "../skills/skills.module.js";
 import { ToolsModule } from "../tools/tools.module.js";
@@ -23,6 +25,7 @@ import { CompactionSettingsService } from "./compaction-settings.service.js";
 import { ConversationLock } from "./conversation-lock.js";
 import { MAINTENANCE_QUEUE_NAME } from "./maintenance-queue.js";
 import { PluginContextService } from "./plugin-context.service.js";
+import { ProjectKnowledgeService } from "./project/knowledge.service.js";
 import { ProvidersModule } from "./providers.js";
 import { EVAL_QUOTA, EVAL_QUOTA_PREFIX, OrgQuota, RUN_QUOTA, RUN_QUOTA_PREFIX } from "./quota.js";
 import { RunContextService } from "./run-context.service.js";
@@ -55,6 +58,9 @@ import { Waits } from "./waits.js";
     IdentityModule,
     SkillsModule,
     ToolsModule,
+    // a bound conversation's device and project scope (project root spec §4.4)
+    DevicesModule,
+    SandboxModule,
     GitModule,
     ProvidersModule,
     RunJobsModule,
@@ -83,6 +89,7 @@ import { Waits } from "./waits.js";
     RunSteps,
     RunContextService,
     PluginContextService,
+    ProjectKnowledgeService,
     RunWorker,
     // the org's effective compaction settings, one read per model step
     CompactionSettingsService,

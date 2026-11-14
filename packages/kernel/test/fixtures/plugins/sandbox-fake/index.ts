@@ -68,6 +68,9 @@ import { z } from "zod";
  *   `update`. `limitsApplyAt` is declared as given. Every limits a `create-fs`, `create` or
  *   `update` got is appended to `root/limits.log` ({@link readFakeSandboxLimits}); an `update`
  *   also logs `update <id> <answer>` in `ops.log`.
+ * - `list` (deployment config or {@link FakeSandboxOptions}; off by default, so the fake offers no
+ *   projects unless a test asks): lists one directory as `SandboxProvider.list` does, with the
+ *   instance's directories mapped as for `readFile`.
  * - `root/refuse-open-egress` (optional, {@link setFakeSandboxRefuseOpenEgress}; read at each
  *   call): like sandbox-docker with `refuseOpenNetwork: true`, limits with mode `auto` and
  *   the open public network make `create`, `update` and (with `limitsApplyAt: "fileSystem"`)
@@ -84,6 +87,7 @@ const Deployment = z.object({
   root: z.string().min(1),
   updateMode: z.enum(["updated", "recreate", "throw", "none"]).optional(),
   limitsApplyAt: z.enum(["instance", "fileSystem"]).optional(),
+  list: z.boolean().optional(),
 });
 
 /** A stand-in for a provider setting in the refusal's message (see the file header). */
@@ -94,6 +98,8 @@ export interface FakeSandboxOptions {
   /** `update`'s answer (`throw`: it fails with an ordinary error); `none` (default): no `update`. */
   updateMode?: "updated" | "recreate" | "throw" | "none";
   limitsApplyAt?: "instance" | "fileSystem";
+  /** Gives the provider a `list` (see the file header). */
+  list?: boolean;
 }
 
 /** One line of `root/limits.log`: the limits an operation got. */
@@ -884,6 +890,29 @@ export function createFakeSandbox(
       return s === null ? null : { size: s.size, isDir: s.isDirectory() };
     },
   };
+  if (options.list === true) {
+    provider.list = async (h, path, opts) => {
+      opts.signal.throwIfAborted();
+      await requireRunning(h);
+      const p = await real(h, path);
+      const s = await stat(p).catch(() => null);
+      if (s === null) return null;
+      if (!s.isDirectory()) throw new Error(`not a directory: ${path}`);
+      const dirents = await readdir(p, { withFileTypes: true });
+      const entries = await Promise.all(
+        dirents.map(async (d) => ({
+          name: d.name,
+          // stat semantics: a link to a directory is a directory
+          isDir: await stat(join(p, d.name)).then(
+            (t) => t.isDirectory(),
+            () => false,
+          ),
+        })),
+      );
+      entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+      return { entries: entries.slice(0, opts.limit), truncated: entries.length > opts.limit };
+    };
+  }
   const mode = options.updateMode ?? "none";
   if (mode !== "none") {
     provider.update = async (h, limits, signal) => {
@@ -916,12 +945,13 @@ export default defineExtension({
   permissions: {},
   config: { deployment: Deployment },
   setup(ctx) {
-    const { root, updateMode, limitsApplyAt } = ctx.config as z.infer<typeof Deployment>;
+    const { root, updateMode, limitsApplyAt, list } = ctx.config as z.infer<typeof Deployment>;
     ctx.provide(
       SANDBOX_EXTENSION_POINT,
       createFakeSandbox(root, {
         ...(updateMode !== undefined && { updateMode }),
         ...(limitsApplyAt !== undefined && { limitsApplyAt }),
+        ...(list !== undefined && { list }),
       }),
     );
   },

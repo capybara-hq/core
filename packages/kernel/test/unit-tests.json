@@ -82,6 +82,7 @@
   "runtime/device-paths.test.ts",
   "runtime/hook-calls.test.ts",
   "runtime/pinned-render.test.ts",
+  "runtime/project-knowledge-read.test.ts",
   "runtime/skill-fork.test.ts",
   "runtime/stream.test.ts",
   "sandbox/instance.test.ts",

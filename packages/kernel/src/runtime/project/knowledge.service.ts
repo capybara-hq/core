@@ -1,0 +1,230 @@
+import { DeviceProtocolError } from "@capybara-hq/plugin-sdk";
+import { Inject, Injectable } from "@nestjs/common";
+import { EventLog } from "../../conversations/event-log.js";
+import { ConversationDevices } from "../../devices/conversation-devices.js";
+import { DeviceProjectsService, withinMode } from "../../devices/device-projects.service.js";
+import { ApiError } from "../../errors.js";
+import { KernelDb } from "../../infra/database/kernel-db.js";
+import { TransactionHost } from "../../infra/database/transaction-host.js";
+import { Transactional } from "../../infra/database/transactional.decorator.js";
+import { KERNEL_LOGGER } from "../../infra/tokens.js";
+import type { KernelLogger } from "../../log.js";
+import { SandboxLockLostError, SandboxPathBusyError } from "../../sandbox/leases.js";
+import { SandboxService } from "../../sandbox/sandbox.service.js";
+import { providerConnectionFailure } from "../../sandbox/unreachable.js";
+import { runEndedIn } from "../run-status.js";
+import {
+  type ProjectFiles,
+  type ProjectRootPayload,
+  projectAbsence,
+  projectRootIdemKey,
+  readProjectKnowledge,
+  sameProjectRoot,
+} from "./knowledge.js";
+
+/**
+ * The longest a run start waits for its project's knowledge (every device call of the read under
+ * one bound): past it the run goes on without a new snapshot, as when the device is unreachable.
+ */
+export const PROJECT_KNOWLEDGE_TIMEOUT_MS = 30_000;
+
+/**
+ * An error that says the device could not be asked, not that the project is unreadable: the
+ * provider unreachable, a kernel refusal (the device offline, gone or busy, a relay given up), a
+ * malformed device answer, a lost lease.
+ */
+function isDeviceFailure(e: unknown): boolean {
+  return (
+    providerConnectionFailure(e) !== undefined ||
+    e instanceof ApiError ||
+    e instanceof DeviceProtocolError ||
+    e instanceof SandboxLockLostError ||
+    e instanceof SandboxPathBusyError
+  );
+}
+
+/** What a run start tells {@link ProjectKnowledgeService.record}. */
+export interface ProjectKnowledgeInput {
+  orgId: string;
+  conversationId: string;
+  runId: string;
+  /** The conversation's kind: only a chat conversation can be bound to a project. */
+  kind: "chat" | "eval" | "subagent";
+  /** The run's shutdown signal (the read has its own time limit as well). */
+  signal: AbortSignal;
+}
+
+/**
+ * Run start's project knowledge (project root spec §4.4, §4.7): for a conversation bound to a
+ * project (`conversations.project_name` / `project_path`), reads the project's `AGENTS.md` and
+ * skills on its device before the run's first model call ({@link readProjectKnowledge}), outside
+ * any transaction, and appends a `project_root` event when the snapshot differs from the
+ * conversation's latest one. A free conversation reads nothing, so its device still starts lazily
+ * at its first sandbox call; an eval replay or a sub-agent never reads a device here.
+ *
+ * Reads in the device's effective mode (`DeviceProjectsService.scopeFor`, the same scope the
+ * binding was checked against) and through `SandboxService.withSandbox`, as a tool call does, so
+ * a bound conversation starts its device eagerly (the accepted cost, spec §4.4). A root that is
+ * gone, out of the mode or unreadable is recorded as `absent`; the device not being reachable
+ * (offline, the provider down, the time limit, a device that offers no projects) records nothing
+ * and the run goes on as it does today when its device is away. Nothing is cached in the process.
+ */
+@Injectable()
+export class ProjectKnowledgeService {
+  constructor(
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(EventLog) private readonly eventLog: Pick<EventLog, "appendIn" | "notify">,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+    @Inject(ConversationDevices) private readonly devices: Pick<ConversationDevices, "forTool">,
+    @Inject(DeviceProjectsService)
+    private readonly projects: Pick<DeviceProjectsService, "scopeFor">,
+    @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "withSandbox">,
+    @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
+  ) {}
+
+  /**
+   * Reads and records (see the class); notifies after the commit. False: the run had ended under
+   * the locks (a stop landed while the device was read), so nothing was appended and the run must
+   * not go on (as `PluginContextService.record`).
+   */
+  async record(input: ProjectKnowledgeInput): Promise<boolean> {
+    if (input.kind !== "chat") return true;
+    const conv = await this.db.db
+      .selectFrom("conversations")
+      .select(["account_id", "project_name", "project_path"])
+      .where("id", "=", input.conversationId)
+      .where("org_id", "=", input.orgId)
+      .executeTakeFirst();
+    if (!conv || conv.project_name === null || conv.project_path === null) return true;
+    const payload = await this.read(input, {
+      accountId: conv.account_id,
+      project: conv.project_name,
+      root: conv.project_path,
+    });
+    if (payload === null) return true;
+    const seq = await this.append(input, payload);
+    if (seq === "ended") return false;
+    if (seq !== null) await this.eventLog.notify(input.conversationId, seq);
+    return true;
+  }
+
+  /** The snapshot read on the device, or null when the device could not be asked (logged). */
+  private async read(
+    input: ProjectKnowledgeInput,
+    bound: { accountId: string; project: string; root: string },
+  ): Promise<ProjectRootPayload | null> {
+    const where = {
+      orgId: input.orgId,
+      conversationId: input.conversationId,
+      runId: input.runId,
+      project: bound.project,
+    };
+    const signal = AbortSignal.any([
+      input.signal,
+      AbortSignal.timeout(PROJECT_KNOWLEDGE_TIMEOUT_MS),
+    ]);
+    try {
+      // the device a tool call of this conversation would enter, checked for its owner now
+      const deviceId = await this.devices.forTool(input.orgId, input.conversationId);
+      const scope = await this.projects.scopeFor(input.orgId, bound.accountId, deviceId);
+      if (scope.source === "local" && !scope.supported) {
+        this.log.warn("project knowledge not read: the device offers no projects", {
+          ...where,
+          deviceId,
+        });
+        return null;
+      }
+      return await this.sandbox.withSandbox(
+        {
+          orgId: input.orgId,
+          deviceId,
+          holderConversationId: input.conversationId,
+          actor: {
+            accountId: bound.accountId,
+            conversationId: input.conversationId,
+            runId: input.runId,
+          },
+        },
+        async (h, p, info, sig) => {
+          const target = { project: bound.project, root: bound.root, mode: scope.mode };
+          // the kernel's own check first: a root the mode cannot read is never asked about
+          if (!withinMode(scope, bound.root, info.roots.workspace)) {
+            return {
+              project: bound.project,
+              root: bound.root,
+              absent: projectAbsence.outsideMode(bound.root, scope.mode),
+              skills: [],
+            };
+          }
+          const list = p.list;
+          const files: ProjectFiles = {
+            stat: (path) => p.stat(h, path, sig),
+            readFile: (path, maxBytes) => p.readFile(h, path, { maxBytes, signal: sig }),
+            ...(list !== undefined && {
+              list: (path: string, limit: number) =>
+                list.call(p, h, path, { limit, limits: { mode: scope.mode }, signal: sig }),
+            }),
+          };
+          return readProjectKnowledge(files, target, {
+            log: (msg, detail) => this.log.info(msg, { ...where, ...detail }),
+            isDeviceFailure: (e) => sig.aborted || isDeviceFailure(e),
+          });
+        },
+        signal,
+      );
+    } catch (err) {
+      this.log.warn("project knowledge not read: the device could not be asked; the run goes on", {
+        ...where,
+        timedOut: signal.aborted && !input.signal.aborted,
+        err,
+      });
+      return null;
+    }
+  }
+
+  /**
+   * One transaction under the conversation row lock (as `PluginContextService`): compares the
+   * snapshot with the conversation's latest `project_root` and appends it when it differs, with
+   * the run's idempotency key, so a retried run start finds its event (or nothing changed).
+   * Returns the seq written, null for none, `ended` when the run is terminal under the locks.
+   */
+  @Transactional()
+  private async append(
+    input: ProjectKnowledgeInput,
+    payload: ProjectRootPayload,
+  ): Promise<number | null | "ended"> {
+    const t = this.db.db;
+    await t
+      .selectFrom("conversations")
+      .select("id")
+      .where("id", "=", input.conversationId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (await runEndedIn(t, input.runId)) return "ended";
+    const latest = await t
+      .selectFrom("conversation_events")
+      .select(["seq", "payload"])
+      .where("conversation_id", "=", input.conversationId)
+      .where("type", "=", "project_root")
+      .orderBy("seq", "desc")
+      .limit(1)
+      .executeTakeFirst();
+    // the stored payload passed the event schema when it was appended (`skills` defaulted)
+    if (latest !== undefined && sameProjectRoot(latest.payload as ProjectRootPayload, payload)) {
+      return null;
+    }
+    const [written] = await this.eventLog.appendIn(input.conversationId, [
+      {
+        type: "project_root",
+        runId: input.runId,
+        idemKey: projectRootIdemKey(input.runId),
+        payload,
+      },
+    ]);
+    // an earlier attempt of this run start already wrote its snapshot: nothing new to tell
+    if (written === undefined || (latest !== undefined && written.seq <= Number(latest.seq))) {
+      return null;
+    }
+    return written.seq;
+  }
+}
