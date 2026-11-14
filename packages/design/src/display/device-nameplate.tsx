@@ -28,6 +28,11 @@ export type DeviceNameplateProps = {
    */
   lastSeen?: string | null;
   /**
+   * When the device was created (ISO), as a third mono figure after last seen. A page whose
+   * object carries no creation time leaves it out.
+   */
+  created?: string | null;
+  /**
    * The mode mark after the origin (a `Badge`): 自动 / 沙箱 on a local device, the network mode on
    * a cloud one.
    */
@@ -41,6 +46,7 @@ export type DeviceNameplateProps = {
     state?: Partial<Record<DeviceNameplateState, string>>;
     version?: string;
     lastSeen?: string;
+    created?: string;
     never?: string;
   };
 };
@@ -48,9 +54,10 @@ export type DeviceNameplateProps = {
 /**
  * A device's head (spec §6.41, auto mode design §4): one flat band holding the name as a
  * nameplate — the name, its origin, a status light and the mode badge on the left, the program
- * version and last seen as mono figures on the right. It is the only place a device's version and
- * last seen appear, and the page's one bright element: the status light is the only accent on a
- * running device, everything else is quiet. It draws its own band, never a card in a card.
+ * version and last seen as mono figures on the right (the creation time joins them when the page
+ * has one). It is the only place a device's version and last seen appear, and the page's one
+ * bright element: the status light is the only accent on a running device, everything else is
+ * quiet. It draws its own band, never a card in a card.
  */
 export function DeviceNameplate({
   name,
@@ -58,6 +65,7 @@ export function DeviceNameplate({
   state,
   version,
   lastSeen,
+  created,
   badge,
   labels,
 }: DeviceNameplateProps) {
@@ -66,6 +74,7 @@ export function DeviceNameplate({
   const stateLabel = labels?.state?.[state] ?? t(`nameplate.state.${state}` as DesignKey);
   const versionText = labels?.version ?? t("nameplate.version");
   const lastSeenText = labels?.lastSeen ?? t("nameplate.lastSeen");
+  const createdText = labels?.created ?? t("nameplate.created");
   const neverText = labels?.never ?? t("nameplate.never");
   return (
     <div
@@ -115,6 +124,16 @@ export function DeviceNameplate({
             {lastSeen ? <DateTime value={lastSeen} /> : neverText}
           </span>
         </span>
+        {created != null ? (
+          <span className="cb-nameplate-figure" data-part="device-nameplate-figure">
+            <span className="cb-nameplate-label" data-part="device-nameplate-label">
+              {createdText}
+            </span>
+            <span className="cb-nameplate-value" data-part="device-nameplate-value">
+              <DateTime value={created} />
+            </span>
+          </span>
+        ) : null}
       </div>
     </div>
   );

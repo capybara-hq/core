@@ -31,7 +31,10 @@ export type Command =
       /** `--yes`: confirms `mode auto` without asking. */
       yes?: true;
     }
-  | { command: "service"; action: "install" | "uninstall" | "status" }
+  | {
+      command: "service";
+      action: "install" | "uninstall" | "start" | "stop" | "restart" | "status";
+    }
   | { command: "help" };
 
 export const USAGE = `Usage:
@@ -56,8 +59,11 @@ export const USAGE = `Usage:
   capybara-device policy add|remove allowCredentials <name>
                                   Allow or stop allowing a credential in sandbox mode
   capybara-device service install|uninstall
-                                  Run at login as a user service
-  capybara-device service status  Report whether the login service is loaded and running`;
+                                  Run at login as a user service, or remove it
+  capybara-device service start|stop|restart
+                                  Start, stop or restart the login service
+  capybara-device service status  Report whether the login service is loaded, what is running,
+                                  and whether it is older than the installed program`;
 
 /** Thrown for a bad command line; the message is shown with the usage. */
 export class UsageError extends Error {}
@@ -167,12 +173,17 @@ export function parseCommandLine(argv: string[]): Command {
       const { positionals } = parse(rest, {});
       const [action, ...extra] = positionals;
       if (
-        (action === "install" || action === "uninstall" || action === "status") &&
+        (action === "install" ||
+          action === "uninstall" ||
+          action === "start" ||
+          action === "stop" ||
+          action === "restart" ||
+          action === "status") &&
         extra.length === 0
       ) {
         return { command: "service", action };
       }
-      throw new UsageError("usage: service install|uninstall|status");
+      throw new UsageError("usage: service install|uninstall|start|stop|restart|status");
     }
     default:
       throw new UsageError(`unknown command ${name}`);

@@ -337,6 +337,11 @@
           )
           .join("")}</div></div>`
       : "";
+    // A title-less head (spec §4.2): the page draws its own name band as the first block; the path
+    // and the actions share one row and the name stays an h1 for assistive tech.
+    if (o.titleHidden) {
+      return `<header class="r-ph"><div class="r-ph-titleless"><h1 class="r-sr">${esc(title)}</h1>${crumb}${actions}</div></header>`;
+    }
     return `<header class="r-ph"${o.narrow ? " data-narrow" : ""}>${crumb}<div class="r-ph-row"><div class="r-ph-text"><h1 class="r-ph-title" title="${esc(title)}">${esc(title)}</h1>${desc}</div>${actions}</div>${tabs}</header>`;
   }
 

@@ -208,6 +208,11 @@
 .cb-template-head[data-tabs="true"] {
   padding-bottom: var(--cb-layout-head-tabs-content);
 }
+/* The band form (spec §4.2, §5.2): the page's first block is its own name band, which is the head's
+   last row — the template places it and the tab row, so the head adds nothing below the path row. */
+.cb-template-head[data-band="true"] {
+  padding-bottom: 0;
+}
 /* One content width for every frame (spec §4.3). */
 .cb-template-head-frame[data-width="content"],
 .cb-body-frame[data-width="content"] {
@@ -264,6 +269,17 @@ a.cb-pageheader-path-seg:hover {
 }
 .cb-pageheader-path + .cb-pageheader-row {
   margin-top: var(--cb-layout-head-path);
+}
+/* A title-less head (spec §4.2): the page draws its own name band as the first block, so the path
+   and the actions are one row with the path taking the room between them. */
+.cb-pageheader-titleless {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  min-width: 0;
+}
+.cb-pageheader-titleless .cb-pageheader-path {
+  flex: 1;
 }
 /* A row led by the 40 px avatar centres the title block and the actions on it (spec §4.2). */
 .cb-pageheader-row[data-avatar="true"] {
@@ -344,6 +360,15 @@ a.cb-pageheader-path-seg:hover {
 @media (max-width: 639px) {
   .cb-pageheader-actions[data-responsive="true"] [data-fold="inline"] {
     display: none;
+  }
+  /* A title-less head on a phone: the path takes a line of its own and the actions sit under it
+     (spec §4.2), rather than the path being squeezed to nothing beside them. */
+  .cb-pageheader-titleless {
+    flex-wrap: wrap;
+    row-gap: var(--cb-space-2);
+  }
+  .cb-pageheader-titleless .cb-pageheader-path {
+    flex: 1 1 100%;
   }
   .cb-pageheader-row {
     flex-wrap: wrap;

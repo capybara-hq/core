@@ -1,17 +1,9 @@
-import { Badge, DeviceNameplate, KeycapCommand, ModeScale } from "@capybara-hq/design";
+import { Badge, DeviceNameplate } from "@capybara-hq/design";
 import type { ReactNode } from "react";
 import { RefBlock } from "./ref-block";
 
-// DeviceNameplate and ModeScale (spec §6.41, §6.42; auto mode design §4): the blocks have the same
-// ids and boxes as docs/design/reference/src/device-nameplate.html and mode-scale.html.
-
-const noop = () => {};
-const COMMAND = "capybara-device mode auto|sandbox";
-const HINT = "在这台机器的终端里运行，切换模式。";
-
-function command(): ReactNode {
-  return <KeycapCommand command={COMMAND} hint={HINT} />;
-}
+// DeviceNameplate (spec §6.41; auto mode design §4): the blocks have the same ids and boxes as
+// docs/design/reference/src/device-nameplate.html.
 
 function deviceNameplateBlocks(): ReactNode {
   return (
@@ -23,6 +15,7 @@ function deviceNameplateBlocks(): ReactNode {
           state="running"
           version="0.4.0"
           lastSeen="2026-11-13T16:21:00Z"
+          created="2026-11-01T09:12:00Z"
           badge={<Badge>开放（挡内网）</Badge>}
         />
       </RefBlock>
@@ -33,6 +26,7 @@ function deviceNameplateBlocks(): ReactNode {
           state="online"
           version="0.4.0"
           lastSeen="2026-11-13T15:58:00Z"
+          created="2026-11-02T10:04:00Z"
           badge={<Badge tone="warn">自动</Badge>}
         />
       </RefBlock>
@@ -43,6 +37,7 @@ function deviceNameplateBlocks(): ReactNode {
           state="suspended"
           version="0.4.0"
           lastSeen="2026-11-12T09:04:00Z"
+          created="2026-10-28T14:35:00Z"
           badge={<Badge>白名单</Badge>}
         />
       </RefBlock>
@@ -53,38 +48,8 @@ function deviceNameplateBlocks(): ReactNode {
           state="offline"
           version="0.3.9"
           lastSeen="2026-11-10T18:40:00Z"
+          created="2026-10-20T08:50:00Z"
           badge={<Badge>沙箱</Badge>}
-        />
-      </RefBlock>
-    </>
-  );
-}
-
-function modeScaleBlocks(): ReactNode {
-  return (
-    <>
-      <RefBlock id="mode-scale-auto" width={560} pad>
-        <ModeScale value="auto" onSelect={noop} command={command()} />
-      </RefBlock>
-      <RefBlock id="mode-scale-sandbox" width={560} pad>
-        <ModeScale value="sandbox" onSelect={noop} command={command()} />
-      </RefBlock>
-      <RefBlock id="mode-scale-locked" width={560} pad>
-        <ModeScale
-          value="sandbox"
-          locked
-          lockedReason="云端设备不能选择模式：组织允许自动模式时运行自动，否则运行沙箱。"
-        />
-      </RefBlock>
-      <RefBlock id="mode-scale-capped" width={560} pad>
-        <ModeScale value="sandbox" onSelect={noop} unavailable={{ auto: "组织不允许" }} />
-      </RefBlock>
-      <RefBlock id="mode-scale-disabled" width={560} pad>
-        <ModeScale
-          value="auto"
-          onSelect={noop}
-          disabled
-          disabledReason="这台设备离线，暂时不能修改。"
         />
       </RefBlock>
     </>
@@ -93,5 +58,4 @@ function modeScaleBlocks(): ReactNode {
 
 export const DEVICE_BLOCKS = {
   "device-nameplate": deviceNameplateBlocks,
-  "mode-scale": modeScaleBlocks,
 } as const;

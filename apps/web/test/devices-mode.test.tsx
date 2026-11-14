@@ -123,6 +123,14 @@ const renderDetail = (opts: Parameters<typeof renderRouteWithCache>[2] = {}) =>
 const renderList = (opts: Parameters<typeof renderRouteWithCache>[2] = {}) =>
   renderRouteWithCache("/devices", lastStubRoutes(), opts);
 const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
+/** The device page's 设置 tab: every control lives there (values are on 概览). */
+const openSettings = async () => {
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("tab", { name: E.detail.tabSettings }));
+  return user;
+};
+/** The mode's radio group in 设置. */
+const modeGroup = () => screen.findByRole("radiogroup", { name: E.mode.title });
 
 beforeEach(() => resetNavigation("/devices/e1"));
 afterEach(() => {
@@ -140,9 +148,11 @@ describe("the device nameplate head", () => {
     expect(plate.textContent).toContain(E.source.local);
     expect(plate.textContent).toContain(E.state.online);
     expect(plate.textContent).toContain("v0.4.0");
-    // a local machine's last seen
+    // a local machine's last seen, and the device's creation time as a third figure
     expect(plate.textContent).toContain("2026");
     expect(plate.textContent).toContain(E.mark.auto);
+    // the design's own label for the third figure
+    expect(plate.textContent).toContain("Created");
   });
 
   it("a cloud device without an instance has no version and never connected", async () => {
@@ -155,22 +165,24 @@ describe("the device nameplate head", () => {
   });
 });
 
-describe("the mode scale", () => {
-  it("a local auto device: 自动 is effective, the command is keycaps and copies", async () => {
+describe("the settings tab's run mode", () => {
+  it("a local auto device: 自动 is checked, the command is keycaps and copies", async () => {
     stubApi(detail(local()));
     await renderDetail({ locale: "zh" });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("tab", { name: "设置" }));
     const group = await screen.findByRole("radiogroup", { name: "运行模式" });
-    const auto = within(group).getByRole("radio", { name: /^自动/ });
-    const sandbox = within(group).getByRole("radio", { name: /^沙箱/ });
-    expect(auto.getAttribute("aria-checked")).toBe("true");
-    expect(sandbox.getAttribute("aria-checked")).toBe("false");
+    const auto = within(group).getByRole("radio", { name: /^自动/ }) as HTMLInputElement;
+    const sandbox = within(group).getByRole("radio", { name: /^沙箱/ }) as HTMLInputElement;
+    expect(auto.checked).toBe(true);
+    expect(sandbox.checked).toBe(false);
     // the CLI line is the only place the command appears
     const caps = document.querySelector('[data-part="keycap-command-caps"]') as HTMLElement;
     expect(
       [...caps.querySelectorAll('[data-part="keycap-command-cap"]')].map((c) => c.textContent),
     ).toEqual(["capybara-device", "mode", "auto|sandbox"]);
     const copy = screen.getByRole("button", { name: `复制 ${COMMAND}` });
-    await userEvent.setup().click(copy);
+    await user.click(copy);
     expect(await navigator.clipboard.readText()).toBe(COMMAND);
   });
 
@@ -181,8 +193,9 @@ describe("the mode scale", () => {
         json(200, { policy: { mode: "sandbox", allowedDomains: [] } }),
     });
     await renderDetail();
-    const group = await screen.findByRole("radiogroup", { name: "Run mode" });
-    await userEvent.setup().click(within(group).getByRole("radio", { name: /^Sandbox/ }));
+    const user = await openSettings();
+    const group = await modeGroup();
+    await user.click(within(group).getByRole("radio", { name: /^Sandbox/ }));
     await vi.waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({ mode: "sandbox" });
     expect(calls.some((c) => c.method === "PATCH")).toBe(false);
@@ -190,17 +203,17 @@ describe("the mode scale", () => {
     expect(calls.some((c) => String(c.body ?? "").includes('"auto"'))).toBe(false);
   });
 
-  it("a local sandbox device: 自动 is unavailable, switched on the machine with the command", async () => {
+  it("a local sandbox device: 自动 cannot be chosen and says the machine switches it", async () => {
     const calls = stubApi(
       detail(local({}, { mode: "sandbox", local: { reported: "sandbox", allowedDomains: [] } })),
     );
     await renderDetail();
-    const group = await screen.findByRole("radiogroup", { name: "Run mode" });
-    const auto = within(group).getByRole("radio", { name: /^Auto/ }) as HTMLButtonElement;
-    // not a silently inert control: it says auto is switched on the machine, command below
+    await openSettings();
+    const group = await modeGroup();
+    const auto = within(group).getByRole("radio", { name: /^Auto/ }) as HTMLInputElement;
+    // not a silently inert control: the card itself says why
     expect(auto.disabled).toBe(true);
-    expect(auto.getAttribute("aria-disabled")).toBe("true");
-    expect(screen.getByText(E.mode.autoOnMachine)).toBeTruthy();
+    expect(within(group).getByText(E.mode.autoOnMachine)).toBeTruthy();
     // the machine's switch is a command, shown and copyable
     expect(screen.getByRole("button", { name: `Copy ${COMMAND}` })).toBeTruthy();
     await userEvent.setup().click(screen.getByRole("button", { name: `Copy ${COMMAND}` }));
@@ -214,16 +227,18 @@ describe("the mode scale", () => {
       [`PATCH ${BASE}/e1`]: () => json(200, { device: cloud() }),
     });
     await renderDetail();
-    const group = await screen.findByRole("radiogroup", { name: "Run mode" });
-    const auto = within(group).getByRole("radio", { name: /^Auto/ });
-    expect(auto.getAttribute("aria-checked")).toBe("true");
-    await userEvent.setup().click(within(group).getByRole("radio", { name: /^Sandbox/ }));
+    const user = await openSettings();
+    const group = await modeGroup();
+    expect((within(group).getByRole("radio", { name: /^Auto/ }) as HTMLInputElement).checked).toBe(
+      true,
+    );
+    await user.click(within(group).getByRole("radio", { name: /^Sandbox/ }));
     await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
     expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ mode: "sandbox" });
     expect(calls.some((c) => String(c.body ?? "").includes('"auto"'))).toBe(false);
   });
 
-  it("a mode change in flight disables the scale: a second click sends no second PATCH", async () => {
+  it("a mode change in flight disables the cards: a second click sends no second PATCH", async () => {
     let release: () => void = () => {};
     const held = new Promise<void>((r) => {
       release = r;
@@ -236,12 +251,12 @@ describe("the mode scale", () => {
       },
     });
     await renderDetail();
-    const user = userEvent.setup();
-    let group = await screen.findByRole("radiogroup", { name: "Run mode" });
+    const user = await openSettings();
+    let group = await modeGroup();
     await user.click(within(group).getByRole("radio", { name: /^Sandbox/ }));
     await vi.waitFor(() => expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(1));
-    group = screen.getByRole("radiogroup", { name: "Run mode" });
-    const sandbox = within(group).getByRole("radio", { name: /^Sandbox/ }) as HTMLButtonElement;
+    group = screen.getByRole("radiogroup", { name: E.mode.title });
+    const sandbox = within(group).getByRole("radio", { name: /^Sandbox/ }) as HTMLInputElement;
     expect(sandbox.disabled).toBe(true);
     await user.click(sandbox);
     await settle();
@@ -249,7 +264,7 @@ describe("the mode scale", () => {
     await act(async () => release());
   });
 
-  it("a policy change in flight disables the scale: a second click sends no second POST", async () => {
+  it("a policy change in flight disables the cards: a second click sends no second POST", async () => {
     let release: () => void = () => {};
     const held = new Promise<void>((r) => {
       release = r;
@@ -262,12 +277,12 @@ describe("the mode scale", () => {
       },
     });
     await renderDetail();
-    const user = userEvent.setup();
-    let group = await screen.findByRole("radiogroup", { name: "Run mode" });
+    const user = await openSettings();
+    let group = await modeGroup();
     await user.click(within(group).getByRole("radio", { name: /^Sandbox/ }));
     await vi.waitFor(() => expect(calls.filter((c) => c.method === "POST")).toHaveLength(1));
-    group = screen.getByRole("radiogroup", { name: "Run mode" });
-    const sandbox = within(group).getByRole("radio", { name: /^Sandbox/ }) as HTMLButtonElement;
+    group = screen.getByRole("radiogroup", { name: E.mode.title });
+    const sandbox = within(group).getByRole("radio", { name: /^Sandbox/ }) as HTMLInputElement;
     expect(sandbox.disabled).toBe(true);
     await user.click(sandbox);
     await settle();
@@ -275,7 +290,7 @@ describe("the mode scale", () => {
     await act(async () => release());
   });
 
-  it("a cloud device in sandbox is locked: the web never widens it back", async () => {
+  it("a cloud device in sandbox cannot widen back on the web", async () => {
     stubApi(
       detail(
         cloud({
@@ -286,13 +301,13 @@ describe("the mode scale", () => {
         }),
       ),
     );
-    const { container } = await renderDetail();
-    const scale = container.querySelector('[data-part="mode-scale"]') as HTMLElement;
-    expect(scale.getAttribute("data-locked")).toBe("true");
-    expect(scale.textContent).toContain(E.mode.lockedNarrowed);
-    const group = screen.getByRole("radiogroup", { name: "Run mode" });
-    const stations = within(group).getAllByRole("radio");
-    expect(stations.every((s) => (s as HTMLButtonElement).disabled)).toBe(true);
+    await renderDetail();
+    await openSettings();
+    // the section says why, in one statement, without repeating the mode it shows
+    expect(await screen.findByText(E.mode.lockedNarrowed)).toBeTruthy();
+    const group = screen.getByRole("radiogroup", { name: E.mode.title });
+    const cards = within(group).getAllByRole("radio");
+    expect(cards.every((s) => (s as HTMLInputElement).disabled)).toBe(true);
   });
 
   it("a cloud device the organization keeps in sandbox says so", async () => {
@@ -309,24 +324,29 @@ describe("the mode scale", () => {
       ),
     );
     await renderDetail();
+    await openSettings();
     expect(await screen.findByText(E.mode.lockedSandbox)).toBeTruthy();
   });
 
-  it("a local device whose organization forbids auto marks 自动 unavailable", async () => {
+  it("a local device whose organization forbids auto disables that card with the reason", async () => {
     stubApi(detail(local({}, { allowedMode: "sandbox", allowedBy: null, mode: "sandbox" })));
     await renderDetail();
-    const group = await screen.findByRole("radiogroup", { name: "Run mode" });
-    const auto = within(group).getByRole("radio", { name: /^Auto/ }) as HTMLButtonElement;
+    await openSettings();
+    const group = await modeGroup();
+    const auto = within(group).getByRole("radio", { name: /^Auto/ }) as HTMLInputElement;
     expect(auto.disabled).toBe(true);
-    expect(screen.getByText(E.mode.unavailable)).toBeTruthy();
+    expect(within(group).getByText(E.mode.unavailable)).toBeTruthy();
   });
 
   it("a local device offline cannot be changed from here", async () => {
     stubApi(detail(local({ online: false })));
-    const { container } = await renderDetail();
-    const scale = container.querySelector('[data-part="mode-scale"]') as HTMLElement;
-    expect(scale.getAttribute("data-disabled")).toBe("true");
-    expect(screen.getByText(E.mode.offline)).toBeTruthy();
+    await renderDetail();
+    await openSettings();
+    expect(await screen.findByText(E.mode.offline)).toBeTruthy();
+    const group = screen.getByRole("radiogroup", { name: E.mode.title });
+    for (const card of within(group).getAllByRole("radio")) {
+      expect((card as HTMLInputElement).disabled).toBe(true);
+    }
     // the command stays: it works on the machine
     expect(screen.getByRole("button", { name: `Copy ${COMMAND}` })).toBeTruthy();
   });
@@ -334,73 +354,58 @@ describe("the mode scale", () => {
   it("a pending mode change is one status line", async () => {
     stubApi(detail(cloud({ mode: cloudMode({ pendingNextUse: true }) })));
     await renderDetail();
+    await openSettings();
     expect(await screen.findByText(E.mode.pendingNextUse)).toBeTruthy();
   });
 
   it("a change that only a file reset applies has its own status line and offers 重建文件", async () => {
     stubApi(detail(cloud({ mode: cloudMode({ pendingFilesReset: true }) })));
     await renderDetail();
+    await openSettings();
     expect(await screen.findByText(E.mode.pendingFilesReset)).toBeTruthy();
     expect(screen.getByRole("button", { name: E.detail.resetFiles })).toBeTruthy();
   });
 });
 
-describe("the network section exists in sandbox mode only", () => {
-  it("a local auto device has none", async () => {
+describe("the network", () => {
+  it("a local auto device has no network section, in either tab", async () => {
     stubApi(detail(local()));
     await renderDetail();
-    await screen.findByRole("radiogroup", { name: "Run mode" });
+    await screen.findByRole("tab", { name: E.detail.tabOverview });
+    expect(screen.queryByRole("heading", { name: E.network.title })).toBeNull();
+    await openSettings();
     expect(screen.queryByRole("heading", { name: E.network.title })).toBeNull();
   });
 
-  it("a cloud auto device has none; its 网络 fact row is its network", async () => {
+  it("a cloud auto device has none: its network is the nameplate's mark", async () => {
     stubApi(detail(cloud()));
-    await renderDetail();
-    await screen.findByRole("radiogroup", { name: "Run mode" });
+    const { container } = await renderDetail();
+    await screen.findByRole("tab", { name: E.detail.tabOverview });
     expect(screen.queryByRole("heading", { name: E.network.cloudTitle })).toBeNull();
-    // the row itself, not the nameplate badge (the same words)
-    const row = factRow(E.detail.network);
-    expect(row).toBeTruthy();
-    expect(row?.querySelector("dd")?.textContent).toBe(E.networkKind["open-public"]);
+    const plate = container.querySelector('[data-part="device-nameplate"]') as HTMLElement;
+    expect(plate.textContent).toContain(E.mark.open);
   });
 
-  it("the 网络 fact row follows the device's network, not a constant", async () => {
+  it("a local sandbox device lists its hosts on 概览, read only, and points at 设置", async () => {
     stubApi(
       detail(
-        cloud({
-          mode: cloudMode({
+        local(
+          {},
+          {
             mode: "sandbox",
-            network: { kind: "allowlist", hosts: ["files.example.com"], source: "org" },
-          }),
-        }),
+            local: { reported: "sandbox", allowedDomains: ["files.example.com"] },
+          },
+        ),
       ),
     );
     await renderDetail();
-    await screen.findByRole("heading", { name: E.network.cloudTitle });
-    const row = factRow(E.detail.network);
-    expect(row).toBeTruthy();
-    expect(row?.querySelector("dd")?.textContent).toBe(E.networkKind.allowlist);
-  });
-
-  it("a cloud sandbox device on the open network says so, never that it is allowlisted", async () => {
-    stubApi(
-      detail(
-        cloud({
-          mode: cloudMode({
-            mode: "sandbox",
-            network: { kind: "open-public", hosts: [], source: "platform" },
-          }),
-        }),
-      ),
-    );
-    await renderDetail();
-    const heading = await screen.findByRole("heading", { name: E.network.cloudTitle });
-    const section = heading.closest('[data-part="content-section"]') as HTMLElement;
-    expect(within(section).getByText(E.networkKind["open-public"])).toBeTruthy();
-    expect(within(section).getByText(E.network.cloudDescription["open-public"])).toBeTruthy();
-    // the old false claim: an open cloud device does not reach only the org's domains
-    expect(screen.queryByText(/reaches only the domains/)).toBeNull();
-    expect(within(section).queryByText(E.network.cloudDescription.allowlist)).toBeNull();
+    expect(await screen.findByRole("heading", { name: E.network.title })).toBeTruthy();
+    const list = screen.getByRole("list", { name: E.network.domains });
+    expect(within(list).getByText("files.example.com")).toBeTruthy();
+    // no editing here: one link to the settings tab
+    const open = screen.getByRole("button", { name: E.overview.editNetwork });
+    await userEvent.setup().click(open);
+    expect(await screen.findByRole("heading", { name: E.mode.title })).toBeTruthy();
   });
 
   it("a cloud sandbox device shows the organization's allowlist read only", async () => {
@@ -419,28 +424,46 @@ describe("the network section exists in sandbox mode only", () => {
       ),
     );
     await renderDetail();
-    expect(await screen.findByRole("heading", { name: E.network.cloudTitle })).toBeTruthy();
-    expect(screen.getByText("files.example.com · *.slack.com")).toBeTruthy();
-    expect(screen.getByText(E.network.cloudDescription.allowlist)).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: E.network.title })).toBeTruthy();
+    const list = screen.getByRole("list", { name: E.network.domains });
+    expect(within(list).getByText("files.example.com")).toBeTruthy();
+    expect(within(list).getByText("*.slack.com")).toBeTruthy();
     expect(screen.getByText(E.network.cloudHint.org)).toBeTruthy();
-    // read only: no add field
-    expect(screen.queryByRole("textbox", { name: E.network.add })).toBeNull();
+    // read only: no add control anywhere on the page
+    expect(screen.queryByRole("button", { name: E.network.add })).toBeNull();
+  });
+
+  it("a cloud sandbox device on the open network has no list to show", async () => {
+    stubApi(
+      detail(
+        cloud({
+          mode: cloudMode({
+            mode: "sandbox",
+            network: { kind: "open-public", hosts: [], source: "platform" },
+          }),
+        }),
+      ),
+    );
+    await renderDetail();
+    await screen.findByRole("tab", { name: E.detail.tabOverview });
+    expect(screen.queryByRole("heading", { name: E.network.title })).toBeNull();
+    expect(screen.queryByText(/only the domains/)).toBeNull();
   });
 });
 
 describe("the facts", () => {
-  it("splits the limits into 资源 and 网络 (a cloud device)", async () => {
+  it("a cloud device shows 提供方 and 资源 in its overview", async () => {
     stubApi(detail(cloud()));
     await renderDetail();
-    expect(await screen.findByText(E.detail.resources)).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: E.detail.resources })).toBeTruthy();
     expect(screen.getByText("2 CPU · 2 GB memory · 10 GB disk")).toBeTruthy();
-    expect(screen.getByText(E.detail.network)).toBeTruthy();
+    expect(screen.getByText(E.detail.provider)).toBeTruthy();
   });
 
   it("has no limits rows for a local device", async () => {
     stubApi(detail(local()));
     await renderDetail();
-    await screen.findByText(E.detail.created);
+    await screen.findByRole("tab", { name: E.detail.tabOverview });
     expect(screen.queryByText(E.detail.resources)).toBeNull();
     expect(screen.queryByText(E.detail.network)).toBeNull();
   });
@@ -462,7 +485,7 @@ describe("the recent changes", () => {
   it("says nothing when there is no change", async () => {
     stubApi(detail(cloud()));
     await renderDetail();
-    await screen.findByRole("radiogroup", { name: "Run mode" });
+    await screen.findByRole("tab", { name: E.detail.tabOverview });
     expect(screen.queryByRole("list", { name: E.recent.title })).toBeNull();
   });
 

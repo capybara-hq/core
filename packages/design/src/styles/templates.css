@@ -1,3 +1,51 @@
+/*
+ * The band form of a detail page (spec §4.2, §5.2, accepted 2026-11-14): the page's first block is
+ * its own name band, so the band sits layout.head-path below the path row, the tab row space.2 below
+ * the band (the row's own space.1 padding then puts the tab text 12 below it), and the first block
+ * space.4 below whichever comes last. The page passes no spacing; these three rules own it.
+ */
+.cb-detail-band {
+  display: flex;
+  flex-direction: column;
+}
+.cb-detail-band-facts {
+  margin-top: var(--cb-layout-head-path);
+}
+.cb-detail-band-tabs {
+  margin-top: var(--cb-space-2);
+}
+.cb-detail-band-content {
+  margin-top: var(--cb-space-4);
+}
+/* The band-shaped skeleton of a loading band page: the loaded band's height, so nothing jumps. */
+.cb-detail-band-skeleton {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--cb-space-4);
+  min-height: 70px;
+  padding: var(--cb-space-3) var(--cb-space-4);
+  border: 1px solid var(--cb-line-card);
+  border-radius: var(--cb-radius-md);
+  background: var(--cb-panel);
+  box-sizing: border-box;
+}
+.cb-detail-band-skeleton-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+}
+.cb-detail-band-skeleton-figures {
+  display: flex;
+  gap: var(--cb-space-5);
+}
+@media (max-width: 639px) {
+  .cb-detail-band-skeleton {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
 /* 页面模板：根节点占满 AppShell 内容区，Body 自行滚动 */
 .cb-template {
   display: flex;

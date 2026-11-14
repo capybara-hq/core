@@ -82,9 +82,9 @@ test("connect a machine: authorize → confirm on /devices/link → token → th
     ).toBeVisible();
     await expect(page.getByText(machine).first()).toBeVisible();
 
-    // clean up: delete the device (typing its name)
-    await page.getByRole("button", { name: zh.common.moreActions }).click();
-    await page.getByRole("menuitem", { name: zh.devices.detail.delete }).click();
+    // clean up: delete the device (设置 → danger zone, typing its name)
+    await page.getByRole("tab", { name: zh.devices.detail.tabSettings }).click();
+    await page.getByRole("button", { name: zh.devices.detail.delete }).click();
     const dialog = page.getByRole("dialog");
     await dialog.getByRole("textbox").fill(machine);
     await dialog.getByRole("button", { name: zh.devices.detail.delete }).click();

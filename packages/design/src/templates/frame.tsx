@@ -19,6 +19,7 @@ export function TemplateHead({
   header,
   statsInHead,
   tabs,
+  band = false,
   loadingStats = 0,
   children,
 }: {
@@ -26,6 +27,11 @@ export function TemplateHead({
   statsInHead?: boolean;
   /** A detail page's in-page tabs (DetailPage `tabs`): the head's tab row. */
   tabs?: TabsProps;
+  /**
+   * The band form (spec §4.2, §5.2): the page's first block is its own name band, so the head ends
+   * with the path row — no bottom padding, and the tab row is drawn by the template after the band.
+   */
+  band?: boolean;
   /**
    * With `statsInHead`: stat card placeholders for metrics the page does not know yet (DetailPage
    * `loading.stats`); the header's own `metrics` render for real instead.
@@ -42,6 +48,7 @@ export function TemplateHead({
       className="cb-template-head"
       data-part="template-head"
       data-tabs={withTabs ? "true" : undefined}
+      data-band={band ? "true" : undefined}
     >
       <div
         className="cb-template-head-frame"

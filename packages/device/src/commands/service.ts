@@ -2,11 +2,12 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readRunningPid } from "../pid.js";
+import { readRunning } from "../pid.js";
 import { LAUNCHD_LABEL, plistContent, plistPath, type ServiceSpec } from "../service/launchd.js";
 import { SYSTEMD_UNIT, unitContent, unitPath } from "../service/systemd.js";
+import { PROGRAM_VERSION } from "../version.js";
 
-export type ServiceAction = "install" | "uninstall" | "status";
+export type ServiceAction = "install" | "uninstall" | "start" | "stop" | "restart" | "status";
 
 export interface ServiceDeps {
   stateDir: string;
@@ -94,18 +95,34 @@ function isBootstrapIoError(e: unknown): boolean {
   return (e as { status?: unknown }).status === 5 || /Bootstrap failed: 5:/.test(failureText(e));
 }
 
-/** One status report, once the caller knows whether launchd/systemd has the service loaded. */
-function reportStatus(deps: ServiceDeps, loaded: boolean): number {
-  if (!loaded) {
-    deps.out("capybara-device service is not loaded. Install it: capybara-device service install");
+/**
+ * One status report: installed? running (and at which version)? When the running program is older
+ * than the installed package, a stale daemon after an upgrade — a restart makes it current.
+ */
+function reportStatus(
+  deps: ServiceDeps,
+  state: { installed: boolean; loaded: boolean },
+  installedVersion: string,
+): number {
+  if (!state.installed) {
+    deps.out(
+      "capybara-device service is not installed. Install it: capybara-device service install",
+    );
     return 1;
   }
-  const pid = readRunningPid(deps.stateDir);
-  if (pid === undefined) {
-    deps.out("capybara-device service is loaded, but no capybara-device process is running.");
+  const running = readRunning(deps.stateDir);
+  if (running === undefined || !state.loaded) {
+    deps.out(
+      "capybara-device service is installed, but nothing is running. Start it: capybara-device service start",
+    );
     return 1;
   }
-  deps.out(`capybara-device service is loaded; capybara-device is running (pid ${pid}).`);
+  deps.out(
+    `capybara-device service is loaded; running (pid ${running.pid}, ${running.version ?? "version unknown"}).`,
+  );
+  if (running.version !== installedVersion) {
+    deps.out(`installed ${installedVersion} — restart it: capybara-device service restart`);
+  }
   return 0;
 }
 
@@ -135,7 +152,6 @@ async function launchd(
       return false;
     }
   };
-  if (action === "status") return reportStatus(deps, loaded());
   /** Boots the service out and waits until launchd has let it go (bootout returns before that). */
   const bootout = async (): Promise<void> => {
     tryRun(["bootout", service]);
@@ -145,30 +161,81 @@ async function launchd(
       await sleep(SERVICE_POLL_MS);
     }
   };
-  if (action === "install") {
-    mkdirSync(dirname(file), { recursive: true });
-    mkdirSync(spec.stateDir, { recursive: true });
-    if (existsSync(file) || loaded()) await bootout();
-    writeFileSync(file, plistContent(spec));
+  /** Boots the plist in, retrying launchd's transient "previous instance still going" error. */
+  const bootstrap = async (): Promise<boolean> => {
     for (let attempt = 0; ; attempt++) {
       try {
         run("launchctl", ["bootstrap", domain, file]);
-        break;
+        return true;
       } catch (e) {
         if (!isBootstrapIoError(e)) throw e;
         const backoff = BOOTSTRAP_BACKOFF_MS[attempt];
         if (backoff === undefined) {
           deps.err(
-            `capybara-device service install failed: launchctl bootstrap failed ${attempt + 1} times (${failureText(e)}). ` +
-              `The previous capybara-device service may still be stopping: wait a few seconds and run capybara-device service install again. ` +
+            `launchctl bootstrap failed ${attempt + 1} times (${failureText(e)}). ` +
+              `The previous capybara-device service may still be stopping: wait a few seconds and try again. ` +
               `launchctl print ${service} shows what launchd knows of it.`,
           );
-          return 1;
+          return false;
         }
         await sleep(backoff);
         await bootout();
       }
     }
+  };
+  const installed = (): boolean => existsSync(file);
+  if (action === "status") {
+    return reportStatus(deps, { installed: installed(), loaded: loaded() }, PROGRAM_VERSION);
+  }
+  if (action === "start" || action === "restart") {
+    if (!installed()) {
+      deps.err(
+        "capybara-device service is not installed. Install it: capybara-device service install",
+      );
+      return 1;
+    }
+    if (action === "start" && loaded()) {
+      deps.out("The capybara-device login service is already running.");
+      return 0;
+    }
+    if (action === "restart" && loaded()) {
+      // Reloads the program from the plist's bin, so a newer package takes effect.
+      tryRun(["kickstart", "-k", service]);
+      deps.out("Restarted the capybara-device login service.");
+      return 0;
+    }
+    if (!(await bootstrap())) return 1;
+    deps.out(
+      action === "restart"
+        ? "Restarted the capybara-device login service."
+        : "Started the capybara-device login service.",
+    );
+    return 0;
+  }
+  if (action === "stop") {
+    if (!installed()) {
+      deps.err(
+        "capybara-device service is not installed. Install it: capybara-device service install",
+      );
+      return 1;
+    }
+    if (!loaded()) {
+      deps.out("The capybara-device login service is not running.");
+      return 0;
+    }
+    // Unload, never a signal: KeepAlive would start a signalled program straight back up.
+    await bootout();
+    deps.out(
+      "Stopped the capybara-device login service; running commands ended. It starts again at the next login or with: capybara-device service start",
+    );
+    return 0;
+  }
+  if (action === "install") {
+    mkdirSync(dirname(file), { recursive: true });
+    mkdirSync(spec.stateDir, { recursive: true });
+    if (existsSync(file) || loaded()) await bootout();
+    writeFileSync(file, plistContent(spec));
+    if (!(await bootstrap())) return 1;
     deps.out(`Installed ${file}; capybara-device now starts at login.`);
     return 0;
   }
@@ -185,15 +252,42 @@ function systemd(
   run: (cmd: string, args: string[]) => void,
 ): number {
   const file = unitPath(deps.home);
-  if (action === "status") {
-    let active = false;
+  const active = (): boolean => {
     try {
       run("systemctl", ["--user", "is-active", "--quiet", SYSTEMD_UNIT]);
-      active = true;
+      return true;
     } catch {
-      // Inactive or not installed.
+      return false;
     }
-    return reportStatus(deps, active);
+  };
+  const installed = (): boolean => existsSync(file);
+  if (action === "status") {
+    return reportStatus(deps, { installed: installed(), loaded: active() }, PROGRAM_VERSION);
+  }
+  if (action === "start" || action === "stop" || action === "restart") {
+    if (!installed()) {
+      deps.err(
+        "capybara-device service is not installed. Install it: capybara-device service install",
+      );
+      return 1;
+    }
+    if (action === "start" && active()) {
+      deps.out("The capybara-device login service is already running.");
+      return 0;
+    }
+    if (action === "stop" && !active()) {
+      deps.out("The capybara-device login service is not running.");
+      return 0;
+    }
+    run("systemctl", ["--user", action, SYSTEMD_UNIT]);
+    deps.out(
+      action === "start"
+        ? "Started the capybara-device login service."
+        : action === "restart"
+          ? "Restarted the capybara-device login service."
+          : "Stopped the capybara-device login service; running commands ended. It starts again at the next login or with: capybara-device service start",
+    );
+    return 0;
   }
   if (action === "install") {
     mkdirSync(dirname(file), { recursive: true });

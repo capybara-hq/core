@@ -101,7 +101,6 @@ export {
   Markdown,
   type MarkdownProps,
 } from "./markdown";
-export { type DeviceMode, ModeScale, type ModeScaleProps } from "./mode-scale";
 export { ObjectList, ObjectRow, type ObjectRowProps } from "./object-list";
 export { ObjectMark, type ObjectMarkSize } from "./object-mark";
 export { Pagination, type PaginationProps } from "./pagination";

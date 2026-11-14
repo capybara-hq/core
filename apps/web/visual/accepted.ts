@@ -173,7 +173,6 @@ export const ACCEPTED: string[] = [
   // in place; the reference PNGs and the side-by-side review wait for the reference-update and
   // visual-update workflows
   "device-nameplate",
-  "mode-scale",
 ];
 
 /**

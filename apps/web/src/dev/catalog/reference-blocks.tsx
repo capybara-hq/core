@@ -703,6 +703,11 @@ function pageHeaderBlocks(): ReactNode {
           actions={ACTIONS}
         />
       </RefBlock>
+      {/* A title-less head (spec §4.2): the page draws its own name band as the first block, so the
+          path and the actions share one row and the name is a visually hidden h1. */}
+      <RefBlock id="page-header-no-title" width={LIST} pad>
+        <PageHeader path={LP} title="Laptop" titleHidden actions={ACTIONS} />
+      </RefBlock>
       {/* An object's page leads row 2 with its avatar at 40 (spec §4.2, §6.30). */}
       <RefBlock id="page-header-avatar" width={LIST} pad>
         <PageHeader

@@ -1,11 +1,14 @@
+import { homedir } from "node:os";
 import { type Connection, connect } from "../client.js";
 import { CommandLog } from "../command-log.js";
 import { sandboxUnavailableMessage } from "../exec/sandbox-messages.js";
 import type { Executor } from "../exec/types.js";
 import { readRunningPid, removePid, writePid } from "../pid.js";
 import { PolicyStore } from "../policy-store.js";
+import { hasLoginService } from "../service/installed.js";
 import { rotateServiceLog } from "../service/launchd.js";
 import { type Credential, readCredential } from "../state.js";
+import { PROGRAM_VERSION } from "../version.js";
 
 export interface StartDeps {
   stateDir: string;
@@ -16,6 +19,8 @@ export interface StartDeps {
   createExecutor?: (cred: Credential, policy: PolicyStore) => Promise<Executor> | Executor;
   out: (line: string) => void;
   err: (line: string) => void;
+  /** Where the login service would be installed, and on which platform (default: this machine). */
+  service?: { home: string; platform: NodeJS.Platform };
   /** The process whose signals stop and drain the program. */
   proc?: Pick<NodeJS.Process, "on" | "off" | "pid">;
   kill?: typeof process.kill;
@@ -50,6 +55,14 @@ export async function start(deps: StartDeps): Promise<number> {
     err("capybara-device start: no execution backend is available in this build");
     return 1;
   }
+  const where = deps.service ?? { home: homedir(), platform: process.platform };
+  if (hasLoginService(where.home, where.platform)) {
+    // The service manager runs exactly this command, so it must keep working; say how to control
+    // the one that is installed.
+    out(
+      "capybara-device runs as a login service on this machine. Restart it with: capybara-device service restart",
+    );
+  }
   rotateServiceLog(stateDir);
   const running = readRunningPid(stateDir, deps.kill);
   if (running !== undefined && running !== proc.pid) {
@@ -72,7 +85,7 @@ export async function start(deps: StartDeps): Promise<number> {
   proc.on("SIGTERM", onStop);
   proc.on("SIGINT", onStop);
   proc.on("SIGUSR2", onDrain);
-  writePid(stateDir, proc.pid);
+  writePid(stateDir, proc.pid, PROGRAM_VERSION);
   try {
     let executor: Executor;
     let policy: PolicyStore;

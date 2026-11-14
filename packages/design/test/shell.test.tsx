@@ -328,6 +328,24 @@ describe("PageHeader", () => {
     expect(onSearch).toHaveBeenCalledWith("x");
   });
 
+  it("a title-less head draws the path and the actions in one row, the name as a hidden h1", () => {
+    zh(
+      <PageHeader
+        path={[{ label: "devices", href: "/devices" }, { label: "Laptop" }]}
+        title="Laptop"
+        titleHidden
+        actions={[{ label: "重命名", variant: "default", onSelect: () => {} }]}
+      />,
+    );
+    // the page's name stays an h1 for assistive tech, but there is no visible title row
+    expect(screen.getByRole("heading", { level: 1, name: "Laptop" })).toBeTruthy();
+    expect(document.querySelector('[data-part="page-header-title"]')).toBeNull();
+    expect(document.querySelector('[data-part="page-header-row"]')).toBeNull();
+    const row = document.querySelector('[data-part="page-header-titleless"]') as HTMLElement;
+    expect(row.querySelector('[data-part="path"]')).toBeTruthy();
+    expect(within(row).getByRole("button", { name: "重命名" })).toBeTruthy();
+  });
+
   it("description renders under the title", () => {
     zh(<PageHeader path={[{ label: "~" }]} title="连接器" description="把外部服务接进来。" />);
     const h1 = screen.getByRole("heading", { level: 1 });

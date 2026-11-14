@@ -208,6 +208,9 @@ const ALLOWED: Record<string, Record<string, string[]>> = {
   '.cb-template-head[data-tabs="true"]': {
     "padding-bottom": ["var(--cb-layout-head-tabs-content)"],
   },
+  // The band form (spec §4.2, §5.2): the head ends with the path row; the template places the band
+  // and the tab row below it, so the head adds nothing.
+  '.cb-template-head[data-band="true"]': { "padding-bottom": ["0"] },
   '.cb-template-head-frame[data-width="content"]': { margin: ["0 auto"] },
   ".cb-pageheader-path": { gap: ["var(--cb-space-2)"] },
   ".cb-pageheader-row": { gap: ["var(--cb-space-3)"] },
