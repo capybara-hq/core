@@ -65,9 +65,9 @@ export default defineExtension({
   ],
   permissions: {
     http: [
-      { method: "GET", path: "/ui/platform" },
-      { method: "GET", path: "/ui/platform-data" },
-      { method: "POST", path: "/invalidate" },
+      { method: "GET", path: "/ui/platform", access: "public" },
+      { method: "GET", path: "/ui/platform-data", access: "public" },
+      { method: "POST", path: "/invalidate", access: "public" },
     ],
     ui: {
       views: ["notes", "org-admin", "platform-home", "page", "lost", "old-page"],

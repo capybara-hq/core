@@ -11,7 +11,7 @@ export default defineExtension({
   sdk: "^0.1.0-rc.0",
   provides: [],
   requires: ["counter@1"],
-  permissions: { http: [{ method: "GET", path: "/ping" }] },
+  permissions: { http: [{ method: "GET", path: "/ping", access: "public" }] },
   setup(ctx) {
     ctx.http.route("GET", "/ping", async () => {
       const impl = ctx.extensionPoints.list<{ ping(): string }>("counter@1")[0]?.impl;

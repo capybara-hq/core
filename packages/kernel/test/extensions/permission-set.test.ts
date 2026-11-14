@@ -84,8 +84,8 @@ describe("computePermissionSet", () => {
           tools: ["write", "read"],
           secrets: true,
           http: [
-            { method: "POST", path: "/hook", public: true },
-            { method: "GET", path: "/a" },
+            { method: "POST", path: "/hook", access: "public" },
+            { method: "GET", path: "/a", access: "member" },
           ],
           network: ["b.example.com", "a.example.com"],
           models: [{ purpose: "perm-demo.sum", kind: "chat", label: { zh: "摘要", en: "Sum" } }],
@@ -112,8 +112,8 @@ describe("computePermissionSet", () => {
         secrets: true,
         storage: false,
         http: [
-          { method: "GET", path: "/a", public: false },
-          { method: "POST", path: "/hook", public: true },
+          { method: "GET", path: "/a", access: "member" },
+          { method: "POST", path: "/hook", access: "public" },
         ],
         tools: ["read", "write"],
         hooks: [],
@@ -130,8 +130,8 @@ describe("computePermissionSet", () => {
         "config.org.secret:apiKey",
         "config.org:enabledFlag",
         "optional:channel@1",
+        "permissions.http.member:GET /a",
         "permissions.http.public:POST /hook",
-        "permissions.http:GET /a",
         "permissions.models:perm-demo.sum (chat)",
         "permissions.network:a.example.com",
         "permissions.network:b.example.com",
@@ -175,6 +175,21 @@ describe("diffPermissions", () => {
     });
   });
 
+  it("changing a route's access is a new item: the old key goes, the new key needs approval", async () => {
+    const pub = await computePermissionSet(
+      mf({ permissions: { http: [{ method: "GET", path: "/ui/data", access: "public" }] } }),
+      dir,
+    );
+    const emb = await computePermissionSet(
+      mf({ permissions: { http: [{ method: "GET", path: "/ui/data", access: "embed" }] } }),
+      dir,
+    );
+    expect(diffPermissions(pub, emb)).toEqual({
+      added: ["permissions.http.embed:GET /ui/data"],
+      removed: ["permissions.http.public:GET /ui/data"],
+    });
+  });
+
   it("旧快照缺字段（格式演进）按空处理，不抛错", async () => {
     const b = await computePermissionSet(mf({ permissions: { tools: ["x"] } }), dir);
     expect(diffPermissions({ provides: [] } as never, b)).toEqual({
@@ -199,8 +214,8 @@ describe("permissionKeys and marketplace manifests", () => {
         secrets: true,
         storage: true,
         http: [
-          { method: "GET", path: "/x" },
-          { method: "POST", path: "/events", public: true },
+          { method: "GET", path: "/x", access: "admin" },
+          { method: "POST", path: "/events", access: "public" },
         ],
         tools: ["write"],
         hooks: ["model.request", "tool.preExecute", "usage.report"],

@@ -114,7 +114,8 @@ export interface StaticExtensionManifest {
   optional: string[];
   permissions: {
     secrets?: boolean;
-    http?: { method: string; path: string; public?: boolean }[];
+    /** `access`: `public` / `embed` / `member` / `admin` (SDK `HttpAccess`). */
+    http?: { method: string; path: string; access: string }[];
     tools?: string[];
     hooks?: string[];
     policyHooks?: string[];
@@ -1654,6 +1655,12 @@ export interface PluginReviewAgentTemplate {
   skills?: string[];
 }
 
+/** Route access levels reachable without signing in: public, and embed (an embed token). */
+const noSignIn = (access: string): boolean => access === "public" || access === "embed";
+
+const routeItem = (r: { method: string; path: string; access: string }): string =>
+  `${r.method} ${r.path} (${r.access})`;
+
 /**
  * The permissions an extension declares in its static manifest, by category (the categories of the
  * kernel's permission view; empty ones left out). Only for display: the import review shows the
@@ -1674,14 +1681,9 @@ export function declaredPermissions(
     { category: "optional", items: m.optional },
     { category: "secrets", items: p.secrets ? ["secrets"] : [] },
     { category: "storage", items: p.storage ? ["storage"] : [] },
-    {
-      category: "http",
-      items: http.filter((r) => r.public !== true).map((r) => `${r.method} ${r.path}`),
-    },
-    {
-      category: "publicRoutes",
-      items: http.filter((r) => r.public === true).map((r) => `${r.method} ${r.path}`),
-    },
+    // routes show their access; public and embed routes take no sign-in (the kernel's grouping)
+    { category: "http", items: http.filter((r) => !noSignIn(r.access)).map(routeItem) },
+    { category: "publicRoutes", items: http.filter((r) => noSignIn(r.access)).map(routeItem) },
     { category: "tools", items: p.tools ?? [] },
     {
       category: "hooks",

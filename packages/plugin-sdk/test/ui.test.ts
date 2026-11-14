@@ -7,6 +7,7 @@ import {
   type EmbedParentMessage,
   type ExtensionContext,
   type ExtensionManifest,
+  type HttpPermission,
   parseEmbedChildMessage,
   resolveUiSlots,
   type ToolResult,
@@ -387,7 +388,7 @@ describe("清单校验：ui 贡献与 permissions 交叉核对", () => {
     expect(() => defineExtension(m)).toThrow(/\/ui\//);
   });
   it("an embed path not declared as a public GET in permissions.http is an error", () => {
-    const m = (http: unknown[]) =>
+    const m = (http: HttpPermission[]) =>
       base({
         ui: [{ id: "board", title, place: "page", kind: "embed", path: "/ui/board" }],
         permissions: { http, ui: { embeds: ["board"] } },

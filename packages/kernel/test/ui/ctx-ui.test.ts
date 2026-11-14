@@ -90,7 +90,7 @@ const mf = (over: Partial<ExtensionManifest> = {}) =>
       },
     ],
     permissions: {
-      http: [{ method: "GET", path: "/ui/board" }],
+      http: [{ method: "GET", path: "/ui/board", access: "public" }],
       ui: { views: ["tasks"], embeds: ["board", "settings", "platform"] },
     },
     setup() {},

@@ -202,20 +202,46 @@ describe("ctx 按权限清单构造", () => {
     expect(await denials()).toEqual([]);
   });
 
-  it("http.route：只允许清单中声明的 method + path", async () => {
+  it("http.route: only a declared method + path; the record carries access and its mount", async () => {
     const ctx = createExtensionContext(
       deps,
-      mf({ permissions: { http: [{ method: "GET", path: "/a" }] } }),
+      mf({
+        permissions: {
+          http: [
+            { method: "GET", path: "/items", access: "member" },
+            { method: "PUT", path: "/settings", access: "admin" },
+            { method: "POST", path: "/hook", access: "public" },
+            { method: "GET", path: "/ui/data", access: "embed" },
+          ],
+        },
+      }),
       {},
     );
     const h = async () => new Response("ok");
-    ctx.http.route("GET", "/a", h);
-    expect(() => ctx.http.route("POST", "/a", h)).toThrow(ExtensionPermissionError);
+    ctx.http.route("GET", "/items", h);
+    ctx.http.route("PUT", "/settings", h);
+    ctx.http.route("POST", "/hook", h);
+    ctx.http.route("GET", "/ui/data", h);
+    // declared only as GET: POST is refused; undeclared paths too
+    expect(() => ctx.http.route("POST", "/items", h)).toThrow(ExtensionPermissionError);
     expect(() => ctx.http.route("GET", "/b", h)).toThrow(/permissions\.http.*GET \/b/);
-    expect(ctx.routes.map((r) => `${r.method} ${r.path}`)).toEqual(["GET /plugins/perm-test/a"]);
+    expect(() => ctx.http.route("GET", "/items", h)).toThrow(/duplicate route GET \/items/);
+    expect(ctx.routes.map((r) => [r.plugin, r.method, r.path, r.access])).toEqual([
+      ["perm-test", "GET", "/plugins/perm-test/orgs/:orgId/items", "member"],
+      ["perm-test", "PUT", "/plugins/perm-test/orgs/:orgId/settings", "admin"],
+      ["perm-test", "POST", "/plugins/perm-test/hook", "public"],
+      ["perm-test", "GET", "/plugins/perm-test/ui/data", "embed"],
+    ]);
+    // the record's embed verifier is the extension's own ctx.ui.verifyEmbedToken
+    for (const r of ctx.routes) {
+      expect(r.verifyEmbed).toBe(ctx.ui.verifyEmbedToken);
+      expect(r.handler).toBe(h);
+    }
+    expect(await ctx.routes[3]?.verifyEmbed("not-a-token")).toBeNull();
     await ctx.close();
+    expect(ctx.routes).toEqual([]);
     const items = (await denials()).map((r) => (r.detail as { item: string }).item).sort();
-    expect(items).toEqual(["permissions.http GET /b", "permissions.http POST /a"]);
+    expect(items).toEqual(["permissions.http GET /b", "permissions.http POST /items"]);
   });
 
   it("没有 permissions.http：任何路由都被拒绝", async () => {

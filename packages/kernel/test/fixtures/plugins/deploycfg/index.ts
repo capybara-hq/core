@@ -39,7 +39,7 @@ export default defineExtension({
   version: "0.1.0",
   sdk: "^0.1.0-rc.0",
   provides: [],
-  permissions: { http: [{ method: "GET", path: "/state" }] },
+  permissions: { http: [{ method: "GET", path: "/state", access: "public" }] },
   config: { deployment: DeploycfgSchema },
   setup(ctx) {
     if ((ctx.config as { failSetup?: boolean }).failSetup) throw new Error("failSetup is set");

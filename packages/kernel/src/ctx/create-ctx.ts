@@ -1,5 +1,6 @@
 import {
   type AvailableHook,
+  type EmbedClaims,
   EXTENSION_POINTS,
   type ExtensionContext,
   type ExtensionManifest,
@@ -12,10 +13,12 @@ import {
   type FilePreviewer,
   type FilePreviewProvider,
   type HookHandler,
+  type HttpAccess,
   type Logger,
   OBJECT_STORE_EXTENSION_POINT,
   type ObjectStore,
   parseExtensionPoint,
+  type RouteCaller,
   resolveUiSlots,
   SETUP_CHECK_ID_RE,
   SETUP_GUIDE_PLACES,
@@ -94,11 +97,25 @@ export interface KernelDeps {
   log: Logger & { debug?(msg: string, fields?: Record<string, unknown>): void };
 }
 
-/** 插件 HTTP 路由；`path` 已含 `/plugins/<name>` 前缀。 */
+/**
+ * What `ctx.ui.verifyEmbedToken` returns for a valid token: the signed claims, with an org
+ * token's `role` replaced by the caller's role at verification time.
+ */
+export type VerifiedEmbedClaims = EmbedClaims;
+
+/**
+ * An extension HTTP route as registered through `ctx.http.route`. `path` is the full mounted path:
+ * `/plugins/<name>/orgs/:orgId<path>` for `member` / `admin`, `/plugins/<name><path>` for `public`
+ * / `embed`. `verifyEmbed` is the extension's own `ctx.ui.verifyEmbedToken` (the dispatch checks
+ * an `embed` route's token with it).
+ */
 export type Route = {
+  plugin: string;
   method: "GET" | "POST" | "PUT" | "DELETE";
   path: string;
-  handler: (req: Request) => Promise<Response>;
+  access: HttpAccess;
+  handler: (req: Request, caller: RouteCaller) => Promise<Response>;
+  verifyEmbed: (token: string) => Promise<VerifiedEmbedClaims | null>;
 };
 
 /** 插件经 `ctx.tools.register` 注册的工具。 */
@@ -357,7 +374,8 @@ export class LiveConfig {
  * - Granted automatically: `kv`, `lock`, `bus`, `queue`, `log`, `db`, `config`, `provide`;
  * - `secrets` only with `permissions.secrets`, `storage` only with `permissions.storage`, `models`
  *   only with `permissions.models` (and only its `embedding` purposes, through `deps.models`); `http.route`
- *   only the method + path declared in `permissions.http`; `tools.register` only names declared in
+ *   only the method + path declared in `permissions.http` (the record carries the declared access and
+ *   its mount, see {@link Route}); `tools.register` only names declared in
  *   `permissions.tools`; `ui.view` / `ui.action` only ids declared in `permissions.ui.views` or
  *   `permissions.ui.components` (a component's server view; during setup only); `setup.check` only
  *   ids declared in `permissions.setupChecks` (during setup only, `place` and `run` read once and
@@ -440,7 +458,10 @@ export function createExtensionContext(
           },
         }
       : undefined;
-  const declaredRoutes = new Set((perms.http ?? []).map((r) => `${r.method} ${r.path}`));
+  // "METHOD path" -> the access the manifest declares for it (the approved manifest)
+  const declaredRoutes = new Map<string, HttpAccess>(
+    (perms.http ?? []).map((r) => [`${r.method} ${r.path}`, r.access]),
+  );
   const declaredTools = new Set(perms.tools ?? []);
   const declaredHooks = new Set<string>(perms.hooks ?? []);
   const declaredPolicyHooks = new Set<string>(perms.policyHooks ?? []);
@@ -458,6 +479,31 @@ export function createExtensionContext(
   const uiSlots = new Map<string, UiSlotSpec>(
     uiResolution.resolved.map((r) => [r.contribution.id, r.slot]),
   );
+  // `ctx.ui.verifyEmbedToken`, also every route record's `verifyEmbed`. Accepts only a token signed
+  // for this extension, unexpired and untampered (see ui/embed-token.ts); then one query checks the
+  // present: the extension still enabled in that org, the org not deleted, the account active and
+  // still a member (PG every time, never cached: tokens already issued stop working at once when the
+  // extension is switched off, the member leaves or the account is disabled). The returned role is
+  // the current one; a token whose current role is below the minRole of its contribution's slot is
+  // refused (A38, UI slots spec §7). A platform token: the contribution is a `platform.page` and the
+  // account is still an active super admin. A token of one scope never verifies for the other's
+  // slots. Anything else is null.
+  const verifyEmbedToken = async (token: string): Promise<VerifiedEmbedClaims | null> => {
+    const claims = embedTokens.verify(token, name);
+    if (claims === null) return null;
+    const slot = uiSlots.get(claims.contribution);
+    if (claims.scope === "platform") {
+      if (slot?.id !== "platform.page") return null;
+      return (await currentPlatformAccount(deps.db, claims.accountId)) ? claims : null;
+    }
+    if (claims.scope !== "org" || claims.orgId === undefined) return null;
+    // the contribution's slot as loaded now: never `platform.page` through an org token, and the
+    // current role still meets the slot's minRole (a demoted caller's token stops working)
+    if (slot === undefined || slot.id === "platform.page") return null;
+    const role = await currentEmbedRole(deps.db, name, claims.orgId, claims.accountId);
+    if (role === undefined || !canUseSlot(slot, role)) return null;
+    return { ...claims, role };
+  };
   /** Ids of the extension's `platform.page` contributions (their invalidate takes no orgId). */
   const platformUi: ReadonlySet<string> = new Set(
     [...uiSlots].filter(([, s]) => s.id === "platform.page").map(([id]) => id),
@@ -598,12 +644,23 @@ export function createExtensionContext(
         if (typeof path !== "string" || !path.startsWith("/")) {
           throw new Error(`plugin ${name}: route path "${path}" must start with "/"`);
         }
-        if (!declaredRoutes.has(`${method} ${path}`)) deny(`permissions.http ${method} ${path}`);
-        const full = `/plugins/${name}${path}`;
+        const access = declaredRoutes.get(`${method} ${path}`);
+        if (access === undefined) return deny(`permissions.http ${method} ${path}`);
+        const full =
+          access === "member" || access === "admin"
+            ? `/plugins/${name}/orgs/:orgId${path}`
+            : `/plugins/${name}${path}`;
         if (routes.some((r) => r.method === method && r.path === full)) {
           throw new Error(`plugin ${name}: duplicate route ${method} ${path}`);
         }
-        const route: Route = { method, path: full, handler };
+        const route: Route = {
+          plugin: name,
+          method,
+          path: full,
+          access,
+          handler,
+          verifyEmbed: verifyEmbedToken,
+        };
         routes.push(route);
         ledger.add({
           kind: "route",
@@ -773,27 +830,7 @@ export function createExtensionContext(
           msg,
         );
       },
-      // 只认签给本插件、未过期、未篡改的令牌（见 ui/embed-token.ts）；再用一条查询核对此刻：本插件仍在该组织
-      // 启用、组织未删除、账号 active 且仍是成员（每次查 PG、不缓存：停用插件、离职、停用账号后已签出的令牌立即失效）。
-      // 返回的 role 是此刻的角色；令牌在此刻的角色低于贡献所在位置的 minRole 时失效（A38, UI slots spec §7）。
-      // A platform token: the contribution is a `platform.page` and the account is still an active
-      // super admin. A token of one scope never verifies for the other's slots. 其余一律 null
-      async verifyEmbedToken(token) {
-        const claims = embedTokens.verify(token, name);
-        if (claims === null) return null;
-        const slot = uiSlots.get(claims.contribution);
-        if (claims.scope === "platform") {
-          if (slot?.id !== "platform.page") return null;
-          return (await currentPlatformAccount(deps.db, claims.accountId)) ? claims : null;
-        }
-        if (claims.scope !== "org" || claims.orgId === undefined) return null;
-        // the contribution's slot as loaded now: never `platform.page` through an org token, and the
-        // current role still meets the slot's minRole (a demoted caller's token stops working)
-        if (slot === undefined || slot.id === "platform.page") return null;
-        const role = await currentEmbedRole(deps.db, name, claims.orgId, claims.accountId);
-        if (role === undefined || !canUseSlot(slot, role)) return null;
-        return { ...claims, role };
-      },
+      verifyEmbedToken,
     },
     provide(extensionPoint, impl) {
       if (!manifest.provides.includes(extensionPoint)) {

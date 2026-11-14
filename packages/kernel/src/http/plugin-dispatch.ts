@@ -145,7 +145,8 @@ export async function registerPluginDispatch(
     }
     let res: Response;
     try {
-      res = await pluginHandler(webReq);
+      // temporary: Task 3 resolves the caller from the route's access before the handler runs
+      res = await pluginHandler(webReq, { access: "public" });
     } catch (err) {
       if (err instanceof ApiError && err.code === "model.hook_denied") {
         log.warn("plugin handler refused: a policy hook denied its model call", {

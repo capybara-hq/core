@@ -15,9 +15,12 @@ async function app(
 }
 
 const route = (method: Route["method"], path: string, handler: Route["handler"]): Route => ({
+  plugin: "p",
   method,
   path,
+  access: "public",
   handler,
+  verifyEmbed: async () => null,
 });
 
 afterEach(async () => {

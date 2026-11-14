@@ -152,6 +152,12 @@ function itemReason(category: Category, item: string): SensitiveReason | undefin
   return ALWAYS_SENSITIVE.has(category) ? CATEGORY_REASON[category] : undefined;
 }
 
+/** Route access levels reachable without signing in: public, and embed (an embed token). */
+const noSignIn = (access: string): boolean => access === "public" || access === "embed";
+
+const routeItem = (r: { method: string; path: string; access: string }): string =>
+  `${r.method} ${r.path} (${r.access})`;
+
 const itemOf = (category: Category, value: string): PermissionItem => {
   const reason = itemReason(category, value);
   return reason === undefined ? { value, sensitive: false } : { value, sensitive: true, reason };
@@ -167,6 +173,7 @@ function keyItem(key: string): { category: Category; item: string } | null {
   const table: [string, Category, string][] = [
     ["provides:", "provides", ""],
     ["permissions.http.public:", "publicRoutes", ""],
+    ["permissions.http.embed:", "publicRoutes", ""],
     ["permissions.tools:", "tools", ""],
     ["permissions.hooks:", "hooks", ""],
     ["permissions.hooks.policy:", "hooks", "policy:"],
@@ -231,14 +238,9 @@ export function permissionGroups(set: PermissionSet): PermissionGroup[] {
     { category: "tables", items: set.tables },
     { category: "secrets", items: secretItems },
     { category: "storage", items: p.storage ? ["storage"] : [] },
-    {
-      category: "http",
-      items: p.http.filter((r) => !r.public).map((r) => `${r.method} ${r.path}`),
-    },
-    {
-      category: "publicRoutes",
-      items: p.http.filter((r) => r.public).map((r) => `${r.method} ${r.path}`),
-    },
+    // routes show their access; public and embed routes take no sign-in (sensitive)
+    { category: "http", items: p.http.filter((r) => !noSignIn(r.access)).map(routeItem) },
+    { category: "publicRoutes", items: p.http.filter((r) => noSignIn(r.access)).map(routeItem) },
     { category: "tools", items: p.tools },
     { category: "hooks", items: [...p.hooks, ...(p.policyHooks ?? []).map((h) => `policy:${h}`)] },
     {
