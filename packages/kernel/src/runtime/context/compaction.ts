@@ -4,6 +4,7 @@ import type { ConversationEvent, EventPayload } from "../../conversations/events
 import type { CompactionSettings } from "../../identity/settings.js";
 import { renderSubagentDelivery } from "../subagents/render.js";
 import { latestSummary } from "./build.js";
+import { planningBounds } from "./fit.js";
 import { scheduleHeader, senderTranscriptLabel } from "./run-context.js";
 import { estimateTokens } from "./tokens.js";
 import { toolsChangedText } from "./tool-changes.js";
@@ -53,8 +54,9 @@ const COMPACTION_INSTRUCTION = [
 ].join("\n");
 
 /**
- * The input room a request leaves below the window: the output cap and the safety reserve are never
- * spent on input (context compaction spec §4.1).
+ * The input room one summary call leaves below the compaction model's window (context compaction
+ * spec §4.5, `B = Wc - Cmax - R`): the summary call's own output cap and the safety reserve are never
+ * spent on its input. A step's request plans with {@link planningBounds} instead.
  */
 export function compactionInputBudget(window: number, maxOutput: number, reserve: number): number {
   return window - maxOutput - reserve;
@@ -99,25 +101,24 @@ export const MIN_COMPACTION_CHUNK_TOKENS = 256;
 
 /**
  * Compaction trigger (context compaction spec §4.1): the calibrated estimate reaches the lower of
- * `threshold × window` and the input budget, or it reaches the hard line `estimate + output >
- * window`, which fires even when proactive early compaction is turned off (`enabled: false`).
- * `settings.maxOutputTokens` here carries `O`, the request's output cap (§4.1), not the summary cap (§4.8).
+ * `threshold × window` and the input target `W - O_p - R_p` (the planning bounds,
+ * {@link planningBounds}), or it reaches the hard line `estimate + O_p > window`, which fires even
+ * when proactive early compaction is turned off (`enabled: false`). `settings.maxOutputTokens` here
+ * carries `O`, the request's output cap (§4.1), not the summary cap (§4.8).
  */
 export function shouldCompact(
   estimate: number,
   window: number,
   settings: CompactionSettings,
 ): boolean {
-  const output = settings.maxOutputTokens;
+  const { output, target } = planningBounds(
+    window,
+    settings.maxOutputTokens,
+    settings.reserveTokens,
+  );
   if (estimate + output > window) return true;
   if (!settings.enabled) return false;
-  return (
-    estimate >=
-    Math.min(
-      settings.threshold * window,
-      compactionInputBudget(window, output, settings.reserveTokens),
-    )
-  );
+  return estimate >= Math.min(settings.threshold * window, target);
 }
 
 /**
@@ -127,9 +128,13 @@ export function shouldCompact(
  *
  * The kept tail shrinks turn by turn, down to the latest user turn, until its estimated tokens fit
  * `budget` — the input room left after the output cap, the reserve, the system prompt and the tool
- * definitions. A single turn over the budget is still kept (the hard fit guard handles the rest).
- * `coversUpToSeq` is the largest seq before the first kept user_message. Returns null when there is
- * nothing to summarize.
+ * definitions. When the latest user turn alone does not fit (context compaction spec §4.2, revision
+ * 2026-11-15), the boundary moves inside it, to tool-pair boundaries oldest first, until the tail
+ * fits or only the latest tool pair (the latest assistant message with tool calls, and what follows
+ * it) is left; the summary then covers the turn's user message, which request building shows again
+ * right after the summary (build.ts). A latest turn without a tool pair is kept whole (the hard fit
+ * guard handles the rest). `coversUpToSeq` is the largest seq before the first kept event. Returns
+ * null when there is nothing to summarize.
  */
 export function compactionPlan(
   events: ConversationEvent[],
@@ -145,27 +150,39 @@ export function compactionPlan(
   candidate.forEach((e, i) => {
     if (e.type === "user_message") userIdx.push(i);
   });
+  const atPair = pairBoundaries(candidate);
+  const tail = tailTokens(candidate);
   const keep = settings.keepRecentTurns;
   let boundary: number;
   if (keep <= 0) boundary = candidate.length;
   else if (userIdx.length < keep) boundary = 0;
   else boundary = userIdx[userIdx.length - keep] as number;
-  boundary = keepToolPairs(candidate, userIdx, boundary);
+  boundary = keepToolPairs(atPair, userIdx, boundary);
 
-  // size-aware tail: drop earlier kept turns until the rest fits the budget, but never drop the
-  // latest user turn (a turn over the budget is trimmed by the hard fit guard, spec §4.3)
-  if (
-    userIdx.length > 0 &&
-    boundary < candidate.length &&
-    tailTokens(candidate, boundary) > budget
-  ) {
-    let chosen = boundary;
+  if (boundary < candidate.length && (tail[boundary] as number) > budget) {
+    // size-aware tail: drop earlier kept turns until the rest fits the budget
     for (const start of userIdx) {
       if (start <= boundary) continue;
-      chosen = keepToolPairs(candidate, userIdx, start);
-      if (tailTokens(candidate, chosen) <= budget) break;
+      boundary = keepToolPairs(atPair, userIdx, start);
+      if ((tail[boundary] as number) <= budget) break;
     }
-    boundary = chosen;
+    // the latest user turn alone is over the budget: cut inside it at a tool-pair boundary,
+    // oldest first, never past the latest tool pair (spec §4.2, revision 2026-11-15)
+    if ((tail[boundary] as number) > budget) {
+      let limit = -1;
+      for (let i = candidate.length - 1; i > boundary && limit < 0; i--) {
+        const e = candidate[i] as ConversationEvent;
+        if (e.type === "assistant_message" && e.payload.content.some((b) => b.type === "tool_call"))
+          limit = i;
+      }
+      let chosen = boundary;
+      for (let j = boundary + 1; j <= limit; j++) {
+        if (!atPair[j]) continue;
+        chosen = j;
+        if ((tail[j] as number) <= budget) break;
+      }
+      boundary = chosen;
+    }
   }
 
   const lines: string[] = [];
@@ -184,31 +201,75 @@ export function compactionPlan(
 }
 
 /**
- * Estimated input tokens of the kept tail (the events rendered as the transcript renders them, then
- * estimated with the request estimator).
+ * The user messages that started run `runId`, among those a summary covering up to
+ * `coversUpToSeq` covers (context compaction spec §4.2, revision 2026-11-15): recorded in the
+ * summary as `openingSeqs` when it is written, so request building re-renders exactly these after
+ * the summary text and a request never depends on later events. The opening messages are the user
+ * messages the run's first model call absorbed (`absorbedUpToSeq` of that call, or of the request
+ * about to be built when the run has made none yet) that no earlier turn answered or absorbed:
+ * after the latest assistant message and model call before the run's `run_started`.
+ * Several when the person sent several before the first call. None for a run that no message
+ * started (a finished background task or a sub-agent's delivery woke it, a manual compact run),
+ * and a covered interjection (after the first call) is never one. Sorted by seq.
  */
-function tailTokens(candidate: ConversationEvent[], from: number): number {
-  let tokens = 0;
-  for (const e of candidate.slice(from)) {
-    const line = transcriptLine(e);
-    if (!line) continue;
-    tokens += estimateTokens([{ role: "user", content: [{ type: "text", text: line }] }], []);
+export function openingSeqs(
+  events: readonly ConversationEvent[],
+  runId: string,
+  coversUpToSeq: number,
+  absorbedUpToSeq: number = Number.POSITIVE_INFINITY,
+): number[] {
+  const sorted = [...events].sort((a, b) => a.seq - b.seq);
+  const start = sorted.findLast((e) => e.type === "run_started" && e.runId === runId);
+  if (start?.type !== "run_started") return [];
+  const trigger = start.payload.trigger;
+  if (trigger !== undefined && trigger !== "message" && trigger !== "schedule") return [];
+  const first = sorted.find(
+    (e) => e.type === "model_call" && e.runId === runId && e.seq > start.seq,
+  );
+  const upTo =
+    first?.type === "model_call"
+      ? Math.min(first.payload.request.absorbedUpToSeq ?? first.seq, first.seq)
+      : absorbedUpToSeq;
+  let floor = Number.NEGATIVE_INFINITY;
+  for (const e of sorted) {
+    if (e.seq >= start.seq) break;
+    if (e.type === "assistant_message") floor = Math.max(floor, e.seq);
+    else if (e.type === "model_call") {
+      floor = Math.max(floor, e.payload.request.absorbedUpToSeq ?? e.seq);
+    }
   }
-  return tokens;
+  return sorted
+    .filter(
+      (e) => e.type === "user_message" && e.seq > floor && e.seq <= upTo && e.seq <= coversUpToSeq,
+    )
+    .map((e) => e.seq);
 }
 
 /**
- * 边界不得切开工具调用与其结果：工具运行期间到达的插话（user_message）记在 assistant 的 tool_call 与
- * tool_result 之间，若它成了边界，assistant 进摘要而结果留在原文，构建请求时结果因找不到调用被丢弃。
- * 做法：边界之前仍「未结束」（结果在边界之后）的调用存在时，把边界退到最早那条未结束 assistant 之前的
- * 最近一个 user_message（没有则 0，即不压缩这段），重复直到没有被切开的调用。结果从未写入的调用不算
- * （它们由配对守卫补 unknown，与边界无关）。
+ * Estimated input tokens of the kept tail from each index (`out[i]` for the events from `i` on,
+ * `out[length]` = 0): the events rendered as the transcript renders them, then estimated with the
+ * request estimator.
  */
-function keepToolPairs(
-  candidate: ConversationEvent[],
-  userIdx: number[],
-  boundary: number,
-): number {
+function tailTokens(candidate: ConversationEvent[]): number[] {
+  const out = new Array<number>(candidate.length + 1).fill(0);
+  for (let i = candidate.length - 1; i >= 0; i--) {
+    const line = transcriptLine(candidate[i] as ConversationEvent);
+    const own = line
+      ? estimateTokens([{ role: "user", content: [{ type: "text", text: line }] }], [])
+      : 0;
+    out[i] = (out[i + 1] as number) + own;
+  }
+  return out;
+}
+
+/**
+ * The tool-pair boundaries (`out[j]` for a cut before index `j`, `out[length]` = true): no tool
+ * call before `j` has its result at or after `j`. A tool that ran during an interjection
+ * (user_message) has the message between its call and its result, so that message is no
+ * boundary: cutting there would leave the result without its call, and request building drops such
+ * a result. Calls whose result was never written do not count (the pairing guard pads them).
+ */
+function pairBoundaries(candidate: ConversationEvent[]): boolean[] {
   const key = (runId: string | null, callId: string) => `${runId ?? ""}\u0000${callId}`;
   const resultAt = new Map<string, number>();
   candidate.forEach((e, i) => {
@@ -216,25 +277,39 @@ function keepToolPairs(
     const k = key(e.runId, e.payload.callId);
     if (!resultAt.has(k)) resultAt.set(k, i);
   });
-  for (;;) {
-    let earliestOpen = -1;
-    for (let i = 0; i < boundary && earliestOpen < 0; i++) {
-      const e = candidate[i] as ConversationEvent;
-      if (e.type !== "assistant_message") continue;
-      for (const b of e.payload.content) {
-        if (b.type !== "tool_call") continue;
-        const at = resultAt.get(key(e.runId, b.id));
-        if (at !== undefined && at >= boundary) {
-          earliestOpen = i;
-          break;
-        }
-      }
+  // open[j] > 0: some call before j has its result at or after j (a difference array)
+  const open = new Array<number>(candidate.length + 2).fill(0);
+  candidate.forEach((e, i) => {
+    if (e.type !== "assistant_message") return;
+    for (const b of e.payload.content) {
+      if (b.type !== "tool_call") continue;
+      const at = resultAt.get(key(e.runId, b.id));
+      if (at === undefined || at <= i) continue;
+      open[i + 1] = (open[i + 1] as number) + 1;
+      open[at + 1] = (open[at + 1] as number) - 1;
     }
-    if (earliestOpen < 0) return boundary;
-    let next = 0;
-    for (const u of userIdx) if (u < earliestOpen) next = u;
-    boundary = next;
+  });
+  const out: boolean[] = [];
+  let depth = 0;
+  for (let j = 0; j <= candidate.length; j++) {
+    depth += open[j] as number;
+    out.push(depth === 0);
   }
+  return out;
+}
+
+/**
+ * A turn boundary that would split a tool call from its result moves back to the latest
+ * user_message before it that is a tool-pair boundary (none: 0, nothing of this part is
+ * summarised).
+ */
+function keepToolPairs(atPair: boolean[], userIdx: number[], boundary: number): number {
+  if (atPair[boundary]) return boundary;
+  for (let k = userIdx.length - 1; k >= 0; k--) {
+    const u = userIdx[k] as number;
+    if (u < boundary && atPair[u]) return u;
+  }
+  return 0;
 }
 
 function transcriptLine(e: ConversationEvent): string | null {

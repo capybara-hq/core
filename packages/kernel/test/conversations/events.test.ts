@@ -117,6 +117,20 @@ describe("compaction_summary", () => {
     });
     expect(now.type === "compaction_summary" ? now.payload.savedTokens : undefined).toBe(1200);
   });
+
+  it("keeps openingSeqs (the messages to re-render); older logs have none", () => {
+    const now = ConversationEventSchema.parse({
+      type: "compaction_summary",
+      payload: { coversUpToSeq: 9, text: "summary", openingSeqs: [3, 5] },
+    });
+    expect(now.type === "compaction_summary" ? now.payload.openingSeqs : undefined).toEqual([3, 5]);
+    expect(
+      ConversationEventSchema.safeParse({
+        type: "compaction_summary",
+        payload: { coversUpToSeq: 9, text: "summary", openingSeqs: [1.5] },
+      }).success,
+    ).toBe(false);
+  });
 });
 
 describe("approval_decided", () => {
