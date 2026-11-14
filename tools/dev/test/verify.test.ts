@@ -9,6 +9,7 @@ import {
   baseChecks,
   changedFiles,
   changesetWarning,
+  fastSteps,
   localTestPlan,
   safePlan,
   tryChangedFiles,
@@ -99,7 +100,7 @@ describe("verifySteps", () => {
     expect(find(basePlan, "web")).toBeUndefined();
   });
 
-  it("--fast runs only lint, typecheck, check and the unit tests", () => {
+  it("--fast runs only lint, typecheck, check and the container-free tests", () => {
     const everything = {
       ...basePlan,
       all: true,
@@ -116,9 +117,25 @@ describe("verifySteps", () => {
       ["lint", ["pnpm", "lint"]],
       ["typecheck", ["pnpm", "typecheck"]],
       ["check", ["pnpm", "check"]],
-      ["unit", ["pnpm", "test:unit"]],
+      [
+        "unit",
+        [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "--project",
+          "kernel-unit",
+          "--project",
+          "design",
+          "--project",
+          "plugin-client",
+        ],
+      ],
     ]);
     expect(fast.every((s) => s.cmd !== null)).toBe(true);
+    // The fast list depends on nothing but the flag: no plan and no base.
+    expect(fast).toEqual(fastSteps());
 
     // The same plan without --fast keeps the full step list.
     expect(verifySteps(everything, "abc", { full: true }).map((s) => s.id)).toEqual([
@@ -133,6 +150,11 @@ describe("verifySteps", () => {
       "e2e",
       "docker",
     ]);
+  });
+
+  it("--fast takes precedence over --full", () => {
+    const everything = { ...basePlan, all: true, test: true };
+    expect(verifySteps(everything, "abc", { fast: true, full: true })).toEqual(fastSteps());
   });
 });
 

@@ -59,7 +59,7 @@ export function localTestPlan(files: string[], ws: Workspace): Plan {
 }
 
 export type VerifyOptions = {
-  /** Run only the fast checks (`--fast`): lint, typecheck, custom checks and kernel unit tests. */
+  /** Run only the fast checks (`--fast`): no git, no containers ({@link fastSteps}). */
   fast?: boolean;
   /** Run the full suite when the plan runs everything (`--full`). */
   full?: boolean;
@@ -76,13 +76,37 @@ function checkSteps(): VerifyStep[] {
   ];
 }
 
+/**
+ * The fast, advisory steps (`--fast`): no containers, no database, no network and no git. The
+ * kernel unit project plus the two no-container jsdom projects, so a UI change in design or
+ * plugin-client is covered too.
+ */
+export function fastSteps(): VerifyStep[] {
+  return [
+    ...checkSteps(),
+    {
+      id: "unit",
+      title: "Unit tests",
+      cmd: [
+        "pnpm",
+        "exec",
+        "vitest",
+        "run",
+        "--project",
+        "kernel-unit",
+        "--project",
+        "design",
+        "--project",
+        "plugin-client",
+      ],
+    },
+  ];
+}
+
 /** The local equivalent of CI's required jobs for this plan, in run order. */
 export function verifySteps(plan: Plan, base: string, opts: VerifyOptions = {}): VerifyStep[] {
-  // A fast check is an advisory signal: the steps that need no containers and no database, and
-  // never an integration test.
-  if (opts.fast) {
-    return [...checkSteps(), { id: "unit", title: "Unit tests", cmd: ["pnpm", "test:unit"] }];
-  }
+  // A fast check is an advisory signal and ignores the plan: no containers, no database, no git.
+  if (opts.fast) return fastSteps();
   const steps: VerifyStep[] = checkSteps();
   // CI runs it in the ci job when bootstrap.json changed (or on a full run); it needs the network
   if (plan.bootstrapNetwork)
