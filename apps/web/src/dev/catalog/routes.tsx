@@ -153,6 +153,9 @@ export const REFERENCE_COMPONENTS = [
   "theme-swatch",
   // the theme picker: the cards in one radio group (themes spec §10)
   "theme-swatch-group",
+  // a device's head and its two modes (auto mode design §4, plan Task 10)
+  "device-nameplate",
+  "mode-scale",
 ] as const;
 
 export type ReferenceComponent = (typeof REFERENCE_COMPONENTS)[number];

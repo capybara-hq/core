@@ -8,17 +8,16 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
+import { KernelConfigSchema } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
 import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
-import { UNATTENDED_OPEN_TIER_ERROR } from "../../src/schedules/unattended.js";
 import {
   mapSandboxError,
   SANDBOX_CREATE_FAILED_TEXT,
-  sandboxTierRefusedText,
+  SANDBOX_OPEN_NETWORK_REFUSED_TEXT,
 } from "../../src/tools/builtins/sandbox/common.js";
 import {
   createFakeSandbox,
@@ -35,12 +34,11 @@ import { truncateTables } from "../helpers/db.js";
 import { sandboxLeasesFor, sandboxServiceFor, seedDevice } from "../helpers/sandbox.js";
 
 /**
- * Sandbox tiers on cloud devices (sandbox dev tiers spec §7.1, §11.4, §12): an instance records
- * the tier and egress mode it was made with; a use that finds another effective value updates the
+ * Device modes and limits on cloud devices (auto mode spec §4.2, §4.3): an instance records the
+ * mode and network kind it was made with; a use that finds another effective value updates the
  * instance (`update`), or recreates it on the kept files, or (a provider whose limits are fixed at
  * its file system, without `update`) keeps it and reports a pending file reset. A NULL record (an
- * instance made before migration 0117) differs once. Host list, cpu and memory changes never
- * trigger it. A scheduled run on an open cloud device needs the task's `tier:open` grant.
+ * instance made before auto mode) differs once. The host list, cpu and memory never trigger it.
  */
 
 let pgc: TestContainer;
@@ -48,7 +46,7 @@ let rdc: TestContainer;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let redis: Redis;
-let config: KernelConfig;
+let config: ReturnType<typeof KernelConfigSchema.parse>;
 let root: string;
 let provider: SandboxProvider;
 const warned: string[] = [];
@@ -95,20 +93,17 @@ beforeEach(async () => {
   await redis.flushdb();
   await truncateTables(
     raw,
-    "capybara.device_instances, capybara.devices, capybara.accounts, capybara.orgs, capybara.scheduled_tasks",
+    "capybara.device_instances, capybara.devices, capybara.accounts, capybara.orgs, capybara.scheduled_tasks, capybara.scheduled_task_runs",
   );
   if (root) await rm(root, { recursive: true, force: true });
-  root = await mkdtemp(join(tmpdir(), "cap-sandbox-tiers-"));
+  root = await mkdtemp(join(tmpdir(), "cap-sandbox-modes-"));
   provider = fake();
   config = KernelConfigSchema.parse({
     db: { url: pgc.url },
     redis: { url: rdc.url },
     masterKey: Buffer.alloc(32, 7).toString("base64"),
-    sandbox: { tiers: { max: "open", default: "dev" } },
   });
   ({ orgId, accountId } = await newOrg());
-  // the org may reach open (the platform allows it)
-  await setOrgSettings({ sandboxTier: { max: "open" } });
   deviceId = await seedDevice(raw, orgId);
 });
 
@@ -123,12 +118,19 @@ const service = (p: () => SandboxProvider = () => provider, lockTtlMs?: number) 
     ...(lockTtlMs !== undefined && { lockTtlMs }),
   });
 
+/**
+ * The org's mode switch. `off` also selects the allowlist network (the org's `cloudNetwork`),
+ * because a cloud device in sandbox mode applies it; `allowed` is auto mode, which ignores it.
+ */
+const setAutoMode = (mode: "allowed" | "off") =>
+  sql`UPDATE capybara.orgs SET settings = ${JSON.stringify({
+    autoMode: mode,
+    cloudNetwork: { mode: mode === "off" ? "allowlist" : "open" },
+  })}::jsonb
+    WHERE id = ${orgId}`.execute(raw);
 const setOrgSettings = (value: unknown) =>
   sql`UPDATE capybara.orgs SET settings = ${JSON.stringify(value)}::jsonb
     WHERE id = ${orgId}`.execute(raw);
-/** What the device route (task C2) writes: the device's own tier, null = follow the org. */
-const setTier = (tier: string | null, id = deviceId) =>
-  sql`UPDATE capybara.devices SET tier = ${tier} WHERE id = ${id}`.execute(raw);
 const record = async (id = deviceId) =>
   (
     await db
@@ -136,7 +138,10 @@ const record = async (id = deviceId) =>
       .select("instance_limits")
       .where("device_id", "=", id)
       .executeTakeFirst()
-  )?.instance_limits;
+  )?.instance_limits as Record<string, unknown> | null | undefined;
+const modeOf = async (id = deviceId) => (await record(id))?.mode;
+const networkKindOf = async (id = deviceId) =>
+  ((await record(id))?.network as { kind?: string } | undefined)?.kind;
 
 const use = (s: SandboxService, runId?: string, id = deviceId) =>
   s.withSandbox(
@@ -161,47 +166,49 @@ const status = async (id = deviceId) =>
 
 const ops = async (op: string) => (await readFakeSandboxOps(root)).filter((o) => o[0] === op);
 
-describe("creation records the effective tier and egress mode", () => {
-  it("a device follows the org's default; its own tier wins within the ceiling", async () => {
+describe("creation records the effective mode and network", () => {
+  it("a device follows the org: auto mode with the open public network, sandbox with the allowlist", async () => {
     const s = service();
     const a = await use(s);
     expect((await fakeSandboxMeta(root, a.h.id))?.limits).toMatchObject({
-      tier: "dev",
-      egress: "allowlist",
+      mode: "auto",
+      network: { kind: "open-public" },
     });
-    expect(await record()).toEqual({ tier: "dev", egress: "allowlist" });
+    expect(await modeOf()).toBe("auto");
+    expect(await networkKindOf()).toBe("open-public");
 
     const other = await seedDevice(raw, orgId);
-    await setTier("open", other);
+    await setAutoMode("off");
     const b = await use(s, undefined, other);
     expect((await fakeSandboxMeta(root, b.h.id))?.limits).toMatchObject({
-      tier: "open",
-      egress: "open",
-      allowHosts: [],
+      mode: "sandbox",
+      network: { kind: "allowlist" },
     });
-    expect(await record(other)).toEqual({ tier: "open", egress: "open" });
+    expect(await modeOf(other)).toBe("sandbox");
+    expect(await networkKindOf(other)).toBe("allowlist");
   });
 });
 
-describe("a changed tier on use", () => {
+describe("a changed mode on use", () => {
   it("update answers updated: the same instance, the new limits, no restart", async () => {
     provider = fake({ updateMode: "updated" });
     const s = service();
     const first = await use(s);
-    await setTier("strict");
-    expect(await s.limitsState({ orgId, deviceId })).toEqual({
-      applied: { tier: "dev", egress: "allowlist" },
-      effective: { tier: "strict", egress: "allowlist" },
-      pendingNextUse: true,
-      pendingFilesReset: false,
-    });
+    await setAutoMode("off");
+    const state = await s.limitsState({ orgId, deviceId });
+    expect(state.applied).toMatchObject({ mode: "auto", network: { kind: "open-public" } });
+    expect(state.effective).toMatchObject({ mode: "sandbox", network: { kind: "allowlist" } });
+    expect(state.pendingNextUse).toBe(true);
+    expect(state.pendingFilesReset).toBe(false);
     const again = await use(s);
     expect(again.h).toEqual(first.h);
     expect(again.info).toMatchObject({ fresh: false, restarted: false });
     expect(await ops("update")).toEqual([["update", first.h.id, "updated"]]);
     const updates = (await readFakeSandboxLimits(root)).filter((e) => e.op === "update");
-    expect(updates.map((e) => e.limits.tier)).toEqual(["strict"]);
-    expect(await record()).toEqual({ tier: "strict", egress: "allowlist" });
+    expect(updates.map((e) => [e.limits.mode, e.limits.network.kind])).toEqual([
+      ["sandbox", "allowlist"],
+    ]);
+    expect(await modeOf()).toBe("sandbox");
     expect((await s.limitsState({ orgId, deviceId })).pendingNextUse).toBe(false);
     // applied once: the next use takes a shared lease and changes nothing
     await use(s);
@@ -214,7 +221,7 @@ describe("a changed tier on use", () => {
     const s = service();
     const first = await use(s);
     const fs = (await fakeSandboxMeta(root, first.h.id))?.fileSystem;
-    await setTier("open");
+    await setAutoMode("off");
     const again = await use(s);
     expect(again.h).not.toEqual(first.h);
     expect(again.info).toMatchObject({ fresh: true, restarted: true });
@@ -223,8 +230,8 @@ describe("a changed tier on use", () => {
     expect(await ops("create-fs")).toHaveLength(1);
     const meta = await fakeSandboxMeta(root, again.h.id);
     expect(meta?.fileSystem).toBe(fs);
-    expect(meta?.limits).toMatchObject({ tier: "open", egress: "open" });
-    expect(await record()).toEqual({ tier: "open", egress: "open" });
+    expect(meta?.limits).toMatchObject({ mode: "sandbox", network: { kind: "allowlist" } });
+    expect(await modeOf()).toBe("sandbox");
   });
 
   it("no update (Docker today): destroy and create on the same files, files kept", async () => {
@@ -232,51 +239,46 @@ describe("a changed tier on use", () => {
     const first = await use(s);
     const fsOf = async (id: string) => (await fakeSandboxMeta(root, id))?.fileSystem;
     const fs = await fsOf(first.h.id);
-    await setOrgSettings({ sandboxTier: { max: "open", default: "strict" } });
+    await setAutoMode("off");
     const again = await use(s);
     expect(again.info).toMatchObject({ fresh: true, restarted: true });
     expect(await fsOf(again.h.id)).toBe(fs);
     expect(await ops("create")).toHaveLength(2);
-    expect(await record()).toEqual({ tier: "strict", egress: "allowlist" });
+    expect(await modeOf()).toBe("sandbox");
   });
 
-  it("a suspended instance is resumed, then gets the new tier", async () => {
+  it("a suspended instance is resumed, then gets the new mode", async () => {
     provider = fake({ updateMode: "updated" });
     const s = service();
     const first = await use(s);
     await s.suspendIdle(new Date(Date.now() + 24 * 60 * 60_000));
     expect(await ops("suspend")).toHaveLength(1);
-    await setTier("open");
+    await setAutoMode("off");
     const again = await use(s);
     expect(again.h).toEqual(first.h);
     expect(await ops("resume")).toHaveLength(1);
     expect(await ops("update")).toEqual([["update", first.h.id, "updated"]]);
-    expect(await record()).toEqual({ tier: "open", egress: "open" });
+    expect(await modeOf()).toBe("sandbox");
   });
 
   it("limits fixed at the file system, no update: keeps running as is, pending a file reset", async () => {
     provider = fake({ limitsApplyAt: "fileSystem" });
     const s = service();
     const first = await use(s);
-    // recorded with the file system
-    expect(await record()).toEqual({ tier: "dev", egress: "allowlist" });
-    await setTier("strict");
+    expect(await modeOf()).toBe("auto");
+    await setAutoMode("off");
     const again = await use(s);
     expect(again.h).toEqual(first.h);
     expect(again.info).toMatchObject({ fresh: false, restarted: false });
     expect(await ops("create")).toHaveLength(1);
-    expect(await record()).toEqual({ tier: "dev", egress: "allowlist" });
-    expect(await s.limitsState({ orgId, deviceId })).toEqual({
-      applied: { tier: "dev", egress: "allowlist" },
-      effective: { tier: "strict", egress: "allowlist" },
-      pendingNextUse: false,
-      pendingFilesReset: true,
-    });
+    expect(await modeOf()).toBe("auto");
+    const state = await s.limitsState({ orgId, deviceId });
+    expect(state).toMatchObject({ pendingNextUse: false, pendingFilesReset: true });
     // a file reset applies it
     await s.resetFileSystem(deviceId);
     expect(await record()).toBeNull();
     await use(s);
-    expect(await record()).toEqual({ tier: "strict", egress: "allowlist" });
+    expect(await modeOf()).toBe("sandbox");
     expect((await s.limitsState({ orgId, deviceId })).pendingFilesReset).toBe(false);
   });
 
@@ -284,21 +286,18 @@ describe("a changed tier on use", () => {
     provider = fake({ limitsApplyAt: "fileSystem", updateMode: "recreate" });
     const s = service();
     const first = await use(s);
-    await setTier("open");
+    await setAutoMode("off");
     const again = await use(s);
     expect(again.h).toEqual(first.h);
     expect(await ops("create")).toHaveLength(1);
-    expect(await record()).toEqual({
-      tier: "dev",
-      egress: "allowlist",
-      unapplied: { tier: "open", egress: "open" },
-    });
+    const rec = (await record()) as { unapplied?: { mode?: string } };
+    expect(rec.unapplied).toMatchObject({ mode: "sandbox", network: { kind: "allowlist" } });
     expect((await s.limitsState({ orgId, deviceId })).pendingFilesReset).toBe(true);
     await use(s);
     expect(await ops("update")).toHaveLength(1);
   });
 
-  it("a tier narrowed while a use waits for the lease is applied before that use runs", async () => {
+  it("a mode changed while a use waits for the lease is applied before that use runs", async () => {
     provider = fake({ updateMode: "updated" });
     const leases = sandboxLeasesFor({ redis, log: {}, pollMs: 20 });
     const s = sandboxServiceFor({
@@ -316,22 +315,22 @@ describe("a changed tier on use", () => {
     expect(ex).not.toBeNull();
     const waiting = use(s);
     await new Promise((r) => setTimeout(r, 150));
-    await setTier("strict");
+    await setAutoMode("off");
     await ex?.release();
     const again = await waiting;
     expect(again.h).toEqual(first.h);
     expect(await ops("update")).toEqual([["update", first.h.id, "updated"]]);
-    expect(await record()).toEqual({ tier: "strict", egress: "allowlist" });
+    expect(await modeOf()).toBe("sandbox");
   });
 
-  it("a NULL record (an instance made before the upgrade) differs once", async () => {
+  it("a NULL record (an instance made before auto mode) differs once", async () => {
     const s = service();
     await use(s);
     await sql`UPDATE capybara.device_instances SET instance_limits = NULL
       WHERE device_id = ${deviceId}`.execute(raw);
     const again = await use(s);
     expect(again.info).toMatchObject({ restarted: true });
-    expect(await record()).toEqual({ tier: "dev", egress: "allowlist" });
+    expect(await modeOf()).toBe("auto");
     await use(s);
     expect(await ops("create")).toHaveLength(2);
   });
@@ -339,10 +338,11 @@ describe("a changed tier on use", () => {
   it("a changed host list, cpu or memory alone never touches the running instance", async () => {
     provider = fake({ updateMode: "updated" });
     const s = service();
+    await setAutoMode("off");
     const first = await use(s);
     await setOrgSettings({
-      sandboxTier: { max: "open" },
-      sandboxEgress: { mode: "allowlist", allowHosts: ["example.com"] },
+      autoMode: "off",
+      cloudNetwork: { mode: "allowlist", allowHosts: ["example.com"] },
     });
     await sql`INSERT INTO capybara.deployment_settings (key, value)
       VALUES ('sandboxLimitOverrides', ${JSON.stringify({ [orgId]: { cpu: 4 } })}::jsonb)
@@ -357,59 +357,60 @@ describe("a changed tier on use", () => {
   });
 });
 
-describe("a provider that refuses the open tier (openEgress off, spec §5.3)", () => {
+describe("a provider that refuses the open public network (openEgress off)", () => {
   /** The refusal and the tool text it becomes; the provider's own message never reaches it. */
   const refused = async (err: unknown) => {
     expect(err).toBeInstanceOf(ApiError);
-    expect((err as ApiError).code).toBe("sandbox.tier_refused");
-    expect((err as ApiError).details).toEqual([{ tier: "open" }]);
+    expect((err as ApiError).code).toBe("sandbox.open_network_refused");
     expect((err as Error).message).not.toContain(FAKE_REFUSAL_SECRET);
     const tool = mapSandboxError(err, undefined) as Error;
     expect(tool).toBeInstanceOf(ToolError);
-    expect(tool.message).toBe(sandboxTierRefusedText("open"));
+    expect(tool.message).toBe(SANDBOX_OPEN_NETWORK_REFUSED_TEXT);
     expect(tool.message).not.toContain(FAKE_REFUSAL_SECRET);
     expect(tool.message).not.toContain("openEgress");
-    expect(warned.some((m) => m.includes("refused an instance in the open tier"))).toBe(true);
+    expect(warned.some((m) => m.includes("refused an instance with the open public network"))).toBe(
+      true,
+    );
   };
 
-  it("a new instance at open: the create is refused with the tier error", async () => {
+  it("a new instance in auto mode: the create is refused; sandbox mode works on the same provider", async () => {
     await setFakeSandboxRefuseOpenEgress(root, true);
-    await setTier("open");
     await refused(await use(service()).catch((e: unknown) => e));
-    // dev still works on the same provider
-    await setTier("dev");
+    await setAutoMode("off");
     expect((await use(service())).info).toMatchObject({ fresh: true });
   });
 
-  it("a running instance moved to open: the failed update recreates, and that create is refused", async () => {
+  it("a running instance moved to auto mode: the failed update recreates, and that create is refused", async () => {
+    await setAutoMode("off");
     provider = fake({ updateMode: "updated" });
     const s = service();
     await use(s);
     await setFakeSandboxRefuseOpenEgress(root, true);
-    await setTier("open");
+    await setAutoMode("allowed");
     await refused(await use(s).catch((e: unknown) => e));
   });
 
-  it("limits fixed at the file system: a new file system at open is refused", async () => {
+  it("limits fixed at the file system: a new file system in auto mode is refused", async () => {
     provider = fake({ limitsApplyAt: "fileSystem" });
     await setFakeSandboxRefuseOpenEgress(root, true);
-    await setTier("open");
     await refused(await use(service()).catch((e: unknown) => e));
     expect(await ops("create-fs")).toEqual([]);
   });
 
-  it("limits fixed at the file system: a refused update suspends the instance with the tier error", async () => {
+  it("limits fixed at the file system: a refused update suspends the instance with the error", async () => {
+    await setAutoMode("off");
     provider = fake({ updateMode: "updated", limitsApplyAt: "fileSystem" });
     const s = service();
     await use(s);
     await setFakeSandboxRefuseOpenEgress(root, true);
-    await setTier("open");
+    await setAutoMode("allowed");
     await refused(await use(s).catch((e: unknown) => e));
     expect(await status()).toBe("suspended");
-    expect(await record()).toEqual({ tier: "dev", egress: "allowlist" });
+    expect(await modeOf()).toBe("sandbox");
   });
 
   it("any other create failure becomes sandbox.create_failed without the provider's message", async () => {
+    await setAutoMode("off");
     const failing = fake();
     const p: SandboxProvider = Object.create(failing);
     p.create = async () => {
@@ -428,14 +429,14 @@ describe("a failed limits change", () => {
     provider = fake({ updateMode: "throw" });
     const s = service();
     const first = await use(s);
-    await setTier("strict");
+    await setAutoMode("off");
     const again = await use(s);
     expect(again.h).not.toEqual(first.h);
     expect(again.info).toMatchObject({ fresh: true, restarted: true });
     expect(await ops("update")).toEqual([["update", first.h.id, "throw"]]);
     // recorded by the create that applied it
-    expect(await record()).toEqual({ tier: "strict", egress: "allowlist" });
-    expect((await fakeSandboxMeta(root, again.h.id))?.limits.tier).toBe("strict");
+    expect(await modeOf()).toBe("sandbox");
+    expect((await fakeSandboxMeta(root, again.h.id))?.limits.mode).toBe("sandbox");
     expect(warned.some((m) => m.includes("update failed"))).toBe(true);
   });
 
@@ -443,7 +444,7 @@ describe("a failed limits change", () => {
     provider = fake({ updateMode: "throw" });
     const s = service();
     const first = await use(s);
-    await setTier("strict");
+    await setAutoMode("off");
     await setFakeSandboxDelays(root, { update: 5000 });
     const ac = new AbortController();
     const run = s
@@ -467,19 +468,19 @@ describe("a failed limits change", () => {
     expect(await ops("create")).toHaveLength(1);
     expect(await fakeSandboxState(root, first.h.id)).toBe("suspended");
     expect(await status()).toBe("suspended");
-    expect(await record()).toEqual({ tier: "dev", egress: "allowlist" });
+    expect(await modeOf()).toBe("auto");
   });
 
   it("an update that fails on a provider bound to its file system suspends the instance and throws", async () => {
     provider = fake({ updateMode: "throw", limitsApplyAt: "fileSystem" });
     const s = service();
     const first = await use(s);
-    await setTier("strict");
+    await setAutoMode("off");
     const err = await use(s).catch((e: unknown) => e);
     expect((err as Error).message).toBe("fake update failed");
     expect(await fakeSandboxState(root, first.h.id)).toBe("suspended");
     expect(await status()).toBe("suspended");
-    expect(await record()).toEqual({ tier: "dev", egress: "allowlist" });
+    expect(await modeOf()).toBe("auto");
     // the next use resumes it, tries again, and leaves it suspended when that fails too
     await use(s).catch(() => undefined);
     expect(await ops("resume")).toHaveLength(1);
@@ -492,7 +493,7 @@ describe("a failed limits change", () => {
     provider = fake({ updateMode: "updated" });
     const s = service(undefined, 300);
     const first = await use(s);
-    await setTier("strict");
+    await setAutoMode("off");
     await setFakeSandboxDelays(root, { update: 2000 });
     const run = use(s).catch((e: unknown) => e);
     // the exclusive lease expires under the slow update
@@ -501,7 +502,7 @@ describe("a failed limits change", () => {
     const err = await run;
     expect(err).toBeInstanceOf(Error);
     await setFakeSandboxDelays(root, {});
-    expect(await record()).toEqual({ tier: "dev", egress: "allowlist" });
+    expect(await modeOf()).toBe("auto");
     expect(await ops("update")).toEqual([]);
     expect(await fakeSandboxState(root, first.h.id)).toBe("suspended");
   });
@@ -509,20 +510,19 @@ describe("a failed limits change", () => {
   it("a file reset clears the record of an instance provider; the next create records again", async () => {
     const s = service();
     await use(s);
-    expect(await record()).toEqual({ tier: "dev", egress: "allowlist" });
+    expect(await modeOf()).toBe("auto");
     await s.resetFileSystem(deviceId);
     expect(await record()).toBeNull();
-    await setTier("open");
+    await setAutoMode("off");
     await use(s);
-    expect(await record()).toEqual({ tier: "open", egress: "open" });
+    expect(await modeOf()).toBe("sandbox");
   });
 });
 
-describe("scheduled runs on an open cloud device (spec §11.4)", () => {
-  /** A task of the org's creator on `deviceId`, a task run and a kernel run serving it. */
-  async function scheduledRun(
-    trial = false,
-  ): Promise<{ taskId: string; taskRunId: string; runId: string }> {
+describe("scheduled runs use the effective mode like any use", () => {
+  it("an unattended run needs no mode grant: it uses the effective mode and records no missing grant", async () => {
+    const s = service();
+    await setAutoMode("off");
     const taskId = randomUUID();
     const taskRunId = randomUUID();
     const runId = randomUUID();
@@ -534,7 +534,7 @@ describe("scheduled runs on an open cloud device (spec §11.4)", () => {
         ${deviceId})`.execute(raw);
     await sql`INSERT INTO capybara.scheduled_task_runs (id, task_id, org_id, scheduled_for, trial,
         status)
-      VALUES (${taskRunId}, ${taskId}, ${orgId}, now(), ${trial}, 'running')`.execute(raw);
+      VALUES (${taskRunId}, ${taskId}, ${orgId}, now(), false, 'running')`.execute(raw);
     await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id)
       SELECT ${conversationId}, ${orgId}, a.id, ${accountId}
       FROM capybara.agents a WHERE a.org_id = ${orgId} LIMIT 1`.execute(raw);
@@ -543,67 +543,13 @@ describe("scheduled runs on an open cloud device (spec §11.4)", () => {
       VALUES (${runId}, ${conversationId}, 'running', 1, ${accountId}, 0, ${taskRunId})`.execute(
       raw,
     );
-    return { taskId, taskRunId, runId };
-  }
-  const missing = async (taskRunId: string) =>
-    (
-      await db
-        .selectFrom("scheduled_task_runs")
-        .select("missing_grants")
-        .where("id", "=", taskRunId)
-        .executeTakeFirstOrThrow()
-    ).missing_grants;
-
-  it("without tier:open the sandbox is refused and the grant recorded missing; the grant allows it", async () => {
-    const s = service();
-    await setTier("open");
-    const run = await scheduledRun();
-    const err = await use(s, run.runId).catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(ApiError);
-    expect((err as ApiError).code).toBe("device.tier_not_granted");
-    expect((err as ApiError).message).toBe(UNATTENDED_OPEN_TIER_ERROR);
-    // the tools give the model the same text
-    expect((mapSandboxError(err, undefined) as Error).message).toBe(UNATTENDED_OPEN_TIER_ERROR);
-    expect(await missing(run.taskRunId)).toEqual(["tier:open"]);
-    // nothing was created or switched
-    expect(await ops("create")).toEqual([]);
-
-    await sql`INSERT INTO capybara.scheduled_task_grants (task_id, tool_key, spec_hash)
-      VALUES (${run.taskId}, 'tier:open', 'tier')`.execute(raw);
-    const ok = await use(s, run.runId);
-    expect((await fakeSandboxMeta(root, ok.h.id))?.limits).toMatchObject({ tier: "open" });
-  });
-
-  it("a device below open, a trial run and an attended run are never refused", async () => {
-    const s = service();
-    const run = await scheduledRun();
-    await use(s, run.runId);
-    await setTier("open");
-    const trial = await scheduledRun(true);
-    await use(s, trial.runId);
-    await use(s);
-    expect(await missing(run.taskRunId)).toEqual([]);
-  });
-
-  it("a provider bound to its file system that may still run open is refused (record open or unknown)", async () => {
-    provider = fake({ limitsApplyAt: "fileSystem" });
-    const s = service();
-    await setTier("open");
-    await use(s);
-    expect(await record()).toEqual({ tier: "open", egress: "open" });
-    // narrowed, but only a file reset applies it: the file system still runs open
-    await setTier("dev");
-    const run = await scheduledRun();
-    const err = await use(s, run.runId).catch((e: unknown) => e);
-    expect((err as ApiError).code).toBe("device.tier_not_granted");
-    // an unknown record (made before the upgrade) counts as open too
-    await sql`UPDATE capybara.device_instances SET instance_limits = NULL
-      WHERE device_id = ${deviceId}`.execute(raw);
-    const err2 = await use(s, run.runId).catch((e: unknown) => e);
-    expect((err2 as ApiError).code).toBe("device.tier_not_granted");
-    // after a file reset it runs dev
-    await s.resetFileSystem(deviceId);
-    await use(s, run.runId);
-    expect(await record()).toEqual({ tier: "dev", egress: "allowlist" });
+    await use(s, runId);
+    expect(await modeOf()).toBe("sandbox");
+    const row = await db
+      .selectFrom("scheduled_task_runs")
+      .select("missing_grants")
+      .where("id", "=", taskRunId)
+      .executeTakeFirstOrThrow();
+    expect(row.missing_grants).toEqual([]);
   });
 });

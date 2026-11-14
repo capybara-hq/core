@@ -324,19 +324,21 @@ describe("local devices through the sandbox tools", () => {
     );
   }, 60_000);
 
-  it("every exec carries the org's egress of the moment (R27)", async () => {
+  it("every exec carries the org's sandbox allowlist of the moment (R27)", async () => {
     const m = await member();
     const { machine } = await signIn(m.deviceId, m.accountId, ROOTS_A);
     await m.tool("Bash").run({ command: "true" }, m.ctx());
     const execs = () => machine.frames.filter((f) => f.type === "req" && f.op === "exec");
-    expect((execs()[0] as KernelReq).args).toMatchObject({ limits: { egress: "allowlist" } });
+    expect((execs()[0] as KernelReq).args).toMatchObject({
+      limits: { mode: "auto", network: { kind: "allowlist", hosts: ["example.com"] } },
+    });
     await sql`UPDATE capybara.orgs SET settings = ${JSON.stringify({
-      sandboxEgress: { mode: "none" },
+      cloudNetwork: { mode: "allowlist", allowHosts: ["other.example.com"] },
     })}::jsonb WHERE id = ${orgId}`.execute(raw);
     try {
       await m.tool("Bash").run({ command: "true" }, m.ctx());
       expect((execs()[1] as KernelReq).args).toMatchObject({
-        limits: { egress: "none", allowHosts: [] },
+        limits: { network: { kind: "allowlist", hosts: ["other.example.com"] } },
       });
     } finally {
       await sql`UPDATE capybara.orgs SET settings = '{}'::jsonb WHERE id = ${orgId}`.execute(raw);

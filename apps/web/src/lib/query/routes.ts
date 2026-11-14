@@ -14,7 +14,6 @@ import {
 import { type ConnectorSummary, canManageConnectors, personalConnectors } from "../connectors";
 import type { Conversation } from "../conversations";
 import { codeParam, defaultDeviceOrg } from "../device-sign-in";
-import { type Device, deviceCapped } from "../devices";
 import type { EvalSetDetail } from "../evals";
 import { labelLocale } from "../extension-label";
 import type { InboxItem } from "../inbox";
@@ -855,15 +854,6 @@ export const ROUTES: readonly RouteEntry[] = [
     pattern: "/devices/[id]",
     queries: ({ orgId, params }) =>
       orgId === null || params.id === undefined ? [] : [q(deviceQuery(orgId, params.id))],
-    // A device below the open level: the org settings say who caps its higher cards (org or
-    // platform).
-    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
-    then: async ({ orgId, params }, qc) => {
-      if (orgId === null || params.id === undefined) return;
-      const read = qc.getQueryData<{ device: Device }>(deviceQuery(orgId, params.id).queryKey);
-      if (!deviceCapped(read?.device)) return;
-      await qc.prefetchQuery({ ...orgSettingsQuery(orgId), retry: false });
-    },
   },
   {
     pattern: "/connectors/install",

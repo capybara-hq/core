@@ -8,9 +8,10 @@ import type { CaseSnapshot } from "../../src/evals/snapshot.js";
 import { buildModelRequest } from "../../src/runtime/context/build.js";
 import { compactionPlan } from "../../src/runtime/context/compaction.js";
 import {
-  type DeviceSandboxLevel,
+  type DeviceModeLevel,
+  type DevicePathsPayload,
   devicePathsText,
-  sandboxLevelText,
+  modeLevelText,
 } from "../../src/runtime/context/device-paths.js";
 import { assistantIdemKey } from "../../src/runtime/model-call.js";
 import { type SandboxToolDeps, sandboxTools } from "../../src/tools/builtins/sandbox/index.js";
@@ -69,7 +70,7 @@ function memLog() {
  * An in-memory instance with `roots` (absent: a cloud instance without roots); `setRoots` changes
  * the instance's roots for later calls (a replaced machine, a mode switch).
  */
-function memTools(initial: SandboxRoots | undefined, initialLevel?: DeviceSandboxLevel | null) {
+function memTools(initial: SandboxRoots | undefined, initialLevel?: DeviceModeLevel | null) {
   let roots = initial;
   let level = initialLevel;
   const files = new Map<string, Uint8Array>();
@@ -90,7 +91,7 @@ function memTools(initial: SandboxRoots | undefined, initialLevel?: DeviceSandbo
   const deps: SandboxToolDeps = {
     devices: {
       forTool: async () => "env-1",
-      ...(level !== undefined && { sandboxLevel: async () => level ?? null }),
+      ...(level !== undefined && { modeLevel: async () => level ?? null }),
     },
     sandbox: {
       cloudAvailable: true,
@@ -127,7 +128,7 @@ function memTools(initial: SandboxRoots | undefined, initialLevel?: DeviceSandbo
   const setRoots = (r: SandboxRoots | undefined) => {
     roots = r;
   };
-  const setLevel = (l: DeviceSandboxLevel) => {
+  const setLevel = (l: DeviceModeLevel) => {
     level = l;
   };
   return { files, log, tool, ctx, setRoots, setLevel };
@@ -301,6 +302,29 @@ describe("device_paths: full-run replay", () => {
   }
 
   it("a recorded level is copied by the replay, all its fields", async () => {
+    const level = {
+      mode: "sandbox",
+      allowedMode: "auto",
+      network: { kind: "allowlist", hosts: ["a.com"] },
+      local: true,
+    } as const;
+    const s = snap();
+    (s.events[2] as { payload: unknown }).payload = { roots: ROOTS, ...level };
+    const recordings = recordedCalls(s);
+    expect(recordings[0]?.devicePaths).toEqual({ roots: ROOTS, ...level });
+    const log = memLog();
+    await pipelineFor(recordings, log, { 1: ["f"] }).runStep({
+      conversationId: "e",
+      runId: "r2",
+      step: 1,
+    } as never);
+    expect(log.appended[0]).toMatchObject({
+      type: "device_paths",
+      payload: { roots: ROOTS, ...level },
+    });
+  });
+
+  it("a recorded pre-auto-mode level is copied by the replay, all its fields", async () => {
     const level = { tier: "dev", isolation: "sandbox", network: "none", unattended: true } as const;
     const s = snap();
     (s.events[2] as { payload: unknown }).payload = { roots: ROOTS, ...level };
@@ -316,6 +340,10 @@ describe("device_paths: full-run replay", () => {
       type: "device_paths",
       payload: { roots: ROOTS, ...level },
     });
+    // the old line is rendered exactly as the original model saw it
+    expect(devicePathsText(log.appended[0]?.payload as DevicePathsPayload)).toContain(
+      "Sandbox level: development.",
+    );
   });
 
   it("a replayed call that matched copies the recorded device_paths event, never twice", async () => {
@@ -393,103 +421,93 @@ describe("device_paths: a migrated row", () => {
   });
 });
 
-describe("device_paths: the sandbox level (sandbox dev tiers spec §11.5)", () => {
-  const DEV_LINE =
-    "Sandbox level: development. Package registries and common developer hosts are reachable; other domains need the user's approval. Local servers and unix sockets work.";
+describe("device_paths: the mode and network (auto mode spec §4.2)", () => {
+  const AUTO_LOCAL: DeviceModeLevel = {
+    mode: "auto",
+    allowedMode: "auto",
+    network: { kind: "allowlist", hosts: ["a.com"] },
+    local: true,
+  };
+  const SANDBOX_LOCAL: DeviceModeLevel = {
+    mode: "sandbox",
+    allowedMode: "auto",
+    network: { kind: "allowlist", hosts: ["a.com"] },
+    local: true,
+  };
+  const CLOUD_OPEN: DeviceModeLevel = {
+    mode: "auto",
+    allowedMode: "auto",
+    network: { kind: "open-public", hosts: [] },
+    local: false,
+  };
+  const CLOUD_ALLOWLIST: DeviceModeLevel = {
+    mode: "sandbox",
+    allowedMode: "sandbox",
+    network: { kind: "allowlist", hosts: ["a.com"] },
+    local: false,
+  };
+  const AUTO_LINE =
+    "Mode: auto. Commands run as the user on this machine, with their files, credentials and network; every command is reviewed and dangerous ones are blocked or need approval.";
+  const SANDBOX_LINE =
+    "Mode: sandbox. Only the workspace, skills and temporary files are writable; the network reaches the allowed hosts.";
+  const CLOUD_OPEN_LINE =
+    "Mode: auto. Commands run in the device's container; outside it only public addresses are reachable (loopback, private and cloud metadata addresses are blocked).";
+  const CLOUD_ALLOWLIST_LINE =
+    "Mode: sandbox. Commands run in the device's container; outside it the network reaches the organization's allowlisted hosts.";
 
-  it("each tier and an unsandboxed device have one English line", () => {
-    expect(sandboxLevelText({ tier: "dev", isolation: "sandbox" })).toBe(DEV_LINE);
-    expect(sandboxLevelText({ tier: "strict", isolation: "sandbox" })).toBe(
-      "Sandbox level: strict. Only the organization's allowed domains are reachable; other domains need the user's approval.",
-    );
-    expect(sandboxLevelText({ tier: "open", isolation: "sandbox" })).toBe(
-      "Sandbox level: open. Any public address is reachable. Local servers and unix sockets work.",
-    );
-    expect(sandboxLevelText({ tier: "open", isolation: "none" })).toMatch(
-      /^Sandbox level: open, without a sandbox\. Commands run directly on the user's computer/,
-    );
+  it("each mode and network has one English line", () => {
+    expect(modeLevelText(AUTO_LOCAL)).toBe(AUTO_LINE);
+    expect(modeLevelText(SANDBOX_LOCAL)).toBe(SANDBOX_LINE);
+    expect(modeLevelText(CLOUD_OPEN)).toBe(CLOUD_OPEN_LINE);
+    expect(modeLevelText(CLOUD_ALLOWLIST)).toBe(CLOUD_ALLOWLIST_LINE);
+    expect(devicePathsText({ roots: ROOTS, ...AUTO_LOCAL })).toBe(`${LINE}\n${AUTO_LINE}`);
+  });
+
+  it("an event recorded before auto mode renders exactly as it always did", () => {
     expect(devicePathsText({ roots: ROOTS, tier: "dev", isolation: "sandbox" })).toBe(
-      `${LINE}\n${DEV_LINE}`,
+      `${LINE}\nSandbox level: development. Package registries and common developer hosts are reachable; other domains need the user's approval. Local servers and unix sockets work.`,
+    );
+    expect(devicePathsText({ roots: ROOTS, tier: "open", isolation: "none" })).toMatch(
+      /^This device's directories: .*\nSandbox level: open, without a sandbox\./,
     );
   });
 
-  it("says when the network is off, a scheduled run cannot ask, and what a local machine allows", () => {
-    expect(sandboxLevelText({ tier: "dev", isolation: "sandbox", network: "none" })).toBe(
-      "Sandbox level: development. The network is switched off for this organization: no domain is reachable and approval requests cannot change that.",
-    );
-    // without a sandbox, the user's own network: the switch does not apply
-    expect(sandboxLevelText({ tier: "open", isolation: "none", network: "none" })).toMatch(
-      /^Sandbox level: open, without a sandbox\./,
-    );
-    expect(sandboxLevelText({ tier: "strict", isolation: "sandbox", unattended: true })).toBe(
-      "Sandbox level: strict. Only the organization's allowed domains are reachable; approvals are not available in a scheduled run, so other domains stay blocked.",
-    );
-    expect(
-      sandboxLevelText({
-        tier: "dev",
-        isolation: "sandbox",
-        localhost: "off-proxy-detected",
-        unixSockets: "roots",
-        unattended: true,
-      }),
-    ).toBe(
-      "Sandbox level: development. Package registries and common developer hosts are reachable; approvals are not available in a scheduled run, so other domains stay blocked. Local servers are blocked on this machine because a local proxy was detected (the user can allow them on the device); unix sockets work under the device's directories only.",
-    );
-    expect(
-      sandboxLevelText({ tier: "open", isolation: "sandbox", localhost: "on", unixSockets: "off" }),
-    ).toBe(
-      "Sandbox level: open. Any public address is reachable. Local servers work; unix sockets are blocked.",
-    );
-  });
-
-  it("a change of the network or the local facts records a new event", async () => {
-    const t = memTools(ROOTS, { tier: "dev", isolation: "sandbox" });
+  it("a change of the mode or the network kind records a new event", async () => {
+    const t = memTools(ROOTS, SANDBOX_LOCAL);
     const write = () =>
       t
         .tool("Write")
         .run({ file_path: `${ROOTS.workspace}/x-${Math.random()}`, content: "x" }, t.ctx);
     await write();
-    t.setLevel({ tier: "dev", isolation: "sandbox", network: "none" });
     await write();
+    t.setLevel(AUTO_LOCAL);
     await write();
-    t.setLevel({ tier: "dev", isolation: "sandbox", localhost: "on", unixSockets: "roots" });
+    t.setLevel({ ...AUTO_LOCAL, network: { kind: "open-public", hosts: [] }, local: false });
     await write();
     const paths = t.log.appended.filter((e) => e.type === "device_paths");
     expect(paths.map((e) => e.payload)).toEqual([
-      { roots: ROOTS, tier: "dev", isolation: "sandbox" },
-      { roots: ROOTS, tier: "dev", isolation: "sandbox", network: "none" },
-      { roots: ROOTS, tier: "dev", isolation: "sandbox", localhost: "on", unixSockets: "roots" },
+      { roots: ROOTS, ...SANDBOX_LOCAL },
+      { roots: ROOTS, ...AUTO_LOCAL },
+      {
+        roots: ROOTS,
+        ...AUTO_LOCAL,
+        network: { kind: "open-public", hosts: [] },
+        local: false,
+      },
     ]);
     expect(new Set(paths.map((e) => e.idemKey)).size).toBe(3);
   });
 
-  it("is recorded with the roots on the first call and again when the tier or isolation changes", async () => {
-    const t = memTools(ROOTS, { tier: "dev", isolation: "sandbox" });
-    const write = () =>
-      t
-        .tool("Write")
-        .run({ file_path: `${ROOTS.workspace}/x-${Math.random()}`, content: "x" }, t.ctx);
-    await write();
-    await write();
-    t.setLevel({ tier: "open", isolation: "sandbox" });
-    await write();
-    t.setLevel({ tier: "open", isolation: "none" });
-    await write();
-    await write();
-    t.setLevel({ tier: "dev", isolation: "sandbox" });
-    await write();
+  it("records the level with the roots on the first call", async () => {
+    const t = memTools(ROOTS, AUTO_LOCAL);
+    await t.tool("Write").run({ file_path: `${ROOTS.workspace}/a`, content: "a" }, t.ctx);
+    await t.tool("Write").run({ file_path: `${ROOTS.workspace}/b`, content: "b" }, t.ctx);
     const paths = t.log.appended.filter((e) => e.type === "device_paths");
-    expect(paths.map((e) => e.payload)).toEqual([
-      { roots: ROOTS, tier: "dev", isolation: "sandbox" },
-      { roots: ROOTS, tier: "open", isolation: "sandbox" },
-      { roots: ROOTS, tier: "open", isolation: "none" },
-      { roots: ROOTS, tier: "dev", isolation: "sandbox" },
-    ]);
-    expect(new Set(paths.map((e) => e.idemKey)).size).toBe(4);
+    expect(paths.map((e) => e.payload)).toEqual([{ roots: ROOTS, ...AUTO_LOCAL }]);
   });
 
-  it("a conversation whose latest event predates tiers gets one new event with the level", async () => {
-    const t = memTools(ROOTS, { tier: "dev", isolation: "sandbox" });
+  it("a conversation whose latest event predates auto mode gets one new event with the level", async () => {
+    const t = memTools(ROOTS, SANDBOX_LOCAL);
     await t.log.eventLog.append("c", [
       { type: "device_paths", idemKey: "device_paths:old:0", payload: { roots: ROOTS } },
     ]);
@@ -498,18 +516,18 @@ describe("device_paths: the sandbox level (sandbox dev tiers spec §11.5)", () =
     const paths = t.log.appended.filter((e) => e.type === "device_paths");
     expect(paths.map((e) => e.payload)).toEqual([
       { roots: ROOTS },
-      { roots: ROOTS, tier: "dev", isolation: "sandbox" },
+      { roots: ROOTS, ...SANDBOX_LOCAL },
     ]);
   });
 
-  it("an unknown level (no device row) records the roots only, as before tiers", async () => {
+  it("an unknown level (no device row) records the roots only, as before", async () => {
     const t = memTools(ROOTS, null);
     await t.tool("Write").run({ file_path: `${ROOTS.workspace}/a`, content: "a" }, t.ctx);
     const paths = t.log.appended.filter((e) => e.type === "device_paths");
     expect(paths.map((e) => e.payload)).toEqual([{ roots: ROOTS }]);
   });
 
-  it("renders the level line after the roots at the event's position; a replay copies the level", async () => {
+  it("renders the mode line after the roots at the event's position; a replay copies the level", () => {
     const log = new Log();
     log.user("write a file");
     log.modelCall(1, 1);
@@ -518,7 +536,7 @@ describe("device_paths: the sandbox level (sandbox dev tiers spec §11.5)", () =
       "tool_use",
       1,
     );
-    log.add({ type: "device_paths", payload: { roots: ROOTS, tier: "dev", isolation: "sandbox" } });
+    log.add({ type: "device_paths", payload: { roots: ROOTS, ...AUTO_LOCAL } });
     log.add({
       type: "tool_result",
       payload: { step: 1, callId: "call-1", toolKey: "Write", content: "ok", isError: false },
@@ -530,6 +548,6 @@ describe("device_paths: the sandbox level (sandbox dev tiers spec §11.5)", () =
       model: MODEL,
       step: 2,
     });
-    expect(request.messages.at(-1)).toEqual({ role: "system", content: `${LINE}\n${DEV_LINE}` });
+    expect(request.messages.at(-1)).toEqual({ role: "system", content: `${LINE}\n${AUTO_LINE}` });
   });
 });

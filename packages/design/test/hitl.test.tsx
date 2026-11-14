@@ -189,6 +189,147 @@ describe("ApprovalBlock (§6.16.11)", () => {
   });
 });
 
+describe("the command review variant (auto mode spec §5.4)", () => {
+  const ask = (over: Partial<ApprovalBlockProps> = {}): ApprovalBlockProps =>
+    pending({
+      tool: "Bash",
+      toolKey: "Bash",
+      input: {},
+      scopes: ["once", "session"],
+      command: {
+        kind: "command",
+        command: "rm -rf build && pnpm build",
+        reason: "Deletes build output and rebuilds",
+      },
+      ...over,
+    });
+
+  it("asks to run the command, shows the review's reason and the command as code", () => {
+    const { container } = wrap(<ApprovalBlock {...ask()} />);
+    expect(screen.getByRole("group", { name: "智能体想运行这条命令，允许吗？" })).toBeTruthy();
+    expect(container.querySelector('[data-part="command-reason"]')?.textContent).toBe(
+      "Deletes build output and rebuilds",
+    );
+    expect(container.querySelector('[data-part="code-block"]')?.textContent).toBe(
+      "rm -rf build && pnpm build",
+    );
+    expect(container.querySelector('[data-part="command"]')).toBeNull();
+  });
+
+  it("offers both scopes the approval offers, once primary, and the command's deny", async () => {
+    const onApprove = vi.fn();
+    wrap(<ApprovalBlock {...ask({ onApprove })} />);
+    const once = screen.getByRole("button", { name: "允许一次" });
+    expect(once.getAttribute("data-variant")).toBe("primary");
+    expect(screen.getByRole("button", { name: "本会话允许同类" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "拒绝" })).toBeTruthy();
+    await userEvent.click(once);
+    await userEvent.click(screen.getByRole("button", { name: "本会话允许同类" }));
+    expect(onApprove.mock.calls).toEqual([["once"], ["session"]]);
+  });
+
+  it("a classifier ask offers once only: never 本会话允许同类", () => {
+    wrap(<ApprovalBlock {...ask({ scopes: ["once"] })} />);
+    expect(screen.getByRole("button", { name: "允许一次" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "本会话允许同类" })).toBeNull();
+  });
+
+  it("a write names the path, not the tool key the detail carries as its command", () => {
+    const { container } = wrap(
+      <ApprovalBlock
+        {...ask({
+          tool: "Write",
+          toolKey: "Write",
+          command: {
+            kind: "write",
+            command: "Write",
+            path: "/etc/capybara/config.yaml",
+            reason: "Writes outside the workspace",
+          },
+        })}
+      />,
+    );
+    expect(screen.getByRole("group", { name: "智能体想写入这个文件，允许吗？" })).toBeTruthy();
+    const code = container.querySelector('[data-part="code-block"]') as Element;
+    expect(code.textContent).toBe("路径/etc/capybara/config.yaml");
+    expect(code.textContent).not.toBe("Write");
+  });
+
+  it("clips the command to the card's 300 characters", () => {
+    const long = `echo ${"x".repeat(500)}`;
+    const { container } = wrap(
+      <ApprovalBlock {...ask({ command: { kind: "command", command: long, reason: "r" } })} />,
+    );
+    const shown = container.querySelector('[data-part="code-block"] code')?.textContent ?? "";
+    expect(Array.from(shown)).toHaveLength(300);
+    expect(shown.endsWith("…")).toBe(true);
+  });
+
+  it.each([
+    ["once", "已允许（一次）"],
+    ["session", "已允许（本会话同类）"],
+  ] as const)("an approval with scope %s reads %s", (scope, word) => {
+    const { container } = wrap(
+      <ApprovalBlock
+        {...ask({
+          state: { kind: "decided", decision: "approved", who: "grant", when: "10:32", scope },
+        })}
+      />,
+    );
+    expect(container.querySelector('[data-part="tool-line"]')?.textContent).toBe(
+      `${word} Bash · grant · 10:32`,
+    );
+    expect(container.querySelector('[data-part="approval-block"]')).toBeNull();
+    expect(screen.queryByRole("button")).toBeNull();
+  });
+
+  it("a denial names the reason; expiry and cancel name no one", () => {
+    const denied = wrap(
+      <ApprovalBlock
+        {...ask({
+          state: {
+            kind: "decided",
+            decision: "denied",
+            who: "grant",
+            when: "10:35",
+            reason: "Too broad",
+          },
+        })}
+      />,
+    );
+    expect(denied.container.querySelector('[data-part="tool-line"]')?.textContent).toBe(
+      "已拒绝 Bash · grant · 「Too broad」 · 10:35",
+    );
+    cleanup();
+    const expired = wrap(
+      <ApprovalBlock
+        {...ask({ state: { kind: "decided", decision: "expired", who: "", when: "" } })}
+      />,
+    );
+    expect(expired.container.textContent).toContain("已过期");
+  });
+
+  it("never reads 已跳过: a message cannot skip a command approval", () => {
+    const skipped = wrap(
+      <ApprovalBlock
+        {...ask({ state: { kind: "decided", decision: "skipped", who: "grant", when: "10:36" } })}
+      />,
+    );
+    expect(skipped.container.textContent).toContain("已取消");
+    expect(skipped.container.textContent).not.toContain("已跳过");
+  });
+
+  it("speaks English", () => {
+    wrap(<ApprovalBlock {...ask()} />, "en");
+    expect(screen.getByText("The agent wants to run this command. Allow?")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Allow once" })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Allow this kind for this conversation" }),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Deny" })).toBeTruthy();
+  });
+});
+
 const choice: QuestionField = {
   key: "category",
   label: "类别",

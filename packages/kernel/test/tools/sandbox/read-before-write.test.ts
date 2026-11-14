@@ -250,11 +250,10 @@ describe("read before write", { timeout: 90_000 }, () => {
 
   it("a file over Read's byte limit: Read then Write succeeds; a same-size change beyond the read bytes is not detected", async () => {
     const { step } = await session1();
-    // 11 MB of 'a' lines (limit is 10 MB)
+    // 11 MB (limit is 10 MB); the seed is a command the review allows
     await step("Bash", {
       description: "seed",
-      command:
-        "yes aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | head -c 11000000 > /workspace/big.txt",
+      command: "head -c 11000000 /dev/zero > /workspace/big.txt",
       timeout: 60_000,
     });
     const before = await step("Write", { file_path: "/workspace/big.txt", content: "x" });

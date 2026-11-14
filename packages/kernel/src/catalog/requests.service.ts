@@ -22,7 +22,7 @@ import {
   OrgSettingsService,
   readOrgSettings,
 } from "../orgs/settings.service.js";
-import { baseSandboxEgress } from "../sandbox/tiers.js";
+import { orgSandboxNetwork } from "../sandbox/modes.js";
 import { CatalogService, type MarketplaceImportResult } from "./catalog.service.js";
 import { CatalogScopeService } from "./catalog-scope.service.js";
 import { assertEntryNotDeprecated, loadMarketplaceEntry } from "./marketplaces.service.js";
@@ -159,6 +159,25 @@ const deploymentEgressNone = () =>
     "The platform turned sandbox network off; only a super admin can turn it on",
   );
 
+/**
+ * The allowlist the organization's sandbox-mode devices reach (auto mode spec §4.1, §5.2): the
+ * hosts of `orgSandboxNetwork` when the org or the deployment chose an allowlist, else the org's
+ * own hosts (the deployment's list when the org gave none). An open cloud network does not make a
+ * host "already allowed": a local device in sandbox mode always receives the allowlist, so a host
+ * its network ask tells the person to ask an admin about must be addable (network ask spec §5.3).
+ */
+function sandboxAllowlist(
+  deployment: { mode: "open" | "allowlist"; allowHosts: string[] },
+  org: { mode: "open" | "allowlist"; allowHosts?: string[] | undefined } | undefined,
+): { kind: "allowlist"; hosts: string[] } {
+  const network = orgSandboxNetwork(deployment, org);
+  return {
+    kind: "allowlist",
+    hosts:
+      network.kind === "allowlist" ? network.hosts : (org?.allowHosts ?? deployment.allowHosts),
+  };
+}
+
 /** A unique violation (the partial index of pending requests). */
 const isUniqueViolation = (e: unknown) =>
   typeof e === "object" && e !== null && (e as { code?: unknown }).code === "23505";
@@ -185,7 +204,7 @@ const ORG_KINDS = ["enable", "connector_setup", "network_allowlist"] as const;
  *   (`PendingConnectorRequests`), closed by binding (`approved`) or the agent's deletion
  *   (`cancelled`); here it is listed and rejected;
  * - `network_allowlist` (network ask-to-allow spec §5.3): a member asks the org admins to add hosts
- *   to the org's sandbox egress allowlist; approving merges them into the org's `sandboxEgress`.
+ *   to the org's cloud network allowlist; approving merges them into the org's `cloudNetwork`.
  * A rejection stores an optional reason. Decided requests show in the requester's inbox until
  * dismissed. No in-process state.
  */
@@ -201,7 +220,7 @@ export class CatalogRequestsService {
     @Inject(CatalogService) private readonly catalog: CatalogService,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
     @Inject(PluginImport) private readonly pluginImport: PluginImport,
-    /** Approving a network request writes the org's `sandboxEgress` through the settings path. */
+    /** Approving a network request writes the org's `cloudNetwork` through the settings path. */
     @Inject(OrgSettingsService) private readonly orgSettings: OrgSettingsService,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     /** Serializes the approvals of one `import` request (`@WithLock`). */
@@ -319,15 +338,15 @@ export class CatalogRequestsService {
   }
 
   /**
-   * A member asks the org admins to allow hosts in the org's sandbox egress (`POST /orgs/:orgId/
-   * catalog-requests/network`, `catalog.request`; spec §5.3). The hosts arrive validated (exact,
-   * lowercased) and are deduped and sorted here. The deployment egress `none` ->
-   * `catalog.request_invalid` (only a super admin can turn sandbox network on); the org's own
-   * egress `none` -> `catalog.request_invalid`; {@link NETWORK_REQUESTS_PENDING_MAX} pending
-   * requests of the member already -> `catalog.request_invalid`; every host already
-   * allowed by the org's effective egress -> `catalog.request_invalid`; a conversation or agent not
-   * in the org -> `catalog.request_invalid`. A pending request of the same requester for the same
-   * host set is returned as is (no second request). Audits `catalog.requested`.
+   * A member asks the org admins to allow hosts in the org's sandbox allowlist (`POST /orgs/:orgId/
+   * catalog-requests/network`, `catalog.request`; network ask spec §5.3). The hosts arrive validated
+   * (exact, lowercased) and are deduped and sorted here. The platform kill switch
+   * (`sandbox.limits.egress: none`) -> `catalog.request_invalid` (only a super admin turns the
+   * sandbox network on); {@link NETWORK_REQUESTS_PENDING_MAX} pending requests of the member already
+   * -> `catalog.request_invalid`; every host already in the allowlist the org's sandbox-mode devices
+   * reach -> `catalog.request_invalid`; a conversation or agent not in the org ->
+   * `catalog.request_invalid`. A pending request of the same requester for the same host set is
+   * returned as is (no second request). Audits `catalog.requested`.
    */
   async requestNetwork(
     orgId: string,
@@ -349,21 +368,11 @@ export class CatalogRequestsService {
     const t = this.db;
     await this.orgLock.lockAndAuthorize(orgId, actor, "catalog.request");
     const hosts = [...new Set(input.hosts.map((h) => h.toLowerCase()))].sort();
-    const deployment = (await this.orgSettings.deployment()).sandboxEgress;
-    if (deployment.mode === "none") throw deploymentEgressNone();
+    if (this.config.get().sandbox.limits.egress === "none") throw deploymentEgressNone();
+    const deployment = (await this.orgSettings.deployment()).cloudNetwork;
     const settings = await readOrgSettings(t, orgId);
-    if (settings.sandboxEgress?.mode === "none") {
-      throw new ApiError(
-        "catalog.request_invalid",
-        "The organization has sandbox network turned off; ask an admin to turn it on first.",
-      );
-    }
-    // the org's base list: the hosts a strict device reaches (the tiers only widen it)
-    const effective = baseSandboxEgress(
-      { egress: deployment.mode, allowHosts: deployment.allowHosts },
-      settings.sandboxEgress,
-    );
-    if (hosts.every((h) => orgAllows(h, effective))) {
+    const network = sandboxAllowlist(deployment, settings.cloudNetwork);
+    if (hosts.every((h) => orgAllows(h, { network }))) {
       throw new ApiError(
         "catalog.request_invalid",
         "This organization's sandbox network already allows these hosts; nothing to request",
@@ -560,7 +569,7 @@ export class CatalogRequestsService {
    * An org admin decides a member's `enable`, `network_allowlist` or `connector_setup` request
    * (`catalog.decide`). Not this org's request of those kinds -> `catalog.request_not_found`;
    * decided -> `catalog.request_decided`. Approving a `network_allowlist` request merges its hosts
-   * into the org's `sandboxEgress` (`approveNetwork`). Approving an `enable` request switches the
+   * into the org's `cloudNetwork` (`approveNetwork`). Approving an `enable` request switches the
    * item on in the org as the deciding admin ({@link OrgCatalogService.setSwitch}: its errors, e.g. inputs the install
    * needs, leave the request pending); the install itself resolves the request. A
    * `connector_setup` request is approved only by binding its connectors (ruling P4-T6-6):
@@ -832,10 +841,11 @@ export class CatalogRequestsService {
 
   /**
    * Approves a `network_allowlist` request inside its decision's transaction: the hosts the org's
-   * effective egress does not allow yet are added to the org's `sandboxEgress.allowHosts` through
-   * {@link OrgSettingsService.update} (audited `org.settings_updated` with `requestId`). An org
-   * following the deployment default starts from the deployment's list (it keeps its own list from
-   * then on). The deployment egress `none`, or the org's `none` -> `catalog.request_invalid`; more
+   * sandbox allowlist does not hold yet are added to the org's `cloudNetwork` as an allowlist with
+   * them, through {@link OrgSettingsService.update} (audited `org.settings_updated` with
+   * `requestId`). An org following the deployment default starts from the deployment's list (it
+   * keeps its own list from then on); an org whose cloud network is open is narrowed to the
+   * allowlist, which is what its sandbox-mode devices already use. The platform kill switch, more
    * than {@link ORG_SANDBOX_ALLOW_HOSTS_MAX} hosts -> `catalog.request_invalid`; decided with an API
    * token -> `org.sandbox_egress_not_allowed` (only a person widens the network). Hosts all allowed
    * already: nothing is written.
@@ -848,21 +858,13 @@ export class CatalogRequestsService {
     opts: RequestActorOpts,
   ): Promise<void> {
     const hosts = (detail as Partial<NetworkRequestDetail> | null)?.hosts ?? [];
-    const deployment = (await this.orgSettings.deployment()).sandboxEgress;
-    if (deployment.mode === "none") throw deploymentEgressNone();
-    const current = (await readOrgSettings(this.db, orgId)).sandboxEgress;
-    if (current?.mode === "none") {
-      throw new ApiError(
-        "catalog.request_invalid",
-        "The organization has sandbox network turned off; turn it on in the organization settings first",
-      );
-    }
-    // the org's base list: the hosts a strict device reaches (the tiers only widen it)
-    const effective = baseSandboxEgress(
-      { egress: deployment.mode, allowHosts: deployment.allowHosts },
-      current,
-    );
-    const missing = hosts.filter((h) => !orgAllows(h, effective));
+    if (this.config.get().sandbox.limits.egress === "none") throw deploymentEgressNone();
+    const deployment = (await this.orgSettings.deployment()).cloudNetwork;
+    const current = (await readOrgSettings(this.db, orgId)).cloudNetwork;
+    // the hosts the org's sandbox-mode devices reach now (an open cloud network still gives them
+    // the allowlist: a host their network ask names must be addable)
+    const network = sandboxAllowlist(deployment, current);
+    const missing = hosts.filter((h) => !orgAllows(h, { network }));
     if (missing.length === 0) return;
     const base = current?.allowHosts ?? deployment.allowHosts;
     const allowHosts = [...new Set([...base, ...missing])];
@@ -872,11 +874,11 @@ export class CatalogRequestsService {
         `The organization's sandbox allowlist would exceed ${ORG_SANDBOX_ALLOW_HOSTS_MAX} hosts; remove some in the organization settings first`,
       );
     }
-    // approving widens the org's base list: only a person in a session does that, never an API
-    // token (sandbox dev tiers spec §7.2; the Platform tool has no decide operation at all)
+    // approving widens the org's network allowlist: only a person in a session does that, never an
+    // API token (auto mode spec §4.3; the Platform tool has no decide operation at all)
     await this.orgSettings.update(
       orgId,
-      { sandboxEgress: { mode: "allowlist", allowHosts } },
+      { cloudNetwork: { mode: "allowlist", allowHosts } },
       actor,
       opts.actorTokenId,
       { requestId },

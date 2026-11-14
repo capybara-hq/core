@@ -1,18 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 import {
-  compareTiers,
-  DEV_HOSTS,
   EXTENSION_POINTS,
   isFileSystemGoneError,
   isSandboxGoneError,
-  isSandboxTier,
-  minTier,
   SANDBOX_EXTENSION_POINT,
   SANDBOX_ROOTS,
   SANDBOX_TAG_RE,
-  SANDBOX_TIERS,
   SandboxGoneError,
-  tierAtMost,
+  type SandboxLimits,
   validateAllowHost,
   validateSandboxPath,
   validateSandboxPathShape,
@@ -174,37 +169,22 @@ describe("validateSandboxPathShape", () => {
   });
 });
 
-describe("sandbox tiers", () => {
-  it("are ordered strict < dev < open", () => {
-    expect(SANDBOX_TIERS).toEqual(["strict", "dev", "open"]);
-    expect(compareTiers("strict", "dev")).toBeLessThan(0);
-    expect(compareTiers("open", "dev")).toBeGreaterThan(0);
-    expect(compareTiers("dev", "dev")).toBe(0);
-    expect(tierAtMost("dev", "open")).toBe(true);
-    expect(tierAtMost("dev", "dev")).toBe(true);
-    expect(tierAtMost("open", "dev")).toBe(false);
-  });
-
-  it("minTier picks the lowest", () => {
-    expect(minTier("open")).toBe("open");
-    expect(minTier("open", "dev", "open")).toBe("dev");
-    expect(minTier("dev", "strict", "open")).toBe("strict");
-  });
-
-  it("isSandboxTier accepts only the three ids", () => {
-    for (const t of SANDBOX_TIERS) expect(isSandboxTier(t)).toBe(true);
-    for (const v of ["", "Dev", "none", null, undefined, 1]) expect(isSandboxTier(v)).toBe(false);
-  });
-});
-
-describe("DEV_HOSTS", () => {
-  it("every entry passes validateAllowHost", () => {
-    for (const h of DEV_HOSTS) expect(validateAllowHost(h), h).toEqual([]);
-  });
-
-  it("has no duplicates and is frozen", () => {
-    expect(new Set(DEV_HOSTS).size).toBe(DEV_HOSTS.length);
-    expect(Object.isFrozen(DEV_HOSTS)).toBe(true);
-    expect(DEV_HOSTS).toContain("registry.npmjs.org");
+describe("SandboxLimits", () => {
+  it("carries the mode and the network, and no tier or egress fields", () => {
+    expectTypeOf<SandboxLimits>().toMatchTypeOf<{
+      cpu: number;
+      memoryMb: number;
+      diskMb: number;
+      mode: "auto" | "sandbox";
+      network: { kind: "open-public" | "allowlist"; hosts: string[] };
+    }>();
+    expectTypeOf<"tier" extends keyof SandboxLimits ? true : false>().toEqualTypeOf<false>();
+    expectTypeOf<"egress" extends keyof SandboxLimits ? true : false>().toEqualTypeOf<false>();
+    expectTypeOf<"allowHosts" extends keyof SandboxLimits ? true : false>().toEqualTypeOf<false>();
+    expectTypeOf<"defaultTier" extends keyof SandboxLimits ? true : false>().toEqualTypeOf<false>();
+    expectTypeOf<
+      "allowUnsandboxed" extends keyof SandboxLimits ? true : false
+    >().toEqualTypeOf<false>();
+    expectTypeOf<"devHosts" extends keyof SandboxLimits ? true : false>().toEqualTypeOf<false>();
   });
 });

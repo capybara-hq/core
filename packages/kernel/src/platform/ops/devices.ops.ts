@@ -139,7 +139,7 @@ export class DevicesOperations implements OnModuleInit {
       defineOperation({
         id: "devices.get",
         description:
-          "Read one of your devices with its source (cloud or local), provider, state, instance, the machine of a local one and whether it is online, limits, sandbox level (the tier chosen and the one in effect, the highest allowed and why it is lower, whether it runs without a sandbox) and creation time. Takes the id from devices.list. Only the person changes a device's sandbox level, on the web.",
+          "Read one of your devices with its source (cloud or local), provider, state, instance, the machine of a local one and whether it is online, limits, its mode (the one its commands run at and the one this org allows, and which layer allows auto mode), its network and where that comes from, a pending change that applies on its next use, its recent mode and policy changes, and creation time. Takes the id from devices.list. Only the person changes a device's mode: a local device's on the machine, a cloud device's on the web and to sandbox only; enabling auto mode happens on the machine.",
         input: DeviceId,
         example: { deviceId: "4e8a0c1d-6b2f-4a37-8d19-3c5e7f9a1b20" },
         authz: { orgAction: "agents.use" },
@@ -319,8 +319,8 @@ export class DevicesOperations implements OnModuleInit {
         authz: { orgAction: "agents.use" },
         mirrors: ["PATCH /api/v1/orgs/:orgId/devices/:id"],
         renames: { deviceId: "id" },
-        // a person decides their device's sandbox level (sandbox dev tiers spec §7.2)
-        omits: ["tier"],
+        // a person changes their own machine's mode; enabling auto mode happens on the machine
+        omits: ["mode"],
         confirm: "personal",
         errors: [
           {

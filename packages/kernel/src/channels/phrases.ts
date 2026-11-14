@@ -108,6 +108,20 @@ export const CHANNEL_PHRASES = {
   gitAllowOnce: { zh: "这次允许", en: "Allow this time" },
   /** A git push ask's 「always」 button: the person's standing allow for the repository. */
   gitAllowAlways: { zh: "这个仓库一直允许", en: "Always allow this repository" },
+  /** A command review ask's card title (auto mode spec §5.4). */
+  commandTitle: {
+    zh: "智能体想运行这条命令，允许吗？",
+    en: "The agent wants to run this command. Allow?",
+  },
+  /** A file-write review ask's card title (the path is in the preview). */
+  commandWriteTitle: {
+    zh: "智能体想写入这个文件，允许吗？",
+    en: "The agent wants to write this file. Allow?",
+  },
+  /** A command review ask's 「once」 button. */
+  commandAllowOnce: { zh: "允许一次", en: "Allow once" },
+  /** A command review ask's 「session」 button: remembers the rule for the conversation. */
+  commandAllowSession: { zh: "本会话允许同类", en: "Allow this kind for this conversation" },
   /** 提问卡片的随附文本。 */
   questionTitle: { zh: "需要你的回答", en: "Your input is needed" },
   /** 连接卡片的随附文本。 */

@@ -70,24 +70,15 @@ describe("client", () => {
     const res = await kernel.waitFor("res", () => kernel.of("res")[0]);
     expect(res).toEqual({ type: "res", id: "r1", ok: true, result: OK_EXEC });
     const line = JSON.parse(readFileSync(join(dir, "commands.log"), "utf8").trim());
-    expect(Object.keys(line).sort()).toEqual([
-      "actor",
-      "exitCode",
-      "isolation",
-      "op",
-      "tag",
-      "tier",
-      "time",
-    ]);
-    // Every exec records its tier and isolation.
+    expect(Object.keys(line).sort()).toEqual(["actor", "exitCode", "mode", "op", "tag", "time"]);
+    // Every exec records its mode.
     expect(line).toEqual({
       time: expect.any(String),
       op: "exec",
       tag: "t1",
       actor: { accountId: "acc" },
       exitCode: 0,
-      tier: "strict",
-      isolation: "sandbox",
+      mode: "sandbox",
     });
   });
 
@@ -117,18 +108,11 @@ describe("client", () => {
 
   it("hello carries the features and the local policy; a policy op shows on the next hello", async () => {
     writePolicy(dir, { ...DEFAULT_POLICY, allowedDomains: ["a.com"] });
-    start({ policy: new PolicyStore(dir), platform: "darwin" });
+    start({ policy: new PolicyStore(dir) });
     const hello = await kernel.waitFor("hello", () => kernel.of("hello")[0]);
-    expect(hello.features).toEqual(["networkReport", "policyOp", "policyOpId", "tiers"]);
-    // No exec seen yet: the owner's choice, else dev (every org's default unless changed).
-    expect(hello.policy).toEqual({
-      effectiveTier: "dev",
-      isolation: "sandbox",
-      localhost: "on",
-      unixSockets: "roots",
-      allowedDomains: ["a.com"],
-      remoteGrants: "owner",
-    });
+    expect(hello.features).toEqual(["networkReport", "policyOp", "policyOpId", "mode"]);
+    // No exec seen yet: the owner's choice, auto by default.
+    expect(hello.policy).toEqual({ mode: "auto", allowedDomains: ["a.com"] });
     kernel.send(
       0,
       req("p1", "policy", {
@@ -152,38 +136,31 @@ describe("client", () => {
     writePolicy(dir, {
       ...DEFAULT_POLICY,
       allowedDomains: ["a.com", "files.slack.com"],
-      remoteGrants: "off",
     });
-    // An exec meanwhile tells the device its ceiling: the next hello reports the tier it runs at.
+    // An exec meanwhile tells the device its ceiling: the next hello reports the mode it runs in.
     kernel.send(0, req("e1", "exec", execArgs("now")));
     await kernel.waitFor("exec", () => kernel.of("res").find((x) => x.id === "e1"));
     kernel.sockets[0]?.close(1001);
     const again = await kernel.waitFor("reconnect", () => kernel.of("hello", 1)[0]);
     expect(again.policy).toEqual({
-      effectiveTier: "strict",
-      isolation: "sandbox",
-      localhost: "off",
-      unixSockets: "off",
+      mode: "sandbox",
       allowedDomains: ["a.com", "files.slack.com"],
-      remoteGrants: "off",
     });
   });
 
-  it("a policy changed on the machine is pushed while connected, once per change", async () => {
-    // a local proxy was found: localhost is off until the owner allows it
-    (exec as { proxyGuard?: () => unknown }).proxyGuard = () => ({ detected: true, reasons: [] });
-    writePolicy(dir, { ...DEFAULT_POLICY, tier: "dev" });
-    start({ policy: new PolicyStore(dir), platform: "darwin", policyCheckMs: 20 });
+  it("a mode changed on the machine is pushed while connected, once per change", async () => {
+    writePolicy(dir, { ...DEFAULT_POLICY, mode: "sandbox" });
+    start({ policy: new PolicyStore(dir), policyCheckMs: 20 });
     const hello = await kernel.waitFor("hello", () => kernel.of("hello")[0]);
-    expect(hello.policy.localhost).toBe("off-proxy-detected");
+    expect(hello.policy.mode).toBe("sandbox");
     // nothing changed: nothing is pushed
     await new Promise((r) => setTimeout(r, 100));
     expect(kernel.of("policy")).toEqual([]);
 
-    // `capybara-device policy set localhost allow` while the service runs
-    writePolicy(dir, { ...DEFAULT_POLICY, tier: "dev", localhost: "allow" });
+    // `capybara-device mode auto` while the service runs
+    writePolicy(dir, { ...DEFAULT_POLICY, mode: "auto" });
     const pushed = await kernel.waitFor("policy frame", () => kernel.of("policy")[0]);
-    expect(pushed.policy).toEqual({ ...hello.policy, localhost: "on" });
+    expect(pushed.policy).toEqual({ ...hello.policy, mode: "auto" });
     await new Promise((r) => setTimeout(r, 100));
     expect(kernel.of("policy")).toHaveLength(1);
 
@@ -200,10 +177,10 @@ describe("client", () => {
     await new Promise((r) => setTimeout(r, 100));
     expect(kernel.of("policy")).toHaveLength(1);
 
-    // an exec brings a lower ceiling: the tier it runs at changes, pushed right after its result
+    // an exec brings a sandbox ceiling: the mode it runs in changes, pushed right after its result
     kernel.send(0, req("e1", "exec", execArgs("now")));
     const frame = await kernel.waitFor("exec push", () => kernel.of("policy")[1]);
-    expect(frame.policy).toMatchObject({ tier: "dev", effectiveTier: "strict" });
+    expect(frame.policy).toMatchObject({ mode: "sandbox" });
   });
 
   it("a docker-mode hello offers the policy op but no network report", async () => {
@@ -211,18 +188,14 @@ describe("client", () => {
     start({ policy: new PolicyStore(dir) });
     const hello = await kernel.waitFor("hello", () => kernel.of("hello")[0]);
     expect(hello.mode).toBe("docker");
-    expect(hello.features).toEqual(["policyOp", "policyOpId", "tiers"]);
-    expect(hello.policy).toMatchObject({
-      effectiveTier: "dev",
-      isolation: "sandbox",
-      remoteGrants: "owner",
-    });
+    expect(hello.features).toEqual(["policyOp", "policyOpId", "mode"]);
+    expect(hello.policy).toMatchObject({ mode: "auto" });
   });
 
   it("without a policy store the hello offers no policy op and no summary", async () => {
     start();
     const hello = await kernel.waitFor("hello", () => kernel.of("hello")[0]);
-    expect(hello.features).toEqual(["networkReport", "tiers"]);
+    expect(hello.features).toEqual(["networkReport", "mode"]);
     expect(hello.policy).toBeUndefined();
   });
 

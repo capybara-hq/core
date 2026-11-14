@@ -10,11 +10,13 @@ import {
 import type {
   ApprovalPolicy,
   Approver,
+  CommandAsk,
   ContentBlock,
   ConversationEvent,
   InputForm,
   MessageAttachment,
   ModelRef,
+  ReviewRecord,
   ToolInfo,
 } from "./conversations";
 import type { OrgRole } from "./members";
@@ -30,7 +32,8 @@ import { toolLabel, toolLabelOfKey, toolLabelText } from "./tool-label";
  *   human-in-the-loop item or a divider ends the group. Prose is never folded into a group.
  * - A call's `artifact_created` files and its inline card (`tool_result.card`) land right after the
  *   group that holds the call (files first), then its network facts (`network_blocked` hosts of the
- *   `org` and `address` layers; `device`-layer hosts are asked about in an approval instead).
+ *   `org` and `address` layers; `device`-layer hosts are asked about in an approval instead), then
+ *   a `device_code` card (`gh auth login --web`).
  * - `hook_denied` with a `callId` marks that row as blocked by the extension.
  * - Every run that ended (`run_finished`, `run_failed`, `run_aborted`) becomes a `run` entry at its
  *   terminal event: its model (the last `model_call`, else `run_started`), duration and tokens (its
@@ -167,6 +170,8 @@ export interface TimelineTool {
   outputId: string | null;
   /** A read's line range; the thread shows it as the row's extra through i18n (m10). */
   lines?: { from: number; to: number };
+  /** The command review's decision on the call (auto mode spec §5.4), when it was reviewed. */
+  review?: ReviewRecord;
   /**
    * A background `Bash` call (`run_in_background: true`): the thread labels it "In background"
    * through i18n, as the row's `extra` (it replaces any other extra, e.g. an extension's display
@@ -187,6 +192,8 @@ export interface ApprovalItem {
   approver?: Waiter;
   /** A network ask (network ask spec §6.5): the device-layer hosts asked for. */
   network?: { hosts: string[] };
+  /** A command review ask (auto mode spec §5.4): what is held and why. */
+  command?: CommandAsk;
   decided: ApprovalDecision | null;
   decidedAt: string | null;
 }
@@ -355,6 +362,17 @@ export type TimelineEntry =
       key: string;
       callId: string;
       hosts: { host: string; layer: "org" | "address" }[];
+    }
+  | {
+      /**
+       * A `gh auth login --web` device-code prompt (`device_code`, auto mode spec §6): the URL to
+       * open and the one-time code, under the group that holds the command.
+       */
+      kind: "device-code";
+      key: string;
+      callId: string;
+      url: string;
+      code: string;
     }
   | { kind: "files"; key: string; files: FileRef[] }
   | ({ kind: "divider"; key: string } & DividerData)
@@ -728,6 +746,7 @@ export function buildEventTimeline(
   const groupCards = new Map<string, Extract<TimelineEntry, { kind: "card" }>[]>();
   /** Group key → the network facts of its calls. */
   const groupFacts = new Map<string, Extract<TimelineEntry, { kind: "network-facts" }>[]>();
+  const groupDeviceCodes = new Map<string, Extract<TimelineEntry, { kind: "device-code" }>[]>();
   /** The last user message (Retry repeats it). */
   let lastUser: RetryMessage | null = null;
   /** Plain user bubbles by seq, and the fork invocations (phase D: who waits for a sub-agent). */
@@ -1085,6 +1104,12 @@ export function buildEventTimeline(
         if (!c) break;
         const p = e.payload;
         const row = c.tool.row;
+        // the command review's line on the row: a deny is shown with its reason (the error text
+        // repeats it in the detail), an allow only in the record for the trajectory
+        if (p.review !== undefined) {
+          c.tool.review = p.review;
+          if (p.review.decision === "deny" && row.extra === undefined) row.extra = p.review.reason;
+        }
         const view = p.view;
         // A non-zero exit is information, not a failure (the summary names the code); a timeout or
         // a stopped command fails. A read-before-write refusal (`guard` view) is the guard working:
@@ -1172,6 +1197,22 @@ export function buildEventTimeline(
           list.push(fact);
           groupFacts.set(c.group, list);
         } else out.push(fact);
+        break;
+      }
+      case "device_code": {
+        const entry: Extract<TimelineEntry, { kind: "device-code" }> = {
+          kind: "device-code",
+          key: `${key}:device-code`,
+          callId: e.payload.callId,
+          url: e.payload.url,
+          code: e.payload.code,
+        };
+        const c = calls.get(callKey(e.runId, e.payload.callId));
+        if (c) {
+          const list = groupDeviceCodes.get(c.group) ?? [];
+          list.push(entry);
+          groupDeviceCodes.set(c.group, list);
+        } else out.push(entry);
         break;
       }
       case "hook_denied":
@@ -1359,6 +1400,14 @@ export function buildEventTimeline(
       case "approval_requested":
         waitOn(e.runId, e.payload.callId, "approval", e.payload.approvalId, approverOf(e.payload));
         approvals.set(e.payload.approvalId, out.length);
+        {
+          // a command ask's row carries the review's reason (the card shows the rest)
+          const asked = calls.get(callKey(e.runId, e.payload.callId));
+          const command = e.payload.command;
+          if (asked && command !== undefined && asked.tool.row.extra === undefined) {
+            asked.tool.row.extra = command.reason;
+          }
+        }
         out.push({
           kind: "approval",
           key,
@@ -1372,6 +1421,7 @@ export function buildEventTimeline(
             ...(e.payload.network !== undefined
               ? { network: { hosts: [...e.payload.network.hosts] } }
               : {}),
+            ...(e.payload.command !== undefined ? { command: e.payload.command } : {}),
             ...approverField(e.payload),
             decided: null,
             decidedAt: null,
@@ -1594,7 +1644,12 @@ export function buildEventTimeline(
     (entry) => entry.kind !== "connect" || lastConnect.get(entry.item.connectorId) === entry.key,
   );
 
-  if (groupFiles.size === 0 && groupCards.size === 0 && groupFacts.size === 0)
+  if (
+    groupFiles.size === 0 &&
+    groupCards.size === 0 &&
+    groupFacts.size === 0 &&
+    groupDeviceCodes.size === 0
+  )
     return { entries: shown, modelOf };
   const withExtras: TimelineEntry[] = [];
   for (const entry of shown) {
@@ -1604,6 +1659,7 @@ export function buildEventTimeline(
     if (files) withExtras.push({ kind: "files", key: `${entry.key}:files`, files });
     for (const card of groupCards.get(entry.key) ?? []) withExtras.push(card);
     for (const fact of groupFacts.get(entry.key) ?? []) withExtras.push(fact);
+    for (const device of groupDeviceCodes.get(entry.key) ?? []) withExtras.push(device);
   }
   return { entries: withExtras, modelOf };
 }

@@ -29,6 +29,7 @@ import {
   unavailableWhenNoSandbox,
   withNotices,
 } from "./common.js";
+import { parseDeviceCode } from "./device-code.js";
 
 /** The command timeout in seconds when `timeout` is not given, at most `sandbox.limits.maxCommandSeconds`. */
 export const BASH_DEFAULT_TIMEOUT_SECONDS = 120;
@@ -65,10 +66,12 @@ const SPEC: ToolSpec = {
     "You can use the run_in_background parameter to run the command in the background, which " +
     "allows you to continue working while the command runs, e.g. a dev server, a long build or a " +
     "test suite. The call returns at once with a task id and the command's output goes to a file " +
-    "under .capybara/tasks in the workspace directory. Read the output with TaskOutput (or Read) and stop the " +
+    "under .capybara/tasks in the workspace directory. Read the output with TaskOutput and stop the " +
     "task with TaskStop; you will be told when it finishes. TaskList lists this conversation's " +
     "background tasks and their ids, running ones first. You do not need to use '&' at the end " +
-    "of the command when using this parameter. In the background, timeout defaults to the " +
+    "of the command when using this parameter. A command that waits for a person (an interactive " +
+    "login, a prompt) should run in the background so its output, such as a one-time code to " +
+    "enter, can be read with TaskOutput while it waits. In the background, timeout defaults to the " +
     "deployment's background maximum (7200000 by default). A background task ends when its " +
     "command exits, and processes it left running are stopped. A background task is lost if the " +
     "sandbox is suspended (it is suspended after it has been running for a while, " +
@@ -452,6 +455,9 @@ export function sandboxBashTool(deps: SandboxToolDeps): BuiltinTool {
         });
       });
       const blocked = r.network?.blocked ?? [];
+      // kernel-internal (auto mode spec §6, P-D13): `gh auth login --web`'s device code, which the
+      // pipeline shows to the person. It never becomes part of the result the model sees.
+      const loginCode = parseDeviceCode(`${r.stdout}\n${r.stderr}`);
       const seconds = ms / 1000;
       const clamped = ms < askedMs;
       const shown = clip(command, 120);
@@ -483,6 +489,8 @@ export function sandboxBashTool(deps: SandboxToolDeps): BuiltinTool {
               ),
         // kernel-internal: the pipeline asks the device owner or writes notes (spec §6.2)
         ...(blocked.length > 0 && deviceId !== "" && { networkReport: { deviceId, blocked } }),
+        // kernel-internal: the pipeline writes the display-only `device_code` event (auto mode §6)
+        ...(loginCode !== null && { loginCode }),
       };
     },
   };

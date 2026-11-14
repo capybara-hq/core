@@ -1,4 +1,3 @@
-import { DEV_HOSTS } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { SANDBOX_LOCK_TTL_MS } from "../../src/sandbox/sandbox.service.js";
@@ -37,10 +36,9 @@ describe("配置 sandbox", () => {
         "objects.githubusercontent.com",
         "release-assets.githubusercontent.com",
       ],
-      devHosts: [...DEV_HOSTS],
     });
-    // unset in the config: the admin console's choice decides (sandbox/platform-tiers.ts)
-    expect(c.sandbox.tiers).toEqual({});
+    // unset in the config: the deployment setting `devicesAutoMode` decides (default: allowed)
+    expect(c.devices.autoMode).toBeUndefined();
   });
 
   it("allowHosts 每项用 validateAllowHost 校验：IP、单段名、带协议 / 端口都拒绝", () => {
@@ -66,12 +64,12 @@ describe("配置 sandbox", () => {
     expect(ok.sandbox.limits.egress).toBe("none");
   });
 
-  it('egress takes only none / allowlist; "open" points to sandbox.tiers.max', () => {
+  it('egress takes only none / allowlist; "open" points to auto mode', () => {
     expect(
       KernelConfigSchema.safeParse({ ...base, sandbox: { limits: { egress: "all" } } }).success,
     ).toBe(false);
     const open = KernelConfigSchema.safeParse({ ...base, sandbox: { limits: { egress: "open" } } });
     expect(open.success).toBe(false);
-    expect(open.error?.issues[0]?.message).toContain('set sandbox.tiers.max to "open"');
+    expect(open.error?.issues[0]?.message).toContain("the open public network is a cloud device's");
   });
 });

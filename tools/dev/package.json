@@ -11,7 +11,11 @@
     "build": "tsc -b"
   },
   "dependencies": {
-    "@capybara-hq/ci": "workspace:*"
+    "@capybara-hq/ci": "workspace:*",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.23.1"
   },
   "exports": {
     "./remotes": "./src/remotes.ts"

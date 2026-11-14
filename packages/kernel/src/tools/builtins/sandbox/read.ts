@@ -2,8 +2,8 @@ import { ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
 import type { BuiltinTool } from "../../registry.js";
 import { viewPath } from "../../view.js";
 import {
-  checkPath,
   checkPathShape,
+  checkToolPath,
   clip,
   display,
   inSandbox,
@@ -33,7 +33,8 @@ const SPEC: ToolSpec = {
     "directory or the temporary files directory. Lines are numbered from 1; pass " +
     "offset and limit to read part of a long file. Binary files are not shown; use Bash " +
     "to inspect them. Do not use it to list directories; use Glob instead. Read a file before you " +
-    "write it: Write and Edit fail on a file you have not read, or one changed since you read it.",
+    "write it: Write and Edit fail on a file you have not read, or one changed since you read it. " +
+    "In auto mode paths may be anywhere on the machine; writes outside the workspace need the user's approval.",
   inputSchema: {
     type: "object",
     properties: {
@@ -110,8 +111,9 @@ export function sandboxReadTool(deps: SandboxToolDeps): BuiltinTool {
       const { offset = 1, limit = DEFAULT_LIMIT } = input as ReadInput;
       checkPathShape((input as ReadInput).file_path, "file_path");
       let path = "";
-      const { value, notices } = await inSandbox(deps, ctx, async ({ h, roots, p, signal }) => {
-        path = checkPath((input as ReadInput).file_path, roots, "file_path");
+      const { value, notices } = await inSandbox(deps, ctx, async (s) => {
+        const { h, p, signal } = s;
+        path = checkToolPath((input as ReadInput).file_path, s, "file_path");
         const st = await p.stat(h, path, signal);
         if (st === null) throw new ToolError(notFound(path));
         if (st.isDir) throw new ToolError(isDirectory(path));

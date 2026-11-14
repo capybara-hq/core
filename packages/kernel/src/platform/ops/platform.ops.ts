@@ -137,7 +137,7 @@ export class PlatformOperationsProvider implements OnModuleInit {
       defineOperation({
         id: "platform.me",
         description:
-          "Show this agent as configured: its model, the tools it has now by the keys you call them by (every tool the org offers unless the agent turns it off; connector tools as mcp__<connector>__<tool>, with those that cannot load now and why), the tools it turns off (disabledTools), the skills in its catalog now by name with their plugin (every skill on in the org unless the agent turns it off, its own and builtin plugins' skills always; manual-only skills are not in the catalog), the skills it turns off (disabledSkills), sub-agents, whether it runs in a sandbox, the sandbox level (tier) and network mode of a new device, and its profile (avatar, description, quick actions). Secrets are never shown.",
+          "Show this agent as configured: its model, the tools it has now by the keys you call them by (every tool the org offers unless the agent turns it off; connector tools as mcp__<connector>__<tool>, with those that cannot load now and why), the tools it turns off (disabledTools), the skills in its catalog now by name with their plugin (every skill on in the org unless the agent turns it off, its own and builtin plugins' skills always; manual-only skills are not in the catalog), the skills it turns off (disabledSkills), sub-agents, whether it runs in a sandbox, the mode (auto or sandbox) and network of a new device, and its profile (avatar, description, quick actions). Secrets are never shown.",
         input: EMPTY,
         example: {},
         authz: { orgAction: "agents.use" },
@@ -154,8 +154,10 @@ export class PlatformOperationsProvider implements OnModuleInit {
             (SANDBOX_TOOL_NAMES as readonly string[]).includes(k),
           );
           const org = await this.settings.get(ctx.orgId);
-          // a new device's level: the org's default tier and its network
-          const policy = await this.settings.sandboxPolicy(org, null);
+          // a new device's mode and network (auto mode spec §4.3)
+          const deployment = await this.settings.deployment();
+          const mode =
+            deployment.autoMode.mode === "allowed" && org.autoMode !== "off" ? "auto" : "sandbox";
           return {
             id: agent.id,
             name: d.name,
@@ -171,7 +173,14 @@ export class PlatformOperationsProvider implements OnModuleInit {
             disabledSkills: d.disabledSkills ?? [],
             subagents: d.subagents ?? null,
             sandbox: sandbox
-              ? { enabled: true, tier: policy.tier, egress: policy.egress }
+              ? {
+                  enabled: true,
+                  mode,
+                  network:
+                    mode === "auto" && deployment.cloudNetwork.mode === "open"
+                      ? "open-public"
+                      : "allowlist",
+                }
               : { enabled: false },
             profile: {
               avatar: agent.profile.avatar,

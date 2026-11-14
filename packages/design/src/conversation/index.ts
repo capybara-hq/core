@@ -85,6 +85,7 @@ export {
   type ApprovalScope,
   type ApprovalState,
   approvalArgs,
+  type CommandAsk,
   ConnectBlock,
   type ConnectBlockProps,
   clipCommand,

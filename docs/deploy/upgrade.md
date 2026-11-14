@@ -137,6 +137,18 @@ version. Versions after 0.1.0-rc.26 fail a maintenance job they don't know inste
 retries it and a newer replica can take it, but only within the job's attempts (a few seconds for
 most jobs): stopping old workers first still applies.
 
+### Upgrading across 0130 / 0131 (auto mode): stop the old replicas first
+
+Auto mode replaces the sandbox tiers. `0130_auto_mode.sql` drops `devices.tier` and deletes the
+`deployment_settings.sandboxTiers` row; `0131_device_mode.sql` adds `devices.mode`.
+
+**This step is not a rolling update.** A deployment that runs more than one replica must drain or
+stop every old replica (`api`, `worker`, `gateway` and `web`) before applying the migration set: old
+code still reads the removed `devices.tier` column and the `sandboxTiers` setting, so after the
+migration its device queries fail and its settings read as the new default (auto mode allowed) until
+every replica runs the new build. Stop the old replicas, run `capybara migrate` (and
+`capybara bootstrap`), then start the new version.
+
 ### 0.1.0: IM long connections move to the gateway role
 
 IM long connections (Slack Socket Mode, Lark long connection) now run **only on processes with the

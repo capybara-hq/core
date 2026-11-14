@@ -169,6 +169,11 @@ export const ACCEPTED: string[] = [
   // in place; the reference PNGs and the side-by-side review wait for the reference-update and
   // visual-update workflows
   "schedule-calendar",
+  // a device's head and its two modes (auto mode design §4, plan Task 10): blocks and size tables
+  // in place; the reference PNGs and the side-by-side review wait for the reference-update and
+  // visual-update workflows
+  "device-nameplate",
+  "mode-scale",
 ];
 
 /**

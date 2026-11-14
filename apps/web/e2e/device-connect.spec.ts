@@ -77,7 +77,9 @@ test("connect a machine: authorize → confirm on /devices/link → token → th
     await page.getByRole("button", { name: zh.deviceLink.openDevice }).click();
     await expect(page.locator('[data-template="DetailPage"]')).toBeVisible();
     await expect(page.getByText(zh.devices.source.local)).toBeVisible();
-    await expect(page.getByText(zh.devices.state.offline)).toBeVisible();
+    await expect(
+      page.locator('[data-part="device-nameplate-status"]').getByText(zh.devices.state.offline),
+    ).toBeVisible();
     await expect(page.getByText(machine).first()).toBeVisible();
 
     // clean up: delete the device (typing its name)

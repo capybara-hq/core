@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { hostname } from "node:os";
 import { isAbsolute, resolve } from "node:path";
 import { ApiError, authorize, type FetchFn, programVersion, token } from "../api.js";
@@ -6,10 +7,23 @@ import type { Command } from "../args.js";
 import { prepareDeviceDir } from "../exec/shared.js";
 import {
   DEFAULT_MAX_FRAME_BYTES,
+  DEFAULT_POLICY,
   defaultWorkDir,
+  policyPath,
   readCredential,
+  readPolicy,
+  type SandboxMode,
+  withPolicyLock,
   writeCredential,
+  writePolicy,
 } from "../state.js";
+import {
+  AUTO_MODE_LOGIN_LINE,
+  AUTO_MODE_RISK_TEXT,
+  AUTO_POLICY_REFUSED_LOGIN_LINE,
+  SANDBOX_MODE_LOGIN_LINE,
+  SANDBOX_POLICY_LOGIN_LINE,
+} from "./mode.js";
 
 export interface LoginDeps {
   stateDir: string;
@@ -37,6 +51,23 @@ function defaultOpen(platform: NodeJS.Platform) {
       // The URL is printed anyway.
     }
   };
+}
+
+/**
+ * A fresh device in an organization that forbids auto mode starts in sandbox mode (auto mode
+ * spec §4.1): the default policy is auto, which the kernel refuses at every exec, so the login
+ * line would otherwise describe a mode the machine does not run. Written under the policy lock,
+ * and only while no policy file exists: an existing policy is the owner's choice and is never
+ * changed here. Returns whether this call created the file.
+ */
+function persistSandboxPolicy(stateDir: string): boolean {
+  const file = policyPath(stateDir);
+  if (existsSync(file)) return false;
+  return withPolicyLock(stateDir, () => {
+    if (existsSync(file)) return false;
+    writePolicy(stateDir, { ...DEFAULT_POLICY, mode: "sandbox" });
+    return true;
+  });
 }
 
 /** Normalises the deployment URL: http(s) origin plus optional path prefix, no trailing slash. */
@@ -111,6 +142,26 @@ export async function login(
               : resolve(cmd.dir);
         // Recreates a lost directory, marker or root: the device starts afresh.
         prepareDeviceDir(dir);
+        // The printed line follows this machine's persisted policy in both branches, not the
+        // organization's allowance: sandbox mode is also the state an earlier login in an
+        // auto-forbidden organization left behind. The default mode is auto; an organization that
+        // forbids it gets sandbox mode written as this device's policy before the credential makes
+        // the login final. An existing policy is the owner's choice: the kernel refuses auto mode
+        // at every command if the organization forbids it and the owner keeps auto.
+        let mode: SandboxMode = "auto";
+        if (granted.autoMode === "off") {
+          try {
+            mode = persistSandboxPolicy(deps.stateDir) ? "sandbox" : readPolicy(deps.stateDir).mode;
+          } catch (e) {
+            err(`Cannot set the local policy in ${deps.stateDir}: ${(e as Error).message}`);
+          }
+        } else {
+          try {
+            mode = readPolicy(deps.stateDir).mode;
+          } catch (e) {
+            err(`Cannot read the local policy in ${deps.stateDir}: ${(e as Error).message}`);
+          }
+        }
         writeCredential(deps.stateDir, {
           url: baseUrl,
           connectUrl: granted.connectUrl,
@@ -123,6 +174,15 @@ export async function login(
           maxFrameBytes: granted.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES,
         });
         out(`Logged in. Device ${granted.deviceId}, working directory ${dir}`);
+        // The risk text is shown once at login (spec §8), and only when this machine runs auto.
+        if (granted.autoMode === "off") {
+          out(mode === "sandbox" ? SANDBOX_MODE_LOGIN_LINE : AUTO_POLICY_REFUSED_LOGIN_LINE);
+        } else if (mode === "sandbox") {
+          out(SANDBOX_POLICY_LOGIN_LINE);
+        } else {
+          out(AUTO_MODE_LOGIN_LINE);
+          out(AUTO_MODE_RISK_TEXT);
+        }
         out(
           "Run `capybara-device start` to bring it online (or `capybara-device service install` to connect at login).",
         );

@@ -1,4 +1,4 @@
-import { type SandboxTier, validateAllowHost } from "@capybara-hq/plugin-sdk";
+import { validateAllowHost } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { publicSuffixWildcard } from "./public-suffix.js";
@@ -9,19 +9,17 @@ export const DeviceName = z.string().trim().min(1).max(64);
 export const DeviceNameBody = z.object({ name: DeviceName }).strict();
 export const DeviceParams = z.object({ id: z.string().min(1).max(100) });
 
-/** A sandbox tier (sandbox dev tiers spec §5). */
-export const DeviceTier = z.enum(["strict", "dev", "open"]) satisfies z.ZodType<SandboxTier>;
-
 /**
- * `PATCH /devices/:id`: a new name, and for a cloud device its sandbox tier (null = follow the
- * org's default; sandbox dev tiers spec §7.2). The tier is a person's choice in a web session:
- * an API token gets `auth.session_required` and the Platform tool leaves the field out.
+ * `PATCH /devices/:id`: a new name, and a cloud device's narrowing `mode` (`sandbox` only: auto
+ * mode is never set from the web, auto mode spec §4.3). A local device's mode lives on its machine,
+ * so the service refuses a `mode` for it (`device.mode_on_device`). The mode is a person's choice
+ * in a web session: an API token gets `auth.session_required`.
  */
 export const DevicePatchBody = z
-  .object({ name: DeviceName.optional(), tier: DeviceTier.nullable().optional() })
+  .object({ name: DeviceName.optional(), mode: z.literal("sandbox").optional() })
   .strict()
-  .refine((b) => b.name !== undefined || b.tier !== undefined, {
-    message: "Give at least one of name or tier",
+  .refine((b) => b.name !== undefined || b.mode !== undefined, {
+    message: "Give at least one of name or mode",
   });
 
 /** One host of a device's network allowlist (`validateAllowHost`: lowercase, `*.` allowed). */
@@ -39,28 +37,21 @@ const AddHost = PolicyHost.superRefine((h, ctx) => {
 });
 
 /**
- * `POST /devices/:id/policy` (network ask-to-allow spec §7, sandbox dev tiers spec §7.3): the
- * device owner's change of the machine's local policy. `add` and a higher `tier` widen it (the
- * machine accepts them only while its local `remoteGrants` is `owner`); `remove` and a lower
- * `tier` narrow it. `tier: null` follows the org's default. `isolation` only turns the sandbox
- * back on: running without one is decided on the machine.
+ * `POST /devices/:id/policy` (network ask-to-allow spec §7; auto mode spec §4.1): the device
+ * owner's change of the machine's local policy. `add` and `remove` change its sandbox-mode
+ * allowlist; `mode: "sandbox"` turns the sandbox back on (turning auto mode on is decided on the
+ * machine only).
  */
 export const DevicePolicyBody = z
   .object({
     add: z.array(AddHost).min(1).max(20).optional(),
     remove: z.array(PolicyHost).min(1).max(100).optional(),
-    tier: DeviceTier.nullable().optional(),
-    isolation: z.literal("sandbox").optional(),
+    mode: z.literal("sandbox").optional(),
   })
   .strict()
-  .refine(
-    (b) =>
-      b.add !== undefined ||
-      b.remove !== undefined ||
-      b.tier !== undefined ||
-      b.isolation !== undefined,
-    { message: "Give at least one of add, remove, tier or isolation" },
-  );
+  .refine((b) => b.add !== undefined || b.remove !== undefined || b.mode !== undefined, {
+    message: "Give at least one of add, remove or mode",
+  });
 
 export class DeviceCreateBodyDto extends createZodDto(DeviceNameBody, "DeviceCreateBody") {}
 export class DevicePatchBodyDto extends createZodDto(DevicePatchBody, "DevicePatchBody") {}

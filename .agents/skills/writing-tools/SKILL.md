@@ -1,6 +1,6 @@
 ---
 name: writing-tools
-description: 'Use when changing the kernel tool pipeline or builtin tools (packages/kernel/src/tools), or the tool contract extensions and connectors implement: ctx.tools.register as the kernel hosts it, tool naming and keys, English descriptions and actionable error text (the tool design check), annotations, defaultPolicy and policy_source, ToolError and kind (circuit breaker), timeouts and abort, output archiving (ReadToolOutput, {"$output": id}), InputRequired and resume, ToolSearch, drift review; the builtin sandbox tools Bash / Read / Write / Edit / Glob / Grep / Deliver (sandboxToolPolicy) and skill tool Skill (also <plugin>:<name>; agents.register-skill, skills.writePolicy), the agent skill catalog (skills on by default, disabledSkills); sub-agent tools Agent / SendMessage / SubagentHandback; web tools WebSearch / WebFetch; PLUGIN_UNLOADED_TOOL_ERROR; tool hooks; tests with fake-tools-ui and model-fake. For connectors see writing-connectors; to write a plugin''s tools (todo) see writing-tools in capybara-hq/plugins.'
+description: 'Use when changing the kernel tool pipeline or builtin tools (packages/kernel/src/tools), or the tool contract extensions and connectors implement: ctx.tools.register, tool naming and keys, English descriptions and actionable errors (tool design check), annotations, defaultPolicy and policy_source, the command review stage (auto mode, approval kind `command`), ToolError and kind, timeouts and abort, output archiving (ReadToolOutput), InputRequired and resume, ToolSearch, drift review; the builtin sandbox tools Bash / Read / Write / Edit / Glob / Grep / Deliver (sandboxToolPolicy, absolute paths in auto mode) and skill tool Skill (also <plugin>:<name>; agents.register-skill, skills.writePolicy), the skill catalog (skills on by default, disabledSkills); sub-agent tools Agent / SendMessage / SubagentHandback; web tools WebSearch / WebFetch; PLUGIN_UNLOADED_TOOL_ERROR; tool hooks; tests with fake-tools-ui and model-fake. For connectors see writing-connectors; plugin tools: writing-tools in capybara-hq/plugins.'
 ---
 
 # Writing tools
@@ -18,7 +18,7 @@ For the extension host (manifest, config, ctx, the multi-replica prohibitions, d
 - Extension tools: the core fake `fake-tools-ui` (tool `write`, model-visible `fake-tools-ui__write`, default allow); the official [`todo`](https://github.com/capybara-hq/plugins/tree/main/plugins/todo) plugin in capybara-hq/plugins (one `write` tool, writes the whole list into the extension's schema, default allow) is the reference for plugin authors and the source of the examples below.
 - Connectors: see `.agents/skills/writing-connectors`.
 
-All tool execution goes through the kernel pipeline `packages/kernel/src/tools/pipeline.ts`: resolve `{"$output": id}` references -> ajv validates the arguments -> policy decision (allow / ask / deny) -> write `tool_call_started` -> execute (timeout + abort) -> render the result -> spill oversized results -> write `tool_result`. An extension only "does the work and returns the result"; approval, timeouts, archiving, audit and redaction are the kernel's job, and **must not be reimplemented in the extension**.
+All tool execution goes through the kernel pipeline `packages/kernel/src/tools/pipeline.ts`: resolve `{"$output": id}` references -> ajv validates the arguments -> policy decision (allow / ask / deny) -> **command review** (auto mode: `Bash` / `Write` / `Edit` against the conversation's device) -> write `tool_call_started` -> execute (timeout + abort) -> render the result -> spill oversized results -> write `tool_result`. An extension only "does the work and returns the result"; approval, the command review, timeouts, archiving, audit and redaction are the kernel's job, and **must not be reimplemented in the extension**.
 
 ## Three tool sources and keys
 
@@ -98,6 +98,38 @@ Writing requirements beyond the checks:
 - `ask` -> the kernel creates an approval and the run goes to `waiting` (it holds no conversation lock or quota), and resumes from the checkpoint after approval; rejection / timeout (`tools.approvalTimeoutHours`) / abort while waiting are all written as a rejection in `tool_result`. The extension doesn't need to care.
 - **Deny reason and asking policy** (UI refresh B, Task 6): `POST …/approvals/:id/decision` takes an optional `reason` (trimmed, 1–500 characters, only with `deny`, else 400 `validation_failed`). It is stored (`approvals.deny_reason`, `denyReason` on the record), written to `approval_decided.reason` (at most 500 characters in the schema too) and given to the model as the denied call's result `An approver denied this tool call. Reason: <reason>` (in the log, so replay needs nothing; the first B events said `The user denied this tool call. Reason: …` and keep it; under role escalation the approver is an admin, not the requester). `approval_requested.policy` names the rule that asked, most specific first: `role` (R1 escalation), `agent` (`toolPolicies`), `member` (the member's own 询问 on their connection), `connector` (the connector tool's policy), `fixed` (R3, `requiresUserInteraction`, a Platform operation that is never remembered, a skill change in an unattended run), `org` (the org `sandboxToolPolicy` made a sandbox tool ask), else `default` (the tool's own default); display only, absent in older logs (and `org` / `fixed` read as `default` in the first B events).
 - **NUL bytes**: PostgreSQL jsonb rejects `\u0000`, so the event log stores every NUL in a payload string or key as U+FFFD (`payloadJson`, `conversations/event-log.ts`); a file read or command output with NUL reaches the model and the log as U+FFFD instead of failing the run. Views map NUL to U+FFFD too, and `Write` shows no diff when the old file has a NUL anywhere. A display-only read that fails never fails the tool. Diff views are capped at 2000 lines and 256 KB of line text (`TOOL_VIEW_DIFF_MAX_TEXT_BYTES`); `Write` reads at most 1 MiB of the old file for the diff.
+
+## The command review stage (auto mode)
+
+Auto mode spec §5.1: in both modes, `Bash` (foreground and `run_in_background`) and the file tools
+`Write` / `Edit` pass a **command review** before the device runs them. It is a kernel step in
+`runCall` (`reviewCall` in `pipeline.ts`), not an extension hook: it must run for every device and
+fails closed.
+
+- **Position.** After argument validation and the tool policy (and its approval), before
+  `tool.preExecute` hooks and `tool_call_started`, and therefore before the device exec. The
+  `review` and `devices` dependencies are optional; with no review service or no device the call
+  runs unreviewed and fails on its own. The facts (device id and name, `mode`, workspace root, owner)
+  come from the same `ConversationDevices.forTool` the tool itself enters.
+- **Verdicts.** `allow` continues; `deny` ends the call with the model-facing text
+  (`Command blocked by review: <reason>…`, or "this write" for `Write` / `Edit`) and the command
+  never runs; `ask` parks the run on an **approval of kind `command`** (the detail carries the
+  device, the mode, the whole command or path, the rule and the reason; `once` always, `session`
+  only for a concrete rule, never a catch-all `unsure.*`). An ask on an **unattended** run is a
+  deny at once with a note the model reads (no approval, no missing grant), and a command over the
+  display ceiling is refused rather than approved unseen. A review error, timeout or unreadable
+  classifier answer is an ask, never an allow.
+- **Resume.** A decided `command` approval is the whole truth for that call: a resumed call is
+  never reviewed twice. 「本会话允许同类」 is a `session` grant written as a conversation tool grant
+  (`command:<ruleId>`); a deny rule is never grantable.
+- **The log.** The verdict is carried on `tool_result.review` (display only; request building reads
+  only `callId` / `content` / `isError`, so replay never re-reviews) and needs **no
+  `DriftReason`**. The review's own classifier call is a `model_call` with `purpose: "review"` (not
+  model-visible) and a `usage` event with the same purpose and the call's `callId`.
+- **File tools in auto mode.** `Read` / `Write` / `Edit` reach any absolute path on a local device;
+  inside the workspace a write is allowed by a rule, outside it the rule asks (or denies for a
+  secret path). Path validation still applies first. Existing `ctx.hooks` policy hooks run after
+  the review and can add their own deny.
 
 ## Display metadata: `title`, `keyArgs`, kinds and views
 
@@ -210,7 +242,10 @@ the same transaction as the business rows.
   and a provider that can't be reached (`SandboxProviderUnreachableError`, see writing-sandbox-providers) into `SANDBOX_UNREACHABLE_TEXT` (never connected: nothing ran,
   retrying won't help) or `SANDBOX_CONNECTION_DROPPED_TEXT` (broke mid-call: check before retrying), `kind: "unavailable"`, the raw error warned
   as `sandbox provider unreachable`.
-  Paths go through `validateSandboxPath`, and `write` / `edit` reject `/skills`. A conversation is bound at create (`POST /conversations`
+  Paths go through `checkToolPath`: the instance's roots (`validateSandboxPath`) in sandbox mode,
+  any clean absolute path on the machine in auto mode (shape checks only; the review judges a write
+  outside the workspace), and `write` / `edit` reject the skills root in both modes
+  (`checkToolWritable`). A conversation is bound at create (`POST /conversations`
   `deviceId`, checked with `usable`; without it the owner's default) and its device is read at `GET …/conversations/:id/device`.
 - Timeout: `Bash` = `min(timeout ?? 120000, sandbox.limits.maxCommandSeconds * 1000)` milliseconds plus a margin (margin =
   `tools.timeoutMs` + `sandbox.lockWaitSeconds`, covering lock waiting and creation / resume); a `timeout` above the limit is lowered to it and the result says so.
@@ -227,9 +262,12 @@ the same transaction as the business rows.
 - Spilling: `Bash`'s `spillChars` is 30000, and large output is read as usual through `ReadToolOutput` / `{"$output": id}`.
 - Result prefix notices (English): on first use `Device started (first use in this conversation)…`, on a new instance
   `The device's instance was restarted; files are kept, running processes and /tmp are gone.`, and newly copied attachments list their paths. Before every call, attachments in the conversation that are ready are synced to
-  `/workspace/attachments/<conversation>/` (the first 12 hex digits of the root conversation id; the sync marker is per conversation).
-- Default policy is allow (the sandbox is isolated, D5); when the org setting `sandboxToolPolicy: "ask"` is set, bash / write / edit / deliver need approval,
-  the setting is read **at the moment of execution**, and the read-only read / glob / grep are unaffected.
+  the workspace's `attachments/<conversation>/` (the first 12 hex digits of the root conversation id; the sync marker is per conversation).
+- Default policy is allow; the **command review** above is the boundary in auto mode (and in
+  sandbox mode the sandbox isolates the host, D5). When the org setting `sandboxToolPolicy: "ask"`
+  is set, bash / write / edit / deliver need approval, the setting is read **at the moment of
+  execution**, and the read-only read / glob / grep are unaffected. The file tools reach any
+  absolute path on a local device in auto mode (`checkToolPath`).
 - `Deliver` puts a file into object storage (`kernel/<orgId>/artifacts/<conversation>/<id>`, limit `sandbox.deliverMaxBytes`),
   appends an `artifact_created` event, and the web "Artifacts" tab is rebuilt from the log.
 

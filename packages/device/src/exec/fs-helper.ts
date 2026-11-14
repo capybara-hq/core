@@ -1,31 +1,49 @@
 /**
  * The file-operation helper the OS executor runs **inside the sandbox** (`node -e`), so a
- * kernel-side read or write in the workspace or tmp root never touches the host file system with
- * the program's own privileges: a parent directory swapped for a symlink mid-operation reaches
- * only what any sandboxed command could reach anyway.
+ * kernel-side read or write never touches the host file system with the program's own privileges:
+ * a parent directory swapped for a symlink mid-operation reaches only what any sandboxed command
+ * could reach anyway.
  *
- * argv: `<op> <path> <maxBytes> <root>...` with op `read` | `stat` | `write` (data on stdin).
- * stdout: one JSON object, `{ "r": <result> }` or `{ "e": "policy" | "error", "m": <message> }`.
- * read → `null` | `{ b64, truncated }`; stat → `null` | `{ size, isDir }`; write → `null`.
- * Non-regular files (FIFOs, sockets, devices) are refused without blocking (`O_NONBLOCK`).
+ * argv: `<mode> <op> <path> <maxBytes> <root>...`, mode `auto` | `sandbox`, op `read` | `stat` |
+ * `write` (data on stdin). A missing or unknown mode is refused. In sandbox mode the roots are
+ * enforced; in auto mode any clean absolute path is accepted (shape checks: absolute, no `..`
+ * segments, no control characters). The `auto` branch is required by this contract but has no
+ * production caller today: the OS executor runs the helper in sandbox mode only, and auto mode
+ * reads and writes directly through `HostExecutor`. stdout: one JSON object, `{ "r": <result> }`
+ * or `{ "e": "policy" | "error", "m": <message> }`. read → `null` | `{ b64, truncated }`; stat →
+ * `null` | `{ size, isDir }`; write → `null`. Non-regular files (FIFOs, sockets, devices) are
+ * refused without blocking (`O_NONBLOCK`).
  */
 export const FS_HELPER_SCRIPT = `
 (() => {
   const fs = require("fs");
   const path = require("path");
   const C = fs.constants;
-  const [op, p, maxS, ...roots] = process.argv.slice(1);
+  const [mode, op, p, maxS, ...roots] = process.argv.slice(1);
   const out = (o) => process.stdout.write(JSON.stringify(o));
   const realRoots = roots.map((r) => { try { return fs.realpathSync(r); } catch { return r; } });
   const under = (r) => realRoots.some((x) => r === x || r.startsWith(x + "/"));
   const missing = (e) => e && (e.code === "ENOENT" || e.code === "ENOTDIR");
   const real = (q) => { try { return fs.realpathSync(q); } catch (e) { if (missing(e)) return null; throw e; } };
   const outside = (r) => out({ e: "policy", m: p + " resolves to " + r + ", outside the device's roots" });
+  // auto mode: any clean absolute path; sandbox mode: one of the roots.
+  const shapeOk = () => {
+    if (typeof p !== "string" || !path.isAbsolute(p)) return false;
+    if (/[\\u0000-\\u001f\\u007f]/.test(p)) return false;
+    return !p.split("/").some((s) => s === "..");
+  };
+  const allowed = (r) => mode === "auto" ? true : under(r);
   try {
+    if (mode !== "auto" && mode !== "sandbox") {
+      return out({ e: "policy", m: "missing or unknown mode" });
+    }
+    if (mode === "auto" && !shapeOk()) {
+      return out({ e: "policy", m: p + " is not a clean absolute path" });
+    }
     if (op === "read" || op === "stat") {
       const r = real(p);
       if (r === null) return out({ r: null });
-      if (!under(r)) return outside(r);
+      if (!allowed(r)) return outside(r);
       const fd = fs.openSync(r, C.O_RDONLY | C.O_NONBLOCK | C.O_NOFOLLOW);
       try {
         const st = fs.fstatSync(fd);
@@ -52,18 +70,18 @@ export const FS_HELPER_SCRIPT = `
       let anc = parent;
       while (real(anc) === null && anc !== path.dirname(anc)) anc = path.dirname(anc);
       const ra = real(anc);
-      if (ra === null || !under(ra)) return outside(ra);
+      if (ra === null || !allowed(ra)) return outside(ra);
       fs.mkdirSync(parent, { recursive: true });
       const rp = real(parent);
       if (rp === null) return out({ e: "error", m: "cannot create " + parent });
-      if (!under(rp)) return outside(rp);
+      if (!allowed(rp)) return outside(rp);
       let file = path.join(rp, path.basename(p));
       let st = null;
       try { st = fs.lstatSync(file); } catch (e) { if (!missing(e)) throw e; }
       if (st && st.isSymbolicLink()) {
         const r = real(file);
         if (r === null) return out({ e: "policy", m: p + " is a dangling symbolic link" });
-        if (!under(r)) return outside(r);
+        if (!allowed(r)) return outside(r);
         file = r;
       }
       const fd = fs.openSync(file, C.O_WRONLY | C.O_CREAT | C.O_NONBLOCK | C.O_NOFOLLOW, 0o644);

@@ -10,20 +10,10 @@ import {
 } from "../src/network.js";
 
 const limits = (
-  egress: SandboxLimits["egress"],
-  allowHosts: string[] = [],
-  tier: SandboxLimits["tier"] = "open",
-  devHosts: string[] = [],
-): Pick<SandboxLimits, "egress" | "allowHosts" | "tier" | "devHosts"> => ({
-  egress,
-  allowHosts,
-  tier,
-  devHosts,
-});
-const policy = (allowedDomains: string[], tier?: "strict" | "dev" | "open") => ({
-  allowedDomains,
-  ...(tier !== undefined && { tier }),
-});
+  kind: SandboxLimits["network"]["kind"] = "allowlist",
+  hosts: string[] = [],
+): Pick<SandboxLimits, "mode" | "network"> => ({ mode: "sandbox", network: { kind, hosts } });
+const policy = (allowedDomains: string[]) => ({ allowedDomains });
 
 describe("parseNetworkViolation (sandbox-runtime 0.0.81 line format)", () => {
   it("parses a refused host, port and reason", () => {
@@ -77,11 +67,7 @@ describe("parseNetworkViolation (sandbox-runtime 0.0.81 line format)", () => {
 describe("classifyHost", () => {
   const notListed = "host is not on the allow list";
 
-  it("org egress none refuses at the org layer", () => {
-    expect(classifyHost("a.com", notListed, limits("none"), policy(["a.com"]))).toBe("org");
-  });
-
-  it("a host outside the org allowlist is org, also when the device lacks it", () => {
+  it("a host outside the kernel's allowlist is org, also when the device lacks it", () => {
     expect(classifyHost("a.com", notListed, limits("allowlist", ["b.com"]), policy([]))).toBe(
       "org",
     );
@@ -90,11 +76,17 @@ describe("classifyHost", () => {
     ).toBe("org");
   });
 
-  it("a host the org allows but the device does not is device", () => {
+  it("an empty kernel allowlist refuses at the org layer", () => {
+    expect(classifyHost("a.com", notListed, limits("allowlist", []), policy(["a.com"]))).toBe(
+      "org",
+    );
+  });
+
+  it("a host the kernel allows but the device does not is device", () => {
     expect(
       classifyHost("a.com", notListed, limits("allowlist", ["a.com"]), policy(["b.com"])),
     ).toBe("device");
-    expect(classifyHost("github.com", notListed, limits("open"), policy([]))).toBe("device");
+    expect(classifyHost("github.com", notListed, limits("open-public"), policy([]))).toBe("device");
     expect(
       classifyHost("api.x.com", notListed, limits("allowlist", ["*.x.com"]), policy(["x.com"])),
     ).toBe("device");
@@ -109,26 +101,19 @@ describe("classifyHost", () => {
     ).toBe("device");
   });
 
-  it("a dev device admits the dev hosts; strict does not; the ceiling cuts open", () => {
-    const l = limits("allowlist", ["registry.npmjs.org"], "open", ["registry.npmjs.org"]);
-    expect(classifyHost("registry.npmjs.org", notListed, l, policy([], "dev"))).toBe("unknown");
-    expect(classifyHost("registry.npmjs.org", notListed, l, policy([], "strict"))).toBe("device");
-    const capped = limits("allowlist", ["a.com"], "strict");
-    expect(classifyHost("a.com", notListed, capped, policy([], "open"))).toBe("device");
-  });
-
-  it("a device whose tier is open is never the refusing layer", () => {
-    expect(classifyHost("a.com", notListed, limits("open"), policy([], "open"))).toBe("unknown");
-    expect(
-      classifyHost("a.com", notListed, limits("allowlist", ["b.com"]), policy([], "open")),
-    ).toBe("org");
+  it("an open-public ceiling is never the refusing layer", () => {
+    expect(classifyHost("a.com", notListed, limits("open-public"), policy(["a.com"]))).toBe(
+      "unknown",
+    );
   });
 
   it("addresses and internal names are address, whatever the lists", () => {
-    expect(classifyHost("10.0.0.5", notListed, limits("open"), policy([]))).toBe("address");
-    expect(classifyHost("::1", notListed, limits("open"), policy([]))).toBe("address");
-    expect(classifyHost("localhost", notListed, limits("open"), policy([]))).toBe("address");
-    expect(classifyHost("printer.local", notListed, limits("open"), policy([]))).toBe("address");
+    expect(classifyHost("10.0.0.5", notListed, limits("open-public"), policy([]))).toBe("address");
+    expect(classifyHost("::1", notListed, limits("open-public"), policy([]))).toBe("address");
+    expect(classifyHost("localhost", notListed, limits("open-public"), policy([]))).toBe("address");
+    expect(classifyHost("printer.local", notListed, limits("open-public"), policy([]))).toBe(
+      "address",
+    );
     expect(
       classifyHost(
         "a.com",
@@ -171,7 +156,7 @@ describe("blockedHosts", () => {
           line("a.com", 80),
           line("10.0.0.5", 22),
         ],
-        limits("open"),
+        limits("open-public"),
         policy([]),
       ),
     ).toEqual([
@@ -182,7 +167,7 @@ describe("blockedHosts", () => {
 
   it("keeps at most MAX_BLOCKED_HOSTS hosts", () => {
     const lines = Array.from({ length: 30 }, (_, i) => line(`h${i}.example.com`));
-    const out = blockedHosts(lines, limits("none"), policy([]));
+    const out = blockedHosts(lines, limits("allowlist"), policy([]));
     expect(MAX_BLOCKED_HOSTS).toBe(20);
     expect(out).toHaveLength(20);
     expect(out[19]?.host).toBe("h19.example.com");
@@ -218,7 +203,7 @@ describe("networkTrailer", () => {
 
 describe("denyReason (the ask callback's answer)", () => {
   it("names the device layer", () => {
-    expect(denyReason("files.slack.com", limits("open"), policy([]))).toBe(
+    expect(denyReason("files.slack.com", limits("open-public"), policy([]))).toBe(
       "capybara: files.slack.com is not in this device's allowed domains",
     );
   });
@@ -227,13 +212,13 @@ describe("denyReason (the ask callback's answer)", () => {
     expect(denyReason("files.slack.com", limits("allowlist", ["b.com"]), policy([]))).toBe(
       "capybara: files.slack.com is not in the organization's network allowlist",
     );
-    expect(denyReason("a.com", limits("none"), policy(["a.com"]))).toBe(
+    expect(denyReason("a.com", limits("allowlist", []), policy(["a.com"]))).toBe(
       "capybara: a.com is not in the organization's network allowlist",
     );
   });
 
   it("names an address and falls back without limits", () => {
-    expect(denyReason("10.0.0.5", limits("open"), policy([]))).toBe(
+    expect(denyReason("10.0.0.5", limits("open-public"), policy([]))).toBe(
       "capybara: 10.0.0.5 is a private or local address",
     );
     expect(denyReason("a.com", undefined, policy([]))).toBe(

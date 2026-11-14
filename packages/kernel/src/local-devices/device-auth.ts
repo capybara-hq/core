@@ -13,6 +13,8 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { authorizeOrgAction } from "../orgs/org.guard.js";
+import { readOrgSettings } from "../orgs/settings.service.js";
+import { allowedDeviceMode, readDeploymentDevicePolicy } from "../sandbox/modes.js";
 import { LOCAL_PROVIDER } from "../sandbox/providers.js";
 import { deviceNotFound } from "../sandbox/sandbox.service.js";
 import { MachinesService } from "./machines.js";
@@ -127,6 +129,11 @@ export interface DeviceGrant extends Grant {
   reconnectGraceSeconds: number;
   /** `devices.local.maxFrameBytes`: the program never sends a larger frame (ruling R26). */
   maxFrameBytes: number;
+  /**
+   * Whether the organization allows auto mode now: `off` turns a local device's default to sandbox
+   * mode and makes `login` say why (auto mode spec §4.1). Absent on older kernels counts as allowed.
+   */
+  autoMode: "allowed" | "off";
 }
 
 const codeInvalid = () =>
@@ -171,7 +178,8 @@ export class DeviceAuthService {
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(REDIS) private readonly redis: Redis,
-    @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
+    @Inject(KernelConfigService)
+    private readonly config: Pick<KernelConfigService, "get" | "fieldSource">,
     @Inject(DevicesService)
     private readonly devices: Pick<DevicesService, "createLocal">,
     @Inject(MachinesService)
@@ -239,11 +247,19 @@ export class DeviceAuthService {
       case "approved": {
         const grant = JSON.parse(r[1] as string) as Grant;
         const local = this.config.get().devices.local;
+        const [deployment, settings] = await Promise.all([
+          readDeploymentDevicePolicy(this.db.db, this.config),
+          readOrgSettings(this.db.db, grant.orgId),
+        ]);
         return {
           ...grant,
           connectUrl,
           reconnectGraceSeconds: local.reconnectGraceSeconds,
           maxFrameBytes: local.maxFrameBytes,
+          autoMode:
+            allowedDeviceMode(deployment.autoMode, settings.autoMode) === "auto"
+              ? "allowed"
+              : "off",
         };
       }
       case "slow_down":

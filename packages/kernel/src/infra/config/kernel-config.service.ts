@@ -30,10 +30,11 @@ const HOT_APPLIERS: Record<string, (k: { log: KernelLogger }, value: unknown) =>
   "models.embedTimeoutMs": () => {},
   // SandboxService reads the shared-lease cap at every acquisition.
   "sandbox.maxConcurrentCommands": () => {},
-  // Sandbox tiers are read at every device use, org settings read and Platform call.
-  "sandbox.tiers.max": () => {},
-  "sandbox.tiers.default": () => {},
-  "sandbox.tiers.allowUnsandboxed": () => {},
+  // The command-review service reads the classifier's bounds at every classifier call.
+  "sandbox.review.timeoutMs": () => {},
+  "sandbox.review.messageTokens": () => {},
+  // The devices service reads the platform's auto-mode switch at every device use and settings read.
+  "devices.autoMode": () => {},
   // The devices service reads the personal limit at every create.
   "devices.maxPersonal": () => {},
   // The local device relay reads the reconnect grace at every disconnect and token response.
@@ -119,7 +120,7 @@ export class KernelConfigService {
    * Where the current value of a field without a schema default comes from: `env` when an
    * environment variable sets it, else the config source (`file` / `nacos`) when it is set at all;
    * undefined when nothing sets it (a layer below the startup config decides, e.g. the deployment
-   * settings for `sandbox.tiers.*`). Such fields are read-only in the admin console.
+   * settings for `devices.autoMode`). Such fields are read-only in the admin console.
    */
   fieldSource(path: string): "env" | "file" | "nacos" | undefined {
     if (getPath(this.current, path) === undefined) return undefined;

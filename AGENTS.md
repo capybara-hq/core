@@ -147,9 +147,11 @@ Each line is the rule you must not miss; the skill has the rest.
   purposes and `ctx.models`); calls made for an org carry `{ orgId, config }`. Extensions embed
   through `ctx.models.embed` (needs `permissions.models`, an org where the extension is enabled;
   recorded in `model_usage`, delivered by `usage.report` with purpose `embedding`). [writing-model-providers](.agents/skills/writing-model-providers/SKILL.md)
-- **Sandboxes:** work happens in devices (one instance + a file system kept until the device
-  is deleted); abort must kill the command; locking, suspension and destruction are the kernel's;
-  never publish the socket proxy on a host address.
+- **Sandboxes:** work happens in devices (one instance + a file system kept until the device is
+  deleted) in one of two modes (auto: the environment's own capability; sandbox: the OS sandbox
+  and the allowlist network); every command and every write outside the workspace passes the
+  command review, a kernel step that fails closed; abort must kill the command; locking,
+  suspension and destruction are the kernel's; never publish the socket proxy on a host address.
   [writing-sandbox-providers](.agents/skills/writing-sandbox-providers/SKILL.md)
 - **Object storage:** key prefixes are added by the kernel; presigned upload size enforced by the
   store. [writing-object-store-providers](.agents/skills/writing-object-store-providers/SKILL.md)
