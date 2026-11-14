@@ -109,6 +109,8 @@ git commit -m "feat(plugin-sdk): a device reports its projects, and providers li
 ```
 
 ### Task 1b: the kernel parses the device's projects
+> **Superseded by the 2026-11-15 revision** (projects move to PostgreSQL): see Task 16 at the end of this plan.
+
 
 Added during execution: the plan's T1 made `projects` a required field, so the kernel's own summary
 parser and the test fixtures that write one stopped compiling, and no task owned them.
@@ -148,6 +150,8 @@ git commit -m "feat(kernel): parse a device's projects in its local policy"
 ## Phase 2 — device program and event schema
 
 ### Task 2: Device: the project store, the four operations, the policy report
+> **Superseded by the 2026-11-15 revision** (projects move to PostgreSQL): see Task 17 at the end of this plan.
+
 
 **Files:**
 - Create: `packages/device/src/projects.ts`
@@ -189,6 +193,8 @@ git commit -m "feat(device): projects in the local policy and four project opera
 ```
 
 ### Task 3: The `list` device operation and `LocalDeviceProvider.list`
+> **Superseded by the 2026-11-15 revision** (projects move to PostgreSQL): see Task 17 and Task 18 at the end of this plan.
+
 
 Re-scoped during execution: the opus re-review of Task 1 found that `packages/device/src` has no
 `SandboxProvider`; the kernel's `LocalDeviceProvider` forwards each file method to the machine as one
@@ -238,6 +244,8 @@ Re-scoped during execution: the opus re-review of Task 1 found that `packages/de
 ## Phase 3 — kernel
 
 ### Task 5: Conversation columns, migration, binding on create
+> **Superseded by the 2026-11-15 revision** (projects move to PostgreSQL): see Task 18 and Task 19 at the end of this plan.
+
 
 **Files:**
 - Create: `packages/kernel/src/migrations/0133_project_root.sql`
@@ -311,6 +319,8 @@ Re-scoped during execution: the opus re-review of Task 1 found that `packages/de
 - [ ] **Step 4: Run the tests and commit** — `feat(kernel): work inside the project root`.
 
 ### Task 9: The four admin routes and their Platform operations
+> **Superseded by the 2026-11-15 revision** (projects move to PostgreSQL): see Task 18 at the end of this plan.
+
 
 **Files:**
 - Modify: `packages/kernel/src/devices/*.controller.ts`, `packages/kernel/src/platform/ops/*`
@@ -374,6 +384,9 @@ git add packages/kernel && git commit -m "fix(kernel): degrade to free mode when
 
 ### Task 11: The device settings section
 
+> 2026-11-15 revision: the routes this section calls are Task 18's (`device_projects`), not Task 9's.
+
+
 **Files:**
 - Create: `apps/web/src/components/DeviceProjectsSection.tsx`
 - Modify: `apps/web/src/app/(app)/devices/[id]/view.tsx`, `apps/web/src/lib/devices.ts`, `apps/web/src/lib/query/*`, messages (zh + en)
@@ -426,6 +439,8 @@ git add apps/web packages/kernel && git commit -m "feat(web): bind a conversatio
 ## Phase 5 — plugins and wrap-up
 
 ### Task 13: `list` in `sandbox-docker` / `sandbox-e2b`
+> **Superseded by the 2026-11-15 revision** (projects move to PostgreSQL): see Task 20 at the end of this plan.
+
 
 **Files:** in `capybara-hq/plugins`, `plugins/sandbox-docker` and `plugins/sandbox-e2b`, each with its existing test style (real Docker; `startFakeE2B`). Separate PRs, one per provider.
 
@@ -446,3 +461,157 @@ Run: `pnpm verify`
 Expected: PASS, including `check:sdk-api`, `check:platform-ops`, `check:web-ui`, `check:i18n` and the zero-drift fixtures.
 
 - [ ] **Step 4: Commit** `docs: the project root in the device guide`.
+
+---
+
+## Revision of 2026-11-15: projects move to PostgreSQL
+
+The maintainer overturned the device-owned project list (spec §12): a device's projects live in
+`capybara.device_projects`, keyed by `devices.id`, the same for local and cloud devices, written only
+by the kernel. The device answers two calls, `list` and `scan`, each carrying the kernel's current
+ceiling. Tasks 1b, 2, 3, 5, 9 and 13 are superseded by Tasks 16-20 below; Task 1's contract and
+Task 2's device code are reworked in place. Tasks 4, 6, 7, 8, 10, 11, 12 and 14 stand, with the
+notes below. Task 21 is the release.
+
+Notes for the standing tasks:
+- **Task 6** reads the knowledge through `SandboxProvider.list(h, path, { limit, limits, signal })`
+  and `readFile`, passing the conversation's current ceiling.
+- **Task 10**: "the project is gone" includes "removed from `device_projects`" and "outside the
+  device's current mode".
+- **Tasks 11, 12** call Task 18's routes.
+
+Plan decisions superseded: **P-D2** (projects in `policy.json`) → `device_projects`; **P-D8** (older
+devices) → the kernel sends `list` / `scan` only to a device announcing `"projects"`, else the device
+offers no projects and binding is refused.
+
+### Revised wave plan
+
+| Task | Depends on | Files / area | Risk | Wave | Review |
+|---|---|---|---|---|---|
+| T16 Contract rework | — | plugin-sdk device-protocol / sandbox / tests / api / changeset; kernel `local-devices/policy-summary.ts` + fixtures | high | A | alone |
+| T17 Device: `list` + `scan`, no project store | T16 | `packages/device/**` | high (trust boundary) | B | alone |
+| T18 Kernel store, routes, provider calls | T16 | migration `0133`, kernel `devices/*`, `local-devices/local-device-provider.ts`, `platform/ops/*`, errors | high (migration, ownership) | B (own worktree) | alone |
+| T19 Binding on create | T18 | `conversations/*`, DTO | high (ownership) | C | alone |
+| T6 Knowledge at run start | T4, T18, T19 | `runtime/project/*`, run pipeline | high | C | alone |
+| T7 Rendering + catalog | T6 | `runtime/context/*`, `skill-load.ts` | high (replay) | D | alone |
+| T8 Workdir + review fact | T6 | `tools/builtins/sandbox/*`, `tools/pipeline.ts` | high | D | alone |
+| T10 Fallbacks | T6 | `runtime/project/knowledge.service.ts` | normal | D | batch |
+| T11 Device settings section | T18 | `apps/web` devices view + section, messages | normal | E | batch |
+| T12 Binding, header, palette | T7, T18, T11 | `ComposerBar`, header, `invocable.controller.ts`, messages | normal | F | batch |
+| T14 Docs, changesets, verify | all core | docs, skills, changesets | normal | G | batch |
+| Final whole-branch review → core PR → merge | | | | H | opus |
+| T21 Release + T20 plugins + bootstrap pin | core merged | release, `capybara-hq/plugins` | high | I | alone |
+
+### Task 16: Contract rework — `list` and `scan` with the ceiling, no project operations
+
+**Files:**
+- Modify: `packages/plugin-sdk/src/device-protocol.ts`, `packages/plugin-sdk/src/sandbox.ts`,
+  `packages/plugin-sdk/test/device-protocol.test.ts`, `packages/plugin-sdk/api/plugin-sdk.api.md`,
+  `.changeset/device-projects.md`
+- Modify (compile ripple): `packages/kernel/src/local-devices/policy-summary.ts` and the kernel test
+  fixtures Task 1b gave `projects: []`; `packages/device/src/**` only as far as needed to compile (the
+  device's real rework is Task 17)
+
+**Interfaces:**
+- Produces: `DeviceOp` without `projectList` / `projectCandidates` / `projectAdd` / `projectRemove`;
+  `list` args `{ path: string; limit: number; limits: { mode: SandboxMode } }` → `{ entries: { name:
+  string; isDir: boolean }[]; truncated: boolean } | null`; `scan` args `{ base: string; limits: { mode
+  } }` → `{ path: string; suggestedName: string }[]` (≤ 50); `DeviceHello.home?: string`;
+  `DeviceLocalPolicySummary` back to `{ mode, allowedDomains }`; `DeviceFeature "projects"` kept
+  (announces `list` + `scan`); `SandboxProvider.list?(h, path, { limit, limits, signal })` and
+  `scan?(h, base, { limits, signal })`. Entry names never `.` or `..`; `isDir` follows symbolic links
+  (stat semantics, a dangling link is `false`); `suggestedName` obeys the name bound (64, no `/`, no
+  control characters); paths absolute, checked with the public `validateSandboxPathShape`.
+
+- [ ] **Step 1: Write the failing tests** — `list` / `scan` args require `limits`; results parse and
+  refuse `.` / `..` names, relative paths, more than 50 candidates; a summary carrying `projects` no
+  longer has that field after parsing; a hello with `home` keeps it.
+- [ ] **Step 2: Run them to see them fail** — `pnpm exec vitest run packages/plugin-sdk/test/device-protocol.test.ts`.
+- [ ] **Step 3: Implement**, remove the project operations and the summary field, regenerate the API
+  report, rewrite the changeset entry.
+- [ ] **Step 4: Fix the compile ripple** (kernel parse back to two fields, fixtures, device stubs so
+  `pnpm typecheck` exits 0) and commit `refactor(plugin-sdk): projects leave the device policy; list and scan carry the ceiling`.
+
+### Task 17: Device — serve `list` and `scan` in the request's ceiling; no project store
+
+**Files:** `packages/device/src/**` (remove `projects.ts`'s store functions, `state.ts`'s projects,
+the four project ops, `statAs` if nothing else uses it; serve `list` and `scan`; report `home`;
+announce `projects`), `packages/device/test/**`. The stopped work on `wip/project-root-t2-fix2`
+(async bounded candidate scan skipping `Library` / `node_modules`, container scanning through the
+bind-mounted host workspace) is reusable for `scan`.
+
+**Interfaces:** Consumes Task 16. Produces a device whose `list` / `scan` answer in
+`effectiveMode(policy, args.limits)` — never the last seen ceiling.
+
+- [ ] **Step 1: Failing tests** — before any command, owner on auto, ceiling sandbox: `list` and `scan`
+  outside the workspace are refused / scan only the workspace; ceiling auto: `list ~/code/core` works;
+  `list` returns sorted entries, `truncated` past the limit, null for a missing path, an error for a
+  file; a symlinked directory is `isDir: true`; `scan` finds `.git` / `AGENTS.md` dirs two levels down,
+  at most 50, skipping hidden dirs, `Library`, `node_modules`; a docker-mode device scans its
+  container workspace; hello carries `home` and `"projects"`.
+- [ ] **Step 2: Run them to see them fail** — `pnpm exec vitest run packages/device/test`.
+- [ ] **Step 3: Implement** and delete the project store.
+- [ ] **Step 4: Check `exec-docker.test.ts`'s flake** (it failed twice under load): run it on
+  `origin/main` with `--maxWorkers=2`; pre-existing → open an issue and fix it in its own PR;
+  introduced here → fix it in this task.
+- [ ] **Step 5: `pnpm typecheck`, the device suite, commit** `feat(device): list and scan in the request's ceiling`.
+
+### Task 18: Kernel — `device_projects`, the projects service, routes, provider calls
+
+**Files:**
+- Create: `packages/kernel/src/migrations/0133_project_root.sql` (`device_projects` + the two
+  conversation columns Task 19 uses), a device projects service under `packages/kernel/src/devices/`
+- Modify: `packages/kernel/src/db/kernel-schema.ts`, `packages/kernel/src/local-devices/local-device-provider.ts`
+  (`list`, `scan`, gated on the device's `"projects"` feature: throw for a device without it),
+  the devices controller (routes), `packages/kernel/src/platform/ops/*` (operations or exclusions),
+  `packages/kernel/src/errors.ts`
+- Test: `packages/kernel/test/devices/*`, `packages/kernel/test/local-devices/*`, the platform parity test
+
+**Interfaces:**
+- Produces: `GET /api/v1/orgs/:orgId/devices/:deviceId/projects` (the projects the device's current
+  mode can read), `POST …/projects` `{ path, name? }` (path relative to the mode's base),
+  `DELETE …/projects/:name`, `GET …/projects/candidates`; all owner-only. A service method the binding
+  uses: `resolveForBinding(orgId, deviceId, accountId, name) → { name, path }` or a refusal.
+- Table: `device_projects (device_id text REFERENCES devices(id) ON DELETE CASCADE, name text, path
+  text, created_by text, created_at timestamptz DEFAULT now(), PRIMARY KEY (device_id, name))`.
+
+- [ ] **Step 1: Failing tests** — add refuses: a non-owner, a name over 64 / with `/`, a duplicate, the
+  101st project, a path outside the current mode, a missing path (`list` → null), a file (`list`
+  throws); add succeeds on a readable directory and stores the absolute path; list hides a project
+  outside the current mode without deleting it; remove is owner-only and idempotent; candidates call
+  `scan` with the current ceiling; a device without `"projects"` offers none and refuses add; the
+  parity test passes.
+- [ ] **Step 2: Run them to see them fail.**
+- [ ] **Step 3: Implement** — the migration in the style of `0131_device_mode.sql`; device calls outside
+  the transaction, the insert inside `@Transactional()` with the uniqueness from the primary key; the
+  effective mode from the code the review already uses (`devices/conversation-devices.ts`).
+- [ ] **Step 4: `pnpm typecheck`, the suites, `pnpm check:platform-ops`; commit** `feat(kernel): keep a device's projects`.
+
+### Task 19: Binding on create
+
+**Files:** `packages/kernel/src/conversations/conversations.service.ts` (`create`,
+`createWithMessage`), the conversation-create schema / DTO, `NewConversationDevice`,
+`packages/kernel/test/conversations/*`. The stopped work on branch `feat/project-root-t5`
+(`620fcb12d`) has a binding test and resolver pieces worth reusing; its migration is replaced by
+Task 18's.
+
+**Interfaces:** Consumes Task 18's `resolveForBinding`. Produces `conversations.project_name` /
+`project_path` set at creation.
+
+- [ ] **Step 1: Failing tests** — creating with `project: "core"` stores name and path; an unknown
+  name, a project outside the current mode, a device without `"projects"`, and a non-owner are
+  refused with a readable error; no project → today's behaviour.
+- [ ] **Step 2–4:** fail, implement inside the create transaction, typecheck + suites + platform
+  parity; commit `feat(kernel): bind a conversation to a project`.
+
+### Task 20: `list` and `scan` in `sandbox-docker` / `sandbox-e2b`
+
+In `capybara-hq/plugins`, after the core release publishes the SDK: implement both inside the
+container's workspace with each provider's own test style (real Docker; `startFakeE2B`); separate PRs.
+
+### Task 21: Release
+
+After the core PR merges: merge the core "Version Packages" PR (npm `@capybara-hq/plugin-sdk`,
+`@capybara-hq/device`, images); then Task 20's plugin PRs and the plugins release; update the
+marketplace; then a core PR bumping `packages/kernel/bootstrap.json` (`pnpm check:bootstrap`).
+

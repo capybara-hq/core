@@ -9,7 +9,10 @@
 - Sequence **(maintainer, 2026-11-14)**: this work starts after auto mode, which landed on
   2026-11-14 (PR #265 with its 15 tasks, migrations `0130_auto_mode` / `0131_device_mode`, the
   bootstrap pin #280). The assumptions this spec makes about that work were checked against
-  `4283d6480` on 2026-11-14 and are listed in §10.
+  `4283d6480` on 2026-11-14 and are listed in §11.
+- Revised 2026-11-15 **(maintainer)**: a device's projects are kept in PostgreSQL, keyed by the
+  device's id, with the kernel as the only writer; local and cloud devices share one logic. The first
+  draft kept the list in the device program's local `policy.json`; §12 records what changed.
 
 ## 1. Why
 
@@ -34,7 +37,8 @@ live.
 
 Goals:
 
-- A device can offer **several projects** (a name and a directory each), declared on the machine.
+- A device can offer **several projects** (a name and a directory each), kept by the kernel per
+  device, the same way for a local and a cloud device.
 - A conversation may bind **one** project. When it does, the model sees that project's `AGENTS.md`
   and the skills under its `.agents/skills/`, without a person copying anything.
 - Free mode stays exactly as today: a conversation with no project is an ordinary Capybara
@@ -46,8 +50,8 @@ Non-goals:
 
 - Project hooks. They execute repository code and have a different trust model; a later spec.
 - Nested instruction files (`sub/AGENTS.md`). Only the project root's `AGENTS.md` in v1.
-- A recursive scan or a file manager in the web: `projectCandidates` is a shallow two-level scan and
-  the device validates every choice (§4.1).
+- A recursive scan or a file manager in the web: candidates come from a bounded two-level scan the
+  device runs in its own mode, and every added path is checked on the device (§4.1).
 - Any path outside what the device's current mode can read (§4.2).
 
 Anti-goals (would make this a failure even if it works):
@@ -74,34 +78,49 @@ conversation and run a command on the device: a device that is connected, and in
 has the capability, and asking its owner to go to a terminal is a worse experience for no safety
 **(maintainer, 2026-11-14)**.
 
-The device gains four operations on the existing request channel (`KernelReq.op`, which today
-carries ten operations and no listing).
+**Where the list lives (maintainer, 2026-11-15).** A table `capybara.device_projects` keyed by the
+device's id (`devices.id`, the same row for a local machine and a cloud device): `device_id`, `name`,
+`path`, `created_by`, `created_at`, unique on `(device_id, name)`, deleted with its device. The
+kernel is the only writer; the device program keeps no project list of its own.
 
-| Op | Args | Returns |
+**What the device is asked.** The device stays the authority on what it can read: the kernel never
+assumes a path exists or is readable, it asks. Two calls, the same for a local device (forwarded as
+device operations) and a cloud device (its provider):
+
+| Call | Args | Returns |
 |---|---|---|
-| `projectList` | — | the projects the device serves, `{ name, path }[]` |
-| `projectCandidates` | — | directories that look like projects (`.git` or `AGENTS.md`) under what the device may offer, at most two levels deep, bounded to a page |
-| `projectAdd` | `{ path, name? }` | the added entry, or the reason it was refused; the name defaults to the directory's basename |
-| `projectRemove` | `{ name }` | — |
+| `list` | `{ path, limit, limits }` | `{ entries: { name, isDir }[], truncated }`, or null when the path does not exist; a file or an unreadable path throws |
+| `scan` | `{ base, limits }` | directories under `base`, at most two levels down and at most 50, that hold `.git` or `AGENTS.md`: `{ path, suggestedName }[]` |
 
-- **Where it lives**: adding and removing a project is a device setting, so it belongs on the
-  device's **设置** view beside the run mode and the allowlist (the page was split into 概览 / 设置
-  on 2026-11-14, `DeviceModeSection.tsx` is its model); the 概览 view lists the projects read-only.
-  Binding a conversation to one stays in the composer (§4.3) **(designer's call: configure the
-  machine on one page, pick a project per conversation — never the reverse)**.
-- The form takes the path **relative to the device's base**, shown as a fixed prefix
-  (`workspace/` today), never a free absolute path **(maintainer, 2026-11-14)**.
-- `projectCandidates` is a shallow scan, never a recursive walk and never file contents; it only
-  fills the picker's suggestions.
-- `projectAdd` validates on the device: the path exists, is inside what the device may offer (§4.2),
-  and is a project. The answer is immediate, so a typo fails at the form, not at the first run.
-- The device reports the resulting list in the frame it already sends when its local policy changes
-  (`DevicePolicyChanged`, `policy?: DeviceLocalPolicySummary`), so the web learns a project added on
-  the machine as well. The command line stays available for headless and scripted setups; it is no
-  longer the only way in.
+Both carry the kernel's **current** ceiling (`limits: { mode }`), and the device answers in the mode
+it would run that request in — never by a ceiling it saw on an earlier command **(designer's call,
+2026-11-15: before its first command a device has seen no ceiling)**.
 
-Rejected alternative: enumerating the file system from the kernel. The kernel would be browsing the
-owner's disk on behalf of a web session, with no way to bound what it sees.
+**Adding a project.**
+- The form takes the path **relative to the device's base**, shown as a fixed prefix, never a free
+  absolute path **(maintainer, 2026-11-14)**; the base follows the mode (§4.2).
+- The kernel checks the name (at most 64 characters, no `/`, no control characters, unique on the
+  device, defaulting to the directory's basename), resolves the path against the base, checks it is
+  inside what the device may offer in its current mode (§4.2), then asks the device: `list(path,
+  { limit: 1 })` returning entries means a readable directory; null means it does not exist; an error
+  means it is a file or unreadable. Each outcome is a readable refusal at the form, so a typo fails
+  there, not at the first run.
+- The directory need not hold `.git` or `AGENTS.md` yet: an empty directory is how a new project
+  starts **(designer's call, 2026-11-15)**.
+- At most 100 projects per device.
+
+**Candidates** fill the picker's suggestions: one `scan` of the base, never file contents.
+
+**Where it appears**: adding and removing a project is a device setting, so it belongs on the
+device's **设置** view beside the run mode and the allowlist (the page was split into 概览 / 设置
+on 2026-11-14, `DeviceModeSection.tsx` is its model); the 概览 view lists the projects read-only.
+Binding a conversation to one stays in the composer (§4.3) **(designer's call: configure the device
+on one page, pick a project per conversation — never the reverse)**.
+
+Rejected alternative (the first draft): the device program keeps the list in its `policy.json` and
+reports it on its policy summary. Overturned by the maintainer on 2026-11-15 — a cloud device has no
+device program, so local and cloud would need two stores, and the kernel needs the list anyway to
+bind conversations and answer the web.
 
 ### 4.2 Which paths a device may offer
 
@@ -115,18 +134,21 @@ its current mode, and that is the whole rule:
 - **Cloud device**: the container's workspace, in either mode; the container is the environment's
   containment, so "sandbox" there is the container plus the network allowlist, not a label.
 
-The check lives where the files are — on the device, or in the provider — and the kernel enforces it
-a second time, through `checkToolPath` / `validateSandboxPath`
-(`tools/builtins/sandbox/common.ts`): in sandbox mode a path must be under the roots; in auto mode
-it must be a clean absolute path and the review judges a write outside the workspace. A device that
-lies therefore changes nothing. The form's prefix follows the mode: `workspace/` in sandbox mode,
-the owner's home in auto mode, `workspace/` on a cloud device **(designer's call: one rule read off
-the mode, not a phased rollout)**.
+Both sides check. The kernel scopes every project by the device's current effective mode, which it
+already knows (the platform, the org and the device decide it): when adding, when listing projects to
+the web, and when binding. The device then enforces its mode on every access it serves (`list`,
+`scan`, reads, commands), and the kernel's tools check paths again through `checkToolPath` /
+`validateSandboxPath` (`tools/builtins/sandbox/common.ts`). A stored path therefore grants nothing:
+a project added in auto mode is hidden while the device runs in sandbox mode, not deleted.
+
+The form's prefix and the base of a relative path follow the mode: `workspace/` in sandbox mode and
+on a cloud device, the owner's home in auto mode **(designer's call: one rule read off the mode, not
+a phased rollout)**. A local device reports its owner's home directory in its hello for this.
 
 ### 4.3 Binding a conversation to a project
 
-- The binding is chosen when the conversation is created, from the projects the conversation's
-  device declares **(designer's call: the choice belongs in the composer's existing device/agent
+- The binding is chosen when the conversation is created, from the device's projects in
+  `device_projects` that its current mode can read **(designer's call: the choice belongs in the composer's existing device/agent
   affordances, not a new settings page)**.
 - Only the device's owner may bind a project **(designer's call: the paths are that person's)**.
 - The binding is immutable once the conversation exists. Switching projects means a new
@@ -142,8 +164,9 @@ the mode, not a phased rollout)**.
   and as the inside/outside test for writes; with a project root outside the device's workspace,
   every write inside the project would be judged "outside the workspace" and ask every time. This
   amends the auto-mode design's "the working directory stays the device's `workspace/`".
-- A conversation whose device no longer declares the bound project continues in free mode, with a
-  notice in the conversation **(designer's call: losing a project must never fail a run)**.
+- A conversation whose bound project was removed, is outside the device's current mode, or whose
+  directory is gone continues in free mode, with a notice in the conversation **(designer's call:
+  losing a project must never fail a run)**.
 
 ### 4.4 Reading the project knowledge
 
@@ -159,10 +182,10 @@ pays for it.
   **Bodies are not recorded** — `Skill` reads one body on demand and its result is a tool result in
   the log **(designer's call: this repository alone has 19 skills and 713 KB of bodies; recording
   them would swamp both the context and the log)**.
-- Listing uses one new provider call, `list(path, { depth })`, added to `SandboxProvider` beside
-  `stat`; the device, `sandbox-docker` and `sandbox-e2b` implement it. It lists entries, never
-  contents, and never recursively. Today the provider exposes only `create`, `exec`, `readFile`,
-  `writeFile` and `stat`, so this is a genuine addition to the public contract.
+- Listing uses the `list` call of §4.1 (`SandboxProvider.list`, beside `stat`); the device,
+  `sandbox-docker` and `sandbox-e2b` implement it. It lists entries, never contents, and never
+  recursively. Today the provider exposes only `create`, `exec`, `readFile`, `writeFile` and `stat`,
+  so this is a genuine addition to the public contract.
 - **Cost, accepted**: reading before the first model call needs a device session first. Today the
   roots are known only once a session exists — `device_paths` is recorded at the first sandbox tool
   call — so a bound conversation starts its device eagerly, even for a run that never executes a
@@ -229,45 +252,46 @@ zero-drift fixtures:
 
 ## 6. Multi-replica
 
-Nothing is held in process memory. The binding is a column on the conversation row; the project list
-is part of the device's reported policy, stored with the device; the knowledge is an event. Two
-replicas serving the same conversation read the same row and append to the same log.
+Nothing is held in process memory. The project list is the `device_projects` table, written in
+`@Transactional()` methods with the uniqueness enforced by the database; the binding is two columns
+on the conversation row; the knowledge is an event. Two replicas serving the same conversation read
+the same rows and append to the same log. The device calls (`list`, `scan`) happen outside
+transactions, before the write that records their outcome.
 
 ## 7. Contract and protocol changes (outline; the plan details them)
 
-- `@capybara-hq/plugin-sdk`: `DeviceLocalPolicySummary` gains `projects: { name: string; path:
-  string }[]`, always present once parsed (`[]` when the device reports none) — the summary is
-  `{ mode, allowedDomains }` today, so this is one added field. Bounds: at most 100 projects, a name
-  of at most 64 characters without `/` or control characters, a reported path absolute and free of
-  control characters (only `projectAdd`'s args may carry a base-relative path). `DeviceOp` gains the
-  four project operations (`projectCandidates` answers `{ path, suggestedName }` suggestions, not
-  served projects) and `list` (`{ path, limit }` → `{ entries: { name, isDir }[], truncated }`, or
-  null when the path does not exist), since a local device's provider forwards each file method as
-  one op. `DeviceFeature` gains `projects`: the kernel sends those five ops only to a device that
-  announced it, as it gates `policy` on `policyOp`. `SandboxProvider` gains an optional
-  `list(h, path, { limit, signal })` with the same result (entries sorted by code unit, never
-  contents, never recursive; a file or an unreadable directory throws; whether a project root exists
-  is answered by `stat`). A changeset and `pnpm gen:sdk-api`.
-- `capybara-hq/plugins`: `sandbox-docker` and `sandbox-e2b` implement `list` (v1 covers cloud
-  devices, §4.2).
-- `packages/device`: the four project operations of §4.1, the containment check, `list`, the policy
-  summary, and the `project` CLI kept as the headless equivalent.
-- Kernel: the `project_root` event, the run-start reader, the rendering, the conversation column and
-  its migration, the binding on create, the owner check, the working-directory change of §4.3, the
-  review's `workspace` fact, the free-mode fallbacks, and the four project operations behind an
-  owner-only route.
+- `@capybara-hq/plugin-sdk`: `DeviceOp` gains `list` (`{ path, limit, limits }` → `{ entries:
+  { name, isDir }[], truncated }` or null) and `scan` (`{ base, limits }` → `{ path, suggestedName }[]`,
+  at most 50, two levels), since a local device's provider forwards each file method as one op.
+  `DeviceFeature` gains `projects`: the kernel sends `list` and `scan` only to a device that announced
+  it, as it gates `policy` on `policyOp`. `DeviceHello` gains `home?: string` (the owner's home, a
+  local device only). `SandboxProvider` gains optional `list(h, path, { limit, limits, signal })` and
+  `scan(h, base, { limits, signal })` with the same results (entries sorted by code unit; a file or an
+  unreadable directory throws). No project list in the device's policy summary and no project
+  operations. A changeset and `pnpm gen:sdk-api`.
+- `capybara-hq/plugins`: `sandbox-docker` and `sandbox-e2b` implement `list` and `scan` inside the
+  container's workspace (v1 covers cloud devices, §4.2).
+- `packages/device`: serves `list` and `scan` in the mode the request's ceiling gives, reports `home`
+  in its hello, and announces `projects`. It keeps no project list.
+- Kernel: migration `0133` (`device_projects`, `conversations.project_name` / `project_path`), a
+  device projects service (list by current mode, add with the device check, remove, candidates)
+  behind owner-only routes with their Platform operations, `LocalDeviceProvider.list` / `scan`, the
+  `project_root` event, the run-start reader, the rendering, the binding on create, the
+  working-directory change of §4.3, the review's `workspace` fact, the free-mode fallbacks.
 - Amendment to `2026-11-13-auto-mode-design.md` §4.1: the working directory follows the project
   binding, and the command review takes the project root as its `workspace` fact.
-- Web: the project picker (name + workspace-relative path, candidates suggested, owner only), the
-  project line in the conversation header, the project entries in the existing `/` palette (§4.6),
-  the notice for a lost project.
-- Docs: `docs/guide/devices.md`, the `writing-extensions` skill if the catalog source matters to
-  extension authors.
+- Web: the project section on the device's 设置 view (name + base-relative path, candidates
+  suggested, owner only), the project line in the conversation header, the project entries in the
+  existing `/` palette (§4.6), the notice for a lost project.
+- Docs: `docs/guide/devices.md`, the `writing-sandbox-providers` and `writing-tools` skills.
 
 ## 8. Testing
 
-- Device: `projectAdd` refuses a path outside what the current mode may offer (the workspace in
-  sandbox mode); the reported summary round-trips.
+- Device: `list` and `scan` answer in the request's ceiling — before any command, with the owner on
+  auto and the ceiling sandbox, nothing outside the workspace is listed or scanned.
+- Kernel: adding a project refuses a path outside the device's current mode, a missing path, a file,
+  a duplicate name; a project outside the current mode is hidden from the list and from binding, not
+  deleted; a non-owner cannot add, remove or bind.
 - Kernel: reading `AGENTS.md` and a skills tree from a fake device; the 64 KiB cap; an unparsable
   skill is skipped; a missing project degrades to free mode.
 - Replay: the two zero-drift cases of §5, run before and after.
@@ -292,9 +316,9 @@ replicas serving the same conversation read the same row and append to the same 
 3. Binding is create-time only and owner-only.
 4. Reading at run start, before the first model call, rather than at the first tool call.
 5. The containment rule read off the device's mode, enforced on the device and again in the kernel.
-6. `projects` in `DeviceLocalPolicySummary` rather than a frame of its own — auto mode lands first
-   and has already rewritten that type.
-7. The candidate scan's depth (two levels) and its page size.
+6. The device-owned list of the first draft was replaced by `device_projects` (maintainer,
+   2026-11-15); `list` doubles as the existence check when adding.
+7. The candidate scan's depth (two levels) and its size (50), run on the device as `scan`.
 8. Whether the binder is the composer's device affordance or the conversation header's project line
    — one entry point, not both.
 
@@ -315,3 +339,20 @@ Checked against `4283d6480` on 2026-11-14, after auto mode merged (PR #265, migr
 Re-checked after merging `main` on 2026-11-15 (`bffe0ef3f`): the interfaces above are unchanged. The
 device page was split into 概览 / 设置, which moved where a project is added (§4.1); the tool
 catalog's header wording (#287) and the device service control do not touch this design.
+
+## 12. Revision of 2026-11-15: projects move to PostgreSQL
+
+The first draft kept a device's projects in the device program's `policy.json`, reported them on its
+policy summary, and gave the device four project operations (`projectList`, `projectCandidates`,
+`projectAdd`, `projectRemove`). The maintainer overturned that: projects are kept in PostgreSQL keyed
+by the device's id, the same for a local and a cloud device. What changed:
+
+- **Store**: `device_projects`, written only by the kernel (§4.1, §6).
+- **Device contract**: the four project operations and the policy summary's `projects` are removed;
+  the device answers `list` and `scan`, both carrying the kernel's current ceiling, and reports its
+  owner's home (§4.1, §7).
+- **Checks**: the kernel scopes projects by the device's current mode; the device still enforces its
+  mode on every access, so a stored path grants nothing (§4.2).
+- Work already built on the first draft (the SDK contract, the kernel's parse of the summary, the
+  device's project store) is reworked in place; pre-0.1.0, no compatibility layers.
+
