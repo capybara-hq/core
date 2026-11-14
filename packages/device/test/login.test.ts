@@ -123,8 +123,7 @@ const granted = {
 const stateDir = () => join(home, "cfg", "capybara-device");
 const credFile = () => join(stateDir(), "credential.json");
 /** The mode the hello reports before the first exec: `policySummary` with no ceiling seen. */
-const helloMode = () =>
-  policySummary(new PolicyStore(stateDir()).current(), { mode: "os", workspace: "/w" }).mode;
+const helloMode = () => policySummary(new PolicyStore(stateDir()).current(), { mode: "os" }).mode;
 
 describe("login", () => {
   it("polls until approved and writes a 0600 credential", async () => {

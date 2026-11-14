@@ -2,7 +2,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
 import { homedir, constants as osConstants } from "node:os";
-import { resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import {
   type SandboxAskCallback,
   SandboxManager,
@@ -10,6 +10,8 @@ import {
 } from "@anthropic-ai/sandbox-runtime";
 import {
   type DeviceExecArgs,
+  type DeviceListResult,
+  type DeviceScanResult,
   type ExecResult,
   isBackgroundLaunch,
   type SandboxLimits,
@@ -17,8 +19,9 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { type BlockedHost, blockedHosts, denyReason, networkTrailer } from "../network.js";
 import { effectiveEgress, grantedHosts, srtConfig } from "../policy.js";
-import type { Policy } from "../state.js";
+import type { Policy, SandboxMode } from "../state.js";
 import { FS_HELPER_SCRIPT } from "./fs-helper.js";
+import { finishScan } from "./listing.js";
 import { EXEC_MARKER, killMarked } from "./procs.js";
 import { Reaper, type ReaperDeps } from "./reap.js";
 import { sandboxUnavailableMessage } from "./sandbox-messages.js";
@@ -498,22 +501,14 @@ export class OsExecutor implements Executor {
 
   /** Runs one file operation in the sandboxed helper; returns its `r`, throws its `e`. */
   private async helper(
-    op: "read" | "stat" | "write",
+    op: "read" | "stat" | "write" | "list" | "scan",
     path: string,
     maxBytes: number,
     data?: Uint8Array,
+    roots: string[] = [this.roots.workspace, this.roots.tmp],
   ): Promise<unknown> {
-    const script = [
-      process.execPath,
-      "-e",
-      FS_HELPER_SCRIPT,
-      "sandbox",
-      op,
-      path,
-      String(maxBytes),
-      this.roots.workspace,
-      this.roots.tmp,
-    ]
+    const script = [process.execPath, "-e", FS_HELPER_SCRIPT, "sandbox", op, path, String(maxBytes)]
+      .concat(roots)
       .map(shellQuote)
       .join(" ");
     const { child, commandId } = await this.spawnSandboxed(script, {
@@ -591,6 +586,46 @@ export class OsExecutor implements Executor {
       return this.files.stat(path);
     }
     return (await this.helper("stat", p, 0)) as { size: number; isDir: boolean } | null;
+  }
+
+  /**
+   * The workspace path `path` names, refused unless it lies lexically under the workspace: sandbox
+   * mode offers the workspace only (spec §4.2), not the tmp or skills roots.
+   */
+  private workspacePath(path: string): string {
+    if (!isAbsolute(path)) throw policyError(`${path} is not an absolute path`);
+    const p = resolve(path);
+    if (!isUnder(p, this.roots.workspace)) {
+      throw policyError(
+        `${path} is outside the device's workspace; in sandbox mode the device reads only that`,
+      );
+    }
+    return p;
+  }
+
+  /**
+   * Lists a workspace directory in the sandboxed helper (sandbox mode whatever `_mode` says: this
+   * executor has no other). A path outside the workspace is refused, also after resolving links.
+   */
+  async list(_mode: SandboxMode, path: string, limit: number): Promise<DeviceListResult> {
+    this.requireSandbox();
+    const p = this.workspacePath(path);
+    const r = await this.helper("list", p, limit, undefined, [this.roots.workspace]);
+    if (r !== null && !Array.isArray((r as { entries?: unknown }).entries)) {
+      throw new DeviceOpError("error", `list ${path} answered an invalid result`);
+    }
+    return r as DeviceListResult;
+  }
+
+  /** Scans a workspace directory in the sandboxed helper ({@link list}'s rules). */
+  async scan(_mode: SandboxMode, base: string): Promise<DeviceScanResult> {
+    this.requireSandbox();
+    const p = this.workspacePath(base);
+    const r = await this.helper("scan", p, 0, undefined, [this.roots.workspace]);
+    if (!Array.isArray(r) || !r.every((x) => typeof x === "string")) {
+      throw new DeviceOpError("error", `scan ${base} answered an invalid result`);
+    }
+    return finishScan(r);
   }
 
   async killTagged(tags: string[]): Promise<void> {

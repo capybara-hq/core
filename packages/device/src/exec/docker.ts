@@ -5,6 +5,8 @@ import { join, resolve } from "node:path";
 import {
   DEFAULT_SANDBOX_ROOTS,
   type DeviceExecArgs,
+  type DeviceListResult,
+  type DeviceScanResult,
   type ExecResult,
   type SandboxLimits,
   type SandboxRoots,
@@ -12,6 +14,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { effectiveMode } from "../policy.js";
 import type { Policy, SandboxMode } from "../state.js";
+import { listDirectory, type ReadArea, rebase, scanDirectory } from "./listing.js";
 import { EXEC_MARKER } from "./procs.js";
 import {
   ENV_NAME_RE,
@@ -802,6 +805,48 @@ export class DockerExecutor implements Executor {
     if (r === null) return null;
     const [size, kind] = r.stdout.toString("utf8").split(" ");
     return { size: Number(size), isDir: kind === "d" };
+  }
+
+  /**
+   * The host path of a container workspace path, refused unless `path` lies lexically under the
+   * container's workspace: a container device offers its workspace only, in either mode (spec
+   * §4.2); nothing else of the container is mounted from the host, and nothing of the host is
+   * the container's.
+   */
+  private workspaceHostPath(path: string): string {
+    if (!path.startsWith("/")) throw policyError(`${path} is not an absolute path`);
+    const p = resolve(path);
+    if (!isUnder(p, ROOTS.workspace)) {
+      throw policyError(
+        `${path} is outside the container's workspace (${ROOTS.workspace}); this device reads only that`,
+      );
+    }
+    return rebase(p, ROOTS.workspace, this.hostRoots.workspace);
+  }
+
+  /** Reads stay in the host directory mounted at the container's workspace, after resolving links. */
+  private workspaceArea(): ReadArea {
+    return { root: { path: this.hostRoots.workspace, describe: "the container's workspace" } };
+  }
+
+  /**
+   * Lists a container workspace directory through the host directory mounted there (no container
+   * needs to run), in either mode. Links are resolved on the host and must stay in that directory:
+   * a link whose target leaves it (an absolute container path among them) is not a directory, and
+   * listing through one is refused.
+   */
+  async list(_mode: SandboxMode, path: string, limit: number): Promise<DeviceListResult> {
+    const host = this.workspaceHostPath(path);
+    return listDirectory(host, limit, this.workspaceArea(), resolve(path));
+  }
+
+  /**
+   * Scans a container workspace directory through the host directory mounted there; candidates are
+   * reported at their container paths ({@link list}'s rules; the scan follows no link anyway).
+   */
+  async scan(_mode: SandboxMode, base: string, signal: AbortSignal): Promise<DeviceScanResult> {
+    const host = this.workspaceHostPath(base);
+    return scanDirectory(host, this.workspaceArea(), { reportAs: resolve(base), signal });
   }
 
   /** Kills the container processes of one marker (exact) or marker prefix. */

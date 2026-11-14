@@ -1,9 +1,18 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FS_HELPER_SCRIPT } from "../src/exec/fs-helper.js";
+import { finishScan } from "../src/exec/listing.js";
 
 let base: string;
 let root: string;
@@ -75,5 +84,67 @@ describe("FS_HELPER_SCRIPT", () => {
     });
     execFileSync("mkfifo", [join(root, "fifo")]);
     expect(read("sandbox", join(root, "fifo"))).toMatchObject({ e: "policy" });
+  });
+
+  describe("list and scan (sandbox mode: the workspace only)", () => {
+    const list = (path: string, limit = 10) => run(["sandbox", "list", path, String(limit), root]);
+    const scan = (path: string) => run(["sandbox", "scan", path, "0", root]);
+
+    it("lists a workspace directory sorted by code unit, truncated past the limit", () => {
+      mkdirSync(join(root, "B"));
+      mkdirSync(join(root, "a"));
+      expect(list(root)).toEqual({
+        r: {
+          entries: [
+            { name: "B", isDir: true },
+            { name: "a", isDir: true },
+            { name: "in.txt", isDir: false },
+          ],
+          truncated: false,
+        },
+      });
+      expect(list(root, 1)).toEqual({
+        r: { entries: [{ name: "B", isDir: true }], truncated: true },
+      });
+    });
+
+    it("answers null only for a missing path inside the workspace; outside it is refused", () => {
+      expect(list(join(root, "missing"))).toEqual({ r: null });
+      expect(list(join(base, "missing"))).toMatchObject({ e: "policy" });
+      expect(list(base)).toMatchObject({ e: "policy" });
+      expect(list(join(root, "in.txt"))).toMatchObject({ e: "error", m: /not a directory/ });
+    });
+
+    it("does not follow a link out of the workspace", () => {
+      mkdirSync(join(base, "outdir"));
+      symlinkSync(join(base, "outdir"), join(root, "out"));
+      mkdirSync(join(root, "sub"));
+      symlinkSync(join(root, "sub"), join(root, "in"));
+      expect(list(join(root, "out"))).toMatchObject({ e: "policy" });
+      expect(scan(join(root, "out"))).toMatchObject({ e: "policy" });
+      const entries = (list(root).r as { entries: { name: string; isDir: boolean }[] }).entries;
+      expect(entries.filter((e) => e.name === "in" || e.name === "out")).toEqual([
+        { name: "in", isDir: true },
+        { name: "out", isDir: false },
+      ]);
+    });
+
+    it("scans like scanDirectory: the base, two levels, no hidden or skipped directories", () => {
+      for (const d of ["p/.git", "p/sub/.git", "x/y/z/.git", ".h/q/.git", "node_modules/m/.git"]) {
+        mkdirSync(join(root, d), { recursive: true });
+      }
+      mkdirSync(join(base, "elsewhere/.git"), { recursive: true });
+      symlinkSync(join(base, "elsewhere"), join(root, "link"));
+      writeFileSync(join(root, "AGENTS.md"), "");
+      const r = scan(root).r as string[];
+      expect(finishScan(r)).toEqual([
+        { path: root, suggestedName: "workspace" },
+        { path: join(root, "p"), suggestedName: "p" },
+        { path: join(root, "p/sub"), suggestedName: "sub" },
+      ]);
+      expect(scan(join(root, "missing"))).toEqual({ r: [] });
+      expect(scan(join(root, "in.txt"))).toMatchObject({ e: "error" });
+      expect(scan(base)).toMatchObject({ e: "policy" });
+    });
   });
 });

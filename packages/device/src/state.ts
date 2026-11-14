@@ -16,25 +16,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { isDeviceProjectName } from "@capybara-hq/plugin-sdk";
 import type { DeviceMode } from "./args.js";
-
-/** A project the local policy file lists: a name its owner knows and a directory on this machine. */
-export interface DeviceProject {
-  name: string;
-  path: string;
-}
-
-/** The most projects the local policy file may list. */
-export const MAX_DEVICE_PROJECTS = 100;
-
-// biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what it refuses
-const CONTROL = /[\u0000-\u001f\u007f]/;
-
-/** Whether `v` is a project directory: absolute, at most 4096 characters, no control characters. */
-export function isDeviceProjectPath(v: unknown): v is string {
-  return typeof v === "string" && v.startsWith("/") && v.length <= 4096 && !CONTROL.test(v);
-}
 
 /** What `login` stores: how to reach the deployment and who this machine is there. */
 export interface Credential {
@@ -69,8 +51,6 @@ export interface Policy {
    * sandbox-mode machine never runs auto because the organization allows it.
    */
   mode: SandboxMode;
-  /** The projects the device serves: a name its owner knows and a directory on this machine. */
-  projects: DeviceProject[];
 }
 
 const DEFAULT_RECONNECT_GRACE_SECONDS = 120;
@@ -82,7 +62,6 @@ export const DEFAULT_POLICY: Policy = {
   cpu: null,
   memoryMb: null,
   mode: "auto",
-  projects: [],
 };
 
 type Env = Record<string, string | undefined>;
@@ -176,13 +155,6 @@ const isStringList = (v: unknown): v is string[] =>
   Array.isArray(v) && v.every((x) => typeof x === "string");
 const isCeiling = (v: unknown): v is number | null =>
   v === null || (typeof v === "number" && Number.isFinite(v) && v > 0);
-const isProject = (v: unknown): v is DeviceProject => {
-  if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
-  const { name, path } = v as { name?: unknown; path?: unknown };
-  return isDeviceProjectName(name) && isDeviceProjectPath(path);
-};
-const isProjectList = (v: unknown): v is DeviceProject[] =>
-  Array.isArray(v) && v.length <= MAX_DEVICE_PROJECTS && v.every(isProject);
 
 const POLICY_KEYS: readonly string[] = Object.keys(DEFAULT_POLICY);
 /**
@@ -256,18 +228,11 @@ export function readPolicyFile(dir: string): PolicyFile {
     cpu: o.cpu === undefined ? null : (o.cpu as number | null),
     memoryMb: o.memoryMb === undefined ? null : (o.memoryMb as number | null),
     mode: rawMode,
-    projects: o.projects === undefined ? [] : (o.projects as DeviceProject[]),
   };
   if (!isStringList(policy.allowedDomains)) throw bad("allowedDomains", "a list of strings");
   if (!isStringList(policy.allowCredentials)) throw bad("allowCredentials", "a list of strings");
   if (!isCeiling(policy.cpu)) throw bad("cpu", "a positive number or null");
   if (!isCeiling(policy.memoryMb)) throw bad("memoryMb", "a positive number or null");
-  if (!isProjectList(policy.projects)) {
-    throw bad(
-      "projects",
-      `a list of at most ${MAX_DEVICE_PROJECTS} objects with a "name" (no "/", at most 64 characters) and an absolute "path"`,
-    );
-  }
   const extra: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(o)) {
     if (!POLICY_KEYS.includes(k) && !LEGACY_POLICY_KEYS.includes(k)) extra[k] = v;

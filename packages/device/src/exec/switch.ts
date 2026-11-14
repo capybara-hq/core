@@ -167,17 +167,28 @@ export class SwitchingExecutor implements Executor {
   }
 
   /**
-   * {@link stat} as a device in `mode` reads, without the file-operation window: the project
-   * operations judge their scope's mode themselves (the owner's choice cut to the latest ceiling
-   * seen), so an auto-mode device checks a project outside its workspace with the owner's rights
-   * even before its first command. Sandbox mode, or a policy that says sandbox, reads through the
-   * sandboxed helper.
+   * The executor that reads as a device in `mode` (the request's own effective mode), without the
+   * file-operation window: the host with the owner's rights in auto mode, else the sandboxed
+   * helper. The policy is reread and wins: a sandbox turned on on the machine reads through the
+   * sandboxed helper whatever `mode` says.
    */
-  async statAs(mode: SandboxMode, path: string) {
+  private async readerFor(mode: SandboxMode): Promise<{ ex: Executor; mode: SandboxMode }> {
     const policy = this.policy();
     await this.sync(policy);
     const auto = mode === "auto" && policy.mode === "auto";
-    return (auto ? this.host : this.sandboxed).stat(path);
+    return auto ? { ex: this.host, mode: "auto" } : { ex: this.sandboxed, mode: "sandbox" };
+  }
+
+  async list(mode: SandboxMode, path: string, limit: number, signal: AbortSignal) {
+    const r = await this.readerFor(mode);
+    if (r.ex.list === undefined) throw new DeviceOpError("error", "unsupported operation");
+    return r.ex.list(r.mode, path, limit, signal);
+  }
+
+  async scan(mode: SandboxMode, base: string, signal: AbortSignal) {
+    const r = await this.readerFor(mode);
+    if (r.ex.scan === undefined) throw new DeviceOpError("error", "unsupported operation");
+    return r.ex.scan(r.mode, base, signal);
   }
 
   async killTagged(tags: string[]): Promise<void> {

@@ -1,5 +1,5 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { backoffMs, type Connection, type ConnectOptions, connect } from "../src/client.js";
@@ -82,6 +82,17 @@ describe("client", () => {
     });
   });
 
+  it("reports the user's home by default and leaves out one that is not a clean absolute path", async () => {
+    start();
+    const hello = await kernel.waitFor("hello", () => kernel.of("hello")[0]);
+    expect(hello.home).toBe(homedir());
+    conn?.stop();
+    await conn?.done;
+    start({ home: "relative/home" });
+    const again = await kernel.waitFor("second hello", () => kernel.of("hello")[1]);
+    expect(again.home).toBeUndefined();
+  });
+
   it("answers the file operations and create", async () => {
     start();
     await kernel.waitFor("hello", () => kernel.of("hello")[0]);
@@ -108,9 +119,11 @@ describe("client", () => {
 
   it("hello carries the features and the local policy; a policy op shows on the next hello", async () => {
     writePolicy(dir, { ...DEFAULT_POLICY, allowedDomains: ["a.com"] });
-    start({ policy: new PolicyStore(dir) });
+    start({ policy: new PolicyStore(dir), home: "/home/ada" });
     const hello = await kernel.waitFor("hello", () => kernel.of("hello")[0]);
     expect(hello.features).toEqual(["networkReport", "policyOp", "policyOpId", "mode", "projects"]);
+    // the owner's home: the base of an auto-mode project path
+    expect(hello.home).toBe("/home/ada");
     // No exec seen yet: the owner's choice, auto by default.
     expect(hello.policy).toEqual({ mode: "auto", allowedDomains: ["a.com"] });
     kernel.send(

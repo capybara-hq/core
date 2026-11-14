@@ -38,19 +38,6 @@ const r = (op: KernelReq["op"], args: unknown): KernelReq => ({
 });
 
 describe("runOp", () => {
-  it("answers list and scan as unsupported for now", async () => {
-    const limits = { mode: "sandbox" };
-    for (const req of [
-      r("list", { path: "/w", limit: 10, limits }),
-      r("scan", { base: "/w", limits }),
-    ]) {
-      expect(await runOp(new FakeExecutor(), req, new AbortController().signal)).toMatchObject({
-        ok: false,
-        error: { kind: "error", message: "unsupported operation" },
-      });
-    }
-  });
-
   it("maps an executor failure to an error answer, keeping a DeviceOpError kind", async () => {
     const ex = new FakeExecutor();
     ex.stat = async () => {
@@ -425,22 +412,18 @@ describe("modes in the summary and the command log", () => {
   });
 
   it("reports the owner's mode before any exec", () => {
-    expect(
-      policySummary({ ...DEFAULT_POLICY, mode: "auto" }, { mode: "os", workspace: "/w" }),
-    ).toEqual({
+    expect(policySummary({ ...DEFAULT_POLICY, mode: "auto" }, { mode: "os" })).toEqual({
       mode: "auto",
       allowedDomains: [],
     });
-    expect(
-      policySummary({ ...DEFAULT_POLICY, mode: "sandbox" }, { mode: "docker", workspace: "/w" }),
-    ).toEqual({
+    expect(policySummary({ ...DEFAULT_POLICY, mode: "sandbox" }, { mode: "docker" })).toEqual({
       mode: "sandbox",
       allowedDomains: [],
     });
     expect(
       policySummary(
         { ...DEFAULT_POLICY, mode: "auto" },
-        { mode: "os", limits: { mode: "sandbox" }, workspace: "/w" },
+        { mode: "os", limits: { mode: "sandbox" } },
       ),
     ).toEqual({ mode: "sandbox", allowedDomains: [] });
   });

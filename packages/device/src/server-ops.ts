@@ -1,18 +1,22 @@
 import {
   type DeviceExecArgs,
   type DeviceKillTaggedArgs,
+  type DeviceListArgs,
   type DeviceLocalPolicySummary,
   type DevicePolicyArgs,
   type DevicePolicyStatus,
   type DevicePolicyStatusArgs,
   type DeviceReadFileArgs,
   type DeviceRes,
+  type DeviceScanArgs,
   type DeviceStatArgs,
   type DeviceWriteFileArgs,
   isPolicyOpId,
   type KernelReq,
+  MAX_DEVICE_LIST_ENTRIES,
   type SandboxLimits,
   validateAllowHost,
+  validateSandboxPathShape,
 } from "@capybara-hq/plugin-sdk";
 import type { CommandLogEntry } from "./command-log.js";
 import { DeviceOpError, type ExecMode, type Executor } from "./exec/types.js";
@@ -20,7 +24,7 @@ import { effectiveMode, grantedHosts } from "./policy.js";
 import type { PolicyOpRecord } from "./policy-ops.js";
 import type { PolicyStore } from "./policy-store.js";
 import { publicSuffixWildcard } from "./public-suffix.js";
-import { DEFAULT_POLICY, type Policy, type SandboxMode } from "./state.js";
+import { DEFAULT_POLICY, type Policy } from "./state.js";
 
 /** What this program has seen across requests (one per program run, kept over reconnects). */
 export interface SeenState {
@@ -37,11 +41,6 @@ export interface OpContext {
   policy?: PolicyStore;
   /** Updated by every exec; read by the policy op's summary. */
   seen?: SeenState;
-  /**
-   * The owner's home: the base of auto mode's relative project paths and its candidate scan.
-   * Defaults to the user's home; tests pass a temporary directory.
-   */
-  home?: string;
 }
 
 /** The refusal of a `policy` op that tries to turn auto mode on from the deployment. */
@@ -77,18 +76,6 @@ export interface SummaryFacts {
   mode: Executor["mode"];
   /** The latest exec's mode ceiling; undefined before the first exec. */
   limits?: Pick<SandboxLimits, "mode"> | undefined;
-  /** The device's workspace: all a sandbox-mode (or container) device offers as projects. */
-  workspace: string;
-  /** The owner's home (auto mode's project base); defaults to the user's home. */
-  home?: string | undefined;
-}
-
-/**
- * The mode the summary reports and the project operations follow: the owner's choice cut to the
- * latest kernel ceiling seen.
- */
-export function summaryMode(p: Policy, facts: SummaryFacts): SandboxMode {
-  return facts.limits === undefined ? p.mode : effectiveMode(p, facts.limits);
 }
 
 /**
@@ -97,7 +84,7 @@ export function summaryMode(p: Policy, facts: SummaryFacts): SandboxMode {
  */
 export function policySummary(p: Policy, facts: SummaryFacts): DeviceLocalPolicySummary {
   return {
-    mode: summaryMode(p, facts),
+    mode: facts.limits === undefined ? p.mode : effectiveMode(p, facts.limits),
     allowedDomains: [...p.allowedDomains],
   };
 }
@@ -107,8 +94,6 @@ export function summaryFacts(executor: Executor, ctx: OpContext): SummaryFacts {
   return {
     mode: executor.mode,
     limits: ctx.seen?.limits,
-    workspace: executor.roots.workspace,
-    home: ctx.home,
   };
 }
 
@@ -290,7 +275,7 @@ function isLocalPolicyOp(op: KernelReq["op"]): op is LocalPolicyOp {
   return op === "policy" || op === "policyStatus";
 }
 
-/** The answer to an operation this program does not serve (it has no policy store). */
+/** The answer to an operation this program does not serve (no policy store, or no reader). */
 function unsupported(req: KernelReq): DeviceRes {
   return {
     type: "res",
@@ -314,6 +299,73 @@ function policyStatus(store: PolicyStore, args: unknown, facts: SummaryFacts): D
   };
 }
 
+/** A `list` / `scan` field that must be a clean absolute path, checked again here. */
+function requestPath(v: unknown, key: string): string {
+  const errors = typeof v === "string" ? validateSandboxPathShape(v) : ["path must be a string"];
+  if (errors.length > 0) {
+    throw new DeviceOpError("error", `invalid request: field "${key}": ${errors.join("; ")}`);
+  }
+  return v as string;
+}
+
+/** A `list` / `scan` request's ceiling (`limits.mode`), checked again here. */
+function requestCeiling(args: unknown): Pick<SandboxLimits, "mode"> {
+  const mode = (args as { limits?: { mode?: unknown } } | null)?.limits?.mode;
+  if (mode !== "auto" && mode !== "sandbox") {
+    throw new DeviceOpError(
+      "error",
+      'invalid request: field "limits.mode" must be "auto" or "sandbox"',
+    );
+  }
+  return { mode };
+}
+
+/**
+ * A `list` or `scan` request (a trust boundary: the device decides what a web session sees of its
+ * machine). Each is read in the mode it would run in now, `effectiveMode` of the owner's policy and
+ * the ceiling the request carries, never one an earlier command saw nor the file operations'
+ * window. Answered without the device directory: it reads the owner's machine, not that
+ * directory. Throws like the executor (a path its mode cannot reach is a `policy` refusal).
+ */
+async function serveRead(
+  executor: Executor,
+  req: KernelReq,
+  signal: AbortSignal,
+  store: PolicyStore,
+): Promise<{ result: unknown; detail: string }> {
+  const args = req.args as Partial<DeviceListArgs & DeviceScanArgs> | null;
+  const limits = requestCeiling(args);
+  if (req.op === "list") {
+    const path = requestPath(args?.path, "path");
+    const limit = args?.limit;
+    if (
+      typeof limit !== "number" ||
+      !Number.isInteger(limit) ||
+      limit < 1 ||
+      limit > MAX_DEVICE_LIST_ENTRIES
+    ) {
+      throw new DeviceOpError(
+        "error",
+        `invalid request: field "limit" must be an integer from 1 to ${MAX_DEVICE_LIST_ENTRIES}`,
+      );
+    }
+    const mode = effectiveMode(store.current(), limits);
+    signal.throwIfAborted();
+    const result = await (executor.list as NonNullable<Executor["list"]>)(
+      mode,
+      path,
+      limit,
+      signal,
+    );
+    return { result, detail: `list ${clean(path, 300)} in ${mode} mode` };
+  }
+  const base = requestPath(args?.base, "base");
+  const mode = effectiveMode(store.current(), limits);
+  signal.throwIfAborted();
+  const result = await (executor.scan as NonNullable<Executor["scan"]>)(mode, base, signal);
+  return { result, detail: `scan ${clean(base, 300)} in ${mode} mode` };
+}
+
 /** The audit line of an exec whose grants applied (sandbox mode only: auto mode ignores grants). */
 function grantsDetail(
   executor: Executor,
@@ -333,7 +385,7 @@ function grantsDetail(
 /**
  * Runs one request and returns the answer plus its local audit line and, for an exec, its mode
  * (for the local command log). A vanished device directory answers `fs_gone` for every operation
- * except `stop`, `policy` and `policyStatus`. Never throws.
+ * except `stop`, `policy`, `policyStatus`, `list` and `scan`. Never throws.
  */
 export async function serveOp(
   executor: Executor,
@@ -350,6 +402,21 @@ export async function serveOp(
       const facts = summaryFacts(executor, ctx);
       if (req.op === "policyStatus") return { res: ok(policyStatus(ctx.policy, req.args, facts)) };
       return servePolicyOp(req, ctx.policy, facts);
+    }
+    // They read the owner's machine in the request's own mode, not the device directory, so they
+    // work while that directory is gone. Served only with a policy store (the mode needs the
+    // owner's choice) and by an executor that can read in a given mode.
+    if (req.op === "list" || req.op === "scan") {
+      const can = req.op === "list" ? executor.list : executor.scan;
+      if (ctx.policy === undefined || can === undefined) return { res: unsupported(req) };
+      try {
+        const { result, detail } = await serveRead(executor, req, signal, ctx.policy);
+        return { res: ok(result), detail };
+      } catch (e) {
+        const { res } = errorAnswer(req, e);
+        const message = res.ok ? "" : clean(res.error.message, 300);
+        return { res, detail: `${req.op} refused: ${message}` };
+      }
     }
     if ((await executor.ensureRoot()) === "gone") {
       return {
@@ -417,10 +484,6 @@ export async function serveOp(
       case "killAll":
         await executor.killAll();
         return { res: ok(null) };
-      case "list":
-      case "scan":
-        // not served yet: the device answers them in the request's ceiling once it implements them
-        return { res: unsupported(req) };
     }
   } catch (e) {
     return errorAnswer(req, e);

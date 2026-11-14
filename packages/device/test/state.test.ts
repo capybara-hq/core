@@ -109,7 +109,6 @@ describe("state", () => {
       cpu: null,
       memoryMb: null,
       mode: "auto",
-      projects: [],
     });
     writePolicy(dir, {
       allowedDomains: ["a.test"],
@@ -117,7 +116,6 @@ describe("state", () => {
       cpu: 2,
       memoryMb: null,
       mode: "sandbox",
-      projects: [{ name: "core", path: "/w/core" }],
     });
     expect(readPolicy(dir)).toEqual({
       allowedDomains: ["a.test"],
@@ -125,23 +123,7 @@ describe("state", () => {
       cpu: 2,
       memoryMb: null,
       mode: "sandbox",
-      projects: [{ name: "core", path: "/w/core" }],
     });
-  });
-
-  it("refuses projects outside the protocol's bounds", () => {
-    const file = join(dir, "policy.json");
-    for (const projects of [
-      [{ name: "core", path: "w/core" }],
-      [{ name: "a/b", path: "/w/core" }],
-      [{ name: "x".repeat(65), path: "/w/core" }],
-      Array.from({ length: 101 }, (_, i) => ({ name: `p${i}`, path: `/w/p${i}` })),
-    ]) {
-      writeFileSync(file, JSON.stringify({ mode: "auto", projects }));
-      expect(() => readPolicyFile(dir), JSON.stringify(projects).slice(0, 60)).toThrow(
-        /projects must be/,
-      );
-    }
   });
 
   it("migrates a legacy policy file to a mode, once", () => {

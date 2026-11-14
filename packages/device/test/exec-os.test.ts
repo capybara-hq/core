@@ -9,6 +9,7 @@ import {
   realpathSync,
   rmSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -318,6 +319,37 @@ describe.skipIf(!availability.ok)(
         }
         expect(existsSync(join(state, "w"))).toBe(false);
         expect(readFileSync(join(state, "f"), "utf8")).toBe("OUTSIDE SECRET");
+      }, 30_000);
+    });
+
+    describe("list and scan (in the sandboxed helper, the workspace only)", () => {
+      it("lists and scans the workspace and refuses the tmp root, the state directory and links out", async () => {
+        const ws = ex.roots.workspace;
+        mkdirSync(join(ws, "proj/.git"), { recursive: true });
+        symlinkSync(state, join(ws, "to-state"));
+        try {
+          const listed = await ex.list("sandbox", ws, 1000);
+          expect(listed?.entries).toEqual(
+            expect.arrayContaining([
+              { name: "proj", isDir: true },
+              { name: "to-state", isDir: false },
+            ]),
+          );
+          expect(await ex.scan("sandbox", ws)).toEqual(
+            expect.arrayContaining([{ path: join(ws, "proj"), suggestedName: "proj" }]),
+          );
+          expect(await ex.list("sandbox", join(ws, "no-such-dir"), 10)).toBeNull();
+          for (const path of [ex.roots.tmp, state, join(ws, "to-state"), fakeHome]) {
+            const e = await ex.list("auto", path, 10).catch((err: unknown) => err);
+            expect(e, path).toBeInstanceOf(DeviceOpError);
+            expect((e as DeviceOpError).kind, path).toBe("policy");
+          }
+          const s = await ex.scan("auto", state).catch((err: unknown) => err);
+          expect((s as DeviceOpError).kind).toBe("policy");
+        } finally {
+          unlinkSync(join(ws, "to-state"));
+          rmSync(join(ws, "proj"), { recursive: true });
+        }
       }, 30_000);
     });
 
