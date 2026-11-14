@@ -12,6 +12,7 @@ import {
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { sql } from "kysely";
 import semver from "semver";
+import { marketplaceNetPolicy } from "../catalog/marketplace-fetch.js";
 import { otherNameOwner } from "../catalog/ownership.js";
 import { catalogPackageError, type PluginImport } from "../catalog/plugin-import.js";
 import { PluginPackageError, readPluginPackage } from "../catalog/plugin-package.js";
@@ -194,7 +195,7 @@ export interface BootstrapResolveOptions {
    * Omitted or missing: no offline packages.
    */
   dir?: string;
-  config: Pick<KernelConfig, "packages">;
+  config: Pick<KernelConfig, "packages" | "marketplaces" | "net">;
   signal?: AbortSignal;
   log?: Pick<Logger, "warn">;
   /** The npm download (default {@link fetchNpmPackage}; tests replace it). */
@@ -251,7 +252,12 @@ export async function resolveBootstrapPackages(
     const offlineHint = `to install offline, put the package tgz (npm pack ${e.npm}@${e.version}, any file name) in ${where}`;
     try {
       const r = await fetchPackage(
-        { registry: npmRegistry, ...(npmToken !== undefined && { token: npmToken }), maxBytes },
+        {
+          registry: npmRegistry,
+          ...(npmToken !== undefined && { token: npmToken }),
+          maxBytes,
+          net: marketplaceNetPolicy(o.config),
+        },
         e.npm,
         e.version,
         signal,

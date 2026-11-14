@@ -7,6 +7,7 @@ import {
   startFakeNpmRegistry,
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { LookupFn, NetPolicy } from "../../src/net/public-address.js";
 import {
   fetchProvenance,
   parseAttestations,
@@ -20,7 +21,18 @@ const COMMIT = "0123456789abcdef0123456789abcdef01234567";
 const REPO = "https://github.com/acme/plugins";
 
 let reg: FakeNpmRegistry;
-const cfg = () => ({ registry: reg.url, maxBytes: 1024 * 1024, token: "npm-secret" });
+/** The kernel's policy shape: the configured registry's origin is trusted. */
+const trusting = (registry: string): NetPolicy => ({
+  allowInsecureLoopback: false,
+  allowPrivateHosts: [],
+  trustedOrigins: [registry],
+});
+const cfg = () => ({
+  registry: reg.url,
+  maxBytes: 1024 * 1024,
+  token: "npm-secret",
+  net: trusting(reg.url),
+});
 const signal = () => AbortSignal.timeout(10_000);
 
 beforeAll(async () => {
@@ -125,7 +137,7 @@ describe("fetchProvenance (spec §5.5: display only, never fails an import)", ()
 
   it("an unreachable registry, a slow one, an oversized answer: not checked, never a throw", async () => {
     const offline = await fetchProvenance(
-      { registry: "http://127.0.0.1:1", maxBytes: 1 },
+      { registry: "http://127.0.0.1:1", maxBytes: 1, net: trusting("http://127.0.0.1:1") },
       "@acme/plugin-crm",
       "1.2.0",
       signal(),
@@ -145,13 +157,18 @@ describe("fetchProvenance (spec §5.5: display only, never fails an import)", ()
     const url = `http://127.0.0.1:${(slow.address() as AddressInfo).port}`;
     try {
       const late = await fetchProvenance(
-        { registry: url, maxBytes: 1 },
+        { registry: url, maxBytes: 1, net: trusting(url) },
         "slow",
         "1.0.0",
         AbortSignal.timeout(200),
       );
       expect(late).toEqual({ checked: false, reason: "the registry did not answer in time" });
-      const big = await fetchProvenance({ registry: url, maxBytes: 1 }, "big", "1.0.0", signal());
+      const big = await fetchProvenance(
+        { registry: url, maxBytes: 1, net: trusting(url) },
+        "big",
+        "1.0.0",
+        signal(),
+      );
       expect(big).toEqual({
         checked: false,
         reason: "cannot read the attestations: the attestations are too large",
@@ -160,6 +177,28 @@ describe("fetchProvenance (spec §5.5: display only, never fails an import)", ()
       slow.closeAllConnections();
       await new Promise<void>((r) => slow.close(() => r()));
     }
+  });
+});
+
+describe("fetchProvenance goes through packages/kernel/src/net", () => {
+  it("a registry host the policy does not allow is not checked, and nothing is sent", async () => {
+    const lookup: LookupFn = async () => [{ address: "10.0.0.5", family: 4 }];
+    const p = await fetchProvenance(
+      {
+        registry: "https://registry.corp.invalid/",
+        maxBytes: 1024,
+        token: "npm-secret",
+        net: { allowInsecureLoopback: false, allowPrivateHosts: [], trustedOrigins: [] },
+        lookup,
+      },
+      "@acme/plugin-crm",
+      "1.2.0",
+      signal(),
+    );
+    expect(p).toMatchObject({ checked: false });
+    expect((p as { reason: string }).reason).toMatch(
+      /^the network rules refused the attestations: .*private or reserved address/,
+    );
   });
 });
 

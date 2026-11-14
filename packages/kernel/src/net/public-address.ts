@@ -141,7 +141,11 @@ export type NetPolicy = {
    * name that resolves there (an attacker's name could point into the range).
    */
   allowPrivateHosts: string[];
-  /** Origins configured by the admin (the npm registry): their hosts may resolve to private addresses. */
+  /**
+   * Origins configured by the admin (the npm registry): a request to exactly such an origin
+   * (scheme, host and port) may resolve to private addresses, and an origin configured as
+   * `http://` may be fetched over http. The same host on another port or scheme is not trusted.
+   */
   trustedOrigins: string[];
   /**
    * `net.httpsProxy` / `net.noProxy`: https downloads tunnel through this proxy (see `proxy.ts`);
@@ -165,6 +169,8 @@ export class NetDeniedError extends Error {
     readonly code: NetDeniedCode,
     readonly host: string,
     message: string,
+    /** The HTTP status of a refused redirect (`net.redirect`). */
+    readonly status?: number,
   ) {
     super(message);
     this.name = "NetDeniedError";
@@ -214,7 +220,11 @@ export function isPrivateHostEntry(entry: string): boolean {
   return privateHostEntryProblem(entry) === null;
 }
 
-function exemptions(host: string, policy: NetPolicy): { all: boolean; cidrs: BlockList } {
+function exemptions(
+  host: string,
+  policy: NetPolicy,
+  origin: string | undefined,
+): { all: boolean; cidrs: BlockList } {
   const cidrs = new BlockList();
   let all = false;
   const literal = isIP(host) !== 0;
@@ -236,11 +246,15 @@ function exemptions(host: string, policy: NetPolicy): { all: boolean; cidrs: Blo
       all = true;
     }
   }
-  for (const origin of policy.trustedOrigins) {
-    try {
-      if (normalizeHost(new URL(origin).hostname) === host) all = true;
-    } catch {
-      // an unparseable origin trusts nothing
+  // a trusted origin exempts that exact origin (scheme, host and port), never its host on
+  // another port or scheme: a manifest URL there is judged like any other host
+  if (origin !== undefined) {
+    for (const trusted of policy.trustedOrigins) {
+      try {
+        if (new URL(trusted).origin === origin) all = true;
+      } catch {
+        // an unparseable origin trusts nothing
+      }
     }
   }
   return { all, cidrs };
@@ -262,13 +276,16 @@ function allowedBy(cidrs: BlockList, ip: string): boolean {
 
 /**
  * Resolves `host` (an IP literal is taken as is) and returns every address, in resolution order,
- * after checking that each is public or exempt by `policy`. Throws {@link NetDeniedError}
+ * after checking that each is public or exempt by `policy`. `origin` is the request URL's origin:
+ * only when it equals a `policy.trustedOrigins` entry does that trust apply (without it, trusted
+ * origins exempt nothing). Throws {@link NetDeniedError}
  * `net.dns_failed` (no answer) or `net.private_address` (some address is private and not exempt).
  */
 export async function resolvePublic(
   host: string,
   policy: NetPolicy,
   lookup: LookupFn = defaultLookup,
+  origin?: string,
 ): Promise<string[]> {
   const h = normalizeHost(host);
   let addrs: string[];
@@ -282,7 +299,7 @@ export async function resolvePublic(
     }
     if (addrs.length === 0) throw new NetDeniedError("net.dns_failed", h, `Cannot resolve ${h}.`);
   }
-  const ex = exemptions(h, policy);
+  const ex = exemptions(h, policy, origin);
   const refused = (a: string) =>
     isForbiddenAddress(a) && (isLinkLocalAddress(a) || (!ex.all && !allowedBy(ex.cidrs, a)));
   if (addrs.some(refused)) {

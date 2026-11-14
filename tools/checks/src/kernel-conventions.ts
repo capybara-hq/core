@@ -73,7 +73,16 @@ import {
  *   `// Ported from octok-platform <path> (owner-approved, 2026-10-28).`;
  * - kc-lock-in-tx / kc-side-effect-in-tx: see {@link checkTransactionalMethods} (ported from octok);
  * - kc-worker-only: a `@LockedCron` / `@LockedInterval` / `@Processor` provider is provided only by
- *   modules that only `WorkerModule` imports, transitively (see {@link checkWorkerOnly}).
+ *   modules that only `WorkerModule` imports, transitively (see {@link checkWorkerOnly});
+ * - kc-global-fetch: outbound HTTP that bypasses `net/` (`safeFetch`: public addresses only, the
+ *   connection pinned to the checked address, `net.httpsProxy`, no redirects) outside `net/`: a
+ *   call of the global `fetch` (a bare `fetch(`, or `globalThis.fetch(`) and any value use of
+ *   `undici` (a named, default or namespace import, a re-export, `require("undici")`,
+ *   `import("undici")`; a type-only import is fine). Known gaps: a file that binds the name `fetch`
+ *   anywhere (a variable, parameter, destructured name or another import: the check is
+ *   file-scoped, not scope-aware) is not checked for bare `fetch(` calls; a global `fetch` passed
+ *   around under another name; `node:http` / `node:https` requests; other HTTP clients
+ *   (`node-fetch`, `axios`, `got`, ...), which the kernel does not depend on today.
  *
  * Names are resolved, not matched as text ({@link buildResolver}): every rule above that looks for
  * a decorator, a function or a class follows aliased imports (`import { Cron as C }`), re-exports,
@@ -116,6 +125,7 @@ export const KC_RULES = [
   "kc-worker-only",
   "kc-enqueue-via-outbox",
   "kc-after-commit-hint",
+  "kc-global-fetch",
 ] as const;
 export type KcRule = (typeof KC_RULES)[number];
 
@@ -234,6 +244,14 @@ export const KC_ALLOWED_FACTORY_TOKENS: readonly KcFactoryAllowance[] = [
 export const KC_FORWARD_REF_ALLOWLIST: readonly { path: string; reason: string }[] = [];
 
 export const KC_EXCEPTIONS: readonly KcException[] = [
+  {
+    rule: "kc-global-fetch",
+    path: "packages/kernel/src/log-loki.ts",
+    reason:
+      "the Loki log push goes to the operator's own log endpoint (`log.loki.url`, env or file " +
+      "config, usually an internal http host), set up with the logger before any kernel service; " +
+      "no admin or remote party supplies it, so the public-address rules do not apply",
+  },
   {
     rule: "kc-lock",
     path: "packages/kernel/src/db/migrator.ts",
@@ -513,6 +531,8 @@ const MESSAGES: Record<KcRule, string> = {
   "kc-after-commit-hint": "afterCommit is for hints; owed work goes to the outbox",
   "kc-worker-only":
     "a cron, interval or queue-consumer provider must be provided only by modules that only WorkerModule imports (transitively)",
+  "kc-global-fetch":
+    "outbound HTTP outside net/: use safeFetch from net/safe-fetch.ts (public addresses, pinned DNS, net.httpsProxy, no redirects)",
 };
 
 const DECORATOR_HOSTS: Record<string, readonly string[]> = {
@@ -926,6 +946,42 @@ function collectKnown(files: FileInfo[], r: Resolver): Known {
   return known;
 }
 
+/**
+ * Whether the file binds the name `fetch` itself (a variable, parameter, function, destructured
+ * name or an import other than undici's), so a bare `fetch(` there need not be the global one.
+ */
+function bindsOwnFetch(program: Node): boolean {
+  let found = false;
+  visit(program, (n, anc) => {
+    if (found || n.type !== "Identifier" || n.name !== "fetch") return;
+    const parent = anc[anc.length - 1];
+    const grand = anc[anc.length - 2];
+    if (!parent) return;
+    if (parent.type === "VariableDeclarator" && parent.id === n) found = true;
+    else if (
+      /Function/.test(parent.type) &&
+      (parent.id === n || (parent.params as Node[] | undefined)?.includes(n))
+    ) {
+      found = true;
+    } else if (parent.type === "FormalParameter" || parent.type === "AssignmentPattern") {
+      found = parent.type === "FormalParameter" || parent.left === n;
+    } else if (
+      parent.type === "Property" &&
+      parent.value === n &&
+      grand?.type === "ObjectPattern"
+    ) {
+      found = true;
+    } else if (
+      (parent.type === "ImportSpecifier" || parent.type === "ImportDefaultSpecifier") &&
+      parent.local === n &&
+      (grand?.source as Node | undefined)?.value !== "undici"
+    ) {
+      found = true;
+    }
+  });
+  return found;
+}
+
 function scanFile(
   f: FileInfo,
   known: Known,
@@ -966,6 +1022,29 @@ function scanFile(
   }
 
   const inInfra = within(k, "infra");
+  const netHome = within(k, "net");
+  const ownFetch = !netHome && bindsOwnFetch(parsed.program);
+  if (!netHome) {
+    // undici (an import, a re-export, require or a dynamic import) builds requests outside net/
+    const isUndici = (src: unknown) => isNode(src) && src.value === "undici";
+    visit(parsed.program, (n, anc) => {
+      if (
+        (n.type === "ImportDeclaration" && n.importKind !== "type") ||
+        ((n.type === "ExportNamedDeclaration" || n.type === "ExportAllDeclaration") &&
+          n.exportKind !== "type")
+      ) {
+        if (isUndici(n.source)) hit("kc-global-fetch", n, anc);
+      } else if (n.type === "ImportExpression") {
+        if (isUndici(n.source)) hit("kc-global-fetch", n, anc);
+      } else if (
+        n.type === "CallExpression" &&
+        nameOf(n.callee) === "require" &&
+        isUndici((n.arguments as Node[])[0])
+      ) {
+        hit("kc-global-fetch", n, anc);
+      }
+    });
+  }
   const bullmq = new Set<string>();
   const queueTyped = new Set<string>();
   let importsIoredis = false;
@@ -1095,6 +1174,10 @@ function scanFile(
         const callee = nameOf(n.callee);
         const mc = memberCall(n);
         const fn = callee ?? mc?.prop;
+        if (!netHome) {
+          const viaGlobal = mc?.prop === "fetch" && nameOf(unwrap(mc.object)) === "globalThis";
+          if ((callee === "fetch" && !ownFetch) || viaGlobal) hit("kc-global-fetch", n, anc);
+        }
         if (fn === "transaction" || fn === "startTransaction") {
           if (mc && !within(k, "infra/database")) hit("kc-transaction", n, anc);
         }
