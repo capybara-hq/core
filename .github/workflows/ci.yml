@@ -314,19 +314,31 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      # The three kernel images share every layer but the last; the builder keeps them between steps.
-      - name: Build capybara-api
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          file: docker/kernel.Dockerfile
-          platforms: linux/amd64
-          build-args: ROLES=api
-          load: true
-          provenance: false
-          tags: capybara-api:test
-          cache-from: type=gha,scope=kernel-amd64
-          cache-to: ${{ env.CACHE_TO != '' && format('{0},scope=kernel-amd64', env.CACHE_TO) || '' }}
+      # The api and web images are independent, so build them at the same time. The builder keeps
+      # layers between steps, so the worker and gateway below reuse the kernel image's cache.
+      - name: Build capybara-api and capybara-web
+        shell: bash
+        run: |
+          kernel_cache=()
+          [ -n "${CACHE_TO:-}" ] && kernel_cache=(--cache-to "$CACHE_TO,scope=kernel-amd64")
+          web_cache=()
+          [ -n "${CACHE_TO:-}" ] && web_cache=(--cache-to "$CACHE_TO,scope=web-amd64")
+
+          docker buildx build --platform linux/amd64 --load --provenance=false \
+            --build-arg ROLES=api -f docker/kernel.Dockerfile -t capybara-api:test \
+            --cache-from type=gha,scope=kernel-amd64 "${kernel_cache[@]}" . &
+          api=$!
+          docker buildx build --platform linux/amd64 --load --provenance=false \
+            -f docker/web.Dockerfile -t capybara-web:test \
+            --cache-from type=gha,scope=web-amd64 "${web_cache[@]}" . &
+          web=$!
+
+          # Wait for both builds, then fail unless both succeeded.
+          api_ok=0
+          web_ok=0
+          wait "$api" || api_ok=$?
+          wait "$web" || web_ok=$?
+          [ "$api_ok" -eq 0 ] && [ "$web_ok" -eq 0 ]
       - name: Build capybara-worker
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -349,17 +361,6 @@ jobs:
           provenance: false
           tags: capybara-gateway:test
           cache-from: type=gha,scope=kernel-amd64
-      - name: Build capybara-web
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          file: docker/web.Dockerfile
-          platforms: linux/amd64
-          load: true
-          provenance: false
-          tags: capybara-web:test
-          cache-from: type=gha,scope=web-amd64
-          cache-to: ${{ env.CACHE_TO != '' && format('{0},scope=web-amd64', env.CACHE_TO) || '' }}
       - name: Compose smoke test
         env:
           SKIP_BUILD: "1"
