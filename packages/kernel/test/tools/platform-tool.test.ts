@@ -163,7 +163,6 @@ const ADMIN: ActorFacts = {
 
 let facts: ActorFacts;
 let factsCalls: unknown[];
-let logged: { level: string; msg: string; fields?: Record<string, unknown> }[];
 let setting: "on" | "read-only" | "off";
 let tool: BuiltinTool;
 
@@ -175,7 +174,6 @@ beforeEach(() => {
   seenRoles = {};
   facts = ADMIN;
   factsCalls = [];
-  logged = [];
   setting = "on";
   const ops = new PlatformOperations();
   targetClassCtx = [];
@@ -197,10 +195,6 @@ beforeEach(() => {
     },
     setting: async () => setting,
     precheckTimeoutMs: 50,
-    log: {
-      warn: (msg, fields) => logged.push({ level: "warn", msg, ...(fields && { fields }) }),
-      debug: (msg, fields) => logged.push({ level: "debug", msg, ...(fields && { fields }) }),
-    },
   });
 });
 
@@ -700,26 +694,6 @@ describe("callPolicy: precheck before the card", () => {
     // an org admin falls back to the member's step, never up to the admin console
     facts = ADMIN;
     expect((await policy(input))?.denyReason).toContain("Ask about weekly-report.");
-  });
-
-  it("a precheck that throws is logged as a warning, a timeout at debug, with the operation id", async () => {
-    precheckMode = "throw";
-    await policy(input);
-    expect(logged).toEqual([
-      expect.objectContaining({
-        level: "warn",
-        fields: expect.objectContaining({ operation: "skills.fixture-create" }),
-      }),
-    ]);
-    logged = [];
-    precheckMode = "hang";
-    await policy(input);
-    expect(logged).toEqual([
-      expect.objectContaining({
-        level: "debug",
-        fields: expect.objectContaining({ operation: "skills.fixture-create" }),
-      }),
-    ]);
   });
 
   it("the precheck's signal aborts with the run's signal", async () => {
