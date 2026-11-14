@@ -21,13 +21,20 @@
  * LESSOPEN and similar interpreter hooks on non-git programs are not inspected; tar still needs
  * `-c` before `-f` for the archive target; and variable state is tracked linearly across `&&` /
  * `||`. The standard credential producers (`env`, `printenv`, `set`, `export -p`, `declare -x`,
- * `gh auth token`, `gh auth status --show-token`, `git credential fill`, `ps e` / `ps -E`,
- * `launchctl getenv`) ask when printed and are denied when piped into a network command, and
- * `/proc/<pid>/environ` is a secret path (its glob form too). Two gaps stay open: a secret the
- * environment already handed to a variable and that another command or an unknown program prints
- * (`echo $TOKEN | curl …`) is not tracked; and config-value inspection is shallow — `git config
- * --get` / `--get-all` (including `http.extraheader`), `git config --list`, and `npm` / `pnpm` /
- * `yarn` / `pip config get` / `config list` can print a token and are not classified as producers.
+ * `gh auth token`, `gh auth status --show-token`, `git credential fill`, `launchctl getenv`, and
+ * every `ps` environment display — a bare BSD cluster with `e` or `E` (`ps eww`, `ps axE`), a
+ * dashed `-E`, and a Linux procps `x` selector together with a dashed or bare `e`, including in
+ * separate arguments (`ps -xe`, `ps -e -x`, `ps -auxe`)) ask when printed and are denied when
+ * piped into a network command. `/proc/<pid>/environ` is a secret path (its glob form too), and so
+ * is the same file reached through the `/proc/<pid>/root` symlink
+ * (`/proc/self/root/proc/self/environ`). Two gaps stay open: a secret the environment already
+ * handed to a variable and that another command or an unknown program prints (`echo $TOKEN |
+ * curl …`) is not tracked, because the table does not attempt shell data-flow provenance; and
+ * config-value inspection is shallow — `git config --get <key>` / `--get-all <key>` (including
+ * `http.extraheader`), `git config --list`, and `npm` / `pnpm` / `yarn` / `pip config get <key>` /
+ * `config list` can print a token and are not classified as producers, because a config value is
+ * ordinary text and classifying these whole programs would ask on every harmless read
+ * (`git config --get user.email`).
  */
 import type {
   ParsedCommand,
@@ -1005,8 +1012,13 @@ const SECRET_HOME_PATHS = [
   "~/.config/gh/hosts.yml",
 ];
 
-/** A path under `/proc` naming a process's environment (and its glob form): a secret dump. */
-const PROC_ENVIRON = /^\/proc\/(?:self|thread-self|[^/]+)(?:\/task\/[^/]+)?\/environ[^/]*$/;
+/**
+ * A path naming a process's environment (and its glob form): a secret dump. Unanchored on purpose:
+ * `/proc/<pid>/root` is a symlink to `/`, so `/proc/self/root/proc/self/environ` names the same
+ * file. Any path whose tail is a `/proc/.../environ` component is treated as that file (an ordinary
+ * directory named `proc` is unlikely enough to over-ask harmlessly).
+ */
+const PROC_ENVIRON = /\/proc\/(?:self|thread-self|[^/]+)(?:\/task\/[^/]+)?\/environ[^/]*$/;
 
 function isSecretPath(path: string, facts: ResolvedFacts): boolean {
   if (PROC_ENVIRON.test(path)) return true;
@@ -2280,9 +2292,12 @@ function shortOptionHas(args: string[], letter: string): boolean {
 
 /** Options of `ps` that take a value, so the next word is not a BSD-style letter cluster. */
 const PS_VALUE_OPTIONS: ReadonlySet<string> = new Set([
+  "-C",
   "-G",
   "-g",
   "-p",
+  "-q",
+  "-s",
   "-t",
   "-U",
   "-u",
@@ -2308,27 +2323,43 @@ const PS_VALUE_OPTIONS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Whether a `ps` invocation prints each process's environment: `ps eww` / `ps auxe` (the BSD-style
- * `e` letter), `ps -E`, or a dashed cluster containing `E`. UNIX-syntax `-e` (`ps -e`, `ps -ef`)
- * only selects every process and stays a plain listing.
+ * Whether a `ps` invocation prints each process's environment.
+ *
+ * macOS: a bare BSD-style cluster containing `e` (`ps eww`, `ps auxe`, `ps axe`) or `E`
+ * (`ps axE`) displays it, and a dashed `-E` does too (`ps -E`).
+ *
+ * Linux procps: any `x` selector switches to the BSD reading, where a dashed or bare `e` means the
+ * environment (`ps -xe`, `ps -ex`, `ps -xef`, `ps -auxe`, `ps -xe -u user`), and `e` may sit in a
+ * different argument from `x` (`ps -e -x`, `ps -x -e`). Without `x`, UNIX-syntax `-e` (`ps -e`,
+ * `ps -ef`, `ps -eww`) only selects every process and stays a plain listing. This over-asks
+ * `ps -e -x` on macOS (where `-e` is `-A`), which one prompt absorbs; never a false denial.
  */
 function psShowsEnvironment(args: string[]): boolean {
+  let hasX = false; // an `x` selector in a dashed or a bare BSD-style cluster
+  let dashedE = false; // a lower-case `e` in a dashed cluster (`-e`, `-xe`, `-ex`)
+  let dashedUpperE = false; // an upper-case `E` in a dashed cluster (`ps -E`, `ps -AE`)
+  let bareE = false; // `e` or `E` in a bare BSD-style cluster (`eww`, `axE`, `auxe`)
   for (let i = 0; i < args.length; i += 1) {
     const a = args[i] as string;
     if (a === "--") break;
     if (PS_VALUE_OPTIONS.has(a)) {
-      i += 1; // the option's value is not a BSD-style letter cluster (`ps -u user`)
+      i += 1; // the option's value is not a BSD-style letter cluster (`ps -u user -C editor`)
       continue;
     }
     if (a.startsWith("--")) continue;
     if (a.startsWith("-")) {
-      if (a.slice(1).includes("E")) return true;
+      const letters = a.slice(1);
+      if (letters.includes("x")) hasX = true;
+      if (letters.includes("e")) dashedE = true;
+      if (letters.includes("E")) dashedUpperE = true;
       continue;
     }
-    // A BSD-style letter cluster (`auxe`, `eww`, `axe`): `e` displays the environment.
-    if (a.includes("e")) return true;
+    if (a.includes("x")) hasX = true;
+    if (a.includes("e") || a.includes("E")) bareE = true;
   }
-  return false;
+  // A bare cluster prints the environment by itself; a dashed `E` always does; a dashed `e` only
+  // on the Linux BSD path, whose marker is an `x` selector anywhere in the same invocation.
+  return bareE || dashedUpperE || (dashedE && hasX);
 }
 
 /** `gh auth status` with `-t` / `--show-token` prints the login token, like `gh auth token`. */
@@ -2347,10 +2378,10 @@ function ghStatusShowsToken(args: string[]): boolean {
 
 /**
  * Whether an invocation prints credentials to its stdout: the environment (`env`, `set`,
- * `export -p`, `declare -x`, `printenv`, `ps e`, `ps -E`, `launchctl getenv`) or a stored
- * credential (`gh auth token`, `gh auth status --show-token`, `git credential fill`). Plain shell
- * reads allow these programs, yet their output is the owner's exported cloud keys and tokens (auto
- * mode) or a stored login. Printing one asks; piping it into a network command is a secret
+ * `export -p`, `declare -x`, `printenv`, every `ps` environment display, `launchctl getenv`) or a
+ * stored credential (`gh auth token`, `gh auth status --show-token`, `git credential fill`). Plain
+ * shell reads allow these programs, yet their output is the owner's exported cloud keys and tokens
+ * (auto mode) or a stored login. Printing one asks; piping it into a network command is a secret
  * exfiltration (see `readsSecret`).
  *
  * Only the printing forms count: `env VAR=1 cmd` never reaches here (the parser unwraps it),
