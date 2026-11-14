@@ -320,25 +320,24 @@ function tagged<P>(
  * Sandbox config problems to tell operators at startup (English log lines):
  * - `runtime.maxRunSeconds` below `sandbox.limits.maxCommandSeconds`: long commands are cut by the
  *   run time limit (Ruling M20);
- * - auto mode is allowed but the current provider plugin sets `openEgress: "off"`: every creation
- *   of a cloud device with the open public network is refused.
+ * - the current provider plugin refuses the open public network (`refuseOpenNetwork: true` in its
+ *   startup config) while an org can be on it: auto mode always is, and a sandbox-mode cloud device
+ *   keeps its org's cloud network, open by default, so turning auto mode off does not avoid it
+ *   (auto mode hardening spec K3). Only the kill switch (`sandbox.limits.egress: none`) does.
  * No run duration limit (`runtime.maxRunSeconds` 0, the default) cuts no command, so there is
- * nothing to tell. `autoAllowed`: whether the deployment allows auto mode now (read live; the
- * startup config alone when absent).
+ * nothing to tell.
  */
 export function sandboxConfigWarnings(
-  cfg: Pick<KernelConfig, "runtime" | "sandbox" | "devices" | "extensionConfig">,
+  cfg: Pick<KernelConfig, "runtime" | "sandbox" | "extensionConfig">,
   providerPlugin?: string,
-  autoAllowed: boolean = cfg.devices.autoMode !== "off",
 ): { level: "warn"; message: string }[] {
   const out: { level: "warn"; message: string }[] = [];
-  if (autoAllowed && providerPlugin !== undefined) {
-    // absent means the plugin's default ("proxy"), which creates open instances
-    const pc = cfg.extensionConfig[providerPlugin] as { openEgress?: unknown } | undefined;
-    if (pc?.openEgress === "off") {
+  if (providerPlugin !== undefined && cfg.sandbox.limits.egress !== "none") {
+    const pc = cfg.extensionConfig[providerPlugin] as { refuseOpenNetwork?: unknown } | undefined;
+    if (pc?.refuseOpenNetwork === true) {
       out.push({
         level: "warn",
-        message: `auto mode is allowed but extensionConfig."${providerPlugin}".openEgress is "off": the ${providerPlugin} plugin refuses to create cloud devices with the open public network; set openEgress to "proxy" (or "direct" for trusted deployments only), or switch the organization's cloud network to the allowlist`,
+        message: `extensionConfig."${providerPlugin}".refuseOpenNetwork is true: the ${providerPlugin} plugin refuses cloud devices on the open public network, which every device in auto mode and every sandbox-mode device of an organization whose cloudNetwork is open (the default) uses; set refuseOpenNetwork to false, or turn auto mode off (devices.autoMode) and have every organization switch its cloudNetwork to the allowlist`,
       });
     }
   }

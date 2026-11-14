@@ -1663,7 +1663,7 @@ export const KernelConfigSchema = z.object({
             .enum(["none", "allowlist"], {
               error: (iss) =>
                 iss.input === "open"
-                  ? 'sandbox.limits.egress does not take "open": the open public network is a cloud device\'s default in auto mode; use "allowlist" or "none"'
+                  ? 'sandbox.limits.egress does not take "open": the open public network is set by devices.autoMode and an organization\'s cloudNetwork; use "allowlist" or "none"'
                   : undefined,
             })
             .default("allowlist")
@@ -1696,8 +1696,8 @@ export const KernelConfigSchema = z.object({
   devices: z
     .object({
       /**
-       * The platform's auto-mode switch (auto mode spec §4.3): the default for a new local device,
-       * and a cloud device's network follows it. Also a deployment setting the super admin changes
+       * The platform's auto-mode switch (auto mode spec §4.3): whether a device may run in auto
+       * mode; when off, a cloud device keeps its org's cloudNetwork (open by default). Also a deployment setting the super admin changes
        * in the admin console; the startup config wins over it, so this field is optional with no
        * schema default (the default `allowed` is applied by `readDevicesAutoMode`: a schema default
        * would be indistinguishable from a value the config source set, and the stored choice may
@@ -1710,7 +1710,7 @@ export const KernelConfigSchema = z.object({
           meta({
             hot: true,
             description:
-              "Whether devices may run in auto mode (default allowed): auto mode is the default of a new local device, and a cloud device's network opens to public hosts when it is allowed (the allowlist when off). An organization may turn it off and follow the platform; only capybara-device on the machine turns auto mode on, and the web may switch a local device to sandbox mode. Set here, it is read-only in the admin console",
+              "Whether devices may run in auto mode (default allowed): auto mode is the default of a new local device and of a cloud device, whose network in auto mode is the open public network (private and internal addresses blocked). When off, devices run in sandbox mode: local devices on their allowlist, cloud devices on their organization's cloud network (cloudNetwork, open by default, or the allowlist the organization sets). An organization may turn it off and follow the platform; only capybara-device on the machine turns auto mode on for a local device. Set here, it is read-only in the admin console",
           }),
         ),
       maxPersonal: z
