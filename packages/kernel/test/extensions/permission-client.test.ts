@@ -155,7 +155,7 @@ describe("capybara extensions review", () => {
     expect(review.stdout).toContain("client-a 0.1.0: awaiting approval (new extension)");
     expect(lines).toContain("  + permissions.client  (sensitive)");
     expect(lines).toContain("  + ui.component:hud  (sensitive)");
-  }, 180_000);
+  });
 });
 
 /** Runs `pnpm capybara <args>` as a child process against `dbUrl` (Redis unreachable: not used). */

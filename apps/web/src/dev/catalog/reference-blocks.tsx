@@ -74,6 +74,7 @@ import { CARD_GRID_BLOCKS } from "./card-grid-blocks";
 import { CONFIG_FORM_BLOCKS } from "./config-form-blocks";
 import { CONVERSATION_BLOCKS } from "./conversation-blocks";
 import { CONVERSATION_PAGE_BLOCKS } from "./conversation-page-blocks";
+import { DEVICE_BLOCKS } from "./device-blocks";
 import { COMMANDS } from "./fixtures";
 import { headRhythmBlocks } from "./head-rhythm-blocks";
 import { OVERVIEW_SECTION_BLOCKS } from "./overview-section-blocks";
@@ -1341,4 +1342,5 @@ export const REFERENCE_BLOCKS = {
   ...TREND_CHART_BLOCKS,
   ...SCHEDULE_CALENDAR_BLOCKS,
   ...THEME_SWATCH_BLOCKS,
+  ...DEVICE_BLOCKS,
 } as const;

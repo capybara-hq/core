@@ -1,12 +1,10 @@
-import {
-  SANDBOX_TIERS,
-  type SandboxLimits,
-  type SandboxTier,
-  tierAtMost,
-  validateAllowHost,
-} from "@capybara-hq/plugin-sdk";
+import { type SandboxLimits, validateAllowHost } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Module, Optional } from "@nestjs/common";
 import { z } from "zod";
+import {
+  type PlatformAttribution,
+  readPlatformAttribution,
+} from "../attribution/platform-attribution.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
@@ -24,8 +22,11 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
-import { type PlatformTiers, readPlatformTiers } from "../sandbox/platform-tiers.js";
-import { type EffectiveSandboxPolicy, effectiveSandboxPolicy } from "../sandbox/tiers.js";
+import {
+  type DevicesAutoMode,
+  type DevicesAutoModeView,
+  readDevicesAutoMode,
+} from "../sandbox/platform-auto-mode.js";
 import { assertThemeOnIn } from "../themes/theme-state.js";
 import { IanaTimeZone } from "../time-zone.js";
 import {
@@ -43,11 +44,12 @@ import { OrgLock, OrgLockModule } from "./org-lock.js";
  * - `sandboxToolPolicy`：沙箱工具的默认策略（M5 T8，默认 allow）。为 `ask` 时除只读的
  *   `Read` / `Glob` / `Grep` 外都需要审批（执行时实时读取）。
  * - `wakeOnBackgroundTask`：组织对 `runtime.wakeOnBackgroundTask` 的覆盖（缺省跟随部署），见 {@link effectiveWakeOnBackgroundTask}。
- * - `sandboxEgress`：组织的沙箱出站（Ruling M19 / D6），缺省跟随部署的 `sandbox.limits.egress` + `allowHosts`。
- *   See `baseSandboxEgress` (sandbox/tiers.ts). 存量值非法时按 `none` 读（宁可断网，不悄悄放宽到部署默认）。
- * - `sandboxTier`: the org's sandbox tier ceiling, default and unsandboxed switch (sandbox dev tiers
- *   spec §4.1), each absent = follow the platform (`sandbox.tiers`); never above the platform. An
- *   invalid stored value reads as `{ max: "strict" }` (narrower, never wider).
+ * - `autoMode`: whether devices of the org may run in auto mode (auto mode spec §4.3); absent
+ *   follows the platform's `devices.autoMode`, and an invalid stored value reads as `off`
+ *   (narrower, never wider). Setting `allowed` while the platform is `off` is refused.
+ * - `cloudNetwork`: the org's network for cloud devices (auto mode spec §4.3): `open` (any public
+ *   host; the default) or `allowlist` with `allowHosts` (the deployment's list when omitted). An
+ *   invalid stored value reads as `{ mode: "allowlist", allowHosts: [] }` (narrower, never wider).
  * - `platformTool`: the `Platform` builtin for the whole org (Platform tool spec §3): `on`,
  *   `read-only` (writes listed as unavailable) or `off` (default `on`).
  * - `timeZone`: the org's default time zone (IANA; absent = UTC) for senders without one of their
@@ -60,16 +62,20 @@ import { OrgLock, OrgLockModule } from "./org-lock.js";
  *   not in the PATCH yet; an invalid stored value reads as `{ enabled: false }` (fails closed).
  */
 
-/** 组织沙箱出站白名单的主机数上限。 */
+/** The org cloud-network allowlist's host limit. */
 export const ORG_SANDBOX_ALLOW_HOSTS_MAX = 200;
 
 /**
- * 组织的沙箱出站设置：`none`（只有回环），或 `allowlist`。`allowHosts` 给出时**替换**部署的白名单
- * （组织可以去掉预置项、也可以加别的主机），省略时沿用部署的白名单。没有 `open`：组织不能比部署放得更开。
+ * The org's network for cloud devices (auto mode spec §4.3): `open` (any public host; loopback,
+ * private and cloud metadata addresses are blocked outside the container) or `allowlist` with
+ * `allowHosts`. `allowHosts` given **replaces** the deployment's list (the org may drop the presets
+ * and add its own hosts); omitted, the deployment's `sandbox.limits.allowHosts` applies.
+ * The host list is also the ceiling a local device in sandbox mode reaches (the device intersects
+ * it with its own list), so narrowing it limits local sandbox devices too.
  */
-export const SandboxEgressSettingSchema = z
+export const CloudNetworkSettingSchema = z
   .object({
-    mode: z.enum(["none", "allowlist"]),
+    mode: z.enum(["open", "allowlist"]),
     allowHosts: z
       .array(z.string())
       .max(ORG_SANDBOX_ALLOW_HOSTS_MAX)
@@ -87,24 +93,19 @@ export const SandboxEgressSettingSchema = z
   })
   .strict();
 
-export type SandboxEgressSetting = z.infer<typeof SandboxEgressSettingSchema>;
+export type CloudNetworkSetting = z.infer<typeof CloudNetworkSettingSchema>;
 
-const TierSchema = z.enum(["strict", "dev", "open"]) satisfies z.ZodType<SandboxTier>;
+/** What an invalid stored `cloudNetwork` reads as: the allowlist with no host (never wider). */
+export const invalidCloudNetwork = (): CloudNetworkSetting => ({
+  mode: "allowlist",
+  allowHosts: [],
+});
 
 /**
- * The org's sandbox tier setting (sandbox dev tiers spec §4.1): `max` the highest tier its devices
- * may reach, `default` the tier of a device that chose none, `allowUnsandboxed` false forbids
- * unsandboxed local devices. Each absent = follow the platform's `sandbox.tiers`.
+ * The org's auto-mode switch (auto mode spec §4.3): `allowed` or `off`; absent follows the
+ * platform's `devices.autoMode`. An invalid stored value reads as `off` (narrower, never wider).
  */
-export const SandboxTierSettingSchema = z
-  .object({
-    max: TierSchema.optional(),
-    default: TierSchema.optional(),
-    allowUnsandboxed: z.boolean().optional(),
-  })
-  .strict();
-
-export type SandboxTierSetting = z.infer<typeof SandboxTierSettingSchema>;
+export const AutoModeSetting = z.enum(["allowed", "off"]) satisfies z.ZodType<DevicesAutoMode>;
 
 /**
  * The org's theme setting (themes spec §7): `id` a theme on in the org (a `platform_themes` id),
@@ -197,9 +198,10 @@ export const OrgSettingsSchema = z.object({
   locale: z.enum(["zh", "en"]).default("en").catch("en"),
   sandboxToolPolicy: z.enum(["allow", "ask"]).default("allow").catch("allow"),
   platformTool: z.enum(["on", "read-only", "off"]).default("on").catch("on"),
-  sandboxEgress: SandboxEgressSettingSchema.optional().catch({ mode: "none" }),
-  /** The org's sandbox tiers (sandbox dev tiers spec §4.1); absent follows the platform. */
-  sandboxTier: SandboxTierSettingSchema.optional().catch({ max: "strict" }),
+  /** The org's auto-mode switch (auto mode spec §4.3); absent follows the platform. */
+  autoMode: AutoModeSetting.optional().catch("off"),
+  /** The org's network for cloud devices (auto mode spec §4.3); absent = open (the default). */
+  cloudNetwork: CloudNetworkSettingSchema.optional().catch(invalidCloudNetwork),
   /** Overrides `runtime.wakeOnBackgroundTask`; absent follows the deployment. */
   wakeOnBackgroundTask: z.boolean().optional().catch(undefined),
   /** The org's default time zone (run context spec §3.3); absent = UTC. */
@@ -232,13 +234,16 @@ export const OrgSettingsPatchSchema = z
     platformTool: z.enum(["on", "read-only", "off"]).optional(),
     /** null clears (follow the deployment again). */
     wakeOnBackgroundTask: z.boolean().nullable().optional(),
-    /** null 清除（恢复跟随部署默认）。 */
-    sandboxEgress: SandboxEgressSettingSchema.nullable().optional(),
     /**
-     * The org's sandbox tiers, replaced whole (fields left out follow the platform); never above
-     * the platform (`org.sandbox_tier_not_allowed`). null clears it.
+     * The org's auto-mode switch; null clears it (follow the platform). `allowed` while the
+     * platform is `off` -> 400 `org.auto_mode_not_allowed`.
      */
-    sandboxTier: SandboxTierSettingSchema.nullable().optional(),
+    autoMode: AutoModeSetting.nullable().optional(),
+    /**
+     * The org's network for cloud devices, replaced whole (hosts left out follow the deployment);
+     * null clears it (open). Through the Platform tool or an API token it may only narrow.
+     */
+    cloudNetwork: CloudNetworkSettingSchema.nullable().optional(),
     /** The org's default time zone (IANA); null clears it (UTC). */
     timeZone: IanaTimeZone.nullable().optional(),
     /**
@@ -273,8 +278,9 @@ export function effectiveWakeOnBackgroundTask(
 }
 
 /**
- * 组织实际生效的沙箱限额（C19 / Ruling M16）：超级管理员的覆盖（部署设置 `sandboxLimitOverrides[orgId]`）
- * 给出的 cpu / memoryMb 替换部署默认，未给的项、disk 与出站沿用 `deployment`。只在创建沙箱时读取。
+ * The org's effective sandbox limits (C19 / Ruling M16): the super admin's override (deployment
+ * setting `sandboxLimitOverrides[orgId]`) replaces the deployment's cpu / memoryMb; fields it does
+ * not give, disk and the network, stay as in `deployment`. Read only when an instance is created.
  */
 export function effectiveSandboxLimits(
   deployment: SandboxLimits,
@@ -282,7 +288,7 @@ export function effectiveSandboxLimits(
 ): SandboxLimits {
   return {
     ...deployment,
-    allowHosts: [...deployment.allowHosts],
+    network: { ...deployment.network, hosts: [...deployment.network.hosts] },
     ...(override?.cpu !== undefined && { cpu: override.cpu }),
     ...(override?.memoryMb !== undefined && { memoryMb: override.memoryMb }),
   };
@@ -295,21 +301,27 @@ export interface OrgSandboxLimits {
   source: "deployment" | "override";
 }
 
-/** 设置页展示用的部署默认值（`GET` 一并返回）。 */
+/** The deployment defaults the settings page shows for "follow the platform" (`GET` returns them). */
 export interface OrgSettingsDeployment {
-  sandboxEgress: { mode: "none" | "allowlist"; allowHosts: string[] };
-  /** The platform's tiers (`sandbox.tiers`) and the dev hosts the dev tier adds. */
-  sandboxTiers: {
-    max: SandboxTier;
-    default: SandboxTier;
-    allowUnsandboxed: boolean;
-    devHosts: string[];
-  };
+  /** The platform's auto-mode switch and where it comes from. */
+  autoMode: DevicesAutoModeView;
+  /**
+   * The deployment's default cloud network: `open` (the normal default; `allowlist` when
+   * `sandbox.limits.egress` is `none`, the kill switch) and the host list an allowlist starts from.
+   */
+  cloudNetwork: { mode: "open" | "allowlist"; allowHosts: string[] };
+  /** The platform's effective attribution defaults for agent-created commits and pull requests. */
+  attribution: PlatformAttribution;
+  /**
+   * Whether the deployment set `http.publicUrl`. Without it a requested conversation link cannot be
+   * added to a pull request, so the agent page can say why the link setting has no effect.
+   */
+  publicUrl: boolean;
   /** The platform's conversation compaction settings (what "follow the platform" means). */
   compaction: CompactionSettings;
 }
 
-/** 按值比较（`sandboxEgress` 是对象）；键序由 schema 固定。 */
+/** Compare by value (`cloudNetwork` is an object); the schema fixes the key order. */
 const sameSettings = (a: OrgSettings, b: OrgSettings): boolean =>
   JSON.stringify(OrgSettingsSchema.parse(a)) === JSON.stringify(OrgSettingsSchema.parse(b));
 
@@ -332,18 +344,20 @@ export async function readOrgSettings(db: KernelSchemaDb, orgId: string): Promis
   return parseOrgSettings(row?.settings);
 }
 
-const sandboxTierNotAllowed = (message: string): ApiError =>
-  new ApiError("org.sandbox_tier_not_allowed", message);
+const autoModeNotAllowed = (message: string): ApiError =>
+  new ApiError("org.auto_mode_not_allowed", message);
 
-/** Whether a stored settings object holds a `sandboxTier` this version reads as `{ max: "strict" }`. */
-export function invalidStoredSandboxTier(raw: unknown): boolean {
-  const v = asObject(raw).sandboxTier;
-  return v !== undefined && !SandboxTierSettingSchema.safeParse(v).success;
+/** Whether a stored settings object holds an `autoMode` this version reads as `off`. */
+export function invalidStoredAutoMode(raw: unknown): boolean {
+  const v = asObject(raw).autoMode;
+  return v !== undefined && !AutoModeSetting.safeParse(v).success;
 }
 
-/** A setting's tier for intent comparison: absent (follow the platform) ranks above every tier. */
-const intentRank = (t: SandboxTier | undefined): number =>
-  t === undefined ? SANDBOX_TIERS.length : SANDBOX_TIERS.indexOf(t);
+/** Whether a stored settings object holds a `cloudNetwork` this version reads as an empty allowlist. */
+export function invalidStoredCloudNetwork(raw: unknown): boolean {
+  const v = asObject(raw).cloudNetwork;
+  return v !== undefined && !CloudNetworkSettingSchema.safeParse(v).success;
+}
 
 /** 组织设置服务：读取与修改（修改需 `org.update`，锁内实时复核角色，写审计）。 */
 @Injectable()
@@ -352,41 +366,48 @@ export class OrgSettingsService {
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(OrgLock) private readonly orgLock: OrgLock,
-    /** The deployment config (`sandboxEgress` may not exceed the deployment's). */
-    @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
+    /**
+     * The deployment config: `sandbox.limits` and the platform's auto-mode switch
+     * (`devices.autoMode`; the org may follow it, never exceed it).
+     */
+    @Inject(KernelConfigService)
+    private readonly config: Pick<KernelConfigService, "get" | "fieldSource">,
     @Optional() @Inject(KERNEL_LOGGER) private readonly log?: KernelLogger,
   ) {}
 
-  /** Parses stored settings, warning when an invalid `sandboxTier` narrows to `{ max: "strict" }`. */
+  /** Parses stored settings, warning when an invalid `autoMode` narrows to `off` or an invalid
+   * `cloudNetwork` to an empty allowlist. */
   private parseStored(orgId: string, raw: unknown): OrgSettings {
-    if (invalidStoredSandboxTier(raw)) {
-      this.log?.warn("org settings: stored sandboxTier is invalid; it reads as max strict", {
-        orgId,
-      });
+    if (invalidStoredAutoMode(raw)) {
+      this.log?.warn("org settings: stored autoMode is invalid; it reads as off", { orgId });
+    }
+    if (invalidStoredCloudNetwork(raw)) {
+      this.log?.warn(
+        "org settings: stored cloudNetwork is invalid; it reads as an empty allowlist",
+        {
+          orgId,
+        },
+      );
     }
     return parseOrgSettings(raw);
-  }
-
-  /** The platform's effective sandbox tiers (the startup config over the admin console's choice). */
-  platformTiers(): Promise<PlatformTiers> {
-    return readPlatformTiers(this.db.db, this.config, this.log);
   }
 
   /** 部署默认值（设置页展示「跟随部署」时的实际取值）。 */
   async deployment(): Promise<OrgSettingsDeployment> {
     const lim = this.config.get().sandbox.limits;
-    const [tiers, compaction] = await Promise.all([
-      this.platformTiers(),
+    const [autoMode, attribution, compaction] = await Promise.all([
+      readDevicesAutoMode(this.db.db, this.config, this.log),
+      readPlatformAttribution(this.db.db, this.config, this.log),
       readPlatformCompactionSettings(this.db.db),
     ]);
     return {
-      sandboxEgress: { mode: lim.egress, allowHosts: [...lim.allowHosts] },
-      sandboxTiers: {
-        max: tiers.max,
-        default: tiers.default,
-        allowUnsandboxed: tiers.allowUnsandboxed,
-        devHosts: [...lim.devHosts],
-      },
+      autoMode,
+      cloudNetwork:
+        lim.egress === "none"
+          ? { mode: "allowlist", allowHosts: [] }
+          : { mode: "open", allowHosts: [...lim.allowHosts] },
+      attribution,
+      publicUrl: this.config.get().http.publicUrl !== undefined,
       compaction,
     };
   }
@@ -418,33 +439,11 @@ export class OrgSettingsService {
 
   /** The refusals of {@link update} that need no read of the org (the Platform tool's precheck). */
   async check(patch: OrgSettingsPatch): Promise<void> {
-    if (
-      patch.sandboxEgress?.mode === "allowlist" &&
-      this.config.get().sandbox.limits.egress === "none"
-    ) {
-      throw new ApiError(
-        "org.sandbox_egress_not_allowed",
-        "This deployment disables sandbox network access (sandbox.limits.egress is none); an organization can only set sandboxEgress to none",
-      );
-    }
-    const t = patch.sandboxTier;
-    if (t != null) {
-      const platform = await this.platformTiers();
-      if (t.max !== undefined && !tierAtMost(t.max, platform.max)) {
-        throw sandboxTierNotAllowed(
-          `The platform allows sandbox tiers up to ${platform.max}; sandboxTier.max cannot be ${t.max}`,
-        );
-      }
-      const max = t.max ?? platform.max;
-      if (t.default !== undefined && !tierAtMost(t.default, max)) {
-        throw sandboxTierNotAllowed(
-          `sandboxTier.default (${t.default}) cannot be above the organization's highest tier (${max})`,
-        );
-      }
-      if (t.allowUnsandboxed === true && !platform.allowUnsandboxed) {
-        throw sandboxTierNotAllowed(
-          "The platform does not allow unsandboxed devices (sandbox.tiers.allowUnsandboxed is false); sandboxTier.allowUnsandboxed cannot be true",
-        );
+    // turning auto mode on where the platform turned it off is wider than the platform allows
+    if (patch.autoMode === "allowed") {
+      const platform = await readDevicesAutoMode(this.db.db, this.config, this.log);
+      if (platform.mode === "off") {
+        throw autoModeNotAllowed("The platform does not allow auto mode");
       }
     }
   }
@@ -457,7 +456,7 @@ export class OrgSettingsService {
     /** Merged into the audit detail (the Platform tool's `via: "agent"`). */
     auditDetail?: Record<string, unknown>,
     /**
-     * `onlyNarrows` (the Platform tool, API tokens): refuse a `sandboxTier` or `sandboxEgress`
+     * `onlyNarrows` (the Platform tool, API tokens): refuse an `autoMode` or `cloudNetwork`
      * change that widens (see {@link assertOnlyNarrows}); only a person in a session widens.
      */
     opts?: { onlyNarrows?: boolean },
@@ -467,75 +466,46 @@ export class OrgSettingsService {
   }
 
   /**
-   * The effective sandbox policy for the org's settings and a device's own tier (null = none);
-   * `tiers`: the platform's tiers when the caller already read them.
-   */
-  async sandboxPolicy(
-    settings: OrgSettings,
-    deviceTier: SandboxTier | null,
-    tiers?: PlatformTiers,
-  ): Promise<EffectiveSandboxPolicy> {
-    const deployment = {
-      limits: this.config.get().sandbox.limits,
-      tiers: tiers ?? (await this.platformTiers()),
-    };
-    return effectiveSandboxPolicy(deployment, settings, deviceTier);
-  }
-
-  /**
-   * Refuses a patch that widens the org's sandbox (sandbox dev tiers spec §2, §7.2: only a person
-   * widens it, never the Platform tool or an API token):
-   * - `sandboxTier`: the effective ceiling, default or unsandboxed switch rises, or a stored cap
-   *   loosens (an absent `max` / `default` follows the platform, so it ranks above every tier and
-   *   clearing a cap that equals today's platform value is a widening; an explicit
-   *   `allowUnsandboxed: false` stays false). A cleared `default` under a new `max` no higher than
-   *   the old default is no loosening: the default never exceeds the ceiling. The value is
-   *   replaced whole, so the refusal names the fields the patch would clear;
-   * - `sandboxEgress`: the base list grows: from none to anything else, or to hosts (the
-   *   deployment's when the org gives none) not all in the current list.
+   * Refuses a patch that widens the org's sandbox (auto mode spec §4.3: only a person widens it,
+   * never the Platform tool or an API token):
+   * - `autoMode`: `allowed` where the organization runs `off` (an absent value follows the
+   *   platform); clearing it follows the platform too, never wider than the platform allows;
+   * - `cloudNetwork`: `open` where the network is the allowlist, or a host the current allowlist
+   *   does not have (the deployment's `sandbox.limits.allowHosts` when the org gives none).
+   *   `cloudNetwork.allowHosts` is also the local sandbox-mode ceiling (`orgAllowedDomains` in
+   *   `sandbox/modes.ts` becomes `deviceLimits.localAllowedDomains`, which the device intersects
+   *   with its own list): an org with no `cloudNetwork` still caps its local devices at the
+   *   deployment's list, and an org whose network is `open` still caps them at its own `allowHosts`.
+   *   The host comparison therefore applies to both shapes, whatever the target mode: a patch may
+   *   only keep or lower the host set. Switching from `open` is a widening by itself, and the host
+   *   set must not grow even when the target stays `open` (spec §4.2, §4.3).
    */
   async assertOnlyNarrows(before: OrgSettings, patch: OrgSettingsPatch): Promise<void> {
-    if (patch.sandboxTier !== undefined) {
-      const next = patch.sandboxTier ?? undefined;
-      const prev = before.sandboxTier;
-      const tiers = await this.platformTiers();
-      const b = await this.sandboxPolicy(before, null, tiers);
-      const a = await this.sandboxPolicy({ ...before, sandboxTier: next }, null, tiers);
-      // a cleared default follows the platform, capped by the ceiling: `max` bounds it then
-      const nextDefault =
-        next?.default === undefined && next?.max !== undefined ? next.max : next?.default;
-      if (
-        !tierAtMost(a.ceiling, b.ceiling) ||
-        !tierAtMost(a.defaultTier, b.defaultTier) ||
-        (a.allowUnsandboxed && !b.allowUnsandboxed) ||
-        intentRank(next?.max) > intentRank(prev?.max) ||
-        intentRank(nextDefault) > intentRank(prev?.default) ||
-        (prev?.allowUnsandboxed === false && next?.allowUnsandboxed !== false)
-      ) {
-        const cleared = (["max", "default", "allowUnsandboxed"] as const).filter(
-          (f) => prev?.[f] !== undefined && next?.[f] === undefined,
-        );
-        throw sandboxTierNotAllowed(
-          "Raising the sandbox level needs a person in the organization settings." +
-            (cleared.length === 0
-              ? ""
-              : ` sandboxTier is replaced whole: this change clears ${cleared.join(", ")}` +
-                " (which would then follow the platform); give the values to keep again."),
+    if (patch.autoMode !== undefined) {
+      const platform = await readDevicesAutoMode(this.db.db, this.config, this.log);
+      const next = patch.autoMode === null ? platform.mode : patch.autoMode;
+      if ((before.autoMode ?? platform.mode) !== "allowed" && next === "allowed") {
+        throw autoModeNotAllowed(
+          "Turning auto mode on needs a person in the organization settings.",
         );
       }
     }
-    if (patch.sandboxEgress !== undefined) {
-      const deploymentHosts = this.config.get().sandbox.limits.allowHosts;
-      const prev = before.sandboxEgress;
-      const next = patch.sandboxEgress ?? undefined;
-      const hostsOf = (e: typeof prev): string[] => e?.allowHosts ?? deploymentHosts;
+    if (patch.cloudNetwork !== undefined) {
+      const lim = this.config.get().sandbox.limits;
+      const defaultMode = lim.egress === "none" ? "allowlist" : "open";
+      const defaultHosts = lim.egress === "none" ? [] : [...lim.allowHosts];
+      const prev = before.cloudNetwork;
+      const next = patch.cloudNetwork ?? undefined;
+      const modeOf = (v: typeof prev) => v?.mode ?? defaultMode;
+      const hostsOf = (v: typeof prev): string[] => v?.allowHosts ?? defaultHosts;
+      const nextMode = next?.mode ?? defaultMode;
       const widens =
-        next?.mode !== "none" &&
-        (prev?.mode === "none" || !hostsOf(next).every((h) => hostsOf(prev).includes(h)));
+        (nextMode === "open" && modeOf(prev) !== "open") ||
+        !hostsOf(next).every((h) => hostsOf(prev).includes(h));
       if (widens) {
         throw new ApiError(
           "org.sandbox_egress_not_allowed",
-          "Widening the sandbox network needs a person in the organization settings.",
+          "Widening the cloud network needs a person in the organization settings.",
         );
       }
     }
@@ -565,7 +535,7 @@ export class OrgSettingsService {
     const changes = Object.fromEntries(
       Object.entries(patch)
         .filter(([, v]) => v !== undefined)
-        // null clears sandboxEgress / wakeOnBackgroundTask: follow the deployment default again
+        // null clears autoMode / cloudNetwork / wakeOnBackgroundTask: follow the deployment again
         .map(([k, v]) => [k, v === null ? undefined : v]),
     ) as Partial<OrgSettings>;
     const arrangementPatch = patch.uiArrangement;
@@ -591,12 +561,8 @@ export class OrgSettingsService {
       after.uiArrangement = mergeArrangement(before.uiArrangement, arrangementPatch);
       if (Object.keys(after.uiArrangement).length === 0) delete after.uiArrangement;
     }
-    if (after.sandboxEgress === undefined) delete after.sandboxEgress;
-    // an empty sandboxTier is the same as none: follow the platform
-    if (after.sandboxTier !== undefined && Object.keys(after.sandboxTier).length === 0) {
-      delete after.sandboxTier;
-    }
-    if (after.sandboxTier === undefined) delete after.sandboxTier;
+    if (after.autoMode === undefined) delete after.autoMode;
+    if (after.cloudNetwork === undefined) delete after.cloudNetwork;
     if (after.wakeOnBackgroundTask === undefined) delete after.wakeOnBackgroundTask;
     if (after.timeZone === undefined) delete after.timeZone;
     if (after.theme === undefined) delete after.theme;
@@ -613,10 +579,11 @@ export class OrgSettingsService {
     if (patch.theme?.id != null && patch.theme.id !== before.theme?.id) {
       await assertThemeOnIn(this.db.db, orgId, patch.theme.id);
     }
-    // 与存量合并：保留本版本不认识的键（清除的 sandboxEgress 不留在存量里）
+    // Merge with the stored value: keep the keys this version does not know (a cleared autoMode /
+    // cloudNetwork is not kept)
     const {
-      sandboxEgress: _old,
-      sandboxTier: _oldTier,
+      autoMode: _oldAutoMode,
+      cloudNetwork: _oldNetwork,
       wakeOnBackgroundTask: _oldWake,
       timeZone: _oldZone,
       theme: _oldTheme,
@@ -644,7 +611,8 @@ export class OrgSettingsService {
 
 /**
  * The one {@link OrgSettingsService}: the orgs module re-exports it, and the catalog imports it
- * directly (approving a network request writes `sandboxEgress`) without a cycle through OrgsModule.
+ * directly (approving a network request writes the org's cloud network) without a cycle through
+ * OrgsModule.
  */
 @Module({
   imports: [OrgLockModule],

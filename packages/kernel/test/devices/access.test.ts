@@ -74,7 +74,7 @@ beforeAll(async () => {
     .id;
   owner = await session(k, "owner");
   orgId = await createOrg(owner);
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();

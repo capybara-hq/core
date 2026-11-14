@@ -251,6 +251,91 @@ describe("收件箱（InboxPage）", () => {
   });
 });
 
+describe("inbox: command review asks (auto mode spec §5.4)", () => {
+  const ask = (over: Record<string, unknown> = {}) => ({
+    deviceId: "d1",
+    deviceName: "box",
+    mode: "auto",
+    kind: "command",
+    command: "rm -rf build",
+    rule: "rm:forced",
+    reason: "Deletes files outside the workspace",
+    ...over,
+  });
+  const commandApproval = (over: Record<string, unknown> = {}) =>
+    approval("a", {
+      kind: "command",
+      toolKey: "Bash",
+      toolName: "Bash",
+      connector: null,
+      input: {},
+      command: ask(),
+      ...over,
+    });
+
+  it("shows the question, the reason, the device and the clipped command; never an argument box", async () => {
+    const command = `rm -rf build ${"x".repeat(400)}`;
+    const { container } = await renderInbox({
+      [LIST]: () => json(200, inbox([commandApproval({ command: ask({ command }) })])),
+    });
+    const rg = await screen.findByRole("radiogroup", { name: en.approval.scopeLabel });
+    expect(rg).toBeTruthy();
+    expect(await screen.findByText(en.approval.command.title)).toBeTruthy();
+    expect(screen.getByText("Deletes files outside the workspace")).toBeTruthy();
+    expect(screen.getByText("box")).toBeTruthy();
+    const code = container.querySelector('[data-part="code-block"]') as Element;
+    expect(Array.from(code.textContent ?? "")).toHaveLength(300);
+    expect(code.textContent?.endsWith("…")).toBe(true);
+    // the empty argument box that let the owner approve blind is gone
+    expect(screen.queryByLabelText(en.approval.input)).toBeNull();
+  });
+
+  it("a write asks about the path, never the tool key it carries as its command", async () => {
+    const { container } = await renderInbox({
+      [LIST]: () =>
+        json(
+          200,
+          inbox([
+            commandApproval({
+              toolKey: "Write",
+              toolName: "Write",
+              command: ask({ kind: "write", command: "Write", path: "/etc/capybara/config.yaml" }),
+            }),
+          ]),
+        ),
+    });
+    expect(await screen.findByText(en.approval.command.titleWrite)).toBeTruthy();
+    const code = container.querySelector('[data-part="code-block"]') as Element;
+    expect(code.textContent).toContain("/etc/capybara/config.yaml");
+    expect(code.textContent).not.toContain("Write");
+    expect(screen.getByText(en.approval.command.path)).toBeTruthy();
+  });
+
+  it("offers only the scopes the approval carries", async () => {
+    await renderInbox({
+      [LIST]: () =>
+        json(
+          200,
+          inbox([commandApproval({ scopes: ["once", "session"], command: ask({ rule: null }) })]),
+        ),
+    });
+    const scopes = await screen.findByRole("radiogroup", { name: en.approval.scopeLabel });
+    expect(within(scopes).getAllByRole("radio")).toHaveLength(2);
+    expect(within(scopes).getByText(en.approval.scope.session)).toBeTruthy();
+    expect(within(scopes).queryByText(en.approval.scope.always)).toBeNull();
+  });
+
+  it("a classifier ask (scopes once) never shows the session scope", async () => {
+    await renderInbox({
+      [LIST]: () =>
+        json(200, inbox([commandApproval({ scopes: ["once"], command: ask({ rule: null }) })])),
+    });
+    const scopes = await screen.findByRole("radiogroup", { name: en.approval.scopeLabel });
+    expect(within(scopes).getAllByRole("radio")).toHaveLength(1);
+    expect(within(scopes).queryByText(en.approval.scope.session)).toBeNull();
+  });
+});
+
 describe("收件箱：技能变更", () => {
   const DETAIL = "GET /api/v1/orgs/o1/skill-changes/sc1";
   const detail = (over: Record<string, unknown> = {}) => ({

@@ -42,7 +42,7 @@ beforeAll(async () => {
     schema: "capybara",
     dir: fileURLToPath(new URL("../../src/migrations", import.meta.url)),
   });
-}, 120_000);
+});
 
 afterAll(async () => {
   for (const c of clients) c.disconnect();
@@ -133,13 +133,14 @@ const run = (s: SandboxService, command: string, conv = conversationId) =>
     signal(),
   );
 const ops = async (op: string) => (await readFakeSandboxOps(root)).filter((o) => o[0] === op);
-const until = async (cond: () => Promise<boolean>, ms = 20_000) => {
-  const end = Date.now() + ms;
-  while (!(await cond())) {
-    if (Date.now() > end) throw new Error("condition not reached");
-    await new Promise((r) => setTimeout(r, 25));
-  }
-};
+/** Waits until `cond` holds (the old polling loop's 20 s budget); an error surfaces. */
+const until = (cond: () => Promise<boolean>, ms = 20_000) =>
+  vi.waitFor(
+    async () => {
+      if (!(await cond())) throw new Error("condition not reached yet");
+    },
+    { timeout: ms },
+  );
 
 describe("concurrent sandbox holders (two replicas)", () => {
   it("crashed holder in a shared device kills only its tags", async () => {

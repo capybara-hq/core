@@ -7,12 +7,13 @@ import {
   DEFAULT_SANDBOX_ROOTS,
   isSandboxGoneError,
   type SandboxHandle,
+  type SandboxLimits,
   type SandboxProvider,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
@@ -89,7 +90,7 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
   redis = new Redis(rdc.url);
-}, 120_000);
+});
 
 afterAll(async () => {
   redis?.disconnect();
@@ -163,11 +164,14 @@ const row = (id = envId) =>
 /** Waits until the fake records a running command (`instances/<id>/procs/<pid>`), instead of a fixed wait. */
 async function waitForProc(id: string, timeoutMs = 10_000): Promise<void> {
   const dir = join(root, "instances", id, "procs");
-  const until = Date.now() + timeoutMs;
-  while ((await readdir(dir).catch(() => [])).length === 0) {
-    if (Date.now() > until) throw new Error(`no running command registered for ${id}`);
-    await new Promise((r) => setTimeout(r, 10));
-  }
+  await vi.waitFor(
+    async () => {
+      if ((await readdir(dir).catch(() => [])).length === 0) {
+        throw new Error(`no running command registered for ${id} yet`);
+      }
+    },
+    { timeout: timeoutMs },
+  );
 }
 
 /** Commands run one at a time (the behavior before phase C). */
@@ -215,66 +219,60 @@ describe("没有提供方", () => {
   });
 });
 
-describe("组织出站设置（Ruling M19）", () => {
-  const setEgress = (value: unknown, org = orgId) =>
-    sql`UPDATE capybara.orgs SET settings = ${JSON.stringify({ sandboxEgress: value })}::jsonb
+describe("组织云网络设置（auto mode spec §4.3）", () => {
+  const setOrg = (value: unknown, org = orgId) =>
+    sql`UPDATE capybara.orgs SET settings = ${JSON.stringify(value)}::jsonb
       WHERE id = ${org}`.execute(raw);
   const limitsOf = async (s: SandboxService, id = envId) =>
     (await fakeSandboxMeta(root, (await use(s, id)).h.id))?.limits;
-  // these cases are about the org's base list: the strict tier sends it unchanged
-  beforeEach(() => {
-    config.sandbox.tiers.default = "strict";
-  });
 
-  it("组织 none → 创建时 egress none；allowlist + 主机 → 替换部署白名单；省略主机 → 沿用部署的", async () => {
+  it("an org allowlist replaces the deployment's hosts; a changed host list reaches only later instances", async () => {
     const s = service();
-    await setEgress({ mode: "none" });
-    expect(await limitsOf(s)).toMatchObject({ egress: "none", allowHosts: [] });
-
-    await setEgress({ mode: "allowlist", allowHosts: ["example.com", "*.corp.example.org"] });
-    expect(await limitsOf(s, await newDevice())).toMatchObject({
-      egress: "allowlist",
-      allowHosts: ["example.com", "*.corp.example.org"],
+    await setOrg({
+      autoMode: "off",
+      cloudNetwork: { mode: "allowlist", allowHosts: ["example.com"] },
     });
-
-    await setEgress({ mode: "allowlist" });
     expect(await limitsOf(s, await newDevice())).toMatchObject({
-      egress: "allowlist",
-      allowHosts: config.sandbox.limits.allowHosts,
+      mode: "sandbox",
+      network: { kind: "allowlist", hosts: ["example.com"] },
+    });
+    await setOrg({ autoMode: "off", cloudNetwork: { mode: "allowlist" } });
+    expect(await limitsOf(s, await newDevice())).toMatchObject({
+      network: { kind: "allowlist", hosts: config.sandbox.limits.allowHosts },
     });
   });
 
-  it("a deployment at none keeps an org allowlist at none; an org allowlist replaces the deployment's; an invalid stored value reads as none", async () => {
+  it("auto mode ignores the org's network; sandbox mode applies it; a kind change recreates", async () => {
     const s = service();
-    await setEgress({ mode: "allowlist", allowHosts: ["example.com"] });
-    config.sandbox.limits.egress = "none";
-    expect(await limitsOf(s)).toMatchObject({ egress: "none", allowHosts: [] });
-    config.sandbox.limits.egress = "allowlist";
-    expect(await limitsOf(s, await newDevice())).toMatchObject({
-      egress: "allowlist",
-      allowHosts: ["example.com"],
+    // auto mode ignores the org's allowlist: the cloud device's network is open
+    await setOrg({
+      autoMode: "allowed",
+      cloudNetwork: { mode: "allowlist", allowHosts: ["example.com"] },
     });
-    await setEgress({ mode: "open" });
-    expect(await limitsOf(s, await newDevice())).toMatchObject({
-      egress: "none",
-      allowHosts: [],
-    });
-  });
-
-  it("a changed host list reaches only later instances; a changed egress mode recreates the instance on its next use", async () => {
-    const s = service();
     const first = await use(s);
-    await setEgress({ mode: "allowlist", allowHosts: ["example.com"] });
+    expect((await fakeSandboxMeta(root, first.h.id))?.limits).toMatchObject({
+      mode: "auto",
+      network: { kind: "open-public" },
+    });
+    // a host change under the same (ignored) network changes nothing
+    await setOrg({
+      autoMode: "allowed",
+      cloudNetwork: { mode: "allowlist", allowHosts: ["other.example.com"] },
+    });
     const same = await use(s);
     expect(same.h).toEqual(first.h);
-    expect((await fakeSandboxMeta(root, same.h.id))?.limits.allowHosts).toEqual(
-      config.sandbox.limits.allowHosts,
-    );
-    await setEgress({ mode: "none" });
+    // switching to sandbox mode applies the org's allowlist: the instance is recreated
+    await setOrg({
+      autoMode: "off",
+      cloudNetwork: { mode: "allowlist", allowHosts: ["other.example.com"] },
+    });
     const again = await use(s);
     expect(again.h).not.toEqual(first.h);
     expect(again.info).toMatchObject({ fresh: true, restarted: true });
-    expect((await fakeSandboxMeta(root, again.h.id))?.limits.egress).toBe("none");
+    expect((await fakeSandboxMeta(root, again.h.id))?.limits).toMatchObject({
+      mode: "sandbox",
+      network: { kind: "allowlist", hosts: ["other.example.com"] },
+    });
   });
 });
 
@@ -285,17 +283,13 @@ describe("lazy creation", () => {
     expect(await ops()).toEqual([]);
     const a = await use(s);
     expect(a.info).toEqual({ fresh: true, restarted: false, roots: DEFAULT_SANDBOX_ROOTS });
-    // the default tier is dev: the base list plus the dev hosts
+    // the default mode is auto: the open public network
     const limits = {
       cpu: 1,
       memoryMb: 2048,
       diskMb: 5120,
-      egress: "allowlist",
-      allowHosts: [
-        ...new Set([...config.sandbox.limits.allowHosts, ...config.sandbox.limits.devHosts]),
-      ],
-      tier: "dev",
-      devHosts: config.sandbox.limits.devHosts,
+      mode: "auto",
+      network: { kind: "open-public", hosts: [] },
     };
     const meta = await fakeSandboxMeta(root, a.h.id);
     expect(meta).toEqual({
@@ -397,6 +391,10 @@ describe("lazy creation", () => {
       },
     };
     const s = service(() => flaky);
+    // sandbox mode: the deployment allowlist, so a failure is not attributed to the open network
+    await sql`UPDATE capybara.orgs SET settings =
+      '{"autoMode":"off","cloudNetwork":{"mode":"allowlist"}}'::jsonb
+      WHERE id = ${orgId}`.execute(raw);
     // the provider's own message stays in the log
     await expect(use(s)).rejects.toMatchObject({ code: "sandbox.create_failed" });
     fail = false;
@@ -1013,6 +1011,10 @@ describe("restarted is sticky (fix round 1)", () => {
       },
     };
     const s = service(() => flaky);
+    // sandbox mode: the deployment allowlist, so a failure is not attributed to the open network
+    await sql`UPDATE capybara.orgs SET settings =
+      '{"autoMode":"off","cloudNetwork":{"mode":"allowlist"}}'::jsonb
+      WHERE id = ${orgId}`.execute(raw);
     await use(s);
     expect(await s.destroyInactive(later(8 * DAY))).toBe(1);
     fail = true;
@@ -1126,15 +1128,13 @@ describe("another holder rebuilt the sandbox (final review m5)", () => {
 });
 
 describe("leftovers of interrupted creates and of other providers (fix round 1)", () => {
-  const tiny = {
+  const tiny: SandboxLimits = {
     cpu: 1,
     memoryMb: 1,
     diskMb: 1,
-    egress: "none",
-    allowHosts: [],
-    tier: "strict",
-    devHosts: [],
-  } as const;
+    mode: "sandbox",
+    network: { kind: "allowlist", hosts: [] },
+  };
   const name = () => `cap-device-${envId}`;
 
   it("a create that crashed before its handle was recorded is destroyed by name; the file system stays", async () => {
@@ -1143,12 +1143,12 @@ describe("leftovers of interrupted creates and of other providers (fix round 1)"
     const p = provider as SandboxProvider;
     const fs = await p.createFileSystem({
       name: name(),
-      limits: { ...tiny, allowHosts: [], devHosts: [] },
+      limits: tiny,
       signal: signal(),
     });
     const h = await p.create({
       name: name(),
-      limits: { ...tiny, allowHosts: [], devHosts: [] },
+      limits: tiny,
       fileSystem: fs,
       signal: signal(),
     });
@@ -1167,7 +1167,7 @@ describe("leftovers of interrupted creates and of other providers (fix round 1)"
     const p = provider as SandboxProvider;
     await p.createFileSystem({
       name: name(),
-      limits: { ...tiny, allowHosts: [], devHosts: [] },
+      limits: tiny,
       signal: signal(),
     });
     await sql`INSERT INTO capybara.device_instances (device_id, org_id, provider, status)
@@ -1206,15 +1206,13 @@ describe("leftovers of interrupted creates and of other providers (fix round 1)"
 });
 
 describe("provider switch during a create", () => {
-  const tiny = {
+  const tiny: SandboxLimits = {
     cpu: 1,
     memoryMb: 1,
     diskMb: 1,
-    egress: "none",
-    allowHosts: [],
-    tier: "strict",
-    devHosts: [],
-  } as const;
+    mode: "sandbox",
+    network: { kind: "allowlist", hosts: [] },
+  };
   const name = () => `cap-device-${envId}`;
 
   it("a file system the previous provider made by name before it was recorded is destroyed when the current provider takes the device over", async () => {
@@ -1223,7 +1221,7 @@ describe("provider switch during a create", () => {
     // the previous provider's create ended after createFileSystem, before the handle was written
     await old.createFileSystem({
       name: name(),
-      limits: { ...tiny, allowHosts: [], devHosts: [] },
+      limits: tiny,
       signal: signal(),
     });
     await sql`INSERT INTO capybara.device_instances (device_id, org_id, provider, status)

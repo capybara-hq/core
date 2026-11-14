@@ -36,11 +36,11 @@ let pool: Kysely<any>;
 beforeAll(async () => {
   [rd, pgc] = await Promise.all([startTestRedis(), startTestPostgres()]);
   pool = createDb(pgc.url, 5);
-}, 120_000);
+});
 afterAll(async () => {
   await pool?.destroy();
   await Promise.all([rd?.stop(), pgc?.stop()]);
-}, 120_000);
+});
 
 const redisOf = (r: { app: INestApplicationContext }) => r.app.get<Redis>(REDIS);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -108,6 +108,7 @@ class Jobs {
   async startJob() {
     shared.startRuns++;
     shared.tx.push(currentStore() !== undefined);
+    // the job's own duration: it must still be in flight when the test closes the app
     await sleep(200);
   }
 
@@ -160,6 +161,7 @@ class Jobs {
     await new Promise<void>((_resolve, reject) => {
       signal?.addEventListener("abort", () => {
         shared.stopJob.aborted = true;
+        // the job's own work after the abort (what the stop must wait for), not a test wait
         setTimeout(() => reject(new Error("aborted by the stop")), 100);
       });
     });
@@ -169,6 +171,7 @@ class Jobs {
   @LockedCron("0 0 1 1 *", { name: "test-lost", lockKey: "test-cron-lost", ttl: 300 })
   async losable(signal?: AbortSignal) {
     await new Promise<void>((resolve) => {
+      // the job's own upper bound (it ends on the abort); a test wait would use waitFor
       const timer = setTimeout(resolve, 3000);
       signal?.addEventListener("abort", () => {
         shared.lostJob.aborted = true;
@@ -181,6 +184,7 @@ class Jobs {
   /** Ignores the signal: the stop waits for it (it is short). */
   @LockedCron("0 0 1 1 *", { name: "test-stop-2", lockKey: "test-cron-stop-2", ttl: 5000 })
   async stubborn(signal?: AbortSignal) {
+    // the job's own duration: it ignores the signal, so the stop waits for it
     await sleep(400);
     shared.stopJob.aborted = signal?.aborted === true;
     shared.stopJob.finished = true;
@@ -325,6 +329,7 @@ describe("@LockedCron", () => {
     // its run lock released by then, so only the per-tick marker keeps b from running the tick.
     const ls = b.jobs.lockService;
     const [lease, acquire] = [ls.lease.bind(ls), ls.acquire.bind(ls)];
+    // a simulated ~40 ms clock skew: b's callback lands after a's fast job released its lock
     ls.lease = async (...args) => {
       await sleep(40);
       return lease(...args);
@@ -345,9 +350,10 @@ describe("@LockedCron", () => {
     expect(b.error).not.toHaveBeenCalled();
     // stopped schedulers fire no more
     const after = shared.runs;
+    // Nothing-happened window: more than one 1 s period passes with stopped schedulers
     await sleep(1300);
     expect(shared.runs).toBe(after);
-  }, 30_000);
+  });
 
   it("a run that outlives the next tick is never overlapped; the next tick logs INFO and skips", async () => {
     Object.assign(shared, {
@@ -581,6 +587,7 @@ describe("ScheduledRuns: stop", () => {
           "cron skipped: the scheduler is stopping",
           expect.anything(),
         );
+        // Nothing-happened window: a stopped job must leave no unhandled rejection
         await sleep(50);
         expect(unhandled).toEqual([]);
       } finally {
@@ -640,10 +647,12 @@ describe("@LockedInterval", () => {
     const ls = b.jobs.lockService;
     const [lease, acquire] = [ls.lease.bind(ls), ls.acquire.bind(ls)];
     ls.lease = async (...args) => {
+      // a simulated ~40 ms clock skew between the two replicas
       await sleep(40);
       return lease(...args);
     };
     ls.acquire = async (...args) => {
+      // the same simulated skew on the acquire path
       await sleep(40);
       return acquire(...args);
     };
@@ -663,9 +672,10 @@ describe("@LockedInterval", () => {
     expect(a.error).not.toHaveBeenCalled();
     expect(b.error).not.toHaveBeenCalled();
     const after = shared.runs;
+    // Nothing-happened window: more than one period passes with stopped schedulers
     await sleep(1300);
     expect(shared.runs).toBe(after);
-  }, 30_000);
+  });
 
   it("periodOf is the period read from the config", async () => {
     const r = await boot(["test-interval"]);

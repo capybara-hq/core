@@ -1,17 +1,29 @@
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { connect, createServer } from "node:net";
+import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import pg from "pg";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { ConfigSource } from "../src/config/load.js";
-import { type KernelConfig, KernelConfigSchema } from "../src/config/schema.js";
+import {
+  type KernelConfig,
+  KernelConfigSchema,
+  MARKETPLACE_OFFICIAL_URL_DEFAULT,
+} from "../src/config/schema.js";
 import { ExtensionHost } from "../src/extensions/host.js";
 import { KernelConfigService } from "../src/infra/config/kernel-config.service.js";
 import { KERNEL_ROOT_LOGGER } from "../src/infra/tokens.js";
 import { migrateAll } from "../src/kernel.js";
 import { createLogger, type KernelLogger } from "../src/log.js";
-import { buildKernel, type TestKernel, type TestKernelOptions } from "./helpers/runs.js";
+import {
+  buildKernel,
+  runConfig,
+  startKernel,
+  type TestKernel,
+  type TestKernelOptions,
+} from "./helpers/runs.js";
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -19,7 +31,6 @@ const kernels: TestKernel[] = [];
 const masterKey = Buffer.alloc(32, 7).toString("base64");
 const fx = (n: string) =>
   fileURLToPath(new URL(`./fixtures/plugins/${n}/index.ts`, import.meta.url));
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const raw = (over: Record<string, unknown> = {}, redisUrl = rd.url): Record<string, unknown> => ({
   db: { url: pgc.url, poolMax: 3 },
@@ -123,8 +134,8 @@ describe("HTTP 健康检查", () => {
   });
 
   // Applying every kernel migration to an empty database is this test's subject; it takes a few
-  // seconds alone and more on a loaded machine.
-  it("start runs the kernel migrations (capybara schema)", { timeout: 60_000 }, async () => {
+  // seconds alone, so it relies on the integration project's bound rather than its own.
+  it("start runs the kernel migrations (capybara schema)", async () => {
     const fresh = await startTestPostgres();
     const c = new pg.Client({ connectionString: fresh.url });
     try {
@@ -156,7 +167,7 @@ describe("HTTP 健康检查", () => {
     } finally {
       await k.close();
     }
-  }, 60_000);
+  });
 
   it("stop() 后 /readyz 立即 503", async () => {
     const k = await kernel(cfg());
@@ -239,12 +250,12 @@ describe("角色", () => {
     expect((await fetch(`http://127.0.0.1:${port}/plugins/jobber/x`)).status).toBe(404);
     const r = new Redis(rd.url);
     try {
-      let done: string | null = null;
-      for (let i = 0; i < 50 && done === null; i++) {
-        done = await r.get("cap:jobber:kv:done");
-        if (done === null) await sleep(100);
-      }
-      expect(done).toBe(JSON.stringify({ n: 1, replica: null }));
+      await vi.waitFor(
+        async () => {
+          expect(await r.get("cap:jobber:kv:done")).toBe(JSON.stringify({ n: 1, replica: null }));
+        },
+        { timeout: 5_000 },
+      );
     } finally {
       r.disconnect();
     }
@@ -319,5 +330,85 @@ describe("migrateAll", () => {
     } finally {
       await c.end();
     }
+  });
+});
+
+// The official marketplace is on by default (spec §5.5) and lives on the internet. Test kernels must
+// never reach it: every config a test builds sets `marketplaces.official.enabled: false`, unless the
+// test is about it and points it at a fake.
+const URLS = { pg: "postgres://u:p@localhost/db", redis: "redis://localhost:6379" };
+
+describe("runConfig", () => {
+  it("keeps the official marketplace off", () => {
+    expect(runConfig(URLS).marketplaces.official.enabled).toBe(false);
+  });
+
+  it("keeps it off when a test passes other marketplace settings", () => {
+    const c = runConfig(URLS, { marketplaces: { allowInsecureLoopback: true } });
+    expect(c.marketplaces.official.enabled).toBe(false);
+    expect(c.marketplaces.allowInsecureLoopback).toBe(true);
+  });
+
+  it("a test about the official marketplace turns it on explicitly", () => {
+    const url = "https://example.com/marketplace.json";
+    const c = runConfig(URLS, { marketplaces: { official: { enabled: true, url } } });
+    expect(c.marketplaces.official).toMatchObject({ enabled: true, url });
+  });
+});
+
+const REPO = fileURLToPath(new URL("../../../", import.meta.url));
+
+function walk(dir: string, out: string[] = []): string[] {
+  for (const name of readdirSync(dir)) {
+    if (name === "node_modules" || name === "dist" || name === "fixtures") continue;
+    const p = join(dir, name);
+    if (statSync(p).isDirectory()) walk(p, out);
+    else if (name.endsWith(".ts")) out.push(p);
+  }
+  return out;
+}
+
+describe("kernels started by tests", () => {
+  it("every file that creates a kernel sets the official marketplace or uses a test config helper", () => {
+    const roots = [
+      "packages/kernel/test",
+      "packages/testing/src",
+      "packages/testing/test",
+      "apps/capybara/test",
+    ];
+    const offenders = roots
+      .flatMap((r) => walk(join(REPO, r)))
+      .filter((f) => {
+        const text = readFileSync(f, "utf8");
+        // Creates a kernel itself, or parses its own config and starts it through a helper.
+        const starts =
+          /\b(?:create|build|start)KernelApp\(/.test(text) ||
+          (/KernelConfigSchema\.parse\(/.test(text) &&
+            /\b(?:start(?:Test)?|build)Kernel\(/.test(text));
+        return (
+          starts &&
+          !/official:\s*\{\s*enabled:/.test(text) &&
+          !/\b(?:testKernelConfig|runConfig)\(/.test(text)
+        );
+      })
+      .map((f) => relative(REPO, f));
+    expect(offenders).toEqual([]);
+  });
+});
+
+describe("startKernel", () => {
+  const raw = {
+    db: { url: URLS.pg },
+    redis: { url: URLS.redis },
+    masterKey: Buffer.alloc(32, 7).toString("base64"),
+  };
+
+  it("refuses a config that would reach the real official marketplace, before starting anything", async () => {
+    const config = KernelConfigSchema.parse(raw);
+    expect(config.marketplaces.official).toMatchObject({
+      enabled: true,
+      url: MARKETPLACE_OFFICIAL_URL_DEFAULT,
+    });
+    await expect(startKernel(config)).rejects.toThrow(/official marketplace/);
   });
 });

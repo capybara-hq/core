@@ -90,7 +90,7 @@ beforeAll(async () => {
   };
   await sql`INSERT INTO capybara.conversation_events (conversation_id, seq, type, payload)
     VALUES (${conv}, 1, 'usage', ${JSON.stringify(payload)}::jsonb)`.execute(raw);
-}, 240_000);
+});
 
 afterAll(async () => {
   await a?.close();

@@ -1,6 +1,18 @@
 import { EXTENSION_NAME_RE } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { z } from "zod";
+import {
+  applyPlatformAttributionPatch,
+  PLATFORM_ATTRIBUTION_FIELDS,
+  PLATFORM_ATTRIBUTION_PATCH,
+  PLATFORM_ATTRIBUTION_SETTING,
+  type PlatformAttributionPatch,
+  type PlatformAttributionSource,
+  type PlatformAttributionStored,
+  type PlatformAttributionView,
+  readStoredPlatformAttribution,
+  resolvePlatformAttribution,
+} from "../attribution/platform-attribution.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
@@ -10,20 +22,17 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import {
-  applyPlatformTiersPatch,
-  chosenPlatformDefault,
-  PLATFORM_TIER_FIELDS,
-  PLATFORM_TIERS_PATCH,
-  PLATFORM_TIERS_SETTING,
-  type PlatformTierSource,
-  type PlatformTiers,
-  type PlatformTiersPatch,
-  type PlatformTiersStored,
-  type PlatformTiersView,
-  platformTiersWiden,
-  readStoredPlatformTiers,
-  resolvePlatformTiers,
-} from "../sandbox/platform-tiers.js";
+  applyDevicesAutoModePatch,
+  DEVICES_AUTO_MODE_DEFAULT,
+  DEVICES_AUTO_MODE_PATCH,
+  DEVICES_AUTO_MODE_SETTING,
+  type DevicesAutoMode,
+  type DevicesAutoModePatch,
+  type DevicesAutoModeStored,
+  type DevicesAutoModeView,
+  readDevicesAutoMode,
+  readStoredDevicesAutoMode,
+} from "../sandbox/platform-auto-mode.js";
 import { assertPlatformDefaultEligible, lockThemeShared } from "../themes/theme-state.js";
 import {
   mergeArrangement,
@@ -257,16 +266,20 @@ export type DeploymentSettings = z.infer<typeof DEPLOYMENT_SETTINGS>;
 const DEFAULTS: DeploymentSettings = DEPLOYMENT_SETTINGS.parse({});
 
 /**
- * What `GET /api/v1/admin/settings` answers: the stored settings, and the platform's sandbox tiers
- * as they are in effect with where each field comes from (`env` / `file` / `nacos`: the startup
- * config, read-only here; `db`: chosen in the admin console; `default`).
+ * What `GET /api/v1/admin/settings` answers: the stored settings, the platform's auto-mode switch
+ * as it is in effect with where it comes from (`env` / `file` / `nacos`: the startup config,
+ * read-only here; `db`: chosen in the admin console; `default`), and the platform's effective
+ * attribution defaults with their sources the same way.
  */
-export type DeploymentSettingsView = DeploymentSettings & { sandboxTiers: PlatformTiersView };
+export type DeploymentSettingsView = DeploymentSettings & {
+  devicesAutoMode: DevicesAutoModeView;
+  attribution: PlatformAttributionView;
+};
 
-const tierWidenRefused = (): ApiError =>
+const autoModeWidenRefused = (): ApiError =>
   new ApiError(
-    "deployment.sandbox_tier_not_allowed",
-    "Raising the platform's sandbox level (sandboxTiers) needs a super admin in the admin console; an API token or the Platform tool may only lower it.",
+    "deployment.auto_mode_not_allowed",
+    "Turning auto mode on at the platform level (devicesAutoMode) needs a super admin in the admin console; an API token or the Platform tool may only turn it off.",
   );
 
 /**
@@ -315,13 +328,19 @@ export const DEPLOYMENT_SETTINGS_PATCH = z
       })
       .optional(),
     /**
-     * The platform's sandbox tiers (sandbox dev tiers spec §4.1): each given field replaces the
-     * stored one, null clears it (back to the default: max dev, default dev, unsandboxed allowed).
-     * A field set in the startup config is read-only (409 `deployment.setting_readonly`); the
-     * default may not be above the max; an API token or the Platform tool may only narrow (400
-     * `deployment.sandbox_tier_not_allowed`).
+     * The platform's auto-mode switch (auto mode spec §4.3, P-D9): `mode` replaced, null clears it
+     * (back to the default, allowed). A value set in the startup config is read-only (409
+     * `deployment.setting_readonly`); an API token or the Platform tool may only turn it off (400
+     * `deployment.auto_mode_not_allowed`).
      */
-    sandboxTiers: PLATFORM_TIERS_PATCH.optional(),
+    devicesAutoMode: DEVICES_AUTO_MODE_PATCH.optional(),
+    /**
+     * The platform's attribution defaults for agent-created git commits and pull requests (spec
+     * 2026-11-14-agent-attribution): each given field replaces the stored one, null clears it
+     * (back to the default), `""` turns that line off. A field set in the startup config is
+     * read-only (409 `deployment.setting_readonly`).
+     */
+    attribution: PLATFORM_ATTRIBUTION_PATCH.optional(),
     /**
      * Conversation compaction (context compaction spec §4.8): each given field replaces the stored
      * one, fields left out keep their value.
@@ -523,80 +542,86 @@ export class SettingsService {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(SuperAdminLock) private readonly adminLock: SuperAdminLock,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
-    /** The startup config's `sandbox.tiers`, which wins over the stored choice. */
+    /** The startup config's `devices.autoMode`, which wins over the stored choice. */
     @Inject(KernelConfigService)
     private readonly config: Pick<KernelConfigService, "get" | "fieldSource">,
   ) {}
 
-  /** The settings with the platform's sandbox tiers in effect and their sources. */
+  /** The settings with the platform's auto-mode switch and attribution defaults in effect. */
   async view(): Promise<DeploymentSettingsView> {
-    const [settings, stored] = await Promise.all([
+    const [settings, devicesAutoMode, attribution] = await Promise.all([
       this.get(),
-      readStoredPlatformTiers(this.db.db, this.log),
+      readDevicesAutoMode(this.db.db, this.config, this.log),
+      readStoredPlatformAttribution(this.db.db, this.log),
     ]);
-    return { ...settings, sandboxTiers: this.tiersView(stored) };
+    return {
+      ...settings,
+      devicesAutoMode,
+      attribution: this.attributionView(attribution),
+    };
   }
 
-  private tiersView(stored: PlatformTiersStored): PlatformTiersView {
-    const config = this.config.get().sandbox.tiers;
+  private attributionView(stored: PlatformAttributionStored): PlatformAttributionView {
+    const config = this.config.get().attribution;
     const sources = Object.fromEntries(
-      PLATFORM_TIER_FIELDS.map((f): [string, PlatformTierSource] => [
+      PLATFORM_ATTRIBUTION_FIELDS.map((f): [string, PlatformAttributionSource] => [
         f,
-        this.config.fieldSource(`sandbox.tiers.${f}`) ??
-          (stored[f] !== undefined ? "db" : "default"),
+        this.config.fieldSource(`attribution.${f}`) ?? (stored[f] !== undefined ? "db" : "default"),
       ]),
-    ) as PlatformTiersView["sources"];
-    return { ...resolvePlatformTiers(config, stored), sources };
+    ) as PlatformAttributionView["sources"];
+    return { ...resolvePlatformAttribution(config, stored), sources };
   }
 
   /**
-   * The refusals of a `sandboxTiers` change against the stored choice: a field set in the
-   * startup config (`deployment.setting_readonly`), a default above the max
-   * (`validation_failed`), and with `onlyNarrows` (an API token, the Platform tool) any widening:
-   * a higher max or default, unsandboxed allowed, in effect or in the stored choice (which
-   * applies once the startup config stops setting a field). Returns the next stored choice and
-   * the effective tiers before and after.
+   * The refusals of a `devicesAutoMode` change: a value set in the startup config
+   * (`deployment.setting_readonly`) and, with `onlyNarrows` (an API token, the Platform tool),
+   * turning auto mode on where it is off (`deployment.auto_mode_not_allowed`). Returns the next
+   * stored choice and the effective switch before it.
    */
-  async checkSandboxTiers(
-    patch: PlatformTiersPatch,
+  async checkDevicesAutoMode(
+    patch: DevicesAutoModePatch,
     opts: { onlyNarrows?: boolean } = {},
-  ): Promise<{ next: PlatformTiersStored; before: PlatformTiers; after: PlatformTiers }> {
-    const readonly = PLATFORM_TIER_FIELDS.filter(
-      (f) => patch[f] !== undefined && this.config.fieldSource(`sandbox.tiers.${f}`) !== undefined,
+  ): Promise<{ next: DevicesAutoModeStored; before: DevicesAutoModeView }> {
+    const source = this.config.fieldSource("devices.autoMode");
+    if (source !== undefined) {
+      throw new ApiError(
+        "deployment.setting_readonly",
+        "The platform's auto-mode switch is set in the startup config (file, Nacos or environment) and is read-only here",
+        [{ path: "devicesAutoMode.mode", source }],
+      );
+    }
+    const before = await readDevicesAutoMode(this.db.db, this.config, this.log);
+    const next = applyDevicesAutoModePatch(
+      await readStoredDevicesAutoMode(this.db.db, this.log),
+      patch,
+    );
+    const after = next.mode ?? DEVICES_AUTO_MODE_DEFAULT;
+    if (opts.onlyNarrows && before.mode === "off" && after === DEVICES_AUTO_MODE_DEFAULT) {
+      throw autoModeWidenRefused();
+    }
+    return { next, before };
+  }
+
+  /**
+   * The refusals of an `attribution` change against the stored choice: a field set in the startup
+   * config (`deployment.setting_readonly`). Returns the next stored choice.
+   */
+  async checkAttribution(patch: PlatformAttributionPatch): Promise<PlatformAttributionStored> {
+    const readonly = PLATFORM_ATTRIBUTION_FIELDS.filter(
+      (f) => patch[f] !== undefined && this.config.fieldSource(`attribution.${f}`) !== undefined,
     );
     if (readonly.length > 0) {
       throw new ApiError(
         "deployment.setting_readonly",
-        `These sandbox tier settings are set in the startup config (file, Nacos or environment) and are read-only here: ${readonly.map((f) => `sandbox.tiers.${f}`).join(", ")}`,
+        `These attribution settings are set in the startup config (file, Nacos or environment) and are read-only here: ${readonly.map((f) => `attribution.${f}`).join(", ")}`,
         readonly.map((f) => ({
-          path: `sandboxTiers.${f}`,
-          source: this.config.fieldSource(`sandbox.tiers.${f}`),
+          path: `attribution.${f}`,
+          source: this.config.fieldSource(`attribution.${f}`),
         })),
       );
     }
-    const config = this.config.get().sandbox.tiers;
-    const stored = await readStoredPlatformTiers(this.db.db, this.log);
-    const next = applyPlatformTiersPatch(stored, patch);
-    const before = resolvePlatformTiers(config, stored);
-    const after = resolvePlatformTiers(config, next);
-    const chosen = chosenPlatformDefault(config, next);
-    if ((patch.max !== undefined || patch.default !== undefined) && chosen !== after.default) {
-      throw new ApiError(
-        "validation_failed",
-        `The default sandbox tier (${chosen}) cannot be above the highest (${after.max}); lower sandboxTiers.default as well`,
-        [{ path: "sandboxTiers.default", message: `must be at most ${after.max}` }],
-      );
-    }
-    if (opts.onlyNarrows) {
-      const none = {};
-      if (
-        platformTiersWiden(before, after) ||
-        platformTiersWiden(resolvePlatformTiers(none, stored), resolvePlatformTiers(none, next))
-      ) {
-        throw tierWidenRefused();
-      }
-    }
-    return { next, before, after };
+    const stored = await readStoredPlatformAttribution(this.db.db, this.log);
+    return applyPlatformAttributionPatch(stored, patch);
   }
 
   /**
@@ -626,7 +651,7 @@ export class SettingsService {
 
   /**
    * Updates settings under the super admin lock, re-checking the actor (else `forbidden`).
-   * `onlyNarrows` (an API token, the Platform tool): `sandboxTiers` may only narrow.
+   * `onlyNarrows` (an API token, the Platform tool): `devicesAutoMode` may only turn auto mode off.
    */
   async update(
     patch: DeploymentSettingsPatch,
@@ -729,14 +754,18 @@ export class SettingsService {
         next.subagentLimitOverrides = mergeByOrg(current.subagentLimitOverrides, subagentPatch);
       }
     }
-    // the platform's sandbox tiers: checked against the stored choice under the lock; lowering
-    // the max needs no org rewrite, the effective policy cuts every org's ceiling and default
-    let tiersChange: { before: PlatformTiers; after: PlatformTiers } | undefined;
+    // the platform's auto-mode switch: checked against the stored choice under the lock; the
+    // stored shape keeps `mode` optional, so clearing it (null) writes `{}` back to the default
+    let autoModeChange: { before: DevicesAutoModeView; after: DevicesAutoMode } | undefined;
     const writes: [string, unknown][] = Object.entries(next);
-    if (patch.sandboxTiers !== undefined) {
-      const r = await this.checkSandboxTiers(patch.sandboxTiers, opts);
-      tiersChange = { before: r.before, after: r.after };
-      writes.push([PLATFORM_TIERS_SETTING, r.next]);
+    if (patch.devicesAutoMode !== undefined) {
+      const r = await this.checkDevicesAutoMode(patch.devicesAutoMode, opts);
+      autoModeChange = { before: r.before, after: r.next.mode ?? DEVICES_AUTO_MODE_DEFAULT };
+      writes.push([DEVICES_AUTO_MODE_SETTING, r.next]);
+    }
+    // the platform's attribution defaults: a field set in the startup config is read-only
+    if (patch.attribution !== undefined) {
+      writes.push([PLATFORM_ATTRIBUTION_SETTING, await this.checkAttribution(patch.attribution)]);
     }
     for (const [key, value] of writes) {
       if (value === undefined) continue;
@@ -757,7 +786,7 @@ export class SettingsService {
       action: "deployment.settings.updated",
       detail: {
         ...patch,
-        ...(tiersChange !== undefined && { sandboxTiersEffective: tiersChange }),
+        ...(autoModeChange !== undefined && { devicesAutoModeEffective: autoModeChange }),
         ...auditDetail,
       },
     });

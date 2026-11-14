@@ -425,7 +425,7 @@ describe("scanner parity: ticksIn lists exactly what the scanner fires", () => {
         expect(iso(sim.fired.filter((d) => d <= until)), `${scanAt} +${delay}s`).toEqual(iso(plan));
       }
       // the tick evaluations are slow (cron walks a calendar): a 10-day window of */15 takes seconds
-    }, 60_000);
+    });
   }
 
   it("02:30 New York does not fire on the spring-forward day, 01:30 fires once on the fall-back day", () => {

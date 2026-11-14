@@ -106,7 +106,7 @@ beforeAll(async () => {
   });
   expect(res.statusCode, res.body).toBe(201);
   agentId = (res.json() as { agent: { id: string } }).agent.id;
-}, 180_000);
+});
 
 afterAll(async () => {
   await Promise.all(kernels.map((k) => k.close().catch(() => {})));
@@ -129,7 +129,7 @@ const whoami = async (req: Req) => (await who(req)).instanceId;
 
 const idOf = (e: ConversationEvent) => `${e.conversationId}/${e.seq}`;
 
-describe("usage.report across two replicas", { timeout: 90_000 }, () => {
+describe("usage.report across two replicas", () => {
   it("every usage event is delivered exactly once, and both replicas delivered some", async () => {
     // each delivery takes ~200 ms, so while one replica is busy the other takes the next job
     const cfg = await reqA({

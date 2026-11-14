@@ -190,11 +190,11 @@ describe("插件生命周期", () => {
     expect(closed).toEqual(["dep-b", "dep-a"]);
   });
 
-  // The waits below add up to more than vitest's 5 s default (up to 5 s for the baseline, then the
-  // start, the stop and up to 1 s), so the test has its own timeout. If it still times out, the
-  // signal stops the body before it creates a kernel or right after (see kernel()), so it leaks no
-  // connections into the next test.
-  it("stop during slow start does not leak", { timeout: 30_000 }, async ({ signal }) => {
+  // The waits below add up to more than a few seconds (up to 5 s for the baseline, then the start,
+  // the stop and up to 1 s), so they rely on the integration project's bound. If the test still
+  // times out, the signal stops the body before it creates a kernel or right after (see kernel()),
+  // so it leaks no connections into the next test.
+  it("stop during slow start does not leak", async ({ signal }) => {
     // A new deferred per run, handed to the fixture through a deployment config key (a rerun does
     // not reuse an old, already resolved deferred)
     const entered = deferred();
@@ -382,7 +382,7 @@ describe("超时", () => {
     } finally {
       sock?.destroy();
     }
-  }, 20_000);
+  });
 
   it("停机先中止进行中的插件请求：插件 SSE 收到 req.signal 中止，不占满 10s 的 http 预算", async () => {
     const g = globalThis as unknown as Record<string, number | undefined>;
@@ -398,7 +398,7 @@ describe("超时", () => {
     expect(Date.now() - t0).toBeLessThan(3_000);
     expect(g[SSE_HOLD_KEY]).toBe(1);
     await reader?.cancel().catch(() => {});
-  }, 20_000);
+  });
 
   it("http phase cannot starve queue drain", async () => {
     const r = redisClient();
@@ -421,5 +421,5 @@ describe("超时", () => {
       sock?.destroy();
       r.disconnect();
     }
-  }, 45_000);
+  });
 });

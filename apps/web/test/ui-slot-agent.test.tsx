@@ -111,6 +111,7 @@ describe("agent.detail.section", () => {
       P_.sections.basics,
       P_.sections["quick-actions"],
       P_.sections.model,
+      P_.sections.attribution,
       "Agent notes",
     ]);
   });

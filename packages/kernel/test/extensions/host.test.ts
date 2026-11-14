@@ -58,10 +58,9 @@ const host = (cfg: Record<string, unknown> = {}, opts?: { resolveFrom?: string }
   hosts.push(h);
   return h;
 };
-const logged: { msg: string; fields: Record<string, unknown> | undefined }[] = [];
 const warned: { msg: string; fields: Record<string, unknown> | undefined }[] = [];
 const log = {
-  info: (msg: string, fields?: Record<string, unknown>) => logged.push({ msg, fields }),
+  info() {},
   warn: (msg: string, fields?: Record<string, unknown>) => warned.push({ msg, fields }),
   error() {},
 };
@@ -323,12 +322,12 @@ describe("ExtensionHost load rules", () => {
     await h.load([fx("subscriber")]);
     const pub = (p: unknown) => redis.publish("cap:subscriber:t", JSON.stringify(p));
     await pub("one");
-    for (let i = 0; i < 100 && (await redis.get("cap:subscriber:kv:got")) === null; i++) {
-      await sleep(20);
-    }
-    expect(await redis.get("cap:subscriber:kv:got")).toBe('"one"');
+    await vi.waitFor(async () => expect(await redis.get("cap:subscriber:kv:got")).toBe('"one"'), {
+      timeout: 5_000,
+    });
     await h.close();
     await pub("two");
+    // Nothing-happened window: the closed host's subscriber must not write after "two"
     await sleep(300);
     expect(await redis.get("cap:subscriber:kv:got")).toBe('"one"');
   });
@@ -356,25 +355,6 @@ describe("createExtensionContext rules", () => {
     await closing;
     const channels = (await redis.pubsub("CHANNELS", "*late-sub*")) as string[];
     expect(channels).toEqual([]);
-  });
-
-  it("ctx.log 附加 plugin 字段", async () => {
-    const ctx = createExtensionContext(
-      deps,
-      defineExtension({
-        name: "logger-x",
-        version: "0.1.0",
-        sdk: "^0.1.0-rc.0",
-        provides: [],
-        setup() {},
-      }),
-      {},
-    );
-    ctx.log.info("hello", { a: 1 });
-    ctx.log.info("bare");
-    expect(logged.at(-2)?.fields).toEqual({ a: 1, plugin: "logger-x" });
-    expect(logged.at(-1)?.fields).toEqual({ plugin: "logger-x" });
-    await ctx.close();
   });
 
   const mf = (over: Partial<ExtensionManifest> = {}) =>

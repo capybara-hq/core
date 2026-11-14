@@ -68,7 +68,7 @@ beforeAll(async () => {
       { org_id: orgA, account_id: memId, role: "member" },
     ])
     .execute();
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -234,7 +234,7 @@ async function sharedLead(
   return { id, pid: scoped.json().id as string, definition: saved.json().template.definition };
 }
 
-describe("org agent templates", { timeout: 120_000 }, () => {
+describe("org agent templates", () => {
   it("save-as maps every field without credentials (P4-10, P4-11)", async () => {
     // a platform connector template (of a catalog item) and a connector made from it
     const itemId = randomUUID();

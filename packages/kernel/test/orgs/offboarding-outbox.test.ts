@@ -89,7 +89,7 @@ beforeAll(async () => {
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
   owner = await session(k, "owner");
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -311,7 +311,7 @@ describe("offboarding owes its run stops and device destroys", () => {
       await runs.close();
       connection.disconnect();
     }
-  }, 30_000);
+  });
 
   it("their devices are destroyed with the fast path disabled", async () => {
     const orgId = await createOrg(owner, `Devs ${randomUUID().slice(0, 6)}`);

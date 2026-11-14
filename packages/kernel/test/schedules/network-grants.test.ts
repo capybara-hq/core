@@ -58,41 +58,32 @@ import { FakeMachine, HELLO } from "../local-devices/fake-machine.js";
  */
 
 const POLICY: DeviceLocalPolicySummary = {
-  effectiveTier: "strict",
-  isolation: "sandbox",
-  localhost: "off",
-  unixSockets: "off",
+  mode: "auto",
   allowedDomains: [],
-  remoteGrants: "owner",
 };
-const OPEN = { egress: "allowlist" as const, allowHosts: ["*.example.com"] };
+const OPEN = { network: { kind: "allowlist" as const, hosts: ["*.example.com"] } };
 
 describe("networkGrantRefusal", () => {
-  const cases: [string, Partial<{ remoteGrants: "owner" | "off" }> | null, string | null][] = [
-    ["files.example.com", null, null],
-    ["files.example.com", { remoteGrants: "owner" }, null],
-    ["*.example.com", null, "not_grantable"],
-    ["10.0.0.5", null, "not_grantable"],
-    ["printer.local", null, "not_grantable"],
-    ["Files.Example.com", null, "not_grantable"],
-    ["api.foo.com", null, "needs_admin"],
-    ["files.example.com", { remoteGrants: "off" }, "device_refuses"],
-    // the org layer comes first: an admin must act before the device matters
-    ["api.foo.com", { remoteGrants: "off" }, "needs_admin"],
+  const cases: [string, string | null][] = [
+    ["files.example.com", null],
+    ["*.example.com", "not_grantable"],
+    ["10.0.0.5", "not_grantable"],
+    ["printer.local", "not_grantable"],
+    ["Files.Example.com", "not_grantable"],
+    ["api.foo.com", "needs_admin"],
   ];
-  it.each(cases)("%s with device %j → %s", (host, device, code) => {
-    const summary = device === null ? null : { ...POLICY, ...device };
-    expect(networkGrantRefusal(host, { limits: OPEN, deviceSummary: summary })?.code ?? null).toBe(
-      code,
-    );
+  it.each(cases)("%s → %s", (host, code) => {
+    expect(networkGrantRefusal(host, { limits: OPEN })?.code ?? null).toBe(code);
   });
 
-  it("egress none refuses every host; open admits every valid one", () => {
+  it("an empty allowlist refuses every host; the open network admits every valid one", () => {
     expect(
-      networkGrantRefusal("a.example.com", { limits: { egress: "none", allowHosts: [] } })?.code,
+      networkGrantRefusal("a.example.com", {
+        limits: { network: { kind: "allowlist", hosts: [] } },
+      })?.code,
     ).toBe("needs_admin");
     expect(
-      networkGrantRefusal("a.foo.com", { limits: { egress: "open", allowHosts: [] } }),
+      networkGrantRefusal("a.foo.com", { limits: { network: { kind: "open-public", hosts: [] } } }),
     ).toBeNull();
   });
 });
@@ -206,7 +197,7 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "worker", "gateway"],
-        sandbox: { limits: OPEN },
+        sandbox: { limits: { allowHosts: ["*.example.com"] } },
         devices: { local: { reconnectGraceSeconds: 1, leaseTtlMs: 6000 } },
       },
     ),
@@ -215,7 +206,7 @@ beforeAll(async () => {
     .id;
   orgId = await createOrg(await session(k, "owner"));
   wsUrl = `ws://127.0.0.1:${k.port}/device/connect`;
-}, 180_000);
+});
 
 afterEach(() => {
   for (const m of open.splice(0)) m.close();
@@ -414,7 +405,7 @@ const grantKeys = async (s: Setup, taskId: string) => {
   return (res.json() as { items: { toolKey: string; specHash: string; stale: boolean }[] }).items;
 };
 
-describe("adding network grants", { timeout: 60_000 }, () => {
+describe("adding network grants", () => {
   it("create and add take network:<host> by the rule; the grant is stored as P-D7 says", async () => {
     const s = await setup();
     const taskId = await createTask(s, ["network:files.example.com"]);
@@ -459,22 +450,9 @@ describe("adding network grants", { timeout: 60_000 }, () => {
       "network:files.example.com",
     ]);
   });
-
-  it("a device that takes no remote grants refuses a network grant (device_refuses)", async () => {
-    const s = await setup({ remoteGrants: "off" });
-    const taskId = await createTask(s);
-    const res = await s.req({
-      method: "POST",
-      url: `${base()}/${taskId}/grants`,
-      payload: { grants: [{ toolKey: "network:files.example.com" }] },
-    });
-    expect(res.statusCode).toBe(400);
-    expect(codeOf(res)).toBe("schedule.grant_not_allowed");
-    expect(res.body).toContain("capybara-device policy add allowedDomains files.example.com");
-  });
 });
 
-describe("who may approve domains", { timeout: 60_000 }, () => {
+describe("who may approve domains", () => {
   const refusal = "Network domains are approved on the task page by a person.";
 
   it("a personal access token cannot add or create network grants", async () => {
@@ -546,7 +524,7 @@ describe("who may approve domains", { timeout: 60_000 }, () => {
   });
 });
 
-describe("unattended runs", { timeout: 60_000 }, () => {
+describe("unattended runs", () => {
   it("a task grant reaches the exec with source task; nothing is asked or missing", async () => {
     const s = await setup();
     s.dev.blocking.set("files.example.com", "device");
@@ -611,7 +589,7 @@ describe("unattended runs", { timeout: 60_000 }, () => {
   });
 });
 
-describe("NetworkGrants with task grants", { timeout: 60_000 }, () => {
+describe("NetworkGrants with task grants", () => {
   it("run and task grants merge (source task); another person's device, a trial or another org get none", async () => {
     const s = await setup();
     const taskId = await createTask(s, ["network:files.example.com"]);
@@ -656,7 +634,7 @@ describe("NetworkGrants with task grants", { timeout: 60_000 }, () => {
   });
 });
 
-describe("trial runs", { timeout: 60_000 }, () => {
+describe("trial runs", () => {
   it("the creator's 「这次允许」 becomes a task grant; an unchecked host does not", async () => {
     const s = await setup();
     s.dev.blocking.set("files.example.com", "device");

@@ -73,7 +73,7 @@ beforeAll(async () => {
       { roles: ["api", "worker"], extensions: [MODEL_FAKE] },
     ),
   );
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -204,7 +204,7 @@ const dailyTask = (accountId: string, name = "Digest"): Promise<ScheduledTask> =
     grants: [{ toolKey: "CurrentTime" }],
   });
 
-describe("schedule tools (spec §11)", { timeout: 120_000 }, () => {
+describe("schedule tools (spec §11)", () => {
   it("ScheduleCreate asks and the created task matches the approved input", async () => {
     await db
       .updateTable("accounts")

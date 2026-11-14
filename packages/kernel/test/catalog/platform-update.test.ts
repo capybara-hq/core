@@ -44,7 +44,7 @@ let org2: string;
 beforeAll(async () => {
   env = await startOrgEnv();
   org2 = await createOrg(env.root, "Beta");
-}, 240_000);
+});
 
 afterAll(async () => {
   await env?.stop();
@@ -240,7 +240,7 @@ async function seedCrm(): Promise<string> {
   return item;
 }
 
-describe("platform plugin update (spec §7)", { timeout: 120_000 }, () => {
+describe("platform plugin update (spec §7)", () => {
   it("preview marks a component updated on its own and one with its own scope; confirm moves both, clears a pinned copy, updates connectors in two orgs", async () => {
     const item = await seedCrm();
     await installIn(env.orgId, item, { connectors: { gh: tokenInput() } });
@@ -802,7 +802,7 @@ describe("platform plugin update (spec §7)", { timeout: 120_000 }, () => {
   });
 });
 
-describe("platform plugin update: concurrency and the extension", { timeout: 120_000 }, () => {
+describe("platform plugin update: concurrency and the extension", () => {
   it("two confirms at once: one updates, the other gets 409, no half state", async () => {
     const item = await seedCrm();
     await installIn(env.orgId, item, { connectors: { gh: tokenInput() } });
@@ -849,7 +849,7 @@ describe("platform plugin update: concurrency and the extension", { timeout: 120
   });
 });
 
-describe("uninstall and dependencies (Task 7 carry-over)", { timeout: 120_000 }, () => {
+describe("uninstall and dependencies (Task 7 carry-over)", () => {
   it("the uninstall preview lists agents using components of the dependency installs it removes", async () => {
     await seedPlugin(env, { name: "dep-a", skills: ["dep-skill"], templates: false });
     const app = await seedPlugin(env, {
@@ -885,7 +885,7 @@ const syncedVersion = async (itemId: string) =>
   ).platform_synced_version;
 const loaded = (name: string) => env.k.app.get(ExtensionHost).current(name)?.manifest.version;
 
-describe("platform plugin update: the extension (fix round 1)", { timeout: 180_000 }, () => {
+describe("platform plugin update: the extension (fix round 1)", () => {
   it("moves the deployment's extension package; the preview lists the orgs using it; a crash after the extension step is completed by a new preview", async () => {
     const v1 = await lifePkg({ name: "upd-move", version: "1.0.0" });
     const v2 = await lifePkg({ name: "upd-move", version: "2.0.0" });
@@ -1007,9 +1007,7 @@ describe("platform plugin update: the extension (fix round 1)", { timeout: 180_0
   });
 });
 
-describe("platform plugin update: storage, dependencies, missing connectors (fix round 1)", {
-  timeout: 180_000,
-}, () => {
+describe("platform plugin update: storage, dependencies, missing connectors (fix round 1)", () => {
   it("no storage call runs inside the update's transaction", async () => {
     const item = await seedCrm();
     await installIn(env.orgId, item, { connectors: { gh: tokenInput() } });
@@ -1125,9 +1123,7 @@ describe("platform plugin update: storage, dependencies, missing connectors (fix
   });
 });
 
-describe("platform plugin update: templates shipped defaultEnabled false", {
-  timeout: 120_000,
-}, () => {
+describe("platform plugin update: templates shipped defaultEnabled false", () => {
   const ghId = async () =>
     (
       await env.db

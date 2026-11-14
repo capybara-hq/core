@@ -40,7 +40,7 @@ beforeAll(async () => {
   k = await startKernel(
     runConfig({ pg: pgc.url, redis: rd.url }, { roles: ["api"], extensions: [MODEL_FAKE] }),
   );
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -149,7 +149,7 @@ const invalidPaths = (r: Awaited<ReturnType<Req>>) => {
   return (r.json().error.details as { path: string }[]).map((d) => d.path);
 };
 
-describe("disabledSkills", { timeout: 60_000 }, () => {
+describe("disabledSkills", () => {
   it("nothing pins or selects any more: skills.orgSkills and skills.pinned are refused", async () => {
     const s1 = await skill("one");
     expect((await create({ skills: { orgSkills: [s1] } })).statusCode).toBe(400);

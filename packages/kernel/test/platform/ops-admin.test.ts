@@ -92,7 +92,7 @@ beforeAll(async () => {
   org2 = await createOrg(root, "Beta Corp");
   await sql`INSERT INTO capybara.memberships (org_id, account_id, role)
     VALUES (${orgId}, ${memberId}, 'member')`.execute(db);
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -525,47 +525,62 @@ describe("admin and models", () => {
     expect(http.json()).toEqual(all);
   });
 
-  it("admin.update-settings lowers the platform's sandbox tiers but never raises them", async () => {
+  it("admin.update-settings turns the platform's auto mode off but never on", async () => {
     expect(await run("admin.settings", {})).toMatchObject({
-      sandboxTiers: { max: "dev", default: "dev", allowUnsandboxed: true },
+      devicesAutoMode: { mode: "allowed", source: "default" },
     });
-    for (const sandboxTiers of [{ max: "open" }, { max: null }]) {
-      // { max: null } is no raise while the stored max is the default; set it first
-      await root({
-        method: "PUT",
-        url: "/api/v1/admin/settings",
-        payload: { sandboxTiers: { max: "dev" } },
+    // an agent may turn it off
+    expect(await precheck("admin.update-settings", { devicesAutoMode: { mode: "off" } })).toEqual({
+      ok: true,
+    });
+    const out = await run("admin.update-settings", { devicesAutoMode: { mode: "off" } });
+    expect(out).toMatchObject({ devicesAutoMode: { mode: "off", source: "db" } });
+    // but never on again, nor cleared back to the default (allowed)
+    for (const devicesAutoMode of [{ mode: "allowed" }, { mode: null }]) {
+      expect(
+        await precheck("admin.update-settings", { devicesAutoMode }),
+        JSON.stringify(devicesAutoMode),
+      ).toMatchObject({
+        ok: false,
+        code: "deployment.auto_mode_not_allowed",
       });
-      expect(await precheck("admin.update-settings", { sandboxTiers })).toMatchObject({
-        ok: sandboxTiers.max === null,
-      });
+      await expect(run("admin.update-settings", { devicesAutoMode })).rejects.toThrow(
+        /only turn it off/,
+      );
     }
-    await root({
+    // an API token of the super admin may not turn it on either
+    const made = await root({
+      method: "POST",
+      url: "/api/v1/me/tokens",
+      payload: { name: "ops" },
+    });
+    expect(made.statusCode, made.body).toBe(201);
+    const token = (made.json() as { token: string }).token;
+    const viaToken = await k.http.inject({
       method: "PUT",
       url: "/api/v1/admin/settings",
-      payload: { sandboxTiers: { max: "strict", default: "strict" } },
+      headers: { authorization: `Bearer ${token}` },
+      payload: { devicesAutoMode: { mode: "allowed" } },
     });
-    for (const sandboxTiers of [{ max: "dev" }, { max: null, default: null }, { default: "dev" }]) {
-      expect(await precheck("admin.update-settings", { sandboxTiers })).toMatchObject({
-        ok: false,
-        code:
-          sandboxTiers.default === "dev"
-            ? "validation_failed"
-            : "deployment.sandbox_tier_not_allowed",
-      });
-      await expect(run("admin.update-settings", { sandboxTiers })).rejects.toThrow();
-    }
-    const out = await run("admin.update-settings", { sandboxTiers: { allowUnsandboxed: false } });
-    expect(out).toMatchObject({
-      sandboxTiers: { max: "strict", default: "strict", allowUnsandboxed: false },
-    });
-    // a person raises them again
+    expect(viaToken.statusCode).toBe(400);
+    expect(viaToken.json().error.code).toBe("deployment.auto_mode_not_allowed");
+    // a person (super admin) turns it back on in the admin console, then the agent may turn it off
     const back = await root({
       method: "PUT",
       url: "/api/v1/admin/settings",
-      payload: { sandboxTiers: { max: null, default: null, allowUnsandboxed: null } },
+      payload: { devicesAutoMode: { mode: "allowed" } },
     });
     expect(back.statusCode, back.body).toBe(200);
+    expect(back.json().devicesAutoMode).toMatchObject({ mode: "allowed", source: "db" });
+    await run("admin.update-settings", { devicesAutoMode: { mode: "off" } });
+    // a person may also clear the stored choice, back to the default
+    const cleared = await root({
+      method: "PUT",
+      url: "/api/v1/admin/settings",
+      payload: { devicesAutoMode: { mode: null } },
+    });
+    expect(cleared.statusCode, cleared.body).toBe(200);
+    expect(cleared.json().devicesAutoMode).toMatchObject({ mode: "allowed", source: "default" });
   });
 
   it("admin.update-settings: theme.not_available says the default must be on in every org", () => {
@@ -574,6 +589,15 @@ describe("admin and models", () => {
     )?.next;
     expect(next).toMatch(/on in every organization/);
     expect(next).toMatch(/details list orgs/);
+  });
+
+  it("admin.update-settings: deployment.setting_readonly names the startup config, not a sandbox setting", () => {
+    const next = op("admin.update-settings").errors?.find(
+      (e) => e.code === "deployment.setting_readonly",
+    )?.next;
+    expect(next).toMatch(/startup config/);
+    expect(next).toMatch(/admin\.settings shows the field's source/);
+    expect(next).not.toMatch(/sandbox/);
   });
 
   it("lists the providers, then one provider's models; disables one platform-wide", async () => {

@@ -1,17 +1,16 @@
 import { fileURLToPath } from "node:url";
-import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import {
+  fakeExtensionEntry,
+  startTestPostgres,
+  startTestRedis,
+  type TestContainer,
+} from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ToolRegistry } from "../../src/tools/registry.js";
 import { truncateTables } from "../helpers/db.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
-
-const PROBER_OFF = [
-  ...builtinsOff(),
-  { kind: "plugin" as const, plugin: "tools-probe", tools: ["second"] },
-];
-
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import {
@@ -25,13 +24,19 @@ import {
 } from "../helpers/runs.js";
 
 /**
- * Per-org tool switches (layering spec A §7): an org admin turns off one tool of an extension;
- * switching off is previewed with the org's agents that selected the tool (PCM §5 rule 8).
+ * The org's tool switches and extension-tool list over HTTP (one kernel for both):
+ * - per-org tool switches (layering spec A §7): an org admin turns off one tool of an extension;
+ *   switching off is previewed with the org's agents that selected the tool (PCM §5 rule 8);
+ * - `GET /orgs/:orgId/tools/extensions`: the enabled extensions' tools for the agent form.
  */
 
 const TOOLS_PROBE = fileURLToPath(
   new URL("../fixtures/plugins/tools-probe/index.ts", import.meta.url),
 );
+const PROBER_OFF = [
+  ...builtinsOff(),
+  { kind: "plugin" as const, plugin: "tools-probe", tools: ["second"] },
+];
 const KEY = "plugin__tools-probe__echo";
 const OFF_REASON = `Tool ${KEY} is turned off in this organization`;
 
@@ -40,74 +45,78 @@ let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let k: TestKernel;
-let owner: Req;
-let member: Req;
-let orgId: string;
-let otherOrg: string;
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
   const base = runConfig({ pg: pgc.url, redis: rd.url }, { roles: ["api"] });
-  k = await startKernel({ ...base, extensions: [...base.extensions, TOOLS_PROBE] });
-}, 180_000);
+  k = await startKernel({
+    ...base,
+    extensions: [...base.extensions, TOOLS_PROBE, fakeExtensionEntry("fake-tools-ui")],
+  });
+});
 afterAll(async () => {
   await k?.close();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 
-beforeEach(async () => {
-  await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
-  const accounts = accountsFor(db);
-  const ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "O" }))
-    .id;
-  const memberId = (await accounts.createLocal({ login: "mem", password: PW, displayName: "M" }))
-    .id;
-  owner = await session(k, "owner");
-  orgId = await createOrg(owner);
-  otherOrg = await createOrg(owner, "Other");
-  await testMembers(db).add(orgId, memberId, "member", ownerId);
-  member = await session(k, "mem");
-  for (const org of [orgId, otherOrg]) {
-    const r = await owner({
-      method: "PUT",
-      url: `/api/v1/orgs/${org}/extensions/tools-probe`,
-      payload: { enabled: true },
-    });
-    expect(r.statusCode, r.body).toBe(200);
-  }
-});
-
-const toolsUrl = (org = orgId) => `/api/v1/orgs/${org}/extensions/tools-probe/tools`;
-
-async function createProber(org = orgId): Promise<string> {
-  const res = await owner({
-    method: "POST",
-    url: `/api/v1/orgs/${org}/agents`,
-    payload: {
-      definition: {
-        name: "Prober",
-        instructions: "Probe.",
-        model: { provider: "model-fake", model: "fake-1" },
-        // only echo: every builtin and the extension's other tool off
-        disabledTools: PROBER_OFF,
-      },
-      visibility: "org",
-    },
-  });
-  expect(res.statusCode, res.body).toBe(201);
-  return (res.json() as { agent: { id: string } }).agent.id;
-}
-
-const put = (req: Req, tool: string, body: Record<string, unknown>, org = orgId) =>
-  req({ method: "PUT", url: `${toolsUrl(org)}/${tool}`, payload: body });
-
-const resolve = (org: string) =>
-  k.app.get(ToolRegistry).forAgent(org, { source: "web", disabledTools: PROBER_OFF });
-
 describe("org tool switches over HTTP", () => {
+  let owner: Req;
+  let member: Req;
+  let orgId: string;
+  let otherOrg: string;
+
+  beforeEach(async () => {
+    await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
+    const accounts = accountsFor(db);
+    const ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "O" }))
+      .id;
+    const memberId = (await accounts.createLocal({ login: "mem", password: PW, displayName: "M" }))
+      .id;
+    owner = await session(k, "owner");
+    orgId = await createOrg(owner);
+    otherOrg = await createOrg(owner, "Other");
+    await testMembers(db).add(orgId, memberId, "member", ownerId);
+    member = await session(k, "mem");
+    for (const org of [orgId, otherOrg]) {
+      const r = await owner({
+        method: "PUT",
+        url: `/api/v1/orgs/${org}/extensions/tools-probe`,
+        payload: { enabled: true },
+      });
+      expect(r.statusCode, r.body).toBe(200);
+    }
+  });
+
+  const toolsUrl = (org = orgId) => `/api/v1/orgs/${org}/extensions/tools-probe/tools`;
+
+  async function createProber(org = orgId): Promise<string> {
+    const res = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${org}/agents`,
+      payload: {
+        definition: {
+          name: "Prober",
+          instructions: "Probe.",
+          model: { provider: "model-fake", model: "fake-1" },
+          // only echo: every builtin and the extension's other tool off
+          disabledTools: PROBER_OFF,
+        },
+        visibility: "org",
+      },
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    return (res.json() as { agent: { id: string } }).agent.id;
+  }
+
+  const put = (req: Req, tool: string, body: Record<string, unknown>, org = orgId) =>
+    req({ method: "PUT", url: `${toolsUrl(org)}/${tool}`, payload: body });
+
+  const resolve = (org: string) =>
+    k.app.get(ToolRegistry).forAgent(org, { source: "web", disabledTools: PROBER_OFF });
+
   it("lists the extension's tools, on by default, for members too", async () => {
     const r = await member({ method: "GET", url: toolsUrl() });
     expect(r.statusCode, r.body).toBe(200);
@@ -225,5 +234,97 @@ describe("org tool switches over HTTP", () => {
     expect(noTools.json()).toEqual({ tools: [] });
     const bad = await put(owner, "echo", { enabled: "no" });
     expect(bad.statusCode).toBe(400);
+  });
+});
+
+describe("extension tools over HTTP", () => {
+  let owner: Req;
+  let member: Req;
+  let orgId: string;
+
+  beforeEach(async () => {
+    await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
+    const accounts = accountsFor(db);
+    const ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "O" }))
+      .id;
+    const memberId = (await accounts.createLocal({ login: "mem", password: PW, displayName: "M" }))
+      .id;
+    owner = await session(k, "owner");
+    orgId = await createOrg(owner);
+    await testMembers(db).add(orgId, memberId, "member", ownerId);
+    member = await session(k, "mem");
+  });
+
+  type Offer = {
+    extensions: {
+      plugin: string;
+      displayName: { zh: string; en: string };
+      tools: Record<string, unknown>[];
+    }[];
+  };
+
+  const list = async (req: Req) => {
+    const r = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/tools/extensions` });
+    expect(r.statusCode, r.body).toBe(200);
+    return r.json() as Offer;
+  };
+
+  const toggle = async (enabled: boolean) => {
+    const r = await owner({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgId}/extensions/fake-tools-ui`,
+      payload: { enabled },
+    });
+    expect(r.statusCode, r.body).toBe(200);
+  };
+
+  it("lists only the extensions enabled in the org, with each tool's metadata", async () => {
+    const before = await list(member);
+    expect(before.extensions.find((e) => e.plugin === "fake-tools-ui")).toBeUndefined();
+
+    await toggle(true);
+    const after = await list(member);
+    const ext = after.extensions.find((e) => e.plugin === "fake-tools-ui");
+    expect(ext).toEqual({
+      plugin: "fake-tools-ui",
+      displayName: { zh: "fake-tools-ui", en: "fake-tools-ui" },
+      tools: [
+        {
+          name: "write",
+          key: "plugin__fake-tools-ui__write",
+          title: null,
+          description:
+            "Replace the item list of the current conversation. Send every item each time; " +
+            "status is pending, in_progress or completed. Test fixture only.",
+          annotations: {},
+          defaultPolicy: "allow",
+          switchedOff: false,
+        },
+        {
+          name: "web-only",
+          key: "plugin__fake-tools-ui__web-only",
+          title: null,
+          description:
+            "Report who and where this call runs: the conversation source, its owner, the " +
+            "caller and the caller's role. Offered only in web and direct-message " +
+            "conversations. Test fixture only.",
+          annotations: {},
+          defaultPolicy: "allow",
+          switchedOff: false,
+        },
+      ],
+    });
+
+    await toggle(false);
+    const off = await list(owner);
+    expect(off.extensions.find((e) => e.plugin === "fake-tools-ui")).toBeUndefined();
+  });
+
+  it("is an org route: a non-member gets 404 or 403", async () => {
+    const accounts = accountsFor(db);
+    await accounts.createLocal({ login: "out", password: PW, displayName: "X" });
+    const out = await session(k, "out");
+    const r = await out({ method: "GET", url: `/api/v1/orgs/${orgId}/tools/extensions` });
+    expect([403, 404]).toContain(r.statusCode);
   });
 });

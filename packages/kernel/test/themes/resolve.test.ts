@@ -15,23 +15,27 @@ import {
  * Themes spec §7 (plan Task 8): the theme of a signed-in page is the person's pick if it is on in
  * the org and the org does not lock; else the org's default if on; else the platform default if on
  * in the org; else the built-in theme (null). An unavailable choice is skipped, never an error.
+ *
+ * The second suite is client extensions spec §7.3: `ThemeRef.key` names a theme for the `theme=`
+ * state token. Both suites share one org environment.
  */
+let env: OrgEnv;
+let themes: ThemesService;
+
+beforeAll(async () => {
+  env = await startOrgEnv();
+  themes = env.k.app.get(ThemesService);
+});
+
+afterAll(async () => {
+  await env?.stop();
+});
+
 describe("theme resolution", () => {
-  let env: OrgEnv;
-  let themes: ThemesService;
   /** Three themes with their own scope `all` (on in the org). */
   let a: string;
   let b: string;
   let c: string;
-
-  beforeAll(async () => {
-    env = await startOrgEnv();
-    themes = env.k.app.get(ThemesService);
-  }, 240_000);
-
-  afterAll(async () => {
-    await env?.stop();
-  });
 
   beforeEach(async () => {
     await resetOrgCatalog(env);
@@ -129,5 +133,23 @@ describe("theme resolution", () => {
     expect((await themes.platformDefault())?.id).toBe(c);
     await setThemeScope(env, c, "optional");
     expect(await themes.platformDefault()).toBeNull();
+  });
+});
+
+describe("ThemeRef.key", () => {
+  beforeEach(async () => {
+    await resetOrgCatalog(env);
+    await clearThemeLevels(env);
+  });
+
+  it("ThemeRef.key is plugin/file id", async () => {
+    const { id } = await importTheme(env, "neon", "neon-grid");
+    await setThemeScope(env, id, "all");
+    await writeUiTheme(env, id);
+    // The listing, the platform default and the resolved theme all carry the same key (not the
+    // `platform_themes` uuid).
+    expect((await themes.listForOrg(env.orgId)).map((t) => t.key)).toEqual(["neon/neon-grid"]);
+    expect((await themes.platformDefault())?.key).toBe("neon/neon-grid");
+    expect((await themes.resolve(env.orgId, env.memId))?.key).toBe("neon/neon-grid");
   });
 });

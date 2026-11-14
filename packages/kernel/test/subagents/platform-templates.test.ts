@@ -30,7 +30,7 @@ const capture = captureProviderRequests();
 beforeAll(async () => {
   capture.install();
   env = await startOrgEnv();
-}, 240_000);
+});
 
 afterAll(async () => {
   capture.restore();
@@ -274,7 +274,7 @@ describe("agent templates from platform components", () => {
       platformTemplateId: p,
     });
     expect(await childSystem("echo:first")).toContain("Review P2.");
-  }, 60_000);
+  });
 
   it("a template without a plugin is the bare type; one clashing with general-purpose or an inline name is skipped", async () => {
     const bare = await seedPlatform({ name: "reviewer", plugin: null, bodies: ["Bare."] });
@@ -326,7 +326,7 @@ describe("agent templates from platform components", () => {
       ["reviewer", "inline"],
     ]);
     expect(warn).toHaveBeenCalledTimes(2);
-  }, 60_000);
+  });
 
   it("the org's own template wins a type clash; a linked copy is listed as its platform template", async () => {
     const p = await seedPlatform({ name: "reviewer", plugin: "crm", bodies: ["Review P1."] });
@@ -439,7 +439,7 @@ describe("agent templates from platform components", () => {
     // the pin changed the source: the linked case differs, the first (org) case matches again
     expect(await currentTemplate(env.db, caseOf(second.started))).toEqual({ id: copy, version: 1 });
     expect(first.started.payload.template.platformTemplateId).toBeUndefined();
-  }, 150_000);
+  });
 
   it("a selected platform id shadowed by an org row of the same component stays in the roster as its alias", async () => {
     const itemId = await catalogItem("crm");
@@ -486,7 +486,7 @@ describe("agent templates from platform components", () => {
       version: 1,
       plugin: "crm",
     });
-  }, 120_000);
+  });
   it("a pinned linked copy follows its platform template's availability and counts as a reference (ruling P2-18)", async () => {
     const p = await seedPlatform({ name: "reviewer", plugin: "crm", bodies: ["Review P1."] });
     const own = await seedOrg({ name: "reviewer", plugin: "crm", body: "Review O1." });

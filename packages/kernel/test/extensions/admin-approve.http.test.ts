@@ -164,7 +164,7 @@ beforeAll(async () => {
   await accounts.createLocal({ login: "mem", password: PW, displayName: "M" });
   admin = await session(k, "root");
   member = await session(k, "mem");
-}, 240_000);
+});
 afterAll(async () => {
   await k?.close();
   await destroyDb?.();

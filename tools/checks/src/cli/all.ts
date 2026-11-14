@@ -16,6 +16,7 @@ import { checkSkillsFrontmatter } from "../skills-frontmatter.js";
 import { checkSyncedSkills } from "../synced-skills.js";
 import { checkTerms } from "../terms.js";
 import { checkTestPlugins } from "../test-plugins.js";
+import { checkTestPortfolio } from "../test-portfolio.js";
 import { checkTokens } from "../tokens.js";
 import { checkUiParts } from "../ui-parts.js";
 import { checkUiSlots } from "../ui-slots.js";
@@ -52,6 +53,7 @@ const checks: NamedCheck[] = [
     run: () => checkWebUi(join(root, "apps/web/src"), join(root, "packages/design/src")),
   },
   { name: "Test plugins", run: () => checkTestPlugins(root) },
+  { name: "Test portfolio", run: () => checkTestPortfolio({ root }) },
   { name: "Synced skills", run: () => checkSyncedSkills(root) },
   { name: "Skills frontmatter", run: () => checkSkillsFrontmatter(join(root, ".agents/skills")) },
   { name: "release metadata", run: () => checkReleaseMetadata(root) },

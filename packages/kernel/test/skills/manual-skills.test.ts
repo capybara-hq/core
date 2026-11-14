@@ -72,7 +72,7 @@ beforeAll(async () => {
       },
     ),
   );
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -253,7 +253,7 @@ const record = (
       log && { log },
     );
 
-describe("manifest.invocation", { timeout: 60_000 }, () => {
+describe("manifest.invocation", () => {
   it("an upload with disable-model-invocation: true stores a manual-only version", async () => {
     const r = await upload(md("manual", "disable-model-invocation: true\nargument-hint: '[n]'\n"));
     expect(r.statusCode, r.body).toBe(201);
@@ -307,7 +307,7 @@ describe("manifest.invocation", { timeout: 60_000 }, () => {
   });
 });
 
-describe("the model's catalog", { timeout: 60_000 }, () => {
+describe("the model's catalog", () => {
   it("leaves out manual-only skills", async () => {
     await seedSkill({ name: "manual", text: md("manual"), invocation: MANUAL });
     await seedSkill({ name: "plain", text: md("plain") });
@@ -352,7 +352,7 @@ describe("the model's catalog", { timeout: 60_000 }, () => {
   });
 });
 
-describe("the Claude Code tool map (batch 1 review M8)", { timeout: 60_000 }, () => {
+describe("the Claude Code tool map (batch 1 review M8)", () => {
   /** Inserts skill rows directly (no files: nothing here reads them). */
   async function bulk(
     specs: { name: string; claude?: boolean; invocation?: SkillManifest["invocation"] }[],

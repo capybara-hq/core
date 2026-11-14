@@ -79,8 +79,9 @@ const localAdd = (hosts: readonly string[]) =>
   hosts.map((h) => `capybara-device policy add allowedDomains ${h}`).join(" and ");
 
 /**
- * Not asked: the device takes no network changes from the deployment (`remoteGrants: off`), so
- * neither a run grant nor 「一直允许」 would reach it; only its owner can allow the host locally.
+ * Not asked: the device cannot take network changes from the deployment (Docker mode, or a program
+ * too old to take them), so neither a run grant nor 「一直允许」 would reach it; only its owner can
+ * allow the host locally.
  */
 export const localOnlyNote = (hosts: readonly string[]) =>
   `${blockedLead(hosts).slice(0, -1)}, and this device does not accept network changes from the conversation. The device owner can allow ${pron(hosts)} locally: ${localAdd(hosts)}. Continue without ${pron(hosts)} or tell the user.`;
@@ -106,7 +107,7 @@ export const addressLayerNote = (hosts: readonly string[]) =>
 
 /**
  * An unattended run (spec §8.1): the task approves the host, yet the device refused it: the device
- * takes no network grants from the deployment (`remoteGrants` off, or a program too old for them).
+ * takes no network grants from the deployment (Docker mode, or a program too old for them).
  * Not asked, not a missing grant: only the device's owner can allow it locally.
  */
 export const taskGrantIgnoredNote = (hosts: readonly string[]) =>
@@ -178,7 +179,6 @@ export function planNetworkAsk(
   const address: string[] = [];
   const org: string[] = [];
   const refused: string[] = [];
-  const localOnly: string[] = [];
   const unattended: string[] = [];
   const taskIgnored: string[] = [];
   const candidates: { host: string; port: number }[] = [];
@@ -188,8 +188,6 @@ export function planNetworkAsk(
   const canAsk =
     ctx.device?.features.includes("networkReport") === true &&
     ctx.device.features.includes("policyOpId");
-  // no run grant or policy change reaches a device whose owner turned remote grants off
-  const remote = ctx.device?.policy?.remoteGrants !== "off";
   for (const b of hostsOf(blocked)) {
     if (b.layer === "address") address.push(b.host);
     else if (b.layer === "org") {
@@ -205,13 +203,11 @@ export function planNetworkAsk(
       else if (unattendedFails(ctx.unattended)) {
         unattended.push(b.host);
         missingGrants.push(networkGrantKey(b.host));
-      } else if (!remote) localOnly.push(b.host);
-      else candidates.push({ host: b.host, port: b.port });
+      } else candidates.push({ host: b.host, port: b.port });
     }
   }
   const notes: string[] = [];
   if (refused.length > 0) notes.push(deniedNote(refused));
-  if (localOnly.length > 0) notes.push(localOnlyNote(localOnly));
   if (taskIgnored.length > 0) notes.push(taskGrantIgnoredNote(taskIgnored));
   if (unattended.length > 0) notes.push(unattendedNetworkNote(unattended));
   let ask: { host: string; port: number }[] = [];

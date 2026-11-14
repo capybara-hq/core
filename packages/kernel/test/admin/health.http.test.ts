@@ -47,7 +47,7 @@ beforeAll(async () => {
   ).token;
   root = await session(k, "root");
   owner = await session(k, "owner");
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();

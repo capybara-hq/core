@@ -52,7 +52,7 @@ interface View {
   replicas: { replicaId: string; state: string; reason: string | null; version: string }[];
 }
 
-describe("插件生命周期双副本验收", { timeout: 120_000 }, () => {
+describe("插件生命周期双副本验收", () => {
   let pgc: TestContainer;
   let rdc: TestContainer;
   let h: Harness;
@@ -152,7 +152,7 @@ describe("插件生命周期双副本验收", { timeout: 120_000 }, () => {
     });
     const r = await at(0, "POST", "/api/v1/auth/login", { login: "root", password: PW });
     expect(r.status, JSON.stringify(r.json)).toBe(200);
-  }, 300_000);
+  });
 
   afterAll(async () => {
     await h?.stop();
@@ -160,7 +160,7 @@ describe("插件生命周期双副本验收", { timeout: 120_000 }, () => {
     redis?.disconnect();
     await Promise.all([pgc?.stop(), rdc?.stop()]);
     for (const d of [gateDir, pluginsDir]) if (d) await rm(d, { recursive: true, force: true });
-  }, 120_000);
+  });
 
   let orgId: string;
   let agentId: string;
@@ -249,6 +249,7 @@ describe("插件生命周期双副本验收", { timeout: 120_000 }, () => {
       "idle replica unloaded",
       100,
     );
+    // the draining replica keeps reporting loaded while the in-flight call runs
     await new Promise((r) => setTimeout(r, 500));
     expect(rowOf(await view(), runner)?.state).toBe("loaded");
     expect((await eventsOf(db, convId)).some((e) => e.type === "tool_result")).toBe(false);

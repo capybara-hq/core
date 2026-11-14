@@ -47,13 +47,13 @@ beforeAll(async () => {
   await insertEnv("e-cloud", "cloud");
   await expect(insertEnv("e-early", "device")).rejects.toThrow(/source/);
   await migrate(pg.url, { schema: "capybara", dir: copyMigrations((f) => f <= FILE) });
-}, 120_000);
+});
 
 afterAll(async () => {
   await db?.destroy();
   await pg?.stop();
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
-}, 120_000);
+});
 
 describe("0093_connected_environments", () => {
   it("0093 adds device to environments.source", async () => {

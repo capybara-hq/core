@@ -18,22 +18,23 @@ beforeAll(async () => {
   rd = await startTestRedis();
   r1 = new Redis(rd.url);
   r2 = new Redis(rd.url);
-}, 120_000);
+});
 afterAll(async () => {
   r1?.disconnect();
   r2?.disconnect();
   await rd?.stop();
-}, 120_000);
+});
 
 const log = createLogger("error");
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-async function until(cond: () => boolean | Promise<boolean>, ms = 3000) {
-  const end = Date.now() + ms;
-  while (!(await cond())) {
-    if (Date.now() > end) throw new Error("condition not met in time");
-    await sleep(10);
-  }
-}
+/** Waits until `cond` holds (the old polling loop's 3 s budget); an error from `cond` surfaces. */
+const until = (cond: () => boolean | Promise<boolean>, ms = 3000) =>
+  vi.waitFor(
+    async () => {
+      if (!(await cond())) throw new Error("condition not met yet");
+    },
+    { timeout: ms },
+  );
 let n = 0;
 const k = (name: string) => `${name}-${++n}-${Math.random().toString(36).slice(2)}`;
 
@@ -67,10 +68,17 @@ describe("LockService", () => {
     const b = new LockService(r2, log);
     const key = k("wait");
     const h = await a.acquire(key, { ttlMs: 5000 });
-    setTimeout(() => void h?.release(), 100);
-    const h2 = await b.acquire(key, { ttlMs: 5000, waitMs: 2000, retryMs: 20 });
+    const tries = vi.spyOn(r2, "set");
+    const waiting = b.acquire(key, { ttlMs: 5000, waitMs: 2000, retryMs: 20 });
+    // the waiter made a second attempt before the release: waitMs, not the first try, got the lock
+    await vi.waitFor(() => expect(tries.mock.calls.length).toBeGreaterThanOrEqual(2), {
+      timeout: 3000,
+    });
+    await h?.release();
+    const h2 = await waiting;
     expect(h2).toBeDefined();
     await h2?.release();
+    tries.mockRestore();
   });
 
   it("waitMs Infinity waits until the holder releases; signal aborts the wait", async () => {
@@ -78,24 +86,34 @@ describe("LockService", () => {
     const b = new LockService(r2, log);
     const key = k("inf");
     const h = await a.acquire(key, { ttlMs: 5000 });
+    const tries = vi.spyOn(r2, "set");
     const waiting = b.acquire(key, { ttlMs: 5000, waitMs: Number.POSITIVE_INFINITY, retryMs: 20 });
-    await sleep(300);
+    // the waiter made a second attempt: it is in its retry loop before the holder releases
+    await vi.waitFor(() => expect(tries.mock.calls.length).toBeGreaterThanOrEqual(2), {
+      timeout: 3000,
+    });
     await h?.release();
     const h2 = await waiting;
     expect(h2).toBeDefined();
     const ac = new AbortController();
+    const triesA = vi.spyOn(r1, "set");
     const blocked = a.acquire(key, {
       ttlMs: 5000,
       waitMs: Number.POSITIVE_INFINITY,
       retryMs: 20,
       signal: ac.signal,
     });
-    await sleep(100);
+    // aborted while blocked and retrying, not on its first attempt
+    await vi.waitFor(() => expect(triesA.mock.calls.length).toBeGreaterThanOrEqual(2), {
+      timeout: 3000,
+    });
     const t0 = Date.now();
     ac.abort(new Error("stop waiting"));
     await expect(blocked).rejects.toThrow("stop waiting");
     expect(Date.now() - t0).toBeLessThan(500);
     await h2?.release();
+    tries.mockRestore();
+    triesA.mockRestore();
     // an already aborted signal throws before trying
     await expect(
       a.acquire(k("pre"), { ttlMs: 5000, signal: AbortSignal.abort(new Error("pre")) }),
@@ -173,6 +191,7 @@ describe("LockService", () => {
     vi.mocked(slow.eval).mockResolvedValue(1 as never);
     await h?.release();
     reject?.(new Error("late"));
+    // Nothing-happened window: the late rejection must not reach a retained log call
     await sleep(50);
     expect(warn).not.toHaveBeenCalled();
     slow.disconnect();
@@ -262,6 +281,7 @@ class Svc {
   async serial(_id: string) {
     this.counter.active++;
     this.counter.maxActive = Math.max(this.counter.maxActive, this.counter.active);
+    // the work being serialized: long enough for the three callers to overlap
     await sleep(50);
     this.counter.active--;
   }
@@ -427,8 +447,13 @@ describe("LockService shared leases", () => {
     s?.abandon();
     const b = new LockService(r2, log);
     expect(await b.tryExclusive(keys, "x", 5000)).toBeUndefined();
-    await sleep(400);
-    const x = await b.tryExclusive(keys, "x", 5000);
+    // the 300 ms lease must expire: poll for it, but inside a 1 s ceiling (the old 400 ms sleep),
+    // so a regression that reclaims the lease only seconds later still fails
+    let x: Awaited<ReturnType<typeof b.tryExclusive>>;
+    await until(async () => {
+      x = await b.tryExclusive(keys, "x", 5000);
+      return x !== undefined;
+    }, 1_000);
     expect(x).toBeDefined();
     await x?.release();
   });
@@ -492,6 +517,7 @@ describe("LockService shared leases", () => {
             if (script === RENEW_SHARED_LEASE) return new Promise(() => {});
             // biome-ignore lint/suspicious/noExplicitAny: forwards the call unchanged
             const r = await (t.eval as any)(script, ...args);
+            // the reply arrives 2300 ms later: a simulated slow downgrade, after the deadline
             if (script === DOWNGRADE_SHARED_LEASE) await sleep(2300);
             return r;
           };
@@ -520,6 +546,7 @@ describe("LockService shared leases", () => {
           return async (script: string, ...args: unknown[]) => {
             // biome-ignore lint/suspicious/noExplicitAny: forwards the call unchanged
             const r = await (t.eval as any)(script, ...args);
+            // a simulated 700 ms reply: the renewal at 500 is due while the downgrade is in flight
             if (script === DOWNGRADE_SHARED_LEASE) await sleep(700);
             return r;
           };
@@ -532,6 +559,7 @@ describe("LockService shared leases", () => {
     const keys = keysOf("down-race");
     const x = await a.tryExclusive(keys, "t", 1500);
     expect(await x?.downgrade()).toBe(true);
+    // a genuine time assertion: real time past the 1000 ms loss deadline, with a real Redis key
     await sleep(1200);
     expect(x?.lost.aborted).toBe(false);
     expect(await new LockService(r1, log).sharedCount(keys)).toBe(1);

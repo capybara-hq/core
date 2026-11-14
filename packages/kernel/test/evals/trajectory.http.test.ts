@@ -34,7 +34,7 @@ beforeAll(async () => {
   db = legacyDbFor(raw);
   eventLog = eventLogFor(db, { publish: async () => {} });
   k = await startKernel(runConfig({ pg: pgc.url, redis: rd.url }, { roles: ["api"] }));
-}, 120_000);
+});
 afterAll(async () => {
   await k?.close();
   await raw?.destroy();

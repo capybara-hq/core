@@ -47,13 +47,13 @@ beforeAll(async () => {
   await insertEnv("mine", "Build box", false);
   await insertEnv("almost", "Personal (sandbox-docker) copy", false);
   await migrate(pg.url, { schema: "capybara", dir: copyMigrations((f) => f <= FILE) });
-}, 120_000);
+});
 
 afterAll(async () => {
   await db?.destroy();
   await pg?.stop();
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
-}, 120_000);
+});
 
 describe("0096_environment_demoted_default", () => {
   it("marks the defaults demoted under the old naming and drops their generated names", async () => {

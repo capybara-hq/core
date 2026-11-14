@@ -53,8 +53,6 @@ const streamsWith = (
     live: d.drafts ?? (async () => []),
   });
 
-const flush = () => new Promise((r) => setTimeout(r, 10));
-
 describe("ConversationStreams", () => {
   it("订阅失败：抛出原错误，且不碰输出端（由 HTTP 层按普通错误返回）", async () => {
     const out = output();
@@ -113,7 +111,7 @@ describe("ConversationStreams", () => {
     for (let i = 0; i < 6; i++) {
       handler?.({ kind: "delta", runId: "r", step: 1, delta: "text", text: big });
     }
-    await flush();
+    await vi.waitFor(() => expect(out.abort).toHaveBeenCalledTimes(1), { timeout: 5_000 });
     expect(out.abort).toHaveBeenCalledTimes(1);
     expect(out.end).not.toHaveBeenCalled();
     expect(unsubscribe).toHaveBeenCalled();
@@ -135,7 +133,7 @@ describe("ConversationStreams", () => {
     });
     const h = await streams.open(params, out);
     h.begin();
-    await flush();
+    await vi.waitFor(() => expect(out.abort).toHaveBeenCalledTimes(1), { timeout: 5_000 });
     expect(out.abort).toHaveBeenCalledTimes(1);
     expect(out.end).not.toHaveBeenCalled();
   });
@@ -181,10 +179,15 @@ describe("ConversationStreams", () => {
     const gate = new Promise<void>((r) => {
       release = r;
     });
+    let subscribing!: () => void;
+    const subscribed = new Promise<void>((r) => {
+      subscribing = r;
+    });
     const unsubscribe = vi.fn(async () => {});
     const streams = streamsWith({
       eventLog: { readAfter: async () => [] },
       bus: busWith(async () => {
+        subscribing();
         await gate;
         return unsubscribe;
       }),
@@ -194,7 +197,7 @@ describe("ConversationStreams", () => {
     });
     const out = output();
     const opening = streams.open(params, out);
-    await flush();
+    await subscribed;
     streams.closeAll();
     release();
     const h = await opening;
@@ -244,7 +247,7 @@ describe("ConversationStreams", () => {
     // a delta that arrives before the stream begins is forwarded after the draft
     handler?.({ kind: "delta", runId: "r", step: 1, delta: "text", text: "lo", offset: 3 });
     h.begin();
-    await flush();
+    await vi.waitFor(() => expect(out.chunks).toHaveLength(3), { timeout: 5_000 });
     expect(readAt).toBe(1);
     expect(out.chunks).toEqual([
       `id: 3\nevent: event\ndata: ${JSON.stringify(ev)}\n\n`,
@@ -258,8 +261,9 @@ describe("ConversationStreams", () => {
     let handler: ((m: unknown) => unknown) | undefined;
     const drafts = vi.fn(async () => []);
     const out = output();
+    const readAfter = vi.fn(async () => []);
     const streams = streamsWith({
-      eventLog: { readAfter: async () => [] },
+      eventLog: { readAfter },
       bus: busWith(async (_t, h) => {
         handler = h;
         return async () => {};
@@ -271,9 +275,10 @@ describe("ConversationStreams", () => {
     });
     const h = await streams.open(params, out);
     h.begin();
-    await flush();
+    await vi.waitFor(() => expect(drafts).toHaveBeenCalledTimes(1), { timeout: 5_000 });
     handler?.({ kind: "events", toSeq: 9 });
-    await flush();
+    // the events notice ran another catch-up; no draft was read again
+    await vi.waitFor(() => expect(readAfter).toHaveBeenCalledTimes(2), { timeout: 5_000 });
     expect(drafts).toHaveBeenCalledTimes(1);
     expect(out.chunks.some((c) => c.startsWith("event: draft"))).toBe(false);
     h.close();
@@ -294,7 +299,7 @@ describe("ConversationStreams", () => {
     });
     const h = await streams.open(params, out);
     h.begin();
-    await flush();
+    await vi.waitFor(() => expect(warn).toHaveBeenCalled(), { timeout: 5_000 });
     expect(warn).toHaveBeenCalledWith(
       "conversation stream cannot read live drafts",
       expect.objectContaining({ conversationId: "c" }),
@@ -319,7 +324,7 @@ describe("ConversationStreams", () => {
     });
     const h = await streams.open(params, out);
     h.begin();
-    await flush();
+    await vi.waitFor(() => expect(handler).toBeDefined(), { timeout: 5_000 });
     handler?.({
       kind: "compaction_progress",
       runId: "r",
@@ -332,7 +337,7 @@ describe("ConversationStreams", () => {
       chars: 120,
       startedAt: 5,
     });
-    await flush();
+    await vi.waitFor(() => expect(out.chunks).toHaveLength(1), { timeout: 5_000 });
     expect(out.chunks).toEqual([
       `event: compaction\ndata: ${JSON.stringify({
         runId: "r",
@@ -364,9 +369,8 @@ describe("ConversationStreams", () => {
     });
     const h = await streams.open(params, out);
     h.begin();
-    await flush();
+    await vi.waitFor(() => expect(handler).toBeDefined(), { timeout: 5_000 });
     handler?.({ kind: "compaction_progress", runId: "r", conversationId: "c" });
-    await flush();
     expect(out.chunks).toEqual([]);
     h.close();
   });

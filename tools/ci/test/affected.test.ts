@@ -318,12 +318,12 @@ describe("planFromFiles: by diff", () => {
 });
 
 describe("toOutputs", () => {
-  it("full run: no filter, six shards", () => {
+  it("full run: no filter, ten shards", () => {
     expect(toOutputs(planAll("push"))).toMatchObject({
       test: "true",
       "test-dirs": "",
-      "test-shards": "[1,2,3,4,5,6]",
-      "test-shard-total": "6",
+      "test-shards": "[1,2,3,4,5,6,7,8,9,10]",
+      "test-shard-total": "10",
       e2e: "true",
       docker: "true",
       "bootstrap-network": "true",

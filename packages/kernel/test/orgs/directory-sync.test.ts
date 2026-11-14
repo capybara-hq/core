@@ -89,7 +89,7 @@ beforeAll(async () => {
   accounts = accountsFor(db);
   owner = await accounts.createLocal({ login: "owner", password: PW, displayName: "Owner" });
   ownerReq = await session(k, "owner");
-}, 120_000);
+});
 
 afterAll(async () => {
   await queue?.close();
@@ -1015,7 +1015,7 @@ describe("修复波 W1", () => {
     expect(last).toMatchObject({ trigger: "changed", removed: 1, partial: false });
     expect(await memberOf(orgId, "dc-2")).toBeUndefined();
     expect(await memberOf(orgId, "dc-1")).toMatchObject({ source: DIR_SOURCE });
-  }, 30_000);
+  });
 
   it("移除阶段前复核可同步性：组织级配置中途变得无效 → 不移除任何人", async () => {
     const { orgId, book } = await setupOrg();

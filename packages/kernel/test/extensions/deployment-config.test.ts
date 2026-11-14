@@ -116,7 +116,7 @@ describe("配置来源标注（extensionConfigSources / loadConfigWithSources）
   });
 });
 
-describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }, () => {
+describe("部署级插件配置入 PG（审查重点 5）", () => {
   let pgc: TestContainer;
   let rd: TestContainer;
   let db: KernelSchemaDb;
@@ -233,7 +233,7 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
     k = await boot({ region: "eu-file", mode: "auto" });
     admin = await session(k, "root");
     member = await session(k, "mem");
-  }, 240_000);
+  });
 
   afterAll(async () => {
     await k?.close();
@@ -725,6 +725,7 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
     });
     // a reconcile keeps it pending (the config is still missing)
     await k?.app.get<ExtensionContext["bus"]>(KERNEL_BUS).publish("plugins.reconcile", {});
+    // nothing-happened window: a reconcile that reloaded the plugin would load it here
     await new Promise((r) => setTimeout(r, 300));
     expect(host?.current("badconfig")).toBeUndefined();
   });
@@ -755,9 +756,7 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
   });
 });
 
-describe("an extension unloaded for a dependency comes back on the config stored now", {
-  timeout: 120_000,
-}, () => {
+describe("an extension unloaded for a dependency comes back on the config stored now", () => {
   const DEP_A = fileURLToPath(new URL("../fixtures/plugins/dep-a/index.ts", import.meta.url));
   const CFG_DEPENDENT = fileURLToPath(
     new URL("../fixtures/plugins/cfg-dependent/index.ts", import.meta.url),
@@ -809,7 +808,7 @@ describe("an extension unloaded for a dependency comes back on the config stored
       { logger: createLogger("error", { write: () => {} }) },
     );
     admin = await session(k, "root");
-  }, 240_000);
+  });
 
   afterAll(async () => {
     await k?.close();

@@ -119,7 +119,7 @@ beforeAll(async () => {
   });
   expect(res.statusCode, res.body).toBe(201);
   agentId = (res.json() as { agent: { id: string } }).agent.id;
-}, 180_000);
+});
 
 afterAll(async () => {
   capture.restore();
@@ -230,7 +230,7 @@ async function finishTaskOf(conv: string, runId: string): Promise<void> {
   ).toBe(true);
 }
 
-describe("the schedule marker", { timeout: 90_000 }, () => {
+describe("the schedule marker", () => {
   it("a marked first message sets runs.scheduled_task_run_id", async () => {
     const m = await marker(true);
     const { conversation, event } = await fireNew(m, "digest please");

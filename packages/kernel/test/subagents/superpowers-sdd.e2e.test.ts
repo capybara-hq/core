@@ -28,6 +28,7 @@ import { takeSnapshot, toEvents } from "../../src/evals/snapshot.js";
 import { BEHAVIOR_RULES } from "../../src/runtime/context/build.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { SUBAGENT_PREAMBLE } from "../../src/runtime/subagents/preamble.js";
+import { REVIEW_SYSTEM_PROMPT } from "../../src/sandbox/review/classifier.js";
 import { sentToIdleText } from "../../src/tools/builtins/send-message.js";
 import { loadFixtureAsStrings } from "../catalog/claude-fixtures.js";
 import type { ScriptRule } from "../fixtures/plugins/model-script/index.js";
@@ -91,6 +92,16 @@ const SDD = JSON.parse(
   readFileSync(fileURLToPath(new URL("./sdd-script.json", import.meta.url)), "utf8"),
 ) as { plan: string; rules: ScriptRule[] };
 
+/**
+ * The command review classifier's answer (auto mode spec §5.3): the SDD run's `unsure` commands are
+ * everyday git and skill-script work, so the fake says allow. The rule is first so no controller
+ * rule can match a review call (the review request carries the person's messages).
+ */
+const REVIEW_RULE: ScriptRule = {
+  when: { systemIncludes: REVIEW_SYSTEM_PROMPT },
+  reply: { text: JSON.stringify({ decision: "allow", reason: "Everyday development work." }) },
+};
+
 const capture = captureProviderRequests();
 const { sent } = capture;
 
@@ -132,7 +143,7 @@ beforeAll(async () => {
         extensions: [MODEL_FAKE, MODEL_SCRIPT, SANDBOX_FAKE, OBJECT_STORE],
         runtime: { wakeOnBackgroundTask: false },
         extensionConfig: {
-          "model-script": { rules: SDD.rules },
+          "model-script": { rules: [REVIEW_RULE, ...SDD.rules] },
           "sandbox-fake": { root: sandboxRoot },
           "fake-object-store": {
             endpoint: s3.endpoint,
@@ -154,7 +165,7 @@ beforeAll(async () => {
   });
   admin = await session(k, "root");
   orgId = await createOrg(admin);
-}, 240_000);
+});
 
 afterAll(async () => {
   capture.restore();
@@ -221,9 +232,7 @@ async function childConversations(parent: string) {
     .execute();
 }
 
-describe("phase C acceptance: superpowers subagent-driven-development", {
-  timeout: 180_000,
-}, () => {
+describe("phase C acceptance: superpowers subagent-driven-development", () => {
   it("superpowers is imported from a git marketplace and installed; an agent gets the SDD skills, the agent tool and the code-reviewer template", async () => {
     await srv.commit("superpowers", loadFixtureAsStrings("superpowers"));
     const added = await admin({
@@ -272,6 +281,14 @@ describe("phase C acceptance: superpowers subagent-driven-development", {
       payload: { target: { model: SCRIPT } },
     });
     expect(mapped.statusCode, mapped.body).toBe(200);
+    // a real deployment maps the command review's classifier too: an `unsure` command then asks
+    // the model (whose review rule says allow), not the person, so the attended run cannot park
+    const reviewMapped = await admin({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgId}/model-purposes/review`,
+      payload: { target: { model: SCRIPT } },
+    });
+    expect(reviewMapped.statusCode, reviewMapped.body).toBe(200);
 
     const created = await admin({
       method: "POST",

@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DeviceExecArgs, SandboxLimits } from "@capybara-hq/plugin-sdk";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 // The real OS executor of capybara-device (macOS Seatbelt), the provider these scripts run on for a
 // local macOS device. Source only: the device package depends on nothing of the kernel.
 import {
@@ -18,22 +18,21 @@ const LIMITS: SandboxLimits = {
   cpu: 1,
   memoryMb: 512,
   diskMb: 1024,
-  egress: "none",
-  allowHosts: [],
-  tier: "strict",
-  devHosts: [],
+  mode: "sandbox",
+  network: { kind: "allowlist", hosts: [] },
 };
 
 const tmp = (prefix: string) => realpathSync(mkdtempSync(join(tmpdir(), prefix)));
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function waitFor(cond: () => boolean | Promise<boolean>, ms = 10_000): Promise<void> {
-  const until = Date.now() + ms;
-  while (!(await cond())) {
-    if (Date.now() > until) throw new Error("timed out waiting");
-    await sleep(50);
-  }
-}
+/** Waits until `cond` holds (the old polling loop's 10 s budget); an error surfaces. */
+const waitFor = (cond: () => boolean | Promise<boolean>, ms = 10_000): Promise<unknown> =>
+  vi.waitFor(
+    async () => {
+      if (!(await cond())) throw new Error("condition not met yet");
+    },
+    { timeout: ms },
+  );
 
 const availability = sandboxAvailability();
 
@@ -47,7 +46,7 @@ describe.skipIf(!availability.ok || process.platform !== "darwin")(
     let base: string;
     let ex: OsExecutor;
     const never = new AbortController().signal;
-    const DEV: SandboxLimits = { ...LIMITS, tier: "dev", defaultTier: "dev" };
+    const DEV: SandboxLimits = LIMITS;
 
     beforeAll(async () => {
       base = tmp("device-bg-");
@@ -56,11 +55,9 @@ describe.skipIf(!availability.ok || process.platform !== "darwin")(
       ex = await createOsExecutor({
         dir: join(base, "env"),
         policy: () => DEFAULT_POLICY,
-        socketBase: join(base, "s"),
-        detectProxy: async () => ({ detected: false, reasons: [] }),
       });
       await ex.ensureRoot();
-    }, 60_000);
+    });
     afterAll(async () => {
       await ex?.dispose();
       if (base) rmSync(base, { recursive: true, force: true });
@@ -106,7 +103,7 @@ describe.skipIf(!availability.ok || process.platform !== "darwin")(
 
     it("selects the process group (-g) on macOS", async () => {
       expect((await run(`${SESSION_MODE_SCRIPT}\necho "$pg"`)).stdout).toBe("-g\n");
-    }, 30_000);
+    });
 
     it("starts, outlives the launch exec, and leaves its output and exit status", async () => {
       const t0 = Date.now();
@@ -120,14 +117,14 @@ describe.skipIf(!availability.ok || process.platform !== "darwin")(
       expect(fileOf("bt_mac222", "exit")).toBe("3\n");
       expect(fileOf("bt_mac222", "out")).toBe("out\nerr\n");
       await waitFor(async () => !(await alive(sid)));
-    }, 30_000);
+    });
 
     it("the task ends with its command: what it left running is killed", async () => {
       const sid = await launch("bt_macabc", "sleep 300 > /dev/null 2>&1 & echo left", 60);
       await waitFor(() => fileOf("bt_macabc", "exit") !== null);
       expect(fileOf("bt_macabc", "exit")).toBe("0\n");
       await waitFor(async () => !(await alive(sid)));
-    }, 30_000);
+    });
 
     it("a foreground call's `sleep 300 &` is gone when it returns; a background task survives and stops", async () => {
       const sid = await launch("bt_macdef", "sleep 300", 60);
@@ -151,7 +148,7 @@ describe.skipIf(!availability.ok || process.platform !== "darwin")(
       const term = await run(termScript("bt_macdef", sid));
       expect(term.stdout.trim()).toBe("term");
       await waitFor(async () => !(await alive(sid)));
-    }, 40_000);
+    });
 
     it("runs the command with bash and keeps it byte for byte", async () => {
       const command = `[[ 1 == 1 ]] && echo ok; echo {1..3}; echo 'q "d" $HOME \`x\`'`;
@@ -160,14 +157,14 @@ describe.skipIf(!availability.ok || process.platform !== "darwin")(
       expect(fileOf("bt_mac333", "sh")).toBe(command);
       expect(fileOf("bt_mac333", "out")).toBe('ok\n1 2 3\nq "d" $HOME `x`\n');
       expect(fileOf("bt_mac333", "exit")).toBe("0\n");
-    }, 30_000);
+    });
 
     it("works at tier dev too", async () => {
       const sid = await launch("bt_mac444", "echo dev", 60, DEV);
       await waitFor(() => fileOf("bt_mac444", "exit") !== null);
       expect(fileOf("bt_mac444", "out")).toBe("dev\n");
       await waitFor(async () => !(await alive(sid)));
-    }, 30_000);
+    });
 
     it("the time limit SIGKILLs the whole tree, a child that ignores SIGTERM too: exit 137", async () => {
       const sid = await launch(
@@ -179,7 +176,7 @@ describe.skipIf(!availability.ok || process.platform !== "darwin")(
       await waitFor(() => fileOf("bt_mac555", "exit") !== null, 15_000);
       expect(fileOf("bt_mac555", "exit")).toBe("137\n");
       await waitFor(async () => !(await alive(sid)));
-    }, 30_000);
+    });
 
     it("a stop (SIGTERM, then SIGKILL of the group) kills the whole tree", async () => {
       const sid = await launch("bt_mac666", "sleep 300 & sleep 300 & wait", 60);
@@ -198,6 +195,6 @@ describe.skipIf(!availability.ok || process.platform !== "darwin")(
       const kill = await run(`${killSessionScript(stubborn)}; exit "$ks"`);
       expect(kill.exitCode).toBe(0);
       expect(await alive(stubborn)).toBe(false);
-    }, 40_000);
+    });
   },
 );

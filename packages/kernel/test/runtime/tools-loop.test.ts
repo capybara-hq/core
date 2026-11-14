@@ -206,7 +206,7 @@ describe("tools 节点（LangGraphLoop + 执行管线）", () => {
       }),
     };
     saver = checkpointsFor(db);
-  }, 120_000);
+  });
 
   afterAll(async () => {
     await sub?.close();
@@ -318,7 +318,7 @@ describe("端到端：model-fake 脚本工具调用 → 连接器工具与插件
     k = await startKernel(
       runConfig({ pg: pgc.url, redis: rd.url }, { extensions: [MODEL_FAKE, MEM_CONNECTOR] }),
     );
-  }, 120_000);
+  });
   afterAll(async () => {
     await k?.close();
     await Promise.all([pgc?.stop(), rd?.stop()]);

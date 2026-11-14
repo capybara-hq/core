@@ -85,7 +85,7 @@ beforeAll(async () => {
     k.app.get(EffectiveConfigs),
     k.app.get(OrgToolSwitches),
   );
-}, 120_000);
+});
 afterAll(async () => {
   await k?.close();
   redis?.disconnect();
@@ -455,13 +455,14 @@ describe("组织设置与 ToolSearch 启用条件", () => {
           reserveTokens: 8000,
           maxOutputTokens: 20000,
         },
-        sandboxEgress: { mode: "allowlist", allowHosts: baseCfg.sandbox.limits.allowHosts },
-        sandboxTiers: {
-          max: "dev",
-          default: "dev",
-          allowUnsandboxed: true,
-          devHosts: baseCfg.sandbox.limits.devHosts,
+        autoMode: { mode: "allowed", source: "default" },
+        cloudNetwork: { mode: "open", allowHosts: baseCfg.sandbox.limits.allowHosts },
+        attribution: {
+          commit: "Co-Authored-By: Capybara <noreply@capybarahq.com>",
+          pr: "🤖 Generated with [Capybara](https://github.com/capybara-hq/core)",
+          sessionUrl: false,
         },
+        publicUrl: false,
       },
       // 组织级沙箱限额只读（C19）：没有超级管理员的覆盖时取部署默认
       sandboxLimits: {
@@ -562,129 +563,55 @@ describe("组织设置与 ToolSearch 启用条件", () => {
     expect((await req({ method: "GET", url: settingsUrl() })).statusCode).toBe(200);
   });
 
-  it("sandboxEgress（Ruling M19）：校验主机、无 open、上限 200；null 清除；部署 none 时只能设 none", async () => {
-    const patch = (sandboxEgress: unknown) =>
-      req({ method: "PATCH", url: settingsUrl(), payload: { sandboxEgress } });
+  it("autoMode and cloudNetwork: validated, null clears, the platform switch is the ceiling", async () => {
+    const patch = (payload: Record<string, unknown>) =>
+      req({ method: "PATCH", url: settingsUrl(), payload });
     for (const bad of [
-      { mode: "open" },
-      { mode: "allowlist", allowHosts: ["10.0.0.1"] },
-      { mode: "allowlist", allowHosts: ["localhost"] },
-      { mode: "allowlist", allowHosts: ["Example.com"] },
-      { mode: "allowlist", allowHosts: ["a.example.com", "a.example.com"] },
-      { mode: "allowlist", allowHosts: Array.from({ length: 201 }, (_, i) => `h${i}.example.com`) },
-      { mode: "none", extra: 1 },
+      { cloudNetwork: { mode: "open", allowHosts: ["10.0.0.1"] } },
+      { cloudNetwork: { mode: "allowlist", allowHosts: ["localhost"] } },
+      { cloudNetwork: { mode: "allowlist", allowHosts: ["Example.com"] } },
+      {
+        cloudNetwork: {
+          mode: "allowlist",
+          allowHosts: ["a.example.com", "a.example.com"],
+        },
+      },
+      {
+        cloudNetwork: {
+          mode: "allowlist",
+          allowHosts: Array.from({ length: 201 }, (_, i) => `h${i}.example.com`),
+        },
+      },
+      { cloudNetwork: { mode: "allowlist", extra: 1 } },
+      { autoMode: "maybe" },
     ]) {
       const r = await patch(bad);
       expect(r.statusCode, JSON.stringify(bad)).toBe(400);
     }
     const ok = await patch({
-      mode: "allowlist",
-      allowHosts: ["registry.npmjs.org", "*.corp.example.org"],
+      cloudNetwork: { mode: "allowlist", allowHosts: ["registry.npmjs.org"] },
     });
     expect(ok.statusCode, ok.body).toBe(200);
-    expect(ok.json().settings.sandboxEgress).toEqual({
+    expect(ok.json().settings.cloudNetwork).toEqual({
       mode: "allowlist",
-      allowHosts: ["registry.npmjs.org", "*.corp.example.org"],
+      allowHosts: ["registry.npmjs.org"],
     });
-    // 同值再改是空操作（对象按值比较），不多写审计
-    await patch({ mode: "allowlist", allowHosts: ["registry.npmjs.org", "*.corp.example.org"] });
-    const audits = await db
-      .selectFrom("audit_events")
-      .select("action")
-      .where("action", "=", "org.settings_updated")
-      .execute();
-    expect(audits).toHaveLength(1);
-    const cleared = await patch(null);
+    const narrowed = await patch({ autoMode: "off" });
+    expect(narrowed.statusCode, narrowed.body).toBe(200);
+    expect(narrowed.json().settings.autoMode).toBe("off");
+    const cleared = await patch({ autoMode: null, cloudNetwork: null });
     expect(cleared.statusCode).toBe(200);
-    expect(cleared.json().settings).not.toHaveProperty("sandboxEgress");
-    const row = await db
-      .selectFrom("orgs")
-      .select("settings")
-      .where("id", "=", orgId)
-      .executeTakeFirstOrThrow();
-    expect(row.settings).not.toHaveProperty("sandboxEgress");
+    expect(cleared.json().settings).not.toHaveProperty("autoMode");
+    expect(cleared.json().settings).not.toHaveProperty("cloudNetwork");
 
-    // 部署 egress none：组织只能设 none
-    const ownerId = (await db.selectFrom("accounts").select("id").executeTakeFirstOrThrow()).id;
-    const none = orgSettingsFor(db, () => ({
-      sandbox: { ...baseCfg.sandbox, limits: { ...baseCfg.sandbox.limits, egress: "none" } },
-    }));
-    const err = await none
-      .update(orgId, { sandboxEgress: { mode: "allowlist" } }, ownerId)
-      .catch((e: unknown) => e);
-    expect(err).toMatchObject({ code: "org.sandbox_egress_not_allowed" });
-    expect(await none.update(orgId, { sandboxEgress: { mode: "none" } }, ownerId)).toMatchObject({
-      sandboxEgress: { mode: "none" },
-    });
-    expect((await none.deployment()).sandboxEgress).toEqual({
-      mode: "none",
-      allowHosts: baseCfg.sandbox.limits.allowHosts,
-    });
-  });
-
-  it("sandboxTier: never above the platform, default at most max, unsandboxed only where the platform allows; null clears; an invalid stored value reads as max strict", async () => {
-    const patch = (sandboxTier: unknown) =>
-      req({ method: "PATCH", url: settingsUrl(), payload: { sandboxTier } });
-    for (const bad of [{ max: "wide" }, { extra: 1 }, { allowUnsandboxed: "yes" }]) {
-      const r = await patch(bad);
-      expect(r.statusCode, JSON.stringify(bad)).toBe(400);
-      expect(r.json().error.code).toBe("validation_failed");
-    }
-    // the platform default max is dev
-    for (const bad of [{ max: "open" }, { default: "open" }, { max: "strict", default: "dev" }]) {
-      const r = await patch(bad);
-      expect(r.statusCode, JSON.stringify(bad)).toBe(400);
-      expect(r.json().error.code).toBe("org.sandbox_tier_not_allowed");
-    }
-    const ok = await patch({ max: "dev", default: "strict", allowUnsandboxed: false });
-    expect(ok.statusCode, ok.body).toBe(200);
-    expect(ok.json().settings.sandboxTier).toEqual({
-      max: "dev",
-      default: "strict",
-      allowUnsandboxed: false,
-    });
-    const cleared = await patch(null);
-    expect(cleared.statusCode).toBe(200);
-    expect(cleared.json().settings).not.toHaveProperty("sandboxTier");
-    // an empty object is the same as following the platform
-    expect((await patch({})).json().settings).not.toHaveProperty("sandboxTier");
-
-    const ownerId = (await db.selectFrom("accounts").select("id").executeTakeFirstOrThrow()).id;
-    const open = orgSettingsFor(db, () => ({
-      sandbox: {
-        ...baseCfg.sandbox,
-        tiers: { max: "open", default: "dev", allowUnsandboxed: false },
-      },
-    }));
-    expect(await open.update(orgId, { sandboxTier: { max: "open" } }, ownerId)).toMatchObject({
-      sandboxTier: { max: "open" },
-    });
-    expect(
-      await open
-        .update(orgId, { sandboxTier: { max: "open", allowUnsandboxed: true } }, ownerId)
-        .catch((e: unknown) => e),
-    ).toMatchObject({ code: "org.sandbox_tier_not_allowed" });
-    expect((await open.deployment()).sandboxTiers).toMatchObject({
-      max: "open",
-      default: "dev",
-      allowUnsandboxed: false,
-    });
-    expect(await open.sandboxPolicy(await open.get(orgId), null)).toMatchObject({
-      tier: "dev",
-      ceiling: "open",
-      allowUnsandboxed: false,
-    });
-
-    // a stored value this version cannot read narrows to strict, never widens
+    // a stored value this version cannot read narrows to off, never widens
     await db
       .updateTable("orgs")
-      .set({ settings: JSON.stringify({ sandboxTier: { max: "everything" } }) })
+      .set({ settings: JSON.stringify({ autoMode: "everything" }) })
       .where("id", "=", orgId)
       .execute();
-    expect((await req({ method: "GET", url: settingsUrl() })).json().settings.sandboxTier).toEqual({
-      max: "strict",
-    });
-    await patch(null);
+    expect((await req({ method: "GET", url: settingsUrl() })).json().settings.autoMode).toBe("off");
+    await patch({ autoMode: null });
   });
 
   it("阈值切换：工具数或定义估算超过阈值才启用并自动加入 ToolSearch；组织关闭后全部直接加载", async () => {

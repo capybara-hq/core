@@ -81,7 +81,7 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
   redis = new Redis(rd.url);
-}, 120_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -389,7 +389,7 @@ describe("安装", () => {
     });
     expect(bad.statusCode, bad.body).toBe(502);
     expect(bad.json()).toMatchObject({ error: { code: "connector.connect_failed" } });
-  }, 60_000);
+  });
 
   it("OAuth 连接器的个人 / 组织凭据只能经连接流程写入（PUT 凭据 → validation_failed）", async () => {
     const { mcp } = await servers();
@@ -439,7 +439,7 @@ describe("连接（授权码 + PKCE）", () => {
     const r = await runTool(convId, 1, "mcp__docs__whoami");
     expect(r).toMatchObject({ content: "you are [REDACTED]", isError: false });
     expect(mcp.calls.at(-1)?.headers.authorization).toMatch(/^Bearer at_/);
-  }, 60_000);
+  });
 
   it("回跳页面：只接受站内相对路径；带上 connected 参数", async () => {
     const { mcp } = await servers();
@@ -560,7 +560,7 @@ describe("刷新", () => {
     expect(r?.isError).toBe(false);
     expect(refreshes(as).length).toBeGreaterThan(before);
     expect(refreshes(as).every((x) => x.status === 200)).toBe(true);
-  }, 60_000);
+  });
 
   it("收到 401 → 刷新一次后重试成功", async () => {
     const { as, mcp } = await servers();
@@ -571,7 +571,7 @@ describe("刷新", () => {
     const r = await runTool(convId, 1, "mcp__docs__whoami");
     expect(r).toMatchObject({ content: "you are [REDACTED]", isError: false });
     expect(refreshes(as)).toMatchObject([{ status: 200 }]);
-  }, 60_000);
+  });
 
   it("refresh 失败 → 凭据失效、connection_required 与工具错误；之后重新连接即可", async () => {
     const { as, mcp } = await servers();
@@ -595,7 +595,7 @@ describe("刷新", () => {
     await connectFully(app.id);
     const r2 = await runTool(convId, 2, "mcp__docs__whoami");
     expect(r2?.isError).toBe(false);
-  }, 60_000);
+  });
 
   it("token、refresh token 与 client secret 不出现在日志、事件、审计与 HTTP 响应中", async () => {
     const { as, mcp } = await servers({ accessTokenTtl: 30 });
@@ -619,7 +619,7 @@ describe("刷新", () => {
     for (const [where, text] of haystacks) {
       for (const s of secrets) expect(text.includes(s), `secret leaked into ${where}`).toBe(false);
     }
-  }, 60_000);
+  });
 });
 
 describe("Slack-like token endpoint (token_type user, errors as 200 ok:false)", () => {
@@ -634,7 +634,7 @@ describe("Slack-like token endpoint (token_type user, errors as 200 ok:false)", 
     const r = await runTool(convId, 1, "mcp__docs__whoami");
     expect(r).toMatchObject({ content: "you are [REDACTED]", isError: false });
     expect(as.tokenRequests.map((t) => t.status)).toEqual([200]);
-  }, 60_000);
+  });
 
   it("a dead refresh token (200 invalid_refresh_token) asks the person to reconnect", async () => {
     const { as, mcp } = await servers({ dialect: "slack" });
@@ -651,7 +651,7 @@ describe("Slack-like token endpoint (token_type user, errors as 200 ok:false)", 
     });
     expect(refreshes(as)).toMatchObject([{ status: 200, error: "invalid_refresh_token" }]);
     expect((await getConnector(app.id)).credential.status).toBe("missing");
-  }, 60_000);
+  });
 });
 
 describe("轮换客户端与其他校验", () => {
@@ -722,7 +722,7 @@ describe("轮换客户端与其他校验", () => {
       payload: { clientId: "svc2" },
     });
     expect(missingSecret.statusCode).toBe(400);
-  }, 60_000);
+  });
 
   it("A18：手填 client 的授权码连接器只替换客户端（成员 token 保留）；DCR 连接器不可替换", async () => {
     const { as, mcp } = await servers({
@@ -780,7 +780,7 @@ describe("轮换客户端与其他校验", () => {
       error: { code: "validation_failed", details: [{ path: "auth.client" }] },
     });
     expect(as.tokenRequests.filter((t) => t.clientId === "m2")).toEqual([]);
-  }, 60_000);
+  });
 
   it("RFC 9207：回跳的 iss 与发起时的授权服务器不同 → issuer_mismatch，不换 token", async () => {
     const { as, mcp } = await servers();
@@ -861,5 +861,5 @@ describe("http.publicUrl 未配置", () => {
     } finally {
       await k2.close();
     }
-  }, 60_000);
+  });
 });

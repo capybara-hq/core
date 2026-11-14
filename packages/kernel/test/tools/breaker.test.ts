@@ -3,7 +3,7 @@ import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
 import { breakerKey, breakerOpenMessage } from "../../src/tools/breaker.js";
-import { sleep } from "../helpers/runs.js";
+import { waitFor } from "../helpers/runs.js";
 import { breakerFor } from "../helpers/tools.js";
 
 let rd: TestContainer;
@@ -19,7 +19,7 @@ const config = (): KernelConfig => ({ ...base, tools: { ...base.tools, ...tools 
 beforeAll(async () => {
   rd = await startTestRedis({ shared: true });
   redis = new Redis(rd.url);
-}, 120_000);
+});
 afterAll(async () => {
   redis?.disconnect();
   await rd?.stop();
@@ -50,8 +50,7 @@ describe("Breaker", () => {
     expect(await redis.pttl(breakerKey("o1", "a1"))).toBeGreaterThan(0);
     // 另一个连接器不受影响
     expect((await b.check("o1", "a2")).open).toBe(false);
-    await sleep(1100);
-    expect((await b.check("o1", "a1")).open).toBe(false);
+    await waitFor(async () => !(await b.check("o1", "a1")).open, 5_000, "the breaker to close");
   });
 
   it("半开时探测失败立即重新打开；成功清零", async () => {
@@ -60,8 +59,7 @@ describe("Breaker", () => {
     await b.failure("o1", "a1");
     await b.failure("o1", "a1");
     expect((await b.check("o1", "a1")).open).toBe(true);
-    await sleep(1100);
-    expect((await b.check("o1", "a1")).open).toBe(false);
+    await waitFor(async () => !(await b.check("o1", "a1")).open, 5_000, "the breaker to close");
     await b.failure("o1", "a1");
     expect(await b.check("o1", "a1")).toMatchObject({ open: true, failures: 3 });
     await b.success("o1", "a1");

@@ -21,7 +21,7 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
   k = await startKernel(runConfig({ pg: pgc.url, redis: rd.url }, { roles: ["api"] }));
-}, 120_000);
+});
 afterAll(async () => {
   await k?.close();
   await raw?.destroy();

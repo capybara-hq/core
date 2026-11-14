@@ -94,7 +94,7 @@ beforeAll(async () => {
     ),
   );
   ops = k.app.get(PlatformOperations);
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -236,7 +236,7 @@ const approvalOf = async (who: Req, id: string) => {
 const decide = (who: Req, id: string, body: Record<string, unknown>) =>
   who({ method: "POST", url: `/api/v1/orgs/${orgId}/approvals/${id}/decision`, payload: body });
 
-describe("agents.register-skill", { timeout: 120_000 }, () => {
+describe("agents.register-skill", () => {
   it("is registered with its parity bookkeeping", () => {
     expect(op()).toMatchObject({
       id: OP,

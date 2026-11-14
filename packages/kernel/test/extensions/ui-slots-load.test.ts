@@ -119,7 +119,7 @@ beforeAll(async () => {
   const accounts = accountsFor(db);
   await accounts.createLocal({ login: "root", password: PW, displayName: "R", superAdmin: true });
   admin = await session(k, "root");
-}, 240_000);
+});
 afterAll(async () => {
   await k?.close();
   await raw?.destroy();

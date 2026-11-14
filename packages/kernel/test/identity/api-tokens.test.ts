@@ -24,7 +24,7 @@ beforeAll(async () => {
   raw = createDb(pg.url, 5);
   db = kernelDb(raw);
   svc = apiTokensFor(db);
-}, 120_000);
+});
 afterAll(async () => {
   await raw.destroy();
   await pg.stop();

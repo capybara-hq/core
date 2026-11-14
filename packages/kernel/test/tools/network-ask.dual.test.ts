@@ -31,13 +31,9 @@ afterEach(async () => {
 type Json = Record<string, unknown>;
 
 const POLICY = {
-  effectiveTier: "strict",
-  isolation: "sandbox",
-  localhost: "off",
-  unixSockets: "off",
+  mode: "auto" as const,
   allowedDomains: [] as string[],
-  remoteGrants: "owner",
-} as const;
+};
 
 describe("network ask (dual replica)", () => {
   it.each(["once", "always"] as const)(

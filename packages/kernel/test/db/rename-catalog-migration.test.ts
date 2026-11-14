@@ -131,13 +131,13 @@ beforeAll(async () => {
     db,
   );
   await migrate(pg.url, { schema: "capybara", dir: upTo });
-}, 120_000);
+});
 
 afterAll(async () => {
   await db?.destroy();
   await pg?.stop();
   for (const dir of [before, upTo]) if (dir) rmSync(dir, { recursive: true, force: true });
-}, 120_000);
+});
 
 describe("0042 directory -> catalog, catalog sources -> marketplaces", () => {
   it("renames the six tables and keeps their rows", async () => {

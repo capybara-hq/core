@@ -31,7 +31,7 @@ beforeAll(async () => {
   env = await startOrgEnv();
   orgA = env.orgId;
   orgB = await createOrg(env.root, "B");
-}, 240_000);
+});
 
 afterAll(async () => {
   await env?.stop();
@@ -146,7 +146,7 @@ async function sharedCrm(): Promise<string> {
   return itemId;
 }
 
-describe("owner updates without an extension", { timeout: 120_000 }, () => {
+describe("owner updates without an extension", () => {
   it("owner update applies at once and reaches every org", async () => {
     const itemId = await sharedCrm();
     const v2 = await bundlePlugin({

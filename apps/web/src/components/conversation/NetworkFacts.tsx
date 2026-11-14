@@ -53,7 +53,8 @@ export function NetworkFacts({
     enabled: orgHosts.length > 0,
     retryOnMount: retryOnMountOf(settingsQ.queryKey),
   }).data;
-  const platformOff = settings?.deployment?.sandboxEgress.mode === "none";
+  // The platform's network kill switch: its default cloud network is an empty allowlist.
+  const platformOff = settings?.deployment?.cloudNetwork.mode === "allowlist";
   const [asking, setAsking] = useState(false);
   const action: CalloutAction | undefined =
     orgHosts.length === 0 || platformOff

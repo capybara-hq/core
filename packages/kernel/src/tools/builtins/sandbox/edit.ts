@@ -3,7 +3,7 @@ import type { BuiltinTool } from "../../registry.js";
 import { lineDiff, viewPath } from "../../view.js";
 import {
   checkPathShape,
-  checkWritable,
+  checkToolWritable,
   clip,
   display,
   inSandbox,
@@ -36,7 +36,8 @@ const SPEC: ToolSpec = {
     "Edit a text file in this conversation's sandbox by replacing exact text. old_string must match " +
     "the file exactly (including whitespace and indentation) and, unless replace_all is true, occur " +
     "exactly once; include enough surrounding lines to make it unique. Read the file first; " +
-    "editing a file you have not read, or one changed since you read it, fails. Use Write to create a file or replace all of it.",
+    "editing a file you have not read, or one changed since you read it, fails. Use Write to create a file or replace all of it. " +
+    "In auto mode paths may be anywhere on the machine; writes outside the workspace need the user's approval.",
   inputSchema: {
     type: "object",
     properties: {
@@ -96,8 +97,9 @@ export function sandboxEditTool(deps: SandboxToolDeps): BuiltinTool {
       checkPathShape((input as EditInput).file_path, "file_path");
       let path = "";
       // a read-before-write refusal is the guard working: a result with the guard view
-      const ran = await inSandbox(deps, ctx, ({ deviceId, h, roots, p, signal }) => {
-        path = checkWritable((input as EditInput).file_path, roots);
+      const ran = await inSandbox(deps, ctx, (s) => {
+        const { deviceId, h, p, signal } = s;
+        path = checkToolWritable((input as EditInput).file_path, s);
         // read, replace, write: one holder at a time per file
         return withPathLease(deps, { deviceId }, path, signal, async (signal) => {
           const st = await p.stat(h, path, signal);

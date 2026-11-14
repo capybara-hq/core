@@ -379,7 +379,7 @@ describe("AGENT_REFUSALS (§4.5)", () => {
   });
 });
 
-describe("tool resolution", { timeout: 60_000 }, () => {
+describe("tool resolution", () => {
   let pgc: TestContainer;
   let rd: TestContainer;
   let k: TestKernel;
@@ -403,7 +403,7 @@ describe("tool resolution", { timeout: 60_000 }, () => {
     k = await startKernel(cfg, { env: {}, logger: createLogger("error", { write: () => {} }) });
     raw = createDb(pgc.url, 5);
     db = kernelDb(raw);
-  }, 120_000);
+  });
 
   afterAll(async () => {
     await k?.close();

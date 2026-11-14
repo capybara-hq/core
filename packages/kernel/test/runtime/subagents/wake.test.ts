@@ -239,7 +239,7 @@ beforeAll(async () => {
   });
   expect(res.statusCode, res.body).toBe(201);
   agentId = (res.json() as { agent: { id: string } }).agent.id;
-}, 180_000);
+});
 
 afterAll(async () => {
   for (const name of barriers()?.keys() ?? []) release(name);
@@ -355,7 +355,7 @@ async function noteFrom(conv: string, accountId: string): Promise<Delivery> {
   return (await deliveriesOf(conv)).find((d) => d.seq === seq) as Delivery;
 }
 
-describe("waking on sub-agent deliveries", { timeout: 90_000 }, () => {
+describe("waking on sub-agent deliveries", () => {
   it('a delivery to an idle root starts a wake run with trigger "subagent" and the child\'s trigger account', async () => {
     capture.reset();
     const conv = await dispatched("SCENARIO hold");
@@ -446,7 +446,13 @@ describe("waking on sub-agent deliveries", { timeout: 90_000 }, () => {
     // ruling R22: the step's first sandbox call recorded the device's directories
     expect(systemTexts(sent[2])).toEqual([
       renderSubagentDelivery(delivery.payload),
-      devicePathsText({ roots: DEFAULT_SANDBOX_ROOTS, tier: "dev", isolation: "sandbox" }),
+      devicePathsText({
+        roots: DEFAULT_SANDBOX_ROOTS,
+        mode: "auto",
+        allowedMode: "auto",
+        network: { kind: "open-public", hosts: [] },
+        local: false,
+      }),
     ]);
     expect(
       ((end as ConversationEvent).payload as EventPayload<"run_finished">).consumedUpToSeq,
@@ -484,7 +490,13 @@ describe("waking on sub-agent deliveries", { timeout: 90_000 }, () => {
     expect(systemTexts(wakeRequests[1])).toEqual([
       ...all.map((d) => renderSubagentDelivery(d.payload)),
       // ruling R22: the wake run's first sandbox call recorded the device's directories
-      devicePathsText({ roots: DEFAULT_SANDBOX_ROOTS, tier: "dev", isolation: "sandbox" }),
+      devicePathsText({
+        roots: DEFAULT_SANDBOX_ROOTS,
+        mode: "auto",
+        allowedMode: "auto",
+        network: { kind: "open-public", hosts: [] },
+        local: false,
+      }),
     ]);
     expect(await consumedSeq(db, conv)).toBeGreaterThanOrEqual(all[2]?.seq ?? 0);
     // everything consumed: no delayed wake waits for this conversation (its ensure-run backstops
@@ -896,7 +908,7 @@ const treeStoppedAt = async (conv: string) =>
       .executeTakeFirstOrThrow()
   ).tree_stopped_at;
 
-describe("a person's stop of the root holds its tree", { timeout: 90_000 }, () => {
+describe("a person's stop of the root holds its tree", () => {
   it("stops the running sub-agents; no finish, before or after the stop, wakes the root; the next message's run sees them", async () => {
     capture.reset();
     const before = arrivals("root-hold");

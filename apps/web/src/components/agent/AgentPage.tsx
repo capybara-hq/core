@@ -20,6 +20,7 @@ import { SaveAsTemplateDialog } from "../SaveAsTemplateDialog";
 import { navLevelOf } from "../shell/nav";
 import { usePagePath } from "../shell/path";
 import { useSession } from "../shell/session";
+import { AttributionSection } from "./AttributionSection";
 import { BasicsSection } from "./BasicsSection";
 import { ChannelsSection } from "./ChannelsSection";
 import {
@@ -224,8 +225,8 @@ export function AgentPage({
 
 /**
  * The open section's body: the section components of agent profile design §3.2. Someone who may
- * not change the agent only reaches basics, quick actions and the model (`sectionOf`), each of
- * which draws its read-only form for them.
+ * not change the agent only reaches basics, quick actions, the model and attribution (`sectionOf`),
+ * each of which draws its read-only form for them.
  */
 function OpenSection({ section }: { section: AgentSectionId }) {
   if (section.startsWith("ext.")) return <ExtensionSection section={section} />;
@@ -244,6 +245,8 @@ function OpenSection({ section }: { section: AgentSectionId }) {
       return <SkillsSection />;
     case "subagents":
       return <SubagentsSection />;
+    case "attribution":
+      return <AttributionSection />;
     case "channels":
       return <ChannelsSection />;
     default:

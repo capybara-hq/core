@@ -6,7 +6,7 @@ import { type ExtensionContext, SDK_VERSION, type ToolHandler } from "@capybara-
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import pg from "pg";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
@@ -176,7 +176,7 @@ beforeAll(async () => {
   });
   admin = await session(k, "root");
   orgId = await createOrg(admin);
-}, 240_000);
+});
 afterAll(async () => {
   await k?.close();
   await destroyDb?.();
@@ -186,7 +186,7 @@ afterAll(async () => {
 });
 
 // 各用例按顺序依赖前一步的状态
-describe("插件生命周期（单副本，不重启）", { timeout: 60_000 }, () => {
+describe("插件生命周期（单副本，不重启）", () => {
   let v1: Uint8Array;
   let v2: Uint8Array;
 
@@ -494,7 +494,9 @@ describe("插件生命周期（单副本，不重启）", { timeout: 60_000 }, (
     expect(inst.inflight.size).toBe(1);
     await setState("conn", "disable");
     await waitFor(async () => loadedVersion("conn") === undefined, 15_000, "conn off the registry");
-    // 排空中：实例已摘下，但登记还在（等会话关闭）
+    // Draining: the instance is off the registry but its registrations stay until the session
+    // closes. Nothing-happened window: a drain that dropped the registrations early would fail
+    // only after some time has passed.
     await new Promise((r) => setTimeout(r, 300));
     expect(inst.registrations().length).toBeGreaterThan(0);
     release();
@@ -521,6 +523,7 @@ describe("插件生命周期（单副本，不重启）", { timeout: 60_000 }, (
           .executeTakeFirstOrThrow()
       ).heartbeat_at.getTime();
     const before = await hb();
+    // the refresh must land in a later millisecond: the timestamp has ms resolution
     await new Promise((r) => setTimeout(r, 20));
     await k.app.get<ExtensionContext["bus"]>(KERNEL_BUS).publish("plugins.reconcile", {});
     await waitFor(async () => (await hb()) > before, 10_000, "heartbeat refreshed");
@@ -658,7 +661,7 @@ describe("插件生命周期（单副本，不重启）", { timeout: 60_000 }, (
   });
 });
 
-describe("policy hooks across upgrade and disable (M-1, N-2)", { timeout: 90_000 }, () => {
+describe("policy hooks across upgrade and disable (M-1, N-2)", () => {
   const run = (input: Record<string, unknown>) =>
     k.app.get(ExtensionHost).hooks.run(
       "tool.preExecute",
@@ -707,10 +710,15 @@ describe("policy hooks across upgrade and disable (M-1, N-2)", { timeout: 90_000
     await waitFor(async () => v1.inflight.size === 1, 5_000, "v1 policy call in flight");
     await install("guard", await lifePkg({ name: "guard", version: "2.0.0", policy: true }));
     const seen: unknown[] = [];
-    while (loadedVersion("guard") !== "2.0.0") {
-      seen.push(await run({ deny: true }));
-      await new Promise((r) => setTimeout(r, 20));
-    }
+    // keep deciding policy calls until the upgrade lands: every call in the window is decided by
+    // a loaded generation (never "not loaded")
+    await vi.waitFor(
+      async () => {
+        seen.push(await run({ deny: true }));
+        expect(loadedVersion("guard")).toBe("2.0.0");
+      },
+      { timeout: 15_000 },
+    );
     seen.push(await run({ deny: true }));
     for (const o of seen) expect(o).toMatchObject({ allowed: false, cause: "deny" });
     expect(seen.at(-1)).toMatchObject({ reason: "guard 2.0.0 denies" });
@@ -738,7 +746,7 @@ describe("policy hooks across upgrade and disable (M-1, N-2)", { timeout: 90_000
   });
 });
 
-describe("停机：后台排空中的旧实例在 lifecycleWaitMs 后强制撤销", { timeout: 60_000 }, () => {
+describe("停机：后台排空中的旧实例在 lifecycleWaitMs 后强制撤销", () => {
   it("in-flight calls of the old instance after an upgrade do not finish: shutdown does not wait drainSeconds, the call ends with ExtensionUnloadedError", async () => {
     await setState("life", "enable");
     await waitFor(async () => loadedVersion("life") === "2.0.0", 15_000, "life 2.0.0 loaded");
@@ -764,7 +772,7 @@ describe("停机：后台排空中的旧实例在 lifecycleWaitMs 后强制撤�
   });
 });
 
-describe("启动中止：host.load 里进行中的插件迁移随停机中止", { timeout: 60_000 }, () => {
+describe("启动中止：host.load 里进行中的插件迁移随停机中止", () => {
   it("迁移卡在 schema 锁上时 stop() 很快返回，start() 失败，锁随后可用", async () => {
     const pkgBytes = await lifePkg({
       name: "slowmig",
@@ -843,7 +851,7 @@ describe("启动中止：host.load 里进行中的插件迁移随停机中止", 
   });
 });
 
-describe("安装记录不受信任：启动时的 setup 与迁移都限时（I3）", { timeout: 60_000 }, () => {
+describe("安装记录不受信任：启动时的 setup 与迁移都限时（I3）", () => {
   /** 把包存进 PG 包存储并写一条期望启用的安装记录。 */
   const seedInstall = async (name: string, bytes: Uint8Array) => {
     const pkg = await readExtensionPackage(bytes, {
@@ -1012,7 +1020,7 @@ describe("安装记录不受信任：启动时的 setup 与迁移都限时（I3�
   });
 });
 
-describe("插件名归属：配置声明的插件也占名字（I4）", { timeout: 60_000 }, () => {
+describe("插件名归属：配置声明的插件也占名字（I4）", () => {
   it("配置声明的插件从 plugins 去掉后，别的包不能用同名插件安装；无归属但有遗留数据的名字同样拒绝", async () => {
     // 第一个内核启动时（extensions: [MODEL_FAKE]；引导安装 fake-bootstrap-b）已登记归属
     const owners = await db
@@ -1086,7 +1094,7 @@ describe("插件名归属：配置声明的插件也占名字（I4）", { timeou
   });
 });
 
-describe("停机：本副本的状态行删除（I6）", { timeout: 90_000 }, () => {
+describe("停机：本副本的状态行删除（I6）", () => {
   it("两个副本都加载了插件；一个正常停机后状态立即为 enabled（不等心跳过期）", async () => {
     const bytes = await pluginTgz({ manifest: { name: "twin", version: "1.0.0" }, extension: {} });
     const pkg = await readExtensionPackage(bytes, {

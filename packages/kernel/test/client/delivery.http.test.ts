@@ -89,7 +89,7 @@ beforeAll(async () => {
   await importClientPlugin(env, pageBytes, PAGE);
   await importClientPlugin(env, plainBytes, PLAIN);
   await enableExtensions(env.db, env.orgId, PAGE, PLAIN);
-}, 240_000);
+});
 
 afterAll(async () => {
   await env?.stop();
@@ -139,7 +139,7 @@ const expectNotFound = (r: { status: number; headers: Record<string, unknown> },
   expect(code).toBe("client.not_found");
 };
 
-describe("client delivery", { timeout: 120_000 }, () => {
+describe("client delivery", () => {
   it("a member of an org where the plugin is on gets the bundle", async () => {
     const r = await rawGet(env, url(PAGE, pageSha, "client.mjs"), mem.cookie());
     expect(r.status, r.body.toString()).toBe(200);
@@ -380,13 +380,23 @@ describe("client delivery", { timeout: 120_000 }, () => {
     vi.spyOn(store, "write").mockImplementation(async (st) => {
       if (st.plugin !== "cx-stale") await write(st);
     });
-    await env.db
-      .updateTable("extension_replica_status")
-      .set({ heartbeat_at: new Date(Date.now() - 3_600_000) })
-      .where("plugin", "=", "cx-stale")
-      .execute();
-    const r = await rawGet(env, path, mem.cookie());
-    expectNotFound(r, rawCode(r));
+    const stale = () =>
+      env.db
+        .updateTable("extension_replica_status")
+        .set({ heartbeat_at: new Date(Date.now() - 3_600_000) })
+        .where("plugin", "=", "cx-stale")
+        .execute();
+    // a reconcile round already in flight when the stubs were installed can still refresh this
+    // row once (its heartbeat commits after the update); stale it again on each pass until the
+    // request sees it, instead of racing that single write on the first read
+    await vi.waitFor(
+      async () => {
+        await stale();
+        const r = await rawGet(env, path, mem.cookie());
+        expectNotFound(r, rawCode(r));
+      },
+      { timeout: 5_000 },
+    );
     expect(await listedBuilds()).not.toHaveProperty("cx-stale");
   });
 

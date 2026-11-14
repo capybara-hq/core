@@ -194,7 +194,7 @@ beforeAll(async () => {
   await accounts.createLocal({ login: "mem", password: PW, displayName: "M" });
   admin = await session(k, "root");
   member = await session(k, "mem");
-}, 240_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -1062,16 +1062,16 @@ describe("定期刷新（@LockedInterval catalogs-refresh）", () => {
       expect(intervals.periodOf(MARKETPLACES_REFRESH_JOB)).toBe(30 * 60_000);
       // Once across replicas (per tick and at start) is the infra's, tested by the @LockedInterval
       // tests in test/infra/schedule.test.ts. No tick is waited for: the start run refreshes.
-      await expect
-        .poll(async () => (await k.app.get(MarketplacesService).get("official")).lastStatus, {
-          timeout: 15_000,
-        })
-        .toBe("ok");
+      await waitFor(
+        async () => (await k.app.get(MarketplacesService).get("official")).lastStatus === "ok",
+        15_000,
+        "the official marketplace refreshed",
+      );
       expect(official.requests.length).toBeGreaterThan(before);
     } finally {
       await worker.close();
     }
-  }, 60_000);
+  });
 });
 
 describe("浏览条目的上限", () => {
@@ -1107,7 +1107,7 @@ describe("浏览条目的上限", () => {
     expect(big.statusCode, big.body).toBe(200);
     expect(big.json().truncated).toBe(true);
     expect(big.json().items).toHaveLength(MARKETPLACE_ENTRIES_MAX);
-  }, 60_000);
+  });
 });
 
 describe("official marketplace: on by default, offline mode when disabled", () => {
@@ -1205,5 +1205,5 @@ describe("official marketplace: on by default, offline mode when disabled", () =
       spy.mockRestore();
       await worker.close();
     }
-  }, 60_000);
+  });
 });

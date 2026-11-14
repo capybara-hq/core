@@ -82,7 +82,7 @@ beforeAll(async () => {
       },
     ),
   );
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -148,7 +148,7 @@ const NOT_READ = "File has not been read yet. Read it first before writing to it
 const MODIFIED =
   "File has been modified since it was read, either by the user or by another command. Read it again before writing to it.";
 
-describe("read before write", { timeout: 90_000 }, () => {
+describe("read before write", () => {
   /** A conversation with a stepper over `call` (n counts the finished runs). */
   async function session1() {
     const conv = await sandboxConversation();
@@ -250,11 +250,10 @@ describe("read before write", { timeout: 90_000 }, () => {
 
   it("a file over Read's byte limit: Read then Write succeeds; a same-size change beyond the read bytes is not detected", async () => {
     const { step } = await session1();
-    // 11 MB of 'a' lines (limit is 10 MB)
+    // 11 MB (limit is 10 MB); the seed is a command the review allows
     await step("Bash", {
       description: "seed",
-      command:
-        "yes aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | head -c 11000000 > /workspace/big.txt",
+      command: "head -c 11000000 /dev/zero > /workspace/big.txt",
       timeout: 60_000,
     });
     const before = await step("Write", { file_path: "/workspace/big.txt", content: "x" });

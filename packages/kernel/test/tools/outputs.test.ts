@@ -41,7 +41,7 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
   outputs = outputsFor(db, config);
-}, 120_000);
+});
 afterAll(async () => {
   await raw?.destroy();
   await pgc?.stop();

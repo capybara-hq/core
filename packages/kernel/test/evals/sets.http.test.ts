@@ -43,7 +43,7 @@ beforeAll(async () => {
       { roles: ["api"], evals: { maxCasesPerSet: MAX_CASES, maxCaseBytes: MAX_CASE_BYTES } },
     ),
   );
-}, 120_000);
+});
 afterAll(async () => {
   await k?.close();
   await raw?.destroy();

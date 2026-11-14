@@ -10,6 +10,8 @@ import type { KernelConfigService } from "../../src/infra/config/kernel-config.s
 import type { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { KernelEvents } from "../../src/infra/events/kernel-events.js";
 import type { LockService } from "../../src/infra/lock/lock.service.js";
+import type { DevicePolicyService } from "../../src/local-devices/device-policy.service.js";
+import type { NetworkRunState } from "../../src/local-devices/network-grants.js";
 import { createLogger, type KernelLogger } from "../../src/log.js";
 import type { HookRunner } from "../../src/runtime/hook-calls.js";
 import { ScheduledTaskStore } from "../../src/schedules/store.js";
@@ -117,10 +119,8 @@ export function approvalsFor(
         cpu: 1,
         memoryMb: 512,
         diskMb: 1024,
-        egress: "open" as const,
-        allowHosts: [],
-        tier: "strict" as const,
-        devHosts: [],
+        mode: "auto" as const,
+        network: { kind: "open-public" as const, hosts: [] },
       }),
     },
     noResume,
@@ -146,7 +146,15 @@ export interface PipelineTestDeps {
   credentials: Pick<Credentials, "injection" | "onUnauthorized">;
   breaker: Pick<Breaker, "check" | "failure" | "success">;
   outputs: Pick<ToolOutputs, "save" | "load">;
-  approvals: Pick<ApprovalsService, "request" | "forCall" | "networkForCall" | "requestNetwork">;
+  approvals: Pick<
+    ApprovalsService,
+    | "request"
+    | "forCall"
+    | "networkForCall"
+    | "requestNetwork"
+    | "commandForCall"
+    | "requestCommand"
+  >;
   questions: Pick<QuestionsService, "ask" | "forCall">;
   config: () => unknown;
   log: Logger;
@@ -157,6 +165,10 @@ export interface PipelineTestDeps {
   effective?: Pick<EffectiveConfigs, "get">;
   /** The org tool switches (default: none off). */
   switches?: Pick<OrgToolSwitches, "isToolOff">;
+  /** The run's network grants (default: none: no network ask). */
+  networkGrants?: { runState(runId: string, deviceId?: string): Promise<NetworkRunState> };
+  /** The device's active machine (default: none: no network ask). */
+  devicePolicy?: Pick<DevicePolicyService, "summary">;
   onToolsChanged?: (orgId: string, connectorId: string) => void;
 }
 
@@ -196,5 +208,7 @@ export function pipelineFor(d: PipelineTestDeps): ToolPipeline {
       ...d.hooks,
       ...(d.decidePolicy !== undefined && { decidePolicy: d.decidePolicy }),
     },
+    d.networkGrants,
+    d.devicePolicy,
   );
 }

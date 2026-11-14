@@ -1,10 +1,7 @@
-import { NestFactory } from "@nestjs/core";
 import { describe, expect, it } from "vitest";
 import { resolveConfig } from "../../src/config/load.js";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
-import { ConfigModule } from "../../src/infra/config/config.module.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
-import { LoggingModule } from "../../src/infra/logging/logging.module.js";
 import { createLogger } from "../../src/log.js";
 
 const BASE = {
@@ -81,21 +78,5 @@ describe("KernelConfigService", () => {
     svc.apply({ nonsense: true });
     expect(svc.get()).toBe(before);
     expect(lines.some((l) => l.msg.includes("rejected"))).toBe(true);
-  });
-
-  it("ConfigModule provides it as a global service", async () => {
-    const config = resolveConfig(raw(), {});
-    const app = await NestFactory.createApplicationContext(
-      {
-        module: class Root {},
-        imports: [
-          LoggingModule.forRoot(config, { logger: createLogger("error") }),
-          ConfigModule.forRoot(config),
-        ],
-      },
-      { logger: false },
-    );
-    expect(app.get(KernelConfigService).get()).toBe(config);
-    await app.close();
   });
 });

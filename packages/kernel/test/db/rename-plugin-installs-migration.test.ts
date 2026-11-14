@@ -94,13 +94,13 @@ beforeAll(async () => {
     db,
   );
   await migrate(pg.url, { schema: "capybara", dir: upTo });
-}, 120_000);
+});
 
 afterAll(async () => {
   await db?.destroy();
   await pg?.stop();
   for (const dir of [before, upTo]) if (dir) rmSync(dir, { recursive: true, force: true });
-}, 120_000);
+});
 
 describe("0043 app installs -> plugin installs", () => {
   it("renames the three tables and keeps their rows", async () => {

@@ -36,7 +36,7 @@ beforeAll(async () => {
   redis = new Redis(rd.url);
   sub = createBusSubscriber(() => new Redis(rd.url));
   bus = createBus(redis, sub, "kernel", silent);
-}, 60_000);
+});
 
 afterAll(async () => {
   await sub?.close();

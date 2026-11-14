@@ -1,42 +1,61 @@
 import { createHash } from "node:crypto";
-import type { SandboxRoots, SandboxTier } from "@capybara-hq/plugin-sdk";
+import type { SandboxRoots } from "@capybara-hq/plugin-sdk";
 import type { ConversationEvent } from "../../conversations/events.js";
+import type { DeviceNetwork, SandboxMode } from "../../sandbox/modes.js";
 
 /**
- * The `device_paths` event (environments spec §13.1, ruling R22; sandbox dev tiers spec §11.5):
- * the first sandbox tool call of every conversation records the instance's roots (the defaults
- * included) and the device's sandbox level, and a later call records them again whenever they
- * differ from the conversation's latest recorded ones (a connected machine's real paths, a mode
- * switch back to the defaults, a tier or isolation change). Model-visible: rendered at its
- * position as a system message; in the log, so it needs no `DriftReason`. Events recorded before
- * tiers have no `tier` / `isolation` and render as they always did.
+ * The `device_paths` event (environments spec §13.1, ruling R22; auto mode spec §4.2): the first
+ * sandbox tool call of every conversation records the instance's roots (the defaults included) and
+ * the device's mode and network, and a later call records them again whenever they differ from the
+ * conversation's latest recorded ones (a connected machine's real paths, a mode switch back to the
+ * defaults, a network change). Model-visible: rendered at its position as a system message; in the
+ * log, so it needs no `DriftReason`. Events recorded before auto mode carry the old `tier` /
+ * `isolation` fields and render exactly as they always did.
  */
 
-/** The sandbox level a device's commands run at (spec §11.5), as the model is told it. */
-export interface DeviceSandboxLevel {
-  tier: SandboxTier;
-  isolation: "sandbox" | "none";
-  /** `none`: the org's or the platform's sandbox network is off (every tier). */
-  network?: "none" | undefined;
-  /** A local device's localhost and unix sockets, as its machine reported them (absent: cloud). */
+/** The mode and network a device's commands run at, as the model is told them. */
+export interface DeviceModeLevel {
+  mode: SandboxMode;
+  allowedMode: SandboxMode;
+  network: DeviceNetwork;
+  /** A connected machine (`true`) rather than a cloud container. */
+  local: boolean;
+}
+
+/** The payload of a `device_paths` event; the mode fields are absent on events before auto mode. */
+export interface DevicePathsPayload {
+  roots: SandboxRoots;
+  mode?: SandboxMode | undefined;
+  allowedMode?: SandboxMode | undefined;
+  /** A device network; `"none"` only on events recorded before auto mode. */
+  network?: DeviceNetwork | "none" | undefined;
+  local?: boolean | undefined;
+  /** Before auto mode: the tier and isolation the device ran at. */
+  tier?: LegacyTier | undefined;
+  isolation?: "sandbox" | "none" | undefined;
   localhost?: "on" | "off-proxy-detected" | "off" | undefined;
   unixSockets?: "roots" | "all-masked" | "off" | undefined;
-  /** The call is in a scheduled run without a person: nobody can approve a domain. */
   unattended?: true | undefined;
 }
 
-/** The payload of a `device_paths` event; the level fields are absent on events before tiers. */
-export interface DevicePathsPayload extends Omit<DeviceSandboxLevel, "tier" | "isolation"> {
-  roots: SandboxRoots;
-  tier?: SandboxTier | undefined;
-  isolation?: "sandbox" | "none" | undefined;
+/** The tier names of events recorded before auto mode (read only by their old rendering). */
+type LegacyTier = "strict" | "dev" | "open";
+
+/** The old level of a payload (before auto mode), for its unchanged rendering. */
+export interface LegacyLevel {
+  tier: LegacyTier;
+  isolation: "sandbox" | "none";
+  network?: "none" | undefined;
+  localhost?: "on" | "off-proxy-detected" | "off" | undefined;
+  unixSockets?: "roots" | "all-masked" | "off" | undefined;
+  unattended?: true | undefined;
 }
 
 /** The roots line of a `device_paths` event (model-visible, English). */
 const rootsText = (r: SandboxRoots): string =>
   `This device's directories: workspace ${r.workspace}, skills ${r.skills} (read only), temporary files ${r.tmp}. Use these paths in commands and tool calls.`;
 
-const TIER_NAMES: Record<SandboxTier, string> = {
+const TIER_NAMES: Record<LegacyTier, string> = {
   strict: "strict",
   dev: "development",
   open: "open",
@@ -49,7 +68,7 @@ const otherDomains = (unattended: boolean): string =>
     : "other domains need the user's approval.";
 
 /** Local servers and unix sockets in `dev` / `open` (a cloud instance has both). */
-function localText(level: DeviceSandboxLevel): string {
+function localText(level: LegacyLevel): string {
   const { localhost, unixSockets } = level;
   if (localhost === undefined || unixSockets === undefined) {
     return "Local servers and unix sockets work.";
@@ -69,8 +88,8 @@ function localText(level: DeviceSandboxLevel): string {
   return `${servers}; ${sockets}.`;
 }
 
-/** The sandbox level line of a `device_paths` event (model-visible, English; spec §11.5). */
-export function sandboxLevelText(level: DeviceSandboxLevel): string {
+/** The old level line of a `device_paths` event (before auto mode; kept byte for byte). */
+function sandboxLevelText(level: LegacyLevel): string {
   if (level.isolation === "none") {
     return "Sandbox level: open, without a sandbox. Commands run directly on the user's computer as the user, with their files, credentials and network; be careful with anything that deletes files or sends data out.";
   }
@@ -89,38 +108,75 @@ export function sandboxLevelText(level: DeviceSandboxLevel): string {
   }
 }
 
-/** The level a payload records; undefined for an event recorded before tiers. */
-export function devicePathsLevel(p: DevicePathsPayload): DeviceSandboxLevel | undefined {
+/** The mode and network line of a `device_paths` event (model-visible, English). */
+export function modeLevelText(level: DeviceModeLevel): string {
+  if (!level.local) {
+    const head = `Mode: ${level.mode}. Commands run in the device's container; outside it `;
+    return level.network.kind === "open-public"
+      ? `${head}only public addresses are reachable (loopback, private and cloud metadata addresses are blocked).`
+      : `${head}the network reaches the organization's allowlisted hosts.`;
+  }
+  if (level.mode === "auto") {
+    return "Mode: auto. Commands run as the user on this machine, with their files, credentials and network; every command is reviewed and dangerous ones are blocked or need approval.";
+  }
+  return "Mode: sandbox. Only the workspace, skills and temporary files are writable; the network reaches the allowed hosts.";
+}
+
+/** The old level a payload records; undefined for an event recorded after auto mode. */
+function legacyLevel(p: DevicePathsPayload): LegacyLevel | undefined {
   if (p.tier === undefined) return undefined;
   return {
     tier: p.tier,
     isolation: p.isolation ?? "sandbox",
-    ...(p.network !== undefined && { network: p.network }),
+    ...(p.network === "none" && { network: "none" as const }),
     ...(p.localhost !== undefined && { localhost: p.localhost }),
     ...(p.unixSockets !== undefined && { unixSockets: p.unixSockets }),
     ...(p.unattended === true && { unattended: true as const }),
   };
 }
 
+/** A payload's level: the current mode/network shape or the pre-auto-mode one. */
+export type DevicePathsLevel = DeviceModeLevel | LegacyLevel;
+
+/** The level a payload records, in either shape; undefined without one. */
+export function devicePathsLevel(p: DevicePathsPayload): DevicePathsLevel | undefined {
+  if (
+    p.mode !== undefined &&
+    p.allowedMode !== undefined &&
+    typeof p.network === "object" &&
+    p.network !== null
+  ) {
+    return {
+      mode: p.mode,
+      allowedMode: p.allowedMode,
+      network: { kind: p.network.kind, hosts: [...p.network.hosts] },
+      local: p.local === true,
+    };
+  }
+  return legacyLevel(p);
+}
+
 /** The system message of a `device_paths` event (model-visible, English). */
 export function devicePathsText(p: DevicePathsPayload): string {
   const roots = rootsText(p.roots);
   const level = devicePathsLevel(p);
-  return level === undefined ? roots : `${roots}\n${sandboxLevelText(level)}`;
+  if (level === undefined) return roots;
+  return `${roots}\n${"mode" in level ? modeLevelText(level) : sandboxLevelText(level)}`;
 }
 
 /** The fields of a level, in a fixed order (absent ones left out). */
-const levelKey = (l: DeviceSandboxLevel | undefined): unknown[] =>
-  l === undefined
-    ? []
-    : [
-        l.tier,
-        l.isolation,
-        ...(l.network !== undefined ? [`network:${l.network}`] : []),
-        ...(l.localhost !== undefined ? [`localhost:${l.localhost}`] : []),
-        ...(l.unixSockets !== undefined ? [`unixSockets:${l.unixSockets}`] : []),
-        ...(l.unattended === true ? ["unattended"] : []),
-      ];
+const levelKey = (l: DevicePathsLevel | undefined): unknown[] => {
+  if (l === undefined) return [];
+  if ("mode" in l) return [l.mode, l.network.kind];
+  return [
+    l.tier,
+    l.isolation,
+    ...(l.network !== undefined ? [`network:${l.network}`] : []),
+    ...(l.localhost !== undefined ? [`localhost:${l.localhost}`] : []),
+    ...(l.unixSockets !== undefined ? [`unixSockets:${l.unixSockets}`] : []),
+    ...(l.unattended === true ? ["unattended"] : []),
+  ];
+};
 
 /** Whether two sets of roots are the same paths. */
 export const sameRoots = (a: SandboxRoots, b: SandboxRoots): boolean =>
@@ -147,32 +203,30 @@ export const devicePathsIdemKey = (p: DevicePathsPayload, prevSeq: number): stri
 /**
  * The `device_paths` event to append when a sandbox call holds an instance with `roots` in a
  * device at `level`, and the conversation's latest such event is `latest`; null when nothing
- * changed. Without a `level` (not known: test stubs, a replay of a call recorded before tiers)
+ * changed. Without a `level` (not known: test stubs, a replay of a call recorded before auto mode)
  * only the roots are compared and recorded.
  */
 export function devicePathsChange(
   latest: { seq: number; payload: DevicePathsPayload } | undefined,
   roots: SandboxRoots,
   runId: string | undefined,
-  level?: DeviceSandboxLevel,
+  level?: DevicePathsLevel,
 ): {
   type: "device_paths";
   runId?: string;
   idemKey: string;
   payload: DevicePathsPayload;
 } | null {
-  if (
-    latest &&
-    sameRoots(latest.payload.roots, roots) &&
-    (level === undefined ||
+  if (latest) {
+    const sameLevel =
+      level === undefined ||
       JSON.stringify(levelKey(devicePathsLevel(latest.payload))) ===
-        JSON.stringify(levelKey(level)))
-  ) {
-    return null;
+        JSON.stringify(levelKey(level));
+    if (sameRoots(latest.payload.roots, roots) && sameLevel) return null;
   }
   const payload: DevicePathsPayload = {
     roots: { workspace: roots.workspace, skills: roots.skills, tmp: roots.tmp },
-    ...(level !== undefined && devicePathsLevel({ roots, ...level })),
+    ...(level !== undefined && level),
   };
   return {
     type: "device_paths",

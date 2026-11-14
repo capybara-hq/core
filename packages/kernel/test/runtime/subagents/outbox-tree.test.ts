@@ -97,7 +97,7 @@ beforeAll(async () => {
   redis = new Redis(rd.url, { maxRetriesPerRequest: null });
   subQueue = new Queue(SUBAGENT_RUN_QUEUE_NAME, { connection: redis });
   maint = new Queue(MAINTENANCE_QUEUE_NAME, { connection: redis });
-}, 180_000);
+});
 
 afterAll(async () => {
   failing = false;
@@ -324,7 +324,7 @@ describe("sub-agent work owed in its transactions", () => {
       30_000,
       "the child run completed",
     );
-  }, 60_000);
+  });
 
   it("a finished child's result reaches its parent with the fast path disabled", async () => {
     const { conv, ctx } = await parentRun();
@@ -381,7 +381,7 @@ describe("sub-agent work owed in its transactions", () => {
       text: "child result",
     });
     expect(ofType(await eventsOf(db, conv), "subagent_finished")).toHaveLength(1);
-  }, 60_000);
+  });
 
   it("a parent finishing stops its fork child with the fast path disabled", async () => {
     const { conv, runId, childRunId } = await forkParent();
@@ -420,7 +420,7 @@ describe("sub-agent work owed in its transactions", () => {
       30_000,
       "the fork child stopped",
     );
-  }, 60_000);
+  });
 
   it("deleting a root stops the tree with the fast path disabled", async () => {
     const { conv, runId, ctx } = await parentRun();
@@ -459,7 +459,7 @@ describe("sub-agent work owed in its transactions", () => {
     );
     const aborted = ofType(await eventsOf(db, out.childConversationId), "run_aborted");
     expect(aborted[0]?.payload).toMatchObject({ byAccountId: ownerId });
-  }, 60_000);
+  });
 
   it("a parent's terminal transaction leaves no open Agent call", async () => {
     const { conv, runId, seq } = await forkParent();
@@ -487,7 +487,7 @@ describe("sub-agent work owed in its transactions", () => {
     expect(JSON.stringify(report[0]?.payload)).toContain(AGENT_STOPPED_WITH_RUN_TEXT);
     // written in the terminal transaction, before the terminal event
     expect(report[0]?.seq).toBeLessThan(toSeq ?? 0);
-  }, 60_000);
+  });
 
   it("a root's unpause owes the wakes it held for its tree", async () => {
     const root = await createConv(owner, orgId, agentId);
@@ -551,5 +551,5 @@ describe("sub-agent work owed in its transactions", () => {
       "the held sub-agent's run",
     );
     expect(Number(run.trigger_seq)).toBe(seq);
-  }, 60_000);
+  });
 });

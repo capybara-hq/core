@@ -47,7 +47,7 @@ beforeAll(async () => {
       { roles: ["api"], extensions: [MODEL_FAKE_B, MODEL_EVAL] },
     ),
   );
-}, 120_000);
+});
 afterAll(async () => {
   await k?.close();
   redis?.disconnect();

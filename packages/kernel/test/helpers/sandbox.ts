@@ -59,7 +59,7 @@ export interface SandboxServiceDeps {
   lookup?: (plugin: string) => SandboxProvider | undefined;
   /** Kernel-internal providers (`@local`), found by name before any extension. */
   internal?: SandboxProviderEntry[];
-  config: () => Pick<KernelConfig, "sandbox">;
+  config: () => Pick<KernelConfig, "sandbox" | "devices">;
   log: Partial<Pick<Logger, "info" | "warn" | "error">>;
   /** Lease poll interval (ms), default 100. */
   lockPollMs?: number;
@@ -94,7 +94,13 @@ export function sandboxServiceFor(d: SandboxServiceDeps): SandboxService {
         return impl ? { plugin, impl } : undefined;
       },
     },
-    { get: () => d.config() as KernelConfig },
+    {
+      get: () => d.config() as KernelConfig,
+      fieldSource: (path: string) =>
+        path === "devices.autoMode" && d.config().devices.autoMode !== undefined
+          ? ("file" as const)
+          : undefined,
+    },
     kernelLog(d.log),
     d.background ??
       new BackgroundTaskStore(

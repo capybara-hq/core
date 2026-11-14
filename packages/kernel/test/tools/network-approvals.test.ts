@@ -48,14 +48,7 @@ import type { Answer } from "../local-devices/test-holder.js";
  * it, and the call's tool approvals are left alone.
  */
 
-const POLICY: DeviceLocalPolicySummary = {
-  effectiveTier: "strict",
-  isolation: "sandbox",
-  localhost: "off",
-  unixSockets: "off",
-  allowedDomains: ["pypi.org"],
-  remoteGrants: "owner",
-};
+const POLICY: DeviceLocalPolicySummary = { mode: "auto", allowedDomains: ["pypi.org"] };
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -87,7 +80,7 @@ beforeAll(async () => {
     .id;
   orgId = await createOrg(await session(k, "owner"));
   wsUrl = `ws://127.0.0.1:${k.port}/device/connect`;
-}, 180_000);
+});
 
 afterEach(() => {
   for (const m of open.splice(0)) m.close();

@@ -52,13 +52,13 @@ const agentCall = (description: string, prompt: string) => ({
 
 const RULES: ScriptRule[] = [
   {
-    // a command whose output (40000 chars) is archived
+    // a command the command review allows whose output is archived
     when: { systemIncludes: CHILD, lastUserIncludes: "task-tool", assistantTurns: 0 },
     reply: {
       toolCalls: [
         {
           name: "Bash",
-          input: { description: "Print a lot", command: "yes a | head -c 40000" },
+          input: { description: "Print a lot", command: "seq 1 40000" },
         },
       ],
     },
@@ -106,7 +106,7 @@ beforeAll(async () => {
       },
     ),
   );
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -344,7 +344,7 @@ describe("GET /conversations/:id/subagents", () => {
     const stop = await owner({ method: "POST", url: `${base()}/${write.subagentId}/abort` });
     expect(stop.statusCode, stop.body).toBe(202);
     await finishedDeliveries(db, conv, 2);
-  }, 90_000);
+  });
 });
 
 describe("child conversations through the conversation routes", () => {
@@ -389,7 +389,7 @@ describe("child conversations through the conversation routes", () => {
       url: `${base()}/${child}/outputs/${archived?.payload.outputId}`,
     });
     expect(out.statusCode, out.body).toBe(200);
-    expect(out.json().output.text).toContain("a\na\na\n");
+    expect(out.json().output.text).toContain("1\n2\n3\n");
 
     // nobody else: the member gets 404 on every child route
     const someArtifact = "00000000-0000-4000-8000-000000000000";
@@ -414,7 +414,7 @@ describe("child conversations through the conversation routes", () => {
       expect(r.statusCode, `${method} ${path}`).toBe(404);
       expect(r.body, `${method} ${path}`).not.toContain(conv);
     }
-  }, 60_000);
+  });
 
   it("listMine never lists children", async () => {
     const { conv, child } = await oneChild();
@@ -428,7 +428,7 @@ describe("child conversations through the conversation routes", () => {
     );
     expect(ids).toEqual([conv]);
     expect(ids).not.toContain(child);
-  }, 60_000);
+  });
 });
 
 describe("progress and usage", () => {
@@ -465,7 +465,7 @@ describe("progress and usage", () => {
     for (const id of [conv, c?.conversationId as string]) {
       expect((await eventsOf(db, id)).map((e) => e.type)).not.toContain("subagent_progress");
     }
-  }, 60_000);
+  });
 
   it("conversation usage sums the children", async () => {
     const { conv, child } = await oneChild();
@@ -480,7 +480,7 @@ describe("progress and usage", () => {
     expect(cr.json()).toEqual({ usage: await usageOf(child) });
     // owner only
     expect((await member({ method: "GET", url: `${base()}/${conv}/usage` })).statusCode).toBe(404);
-  }, 60_000);
+  });
 
   it("conversation usage sums every descendant (depth 3), and a sub-agent's covers its subtree", async () => {
     const { conv, child } = await oneChild();
@@ -533,5 +533,5 @@ describe("progress and usage", () => {
     expect(r.json()).toEqual({ usage: await usageOf(conv, child, ...below) });
     const cr = await owner({ method: "GET", url: `${base()}/${child}/usage` });
     expect(cr.json()).toEqual({ usage: await usageOf(child, ...below) });
-  }, 60_000);
+  });
 });

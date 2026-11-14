@@ -48,7 +48,7 @@ beforeAll(async () => {
   db = kernelDb(raw);
   redis = new Redis(rd.url);
   accounts = accountsFor(db);
-}, 120_000);
+});
 afterAll(async () => {
   await k?.close();
   redis?.disconnect();
@@ -159,7 +159,7 @@ describe("POST /api/v1/auth/login", () => {
 
   // Each attempt runs scrypt (a dummy one for an unknown login), serially: some 60 of them take
   // about 3 s alone and more in a loaded run, so this test gets a budget sized to that work.
-  it("成功登录不消耗 IP 额度：同一 IP 连续 60 次成功登录都 200", { timeout: 30_000 }, async () => {
+  it("成功登录不消耗 IP 额度：同一 IP 连续 60 次成功登录都 200", async () => {
     for (let i = 0; i < 60; i++) {
       expect((await login(cookieJar(), i % 2 ? "alice" : "admin")).statusCode).toBe(200);
     }
@@ -721,11 +721,11 @@ describe("M2 收尾：登录限流按登录名 + IP、改密码吊销 PAT、守�
       await kk.close();
       await redis.call("ACL", "DELUSER", "limited");
     }
-  }, 60_000);
+  });
 
   // Each attempt runs scrypt (a dummy one for an unknown login), serially: some 60 of them take
   // about 3 s alone and more in a loaded run, so this test gets a budget sized to that work.
-  it("改密码失败 11 次 → 429，但同 IP 的登录不受影响", { timeout: 30_000 }, async () => {
+  it("改密码失败 11 次 → 429，但同 IP 的登录不受影响", async () => {
     const jar = cookieJar();
     await login(jar);
     const change = (currentPassword: string) =>
@@ -922,5 +922,5 @@ describe("M2 收尾：登录限流按登录名 + IP、改密码吊销 PAT、守�
       await sql`DROP DATABASE IF EXISTS ${brkDb} WITH (FORCE)`.execute(adminDb);
       await adminDb.destroy();
     }
-  }, 60_000);
+  });
 });

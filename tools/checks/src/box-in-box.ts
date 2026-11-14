@@ -587,7 +587,10 @@ export class BoxReader {
   /**
    * Walks `root` with the nearest enclosing box (`box`, with whether it is a flush form card) and
    * reports nested boxes to `report`, or collects the root's traits into `traits` (with `props`,
-   * the component's own props, to find the ones it draws inside a box).
+   * the component's own props, to find the ones it draws inside a box). `portal` means the draw is
+   * behind an overlay and `ground` that it is past a pane or a ground reset: neither makes the
+   * enclosing component draw a box (`merge` skips both), though a box already opened past the reset
+   * still reports what is inside it.
    */
   scan(
     root: Node,
@@ -598,18 +601,25 @@ export class BoxReader {
     traits: Traits | null,
     props: Props = { aliases: new Map() },
   ): void {
-    const merge = (t: Traits, portal: boolean) => {
-      if (!traits || portal) return;
+    const merge = (t: Traits, portal: boolean, ground: boolean) => {
+      if (!traits || portal || ground) return;
       if (t.boxed) traits.boxed = [...new Set([...(traits.boxed ?? []), ...t.boxed])];
       if (t.table) traits.table = true;
     };
     /** A followed node (a component, a const, a helper) drawn here, inside `box`. */
-    const drawn = (t: Traits, name: string, at: Node, box: Box, portal: boolean) => {
+    const drawn = (
+      t: Traits,
+      name: string,
+      at: Node,
+      box: Box,
+      portal: boolean,
+      ground: boolean,
+    ) => {
       const second = (t.boxed ?? []).filter((b) => ALLOWED[b]?.outer !== box?.name);
       if (second.length > 0 && box) report?.(name, box.name, at, ` (draws ${second[0]})`);
       if (t.table && box?.name === "FormSection" && !box.flush)
         report?.(name, box.name, at, " (draws a DataTable)");
-      merge(t, portal);
+      merge(t, portal, ground);
     };
     /** A prop of the scanned component drawn inside a box: the component's slot. */
     const slot = (prop: string, box: Box, portal: boolean) => {
@@ -617,16 +627,16 @@ export class BoxReader {
       traits.slots = { ...traits.slots };
       if (traits.slots[prop] === undefined) traits.slots[prop] = box.name;
     };
-    const follow = (name: string, at: Node, box: Box, portal: boolean) => {
+    const follow = (name: string, at: Node, box: Box, portal: boolean, ground: boolean) => {
       const prop = props.aliases.get(name);
       if (prop !== undefined) return slot(prop, box, portal);
       const r = this.renderable(file, info, name, at.start);
-      if (r) drawn(this.traitsOf(r), name, at, box, portal);
+      if (r) drawn(this.traitsOf(r), name, at, box, portal, ground);
     };
-    const visit = (n: Node, box: Box, portal: boolean) => {
-      if (n.type === "JSXElement") return element(n, box, portal);
+    const visit = (n: Node, box: Box, portal: boolean, ground: boolean) => {
+      if (n.type === "JSXElement") return element(n, box, portal, ground);
       if (n.type === "Identifier") {
-        if (box !== null || traits !== null) follow(n.name as string, n, box, portal);
+        if (box !== null || traits !== null) follow(n.name as string, n, box, portal, ground);
         return;
       }
       if (n.type === "MemberExpression") {
@@ -644,24 +654,25 @@ export class BoxReader {
         if (k === "type" || k === "start" || k === "end" || SKIP_KEYS.has(k)) continue;
         if (k === "property" && n.type === "MemberExpression" && !n.computed) continue;
         if (k === "key" && n.type === "Property" && !n.computed) continue;
-        walkInto(v, box, portal);
+        walkInto(v, box, portal, ground);
       }
     };
-    const element = (n: Node, box: Box, portal: boolean) => {
+    const element = (n: Node, box: Box, portal: boolean, ground: boolean) => {
       const name = elementName(n);
       let next = box;
       let nextPortal = portal;
+      let nextGround = ground;
       let slots: Record<string, string> = {};
       if (name !== undefined) {
         const design = info.design.get(name);
         if (design !== undefined) {
           if (BOXED.has(design)) {
             if (box && ALLOWED[design]?.outer !== box.name) report?.(design, box.name, n, "");
-            merge({ boxed: [design] }, portal);
+            merge({ boxed: [design] }, portal, ground);
           }
           if (design === "DataTable") {
             if (box?.name === "FormSection" && !box.flush) report?.("DataTable", box.name, n, "");
-            merge({ table: true }, portal);
+            merge({ table: true }, portal, ground);
           }
           if (FRAMED.has(design) && box && attrTrue(n, "framed"))
             report?.(design, box.name, n, " (framed)");
@@ -670,12 +681,17 @@ export class BoxReader {
             nextPortal = true;
             if (!OUTER.has(design)) next = null;
           }
-          if (PANES.has(design) || GROUND.has(design)) next = null;
+          // a pane or a ground grid starts again on the page ground: what it holds (a followed
+          // component's Card too) is not inside the box the component is drawn in
+          if (PANES.has(design) || GROUND.has(design)) {
+            next = null;
+            nextGround = true;
+          }
         } else if (isCapitalized(name)) {
           const c = this.componentFor(file, name);
           if (c) {
             const t = this.traitsOf(c);
-            drawn(t, name, n, box, portal);
+            drawn(t, name, n, box, portal, ground);
             slots = t.slots ?? {};
           }
         }
@@ -684,19 +700,19 @@ export class BoxReader {
       // local wrapper's slot prop is inside the box it draws that prop in.
       for (const a of ((n.openingElement as Node).attributes as Node[]) ?? []) {
         const slotBox = slots[attributeName(a) ?? ""];
-        walkInto(a, slotBox ? { name: slotBox, flush: false } : next, nextPortal);
+        walkInto(a, slotBox ? { name: slotBox, flush: false } : next, nextPortal, nextGround);
       }
       const inner = slots.children ? { name: slots.children, flush: false } : next;
-      for (const ch of (n.children as Node[]) ?? []) walkInto(ch, inner, nextPortal);
+      for (const ch of (n.children as Node[]) ?? []) walkInto(ch, inner, nextPortal, nextGround);
     };
-    const walkInto = (v: unknown, box: Box, portal: boolean) => {
+    const walkInto = (v: unknown, box: Box, portal: boolean, ground: boolean) => {
       if (Array.isArray(v)) {
-        for (const x of v) walkInto(x, box, portal);
+        for (const x of v) walkInto(x, box, portal, ground);
         return;
       }
-      if (isNode(v)) visit(v, box, portal);
+      if (isNode(v)) visit(v, box, portal, ground);
     };
-    visit(root, start, false);
+    visit(root, start, false, false);
   }
 }
 

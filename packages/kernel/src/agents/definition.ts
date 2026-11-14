@@ -1,5 +1,6 @@
 import { type ModelParameter, validateParams } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
+import { AgentAttributionSchema } from "../attribution/platform-attribution.js";
 import { isRemovedBuiltinKey } from "../tools/builtin-names.js";
 import {
   isLegacyBuiltinKey,
@@ -360,6 +361,12 @@ export const AgentDefinitionSchema = z.object({
    * default: definitions without it are unchanged. Model-invisible.
    */
   pendingConnectors: z.array(PendingConnectorSchema).max(PENDING_CONNECTORS_MAX).optional(),
+  /**
+   * The attribution line of git commits and pull requests this agent creates (spec
+   * 2026-11-14-agent-attribution): `inherit` (or absent) follows the deployment defaults, `custom`
+   * uses its own values, `off` adds nothing. No default: definitions without it are unchanged.
+   */
+  attribution: AgentAttributionSchema.optional(),
 });
 export type AgentDefinition = z.infer<typeof AgentDefinitionSchema>;
 
@@ -637,6 +644,18 @@ export function normalizeStoredDefinition(def: unknown, scope?: LegacyScope): Ag
     d = Object.keys(keep).length > 0 ? { ...rest, skills: keep } : rest;
   }
   if (!Array.isArray(d.disabledSkills)) d = { ...d, disabledSkills: [] };
+  // an attribution mode other than inherit / custom / off (stored data is not re-validated) reads
+  // as inherit, the value the kernel applies and the agent page shows (spec 2026-11-14)
+  const attribution = d.attribution;
+  if (
+    isRecord(attribution) &&
+    attribution.mode !== undefined &&
+    attribution.mode !== "inherit" &&
+    attribution.mode !== "custom" &&
+    attribution.mode !== "off"
+  ) {
+    d = { ...d, attribution: { ...attribution, mode: "inherit" } };
+  }
   return d as AgentDefinition;
 }
 

@@ -54,10 +54,8 @@ const LIMITS = {
   cpu: 1,
   memoryMb: 512,
   diskMb: 1024,
-  egress: "none",
-  allowHosts: [],
-  tier: "strict",
-  devHosts: [],
+  mode: "sandbox" as const,
+  network: { kind: "allowlist" as const, hosts: [] },
 };
 const execArgs = {
   command: "echo hi",
@@ -123,7 +121,7 @@ beforeAll(async () => {
   sub = createBusSubscriber(() => new Redis(rd.url));
   bus = createBus(redis, sub, "kernel");
   relay = relayOver(redis);
-}, 120_000);
+});
 afterAll(async () => {
   await sub?.close();
   redis?.disconnect();
@@ -217,7 +215,7 @@ describe("LocalDeviceRelay", () => {
     await h.respond(req.id, { ok: true, result: EXEC_RESULT });
     expect(await call).toEqual(EXEC_RESULT);
     await h.disconnect();
-  }, 15_000);
+  });
 
   it("a stored result whose publish was lost is still found before giving up", async () => {
     graceSeconds = 1;
@@ -231,7 +229,7 @@ describe("LocalDeviceRelay", () => {
     await h.respond(req.id, { ok: true, result: EXEC_RESULT }, { publish: false });
     expect(await call).toEqual(EXEC_RESULT);
     await h.disconnect();
-  }, 10_000);
+  });
 
   it("grace exceeded on a taken request queues a cancel and throws device.offline", async () => {
     graceSeconds = 1;
@@ -256,7 +254,7 @@ describe("LocalDeviceRelay", () => {
     await h.connect();
     expect(await h.next((f) => f.type === "cancel")).toEqual({ type: "cancel", id: req.id });
     await h.disconnect();
-  }, 10_000);
+  });
 
   it("a request given up on before the machine took it is removed: nothing reaches the machine", async () => {
     graceSeconds = 1;
@@ -279,7 +277,7 @@ describe("LocalDeviceRelay", () => {
     await sleep(200);
     expect(h.frames).toEqual([]);
     await h.disconnect();
-  }, 10_000);
+  });
 
   it("a holder lost mid-call ends the wait one grace after the loss, not at the deadline", async () => {
     graceSeconds = 1;
@@ -299,7 +297,7 @@ describe("LocalDeviceRelay", () => {
     const queued = await redis.lrange(deviceReqKey(h.deviceId), 0, -1);
     expect(queued.map((x) => JSON.parse(x))).toEqual([{ type: "cancel", id: req.id }]);
     await redis.del(deviceReqKey(h.deviceId));
-  }, 15_000);
+  });
 
   it.each([
     ["revoked", "device.forbidden"],
@@ -353,7 +351,7 @@ describe("LocalDeviceRelay", () => {
     await h.respond(req.id, { ok: true, result: EXEC_RESULT });
     expect(await call).toEqual(EXEC_RESULT);
     await h.disconnect();
-  }, 30_000);
+  });
 
   it("a stalled lease check does not hold the give-up back", async () => {
     graceSeconds = 1;
@@ -381,7 +379,7 @@ describe("LocalDeviceRelay", () => {
     expect(isOffline(await call)).toBe(true);
     expect(Date.now() - t0).toBeLessThan(1500 + LEASE_CHECK_TIMEOUT_MS + 1000);
     await redis.del(deviceLeaseKey(env), deviceReqKey(env));
-  }, 10_000);
+  });
 
   it("abort of a taken request queues a cancel and rejects with the abort reason", async () => {
     const h = holder();
@@ -524,5 +522,5 @@ describe("LocalDeviceRelay", () => {
     // neither request was taken: both were removed, no cancel queued
     expect(await redis.exists(listKey)).toBe(0);
     await redis.del(deviceLeaseKey(env));
-  }, 10_000);
+  });
 });

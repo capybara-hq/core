@@ -67,7 +67,7 @@ beforeAll(async () => {
     { ...base, extensions: [...base.extensions, UI_PROBE, TOOLS_UI] },
     { env: {}, logger: createLogger("warn", { write: (l) => lines.push(l) }) },
   );
-}, 120_000);
+});
 afterAll(async () => {
   await k?.close();
   redis?.disconnect();
@@ -329,7 +329,7 @@ describe("插件视图接口", () => {
     expect(errCode(slow)).toBe("ui.timeout");
     expect(Date.now() - t0).toBeGreaterThanOrEqual(4900);
     expect(probe().aborted).toBe(aborted + 1);
-  }, 20_000);
+  });
 
   it("非法视图 → 502 ui.invalid_view，记一条告警，对话日志里没有新事件（审查重点 1）", async () => {
     await enable(owner, orgId, "ui-probe");

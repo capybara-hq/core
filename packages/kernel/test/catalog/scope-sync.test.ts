@@ -26,7 +26,7 @@ let env: OrgEnv;
 
 beforeAll(async () => {
   env = await startOrgEnv();
-}, 240_000);
+});
 
 afterAll(async () => {
   await env?.stop();
@@ -109,7 +109,7 @@ async function switchRow(itemId: string, orgId: string, enabled: boolean): Promi
     .execute();
 }
 
-describe("plugin scope sync", { timeout: 90_000 }, () => {
+describe("plugin scope sync", () => {
   it("all: every org gets a live install, and so does an org created afterwards", async () => {
     const itemId = await skillsOnly("everywhere");
     const orgB = await createOrg(env.root, "Scope B");

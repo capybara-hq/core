@@ -1,5 +1,5 @@
 import { ToolError } from "@capybara-hq/plugin-sdk";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { ApiError } from "../../src/errors.js";
 import type { ActorFacts } from "../../src/platform/actor.js";
@@ -163,7 +163,6 @@ const ADMIN: ActorFacts = {
 
 let facts: ActorFacts;
 let factsCalls: unknown[];
-let logged: { level: string; msg: string; fields?: Record<string, unknown> }[];
 let setting: "on" | "read-only" | "off";
 let tool: BuiltinTool;
 
@@ -175,7 +174,6 @@ beforeEach(() => {
   seenRoles = {};
   facts = ADMIN;
   factsCalls = [];
-  logged = [];
   setting = "on";
   const ops = new PlatformOperations();
   targetClassCtx = [];
@@ -197,10 +195,6 @@ beforeEach(() => {
     },
     setting: async () => setting,
     precheckTimeoutMs: 50,
-    log: {
-      warn: (msg, fields) => logged.push({ level: "warn", msg, ...(fields && { fields }) }),
-      debug: (msg, fields) => logged.push({ level: "debug", msg, ...(fields && { fields }) }),
-    },
   });
 });
 
@@ -702,31 +696,11 @@ describe("callPolicy: precheck before the card", () => {
     expect((await policy(input))?.denyReason).toContain("Ask about weekly-report.");
   });
 
-  it("a precheck that throws is logged as a warning, a timeout at debug, with the operation id", async () => {
-    precheckMode = "throw";
-    await policy(input);
-    expect(logged).toEqual([
-      expect.objectContaining({
-        level: "warn",
-        fields: expect.objectContaining({ operation: "skills.fixture-create" }),
-      }),
-    ]);
-    logged = [];
-    precheckMode = "hang";
-    await policy(input);
-    expect(logged).toEqual([
-      expect.objectContaining({
-        level: "debug",
-        fields: expect.objectContaining({ operation: "skills.fixture-create" }),
-      }),
-    ]);
-  });
-
   it("the precheck's signal aborts with the run's signal", async () => {
     precheckMode = "hang";
     const run = new AbortController();
     const p = tool.callPolicy?.(input, { ...policyCtx, signal: run.signal });
-    while (precheckSignal === null) await new Promise((r) => setTimeout(r, 1));
+    await vi.waitFor(() => expect(precheckSignal).not.toBeNull());
     const seen = precheckSignal as AbortSignal;
     expect(seen.aborted).toBe(false);
     run.abort();

@@ -26,8 +26,8 @@ const PLATFORM = {
 };
 
 const DEPLOYMENT = {
-  sandboxEgress: { mode: "none", allowHosts: [] as string[] },
-  sandboxTiers: { max: "dev", default: "dev", allowUnsandboxed: true, devHosts: [] as string[] },
+  autoMode: { mode: "allowed", source: "default" },
+  cloudNetwork: { mode: "open", allowHosts: [] as string[] },
   compaction: PLATFORM,
 };
 

@@ -47,7 +47,7 @@ let seq = 0;
 beforeAll(async () => {
   env = await startOrgEnv();
   orgB = await createOrg(env.root, "B");
-}, 240_000);
+});
 
 afterAll(async () => {
   await env?.stop();
@@ -230,7 +230,7 @@ async function promotedSkill(orgId: string, name: string): Promise<string> {
   return platformId;
 }
 
-describe("org deletion and what the org owns", { timeout: 180_000 }, () => {
+describe("org deletion and what the org owns", () => {
   it("shared items survive their org", async () => {
     const orgX = await newOrg();
     const shared = await uploaded(orgX, await skillPlugin("del-shared"), "installed");

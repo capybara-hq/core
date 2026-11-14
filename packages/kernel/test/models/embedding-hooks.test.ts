@@ -80,7 +80,7 @@ beforeAll(async () => {
   );
   await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
   owner = await session(k, "owner");
-}, 120_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -148,7 +148,7 @@ async function rejection(p: Promise<unknown>): Promise<unknown> {
 
 const texts = (n: number) => Array.from({ length: n }, (_, i) => `t${i}`);
 
-describe("model.request for ctx.models.embed", { timeout: 60_000 }, () => {
+describe("model.request for ctx.models.embed", () => {
   it("observe and policy hooks see one payload per call, with every text and no conversation", async () => {
     const orgId = await freshOrg();
     // 6 texts: two provider batches (maxBatch 4), one hook payload

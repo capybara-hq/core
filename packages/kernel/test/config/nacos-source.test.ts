@@ -11,6 +11,8 @@ interface Stub {
   url: string;
   setContent(c: string): void;
   requests: string[];
+  /** Long-poll responses the server currently holds open (a watcher is listening). */
+  pending(): number;
   close(): Promise<void>;
 }
 
@@ -52,6 +54,7 @@ async function startStub(initial: string): Promise<Stub> {
     server,
     url: `127.0.0.1:${port}`,
     requests,
+    pending: () => waiting.size,
     setContent(c) {
       content = c;
       for (const res of waiting) res.end("capybara.yaml%02DEFAULT_GROUP%02ns%01");
@@ -127,14 +130,17 @@ describe("nacos source", () => {
       });
       cancels.push(cancel as () => void);
     });
-    await new Promise((r) => setTimeout(r, 100));
+    // A held long-poll response is the marker that the watcher is listening.
+    await vi.waitFor(() => expect(s.pending()).toBe(1), { timeout: 5_000 });
     s.setContent("http:\n  port: 9300\n");
     await next;
     expect(got).toEqual([{ http: { port: 9300 } }]);
     cancels.pop()?.();
-    await new Promise((r) => setTimeout(r, 100));
+    // Cancel aborts the in-flight long-poll; the server sees its connection close.
+    await vi.waitFor(() => expect(s.pending()).toBe(0), { timeout: 5_000 });
     const count = s.requests.length;
     s.setContent("http:\n  port: 9400\n");
+    // Nothing-happened window: a cancelled watch must issue no further request.
     await new Promise((r) => setTimeout(r, 200));
     expect(s.requests.length).toBe(count);
     expect(got).toHaveLength(1);
@@ -184,13 +190,19 @@ describe("nacos source robustness", () => {
       (e) => errors.push(e),
     ) as () => void;
     cancels.push(cancel);
-    while (listenerCalls < 15) await new Promise((r) => setTimeout(r, 5));
+    // The listener is retried with a 1 ms backoff, so 15 calls prove the loop ran; a runaway loop
+    // would trip the 10 s guard instead of hanging the suite.
+    await vi.waitFor(() => expect(listenerCalls).toBeGreaterThanOrEqual(15), { timeout: 10_000 });
     await new Promise((r) => setImmediate(r));
     process.off("warning", onWarn);
     expect(warnings).not.toContain("MaxListenersExceededWarning");
     expect(errors[0]).toBeInstanceOf(ConfigError);
     cancel();
+    // Settle the retry already scheduled by the 1 ms backoff before taking the baseline count, so
+    // only calls that start after cancel are judged.
     await new Promise((r) => setTimeout(r, 20));
+    // Nothing-happened window: after cancel no listener call may follow (the 1 ms backoff would
+    // produce dozens in this window if the loop were still running).
     const n = listenerCalls;
     await new Promise((r) => setTimeout(r, 50));
     expect(listenerCalls).toBe(n);
@@ -228,7 +240,7 @@ describe("nacos source robustness", () => {
     const err = new Promise<Error>((resolve) => {
       cancels.push(src.watch?.(() => {}, resolve) as () => void);
     });
-    await new Promise((r) => setTimeout(r, 50));
+    await vi.waitFor(() => expect(s.pending()).toBe(1), { timeout: 5_000 });
     s.setContent("a: [unclosed TOPSECRET\n");
     const e = await err;
     expect(e).toBeInstanceOf(ConfigError);
@@ -251,7 +263,7 @@ describe("nacos source robustness", () => {
         }, resolve) as () => void,
       );
     });
-    await new Promise((r) => setTimeout(r, 50));
+    await vi.waitFor(() => expect(s.pending()).toBe(1), { timeout: 5_000 });
     s.setContent("a: 2\n");
     const e = await err;
     expect(e.message).not.toContain("SECRET");
@@ -405,10 +417,13 @@ describe("nacos auth", () => {
 
     const stop = src.watch?.(() => {}) ?? (() => {});
     try {
-      const deadline = Date.now() + 5_000;
-      while (!s.requests.some((r) => r.path.endsWith("/listener")) && Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 20));
-      }
+      // The listener request carries the token from the login performed by load().
+      await vi.waitFor(
+        () => expect(s.requests.some((r) => r.path.endsWith("/listener"))).toBe(true),
+        {
+          timeout: 5_000,
+        },
+      );
       const listener = s.requests.find((r) => r.path === "/nacos/v1/cs/configs/listener");
       expect(listener?.token).toBe("tok-1");
       expect(s.logins()).toBe(1);

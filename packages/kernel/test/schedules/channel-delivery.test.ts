@@ -154,7 +154,7 @@ beforeAll(async () => {
     (${`chan-tg:${tg.bot.id}`}, '888', ${bobId})`.execute(raw);
   await waitFor(async () => im.active(miniId).length === 1, 10_000, "long connection");
   scriptRules([{ when: { lastUserIncludes: "digest please" }, reply: { text: ANSWER } }]);
-}, 180_000);
+});
 
 afterAll(async () => {
   scriptRules([]);
@@ -263,7 +263,7 @@ const threadOf = (conversationId: string) =>
     "the run's thread is bound",
   );
 
-describe("scheduled task channel delivery (spec §8)", { timeout: 90_000 }, () => {
+describe("scheduled task channel delivery (spec §8)", () => {
   it("dm delivery posts the run's answer to the fake Telegram chat", async () => {
     const t = await chatTask({ connectionId: tgId, chatId: "777", chatType: "dm" });
     const r = await fireNow(t);

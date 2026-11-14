@@ -170,7 +170,7 @@ beforeAll(async () => {
   await accounts.createLocal({ login: "mem", password: PW, displayName: "M" });
   admin = await session(k, "root");
   member = await session(k, "mem");
-}, 240_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -257,7 +257,7 @@ async function nothingStored(): Promise<void> {
   expect((await k.app.get(StorageService).deployment().list("directory/")).items).toEqual([]);
 }
 
-describe("one import flow for every plugin", { timeout: 60_000 }, () => {
+describe("one import flow for every plugin", () => {
   beforeAll(reset);
 
   it("a skills-only plugin: staged with the skill's body, confirmed into an item with its files", async () => {
@@ -640,7 +640,7 @@ describe("one import flow for every plugin", { timeout: 60_000 }, () => {
   });
 });
 
-describe("deploying the extension at confirm", { timeout: 60_000 }, () => {
+describe("deploying the extension at confirm", () => {
   beforeEach(reset);
 
   it("deploys only the plugin's own extension: installed and enabled without a restart", async () => {
@@ -826,7 +826,7 @@ describe("deploying the extension at confirm", { timeout: 60_000 }, () => {
   });
 });
 
-describe("confirm installs the extension and stores the scope", { timeout: 60_000 }, () => {
+describe("confirm installs the extension and stores the scope", () => {
   beforeEach(reset);
 
   const ORG_A = "org-scope-a";
@@ -914,7 +914,7 @@ describe("confirm installs the extension and stores the scope", { timeout: 60_00
   });
 });
 
-describe("invalid plugins: nothing is written", { timeout: 60_000 }, () => {
+describe("invalid plugins: nothing is written", () => {
   beforeEach(reset);
 
   it("a pre-0.1.0 tgz (capybara section or app.yaml) is 422 catalog.legacy_format with the repack message", async () => {
@@ -1047,7 +1047,7 @@ describe("invalid plugins: nothing is written", { timeout: 60_000 }, () => {
   });
 });
 
-describe("npm source", { timeout: 60_000 }, () => {
+describe("npm source", () => {
   beforeAll(reset);
 
   it("import/npm: downloaded by dist.integrity, staged with source npm; the version records it", async () => {
@@ -1096,7 +1096,7 @@ describe("npm source", { timeout: 60_000 }, () => {
   });
 });
 
-describe("staging cleanup (maintenance job app-staging-cleanup)", { timeout: 60_000 }, () => {
+describe("staging cleanup (maintenance job app-staging-cleanup)", () => {
   beforeAll(reset);
 
   it("GET imports/:stagingId returns the staged review; unknown and expired ones are 404", async () => {
@@ -1252,7 +1252,7 @@ describe("staging cleanup (maintenance job app-staging-cleanup)", { timeout: 60_
   });
 });
 
-describe("permissions", { timeout: 60_000 }, () => {
+describe("permissions", () => {
   it("non super admins get 403 on the four endpoints", async () => {
     const id = "00000000-0000-4000-8000-000000000000";
     for (const res of [

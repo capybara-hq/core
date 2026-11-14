@@ -1,8 +1,8 @@
 import { ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
 import type { BuiltinTool } from "../../registry.js";
 import {
-  checkPath,
   checkPathShape,
+  checkToolPath,
   clip,
   display,
   inSandbox,
@@ -41,7 +41,7 @@ const SPEC: ToolSpec = {
     '"count" returns <path>:<number of matching lines> per file. -n (line numbers) and the context ' +
     "options apply only to content mode. head_limit caps the entries returned (default 250; " +
     "0 = up to 500); pass offset to skip entries and page through more. To find files by " +
-    "name, use Glob.",
+    "name, use Glob. In auto mode paths may be anywhere on the machine; writes outside the workspace need the user's approval.",
   inputSchema: {
     type: "object",
     properties: {
@@ -201,8 +201,9 @@ export function sandboxGrepTool(deps: SandboxToolDeps): BuiltinTool {
       const numbered = g["-n"] ?? true;
       if (g.path !== undefined) checkPathShape(g.path);
       let path = "";
-      const { value, notices } = await inSandbox(deps, ctx, async ({ h, roots, p, signal }) => {
-        path = checkPath(g.path ?? roots.workspace, roots);
+      const { value, notices } = await inSandbox(deps, ctx, async (s) => {
+        const { h, p, signal } = s;
+        path = checkToolPath(g.path ?? s.roots.workspace, s);
         const st = await p.stat(h, path, signal);
         if (st === null) throw new ToolError(notFound(path));
         // 在目标所在目录里搜相对路径，输出再拼回绝对路径（命令里不出现沙箱绝对路径）
@@ -250,7 +251,7 @@ export function sandboxGrepTool(deps: SandboxToolDeps): BuiltinTool {
             : mode === "count"
               ? parseCounts(r.stdout, base)
               : parseGrepNull(r.stdout, base, numbered);
-        const isMarker = syncMarkerMatcher(roots);
+        const isMarker = syncMarkerMatcher(s.roots);
         const entries = all.filter((l) => !isMarker(l));
         // 退出码 2 = 有错误（如个别文件不可读）；有输出时照常返回（可能为空：只匹配到隐藏的标记文件）并附上说明
         if (r.exitCode !== 0 && all.length === 0) throw new ToolError(failed(r.stderr));

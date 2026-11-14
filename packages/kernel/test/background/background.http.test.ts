@@ -132,7 +132,7 @@ beforeAll(async () => {
   });
   expect(res.statusCode, res.body).toBe(201);
   agentId = (res.json() as { agent: { id: string } }).agent.id;
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -255,7 +255,7 @@ const code = (r: { json: () => unknown }) => (r.json() as { error: { code: strin
 const details = (r: { json: () => unknown }) =>
   (r.json() as { error: { details?: unknown[] } }).error.details;
 
-describe("background task routes", { timeout: 90_000 }, () => {
+describe("background task routes", () => {
   it("lists the conversation's tasks newest first and its sub-agents' with subagentId", async () => {
     const c = await conversation();
     const kid = await child(c.conversationId);

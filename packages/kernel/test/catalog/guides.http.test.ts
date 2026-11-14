@@ -33,7 +33,7 @@ let otherOrgId: string;
 beforeAll(async () => {
   env = await startOrgEnv();
   otherOrgId = await createOrg(env.root, "Globex");
-}, 240_000);
+});
 
 afterAll(async () => {
   await env?.stop();
@@ -192,7 +192,7 @@ const withConfig = async (
   }
 };
 
-describe("setup guides v2: rendering", { timeout: 60_000 }, () => {
+describe("setup guides v2: rendering", () => {
   it("renders the channel guide for an org admin", async () => {
     const itemId = await importPlugin(env, await guidePlugin());
     const v = await env.db

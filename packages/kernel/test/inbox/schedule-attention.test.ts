@@ -54,7 +54,7 @@ beforeAll(async () => {
   );
   svc = k.app.get(ScheduledTasksService);
   inbox = k.app.get(InboxService);
-}, 120_000);
+});
 afterAll(async () => {
   await k?.close();
   await raw?.destroy();

@@ -33,7 +33,7 @@ const cleanups: (() => Promise<unknown> | unknown)[] = [];
 
 beforeAll(async () => {
   [pgc, rdc] = await Promise.all([startTestPostgres(), startTestRedis()]);
-}, 120_000);
+});
 afterEach(async () => {
   for (const c of cleanups.splice(0).reverse()) await c();
   await h?.stop();
@@ -214,5 +214,5 @@ describe("界面刷新（双副本）", () => {
     const anon = await fetch(`http://127.0.0.1:${harness.replicas[1].port}${base}/ui/stream`);
     expect(anon.status).toBe(401);
     await anon.body?.cancel();
-  }, 120_000);
+  });
 });

@@ -52,7 +52,7 @@ beforeAll(async () => {
   );
   points = k.app.get(ExtensionPointDefaults);
   configs = k.app.get(OrgExtensionConfigs);
-}, 180_000);
+});
 afterAll(async () => {
   await k?.close();
   await raw?.destroy();

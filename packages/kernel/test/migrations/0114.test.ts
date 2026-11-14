@@ -67,13 +67,13 @@ beforeAll(async () => {
   // idempotent: the file's statements run again without error
   const text = readFileSync(join(KERNEL_MIGRATIONS_DIR, FILE), "utf8");
   await sql.raw(`set search_path to capybara; ${text}`).execute(db);
-}, 120_000);
+});
 
 afterAll(async () => {
   await db?.destroy();
   await pg?.stop();
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
-}, 120_000);
+});
 
 describe("0114_network_asks", () => {
   it("existing approvals read kind tool and no detail", async () => {

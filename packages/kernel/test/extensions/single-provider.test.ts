@@ -160,7 +160,7 @@ beforeAll(async () => {
     superAdmin: true,
   });
   admin = await session(k, "root");
-}, 240_000);
+});
 
 afterAll(async () => {
   for (const x of extra) await x.close().catch(() => {});
@@ -172,7 +172,7 @@ afterAll(async () => {
 });
 
 // The cases run in order: each starts from the state the previous one left.
-describe("single-provider extension points: one enabled provider", { timeout: 90_000 }, () => {
+describe("single-provider extension points: one enabled provider", () => {
   it("enabling a second sandbox is refused (409, actionable) and allowed once the first is disabled", async () => {
     await install("sbx-a");
     await install("sbx-b");

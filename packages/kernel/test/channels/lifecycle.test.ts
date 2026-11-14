@@ -103,7 +103,7 @@ beforeAll(async () => {
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
   owner = await session(a, "owner");
-}, 120_000);
+});
 
 afterAll(async () => {
   await queue?.close();
@@ -177,7 +177,7 @@ describe("渠道连接生命周期", () => {
     expect(await threadsOf(connId)).toBe(0);
     expect(im.sent.length).toBe(before);
     await expect(a.app.get(ChannelConnections).row(connId)).resolves.toBeUndefined();
-  }, 60_000);
+  });
 
   it("组织停用插件 → 广播 channel.changed，长连接立即断开（不等扫描复核）", async () => {
     const { orgId, connId } = await setup("toggle");
@@ -208,7 +208,7 @@ describe("渠道连接生命周期", () => {
       );
     expect(await threadsOf(connId)).toBe(0);
     expect(im.sent.length).toBe(before);
-  }, 60_000);
+  });
 
   it("插件在组织停用时仍可轮换凭据：跳过 verify 并在响应里说明；重新启用后按新凭据连上", async () => {
     const { orgId, connId } = await setup("rotate");
@@ -261,7 +261,7 @@ describe("渠道连接生命周期", () => {
     });
     expect(again.statusCode).toBe(502);
     expect((again.json() as { error: { code: string } }).error.code).toBe("channel.verify_failed");
-  }, 60_000);
+  });
 
   it("重新启用连接 → 补投停用期间落下的会话（不必等下一条消息）", async () => {
     const { orgId, connId } = await setup("resume");
@@ -318,7 +318,7 @@ describe("渠道连接生命周期", () => {
       .execute();
     await drainOutbox(a.app, { queue: CHANNEL_QUEUE_NAME, jobName: "channel-resume" });
     await waitFor(async () => toChat().length > before, 10_000, "backlog delivered");
-  }, 60_000);
+  });
 
   it("投递中轮换凭据 → 进行中的投递任务结束并由新任务接着投，之后的发送 / 编辑都用新凭据", async () => {
     const { orgId, connId } = await setup("midrot");
@@ -344,7 +344,7 @@ describe("渠道连接生命周期", () => {
     const after = [...ofChat(im.sent), ...ofChat(im.updated)].filter((x) => x.at > rotatedAt + 700);
     expect(after.length).toBeGreaterThan(0);
     expect(after.every((x) => x.appId === "app-midrot-new")).toBe(true);
-  }, 60_000);
+  });
 
   it("投递中停用连接 → 进行中的投递任务不再发送 / 编辑", async () => {
     const { orgId, connId } = await setup("middis");
@@ -366,7 +366,7 @@ describe("渠道连接生命周期", () => {
     const snapshot = count();
     await sleep(4000);
     expect(count()).toBe(snapshot);
-  }, 60_000);
+  });
 
   it("滚动升级：没有加载该插件的副本不取租约、不写 last_error / 退避，出站任务推迟重试；有插件的副本接管并补投", async () => {
     const { orgId, connId } = await setup("rolling");
@@ -434,5 +434,5 @@ describe("渠道连接生命周期", () => {
     } finally {
       await b.close();
     }
-  }, 90_000);
+  });
 });

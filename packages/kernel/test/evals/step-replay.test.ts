@@ -74,7 +74,7 @@ beforeAll(async () => {
     .executeTakeFirstOrThrow();
   snap = await takeSnapshot(db, orgId, convId, run.id, 4_000_000);
   def = snap.definitions[String(snap.agentVersion)] as AgentDefinition;
-}, 120_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -355,7 +355,7 @@ describe("a run on a person's model switch (UI refresh B)", () => {
       .where("conversation_id", "=", convId)
       .executeTakeFirstOrThrow();
     switched = await takeSnapshot(db, orgId, convId, run.id, 4_000_000);
-  }, 60_000);
+  });
 
   it("caseBase applies the switch; a candidate with only new instructions replays on it", async () => {
     const b = await caseBase(db, switched);

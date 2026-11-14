@@ -17,8 +17,8 @@ import { startKernel, type TestKernel } from "../helpers/runs.js";
 
 /**
  * Org-layer network requests (network ask-to-allow spec §5.3, plan P2.1): a member asks the org
- * admins to allow hosts in the org's sandbox egress; approving merges them into the org's
- * `sandboxEgress`. The deployment allows `pypi.org` and `*.github.com`.
+ * admins to allow hosts in the org's sandbox allowlist; approving adds them to the org's
+ * `cloudNetwork` as an allowlist. The deployment's list holds `pypi.org` and `*.github.com`.
  */
 
 let pgc: TestContainer;
@@ -59,7 +59,7 @@ beforeAll(async () => {
   accounts = accountsFor(db);
   members = testMembers(db);
   tokens = apiTokensFor(db);
-}, 120_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -121,16 +121,16 @@ async function fileOk(payload: Record<string, unknown>): Promise<RequestView> {
 const decide = (req: Req, id: string, payload: Record<string, unknown>) =>
   req({ method: "POST", url: `/api/v1/orgs/${orgId}/catalog-requests/${id}/decide`, payload });
 
-async function orgEgress(): Promise<unknown> {
+async function orgNetwork(): Promise<unknown> {
   const res = await ownerReq({ method: "GET", url: `/api/v1/orgs/${orgId}/settings` });
-  return (res.json() as { settings: { sandboxEgress?: unknown } }).settings.sandboxEgress;
+  return (res.json() as { settings: { cloudNetwork?: unknown } }).settings.cloudNetwork;
 }
 
-const setOrgEgress = async (sandboxEgress: unknown) => {
+const setOrgNetwork = async (cloudNetwork: unknown) => {
   const res = await ownerReq({
     method: "PATCH",
     url: `/api/v1/orgs/${orgId}/settings`,
-    payload: { sandboxEgress },
+    payload: { cloudNetwork },
   });
   expect(res.statusCode, res.body).toBe(200);
 };
@@ -216,12 +216,12 @@ describe("network requests", () => {
   });
 
   it("approving an org that follows the deployment copies its list plus the hosts", async () => {
-    expect(await orgEgress()).toBeUndefined();
+    expect(await orgNetwork()).toBeUndefined();
     const r = await fileOk({ hosts: ["files.slack.com"] });
     const res = await decide(ownerReq, r.id, { approve: true });
     expect(res.statusCode, res.body).toBe(200);
     expect((res.json() as { request: RequestView }).request.status).toBe("approved");
-    expect(await orgEgress()).toEqual({
+    expect(await orgNetwork()).toEqual({
       mode: "allowlist",
       allowHosts: ["pypi.org", "*.github.com", "files.slack.com"],
     });
@@ -244,16 +244,28 @@ describe("network requests", () => {
   });
 
   it("approving merges into the org's own list, adding only what it lacks", async () => {
-    await setOrgEgress({ mode: "allowlist", allowHosts: ["*.slack.com"] });
+    await setOrgNetwork({ mode: "allowlist", allowHosts: ["*.slack.com"] });
     const r = await fileOk({ hosts: ["api.openai.com"] });
     expect((await decide(ownerReq, r.id, { approve: true })).statusCode).toBe(200);
-    expect(await orgEgress()).toEqual({
+    expect(await orgNetwork()).toEqual({
       mode: "allowlist",
       allowHosts: ["*.slack.com", "api.openai.com"],
     });
   });
 
-  it("the deployment egress none refuses filing and approving", async () => {
+  it("an open cloud network still lets its sandbox devices' hosts be added", async () => {
+    // the org's cloud network is open (the default for cloud devices); a local device in sandbox
+    // mode still gets the allowlist, so a host its network ask names must be addable
+    await setOrgNetwork({ mode: "open" });
+    const r = await fileOk({ hosts: ["files.slack.com"] });
+    expect((await decide(ownerReq, r.id, { approve: true })).statusCode).toBe(200);
+    expect(await orgNetwork()).toEqual({
+      mode: "allowlist",
+      allowHosts: ["pypi.org", "*.github.com", "files.slack.com"],
+    });
+  });
+
+  it("the platform's kill switch refuses filing and approving", async () => {
     const r = await fileOk({ hosts: ["files.slack.com"] });
     deploymentEgressNone();
     const filed = await file(memberReq, { hosts: ["api.openai.com"] });
@@ -263,37 +275,26 @@ describe("network requests", () => {
     const res = await decide(ownerReq, r.id, { approve: true });
     expect(res.statusCode).toBe(409);
     expect(errCode(res)).toBe("catalog.request_invalid");
-    expect(await orgEgress()).toBeUndefined();
+    expect(await orgNetwork()).toBeUndefined();
   });
 
-  it("an org with sandbox network off cannot approve; it can deny", async () => {
+  it("an org's empty allowlist still takes requests; it can deny", async () => {
     const r = await fileOk({ hosts: ["files.slack.com"] });
-    await setOrgEgress({ mode: "none" });
-    const res = await decide(ownerReq, r.id, { approve: true });
-    expect(res.statusCode).toBe(409);
-    expect(errCode(res)).toBe("catalog.request_invalid");
-    expect((res.json() as { error: { message: string } }).error.message).toMatch(/turned off/);
-    expect(await orgEgress()).toEqual({ mode: "none" });
+    await setOrgNetwork({ mode: "allowlist", allowHosts: [] });
     const deny = await decide(ownerReq, r.id, { approve: false, reason: "not now" });
     expect(deny.statusCode).toBe(200);
     expect((deny.json() as { request: RequestView & { reason: string } }).request).toMatchObject({
       status: "rejected",
       reason: "not now",
     });
-    expect(await orgEgress()).toEqual({ mode: "none" });
+    expect(await orgNetwork()).toEqual({ mode: "allowlist", allowHosts: [] });
     // decided: a second decision is refused
     const again = await decide(ownerReq, r.id, { approve: true });
     expect(errCode(again)).toBe("catalog.request_decided");
-  });
-
-  it("an org with sandbox network off refuses filing", async () => {
-    await setOrgEgress({ mode: "none" });
-    const res = await file(memberReq, { hosts: ["files.slack.com"] });
-    expect(res.statusCode).toBe(409);
-    expect(errCode(res)).toBe("catalog.request_invalid");
-    expect((res.json() as { error: { message: string } }).error.message).toMatch(
-      /ask an admin to turn it on first/,
-    );
+    // another host is still addable
+    const second = await fileOk({ hosts: ["api.openai.com"] });
+    expect((await decide(ownerReq, second.id, { approve: true })).statusCode).toBe(200);
+    expect(await orgNetwork()).toEqual({ mode: "allowlist", allowHosts: ["api.openai.com"] });
   });
 
   it("a member has at most 10 pending network requests", async () => {
@@ -321,7 +322,7 @@ describe("network requests", () => {
     const approved = await byPat({ approve: true });
     expect(approved.statusCode, approved.body).toBe(400);
     expect(errCode(approved)).toBe("org.sandbox_egress_not_allowed");
-    expect(await orgEgress()).toBeUndefined();
+    expect(await orgNetwork()).toBeUndefined();
     const rejected = await byPat({ approve: false, reason: "no" });
     expect(rejected.statusCode, rejected.body).toBe(200);
     expect((rejected.json() as { request: RequestView }).request.status).toBe("rejected");
@@ -331,7 +332,7 @@ describe("network requests", () => {
     const r = await fileOk({ hosts: ["files.slack.com"] });
     const res = await decide(memberReq, r.id, { approve: true });
     expect(res.statusCode).toBe(403);
-    expect(await orgEgress()).toBeUndefined();
+    expect(await orgNetwork()).toBeUndefined();
 
     const { token: pat } = await tokens.createPersonal(member.id, { name: "ci" });
     const byPat = await k.http.inject({

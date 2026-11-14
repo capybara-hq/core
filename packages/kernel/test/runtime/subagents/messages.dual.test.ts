@@ -116,7 +116,7 @@ beforeAll(async () => {
   });
   expect(res.statusCode, res.body).toBe(201);
   agentId = (res.json() as { agent: { id: string } }).agent.id;
-}, 240_000);
+});
 
 afterAll(async () => {
   release("dual-step");
@@ -134,7 +134,7 @@ type Ev<T extends ConversationEvent["type"]> = ConversationEvent & {
 const ofType = <T extends ConversationEvent["type"]>(events: ConversationEvent[], type: T) =>
   events.filter((e): e is Ev<T> => e.type === type);
 
-describe("SendMessage across replicas", { timeout: 90_000 }, () => {
+describe("SendMessage across replicas", () => {
   it("a message posted on replica A is absorbed by a child running on replica B", async () => {
     const conv = await createConv(owner, orgId, agentId);
     const runId = randomUUID();

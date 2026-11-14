@@ -34,7 +34,7 @@ beforeAll(async () => {
     values ('o1', 'o1', 'O1'), ('o2', 'o2', 'O2')`.execute(raw);
   await sql`insert into capybara.agents (id, org_id, owner_account_id, visibility, current_version)
     values ('ag1', 'o1', 'owner', 'org', 1), ('ag2', 'o2', 'owner', 'org', 1)`.execute(raw);
-}, 120_000);
+});
 
 afterAll(async () => {
   await raw?.destroy();
@@ -234,9 +234,8 @@ describe("relayer", () => {
     port: 443,
     layer,
   });
-  const allowlist: Pick<SandboxLimits, "egress" | "allowHosts"> = {
-    egress: "allowlist",
-    allowHosts: ["example.com", "*.github.com"],
+  const allowlist: Pick<SandboxLimits, "network"> = {
+    network: { kind: "allowlist", hosts: ["example.com", "*.github.com"] },
   };
 
   it.each([
@@ -245,12 +244,18 @@ describe("relayer", () => {
     ["device, uppercase and a trailing dot", "API.GitHub.com.", "device", allowlist, "device"],
     ["device, the apex of a wildcard", "github.com", "device", allowlist, "org"],
     ["device, not in the org's list", "evil.example.net", "device", allowlist, "org"],
-    ["device, egress none", "example.com", "device", { egress: "none", allowHosts: [] }, "org"],
+    [
+      "device, egress none",
+      "example.com",
+      "device",
+      { network: { kind: "allowlist", hosts: [] } },
+      "org",
+    ],
     [
       "device, egress open",
       "evil.example.net",
       "device",
-      { egress: "open", allowHosts: [] },
+      { network: { kind: "open-public", hosts: [] } },
       "device",
     ],
     ["device, not a host name", "localhost", "device", allowlist, "address"],
@@ -272,13 +277,21 @@ describe("grantsWithin", () => {
   it("keeps only the hosts the org's limits admit", () => {
     const hosts = ["example.com", "api.github.com", "github.com", "evil.example.net"];
     expect(
-      grantsWithin(g(hosts), { egress: "allowlist", allowHosts: ["example.com", "*.github.com"] }),
+      grantsWithin(g(hosts), {
+        network: { kind: "allowlist", hosts: ["example.com", "*.github.com"] },
+      }),
     ).toEqual(g(["example.com", "api.github.com"]));
-    expect(grantsWithin(g(hosts), { egress: "open", allowHosts: [] })).toEqual(g(hosts));
-    expect(grantsWithin(g(hosts), { egress: "none", allowHosts: [] })).toBeUndefined();
+    expect(grantsWithin(g(hosts), { network: { kind: "open-public", hosts: [] } })).toEqual(
+      g(hosts),
+    );
+    expect(grantsWithin(g(hosts), { network: { kind: "allowlist", hosts: [] } })).toBeUndefined();
     expect(
-      grantsWithin(g(["evil.example.net"]), { egress: "allowlist", allowHosts: ["example.com"] }),
+      grantsWithin(g(["evil.example.net"]), {
+        network: { kind: "allowlist", hosts: ["example.com"] },
+      }),
     ).toBeUndefined();
-    expect(grantsWithin(undefined, { egress: "open", allowHosts: [] })).toBeUndefined();
+    expect(
+      grantsWithin(undefined, { network: { kind: "open-public", hosts: [] } }),
+    ).toBeUndefined();
   });
 });

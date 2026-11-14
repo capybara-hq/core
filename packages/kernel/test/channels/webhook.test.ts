@@ -134,7 +134,7 @@ beforeAll(async () => {
     });
     expect(res.statusCode, res.body).toBe(200);
   }
-}, 120_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -727,9 +727,9 @@ describe("ChannelWebhooks.handle", () => {
       settled = true;
       return r;
     });
-    await new Promise((r) => setTimeout(r, 50));
+    // x1 has been handled while x2 still waits on the gate: the call cannot have settled
+    await vi.waitFor(() => expect(accepted).toEqual(["x1"]));
     expect(settled).toBe(false);
-    expect(accepted).toEqual(["x1"]);
     release();
     const res = await pending;
     expect(res.status).toBe(200);
@@ -987,7 +987,8 @@ describe("ChannelWebhooks.handle", () => {
       },
     });
     const pending = call();
-    await new Promise((r) => setTimeout(r, 20));
+    // the first call has entered the runtime lookup and is holding it open
+    await vi.waitFor(() => expect(calls).toBe(1));
     webhooks.invalidateAll(); // a plugin instance changed mid-fetch
     release();
     expect((await pending).status).toBe(200);

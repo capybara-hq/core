@@ -30,11 +30,11 @@ let pool: Kysely<any>;
 beforeAll(async () => {
   [rd, pgc] = await Promise.all([startTestRedis(), startTestPostgres()]);
   pool = createDb(pgc.url, 5);
-}, 120_000);
+});
 afterAll(async () => {
   await pool?.destroy();
   await Promise.all([rd?.stop(), pgc?.stop()]);
-}, 120_000);
+});
 
 const QUEUE = "cap-test-consume";
 

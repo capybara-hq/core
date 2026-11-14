@@ -34,7 +34,7 @@ export class OrgSettingsOperations implements OnModuleInit {
       defineOperation({
         id: "org-settings.get",
         description:
-          "Read this org's settings: toolSearch, locale, sandboxToolPolicy, platformTool (on, read-only or off), sandboxEgress, sandboxTier ({ max, default, allowUnsandboxed }: the org's sandbox levels strict < dev < open) and wakeOnBackgroundTask (absent means it follows the deployment), theme (the org's default theme id, null or absent following the platform, and personal: allowed or locked), uiArrangement (per list slot, the extension contributions the org hides and their order; per single slot, the contribution that replaces the built-in as use, null for the built-in; a slot not listed follows the platform), the deployment's sandbox egress default and sandbox tiers, and the sandbox cpu / memory limits in effect.",
+          "Read this org's settings: toolSearch, locale, sandboxToolPolicy, platformTool (on, read-only or off), autoMode (allowed or off: whether the org's devices may run in auto mode; absent follows the deployment's switch, and the org may never exceed it), cloudNetwork (the network of a cloud device in sandbox mode: open, or allowlist with its hosts; open means any public host, while loopback, private and cloud metadata addresses stay blocked), wakeOnBackgroundTask (absent means it follows the deployment), theme (the org's default theme id, null or absent following the platform, and personal: allowed or locked), uiArrangement (per list slot, the extension contributions the org hides and their order; per single slot, the contribution that replaces the built-in as use, null for the built-in; a slot not listed follows the platform), the deployment's auto-mode switch and cloud-network defaults, and the sandbox cpu / memory limits in effect.",
         input: z.object({}).strict(),
         example: {},
         authz: { orgAction: "org.read" },
@@ -49,7 +49,7 @@ export class OrgSettingsOperations implements OnModuleInit {
       defineOperation({
         id: "org-settings.update",
         description:
-          "Change this org's settings (org admins). Give only the settings to change; null clears sandboxEgress, sandboxTier or wakeOnBackgroundTask so they follow the deployment again. sandboxTier ({ max, default, allowUnsandboxed }, replaced whole) and sandboxEgress may only narrow the org's sandbox here: raising or clearing a tier cap, allowing unsandboxed devices, or adding network hosts is refused and needs a person in the organization settings on the web. theme: { id, personal } sets the org's default theme (a theme id from themes.list, or null to follow the platform) and whether members may pick their own (allowed) or not (locked); null clears it. uiArrangement: { <slot>: { hidden, order } } (a list slot) or { <slot>: { use } } (a single slot: shell.brand, conversation.empty, conversation.composer.frame) replaces that slot's entry, where hidden, order and use name contribution keys <extension>/<contribution> (hidden ones are not listed in the web UI but their pages still open by URL; use null is the built-in); null for a slot makes it follow the platform again; platform.page is refused. Setting platformTool to off or read-only takes effect from the next call and cuts this Platform tool off in the org, so say so before asking; an org admin switches it back on in the web settings.",
+          "Change this org's settings (org admins). Give only the settings to change; null clears autoMode, cloudNetwork or wakeOnBackgroundTask so they follow the deployment again (refused when the deployment value is wider than what this tool may set). autoMode (allowed or off; the platform must allow it) and cloudNetwork ({ mode: open | allowlist, allowHosts? }, replaced whole, hosts left out following the deployment's list) may only narrow the org's devices here: turning auto mode on where the org has it off, switching the cloud network from allowlist to open, or adding a network host is refused and needs a person in the organization settings on the web. theme: { id, personal } sets the org's default theme (a theme id from themes.list, or null to follow the platform) and whether members may pick their own (allowed) or not (locked); null clears it. uiArrangement: { <slot>: { hidden, order } } (a list slot) or { <slot>: { use } } (a single slot: shell.brand, conversation.empty, conversation.composer.frame) replaces that slot's entry, where hidden, order and use name contribution keys <extension>/<contribution> (hidden ones are not listed in the web UI but their pages still open by URL; use null is the built-in); null for a slot makes it follow the platform again; platform.page is refused. Setting platformTool to off or read-only takes effect from the next call and cuts this Platform tool off in the org, so say so before asking; an org admin switches it back on in the web settings.",
         input: OrgSettingsPatchSchema.refine((i) => Object.values(i).some((v) => v !== undefined), {
           message: "give at least one setting",
         }),
@@ -60,11 +60,11 @@ export class OrgSettingsOperations implements OnModuleInit {
         errors: [
           {
             code: "org.sandbox_egress_not_allowed",
-            next: "Through this tool the org's sandbox network may only be narrowed (no new hosts, not back from none); if the deployment disables sandbox network access, sandboxEgress can only be none. To widen it, ask an org admin to change it in the organization settings on the web.",
+            next: "Through this tool the org's cloud network may only be narrowed: the host list may keep or lose hosts, and an open network may become an allowlist of hosts that list already has, but no change may add a host or switch an allowlist back to open (the host list is the local sandbox-mode ceiling whatever the cloud mode). To widen it, ask an org admin to change it in the organization settings on the web.",
           },
           {
-            code: "org.sandbox_tier_not_allowed",
-            next: "Through this tool the org's sandbox level may only be lowered, never above the platform's sandbox.tiers (org-settings.get shows both); to raise it, ask an org admin to change it in the organization settings on the web.",
+            code: "org.auto_mode_not_allowed",
+            next: "Through this tool the org's auto mode may only be turned off, never on (the platform may turn it off too; org-settings.get shows both); to allow it, ask an org admin to change it in the organization settings on the web.",
           },
           {
             code: "theme.not_available",
@@ -125,7 +125,7 @@ export class OrgSettingsOperations implements OnModuleInit {
             ctx.actorAccountId,
             undefined,
             viaAgent("org-settings.update", ctx),
-            // a person widens the sandbox, never an agent (sandbox dev tiers spec §7.2)
+            // a person widens auto mode or the cloud network, never an agent (auto mode spec §4.3)
             { onlyNarrows: true },
           );
           const note =

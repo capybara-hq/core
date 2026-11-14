@@ -150,14 +150,14 @@ describe("M5 segment 3 dual-replica acceptance (agent skill registration + skill
     base = `/api/v1/orgs/${orgId}`;
     await testMembers(db).add(orgId, memberId, "member", ownerId);
     await testMembers(db).add(orgId, otherId, "member", ownerId);
-  }, 300_000);
+  });
 
   afterAll(async () => {
     await h?.stop();
     await raw?.destroy();
     await Promise.all([pgc?.stop(), rdc?.stop(), s3?.stop()]);
     if (root) await rm(root, { recursive: true, force: true });
-  }, 120_000);
+  });
 
   const terminal = async (convId: string, n: number) => {
     const term = await waitForTerminal(db, convId, n, 60_000);
@@ -336,5 +336,5 @@ describe("M5 segment 3 dual-replica acceptance (agent skill registration + skill
       .where("status", "in", ["queued", "running", "waiting"])
       .execute();
     expect(active).toEqual([]);
-  }, 300_000);
+  });
 });

@@ -38,7 +38,7 @@ beforeAll(async () => {
   redis = new Redis(rd.url);
   accounts = accountsFor(db);
   members = testMembers(db);
-}, 120_000);
+});
 afterAll(async () => {
   redis?.disconnect();
   await raw?.destroy();
@@ -106,7 +106,7 @@ describe("org readiness", () => {
     } finally {
       await k.close();
     }
-  }, 120_000);
+  });
 
   it("a loaded provider is ready without calling the vendor; agents count what each role sees", async () => {
     // model-needs-config is configured here, so it loads; its listModels throws (vendor down)
@@ -145,5 +145,5 @@ describe("org readiness", () => {
     } finally {
       await k.close();
     }
-  }, 120_000);
+  });
 });

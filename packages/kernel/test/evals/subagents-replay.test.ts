@@ -232,7 +232,7 @@ beforeAll(async () => {
     children,
     sent: structuredClone(capture.sent),
   });
-}, 240_000);
+});
 
 afterAll(async () => {
   capture.restore();
@@ -343,7 +343,7 @@ async function fourthChild(): Promise<{ id: string; runs: string[]; snap: CaseSn
   return { ...child, snap: await snapshotOf(child.id, child.runs[0] as string) };
 }
 
-describe("full-run replay of a parent with sub-agent calls", { timeout: 120_000 }, () => {
+describe("full-run replay of a parent with sub-agent calls", () => {
   it("parent full-run replay with three parallel agent calls and a fourth: same requests, zero tool_unmatched, no child conversation created, no subagent_* events", async () => {
     const original = normalizeIds((state.sent ?? []).filter((r) => !isChild(r)));
     expect(original).toHaveLength(3);
@@ -377,7 +377,7 @@ describe("full-run replay of a parent with sub-agent calls", { timeout: 120_000 
   });
 });
 
-describe("child cases", { timeout: 120_000 }, () => {
+describe("child cases", () => {
   it("each child step reconstructs with drift [] and equals what the provider received", async () => {
     const info = await modelInfo();
     const sent = state.sent ?? [];
@@ -667,7 +667,7 @@ describe("child cases", { timeout: 120_000 }, () => {
   });
 });
 
-describe("candidates on child cases (batch 13 review I1, m1)", { timeout: 120_000 }, () => {
+describe("candidates on child cases (batch 13 review I1, m1)", () => {
   it("the case's own version with another model is not a sub-agent change", async () => {
     const child = await fourthChild();
     const setId = await createSet("Own version");
@@ -865,7 +865,7 @@ describe("candidates on child cases (batch 13 review I1, m1)", { timeout: 120_00
   });
 });
 
-describe("trajectory links", { timeout: 60_000 }, () => {
+describe("trajectory links", () => {
   it("the trajectory of a parent links each agent call to its child and back; another user gets 404", async () => {
     const conv = state.conv as string;
     const res = await owner({ method: "GET", url: `/api/v1/orgs/${orgId}/trajectories/${conv}` });
@@ -922,7 +922,7 @@ describe("trajectory links", { timeout: 60_000 }, () => {
   });
 });
 
-describe("forked skills (phase D)", { timeout: 120_000 }, () => {
+describe("forked skills (phase D)", () => {
   /** A person's `/review src` (a forked skill) and the provider requests it caused. */
   const fork: {
     agentId?: string;
@@ -984,7 +984,7 @@ describe("forked skills (phase D)", { timeout: 120_000 }, () => {
       child: { id: kid.id, runId: (childRun as { id: string }).id },
       sent: structuredClone(capture.sent),
     });
-  }, 120_000);
+  });
 
   it("a full-run replay of the fork invocation's run uses the recorded report: same requests, zero tool_unmatched, no sub-agent started, no subagent_* events", async () => {
     const original = (fork.sent ?? []).filter((r) => !isChild(r));
@@ -1084,7 +1084,7 @@ describe("forked skills (phase D)", { timeout: 120_000 }, () => {
 });
 
 // Last in the file: it adds a hand-made run to the scenario's parent conversation.
-describe("follow-ups by SendMessage", { timeout: 60_000 }, () => {
+describe("follow-ups by SendMessage", () => {
   it("a follow-up's snapshot carries the narrowed tools of its message (final review I1)", async () => {
     const child = await fourthChild();
     // a running run of the parent conversation (no worker holds it) sends the idle child a message

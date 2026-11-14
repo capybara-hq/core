@@ -284,7 +284,7 @@ beforeAll(async () => {
       ],
     },
   );
-}, 120_000);
+});
 afterAll(async () => {
   await k?.close();
   await raw?.destroy();
@@ -675,7 +675,7 @@ describe("评委与运行停下（T6 补测）", () => {
     expect(s).toBe("completed");
     expect(r).toMatchObject({ status: "done", judge_status: "skipped", judge: null });
     expect(judgeRequests()).toHaveLength(0);
-  }, 30_000);
+  });
 });
 
 describe("评委估算", () => {

@@ -21,12 +21,12 @@ beforeAll(async () => {
   pg = await startTestPostgres();
   db = createDb(pg.url, 1);
   await migrate(pg.url, { schema: "capybara", dir: KERNEL_MIGRATIONS_DIR });
-}, 120_000);
+});
 
 afterAll(async () => {
   await db?.destroy();
   await pg?.stop();
-}, 120_000);
+});
 
 /** The generic plan of the statement the cascade runs (seq scans priced out). */
 async function cascadePlan(table: string): Promise<string> {

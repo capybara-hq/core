@@ -183,7 +183,7 @@ describe("themes as platform components", () => {
 
   beforeAll(async () => {
     env = await startOrgEnv();
-  }, 240_000);
+  });
 
   afterAll(async () => {
     await env?.stop();

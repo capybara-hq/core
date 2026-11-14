@@ -58,7 +58,7 @@ beforeAll(async () => {
   ownerB = await session(b, "owner");
   orgId = await createOrg(ownerA);
   agentId = await createAgent(ownerA, orgId);
-}, 180_000);
+});
 afterAll(async () => {
   await Promise.all([a?.close(), b?.close()]);
   await runQueue?.close();
@@ -69,7 +69,7 @@ afterAll(async () => {
 
 const compactUrl = (conv: string) => `/api/v1/orgs/${orgId}/conversations/${conv}/compact`;
 
-describe("manual compaction on two replicas", { timeout: 120_000 }, () => {
+describe("manual compaction on two replicas", () => {
   it("concurrent requests to both replicas claim one compact run and write one summary", async () => {
     const conv = await createConv(ownerA, orgId, agentId);
     for (let i = 0; i < 5; i++) {

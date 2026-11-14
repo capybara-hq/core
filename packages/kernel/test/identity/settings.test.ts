@@ -11,8 +11,9 @@ import {
   DEPLOYMENT_SETTINGS,
   parseClientExtensions,
   readClientExtensions,
+  SettingsService,
 } from "../../src/identity/settings.js";
-import { accountsFor, settingsFor } from "../helpers/identity.js";
+import { accountsFor, adminLockFor, handlesFor, settingsFor } from "../helpers/identity.js";
 
 let box: Awaited<ReturnType<typeof startTestPostgres>>;
 let raw: ReturnType<typeof createDb>;
@@ -26,7 +27,7 @@ beforeAll(async () => {
   });
   raw = createDb(box.url, 5);
   db = kernelDb(raw);
-}, 120_000);
+});
 afterAll(async () => {
   await raw.destroy();
   await box.stop();
@@ -297,5 +298,67 @@ describe("SettingsService", () => {
     });
     expect(config.runtime).not.toHaveProperty("compactionThreshold");
     expect(config.runtime).not.toHaveProperty("keepRecentTurns");
+  });
+});
+
+describe("SettingsService devicesAutoMode", () => {
+  /** The settings service over a config whose `devices.autoMode` comes from `source`. */
+  const serviceWith = (
+    autoMode: "allowed" | "off" | undefined,
+    source: "env" | "file" | "nacos" | undefined,
+  ) => {
+    const h = handlesFor(db);
+    return new SettingsService(
+      h.db,
+      h.txHost,
+      adminLockFor(db),
+      { warn: () => {} },
+      {
+        get: () => ({ devices: { autoMode }, attribution: {} }) as never,
+        fieldSource: () => source,
+      },
+    );
+  };
+
+  const adminFor = (login: string) =>
+    accountsFor(db).createLocal({
+      login,
+      password: "correct horse battery",
+      displayName: login,
+      superAdmin: true,
+    });
+
+  it("view reports the startup source; a write to a startup-config value is read-only", async () => {
+    await db.deleteFrom("deployment_settings").execute();
+    const admin = await adminFor("auto-mode-readonly");
+    for (const source of ["env", "file", "nacos"] as const) {
+      const s = serviceWith("off", source);
+      expect((await s.view()).devicesAutoMode).toEqual({ mode: "off", source });
+      const err = await s
+        .update({ devicesAutoMode: { mode: "allowed" } }, admin.id)
+        .catch((e: unknown) => e);
+      expect(err).toMatchObject({ code: "deployment.setting_readonly" });
+      expect((err as ApiError).details).toEqual([{ path: "devicesAutoMode.mode", source }]);
+    }
+  });
+
+  it("the stored choice applies with source db; a token may turn it off, never on", async () => {
+    await db.deleteFrom("deployment_settings").execute();
+    const admin = await adminFor("auto-mode-token");
+    const s = serviceWith(undefined, undefined);
+    expect((await s.view()).devicesAutoMode).toEqual({ mode: "allowed", source: "default" });
+    expect(await s.update({ devicesAutoMode: { mode: "off" } }, admin.id)).toMatchObject({
+      devicesAutoMode: { mode: "off", source: "db" },
+    });
+    const widened = await s
+      .update({ devicesAutoMode: { mode: "allowed" } }, admin.id, "tok", undefined, {
+        onlyNarrows: true,
+      })
+      .catch((e: unknown) => e);
+    expect(widened).toMatchObject({ code: "deployment.auto_mode_not_allowed" });
+    // a person in a session may turn it back on
+    expect(await s.update({ devicesAutoMode: { mode: "allowed" } }, admin.id)).toMatchObject({
+      devicesAutoMode: { mode: "allowed", source: "db" },
+    });
   });
 });

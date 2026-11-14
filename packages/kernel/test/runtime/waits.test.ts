@@ -1,16 +1,20 @@
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
 import { RunAbort } from "../../src/runtime/abort.js";
 import { ConversationLock } from "../../src/runtime/conversation-lock.js";
+import { subagentsWaitId } from "../../src/runtime/loop.js";
 import { RUN_QUEUE_NAME } from "../../src/runtime/run-queue.js";
+import { processDeliverToParent, processStopTree } from "../../src/runtime/subagents/tree-jobs.js";
 import { MAINTENANCE_QUEUE_NAME, Waits, waitTimeoutJobId } from "../../src/runtime/waits.js";
 import {
   APPROVAL_CANCELLED_TEXT,
@@ -47,6 +51,9 @@ import {
 /**
  * Task 9：运行等待人处理（审批 / 输入请求）时暂停，处理后从 LangGraph checkpoint 续跑。
  * 单副本端到端（model-fake 脚本工具调用 + mem-connector 的插件工具）；双副本见 waits-dual.test.ts。
+ *
+ * The last describe is the sub-agent jobs a run's end owes (transactional outbox spec §6): it
+ * writes its runs, conversations and dispatch rows by hand and shares this kernel.
  */
 
 const MEM_CONNECTOR = fileURLToPath(
@@ -98,7 +105,7 @@ beforeAll(async () => {
   redis = new Redis(rd.url);
   maint = new Queue(MAINTENANCE_QUEUE_NAME, { connection: redisClient() });
   runQueue = new Queue(RUN_QUEUE_NAME, { connection: redisClient() });
-}, 120_000);
+});
 
 afterAll(async () => {
   await maint?.close();
@@ -284,7 +291,7 @@ describe("审批等待", () => {
     expect(ofType(evs, "run_started")).toHaveLength(1);
     // 终态事件写入后 worker 才删除 checkpoint
     await waitFor(async () => (await checkpointCount(runId)) === 0, 5_000, "checkpoint deleted");
-  }, 20_000);
+  });
 
   it("拒绝后模型拿到拒绝说明，工具不执行", async () => {
     const convId = await createConv(req, orgId, agentId);
@@ -641,5 +648,125 @@ describe("输入请求等待", () => {
     await expect(
       k.app.get(QuestionsService).answer(questionIdOf(event), ownerId, { color: "red" }),
     ).rejects.toMatchObject({ code: "question.already_answered" });
+  });
+});
+
+/**
+ * A parent run of a new conversation in `status`, one child conversation whose run is `running`
+ * and the dispatch row between them (a fork invocation's with `forSkill`).
+ */
+async function dispatched(
+  status: "completed" | "waiting",
+  forSkill: boolean,
+): Promise<{ convId: string; runId: string; childConv: string; childRun: string }> {
+  const convId = await createConv(req, orgId, agentId);
+  const runId = randomUUID();
+  await db
+    .insertInto("runs")
+    .values({
+      id: runId,
+      conversation_id: convId,
+      status,
+      agent_version: 1,
+      trigger_account_id: ownerId,
+      trigger_seq: 0,
+      ...(status === "waiting"
+        ? {
+            waiting_since: sql<Date>`now() - interval '5 minutes'`,
+            wait_expires_at: sql<Date>`now() - interval '1 minute'`,
+          }
+        : { finished_at: sql<Date>`now() - interval '5 minutes'` }),
+    })
+    .execute();
+  const childConv = randomUUID();
+  await db
+    .insertInto("conversations")
+    .values({
+      id: childConv,
+      org_id: orgId,
+      agent_id: agentId,
+      account_id: ownerId,
+      title: "Child",
+      kind: "subagent",
+      source: "subagent",
+      parent_conversation_id: convId,
+      subagent_type: "general-purpose",
+      subagent_depth: 1,
+    })
+    .execute();
+  const childRun = randomUUID();
+  await db
+    .insertInto("runs")
+    .values({
+      id: childRun,
+      conversation_id: childConv,
+      status: "running",
+      agent_version: 1,
+      trigger_account_id: ownerId,
+      trigger_seq: 0,
+      budget_run_id: runId,
+    })
+    .execute();
+  await db
+    .insertInto("subagent_dispatches")
+    .values({
+      parent_run_id: runId,
+      parent_call_id: forSkill ? "skill-1" : "call-1",
+      parent_conversation_id: convId,
+      step: forSkill ? 0 : 1,
+      child_conversation_id: childConv,
+      child_run_id: childRun,
+      resumed: false,
+      budget_run_id: runId,
+      for_skill: forSkill,
+    })
+    .execute();
+  return { convId, runId, childConv, childRun };
+}
+
+describe("the sub-agent jobs a run's end owes (agent map spec §5.4)", () => {
+  it("a finished parent run's stop-tree job leaves its active background child alone", async () => {
+    const d = await dispatched("completed", false);
+    await processStopTree(k.app.get(Waits), { runId: d.runId });
+    expect(await runStatus(d.childRun)).toBe("running");
+    expect(ofType(await eventsOf(db, d.childConv), "run_aborted")).toEqual([]);
+  });
+
+  it("deliver-to-parent delivers a background child's finish its finisher never wrote, once", async () => {
+    const d = await dispatched("completed", false);
+    await k.app.get(EventLog).append(d.childConv, [
+      {
+        type: "run_finished",
+        runId: d.childRun,
+        payload: { reason: "completed", consumedUpToSeq: 0 },
+      },
+    ]);
+    await db
+      .updateTable("runs")
+      .set({ status: "completed", finished_at: sql<Date>`now() - interval '5 minutes'` })
+      .where("id", "=", d.childRun)
+      .execute();
+    // the finisher died after the child's terminal commit: the job that commit owed delivers it
+    await processDeliverToParent(k.app.get(Waits), { childRunId: d.childRun });
+    expect(ofType(await eventsOf(db, d.convId), "subagent_delivery")).toHaveLength(1);
+    expect(ofType(await eventsOf(db, d.convId), "subagent_finished")).toHaveLength(1);
+    // a second run of the job (a redelivery) writes nothing more
+    await processDeliverToParent(k.app.get(Waits), { childRunId: d.childRun });
+    expect(ofType(await eventsOf(db, d.convId), "subagent_delivery")).toHaveLength(1);
+  });
+
+  it("a fork dispatch's wait timeout stops its child as timed_out", async () => {
+    const d = await dispatched("waiting", true);
+    const r = await k.app
+      .get(Waits)
+      .expire("subagents", subagentsWaitId(d.runId, 0), { runId: d.runId, step: 0 });
+    expect(r.acted).toBe(true);
+    expect(await runStatus(d.childRun)).toBe("aborted");
+    const aborted = ofType(await eventsOf(db, d.childConv), "run_aborted");
+    expect(aborted.map((e) => e.payload.detail)).toEqual(["wait_timeout"]);
+    const finished = ofType(await eventsOf(db, d.convId), "subagent_finished");
+    expect(finished.map((e) => e.payload.status)).toEqual(["timed_out"]);
+    // a fork's child is never delivered: its waiting run writes the report itself
+    expect(ofType(await eventsOf(db, d.convId), "subagent_delivery")).toEqual([]);
   });
 });

@@ -20,7 +20,7 @@ let pgc: TestContainer;
 beforeAll(async () => {
   pgc = await startTestPostgres();
   await migrate(pgc.url, { schema: KERNEL_SCHEMA, dir: KERNEL_MIGRATIONS_DIR });
-}, 120_000);
+});
 afterAll(async () => {
   await pgc?.stop();
 });
@@ -101,7 +101,7 @@ describe("openKernelCli queues", () => {
       await app.close();
       await rd.stop();
     }
-  }, 120_000);
+  });
 });
 
 describe("openKernelCliOverPool", () => {

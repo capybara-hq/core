@@ -70,6 +70,54 @@ export const GIT_REF_MAX_CHARS = 255;
 export const GIT_REPO_MAX_CHARS = 191;
 /** The longest deny reason (characters): the decision route's limit and `approval_decided.reason`'s. */
 export const APPROVAL_DENY_REASON_MAX_CHARS = 500;
+/** The most characters a command ask's command / reason carries (display only). */
+export const COMMAND_ASK_TEXT_MAX_CHARS = 2000;
+/**
+ * The longest command a `command` ask holds in full: the person's approval binds the whole text,
+ * so a longer command is refused rather than clipped (`Bash` accepts an unbounded `command`).
+ */
+export const COMMAND_ASK_MAX_CHARS = 32 * 1024;
+
+/**
+ * A command review's decision on a tool call (auto mode spec §5.4): display only, never model-visible
+ * beyond the result's own text. `by` says who decided — the rule table, the classifier, or the person
+ * through a `command` approval; `scope` is the person's choice (`once` / `session`);
+ * `commandHash` is the SHA-256 of the command text the approval holds in full, so an audit can
+ * match a record to what ran.
+ */
+const ReviewRecordSchema = z
+  .object({
+    decision: z.enum(["allow", "deny"]),
+    by: z.enum(["rule", "classifier", "person"]),
+    rule: z.string().nullable(),
+    reason: z.string(),
+    scope: z.enum(["once", "session"]).optional(),
+    commandHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
+  })
+  .strict();
+
+/** The display-only `approval_requested.command` facts of a `command` ask (auto mode spec §5.4). */
+export const CommandAskSchema = z
+  .object({
+    /** A shell command or a file write. */
+    kind: z.enum(["command", "write"]),
+    /** The command text, or the tool key of the write. */
+    command: z.string().max(COMMAND_ASK_TEXT_MAX_CHARS),
+    /** A file write's target path. */
+    path: z.string().max(4096).optional(),
+    rule: z.string().max(200).nullable(),
+    reason: z.string().max(COMMAND_ASK_TEXT_MAX_CHARS),
+    mode: z.enum(["auto", "sandbox"]),
+  })
+  .strict();
+
+/** A command review record as the log carries it (the pipeline writes {@link ReviewRecordSchema}). */
+export type ReviewRecord = z.infer<typeof ReviewRecordSchema>;
+/** A command ask's display facts, as `approval_requested.command` carries them. */
+export type CommandAsk = z.infer<typeof CommandAskSchema>;
 /** 一条 `media_excluded` 事件最多的附件数。 */
 export const MEDIA_EXCLUDED_MAX_IDS = 50;
 /** 一份 `skills_catalog` 快照最多的技能数（组织技能引用上限 100，余量给 agent 自己的技能）。 */
@@ -303,6 +351,20 @@ export const RunContextSchema = z.object({
   /** Sub-agents only: who dispatched this conversation. */
   dispatchedBy: z
     .object({ agent: z.string().min(1).max(130), person: z.string().min(1).max(80) })
+    .optional(),
+  /**
+   * The attribution a run's requests carry for git commits and pull requests it creates (spec
+   * 2026-11-14-agent-attribution): the effective values fixed at run start (platform defaults or
+   * the agent's override), so request building never reads config or the database. Absent in older
+   * logs. An empty `commit` / `pr` turns that line off; `sessionUrl` is the resolved conversation
+   * link, or null.
+   */
+  attribution: z
+    .object({
+      commit: z.string().max(500),
+      pr: z.string().max(500),
+      sessionUrl: z.string().max(2048).nullable(),
+    })
     .optional(),
 });
 
@@ -601,7 +663,9 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
    * reported, but no step consumer may pair it with the step's `model_call`); `title` = the
    * conversation title call (UI refresh B: no run, `step` 0, not model-visible, billed and reported);
    * `web_fetch` = a `WebFetch` extraction call (web tools spec §5: the tool call's run and step,
-   * `callId` = the call; not model-visible, billed and reported, counted on a sub-agent's parent).
+   * `callId` = the call; not model-visible, billed and reported, counted on a sub-agent's parent);
+   * `review` = the command-review classifier's call (auto mode spec §5.3: not model-visible, billed
+   * and reported, `callId` = the reviewed tool call).
    */
   ev(
     "usage",
@@ -610,7 +674,7 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       provider: z.string(),
       model: z.string(),
       ...ModelUsageShape,
-      purpose: z.enum(["compaction", "title", "web_fetch"]).optional(),
+      purpose: z.enum(["compaction", "title", "web_fetch", "review"]).optional(),
       /**
        * The chunk a chunked compaction call summarised (1-based), with the number of calls the
        * compaction attempted (the full chunk count on a completed one; on a failed or hook-denied
@@ -618,7 +682,7 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
        */
       chunk: count.optional(),
       chunks: count.optional(),
-      /** The tool call a `web_fetch` usage belongs to. */
+      /** The tool call a `web_fetch` or `review` usage belongs to. */
       callId: z.string().optional(),
     }),
   ),
@@ -665,10 +729,23 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       }),
       tier: z.enum(["strict", "dev", "open"]).optional(),
       isolation: z.enum(["sandbox", "none"]).optional(),
-      network: z.literal("none").optional(),
+      /** The current network (`none` on events recorded before auto mode). */
+      network: z
+        .union([
+          z.literal("none"),
+          z.object({
+            kind: z.enum(["open-public", "allowlist"]),
+            hosts: z.array(z.string()),
+          }),
+        ])
+        .optional(),
       localhost: z.enum(["on", "off-proxy-detected", "off"]).optional(),
       unixSockets: z.enum(["roots", "all-masked", "off"]).optional(),
       unattended: z.literal(true).optional(),
+      /** Auto mode: the mode and its ceiling, and whether the device is a connected machine. */
+      mode: z.enum(["auto", "sandbox"]).optional(),
+      allowedMode: z.enum(["auto", "sandbox"]).optional(),
+      local: z.boolean().optional(),
     }),
   ),
   /** 工具调用开始执行之前写入（续跑时「有开始无结果」的调用记为结果未知，不再执行）。 */
@@ -690,6 +767,12 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       isError: z.boolean(),
       outputId: z.string().optional(),
       contentTypes: z.array(z.string()).optional(),
+      /**
+       * The command review's decision on the call (auto mode spec §5.4): display only (request
+       * building reads only `callId` / `content` / `isError`, so replays never re-review). `by`
+       * says who decided: the rule table, the classifier, or the person through a `command` ask.
+       */
+      review: ReviewRecordSchema.optional(),
       /**
        * `ToolSearch` 本次加载的工具 key（没有匹配时不写）。已加载集合 = 会话中全部 tool_result 的
        * `loadedTools` 并集（含已被摘要覆盖的部分），构建请求时由日志还原，不放进程内存。
@@ -761,6 +844,11 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
           refs: z.array(z.string().min(1).max(GIT_REF_MAX_CHARS)).max(GIT_ASK_MAX_REFS),
         })
         .optional(),
+      /**
+       * A command review ask (auto mode spec §5.4): what is held and why. Display only, never
+       * model-visible, as `network` and `git`; the model sees the call's `tool_result` only.
+       */
+      command: CommandAskSchema.optional(),
       ...ApproverFields,
     }),
   ),
@@ -948,6 +1036,21 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
         )
         .min(1)
         .max(NETWORK_ASK_MAX_HOSTS),
+    }),
+  ),
+  /**
+   * A `gh auth login --web` device-code prompt a command printed (auto mode spec §6, P-D13): the
+   * URL to open and the one-time code. Display only, never model-visible: request building skips
+   * it (the model sees only the command's own output). The token the login finally writes stays in
+   * the device's container, so no event carries it.
+   */
+  ev(
+    "device_code",
+    z.object({
+      step: count,
+      callId: z.string(),
+      url: z.string().min(1).max(2048),
+      code: z.string().regex(/^[A-Z0-9]{4}-[A-Z0-9]{4}$/),
     }),
   ),
   /**

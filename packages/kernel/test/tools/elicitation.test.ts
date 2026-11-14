@@ -190,8 +190,7 @@ describe("ElicitationSession", () => {
       onSuspend: () => suspended++,
     });
     await s2.handle(form(schema, "Who are you?"));
-    s2.handle(form(schema, "Who are you?")).catch(() => {});
-    await new Promise((r) => setTimeout(r, 10));
+    await s2.handle(form(schema, "Who are you?")).catch(() => {});
     expect(suspended).toBe(1);
     expect(s2.pending?.state).toMatchObject({
       elicitation: { answers: [{ response: { action: "accept", content: { name: "Ada" } } }] },
@@ -231,8 +230,9 @@ describe("ElicitationSession", () => {
       resume: { state: first.pending?.state, answer: { name: "Ada" } },
       onSuspend: () => suspended++,
     });
-    s.handle(form({ type: "object", properties: { age: { type: "integer" } } })).catch(() => {});
-    await new Promise((r) => setTimeout(r, 10));
+    await s
+      .handle(form({ type: "object", properties: { age: { type: "integer" } } }))
+      .catch(() => {});
     expect(suspended).toBe(1);
   });
 

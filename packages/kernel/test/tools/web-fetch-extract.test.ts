@@ -108,7 +108,7 @@ beforeAll(async () => {
   purposes = k.app.get(ModelPurposesService);
   realChat = purposes.chat.bind(purposes);
   chatSpy = vi.spyOn(purposes, "chat");
-}, 180_000);
+});
 
 afterAll(async () => {
   capture.restore();
@@ -296,7 +296,7 @@ async function probeLast(purpose: string, mount: string): Promise<Record<string,
   return last[mount] ?? null;
 }
 
-describe("WebFetch extraction", { timeout: 120_000 }, () => {
+describe("WebFetch extraction", () => {
   it("mapped purpose: its model answers; the result is the answer, never the page", async () => {
     await mapPurpose("web_fetch", SCRIPT_2);
     const url = unique();

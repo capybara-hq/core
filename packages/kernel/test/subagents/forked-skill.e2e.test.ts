@@ -138,7 +138,7 @@ beforeAll(async () => {
   // the orphan test calls the run-orphan-check itself
   k.app.get(LockedIntervalScheduler).stop(RUN_ORPHAN_CHECK_JOB);
   subQueue = new Queue(SUBAGENT_RUN_QUEUE_NAME, { connection: redisClient() });
-}, 180_000);
+});
 
 afterAll(async () => {
   capture.restore();
@@ -276,7 +276,7 @@ function expectAppendOnly(reqs: readonly { messages: unknown[] }[]): void {
 const LEAD = (agentType: string, args: string) =>
   `The user ran the skill "review" in a sub-agent (${agentType}) with /review${args === "" ? "" : ` ${args}`}. The sub-agent gets the skill's instructions as its task; its report follows. Do not do the task yourself.`;
 
-describe("forked skills (phase D Task 6)", { timeout: 90_000 }, () => {
+describe("forked skills (phase D Task 6)", () => {
   it("/review src dispatches acme:code-reviewer before any model call; the report precedes the parent's answer", async () => {
     const review = await seedForked("review", "Review $ARGUMENTS carefully.", "code-reviewer");
     const template = await reviewerTemplate();

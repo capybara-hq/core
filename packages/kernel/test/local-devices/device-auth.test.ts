@@ -63,7 +63,7 @@ beforeAll(async () => {
     .id;
   owner = await session(k, "owner");
   orgId = await createOrg(owner);
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -154,6 +154,7 @@ interface Granted {
   connectUrl: string;
   reconnectGraceSeconds: number;
   maxFrameBytes: number;
+  autoMode: "allowed" | "off";
 }
 
 /** Authorize, confirm into a new device named `name`, take the credential. */
@@ -278,6 +279,7 @@ describe("device authorization", () => {
       connectUrl: "wss://cap.example.com/device/connect",
       reconnectGraceSeconds: 120,
       maxFrameBytes: 16 * 1024 * 1024,
+      autoMode: "allowed",
     });
 
     // the credential authenticates the machine; it is never an /api credential
@@ -326,6 +328,17 @@ describe("device authorization", () => {
       machine: { name: "grant-mbp", os: "darwin", programVersion: "0.1.0" },
     });
     expect(await auditActions(deviceId)).toEqual(["device.created", "device.machine_connected"]);
+  });
+
+  it("the token says the organization forbids auto mode (login's line)", async () => {
+    await db
+      .updateTable("orgs")
+      .set({ settings: JSON.stringify({ autoMode: "off" }) })
+      .where("id", "=", orgId)
+      .execute();
+    const m = await member();
+    const g = await login(m.req, "Mode line");
+    expect(g.autoMode).toBe("off");
   });
 
   it("token before confirm is authorization_pending", async () => {

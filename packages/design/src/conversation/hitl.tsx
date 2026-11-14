@@ -3,6 +3,7 @@ import { Button } from "../controls/button";
 import { Input } from "../controls/inputs";
 import { Checkbox, Switch } from "../controls/toggles";
 import { Callout, type CalloutAction } from "../display/callout";
+import { CodeBlock } from "../display/chat";
 import { initialOf } from "../display/initial";
 import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
@@ -51,6 +52,22 @@ export type NetworkAsk = {
 /** How much of a network ask's command the card shows. */
 export const NETWORK_COMMAND_MAX = 300;
 
+/**
+ * A command review ask (auto mode spec §5.4): the run waits for the device owner to allow a shell
+ * command, or a file write outside the workspace, before it runs. The command is model-controlled:
+ * drawn as code, never markup, and clipped to {@link NETWORK_COMMAND_MAX} characters.
+ */
+export type CommandAsk = {
+  /** A shell command (`Bash`) or a file write outside the workspace (`Write` / `Edit`). */
+  kind: "command" | "write";
+  /** The command text (display-clipped), or the tool key of the write. */
+  command: string;
+  /** A write's target path. */
+  path?: string;
+  /** The review's reason: why this command is held. */
+  reason: string;
+};
+
 export type ApprovalBlockProps = {
   /** The tool as people read it: "<connector>: <title>", or the source and localized name. */
   tool: string;
@@ -76,6 +93,12 @@ export type ApprovalBlockProps = {
    * not shown.
    */
   network?: NetworkAsk;
+  /**
+   * A command review ask instead of a tool call: the head is the question, the body the review's
+   * reason and the held command (a write: its path); `input` is not shown. The offered `scopes`
+   * decide the buttons — a classifier ask offers `once` only.
+   */
+  command?: CommandAsk;
   state: ApprovalState;
   /** `hosts`: a network ask's checked hosts (every host when it has one). */
   onApprove?(scope: ApprovalScope, hosts?: string[]): void;
@@ -131,6 +154,10 @@ export function ApprovalBlock(p: ApprovalBlockProps): JSX.Element {
 
   if (p.network) {
     return <NetworkApproval {...p} network={p.network} />;
+  }
+
+  if (p.command) {
+    return <CommandApproval {...p} command={p.command} />;
   }
 
   if (s.kind === "decided") {
@@ -567,6 +594,164 @@ function NetworkApproval(p: ApprovalBlockProps & { network: NetworkAsk }): JSX.E
           {richCopy(t("hitl.network.remoteOff"), { host: one ? (hosts[0] ?? "") : "<host>" })}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+// ── Command review ──────────────────────────────────────────────────────────
+
+/**
+ * A command ask's decided line. `skipped` never happens for a command ask — a message never skips
+ * one — and is drawn as cancelled rather than the generic 已跳过 so the card cannot claim it.
+ */
+const COMMAND_DECIDED = {
+  denied: "hitl.command.denied",
+  expired: "hitl.command.expired",
+  cancelled: "hitl.command.cancelled",
+  skipped: "hitl.command.cancelled",
+} as const;
+
+/** The command review variant of {@link ApprovalBlock} (auto mode spec §5.4). */
+function CommandApproval(p: ApprovalBlockProps & { command: CommandAsk }): JSX.Element {
+  const t = useDesignT();
+  const [denying, setDenying] = useState(p.defaultDeny !== undefined);
+  const [reason, setReason] = useState(p.defaultDeny?.reason ?? "");
+  const inputId = useId();
+  const s = p.state;
+  const write = p.command.kind === "write";
+  const title = write ? t("hitl.command.titleWrite") : t("hitl.command.title");
+
+  if (s.kind === "decided") {
+    const approved = s.decision === "approved";
+    const word =
+      s.decision === "approved"
+        ? t(s.scope === "session" ? "hitl.command.allowedSession" : "hitl.command.allowedOnce")
+        : t(COMMAND_DECIDED[s.decision]);
+    // expiry and cancel name no one; a skip is drawn like a cancel (it never happens here)
+    const who =
+      s.decision === "expired" || s.decision === "cancelled" || s.decision === "skipped"
+        ? ""
+        : s.who;
+    return (
+      <div
+        className="cb-tool-line"
+        data-part="tool-line"
+        data-decision={s.decision}
+        data-command="true"
+      >
+        <Icon name={approved ? "check" : "x"} size={12} />
+        <span className="cb-tool-label">
+          {word}{" "}
+          <span className="cb-faint" data-part="tool-key">
+            {[p.toolKey, who].filter(Boolean).join(" · ")}
+          </span>
+          {s.reason ? (
+            <span className="cb-muted">
+              {` · ${fillCopy(t("hitl.reasonQuote"), { reason: s.reason })}`}
+            </span>
+          ) : null}
+          {s.when ? <span className="cb-faint">{` · ${s.when}`}</span> : null}
+        </span>
+      </div>
+    );
+  }
+
+  const busy = s.busy === true;
+  // a write names its target path; the command text there is the tool key, which says nothing
+  const shown = write ? (p.command.path ?? p.command.command) : p.command.command;
+  const label = (scope: ApprovalScope) =>
+    p.scopeLabels?.[scope] ??
+    t(
+      scope === "session"
+        ? "hitl.command.allowSession"
+        : scope === "once"
+          ? "hitl.command.allowOnce"
+          : SCOPE_LABEL[scope],
+    );
+
+  let actions: ReactNode;
+  if (denying) {
+    const trimmed = reason.trim();
+    actions = (
+      <div className="cb-hcard-deny">
+        <Input
+          id={inputId}
+          aria-label={t("hitl.denyReason")}
+          placeholder={t("hitl.denyPlaceholder")}
+          value={reason}
+          disabled={busy}
+          onChange={(e) => setReason(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+              e.preventDefault();
+              p.onDeny?.(trimmed === "" ? undefined : trimmed);
+            }
+          }}
+        />
+        <div className="cb-hcard-actions">
+          <Button
+            variant="danger"
+            disabled={busy}
+            onClick={() => p.onDeny?.(trimmed === "" ? undefined : trimmed)}
+          >
+            {t("hitl.deny")}
+          </Button>
+          <Button variant="ghost" disabled={busy} onClick={() => setDenying(false)}>
+            {t("hitl.cancel")}
+          </Button>
+          <span className="cb-hcard-note" data-part="card-note">
+            {t("hitl.denyNote")}
+          </span>
+        </div>
+      </div>
+    );
+  } else {
+    actions = (
+      <div className="cb-hcard-actions">
+        {p.scopes.map((scope, i) => (
+          <ScopeChoice
+            key={scope}
+            primary={i === 0}
+            disabled={busy}
+            label={label(scope)}
+            hint={p.scopeHints?.[scope]}
+            onClick={() => p.onApprove?.(scope)}
+          />
+        ))}
+        <Button disabled={busy} onClick={() => setDenying(true)}>
+          {t("hitl.command.deny")}
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    // biome-ignore lint/a11y/useSemanticElements: a fieldset brings its own border and legend layout
+    <div
+      className="cb-hcard"
+      data-part="approval-block"
+      data-pending="true"
+      data-command="true"
+      role="group"
+      aria-label={title}
+    >
+      <div className="cb-hcard-head">
+        <span className="cb-hcard-dot" aria-hidden="true" />
+        <strong className="cb-hcard-strong">{title}</strong>
+        <span className="cb-muted cb-small">{p.tool}</span>
+        <span className="cb-faint cb-small cb-hcard-key" data-part="tool-key">
+          {p.toolKey}
+        </span>
+      </div>
+      <div className="cb-small" data-part="command-reason">
+        {p.command.reason}
+      </div>
+      <CodeBlock
+        text={clipCommand(shown)}
+        framed={false}
+        {...(write ? { title: t("hitl.command.path") } : {})}
+      />
+      {actions}
     </div>
   );
 }

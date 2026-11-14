@@ -82,7 +82,7 @@ beforeAll(async () => {
   ownerConv = await createConv(owner, orgId, agentId);
   guestConv = await createConv(guest, orgId, agentId);
   ui = `/api/v1/orgs/${orgId}/ui`;
-}, 180_000);
+});
 afterAll(async () => {
   await k?.close();
   await raw?.destroy();

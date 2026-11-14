@@ -48,6 +48,7 @@ const SETTINGS = {
   sandboxLimitOverrides: {},
   customConnectors: "allow",
   customSkills: "allow",
+  devicesAutoMode: { mode: "allowed", source: "default" },
 };
 
 const SHA = "a".repeat(64);
@@ -568,7 +569,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
   it("/admin/settings: the loading sections are the page's own (five card radios, the currency)", async () => {
     const { release } = await renderHeld("/admin/settings", "GET /api/v1/admin/settings");
     await expectLoading("FormPage", en.admin.settings.orgCreation.anyone);
-    // three policies, 沙箱级别's level cards and 外观's theme cards, then 插件界面代码's switch row
+    // three policies, 自动模式's two cards and 外观's theme cards, then 插件界面代码's switch row
     expect(document.querySelectorAll('[data-part="loading-radios"]')).toHaveLength(5);
     // ... plus the compaction section (a switch and four numbers, no card radios)
     expect(document.querySelectorAll(".cb-form-section")).toHaveLength(8);
@@ -605,7 +606,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     await release();
   });
 
-  it("/admin/models: the purposes load as the kernel's six item rows", async () => {
+  it("/admin/models: the purposes load as the kernel's seven item rows", async () => {
     const { release } = await renderHeld(
       "/admin/models?tab=purposes",
       "GET /api/v1/admin/model-purposes",
@@ -615,7 +616,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     });
     expect(
       document.querySelectorAll('[data-part="loading-item-list"] > [data-part="loading-item-row"]'),
-    ).toHaveLength(6);
+    ).toHaveLength(7);
     await release();
   });
 

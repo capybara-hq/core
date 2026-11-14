@@ -10,7 +10,7 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara
 import type { NestFastifyApplication } from "@nestjs/platform-fastify";
 import { Redis } from "ioredis";
 import pg from "pg";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createKernelApp, startKernelApp } from "../../src/app.js";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
 import { createLogger } from "../../src/log.js";
@@ -160,19 +160,21 @@ async function kernelPgConnections(): Promise<number> {
   }
 }
 
-async function eventually(fn: () => Promise<boolean>, timeoutMs = 2_000): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (!(await fn())) {
-    if (Date.now() > deadline) return false;
-    await new Promise((r) => setTimeout(r, 25));
-  }
-  return true;
-}
+/** Waits until `fn` is true (the old polling loop's 2 s budget); a false result fails the call. */
+const eventually = (fn: () => Promise<boolean>, timeoutMs = 2_000): Promise<boolean> =>
+  vi
+    .waitFor(
+      async () => {
+        if (!(await fn())) throw new Error("condition not met yet");
+      },
+      { timeout: timeoutMs },
+    )
+    .then(() => true);
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   bootstrapDir = await mkdtemp(join(tmpdir(), "kernel-start-order-"));
-}, 120_000);
+});
 afterEach(async () => {
   while (apps.length > 0) await apps.pop()?.close();
   while (servers.length > 0) {
@@ -243,7 +245,7 @@ describe("start order", () => {
       slow.gate.resolve();
       g[SLOW_GATES_KEY]?.delete(key);
     }
-  }, 60_000);
+  });
 
   it("a required bootstrap failure rejects createKernelApp and closes Redis and the pool", async () => {
     const registry = await gatedRegistry(Promise.resolve());
@@ -258,7 +260,7 @@ describe("start order", () => {
     ).rejects.toMatchObject({ code: "bootstrap.download_failed" });
     expect(await eventually(async () => (await redisClients()) === baseline)).toBe(true);
     expect(await eventually(async () => (await kernelPgConnections()) === 0)).toBe(true);
-  }, 60_000);
+  });
 
   it("a required bootstrap failure keeps startKernelApp from listening", async () => {
     const port = await freePort();
@@ -272,5 +274,5 @@ describe("start order", () => {
       }),
     ).rejects.toMatchObject({ code: "bootstrap.download_failed" });
     expect(await canConnect(port)).toBe(false);
-  }, 60_000);
+  });
 });

@@ -179,7 +179,7 @@ beforeAll(async () => {
   });
   expect(res.statusCode, res.body).toBe(201);
   agentId = (res.json() as { agent: { id: string } }).agent.id;
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -554,7 +554,7 @@ async function trajectory(conversationId: string): Promise<TrajectoryDetail> {
 
 const evalEvents = (r: EvalResultView) => eventsOf(db, r.evalConversationId as string);
 
-describe("整轮回放", { timeout: 60_000 }, () => {
+describe("整轮回放", () => {
   it("候选等于基线：工具序列与原运行一致、unmatched 0，工具处理函数 0 次、没有审批、没有沙箱调用", async () => {
     // 原运行是真实运行：工具确实执行了一次
     const conv = await createConv(admin, orgId, agentId);

@@ -216,7 +216,7 @@ beforeAll(async () => {
   await testMembers(db).add(orgA, mem.id, "member", ownerId);
   await deployWithHost();
   await platform({ baseUrl: "https://p.example", apiKey: PK });
-}, 240_000);
+});
 
 /** First install: the hidden `host` is required, so it loads once the platform saved it. */
 async function deployWithHost(): Promise<void> {

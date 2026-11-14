@@ -39,7 +39,7 @@ let env: OrgEnv;
 
 beforeAll(async () => {
   env = await startOrgEnv();
-}, 240_000);
+});
 
 afterAll(async () => {
   await env?.stop();
@@ -102,7 +102,7 @@ const skillOfItem = (itemId: string) =>
     .where("deleted_at", "is", null)
     .executeTakeFirstOrThrow();
 
-describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
+describe("组织从目录安装：三档策略", () => {
   it("技能：optional 直接装；disabled 拒绝（409 plugin.disabled）、成员看不到、显示 unavailable", async () => {
     const itemId = await importSkill(env);
     const ok = await install(env.boss, env, itemId);
@@ -471,7 +471,7 @@ describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
   });
 });
 
-describe("直接启用来自目录的插件（C22，按全部来源条目判定）", { timeout: 60_000 }, () => {
+describe("直接启用来自目录的插件（C22，按全部来源条目判定）", () => {
   it("应用带进部署的插件：PUT /plugins 也受应用条目策略约束，最严格的来源生效；不经目录重装不清来源", async () => {
     const { itemId: pluginItem, sha256 } = await importDeployedPlugin(env, "dirplug");
     const row = await env.db
@@ -585,9 +585,7 @@ describe("直接启用来自目录的插件（C22，按全部来源条目判定�
   });
 });
 
-describe("skill provenance follows the latest version (a skill of the same name exists)", {
-  timeout: 60_000,
-}, () => {
+describe("skill provenance follows the latest version (a skill of the same name exists)", () => {
   const skillRow = (id: string) =>
     env.db
       .selectFrom("skills")
@@ -676,7 +674,7 @@ describe("skill provenance follows the latest version (a skill of the same name 
   });
 });
 
-describe("自建开关与权限", { timeout: 60_000 }, () => {
+describe("自建开关与权限", () => {
   it("customConnectors / customSkills 为 deny：自建 403，从目录安装不受影响", async () => {
     await setDeployment(env, { customConnectors: "deny", customSkills: "deny" });
     const custom = await env.boss({
@@ -803,7 +801,7 @@ describe("自建开关与权限", { timeout: 60_000 }, () => {
   });
 });
 
-describe("条目详情与图标（安装向导、网页只以 <img> 显示）", { timeout: 60_000 }, () => {
+describe("条目详情与图标（安装向导、网页只以 <img> 显示）", () => {
   /** A templates-only plugin whose plugin.json has an icon (the item's icon). */
   const importIconPlugin = async () =>
     importPlugin(
@@ -1059,7 +1057,7 @@ describe("条目详情与图标（安装向导、网页只以 <img> 显示）", 
   });
 });
 
-describe("the org switch (plugin scope)", { timeout: 60_000 }, () => {
+describe("the org switch (plugin scope)", () => {
   const switchUrl = (itemId: string) => `/api/v1/orgs/${env.orgId}/catalog/${itemId}/switch`;
   const put = (req: OrgEnv["root"], itemId: string, payload: Record<string, unknown>) =>
     req({ method: "PUT", url: switchUrl(itemId), payload });

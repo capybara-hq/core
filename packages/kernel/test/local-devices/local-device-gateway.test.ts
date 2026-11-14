@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
+import { ApiError } from "../../src/errors.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import {
   deviceLeaseKey,
@@ -16,6 +17,7 @@ import {
   deviceTakenKey,
 } from "../../src/local-devices/keys.js";
 import { LocalDeviceGateway } from "../../src/local-devices/local-device-gateway.js";
+import { LocalDeviceProvider } from "../../src/local-devices/local-device-provider.js";
 import { MachinesService } from "../../src/local-devices/machines.js";
 import { NetworkGrants } from "../../src/local-devices/network-grants.js";
 import { LocalDeviceRelay } from "../../src/local-devices/relay.js";
@@ -46,10 +48,8 @@ const LIMITS = {
   cpu: 1,
   memoryMb: 512,
   diskMb: 1024,
-  egress: "none",
-  allowHosts: [],
-  tier: "strict",
-  devHosts: [],
+  mode: "sandbox" as const,
+  network: { kind: "allowlist" as const, hosts: [] },
 };
 const execArgs = {
   command: "echo hi",
@@ -98,7 +98,7 @@ beforeAll(async () => {
     .id;
   orgId = await createOrg(await session(k, "owner"));
   url = `ws://127.0.0.1:${k.port}/device/connect`;
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -165,14 +165,10 @@ const held = (deviceId: string) =>
   waitFor(() => redis.get(deviceLeaseKey(deviceId)), 10_000, "lease held");
 const codeOf = (body: string) => (JSON.parse(body) as { error: { code: string } }).error.code;
 
-describe("the hello's policy summary and the unsandboxed gate", () => {
+describe("the hello's policy summary and the reported mode", () => {
   const SUMMARY = {
-    tier: "open",
-    effectiveTier: "open",
-    localhost: "on",
-    unixSockets: "roots",
+    mode: "auto" as const,
     allowedDomains: [],
-    remoteGrants: "owner",
   };
 
   /** Connects a machine of a new device that says `hello`; resolves once it is recorded. */
@@ -197,63 +193,49 @@ describe("the hello's policy summary and the unsandboxed gate", () => {
     return { m, machine };
   }
 
-  it("a summary the frame parser drops still tells that the device runs without a sandbox", async () => {
-    // a newer program: a localhost value this kernel does not know drops the whole summary
+  it("an unreadable summary is stored as none", async () => {
     const { m, machine } = await helloWith({
       programVersion: "0.9.0",
-      features: ["networkReport", "policyOp", "tiers"],
-      policy: { ...SUMMARY, isolation: "none", localhost: "on-loopback-only" },
+      features: ["networkReport", "policyOp", "mode"],
+      policy: { ...SUMMARY, allowedDomains: "not-a-list" },
     });
-    expect(await k.app.get(NetworkGrants).unsandboxed(m.deviceId)).toBe(true);
+    // fail closed: a program that applies modes but sent no readable summary is sandbox
+    expect(await k.app.get(NetworkGrants).reportedMode(m.deviceId)).toBe("sandbox");
     expect((await machines.activeFor(m.deviceId))?.localPolicy).toBeNull();
-    expect(
-      await db
-        .selectFrom("audit_events")
-        .select("detail")
-        .where("target", "=", m.deviceId)
-        .where("action", "=", "device.isolation_reported")
-        .execute(),
-    ).toEqual([{ detail: { machineId: m.machineId, isolation: "none", previous: "sandbox" } }]);
     machine.close();
   });
 
   it("a policy frame after the hello replaces the stored summary, in order", async () => {
     const { m, machine } = await helloWith({
       programVersion: "0.9.0",
-      features: ["networkReport", "policyOp", "tiers"],
-      policy: { ...SUMMARY, isolation: "sandbox", localhost: "off-proxy-detected" },
+      features: ["networkReport", "policyOp", "mode"],
+      policy: SUMMARY,
     });
-    machine.send({ type: "policy", policy: { ...SUMMARY, isolation: "sandbox", localhost: "on" } });
-    machine.send({ type: "policy", policy: { ...SUMMARY, isolation: "none", localhost: "on" } });
+    machine.send({ type: "policy", policy: { ...SUMMARY, mode: "sandbox" } });
     await waitFor(
-      async () => (await machines.activeFor(m.deviceId))?.localPolicy?.isolation === "none",
+      async () => (await machines.activeFor(m.deviceId))?.localPolicy?.mode === "sandbox",
       10_000,
       "policy recorded",
     );
     expect((await machines.activeFor(m.deviceId))?.localPolicy).toEqual({
       ...SUMMARY,
-      isolation: "none",
-      localhost: "on",
+      mode: "sandbox",
     });
-    expect(await k.app.get(NetworkGrants).unsandboxed(m.deviceId)).toBe(true);
-    // each frame's change is listed as made on the machine, the isolation with it
+    expect(await k.app.get(NetworkGrants).reportedMode(m.deviceId)).toBe("sandbox");
+    // the frame's change is listed as made on the machine
     expect(
       await db
         .selectFrom("audit_events")
         .select(["action", "detail"])
         .where("target", "=", m.deviceId)
-        .where("action", "in", ["device.isolation_reported", "device.policy_changed"])
+        .where("action", "in", ["device.mode_changed", "device.policy_changed"])
         .orderBy("at")
         .orderBy("id")
         .execute(),
     ).toEqual([
       {
-        action: "device.policy_changed",
-        detail: expect.objectContaining({ localhost: "on", via: "device" }),
-      },
-      {
-        action: "device.policy_changed",
-        detail: expect.objectContaining({ isolation: "none", via: "device" }),
+        action: "device.mode_changed",
+        detail: expect.objectContaining({ from: "auto", to: "sandbox", via: "device" }),
       },
     ]);
     // the connection stays up
@@ -261,22 +243,64 @@ describe("the hello's policy summary and the unsandboxed gate", () => {
     machine.close();
   });
 
-  it("a valid summary with the sandbox on is sandboxed; a tiers program without one is not", async () => {
+  it("a valid summary reports its mode; a mode program without one reports none; an older program reports sandbox", async () => {
     const ok = await helloWith({
       programVersion: "0.9.0",
-      features: ["networkReport", "policyOp", "tiers"],
-      policy: { ...SUMMARY, isolation: "sandbox" },
+      features: ["networkReport", "policyOp", "mode"],
+      policy: { ...SUMMARY, mode: "auto" },
     });
-    expect(await k.app.get(NetworkGrants).unsandboxed(ok.m.deviceId)).toBe(false);
+    expect(await k.app.get(NetworkGrants).reportedMode(ok.m.deviceId)).toBe("auto");
     ok.machine.close();
-    // fail closed: a program that applies tiers always sends a summary
-    const none = await helloWith({ programVersion: "0.9.0", features: ["tiers"] });
-    expect(await k.app.get(NetworkGrants).unsandboxed(none.m.deviceId)).toBe(true);
+    const none = await helloWith({ programVersion: "0.9.0", features: ["mode"] });
+    expect(await k.app.get(NetworkGrants).reportedMode(none.m.deviceId)).toBe("sandbox");
     none.machine.close();
-    // an older program has no unsandboxed mode
+    // a program without the mode feature behaves as an allowlisted sandbox
     const old = await helloWith({ programVersion: "0.9.0" });
-    expect(await k.app.get(NetworkGrants).unsandboxed(old.m.deviceId)).toBe(false);
+    expect(await k.app.get(NetworkGrants).reportedMode(old.m.deviceId)).toBe("sandbox");
     old.machine.close();
+  });
+
+  it("an old unsandboxed program is refused when the org forbids auto mode", async () => {
+    const { m, machine } = await helloWith({
+      programVersion: "0.9.0",
+      features: [],
+      policy: {
+        tier: "open",
+        effectiveTier: "open",
+        isolation: "none",
+        localhost: "on",
+        unixSockets: "roots",
+        allowedDomains: [],
+        remoteGrants: "owner",
+      },
+    });
+    await db
+      .updateTable("orgs")
+      .set({ settings: JSON.stringify({ autoMode: "off" }) })
+      .where("id", "=", orgId)
+      .execute();
+    try {
+      // the gate: reportedMode is auto (the legacy summary ran unsandboxed), the ceiling sandbox
+      const err = await k.app
+        .get(LocalDeviceProvider)
+        .exec(
+          { id: m.deviceId, roots: HELLO.roots },
+          {
+            command: "true",
+            timeoutMs: 1000,
+            maxOutputBytes: 100,
+            tag: "t",
+            actor: { accountId: m.accountId, conversationId: randomUUID() },
+            signal: AbortSignal.timeout(10_000),
+          },
+        )
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ApiError);
+      expect((err as ApiError).code).toBe("device.auto_mode_not_allowed");
+    } finally {
+      await db.updateTable("orgs").set({ settings: "{}" }).where("id", "=", orgId).execute();
+      machine.close();
+    }
   });
 });
 
@@ -485,7 +509,7 @@ describe("GET /device/connect", () => {
     // without it: an ordinary keep-alive request
     const plain = await rawUpgrade("/healthz", "h2c", "keep-alive");
     expect(plain.data.startsWith("HTTP/1.1 200"), plain.data).toBe(true);
-  }, 15_000);
+  });
 
   it("an upgrade request to another path is answered 404 and its socket closed", async () => {
     for (const path of ["/healthz", "/api/v1/setup"]) {
@@ -513,7 +537,7 @@ describe("GET /device/connect", () => {
     expect(await redis.get(deviceLeaseKey(m.deviceId))).not.toBeNull();
     a.close();
     b.close();
-  }, 20_000);
+  });
 
   it("a lease held elsewhere that is never handed back closes the claim with 4409", async () => {
     const m = await connected();
@@ -522,7 +546,7 @@ describe("GET /device/connect", () => {
     await machine.opened;
     expect((await machine.closed).code).toBe(4409);
     await redis.del(deviceLeaseKey(m.deviceId));
-  }, 20_000);
+  });
 
   it("a lost lease closes the socket with 4001", async () => {
     const m = await connected();
@@ -534,7 +558,7 @@ describe("GET /device/connect", () => {
     expect((await machine.closed).code).toBe(4001);
     expect(await redis.get(deviceLeaseKey(m.deviceId))).toBe("someone-else");
     await redis.del(deviceLeaseKey(m.deviceId));
-  }, 20_000);
+  });
 
   it("a machine that misses two pongs is terminated", async () => {
     const gw = k.app.get(LocalDeviceGateway);

@@ -173,7 +173,7 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
     const org = await at(1, "POST", "/api/v1/orgs", { name: "Acme" });
     expect(org.status, JSON.stringify(org.json)).toBe(201);
     base = `/api/v1/orgs/${(org.json.org as { id: string }).id}`;
-  }, 600_000);
+  });
 
   afterAll(async () => {
     await h?.stop();
@@ -183,7 +183,7 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
     await raw?.destroy();
     await Promise.all([pgc?.stop(), rdc?.stop(), s3?.stop()]);
     if (root) await rm(root, { recursive: true, force: true });
-  }, 180_000);
+  });
 
   /** 预签名直传一个附件并 finalize，返回 id（建、finalize 分别打在两个副本上）。 */
   async function uploadAttachment(name: string, contentType: string, bytes: Buffer) {
@@ -482,5 +482,5 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
       .where("status", "in", ["queued", "running", "waiting"])
       .execute();
     expect(active).toEqual([]);
-  }, 420_000);
+  });
 });

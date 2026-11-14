@@ -33,13 +33,13 @@ beforeAll(async () => {
   });
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
-}, 120_000);
+});
 
 afterAll(async () => {
   await Promise.all(redises.splice(0).map((r) => r.quit()));
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
-}, 120_000);
+});
 
 const row = (plugin: string, ageDays: number) => ({
   plugin,
@@ -52,7 +52,7 @@ const row = (plugin: string, ageDays: number) => ({
   last_at: new Date(Date.now() - ageDays * 86_400_000),
 });
 
-describe("client reports prune", { timeout: 120_000 }, () => {
+describe("client reports prune", () => {
   it("rows older than 30 days are deleted once per tick across two replicas", async () => {
     await db
       .insertInto("extension_client_reports")

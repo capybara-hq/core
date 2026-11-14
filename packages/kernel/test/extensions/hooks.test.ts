@@ -569,6 +569,7 @@ describe("HookRegistry.run: a policy plugin not loaded on this replica (M-1)", (
       ),
     );
     await r.run("tool.preExecute", toolPre(), signal());
+    // quiescence window: a duplicate warning would land in this gap
     await new Promise((res) => setTimeout(res, 20));
     expect(warn.mock.calls.filter((c) => String(c[0]).includes("not loaded"))).toHaveLength(1);
   });
@@ -655,6 +656,7 @@ describe("HookRegistry: the effective config per organization (layering spec A Â
     const observe = vi.fn();
     plugin("guard").on("model.request", observe, { mode: "observe" });
     expect(await r.run("model.request", inOrg("org-a"), signal())).toEqual({ allowed: true });
+    // quiescence window: a stray observe call would land in this gap
     await new Promise((res) => setTimeout(res, 20));
     expect(observe).not.toHaveBeenCalled();
     await r.run("model.request", inOrg("org-b"), signal());
@@ -681,6 +683,7 @@ describe("HookRegistry: the effective config per organization (layering spec A Â
     expect(await observeOnly.r.run("model.request", inOrg("org-b"), signal())).toEqual({
       allowed: true,
     });
+    // quiescence window: a stray observe call would land in this gap
     await new Promise((res) => setTimeout(res, 20));
     expect(observe).not.toHaveBeenCalled();
   });

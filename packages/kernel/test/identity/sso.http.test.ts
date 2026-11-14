@@ -50,7 +50,7 @@ beforeAll(async () => {
   db = kernelDb(raw);
   redis = new Redis(rd.url);
   accounts = accountsFor(db);
-}, 120_000);
+});
 afterAll(async () => {
   await k?.close();
   redis?.disconnect();

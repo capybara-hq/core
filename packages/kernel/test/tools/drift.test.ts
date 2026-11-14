@@ -96,7 +96,7 @@ beforeAll(async () => {
   probe = new Queue(MAINTENANCE_QUEUE_NAME, { connection: redisClient() });
   accounts = accountsFor(db);
   members = testMembers(db);
-}, 120_000);
+});
 afterAll(async () => {
   await k?.close();
   await probe?.close();
@@ -871,7 +871,12 @@ describe("定时任务与 list_changed", () => {
         10_000,
         "drift",
       );
-      await new Promise((r) => setTimeout(r, 1000));
+      // both scans dedupe into one job: the recorded state says one check ran, not a second
+      await waitFor(
+        async () => (await driftJobAttempts(app.id)).length === 1,
+        10_000,
+        "one drift check job",
+      );
       expect(await auditOf("connector.tools_drifted")).toHaveLength(1);
       expect(memState().opened - opened).toBe(1);
       expect(await driftJobAttempts(app.id)).toEqual([1]);

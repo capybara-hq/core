@@ -45,13 +45,13 @@ beforeAll(async () => {
     db,
   );
   await migrate(pg.url, { schema: "capybara", dir: copyMigrations((f) => f <= FILE) });
-}, 120_000);
+});
 
 afterAll(async () => {
   await db?.destroy();
   await pg?.stop();
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
-}, 120_000);
+});
 
 describe("0084 org owned items", () => {
   it("existing rows stay platform-owned and unshared", async () => {

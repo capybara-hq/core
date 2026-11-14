@@ -143,7 +143,7 @@ beforeAll(async () => {
   agentId = (res.json() as { agent: { id: string } }).agent.id;
   miniId = await connection("chan-mini", "cli_1");
   plainId = await connection("chan-plain", "cli_plain");
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();

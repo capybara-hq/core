@@ -68,7 +68,7 @@ beforeAll(async () => {
   kb = await startKernel(runConfig(urls, { extensions: plugins, roles: ["api"] }));
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
-}, 120_000);
+});
 
 afterAll(async () => {
   scriptRules([]);
@@ -164,7 +164,7 @@ const send = (r: Req, convId: string, body: Record<string, unknown>) =>
 const answer = (r: Req, id: string, body: Record<string, unknown>) =>
   r({ method: "POST", url: `/api/v1/orgs/${orgId}/questions/${id}/answer`, payload: body });
 
-describe("a message skips the pending question", { timeout: 60_000 }, () => {
+describe("a message skips the pending question", () => {
   it("the starter's message skips the question; the run resumes at once and reads the skipped result, then the message", async () => {
     const convId = await createConv(reqA, orgId, await createAgent());
     await postMessage(reqA, orgId, convId, ASK);
@@ -462,9 +462,7 @@ describe("a message skips the pending question", { timeout: 60_000 }, () => {
   });
 });
 
-describe("races across replicas (lock order: conversation, then question)", {
-  timeout: 180_000,
-}, () => {
+describe("races across replicas (lock order: conversation, then question)", () => {
   const ROUNDS = 12;
 
   it("answer on B and a message on A at once: exactly one question_answered, no deadlock", async () => {
@@ -498,16 +496,19 @@ describe("races across replicas (lock order: conversation, then question)", {
       const qid = questionIds[0] as string;
       await sql`UPDATE capybara.questions SET expires_at = now() + interval '40 milliseconds'
         WHERE id = ${qid}`.execute(raw);
-      await new Promise((r) => setTimeout(r, 40));
-      const [e, m] = await Promise.all([
-        waits.expire("input", qid),
+      // the expire races the message: it is retried until the question is due, never on a fixed wait
+      const [, m] = await Promise.all([
+        waitFor(
+          async () => {
+            const out = await waits.expire("input", qid);
+            return out.notDueUntil === undefined ? out : null;
+          },
+          5_000,
+          "the question to expire",
+        ),
         send(reqB, convId, { text: "echo:raced" }),
       ]);
       expect(m.statusCode, m.body).toBe(202);
-      if (e.notDueUntil !== undefined) {
-        await new Promise((r) => setTimeout(r, 60));
-        await waits.expire("input", qid);
-      }
       await waitForTerminal(db, convId, 1, 20_000);
       const outcomes = ofType(await eventsOf(db, convId), "question_answered").map(
         (x) => x.payload.outcome,

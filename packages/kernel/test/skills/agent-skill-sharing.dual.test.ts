@@ -119,13 +119,13 @@ describe("agent skill sharing (dual replica)", () => {
     base = `/api/v1/orgs/${orgId}`;
     await testMembers(db).add(orgId, adminId, "admin", ownerId);
     await testMembers(db).add(orgId, memberId, "member", ownerId);
-  }, 300_000);
+  });
 
   afterAll(async () => {
     await h?.stop();
     await raw?.destroy();
     await Promise.all([pgc?.stop(), rdc?.stop(), s3?.stop()]);
-  }, 120_000);
+  });
 
   /** The member registers a package on its agent through replica `i` (upload, put, register). */
   async function register(i: 0 | 1, agentId: string, zip: Uint8Array) {

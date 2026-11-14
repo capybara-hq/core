@@ -76,30 +76,23 @@ describe("运行时限与命令超时（纯函数）", () => {
     ).toEqual([]);
   });
 
-  it('warns when sandbox.tiers.max is open and the provider plugin sets openEgress "off" (absent is the plugin default, proxy)', () => {
+  it('warns when auto mode is allowed and the provider plugin sets openEgress "off" (absent is the plugin default, proxy)', () => {
     const long = { ...cfg, runtime: { ...cfg.runtime, maxRunSeconds: 7200 } };
-    const open = {
-      ...long,
-      sandbox: { ...long.sandbox, tiers: { ...long.sandbox.tiers, max: "open" as const } },
-    };
-    const off = { ...open, extensionConfig: { "sandbox-docker": { openEgress: "off" } } };
-    const [w] = sandboxConfigWarnings(off, "sandbox-docker");
+    const off = { ...long, extensionConfig: { "sandbox-docker": { openEgress: "off" } } };
+    const [w] = sandboxConfigWarnings(off, "sandbox-docker", true);
     expect(w?.level).toBe("warn");
     expect(w?.message).toContain('extensionConfig."sandbox-docker".openEgress is "off"');
-    expect(w?.message).toContain("sandbox.tiers.max");
-    expect(sandboxConfigWarnings(open, "sandbox-docker")).toEqual([]);
+    expect(w?.message).toContain("auto mode is allowed");
+    expect(sandboxConfigWarnings(off, "sandbox-docker", false)).toEqual([]);
     for (const openEgress of ["proxy", "direct"]) {
       expect(
         sandboxConfigWarnings(
-          { ...open, extensionConfig: { "sandbox-docker": { openEgress } } },
+          { ...off, extensionConfig: { "sandbox-docker": { openEgress } } },
           "sandbox-docker",
+          true,
         ),
       ).toEqual([]);
     }
-    // below open, the plugin's setting does not matter
-    expect(
-      sandboxConfigWarnings({ ...long, extensionConfig: off.extensionConfig }, "sandbox-docker"),
-    ).toEqual([]);
     expect(sandboxConfigWarnings(off)).toEqual([]);
   });
 });
@@ -128,7 +121,7 @@ beforeAll(async () => {
       },
     ),
   );
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -139,7 +132,7 @@ afterAll(async () => {
 
 type ToolResultEvent = Extract<ConversationEvent, { type: "tool_result" }>;
 
-describe("Bash 按运行剩下的时间收紧超时", { timeout: 90_000 }, () => {
+describe("Bash 按运行剩下的时间收紧超时", () => {
   it("请求的 timeout 超过运行剩余：命令在截止前超时，结果说明运行时限（不是结果未知）", async () => {
     await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
     const owner = await session(k, "owner");

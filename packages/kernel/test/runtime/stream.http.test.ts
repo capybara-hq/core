@@ -215,6 +215,7 @@ async function resumeLive(
           );
           if (fresh === undefined && final) return { text: textOf(final), refetches };
           if (Date.now() > deadline) throw new Error(`gap: offset ${offset} beyond ${text.length}`);
+          // poll interval of the gap retry (the loop has its own 2 s deadline)
           await sleep(25);
         }
       }
@@ -222,6 +223,7 @@ async function resumeLive(
       text = text.slice(0, offset) + t;
     }
     if (s.isEnded()) throw new Error("stream ended before run_finished");
+    // tick of the live-follow loop; it ends at run_finished
     await sleep(10);
   }
 }
@@ -255,7 +257,7 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
   redis = new Redis(rd.url);
-}, 120_000);
+});
 afterAll(async () => {
   redis?.disconnect();
   await raw?.destroy();
@@ -320,7 +322,7 @@ describe("会话 SSE（单副本 api+worker）", () => {
 
   beforeAll(async () => {
     k = await startKernel(runConfig(urls(), { roles: ["api", "worker"], runtime: STREAM_RUNTIME }));
-  }, 60_000);
+  });
   afterAll(async () => {
     await k?.close();
   });
@@ -478,6 +480,7 @@ describe("会话 SSE（单副本 api+worker）", () => {
     const s = await openSse(streamUrl(k, orgId, bobConv), { cookie: bob.cookie() });
     try {
       expect(s.status).toBe(200);
+      // a recheck period must pass: the stream must stay open while the membership is there
       await sleep(400);
       expect(s.isEnded()).toBe(false);
       await db
@@ -485,13 +488,7 @@ describe("会话 SSE（单副本 api+worker）", () => {
         .where("org_id", "=", orgId)
         .where("account_id", "=", bobId)
         .execute();
-      await Promise.race([
-        s.ended,
-        sleep(3_000).then(() => {
-          throw new Error("stream not closed after recheck");
-        }),
-      ]);
-      expect(s.isEnded()).toBe(true);
+      await vi.waitFor(() => expect(s.isEnded()).toBe(true), { timeout: 3_000, interval: 25 });
     } finally {
       s.close();
     }
@@ -532,7 +529,7 @@ describe("会话 SSE：live drafts (spec 2026-11-07 §3.2)", () => {
 
   beforeAll(async () => {
     k = await startKernel(runConfig(urls(), { roles: ["api", "worker"], runtime: STREAM_RUNTIME }));
-  }, 60_000);
+  });
   afterAll(async () => {
     await k?.close();
   });
@@ -589,6 +586,7 @@ describe("会话 SSE：live drafts (spec 2026-11-07 §3.2)", () => {
       const c = await openSse(streamUrl(k, orgId, convId), { cookie: owner.cookie() });
       try {
         await c.until((m) => finishedCount(m) === 1, 5_000, "catch-up");
+        // negative assertion: no draft frame follows the catch-up
         await sleep(300);
         expect(draftsIn(c.messages)).toEqual([]);
       } finally {
@@ -598,7 +596,7 @@ describe("会话 SSE：live drafts (spec 2026-11-07 §3.2)", () => {
       a.close();
       b?.close();
     }
-  }, 30_000);
+  });
 
   it("text deltas carry offsets that add up to the reply", async () => {
     const s = await openSse(streamUrl(k, orgId, convId), { cookie: owner.cookie() });
@@ -676,7 +674,7 @@ describe("会话 SSE：live drafts (spec 2026-11-07 §3.2)", () => {
     const bad = await owner.req({ method: "GET", url: draftUrl(orgId, convId, "x".repeat(101)) });
     expect(bad.statusCode).toBeGreaterThanOrEqual(400);
     expect(bad.statusCode).toBeLessThan(500);
-  }, 30_000);
+  });
 
   it("GET …/draft answers no drafts (and warns) when the drafts cannot be read", async () => {
     await postMessage(owner.req, orgId, convId, "echo:done");
@@ -716,6 +714,7 @@ describe("会话 SSE：live drafts (spec 2026-11-07 §3.2)", () => {
       const b = await openSse(streamUrl(k, orgId, convId), { cookie: owner.cookie() });
       try {
         await b.until((m) => eventsIn(m).some((e) => e.type === "run_aborted"), 5_000, "catch-up");
+        // negative assertion: no draft frame follows the catch-up
         await sleep(300);
         expect(draftsIn(b.messages)).toEqual([]);
       } finally {
@@ -724,7 +723,7 @@ describe("会话 SSE：live drafts (spec 2026-11-07 §3.2)", () => {
     } finally {
       a.close();
     }
-  }, 30_000);
+  });
 });
 
 describe("会话 SSE（跨副本：运行在 worker 副本，SSE 连在 api 副本）", () => {
@@ -736,7 +735,7 @@ describe("会话 SSE（跨副本：运行在 worker 副本，SSE 连在 api 副�
       startKernel(runConfig(urls(), { roles: ["worker"], runtime: STREAM_RUNTIME })),
       startKernel(runConfig(urls(), { roles: ["api"], runtime: STREAM_RUNTIME })),
     ]);
-  }, 60_000);
+  });
   afterAll(async () => {
     await Promise.all([worker?.close(), api?.close()]);
   });
@@ -776,7 +775,7 @@ describe("会话 SSE（跨副本：运行在 worker 副本，SSE 连在 api 副�
       a.close();
       b?.close();
     }
-  }, 30_000);
+  });
 
   it("api 副本收到 worker 副本运行的全部增量与事件；停机时关闭进行中的流", async () => {
     await resetDb();
@@ -819,7 +818,7 @@ describe("会话 SSE：凭据复核（R35）", () => {
       startKernel(runConfig(urls(), { roles: ["api", "worker"], runtime: STREAM_RUNTIME })),
       startKernel(runConfig(urls(), { roles: ["api"], runtime: STREAM_RUNTIME })),
     ]);
-  }, 60_000);
+  });
   afterAll(async () => {
     await Promise.all([a?.close(), b?.close()]);
   });
@@ -840,12 +839,7 @@ describe("会话 SSE：凭据复核（R35）", () => {
       .map((m) => JSON.parse(m.data as string) as { code: string });
 
   async function endsWithin(s: SseClient, ms: number): Promise<void> {
-    await Promise.race([
-      s.ended,
-      sleep(ms).then(() => {
-        throw new Error("stream not closed");
-      }),
-    ]);
+    await vi.waitFor(() => expect(s.isEnded()).toBe(true), { timeout: ms, interval: 25 });
   }
 
   it("在另一副本登出 → 一个复核周期内收到 event: error（auth.session_revoked），流结束", async () => {
@@ -853,6 +847,7 @@ describe("会话 SSE：凭据复核（R35）", () => {
     const s = await openSse(streamUrl(a, orgId, convId), { cookie: owner.cookie() });
     try {
       expect(s.status).toBe(200);
+      // a recheck period must pass: the stream must stay open before the logout
       await sleep(300);
       expect(s.isEnded()).toBe(false);
       const out = await asUser(b.http, owner.jar)({ method: "POST", url: "/api/v1/auth/logout" });
@@ -873,6 +868,7 @@ describe("会话 SSE：凭据复核（R35）", () => {
     const s = await openSse(url, { authorization: `Bearer ${token}` });
     try {
       expect(s.status).toBe(200);
+      // a recheck period must pass: the stream must stay open before the revocation
       await sleep(300);
       expect(s.isEnded()).toBe(false);
       await tokens.revoke(record.id, { accountId: ownerId });
@@ -897,6 +893,7 @@ describe("会话 SSE：凭据复核（R35）", () => {
     const s = await openSse(streamUrl(a, orgId, convId), { cookie });
     try {
       expect(s.status).toBe(200);
+      // the token's real 2 s lifetime must elapse (the session service has no injected clock)
       await sleep(2_600);
       // 令牌已过期：新请求被拒，但已建立的流仍在
       const expired = await fetch(streamUrl(a, orgId, convId), { headers: { cookie } });
@@ -957,5 +954,5 @@ describe("会话 SSE：凭据复核（R35）", () => {
       sock.destroy();
       await c.close();
     }
-  }, 30_000);
+  });
 });

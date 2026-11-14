@@ -6,19 +6,12 @@ import {
   DEFAULT_SANDBOX_ROOTS,
   type DeviceExecArgs,
   type ExecResult,
+  type SandboxLimits,
   type SandboxRoots,
-  type SandboxTier,
+  validateSandboxPathShape,
 } from "@capybara-hq/plugin-sdk";
-import {
-  ANY_HOST,
-  deviceTier,
-  type EgressLimits,
-  effectiveEgress,
-  provisionalTier,
-  type TierFacts,
-  tierFacts,
-} from "../policy.js";
-import type { Policy } from "../state.js";
+import { effectiveMode } from "../policy.js";
+import type { Policy, SandboxMode } from "../state.js";
 import { EXEC_MARKER } from "./procs.js";
 import {
   ENV_NAME_RE,
@@ -30,6 +23,7 @@ import {
   policyError,
   RootGuard,
 } from "./shared.js";
+import { FILE_OPS_DECISION_TTL_MS } from "./switch.js";
 import { DeviceOpError, type Executor } from "./types.js";
 
 /** The version of the published sandbox images this program runs commands in. */
@@ -61,31 +55,6 @@ const SPEC_LABEL = "capybara.device.spec";
 const FILE_OP_TIMEOUT_S = 30;
 
 const ROOTS: SandboxRoots = DEFAULT_SANDBOX_ROOTS;
-
-/**
- * The container's `--shm-size` for a tier (spec §5.2): `strict` keeps Docker's default (64 MiB);
- * `dev` and `open` get a quarter of the memory ceiling up to 1 GiB (at least the default), or
- * 1 GiB without a ceiling, so browsers have room.
- */
-export function shmSize(tier: SandboxTier, memoryMb: number | null): string | undefined {
-  if (tier === "strict") return undefined;
-  if (memoryMb === null) return "1g";
-  return `${Math.max(64, Math.min(1024, Math.floor(memoryMb / 4)))}m`;
-}
-
-/**
- * Whether a command gets the default bridge (spec §5.2 table). Docker mode has no domain filter,
- * and the bridge reaches the host and the intranet, so only an explicit choice opens it: the
- * device's own allowed domains within the ceiling (as `strict` computes them; the dev hosts do
- * not count), or tier `open` with a ceiling that allows any host (an allowlist ceiling at `open`
- * counts only its explicit local domains, like the lower tiers).
- */
-export function bridgeNetwork(policy: Policy, limits: EgressLimits): boolean {
-  if (deviceTier(policy, limits) === "open" && effectiveEgress(policy, limits).includes(ANY_HOST)) {
-    return true;
-  }
-  return effectiveEgress({ ...policy, tier: "strict" }, limits).length > 0;
-}
 
 /** Container name of a device. */
 export function containerName(deviceId: string): string {
@@ -164,36 +133,51 @@ const EXEC_WRAPPER =
 /** The pids limit of a container (as the cloud sandbox). */
 const PIDS_LIMIT = 1024;
 
-/** The shared prologue of the file scripts: `under` checks a real path against the three roots. */
-const FILE_PROLOGUE = `under() { case "$1" in /workspace|/workspace/*|/tmp|/tmp/*) return 0;; esac; return 1; }
-`;
-
 // Exit codes of the file scripts.
+const E_MODE = 9;
 const E_MISSING = 10;
 const E_OUTSIDE = 11;
 const E_NOT_FILE = 12;
 const E_FAIL = 13;
 const E_DANGLING = 14;
 
-const READ_SCRIPT = `${FILE_PROLOGUE}r=$(realpath -e -- "$1" 2>/dev/null) || exit ${E_MISSING}
-under "$r" || exit ${E_OUTSIDE}
+/**
+ * The shared prologue of the file scripts: `$1` is the mode, `$2` the path, `$3` the extra
+ * argument. In sandbox mode `allowed` checks a real path against the mounted roots; in auto mode
+ * any absolute path in the container is allowed (the host checks its shape already).
+ */
+const FILE_PROLOGUE = `mode=$1; p=$2; arg=$3
+allowed() {
+  if [ "$mode" = "auto" ]; then
+    case "$1" in /*) ;; *) return 1;; esac
+    case "/$1/" in *"/../"*) return 1;; esac
+    return 0
+  fi
+  case "$1" in /workspace|/workspace/*|/tmp|/tmp/*) return 0;; esac
+  return 1
+}
+if [ "$mode" != "auto" ] && [ "$mode" != "sandbox" ]; then exit ${E_MODE}; fi
+`;
+
+const READ_SCRIPT = `${FILE_PROLOGUE}r=$(realpath -e -- "$p" 2>/dev/null) || exit ${E_MISSING}
+allowed "$r" || exit ${E_OUTSIDE}
 [ -d "$r" ] && exit ${E_MISSING}
 [ -f "$r" ] || exit ${E_NOT_FILE}
-head -c "$2" -- "$r"`;
+head -c "$arg" -- "$r"`;
 
-const STAT_SCRIPT = `${FILE_PROLOGUE}r=$(realpath -e -- "$1" 2>/dev/null) || exit ${E_MISSING}
-under "$r" || exit ${E_OUTSIDE}
+const STAT_SCRIPT = `${FILE_PROLOGUE}r=$(realpath -e -- "$p" 2>/dev/null) || exit ${E_MISSING}
+allowed "$r" || exit ${E_OUTSIDE}
 if [ -d "$r" ]; then printf '%s d' "$(stat -c %s -- "$r")"; else printf '%s f' "$(stat -c %s -- "$r")"; fi`;
 
-const WRITE_SCRIPT = `${FILE_PROLOGUE}p=$1; d=$(dirname -- "$p"); a=$d
+const WRITE_SCRIPT = `${FILE_PROLOGUE}d=$(dirname -- "$p"); a=$d
 while [ ! -e "$a" ] && [ "$a" != / ]; do a=$(dirname -- "$a"); done
 ra=$(realpath -e -- "$a" 2>/dev/null) || exit ${E_FAIL}
-under "$ra" || exit ${E_OUTSIDE}
+allowed "$ra" || exit ${E_OUTSIDE}
 mkdir -p -- "$d" || exit ${E_FAIL}
 rp=$(realpath -e -- "$d" 2>/dev/null) || exit ${E_FAIL}
-under "$rp" || exit ${E_OUTSIDE}
+allowed "$rp" || exit ${E_OUTSIDE}
 f="$rp/$(basename -- "$p")"
-if [ -L "$f" ]; then r=$(realpath -e -- "$f" 2>/dev/null) || exit ${E_DANGLING}; under "$r" || exit ${E_OUTSIDE}; f=$r; fi
+if [ -L "$f" ]; then r=$(realpath -e -- "$f" 2>/dev/null) || exit ${E_DANGLING}; allowed "$r" || exit ${E_OUTSIDE}; f=$r; fi
 if [ -e "$f" ] && [ ! -f "$f" ]; then exit ${E_NOT_FILE}; fi
 cat > "$f" || exit ${E_FAIL}`;
 
@@ -202,9 +186,8 @@ export interface DockerExecutorOptions {
   dir: string;
   deviceId: string;
   /**
-   * The local policy now. The network decision reads it at each command; cpu, memory and the
-   * tier's shm size apply when the container is next created (at the next command that finds it
-   * idle).
+   * The local policy now. The network decision reads it at each command; cpu and memory apply
+   * when the container is next created (at the next command that finds it idle).
    */
   policy: () => Policy;
 }
@@ -238,10 +221,10 @@ interface Inspected {
  * /workspace, /skills and /tmp. Workspace and tmp files are read and written inside the container
  * (as the `sandbox` user, so a link a command plants resolves in the container and never on the
  * host); the skills directory, which commands cannot write, is accessed from the host with the
- * same real-path checks as the OS executor. Network: none unless {@link bridgeNetwork} says
- * otherwise, then the default bridge (Docker mode has no domain allowlist). Tiers `dev` and
- * `open` get a larger `/dev/shm` ({@link shmSize}); a change of the container's flags recreates it
- * at the next command that finds it idle.
+ * same real-path checks as the OS executor. Auto mode: the container on its default bridge, and
+ * file operations reach any absolute path in the container. Sandbox mode: no network attached and
+ * file operations stay in the mounted roots. Docker mode has no per-domain filter. A change of the
+ * container's flags recreates it at the next command that finds it idle.
  */
 export class DockerExecutor implements Executor {
   readonly mode = "docker" as const;
@@ -262,8 +245,10 @@ export class DockerExecutor implements Executor {
   private readonly queue: Waiter[] = [];
   private pumping = false;
   private dirty = false;
-  /** The limits of the latest command: they decide the tier the container is made for. */
-  private lastLimits: EgressLimits | undefined;
+  /** The limits of the latest command: the kernel's mode ceiling for file operations. */
+  private lastLimits: Pick<SandboxLimits, "mode"> | undefined;
+  /** When {@link lastLimits} came (file operations follow it only inside the window). */
+  private lastLimitsAt = 0;
   /** The spec hash of the container in use (set when it is created or reused). */
   private spec: string | undefined;
 
@@ -272,7 +257,7 @@ export class DockerExecutor implements Executor {
     this.dir = existsSync(dir) ? realpathSync(dir) : dir;
     this.hostRoots = osRoots(this.dir);
     this.guard = new RootGuard(this.dir, this.hostRoots);
-    this.hostFiles = new HostFiles(this.hostRoots);
+    this.hostFiles = new HostFiles(this.hostRoots, "sandbox");
     this.name = containerName(opts.deviceId);
     this.dirKey = createHash("sha256").update(this.dir).digest("hex").slice(0, 16);
   }
@@ -305,22 +290,21 @@ export class DockerExecutor implements Executor {
     ];
   }
 
-  /** The tier commands run at now (the owner's choice, else `dev`, before any command). */
-  tier(policy: Policy = this.opts.policy()): SandboxTier {
-    return this.lastLimits === undefined
-      ? provisionalTier(policy)
-      : deviceTier(policy, this.lastLimits);
-  }
-
-  /** What the tier gives in this mode (for the policy summary). */
-  tierFacts(policy: Policy = this.opts.policy()): TierFacts {
-    return tierFacts(policy, this.lastLimits, { proxyDetected: false, mode: "docker" });
+  /**
+   * The mode file operations use now. File operations carry no limits and never pass command
+   * review, so they use the sandboxed result before any exec and once the latest decision is stale
+   * (the safe default for an organization whose ceiling is sandbox), else
+   * `effectiveMode(policy, limits)`.
+   */
+  private modeNow(policy: Policy = this.opts.policy()): SandboxMode {
+    if (policy.mode === "sandbox" || this.lastLimits === undefined) return "sandbox";
+    if (Date.now() - this.lastLimitsAt > FILE_OPS_DECISION_TTL_MS) return "sandbox";
+    return effectiveMode(policy, this.lastLimits);
   }
 
   /** Every `docker run` flag of the container except its name and spec label. */
   private runArgs(): string[] {
     const policy = this.opts.policy();
-    const shm = shmSize(this.tier(policy), policy.memoryMb);
     return [
       "--init",
       "--read-only",
@@ -344,7 +328,6 @@ export class DockerExecutor implements Executor {
       ...(policy.memoryMb !== null
         ? ["--memory", `${policy.memoryMb}m`, "--memory-swap", `${policy.memoryMb}m`]
         : []),
-      ...(shm !== undefined ? ["--shm-size", shm] : []),
       "--entrypoint",
       "sleep",
       SANDBOX_IMAGE,
@@ -379,7 +362,7 @@ export class DockerExecutor implements Executor {
   /**
    * Creates the container, or reuses the existing one when it matches; call inside `serial`.
    * A file operation (`anySpec`) reuses any container that sees the directory: it needs no
-   * particular flags, and before the first command the tier is not known yet. The next command
+   * particular flags, and before the first command the policy is not known yet. The next command
    * that finds it idle recreates it if its flags differ.
    */
   private async ensureContainer(opts: { anySpec?: boolean } = {}): Promise<void> {
@@ -510,7 +493,7 @@ export class DockerExecutor implements Executor {
         let served: boolean;
         try {
           served = await this.serial(async () => {
-            // The policy or the tier changed the container's flags (shm, cpu, memory): recreate
+            // The policy or the mode changed the container's flags (shm, cpu, memory): recreate
             // it once nothing runs in it.
             if (this.ready && this.inflight === 0 && this.spec !== this.specHash()) {
               this.ready = false;
@@ -556,7 +539,8 @@ export class DockerExecutor implements Executor {
 
   async exec(args: DeviceExecArgs, signal: AbortSignal): Promise<ExecResult> {
     signal.throwIfAborted();
-    const cwd = this.containerPath(args.cwd ?? ROOTS.workspace);
+    const mode = effectiveMode(this.opts.policy(), args.limits);
+    const cwd = this.containerPath(args.cwd ?? ROOTS.workspace, mode);
     const env: Record<string, string> = {
       HOME: ROOTS.workspace,
       TERM: "dumb",
@@ -569,7 +553,9 @@ export class DockerExecutor implements Executor {
         throw policyError(`invalid environment variable name ${JSON.stringify(k)}`);
     }
     this.lastLimits = args.limits;
-    const open = bridgeNetwork(this.opts.policy(), args.limits);
+    this.lastLimitsAt = Date.now();
+    // Auto: the container on its default bridge. Sandbox: no network at all (spec P-D7).
+    const open = effectiveMode(this.opts.policy(), args.limits) === "auto";
     await this.acquire(open, signal);
     try {
       signal.throwIfAborted();
@@ -700,8 +686,16 @@ export class DockerExecutor implements Executor {
     });
   }
 
-  /** `path` made absolute and normalized; refused unless lexically under a root. */
-  private containerPath(path: string): string {
+  /**
+   * `path` made absolute and normalized. Auto mode accepts any clean absolute path (the container
+   * is the boundary); sandbox mode refuses anything outside the mounted roots.
+   */
+  private containerPath(path: string, mode: SandboxMode): string {
+    if (mode === "auto") {
+      const errors = validateSandboxPathShape(path);
+      if (errors.length > 0) throw policyError(`${path}: ${errors.join("; ")}`);
+      return resolve(path);
+    }
     if (!path.startsWith("/")) throw policyError(`${path} is not an absolute path`);
     const p = resolve(path);
     const roots = Object.values(ROOTS);
@@ -723,6 +717,7 @@ export class DockerExecutor implements Executor {
   /** Runs one file script in the container; `null` for a missing file. */
   private async fileOp(
     script: string,
+    mode: SandboxMode,
     path: string,
     arg2: string,
     input?: Uint8Array,
@@ -742,6 +737,7 @@ export class DockerExecutor implements Executor {
         "-c",
         script,
         "capybara-file",
+        mode,
         path,
         arg2,
       ],
@@ -757,6 +753,8 @@ export class DockerExecutor implements Executor {
     switch (r.code) {
       case 0:
         return r;
+      case E_MODE:
+        throw new DeviceOpError("policy", `missing or unknown mode for ${path}`);
       case E_MISSING:
         return null;
       case E_OUTSIDE:
@@ -778,9 +776,10 @@ export class DockerExecutor implements Executor {
     path: string,
     maxBytes: number,
   ): Promise<{ data: Uint8Array; truncated: boolean } | null> {
-    const p = this.containerPath(path);
+    const mode = this.modeNow();
+    const p = this.containerPath(path, mode);
     if (this.inSkills(p)) return this.hostFiles.read(this.skillsHostPath(p), maxBytes);
-    const r = await this.fileOp(READ_SCRIPT, p, String(maxBytes + 1));
+    const r = await this.fileOp(READ_SCRIPT, mode, p, String(maxBytes + 1));
     if (r === null) return null;
     return {
       data: r.stdout.subarray(0, maxBytes),
@@ -789,15 +788,17 @@ export class DockerExecutor implements Executor {
   }
 
   async writeFile(path: string, data: Uint8Array): Promise<void> {
-    const p = this.containerPath(path);
+    const mode = this.modeNow();
+    const p = this.containerPath(path, mode);
     if (this.inSkills(p)) return this.hostFiles.write(this.skillsHostPath(p), data);
-    await this.fileOp(WRITE_SCRIPT, p, "", data);
+    await this.fileOp(WRITE_SCRIPT, mode, p, "", data);
   }
 
   async stat(path: string): Promise<{ size: number; isDir: boolean } | null> {
-    const p = this.containerPath(path);
+    const mode = this.modeNow();
+    const p = this.containerPath(path, mode);
     if (this.inSkills(p)) return this.hostFiles.stat(this.skillsHostPath(p));
-    const r = await this.fileOp(STAT_SCRIPT, p, "");
+    const r = await this.fileOp(STAT_SCRIPT, mode, p, "");
     if (r === null) return null;
     const [size, kind] = r.stdout.toString("utf8").split(" ");
     return { size: Number(size), isDir: kind === "d" };

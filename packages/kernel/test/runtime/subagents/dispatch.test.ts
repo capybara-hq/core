@@ -8,6 +8,7 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { normalizeStoredDefinition } from "../../../src/agents/definition.js";
+import { ATTRIBUTION_DEFAULTS } from "../../../src/attribution/platform-attribution.js";
 import { type AppendEvent, EventLog } from "../../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../../src/db/kernel-schema.js";
@@ -167,7 +168,7 @@ beforeAll(async () => {
       },
     ),
   );
-}, 180_000);
+});
 
 afterAll(async () => {
   capture.restore();
@@ -241,6 +242,25 @@ async function children(parent: string): Promise<{ id: string; subagent_type: st
     .execute();
 }
 
+/**
+ * Waits until a session in this database is blocked by `pid` (the test's own open transaction).
+ * Scoped by blocker and database, so another file's lock wait cannot satisfy it.
+ */
+const blockedBy = (pid: number) =>
+  waitFor(
+    async () =>
+      Number(
+        (
+          await sql<{ n: string }>`SELECT count(*) AS n FROM pg_stat_activity
+            WHERE datname = current_database() AND ${pid}::int = ANY(pg_blocking_pids(pid))`.execute(
+            db,
+          )
+        ).rows[0]?.n,
+      ) >= 1,
+    5_000,
+    "a session blocked by the test's transaction",
+  );
+
 /** Starts a conversation of the Lead agent with `text` and waits for its first terminal event. */
 async function converse(
   text: string,
@@ -294,7 +314,7 @@ describe("dispatch", () => {
       .executeTakeFirstOrThrow();
     expect(sandboxes.map((s) => s.device_id)).toEqual([rootEnv]);
     expect(child).toBeDefined();
-  }, 60_000);
+  });
 
   it("a general-purpose dispatch: child log, the child's first request and the parent's result", async () => {
     const { conv } = await converse("SCENARIO general");
@@ -355,7 +375,7 @@ describe("dispatch", () => {
     expect(first.messages).toHaveLength(2);
     expect(first.messages[1]?.role).toBe("system");
     expect(first.messages[1]?.content).toMatch(
-      /^Context from the platform:\n- You are "general-purpose", dispatched by the agent "Lead" working for O\.\n- Today is \d{4}-\d{2}-\d{2} \(\w+day\), time zone UTC\.\nA later context update replaces these facts\.$/,
+      /^Context from the platform:\n- You are "general-purpose", dispatched by the agent "Lead" working for O\.\n- Today is \d{4}-\d{2}-\d{2} \(\w+day\), time zone UTC\.\n- When you create a git commit, end the commit message with this trailer: .*\n- When you open a pull request, end the body with this line: .*\nA later context update replaces these facts\.$/,
     );
     const ctx = cev.find((e) => e.type === "run_context") as Ev<"run_context">;
     expect(ctx.payload).toMatchObject({
@@ -426,7 +446,7 @@ describe("dispatch", () => {
       agentType: "general-purpose",
       source: "general",
     });
-  }, 60_000);
+  });
 
   it("a general-purpose child and a tier fallback inherit the parent's switched model", async () => {
     const save = await owner({
@@ -469,7 +489,62 @@ describe("dispatch", () => {
       expect(ofType(cev, "run_started")[0]?.payload.model).toEqual(SCRIPT_2);
       expect(ofType(cev, "model_switched")).toEqual([]);
     }
-  }, 90_000);
+  });
+
+  it("a general-purpose child inherits the parent's attribution: custom and off", async () => {
+    const save = (attribution: Record<string, unknown>) =>
+      owner({
+        method: "PATCH",
+        url: `/api/v1/orgs/${orgId}/agents/${agentId}`,
+        payload: {
+          definition: {
+            name: "Lead",
+            instructions: INSTRUCTIONS,
+            model: { provider: "model-script", model: "script-1" },
+            disabledTools: onlyBuiltins(
+              ["Agent", "Write", "Read", "Deliver"].map((name) => ({ kind: "builtin", name })),
+            ),
+            attribution,
+          },
+        },
+      });
+    const custom = { mode: "custom", commit: "Co-Authored-By: Parent <p@x>" };
+    expect((await save(custom)).statusCode).toBe(200);
+    const { conv: conv1 } = await converse("SCENARIO general");
+    await delivered(conv1);
+    const child1 = ((await children(conv1))[0] as { id: string }).id;
+    const cev1 = await eventsOf(db, child1);
+    // the child's frozen definition carries the parent's setting, so its replay matches
+    expect((cev1[0] as Ev<"subagent_started">).payload.definition.attribution).toEqual(custom);
+    expect(ofType(cev1, "run_context")[0]?.payload.attribution).toEqual({
+      commit: custom.commit,
+      pr: ATTRIBUTION_DEFAULTS.pr,
+      sessionUrl: null,
+    });
+    // and the child's request shows it
+    const childReq1 = capture.sent.find(
+      (r) => isChildRequest(r) && JSON.stringify(r.messages).includes("gp-task: do it"),
+    );
+    expect(JSON.stringify(childReq1?.messages)).toContain(custom.commit);
+
+    // off: the child's own run context has no attribution, and its request has no instruction
+    expect((await save({ mode: "off" })).statusCode).toBe(200);
+    const before = capture.sent.length;
+    const { conv: conv2 } = await converse("SCENARIO general");
+    await delivered(conv2);
+    const child2 = ((await children(conv2))[0] as { id: string }).id;
+    const cev2 = await eventsOf(db, child2);
+    expect((cev2[0] as Ev<"subagent_started">).payload.definition.attribution).toEqual({
+      mode: "off",
+    });
+    const ctx2 = ofType(cev2, "run_context")[0];
+    expect(ctx2?.payload).not.toHaveProperty("attribution");
+    const childReq2 = capture.sent
+      .slice(before)
+      .find((r) => isChildRequest(r) && JSON.stringify(r.messages).includes("gp-task: do it"));
+    expect(childReq2).toBeDefined();
+    expect(JSON.stringify(childReq2?.messages)).not.toContain("git commit");
+  });
 
   it("three agent calls in one response run concurrently and the parent continues once", async () => {
     const { conv } = await converse("SCENARIO parallel");
@@ -494,7 +569,7 @@ describe("dispatch", () => {
     expect(runs).toEqual([{ status: "completed" }]);
     expect(ofType(events, "model_call").filter((e) => e.payload.step === 2)).toHaveLength(1);
     expect(ofType(events, "subagent_finished")).toHaveLength(3);
-  }, 60_000);
+  });
 
   it("a child's step reminder counts against its own maxSteps (final review m4)", async () => {
     const save = await owner({
@@ -525,7 +600,7 @@ describe("dispatch", () => {
     const [kid] = await children(conv);
     const reminders = ofType(await eventsOf(db, (kid as { id: string }).id), "reminder");
     expect(reminders.map((r) => r.payload.text).join("\n")).toContain("(step 1 of 3)");
-  }, 60_000);
+  });
 
   it("posting to a child conversation is 409 conversation.read_only; reading it works", async () => {
     const { conv } = await converse("SCENARIO general");
@@ -575,7 +650,7 @@ describe("dispatch", () => {
     const list = await owner({ method: "GET", url: `/api/v1/orgs/${orgId}/conversations` });
     const ids = (list.json() as { conversations: { id: string }[] }).conversations.map((c) => c.id);
     expect(ids).toEqual([conv]);
-  }, 60_000);
+  });
 
   it("a dispatch refused by tool.preExecute starts nothing", async () => {
     const enable = await owner({
@@ -600,7 +675,7 @@ describe("dispatch", () => {
     expect(await children(conv)).toEqual([]);
     expect(ofType(events, "subagent_dispatched")).toEqual([]);
     expect(await db.selectFrom("subagent_dispatches").select("child_run_id").execute()).toEqual([]);
-  }, 60_000);
+  });
 });
 
 describe("dispatch idempotency under the parent run lock", () => {
@@ -686,7 +761,7 @@ describe("dispatch idempotency under the parent run lock", () => {
     // found already dispatched owes nothing again: its child's job was owed with the first holder
     expect(owed).toHaveLength(2);
     expect(new Set(owed).size).toBe(2);
-  }, 60_000);
+  });
 
   it("a call dispatched before background Agent (no tool_result yet) is paired once, under its logged key", async () => {
     const { conv, runId, ctx } = await parentRun();
@@ -754,7 +829,7 @@ describe("dispatch idempotency under the parent run lock", () => {
     ]);
     // nothing new was dispatched
     expect(await children(conv)).toHaveLength(1);
-  }, 60_000);
+  });
 
   it("an rc child that ended under the foreground wait, finished but never delivered, gives its report as the call's result", async () => {
     const { conv, runId, ctx } = await parentRun();
@@ -849,7 +924,7 @@ describe("dispatch idempotency under the parent run lock", () => {
     expect(toolResults(events).map((e) => e.payload.content)).toEqual([r.content]);
     expect(ofType(events, "subagent_finished")).toHaveLength(1);
     expect(ofType(events, "subagent_delivery")).toEqual([]);
-  }, 60_000);
+  });
 
   it("a second holder of a call that already has its result writes no subagent_finished for an undelivered child", async () => {
     const { conv, runId, ctx } = await parentRun();
@@ -949,7 +1024,7 @@ describe("dispatch idempotency under the parent run lock", () => {
     ]);
     // the undelivered sweep still sees the run as undelivered
     expect(ofType(events, "subagent_finished")).toEqual([]);
-  }, 60_000);
+  });
 
   it("the dispatch locks the parent conversation before the parent run (final review m2)", async () => {
     const { conv, runId, ctx } = await parentRun();
@@ -962,6 +1037,7 @@ describe("dispatch idempotency under the parent run lock", () => {
       locked = r;
     });
     // a stop path holds the conversation row (conversation -> run, run-finish.ts)
+    let blockerPid!: number;
     const stop = db.transaction().execute(async (t) => {
       await t
         .selectFrom("conversations")
@@ -969,12 +1045,15 @@ describe("dispatch idempotency under the parent run lock", () => {
         .where("id", "=", conv)
         .forUpdate()
         .executeTakeFirst();
+      blockerPid = Number(
+        (await sql<{ pid: number }>`SELECT pg_backend_pid() AS pid`.execute(t)).rows[0]?.pid,
+      );
       locked();
       await held;
     });
     await holding;
     const dispatch = dispatchSubagent(deps(), { ctx, callId: "c1", input });
-    await new Promise((r) => setTimeout(r, 300));
+    await blockedBy(blockerPid);
     // while the dispatch waits for the conversation row it holds no lock on the run row
     const free = await db.transaction().execute(async (t) =>
       sql`select id from capybara.runs where id = ${runId} for update nowait`.execute(t).then(
@@ -986,7 +1065,7 @@ describe("dispatch idempotency under the parent run lock", () => {
     await stop;
     expect(free).toBe(true);
     expect((await dispatch).kind).toBe("dispatched");
-  }, 60_000);
+  });
 
   it("a parent run that is no longer running dispatches nothing", async () => {
     const { conv, runId, ctx } = await parentRun();
@@ -994,7 +1073,7 @@ describe("dispatch idempotency under the parent run lock", () => {
     const out = await dispatchSubagent(deps(), { ctx, callId: "c1", input });
     expect(out).toEqual({ kind: "refused", content: AGENT_REFUSALS.notAvailableHere });
     expect(await children(conv)).toEqual([]);
-  }, 60_000);
+  });
 
   // Follow-ups (phase C `resume`) are `SendMessage`s now (agent map spec §4.2, §5.1, §6): the
   // gates and the roster are checked at every message, and an idle child starts again narrowed.
@@ -1044,9 +1123,15 @@ describe("dispatch idempotency under the parent run lock", () => {
       .where("id", "=", first.childRunId)
       .execute();
     let locked!: () => void;
+    let releaseAppend!: () => void;
     const holding = new Promise<void>((r) => {
       locked = r;
     });
+    // the append holds the child's conversation row until the message is blocked on it
+    const held = new Promise<void>((r) => {
+      releaseAppend = r;
+    });
+    let blockerPid!: number;
     const append = db.transaction().execute(async (t) => {
       await t
         .selectFrom("conversations")
@@ -1054,8 +1139,11 @@ describe("dispatch idempotency under the parent run lock", () => {
         .where("id", "=", childId)
         .forUpdate()
         .executeTakeFirst();
+      blockerPid = Number(
+        (await sql<{ pid: number }>`SELECT pg_backend_pid() AS pid`.execute(t)).rows[0]?.pid,
+      );
       locked();
-      await new Promise((r) => setTimeout(r, 300));
+      await held;
       await t
         .updateTable("runs")
         .set({ subagent_tokens_used: sql<string>`subagent_tokens_used + 1` })
@@ -1064,14 +1152,17 @@ describe("dispatch idempotency under the parent run lock", () => {
     });
     await holding;
     // the message holds no lock of the parent's while it waits for the child's row
-    const [out] = await Promise.all([send(ctx, "s1", childId, "more"), append]);
+    const sending = send(ctx, "s1", childId, "more");
+    await blockedBy(blockerPid);
+    releaseAppend();
+    const [out] = await Promise.all([sending, append]);
     expect(out).toEqual({
       content: sentToRunningText({ id: childId, description: "Task" }),
       isError: false,
     });
     expect((await lastMessage(childId))?.kind).toBe("message");
     await settle(first);
-  }, 60_000);
+  });
 
   it("a follow-up turns off what the parent's current version turned off since (final review I1)", async () => {
     const { conv, ctx } = await parentRun();
@@ -1116,7 +1207,7 @@ describe("dispatch idempotency under the parent run lock", () => {
       },
     });
     await childIdle(childId, 2);
-  }, 60_000);
+  });
 
   it("a follow-up runs with the tools the parent's current version still has, after its earlier history (final review I1)", async () => {
     const { conv, ctx } = await parentRun();
@@ -1149,7 +1240,7 @@ describe("dispatch idempotency under the parent run lock", () => {
       { resumed: false, child_conversation_id: childId },
       { resumed: true, child_conversation_id: childId },
     ]);
-  }, 60_000);
+  });
 
   it("a follow-up to a type the roster no longer offers is refused (final review I1)", async () => {
     const { conv, ctx } = await parentRun();
@@ -1183,7 +1274,7 @@ describe("dispatch idempotency under the parent run lock", () => {
     const ok = await send({ ...ctx, agent: v3 }, "s3", rev, "more");
     expect(ok.isError).toBe(false);
     await childIdle(rev, 2);
-  }, 60_000);
+  });
 
   it("refuses foreign and forged targets and writes nothing", async () => {
     // P1 with its child C1; P2 (same owner) with its child C2; C3 belongs to another person
@@ -1226,5 +1317,5 @@ describe("dispatch idempotency under the parent run lock", () => {
     expect(
       await db.selectFrom("subagent_dispatches").select("child_run_id").execute(),
     ).toHaveLength(2);
-  }, 60_000);
+  });
 });

@@ -41,7 +41,7 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 3);
   db = legacyDbFor(raw);
   k = await startKernel(runConfig({ pg: pgc.url, redis: rd.url }, { roles: ["api", "worker"] }));
-}, 120_000);
+});
 afterAll(async () => {
   await k?.close();
   await raw?.destroy();
@@ -70,7 +70,7 @@ const groupIds = async () =>
     }
   ).groups.flatMap((g) => g.conversations.map((c) => c.id));
 
-describe("archive and soft delete", { timeout: 60_000 }, () => {
+describe("archive and soft delete", () => {
   it("archive hides from list and groups; unarchive brings it back", async () => {
     const conv = await createConv(owner, orgId, agentId);
     const r = await patch(conv, { archived: true });

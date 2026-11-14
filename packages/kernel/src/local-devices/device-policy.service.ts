@@ -22,7 +22,7 @@ import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { deviceNotFound } from "../sandbox/sandbox.service.js";
 import { MachinesService } from "./machines.js";
 import { DEVICE_OP_RESOLVE_JOB, deviceOpResolveJobId } from "./policy-op-jobs.js";
-import { isolationOf, type PendingPolicyOp, pendingPolicyOpsOf } from "./policy-summary.js";
+import { localPolicyOf, type PendingPolicyOp, pendingPolicyOpsOf } from "./policy-summary.js";
 import { LIST_TTL_MARGIN_MS, LocalDeviceRelay, ON_MACHINE_PREFIX } from "./relay.js";
 
 /** How long the machine may take to apply a policy change. */
@@ -95,11 +95,11 @@ const NOT_RECEIVED_MESSAGE = "The device's machine never received the policy cha
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
- * Changes a local device's policy on its machine (network ask-to-allow spec §5.2; sandbox dev
- * tiers spec §7.3: its hosts, its `tier`, and `isolation` back to `sandbox`): the kernel→device
- * `policy` op over the {@link LocalDeviceRelay}. The machine is the authority: it refuses
- * widening unless its owner allows remote grants, validates every host and answers with the
- * policy as written, which the kernel then keeps on the active machine's row (§5.4).
+ * Changes a local device's policy on its machine (network ask-to-allow spec §5.2; auto mode spec
+ * §4.1: its sandbox-mode allowlist, and its mode back to `sandbox`): the kernel→device `policy`
+ * op over the {@link LocalDeviceRelay}. The machine is the authority: it refuses what its owner
+ * forbids, validates every host and answers with the policy as written, which the kernel then
+ * keeps on the active machine's row (§5.4).
  *
  * Intent first (transactional outbox spec §7): {@link begin} writes the intent in a transaction
  * before anything is sent (the entry on the machine row's `pending_policy_ops`, the audit
@@ -348,14 +348,10 @@ export class DevicePolicyService {
     }
 
     const live = row.revoked_at === null;
-    let isolationNow: "sandbox" | "none" | undefined;
     const policy = result.outcome === "applied" ? result.policy : undefined;
-    if (policy !== undefined && live) {
-      // the isolation the machine reports now, when it differs from the stored one: a tier change
-      // turns an unsandboxed device's sandbox back on without asking for it (spec §5.4, §10.4)
-      const before = isolationOf(row.local_policy) ?? "sandbox";
-      if (policy.isolation !== before) isolationNow = policy.isolation;
-    }
+    const modeBefore = localPolicyOf(row.local_policy)?.mode ?? null;
+    const modeNow =
+      policy !== undefined && live && policy.mode !== modeBefore ? policy.mode : undefined;
     await this.db
       .updateTable("device_machines")
       .set({
@@ -366,10 +362,18 @@ export class DevicePolicyService {
       .where("id", "=", ref.machineId)
       .execute();
     if (result.outcome === "applied") {
-      await auditOp("device.policy_changed", {
-        ...(isolationNow !== undefined && { isolation: isolationNow }),
-        ...(op.status === "unknown" && { late: true }),
-      });
+      if (op.add.length > 0 || op.remove.length > 0) {
+        await auditOp("device.policy_changed", {
+          ...(op.status === "unknown" && { late: true }),
+        });
+      }
+      if (modeNow !== undefined) {
+        await auditOp("device.mode_changed", {
+          from: modeBefore,
+          to: modeNow,
+          ...(op.status === "unknown" && { late: true }),
+        });
+      }
       const stored = policy ?? (await this.machines.activeFor(row.device_id))?.localPolicy;
       return stored
         ? { applied: true, policy: stored }
@@ -444,8 +448,7 @@ export class DevicePolicyService {
       id: input.opId,
       add: change.add ?? [],
       remove: change.remove ?? [],
-      ...(change.tier !== undefined && { tier: change.tier }),
-      ...(change.isolation !== undefined && { isolation: change.isolation }),
+      ...(change.mode !== undefined && { mode: change.mode }),
       source: {
         accountId: source.accountId,
         via: source.via,
@@ -499,15 +502,13 @@ const unsupported = (): PolicyChangeOutcome => ({
   message: UNSUPPORTED_MESSAGE,
 });
 
-/** The audit detail of an op's change and source (every `device.policy_*` row of an op). */
+/** The audit detail of an op's change and source (every `device.policy_*` / `device.mode_*` row). */
 function changeDetail(op: PendingPolicyOp): Record<string, unknown> {
   return {
     opId: op.id,
     add: op.add,
     remove: op.remove,
-    // only when set (null: follow the org's default); the device page lists the change
-    ...(op.tier !== undefined && { tier: op.tier }),
-    ...(op.isolation !== undefined && { isolation: op.isolation }),
+    ...(op.mode !== undefined && { mode: op.mode }),
     by: op.source.accountId,
     via: op.source.via,
     approvalId: op.source.approvalId,

@@ -47,7 +47,7 @@ describe("the policy lock's release", () => {
       new FakeExecutor(),
       req({ opId: "op_1", add: ["a.com"], source }),
       new AbortController().signal,
-      { policy: store, platform: "darwin" },
+      { policy: store },
     );
     expect(res).toMatchObject({ ok: true, result: { policy: { allowedDomains: ["a.com"] } } });
     expect(JSON.parse(readFileSync(policyOpsPath(dir), "utf8"))).toEqual([

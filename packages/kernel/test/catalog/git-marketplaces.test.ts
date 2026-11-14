@@ -225,7 +225,7 @@ beforeAll(async () => {
     superAdmin: true,
   });
   admin = await session(k, "root");
-}, 240_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -418,8 +418,8 @@ describe("branch heads to resolve", () => {
 });
 
 // Each case drives git over HTTP, the object store and the kernel end to end: about 1-2 s alone,
-// several times that in a full parallel run, past the local 5 s default (CI has 30 s).
-describe("git marketplaces", { timeout: 30_000 }, () => {
+// several times that in a full parallel run, the integration project's 30 s bound carries them.
+describe("git marketplaces", () => {
   it("refresh reads .capybara-plugin/marketplace.json at the branch head; an unchanged commit is skipped", async () => {
     const head = await marketplaceRepo();
     const id = await addGit({ url: srv.url("mkt") });
@@ -767,7 +767,7 @@ describe("git marketplaces", { timeout: 30_000 }, () => {
   });
 });
 
-describe("direct git import", { timeout: 30_000 }, () => {
+describe("direct git import", () => {
   it("POST import/git stages a review from a repo (ref, path) without creating a marketplace", async () => {
     await other.commit("multi", {
       ...under("plugins/alpha", skill("alpha")),
@@ -838,7 +838,7 @@ describe("direct git import", { timeout: 30_000 }, () => {
   });
 });
 
-describe("item identity", { timeout: 30_000 }, () => {
+describe("item identity", () => {
   const importGit = (payload: Record<string, unknown>) =>
     admin({ method: "POST", url: "/api/v1/admin/catalog/import/git", payload });
 
@@ -895,7 +895,7 @@ describe("item identity", { timeout: 30_000 }, () => {
   });
 });
 
-describe("content changed at the same version (spec §5.3)", { timeout: 30_000 }, () => {
+describe("content changed at the same version (spec §5.3)", () => {
   /** A marketplace repo with one path entry and one entry following a branch of another repo. */
   async function movingRepo(note: string): Promise<string> {
     return srv.commit("moving", {
@@ -1060,7 +1060,7 @@ describe("content changed at the same version (spec §5.3)", { timeout: 30_000 }
   });
 });
 
-describe("archive entries without plugin.json", { timeout: 30_000 }, () => {
+describe("archive entries without plugin.json", () => {
   let reg: FakeNpmRegistry;
   let mkt: FakeMarketplace;
   let tgz: Uint8Array;
@@ -1122,7 +1122,7 @@ describe("archive entries without plugin.json", { timeout: 30_000 }, () => {
   });
 });
 
-describe("contentChanged follows the plugin's own source", { timeout: 30_000 }, () => {
+describe("contentChanged follows the plugin's own source", () => {
   const changedOf = async (id: string) =>
     Object.fromEntries(
       [...(await entries(id))].map(([name, e]) => [name, e.contentChanged as boolean]),
@@ -1285,9 +1285,7 @@ describe("contentChanged follows the plugin's own source", { timeout: 30_000 }, 
   });
 });
 
-describe("npm provenance of a git marketplace's npm entries (spec §5.5)", {
-  timeout: 30_000,
-}, () => {
+describe("npm provenance of a git marketplace's npm entries (spec §5.5)", () => {
   it("shows the attested build; a repository other than the marketplace's is a warning, not a refusal", async () => {
     const sri = (b: Uint8Array) => `sha512-${createHash("sha512").update(b).digest("base64")}`;
     await srv.commit("prov", {

@@ -29,7 +29,6 @@ import {
   alwaysRefusedNote,
   deniedNote,
   expiredNote,
-  localOnlyNote,
   orgLayerNote,
   skippedNote,
   tooManyNote,
@@ -64,14 +63,7 @@ import { FakeMachine, HELLO } from "../local-devices/fake-machine.js";
  * again. Model-fake drives the runs; a fake machine answers the exec with `network.blocked`.
  */
 
-const POLICY: DeviceLocalPolicySummary = {
-  effectiveTier: "strict",
-  isolation: "sandbox",
-  localhost: "off",
-  unixSockets: "off",
-  allowedDomains: [],
-  remoteGrants: "owner",
-};
+const POLICY: DeviceLocalPolicySummary = { mode: "auto", allowedDomains: [] };
 const CURL_ERR = "curl: (56) CONNECT tunnel failed, response 403";
 
 let pgc: TestContainer;
@@ -105,7 +97,7 @@ beforeAll(async () => {
     .id;
   orgId = await createOrg(await session(k, "owner"));
   wsUrl = `ws://127.0.0.1:${k.port}/device/connect`;
-}, 180_000);
+});
 
 afterEach(() => {
   for (const m of open.splice(0)) m.close();
@@ -329,7 +321,7 @@ const runStatus = async (conversationId = s.conversationId) =>
       .executeTakeFirstOrThrow()
   ).status;
 
-describe("the ask and its outcomes", { timeout: 60_000 }, () => {
+describe("the ask and its outcomes", () => {
   beforeEach(async () => {
     s = await setup();
     s.dev.blocking.set("files.example.com", "device");
@@ -488,7 +480,7 @@ describe("the ask and its outcomes", { timeout: 60_000 }, () => {
   });
 });
 
-describe("not asked", { timeout: 60_000 }, () => {
+describe("not asked", () => {
   it("org and address layers: immediate notes and network_blocked, no ask (the org layer is the kernel's)", async () => {
     s = await setup();
     // the device calls api.foo.com `device`: the org does not allow it, so it is `org`
@@ -523,16 +515,6 @@ describe("not asked", { timeout: 60_000 }, () => {
     expect(r?.content).not.toContain("[network]");
     expect(await asks()).toEqual([]);
     expect(ofType(await eventsOf(db, s.conversationId), "network_blocked")).toHaveLength(1);
-  });
-
-  it("a device without remote grants is not asked: the allow-it-locally note", async () => {
-    s = await setup({ policy: { ...POLICY, remoteGrants: "off" } });
-    s.dev.blocking.set("files.example.com", "device");
-    await post([curl(["files.example.com"])]);
-    await waitForTerminal(db, s.conversationId, 1, 20_000);
-    const [r] = await results();
-    expect(r?.content.endsWith(`\n\n${localOnlyNote(["files.example.com"])}`)).toBe(true);
-    expect(await asks()).toEqual([]);
   });
 
   it("a Docker-mode machine (policyOp, no networkReport) is not asked", async () => {
@@ -570,7 +552,7 @@ describe("not asked", { timeout: 60_000 }, () => {
   });
 });
 
-describe("sub-agents and unattended runs", { timeout: 90_000 }, () => {
+describe("sub-agents and unattended runs", () => {
   it("a sub-agent's ask surfaces in the root (subagent_waiting); deciding resumes the child", async () => {
     s = await setup({}, ["Agent", "Bash"]);
     s.dev.blocking.set("files.example.com", "device");

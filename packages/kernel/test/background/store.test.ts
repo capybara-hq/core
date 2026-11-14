@@ -34,7 +34,7 @@ beforeAll(async () => {
     h.txHost,
     new BackgroundLaunchLock(new XactLock(h.db, h.txHost), h.txHost),
   );
-}, 120_000);
+});
 afterAll(async () => {
   await raw?.destroy();
   await pgc?.stop();

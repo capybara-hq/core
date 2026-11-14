@@ -1,9 +1,7 @@
 import { isIP } from "node:net";
 import {
-  DEV_HOSTS,
   DOCUMENT_MEDIA_TYPES,
   IMAGE_MEDIA_TYPES,
-  tierAtMost,
   validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
@@ -49,9 +47,12 @@ export const ACCESS_TOKEN_TTL_MAX_SECONDS = 3600;
 export const REQUEST_MEDIA_BYTES_MAX = 25_165_824;
 
 /**
- * 沙箱出站白名单的默认值（`sandbox.limits.allowHosts`）：常用的包仓库与源码托管（git clone、归档下载、
- * raw 文件、release 附件）。不预置 `deb.debian.org`：沙箱用户是 uid 1000、没有 sudo，装不了 apt 包，
- * 放行它只多一个出口；需要系统包的部署把它们装进镜像。组织可以替换这份清单（`sandboxEgress`，Ruling M19）。
+ * The default host list of the allowlist (`sandbox.limits.allowHosts`): the common package
+ * registries and source hosts (git clone, archive downloads, raw files, release assets). It is the
+ * default cloud network of an organization on allowlist and the allowlist of sandbox mode. Debian's
+ * `deb.debian.org` is left out: the sandbox user is uid 1000 without sudo, so apt packages cannot be
+ * installed; allowing it would only add one more exit. Deployments that need system packages install
+ * them into the image.
  */
 export const DEFAULT_SANDBOX_ALLOW_HOSTS = [
   "registry.npmjs.org",
@@ -1300,6 +1301,44 @@ export const KernelConfigSchema = z.object({
         ),
     })
     .prefault({} as never),
+  attribution: z
+    .object({
+      commit: z
+        .string()
+        .max(500)
+        .refine((s) => !/[\r\n]/.test(s), { message: "one line" })
+        .optional()
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "The trailer an agent ends the message of a git commit it creates with; an empty string turns it off. Overridable per agent; unset follows the admin console's value, else 'Co-Authored-By: Capybara <noreply@capybarahq.com>'",
+          }),
+        ),
+      pr: z
+        .string()
+        .max(500)
+        .refine((s) => !/[\r\n]/.test(s), { message: "one line" })
+        .optional()
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "The line an agent ends the body of a pull request it opens with; an empty string turns it off. Overridable per agent; unset follows the admin console's value, else '🤖 Generated with [Capybara](https://github.com/capybara-hq/core)'",
+          }),
+        ),
+      sessionUrl: z
+        .boolean()
+        .optional()
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Whether agent-created pull requests also carry a link to the conversation; it needs http.publicUrl set, and unset follows the admin console's value, else false",
+          }),
+        ),
+    })
+    .prefault({} as never),
   web: z
     .object({
       search: z
@@ -1509,6 +1548,39 @@ export const KernelConfigSchema = z.object({
             ),
         })
         .prefault({} as never),
+      /**
+       * The bounds of the command-review classifier call (auto mode spec §5.3): the classifier sees
+       * the command and what the person asked for, never the agent's own text. Without a model
+       * purpose `review` no classifier runs and an unsure command is asked about.
+       */
+      review: z
+        .object({
+          timeoutMs: z
+            .number()
+            .int()
+            .positive()
+            .default(10_000)
+            .meta(
+              meta({
+                hot: true,
+                description:
+                  "Time limit of the command-review classifier call in milliseconds; a timeout counts as ask",
+              }),
+            ),
+          messageTokens: z
+            .number()
+            .int()
+            .positive()
+            .default(1_500)
+            .meta(
+              meta({
+                hot: true,
+                description:
+                  "Most tokens of the last person messages given to the command-review classifier (the bounded part of its input)",
+              }),
+            ),
+        })
+        .prefault({} as never),
       limits: z
         .object({
           cpu: z
@@ -1591,14 +1663,14 @@ export const KernelConfigSchema = z.object({
             .enum(["none", "allowlist"], {
               error: (iss) =>
                 iss.input === "open"
-                  ? 'sandbox.limits.egress no longer takes "open": open egress is the open sandbox tier now; set sandbox.tiers.max to "open" (and egress to "allowlist")'
+                  ? 'sandbox.limits.egress does not take "open": the open public network is a cloud device\'s default in auto mode; use "allowlist" or "none"'
                   : undefined,
             })
             .default("allowlist")
             .meta(
               meta({
                 description:
-                  'Outbound network of sandboxed devices: none (no tier reaches the network, the kill switch) or allowlist (strict reaches allowHosts, dev adds devHosts, open reaches any public host). Open egress is the open tier: set sandbox.tiers.max to "open"',
+                  "Outbound network kill switch of sandboxed devices: allowlist (the normal setting) or none. none cuts every network the kernel controls: a cloud device reaches no host (an empty allowlist) and a local device in sandbox mode has an empty allowlist; a local device in auto mode uses the machine's own network, which the kernel cannot cut",
               }),
             ),
           allowHosts: z
@@ -1614,74 +1686,33 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "Hosts cloud device instances may reach when egress is allowlist: lowercase hostnames, optional leading '*.', no IPs, ports or internal-only names; applies to instances created after the change",
-              }),
-            ),
-          devHosts: z
-            .array(z.string())
-            .default([...DEV_HOSTS])
-            .superRefine((hosts, ctx) => {
-              hosts.forEach((h, i) => {
-                for (const message of validateAllowHost(h)) {
-                  ctx.addIssue({ code: "custom", path: [i], message: `${h}: ${message}` });
-                }
-              });
-            })
-            .meta(
-              meta({
-                description:
-                  "Hosts the dev sandbox tier adds to the allowlist (package registries, source hosts, tool downloads) when egress is allowlist; same format as allowHosts",
+                  "Default host list of the allowlist: in sandbox mode, the hosts a cloud device instance may reach on allowlist (the default of an organization's cloud network, used in sandbox mode only) and a local device's allowlist; lowercase hostnames, optional leading '*.', no IPs, ports or internal-only names; applies to instances created after the change",
               }),
             ),
         })
-        .prefault({} as never),
-      tiers: z
-        .object({
-          max: z
-            .enum(["strict", "dev", "open"])
-            .optional()
-            .meta(
-              meta({
-                hot: true,
-                description:
-                  "Highest sandbox tier any organization may reach: strict (the allowlist only), dev (adds devHosts and local development affordances) or open (any public host); organizations and devices choose at most this. Unset: the super admin's choice in the admin console, else dev; set here, it is read-only there",
-              }),
-            ),
-          default: z
-            .enum(["strict", "dev", "open"])
-            .optional()
-            .meta(
-              meta({
-                hot: true,
-                description:
-                  "Sandbox tier of a device whose owner chose none, unless its organization sets its own default; at most sandbox.tiers.max. Unset: the super admin's choice in the admin console, else dev; set here, it is read-only there",
-              }),
-            ),
-          allowUnsandboxed: z
-            .boolean()
-            .optional()
-            .meta(
-              meta({
-                hot: true,
-                description:
-                  "Whether a local device may run commands without a sandbox (its owner's local choice); it only applies where the organization's ceiling is open, and an organization may forbid it. Unset: the super admin's choice in the admin console, else true; set here, it is read-only there",
-              }),
-            ),
-        })
-        // both set here: the default may not be above the max (a max from the admin console
-        // caps a default set here instead, see sandbox/platform-tiers.ts)
-        .refine(
-          (t) => t.default === undefined || t.max === undefined || tierAtMost(t.default, t.max),
-          {
-            message: "sandbox.tiers.default must not be above sandbox.tiers.max",
-            path: ["default"],
-          },
-        )
         .prefault({} as never),
     })
     .prefault({} as never),
   devices: z
     .object({
+      /**
+       * The platform's auto-mode switch (auto mode spec §4.3): the default for a new local device,
+       * and a cloud device's network follows it. Also a deployment setting the super admin changes
+       * in the admin console; the startup config wins over it, so this field is optional with no
+       * schema default (the default `allowed` is applied by `readDevicesAutoMode`: a schema default
+       * would be indistinguishable from a value the config source set, and the stored choice may
+       * only apply when the source is silent).
+       */
+      autoMode: z
+        .enum(["allowed", "off"])
+        .optional()
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Whether devices may run in auto mode (default allowed): auto mode is the default of a new local device, and a cloud device's network opens to public hosts when it is allowed (the allowlist when off). An organization may turn it off and follow the platform; only capybara-device on the machine turns auto mode on, and the web may switch a local device to sandbox mode. Set here, it is read-only in the admin console",
+          }),
+        ),
       maxPersonal: z
         .number()
         .int()

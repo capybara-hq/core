@@ -3,7 +3,6 @@ import type {
   FileSystemHandle,
   GitHostEntry,
   ParsedTheme,
-  SandboxTier,
   SkillInvocation,
 } from "@capybara-hq/plugin-sdk";
 import type { ColumnType, Generated, Kysely } from "kysely";
@@ -425,7 +424,7 @@ export interface RunsTable {
    */
   scheduled_task_run_id: ColumnType<string | null, string | null | undefined, string | null>;
   /**
-   * 0130: a manual compaction run (context compaction spec §4.7): it calls the shared compaction
+   * 0132: a manual compaction run (context compaction spec §4.7): it calls the shared compaction
    * execution with `force: true` instead of the agent loop, and writes no model step.
    */
   compact: ColumnType<boolean, boolean | undefined, boolean>;
@@ -624,10 +623,10 @@ export interface ApprovalsTable {
   >;
   /**
    * 0114: what is asked: a tool call ('tool') or a refused network domain ('network'); 0126: a
-   * git push the gateway held ('git').
+   * git push the gateway held ('git'); 0130: a command review ask ('command').
    */
-  kind: Generated<"tool" | "network" | "git">;
-  /** 0114: a network or git ask's facts, kept result and outcome (null for tool approvals). */
+  kind: Generated<"tool" | "network" | "git" | "command">;
+  /** 0114: a network or git ask's facts, kept result and outcome; 0130: a command ask's facts. */
   detail: ColumnType<unknown | null, string | null | undefined, string | null>;
 }
 
@@ -1003,8 +1002,8 @@ export interface DevicesTable {
   provider: ColumnType<string | null, string | null | undefined, string | null>;
   /** 0096: the provider a demoted default was demoted from; null for every other device. */
   demoted_from_provider: ColumnType<string | null, string | null | undefined, string | null>;
-  /** 0117: a cloud device's own sandbox tier; null follows the org's default. */
-  tier: ColumnType<SandboxTier | null, SandboxTier | null | undefined, SandboxTier | null>;
+  /** 0131: a cloud device's narrowing switch (`sandbox`); null follows the platform and the org. */
+  mode: ColumnType<"sandbox" | null, "sandbox" | null | undefined, "sandbox" | null>;
   created_at: Ts;
   updated_at: Ts;
   deleted_at: TsNullable;
@@ -1044,9 +1043,10 @@ export interface DeviceInstancesTable {
   prev_handle: InstanceHandle;
   sweep_failed_at: TsNullable;
   /**
-   * 0117: the limits in force on the instance, `{ tier, egress }`, plus `unapplied` when the
+   * 0117: the limits in force on the instance, `{ mode, network }`, plus `unapplied` when the
    * provider could not apply a newer value without a file reset; null = unknown (made before
-   * 0117). Read with `readInstanceLimits` (`sandbox/tiers.ts`).
+   * 0117 or in the old `{ tier, egress }` shape). Read with `readInstanceLimits`
+   * (`sandbox/modes.ts`).
    */
   instance_limits: ColumnType<unknown | null, string | null | undefined, string | null>;
 }

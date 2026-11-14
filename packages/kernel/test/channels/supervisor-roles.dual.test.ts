@@ -33,7 +33,7 @@ const cleanups: (() => Promise<unknown> | unknown)[] = [];
 
 beforeAll(async () => {
   im = await startFakeChannelServer();
-}, 120_000);
+});
 
 afterEach(async () => {
   for (const c of cleanups.splice(0).reverse()) await c();
@@ -142,7 +142,7 @@ describe("channel long connections on the gateway role (dual replica)", () => {
     expect(reply.pid).toBe(workerReplica.pid);
     await sleep(1000);
     expect(mine().filter((s) => im.finalText(s) === "hello gateway")).toHaveLength(1);
-  }, 120_000);
+  });
 
   it("replicas without the gateway role open no long connection", async () => {
     const { harness, connId } = await setup(
@@ -159,5 +159,5 @@ describe("channel long connections on the gateway role (dual replica)", () => {
     expect(im.streams.filter((s) => s.connectionId === connId)).toHaveLength(0);
     // Nobody even took the lease
     expect(await redis.exists(channelLeaseKey(connId))).toBe(0);
-  }, 120_000);
+  });
 });

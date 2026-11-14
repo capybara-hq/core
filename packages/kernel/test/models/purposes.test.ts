@@ -65,7 +65,7 @@ beforeAll(async () => {
       },
     ),
   );
-}, 120_000);
+});
 afterAll(async () => {
   await k?.close();
   redis?.disconnect();
@@ -144,6 +144,7 @@ const find = (views: PurposeView[], purpose: string) => views.find((v) => v.purp
 const KERNEL = [
   "eval",
   "title",
+  "review",
   "web_fetch",
   "subagent_fast",
   "subagent_standard",
@@ -151,10 +152,11 @@ const KERNEL = [
 ];
 
 describe("purpose list", () => {
-  it("the kernel purposes (eval, title, web_fetch, sub-agent tiers) and plugin purposes; null when unmapped", async () => {
+  it("the kernel purposes (eval, title, review, web_fetch, sub-agent tiers) and plugin purposes; null when unmapped", async () => {
     expect(KERNEL_PURPOSES).toEqual([
       { purpose: "eval", kind: "chat", label: { zh: "评测评委", en: "Eval judge" } },
       { purpose: "title", kind: "chat", label: { zh: "会话标题", en: "Conversation titles" } },
+      { purpose: "review", kind: "chat", label: { zh: "命令审查", en: "Command review" } },
       { purpose: "web_fetch", kind: "chat", label: { zh: "网页提取", en: "Web page extraction" } },
       {
         purpose: "subagent_fast",

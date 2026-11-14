@@ -82,7 +82,7 @@ beforeAll(async () => {
       ],
     },
   );
-}, 120_000);
+});
 afterAll(async () => {
   await k?.close();
   await raw?.destroy();
@@ -605,7 +605,7 @@ describe("组织或 agent 删除后运行停下", () => {
     expect(s.requests).toHaveLength(1);
     const cancel = await admin({ method: "POST", url: `${runsUrl()}/${run.id}/cancel` });
     expect(cancel.statusCode).toBe(200);
-  }, 20_000);
+  });
 });
 
 describe("运行", () => {
@@ -755,7 +755,7 @@ describe("运行", () => {
         expect(r.diff).toMatchObject({ toolCallsMatch: expect.any(Boolean) });
       else expect(r.diff).toBeNull();
     }
-  }, 40_000);
+  });
 
   it("取消后剩余结果为 skipped；再取消 409", async () => {
     const setId = await seededSet(3);
@@ -865,7 +865,7 @@ describe("失败计费与熔断", () => {
       100,
     );
     expect(final.summary).toMatchObject({ done: 2, errors: 0 });
-  }, 40_000);
+  });
 
   it("连续出错达到 evals.maxConsecutiveErrors：运行 failed，其余 skipped", async () => {
     const setId = await seededSet(3);
@@ -894,7 +894,7 @@ describe("失败计费与熔断", () => {
     expect(results.filter((r) => r.status === "skipped")).toHaveLength(6 - errors);
     expect(s.requests.length).toBe(errors);
     expect(final.summary).toMatchObject({ errors, skipped: 6 - errors, done: 0 });
-  }, 40_000);
+  });
 });
 
 describe("认领号", () => {

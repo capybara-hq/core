@@ -55,13 +55,13 @@ beforeAll(async () => {
   await insertRequest("r-pending", "s1", "pending");
   await insertRequest("r-approved", "s2", "approved");
   await migrate(pg.url, { schema: "capybara", dir: copyMigrations((f) => f <= FILE) });
-}, 120_000);
+});
 
 afterAll(async () => {
   await db?.destroy();
   await pg?.stop();
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
-}, 120_000);
+});
 
 describe("0111_agent_skill_sharing", () => {
   it("adds skills.origin_agent_id, skills.maintainer_account_id and skill_change_requests.kind", async () => {

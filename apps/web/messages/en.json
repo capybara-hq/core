@@ -122,12 +122,12 @@
     },
     "org": {
       "not_found": "The organization does not exist or you are no longer a member.",
-      "sandbox_egress_not_allowed": "This deployment disables sandbox network access; the organization can only choose No network.",
+      "sandbox_egress_not_allowed": "Widening the organization's cloud network needs a person in the organization settings.",
       "last_owner": "An organization must keep at least one org owner.",
       "owner_required": "Only an org owner can do this.",
       "creation_disabled": "Creating organizations is turned off on this deployment.",
       "slug_taken": "This slug is already used by another organization.",
-      "sandbox_tier_not_allowed": "The platform doesn't allow this sandbox level setting."
+      "auto_mode_not_allowed": "The platform does not allow auto mode."
     },
     "setup": {
       "already_completed": "Setup has already been completed.",
@@ -328,7 +328,7 @@
       "file_not_found": "No file at this path in the sandbox.",
       "file_is_directory": "This path is a directory; pass one file.",
       "file_too_large": "The file is too large.",
-      "tier_refused": "The cloud sandbox can't run this device at its sandbox level. Lower the device's level, or ask an org admin or the super admin.",
+      "open_network_refused": "The cloud sandbox cannot give this device the open network and refused to create it. An org admin can switch the organization's cloud network to an allowlist, or a super admin can allow the open network in the sandbox extension's settings.",
       "create_failed": "The cloud sandbox could not be created. Try again; if it keeps failing, ask the super admin to check the sandbox extension's settings."
     },
     "device": {
@@ -344,10 +344,8 @@
       "credential_invalid": "This computer's connection credential is no longer valid. Connect again on the computer.",
       "policy_refused": "This device does not accept this change from the platform. Change it on the machine.",
       "policy_unsupported": "This device can't change its network settings from the platform. Upgrade the device program on the machine.",
-      "tier_not_allowed": "This sandbox level is above the highest the organization or the platform allows.",
-      "tier_on_device": "A local device's sandbox level is kept on its machine: change it on the device page, or run capybara-device policy set tier on the machine.",
-      "unsandboxed_not_allowed": "This device runs commands without a sandbox, which your organization does not allow. Its owner can turn the sandbox back on with capybara-device policy set isolation sandbox.",
-      "tier_not_granted": "This scheduled task has no grant for the open level, so it can't use a device at the open level."
+      "auto_mode_not_allowed": "This device's machine runs in auto mode, which your organization does not allow. Run capybara-device mode sandbox on that machine to switch it to sandbox mode.",
+      "mode_on_device": "This device's mode is kept on its connected machine: switch to sandbox mode from the device page, or run capybara-device mode sandbox there."
     },
     "device_sign_in": {
       "authorization_pending": "The connection is not confirmed yet. Confirm it on the web page and wait a moment.",
@@ -512,8 +510,8 @@
       "once_in_past": "That time has already passed."
     },
     "deployment": {
-      "setting_readonly": "This sandbox level is set in the deployment's startup config (environment, file or Nacos) and can only be changed there.",
-      "sandbox_tier_not_allowed": "An API token or the Platform tool can only lower the platform's sandbox levels; a super admin raises them on the admin settings page."
+      "setting_readonly": "This setting is set in the deployment's startup config (environment, file or Nacos) and can only be changed there.",
+      "auto_mode_not_allowed": "An API token or the Platform tool can only turn the platform's auto mode off; a super admin turns it on in the admin console."
     }
   },
   "agents": {
@@ -709,7 +707,26 @@
       "sheetHint": "Everything is on by default; untick a tool to turn it off for this agent, or untick all to turn the whole group off (tools it gains later too). A policy can only be tightened. The changes are saved with this page.",
       "connectorPolicyHint": "A connector's tools can also be allowed for this agent, over the org default and a member's own Ask; a tool a member set to Deny on their own connection stays denied for them.",
       "loadingTools": "Reading the tools…",
-      "connectorToolsUnreadable": "This connector's tools could not be read. Try again later."
+      "connectorToolsUnreadable": "This connector's tools could not be read. Try again later.",
+      "attributionSection": "Commit and pull request attribution",
+      "attributionSectionHint": "What the agent adds to the git commits it creates and the pull requests it opens.",
+      "attributionMode": "Attribution",
+      "attributionMode_inherit": "Follow the platform",
+      "attributionModeHint_inherit": "Use the platform defaults shown below.",
+      "attributionMode_custom": "Custom",
+      "attributionModeHint_custom": "Use this agent's own lines.",
+      "attributionMode_off": "Off",
+      "attributionModeHint_off": "Add no attribution line.",
+      "attributionCommit": "Commit trailer",
+      "attributionCommitHelp": "Ends the message of a git commit the agent creates; empty adds none.",
+      "attributionPr": "Pull request line",
+      "attributionPrHelp": "Ends the body of a pull request the agent opens; empty adds none.",
+      "attributionSessionUrl": "Add the conversation link",
+      "attributionSessionUrlHint": "Needs http.publicUrl on the deployment; off by default.",
+      "attributionSessionUrlOn": "Yes",
+      "attributionSessionUrlNeedsPublicUrl": "On, but no link is added: the deployment has no public URL (http.publicUrl)",
+      "attributionDefaults": "Platform defaults: commit {commit}; pull request {pr}.",
+      "attributionNone": "None"
     },
     "params": {
       "default": "Default",
@@ -783,7 +800,8 @@
         "tools": "Tools",
         "skills": "Skills",
         "subagents": "Sub-agents",
-        "channels": "Channels"
+        "channels": "Channels",
+        "attribution": "Attribution"
       },
       "startChat": "Start a conversation",
       "reassign": "Change owner",
@@ -1404,6 +1422,14 @@
     },
     "stats": "Turn {n} · {elapsed} elapsed",
     "contextPct": "Context {n}%",
+    "deviceCode": {
+      "title": "Sign in to GitHub",
+      "body": "Open GitHub and enter this one-time code to finish signing in. The sign-in runs inside this device; the token never leaves it.",
+      "codeLabel": "One-time code",
+      "copy": "Copy code",
+      "copied": "Copied",
+      "copyManual": "Select the code and copy it"
+    },
     "toolLines": "lines {from}–{to}",
     "pickModel": "Switch model",
     "pickDevice": "Device",
@@ -1562,14 +1588,19 @@
       "online": "Online",
       "offline": "Offline"
     },
-    "isolation": {
-      "isolated": "Processes isolated between sessions",
-      "shared": "Processes not isolated between sessions"
+    "runMode": {
+      "os": "System sandbox",
+      "docker": "Docker"
     },
-    "egress": {
-      "none": "no network",
-      "allowlist": "allowlisted hosts",
-      "open": "open network"
+    "mark": {
+      "auto": "Auto",
+      "sandbox": "Sandbox",
+      "open": "Open (private networks blocked)",
+      "allowlist": "Allowlist"
+    },
+    "networkKind": {
+      "open-public": "Open (private networks blocked)",
+      "allowlist": "Allowlist"
     },
     "empty": "You have no devices yet.",
     "noCloud": {
@@ -1599,23 +1630,9 @@
       "startStep": "3. Start the connection to keep the device online (to connect at login: capybara-device service install)"
     },
     "detail": {
-      "tabsLabel": "Device sections",
-      "tabs": {
-        "summary": "Summary"
-      },
-      "source": "Source",
-      "provider": "Provider",
-      "state": "State",
-      "isolation": "Isolation",
-      "limits": "Limits",
-      "limitsValue": "{cpu} CPU · {memory} memory · {disk} disk · {egress}",
-      "files": "Files",
-      "filesNote": "Files are kept until the device is deleted.",
-      "suspendNote": "Suspending ends the processes that are running.",
       "demotedNote": "This was your personal device before the platform changed its sandbox provider. When the platform switches back to {provider}, it becomes your default device again, with its files.",
       "filesLostNote": "The files of this device are gone at the provider. Rebuild the files to use it again.",
       "localFilesLostNote": "The files directory of this local device is gone from the machine. On the machine, run capybara-device logout, then capybara-device login into this device to recreate the directory.",
-      "created": "Created",
       "rename": "Rename",
       "renameTitle": "Rename device",
       "renameSubmit": "Save",
@@ -1631,36 +1648,71 @@
       "resetSubmit": "Rebuild files",
       "resetScheduled": "File reset scheduled for {name}; this page updates when it is done.",
       "localFilesNote": "Files stay on the machine and are not uploaded to the platform.",
-      "deleteLocalHint": "Deleting {name} disconnects its machine. This cannot be undone. The files on the machine stay. Type its name to confirm."
+      "deleteLocalHint": "Deleting {name} disconnects its machine. This cannot be undone. The files on the machine stay. Type its name to confirm.",
+      "provider": "Provider",
+      "resources": "Resources",
+      "resourcesValue": "{cpu} CPU · {memory} memory · {disk} disk",
+      "network": "Network",
+      "filesAndSuspendNote": "Files are kept until the device is deleted. Suspending ends the processes that are running.",
+      "created": "Created"
     },
     "mode": {
-      "os": "System sandbox",
-      "docker": "Docker"
+      "description": {
+        "auto": "Commands run on this machine as you, with its network; each command is reviewed.",
+        "sandbox": "Commands run in a sandbox that reaches only the workspace, temporary files and the device's allowed hosts."
+      },
+      "cloudDescription": {
+        "auto": "Commands run in the container and can reach any public address; private networks are blocked.",
+        "sandbox": "Commands run in the container; its network follows the organization's sandbox network setting."
+      },
+      "name": {
+        "auto": "Auto",
+        "sandbox": "Sandbox"
+      },
+      "commandHint": "Run this in the machine's terminal to switch its mode.",
+      "changedSandbox": "The device is in sandbox mode.",
+      "pendingNextUse": "Takes effect at the next use; files are kept.",
+      "lockedNarrowed": "This cloud device is set to sandbox mode; a mode can only be narrowed here, not widened back to auto.",
+      "lockedSandbox": "Auto mode is not enabled, so cloud devices run in sandbox mode.",
+      "unavailable": "Auto mode is not enabled",
+      "autoOnMachine": "Switch to auto on the machine: run the command below.",
+      "noMachine": "Connect a machine to switch its mode here.",
+      "offline": "This device is offline; run the command below on the machine to switch its mode.",
+      "upgrade": "The device program on this machine can't change its mode from the platform. Upgrade capybara-device on the machine.",
+      "pendingFilesReset": "Takes effect after the files are reset."
+    },
+    "recent": {
+      "title": "Recent changes",
+      "add": "Added {hosts}",
+      "remove": "Removed {hosts}",
+      "mode": "Mode set to {mode}",
+      "modeFrom": "Mode changed from {from} to {to}",
+      "none": "No change",
+      "unknownBy": "Unknown account",
+      "via": {
+        "web": "web",
+        "im": "IM",
+        "device": "on the machine"
+      },
+      "outcome": {
+        "unknown": "Not confirmed by the machine",
+        "failed": "Did not take effect"
+      }
     },
     "machine": {
       "title": "Machine",
       "description": "The machine that runs this device's commands.",
       "name": "Name",
       "os": "System",
-      "mode": "Runs in",
-      "programVersion": "Program version",
-      "lastSeen": "Last seen",
-      "never": "Never",
       "none": "No machine is connected. Run capybara-device login on the machine to connect it.",
       "revoke": "Disconnect this machine",
       "revokeTitle": "Disconnect {name}?",
       "revokeHint": "The machine's credential is revoked and the commands it is running end. The files on the machine stay. To connect again, run capybara-device login on the machine.",
       "revokeSubmit": "Disconnect",
-      "revoked": "{name} disconnected."
+      "revoked": "{name} disconnected.",
+      "runMode": "Runs in"
     },
     "network": {
-      "title": "Network",
-      "description": "Which domains commands on this machine may reach, on top of what the organization allows.",
-      "remoteGrants": "Changes from the platform",
-      "remoteGrantsOwner": "Accepted from you",
-      "remoteGrantsOff": "Not accepted",
-      "remoteGrantsHint": "Set only on the machine: capybara-device policy set remoteGrants owner|off",
-      "remoteGrantsOffHint": "This machine accepts no widening from the platform, so adding domains and turning the limit off happen on the machine: capybara-device policy add allowedDomains files.example.com, or capybara-device policy set remoteGrants owner to allow changes from here.",
       "domains": "Allowed domains",
       "domainsEmpty": "No domains allowed on this machine yet.",
       "remove": "Remove",
@@ -1668,108 +1720,26 @@
       "removed": "{host} removed.",
       "add": "Add a domain",
       "addHelp": "An exact host (files.example.com) or a wildcard (*.example.com).",
-      "addDisabled": "This machine does not take new domains from the platform.",
+      "addDisabled": "This machine can't add domains from the platform.",
       "addSubmit": "Add",
       "added": "{host} added.",
       "hostInvalid": "Enter a lowercase host name without scheme, port or path, such as files.example.com or *.example.com.",
       "hostPresent": "This domain is already allowed.",
       "upgrade": "The device program on this machine can't change its network settings from the platform. Upgrade capybara-device on the machine.",
       "dockerNote": "This machine runs commands in Docker, which can't limit single domains, so it accepts no widening from the platform.",
-      "unknown": "The machine has not reported its network settings yet."
-    },
-    "tier": {
-      "strict": "Strict",
-      "dev": "Development",
-      "open": "Open"
-    },
-    "mark": {
-      "open": "Open",
-      "unsandboxed": "No sandbox"
-    },
-    "sandbox": {
-      "title": "Sandbox level",
-      "description": "How wide the sandbox is for commands on this device, up to the highest level the organization and the platform allow.",
-      "follow": "Follow the organization default ({tier})",
-      "followHint": "Changes when the organization changes its default level.",
-      "hint": {
-        "strict": "Only allowed domains; no local ports or unix sockets.",
-        "dev": "Also common developer hosts, local ports and unix sockets; for everyday development.",
-        "open": "Any public address and port."
+      "unknown": "The machine has not reported its network settings yet.",
+      "title": "Network",
+      "description": "In sandbox mode, commands reach only the domains this machine allows; changes are sent to the machine.",
+      "cloudTitle": "Network",
+      "cloudDescription": {
+        "open-public": "In sandbox mode this cloud device can reach any public address; private networks are blocked.",
+        "allowlist": "In sandbox mode this cloud device reaches only the domains the organization allows."
       },
-      "capped": {
-        "org": "Organization allows up to: {tier}",
-        "platform": "Platform allows up to: {tier}",
-        "any": "Allowed up to: {tier}"
+      "cloudHint": {
+        "org": "The organization sets this in its settings.",
+        "platform": "The platform sets this."
       },
-      "effective": "Effective level",
-      "lower": {
-        "org": "The organization allows up to {tier}.",
-        "platform": "The platform allows up to {tier}.",
-        "program": "The device program on this machine doesn't know sandbox levels, so commands run at the strict level. Upgrade capybara-device on the machine."
-      },
-      "pendingNextUse": "Takes effect at the next use; files are kept.",
-      "pendingFilesReset": "Takes effect after the files are reset.",
-      "changed": "Sandbox level set to {tier}.",
-      "followed": "The device now follows the organization default.",
-      "remoteOff": "This machine takes no raise from the platform. To raise the level, run on the machine:",
-      "unknown": "The machine has not reported its sandbox level yet.",
-      "noMachine": "Connect a machine to change the sandbox level.",
-      "upgrade": "The device program on this machine can't change its sandbox level from the platform. Upgrade capybara-device on the machine.",
-      "localhost": "Local ports",
-      "localhostValue": {
-        "on": "Reachable",
-        "off-proxy-detected": "Off: a local proxy or Docker port was found",
-        "off": "Not reachable"
-      },
-      "localhostOverride": "To allow local ports anyway, run on the machine:",
-      "unixSockets": "Unix sockets",
-      "unixSocketsValue": {
-        "roots": "Within the device's directories",
-        "all-masked": "Available, system daemon sockets hidden",
-        "off": "Not available"
-      },
-      "linuxNote": "On Linux the development level opens unix sockets only when the device program can hide the system daemons' sockets; otherwise they stay off.",
-      "openConfirmTitle": "Set this device to the open level?",
-      "openConfirmSubmit": "Set to open",
-      "openRisk": "At the open level, agent commands on this device can reach any public address and port, including uploading files to outside sites. Prompt injection can make an agent do that. Turn it on only on your own development machine, with agents and material you trust.",
-      "cancel": "Cancel",
-      "unsandboxed": "No sandbox",
-      "unsandboxedOffHint": "Only on this machine: the platform can't turn it on for you. Run on the machine:",
-      "unsandboxedRisk": "Without a sandbox, agent commands run on this computer as you: they can read and write all your files, use your credentials (SSH keys, cloud accounts, keychain), Docker and any network. Prompt injection can make an agent delete files or send your credentials away. Turn it on only on your own development machine, with agents and material you fully trust.",
-      "unsandboxedOn": "Commands on this device run on the computer as you, without a sandbox.",
-      "unsandboxedNotAllowed": "The organization doesn't allow devices without a sandbox, so agents can't use this device until the sandbox is back on.",
-      "restore": "Turn the sandbox back on",
-      "restored": "The sandbox is back on.",
-      "recent": {
-        "title": "Recent changes",
-        "add": "Added {hosts}",
-        "remove": "Removed {hosts}",
-        "tier": "Level set to {tier}",
-        "tierFollow": "Set to follow the organization default",
-        "tierFrom": "Level changed from {from} to {to}",
-        "followDefault": "the organization default",
-        "localhost": "Local ports: {value}",
-        "remoteGrants": "Changes from the platform: {value}",
-        "isolation": {
-          "none": "No sandbox",
-          "sandbox": "Sandbox back on"
-        },
-        "none": "No change",
-        "unknownBy": "Unknown account",
-        "via": {
-          "web": "web",
-          "im": "IM",
-          "device": "on the machine"
-        },
-        "outcome": {
-          "unknown": "Not confirmed by the machine",
-          "failed": "Did not take effect"
-        }
-      },
-      "openRiskCloud": "At the open level, agent commands on this cloud device can reach any public address and port, including uploading files and data to outside sites. Prompt injection can make an agent do that. Turn it on only with agents and material you trust.",
-      "unsandboxedOnMark": "On",
-      "unsandboxedRefused": "The device is set to run without a sandbox, but the current level is below open, so it refuses every command. Turn the sandbox back on to use it.",
-      "isolationResetNote": "This device runs without a sandbox now. Changing its level here turns the sandbox back on."
+      "cloudEmpty": "No domains are allowed."
     }
   },
   "nav": {
@@ -1848,6 +1818,15 @@
     "otherApprover": "Waiting for an approver.",
     "otherApproverFor": "{tool} ({key}) needs approval; waiting for an approver.",
     "otherApproverNamed": "{tool} ({key}) needs approval; waiting for {who}.",
+    "command": {
+      "title": "The agent wants to run this command. Allow?",
+      "titleWrite": "The agent wants to write this file. Allow?",
+      "device": "Device",
+      "reason": "Why it is held",
+      "path": "File",
+      "otherApprover": "The agent wants to run a command; waiting for the device owner.",
+      "otherApproverWrite": "The agent wants to write a file; waiting for the device owner."
+    },
     "policy": {
       "agent": "The agent's settings ask for approval",
       "connector": "The connector's policy asks for approval",
@@ -2427,23 +2406,28 @@
       "ask": "Ask first",
       "askHint": "Every call except the read-only tools needs the user's approval."
     },
-    "egress": {
-      "title": "Sandbox network",
-      "description": "Which hosts commands in the sandbox may reach. The allowlist blocks internal networks but does not stop data from being sent to an allowed host (for example git push to github.com); choose No network for sensitive organizations.",
-      "default": "Deployment default",
-      "defaultHint": {
-        "allowlist": "Allowlist set by the deployment ({count} hosts).",
-        "none": "The deployment disables sandbox network access."
-      },
-      "allowlist": "Custom allowlist",
-      "allowlistHint": "Only the hosts below; replaces the deployment list.",
-      "none": "No network",
-      "noneHint": "Sandboxes can only reach themselves (loopback).",
+    "autoMode": {
+      "title": "Auto mode",
+      "description": "In auto mode the organization's devices run commands with the environment's own capability, guarded by command review; in sandbox mode they are limited to the workspace and an allowlist.",
+      "allowed": "Allow auto mode",
+      "allowedHint": "Devices may run in auto mode; each owner still chooses on the machine.",
+      "off": "Turn auto mode off",
+      "offHint": "Local devices run in sandbox mode; their owners cannot turn it back on from the machine.",
+      "platformClosed": "Not enabled by the platform"
+    },
+    "cloudNetwork": {
+      "title": "Cloud devices' network",
+      "description": "The network cloud devices use in sandbox mode; in auto mode there is no network restriction. The host list is also the ceiling for a local device in sandbox mode (the device intersects it with its own list), so narrowing it limits local sandbox devices too.",
+      "open": "Open (internal blocked)",
+      "openHint": "Any public address and port.",
+      "allowlist": "Allowlist",
+      "allowlistHint": "Only the hosts below; replaces the platform's list.",
+      "platformClosed": "The platform turned the network off: only the platform can turn it back on.",
       "hosts": "Allowed hosts",
       "hostsHelp": "One host per line, such as registry.npmjs.org or *.example.com (subdomains only). No IP addresses, ports or internal names; at most 200.",
-      "newOnly": "Changes apply to sandboxes created afterwards; existing sandboxes keep their network settings until they are destroyed.",
+      "invalidHost": "{host} is not a valid host: lowercase, no scheme, port or path, and not an internal-only name.",
       "prefilled": "Added {hosts} from a blocked command. Save to allow it.",
-      "devHosts": "The development level also allows common developer hosts ({count})"
+      "publicOnly": "Only public addresses are reachable; loopback, private and cloud metadata addresses are blocked outside the container."
     },
     "limits": {
       "title": "Sandbox resources",
@@ -2463,19 +2447,6 @@
       "title": "Default time zone",
       "description": "Agents use this time zone to tell what day it is for messages without a time zone of their own: members who set none and write from an IM, and anonymous guests.",
       "label": "Default time zone"
-    },
-    "tiers": {
-      "title": "Sandbox levels",
-      "description": "The highest level devices in the organization may use, and the level new devices start at. Members can choose any level up to the highest on their own devices.",
-      "max": "Highest level",
-      "strictHint": "Only the hosts the network setting below allows; no local ports or unix sockets.",
-      "devHint": "Also common developer hosts, local ports and unix sockets; for everyday development.",
-      "openHint": "Any public address and port. Agent commands can send files and data to any outside site, and prompt injection can make an agent do that. Allow it only with agents and material you fully trust.",
-      "platformClosed": "Not enabled by the platform",
-      "default": "Default for new devices",
-      "defaultHelp": "Used by devices that choose no level; at most the highest level.",
-      "allowUnsandboxed": "Let members' devices run without a sandbox",
-      "allowUnsandboxedHint": "Allowed by default when the highest level is open. Members still turn the sandbox off by running a command on their own computer. Without it, commands can read and write every file and credential on that computer."
     }
   },
   "compaction": {
@@ -3540,7 +3511,8 @@
       "hint": {
         "eval": "The eval judge uses it to compare baseline and candidate and give pass / fail. When it is not set, evals cannot use a judge.",
         "titles": "Generates titles for new conversations. When it is not set, the model of the conversation's latest run is used.",
-        "webFetch": "The web fetch tool uses it to extract what is asked from a fetched page. When it is not set, the model of the calling conversation's latest run is used (for a sub-agent's call, the sub-agent's)."
+        "webFetch": "The web fetch tool uses it to extract what is asked from a fetched page. When it is not set, the model of the calling conversation's latest run is used (for a sub-agent's call, the sub-agent's).",
+        "review": "The command-review classifier uses it to judge commands before they run. When it is not set, no classifier runs and a command it would be unsure about is asked about."
       }
     },
     "catalog": {
@@ -4039,22 +4011,22 @@
         "allowHint": "Organizations can create and import skills themselves or install them from the catalog.",
         "denyHint": "Organizations can only install skills from the catalog."
       },
-      "sandboxTiers": {
-        "title": "Sandbox levels",
-        "description": "The highest level devices on the platform may use, and the level new devices start with. Organizations may narrow it further; after lowering it, organizations and devices above the new highest run at it automatically.",
-        "max": "Highest level",
-        "strictHint": "Only the hosts the network settings allow; no local ports or Unix sockets.",
-        "devHint": "Also common developer hosts (package managers, code hosting, browser downloads), local ports and Unix sockets; suited to everyday development.",
-        "openHint": "Any public address and port. Agents' commands can send files and data to any outside site, and prompt injection can make them do so.",
-        "belowDefault": "Below the default fixed in the startup config",
-        "default": "Default level",
-        "defaultHelp": "Used when neither the organization nor the device chooses a level; at most the highest level.",
-        "allowUnsandboxed": "Allow devices without a sandbox",
-        "allowUnsandboxedHint": "Applies only where an organization's highest level is Open, and an organization may forbid it. Members still have to run a command on their own computer to turn the sandbox off; then commands can read and write every file and sign-in credential on that computer.",
-        "openConfirmTitle": "Set the platform's highest level to Open?",
-        "openConfirmBody": "Organization admins can then let devices reach any public address and port. Agents' commands can upload files and data to any outside site, and prompt injection can make them do so. Open it only if you trust the organizations, agents and material on the platform.",
-        "openConfirmSubmit": "Set to Open",
-        "cancel": "Cancel"
+      "autoMode": {
+        "title": "Auto mode",
+        "description": "Whether devices on the platform may run in auto mode: commands run with the environment's own capability, guarded by command review.",
+        "label": "Auto mode",
+        "allowed": "Allowed",
+        "allowedHint": "Organizations may allow auto mode; each device owner still chooses on the machine.",
+        "off": "Off",
+        "offHint": "Off forces local devices to sandbox mode; cloud devices keep the container and follow the organization's cloud network (open by default). Turning it back on needs a super admin in this console.",
+        "source": "Source: {source}",
+        "sources": {
+          "env": "From an environment variable (read-only)",
+          "file": "From the config file (read-only)",
+          "nacos": "From Nacos (read-only)",
+          "db": "Set in this console",
+          "default": "Default (allowed)"
+        }
       },
       "clientCode": {
         "title": "Plugin interface code",
@@ -4066,6 +4038,21 @@
         "pluginOnHint": "Running",
         "pluginAllOffHint": "Stopped: the switch above turns off all plugin interface code.",
         "pluginOffHint": "Stopped: only its interface code; its server side keeps running."
+      },
+      "attribution": {
+        "title": "Commit and pull request attribution",
+        "description": "The lines agents add to the git commits they create and the pull requests they open. An empty line turns that part off. An agent may override this; it is an instruction to the model, not enforcement.",
+        "commitLabel": "Commit trailer",
+        "commitHelp": "Ends the message of a git commit an agent creates. Leave it empty to add none.",
+        "prLabel": "Pull request line",
+        "prHelp": "Ends the body of a pull request an agent opens. Leave it empty to add none.",
+        "sessionUrlLabel": "Add the conversation link",
+        "sessionUrlHelp": "Adds a link to the conversation to agent-created pull requests. It needs http.publicUrl set; off by default.",
+        "previewTitle": "Preview",
+        "previewCommit": "Commit message ending",
+        "previewPr": "Pull request ending",
+        "off": "(off)",
+        "restore": "Restore defaults"
       }
     },
     "extensions": {

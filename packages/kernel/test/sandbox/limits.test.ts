@@ -29,21 +29,20 @@ const DEPLOYMENT: SandboxLimits = {
   cpu: 1,
   memoryMb: 1024,
   diskMb: 2048,
-  egress: "allowlist",
-  allowHosts: ["registry.npmjs.org"],
-  tier: "strict",
-  devHosts: [],
+  mode: "sandbox",
+  network: { kind: "allowlist", hosts: ["registry.npmjs.org"] },
 };
 
 describe("effectiveSandboxLimits", () => {
-  it("没有覆盖 → 部署默认（返回新对象，不共享 allowHosts 数组）", () => {
+  it("no override -> the deployment defaults (a new object, not sharing network.hosts)", () => {
     const got = effectiveSandboxLimits(DEPLOYMENT, undefined);
     expect(got).toEqual(DEPLOYMENT);
     expect(got).not.toBe(DEPLOYMENT);
-    expect(got.allowHosts).not.toBe(DEPLOYMENT.allowHosts);
+    expect(got.network).not.toBe(DEPLOYMENT.network);
+    expect(got.network.hosts).not.toBe(DEPLOYMENT.network.hosts);
   });
 
-  it("只覆盖 cpu / 只覆盖内存 / 两项都覆盖；未给的项用部署默认；disk 与出站不变", () => {
+  it("cpu only / memoryMb only / both; fields not given use the deployment's; disk and the network stay", () => {
     expect(effectiveSandboxLimits(DEPLOYMENT, { cpu: 4 })).toEqual({ ...DEPLOYMENT, cpu: 4 });
     expect(effectiveSandboxLimits(DEPLOYMENT, { memoryMb: 8192 })).toEqual({
       ...DEPLOYMENT,
@@ -77,7 +76,7 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
   redis = new Redis(rdc.url);
-}, 120_000);
+});
 
 afterAll(async () => {
   redis?.disconnect();
@@ -177,7 +176,8 @@ describe("创建沙箱时按组织覆盖 cpu / memoryMb", () => {
       cpu: 2.5,
       memoryMb: 3072,
       diskMb: config.sandbox.limits.diskMb,
-      egress: config.sandbox.limits.egress,
+      mode: "auto",
+      network: { kind: "open-public" },
     });
     expect(await limitsOf(s, await newDevice(other), other)).toMatchObject({
       cpu: config.sandbox.limits.cpu,
@@ -202,6 +202,25 @@ describe("创建沙箱时按组织覆盖 cpu / memoryMb", () => {
     expect(again).toEqual(first);
     expect((await fakeSandboxMeta(root, again.id))?.limits.cpu).toBe(config.sandbox.limits.cpu);
     expect(await limitsOf(s, await newDevice())).toMatchObject({ cpu: 4 });
+  });
+
+  it("the platform kill switch (egress none) forces an empty allowlist on read (R20)", async () => {
+    config = KernelConfigSchema.parse({
+      db: { url: pgc.url },
+      redis: { url: rdc.url },
+      masterKey: Buffer.alloc(32, 7).toString("base64"),
+      sandbox: { limits: { egress: "none" } },
+    });
+    expect(await limitsOf(service(), await newDevice())).toMatchObject({
+      network: { kind: "allowlist", hosts: [] },
+    });
+    // the org cannot widen it back
+    await sql`UPDATE capybara.orgs SET settings = ${JSON.stringify({
+      cloudNetwork: { mode: "open", allowHosts: ["a.com"] },
+    })}::jsonb WHERE id = ${orgId}`.execute(raw);
+    expect(await limitsOf(service(), await newDevice())).toMatchObject({
+      network: { kind: "allowlist", hosts: [] },
+    });
   });
 });
 

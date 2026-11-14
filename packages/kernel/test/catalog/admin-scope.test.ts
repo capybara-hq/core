@@ -27,7 +27,7 @@ beforeAll(async () => {
   env = await startOrgEnv();
   orgB = await createOrg(env.root, "Scope B");
   await enableConnectorExtensions(env.k, orgB);
-}, 240_000);
+});
 
 afterAll(async () => {
   await env?.stop();
@@ -134,7 +134,7 @@ async function agentUsingSkill(orgId: string, itemId: string, name: string): Pro
   return agentId;
 }
 
-describe("plugin scope", { timeout: 90_000 }, () => {
+describe("plugin scope", () => {
   it("the item view counts the latest version's components and names its format (list and detail)", async () => {
     const itemId = await importSkill(env);
     const counts = { extension: 0, skills: 1, connectorTemplates: 0, agentTemplates: 0 };
@@ -322,7 +322,7 @@ describe("plugin scope", { timeout: 90_000 }, () => {
   });
 });
 
-describe("disable", { timeout: 90_000 }, () => {
+describe("disable", () => {
   it("disabled: true needs the preview's hash; after the sync no org has it; re-enabling reinstalls", async () => {
     const itemId = await importSkill(env);
     const on = await env.boss({

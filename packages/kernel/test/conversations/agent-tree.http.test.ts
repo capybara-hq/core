@@ -105,7 +105,7 @@ beforeAll(async () => {
       },
     ),
   );
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -303,7 +303,7 @@ describe("GET /conversations/:id/agent-tree", () => {
         Date.parse(n.startedAt as string),
       );
     }
-  }, 90_000);
+  });
 
   it("a child id is 404", async () => {
     const { l1, l2 } = await tree();
@@ -312,7 +312,7 @@ describe("GET /conversations/:id/agent-tree", () => {
       expect(r.statusCode).toBe(404);
       expect(r.json()).toMatchObject({ error: { code: "conversation.not_found" } });
     }
-  }, 90_000);
+  });
 
   it("another account's conversation is 404", async () => {
     const { conv, l1 } = await tree();
@@ -322,7 +322,7 @@ describe("GET /conversations/:id/agent-tree", () => {
     expect(r.body).not.toContain(l1);
     const unknown = await getTree(owner, "00000000-0000-4000-8000-000000000000");
     expect(unknown.statusCode).toBe(404);
-  }, 90_000);
+  });
 });
 
 describe("GET /conversations/:id/agent-tree edge cases", () => {
@@ -347,7 +347,7 @@ describe("GET /conversations/:id/agent-tree edge cases", () => {
       FROM capybara.conversation_events WHERE conversation_id = ${l2}
     `.execute(db);
     expect((await leafOf()).tokens).toBe(before.tokens + 12);
-  }, 90_000);
+  });
 
   it("another org's id, a deleted root and a root whose agent the viewer cannot see are 404", async () => {
     const { conv } = await tree();
@@ -376,7 +376,7 @@ describe("GET /conversations/:id/agent-tree edge cases", () => {
     const del = await owner({ method: "DELETE", url: `${base()}/${conv}` });
     expect(del.statusCode, del.body).toBe(204);
     notFound(await getTree(owner, conv));
-  }, 90_000);
+  });
 });
 
 describe("subagent_progress", () => {
@@ -408,5 +408,5 @@ describe("subagent_progress", () => {
     } finally {
       s.close();
     }
-  }, 90_000);
+  });
 });

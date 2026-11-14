@@ -153,7 +153,7 @@ describe("M6 第一段双副本验收（轨迹、评测集、单步 / 整轮回�
       const r = await at(u, i, "POST", "/api/v1/auth/login", { login: u, password: PW });
       expect(r.status, JSON.stringify(r.json)).toBe(200);
     }
-  }, 300_000);
+  });
 
   afterAll(async () => {
     await h?.stop();
@@ -161,7 +161,7 @@ describe("M6 第一段双副本验收（轨迹、评测集、单步 / 整轮回�
     redis?.disconnect();
     await Promise.all([pgc?.stop(), rdc?.stop()]);
     if (gateDir) await rm(gateDir, { recursive: true, force: true });
-  }, 120_000);
+  });
 
   it("两轮对话 → 轨迹 → 评测集 → 单步回放杀副本 → 整轮越限 → 标注", async () => {
     // ---- 组织、成员、插件、共享 agent ----
@@ -547,5 +547,5 @@ describe("M6 第一段双副本验收（轨迹、评测集、单步 / 整轮回�
       .where("status", "in", ["queued", "running"])
       .execute();
     expect(active).toEqual([]);
-  }, 300_000);
+  });
 });

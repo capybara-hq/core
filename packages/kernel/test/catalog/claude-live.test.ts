@@ -33,7 +33,7 @@ const LIVE = process.env.CAPYBARA_TEST_CLAUDE_SUPERPOWERS === "1";
 const PROXY = process.env.CAPYBARA_TEST_HTTPS_PROXY;
 const REPO = "https://github.com/obra/superpowers.git";
 
-describe.skipIf(!LIVE)("live: obra/superpowers from GitHub", { timeout: 300_000 }, () => {
+describe.skipIf(!LIVE)("live: obra/superpowers from GitHub", () => {
   const OBJECT_STORE = fakeExtensionEntry("fake-object-store");
   let pgc: TestContainer;
   let rd: TestContainer;
@@ -76,7 +76,7 @@ describe.skipIf(!LIVE)("live: obra/superpowers from GitHub", { timeout: 300_000 
       superAdmin: true,
     });
     admin = await session(k, "root");
-  }, 240_000);
+  });
 
   afterAll(async () => {
     await k?.close();

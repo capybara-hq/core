@@ -85,13 +85,13 @@ beforeAll(async () => {
     ('pt-org', 1, ${JSON.stringify(template)}::jsonb),
     ('pt-plugin', 1, ${JSON.stringify(template)}::jsonb)`.execute(db);
   await migrate(pg.url, { schema: "capybara", dir: copyMigrations((f) => f <= FILE) });
-}, 120_000);
+});
 
 afterAll(async () => {
   await db?.destroy();
   await pg?.stop();
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
-}, 120_000);
+});
 
 const expectMigrated = async () => {
   expect(await definitionOf("ag1", 1)).toEqual({ ...base, disabledSkills: [] });

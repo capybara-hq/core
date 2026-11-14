@@ -122,7 +122,7 @@ beforeAll(async () => {
   });
   expect(ag.statusCode, ag.body).toBe(201);
   askerId = (ag.json() as { agent: { id: string } }).agent.id;
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -172,7 +172,7 @@ describe("a queued run stopped in PG", () => {
     const t = await types(conv);
     expect(t).toContain("run_aborted");
     expect(t).not.toContain("run_started");
-  }, 30_000);
+  });
 
   it("a person's stop of a queued run ends it in PG", async () => {
     const conv = await createConv(req, orgId, agentId);
@@ -190,7 +190,7 @@ describe("a queued run stopped in PG", () => {
     await waitForRunJobDone(db, runQueue, runId, 15_000);
     expect((await runsOf(db, conv)).find((r) => r.id === runId)?.status).toBe("aborted");
     expect(await types(conv)).not.toContain("run_started");
-  }, 30_000);
+  });
 
   it("the reverse order: a worker that holds the conversation keeps the run", async () => {
     const conv = await createConv(req, orgId, agentId);
@@ -208,7 +208,7 @@ describe("a queued run stopped in PG", () => {
     const t = await types(conv);
     expect(t).toContain("run_started");
     expect(t).not.toContain("run_aborted");
-  }, 30_000);
+  });
 });
 
 describe("the running update never overwrites a terminal status", () => {
@@ -225,7 +225,7 @@ describe("the running update never overwrites a terminal status", () => {
     await waitForRunJobDone(db, runQueue, runId, 15_000);
     expect((await runsOf(db, conv)).find((r) => r.id === runId)?.status).toBe("aborted");
     expect(await types(conv)).not.toContain("assistant_message");
-  }, 30_000);
+  });
 });
 
 describe("a run resumed from waiting back to queued is stopped in PG too", () => {
@@ -290,7 +290,7 @@ describe("a run resumed from waiting back to queued is stopped in PG too", () =>
     await deliverResume(runId);
     expect(await runStatus(runId)).toBe("aborted");
     expect(await afterAbort(conv, runId)).toEqual([]);
-  }, 60_000);
+  });
 
   it("a resume job that read it as queued before the stop appends no catalog or run context", async () => {
     const conv = await createConv(req, orgId, askerId);
@@ -320,7 +320,7 @@ describe("a run resumed from waiting back to queued is stopped in PG too", () =>
       catalog.mockRestore();
       context.mockRestore();
     }
-  }, 60_000);
+  });
 
   it("a stop that saw the lock free and ends the run after the worker took it: nothing is recorded after run_aborted", async () => {
     const conv = await createConv(req, orgId, askerId);
@@ -360,7 +360,7 @@ describe("a run resumed from waiting back to queued is stopped in PG too", () =>
       context.mockRestore();
       await db.updateTable("orgs").set({ name }).where("id", "=", orgId).execute();
     }
-  }, 60_000);
+  });
 
   it("a stop after the catalog record, before the run context append: no run context after run_aborted", async () => {
     const conv = await createConv(req, orgId, askerId);
@@ -405,7 +405,7 @@ describe("a run resumed from waiting back to queued is stopped in PG too", () =>
       plugin.mockRestore();
       await db.updateTable("orgs").set({ name }).where("id", "=", orgId).execute();
     }
-  }, 60_000);
+  });
 
   it("a stop while the context providers are asked: no plugin_context after run_aborted", async () => {
     const conv = await createConv(req, orgId, askerId);
@@ -450,7 +450,7 @@ describe("a run resumed from waiting back to queued is stopped in PG too", () =>
       found.mockRestore();
       plugin.mockRestore();
     }
-  }, 60_000);
+  });
 
   it("offboarding's run-stop ends it in PG and the held resume job does not run it", async () => {
     const login = `m-${Date.now()}`;
@@ -470,5 +470,5 @@ describe("a run resumed from waiting back to queued is stopped in PG too", () =>
     await deliverResume(runId);
     expect(await runStatus(runId)).toBe("aborted");
     expect(await afterAbort(conv, runId)).toEqual([]);
-  }, 60_000);
+  });
 });

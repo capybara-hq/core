@@ -113,14 +113,19 @@ describe("file preview read grant", () => {
 
   it("expires when the extension is unloaded mid-call", async () => {
     let late: Promise<unknown> | undefined;
+    let started!: () => void;
+    const rendering = new Promise<void>((r) => {
+      started = r;
+    });
     const { call, inflight } = setup(async ({ read }) => {
+      started();
       await sleep(80);
       late = read();
       await late.catch(() => {});
       return { blocks: [] };
     }, 5_000);
     const pending = call();
-    await sleep(10);
+    await rendering;
     inflight.abort();
     await expect(pending).rejects.toBeTruthy();
     await expect.poll(() => late !== undefined, { timeout: 2000 }).toBe(true);

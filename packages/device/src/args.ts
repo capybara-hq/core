@@ -1,4 +1,5 @@
 import { type ParseArgsOptionsConfig, parseArgs } from "node:util";
+import type { SandboxMode } from "./state.js";
 
 export type DeviceMode = "os" | "docker";
 
@@ -22,7 +23,12 @@ export type Command =
       action: "set" | "add" | "remove";
       key: string;
       value: string;
-      /** `--yes`: confirms `set tier open` or `set isolation none` without asking. */
+    }
+  | {
+      command: "mode";
+      /** Absent: print the current mode. */
+      mode?: SandboxMode;
+      /** `--yes`: confirms `mode auto` without asking. */
       yes?: true;
     }
   | { command: "service"; action: "install" | "uninstall" | "status" }
@@ -38,19 +44,17 @@ export const USAGE = `Usage:
   capybara-device drain [--wait] [--timeout <seconds>]
                                   Finish running commands, accept no new ones, then stop;
                                   --wait returns once it has stopped (default limit 600 s)
+  capybara-device mode [auto|sandbox] [--yes]
+                                  Show or choose how commands run: auto (as you on this
+                                  machine, every command reviewed) or sandbox (applies at
+                                  the next command; auto needs --yes or a y at the prompt)
   capybara-device policy [show]   Show the local policy
   capybara-device policy set <key> <value>
-                                  Replace one field (applies at the next command)
-  capybara-device policy set tier strict|dev|open|default [--yes]
-                                  Choose the sandbox tier (default: follow the organization)
-  capybara-device policy set isolation sandbox|none [--yes]
-                                  none: at tier open, run commands without a sandbox (OS mode)
-  capybara-device policy set localhost auto|allow
-                                  allow: reach localhost at tier dev or open despite a local proxy
-  capybara-device policy set remoteGrants owner|off
-                                  Let the device owner widen the network from the web, or not
+                                  Replace one field (cpu, memoryMb, allowCredentials)
   capybara-device policy add|remove allowedDomains <host>
-                                  Allow or stop allowing a domain (applies at the next command)
+                                  Allow or stop allowing a domain in sandbox mode
+  capybara-device policy add|remove allowCredentials <name>
+                                  Allow or stop allowing a credential in sandbox mode
   capybara-device service install|uninstall
                                   Run at login as a user service
   capybara-device service status  Report whether the login service is loaded and running`;
@@ -124,13 +128,10 @@ export function parseCommandLine(argv: string[]): Command {
       return { command: "drain", wait: true, timeoutSeconds: seconds };
     }
     case "policy": {
-      const { values, positionals } = parse(rest, { yes: { type: "boolean", short: "y" } });
-      const yes = values.yes === true;
+      const { positionals } = parse(rest, {});
       const [action, key, value, ...extra] = positionals;
-      if (
-        !yes &&
-        (action === undefined || (action === "show" && key === undefined && extra.length === 0))
-      ) {
+      if (action === undefined) return { command: "policy", action: "show" };
+      if (action === "show" && key === undefined && extra.length === 0) {
         return { command: "policy", action: "show" };
       }
       if (
@@ -139,11 +140,28 @@ export function parseCommandLine(argv: string[]): Command {
         value !== undefined &&
         extra.length === 0
       ) {
-        return { command: "policy", action, key, value, ...(yes && { yes: true as const }) };
+        return { command: "policy", action, key, value };
       }
-      throw new UsageError(
-        "usage: policy [show | set <key> <value> [--yes] | add|remove <key> <value>]",
-      );
+      throw new UsageError("usage: policy [show | set <key> <value> | add|remove <key> <value>]");
+    }
+    case "mode": {
+      const { values, positionals } = parse(rest, { yes: { type: "boolean", short: "y" } });
+      const [which, ...extra] = positionals;
+      if (extra.length > 0) {
+        throw new UsageError("usage: mode [auto|sandbox] [--yes]");
+      }
+      if (which !== undefined && which !== "auto" && which !== "sandbox") {
+        throw new UsageError("mode must be auto or sandbox");
+      }
+      const yes = values.yes === true;
+      if (yes && which === undefined) {
+        throw new UsageError("--yes needs a mode: mode auto|sandbox");
+      }
+      return {
+        command: "mode",
+        ...(which !== undefined && { mode: which }),
+        ...(yes && which !== undefined && { yes: true as const }),
+      };
     }
     case "service": {
       const { positionals } = parse(rest, {});

@@ -105,7 +105,7 @@ beforeAll(async () => {
   expect(ag.status, JSON.stringify(ag.json)).toBe(201);
   agentId = (ag.json.agent as { id: string }).id;
   itemId = await seedFakeImGuideItem(db);
-}, 120_000);
+});
 
 afterAll(async () => {
   im?.holdChecks(null);
@@ -148,7 +148,7 @@ function hold(): () => void {
   };
 }
 
-describe("setup checks across replicas", { timeout: 60_000 }, () => {
+describe("setup checks across replicas", () => {
   it("single flight: two concurrent runs on replicas 0 and 1 make one third-party call", async () => {
     const id = await connection(1);
     const open = hold();

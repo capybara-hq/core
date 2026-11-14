@@ -66,7 +66,7 @@ beforeAll(async () => {
     ),
   );
   runQueue = new Queue(RUN_QUEUE_NAME, { connection: new Redis(rd.url) });
-}, 180_000);
+});
 afterAll(async () => {
   await k?.close();
   await runQueue?.close();
@@ -111,7 +111,7 @@ const ev = <T extends ConversationEvent["type"]>(events: ConversationEvent[], ty
 const compact = (conv: string, orgId: string, req: Req = owner) =>
   req({ method: "POST", url: compactUrl(orgId, conv), payload: {} });
 
-describe("manual compaction", { timeout: 90_000 }, () => {
+describe("manual compaction", () => {
   it("compacts an idle conversation in a compact run: one summary and its usage, step 0, no model step", async () => {
     const { orgId, conv } = await setup();
     await seedTurns(orgId, conv, 6);

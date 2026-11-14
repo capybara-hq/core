@@ -120,7 +120,7 @@ beforeAll(async () => {
   });
   admin = await session(k, "root");
   orgId = await createOrg(admin);
-}, 240_000);
+});
 
 afterAll(async () => {
   capture.restore();
@@ -145,7 +145,7 @@ const item = (r: TranslationReport, code: string, name: string) =>
 type ToolResult = Extract<ConversationEvent, { type: "tool_result" }>;
 type ModelCall = Extract<ConversationEvent, { type: "model_call" }>;
 
-describe("phase B acceptance: superpowers from a git marketplace", { timeout: 120_000 }, () => {
+describe("phase B acceptance: superpowers from a git marketplace", () => {
   it("adding the superpowers repo as a git marketplace and importing superpowers; the report lists hooks, commands and the other ignored parts", async () => {
     const files = loadFixtureAsStrings("superpowers");
     await srv.commit("superpowers", files);

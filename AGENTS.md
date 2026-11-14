@@ -86,6 +86,10 @@ Each line is the rule you must not miss; the skill has the rest.
   file, write new comments in English and translate the comments and test titles you edit (no bulk
   translation). Model-facing text is always English; UI text goes through i18n (zh and en); the zh UI
   says 平台 / 超级管理员 / 智能体, never 企业 or the Latin word `agent` (`pnpm check:i18n`).
+- **Tests:** unit tests need no database or app; integration tests use one app per file;
+  dual-replica tests live in the `container` project; no fixed sleeps, no per-test timeouts; a new
+  unit or container test joins its checked-in list in the same change (integration is the default).
+  [test-portfolio](docs/superpowers/specs/2026-11-14-test-portfolio-design.md)
 - **Migrations:** plain SQL `NNNN_<snake_desc>.sql`, `IF [NOT] EXISTS`, applied files are immutable,
   kernel schema `capybara`, extension schema `plugin_<name>`.
   [writing-migrations](.agents/skills/writing-migrations/SKILL.md)
@@ -147,9 +151,11 @@ Each line is the rule you must not miss; the skill has the rest.
   purposes and `ctx.models`); calls made for an org carry `{ orgId, config }`. Extensions embed
   through `ctx.models.embed` (needs `permissions.models`, an org where the extension is enabled;
   recorded in `model_usage`, delivered by `usage.report` with purpose `embedding`). [writing-model-providers](.agents/skills/writing-model-providers/SKILL.md)
-- **Sandboxes:** work happens in devices (one instance + a file system kept until the device
-  is deleted); abort must kill the command; locking, suspension and destruction are the kernel's;
-  never publish the socket proxy on a host address.
+- **Sandboxes:** work happens in devices (one instance + a file system kept until the device is
+  deleted) in one of two modes (auto: the environment's own capability; sandbox: the OS sandbox
+  and the allowlist network); every command and every write outside the workspace passes the
+  command review, a kernel step that fails closed; abort must kill the command; locking,
+  suspension and destruction are the kernel's; never publish the socket proxy on a host address.
   [writing-sandbox-providers](.agents/skills/writing-sandbox-providers/SKILL.md)
 - **Object storage:** key prefixes are added by the kernel; presigned upload size enforced by the
   store. [writing-object-store-providers](.agents/skills/writing-object-store-providers/SKILL.md)

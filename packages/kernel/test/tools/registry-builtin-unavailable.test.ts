@@ -1,13 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { KernelConfigSchema } from "../../src/config/schema.js";
-import { createLogger } from "../../src/log.js";
-import {
-  type BuiltinCallContext,
-  type BuiltinTool,
-  ToolRegistry,
-} from "../../src/tools/registry.js";
+import { type BuiltinTool, ToolRegistry } from "../../src/tools/registry.js";
 import { noRowsDb } from "../helpers/disabled-tools.js";
-import { pipelineFor } from "../helpers/tools.js";
 
 const ORG_A = "org-a";
 const ORG_B = "org-b";
@@ -63,52 +56,5 @@ describe("BuiltinTool.unavailable", () => {
     expect((await registry.forAgent(ORG_A, { ...def, source: "web" })).hidden).toEqual([
       { ref: "CurrentTime", reason: "nope" },
     ]);
-  });
-});
-
-describe("BuiltinCallContext.parentRunId", () => {
-  const exec = async (parent: { runId: string } | undefined): Promise<BuiltinCallContext> => {
-    let got: BuiltinCallContext | undefined;
-    const handler = async (_input: unknown, ctx: BuiltinCallContext) => {
-      got = ctx;
-      return { content: [{ type: "text" as const, text: "ok" }] };
-    };
-    const pipeline = pipelineFor({
-      db: {} as never,
-      registry: { handler: () => handler } as never,
-      config: () =>
-        KernelConfigSchema.parse({
-          db: { url: "postgres://x" },
-          redis: { url: "redis://x" },
-          masterKey: Buffer.alloc(32, 1).toString("base64"),
-        }),
-      log: createLogger("error", { write: () => {} }),
-    } as never);
-    await pipeline.execute(
-      {
-        key: "Probe",
-        source: { kind: "builtin", name: "Probe" },
-      } as never,
-      {},
-      {
-        orgId: ORG_A,
-        conversationId: "c1",
-        runId: "child-run",
-        step: 0,
-        agentId: "ag",
-        accountId: "acc",
-        signal: new AbortController().signal,
-        ...(parent !== undefined && {
-          parent: { conversationId: "parent-conv", runId: parent.runId, callId: "pc" },
-        }),
-      } as never,
-      "call-1",
-    );
-    return got as BuiltinCallContext;
-  };
-
-  it("is the parent run for a sub-agent's call and absent otherwise", async () => {
-    expect((await exec({ runId: "parent-run" })).parentRunId).toBe("parent-run");
-    expect((await exec(undefined)).parentRunId).toBeUndefined();
   });
 });

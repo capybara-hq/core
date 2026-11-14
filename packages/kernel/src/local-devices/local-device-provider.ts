@@ -1,13 +1,10 @@
-import {
-  type ExecResult,
-  type FileSystemHandle,
-  minTier,
-  type SandboxHandle,
-  type SandboxLimits,
-  type SandboxProvider,
-  type SandboxRoots,
-  ToolError,
-  UNSANDBOXED_NOT_ALLOWED_MESSAGE,
+import type {
+  ExecResult,
+  FileSystemHandle,
+  SandboxHandle,
+  SandboxLimits,
+  SandboxProvider,
+  SandboxRoots,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { ApiError } from "../errors.js";
@@ -15,7 +12,6 @@ import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { deviceNotFound, SandboxService } from "../sandbox/sandbox.service.js";
-import { TIER_OPEN_GRANT_KEY, UNATTENDED_UNSANDBOXED_ERROR } from "../schedules/unattended.js";
 import { grantsWithin, NetworkGrants, relayer } from "./network-grants.js";
 import { deviceOffline, LocalDeviceRelay } from "./relay.js";
 import { DeviceTargets, sameRoots } from "./targets.js";
@@ -39,21 +35,12 @@ export const maxReadBytes = (maxFrameBytes: number): number =>
 const NAME_PREFIX = "cap-device-";
 
 /**
- * The tool error of a device that runs commands without a sandbox the org does not allow (§4.3);
- * also what a machine answers when it refuses such a command itself.
+ * The refusal of a command on a machine whose local policy is auto mode while the organization (or
+ * the platform) allows only sandbox mode (auto mode spec §4.3): re-checked at every exec, so a
+ * machine switched locally is refused at the next command.
  */
-export const UNSANDBOXED_NOT_ALLOWED_ERROR = UNSANDBOXED_NOT_ALLOWED_MESSAGE;
-
-/**
- * The relay's error for a machine that refused a command with {@link UNSANDBOXED_NOT_ALLOWED_MESSAGE}
- * (a `policy` error: the relay prefixes the machine's message, `relay.ts`).
- */
-const MACHINE_UNSANDBOXED_REFUSAL = `Refused by the machine's local policy: ${UNSANDBOXED_NOT_ALLOWED_MESSAGE}`;
-
-/** The unattended run of an exec without the task's `tier:open` grant (spec §11.4). */
-interface UnattendedCap {
-  taskRunId: string;
-}
+export const AUTO_MODE_NOT_ALLOWED_TEXT =
+  "This device's machine runs in auto mode, which your organization does not allow. Run `capybara-device mode sandbox` on that machine to switch it to sandbox mode.";
 
 /**
  * The handle of an instance on a machine: the device id (ruling R1: the relay is keyed by
@@ -100,10 +87,7 @@ export class LocalDeviceProvider implements SandboxProvider {
     private readonly sandbox: Pick<SandboxService, "devicePolicy" | "deviceLimits">,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     @Inject(NetworkGrants)
-    private readonly grants: Pick<
-      NetworkGrants,
-      "forExec" | "unattendedTier" | "unsandboxed" | "recordMissing"
-    >,
+    private readonly grants: Pick<NetworkGrants, "forExec" | "reportedMode">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
   ) {}
 
@@ -181,25 +165,20 @@ export class LocalDeviceProvider implements SandboxProvider {
   /**
    * Runs the command on the machine with the org's limits now (ruling R27) and, for a command of a
    * run, the hosts the kernel allows that run on this device beyond the local policy (network
-   * ask-to-allow spec §6.3; only those the org's limits admit, sent only when there are some). The device's report of refused hosts is re-layered
-   * against the limits this exec carried: the kernel never takes the device's word that the org
-   * allows a host (spec §4.1).
+   * ask-to-allow spec §6.3; only those the org's limits admit, sent only when there are some). The
+   * device's report of refused hosts is re-layered against the limits this exec carried: the
+   * kernel never takes the device's word that the org allows a host (auto mode spec §4.2).
    *
-   * The limits are the device's **ceiling** (sandbox dev tiers spec §4.2): `limits.tier` is the
-   * highest tier the org allows, its network that tier's, `defaultTier` the org's default (the
-   * device runs at `min(local tier ?? defaultTier, tier)`) and `devHosts` the dev hosts. A run of
-   * a scheduled task without a person and without the task's `tier:open` grant is capped at `dev`
-   * (spec §11.4). Before relaying, a machine that last reported running commands without a sandbox
-   * is refused when the org does not allow it, or for such a run (`device.unsandboxed_not_allowed`,
-   * spec §4.3). The kernel knows the local policy only from the last hello or policy op, so the
-   * same decision also travels in `limits.allowUnsandboxed` and the machine enforces it itself;
-   * its refusal ({@link UNSANDBOXED_NOT_ALLOWED_MESSAGE}) becomes the same error.
+   * The exec args carry `mode: allowedMode` (the machine cuts its own choice to it), the
+   * sandbox-mode allowlist and the run's grants. A machine whose local policy is auto mode while
+   * the organization allows only sandbox mode is refused at every exec
+   * (`device.auto_mode_not_allowed`), before anything is relayed to it.
    */
   async exec(h: SandboxHandle, args: Parameters<SandboxProvider["exec"]>[1]): Promise<ExecResult> {
     const { signal, ...rest } = args;
     signal.throwIfAborted();
     const runId = rest.actor?.runId;
-    const { orgId, limits, cap } = await this.currentLimits(h.id, runId);
+    const { orgId, limits } = await this.currentLimits(h.id);
     // the run's grants for this device, cut to what the org allows now
     const grants =
       runId !== undefined
@@ -219,14 +198,6 @@ export class LocalDeviceProvider implements SandboxProvider {
       // queued a cancel, which kills the command on the machine); the output stays there
       if (signal.aborted && e === signal.reason) {
         return { exitCode: null, stdout: "", stderr: "", truncated: false, timedOut: false };
-      }
-      // the machine refused to run it unsandboxed (its local policy changed since it reported)
-      if (e instanceof ToolError && e.message === MACHINE_UNSANDBOXED_REFUSAL) {
-        this.log.warn("the machine refused a command without a sandbox", {
-          deviceId: h.id,
-          reason: cap !== undefined ? "unattended" : "not_allowed",
-        });
-        throw await this.unsandboxedRefusal(h.id, cap);
       }
       throw e;
     }
@@ -277,65 +248,25 @@ export class LocalDeviceProvider implements SandboxProvider {
   }
 
   /**
-   * The device's org and the limits of one exec now (ruling R27): the ceiling, capped at `dev` for
-   * an unattended run without the `tier:open` grant (`cap`, set only when the platform and the org
-   * would otherwise allow an unsandboxed command); `allowUnsandboxed` whether this command may run
-   * without a sandbox. A deleted device is not found. Refuses an unsandboxed machine the org does
-   * not allow (or such a run), see {@link exec}.
+   * The device's org and the limits of one exec now (ruling R27): the effective policy's
+   * `allowedMode` and the sandbox-mode allowlist. A deleted device is not found. A machine whose
+   * local policy is auto mode while the organization allows only sandbox mode is refused here, at
+   * every exec, so a machine switched locally is not used until it is switched back.
    */
-  private async currentLimits(
-    deviceId: string,
-    runId: string | undefined,
-  ): Promise<{ orgId: string; limits: SandboxLimits; cap: UnattendedCap | undefined }> {
+  private async currentLimits(deviceId: string): Promise<{ orgId: string; limits: SandboxLimits }> {
     const orgId = await this.targets.orgOf(deviceId);
     if (orgId === null) throw deviceNotFound();
-    const [policy, unattended, unsandboxed] = await Promise.all([
+    const [policy, reported] = await Promise.all([
       this.sandbox.devicePolicy({ orgId, deviceId }),
-      runId === undefined ? null : this.grants.unattendedTier({ runId, deviceId }),
-      this.grants.unsandboxed(deviceId),
+      this.grants.reportedMode(deviceId),
     ]);
-    const capped = unattended !== null && !unattended.openGranted;
-    // what an unsandboxed refusal reports: the run's missing grant only when it alone refused
-    const cap = capped && policy.allowUnsandboxed ? { taskRunId: unattended.taskRunId } : undefined;
-    if (unsandboxed && (!policy.allowUnsandboxed || capped)) {
-      this.log.warn("command refused on a device that runs without a sandbox", {
-        deviceId,
-        reason: policy.allowUnsandboxed ? "unattended" : "not_allowed",
-      });
-      throw await this.unsandboxedRefusal(deviceId, cap);
+    if (policy.allowedMode === "sandbox" && reported === "auto") {
+      this.log.warn("command refused on a machine that reports auto mode", { deviceId });
+      throw new ApiError("device.auto_mode_not_allowed", AUTO_MODE_NOT_ALLOWED_TEXT);
     }
-    const tier = capped ? minTier(policy.ceiling, "dev") : policy.ceiling;
-    const limits = await this.sandbox.deviceLimits({ orgId, deviceId }, { policy, tier });
     return {
       orgId,
-      limits: {
-        ...limits,
-        defaultTier: minTier(policy.defaultTier, tier),
-        // the platform and the org allow it (which needs an open ceiling) and no cap applies
-        allowUnsandboxed: policy.allowUnsandboxed && !capped,
-      },
-      cap,
+      limits: await this.sandbox.deviceLimits({ orgId, deviceId }, { policy, source: "local" }),
     };
-  }
-
-  /**
-   * The `device.unsandboxed_not_allowed` error (spec §4.3); for an unattended run refused only for
-   * its missing `tier:open` grant, the run's text, with the missing grant recorded on the task run.
-   */
-  private async unsandboxedRefusal(
-    deviceId: string,
-    cap: UnattendedCap | undefined,
-  ): Promise<ApiError> {
-    if (cap === undefined) {
-      return new ApiError("device.unsandboxed_not_allowed", UNSANDBOXED_NOT_ALLOWED_ERROR);
-    }
-    await this.grants
-      .recordMissing(cap.taskRunId, TIER_OPEN_GRANT_KEY)
-      .catch((err: unknown) =>
-        this.log.warn("cannot record a missing task grant", { deviceId, err }),
-      );
-    return new ApiError("device.unsandboxed_not_allowed", UNATTENDED_UNSANDBOXED_ERROR, [
-      { reason: "unattended" },
-    ]);
   }
 }
