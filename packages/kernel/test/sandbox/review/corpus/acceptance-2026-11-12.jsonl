@@ -25,7 +25,7 @@
 {"command":"git log --oneline -10","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.git"]}
 {"command":"git diff","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.git"]}
 {"command":"git branch --show-current","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.git"]}
-{"command":"git checkout -b feat/auto","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.git"]}
+{"command":"git checkout -b feat/auto","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.git","allow.workspace-write"]}
 {"command":"git add -A","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.git"]}
 {"command":"git commit -m \"test: cover review rules\"","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.git"]}
 {"command":"git push -u origin feat/auto","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.git"]}

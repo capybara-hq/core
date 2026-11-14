@@ -108,9 +108,9 @@
 {"command":"sudo bash -c 'rm -rf /'","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"deny","rules":["ask.outside-write","ask.sudo","deny.root-destroy"]}
 {"command":"unzip package.zip -d /etc","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"ask","rules":["ask.outside-write"]}
 {"command":"tar -xzf package.tar.gz -C /etc","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"ask","rules":["ask.outside-write"]}
-{"command":"git clean -fdx","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.git"]}
-{"command":"git reset --hard HEAD","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.git"]}
-{"command":"git rm -rf node_modules","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.git"]}
+{"command":"git clean -fdx","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.git","allow.workspace-write"]}
+{"command":"git reset --hard HEAD","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.git","allow.workspace-write"]}
+{"command":"git rm -rf node_modules","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.git","allow.workspace-write"]}
 {"command":"find . -name '*.ts' -delete","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"unsure","rules":["unsure.uncovered"]}
 {"command":"find . -name '*.ts' -exec rm {} ;","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"unsure","rules":["unsure.uncovered"]}
 {"command":"xargs rm < files.txt","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"unsure","rules":["unsure.unparsed"]}

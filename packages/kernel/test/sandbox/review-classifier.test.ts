@@ -567,6 +567,52 @@ describe("CommandReviewService", () => {
     expect(await reviewUsage()).toHaveLength(1);
   });
 
+  it("a file a sub-agent wrote counts for every agent of the tree", async () => {
+    const child = randomUUID();
+    await db
+      .insertInto("conversations")
+      .values({
+        id: child,
+        org_id: orgId,
+        agent_id: agentId,
+        account_id: ownerId,
+        kind: "subagent",
+        source: "subagent",
+        parent_conversation_id: conv,
+        subagent_depth: 1,
+      })
+      .execute();
+    await k.app.get(EventLog).append(child, [
+      {
+        type: "assistant_message",
+        payload: {
+          step: 1,
+          stopReason: "tool_use",
+          content: [
+            {
+              type: "tool_call",
+              id: "w-child",
+              name: "Write",
+              input: { file_path: `${WORKSPACE}/child.sh`, content: "echo hi" },
+            },
+          ],
+        },
+      },
+    ]);
+    // the root's own call and the sub-agent's call both see the sub-agent's write
+    for (const over of [
+      {},
+      {
+        conversationId: child,
+        conversationKind: "subagent" as const,
+        parent: { conversationId: conv, runId, callId: "agent-call" },
+      },
+    ]) {
+      const verdict = await call({ ...over, input: { command: "bash child.sh" } });
+      expect(verdict.decision).not.toBe("allow");
+    }
+  });
+
   it("a sub-agent's conversation resolves to the root: its task text is never seen", async () => {
     answer("allow", "Fine.");
     const child = randomUUID();

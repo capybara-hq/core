@@ -27,6 +27,8 @@ const NEVER_SESSION_CLASSES: ReadonlySet<string> = new Set([
   "ask.credential-print",
   "ask.secret-file",
   "ask.credential-link",
+  "ask.ssh",
+  "ask.outside-link",
   "ask.dynamic-arg",
   "ask.sudo",
 ]);

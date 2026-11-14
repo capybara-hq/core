@@ -429,8 +429,8 @@
 {"command":"cat $(date).txt","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"ask","rules":["allow.read","ask.dynamic-arg"]}
 {"command":"head -c 100 $X","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"ask","rules":["ask.secret-file","ask.dynamic-arg"]}
 {"command":"git commit -m $MSG","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.git"]}
-{"command":"git checkout $BRANCH","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.git"]}
-{"command":"git checkout -b $NAME","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.git"]}
+{"command":"git checkout $BRANCH","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.git","allow.workspace-write"]}
+{"command":"git checkout -b $NAME","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.git","allow.workspace-write"]}
 {"command":"npm run $SCRIPT","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.dev"]}
 {"command":"grep $PATTERN file","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.read"]}
 {"command":"curl -H $AUTH https://example.com","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.network"]}

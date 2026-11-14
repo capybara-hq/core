@@ -939,7 +939,11 @@ function resolveFacts(facts: ReviewFacts): ResolvedFacts {
     workspace,
     cwd,
     home: homeOf(workspace),
-    written: new Set((facts.written ?? []).map(normalizePath)),
+    written: new Set(
+      (facts.written ?? []).map((p) =>
+        p.endsWith("/**") ? `${normalizePath(p.slice(0, -3))}/**` : normalizePath(p),
+      ),
+    ),
   };
 }
 
@@ -1691,6 +1695,8 @@ const INLINE_CODE_OPTIONS: Readonly<Record<string, readonly string[]>> = {
   node: ["-e", "--eval", "-p", "--print"],
   nodejs: ["-e", "--eval", "-p", "--print"],
   bun: ["-e", "--eval", "-p", "--print"],
+  tsx: ["-e", "--eval", "-p", "--print"],
+  "ts-node": ["-e", "--eval", "-p", "--print"],
   ruby: ["-e"],
   perl: ["-e", "-E"],
   php: ["-r"],
@@ -1699,8 +1705,8 @@ const INLINE_CODE_OPTIONS: Readonly<Record<string, readonly string[]>> = {
   julia: ["-e", "-E", "--eval"],
   elixir: ["-e", "--eval"],
   osascript: ["-e"],
-  tsx: ["-e", "--eval", "-p", "--print"],
-  "ts-node": ["-e", "--eval", "-p", "--print"],
+  swift: ["-e"],
+  scala: ["-e"],
 };
 
 /** Programs that run a script file named as their first operand (or read one from stdin). */
@@ -1712,54 +1718,245 @@ const SCRIPT_RUNNERS: ReadonlySet<string> = new Set([
   ...SHELL_PROGRAMS,
 ]);
 
-/** Options of a script runner that take the next word as their value (not the script). */
-const RUNNER_VALUE_OPTIONS: ReadonlySet<string> = new Set([
-  "-W",
-  "-X",
-  "-r",
-  "--require",
-  "--import",
-  "--loader",
-  "--experimental-loader",
-  "--env-file",
-  "--conditions",
-  "-C",
-  "--title",
-  "-I",
-]);
+/** The script-runner families whose option tables {@link RUNNER_OPTIONS} keys by. */
+function runnerFamily(program: string): string {
+  if (/^(python[0-9.]*|pypy3?)$/.test(program)) return "python";
+  if (["node", "nodejs", "bun", "tsx", "ts-node"].includes(program)) return "node";
+  if (SHELL_PROGRAMS.has(program)) return "shell";
+  return program;
+}
 
 /**
- * Package runners: they fetch a package and run it (`npx rimraf`). A package whose name is a
- * development program this table already allows (`npx tsc`, `pnpm dlx prettier`) stays a
- * development command; any other package is code the review cannot read.
+ * Per family: the options that take the next word as their value (so it is not the script), and
+ * the ones whose value is itself code the runner loads first (`node -r ./x.js`, `ruby -r`).
+ */
+const RUNNER_OPTIONS: Readonly<
+  Record<string, { value: readonly string[]; preload: readonly string[] }>
+> = {
+  python: { value: ["-W", "-X", "--check-hash-based-pycs"], preload: [] },
+  node: {
+    value: [
+      "-r",
+      "--require",
+      "--import",
+      "--loader",
+      "--experimental-loader",
+      "--env-file",
+      "--conditions",
+      "-C",
+      "--title",
+      "--tsconfig",
+      "-P",
+      "--project",
+      "-O",
+      "--compiler-options",
+      "--cwd",
+      "--config",
+      "--preload",
+    ],
+    preload: ["-r", "--require", "--import", "--loader", "--experimental-loader", "--preload"],
+  },
+  deno: {
+    value: [
+      "--config",
+      "-c",
+      "--import-map",
+      "--lock",
+      "--cert",
+      "--location",
+      "--seed",
+      "--env-file",
+    ],
+    preload: [],
+  },
+  shell: { value: ["-o", "+o", "-O", "+O", "--rcfile", "--init-file"], preload: [] },
+  ruby: { value: ["-r", "-I", "-C"], preload: ["-r"] },
+  perl: { value: ["-I", "-M"], preload: [] },
+  php: { value: ["-c", "-d", "-f"], preload: [] },
+  lua: { value: ["-l"], preload: [] },
+};
+
+const NO_OPTIONS: { value: readonly string[]; preload: readonly string[] } = {
+  value: [],
+  preload: [],
+};
+
+/** The subcommands of a script runner that run no script file (`tsx watch` runs the next one). */
+const RUNNER_SUBCOMMANDS: Readonly<Record<string, readonly string[]>> = {
+  tsx: ["watch"],
+};
+
+/**
+ * Packages a package runner may fetch and run as development tools without the review reading
+ * them: the development programs this table already allows, plus the usual locally installed
+ * project tools. Matched by exact bare name only (no scope, no `npm:` alias, no tag other than a
+ * version), so `npx @evil/tsc` or `npx tsc@npm:evil` is not this list.
+ */
+const RUNNER_TOOLS: ReadonlySet<string> = new Set([
+  "playwright",
+  "prisma",
+  "turbo",
+  "changeset",
+  "husky",
+  "lint-staged",
+  "tailwindcss",
+  "nx",
+  "wrangler",
+  "drizzle-kit",
+  "astro",
+  "storybook",
+  "rollup",
+  "webpack",
+  "esbuild",
+  "nodemon",
+  "concurrently",
+  "typescript",
+  "vite-node",
+]);
+
+/** Scoped packages matched exactly by {@link RUNNER_TOOLS}' rule. */
+const RUNNER_SCOPED_TOOLS: ReadonlySet<string> = new Set([
+  "@biomejs/biome",
+  "@playwright/test",
+  "@changesets/cli",
+]);
+
+/** Options of a package manager or runner that take the next word as their value. */
+const PM_VALUE_OPTIONS: ReadonlySet<string> = new Set([
+  "--dir",
+  "-C",
+  "--filter",
+  "-F",
+  "--workspace",
+  "-w",
+  "--prefix",
+  "--cwd",
+  "--registry",
+  "--userconfig",
+  "--reporter",
+  "--loglevel",
+  "--python",
+  "-p",
+  "--with",
+  "--from",
+  "--project",
+  "--directory",
+  "--env-file",
+  "--index-url",
+  "--extra-index-url",
+  "-n",
+  "--name",
+]);
+
+/** The first operand of `args` (skipping options and their values) and what follows it. */
+function subcommandOf(args: string[]): {
+  sub: string | undefined;
+  rest: string[];
+  options: string[];
+} {
+  const options: string[] = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const a = args[i] as string;
+    if (a === "--") return { sub: args[i + 1], rest: args.slice(i + 2), options };
+    if (a.startsWith("-")) {
+      options.push(a);
+      if (!a.includes("=") && PM_VALUE_OPTIONS.has(a)) {
+        options.push(args[i + 1] ?? "");
+        i += 1;
+      }
+      continue;
+    }
+    return { sub: a, rest: args.slice(i + 1), options };
+  }
+  return { sub: undefined, rest: [], options };
+}
+
+/**
+ * Package runners: they fetch a package and run it (`npx rimraf`, `pnpm dlx`, `uvx`, `deno x`).
+ * `name` is the package (null when an option chooses or relocates what is fetched, which the review
+ * cannot vouch for: `--package`, `--registry`, `--from`, `--with`), `rest` its arguments.
  */
 function runnerPackage(inv: Invocation): { name: string | null; rest: string[] } | undefined {
   const { program, args } = inv;
   let rest: string[] | null = null;
+  let options: string[] = [];
   if (["npx", "pnpx", "bunx", "uvx"].includes(program)) rest = args;
-  else if (["pnpm", "yarn"].includes(program) && args[0] === "dlx") rest = args.slice(1);
-  else if (program === "npm" && (args[0] === "exec" || args[0] === "x")) rest = args.slice(1);
-  else if (program === "bun" && args[0] === "x") rest = args.slice(1);
-  else if (program === "pipx" && args[0] === "run") rest = args.slice(1);
-  else if (program === "uv" && args[0] === "tool" && args[1] === "run") rest = args.slice(2);
-  if (rest === null) return undefined;
-  for (let i = 0; i < rest.length; i += 1) {
-    const a = rest[i] as string;
-    if (a === "--") return { name: rest[i + 1] ?? null, rest: rest.slice(i + 2) };
-    if (["-p", "--package", "--from", "--with", "-c", "--call"].includes(a)) {
-      return { name: null, rest: [] };
-    }
-    if (a.startsWith("-")) continue;
-    return { name: a, rest: rest.slice(i + 1) };
+  else if (["pnpm", "yarn", "npm", "bun", "pipx", "uv", "deno"].includes(program)) {
+    const top = subcommandOf(args);
+    options = top.options;
+    if ((program === "pnpm" || program === "yarn") && top.sub === "dlx") rest = top.rest;
+    else if (program === "npm" && (top.sub === "exec" || top.sub === "x")) rest = top.rest;
+    else if (program === "bun" && top.sub === "x") rest = top.rest;
+    else if (program === "pipx" && top.sub === "run") rest = top.rest;
+    else if (program === "uv" && top.sub === "tool" && top.rest[0] === "run")
+      rest = top.rest.slice(1);
+    else if (program === "deno" && (top.sub === "x" || top.sub === "install")) rest = top.rest;
   }
-  return { name: null, rest: [] };
+  if (rest === null) return undefined;
+  const relocated = (a: string): boolean =>
+    /^(--package|--registry|--userconfig|--from|--with|--index-url|--extra-index-url)(=|$)/.test(
+      a,
+    ) ||
+    a === "-p" ||
+    a === "-c" ||
+    a === "--call";
+  if (options.some(relocated)) return { name: null, rest: [] };
+  const inner = subcommandOf(rest);
+  if (inner.options.some(relocated)) return { name: null, rest: [] };
+  return { name: inner.sub ?? null, rest: inner.rest };
 }
 
-/** The bare name of a package spec: `@scope/name@1` → `name`, `prettier@3` → `prettier`. */
-function packageName(spec: string): string {
-  const unscoped = spec.startsWith("@") ? (spec.split("/")[1] ?? spec) : spec;
-  return unscoped.replace(/@.*$/, "");
+/**
+ * The tool a runner package spec names when it is a known development tool: a bare name (or one
+ * of {@link RUNNER_SCOPED_TOOLS}) with at most a version, never an alias (`npm:`, `jsr:`, a URL, a
+ * git or file spec); otherwise null.
+ */
+function knownRunnerTool(spec: string): string | null {
+  const scoped = /^(@[a-z0-9-]+\/[a-z0-9._-]+)(?:@[0-9][0-9A-Za-z.+-]*)?$/.exec(spec);
+  if (scoped !== null)
+    return RUNNER_SCOPED_TOOLS.has(scoped[1] as string) ? (scoped[1] as string) : null;
+  const bare = /^([a-z0-9][a-z0-9._-]*)(?:@[0-9][0-9A-Za-z.+-]*)?$/.exec(spec);
+  if (bare === null) return null;
+  const name = bare[1] as string;
+  return DEV_PROGRAMS.has(name) || RUNNER_TOOLS.has(name) ? name : null;
 }
+
+/**
+ * Launchers that run another program in a project environment (`uv run`, `poetry run`, `pnpm
+ * exec`, `yarn node`, `bundle exec`, `bun run`): the program they launch, judged as if it ran
+ * directly; undefined when `inv` launches nothing.
+ */
+function launchedInvocation(inv: Invocation): Invocation | undefined {
+  const { program, args } = inv;
+  const top = subcommandOf(args);
+  const after = (rest: string[]): string[] => {
+    const inner = subcommandOf(rest);
+    return inner.sub === undefined ? [] : [inner.sub, ...inner.rest];
+  };
+  let launched: string[] | undefined;
+  if (ENV_LAUNCHERS.has(program) && top.sub === "run") launched = after(top.rest);
+  else if (program === "bundle" && top.sub === "exec") launched = top.rest;
+  else if (program === "pnpm" || program === "yarn" || program === "bun") {
+    if (top.sub === "exec" || (program === "bun" && top.sub === "run")) launched = after(top.rest);
+    else if (top.sub !== undefined && (top.sub in INLINE_CODE_OPTIONS || /[/.]/.test(top.sub))) {
+      launched = [top.sub, ...top.rest];
+    }
+  }
+  if (launched === undefined || launched.length === 0) return undefined;
+  const raw = launched[0] as string;
+  return { program: baseName(raw), raw, args: launched.slice(1), argv: launched };
+}
+
+/** Project-environment launchers whose `run` subcommand runs another program. */
+const ENV_LAUNCHERS: ReadonlySet<string> = new Set([
+  "uv",
+  "poetry",
+  "pipenv",
+  "pdm",
+  "hatch",
+  "rye",
+  "conda",
+]);
 
 const SAFE_SERVE_PROGRAMS = new Set([
   "open",
@@ -2034,6 +2231,7 @@ function ghApiMethod(args: string[]): "read" | "write" | "destroy" {
     else if (/^-X./.test(a)) method = a.slice(2).toUpperCase();
     else if (
       ["-f", "-F", "--field", "--raw-field", "--input"].includes(a) ||
+      /^-[fF]./.test(a) ||
       /^--(raw-)?field=/.test(a) ||
       a.startsWith("--input=")
     )
@@ -2044,7 +2242,11 @@ function ghApiMethod(args: string[]): "read" | "write" | "destroy" {
   // `args` starts with the `api` subcommand; the endpoint is the first operand after it
   const endpoint = args.find((a, i) => i > 0 && !a.startsWith("-") && !isOptionValue(args, i));
   if (endpoint === "graphql" && (method === null || method === "POST")) {
-    return args.some((a) => /\bmutation\b/.test(a)) ? "write" : "read";
+    // a body from a file (`--input`, `-F query=@q.graphql`) may hold a mutation the review cannot see
+    const fromFile = args.some(
+      (a, i) => a === "--input" || a.startsWith("--input=") || (/=@/.test(a) && i > 0),
+    );
+    return fromFile || args.some((a) => /\bmutation\b/.test(a)) ? "write" : "read";
   }
   if (method !== null && method !== "GET" && method !== "HEAD") return "write";
   return fields && method === null ? "write" : "read";
@@ -2358,6 +2560,32 @@ const TAR_VALUE_LETTERS: ReadonlySet<string> = new Set([
   "X",
 ]);
 
+/** The files a `tar` command names (its operands other than the archive `-f` names). */
+function tarMembers(args: string[]): string[] {
+  const index = args.findIndex((a) => a === "-f" || a === "--file" || /^-[A-Za-z]*f$/.test(a));
+  const archive = index >= 0 ? args[index + 1] : undefined;
+  return operands(args).filter((op) => op !== archive);
+}
+
+/** git subcommands that rewrite files in the work tree they run in. */
+const GIT_WORKTREE_WRITERS: ReadonlySet<string> = new Set([
+  "clean",
+  "checkout",
+  "restore",
+  "reset",
+  "rm",
+  "mv",
+  "stash",
+  "switch",
+  "pull",
+  "merge",
+  "rebase",
+  "am",
+  "apply",
+  "cherry-pick",
+  "revert",
+]);
+
 function writeTargetsOf(inv: Invocation): string[] {
   const { program, args } = inv;
   const positional = nonOptionArgs(args);
@@ -2433,12 +2661,17 @@ function writeTargetsOf(inv: Invocation): string[] {
     case "rsync": {
       const last = positional[positional.length - 1];
       // `host:path` and `rsync://...` are remote: the command writes there, not here.
-      return last !== undefined && !isRemoteSpec(last) ? [last] : [];
+      const out = last !== undefined && !isRemoteSpec(last) ? [last] : [];
+      // `--remove-source-files` deletes the local sources it sent
+      if (program === "rsync" && args.includes("--remove-source-files")) {
+        out.push(...positional.slice(0, -1).filter((op) => !isRemoteSpec(op)));
+      }
+      return out;
     }
     case "tar": {
       // `-C DIR` extracts into DIR; `-cf ARCHIVE` writes ARCHIVE. `-C` on create only selects
-      // the files read, so it is not a write target there.
-      const targets: string[] = [];
+      // the files read, so it is not a write target there. `--remove-files` deletes its members.
+      const targets: string[] = args.includes("--remove-files") ? tarMembers(args) : [];
       let directory: string | null = null;
       let extract = false;
       let create = false;
@@ -2531,6 +2764,11 @@ function writeTargetsOf(inv: Invocation): string[] {
       return dirs.length > 0 ? dirs : ["."];
     }
     case "git": {
+      // a subcommand that rewrites the work tree writes where it runs (`git -C ~/x checkout -- .`)
+      if (GIT_WORKTREE_WRITERS.has(args[0] ?? "")) {
+        const paths = args[0] === "clean" ? operands(args.slice(1)) : [];
+        return [inv.dir ?? ".", ...paths];
+      }
       if (args[0] !== "clone") return [];
       // `git clone [opts] <url> [dest]`: option values are skipped, so `--depth 1` does not shift
       // the destination into the URL's place.
@@ -2616,11 +2854,15 @@ function pipedInto(command: SimpleCommand, commands: readonly SimpleCommand[]): 
     .some((c) => c.pipeline === command.pipeline && c.block === command.block);
 }
 
+/** The option table of a script runner. */
+const optionsOf = (program: string) => RUNNER_OPTIONS[runnerFamily(program)] ?? NO_OPTIONS;
+
 /** Whether a short or long option of `inv` makes its interpreter run code given inline. */
 function inlineCodeOption(inv: Invocation): boolean {
   if (inv.program === "deno") return inv.args[0] === "eval";
   const options = INLINE_CODE_OPTIONS[inv.program];
   if (options === undefined) return false;
+  const values = optionsOf(inv.program).value;
   const letters = options.filter((o) => /^-[A-Za-z]$/.test(o)).map((o) => o.slice(1));
   const longs = options.filter((o) => o.startsWith("--"));
   for (let i = 0; i < inv.args.length; i += 1) {
@@ -2631,11 +2873,11 @@ function inlineCodeOption(inv: Invocation): boolean {
       if ([...a.slice(1)].some((letter) => letters.includes(letter))) return true;
       // `python -m module`: what follows is the module's own arguments
       if (a === "-m") return false;
-      if (RUNNER_VALUE_OPTIONS.has(a)) i += 1;
+      if (values.includes(a)) i += 1;
       continue;
     }
-    if (a.startsWith("-")) {
-      if (RUNNER_VALUE_OPTIONS.has(a)) i += 1;
+    if (a.startsWith("-") || a.startsWith("+")) {
+      if (values.includes(a)) i += 1;
       continue;
     }
     // the first operand is the script; what follows is the script's own arguments
@@ -2644,84 +2886,174 @@ function inlineCodeOption(inv: Invocation): boolean {
   return false;
 }
 
+/** The file extensions of scripts: a word with one names a file a runner or launcher would run. */
+const SCRIPT_FILE =
+  /\.(py|pyw|js|mjs|cjs|ts|mts|cts|tsx|jsx|sh|bash|zsh|fish|rb|pl|php|lua|[rR]|jl|exs?|swift|scala|go)$/;
+
 /**
- * The script a runner runs: a path (or `-` for stdin), null when it names none (it reads stdin or
- * starts a REPL), undefined when the runner runs something else (`python -m pytest`, `deno test`,
- * `bun install`).
+ * The runner's operands after its options: the first is the script (or `-` for stdin); null when
+ * there is none (it reads stdin or starts a REPL), undefined when the runner runs something else
+ * (`python -m pytest`, `deno test`, `bun install`).
  */
 function scriptOperand(inv: Invocation): string | null | undefined {
   let args = inv.args;
+  const subcommands = RUNNER_SUBCOMMANDS[inv.program] ?? [];
   if (inv.program === "deno") {
-    if (args[0] !== "run") return undefined;
-    args = args.slice(1);
-  } else if (inv.program === "bun") {
-    if (args[0] === "run") args = args.slice(1);
+    if (args[0] === "run" || args[0] === "serve") args = args.slice(1);
     else {
-      const first = args.find((a) => !a.startsWith("-"));
-      // a bun subcommand (`bun install`, `bun test`) or a package.json script, not a file
-      if (first !== undefined && !first.includes("/") && !first.includes(".")) return undefined;
+      const first = subcommandOf(args).sub;
+      if (first === undefined || !(first.includes("/") || SCRIPT_FILE.test(first)))
+        return undefined;
     }
   }
+  const values = optionsOf(inv.program).value;
   for (let i = 0; i < args.length; i += 1) {
     const a = args[i] as string;
     if (a === "--") return args[i + 1] ?? null;
     if (a === "-") return "-";
     if (a === "-m") return undefined;
-    if (a.startsWith("-")) {
-      if (RUNNER_VALUE_OPTIONS.has(a)) i += 1;
+    if (a.startsWith("-") || (a.startsWith("+") && runnerFamily(inv.program) === "shell")) {
+      if (!a.includes("=") && values.includes(a)) i += 1;
       continue;
     }
+    if (subcommands.includes(a)) continue;
+    // `bun install`, `bun test`: a bun subcommand or package script, not a file
+    if (inv.program === "bun" && !a.includes("/") && !SCRIPT_FILE.test(a)) return undefined;
     return a;
   }
   return null;
 }
 
+/** The module `python -m <module>` runs, as the files it may load (`a.b` → `a/b.py`, `a/b/__main__.py`). */
+function moduleFiles(inv: Invocation): string[] {
+  if (runnerFamily(inv.program) !== "python") return [];
+  const index = inv.args.indexOf("-m");
+  const module = index < 0 ? undefined : inv.args[index + 1];
+  if (module === undefined || !/^[A-Za-z_][\w.]*$/.test(module)) return [];
+  const path = module.replaceAll(".", "/");
+  return [`${path}.py`, `${path}/__main__.py`, `${path}/__init__.py`];
+}
+
+/** The values of a runner's preload options (`node -r ./x.js`, `--import`, `ruby -r`). */
+function preloadValues(inv: Invocation): string[] {
+  const preload = optionsOf(inv.program).preload;
+  const out: string[] = [];
+  for (let i = 0; i < inv.args.length; i += 1) {
+    const a = inv.args[i] as string;
+    const eq = a.indexOf("=");
+    if (eq > 0 && preload.includes(a.slice(0, eq))) out.push(a.slice(eq + 1));
+    else if (preload.includes(a) && inv.args[i + 1] !== undefined)
+      out.push(inv.args[i + 1] as string);
+  }
+  return out;
+}
+
+/** A shell glob as an anchored regular expression over a full path. */
+function globRegex(pattern: string): RegExp {
+  let source = "";
+  for (const ch of pattern) {
+    if (ch === "*") source += "[^/]*";
+    else if (ch === "?") source += "[^/]";
+    else source += ch.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  }
+  return new RegExp(`^${source}$`, "i");
+}
+
+/**
+ * Whether a path word names something this conversation (or an earlier command of the line)
+ * wrote: compared without case (macOS file systems ignore it), a glob matched against every
+ * written path, and a cloned directory counting for everything under it.
+ */
+function writtenMatcher(command: SimpleCommand, ctx: RuleContext): (word: string) => boolean {
+  const written = [...ctx.facts.written, ...(ctx.writtenBefore.get(command) ?? [])].map((p) =>
+    p.toLowerCase(),
+  );
+  const cwd = cwdOf(command, ctx.facts);
+  return (word) => {
+    const resolved = expandPath(word, ctx.facts, cwd, command.vars);
+    if (resolved === null) return false;
+    const path = resolved.toLowerCase();
+    if (SHELL_PATTERN.test(word)) {
+      const re = globRegex(path);
+      return written.some((w) => re.test(w.endsWith("/**") ? w.slice(0, -3) : w));
+    }
+    return written.some((w) => (w.endsWith("/**") ? path.startsWith(w.slice(0, -2)) : w === path));
+  };
+}
+
+const RISK_INLINE = "Runs code written inline for an interpreter; the review cannot read it.";
+const RISK_FETCHED = "Runs a package or module it fetches; the review cannot read its code.";
+const RISK_STDIN = "Feeds code to an interpreter on its standard input; the review cannot read it.";
+const RISK_URL = "Runs code from a URL or package registry; the review cannot read it.";
+const RISK_WROTE = "Runs a file this conversation wrote; the review cannot vouch for its code.";
+
 /**
  * Why running `inv` is code the review cannot read (hardening spec R1), or null when it is an
- * ordinary development command: inline code, a fetched package, code fed on stdin, code from a URL,
- * or a file this conversation (or an earlier command of the line) wrote.
+ * ordinary development command: inline code (also through a launcher such as `uv run` or `pnpm
+ * exec`), a fetched package or module, code fed on stdin or from a URL, a program whose own
+ * script language runs commands (`awk` `system()`, `sed` `e`), or a file this conversation (or an
+ * earlier command of the line) wrote — run directly, as a script, a preload or a module.
  */
 function interpreterRisk(inv: Invocation, command: SimpleCommand, ctx: RuleContext): string | null {
+  const launched = launchedInvocation(inv);
+  if (launched !== undefined) return interpreterRisk(launched, command, ctx);
+  const written = writtenMatcher(command, ctx);
+  const cwd = cwdOf(command, ctx.facts);
   const pkg = runnerPackage(inv);
   if (pkg !== undefined) {
-    const name = pkg.name === null ? null : packageName(pkg.name);
-    if (name === null || !DEV_PROGRAMS.has(name)) {
-      return "Runs a package a package runner fetches; the review cannot read its code.";
-    }
-    // a development tool that is itself a script runner (`npx tsx x.ts`) is judged as one
-    return SCRIPT_RUNNERS.has(name)
-      ? interpreterRisk({ ...inv, program: name, raw: name, args: pkg.rest }, command, ctx)
+    const tool = pkg.name === null ? null : knownRunnerTool(pkg.name);
+    if (tool === null) return RISK_FETCHED;
+    // a local bin the conversation replaced is not the tool any more
+    if (written(`${cwd}/node_modules/.bin/${baseName(tool)}`)) return RISK_WROTE;
+    return SCRIPT_RUNNERS.has(tool)
+      ? interpreterRisk({ ...inv, program: tool, raw: tool, args: pkg.rest }, command, ctx)
       : null;
   }
-  const runner = SCRIPT_RUNNERS.has(inv.program);
-  if (!runner && !inv.raw.includes("/")) return null;
-  if (runner && inlineCodeOption(inv)) {
-    return "Runs code written inline for an interpreter; the review cannot read it.";
+  if (inv.program === "go" && inv.args[0] === "run") {
+    const target = subcommandOf(inv.args.slice(1)).sub;
+    if (target === undefined) return null;
+    if (target.includes("@") || /^[a-z0-9-]+(\.[a-z0-9-]+)+\//i.test(target)) return RISK_FETCHED;
+    return written(target) ? RISK_WROTE : null;
   }
-  const cwd = cwdOf(command, ctx.facts);
-  const written = (path: string): boolean => {
-    const resolved = expandPath(path, ctx.facts, cwd, command.vars);
-    return (
-      resolved !== null &&
-      (ctx.facts.written.has(resolved) || (ctx.writtenBefore.get(command)?.has(resolved) ?? false))
+  if (inv.program === "make" || inv.program === "gmake") {
+    const file = inv.args.find((_, i) =>
+      ["-f", "--file", "--makefile"].includes(inv.args[i - 1] ?? ""),
     );
-  };
-  const wroteIt = "Runs a file this conversation wrote; the review cannot vouch for its code.";
-  if (inv.raw.includes("/") && written(inv.raw)) return wroteIt;
-  if (!runner) return null;
+    if (file === "-" || file === "/dev/stdin") return RISK_STDIN;
+    return written(file ?? "Makefile") ? RISK_WROTE : null;
+  }
+  if (["awk", "gawk", "mawk", "nawk"].includes(inv.program)) {
+    const program = inv.args.find((a) => !a.startsWith("-"));
+    if (program !== undefined && /\bsystem\s*\(|\|\s*getline|print[^;]*\|\s*"/.test(program)) {
+      return RISK_INLINE;
+    }
+    return null;
+  }
+  if (inv.program === "sed") {
+    const scripts = inv.args.filter((a, i) => !a.startsWith("-") || inv.args[i - 1] === "-e");
+    if (scripts.some((sc) => /(^|[;\n])\s*e(\s|$)|\/[gpiImMw0-9]*e[gpiImMw0-9]*\s*$/.test(sc))) {
+      return RISK_INLINE;
+    }
+    return null;
+  }
+  if (!SCRIPT_RUNNERS.has(inv.program)) {
+    // a program run by its path (`./x.sh`, `bin/tool`) or by its script name
+    return (inv.raw.includes("/") || SCRIPT_FILE.test(inv.raw)) && written(inv.raw)
+      ? RISK_WROTE
+      : null;
+  }
+  if (inlineCodeOption(inv)) return RISK_INLINE;
   if (SHELL_PROGRAMS.has(inv.program) && wrapperScript(inv) !== null) return null;
+  if (preloadValues(inv).some((value) => written(value))) return RISK_WROTE;
+  if (moduleFiles(inv).some((file) => written(file))) return RISK_WROTE;
   const script = scriptOperand(inv);
   if (script === undefined) return null;
   if (script === null || script === "-") {
     const fed = command.redirects.some((r) => r.op === "<") || pipedInto(command, ctx.commands);
-    return fed
-      ? "Feeds code to an interpreter on its standard input; the review cannot read it."
-      : null;
+    return fed ? RISK_STDIN : null;
   }
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(script)) {
-    return "Runs code from a URL; the review cannot read it.";
-  }
-  return written(script) ? wroteIt : null;
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(script) || /^(npm|jsr):/.test(script)) return RISK_URL;
+  return written(script) ? RISK_WROTE : null;
 }
 
 /** A rule's verdict plus the commands it covered (a command no rule covers makes the line unsure). */
@@ -3509,6 +3841,14 @@ function gitConfigIsDangerous(key: string, value: string): boolean {
     return !plainProgram(value, EDITOR_PROGRAMS);
   }
   if (k === "core.askpass" || k === "diff.external" || /^http\..*\.cmd$/.test(k)) return true;
+  // hooks, the file system monitor and filter / diff / merge drivers run programs too
+  if (k === "core.hookspath" || k === "core.gitproxy") return true;
+  if (k === "core.fsmonitor") return !/^(true|false|0|1|yes|no|on|off)$/i.test(value.trim());
+  if (
+    /^(filter\..*\.(clean|smudge|process)|diff\..*\.(textconv|command)|merge\..*\.driver)$/.test(k)
+  ) {
+    return true;
+  }
   return false;
 }
 
@@ -3760,17 +4100,34 @@ function destroyTargetsOf(inv: Invocation): string[] {
     case "find": {
       if (!args.includes("-delete")) return [];
       const starts: string[] = [];
-      for (const a of args) {
+      for (let i = 0; i < args.length; i += 1) {
+        const a = args[i] as string;
+        // the symlink and optimisation options come before the start paths
+        if (["-H", "-L", "-P"].includes(a) || /^-O[0-9]$/.test(a)) continue;
+        if (a === "-D") {
+          i += 1;
+          continue;
+        }
         if (a.startsWith("-") || a === "(" || a === "!") break;
         starts.push(a);
       }
       return starts.length > 0 ? starts : ["."];
     }
     case "rsync": {
-      if (!args.some((a) => a.startsWith("--delete"))) return [];
-      const last = operands(args).at(-1);
-      return last !== undefined && !isRemoteSpec(last) ? [last] : [];
+      const ops = operands(args).filter((op) => !isRemoteSpec(op));
+      const out: string[] = [];
+      if (args.includes("--remove-source-files")) out.push(...ops.slice(0, -1));
+      if (args.some((a) => a.startsWith("--delete"))) {
+        const last = operands(args).at(-1);
+        if (last !== undefined && !isRemoteSpec(last)) out.push(last);
+      }
+      return out;
     }
+    case "tar":
+      return args.includes("--remove-files") ? tarMembers(args) : [];
+    case "git":
+      // `git clean <path>`: what it names; without a path it cleans untracked files, not the tree
+      return args[0] === "clean" ? operands(args.slice(1)) : [];
     default:
       return [];
   }
@@ -3780,7 +4137,8 @@ function isDangerousDelete(resolved: string, ctx: RuleContext): boolean {
   const base = globBase(resolved);
   const t = tildeForm(base, ctx.facts);
   if (t === "/" || t === "~" || t === "~/") return true;
-  return isAncestor(base, ctx.facts.workspace);
+  // the workspace root itself and every directory above it (hardening spec R2)
+  return base === ctx.facts.workspace || isAncestor(base, ctx.facts.workspace);
 }
 
 function modifiesDevice(command: SimpleCommand, ctx: RuleContext): boolean {
@@ -3929,12 +4287,27 @@ function configRule(id: ConfigClass): Rule {
 
 /** The paths an `ln` links to (its sources), resolved against the command's directory. */
 function linkSources(inv: Invocation, command: SimpleCommand, ctx: RuleContext): string[] {
-  if (inv.program !== "ln") return [];
+  const cpLink =
+    inv.program === "cp" &&
+    inv.args.some((a) => ["--symbolic-link", "--link"].includes(a) || /^-[A-Za-z]*[sl]/.test(a));
+  if (inv.program !== "ln" && !cpLink) return [];
   const ops = operands(inv.args);
-  const sources = targetDirectory(inv.args) !== null || ops.length < 2 ? ops : ops.slice(0, -1);
+  const directory = targetDirectory(inv.args);
+  const sources = directory !== null || ops.length < 2 ? ops : ops.slice(0, -1);
+  const symbolic = cpLink || inv.args.some((a) => a === "--symbolic" || /^-[A-Za-z]*s/.test(a));
+  const cwd = cwdOf(command, ctx.facts);
+  // a relative symbolic link points from the link's own directory, not from where ln ran
+  const linkDir =
+    directory ?? (ops.length >= 2 ? (ops.at(-1) as string).replace(/\/[^/]*$/, "") || "." : ".");
+  const base = symbolic ? (expandPath(linkDir, ctx.facts, cwd, command.vars) ?? cwd) : cwd;
   const out: string[] = [];
   for (const source of sources) {
-    const resolved = expandPath(source, ctx.facts, cwdOf(command, ctx.facts), command.vars);
+    const resolved = expandPath(
+      source,
+      ctx.facts,
+      source.startsWith("/") ? cwd : base,
+      command.vars,
+    );
     if (resolved !== null) out.push(resolved);
   }
   return out;
@@ -4546,9 +4919,14 @@ const RULES: readonly Rule[] = [
     outcome: "deny",
     check: (ctx) => {
       const matched = eachInvocation(ctx.commands, (inv, command) => {
+        // `find` and `git clean` remove what they select below a start path, so the workspace
+        // as their start is ordinary cleanup; `/`, `~` and the workspace's parents still count
+        const selects = inv.program === "find" || inv.program === "git";
         for (const target of destroyTargetsOf(inv)) {
           const resolved = expandPath(target, ctx.facts, cwdOf(command, ctx.facts), command.vars);
-          if (resolved !== null && isDangerousDelete(resolved, ctx)) return true;
+          if (resolved === null || !isDangerousDelete(resolved, ctx)) continue;
+          if (selects && globBase(resolved) === ctx.facts.workspace) continue;
+          return true;
         }
         return false;
       });
@@ -4812,12 +5190,90 @@ function strictest(hits: RuleHit[]): RuleOutcome {
   return outcome;
 }
 
+/** The last path segment of a URL's path (`https://h/a/x.sh?q` → `x.sh`), or null. */
+function urlBaseName(url: string): string | null {
+  const match = /^[a-z][a-z0-9+.-]*:\/\/[^/]+(\/[^?#]*)/i.exec(url);
+  const name = match?.[1]?.split("/").pop();
+  return name === undefined || name === "" ? null : name;
+}
+
+/**
+ * What a command writes beyond its write targets, for the record of what the conversation wrote:
+ * a file copied into a directory (`cp a.py sub/` writes `sub/a.py`), a download saved under the
+ * URL's name (`curl -O`, `wget URL`) or by an option cluster (`curl -sSLo x.sh`), and a cloned
+ * repository (everything under its directory, as `<dir>/**`).
+ */
+function extraWrites(inv: Invocation): string[] {
+  const { program, args } = inv;
+  const ops = operands(args);
+  switch (program) {
+    case "cp":
+    case "mv":
+    case "install":
+    case "ln": {
+      const directory = targetDirectory(args);
+      const dest = directory ?? ops.at(-1);
+      const sources = directory !== null ? ops : ops.slice(0, -1);
+      return dest === undefined ? [] : sources.map((src) => `${dest}/${baseName(src)}`);
+    }
+    case "curl": {
+      const out: string[] = [];
+      const urls = args.filter((a) => /^[a-z][a-z0-9+.-]*:\/\//i.test(a));
+      for (let i = 0; i < args.length; i += 1) {
+        const a = args[i] as string;
+        if (/^-[A-Za-z]*o$/.test(a) && args[i + 1] !== undefined) out.push(args[i + 1] as string);
+        if (
+          /^-[A-Za-z]*O[A-Za-z]*$/.test(a) ||
+          a === "--remote-name" ||
+          a === "--remote-name-all"
+        ) {
+          for (const url of urls) {
+            const name = urlBaseName(url);
+            if (name !== null) out.push(name);
+          }
+        }
+      }
+      return out;
+    }
+    case "wget": {
+      const named = args.findIndex((a) => /^-[A-Za-z]*O$/.test(a) || a === "--output-document");
+      if (named >= 0)
+        return args[named + 1] === undefined || args[named + 1] === "-"
+          ? []
+          : [args[named + 1] as string];
+      if (args.some((a) => a.startsWith("--output-document="))) return [];
+      const index = args.findIndex((a) => a === "-P" || a === "--directory-prefix");
+      const dir = index >= 0 ? args[index + 1] : undefined;
+      return args
+        .filter((a) => /^[a-z][a-z0-9+.-]*:\/\//i.test(a))
+        .map((url) => urlBaseName(url) ?? "index.html")
+        .map((name) => (dir === undefined ? name : `${dir}/${name}`));
+    }
+    case "git": {
+      if (args[0] !== "clone") return [];
+      const cloneOps = operands(args.slice(1));
+      const url = cloneOps[0];
+      if (url === undefined) return [];
+      const dir = cloneOps[1] ?? repoName(url);
+      return dir === undefined ? [] : [`${dir}/**`];
+    }
+    default:
+      return [];
+  }
+}
+
 /** The absolute paths `command` writes (its write targets and output redirections). */
 function writtenBy(command: SimpleCommand, facts: ResolvedFacts): string[] {
   const out: string[] = [];
-  for (const target of writeTargets(command)) {
-    const resolved = expandPath(target, facts, cwdOf(command, facts), command.vars);
-    if (resolved !== null) out.push(resolved);
+  const cwd = cwdOf(command, facts);
+  const targets = [
+    ...writeTargets(command),
+    ...invocationsOf(command).flatMap((inv) => extraWrites(inv)),
+  ];
+  for (const target of targets) {
+    const glob = target.endsWith("/**");
+    const resolved = expandPath(glob ? target.slice(0, -3) : target, facts, cwd, command.vars);
+    if (resolved !== null) out.push(glob ? `${resolved}/**` : resolved);
   }
   return out;
 }

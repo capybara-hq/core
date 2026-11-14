@@ -112,7 +112,7 @@ export const REVIEW_REASONS = {
 /** The tools the review covers: the shell, and the file tools whose writes may leave the workspace. */
 const REVIEWED_TOOLS: ReadonlySet<string> = new Set(["Bash", "Write", "Edit"]);
 
-/** How many of a conversation's latest assistant messages the review reads for what it wrote. */
+/** How many of a conversation tree's latest assistant messages the review reads for its writes. */
 const WRITTEN_EVENTS_READ = 200;
 
 /** How many of the root conversation's latest person messages are read before bounding the text. */
@@ -207,7 +207,7 @@ export class CommandReviewService implements CommandReview {
       ? reviewWrite(target, facts)
       : reviewRules(target, {
           ...facts,
-          written: await this.writtenByConversation(input.conversationId, await rootOf(), facts),
+          written: await this.writtenInTree(await rootOf(), facts),
         });
     let hit = decidingHit(result.hits, result.outcome);
 
@@ -354,23 +354,34 @@ export class CommandReviewService implements CommandReview {
   }
 
   /**
-   * The absolute paths this conversation's own tool calls wrote: `Write` / `Edit` targets and the
-   * write targets of its `Bash` lines, from the latest {@link WRITTEN_EVENTS_READ} assistant
-   * messages of the conversation (and of its root, when the call is a sub-agent's). Running one of
-   * them is code the run produced, not a development command (hardening spec R1).
+   * The absolute paths the conversation tree's own tool calls wrote — the root's and every
+   * sub-agent's: `Write` / `Edit` targets and the write targets (downloads and copies included) of
+   * their `Bash` lines, from the latest {@link WRITTEN_EVENTS_READ} assistant messages of the tree.
+   * All agents of a tree share the device, so a file one of them wrote is code the run produced,
+   * whoever runs it (hardening spec R1).
    */
-  private async writtenByConversation(
-    conversationId: string,
+  private async writtenInTree(
     rootConversationId: string,
     facts: { workspace: string; cwd: string; mode: "auto" | "sandbox"; attended: boolean },
   ): Promise<string[]> {
-    const ids = [...new Set([conversationId, rootConversationId])];
     const rows = await this.db
+      .withRecursive("tree(id)", (db) =>
+        db
+          .selectFrom("conversations")
+          .select("id")
+          .where("id", "=", rootConversationId)
+          .unionAll((q) =>
+            q
+              .selectFrom("conversations as c")
+              .innerJoin("tree", "tree.id", "c.parent_conversation_id")
+              .select("c.id"),
+          ),
+      )
       .selectFrom("conversation_events")
       .select("payload")
-      .where("conversation_id", "in", ids)
+      .where("conversation_id", "in", (q) => q.selectFrom("tree").select("id"))
       .where("type", "=", "assistant_message")
-      .orderBy("seq", "desc")
+      .orderBy("created_at", "desc")
       .limit(WRITTEN_EVENTS_READ)
       .execute();
     const written = new Set<string>();
