@@ -1,5 +1,11 @@
 import type { RouteSchemas } from "../platform/route-schemas.js";
-import { DeviceNameBody, DeviceParams, DevicePatchBody } from "./dto.js";
+import {
+  DeviceNameBody,
+  DeviceParams,
+  DevicePatchBody,
+  DeviceProjectAddBody,
+  DeviceProjectParams,
+} from "./dto.js";
 
 /** The body of the excluded `POST /devices/:id/policy` route (human-only). */
 export { DevicePolicyBody } from "./dto.js";
@@ -22,4 +28,12 @@ export const DEVICE_ROUTES: readonly RouteSchemas[] = [
   },
   { route: "DELETE /api/v1/orgs/:orgId/devices/:id", params: DeviceParams },
   { route: "POST /api/v1/orgs/:orgId/devices/:id/files/reset", params: DeviceParams },
+  { route: "GET /api/v1/orgs/:orgId/devices/:id/projects", params: DeviceParams },
+  { route: "GET /api/v1/orgs/:orgId/devices/:id/projects/candidates", params: DeviceParams },
+  {
+    route: "POST /api/v1/orgs/:orgId/devices/:id/projects",
+    params: DeviceParams,
+    body: DeviceProjectAddBody,
+  },
+  { route: "DELETE /api/v1/orgs/:orgId/devices/:id/projects/:name", params: DeviceProjectParams },
 ];

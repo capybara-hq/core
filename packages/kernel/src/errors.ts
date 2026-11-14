@@ -386,6 +386,32 @@ export const ERROR_CODES = {
    * (`capybara-device mode` or the device page's policy op), and a cloud device has none to choose.
    */
   "device.mode_on_device": 409,
+  /**
+   * The device offers no projects (project root §4.1): its `capybara-device` does not announce
+   * `projects` (update it), or its cloud sandbox provider has no `list` / `scan`.
+   */
+  "device.projects_unsupported": 409,
+  /** The device could not be asked about its directories now; the message says why. */
+  "device.projects_unavailable": 503,
+  /** Not a valid project name (1-64 characters, no `/`, no control characters, not `.` / `..`). */
+  "device.project_name_invalid": 422,
+  /** The device already has a project with this name. */
+  "device.project_name_taken": 409,
+  /** The device already has the most projects allowed (100). */
+  "device.project_limit_reached": 409,
+  /** The device has no project with this name. */
+  "device.project_not_found": 404,
+  /**
+   * The project's path is outside what the device may read in its current mode (sandbox mode and
+   * cloud devices: the workspace; project root §4.2).
+   */
+  "device.project_outside_mode": 422,
+  /** Auto mode resolves a relative path against the owner's home, which the device has not reported. */
+  "device.project_home_unknown": 409,
+  /** The project's directory does not exist on the device. */
+  "device.project_path_missing": 422,
+  /** The project's path is a file, cannot be read, or the device refused it in its current mode. */
+  "device.project_path_unreadable": 422,
   /** Device sign-in (RFC 8628 style): the person has not approved the code yet; keep polling. */
   "device_sign_in.authorization_pending": 400,
   /** Device sign-in: the program polls faster than the interval; add 5 seconds and keep polling. */

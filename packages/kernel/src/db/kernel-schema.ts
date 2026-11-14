@@ -315,6 +315,10 @@ export interface ConversationsTable {
    * root next starts a run. While set the tree's wakes are held (agent map spec §6).
    */
   tree_stopped_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  /** 0133: the project of its device it is bound to at creation (project root §4.3); null: free. */
+  project_name: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0133: the absolute path the bound project resolved to at creation; null: free mode. */
+  project_path: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /** 0060: an org's order of file-preview@1 previewers (UI refresh B Task 11). */
@@ -1083,6 +1087,19 @@ export interface DeviceMachinesTable {
   local_policy: ColumnType<unknown | null, string | null | undefined, string | null>;
   /** 0118: the `policy` ops sent whose answer is not recorded yet (`PendingPolicyOp[]`). */
   pending_policy_ops: ColumnType<unknown, string | undefined, string>;
+  /** 0133: the owner's home directory the program reported in its hello; null when not reported. */
+  home: ColumnType<string | null, string | null | undefined, string | null>;
+}
+
+/** 0133: a device's projects (project root design §4.1), written only by the kernel. */
+export interface DeviceProjectsTable {
+  device_id: string;
+  /** The project's identity on its device (`isDeviceProjectName`). */
+  name: string;
+  /** The project's absolute path on the device. */
+  path: string;
+  created_by: string;
+  created_at: Ts;
 }
 
 /** 0088_environments.sql, renamed in 0105: the device a member's new conversations use by default. */
@@ -1464,6 +1481,7 @@ export interface KernelDatabase {
   device_instances: DeviceInstancesTable;
   device_defaults: DeviceDefaultsTable;
   device_machines: DeviceMachinesTable;
+  device_projects: DeviceProjectsTable;
   background_tasks: BackgroundTasksTable;
   scheduled_tasks: ScheduledTasksTable;
   scheduled_task_runs: ScheduledTaskRunsTable;

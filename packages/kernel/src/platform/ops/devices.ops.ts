@@ -1,7 +1,13 @@
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
+import { DeviceProjectsService } from "../../devices/device-projects.service.js";
 import { DevicesService, type DeviceView } from "../../devices/devices.service.js";
-import { DeviceNameBody, DeviceParams } from "../../devices/dto.js";
+import {
+  DeviceNameBody,
+  DeviceParams,
+  DeviceProjectAddBody,
+  DeviceProjectParams,
+} from "../../devices/dto.js";
 import { deviceLabel } from "../../devices/label.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import { rootConversationOf } from "../../runtime/subagents/child.js";
@@ -72,6 +78,7 @@ export class DevicesOperations implements OnModuleInit {
   constructor(
     @Inject(PlatformOperations) private readonly registry: PlatformOperations,
     @Inject(DevicesService) private readonly devices: DevicesService,
+    @Inject(DeviceProjectsService) private readonly projects: DeviceProjectsService,
     @Inject(KernelDb) private readonly kdb: KernelDb,
   ) {}
 
@@ -359,6 +366,153 @@ export class DevicesOperations implements OnModuleInit {
             ),
           ),
         }),
+      }),
+      defineOperation({
+        id: "devices.list-projects",
+        description:
+          "List the projects of one of your devices that its current mode can read (name and absolute path), plus the mode, the base a new project's path is relative to (the workspace in sandbox mode and on a cloud device, your home directory in auto mode), how many stored projects the mode hides, and whether the device offers projects at all. Takes the id from devices.list.",
+        input: DeviceId,
+        example: { deviceId: "4e8a0c1d-6b2f-4a37-8d19-3c5e7f9a1b20" },
+        authz: { orgAction: "agents.use" },
+        mirrors: ["GET /api/v1/orgs/:orgId/devices/:id/projects"],
+        renames: { deviceId: "id" },
+        confirm: "read",
+        errors: [
+          {
+            code: "device.not_found",
+            next: "Check the id with devices.list: you only see your own devices.",
+          },
+        ],
+        run: (input, ctx) => this.projects.list(ctx.orgId, ctx.actorAccountId, input.deviceId),
+      }),
+      defineOperation({
+        id: "devices.project-candidates",
+        description:
+          "Ask one of your devices for project suggestions: the directories under its base (and the base itself) that hold .git or AGENTS.md, at most two levels down, each with its path relative to the base and a suggested name. Directory names only, never file contents. Takes the id from devices.list; add one with devices.add-project.",
+        input: DeviceId,
+        example: { deviceId: "4e8a0c1d-6b2f-4a37-8d19-3c5e7f9a1b20" },
+        authz: { orgAction: "agents.use" },
+        mirrors: ["GET /api/v1/orgs/:orgId/devices/:id/projects/candidates"],
+        renames: { deviceId: "id" },
+        confirm: "read",
+        errors: [
+          {
+            code: "device.not_found",
+            next: "Check the id with devices.list: you only see your own devices.",
+          },
+          {
+            code: "device.offline",
+            next: "Its machine is offline: ask the person to start capybara-device on it, then call again.",
+          },
+          {
+            code: "device.project_home_unknown",
+            next: "Ask the person to update capybara-device on that machine and reconnect it.",
+          },
+        ],
+        run: (input, ctx) =>
+          this.projects.candidates(ctx.orgId, ctx.actorAccountId, input.deviceId),
+      }),
+      defineOperation({
+        id: "devices.add-project",
+        description:
+          "Add a project to one of your devices: path is relative to the device's base (see devices.list-projects; empty for the base itself), never absolute, and must stay inside what the device reads in its current mode; name defaults to the directory's name (1-64 characters, no /, unique on the device). The device is asked first, so a missing directory, a file or an unreadable path is refused. At most 100 projects per device. Takes the id from devices.list.",
+        input: DeviceId.extend(DeviceProjectAddBody.shape).strict(),
+        example: { deviceId: "4e8a0c1d-6b2f-4a37-8d19-3c5e7f9a1b20", path: "src/capybara" },
+        authz: { orgAction: "agents.use" },
+        mirrors: ["POST /api/v1/orgs/:orgId/devices/:id/projects"],
+        renames: { deviceId: "id" },
+        confirm: "personal",
+        errors: [
+          {
+            code: "device.not_found",
+            next: "Check the id with devices.list: you only see your own devices.",
+          },
+          {
+            code: "device.project_name_taken",
+            next: "The device has a project with this name: pass another name, or read them with devices.list-projects.",
+          },
+          {
+            code: "device.project_limit_reached",
+            next: "The device is at the limit: remove a project with devices.remove-project first.",
+          },
+          {
+            code: "device.project_outside_mode",
+            next: "Pick a directory inside the device's workspace, or ask the person to switch the device to auto mode on its machine.",
+          },
+          {
+            code: "device.project_path_missing",
+            next: "Check the path with devices.project-candidates or ask the person for it.",
+          },
+          {
+            code: "device.project_path_unreadable",
+            next: "Pass a directory the device can read (not a file).",
+          },
+          {
+            code: "device.projects_unsupported",
+            next: "This device offers no projects: work without one, or ask the person to update capybara-device.",
+          },
+          {
+            code: "device.offline",
+            next: "Its machine is offline: ask the person to start capybara-device on it, then call again.",
+          },
+        ],
+        precheck: (i, ctx) =>
+          precheckBy(() =>
+            this.projects.checkAdd(ctx.orgId, ctx.actorAccountId, i.deviceId, i.name),
+          ),
+        summary: async (i, ctx) => {
+          const n = await this.label(ctx, i.deviceId);
+          const where = i.path === "" ? "." : i.path;
+          return {
+            zh: `在设备「${n}」上添加项目 ${named(where)}${i.name === undefined ? "" : `（名称「${named(i.name)}」）`}`,
+            en: `Add project ${named(where)} to device "${n}"${i.name === undefined ? "" : ` (named "${named(i.name)}")`}`,
+          };
+        },
+        run: async (input, ctx) => ({
+          project: await this.projects.add(
+            ctx.orgId,
+            ctx.actorAccountId,
+            input.deviceId,
+            { path: input.path, ...(input.name !== undefined && { name: input.name }) },
+            undefined,
+            viaAgent("devices.add-project", ctx),
+          ),
+        }),
+      }),
+      defineOperation({
+        id: "devices.remove-project",
+        description:
+          "Remove a project from one of your devices by name: only the entry goes, never the directory or its files; conversations already bound to it keep their path. Removing a project that is not there succeeds. Takes the id from devices.list and the name from devices.list-projects.",
+        input: DeviceId.extend({ name: DeviceProjectParams.shape.name }).strict(),
+        example: { deviceId: "4e8a0c1d-6b2f-4a37-8d19-3c5e7f9a1b20", name: "capybara" },
+        authz: { orgAction: "agents.use" },
+        mirrors: ["DELETE /api/v1/orgs/:orgId/devices/:id/projects/:name"],
+        renames: { deviceId: "id" },
+        confirm: "personal",
+        errors: [
+          {
+            code: "device.not_found",
+            next: "Check the id with devices.list: you only see your own devices.",
+          },
+        ],
+        summary: async (i, ctx) => {
+          const n = await this.label(ctx, i.deviceId);
+          return {
+            zh: `从设备「${n}」移除项目「${named(i.name)}」（目录和文件保留）`,
+            en: `Remove project "${named(i.name)}" from device "${n}" (the directory and files stay)`,
+          };
+        },
+        run: async (input, ctx) => {
+          await this.projects.remove(
+            ctx.orgId,
+            ctx.actorAccountId,
+            input.deviceId,
+            input.name,
+            undefined,
+            viaAgent("devices.remove-project", ctx),
+          );
+          return { deviceId: input.deviceId, name: input.name, removed: true };
+        },
       }),
     ]);
   }

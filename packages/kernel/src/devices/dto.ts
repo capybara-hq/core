@@ -1,4 +1,8 @@
-import { validateAllowHost } from "@capybara-hq/plugin-sdk";
+import {
+  isDeviceProjectName,
+  MAX_DEVICE_PROJECT_NAME_LENGTH,
+  validateAllowHost,
+} from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { publicSuffixWildcard } from "./public-suffix.js";
@@ -53,7 +57,53 @@ export const DevicePolicyBody = z
     message: "Give at least one of add, remove or mode",
   });
 
+/**
+ * A project's name (project root §4.1, `isDeviceProjectName`): 1-64 UTF-16 code units, not `.` or
+ * `..`, no `/`, no control characters, no leading or trailing whitespace; unique on its device.
+ */
+export const DeviceProjectName = z
+  .string()
+  .max(MAX_DEVICE_PROJECT_NAME_LENGTH)
+  .refine(isDeviceProjectName, {
+    message:
+      "A project name is 1-64 characters, not . or .., without / or control characters, and without leading or trailing spaces",
+  });
+
+// biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what it refuses
+const CONTROL = /[\u0000-\u001f\u007f]/;
+
+/**
+ * `POST /devices/:id/projects`: `path` is relative to the device's base in its current mode (the
+ * workspace in sandbox mode and on a cloud device, the owner's home in auto mode; empty or `.`:
+ * the base itself), never absolute; `name` defaults to the directory's basename.
+ */
+export const DeviceProjectAddBody = z
+  .object({
+    path: z
+      .string()
+      .max(4096)
+      .refine((p) => !p.startsWith("/"), {
+        message: "Give the path relative to the device's base, not an absolute path",
+      })
+      .refine((p) => !CONTROL.test(p) && !p.includes("\\"), {
+        message: "The path must not contain control characters or backslashes",
+      }),
+    name: DeviceProjectName.optional(),
+  })
+  .strict();
+
+/** `DELETE /devices/:id/projects/:name`. */
+export const DeviceProjectParams = DeviceParams.extend({ name: DeviceProjectName });
+
 export class DeviceCreateBodyDto extends createZodDto(DeviceNameBody, "DeviceCreateBody") {}
 export class DevicePatchBodyDto extends createZodDto(DevicePatchBody, "DevicePatchBody") {}
 export class DeviceParamsDto extends createZodDto(DeviceParams, "DeviceParams") {}
 export class DevicePolicyBodyDto extends createZodDto(DevicePolicyBody, "DevicePolicyBody") {}
+export class DeviceProjectAddBodyDto extends createZodDto(
+  DeviceProjectAddBody,
+  "DeviceProjectAddBody",
+) {}
+export class DeviceProjectParamsDto extends createZodDto(
+  DeviceProjectParams,
+  "DeviceProjectParams",
+) {}

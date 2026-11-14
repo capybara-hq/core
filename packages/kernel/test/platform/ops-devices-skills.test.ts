@@ -184,10 +184,14 @@ describe("devices", () => {
         .map((o) => o.id)
         .filter((id) => id.startsWith("devices.")),
     ).toEqual([
+      "devices.add-project",
       "devices.create",
       "devices.delete",
       "devices.get",
       "devices.list",
+      "devices.list-projects",
+      "devices.project-candidates",
+      "devices.remove-project",
       "devices.rename",
       "devices.reset-files",
     ]);
@@ -277,6 +281,46 @@ describe("devices", () => {
       code: "device.not_found",
     });
     await expect(run("devices.get", { deviceId: id }, other)).rejects.toThrow(/devices\.list/);
+  });
+
+  it("projects: reads, personal writes with a card, and a provider without list / scan offers none", async () => {
+    const ctx = ctxOf(ownerId);
+    const l = (await run("devices.list", {}, ctx)) as { items: { id: string }[] };
+    const deviceId = l.items[0]?.id as string;
+    // the fake sandbox has neither list nor scan: the device offers no projects
+    expect(await run("devices.list-projects", { deviceId }, ctx)).toMatchObject({
+      projects: [],
+      supported: false,
+      base: "/workspace",
+    });
+    expect(await run("devices.project-candidates", { deviceId }, ctx)).toMatchObject({
+      candidates: [],
+      supported: false,
+    });
+    expect(await classOf("devices.add-project", { deviceId, path: "app" }, ctx)).toBe("personal");
+    const s = await op("devices.add-project").summary?.(
+      op("devices.add-project").input.parse({ deviceId, path: "app", name: "App" }),
+      ctx,
+    );
+    expect(s?.en).toContain("Add project app");
+    expect(await precheck("devices.add-project", { deviceId, path: "app" }, ctx)).toMatchObject({
+      ok: false,
+      code: "device.projects_unsupported",
+    });
+    // removing is idempotent and audited only when something went
+    expect(await run("devices.remove-project", { deviceId, name: "app" }, ctx)).toEqual({
+      deviceId,
+      name: "app",
+      removed: true,
+    });
+    expect(await audits("device.project_removed")).toEqual([]);
+    // another person's device is not found
+    expect(
+      await precheck("devices.add-project", { deviceId, path: "app" }, ctxOf(memberId)),
+    ).toMatchObject({ ok: false, code: "device.not_found" });
+    await expect(run("devices.list-projects", { deviceId }, ctxOf(memberId))).rejects.toThrow(
+      /devices\.list/,
+    );
   });
 });
 
