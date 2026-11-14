@@ -194,7 +194,7 @@ export function validatePermissions(plugin: string, p: unknown): string[] {
         }
         if (
           (r.access === "member" || r.access === "admin") &&
-          r.path.split("/").includes(":orgId")
+          /(^|\/):orgId(?![A-Za-z0-9_])/.test(r.path)
         ) {
           errs.push(
             `permissions.http route "${key}" must not contain :orgId (the org comes from the mount)`,

@@ -1,6 +1,8 @@
 ---
 "@capybara-hq/plugin-sdk": patch
 "@capybara-hq/plugin-tools": patch
+"@capybara-hq/kernel": patch
+"@capybara-hq/capybara": patch
 ---
 
 Breaking for route authors: every `permissions.http` entry declares `access` (`public`, `embed`,
@@ -8,4 +10,5 @@ Breaking for route authors: every `permissions.http` entry declares `access` (`p
 kernel resolved (`ctx.http.route(method, path, (req, caller) => ...)`, `RouteCaller`); `member` and
 `admin` routes mount under `/plugins/<name>/orgs/:orgId<path>`, `embed` routes live under `/ui/`, and
 an embed contribution's `path` must be declared as a `public` GET. `capybara-plugin check` fails a
-manifest whose route has no valid `access`.
+manifest whose route has no valid `access`, and plugin import refuses it. Existing deployments must
+re-approve every extension that declares routes, because the approved permissions change.
