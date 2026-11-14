@@ -1,40 +1,71 @@
 import type { KernelConfig } from "../../config/schema.js";
+import { type LookupFn, NetDeniedError, type NetPolicy } from "../../net/public-address.js";
+import { NetBodyTooLargeError, safeFetch } from "../../net/safe-fetch.js";
 import type { OAuthClientRecord, TokenAuthMethod } from "./tokens.js";
 
 /**
- * MCP OAuth 发现与动态注册（MCP 授权规范）：
- * RFC 9728 受保护资源元数据（401 的 `WWW-Authenticate: Bearer resource_metadata=…`，或
- * `/.well-known/oauth-protected-resource[/<path>]`）→ RFC 8414 授权服务器元数据（OpenID 发现文档作回退）
- * → RFC 7591 动态客户端注册。
+ * MCP OAuth discovery and dynamic registration (the MCP authorization spec):
+ * RFC 9728 protected resource metadata (a 401's `WWW-Authenticate: Bearer resource_metadata=…`, or
+ * `/.well-known/oauth-protected-resource[/<path>]`) -> RFC 8414 authorization server metadata
+ * (the OpenID discovery document as a fallback) -> RFC 7591 dynamic client registration.
  *
- * 自己实现而不引库：内核只需要这几次 HTTP 往返，且要统一「不跟随重定向、限时、限响应大小、只允许 https」
- * 与错误映射（错误只带原因码与英文说明，不带对方响应正文）。`oauth4webapi` 默认禁止 http、自带错误模型，
- * 换来的代码量并不少；MCP SDK 的 client auth 帮助函数围绕交互式 `OAuthClientProvider`，且会把 MCP SDK
- * 拉进与协议无关的内核。
+ * Written here rather than taken from a library: the kernel needs only these few round trips, and
+ * they must share one set of rules ("no redirects, a time limit, a body cap, https only, the
+ * deployment's network rules") and one error mapping (a reason code and an English message, never
+ * the remote's body). `oauth4webapi` forbids http by default and brings its own error model for
+ * about as much code; the MCP SDK's client auth helpers revolve around an interactive
+ * `OAuthClientProvider` and would pull the MCP SDK into a protocol-agnostic kernel.
+ *
+ * Every round trip goes through `packages/kernel/src/net` ({@link safeFetch}): the host must
+ * resolve to public addresses (or be exempt by `marketplaces.allowPrivateHosts`), the connection is
+ * pinned to the checked address, `net.httpsProxy` tunnels https, and redirects are never followed.
  */
 
 export interface OAuthHttpOptions {
-  /** 允许本机（127.0.0.1 / localhost / [::1]）的 http，仅开发与测试。 */
-  allowInsecureLoopback: boolean;
+  /** The network rules ({@link oauthNetPolicy}). */
+  net: NetPolicy;
   timeoutMs: number;
+  /** Tests only: replaces the DNS lookup. */
+  lookup?: LookupFn;
 }
 
-/** OAuth 往返的限时：工具超时与 30 秒取小。 */
-export function oauthHttpOptions(cfg: KernelConfig): OAuthHttpOptions {
+/**
+ * The network rules of every OAuth round trip (discovery, registration, token endpoint, the setup
+ * check's token probe): the deployment's egress proxy (`net.httpsProxy` / `net.noProxy`), its
+ * private host exemptions (`marketplaces.allowPrivateHosts`, the one list of internal hosts the
+ * kernel may reach) and loopback http only under `tools.oauthAllowInsecureLoopback` (tests).
+ */
+export function oauthNetPolicy(cfg: KernelConfig): NetPolicy {
   return {
     allowInsecureLoopback: cfg.tools.oauthAllowInsecureLoopback,
+    allowPrivateHosts: cfg.marketplaces.allowPrivateHosts,
+    trustedOrigins: [],
+    ...(cfg.net.httpsProxy !== undefined && {
+      proxy: { url: cfg.net.httpsProxy, noProxy: cfg.net.noProxy },
+    }),
+  };
+}
+
+/** The OAuth round trip options: the network rules, and the tool timeout capped at 30 seconds. */
+export function oauthHttpOptions(cfg: KernelConfig): OAuthHttpOptions {
+  return {
+    net: oauthNetPolicy(cfg),
     timeoutMs: Math.min(cfg.tools.timeoutMs, 30_000),
   };
 }
 
 export type OAuthSetupReason =
   | "insecure_url"
+  | "address_refused"
   | "discovery_failed"
   | "dcr_unsupported"
   | "dcr_failed"
   | "token_failed";
 
-/** 发现 / 注册 / 安装时取 token 失败：原因码供向导分支（如 `dcr_unsupported` 改为手填 client），说明为英文。 */
+/**
+ * Discovery / registration / the install-time token request failed: the reason code lets the
+ * wizard branch (e.g. `dcr_unsupported` -> a manual client), the message is English.
+ */
 export class OAuthSetupError extends Error {
   constructor(
     readonly reason: OAuthSetupReason,
@@ -46,10 +77,10 @@ export class OAuthSetupError extends Error {
 }
 
 const LOOPBACK = new Set(["127.0.0.1", "localhost", "[::1]"]);
-/** 元数据 / 令牌响应的大小上限。 */
+/** The size cap of a metadata / token answer. */
 const MAX_BODY_BYTES = 1024 * 1024;
 
-/** 只接受 https（放行时本机 http 也可），不允许 URL 里带用户信息。 */
+/** https only (loopback http when allowed), and no user information in the URL. */
 export function checkOAuthUrl(raw: string, http: OAuthHttpOptions): URL {
   let u: URL;
   try {
@@ -59,7 +90,7 @@ export function checkOAuthUrl(raw: string, http: OAuthHttpOptions): URL {
   }
   const ok =
     u.protocol === "https:" ||
-    (u.protocol === "http:" && http.allowInsecureLoopback && LOOPBACK.has(u.hostname));
+    (u.protocol === "http:" && http.net.allowInsecureLoopback && LOOPBACK.has(u.hostname));
   if (!ok) {
     throw new OAuthSetupError(
       "insecure_url",
@@ -79,8 +110,11 @@ export interface OAuthResponse {
 }
 
 /**
- * OAuth 往返：校验 URL、不跟随重定向（3xx 原样返回，调用方按失败处理）、限时、正文超过 1 MiB 即中止。
- * 网络错误 / 超时原样抛出。
+ * One OAuth round trip through {@link safeFetch}: the URL is checked, a time limit applies and a
+ * body over 1 MiB aborts. An address the network rules refuse (private / reserved, or not https)
+ * is an {@link OAuthSetupError} `address_refused` / `insecure_url` with an actionable English
+ * message. A redirect is never followed: it throws a plain error, as a network error or a timeout
+ * does, so callers handle it as "this location did not answer".
  */
 export async function oauthFetch(
   url: string,
@@ -88,32 +122,29 @@ export async function oauthFetch(
   http: OAuthHttpOptions,
 ): Promise<OAuthResponse> {
   checkOAuthUrl(url, http);
-  const res = await fetch(url, {
-    ...init,
-    redirect: "manual",
-    signal: AbortSignal.timeout(http.timeoutMs),
-  });
-  const declared = Number(res.headers.get("content-length"));
-  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
-    await res.body?.cancel();
-    throw new Error("OAuth response is too large");
-  }
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  if (res.body) {
-    const reader = res.body.getReader();
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > MAX_BODY_BYTES) {
-        await reader.cancel().catch(() => {});
-        throw new Error("OAuth response is too large");
-      }
-      chunks.push(value);
+  let res: Response;
+  try {
+    res = await safeFetch(url, { ...init, signal: AbortSignal.timeout(http.timeoutMs) }, http.net, {
+      maxBytes: MAX_BODY_BYTES,
+      ...(http.lookup !== undefined && { lookup: http.lookup }),
+    });
+  } catch (e) {
+    if (e instanceof NetDeniedError && e.code === "net.private_address") {
+      throw new OAuthSetupError("address_refused", `OAuth: ${e.message}`);
     }
+    if (e instanceof NetDeniedError && e.code === "net.insecure_url") {
+      throw new OAuthSetupError("insecure_url", `OAuth: ${e.message}`);
+    }
+    throw e;
   }
-  return { status: res.status, headers: res.headers, text: Buffer.concat(chunks).toString("utf8") };
+  let text: string;
+  try {
+    text = await res.text();
+  } catch (e) {
+    if (e instanceof NetBodyTooLargeError) throw new Error("OAuth response is too large");
+    throw e;
+  }
+  return { status: res.status, headers: res.headers, text };
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> =>
@@ -224,7 +255,10 @@ export async function discoverMcp(
     if (probe.status === 401) challenge = probe.headers.get("www-authenticate");
   } catch (e) {
     if (e instanceof OAuthSetupError) throw e;
-    throw failed("Could not reach the connector's server for OAuth discovery");
+    // a redirect is not followed and carries no challenge: fall back to the well-known locations
+    if (!(e instanceof NetDeniedError && e.code === "net.redirect")) {
+      throw failed("Could not reach the connector's server for OAuth discovery");
+    }
   }
 
   const metadataUrl = challengeParam(challenge, "resource_metadata");

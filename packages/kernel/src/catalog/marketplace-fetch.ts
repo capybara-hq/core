@@ -37,8 +37,13 @@ export function marketplaceNetCode(e: NetDeniedError): MarketplaceNetCode | unde
   return undefined;
 }
 
-/** The network rules for marketplace downloads from the kernel config. */
-export function marketplaceNetPolicy(config: KernelConfig): NetPolicy {
+/**
+ * The network rules for marketplace downloads from the kernel config; npm registry downloads
+ * (packages, provenance, bootstrap plugins) use them too, with the registry's origin trusted.
+ */
+export function marketplaceNetPolicy(
+  config: Pick<KernelConfig, "marketplaces" | "net" | "packages">,
+): NetPolicy {
   return {
     allowInsecureLoopback: config.marketplaces.allowInsecureLoopback,
     allowPrivateHosts: config.marketplaces.allowPrivateHosts,

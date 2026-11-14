@@ -13,7 +13,8 @@ import {
 
 /**
  * `fetch` for URLs that come from a marketplace or an admin (spec §5.1):
- * - https only; plain http only for a loopback host under `allowInsecureLoopback` (testing);
+ * - https only; plain http only for a loopback host under `allowInsecureLoopback` (testing), or
+ *   to exactly a `trustedOrigins` origin the admin configured as http (an internal npm registry);
  * - the host is resolved once by {@link resolvePublic} and the connection goes to the checked
  *   addresses: a per-request undici `Agent` whose `connect.lookup` answers only those addresses,
  *   so there is no second DNS lookup (no rebinding), while the Host header and TLS SNI keep the
@@ -66,6 +67,15 @@ export function pinnedAgent(ips: string[], tls: { ca?: string | string[] } = {})
   });
 }
 
+/** The origin of a configured URL; null when it does not parse (it then trusts nothing). */
+function originOf(url: string): string | null {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
+}
+
 const NULL_BODY_STATUS = new Set([101, 103, 204, 205, 304]);
 
 function capBody(body: ReadableStream<Uint8Array>, maxBytes: number): ReadableStream<Uint8Array> {
@@ -102,7 +112,9 @@ export async function safeFetch(
   }
   const host = normalizeHost(target.hostname);
   const insecureOk =
-    policy.allowInsecureLoopback && target.protocol === "http:" && isLoopbackHost(host);
+    target.protocol === "http:" &&
+    ((policy.allowInsecureLoopback && isLoopbackHost(host)) ||
+      policy.trustedOrigins.some((o) => originOf(o) === target.origin));
   if (target.protocol !== "https:" && !insecureOk) {
     throw new NetDeniedError("net.insecure_url", host, `The URL must use https (${host}).`);
   }

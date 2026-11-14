@@ -2,6 +2,7 @@ import { type PluginExtensionSection, SDK_VERSION } from "@capybara-hq/plugin-sd
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import type { core } from "zod";
+import { marketplaceNetPolicy } from "../catalog/marketplace-fetch.js";
 import { configFields } from "../config/fields.js";
 import type { Keyring } from "../ctx/secrets.js";
 import { ApiError, type ErrorCode } from "../errors.js";
@@ -357,6 +358,7 @@ export class ExtensionInstalls {
     const cfg: NpmFetchConfig = {
       registry: c.packages.npmRegistry,
       maxBytes: c.packages.maxBytes,
+      net: marketplaceNetPolicy(c),
       ...(c.packages.npmToken !== undefined && { token: c.packages.npmToken }),
     };
     const timeout = AbortSignal.timeout(NPM_TIMEOUT_MS);
@@ -409,6 +411,7 @@ export class ExtensionInstalls {
     const cfg: NpmFetchConfig = {
       registry: c.packages.npmRegistry,
       maxBytes: c.packages.maxBytes,
+      net: marketplaceNetPolicy(c),
       ...(c.packages.npmToken !== undefined && { token: c.packages.npmToken }),
     };
     const timeout = AbortSignal.timeout(PROVENANCE_TIMEOUT_MS);
@@ -430,7 +433,7 @@ export class ExtensionInstalls {
     const cfg: NpmFetchConfig = {
       registry: c.packages.npmRegistry,
       maxBytes: c.packages.maxBytes,
-      allowInsecureLoopback: c.marketplaces.allowInsecureLoopback,
+      net: marketplaceNetPolicy(c),
       ...(c.packages.npmToken !== undefined && { token: c.packages.npmToken }),
     };
     const timeout = AbortSignal.timeout(NPM_TIMEOUT_MS);

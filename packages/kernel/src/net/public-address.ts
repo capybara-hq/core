@@ -141,7 +141,10 @@ export type NetPolicy = {
    * name that resolves there (an attacker's name could point into the range).
    */
   allowPrivateHosts: string[];
-  /** Origins configured by the admin (the npm registry): their hosts may resolve to private addresses. */
+  /**
+   * Origins configured by the admin (the npm registry): their hosts may resolve to private
+   * addresses, and an origin configured as `http://` may be fetched over http (that exact origin).
+   */
   trustedOrigins: string[];
   /**
    * `net.httpsProxy` / `net.noProxy`: https downloads tunnel through this proxy (see `proxy.ts`);

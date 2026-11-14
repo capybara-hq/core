@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { type FakeNpmRegistry, startFakeNpmRegistry } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { LookupFn, NetPolicy } from "../../src/net/public-address.js";
 import {
   fetchNpmPackage,
   IntegrityMismatchError,
@@ -20,10 +21,15 @@ const BIG = new Uint8Array(4096).fill(7);
 
 let reg: FakeNpmRegistry;
 let other: { url: string; close(): Promise<void> };
+/** The authorization header of every request to the other origin. */
+const otherAuth: (string | undefined)[] = [];
 
 beforeAll(async () => {
   // 另一个源上的 tarball（测「不同源」）
-  const s = createServer((_req, res) => res.writeHead(200).end(Buffer.from(A1)));
+  const s = createServer((req, res) => {
+    otherAuth.push(req.headers.authorization);
+    res.writeHead(200).end(Buffer.from(A1));
+  });
   await new Promise<void>((r) => s.listen(0, "127.0.0.1", r));
   other = {
     url: `http://127.0.0.1:${(s.address() as AddressInfo).port}`,
@@ -45,11 +51,21 @@ afterAll(async () => {
   await other?.close();
 });
 
+/** The kernel's policy shape: the configured registry's origin is trusted, nothing else. */
+const net = (over: Partial<NetPolicy> = {}): NetPolicy => ({
+  allowInsecureLoopback: false,
+  allowPrivateHosts: [],
+  trustedOrigins: [reg.url],
+  ...over,
+});
 const cfg = (over: Partial<Parameters<typeof fetchNpmPackage>[0]> = {}) => ({
   registry: reg.url,
   maxBytes: 1024,
+  net: net(),
   ...over,
 });
+/** Every name resolves to loopback, a private address (`.invalid` never resolves: RFC 6761). */
+const toLoopback: LookupFn = async () => [{ address: "127.0.0.1", family: 4 }];
 
 describe("fetchNpmPackage", () => {
   it("取 latest 版本，按 dist.integrity 校验，返回字节、版本与 integrity", async () => {
@@ -136,7 +152,7 @@ describe("fetchNpmPackage", () => {
       /https/,
     );
     const r = await fetchNpmPackage(
-      cfg({ allowInsecureLoopback: true }),
+      cfg({ net: net({ allowInsecureLoopback: true }) }),
       "elsewhere",
       "1.0.0",
       signal(),
@@ -156,5 +172,71 @@ describe("fetchNpmPackage", () => {
     await expect(
       fetchNpmPackage(cfg(), "@acme/plugin-a", undefined, ac.signal),
     ).rejects.toBeInstanceOf(NpmFetchError);
+  });
+});
+
+describe("fetchNpmPackage goes through packages/kernel/src/net", () => {
+  const o = (tarballUrl: string) => ({ expectedIntegrity: sri(A1), tarballUrl });
+
+  it("a tarballUrl on a private host is refused unless marketplaces.allowPrivateHosts lists it", async () => {
+    // port 1: nothing listens there, so an allowed request fails fast at connect
+    const url = "https://pkgs.corp.invalid:1/x.tgz";
+    const refused = await fetchNpmPackage(
+      cfg({ lookup: toLoopback }),
+      "elsewhere",
+      "1.0.0",
+      signal(),
+      o(url),
+    ).catch((e: unknown) => e);
+    expect(refused).toBeInstanceOf(NpmFetchError);
+    expect((refused as Error).message).toMatch(/private or reserved address/);
+    expect((refused as Error).message).toMatch(/marketplaces\.allowPrivateHosts/);
+
+    const allowed = await fetchNpmPackage(
+      cfg({ lookup: toLoopback, net: net({ allowPrivateHosts: ["pkgs.corp.invalid"] }) }),
+      "elsewhere",
+      "1.0.0",
+      signal(),
+      o(url),
+    ).catch((e: unknown) => e);
+    expect(allowed).toBeInstanceOf(NpmFetchError);
+    expect((allowed as Error).message).toMatch(/^cannot fetch the package tarball/);
+    expect((allowed as Error).message).not.toMatch(/private or reserved/);
+  });
+
+  it("a registry on a private host is refused unless the policy trusts or exempts it", async () => {
+    const registry = "https://registry.corp.invalid:1/";
+    const untrusted = { registry, lookup: toLoopback, net: net({ trustedOrigins: [] }) };
+    const refused = await fetchNpmPackage(cfg(untrusted), "@acme/plugin-a", undefined, signal())
+      .then(() => undefined)
+      .catch((e: unknown) => e);
+    expect((refused as Error).message).toMatch(/private or reserved address/);
+    for (const policy of [
+      net({ trustedOrigins: [registry] }),
+      net({ trustedOrigins: [], allowPrivateHosts: ["registry.corp.invalid"] }),
+    ]) {
+      const e = await fetchNpmPackage(
+        cfg({ ...untrusted, net: policy }),
+        "@acme/plugin-a",
+        undefined,
+        signal(),
+      ).catch((x: unknown) => x);
+      expect((e as Error).message).toMatch(/^cannot fetch the npm registry/);
+      expect((e as Error).message).not.toMatch(/private or reserved/);
+    }
+  });
+
+  it("the registry token goes only to the registry origin, never to a tarballUrl elsewhere", async () => {
+    otherAuth.length = 0;
+    const start = reg.authorizations.length;
+    await fetchNpmPackage(
+      cfg({ token: "npm-secret", net: net({ allowInsecureLoopback: true }) }),
+      "elsewhere",
+      "1.0.0",
+      signal(),
+      o(`${other.url}/x.tgz`),
+    );
+    expect(otherAuth).toEqual([undefined]);
+    expect(reg.authorizations.length).toBe(start);
   });
 });

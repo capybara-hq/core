@@ -6,7 +6,6 @@
 // `packages/kernel/src/net` (no redirects, the deployment's network rules) with the run's signal.
 // Nothing is logged and nothing is written; a 2xx token body is never parsed for its token.
 import type { SetupCheckResult, SetupCheckText } from "@capybara-hq/plugin-sdk";
-import type { KernelConfig } from "../config/schema.js";
 import type { NetPolicy } from "../net/public-address.js";
 import { NetDeniedError } from "../net/public-address.js";
 import { safeFetch } from "../net/safe-fetch.js";
@@ -74,28 +73,12 @@ export const redirectFix = (callbackUrl: string): SetupCheckText =>
     `把 ${callbackUrl} 加到应用的重定向地址（Redirect URLs）里。`,
   );
 
-/**
- * The network rules of the probe: the deployment's egress proxy (`net.httpsProxy` /
- * `net.noProxy`), its private host exemptions (`marketplaces.allowPrivateHosts`, the one list of
- * internal hosts the kernel may reach) and loopback http only under
- * `tools.oauthAllowInsecureLoopback` (tests), as for every other OAuth URL.
- */
-export function probeNetPolicy(config: KernelConfig): NetPolicy {
-  return {
-    allowInsecureLoopback: config.tools.oauthAllowInsecureLoopback,
-    allowPrivateHosts: config.marketplaces.allowPrivateHosts,
-    trustedOrigins: [],
-    ...(config.net.httpsProxy !== undefined && {
-      proxy: { url: config.net.httpsProxy, noProxy: config.net.noProxy },
-    }),
-  };
-}
-
 export interface TokenProbeInput {
   /** The stored client: its `tokenEndpoint` is the one the connect flow posts codes to. */
   client: OAuthClientRecord;
   /** The connect flow's redirect URI (`http.publicUrl` + the callback path). */
   redirectUri: string;
+  /** The OAuth network rules (`oauthNetPolicy`), as for every other OAuth round trip. */
   net: NetPolicy;
   /** The run's signal (the kernel's time limit). */
   signal: AbortSignal;
