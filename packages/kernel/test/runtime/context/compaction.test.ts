@@ -6,8 +6,10 @@ import {
   COMPACTION_MAX_OUTPUT_TOKENS,
   chunkTranscript,
   compactionBackoff,
+  compactionChunkSize,
   compactionInputBudget,
   compactionPlan,
+  compactionRequestOverhead,
   extractSummary,
   shouldCompact,
   summarySavedTokens,
@@ -184,6 +186,23 @@ describe("buildCompactionRequest", () => {
   it("defaults the output cap to COMPACTION_MAX_OUTPUT_TOKENS (20000)", () => {
     expect(COMPACTION_MAX_OUTPUT_TOKENS).toBe(20_000);
     expect(buildCompactionRequest("User: hi", "fake-1").maxOutputTokens).toBe(20_000);
+  });
+});
+
+describe("compactionChunkSize", () => {
+  it("leaves room for the summary allowance and the request overhead inside the input budget", () => {
+    const window = 10_000;
+    const cap = 1000;
+    const reserve = 2000;
+    const budget = compactionInputBudget(window, cap, reserve);
+    const size = compactionChunkSize(budget, cap);
+    const overhead = compactionRequestOverhead();
+    expect(overhead).toBeGreaterThan(0);
+    // one call's input: its chunk plus the request's fixed overhead (and the running summary it
+    // may carry, bounded by the summary allowance) stays inside the input budget
+    expect(size + overhead + Math.ceil(cap / 2)).toBeLessThanOrEqual(budget);
+    // and the real request: its input plus the output cap and the reserve fits the window
+    expect(size + overhead + cap + reserve).toBeLessThanOrEqual(window);
   });
 });
 

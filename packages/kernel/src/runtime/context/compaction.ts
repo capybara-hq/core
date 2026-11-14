@@ -60,6 +60,34 @@ export function compactionInputBudget(window: number, maxOutput: number, reserve
   return window - maxOutput - reserve;
 }
 
+/** The transcript wrapper of a summary request; the overhead counts it with an empty transcript. */
+const transcriptWrapper = (text: string): string => `<transcript>\n${text}\n</transcript>`;
+
+/** A margin for estimator drift in the fixed part of a summary request (tokens). */
+const COMPACTION_REQUEST_MARGIN = 64;
+
+/**
+ * The input tokens every summary request carries regardless of its chunk: the instruction, the
+ * transcript wrapper and a small margin. A chunked compaction subtracts it from the chunk size
+ * (context compaction spec §4.5), so chunk + overhead stays inside the request budget.
+ */
+export function compactionRequestOverhead(): number {
+  return (
+    textTokens(COMPACTION_INSTRUCTION) +
+    textTokens(transcriptWrapper("")) +
+    COMPACTION_REQUEST_MARGIN
+  );
+}
+
+/**
+ * The chunk size of a chunked compaction (context compaction spec §4.5): one summary call's input
+ * budget `B` minus the room the running summary may take in the next call (half the output cap) and
+ * the request's fixed overhead.
+ */
+export function compactionChunkSize(budget: number, maxOutputTokens: number): number {
+  return budget - Math.ceil(maxOutputTokens / 2) - compactionRequestOverhead();
+}
+
 /**
  * Compaction trigger (context compaction spec §4.1): the calibrated estimate reaches the lower of
  * `threshold × window` and the input budget, or it reaches the hard line `estimate + output >
@@ -368,7 +396,7 @@ export function buildCompactionRequest(
     messages: [
       {
         role: "user",
-        content: [{ type: "text", text: `<transcript>\n${transcript}\n</transcript>` }],
+        content: [{ type: "text", text: transcriptWrapper(transcript) }],
       },
     ],
     tools: [],

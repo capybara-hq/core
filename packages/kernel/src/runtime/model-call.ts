@@ -44,6 +44,7 @@ import {
   buildCompactionRequest,
   chunkTranscript,
   compactionBackoff,
+  compactionChunkSize,
   compactionInputBudget,
   compactionPlan,
   extractSummary,
@@ -1033,13 +1034,14 @@ async function maybeCompact(
     provider: ref.provider,
     model: ref.model,
   };
-  // §4.5: one summary call's input room is B = Wc - Cmax - R, and the room kept for the running
-  // summary the next call carries (half of the output cap) is subtracted from it, leaving the chunk
-  // size. A transcript over it is summarised chunk by chunk, each call sent the running summary
-  // before its chunk; a degenerate budget (a window smaller than the cap and the reserve) leaves
-  // the single call as before.
+  // §4.5: one summary call's input room is B = Wc - Cmax - R. The room kept for the running
+  // summary the next call carries (half of the output cap) and the request's fixed overhead (the
+  // instruction and the transcript wrapper) are subtracted from it, leaving the chunk size. A
+  // transcript over it is summarised chunk by chunk, each call sent the running summary before its
+  // chunk; a degenerate budget (a window smaller than the cap, the reserve, the overhead and the
+  // allowance) leaves the single call as before.
   const budget = compactionInputBudget(info.contextWindow, summaryCap, compaction.reserveTokens);
-  const chunkSize = budget - Math.ceil(summaryCap / 2);
+  const chunkSize = compactionChunkSize(budget, summaryCap);
   const transcriptTokens = estimateTokens(
     [{ role: "user", content: [{ type: "text", text: plan.transcript }] }],
     [],
@@ -1113,6 +1115,13 @@ async function maybeCompact(
       const final = out.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
       // store only the <summary> block: the <analysis> scratchpad must not enter later requests
       summary = extractSummary(final || partial);
+      // an intermediate call with nothing to carry forward would silently drop every chunk before
+      // it: fail the compaction instead (spec §4.5), no partial summary
+      if (i < chunks.length - 1 && summary === "") {
+        failure = "a chunk produced no summary";
+        failedChunk = chunked ? chunkNo : null;
+        break;
+      }
       // the last call's text is the summary, accepted against the full transcript (spec §4.5)
       if (i === chunks.length - 1 && !acceptSummary(summary, plan.transcript)) {
         failure = `summary too short (${summary.length} chars)`;
