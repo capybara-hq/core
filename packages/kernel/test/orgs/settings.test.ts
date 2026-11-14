@@ -43,6 +43,8 @@ const settingsWith = (
   const cfg = {
     sandbox: { limits: { ...LIMITS, ...opts } },
     devices: { autoMode: opts.autoMode },
+    attribution: {},
+    http: { publicUrl: undefined },
   };
   return orgSettingsFor(db, () => cfg);
 };
@@ -361,6 +363,12 @@ describe("org cloudNetwork", () => {
     expect(await s.deployment()).toEqual({
       autoMode: { mode: "off", source: "db" },
       cloudNetwork: { mode: "open", allowHosts: LIMITS.allowHosts },
+      attribution: {
+        commit: "Co-Authored-By: Capybara <noreply@capybarahq.com>",
+        pr: "🤖 Generated with [Capybara](https://github.com/capybara-hq/core)",
+        sessionUrl: false,
+      },
+      publicUrl: false,
     });
   });
 });

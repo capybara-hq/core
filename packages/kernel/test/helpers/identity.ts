@@ -99,9 +99,9 @@ export function settingsFor(
   log: Pick<KernelLogger, "warn"> = quiet,
 ): SettingsService {
   const h = handlesFor(db);
-  // no startup config sets the auto-mode switch: the stored choice decides
+  // no startup config sets the auto-mode switch or the attribution: the stored choice decides
   const config = {
-    get: () => ({ devices: { autoMode: undefined } }) as unknown as KernelConfig,
+    get: () => ({ devices: { autoMode: undefined }, attribution: {} }) as unknown as KernelConfig,
     fieldSource: () => undefined,
   };
   return new SettingsService(h.db, h.txHost, adminLockFor(db), log, config);

@@ -352,6 +352,20 @@ export const RunContextSchema = z.object({
   dispatchedBy: z
     .object({ agent: z.string().min(1).max(130), person: z.string().min(1).max(80) })
     .optional(),
+  /**
+   * The attribution a run's requests carry for git commits and pull requests it creates (spec
+   * 2026-11-14-agent-attribution): the effective values fixed at run start (platform defaults or
+   * the agent's override), so request building never reads config or the database. Absent in older
+   * logs. An empty `commit` / `pr` turns that line off; `sessionUrl` is the resolved conversation
+   * link, or null.
+   */
+  attribution: z
+    .object({
+      commit: z.string().max(500),
+      pr: z.string().max(500),
+      sessionUrl: z.string().max(2048).nullable(),
+    })
+    .optional(),
 });
 
 const ev = <T extends string, P extends z.ZodType>(type: T, payload: P) =>

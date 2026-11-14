@@ -704,7 +704,26 @@
       "sheetHint": "默认全部开启，取消勾选即对这个智能体关闭；全部取消即整体关闭（之后新增的工具也关闭）。策略只能收紧。修改随本页的保存一起生效。",
       "connectorPolicyHint": "连接器工具也可以对这个智能体设为允许，覆盖组织默认和成员自己的「询问」；成员在自己的连接上设为「禁止」的工具，对他仍然禁止。",
       "loadingTools": "正在读取工具…",
-      "connectorToolsUnreadable": "暂时读不到这个连接器的工具，稍后重试。"
+      "connectorToolsUnreadable": "暂时读不到这个连接器的工具，稍后重试。",
+      "attributionSection": "提交与 PR 署名",
+      "attributionSectionHint": "智能体创建的 git 提交和它打开的 PR 所附带的内容。",
+      "attributionMode": "署名方式",
+      "attributionMode_inherit": "跟随平台",
+      "attributionModeHint_inherit": "使用下方显示的平台默认值。",
+      "attributionMode_custom": "自定义",
+      "attributionModeHint_custom": "使用该智能体自己的署名行。",
+      "attributionMode_off": "关闭",
+      "attributionModeHint_off": "不添加署名行。",
+      "attributionCommit": "提交署名行",
+      "attributionCommitHelp": "加在智能体创建的 git 提交信息末尾；留空则不加。",
+      "attributionPr": "PR 署名行",
+      "attributionPrHelp": "加在智能体打开的 PR 正文末尾；留空则不加。",
+      "attributionSessionUrl": "附加会话链接",
+      "attributionSessionUrlHint": "需要部署设置 http.publicUrl；默认关闭。",
+      "attributionSessionUrlOn": "是",
+      "attributionSessionUrlNeedsPublicUrl": "已开启，但不会加链接：部署未设置 http.publicUrl",
+      "attributionDefaults": "平台默认：提交 {commit}；PR {pr}。",
+      "attributionNone": "无"
     },
     "params": {
       "default": "默认",
@@ -778,7 +797,8 @@
         "tools": "工具",
         "skills": "技能",
         "subagents": "子智能体",
-        "channels": "渠道"
+        "channels": "渠道",
+        "attribution": "署名"
       },
       "startChat": "开始对话",
       "reassign": "更改所有者",
@@ -3968,6 +3988,21 @@
         "pluginOnHint": "运行中",
         "pluginAllOffHint": "已停用：上面的总开关停用了所有插件界面代码。",
         "pluginOffHint": "已停用：只停用界面代码，服务端功能照常运行。"
+      },
+      "attribution": {
+        "title": "提交与 PR 署名",
+        "description": "智能体创建的 git 提交和它打开的 PR 所附带的署名行；留空即关闭该行。智能体可自行覆盖；这只是对模型的指示，不是强制。",
+        "commitLabel": "提交署名行",
+        "commitHelp": "加在智能体创建的 git 提交信息末尾；留空则不加。",
+        "prLabel": "PR 署名行",
+        "prHelp": "加在智能体打开的 PR 正文末尾；留空则不加。",
+        "sessionUrlLabel": "附加会话链接",
+        "sessionUrlHelp": "在智能体创建的 PR 中加上会话链接；需要设置 http.publicUrl，默认关闭。",
+        "previewTitle": "预览",
+        "previewCommit": "提交信息结尾",
+        "previewPr": "PR 结尾",
+        "off": "（关闭）",
+        "restore": "恢复默认"
       }
     },
     "extensions": {

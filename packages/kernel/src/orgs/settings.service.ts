@@ -1,6 +1,10 @@
 import { type SandboxLimits, validateAllowHost } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Module, Optional } from "@nestjs/common";
 import { z } from "zod";
+import {
+  type PlatformAttribution,
+  readPlatformAttribution,
+} from "../attribution/platform-attribution.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
@@ -288,6 +292,13 @@ export interface OrgSettingsDeployment {
    * `sandbox.limits.egress` is `none`, the kill switch) and the host list an allowlist starts from.
    */
   cloudNetwork: { mode: "open" | "allowlist"; allowHosts: string[] };
+  /** The platform's effective attribution defaults for agent-created commits and pull requests. */
+  attribution: PlatformAttribution;
+  /**
+   * Whether the deployment set `http.publicUrl`. Without it a requested conversation link cannot be
+   * added to a pull request, so the agent page can say why the link setting has no effect.
+   */
+  publicUrl: boolean;
 }
 
 /** Compare by value (`cloudNetwork` is an object); the schema fixes the key order. */
@@ -364,12 +375,18 @@ export class OrgSettingsService {
   /** 部署默认值（设置页展示「跟随部署」时的实际取值）。 */
   async deployment(): Promise<OrgSettingsDeployment> {
     const lim = this.config.get().sandbox.limits;
+    const [autoMode, attribution] = await Promise.all([
+      readDevicesAutoMode(this.db.db, this.config, this.log),
+      readPlatformAttribution(this.db.db, this.config, this.log),
+    ]);
     return {
-      autoMode: await readDevicesAutoMode(this.db.db, this.config, this.log),
+      autoMode,
       cloudNetwork:
         lim.egress === "none"
           ? { mode: "allowlist", allowHosts: [] }
           : { mode: "open", allowHosts: [...lim.allowHosts] },
+      attribution,
+      publicUrl: this.config.get().http.publicUrl !== undefined,
     };
   }
 

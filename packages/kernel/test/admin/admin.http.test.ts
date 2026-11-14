@@ -70,6 +70,14 @@ beforeEach(async () => {
 /** The platform's auto-mode switch when neither the startup config nor the admin console sets it. */
 const DEFAULT_AUTO_MODE = { mode: "allowed", source: "default" };
 
+/** The platform's attribution defaults when neither the startup config nor the admin console sets them. */
+const DEFAULT_ATTRIBUTION = {
+  commit: "Co-Authored-By: Capybara <noreply@capybarahq.com>",
+  pr: "🤖 Generated with [Capybara](https://github.com/capybara-hq/core)",
+  sessionUrl: false,
+  sources: { commit: "default", pr: "default", sessionUrl: "default" },
+};
+
 const errCode = (res: { json(): unknown }) =>
   (res.json() as { error?: { code?: string } }).error?.code;
 
@@ -529,6 +537,7 @@ describe("超级管理员端点", () => {
       uiTheme: { id: null },
       clientExtensions: { enabled: true, disabled: [] },
       devicesAutoMode: DEFAULT_AUTO_MODE,
+      attribution: DEFAULT_ATTRIBUTION,
     });
     const put = await adminReq({
       method: "PUT",
@@ -549,6 +558,7 @@ describe("超级管理员端点", () => {
       uiTheme: { id: null },
       clientExtensions: { enabled: true, disabled: [] },
       devicesAutoMode: DEFAULT_AUTO_MODE,
+      attribution: DEFAULT_ATTRIBUTION,
     });
     const bad = await adminReq({
       method: "PUT",
@@ -589,6 +599,7 @@ describe("超级管理员端点", () => {
       uiTheme: { id: null },
       clientExtensions: { enabled: true, disabled: [] },
       devicesAutoMode: DEFAULT_AUTO_MODE,
+      attribution: DEFAULT_ATTRIBUTION,
     });
 
     // 配额读取部署设置：orgA 上限 1，第二个运行进不去；未覆盖的组织用 runtime.orgConcurrency
@@ -617,6 +628,7 @@ describe("超级管理员端点", () => {
       uiTheme: { id: null },
       clientExtensions: { enabled: true, disabled: [] },
       devicesAutoMode: DEFAULT_AUTO_MODE,
+      attribution: DEFAULT_ATTRIBUTION,
     });
     expect(await limit("orgA")).toBe(k.app.get(KernelConfigService).get().runtime.orgConcurrency);
     expect(await quota.tryEnter("orgA", "r2", await limit("orgA"))).toBe(true);
@@ -646,6 +658,7 @@ describe("超级管理员端点", () => {
       uiTheme: { id: null },
       clientExtensions: { enabled: true, disabled: [] },
       devicesAutoMode: DEFAULT_AUTO_MODE,
+      attribution: DEFAULT_ATTRIBUTION,
     });
   });
 
@@ -774,6 +787,85 @@ describe("超级管理员端点", () => {
     // with the startup config silent again, the stored choice applies
     const back = await adminReq({ method: "GET", url: "/api/v1/admin/settings" });
     expect(back.json().devicesAutoMode).toEqual({ mode: "allowed", source: "db" });
+  });
+
+  it('PUT /admin/settings attribution: saved, read back with sources, "" turns a line off, null clears, a startup-config field is read-only', async () => {
+    const adminReq = await session("admin");
+    const put = (payload: Record<string, unknown>) =>
+      adminReq({ method: "PUT", url: "/api/v1/admin/settings", payload });
+    const get = () => adminReq({ method: "GET", url: "/api/v1/admin/settings" });
+    expect((await get()).json().attribution).toEqual(DEFAULT_ATTRIBUTION);
+
+    const saved = await put({ attribution: { commit: "DB trailer", sessionUrl: true } });
+    expect(saved.statusCode, saved.body).toBe(200);
+    expect(saved.json().attribution).toEqual({
+      ...DEFAULT_ATTRIBUTION,
+      commit: "DB trailer",
+      sessionUrl: true,
+      sources: { commit: "db", pr: "default", sessionUrl: "db" },
+    });
+    expect((await get()).json().attribution).toEqual(saved.json().attribution);
+
+    // an empty string is stored as "that line is off", not cleared
+    const off = await put({ attribution: { pr: "" } });
+    expect(off.statusCode, off.body).toBe(200);
+    expect(off.json().attribution).toMatchObject({ pr: "", sources: { pr: "db" } });
+
+    // null clears a field back to the default
+    const cleared = await put({ attribution: { commit: null, sessionUrl: null } });
+    expect(cleared.statusCode, cleared.body).toBe(200);
+    expect(cleared.json().attribution).toEqual({
+      ...DEFAULT_ATTRIBUTION,
+      pr: "",
+      sources: { ...DEFAULT_ATTRIBUTION.sources, pr: "db" },
+    });
+    const row = await db
+      .selectFrom("deployment_settings")
+      .select("value")
+      .where("key", "=", "attribution")
+      .executeTakeFirstOrThrow();
+    expect(row.value).toEqual({ pr: "" });
+
+    // invalid patches are refused
+    for (const payload of [
+      { attribution: {} },
+      { attribution: { other: 1 } },
+      { attribution: { commit: "a\nb" } },
+    ]) {
+      const res = await put(payload);
+      expect(res.statusCode, JSON.stringify(payload)).toBe(400);
+      expect(errCode(res)).toBe("validation_failed");
+    }
+
+    // a field set in the startup config is read-only and wins
+    const service = k.app.get(KernelConfigService);
+    const rawConfig = (attribution: Record<string, unknown>) => ({
+      db: { url: pgc.url, poolMax: 5 },
+      redis: { url: rd.url },
+      masterKey: Buffer.alloc(32, 7).toString("base64"),
+      marketplaces: { official: { enabled: false } },
+      http: { port: 0 },
+      auth: { setupToken: SETUP_TOKEN },
+      attribution,
+    });
+    service.apply(rawConfig({ commit: "Env trailer" }));
+    try {
+      const view = await get();
+      expect(view.json().attribution).toEqual({
+        ...DEFAULT_ATTRIBUTION,
+        commit: "Env trailer",
+        pr: "",
+        sources: { commit: "file", pr: "db", sessionUrl: "default" },
+      });
+      const locked = await put({ attribution: { commit: "Mine" } });
+      expect(locked.statusCode).toBe(409);
+      expect(errCode(locked)).toBe("deployment.setting_readonly");
+      expect(locked.json().error.details).toEqual([{ path: "attribution.commit", source: "file" }]);
+      // the other fields stay editable
+      expect((await put({ attribution: { pr: "Mine" } })).statusCode).toBe(200);
+    } finally {
+      service.apply(rawConfig({}));
+    }
   });
 
   it("GET /admin/overview: orgs, accounts and attentionTotal only", async () => {

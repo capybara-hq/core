@@ -164,6 +164,7 @@ export class OrgsOperations implements OnModuleInit {
           "uiArrangement",
           "clientExtensions",
           "devicesAutoMode",
+          "attribution",
         ],
         extras: ["orgId", "runConcurrency", "sandbox", "subagents"],
         confirm: "platform",

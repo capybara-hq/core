@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Button,
   Callout,
   Field,
   FormPage,
@@ -11,6 +12,7 @@ import {
   RadioGroup,
   Stack,
   Switch,
+  SwitchField,
   Text,
   useToast,
 } from "@capybara-hq/design";
@@ -27,12 +29,17 @@ import {
   UiReplacementsSection,
 } from "../../../../components/UiArrangementSection";
 import {
+  ATTRIBUTION_DEFAULTS,
+  ATTRIBUTION_FIELDS,
+  type AttributionField,
+  type AttributionPatch,
   CLIENT_EXTENSIONS_DEFAULT,
   type ClientExtensionsSetting,
   type CustomPolicy,
   type DeploymentSettings,
   type DeploymentSettingsPatch,
   isCurrencyCode,
+  type PlatformAttributionView,
   updateDeploymentSettings,
 } from "../../../../lib/admin";
 import { componentName, type PlatformComponent } from "../../../../lib/components";
@@ -41,6 +48,7 @@ import type { DevicesAutoModeSource, DevicesAutoModeView } from "../../../../lib
 import {
   adminExtensionsQuery,
   deploymentSettingsQuery,
+  invalidateAttribution,
   invalidateDeviceModes,
   settingsChangeKeys,
 } from "../../../../lib/query/admin";
@@ -177,6 +185,8 @@ function AdminSettings({
       if (patch.clientExtensions !== undefined) await invalidateClientSets(qc);
       // the platform's auto-mode switch decides every org's and device's mode
       if (patch.devicesAutoMode !== undefined) await invalidateDeviceModes(qc);
+      // the attribution defaults ride on every org's settings (the agent page's help text)
+      if (patch.attribution !== undefined) await invalidateAttribution(qc);
       return r;
     },
     invalidates: (patch) => settingsChangeKeys(patch),
@@ -185,6 +195,7 @@ function AdminSettings({
   const [draft, setDraft] = useState<Partial<Simple>>({});
   const [themeDraft, setThemeDraft] = useState<string | null | undefined>(undefined);
   const [clientDraft, setClientDraft] = useState<ClientExtensionsSetting | undefined>(undefined);
+  const [attributionDraft, setAttributionDraft] = useState<AttributionDraft>({});
   const [autoDraft, setAutoDraft] = useState<"allowed" | "off" | undefined>(undefined);
   const cq = adminComponentsQuery("theme");
   const eligible = (
@@ -216,6 +227,9 @@ function AdminSettings({
   const client = clientDraft ?? savedClient;
   const clientPatch = clientChange(savedClient, client);
   if (clientPatch !== null) patch.clientExtensions = clientPatch;
+  const attribution =
+    saved.attribution === undefined ? null : attributionOf(saved.attribution, attributionDraft);
+  if (attribution !== null && attribution.patch !== null) patch.attribution = attribution.patch;
   const autoMode = saved.devicesAutoMode;
   if (
     autoMode !== undefined &&
@@ -234,6 +248,7 @@ function AdminSettings({
       setDraft({});
       setThemeDraft(undefined);
       setClientDraft(undefined);
+      setAttributionDraft({});
       setAutoDraft(undefined);
       toast.success(t("saved"));
     } catch (e) {
@@ -276,6 +291,7 @@ function AdminSettings({
             setDraft({});
             setThemeDraft(undefined);
             setClientDraft(undefined);
+            setAttributionDraft({});
             setAutoDraft(undefined);
           },
         },
@@ -328,6 +344,13 @@ function AdminSettings({
       {policy("customSkills")}
       {saved.devicesAutoMode !== undefined && (
         <AutoModeSection value={saved.devicesAutoMode} draft={autoDraft} onChange={setAutoDraft} />
+      )}
+      {saved.attribution !== undefined && attribution !== null && (
+        <AttributionSection
+          saved={saved.attribution}
+          value={attribution.value}
+          onChange={(d) => setAttributionDraft((cur) => ({ ...cur, ...d }))}
+        />
       )}
       <FormSection
         id="appearance"
@@ -436,6 +459,38 @@ function ClientCodeSection({
 const autoLocked = (source: DevicesAutoModeSource | undefined): boolean =>
   source === "env" || source === "file" || source === "nacos";
 
+/** The startup config's source of a field (read-only here), or null when it can be changed. */
+const lockedSource = (s: string): "env" | "file" | "nacos" | null =>
+  s === "env" || s === "file" || s === "nacos" ? s : null;
+
+/** The attribution section's edits over the saved values. */
+type AttributionDraft = Partial<Pick<PlatformAttributionView, AttributionField>>;
+
+/**
+ * The values the attribution section shows (the draft over the saved ones) and the patch: the
+ * changed fields only, never one set in the startup config. A locked field always shows its
+ * read-only (startup config) value, whatever a draft edit tried to put there.
+ */
+function attributionOf(
+  saved: PlatformAttributionView,
+  draft: AttributionDraft,
+): { value: Omit<PlatformAttributionView, "sources">; patch: AttributionPatch | null } {
+  const shown = <F extends AttributionField>(f: F): PlatformAttributionView[F] =>
+    lockedSource(saved.sources[f]) === null ? (draft[f] ?? saved[f]) : saved[f];
+  const value = {
+    commit: shown("commit"),
+    pr: shown("pr"),
+    sessionUrl: shown("sessionUrl"),
+  };
+  const patch: AttributionPatch = {};
+  for (const f of ATTRIBUTION_FIELDS) {
+    if (value[f] !== saved[f] && lockedSource(saved.sources[f]) === null) {
+      Object.assign(patch, { [f]: value[f] });
+    }
+  }
+  return { value, patch: Object.keys(patch).length > 0 ? patch : null };
+}
+
 /**
  * 自动模式 (auto mode spec §4.3): one control, allowed or off, with where the value comes from. A
  * value set in the startup config is disabled with its source. Off forces local devices to sandbox
@@ -476,6 +531,94 @@ function AutoModeSection({
             ? `${tf("readonly", { source: value.source })} · devices.autoMode`
             : t("source", { source: t(`sources.${value.source}`) })}
         </Text>
+      </Stack>
+    </FormSection>
+  );
+}
+
+/**
+ * 提交与 PR 署名 (spec 2026-11-14-agent-attribution): the trailer ending an agent-created commit
+ * message, the line ending an agent-created pull-request body, and whether a pull request also
+ * carries the conversation link (needs `http.publicUrl`, off by default). A field the startup
+ * config sets is read-only with its source. The preview shows what a commit and a pull request end
+ * with. 恢复默认 puts the built-in values back into the draft; the page's ActionRow saves it.
+ */
+function AttributionSection({
+  saved,
+  value,
+  onChange,
+}: {
+  saved: PlatformAttributionView;
+  value: Omit<PlatformAttributionView, "sources">;
+  onChange(d: AttributionDraft): void;
+}) {
+  const t = useTranslations("admin.settings.attribution");
+  const tf = useTranslations("configForm");
+  const locked = (f: AttributionField) => lockedSource(saved.sources[f]);
+  const lockedNote = (f: AttributionField) => {
+    const source = locked(f);
+    return source === null ? null : `${tf("readonly", { source })} · attribution.${f}`;
+  };
+  const off = t("off");
+  return (
+    <FormSection id="attribution" title={t("title")} description={t("description")}>
+      <Stack gap={12}>
+        <Field label={t("commitLabel")} help={lockedNote("commit") ?? t("commitHelp")}>
+          <Input
+            value={value.commit}
+            maxLength={500}
+            disabled={locked("commit") !== null}
+            onChange={(e) => onChange({ commit: e.target.value })}
+          />
+        </Field>
+        <Field label={t("prLabel")} help={lockedNote("pr") ?? t("prHelp")}>
+          <Input
+            value={value.pr}
+            maxLength={500}
+            disabled={locked("pr") !== null}
+            onChange={(e) => onChange({ pr: e.target.value })}
+          />
+        </Field>
+        <Stack gap={4}>
+          <SwitchField
+            label={t("sessionUrlLabel")}
+            checked={value.sessionUrl}
+            disabled={locked("sessionUrl") !== null}
+            onChange={(next) => onChange({ sessionUrl: next })}
+          />
+          <Text variant="small" tone="muted">
+            {lockedNote("sessionUrl") ?? t("sessionUrlHelp")}
+          </Text>
+        </Stack>
+        <Stack gap={4}>
+          <Text variant="small" tone="muted">
+            {t("previewTitle")}
+          </Text>
+          <Text variant="small" tone="muted">
+            {t("previewCommit")}
+          </Text>
+          <Text pre>{value.commit === "" ? off : value.commit}</Text>
+          <Text variant="small" tone="muted">
+            {t("previewPr")}
+          </Text>
+          <Text pre>{value.pr === "" ? off : value.pr}</Text>
+        </Stack>
+        <div>
+          <Button
+            variant="ghost"
+            onClick={() => {
+              // only the fields this console may change: a field the startup config sets keeps its
+              // read-only value (restoring it to the built-in default would show a value not in effect)
+              const next: AttributionDraft = {};
+              if (locked("commit") === null) next.commit = ATTRIBUTION_DEFAULTS.commit;
+              if (locked("pr") === null) next.pr = ATTRIBUTION_DEFAULTS.pr;
+              if (locked("sessionUrl") === null) next.sessionUrl = ATTRIBUTION_DEFAULTS.sessionUrl;
+              onChange(next);
+            }}
+          >
+            {t("restore")}
+          </Button>
+        </div>
       </Stack>
     </FormSection>
   );

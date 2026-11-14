@@ -704,7 +704,26 @@
       "sheetHint": "Everything is on by default; untick a tool to turn it off for this agent, or untick all to turn the whole group off (tools it gains later too). A policy can only be tightened. The changes are saved with this page.",
       "connectorPolicyHint": "A connector's tools can also be allowed for this agent, over the org default and a member's own Ask; a tool a member set to Deny on their own connection stays denied for them.",
       "loadingTools": "Reading the tools…",
-      "connectorToolsUnreadable": "This connector's tools could not be read. Try again later."
+      "connectorToolsUnreadable": "This connector's tools could not be read. Try again later.",
+      "attributionSection": "Commit and pull request attribution",
+      "attributionSectionHint": "What the agent adds to the git commits it creates and the pull requests it opens.",
+      "attributionMode": "Attribution",
+      "attributionMode_inherit": "Follow the platform",
+      "attributionModeHint_inherit": "Use the platform defaults shown below.",
+      "attributionMode_custom": "Custom",
+      "attributionModeHint_custom": "Use this agent's own lines.",
+      "attributionMode_off": "Off",
+      "attributionModeHint_off": "Add no attribution line.",
+      "attributionCommit": "Commit trailer",
+      "attributionCommitHelp": "Ends the message of a git commit the agent creates; empty adds none.",
+      "attributionPr": "Pull request line",
+      "attributionPrHelp": "Ends the body of a pull request the agent opens; empty adds none.",
+      "attributionSessionUrl": "Add the conversation link",
+      "attributionSessionUrlHint": "Needs http.publicUrl on the deployment; off by default.",
+      "attributionSessionUrlOn": "Yes",
+      "attributionSessionUrlNeedsPublicUrl": "On, but no link is added: the deployment has no public URL (http.publicUrl)",
+      "attributionDefaults": "Platform defaults: commit {commit}; pull request {pr}.",
+      "attributionNone": "None"
     },
     "params": {
       "default": "Default",
@@ -778,7 +797,8 @@
         "tools": "Tools",
         "skills": "Skills",
         "subagents": "Sub-agents",
-        "channels": "Channels"
+        "channels": "Channels",
+        "attribution": "Attribution"
       },
       "startChat": "Start a conversation",
       "reassign": "Change owner",
@@ -3980,6 +4000,21 @@
         "pluginOnHint": "Running",
         "pluginAllOffHint": "Stopped: the switch above turns off all plugin interface code.",
         "pluginOffHint": "Stopped: only its interface code; its server side keeps running."
+      },
+      "attribution": {
+        "title": "Commit and pull request attribution",
+        "description": "The lines agents add to the git commits they create and the pull requests they open. An empty line turns that part off. An agent may override this; it is an instruction to the model, not enforcement.",
+        "commitLabel": "Commit trailer",
+        "commitHelp": "Ends the message of a git commit an agent creates. Leave it empty to add none.",
+        "prLabel": "Pull request line",
+        "prHelp": "Ends the body of a pull request an agent opens. Leave it empty to add none.",
+        "sessionUrlLabel": "Add the conversation link",
+        "sessionUrlHelp": "Adds a link to the conversation to agent-created pull requests. It needs http.publicUrl set; off by default.",
+        "previewTitle": "Preview",
+        "previewCommit": "Commit message ending",
+        "previewPr": "Pull request ending",
+        "off": "(off)",
+        "restore": "Restore defaults"
       }
     },
     "extensions": {
