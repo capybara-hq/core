@@ -349,10 +349,10 @@ describe("client", () => {
     expect(exec.started).toEqual([]);
   });
 
-  it("426 exits 0 (terminal) with the upgrade message", async () => {
+  it("426 exits 1 with the upgrade message: the service retries, and an upgrade in place recovers", async () => {
     kernel.rejectWith = 426;
     const c = start();
-    expect(await c.done).toBe(0);
+    expect(await c.done).toBe(1);
     expect(errs).toEqual([
       "This capybara-device is too old for the deployment. Upgrade it: npm install -g @capybara-hq/device@next",
     ]);

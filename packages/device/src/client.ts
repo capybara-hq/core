@@ -65,9 +65,11 @@ export interface ConnectOptions {
 }
 
 /**
- * A running connection. `done` resolves with the exit code once the program should end: 0 for the
- * terminal conditions (revoked, outdated, replaced, deleted, stopped, drained), so a service
- * manager that restarts on failure leaves it stopped.
+ * A running connection. `done` resolves with the exit code once the program should end: 0 for a
+ * deliberate stop (revoked, replaced by a newer connection of this device, deleted, stopped,
+ * drained), which a service manager that restarts on failure leaves stopped; 1 when the deployment
+ * needs a newer program (426), which an upgrade in place recovers once the service starts it again.
+ * Connection failures never end it: they reconnect with backoff.
  */
 export interface Connection {
   readonly done: Promise<number>;
@@ -414,7 +416,9 @@ export function connect(
         res.resume();
         sock.terminate();
         if (status === 401) return endSession({ exit: 0, message: DISCONNECTED_MESSAGE });
-        if (status === 426) return endSession({ exit: 0, message: OUTDATED_MESSAGE });
+        // Not a deliberate stop: upgrading the package in place recovers it, so the exit is
+        // non-zero and the service manager starts the (new) program again.
+        if (status === 426) return endSession({ exit: 1, message: OUTDATED_MESSAGE });
         reportFailure(
           status === 404
             ? `Connecting to ${cred.connectUrl} failed: HTTP 404. The deployment must route ` +

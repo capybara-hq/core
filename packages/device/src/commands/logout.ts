@@ -1,10 +1,11 @@
-import { isAlive, readRunningPid } from "../pid.js";
+import { isAlive, type ProcessLookup, readRunningPid } from "../pid.js";
 import { removeCredential } from "../state.js";
 
 export interface LogoutDeps {
   out: (line: string) => void;
   err?: (line: string) => void;
   kill?: typeof process.kill;
+  ps?: ProcessLookup;
   sleep?: (ms: number) => Promise<void>;
   /** How long to wait for a running program to exit (default 5 s). */
   waitMs?: number;
@@ -21,7 +22,7 @@ export async function logout(stateDir: string, deps: LogoutDeps): Promise<number
   const err = deps.err ?? out;
   const kill = deps.kill ?? process.kill;
   const sleep = deps.sleep ?? ((ms) => new Promise<void>((r) => setTimeout(r, ms)));
-  const pid = readRunningPid(stateDir, kill);
+  const pid = readRunningPid(stateDir, { kill, ...(deps.ps && { ps: deps.ps }) });
   if (pid !== undefined && pid !== process.pid) {
     out(`Stopping the running capybara-device (pid ${pid}).`);
     try {

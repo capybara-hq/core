@@ -31,3 +31,13 @@ ${env}
 WantedBy=default.target
 `;
 }
+
+/** The bin script a unit runs (the second word of `ExecStart`), or undefined. */
+export function unitBinPath(content: string): string | undefined {
+  const line = /^ExecStart=(.*)$/m.exec(content)?.[1];
+  if (line === undefined) return undefined;
+  const words = [...line.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((m) =>
+    (m[1] ?? "").replace(/\\(.)/g, "$1").replaceAll("%%", "%"),
+  );
+  return words[1];
+}

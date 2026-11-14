@@ -10,7 +10,9 @@ import { start } from "./commands/start.js";
 import { status } from "./commands/status.js";
 import { stop } from "./commands/stop.js";
 import type { Executor } from "./exec/types.js";
+import type { ProcessLookup } from "./pid.js";
 import type { PolicyStore } from "./policy-store.js";
+import type { RunSystem } from "./service/manager.js";
 import { type Credential, stateDir } from "./state.js";
 
 export interface CliEnv {
@@ -24,10 +26,14 @@ export interface CliEnv {
   err?: (line: string) => void;
   createExecutor?: (cred: Credential, policy: PolicyStore) => Promise<Executor> | Executor;
   kill?: typeof process.kill;
-  /** Runs a system command for `service` (default: execFileSync). */
-  runSystem?: (cmd: string, args: string[]) => void;
+  /** Runs a system command for `service` and `stop` and returns its output (default: execFileSync). */
+  runSystem?: RunSystem;
+  /** Looks a process up by pid, to check a pid file names this program (default: `ps`). */
+  ps?: ProcessLookup;
   /** Standard input is a terminal (default: `process.stdin.isTTY`): a confirmation may be asked. */
   stdinIsTTY?: boolean;
+  /** Whether the OS sandbox can run here, for `login` and `mode` (default: the runtime's check). */
+  sandboxAvailable?: () => { ok: true } | { ok: false; reason: string };
   /** Asks one question on the terminal and resolves the answer (default: node:readline). */
   ask?: (question: string) => Promise<string>;
 }
@@ -120,9 +126,15 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
         ...(io.fetch && { fetch: io.fetch }),
         ...(io.sleep && { sleep: io.sleep }),
         ...(io.openBrowser && { openBrowser: io.openBrowser }),
+        ...(io.sandboxAvailable && { sandboxAvailable: io.sandboxAvailable }),
       });
     case "logout":
-      return logout(dir, { out, err, ...(io.kill && { kill: io.kill }) });
+      return logout(dir, {
+        out,
+        err,
+        ...(io.kill && { kill: io.kill }),
+        ...(io.ps && { ps: io.ps }),
+      });
     case "status":
       return status(dir, cmd.json, out, err);
     case "start":
@@ -132,14 +144,27 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
         out,
         err,
         createExecutor: io.createExecutor ?? defaultCreateExecutor(dir, home, err),
+        ...(io.env && { env: io.env }),
         ...(io.kill && { kill: io.kill }),
+        ...(io.ps && { ps: io.ps }),
       });
     case "stop":
-      return stop(dir, out, err, io.kill, { home, platform });
+      return stop(dir, out, err, {
+        service: { home, platform },
+        ...(io.kill && { kill: io.kill }),
+        ...(io.ps && { ps: io.ps }),
+        ...(io.runSystem && { run: io.runSystem }),
+      });
     case "drain":
-      if (cmd.wait !== true) return drain(dir, out, err, io.kill);
+      if (cmd.wait !== true) {
+        return drain(dir, out, err, {
+          ...(io.kill && { kill: io.kill }),
+          ...(io.ps && { ps: io.ps }),
+        });
+      }
       return drainAndWait(dir, out, err, {
         ...(io.kill && { kill: io.kill }),
+        ...(io.ps && { ps: io.ps }),
         ...(io.sleep && { sleep: io.sleep }),
         ...(cmd.timeoutSeconds !== undefined && { timeoutMs: cmd.timeoutSeconds * 1000 }),
       });
@@ -150,6 +175,7 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
         stateDir: dir,
         out,
         err,
+        ...(io.sandboxAvailable && { sandboxAvailable: io.sandboxAvailable }),
         ...((io.stdinIsTTY ?? process.stdin.isTTY === true) && { ask: io.ask ?? askOnTerminal }),
       });
     case "service":
@@ -162,6 +188,8 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
         err,
         ...(io.runSystem && { run: io.runSystem }),
         ...(io.sleep && { sleep: io.sleep }),
+        ...(io.kill && { kill: io.kill }),
+        ...(io.ps && { ps: io.ps }),
       });
   }
 }

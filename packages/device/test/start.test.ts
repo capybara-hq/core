@@ -7,10 +7,16 @@ import type { Connection } from "../src/client.js";
 import { drain, drainAndWait } from "../src/commands/drain.js";
 import { legacyPolicyNotice, start } from "../src/commands/start.js";
 import { stop } from "../src/commands/stop.js";
-import { pidPath, readRunning, removePid, writePid } from "../src/pid.js";
+import { type ProcessLookup, pidPath, readRunning, removePid, writePid } from "../src/pid.js";
 import type { PolicyStore } from "../src/policy-store.js";
 import { DEFAULT_POLICY, writeCredential, writePolicy } from "../src/state.js";
 import { FakeExecutor } from "./fake-kernel.js";
+
+/** `ps` for a test: every pid is a capybara-device that started long ago. */
+const ps: ProcessLookup = () => ({
+  command: "node /x/bin/capybara-device.mjs start",
+  started: new Date(0),
+});
 
 let dir: string;
 beforeEach(() => {
@@ -258,8 +264,7 @@ describe("start, stop, drain", () => {
         dir,
         () => {},
         (l) => err.push(l),
-        kill,
-        noService,
+        { kill, ps, service: noService },
       ),
     ).toBe(1);
     writePid(dir, 777);
@@ -268,8 +273,7 @@ describe("start, stop, drain", () => {
         dir,
         () => {},
         () => {},
-        kill,
-        noService,
+        { kill, ps, service: noService },
       ),
     ).toBe(0);
     expect(
@@ -277,7 +281,7 @@ describe("start, stop, drain", () => {
         dir,
         () => {},
         () => {},
-        kill,
+        { kill, ps },
       ),
     ).toBe(0);
     expect(sent.filter(([, s]) => s !== 0)).toEqual([
@@ -304,7 +308,7 @@ describe("start, stop, drain", () => {
         dir,
         (l) => out.push(l),
         () => {},
-        { kill, sleep, timeoutMs: 60_000 },
+        { kill, ps, sleep, timeoutMs: 60_000 },
       ),
     ).toBe(0);
     expect(out).toEqual(["Draining capybara-device.", "capybara-device has stopped."]);
@@ -321,6 +325,7 @@ describe("start, stop, drain", () => {
         (l) => err.push(l),
         {
           kill: forever,
+          ps,
           sleep,
           timeoutMs: 2000,
         },
@@ -332,7 +337,7 @@ describe("start, stop, drain", () => {
 });
 
 describe("a login service", () => {
-  it("stop refuses while one is installed, and never signals the program", () => {
+  it("stop refuses while the service runs the program, and never signals it", () => {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), "device-service-stop-")));
     const sent: Array<[number, string | number | undefined]> = [];
     const kill = ((pid: number, sig?: string | number) => {
@@ -344,13 +349,20 @@ describe("a login service", () => {
     writeFileSync(join(dir, "Library", "LaunchAgents", "top.capybara.device.plist"), "plist");
     writePid(dir, 4242);
     const err: string[] = [];
+    // launchd has the agent loaded and runs the pid file's program
+    const run = (_cmd: string, args: string[]): string =>
+      args[0] === "print" ? "\tstate = running\n\tpid = 4242\n" : "";
     expect(
       stop(
         dir,
         () => {},
         (l) => err.push(l),
-        kill,
-        { home: dir, platform: "darwin" },
+        {
+          kill,
+          ps,
+          run,
+          service: { home: dir, platform: "darwin" },
+        },
       ),
     ).toBe(1);
     expect(err.join("\n")).toContain("capybara-device service stop");
@@ -361,10 +373,11 @@ describe("a login service", () => {
   it("the pid file carries the running version, and a bare pid reads as unknown", () => {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), "device-pid-")));
     writePid(dir, 1234, "0.1.0-rc.9");
-    expect(readRunning(dir, () => true)).toMatchObject({ pid: 1234, version: "0.1.0-rc.9" });
+    const checks = { kill: (() => true) as typeof process.kill, ps };
+    expect(readRunning(dir, checks)).toMatchObject({ pid: 1234, version: "0.1.0-rc.9" });
     // a program older than the version field
     writeFileSync(pidPath(dir), "1234\n");
-    const old = readRunning(dir, () => true);
+    const old = readRunning(dir, checks);
     expect(old?.pid).toBe(1234);
     expect(old?.version).toBeUndefined();
     // removePid still matches the JSON form

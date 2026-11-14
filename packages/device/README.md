@@ -23,8 +23,10 @@ an existing connected one of yours) after reading what the program can do. Loggi
 another machine into the same device replaces the first machine (its credential is revoked).
 `stop` ends the running program, `drain` makes it accept no new commands and exit when the running
 ones finish (`drain --wait [--timeout <seconds>]` returns only once it has exited, at most 600 s by
-default). On macOS, when the login service is installed, launchd starts the program again after
-`stop` or `drain`; run `capybara-device service uninstall` to keep it stopped. `logout` stops a
+default). Both signal only a pid the pid file names **and** `ps` shows to be `capybara-device`,
+started before the file was written; a stale file (a reused pid) is never signalled. When the login
+service runs the program, `stop` refuses and points at `service stop`; `drain` exits 0, which the
+service leaves stopped until `service start`. `logout` stops a
 running program, then forgets the credential (the machine stays
 connected on the platform until it is revoked there). Deleting the device in the web app
 revokes the machine and stops the program; the files in the working directory stay on your machine.
@@ -36,12 +38,14 @@ jitter) and never gives up: a failure different from the last one is printed at 
 at most once a minute. The message is the HTTP status (a 404 usually means that route is missing),
 the close reason, or the network error.
 
-`start` exits 0, after printing why, when retrying cannot help: the machine was revoked or the
-device deleted, the program is too old for the deployment (426), another login replaced this
-connection, or the machine is not logged in. Other failures exit non-zero. On macOS the login
-service (below) restarts the program after any exit, at most every 30 s, so fix the cause (log in
-again, upgrade): the running agent then reconnects by itself. `capybara-device service status`
-shows whether the agent is loaded and the program running.
+`start` exits 0 only for a deliberate stop: the machine was revoked or the device deleted, another
+connection of this device replaced this one, `stop` / `drain` / `logout`, or the machine is not
+logged in. The login service (below) leaves such an exit stopped. Every exit it must recover from is
+non-zero, and the service restarts it: a crash, an invalid start (`Cannot start: …`), or a
+deployment that needs a newer program (426: upgrade the package in place and the next restart runs
+the new one). A failing connection never ends the program: it reconnects with backoff, so a kernel
+restart needs no service restart. After logging in again, start the installed service with
+`capybara-device service restart`; `capybara-device service status` shows what is true now.
 
 If the working directory (or its marker `.capybara-device`, or one of `workspace/`, `skills/`,
 `tmp/`) is removed, the program never recreates it: operations answer that the files are lost and
@@ -88,7 +92,11 @@ If the OS sandbox is unavailable on the machine (an unsupported platform or miss
 such as `bwrap` / `socat` on Linux), the device still starts and serves: auto mode works, and every
 sandbox-mode command is refused with the reason and how to fix it (`capybara-device mode auto`, or
 install the dependencies and restart). `capybara-device mode sandbox` is refused on such a machine
-and the policy stays in auto; nothing ever runs unsandboxed by falling back.
+and the policy stays in auto; nothing ever runs unsandboxed by falling back. File operations
+(read, write, stat) there follow only a fresh command decision (the latest command, within a
+minute): without one they are refused, never served on the host. `login` into an organization that
+forbids auto mode checks the OS sandbox first: when it is unavailable, no sandbox policy is written
+and the login line says what to install (or to log in with `--mode docker`).
 
 ```bash
 capybara-device mode                            # print the current mode
@@ -135,8 +143,8 @@ lines (at most 21).
 
 In OS mode each command's result also carries the refused hosts and their layers, so the
 deployment can ask the device owner on the spot (the device announces this in its hello, together
-with a summary of its local policy: the effective `mode` and the sandbox-mode
-`allowedDomains`).
+with a summary of its local policy: the owner's `mode`, never cut by an exec's ceiling (the
+deployment applies its own), and the sandbox-mode `allowedDomains`).
 
 ### Sandbox mode details
 
@@ -222,22 +230,32 @@ need to allow single domains.
 
 `capybara-device service install` makes the program start at login: on macOS a launchd agent
 (`~/Library/LaunchAgents/top.capybara.device.plist`, log `service.log` in the state directory), on
-Linux a systemd user unit (`~/.config/systemd/user/capybara-device.service`). The macOS agent
-restarts the program after every exit, at most every 30 s (`ThrottleInterval`); systemd restarts it
-when it exits non-zero, after 5 s.
+Linux a systemd user unit (`~/.config/systemd/user/capybara-device.service`). Both restart the
+program only when it exits non-zero: the macOS agent uses `KeepAlive { SuccessfulExit: false }`, at
+most every 30 s (`ThrottleInterval`); systemd `Restart=on-failure`, after 5 s. Exit 0 is a deliberate
+stop and stays stopped.
 
 `service start|stop|restart` control it without knowing launchctl or systemctl. `stop` unloads the
-service (the plist or unit stays) rather than signalling the program, which the service manager
-would start straight back up; running commands end with it. `restart` reloads the program from the
-installed `bin`, so it is **the way to apply a package upgrade**: `npm i -g
-@capybara-hq/device@latest && capybara-device service restart`. While a service is installed, the
-top-level `stop` refuses and points at `service stop` (a signal would be undone by the restart
-policy); `start` still runs, for a stopped service, and says how to restart the installed one.
+service (the plist or unit stays) rather than signalling the program; running commands end with
+it, and it reports a failure when the service is still loaded afterwards. `start` and `restart`
+wait (up to 10 s) until the service manager runs the program and report a failure, pointing at
+`service.log`, when it does not come back; `service start` refuses while a program started in a
+terminal runs ("stop it first"). On macOS a loaded agent whose program exited is started again with
+`launchctl kickstart`. `restart` reloads the program from the installed `bin`, so it is **the way to
+apply a package upgrade**: `npm i -g @capybara-hq/device@latest && capybara-device service restart`.
+The top-level `stop` refuses only when the service manager runs the program it would signal (launchd
+has the agent loaded, or systemd the unit active, and its pid is the pid file's) and points at
+`service stop`; a program started in a terminal is signalled as before. `start` in a terminal says
+how to restart the installed service; started by the service manager (launchd sets
+`XPC_SERVICE_NAME`, systemd `INVOCATION_ID`) it prints no such hint.
 
-`capybara-device service status` reports whether the service is installed, whether the program is
-running and **at which version**, and when the running program is older than the installed package
-it says so with the restart command. The pid file records the version (`{pid, version, startedAt}`);
-one written by an older program reads as "version unknown". A user unit runs only
+`capybara-device service status` says one of four things: not installed; installed but not loaded
+(`service start`); loaded but the program is not running, i.e. it exited (the reason is at the end of
+`service.log`; fix it, then `service restart`); or running, with the service manager's pid and the
+program's **version**. When the package at the service file's `bin` path (its `package.json`) is a
+different version from the running program, it adds the restart command: an upgrade the service has
+not picked up yet. The pid file records the version (`{pid, version, startedAt}`); one written by an
+older program reads as "version unknown". A user unit runs only
 while you have a session, so run `loginctl enable-linger $USER` to start it at boot and keep it
 running after you log out. `service.log` is emptied into `service.log.1` at 10 MiB when the program
 starts. The service runs `node <bin> start` with the `PATH` of the shell that installed it (so

@@ -4,8 +4,8 @@ import { join } from "node:path";
 export const LAUNCHD_LABEL = "top.capybara.device";
 
 /**
- * Minimum seconds between launchd restarts of the agent. Together with unconditional KeepAlive
- * this restarts the program after any exit, without spinning when it crashes during startup.
+ * Minimum seconds between launchd restarts of the agent: a program that keeps failing (exit code
+ * not 0) is started again at most this often, so a fast crash loop cannot spin.
  */
 export const LAUNCHD_THROTTLE_INTERVAL_SECONDS = 30;
 
@@ -29,10 +29,11 @@ function xml(s: string): string {
 }
 
 /**
- * The launchd agent: `node <bin> start`, at login and after every exit. `KeepAlive` is
- * unconditional on purpose: the program only exits for a shutdown or a terminal condition, and a
- * clean exit must not leave the machine offline until someone bootstraps the agent again.
- * `ThrottleInterval` keeps a fast crash loop from spinning.
+ * The launchd agent: `node <bin> start` at login, and again after every failing exit. The program
+ * exits 0 only for a deliberate stop (logout, a revoked credential, `drain`, not logged in, a
+ * newer connection of this device), which must stay stopped; every exit it must recover from (a
+ * crash, a deployment that needs a newer program) is non-zero, so `KeepAlive { SuccessfulExit:
+ * false }` restarts exactly those. `ThrottleInterval` keeps a fast crash loop from spinning.
  */
 export function plistContent(spec: ServiceSpec): string {
   const env = Object.entries(spec.env)
@@ -53,7 +54,10 @@ export function plistContent(spec: ServiceSpec): string {
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
-  <true/>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
   <key>ThrottleInterval</key>
   <integer>${LAUNCHD_THROTTLE_INTERVAL_SECONDS}</integer>
   <key>EnvironmentVariables</key>
@@ -67,6 +71,18 @@ ${env}
 </dict>
 </plist>
 `;
+}
+
+function unxml(s: string): string {
+  return s.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
+}
+
+/** The bin script a plist runs (the second `ProgramArguments` string), or undefined. */
+export function plistBinPath(content: string): string | undefined {
+  const args = /<key>ProgramArguments<\/key>\s*<array>([\s\S]*?)<\/array>/.exec(content)?.[1];
+  if (args === undefined) return undefined;
+  const strings = [...args.matchAll(/<string>([\s\S]*?)<\/string>/g)].map((m) => unxml(m[1] ?? ""));
+  return strings[1];
 }
 
 export const SERVICE_LOG_MAX_BYTES = 10 * 1024 * 1024;
