@@ -207,6 +207,7 @@ export function ComposerBar({
   sendDisabled,
   initialDraft,
   onBlocked,
+  onCompact,
   control,
 }: {
   orgId: string;
@@ -248,6 +249,12 @@ export function ComposerBar({
   initialDraft?: ComposerDraft | undefined;
   /** ↵ with a draft while `sendDisabled` (the caller says why; the draft stays). */
   onBlocked?(): void;
+  /**
+   * The conversation can be compacted (context compaction spec §4.10): enables the built-in
+   * `/compact` command and its `/` menu entry. Absent while there is no conversation to compact
+   * (a new conversation, a sub-agent's) and for an eval conversation (never shown here).
+   */
+  onCompact?(): Promise<void>;
   /** Filled with {@link ComposerControl} while this composer is mounted. */
   control?: Ref<ComposerControl>;
 }) {
@@ -320,6 +327,22 @@ export function ComposerBar({
     (value === "" || value === "/") &&
     (files.length === 0 || attachments.length > 0);
 
+  /**
+   * Runs the built-in `/compact` (shared by the typed command and the `/` menu entry): the
+   * composer clears the text it ran from and keeps it if the kernel refuses (a busy conversation
+   * read from another tab).
+   */
+  async function runCompact(clearText: string) {
+    if (onCompact === undefined) return;
+    setText((cur) => (cur === clearText ? "" : cur));
+    try {
+      await onCompact();
+    } catch (e) {
+      setText((cur) => (cur.trim() === "" ? clearText : cur));
+      toast.error(errorMessage(e));
+    }
+  }
+
   async function submit() {
     const sentText = text;
     const sentSkill = skill;
@@ -330,6 +353,17 @@ export function ComposerBar({
     const sent = files.flatMap((f) => (f.id !== undefined ? [{ key: f.key, id: f.id }] : []));
     // Files alone can be sent; `@` resources need text (their bodies follow content[0]).
     if (empty(value)) return;
+    // The built-in /compact command (context compaction spec §4.10), before the skill lookup: no
+    // arguments, no user message. A skill chip owns the text after it, so it is not a command then.
+    if (onCompact !== undefined && skill === null) {
+      const command = parseSlashCommand(value);
+      if (command !== null && command.name === "compact") {
+        if (command.args !== "") toast.error(t("compactNoArgs"));
+        else if (running) toast.error(t("compactBusy"));
+        else await runCompact(sentText);
+        return;
+      }
+    }
     const fileIds = sent.map((f) => f.id);
     const shownFiles = files
       .filter((f) => f.id !== undefined)
@@ -538,7 +572,7 @@ export function ComposerBar({
   };
 
   const skillItems = skills ?? [];
-  const groups: CommandGroup[] =
+  const contentGroups: CommandGroup[] =
     palette === "prompts"
       ? [
           ...(skillItems.length > 0
@@ -600,6 +634,35 @@ export function ComposerBar({
             ...unavailableGroup(resources?.unavailable),
           ]
         : [];
+
+  // The built-in /compact command (context compaction spec §4.10) sits above what the agent
+  // offers, but only when the menu has something else: with nothing invocable the palette keeps
+  // its "no skills selected" guidance (spec §5 rule 11), and `/compact` is still typed and parsed.
+  const commandGroup: CommandGroup | null =
+    onCompact !== undefined
+      ? {
+          label: t("commandsGroup"),
+          items: [
+            {
+              id: "command:compact",
+              label: "/compact",
+              description: t("compactCommandHint"),
+              onSelect: () => {
+                picked();
+                if (running) {
+                  toast.error(t("compactBusy"));
+                  return;
+                }
+                void runCompact(text);
+              },
+            },
+          ],
+        }
+      : null;
+  const groups: CommandGroup[] =
+    commandGroup !== null && contentGroups.length > 0
+      ? [commandGroup, ...contentGroups]
+      : contentGroups;
 
   const missingArgs =
     argsFor?.arguments.filter((a) => a.required && (args[a.name] ?? "").trim() === "") ?? [];

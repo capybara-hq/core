@@ -162,7 +162,8 @@
       "artifact_removed": "这个文件已不可用。",
       "queue_full": "排队的消息已满。请等排队消息发出，或删掉一些。",
       "queue_item_not_found": "这条排队消息已发出或已删除。",
-      "read_only": "这是子智能体的会话，不能在这里发消息。"
+      "read_only": "这是子智能体的会话，不能在这里发消息。",
+      "busy": "这个会话正在运行，请等它结束后再试。"
     },
     "background_task": {
       "not_found": "这个后台任务不存在或已被清理。",
@@ -1427,6 +1428,11 @@
     "compacting": "正在压缩会话…",
     "compactingChunk": "{chunk}/{chunks}",
     "compactingElapsed": "{seconds} 秒",
+    "compact": "压缩会话",
+    "compactCommandHint": "总结较早的消息，释放上下文",
+    "compactNoArgs": "「/compact」命令不接受参数。",
+    "compactBusy": "会话正在运行，结束后再压缩。",
+    "commandsGroup": "命令",
     "system": "系统",
     "fileRemoved": "已不可用",
     "noAgents": "没有可用的智能体。请先新建一个智能体。",

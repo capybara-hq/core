@@ -19,6 +19,8 @@ export type TitleBarMenuItem = {
   label: string;
   icon: IconName;
   tone?: "fail";
+  /** Drawn dimmed and not activatable (e.g. an action a running conversation refuses). */
+  disabled?: boolean;
   onSelect(): void;
 };
 
@@ -131,6 +133,7 @@ export function TitleBar({
           label: m.label,
           icon: m.icon,
           ...(m.tone ? { tone: m.tone } : {}),
+          ...(m.disabled === true ? { disabled: true } : {}),
           onSelect: m.onSelect,
         },
   );

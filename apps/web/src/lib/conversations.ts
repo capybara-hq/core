@@ -709,6 +709,18 @@ export const renameConversation = (orgId: string, id: string, title: string) =>
     body: JSON.stringify({ title }),
   });
 
+/**
+ * Manual compaction (context compaction spec §4.7): starts a compact run that summarizes the
+ * conversation's earlier history, `202 { runId }`; the same run id comes back while one is queued
+ * or running. The body is `{}`: the route validates its shape and a missing body is refused. A
+ * busy conversation is `409 conversation.busy`; an eval or someone else's is not found.
+ */
+export const compactConversation = (orgId: string, id: string) =>
+  apiFetch<{ runId: string }>(`${one(orgId, id)}/compact`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+
 /** Archive or unarchive (owner only); archiving does not stop a running run. */
 export const archiveConversation = (orgId: string, id: string, archived: boolean) =>
   apiFetch<{ conversation: Conversation }>(one(orgId, id), {

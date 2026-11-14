@@ -190,11 +190,12 @@ describe("the / menu", () => {
     const dialog = await screen.findByRole("dialog");
     await within(dialog).findByText("/fix-issue");
     const headings = [...dialog.querySelectorAll("[cmdk-group-heading]")].map((h) => h.textContent);
-    expect(headings).toEqual([en.chat.skillsGroup, "Docs"]);
+    expect(headings).toEqual([en.chat.commandsGroup, en.chat.skillsGroup, "Docs"]);
     const options = within(dialog)
       .getAllByRole("option")
       .map((o) => o.textContent);
     expect(options).toEqual([
+      `/compact${en.chat.compactCommandHint}`,
       "/brainstormingThink before buildingsuperpowers",
       "/fix-issue[issue-number]Fix a GitHub issue",
       `/release-check${en.chat.skillTag.manual}Run the release checks`,
@@ -202,7 +203,7 @@ describe("the / menu", () => {
       "/docs:summarizeSummarize a topic",
     ]);
     // the plugin a skill came from is its secondary label (spec §3.2)
-    const brainstorming = within(dialog).getAllByRole("option")[0] as HTMLElement;
+    const brainstorming = within(dialog).getAllByRole("option")[1] as HTMLElement;
     expect(brainstorming.querySelector('[data-part="palette-source"]')?.textContent).toBe(
       "superpowers",
     );

@@ -162,7 +162,8 @@
       "artifact_removed": "This file is no longer available.",
       "queue_full": "The queue is full. Wait for queued messages to go out, or remove some.",
       "queue_item_not_found": "The queued message has already been sent or removed.",
-      "read_only": "This is a sub-agent's conversation; it doesn't take messages."
+      "read_only": "This is a sub-agent's conversation; it doesn't take messages.",
+      "busy": "The conversation is busy. Wait for the current run to finish."
     },
     "background_task": {
       "not_found": "The background task does not exist or has been cleaned up.",
@@ -1427,6 +1428,11 @@
     "compacting": "Compacting conversation…",
     "compactingChunk": "{chunk}/{chunks}",
     "compactingElapsed": "{seconds}s",
+    "compact": "Compact conversation",
+    "compactCommandHint": "Summarize earlier messages to free context",
+    "compactNoArgs": "The /compact command takes no arguments.",
+    "compactBusy": "A run is in progress. Compact the conversation when it finishes.",
+    "commandsGroup": "Commands",
     "system": "System",
     "fileRemoved": "No longer available",
     "noAgents": "No agent is available. Create an agent first.",

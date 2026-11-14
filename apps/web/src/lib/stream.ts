@@ -81,8 +81,9 @@ export interface CompactionProgress {
 }
 
 /**
- * The compaction progress after a frame: a frame of another run is kept only when it is newer than
- * what is shown (frames of different runs are separate compactions).
+ * The compaction progress after a frame: within one run an older frame never replaces a newer one
+ * (the ordering guard); a frame of another run replaces what is shown — frames of different runs
+ * are separate compactions, and a new run owns the row.
  */
 export function acceptCompaction(
   current: CompactionProgress | null,

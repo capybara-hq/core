@@ -20,7 +20,9 @@ export function CompactingRow({ progress }: { progress: CompactionProgress }) {
       ? `${t("compacting")} · ${t("compactingChunk", { chunk: progress.chunk, chunks: progress.chunks })} · ${elapsed}`
       : `${t("compacting")} · ${elapsed}`;
   return (
-    <div data-role="compacting-row" role="status">
+    // No live region of its own: the row lives inside the thread's `role="log"` region, which
+    // announces it when it appears (a nested `role="status"` would announce it twice).
+    <div data-role="compacting-row">
       <Stack direction="row" gap={8} align="center">
         <Spinner size={16} />
         <Text variant="small" tone="muted">
