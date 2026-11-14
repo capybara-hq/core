@@ -1,6 +1,6 @@
 {
   "name": "@capybara-hq/capybara",
-  "version": "0.1.0-rc.31",
+  "version": "0.1.0-rc.32",
   "private": true,
   "license": "Apache-2.0",
   "type": "module",

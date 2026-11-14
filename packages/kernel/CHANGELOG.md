@@ -1,5 +1,65 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.31
+
+### Patch Changes
+
+- 5e3cee2: Auto mode correctness (auto mode hardening spec §3, §5). Approving a network request adds its
+  hosts without turning an open cloud network into an allowlist. `platform.me` reports a new
+  device's mode and network from `effectiveDevicePolicy`. `sandbox.tiers`,
+  `sandbox.limits.devHosts` and `sandbox.limits.egress: "open"` in the loaded config now fail
+  startup with an error naming `devices.autoMode` and `cloudNetwork`; the startup warning fires when
+  the sandbox provider sets `refuseOpenNetwork` while an org can be on the open network. A cloud
+  device's owner may send it back to auto (`PATCH /devices/:id { mode: null }`, web session only;
+  an API token gets `device.mode_requires_session`), and the device view names the network sandbox
+  mode gives it (`mode.sandboxNetwork`). The device page confirms a cloud device's mode switch in
+  a dialog naming the network it will reach, and a card that cannot be chosen says why. The
+  open-network refusal text is provider-neutral.
+- 54d9c50: The sandbox-docker bootstrap pin moves to rc.15 (capybara-hq/plugins 08074e9): the egress proxy
+  refuses the Azure WireServer address and the deployment's `deniedCidrs`, and an open-public
+  instance made before `refuseOpenNetwork` is recreated. The compose sandbox build contexts point at
+  the same commit.
+- 96d1df3: The command review closes routes its rule table let through. Inline interpreter code (`python -c`,
+  `node -e`, `perl -e`, `deno eval`, …), code fed to an interpreter on stdin or from a URL, packages a
+  runner fetches (`npx`, `pnpm dlx`, `uvx`; known development tools stay allowed) and files the
+  conversation itself wrote are now `unsure` (the classifier decides, else the person is asked).
+  Destroying `/`, the home directory or a parent of the workspace is denied for every program —
+  `mv`, `chmod -R`, `chown -R`, `find -delete`, `rsync --delete` as well as `rm`. Links to paths outside
+  the workspace ask, links to credentials ask every time. `gh api` writes ask. More credential files
+  are secret paths (`~/.npmrc`, `~/.pypirc`, `~/.vault-token`, shell history, …).
+  
+  Session grants (「本会话允许同类」) now allow a line only when every class it asks about is granted
+  and nothing in it is unsure, are never consulted in unattended runs, and come in finer classes:
+  `ask.rc-files` splits into `ask.shell-config`, `ask.persistence`, `ask.ssh` and `ask.secret-file`,
+  and credential prints, credential links, dynamic arguments and `sudo` are asked every time. A
+  classifier allow on a command too long to read in full is an ask, and a command over the 32 KiB
+  ceiling is refused before review.
+- aef5036: A default-device lookup that raced a provider switch-back could answer with the default just demoted,
+  so two concurrent callers got different default devices. The unlocked fast path now checks the live
+  default is unchanged after reading the former defaults, and otherwise lets the locked path decide.
+- d8bddcf: OAuth discovery, client registration and token requests, npm registry downloads (packument,
+  tarball, a marketplace's `tarball` URL, the bootstrap download) and npm provenance now go through
+  the kernel's network rules (`packages/kernel/src/net`): a host must resolve to public addresses
+  unless `marketplaces.allowPrivateHosts` lists it, the connection is pinned to the checked address,
+  redirects are never followed, and https requests tunnel through `net.httpsProxy`. An OAuth URL
+  whose host is private fails with reason `address_refused` and says how to allow it. The configured
+  `packages.npmRegistry` origin stays trusted (an internal or `http://` registry keeps working); a
+  deployment with `net.httpsProxy` and an internal https registry lists it in `net.noProxy`.
+  
+  Migration: `NODE_USE_ENV_PROXY=1` / `HTTPS_PROXY` no longer route these requests (the kernel sets
+  its own connection). A deployment that relied on them sets `net.httpsProxy` instead, and lists an
+  internal https npm registry in `net.noProxy`.
+- 7e71aed: A call to a tool that the step's request did not load (ToolSearch mode) now carries a display-only
+  `not_loaded` view. It is expected behaviour — the kernel tells the model to load the tool with
+  `ToolSearch` and the model retries — so the conversation shows it as a neutral "需先加载工具" /
+  "Load the tool first" notice instead of a failure, and the tool group's header no longer counts it
+  as failed. The model-facing result is unchanged (`isError: true`, the same message).
+- d3ba1d8: The tool catalog header in the system prompt now states the rule for every tool, not only for
+  "more tools": a tool that is not in the model's tool list is not loaded even when the agent's
+  instructions name it, and calling it returns an error, so `ToolSearch` comes first. Agents that
+  followed a plugin's or a skill's instruction straight to a catalog tool no longer spend a step on
+  the error. The not-loaded error and the ToolSearch behaviour are unchanged.
+
 ## 0.1.0-rc.30
 
 ### Minor Changes
