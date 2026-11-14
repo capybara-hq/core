@@ -1492,6 +1492,64 @@ describe("runModelStep", () => {
         });
       });
 
+      it("compactions are counted by their recorded step: an earlier-step event between them does not reuse a key", async () => {
+        // same two compactions as above, at step 2, with an event of this run from step 1 logged
+        // between them (a writer outside the step): the second compaction still gets its own keys
+        let fbCalls = 0;
+        const s = stub(
+          [
+            stubInfo("main", { contextWindow: 2000, maxOutputTokens: 100 }),
+            stubInfo("fb", { contextWindow: 700, maxOutputTokens: 100 }),
+          ],
+          (req) => {
+            if (isCompactionCall(req)) return `Summary: ${"s".repeat(300)}`;
+            if (req.model === "main") throw new ModelError("server", "down", { retryAfterMs: 1 });
+            fbCalls++;
+            if (fbCalls === 1) throw new ModelError("context_overflow", "too long");
+            return "fb answer";
+          },
+        );
+        stubImpl = s;
+        for (let i = 0; i < 8; i++) {
+          await say(filler(i));
+          await answer(filler(i));
+        }
+        await say("go");
+        const original = deps.stepLog.appendReported.bind(deps.stepLog);
+        let injected = false;
+        const spy = vi
+          .spyOn(deps.stepLog, "appendReported")
+          .mockImplementation(async (conversation, evs) => {
+            const r = await original(conversation, evs);
+            if (!injected && evs.some((e) => e.type === "compaction_summary")) {
+              injected = true;
+              const late = await eventLog.append(conversationId, [
+                { type: "reminder", runId, payload: { step: 1, text: "late step-1 note" } },
+              ]);
+              return { ...r, written: [...r.written, ...late] };
+            }
+            return r;
+          });
+        const agent = agentWith({
+          model: { provider: "stub", model: "main" },
+          fallback: { provider: "stub", model: "fb" },
+        });
+        try {
+          await withSettings({ reserveTokens: 0 }, async () => {
+            expect((await step({ step: 2, agent })).content).toEqual([
+              { type: "text", text: "fb answer" },
+            ]);
+          });
+        } finally {
+          spy.mockRestore();
+        }
+        expect(injected).toBe(true);
+        const summaries = await ofType("compaction_summary");
+        expect(summaries).toHaveLength(2);
+        expect(summaries.map((e) => e.payload.step)).toEqual([2, 2]);
+        expect(await compactionUsages()).toHaveLength(2);
+      });
+
       it("a step re-run after a crash between the summary call and its write writes one summary", async () => {
         await withSettings({ reserveTokens: 0 }, async () => {
           for (let i = 0; i < 8; i++) {
@@ -2614,7 +2672,11 @@ describe("model.request hooks: stickiness, compaction (M-4, M-2, I-1)", () => {
     // bounds (spec §4.1) keep the guard's target reachable, so the guard needs no forced compaction
     const failures = await ofType("compaction_failed");
     expect(failures.map((f) => f.payload)).toEqual([
-      { attempt: 1, reason: 'compaction request blocked by the "guard" policy hook (deny)' },
+      {
+        attempt: 1,
+        step: 1,
+        reason: 'compaction request blocked by the "guard" policy hook (deny)',
+      },
     ]);
     expect(JSON.stringify(await all())).not.toContain("raw detail");
     expect(await ofType("compaction_summary")).toEqual([]);

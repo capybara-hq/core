@@ -1271,9 +1271,22 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
        * opening message) have none and re-render nothing.
        */
       openingSeqs: z.array(seqNo).optional(),
+      /**
+       * The step the compaction ran in (0 for a manual compact run), so a later compaction in the
+       * same step takes the next idempotency key. Optional: older logs have none.
+       */
+      step: count.optional(),
     }),
   ),
-  ev("compaction_failed", z.object({ attempt: count, reason: z.string() })),
+  ev(
+    "compaction_failed",
+    z.object({
+      attempt: count,
+      reason: z.string(),
+      /** The step the compaction ran in, as on `compaction_summary`. Optional: older logs. */
+      step: count.optional(),
+    }),
+  ),
   ev(
     "run_finished",
     z.object({

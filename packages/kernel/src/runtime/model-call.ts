@@ -451,7 +451,6 @@ const idem = {
     `media_excluded:${runId}:${step}:${attempt}:${part}`,
 };
 
-/** 外部 signal 已触发：本步按「中止」收尾。 */
 /** The step result of a sub-agent whose budget a compaction call used up: no step request. */
 const BUDGET_STOP: ModelStepResult = {
   content: [],
@@ -497,6 +496,7 @@ class NoReactiveTrim extends Error {
   }
 }
 
+/** The external signal fired: the step ends as aborted. */
 class StepAborted extends Error {
   constructor() {
     super("model step aborted");
@@ -1036,26 +1036,29 @@ function stepOf(e: ConversationEvent): number | undefined {
  * `compaction_failed` events the step already wrote (context compaction spec §4.4, revision
  * 2026-11-15). It keys the compaction's events (summary, failure, usage, hook denial), so every
  * compaction of a step writes its own, while a crash-retried compaction (nothing written yet) gets
- * the same keys again. The outcome events carry no step: a run's step N compacts after every event
- * of its earlier steps, so the count restarts at each event of the run from an earlier step. The
- * backoff keeps counting consecutive failures ({@link consecutiveCompactionFailures}).
+ * the same keys again. Outcome events record their step, so they are counted by it. Older ones
+ * have none: a run's step N compacts after every event of its earlier steps, so those are counted
+ * from the run's last event of an earlier step on. The backoff keeps counting consecutive failures
+ * ({@link consecutiveCompactionFailures}).
  */
 function compactionOrdinal(
   events: readonly ConversationEvent[],
   runId: string,
   step: number,
 ): number {
-  let n = 0;
+  let recorded = 0;
+  let legacy = 0;
   for (const e of events) {
     if (e.runId !== runId) continue;
+    const of = stepOf(e);
     if (e.type === "compaction_summary" || e.type === "compaction_failed") {
-      n++;
+      if (of === undefined) legacy++;
+      else if (of === step) recorded++;
       continue;
     }
-    const of = stepOf(e);
-    if (of !== undefined && of < step) n = 0;
+    if (of !== undefined && of < step) legacy = 0;
   }
-  return n + 1;
+  return recorded + legacy + 1;
 }
 
 /** Estimated input tokens of a plain text (a user message's only content). */
@@ -1438,6 +1441,7 @@ export async function runCompaction(
       idemKey: idem.compactionFailed(runId, step, ordinal),
       payload: {
         attempt: attemptNo,
+        step,
         reason: `compaction request blocked by the "${verdict.plugin}" policy hook (${verdict.cause})${chunkNote(multiChunk ? denial.chunk : null)}`,
       },
     };
@@ -1478,13 +1482,14 @@ export async function runCompaction(
             // what compaction saved: the estimated transcript input minus the stored summary
             // output (context compaction spec §4.9)
             savedTokens: summarySavedTokens(plan.transcript, summary),
+            step,
           },
         }
       : {
           type: "compaction_failed",
           runId,
           idemKey: idem.compactionFailed(runId, step, ordinal),
-          payload: { attempt: attemptNo, reason: `${failure}${chunkNote(failedChunk)}` },
+          payload: { attempt: attemptNo, step, reason: `${failure}${chunkNote(failedChunk)}` },
         };
   // the compaction calls' usage (I-1): logged with the outcome in one append (one transaction),
   // marked `purpose: "compaction"` so step consumers (calibration, trajectory steps, replay plans)
