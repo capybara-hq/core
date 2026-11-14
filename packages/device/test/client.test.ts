@@ -112,7 +112,7 @@ describe("client", () => {
     const hello = await kernel.waitFor("hello", () => kernel.of("hello")[0]);
     expect(hello.features).toEqual(["networkReport", "policyOp", "policyOpId", "mode"]);
     // No exec seen yet: the owner's choice, auto by default.
-    expect(hello.policy).toEqual({ mode: "auto", allowedDomains: ["a.com"] });
+    expect(hello.policy).toEqual({ mode: "auto", allowedDomains: ["a.com"], projects: [] });
     kernel.send(
       0,
       req("p1", "policy", {
@@ -145,6 +145,7 @@ describe("client", () => {
     expect(again.policy).toEqual({
       mode: "sandbox",
       allowedDomains: ["a.com", "files.slack.com"],
+      projects: [],
     });
   });
 

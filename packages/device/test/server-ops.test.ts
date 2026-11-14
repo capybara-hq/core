@@ -116,7 +116,7 @@ describe("the policy op", () => {
       id: "x",
       ok: true,
       result: {
-        policy: { mode: "auto", allowedDomains: ["a.com", "files.slack.com"] },
+        policy: { mode: "auto", allowedDomains: ["a.com", "files.slack.com"], projects: [] },
       },
     });
     expect(readPolicy(dir)).toMatchObject({
@@ -415,17 +415,19 @@ describe("modes in the summary and the command log", () => {
     expect(policySummary({ ...DEFAULT_POLICY, mode: "auto" }, { mode: "os" })).toEqual({
       mode: "auto",
       allowedDomains: [],
+      projects: [],
     });
     expect(policySummary({ ...DEFAULT_POLICY, mode: "sandbox" }, { mode: "docker" })).toEqual({
       mode: "sandbox",
       allowedDomains: [],
+      projects: [],
     });
     expect(
       policySummary(
         { ...DEFAULT_POLICY, mode: "auto" },
         { mode: "os", limits: { mode: "sandbox" } },
       ),
-    ).toEqual({ mode: "sandbox", allowedDomains: [] });
+    ).toEqual({ mode: "sandbox", allowedDomains: [], projects: [] });
   });
 
   it("the executor runs the decision the log records", async () => {

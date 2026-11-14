@@ -16,6 +16,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { DeviceProject } from "@capybara-hq/plugin-sdk";
 import type { DeviceMode } from "./args.js";
 
 /** What `login` stores: how to reach the deployment and who this machine is there. */
@@ -51,6 +52,8 @@ export interface Policy {
    * sandbox-mode machine never runs auto because the organization allows it.
    */
   mode: SandboxMode;
+  /** The projects the device serves: a name its owner knows and a directory on this machine. */
+  projects: DeviceProject[];
 }
 
 const DEFAULT_RECONNECT_GRACE_SECONDS = 120;
@@ -62,6 +65,7 @@ export const DEFAULT_POLICY: Policy = {
   cpu: null,
   memoryMb: null,
   mode: "auto",
+  projects: [],
 };
 
 type Env = Record<string, string | undefined>;
@@ -155,6 +159,12 @@ const isStringList = (v: unknown): v is string[] =>
   Array.isArray(v) && v.every((x) => typeof x === "string");
 const isCeiling = (v: unknown): v is number | null =>
   v === null || (typeof v === "number" && Number.isFinite(v) && v > 0);
+const isProject = (v: unknown): v is DeviceProject => {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
+  const { name, path } = v as { name?: unknown; path?: unknown };
+  return typeof name === "string" && name !== "" && typeof path === "string" && path !== "";
+};
+const isProjectList = (v: unknown): v is DeviceProject[] => Array.isArray(v) && v.every(isProject);
 
 const POLICY_KEYS: readonly string[] = Object.keys(DEFAULT_POLICY);
 /**
@@ -228,11 +238,15 @@ export function readPolicyFile(dir: string): PolicyFile {
     cpu: o.cpu === undefined ? null : (o.cpu as number | null),
     memoryMb: o.memoryMb === undefined ? null : (o.memoryMb as number | null),
     mode: rawMode,
+    projects: o.projects === undefined ? [] : (o.projects as DeviceProject[]),
   };
   if (!isStringList(policy.allowedDomains)) throw bad("allowedDomains", "a list of strings");
   if (!isStringList(policy.allowCredentials)) throw bad("allowCredentials", "a list of strings");
   if (!isCeiling(policy.cpu)) throw bad("cpu", "a positive number or null");
   if (!isCeiling(policy.memoryMb)) throw bad("memoryMb", "a positive number or null");
+  if (!isProjectList(policy.projects)) {
+    throw bad("projects", 'a list of objects with a non-empty "name" and "path"');
+  }
   const extra: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(o)) {
     if (!POLICY_KEYS.includes(k) && !LEGACY_POLICY_KEYS.includes(k)) extra[k] = v;

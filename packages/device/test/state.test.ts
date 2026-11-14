@@ -109,6 +109,7 @@ describe("state", () => {
       cpu: null,
       memoryMb: null,
       mode: "auto",
+      projects: [],
     });
     writePolicy(dir, {
       allowedDomains: ["a.test"],
@@ -116,6 +117,7 @@ describe("state", () => {
       cpu: 2,
       memoryMb: null,
       mode: "sandbox",
+      projects: [{ name: "core", path: "/w/core" }],
     });
     expect(readPolicy(dir)).toEqual({
       allowedDomains: ["a.test"],
@@ -123,6 +125,7 @@ describe("state", () => {
       cpu: 2,
       memoryMb: null,
       mode: "sandbox",
+      projects: [{ name: "core", path: "/w/core" }],
     });
   });
 
