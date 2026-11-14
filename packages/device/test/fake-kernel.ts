@@ -20,6 +20,10 @@ export class FakeKernel {
   async start(): Promise<void> {
     this.http.on("upgrade", (req: IncomingMessage, socket: Duplex, head) => {
       this.headers.push(req.headers);
+      // The server drops its own error listener from a socket it hands to 'upgrade': without one,
+      // a client resetting the connection (it terminates right after reading a refusal) would be
+      // an unhandled ECONNRESET in whatever test runs then.
+      socket.on("error", () => socket.destroy());
       if (this.rejectWith !== undefined) {
         socket.end(
           `HTTP/1.1 ${this.rejectWith} X\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`,
