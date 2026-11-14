@@ -290,7 +290,8 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
     await ex.killAll();
     await sleep(300);
     expect(count()).toBe("1");
-  });
+    // six docker round trips in a row: past the 5 s default on a loaded machine
+  }, 20_000);
 
   it("times out, aborts, and refuses to start on an aborted signal", async () => {
     const t = await ex.exec(execArgs("sleep 30", { timeoutMs: 1000 }), live);
