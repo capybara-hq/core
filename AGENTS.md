@@ -180,6 +180,7 @@ pnpm install
 pnpm lint        # biome check
 pnpm typecheck   # tsc -b
 pnpm test        # vitest run
+pnpm test:unit   # kernel unit tests only, no containers (a few seconds)
 pnpm exec vitest run <path>   # a single test: from the repo root, not pnpm --filter <pkg> exec vitest
 pnpm check       # custom checks
 pnpm dev:kernel  # capybara start, pretty logs, copied to /tmp/capybara-dev-kernel.log
@@ -187,6 +188,7 @@ pnpm dev:web     # the web app, output copied to /tmp/capybara-dev-web.log
 pnpm wt:new <branch>   # start a task worktree
 pnpm doctor:env  # check your environment
 pnpm verify      # the required checks for this branch; full-suite diffs run only the touched packages' tests (--full: all)
+pnpm verify --fast   # lint, typecheck, custom checks and kernel unit tests, ~25 s: fast advisory signal, not the gate; no tests of web/design/tools changes
 docker compose -f docker/compose.dev.yaml up -d   # local postgres + valkey
 ```
 
