@@ -3356,7 +3356,7 @@ States: `auto`, `sandbox`, `locked`, `capped`, `disabled`
 | mode-scale-track | auto | height | 1 |
 | mode-scale-option | auto | min-height | row.default |
 | mode-scale-name | auto | font-size | type.body |
-| mode-scale-name | auto | color | color.muted |
+| mode-scale-option[data-state=default] mode-scale-name | auto | color | color.muted |
 | mode-scale-option[data-state=selected] mode-scale-name | sandbox | color | color.ink |
 | mode-scale-marker | auto | height | 2 |
 | mode-scale-option[data-state=selected] mode-scale-marker | auto | background-color | color.ink |
