@@ -1,13 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { ToolError } from "@capybara-hq/plugin-sdk";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentsService } from "../../src/agents/agents.service.js";
 import { OrgAgentTemplates } from "../../src/agents/org-templates.js";
+import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
+import { OrgSettingsService } from "../../src/orgs/settings.service.js";
 import type { ActorFacts } from "../../src/platform/actor.js";
 import { availability } from "../../src/platform/availability.js";
 import { nextStepFor, toToolError } from "../../src/platform/errors.js";
 import type { OperationContext } from "../../src/platform/operation.js";
+import { PlatformOperationsProvider } from "../../src/platform/ops/platform.ops.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
+import { effectiveDevicePolicy, readDeploymentDevicePolicy } from "../../src/sandbox/modes.js";
 import { SkillsService } from "../../src/skills/skills.service.js";
 import { type OrgEnv, resetOrgCatalog, setDeployment, startOrgEnv } from "../catalog/org-env.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
@@ -734,6 +738,73 @@ describe("platform", () => {
       disabledSkills: [{ kind: "skill", skillId: draft }],
     });
     expect(op("platform.me").description).not.toMatch(/pinned/i);
+  });
+
+  it("platform.me reports a new device's mode and network as effectiveDevicePolicy does", async () => {
+    // the agent has a sandbox tool (this deployment has no sandbox provider, so the tool keys are
+    // stubbed); the mode and network then come from the one derivation (hardening spec K2)
+    const provider = env.k.app.get(PlatformOperationsProvider);
+    const keys = vi
+      .spyOn(provider as unknown as { toolKeys: () => Promise<unknown> }, "toolKeys")
+      .mockResolvedValue({ keys: ["Bash"], unavailable: [] });
+    const settings = env.k.app.get(OrgSettingsService);
+    const config = env.k.app.get(KernelConfigService);
+    const id = await agentOf(env.memId, "private");
+    const c = await inConversation(ctxOf(env.memId, id));
+    const OPEN = { mode: "open" as const };
+    const LIST = { mode: "allowlist" as const, allowHosts: ["pypi.org"] };
+    const cases: {
+      platform: "allowed" | "off";
+      org: "off" | null;
+      net: typeof OPEN | typeof LIST;
+      want: [string, string];
+    }[] = [
+      { platform: "allowed", org: null, net: OPEN, want: ["auto", "open-public"] },
+      {
+        platform: "allowed",
+        org: null,
+        net: LIST,
+        want: ["auto", "open-public"],
+      },
+      { platform: "allowed", org: "off", net: OPEN, want: ["sandbox", "open-public"] },
+      {
+        platform: "allowed",
+        org: "off",
+        net: LIST,
+        want: ["sandbox", "allowlist"],
+      },
+      { platform: "off", org: null, net: OPEN, want: ["sandbox", "open-public"] },
+      {
+        platform: "off",
+        org: null,
+        net: LIST,
+        want: ["sandbox", "allowlist"],
+      },
+    ];
+    try {
+      for (const k of cases) {
+        await setDeployment(env, { devicesAutoMode: { mode: k.platform } });
+        await settings.update(env.orgId, { autoMode: k.org, cloudNetwork: k.net }, env.rootId);
+        const out = (await run("platform.me", {}, c)) as {
+          sandbox: { enabled: boolean; mode: string; network: string };
+        };
+        const policy = effectiveDevicePolicy(
+          await readDeploymentDevicePolicy(env.db, config),
+          await settings.get(env.orgId),
+          null,
+        );
+        const label = JSON.stringify(k);
+        expect(out.sandbox, label).toEqual({
+          enabled: true,
+          mode: policy.mode,
+          network: policy.network.kind,
+        });
+        expect([out.sandbox.mode, out.sandbox.network], label).toEqual(k.want);
+      }
+    } finally {
+      keys.mockRestore();
+      await settings.update(env.orgId, { autoMode: null, cloudNetwork: null }, env.rootId);
+    }
   });
 
   it("platform.me shows the agent's profile: avatar, description and quick actions", async () => {
