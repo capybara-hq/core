@@ -15,7 +15,7 @@ import {
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { CHANNEL_QUEUE_NAME, idempotencyKey } from "../../src/channels/outbound.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
@@ -78,6 +78,8 @@ let anonId: string;
 let slowId: string;
 let plainId: string;
 let redis: Redis;
+/** The channel queue, to watch a conversation's delivery jobs (see `deliverySettled`). */
+let channelQueue: Queue<{ conversationId?: string }>;
 /** 出站投递任务空闲多久结束（测试缩短到 1s）。 */
 const IDLE_MS = 1000;
 
@@ -106,6 +108,7 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
   redis = new Redis(rd.url);
+  channelQueue = new Queue(CHANNEL_QUEUE_NAME, { connection: new Redis(rd.url) });
   const accounts = accountsFor(db);
   ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "Owner" })).id;
   const member = await accounts.createLocal({ login: "mem", password: PW, displayName: "Mem" });
@@ -201,6 +204,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  await channelQueue?.close();
   redis?.disconnect();
   await k?.close();
   await im?.stop();
@@ -268,6 +272,28 @@ async function settled(conversationId: string): Promise<void> {
     },
     15_000,
     "delivery settled",
+  );
+}
+
+/**
+ * The conversation's delivery is over for good: `settled`, and no job of the conversation left in
+ * the channel queue. A delivery job records a non-retryable failure on the connection
+ * (`last_error`, `fail_count`) only after it releases the conversation lock, so the delivery row
+ * can look settled while that write is still to come — an assertion right after `settled` reads
+ * the state without it (or, on a shared connection, reads a previous test's error). The job stays
+ * `active` until `process` returns, after the write.
+ */
+async function deliverySettled(conversationId: string): Promise<void> {
+  await settled(conversationId);
+  await waitFor(
+    async () => {
+      const jobs = await channelQueue.getJobs(["active", "waiting", "prioritized", "delayed"]);
+      return jobs.every(
+        (j) => (j.data as { conversationId?: string }).conversationId !== conversationId,
+      );
+    },
+    15_000,
+    "no delivery job of the conversation left",
   );
 }
 
@@ -1445,6 +1471,16 @@ describe("features.cards / threads = false 的渠道（Ruling A33）", () => {
 });
 
 describe("出站投递：发送失败", () => {
+  // The tests below share the two connections; a failing test must not leave its `last_error`
+  // behind for the next one (the reset inside each test only runs when its assertions pass).
+  afterEach(async () => {
+    await db
+      .updateTable("channel_connections")
+      .set({ last_error: null })
+      .where("id", "in", [noEditId, connId])
+      .execute();
+  });
+
   it("Ruling A14：同一事件不可重试地失败 3 次 → 跳过它并提示去网页查看，之后的回复照常投递", async () => {
     const chat = "grp-poison";
     im.failNext("/send", 400, 3, undefined, undefined, undefined, chat);
@@ -1486,7 +1522,7 @@ describe("出站投递：发送失败", () => {
       15_000,
       "later reply delivered",
     );
-    await settled(conv);
+    await deliverySettled(conv);
     expect(sentTo("cli_noedit", chat).some((s) => s.message.text === "poison one")).toBe(false);
     expect(await failCount(conv)).toBe(0);
     await db
@@ -1501,7 +1537,7 @@ describe("出站投递：发送失败", () => {
     im.failNext("/send", 429, 2, 100, undefined, undefined, chat);
     im.push(connId, group("r1", "u-owner", "echo:rate limited reply", { chatId: chat }));
     const conv = await convOf(connId, chat);
-    await settled(conv);
+    await deliverySettled(conv);
     const msgs = sentTo("cli_out", chat).filter((s) => finalText(s) === "rate limited reply");
     expect(msgs).toHaveLength(1);
     expect(msgs[0]?.target.threadId).toBe("r1");
@@ -1519,7 +1555,7 @@ describe("出站投递：发送失败", () => {
     im.failNext("/update", 400, 1, undefined, undefined, undefined, chat);
     im.push(connId, group("er1", "u-owner", "slow:50:Draft then rejected", { chatId: chat }));
     const conv = await convOf(connId, chat);
-    await settled(conv);
+    await deliverySettled(conv);
     const msgs = sentTo("cli_out", chat);
     expect(msgs).toHaveLength(2);
     expect(msgs[1]?.message.text).toBe("Draft then rejected");
@@ -1534,7 +1570,7 @@ describe("出站投递：发送失败", () => {
     im.failNext("/update", 400, 1, undefined, undefined, undefined, chat);
     im.push(connId, group("mr1", "u-owner", `slow:150:${LONG}`, { chatId: chat }));
     const conv = await convOf(connId, chat);
-    await settled(conv);
+    await deliverySettled(conv);
     const msgs = sentTo("cli_out", chat);
     expect(msgs).toHaveLength(2);
     expect(LONG.startsWith(msgs[0]?.message.text as string)).toBe(true);
@@ -1562,7 +1598,7 @@ describe("出站投递：发送失败", () => {
       15_000,
       "failure marker as a new message",
     );
-    await settled(conv);
+    await deliverySettled(conv);
     const msgs = sentTo("cli_out", chat);
     expect(msgs).toHaveLength(2);
     expect(updatesOf(msgs[0]?.messageId as string)).toEqual([]);
@@ -1600,7 +1636,7 @@ describe("出站投递：发送失败", () => {
       10_000,
       "draft closed before the skip",
     );
-    await settled(conv);
+    await deliverySettled(conv);
     expect(sentTo("cli_out", chat).some((s) => s.message.text === "Poisoned draft text")).toBe(
       false,
     );
@@ -1616,7 +1652,16 @@ describe("出站投递：发送失败", () => {
     im.failNext("/send", 403, 3, undefined, "auth", undefined, chat);
     im.push(noEditId, group("au1", "u-owner", "echo:after auth", { chatId: chat }));
     const conv = await convOf(noEditId, chat);
-    const err = await waitFor(() => lastError(noEditId), 15_000, "last_error");
+    // The connection is shared with the other delivery tests: wait for the error this test causes,
+    // not for any error the connection may still carry from an earlier exchange.
+    const err = await waitFor(
+      async () => {
+        const e = await lastError(noEditId);
+        return e?.includes("403") ? e : undefined;
+      },
+      15_000,
+      "last_error 403",
+    );
     expect(err).toMatch(/403/);
     const delivered = () => sentTo("cli_noedit", chat).some((s) => s.message.text === "after auth");
     // Each new message pulls one retry of the stuck event; auth stops the round without a poison
@@ -1636,7 +1681,7 @@ describe("出站投递：发送失败", () => {
       await waitFor(async () => logged(text), 15_000, "message logged");
     }
     await waitFor(async () => delivered(), 15_000, "delivered after the credentials recovered");
-    await settled(conv);
+    await deliverySettled(conv);
     expect(
       sentTo("cli_noedit", chat).some((s) => s.message.text.startsWith("A request is waiting")),
     ).toBe(false);
@@ -1659,7 +1704,7 @@ describe("出站投递：发送失败", () => {
       15_000,
       "delivered on a later job",
     );
-    await settled(conv);
+    await deliverySettled(conv);
     expect(
       sentTo("cli_noedit", chat).filter((s) => s.message.text === "bot was removed"),
     ).toHaveLength(1);
@@ -1678,7 +1723,7 @@ describe("出站投递：发送失败", () => {
       15_000,
       "delivered by the follow-up after the stopped job",
     );
-    await settled(conv);
+    await deliverySettled(conv);
     expect(
       sentTo("cli_noedit", chat).filter((s) => s.message.text === "removed while slow"),
     ).toHaveLength(1);
@@ -1691,17 +1736,14 @@ describe("出站投递：发送失败", () => {
     im.failNext("/send", 400, 1, undefined, undefined, undefined, chat);
     im.push(connId, group("f1", "u-owner", "echo:delivered later", { chatId: chat }));
     const conv = await convOf(connId, chat);
+    // The shared connection may still carry an earlier exchange's error: wait for this one's 400.
     const err = await waitFor(
-      async () =>
-        (
-          await db
-            .selectFrom("channel_connections")
-            .select("last_error")
-            .where("id", "=", connId)
-            .executeTakeFirstOrThrow()
-        ).last_error,
+      async () => {
+        const e = await lastError(connId);
+        return e?.includes("400") ? e : undefined;
+      },
       15_000,
-      "last_error",
+      "last_error 400",
     );
     expect(err).toMatch(/400/);
     // 不需要等下一条消息：同一运行之后写入的事件就会触发新任务从 last_seq 续投
@@ -1710,7 +1752,7 @@ describe("出站投递：发送失败", () => {
       15_000,
       "delivered on a later job",
     );
-    await settled(conv);
+    await deliverySettled(conv);
     expect(sentTo("cli_out", chat).filter((s) => finalText(s) === "delivered later")).toHaveLength(
       1,
     );
