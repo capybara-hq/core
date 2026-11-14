@@ -65,10 +65,12 @@ export const IdParams = z.object({ id: z.string().min(1).max(100) });
 /**
  * `POST …/compact` (context compaction spec §4.7): the optional client request id only makes a
  * transport retry identifiable; the compact run already queued/running is the idempotency key.
+ * Every field is optional, so a request with no body at all is accepted like `{}`.
  */
 export const CompactBody = z
   .object({ clientRequestId: z.string().min(1).max(200).optional() })
-  .strict();
+  .strict()
+  .default({});
 
 export const SubagentsQuery = z.object({
   /** The previous page's last sub-agent id (`next`). */

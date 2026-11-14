@@ -612,8 +612,9 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       ...ModelUsageShape,
       purpose: z.enum(["compaction", "title", "web_fetch"]).optional(),
       /**
-       * The chunk a chunked compaction call summarised (1-based), with the total chunk count
-       * (context compaction spec §4.5). Absent on a single-call compaction: older logs have none.
+       * The chunk a chunked compaction call summarised (1-based), with the number of calls the
+       * compaction attempted (the full chunk count on a completed one; on a failed or aborted run
+       * only the calls that were made). Absent on a single-call compaction: older logs have none.
        */
       chunk: count.optional(),
       chunks: count.optional(),

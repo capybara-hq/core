@@ -85,7 +85,7 @@ Applied to every request after compaction and before sending:
    - If the latest user turn alone is too large, truncate its largest text / `tool_result` blocks and insert the English note `[content truncated to fit the model's context window]`.
    - Record the plan in `model_call.request.fit` (dropped seqs, truncated block identifiers). `buildRequest` applies a recorded plan, so reconstruction is byte-for-byte and old logs (no `fit`) rebuild as before. No `DriftReason`: it is in the log.
 4. If system prompt + tools + the latest user message still exceed the fit target, fail with a clear kernel error (`run.context_too_large`) before any provider call. This is a configuration/input problem, not a history overflow.
-5. Estimator error: a provider may still reject a request the estimate thought fits. On `context_overflow`, re-trim to progressively smaller targets (90%, 80%, 70% of `W`) and retry, bounded; this is the real backstop, not the estimate.
+5. Estimator error: a provider may still reject a request the estimate thought fits. On `context_overflow`, re-trim to progressively smaller targets (70%, then 80%, then 90% of `W`; most aggressive first, applying the first target the plan actually reaches) and retry, bounded; this is the real backstop, not the estimate.
 
 ### 4.4 Reactive compaction
 
@@ -100,12 +100,12 @@ Applied to every request after compaction and before sending:
 
 ### 4.5 Chunked compaction fallback
 
-- Budget `B = Wc - Cmax - R`, where `Wc` is the compaction model's window and `Cmax` is the compaction output cap (20000). Each call's input is `[running summary] + chunk`, so the chunk size is `B - summaryAllowance` (a fraction of `Cmax`, e.g. half); the first call has no summary.
-- If the transcript estimate ≤ `B - summaryAllowance`, one summary call as today.
+- Budget `B = Wc - Cmax - R`, where `Wc` is the compaction model's window and `Cmax` is the compaction output cap (20000). Each call's input is `[running summary] + chunk` plus a fixed request overhead (the instruction and the transcript wrapper), so the base chunk size is `B - summaryAllowance - overhead`, where `summaryAllowance` (half of `Cmax`, rounded up) is the floor a later call reserves for its running summary; the first call has no summary.
+- If the transcript estimate ≤ the base chunk size, one summary call as today. Otherwise the calls after the first shrink their chunk further to reserve the **actual** running summary's estimate (`[Earlier summary]` + the summary text) when it is larger than the allowance, so chunk + running summary + overhead always stays inside `B`. A degenerate budget (one that cannot fit the allowance, the overhead and a minimum chunk) leaves the single call as before.
 - Otherwise split the transcript at line boundaries into chunks ≤ the chunk size and summarize sequentially with a rolling summary: call 1 summarizes chunk 1; call `i` summarizes `[running summary] + chunk i`. The last call's text is the summary; the acceptance check runs against the **full** transcript.
 - A single line (usually a tool result) larger than the chunk size is hard-split at a character boundary with a `[chunk split]` marker rather than failing.
 - Progress is real `i/N` only in this path.
-- One `usage` event per call (`purpose: "compaction"`, optional `chunk`); the idempotency key includes the chunk index. Hooks fire per call with the existing compaction fields; a denial fails the whole compaction.
+- One `usage` event per call (`purpose: "compaction"`, optional `chunk` / `chunks`); the idempotency key includes the chunk index. Hooks fire per call with the existing compaction fields; a denial fails the whole compaction. The completed calls before a failure are still billed and reported.
 - If any chunk call fails, write one `compaction_failed` (reason includes the chunk); no partial summary. The step then relies on 4.3.
 
 ### 4.6 Progress
@@ -141,8 +141,8 @@ UI: a "Conversation compaction" section on the platform settings page and the or
 ### 4.9 Events, replay, SDK
 
 - `run_started.trigger` gains `"compact"` (display only).
-- `usage` gains an optional `chunk` for chunked compaction calls (additive; old logs parse).
-- `compaction_summary` gains an optional `savedTokens` (estimated transcript input minus summary output), so the UI does not derive it from chunked usage.
+- `usage` gains an optional `chunk` (the 1-based chunk a chunked compaction call summarised) and `chunks` (the number of calls the compaction attempted: the full count on a completed compaction, only the calls actually made on a failed or aborted one) (additive; old logs parse).
+- `compaction_summary` gains an optional `savedTokens` (estimated transcript input minus summary output, floored at zero: a longer summary saved nothing), so the UI does not derive it from chunked usage; the divider shows no number when it is absent (older logs) or 0.
 - `model_call.request` gains an optional `fit` plan (4.3); `buildRequest` applies it; old logs have none. Record `estimatedInputTokens` for the request **actually sent (post-fit)**; calibration and the trigger read that value.
 - `compaction_failed.reason` carries the chunk information as text; no schema change.
 - No new `ModelErrorKind` (`context_overflow` exists). No SDK hook payload change; chunk calls reuse the existing compaction hook fields.

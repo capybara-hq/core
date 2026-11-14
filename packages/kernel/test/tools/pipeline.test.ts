@@ -1556,7 +1556,7 @@ describe("ToolSearch 模式", () => {
     expect(handlerCalls.echo).toHaveLength(1);
   });
 
-  it("按最高一次尝试的 model_call 判断（尝试可达 5 次）：第 4 次已加载 → 照常执行", async () => {
+  it("reads the highest attempt's model_call (a step may take 5 attempts): loaded by attempt 4 → runs as usual", async () => {
     await modelCall(["ToolSearch"], true, 1);
     await modelCall(["ToolSearch"], true, 2);
     await modelCall(["ToolSearch"], true, 3);

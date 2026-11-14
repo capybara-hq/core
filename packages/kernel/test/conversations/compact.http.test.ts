@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
@@ -7,10 +8,12 @@ import type { ConversationEvent, EventPayload } from "../../src/conversations/ev
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
+import { compactionProgressKey } from "../../src/runtime/compaction-progress.js";
 import { RUN_QUEUE_NAME } from "../../src/runtime/run-queue.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
+import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createAgent,
   createConv,
@@ -47,12 +50,21 @@ let ownerId: string;
 const compactUrl = (orgId: string, conv: string) =>
   `/api/v1/orgs/${orgId}/conversations/${conv}/compact`;
 
+const HOOKS_PROBE = fileURLToPath(
+  new URL("../fixtures/plugins/hooks-probe/index.ts", import.meta.url),
+);
+
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
   redis = new Redis(rd.url);
-  k = await startKernel(runConfig({ pg: pgc.url, redis: rd.url }, { roles: ["api", "worker"] }));
+  k = await startKernel(
+    runConfig(
+      { pg: pgc.url, redis: rd.url },
+      { roles: ["api", "worker"], extensions: [MODEL_FAKE, HOOKS_PROBE] },
+    ),
+  );
   runQueue = new Queue(RUN_QUEUE_NAME, { connection: new Redis(rd.url) });
 }, 180_000);
 afterAll(async () => {
@@ -247,6 +259,93 @@ describe("manual compaction", { timeout: 90_000 }, () => {
     const req = await session(k, "guest");
     const res = await compact(conv, orgId, req);
     expect(res.statusCode, res.body).toBe(403);
+  });
+
+  it("accepts a request with no body (the body is optional: the run is the idempotency key)", async () => {
+    const { orgId, conv } = await setup();
+    await seedTurns(orgId, conv, 5);
+    const res = await owner({ method: "POST", url: compactUrl(orgId, conv) });
+    expect(res.statusCode, res.body).toBe(202);
+    const { runId } = res.json() as { runId: string };
+    await waitFor(
+      async () => {
+        const row = await db
+          .selectFrom("runs")
+          .select("status")
+          .where("id", "=", runId)
+          .executeTakeFirst();
+        return row?.status === "completed" ? row : null;
+      },
+      30_000,
+      "compact run completed",
+    );
+    expect(ev(await eventsOf(db, conv), "compaction_summary")).toHaveLength(1);
+  });
+
+  it("a stop aborts the compact run: run_aborted, no partial summary (spec §4.11)", async () => {
+    const { orgId, conv } = await setup();
+    await seedTurns(orgId, conv, 5);
+    // the compaction's model.request hook holds it long enough to stop it mid-call
+    const enabled = await owner({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgId}/extensions/hooks-probe`,
+      payload: { enabled: true },
+    });
+    expect(enabled.statusCode, enabled.body).toBe(200);
+    const configured = await owner({
+      method: "POST",
+      url: "/plugins/hooks-probe/config",
+      payload: { orgId, sleepMs: 10_000, sleepIn: ["model.request"] },
+    });
+    expect(configured.statusCode, configured.body).toBe(200);
+
+    const res = await compact(conv, orgId);
+    expect(res.statusCode, res.body).toBe(202);
+    const { runId } = res.json() as { runId: string };
+    // the compaction reached its model call (progress phase summarizing), where the hook holds it
+    await waitFor(
+      async () => {
+        const raw = await redis.get(compactionProgressKey(runId));
+        return raw !== null && (JSON.parse(raw) as { phase: string }).phase === "summarizing"
+          ? raw
+          : null;
+      },
+      20_000,
+      "compaction reached its model call",
+    );
+    const stop = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${conv}/abort`,
+    });
+    expect(stop.statusCode, stop.body).toBe(202);
+    await waitFor(
+      async () => {
+        const row = await db
+          .selectFrom("runs")
+          .select("status")
+          .where("id", "=", runId)
+          .executeTakeFirst();
+        return row?.status === "aborted" ? row : null;
+      },
+      20_000,
+      "compact run aborted",
+    );
+
+    const events = await eventsOf(db, conv);
+    const aborted = ev(events, "run_aborted").filter((e) => e.runId === runId);
+    expect(aborted).toHaveLength(1);
+    expect(aborted[0]?.payload.reason).toBe("user");
+    expect(aborted[0]?.payload.byAccountId).toBe(ownerId);
+    // no partial summary and nothing billed for the aborted call
+    expect(ev(events, "compaction_summary").filter((e) => e.runId === runId)).toEqual([]);
+    expect(ev(events, "compaction_failed").filter((e) => e.runId === runId)).toEqual([]);
+    expect(ev(events, "usage").filter((e) => e.runId === runId)).toEqual([]);
+    // the abort path drops the progress key
+    await waitFor(
+      async () => ((await redis.get(compactionProgressKey(runId))) === null ? true : null),
+      10_000,
+      "progress cleared",
+    );
   });
 
   it("the Platform operation conversations.compact mirrors the route", () => {

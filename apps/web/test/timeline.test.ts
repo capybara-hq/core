@@ -352,7 +352,26 @@ describe("buildTimeline", () => {
     });
   });
 
-  it("compaction → a divider with the saved tokens of its usage", () => {
+  it("compaction → a divider with the summary's savedTokens, not a usage-derived number", () => {
+    const events = [
+      ev(1, "usage", {
+        step: 0,
+        provider: "p",
+        model: "m",
+        inputTokens: 900,
+        outputTokens: 100,
+        cacheReadTokens: 100,
+        cacheWriteTokens: 0,
+        purpose: "compaction",
+      }),
+      ev(2, "compaction_summary", { coversUpToSeq: 1, text: "summary", savedTokens: 1200 }),
+    ];
+    expect(buildTimeline(events, [], new Map(), "en")).toEqual([
+      { kind: "divider", key: "e2", divider: "compacted", summary: "summary", savedTokens: 1200 },
+    ]);
+  });
+
+  it("a compaction divider without the summary's savedTokens shows none (older logs), never a usage-derived one", () => {
     const events = [
       ev(1, "usage", {
         step: 0,
@@ -367,7 +386,16 @@ describe("buildTimeline", () => {
       ev(2, "compaction_summary", { coversUpToSeq: 1, text: "summary" }),
     ];
     expect(buildTimeline(events, [], new Map(), "en")).toEqual([
-      { kind: "divider", key: "e2", divider: "compacted", summary: "summary", savedTokens: 900 },
+      { kind: "divider", key: "e2", divider: "compacted", summary: "summary", savedTokens: null },
+    ]);
+  });
+
+  it("a compaction that saved nothing (savedTokens 0) shows the plain divider", () => {
+    const events = [
+      ev(1, "compaction_summary", { coversUpToSeq: 1, text: "summary", savedTokens: 0 }),
+    ];
+    expect(buildTimeline(events, [], new Map(), "en")).toEqual([
+      { kind: "divider", key: "e1", divider: "compacted", summary: "summary", savedTokens: null },
     ]);
   });
 

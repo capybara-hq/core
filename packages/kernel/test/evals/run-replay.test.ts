@@ -1498,6 +1498,105 @@ describe("整轮回放", { timeout: 60_000 }, () => {
     expect(await outside()).toEqual(before);
   });
 
+  it("a compact run's case is never replayed: no step, no tool, no eval conversation (context compaction §4.7)", async () => {
+    const setId = await createSet();
+    const conv = await createConv(admin, orgId, agentId);
+    // a normal run of the same conversation, the set's one replayable case
+    await postMessage(admin, orgId, conv, "echo:before the compact run");
+    await waitForTerminal(db, conv);
+    const [normal] = await db
+      .selectFrom("runs")
+      .select("id")
+      .where("conversation_id", "=", conv)
+      .execute();
+    await addCase(setId, conv, normal?.id as string);
+
+    // the compact run as the kernel writes it: no user message, no model step, chunked usages
+    const startedAt = new Date();
+    await db
+      .insertInto("runs")
+      .values({
+        id: "compact-run-1",
+        conversation_id: conv,
+        status: "completed",
+        compact: true,
+        agent_version: 1,
+        trigger_account_id: adminId,
+        trigger_seq: "1",
+        started_at: startedAt,
+        finished_at: startedAt,
+      })
+      .execute();
+    const chunkUsage = (chunk: number) => ({
+      type: "usage" as const,
+      runId: "compact-run-1",
+      payload: {
+        step: 0,
+        provider: "model-fake",
+        model: "fake-1",
+        inputTokens: 1000,
+        outputTokens: 100,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        purpose: "compaction" as const,
+        chunk,
+        chunks: 2,
+      },
+    });
+    await eventLog.append(conv, [
+      {
+        type: "run_started",
+        runId: "compact-run-1",
+        payload: {
+          agentVersion: 1,
+          model: { provider: "model-fake", model: "fake-1" },
+          triggerAccountId: adminId,
+          trigger: "compact",
+        },
+      },
+      {
+        type: "compaction_summary",
+        runId: "compact-run-1",
+        payload: { coversUpToSeq: 1, text: "summary", savedTokens: 900 },
+      },
+      chunkUsage(1),
+      chunkUsage(2),
+      {
+        type: "run_finished",
+        runId: "compact-run-1",
+        payload: { reason: "completed", consumedUpToSeq: 1 },
+      },
+    ]);
+    await addCase(setId, conv, "compact-run-1");
+
+    const run = await startRun(setId, {});
+    // the compact case has no plan, so it is not scheduled: one case, one result
+    expect(run.casesTotal).toBe(1);
+    const done = await finished(run.id);
+    expect(done.status).toBe("completed");
+    const rows = await results(run.id);
+    expect(rows).toHaveLength(1);
+    const compactCase = await db
+      .selectFrom("eval_cases")
+      .select("id")
+      .where("source_run_id", "=", "compact-run-1")
+      .executeTakeFirstOrThrow();
+    const compactResults = await db
+      .selectFrom("eval_results")
+      .select("id")
+      .where("case_id", "=", compactCase.id)
+      .execute();
+    expect(compactResults).toEqual([]);
+    // nothing was dispatched for it: no eval conversation, no step
+    const evalConvs = await db
+      .selectFrom("conversations")
+      .select(["id", "eval_run_id"])
+      .where("eval_run_id", "=", run.id)
+      .execute();
+    expect(evalConvs).toHaveLength(1);
+    expect(rows[0]?.caseId).not.toBe(compactCase.id);
+  });
+
   it("达到 token 上限：loop 在下一次请求前停下，结果 skipped，运行 capped", async () => {
     const setId = await createSet();
     const conv = await createConv(admin, orgId, agentId);

@@ -447,6 +447,14 @@ describe("组织设置与 ToolSearch 启用条件", () => {
         scheduledTasks: SCHEDULED_TASK_DEFAULTS,
       },
       deployment: {
+        // the platform's compaction defaults (context compaction spec §4.8)
+        compaction: {
+          enabled: true,
+          threshold: 0.8,
+          keepRecentTurns: 4,
+          reserveTokens: 8000,
+          maxOutputTokens: 20000,
+        },
         sandboxEgress: { mode: "allowlist", allowHosts: baseCfg.sandbox.limits.allowHosts },
         sandboxTiers: {
           max: "dev",

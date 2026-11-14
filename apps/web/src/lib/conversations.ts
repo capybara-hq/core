@@ -141,7 +141,13 @@ type EventBody =
     }
   | {
       type: "run_started";
-      payload: { agentVersion: number; model: ModelRef; triggerAccountId?: string };
+      payload: {
+        agentVersion: number;
+        model: ModelRef;
+        triggerAccountId?: string;
+        /** `compact`: a manual compact run, which runs no model step (display only). */
+        trigger?: "message" | "background_task" | "subagent" | "schedule" | "compact";
+      };
     }
   | {
       type: "model_call";
@@ -176,6 +182,9 @@ type EventBody =
          * `WebFetch` extraction call, with that call's `callId`).
          */
         purpose?: "compaction" | "title" | "web_fetch";
+        /** A chunked compaction call's 1-based chunk and the calls the compaction attempted. */
+        chunk?: number;
+        chunks?: number;
         callId?: string;
       };
     }
@@ -342,7 +351,15 @@ type EventBody =
         stoppedBy?: "person" | "deletion" | "subagent_end";
       };
     }
-  | { type: "compaction_summary"; payload: { coversUpToSeq: number; text: string } }
+  | {
+      type: "compaction_summary";
+      payload: {
+        coversUpToSeq: number;
+        text: string;
+        /** What compaction saved (estimated transcript minus summary); absent in older logs. */
+        savedTokens?: number;
+      };
+    }
   | { type: "compaction_failed"; payload: { attempt: number; reason: string } }
   | {
       type: "media_excluded";

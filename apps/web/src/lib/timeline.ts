@@ -404,6 +404,13 @@ const callKey = (runId: string | null, callId: string) => `${runId ?? ""}\u0000$
 /** A row id that is a call key (an `agent` call never dispatched), not a sub-agent id. */
 export const isCallKey = (id: string) => id.includes("\u0000");
 
+/**
+ * What a compaction divider shows as saved: the summary event's estimate, or null when the log has
+ * none (older logs) or nothing was saved (0): "saved 0 tokens" is no news, the divider stays plain.
+ */
+const savedTokensOf = (saved: number | undefined): number | null =>
+  saved === undefined || saved === 0 ? null : saved;
+
 const joinText = (blocks: { type: string; text?: string }[], type: "text" | "thinking") =>
   blocks
     .filter((b) => b.type === type)
@@ -788,8 +795,6 @@ export function buildEventTimeline(
   let switched: ModelRef | null = null;
   /** A fallback divider waiting for its run's `run_started` (its `to`). */
   const fallbacks = new Map<string, number>();
-  /** Usage of the latest compaction call (the `saved` of the next summary). */
-  let compactionUsage: number | null = null;
   /** `agent` calls by (runId, callId). */
   const agentCalls = new Map<string, { sub: TimelineSubagent; runId: string | null }>();
   /** `agent` calls whose tool result is in the log. */
@@ -1435,13 +1440,6 @@ export function buildEventTimeline(
           tk.total += p.inputTokens + p.cacheReadTokens + p.cacheWriteTokens + p.outputTokens;
           r.tokens = tk;
         }
-        if (e.payload.purpose === "compaction") {
-          const p = e.payload;
-          compactionUsage = Math.max(
-            0,
-            p.inputTokens + p.cacheReadTokens + p.cacheWriteTokens - p.outputTokens,
-          );
-        }
         break;
       case "background_task_finished": {
         const p = e.payload;
@@ -1457,14 +1455,15 @@ export function buildEventTimeline(
         break;
       }
       case "compaction_summary":
+        // the summary event's own estimate (context compaction spec §4.9); with no value (an older
+        // log) or nothing saved there is no number to show, so the divider stays plain
         out.push({
           kind: "divider",
           key,
           divider: "compacted",
           summary: e.payload.text,
-          savedTokens: compactionUsage,
+          savedTokens: savedTokensOf(e.payload.savedTokens),
         });
-        compactionUsage = null;
         break;
       case "run_finished":
         out.push({ kind: "run", key, ...runData(e), status: "ok" });

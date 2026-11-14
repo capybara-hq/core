@@ -107,9 +107,7 @@ export class OrgSettingsOperations implements OnModuleInit {
           const warn = i.platformTool === "off" || i.platformTool === "read-only";
           return {
             zh: `修改组织设置：${zhParts.join("，")}${
-              warn
-                ? "（之后智能体不能再用平台工具" + (i.platformTool === "off" ? "" : "写入") + "）"
-                : ""
+              warn ? `（之后智能体不能再用平台工具${i.platformTool === "off" ? "" : "写入"}）` : ""
             }`,
             en: `Update the org settings: ${enParts.join(", ")}${
               warn

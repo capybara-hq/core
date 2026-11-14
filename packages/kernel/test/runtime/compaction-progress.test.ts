@@ -1,7 +1,7 @@
 import type { ExtensionContext } from "@capybara-hq/plugin-sdk";
 import { startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { conversationTopic } from "../../src/conversations/event-log.js";
 import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
 import { createLogger } from "../../src/log.js";
@@ -30,9 +30,6 @@ const stored = async (runId = "run-1") => {
   const raw = await redis.get(compactionProgressKey(runId));
   return raw === null ? null : (JSON.parse(raw) as Record<string, unknown>);
 };
-
-/** Waits for the fire-and-forget Redis/bus writes to land. */
-const settle = () => new Promise((resolve) => setTimeout(resolve, 50));
 
 beforeAll(async () => {
   rd = await startTestRedis();
@@ -68,7 +65,8 @@ describe("CompactionProgressService", () => {
       expect(ttl).toBeGreaterThan(0);
       expect(ttl).toBeLessThanOrEqual(COMPACTION_PROGRESS_TTL_SECONDS);
 
-      await settle();
+      // the fire-and-forget publish lands on the subscriber's own connection
+      await vi.waitFor(() => expect(seen).toHaveLength(1));
       expect(seen).toEqual([
         {
           kind: "compaction_progress",
@@ -126,10 +124,14 @@ describe("CompactionProgressService", () => {
     service.update({ ...base, progress: { phase: "writing", step: 1, startedAt: 7 } });
     expect(await stored()).toEqual({ phase: "writing", step: 1, startedAt: 7 });
 
-    // after the window a summarizing update writes again
-    await new Promise((resolve) => setTimeout(resolve, COMPACTION_PROGRESS_FLUSH_MS + 30));
-    service.update({ ...base, progress: { ...first, chars: 40 } });
-    expect(await stored()).toEqual({ ...first, chars: 40 });
+    // after the window a summarizing update writes again: keep updating until the write lands
+    await vi.waitFor(
+      async () => {
+        service.update({ ...base, progress: { ...first, chars: 40 } });
+        expect(await stored()).toEqual({ ...first, chars: 40 });
+      },
+      { timeout: COMPACTION_PROGRESS_FLUSH_MS * 5, interval: 10 },
+    );
   });
 
   it("clear deletes the run's key; a later update writes again", async () => {
@@ -137,14 +139,14 @@ describe("CompactionProgressService", () => {
     expect(await stored()).not.toBeNull();
 
     service.clear("run-1");
-    await settle();
-    expect(await stored()).toBeNull();
+    await vi.waitFor(async () => expect(await stored()).toBeNull());
 
     service.update({ ...base, progress: { phase: "preparing", step: 2, startedAt: 10 } });
     expect(await stored()).toEqual({ phase: "preparing", step: 2, startedAt: 10 });
   });
 
   it("a Redis failure is logged, never thrown to the run", async () => {
+    let warned = 0;
     const broken = new CompactionProgressService(
       {
         set: () => Promise.reject(new Error("redis down")),
@@ -153,12 +155,13 @@ describe("CompactionProgressService", () => {
       {
         publish: () => Promise.reject(new Error("bus down")),
       } as unknown as ExtensionContext["bus"],
-      silent,
+      { warn: () => void warned++ },
     );
     expect(() =>
       broken.update({ ...base, progress: { phase: "preparing", step: 1, startedAt: 1 } }),
     ).not.toThrow();
     expect(() => broken.clear("run-1")).not.toThrow();
-    await settle();
+    // both rejected writes of the update and the clear logged, not thrown
+    await vi.waitFor(() => expect(warned).toBe(3));
   });
 });
