@@ -13,6 +13,7 @@ import {
   type ProcessLookup,
   parsePidFile,
   parsePsOutput,
+  pidPath,
   readRunning,
   writePid,
 } from "../src/pid.js";
@@ -379,6 +380,22 @@ describe("service status says what is true (DV5)", () => {
     expect(lines.join("\n")).toContain(
       "installed 2.0.0 — restart it: capybara-device service restart",
     );
+  });
+
+  it("a bare pid file reads as version unknown, with the restart line", async () => {
+    installPlist(packageAt("1.0.0"));
+    // a program older than the version field wrote only its pid
+    writeFileSync(pidPath(stateDir), "4242\n");
+    expect(
+      await serviceCommand("status", {
+        ...base(),
+        platform: "darwin",
+        run: fakeLaunchctl({ loaded: true, pid: 4242 }),
+      }),
+    ).toBe(0);
+    const text = lines.join("\n");
+    expect(text).toContain("running (pid 4242, version unknown)");
+    expect(text).toContain("installed 1.0.0 — restart it: capybara-device service restart");
   });
 
   it("Linux running takes the unit's MainPID", async () => {
