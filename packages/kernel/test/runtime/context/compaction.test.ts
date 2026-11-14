@@ -4,6 +4,7 @@ import {
   buildCompactionRequest,
   COMPACTION_MARKER,
   COMPACTION_MAX_OUTPUT_TOKENS,
+  chunkTranscript,
   compactionBackoff,
   compactionInputBudget,
   compactionPlan,
@@ -186,6 +187,33 @@ describe("buildCompactionRequest", () => {
   });
 });
 
+describe("chunkTranscript", () => {
+  it("returns no chunks for empty input", () => {
+    expect(chunkTranscript("", 100)).toEqual([]);
+  });
+
+  it("returns a transcript that fits as one chunk", () => {
+    expect(chunkTranscript("a\nb", 100)).toEqual(["a\nb"]);
+  });
+
+  it("splits at line boundaries without exceeding the chunk size", () => {
+    // 4 ASCII characters are one token: 2 tokens hold two lines
+    expect(chunkTranscript("aaaa\nbbbb\ncccc", 2)).toEqual(["aaaa\nbbbb", "cccc"]);
+  });
+
+  it("hard-splits a single line over the chunk size at a character boundary, with a marker", () => {
+    // 40 ASCII characters are 10 tokens; 4 tokens keep 16 characters
+    const chunks = chunkTranscript("x".repeat(40), 4);
+    expect(chunks).toEqual([
+      `${"x".repeat(16)}\n[chunk split]\n`,
+      `${"x".repeat(16)}\n[chunk split]\n`,
+      "x".repeat(8),
+    ]);
+    // the pieces reassemble into the original line
+    expect(chunks.join("").replaceAll("\n[chunk split]\n", "")).toBe("x".repeat(40));
+  });
+});
+
 describe("extractSummary", () => {
   it("returns the summary block and drops the analysis scratchpad", () => {
     expect(extractSummary("<analysis>x</analysis><summary>\nS\n</summary>")).toBe("S");
@@ -201,6 +229,13 @@ describe("extractSummary", () => {
 
   it("removes an analysis block from an untagged answer", () => {
     expect(extractSummary("<analysis>t</analysis>\nThe summary.")).toBe("The summary.");
+  });
+
+  it("strips a dangling summary tag when the model was cut off after the opening tag", () => {
+    // a truncated response: the closing tag never arrived, but the literal "<summary>" must not
+    // reach a later request
+    expect(extractSummary("<analysis>x</analysis><summary>Partial answer")).toBe("Partial answer");
+    expect(extractSummary("Partial answer</summary>")).toBe("Partial answer");
   });
 });
 

@@ -1034,8 +1034,10 @@ describe("runModelStep", () => {
       await say("go");
       const agent = agentWith({ model: { provider: "stub", model: "small" } });
       // the default 8000 reserve (the stub harness uses 0): a 10k window with a 1k cap keeps the
-      // proactive trigger below the hard line, where the backoff applies
-      await withSettings({ reserveTokens: 8000 }, async () => {
+      // proactive trigger below the hard line, where the backoff applies. A 200-token summary cap
+      // leaves a 900-token chunk, so the ~820-token transcript stays one call (chunking is §4.5's
+      // subject, not this test's).
+      await withSettings({ reserveTokens: 8000, maxOutputTokens: 200 }, async () => {
         const r = await step({ agent });
         expect(r.content).toEqual([{ type: "text", text: "answer" }]);
         const failed = await ofType("compaction_failed");
@@ -1359,6 +1361,118 @@ describe("runModelStep", () => {
           // main: initial + compaction + trim (3 rows); fallback: initial + compaction (2 rows) = 5,
           // and the step ceiling stops before a sixth
           expect(await ofType("model_call")).toHaveLength(5);
+        });
+      });
+    });
+
+    describe("chunked compaction (spec §4.5)", () => {
+      // 390 ASCII characters per turn: the user line ("User: " + 390) is 99 tokens and the
+      // assistant line 101, so a turn is 200 tokens.
+      const turn = (n: number) => `turn ${n} `.padEnd(390, "y");
+      /** Six turns to summarise: 1200 tokens, over one call's 500-token chunk at this window. */
+      const history = async () => {
+        for (let i = 0; i < 6; i++) {
+          await say(turn(i));
+          await answer(turn(i));
+        }
+      };
+      // Wc 800, summary cap 200, reserve 0 -> B 600; the chunk size is B - 100 (half the cap) = 500
+      const chunked = () => stubInfo("chunked", { contextWindow: 800, maxOutputTokens: 200 });
+      const settings = { maxOutputTokens: 200, reserveTokens: 0, keepRecentTurns: 1 };
+      const compactionCalls = (calls: ModelRequest[]) =>
+        calls.filter((c) => c.system.some((x) => x.text.includes(COMPACTION_MARKER)));
+      const transcriptOf = (req: ModelRequest): string => {
+        const c = req.messages[0]?.content;
+        return Array.isArray(c) && c[0]?.type === "text" ? c[0].text : "";
+      };
+
+      it("3 chunks produce 3 rolling calls, one usage each, and the summary of the last", async () => {
+        const seen: ModelRequest[] = [];
+        stubImpl = stub([chunked()], (req) => {
+          seen.push(req);
+          return req.system.some((x) => x.text.includes(COMPACTION_MARKER))
+            ? `Summary: ${"s".repeat(300)}`
+            : "answer";
+        });
+        const agent = agentWith({ model: { provider: "stub", model: "chunked" } });
+        await withSettings(settings, async () => {
+          await history();
+          await say("go");
+          expect((await step({ agent })).content).toEqual([{ type: "text", text: "answer" }]);
+
+          const calls = compactionCalls(seen);
+          expect(calls).toHaveLength(3);
+          // call 1 has no running summary; calls 2 and 3 carry the previous call's summary
+          expect(transcriptOf(calls[0] as ModelRequest)).not.toContain("[Earlier summary]");
+          expect(transcriptOf(calls[1] as ModelRequest)).toContain(
+            `[Earlier summary]\nSummary: ${"s".repeat(300)}`,
+          );
+          expect(transcriptOf(calls[2] as ModelRequest)).toContain("[Earlier summary]");
+
+          const usage = (await ofType("usage")).filter((u) => u.payload.purpose === "compaction");
+          expect(usage.map((u) => u.payload.chunk)).toEqual([1, 2, 3]);
+          expect(usage.map((u) => u.payload.chunks)).toEqual([3, 3, 3]);
+
+          // one summary event, the last call's text, checked against the full transcript
+          const summaries = await ofType("compaction_summary");
+          expect(summaries).toHaveLength(1);
+          expect(summaries[0]?.payload.text).toBe(`Summary: ${"s".repeat(300)}`);
+          expect(summaries[0]?.payload.savedTokens).toBeGreaterThan(0);
+        });
+      });
+
+      it("a single line over the chunk size is hard-split, not failed", async () => {
+        const seen: ModelRequest[] = [];
+        stubImpl = stub([chunked()], (req) => {
+          seen.push(req);
+          return req.system.some((x) => x.text.includes(COMPACTION_MARKER))
+            ? `Summary: ${"s".repeat(300)}`
+            : "answer";
+        });
+        const agent = agentWith({ model: { provider: "stub", model: "chunked" } });
+        await withSettings(settings, async () => {
+          for (let i = 0; i < 4; i++) {
+            await say(turn(i));
+            await answer(turn(i));
+          }
+          // 2011 characters ≈ 503 tokens: one assistant line over the 500-token chunk
+          await say(turn(9));
+          await answer("z".repeat(2000));
+          await say("go");
+          expect((await step({ agent })).content).toEqual([{ type: "text", text: "answer" }]);
+
+          const calls = compactionCalls(seen);
+          expect(calls.length).toBeGreaterThan(1);
+          expect(calls.some((c) => transcriptOf(c).includes("[chunk split]"))).toBe(true);
+          expect(await ofType("compaction_failed")).toEqual([]);
+          expect(await ofType("compaction_summary")).toHaveLength(1);
+        });
+      });
+
+      it("a failing middle chunk writes one compaction_failed naming the chunk and no summary", async () => {
+        let attempts = 0;
+        stubImpl = stub([chunked()], (req) => {
+          if (req.system.some((x) => x.text.includes(COMPACTION_MARKER))) {
+            attempts++;
+            if (attempts === 2) throw new ModelError("server", "chunk blew up");
+            return `Summary: ${"s".repeat(300)}`;
+          }
+          return "answer";
+        });
+        const agent = agentWith({ model: { provider: "stub", model: "chunked" } });
+        await withSettings(settings, async () => {
+          await history();
+          await say("go");
+          // the step continues unchanged after the failed compaction
+          expect((await step({ agent })).content).toEqual([{ type: "text", text: "answer" }]);
+          expect(attempts).toBe(2);
+          const failed = await ofType("compaction_failed");
+          expect(failed).toHaveLength(1);
+          expect(failed[0]?.payload.reason).toContain("chunk 2/3");
+          expect(await ofType("compaction_summary")).toEqual([]);
+          // chunk 1's call is billed; chunk 2 failed before its usage existed
+          const usage = (await ofType("usage")).filter((u) => u.payload.purpose === "compaction");
+          expect(usage.map((u) => u.payload.chunk)).toEqual([1]);
         });
       });
     });

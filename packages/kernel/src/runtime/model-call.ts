@@ -42,6 +42,7 @@ import {
 import {
   acceptSummary,
   buildCompactionRequest,
+  chunkTranscript,
   compactionBackoff,
   compactionInputBudget,
   compactionPlan,
@@ -65,6 +66,7 @@ import { toolSetChange } from "./context/tool-changes.js";
 import {
   type ConversationKindForHooks,
   fireObserve,
+  type HookDenial,
   type HookRunner,
   hookDeniedAudit,
   hookDeniedEvent,
@@ -346,9 +348,15 @@ const idem = {
   modelCall: modelCallIdemKey,
   hookDenied: (runId: string, step: number, attempt: number) =>
     `hook_denied:${runId}:${step}:${attempt}`,
-  /** Usage of a compaction call: `n` is the compaction attempt (consecutive failures + 1). */
-  compactionUsage: (runId: string, step: number, n: number) =>
-    `usage_compaction:${runId}:${step}:${n}`,
+  /**
+   * Usage of a compaction call: `n` is the compaction attempt (consecutive failures + 1). A
+   * chunked compaction sends one call per chunk, so the chunk index (1-based) is part of the key
+   * (context compaction spec §4.5).
+   */
+  compactionUsage: (runId: string, step: number, n: number, chunk?: number) =>
+    chunk === undefined
+      ? `usage_compaction:${runId}:${step}:${n}`
+      : `usage_compaction:${runId}:${step}:${n}:${chunk}`,
   mediaExcluded: (runId: string, step: number, attempt: number, part: number) =>
     `media_excluded:${runId}:${step}:${attempt}:${part}`,
 };
@@ -1013,11 +1021,7 @@ async function maybeCompact(
   const ref = modelRef;
   // the summary call's output cap: the org's effective setting, never above the model's own cap
   // (context compaction spec §4.8)
-  const request = buildCompactionRequest(
-    plan.transcript,
-    info.id,
-    Math.min(compaction.maxOutputTokens, info.maxOutputTokens),
-  );
+  const summaryCap = Math.min(compaction.maxOutputTokens, info.maxOutputTokens);
   const attemptNo = consecutiveCompactionFailures(events) + 1;
   // hooks see compaction calls like step attempts (I-1): same scope, chat runs only
   const scope = hookScope(deps.hooks, input);
@@ -1029,114 +1033,176 @@ async function maybeCompact(
     provider: ref.provider,
     model: ref.model,
   };
-  if (hookBase && deps.hooks?.has("model.request")) {
-    let verdict: Awaited<ReturnType<HookRunner["run"]>>;
-    try {
-      verdict = await deps.hooks.run(
-        "model.request",
-        { ...hookBase, request: hookRequestOf(request, deps.log) },
-        signal,
-      );
-    } catch (e) {
-      // run() rejects only when the run's signal aborted: an abort, never a deny
-      if (signal.aborted) throw new StepAborted();
-      throw e;
-    }
-    if (!verdict.allowed) {
-      // compaction fails (generic reason in the log, raw detail only in the audit row, R12); the
-      // step continues and its own request meets the hooks next
-      const site = {
-        orgId: input.orgId,
-        conversationId,
-        runId,
-        ...(input.accountId !== undefined && { accountId: input.accountId }),
-        ...(input.agentId !== undefined && { agentId: input.agentId }),
-        idemKey: `hook_denied_compaction:${runId}:${step}:${attemptNo}`,
-      };
-      const denied = hookDeniedEvent(site, "model.request", verdict, { step, attempt: 1 });
-      const entry = hookDeniedAudit(site, denied.payload, verdict);
-      entry.detail = { ...entry.detail, purpose: "compaction" };
-      const failed: AppendEvent = {
-        type: "compaction_failed",
-        runId,
-        payload: {
-          attempt: attemptNo,
-          reason: `compaction request blocked by the "${verdict.plugin}" policy hook (${verdict.cause})`,
-        },
-      };
-      deps.log.warn("compaction blocked by a policy hook", {
-        conversationId,
-        plugin: verdict.plugin,
-        cause: verdict.cause,
-      });
-      const written = await deps.stepLog.appendAudited(conversationId, [failed], entry);
-      if (written.length > 0) {
-        await deps.eventLog.notify(conversationId, Math.max(...written.map((e) => e.seq)));
-      }
-      return mergeLocal(events, written);
-    }
-  }
+  // §4.5: one summary call's input room is B = Wc - Cmax - R, and the room kept for the running
+  // summary the next call carries (half of the output cap) is subtracted from it, leaving the chunk
+  // size. A transcript over it is summarised chunk by chunk, each call sent the running summary
+  // before its chunk; a degenerate budget (a window smaller than the cap and the reserve) leaves
+  // the single call as before.
+  const budget = compactionInputBudget(info.contextWindow, summaryCap, compaction.reserveTokens);
+  const chunkSize = budget - Math.ceil(summaryCap / 2);
+  const transcriptTokens = estimateTokens(
+    [{ role: "user", content: [{ type: "text", text: plan.transcript }] }],
+    [],
+  );
+  const overChunk = chunkSize > 0 && transcriptTokens > chunkSize;
+  const split = overChunk ? chunkTranscript(plan.transcript, chunkSize) : null;
+  // one chunk means the transcript still fits one call (per-line rounding): keep it as today
+  const chunked = split !== null && split.length > 1;
+  const chunks = split ?? [plan.transcript];
 
   let failure: string | null = null;
+  /** The 1-based chunk whose call failed or was denied, when the compaction was chunked. */
+  let failedChunk: number | null = null;
+  let denial: { verdict: HookDenial; chunk: number } | null = null;
   let summary = "";
-  let usage: ModelUsage | null = null;
-  const sentAt = Date.now();
-  try {
-    let partial = "";
-    const out = await consumeModelStream(
-      provider,
-      request,
-      info.streamIdleTimeoutMs ?? runtime.streamIdleMs,
-      signal,
-      (ev) => {
-        if (ev.type === "text_delta") partial += ev.text;
-      },
-    );
-    usage = out.usage;
-    if (hookBase && deps.hooks) {
-      fireObserve(
-        deps.hooks,
-        "model.response",
-        {
-          ...hookBase,
-          outcome: "ok",
-          content: out.content,
-          stopReason: out.stopReason,
-          usage: out.usage,
-          latencyMs: Date.now() - sentAt,
-        },
+  const usages: { chunk: number | undefined; usage: ModelUsage }[] = [];
+  for (let i = 0; i < chunks.length; i++) {
+    const chunkNo = i + 1;
+    // call 1 summarises chunk 1; call i carries the running summary before its chunk, which the
+    // instruction merges (compactionPlan formats a previous summary the same way)
+    const callInput =
+      summary === "" ? (chunks[i] as string) : `[Earlier summary]\n${summary}\n\n${chunks[i]}`;
+    const request = buildCompactionRequest(callInput, info.id, summaryCap);
+    if (hookBase && deps.hooks?.has("model.request")) {
+      let verdict: Awaited<ReturnType<HookRunner["run"]>>;
+      try {
+        verdict = await deps.hooks.run(
+          "model.request",
+          { ...hookBase, request: hookRequestOf(request, deps.log) },
+          signal,
+        );
+      } catch (e) {
+        // run() rejects only when the run's signal aborted: an abort, never a deny
+        if (signal.aborted) throw new StepAborted();
+        throw e;
+      }
+      if (!verdict.allowed) {
+        denial = { verdict, chunk: chunkNo };
+        break;
+      }
+    }
+    const sentAt = Date.now();
+    try {
+      let partial = "";
+      const out = await consumeModelStream(
+        provider,
+        request,
+        info.streamIdleTimeoutMs ?? runtime.streamIdleMs,
         signal,
-        deps.log,
-      );
-    }
-    const final = out.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
-    // store only the <summary> block: the <analysis> scratchpad must not enter later requests
-    summary = extractSummary(final || partial);
-    if (!acceptSummary(summary, plan.transcript)) {
-      failure = `summary too short (${summary.length} chars)`;
-    }
-  } catch (err) {
-    if (err instanceof StepAborted) throw err;
-    if (hookBase && deps.hooks) {
-      fireObserve(
-        deps.hooks,
-        "model.response",
-        {
-          ...hookBase,
-          outcome: "failed",
-          content: [],
-          stopReason: null,
-          usage: null,
-          latencyMs: Date.now() - sentAt,
-          errorCode: classify(err).code,
+        (ev) => {
+          if (ev.type === "text_delta") partial += ev.text;
         },
-        signal,
-        deps.log,
       );
+      usages.push({ chunk: chunked ? chunkNo : undefined, usage: out.usage });
+      if (hookBase && deps.hooks) {
+        fireObserve(
+          deps.hooks,
+          "model.response",
+          {
+            ...hookBase,
+            outcome: "ok",
+            content: out.content,
+            stopReason: out.stopReason,
+            usage: out.usage,
+            latencyMs: Date.now() - sentAt,
+          },
+          signal,
+          deps.log,
+        );
+      }
+      const final = out.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
+      // store only the <summary> block: the <analysis> scratchpad must not enter later requests
+      summary = extractSummary(final || partial);
+      // the last call's text is the summary, accepted against the full transcript (spec §4.5)
+      if (i === chunks.length - 1 && !acceptSummary(summary, plan.transcript)) {
+        failure = `summary too short (${summary.length} chars)`;
+        failedChunk = chunked ? chunkNo : null;
+      }
+    } catch (err) {
+      if (err instanceof StepAborted) throw err;
+      if (hookBase && deps.hooks) {
+        fireObserve(
+          deps.hooks,
+          "model.response",
+          {
+            ...hookBase,
+            outcome: "failed",
+            content: [],
+            stopReason: null,
+            usage: null,
+            latencyMs: Date.now() - sentAt,
+            errorCode: classify(err).code,
+          },
+          signal,
+          deps.log,
+        );
+      }
+      failure = err instanceof Error ? err.message : String(err);
+      failedChunk = chunked ? chunkNo : null;
+      break;
     }
-    failure = err instanceof Error ? err.message : String(err);
   }
 
+  /** The chunk a failure stopped at, for the reason (empty when the compaction was not chunked). */
+  const chunkNote = (chunk: number | null): string =>
+    chunk === null ? "" : ` (chunk ${chunk}/${chunks.length})`;
+
+  /** One usage event per completed call (spec §4.5); a chunked call carries its chunk index. */
+  const usageEvents = (): AppendEvent[] =>
+    usages.map(({ chunk, usage }) => ({
+      type: "usage" as const,
+      runId,
+      idemKey: idem.compactionUsage(runId, step, attemptNo, chunk),
+      payload: {
+        step,
+        provider: ref.provider,
+        model: ref.model,
+        ...usage,
+        purpose: "compaction" as const,
+        ...(chunk !== undefined ? { chunk, chunks: chunks.length } : {}),
+      },
+    }));
+
+  if (denial !== null) {
+    // compaction fails (generic reason in the log, raw detail only in the audit row, R12); the
+    // step continues and its own request meets the hooks next
+    const verdict = denial.verdict;
+    const site = {
+      orgId: input.orgId,
+      conversationId,
+      runId,
+      ...(input.accountId !== undefined && { accountId: input.accountId }),
+      ...(input.agentId !== undefined && { agentId: input.agentId }),
+      idemKey: `hook_denied_compaction:${runId}:${step}:${attemptNo}`,
+    };
+    const denied = hookDeniedEvent(site, "model.request", verdict, { step, attempt: 1 });
+    const entry = hookDeniedAudit(site, denied.payload, verdict);
+    entry.detail = { ...entry.detail, purpose: "compaction" };
+    const failed: AppendEvent = {
+      type: "compaction_failed",
+      runId,
+      payload: {
+        attempt: attemptNo,
+        reason: `compaction request blocked by the "${verdict.plugin}" policy hook (${verdict.cause})${chunkNote(chunked ? denial.chunk : null)}`,
+      },
+    };
+    deps.log.warn("compaction blocked by a policy hook", {
+      conversationId,
+      plugin: verdict.plugin,
+      cause: verdict.cause,
+    });
+    // the chunk calls that completed before the denial are still billed and reported
+    const billed = usages.length > 0 ? await appendCounted(deps, input, usageEvents()) : [];
+    const written = await deps.stepLog.appendAudited(conversationId, [failed], entry);
+    if (written.length > 0) {
+      await deps.eventLog.notify(conversationId, Math.max(...written.map((e) => e.seq)));
+    }
+    return mergeLocal(events, [...billed, ...written]);
+  }
+
+  if (failure !== null) {
+    deps.log.warn("compaction failed", { conversationId, reason: failure });
+  }
   const event: AppendEvent =
     failure === null
       ? {
@@ -1153,22 +1219,12 @@ async function maybeCompact(
       : {
           type: "compaction_failed",
           runId,
-          payload: { attempt: attemptNo, reason: failure },
+          payload: { attempt: attemptNo, reason: `${failure}${chunkNote(failedChunk)}` },
         };
-  if (failure !== null) {
-    deps.log.warn("compaction failed", { conversationId, reason: failure });
-  }
-  // the compaction call's usage (I-1): logged with the outcome in one append (one transaction), marked
-  // `purpose: "compaction"` so step consumers (calibration, trajectory steps, replay plans) skip it
-  const batch: AppendEvent[] = [event];
-  if (usage !== null) {
-    batch.push({
-      type: "usage",
-      runId,
-      idemKey: idem.compactionUsage(runId, step, attemptNo),
-      payload: { step, provider: ref.provider, model: ref.model, ...usage, purpose: "compaction" },
-    });
-  }
+  // the compaction calls' usage (I-1): logged with the outcome in one append (one transaction),
+  // marked `purpose: "compaction"` so step consumers (calibration, trajectory steps, replay plans)
+  // skip it; a chunked compaction writes one per call, each keyed by its chunk
+  const batch: AppendEvent[] = [event, ...usageEvents()];
   const written = await appendCounted(deps, input, batch);
   return mergeLocal(events, written);
 }

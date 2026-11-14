@@ -274,13 +274,81 @@ function renderBlocks(blocks: EventPayload<"user_message">["content"]): string {
 /**
  * The text to store as the compaction summary (context compaction spec §4.2.1): the `<summary>`
  * block when the model returned one, since the `<analysis>` scratchpad must never be sent in a
- * later request; otherwise the answer with any `<analysis>` block removed. Trimmed; an empty result
- * fails the attempt.
+ * later request; otherwise the answer with any `<analysis>` block and any dangling `<summary>` tag
+ * removed (a truncated response may have been cut off after the opening tag). Trimmed; an empty
+ * result fails the attempt.
  */
 export function extractSummary(text: string): string {
   const block = /<summary>([\s\S]*?)<\/summary>/i.exec(text);
   if (block) return (block[1] ?? "").trim();
-  return text.replace(/<analysis>[\s\S]*?<\/analysis>/gi, "").trim();
+  return text
+    .replace(/<analysis>[\s\S]*?<\/analysis>/gi, "")
+    .replace(/<\/?summary>/gi, "")
+    .trim();
+}
+
+/**
+ * Splits a transcript into chunks of at most `chunkSize` estimated tokens at line boundaries
+ * (context compaction spec §4.5). A single line over the chunk size (usually a tool result) is
+ * hard-split at a character boundary rather than failing, its pieces marked with
+ * {@link CHUNK_SPLIT_MARKER}. Empty input returns no chunks; input that fits returns itself as the
+ * only chunk.
+ */
+export function chunkTranscript(transcript: string, chunkSize: number): string[] {
+  if (transcript.length === 0) return [];
+  const max = Math.max(1, chunkSize);
+  const chunks: string[] = [];
+  let lines: string[] = [];
+  let tokens = 0;
+  const flush = (): void => {
+    if (lines.length === 0) return;
+    chunks.push(lines.join("\n"));
+    lines = [];
+    tokens = 0;
+  };
+  for (const line of transcript.split("\n")) {
+    const lineTokens = textTokens(line);
+    if (lineTokens > max) {
+      flush();
+      const pieces = splitLine(line, max);
+      pieces.forEach((piece, i) => {
+        chunks.push(i === pieces.length - 1 ? piece : `${piece}${CHUNK_SPLIT_MARKER}`);
+      });
+      continue;
+    }
+    if (tokens + lineTokens > max) flush();
+    lines.push(line);
+    tokens += lineTokens;
+  }
+  flush();
+  return chunks;
+}
+
+/** The marker a hard-split line carries where it was cut (context compaction spec §4.5). */
+const CHUNK_SPLIT_MARKER = "\n[chunk split]\n";
+
+/** Cuts a line into pieces of at most `max` estimated tokens, at character boundaries. */
+function splitLine(line: string, max: number): string[] {
+  const pieces: string[] = [];
+  let start = 0;
+  let ascii = 0;
+  let other = 0;
+  for (let i = 0; i < line.length; i++) {
+    const isAscii = line.charCodeAt(i) < 128;
+    const nextAscii = ascii + (isAscii ? 1 : 0);
+    const nextOther = other + (isAscii ? 0 : 1);
+    if (i > start && Math.ceil(nextAscii / 4 + nextOther) > max) {
+      pieces.push(line.slice(start, i));
+      start = i;
+      ascii = isAscii ? 1 : 0;
+      other = isAscii ? 0 : 1;
+    } else {
+      ascii = nextAscii;
+      other = nextOther;
+    }
+  }
+  pieces.push(line.slice(start));
+  return pieces;
 }
 
 /**
