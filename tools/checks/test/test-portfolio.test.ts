@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   changedTestFiles,
   checkTestPortfolio,
+  inspectTestPortfolio,
   listCandidates,
   readBaseline,
 } from "../src/test-portfolio.js";
@@ -116,10 +117,10 @@ describe("checkTestPortfolio", () => {
   });
 
   it("passes the real tree, and every grandfather entry is justified and still violates", () => {
-    expect(checkTestPortfolio({ root: repoRoot })).toEqual([]);
-    const entries = readBaseline(repoRoot);
-    expect(entries.length).toBeGreaterThan(0);
-    // With the grandfather list empty the tree still has violations: the list is not vacuous.
-    expect(checkTestPortfolio({ root: repoRoot, baseline: [] }).length).toBeGreaterThan(0);
+    // One scan (~2 s): `findings` is what survives the list, `raw` proves the list is not vacuous.
+    const scan = inspectTestPortfolio({ root: repoRoot });
+    expect(scan.findings).toEqual([]);
+    expect(scan.raw.length).toBeGreaterThan(0);
+    expect(readBaseline(repoRoot).length).toBeGreaterThan(0);
   });
 });

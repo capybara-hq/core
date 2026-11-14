@@ -459,7 +459,22 @@ export interface TestPortfolioOptions {
   changed?: Set<string>;
 }
 
-export function checkTestPortfolio({ root, baseline, changed }: TestPortfolioOptions): Finding[] {
+/**
+ * One scan of the tree: `raw` is every file-level violation before the grandfather list skips a
+ * file (the list-is-not-vacuous measure), `findings` is what {@link checkTestPortfolio} returns
+ * (those that survive the list, plus the baseline and list-file rules).
+ */
+export interface TestPortfolioScan {
+  raw: Finding[];
+  findings: Finding[];
+}
+
+/** Scans the tree once and reports both the raw violations and the surviving findings. */
+export function inspectTestPortfolio({
+  root,
+  baseline,
+  changed,
+}: TestPortfolioOptions): TestPortfolioScan {
   const entries = baseline ?? readBaseline(root);
   // Only a justified entry grants the file-level skip; an unjustified one is itself a finding.
   const skipped = new Set(entries.filter((e) => e.reason !== "").map((e) => e.path));
@@ -516,7 +531,12 @@ export function checkTestPortfolio({ root, baseline, changed }: TestPortfolioOpt
     }
   }
 
-  return [...out, ...checkLists(root)];
+  return { raw: findings, findings: [...out, ...checkLists(root)] };
+}
+
+/** The problems that survive the grandfather list, plus the baseline and list-file rules. */
+export function checkTestPortfolio(options: TestPortfolioOptions): Finding[] {
+  return inspectTestPortfolio(options).findings;
 }
 
 /**

@@ -37,8 +37,8 @@ no guarantee, and make every addition follow a stated level policy so the suite 
 | Id | Goal | Measure |
 |---|---|---|
 | G1 | Shorter CI without changing guarantees | kernel test shards 7–9 min → ≤5 min; total kernel PR wall ~13 → ≤9 min (test job only; e2e/docker untouched) |
-| G2 | No app boot for a handful of tests | app- or container-booting files with ≤5 tests: ~137 → 0; pure unit files may stay small |
-| G3 | Determinism | fixed waits of every kind (`sleep(n)`, `setTimeout(n)` promises) in tests → 0 outside an injected-clock exception; timeout overrides of every form → short documented lists in `vitest.config.ts` |
+| G2 | No app boot for a handful of tests | app- or container-booting files with ≤5 tests: ~137 → 0 outside the check-enforced, shrinking baseline (every remaining exception carries a reason); pure unit files may stay small |
+| G3 | Determinism | fixed waits of every kind (`sleep(n)`, `setTimeout(n)` promises) in tests → 0 outside the check-enforced, shrinking baseline (every remaining exception carries a reason); timeout overrides of every form → the project bounds, with no per-test overrides |
 | G4 | A written level policy | policy in this spec + `AGENTS.md` pointer; new tests reviewed against it |
 | G5 | No silent coverage loss | per-module line coverage recorded before T2 and after each batch; a drop needs an explicit decision in that PR |
 
@@ -113,12 +113,12 @@ Vitest projects are declared in `vitest.config.ts`:
   30 s during T1: converged integration tests keep internal waits of 30–40 s for legitimate
   terminal conditions, and a bound below them turns a slow CI host into a flake. 60 s still
   catches a hang, and no test may sit at its bound with zero headroom.)
-- `container`: includes `test/*-container-tests.json` (the `.dual.test.ts` files, 42 files /
-  88 tests, and process tests); `testTimeout: 240_000`, `hookTimeout: 300_000`. These tests run
-  two replicas against real Redis and PostgreSQL and legitimately take 20–30 s (one measured
-  case: 30 s), so the project timeout is an upper bound sized to the category — it costs nothing
-  for a passing test and only delays the failure report of a hung one. Shortening it would force
-  clock fakes into tests whose point is real cross-replica timing.
+- `container`: includes `test/container-tests.json` (the `.dual.test.ts` files, 42 files /
+  88 tests, process tests and the live test); `testTimeout: 240_000`, `hookTimeout: 300_000`.
+  These tests run two replicas against real Redis and PostgreSQL and legitimately take 20–30 s
+  (one measured case: 30 s), so the project timeout is an upper bound sized to the category — it
+  costs nothing for a passing test and only delays the failure report of a hung one. Shortening
+  it would force clock fakes into tests whose point is real cross-replica timing.
 - The `design`, `plugin-client` and `web` projects are unchanged.
 
 Membership is a checked-in list, not a naming convention or import detection: renaming 578 files
@@ -182,9 +182,9 @@ coverage has no effect on normal test runs.
 - A diff-scoped check (`check:test-portfolio`) flags in **changed** kernel test files:
   `sleep(<number>)`, `new Promise(… setTimeout(… <number> …))`, a `timeout:` property or
   third-argument timeout, an app-booting file with ≤5 tests, and a file booting the app more than
-  once. It runs by diff on PRs (changed files only, `--base "$(git rev-parse HEAD^1)"`) and in
-  full in `pnpm check`. Existing violations are grandfathered in a checked-in list until their
-  T1/T2 batch lands.
+  once. CI runs it in full inside `pnpm check`; the `--base <sha>` mode scans only the changed
+  files and is a local subset, not the PR gate. Existing violations are grandfathered in a
+  checked-in list until their T1/T2 batch lands.
 - Every new check states its full/diff mode in its PR and in `tools/checks/README.md`.
 
 ### 7. Measurement and rollback
@@ -205,6 +205,12 @@ app-booting files, 166 sleeps) are superseded by this table.
 | Timeout bounds | 5 s local / 30 s CI `testTimeout`, 120 s global `hookTimeout` | unit 5 s / 10 s, integration 60 s / 120 s, container 240 s / 300 s |
 | Per-module line coverage | committed baseline (49 rows) | unchanged reference; per-batch deltas inside tolerance |
 | Kernel test shards (CI) | 348–535 s per shard | to be re-measured after the PR |
+
+**Accepted deviations:** the end state is not an absolute zero. The grandfather list
+(`tools/checks/test-portfolio-baseline.json`) still skips 127 files that the scan finds, each with
+a reason, and it only shrinks: a new violation in a changed file fails, an unjustified or stale
+entry fails, and an entry whose reason claims removal while the file exists fails. "Zero" in G2 /
+G3 means zero outside that check-enforced, shrinking baseline.
 
 Notes:
 

@@ -4,6 +4,8 @@
   "background/macos-device.test.ts",
   "background/poll.dual.test.ts",
   "background/tail-script.test.ts",
+  "catalog/claude-live.test.ts",
+  "catalog/claude-superpowers.e2e.test.ts",
   "catalog/m6-segment3.dual.test.ts",
   "catalog/scope-sync.dual.test.ts",
   "channels/lifecycle.test.ts",

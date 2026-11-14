@@ -3,7 +3,6 @@
   "attachments/attachments.service.test.ts",
   "attachments/media-request.test.ts",
   "background/poll-providers.test.ts",
-  "build-failure-cleanup.test.ts",
   "catalog/claude-marketplace.test.ts",
   "catalog/claude-translate.test.ts",
   "catalog/cli.test.ts",
