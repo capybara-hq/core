@@ -141,7 +141,7 @@ UI: a "Conversation compaction" section on the platform settings page and the or
 ### 4.9 Events, replay, SDK
 
 - `run_started.trigger` gains `"compact"` (display only).
-- `usage` gains an optional `chunk` (the 1-based chunk a chunked compaction call summarised) and `chunks` (the number of calls the compaction attempted: the full count on a completed compaction, only the calls actually made on a failed or aborted one) (additive; old logs parse).
+- `usage` gains an optional `chunk` (the 1-based chunk a chunked compaction call summarised) and `chunks` (the number of calls the compaction attempted: the full count on a completed compaction, only the calls actually made on a failed or hook-denied one) (additive; old logs parse).
 - `compaction_summary` gains an optional `savedTokens` (estimated transcript input minus summary output, floored at zero: a longer summary saved nothing), so the UI does not derive it from chunked usage; the divider shows no number when it is absent (older logs) or 0.
 - `model_call.request` gains an optional `fit` plan (4.3); `buildRequest` applies it; old logs have none. Record `estimatedInputTokens` for the request **actually sent (post-fit)**; calibration and the trigger read that value.
 - `compaction_failed.reason` carries the chunk information as text; no schema change.
@@ -164,7 +164,7 @@ UI: a "Conversation compaction" section on the platform settings page and the or
 |---|---|
 | Proactive compaction fails | `compaction_failed` + backoff; step sends if it fits, else 4.3 |
 | Hard guard trims | request sent with `fit`; no error |
-| Provider rejects despite the estimate | progressive trim (90/80/70% of W) + retry, bounded |
+| Provider rejects despite the estimate | progressive trim (70 → 80 → 90% of W) + retry, bounded |
 | Reactive compaction fails | trim + retry; then `model.context_overflow` |
 | Media rejection with bytes | `media_excluded` + in-step retry |
 | Chunk fails | one `compaction_failed` with the chunk; no partial summary |

@@ -680,6 +680,41 @@ describe("轨迹详情（TracePage）", () => {
     ).toBeTruthy();
   });
 
+  it("a compact run refused by the kernel shows the eval error's own message", async () => {
+    stubApi({
+      [`GET ${DETAIL}`]: () => json(200, detailBody([run()])),
+      [`GET ${ORG}/eval-sets`]: () =>
+        json(200, {
+          sets: [
+            {
+              id: "set-1",
+              agentId: "ag1",
+              name: "Regression",
+              description: "",
+              rubric: null,
+              caseCount: 2,
+              createdAt: at(0),
+            },
+          ],
+        }),
+      [`POST ${ORG}/eval-sets/set-1/cases`]: () =>
+        json(422, {
+          error: {
+            code: "eval.compact_not_replayable",
+            message: "A manual compaction run has no model step to replay",
+          },
+        }),
+    });
+    await renderRouteWithCache("/trajectories/c1", { ...NO_MEMBERS, ...lastStubRoutes() });
+    await screen.findByRole("tree");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: en.trajectories.addToSet.action }));
+    const dialog = await screen.findByRole("dialog", { name: en.trajectories.addToSet.title });
+    await user.click(within(dialog).getByRole("button", { name: en.trajectories.addToSet.submit }));
+    // the kernel's code reaches the dialog as the translated reason, not the raw text
+    expect(await within(dialog).findByText(en.errors.eval.compact_not_replayable)).toBeTruthy();
+  });
+
   it("a trajectory the kernel hides (404) is the not-found state in the shell", async () => {
     stubApi({
       [`GET ${DETAIL}`]: () =>

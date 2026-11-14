@@ -1570,27 +1570,34 @@ describe("runModelStep", () => {
         expect(cleared).toHaveLength(1);
       });
 
-      it("fails the compaction when the window leaves less than the minimum chunk size", async () => {
-        // base chunk size 100 < the 256 floor: chunking would clamp to 1 token and storm
+      it("a base chunk below the minimum leaves the single call instead of failing the first chunk", async () => {
+        // base chunk size 100 < the 256 floor: chunking could only make one token per call, so the
+        // degenerate budget keeps the single summary call (the fit guard handles a request too big
+        // for the window)
         const TINY = 100 + 300 + OVERHEAD;
         const tiny = stubInfo("tiny", { contextWindow: TINY, maxOutputTokens: 200 });
         const seen: ModelRequest[] = [];
         stubImpl = stub([tiny], (req) => {
           seen.push(req);
-          return req.system.some((x) => x.text.includes(COMPACTION_MARKER)) ? "never" : "answer";
+          return req.system.some((x) => x.text.includes(COMPACTION_MARKER))
+            ? `Summary: ${"s".repeat(300)}`
+            : "answer";
         });
         const agent = agentWith({ model: { provider: "stub", model: "tiny" } });
         await withSettings(settings, async () => {
           await history();
           await say("go");
-          // the step continues on the trimmed history after the failed compaction
           expect((await step({ agent })).content).toEqual([{ type: "text", text: "answer" }]);
-          const failed = await ofType("compaction_failed");
-          expect(failed).toHaveLength(1);
-          expect(failed[0]?.payload.reason).toContain("256");
-          expect(await ofType("compaction_summary")).toEqual([]);
-          // no summary call was made: the floor fails before the first chunk
-          expect(compactionCalls(seen)).toHaveLength(0);
+          const calls = compactionCalls(seen);
+          // one call with the whole transcript: no running-summary wrapper, no chunk split
+          expect(calls).toHaveLength(1);
+          expect(transcriptOf(calls[0] as ModelRequest)).not.toContain("[Earlier summary]");
+          expect(await ofType("compaction_failed")).toEqual([]);
+          expect(await ofType("compaction_summary")).toHaveLength(1);
+          const usage = (await ofType("usage")).filter((u) => u.payload.purpose === "compaction");
+          expect(usage).toHaveLength(1);
+          // a single call carries no chunk progress
+          expect(usage[0]?.payload.chunk).toBeUndefined();
         });
       });
 

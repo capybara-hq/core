@@ -457,6 +457,7 @@ export const ERROR_CODES = {
   "eval.case_exists": 409,
   "eval.too_many_cases": 409,
   "eval.agent_mismatch": 409,
+  "eval.compact_not_replayable": 422,
   "eval.run_not_found": 404,
   "eval.token_cap_invalid": 400,
   "eval.run_finished": 409,

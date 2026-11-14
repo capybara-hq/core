@@ -82,7 +82,7 @@ function compactRun(s: CaseSnapshot): boolean {
 const NO_PLAN: CasePlan = {
   results: [],
   modelRequests: 0,
-  usage: ZERO,
+  usage: { ...ZERO },
   judgeContextTokens: 0,
 };
 
@@ -96,7 +96,7 @@ const NO_PLAN: CasePlan = {
  * A compact run has no plan in either mode ({@link compactRun}): estimates and starts skip it.
  */
 export function casePlan(s: CaseSnapshot, mode: "step" | "run"): CasePlan {
-  if (compactRun(s)) return { ...NO_PLAN, results: [] };
+  if (compactRun(s)) return { ...NO_PLAN, results: [], usage: { ...ZERO } };
   const own = s.events.filter((e) => e.runId === s.runId);
   if (mode === "run") {
     let usage = ZERO;

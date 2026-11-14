@@ -381,6 +381,7 @@
       "case_exists": "这次运行已经在该评测集里了。",
       "too_many_cases": "评测集已满，无法再加入用例。",
       "agent_mismatch": "这次运行不属于该评测集的智能体。",
+      "compact_not_replayable": "手动压缩运行没有可回放的模型步骤，不能作为评测用例。请选择该对话的普通运行。",
       "run_not_finished": "运行还没结束，结束后才能加入评测集。",
       "case_too_large": "这次运行太大，不能加入评测集。",
       "call_not_found": "快照里找不到这次模型调用。",

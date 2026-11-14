@@ -1131,14 +1131,17 @@ export async function runCompaction(
   // transcript over it is summarised chunk by chunk, each call sent the running summary before its
   // chunk; the actual running summary can be up to the full output cap, so each call after the
   // first shrinks its chunk to that estimate. A degenerate budget (a window smaller than the cap,
-  // the reserve, the overhead and the allowance) leaves the single call as before.
+  // the reserve, the overhead and the allowance, or one that leaves less than a usable chunk)
+  // leaves the single call as before: a chunk below the floor would fail the first call instead.
   const budget = compactionInputBudget(info.contextWindow, summaryCap, compaction.reserveTokens);
   const overhead = compactionRequestOverhead();
   const allowance = Math.ceil(summaryCap / 2);
   const baseChunkSize = compactionChunkSize(budget, summaryCap);
-  // the whole transcript is one call unless it is over the base chunk size
+  // the whole transcript is one call unless it is over a usable base chunk size
   let remaining: string | null =
-    baseChunkSize > 0 && textTokens(plan.transcript) > baseChunkSize ? plan.transcript : null;
+    baseChunkSize >= MIN_COMPACTION_CHUNK_TOKENS && textTokens(plan.transcript) > baseChunkSize
+      ? plan.transcript
+      : null;
   /** Whether this compaction is chunked (real `i/N` progress only in this path). */
   const chunked = remaining !== null;
   /** The chunk count the current chunk size plans (updated when the running summary shrinks it). */

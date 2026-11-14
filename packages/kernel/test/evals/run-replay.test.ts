@@ -9,10 +9,12 @@ import type { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { casePlans } from "../../src/evals/plan.js";
 import { REPLAY_NO_RECORDING } from "../../src/evals/recorded-tools.js";
 import type { EvalReplayHooks, RunReplayResult } from "../../src/evals/run-replay.js";
 import type { EvalResultView, EvalRunView } from "../../src/evals/runs.service.js";
 import type { EvalSetView } from "../../src/evals/sets.service.js";
+import { takeSnapshot } from "../../src/evals/snapshot.js";
 import type { TrajectoryDetail, TrajectoryListItem } from "../../src/evals/trajectory.service.js";
 import { EVAL_REPLAY_HOOKS } from "../../src/evals/worker.js";
 import { INPUT_SKIPPED_TEXT } from "../../src/tools/pipeline.js";
@@ -1498,7 +1500,7 @@ describe("整轮回放", { timeout: 60_000 }, () => {
     expect(await outside()).toEqual(before);
   });
 
-  it("a compact run's case is never replayed: no step, no tool, no eval conversation (context compaction §4.7)", async () => {
+  it("a compact-run case (a row stored before the refusal) is never replayed: no step, no tool, no eval conversation (context compaction §4.7)", async () => {
     const setId = await createSet();
     const conv = await createConv(admin, orgId, agentId);
     // a normal run of the same conversation, the set's one replayable case
@@ -1567,7 +1569,38 @@ describe("整轮回放", { timeout: 60_000 }, () => {
         payload: { reason: "completed", consumedUpToSeq: 1 },
       },
     ]);
-    await addCase(setId, conv, "compact-run-1");
+    // the API refuses a compact run as a case now; store it directly to model a case written
+    // before that refusal (the plan guard is the backstop for such rows)
+    const refused = await admin({
+      method: "POST",
+      url: `${setsUrl()}/${setId}/cases`,
+      payload: { conversationId: conv, runId: "compact-run-1" },
+    });
+    expect(refused.statusCode, refused.body).toBe(422);
+    expect((refused.json() as { error?: { code?: string } }).error?.code).toBe(
+      "eval.compact_not_replayable",
+    );
+    const compactSnapshot = await takeSnapshot(db, orgId, conv, "compact-run-1", 1_000_000);
+    const plans = casePlans(compactSnapshot);
+    const compactCase = await db
+      .insertInto("eval_cases")
+      .values({
+        set_id: setId,
+        org_id: orgId,
+        source_conversation_id: conv,
+        source_run_id: "compact-run-1",
+        agent_version: 1,
+        title: "compact run",
+        snapshot: JSON.parse(JSON.stringify(compactSnapshot)),
+        snapshot_bytes: Buffer.byteLength(JSON.stringify(compactSnapshot)),
+        replayable_steps: 0,
+        plan_step: JSON.parse(JSON.stringify(plans.step)),
+        plan_run: JSON.parse(JSON.stringify(plans.run)),
+        base_model: JSON.stringify({ provider: "model-fake", model: "fake-1" }),
+        added_by: adminId,
+      })
+      .returning("id")
+      .executeTakeFirstOrThrow();
 
     const run = await startRun(setId, {});
     // the compact case has no plan, so it is not scheduled: one case, one result
@@ -1576,11 +1609,6 @@ describe("整轮回放", { timeout: 60_000 }, () => {
     expect(done.status).toBe("completed");
     const rows = await results(run.id);
     expect(rows).toHaveLength(1);
-    const compactCase = await db
-      .selectFrom("eval_cases")
-      .select("id")
-      .where("source_run_id", "=", "compact-run-1")
-      .executeTakeFirstOrThrow();
     const compactResults = await db
       .selectFrom("eval_results")
       .select("id")

@@ -381,6 +381,7 @@
       "case_exists": "This run is already in the eval set.",
       "too_many_cases": "The eval set is full.",
       "agent_mismatch": "This run belongs to a different agent than the eval set.",
+      "compact_not_replayable": "A manual compaction run has no model step to replay, so it cannot be an eval case. Pick an ordinary run of the conversation.",
       "run_not_finished": "The run has not finished yet. Add it after it ends.",
       "case_too_large": "This run is too large to add to an eval set.",
       "call_not_found": "This model call is not in the snapshot.",
