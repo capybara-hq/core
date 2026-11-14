@@ -21,12 +21,12 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { projectsUnsupported } from "../local-devices/local-device-provider.js";
 import { deviceFeaturesOf } from "../local-devices/policy-summary.js";
+import { POLICY_REFUSAL_PREFIX } from "../local-devices/relay.js";
 import type { SandboxMode } from "../sandbox/modes.js";
 import { providerForDevice, SandboxProviders } from "../sandbox/providers.js";
 import { deviceNotFound, type HeldProvider, SandboxService } from "../sandbox/sandbox.service.js";
 import { SandboxProviderUnreachableError } from "../sandbox/unreachable.js";
 import { DeviceAccess } from "./access.js";
-import { DevicesService } from "./devices.service.js";
 
 /** The most projects one device keeps (project root §4.1). */
 export const MAX_DEVICE_PROJECTS = 100;
@@ -140,7 +140,7 @@ function clipped(s: string, max = 200): string {
  * A device's projects (project root design §4.1, §4.2, §6): kept in `device_projects`, keyed by the
  * device's id, written only here. Only the device's owner reads or changes them (anyone else gets
  * `device.not_found`). Every project is scoped by the device's current effective mode
- * ({@link DevicesService.modeLevel}, what the command review reads): sandbox mode and a cloud device
+ * (`SandboxService.devicePolicy`, what the command review's mode derives from): sandbox mode and a cloud device
  * offer only the workspace, auto mode on a machine whatever its owner can read; a project outside
  * the mode is hidden, never deleted. The device stays the authority on what it can read: adding asks
  * it with `list`, the suggestions with `scan`, both carrying the current mode, both outside any
@@ -153,9 +153,9 @@ export class DeviceProjectsService {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(SandboxProviders)
     private readonly providers: Pick<SandboxProviders, "cloud" | "forName">,
-    @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "withSandbox">,
+    @Inject(SandboxService)
+    private readonly sandbox: Pick<SandboxService, "withSandbox" | "devicePolicy">,
     @Inject(DeviceAccess) private readonly access: Pick<DeviceAccess, "usable">,
-    @Inject(DevicesService) private readonly devices: Pick<DevicesService, "modeLevel">,
   ) {}
 
   /** The projects the device's current mode can read; see {@link DeviceProjectList}. */
@@ -192,7 +192,7 @@ export class DeviceProjectsService {
     deviceId: string,
     signal: AbortSignal = new AbortController().signal,
   ): Promise<DeviceProjectCandidates> {
-    await this.access.usable(orgId, accountId, deviceId);
+    // ownership is the scope's; whether the provider can serve the device is withSandbox's
     const scope = await this.scope(orgId, accountId, deviceId);
     if (!scope.supported) {
       return { candidates: [], mode: scope.mode, base: baseOf(scope), supported: false };
@@ -206,7 +206,8 @@ export class DeviceProjectsService {
       try {
         found = await scan.call(p, h, base, { limits: { mode: scope.mode }, signal: sig });
       } catch (e) {
-        throw this.deviceRefusal(e, base);
+        // the base is the device's own workspace or home: a refusal there is not the person's path
+        throw passThrough(e) ?? unavailable(e);
       }
       // the device's answer is checked again: inside the base and the mode, a valid name, bounded
       const candidates = found
@@ -299,14 +300,9 @@ export class DeviceProjectsService {
             signal: sig,
           });
         } catch (e) {
-          throw this.deviceRefusal(e, path);
+          throw await listFailure(e, p, h, path, scope.mode, sig);
         }
-        if (answer === null) {
-          throw new ApiError(
-            "device.project_path_missing",
-            `${clipped(path)} does not exist on the device; check the path`,
-          );
-        }
+        if (answer === null) throw pathMissing(path);
         return { path, name };
       },
     );
@@ -403,8 +399,9 @@ export class DeviceProjectsService {
   }
 
   /**
-   * The owner's live device's scope now: its source, the mode the command review reads
-   * ({@link DevicesService.modeLevel}), the workspace and home as last reported, and whether it
+   * The owner's live device's scope now: its source, its effective mode
+   * (`SandboxService.devicePolicy`: the platform, the org and the device's own choice; for a cloud
+   * device never the wider mode an instance awaiting a files reset still runs at), the workspace and home as last reported, and whether it
    * offers projects. Anyone else's device (or a missing one) → `device.not_found`.
    */
   private async scope(orgId: string, accountId: string, deviceId: string): Promise<Scope> {
@@ -429,12 +426,11 @@ export class DeviceProjectsService {
       .where("e.deleted_at", "is", null)
       .executeTakeFirst();
     if (row === undefined) throw deviceNotFound();
-    const level = await this.devices.modeLevel(orgId, deviceId);
-    if (level === null) throw deviceNotFound();
+    const { mode } = await this.sandbox.devicePolicy({ orgId, deviceId });
     if (row.source === "local") {
       return {
         source: "local",
-        mode: level.mode,
+        mode,
         workspace: row.machine_workspace ?? DEFAULT_SANDBOX_ROOTS.workspace,
         home: row.home,
         supported: deviceFeaturesOf(row.features).includes("projects"),
@@ -444,7 +440,7 @@ export class DeviceProjectsService {
     const handle = row.handle as SandboxHandle | null;
     return {
       source: "cloud",
-      mode: level.mode,
+      mode,
       workspace: handle === null ? DEFAULT_SANDBOX_ROOTS.workspace : rootsOf(handle).workspace,
       home: null,
       supported: typeof impl?.list === "function" && typeof impl.scan === "function",
@@ -483,36 +479,8 @@ export class DeviceProjectsService {
           "The device's sandbox provider cannot be reached now; try again shortly",
         );
       }
-      throw new ApiError(
-        "device.projects_unavailable",
-        e instanceof ToolError
-          ? `The device could not be asked now: ${clipped(e.message)}`
-          : "The device could not be asked now; try again shortly",
-      );
+      throw unavailable(e);
     }
-  }
-
-  /**
-   * What a failed `list` / `scan` becomes: a lost instance or file system is rethrown for
-   * `withSandbox` to handle, a kernel refusal stays as it is, anything else is the device's
-   * refusal of the path (a file, unreadable, outside its mode); a malformed answer is the
-   * program's fault, not the path's (`device.projects_unavailable`). Only a `ToolError`'s message (the
-   * relay's, written for people) is passed on; a provider's own error text is not.
-   */
-  private deviceRefusal(e: unknown, path: string): unknown {
-    if (isSandboxGoneError(e) || isFileSystemGoneError(e) || e instanceof ApiError) return e;
-    if (e instanceof SandboxProviderUnreachableError) return e;
-    if (e instanceof DeviceProtocolError) {
-      return new ApiError(
-        "device.projects_unavailable",
-        "The device answered in a form this kernel does not accept; update capybara-device on that machine",
-      );
-    }
-    const why = e instanceof ToolError ? ` (${clipped(e.message)})` : "";
-    return new ApiError(
-      "device.project_path_unreadable",
-      `${clipped(path)} is a file, cannot be read, or is outside what the device reads in its current mode${why}`,
-    );
   }
 
   /** Locks the owner's live device row (serializes its project writes); else `not_found`. */
@@ -551,4 +519,82 @@ function resolve(scope: Scope, workspace: string, relative: string): string {
     throw outsideMode(path, scope.mode);
   }
   return path;
+}
+
+/**
+ * An error the projects service passes on as it is: a lost instance or file system (for
+ * `withSandbox` to handle), a kernel refusal (offline, busy, unavailable), an unreachable provider;
+ * a malformed device answer becomes `device.projects_unavailable` (the program's fault). Undefined
+ * for anything else.
+ */
+function passThrough(e: unknown): unknown {
+  if (isSandboxGoneError(e) || isFileSystemGoneError(e) || e instanceof ApiError) return e;
+  if (e instanceof SandboxProviderUnreachableError) return e;
+  if (e instanceof DeviceProtocolError) {
+    return new ApiError(
+      "device.projects_unavailable",
+      "The device answered in a form this kernel does not accept; update capybara-device on that machine",
+    );
+  }
+  return undefined;
+}
+
+/**
+ * The device could not be asked now (a failure on the machine or at the provider, an abort, a lost
+ * lease): 503 `device.projects_unavailable`. Only a `ToolError`'s message (the relay's, written for
+ * people) is passed on; a provider's own error text is not.
+ */
+function unavailable(e: unknown): ApiError {
+  return new ApiError(
+    "device.projects_unavailable",
+    e instanceof ToolError
+      ? `The device could not be asked now: ${clipped(e.message)}`
+      : "The device could not be asked now; try again shortly",
+  );
+}
+
+const pathMissing = (path: string): ApiError =>
+  new ApiError(
+    "device.project_path_missing",
+    `${clipped(path)} does not exist on the device; check the path`,
+  );
+
+/**
+ * What a failed `list(path)` becomes. A machine's policy refusal is the device refusing the path
+ * in its mode (`device.project_outside_mode`). Any other error alone cannot tell a file or an
+ * unreadable directory from a failure on the device, so the device is asked `stat(path)`: a file
+ * or a directory it cannot list is the path's problem (422 `device.project_path_unreadable`), a
+ * missing path `device.project_path_missing`, and a `stat` that fails too means the device could
+ * not be asked (503 `device.projects_unavailable`).
+ */
+async function listFailure(
+  e: unknown,
+  p: HeldProvider,
+  h: SandboxHandle,
+  path: string,
+  mode: SandboxMode,
+  signal: AbortSignal,
+): Promise<unknown> {
+  const passed = passThrough(e);
+  if (passed !== undefined) return passed;
+  const why = e instanceof ToolError ? ` (${clipped(e.message)})` : "";
+  if (e instanceof ToolError && e.message.startsWith(POLICY_REFUSAL_PREFIX)) {
+    return new ApiError(
+      "device.project_outside_mode",
+      `The device refused ${clipped(path)} in ${mode} mode${why}`,
+    );
+  }
+  let st: { size: number; isDir: boolean } | null;
+  try {
+    st = await p.stat(h, path, signal);
+  } catch (e2) {
+    return passThrough(e2) ?? unavailable(e);
+  }
+  if (st === null) return pathMissing(path);
+  return new ApiError(
+    "device.project_path_unreadable",
+    st.isDir
+      ? `${clipped(path)} is a directory the device cannot read${why}`
+      : `${clipped(path)} is a file, not a directory`,
+  );
 }

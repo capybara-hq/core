@@ -3,21 +3,30 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { DeviceHello, KernelReq } from "@capybara-hq/plugin-sdk";
+import {
+  DEFAULT_SANDBOX_ROOTS,
+  type DeviceHello,
+  type KernelReq,
+  type SandboxProvider,
+} from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { DeviceAccess } from "../../src/devices/access.js";
 import {
   DeviceProjectsService,
   MAX_DEVICE_PROJECTS,
 } from "../../src/devices/device-projects.service.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
 import { ApiError } from "../../src/errors.js";
+import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { deviceLeaseKey } from "../../src/local-devices/keys.js";
 import { MachinesService } from "../../src/local-devices/machines.js";
+import { SandboxProviders } from "../../src/sandbox/providers.js";
+import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -96,7 +105,8 @@ beforeAll(async () => {
       {
         roles: ["api", "worker", "gateway"],
         extensions: [SANDBOX_FAKE],
-        extensionConfig: { "sandbox-fake": { root: sandboxRoot } },
+        // limits fixed at the file system: a narrowed cloud device can await a files reset
+        extensionConfig: { "sandbox-fake": { root: sandboxRoot, limitsApplyAt: "fileSystem" } },
         devices: { local: { reconnectGraceSeconds: 2, leaseTtlMs: 6000 } },
       },
     ),
@@ -123,7 +133,8 @@ afterAll(async () => {
   if (sandboxRoot) await rm(sandboxRoot, { recursive: true, force: true });
 });
 
-const base = (deviceId: string) => `/api/v1/orgs/${orgId}/devices/${deviceId}/projects`;
+const base = (deviceId: string, org: string = orgId) =>
+  `/api/v1/orgs/${org}/devices/${deviceId}/projects`;
 const errCode = (res: { json(): unknown }) =>
   (res.json() as { error?: { code?: string } }).error?.code;
 
@@ -151,25 +162,45 @@ async function owned() {
 }
 
 /** A machine with the directories of {@link DIRS} answering `create`, `list` and `scan`. */
-function answering(scan: { path: string; suggestedName: string }[] = []) {
+function answering(
+  scan: { path: string; suggestedName: string }[] = [],
+  opts: { holdList?: boolean } = {},
+) {
   return (req: KernelReq): Answer => {
     const a = req.args as { path?: string };
+    const p = a.path as string;
     switch (req.op) {
       case "create":
         return { ok: true, result: { roots: ROOTS } };
-      case "list": {
-        const p = a.path as string;
-        if (p.endsWith(".txt"))
-          return { ok: false, error: { kind: "error", message: "not a directory" } };
-        if (!DIRS.has(p)) return { ok: true, result: null };
-        return { ok: true, result: { entries: [], truncated: false } };
-      }
+      case "list":
+        // the test answers itself (two adds held at the device at once)
+        if (opts.holdList === true) return undefined;
+        return listAnswer(p);
+      case "stat":
+        if (p.endsWith("/flaky")) return { ok: false, error: { kind: "error", message: "EIO" } };
+        if (p.endsWith(".txt")) return { ok: true, result: { size: 3, isDir: false } };
+        if (p.endsWith("/secret") || DIRS.has(p))
+          return { ok: true, result: { size: 0, isDir: true } };
+        return { ok: true, result: null };
       case "scan":
         return { ok: true, result: scan };
       default:
         return { ok: true, result: null };
     }
   };
+}
+
+/** What the fake machine's `list` answers for `p`. */
+function listAnswer(p: string): NonNullable<Answer> {
+  // a file, an unreadable directory, a failing disk: one error kind on the wire
+  if (p.endsWith(".txt") || p.endsWith("/secret") || p.endsWith("/flaky")) {
+    return { ok: false, error: { kind: "error", message: "cannot list" } };
+  }
+  if (p.endsWith("/locked")) {
+    return { ok: false, error: { kind: "policy", message: "outside the sandbox" } };
+  }
+  if (!DIRS.has(p)) return { ok: true, result: null };
+  return { ok: true, result: { entries: [], truncated: false } };
 }
 
 /** Connects the machine with `hello` and waits until its lease and hello are recorded. */
@@ -496,5 +527,212 @@ describe("device projects", () => {
     const res = await add(d.req, id, { path: "app" });
     expect(res.statusCode, res.body).toBe(409);
     expect(errCode(res)).toBe("device.projects_unsupported");
+  });
+
+  it("tells a path the device refuses from a device that cannot be asked", async () => {
+    const d = await owned();
+    const machine = await connect(d);
+    // a directory the device cannot list: its error, then stat says it is a directory
+    const secret = await add(d.req, d.deviceId, { path: "secret" });
+    expect(secret.statusCode, secret.body).toBe(422);
+    expect(errCode(secret)).toBe("device.project_path_unreadable");
+    // the machine's policy refusal is the device refusing the path in its mode
+    const locked = await add(d.req, d.deviceId, { path: "locked" });
+    expect(locked.statusCode, locked.body).toBe(422);
+    expect(errCode(locked)).toBe("device.project_outside_mode");
+    // an error on the machine that stat cannot explain either: the device could not be asked
+    const flaky = await add(d.req, d.deviceId, { path: "flaky" });
+    expect(flaky.statusCode, flaky.body).toBe(503);
+    expect(errCode(flaky)).toBe("device.projects_unavailable");
+    expect(reqsOf(machine, "stat").map((r) => (r.args as { path: string }).path)).toEqual([
+      `${HOME}/secret`,
+      `${HOME}/flaky`,
+    ]);
+    expect(await storedOf(d.deviceId)).toEqual([]);
+  });
+
+  it("two concurrent adds of one name: exactly one is stored, the other is name_taken", async () => {
+    const d = await owned();
+    const machine = await connect(d, AUTO, answering([], { holdList: true }));
+    const both = Promise.allSettled([
+      projects.add(orgId, d.accountId, d.deviceId, { path: "src", name: "same" }),
+      projects.add(orgId, d.accountId, d.deviceId, { path: "src/capybara", name: "same" }),
+    ]);
+    // both passed the precheck and wait at the device: only the insert can decide now
+    await waitFor(async () => reqsOf(machine, "list").length === 2, 10_000, "two lists held");
+    for (const r of reqsOf(machine, "list")) {
+      machine.respond(r.id, listAnswer((r.args as { path: string }).path));
+    }
+    const out = await both;
+    expect(out.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    const failed = out.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+    expect(failed.map((r) => (r.reason as ApiError).code)).toEqual(["device.project_name_taken"]);
+    expect((await storedOf(d.deviceId)).map((r) => r.name)).toEqual(["same"]);
+  });
+
+  it("two concurrent adds at 99 projects: exactly one is stored, the other is limit_reached", async () => {
+    const d = await owned();
+    const machine = await connect(d, AUTO, answering([], { holdList: true }));
+    await db
+      .insertInto("device_projects")
+      .values(
+        Array.from({ length: MAX_DEVICE_PROJECTS - 1 }, (_, i) => ({
+          device_id: d.deviceId,
+          name: `p${i}`,
+          path: `${HOME}/p${i}`,
+          created_by: d.accountId,
+        })),
+      )
+      .execute();
+    const both = Promise.allSettled([
+      projects.add(orgId, d.accountId, d.deviceId, { path: "src", name: "one" }),
+      projects.add(orgId, d.accountId, d.deviceId, { path: "src/capybara", name: "two" }),
+    ]);
+    await waitFor(async () => reqsOf(machine, "list").length === 2, 10_000, "two lists held");
+    for (const r of reqsOf(machine, "list")) {
+      machine.respond(r.id, listAnswer((r.args as { path: string }).path));
+    }
+    const out = await both;
+    expect(out.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    const failed = out.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+    expect(failed.map((r) => (r.reason as ApiError).code)).toEqual([
+      "device.project_limit_reached",
+    ]);
+    expect(await storedOf(d.deviceId)).toHaveLength(MAX_DEVICE_PROJECTS);
+  });
+
+  it("an org owner or admin gets device.not_found on someone else's device, on all four routes", async () => {
+    const d = await owned();
+    await connect(d);
+    expect((await add(d.req, d.deviceId, { path: "src" })).statusCode).toBe(201);
+    const adminLogin = `a-${randomUUID().slice(0, 8)}`;
+    const adminId = (
+      await accountsFor(db).createLocal({ login: adminLogin, password: PW, displayName: "A" })
+    ).id;
+    await testMembers(db).add(orgId, adminId, "admin", ownerId);
+    for (const req of [await session(k, "owner"), await session(k, adminLogin)]) {
+      for (const res of [
+        await req({ method: "GET", url: base(d.deviceId) }),
+        await req({ method: "GET", url: `${base(d.deviceId)}/candidates` }),
+        await add(req, d.deviceId, { path: "src/capybara" }),
+        await req({ method: "DELETE", url: `${base(d.deviceId)}/src` }),
+      ]) {
+        expect(res.statusCode, res.body).toBe(404);
+        expect(errCode(res)).toBe("device.not_found");
+      }
+    }
+    await expect(
+      projects.resolveForBinding(orgId, d.deviceId, ownerId, "src"),
+    ).rejects.toMatchObject({ code: "device.not_found" });
+    expect((await storedOf(d.deviceId)).map((r) => r.name)).toEqual(["src"]);
+  });
+
+  it("the device's own owner cannot reach it from another org", async () => {
+    const d = await owned();
+    await connect(d);
+    expect((await add(d.req, d.deviceId, { path: "src" })).statusCode).toBe(201);
+    const otherOrg = await createOrg(d.req, `Other ${randomUUID().slice(0, 6)}`);
+    for (const res of [
+      await d.req({ method: "GET", url: base(d.deviceId, otherOrg) }),
+      await d.req({ method: "GET", url: `${base(d.deviceId, otherOrg)}/candidates` }),
+      await d.req({
+        method: "POST",
+        url: base(d.deviceId, otherOrg),
+        payload: { path: "src/capybara" },
+      }),
+      await d.req({ method: "DELETE", url: `${base(d.deviceId, otherOrg)}/src` }),
+    ]) {
+      expect(res.statusCode, res.body).toBe(404);
+      expect(errCode(res)).toBe("device.not_found");
+    }
+    await expect(
+      projects.resolveForBinding(otherOrg, d.deviceId, d.accountId, "src"),
+    ).rejects.toMatchObject({ code: "device.not_found" });
+    expect((await storedOf(d.deviceId)).map((r) => r.name)).toEqual(["src"]);
+  });
+
+  it("a cloud device is asked at its effective mode, not a wider one, and scoped to its workspace", async () => {
+    const d = await owned();
+    const created = await d.req({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/devices`,
+      payload: { name: `Cloud ${randomUUID().slice(0, 6)}` },
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    const id = (created.json() as { device: { id: string } }).device.id;
+    const workspace = DEFAULT_SANDBOX_ROOTS.workspace;
+    const seen: { op: string; path: string; mode: string }[] = [];
+    // a cloud provider that has list and scan, driven by a stand-in for the instance's lifecycle
+    const impl = {
+      list: async (_h: unknown, path: string, o: { limits: { mode: string } }) => {
+        seen.push({ op: "list", path, mode: o.limits.mode });
+        return { entries: [], truncated: false };
+      },
+      scan: async (_h: unknown, path: string, o: { limits: { mode: string } }) => {
+        seen.push({ op: "scan", path, mode: o.limits.mode });
+        return [{ path: `${workspace}/app`, suggestedName: "app" }];
+      },
+    } as unknown as SandboxProvider;
+    const real = k.app.get(SandboxProviders);
+    const sandbox = k.app.get(SandboxService);
+    const service = new DeviceProjectsService(
+      k.app.get(KernelDb),
+      txHost,
+      {
+        cloud: () => ({ plugin: real.cloud()?.plugin as string, impl }),
+        forName: () => ({ plugin: real.cloud()?.plugin as string, impl }),
+      },
+      {
+        devicePolicy: (dev) => sandbox.devicePolicy(dev),
+        withSandbox: (_ctx, fn, signal) =>
+          fn(
+            { id },
+            impl as never,
+            { fresh: false, restarted: false, roots: DEFAULT_SANDBOX_ROOTS },
+            signal,
+          ),
+      },
+      k.app.get(DeviceAccess),
+    );
+    // its files were made in auto mode with the open network, then the device was narrowed to
+    // sandbox mode: the provider fixes limits at its file system, so a files reset is pending and
+    // the instance's applied mode (what modeLevel reports for the model) is still auto
+    await db
+      .insertInto("device_instances")
+      .values({
+        device_id: id,
+        org_id: orgId,
+        provider: real.cloud()?.plugin as string,
+        fs_handle: JSON.stringify({ id: `fs-${id}` }),
+        fs_status: "ready",
+        instance_limits: JSON.stringify({
+          mode: "auto",
+          network: { kind: "open-public", hosts: [] },
+        }),
+      })
+      .execute();
+    await db.updateTable("devices").set({ mode: "sandbox" }).where("id", "=", id).execute();
+    expect((await devices.modeLevel(orgId, id))?.mode).toBe("auto");
+    // the ceiling and the scope follow the effective policy: sandbox
+    expect(await service.add(orgId, d.accountId, id, { path: "app" })).toMatchObject({
+      path: `${workspace}/app`,
+    });
+    expect((await service.candidates(orgId, d.accountId, id)).candidates).toHaveLength(1);
+    expect(seen).toEqual([
+      { op: "list", path: `${workspace}/app`, mode: "sandbox" },
+      { op: "scan", path: workspace, mode: "sandbox" },
+    ]);
+    // auto mode (the platform allows it) widens the ceiling, never the scope: still the workspace
+    await db.updateTable("devices").set({ mode: null }).where("id", "=", id).execute();
+    const outside = service.add(orgId, d.accountId, id, { path: "../etc" });
+    await expect(outside).rejects.toMatchObject({ code: "device.project_outside_mode" });
+    expect(await service.add(orgId, d.accountId, id, { path: "", name: "ws" })).toMatchObject({
+      path: workspace,
+    });
+    expect(seen.at(-1)).toEqual({ op: "list", path: workspace, mode: "auto" });
+    expect((await service.list(orgId, d.accountId, id)).projects.map((p) => p.name)).toEqual([
+      "app",
+      "ws",
+    ]);
   });
 });
