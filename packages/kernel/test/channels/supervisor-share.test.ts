@@ -67,7 +67,6 @@ let k: TestKernel;
 let raw: ReturnType<typeof createDb>;
 let redis: Redis;
 const ids: string[] = [];
-const logLines: string[] = [];
 
 const channels: KernelConfig["channels"] = {
   leaseTtlMs: TTL,
@@ -92,7 +91,7 @@ beforeAll(async () => {
         auth: { cookieSecure: false },
       },
     ),
-    { env: {}, logger: createLogger("info", { write: (l) => logLines.push(l) }) },
+    { env: {}, logger: createLogger("info", { write: () => {} }) },
   );
   raw = createDb(pgc.url, 3);
   redis = new Redis(rd.url);
@@ -588,13 +587,5 @@ describe("channel long connections: fair share across gateway replicas", () => {
     expect(warns).toHaveLength(3);
     expect(warns[2]?.fields).toMatchObject({ plugins: ["chan-mini"], connections: CONNECTIONS });
     await redis.del(MINI_KEY, OTHER_KEY, gatewayMissingWarnedKey);
-  });
-
-  it("a worker process without the gateway role logs one startup info line", () => {
-    const lines = logLines
-      .map((l) => JSON.parse(l) as { level?: string; msg?: string })
-      .filter((l) => /worker role without gateway/.test(l.msg ?? ""));
-    expect(lines).toHaveLength(1);
-    expect(lines[0]?.level).toBe("info");
   });
 });

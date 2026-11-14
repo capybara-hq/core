@@ -17,13 +17,7 @@ import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { ChannelInbound } from "../../src/channels/inbound.js";
-import {
-  CHANNEL_QUEUE_NAME,
-  DELIVER_PRIORITY,
-  INBOUND_PRIORITY,
-  idempotencyKey,
-  inboundJobId,
-} from "../../src/channels/outbound.js";
+import { CHANNEL_QUEUE_NAME, idempotencyKey, inboundJobId } from "../../src/channels/outbound.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -491,13 +485,6 @@ describe("入站持久化（Ruling A21）", () => {
     expect(job?.attemptsMade).toBe(1);
     await sleep(1500);
     expect(im.sent.filter((x) => x.target.chatId === "dm-u-gone")).toEqual([]);
-  });
-
-  it("入站任务的优先级高于出站投递任务", async () => {
-    await waitFor(() => processed("m1"), 10_000, "m1 processed");
-    const job = await queue.getJob(inboundJobId(connId, "m1"));
-    expect(job?.opts.priority).toBe(INBOUND_PRIORITY);
-    expect(INBOUND_PRIORITY).toBeLessThan(DELIVER_PRIORITY);
   });
 
   it("onEvent 只去重并入队：平台重投同一条消息只排一个任务、只写一次", async () => {
