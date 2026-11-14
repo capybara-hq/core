@@ -211,7 +211,7 @@ export function DeviceSettings({
             variant="card"
             value={m.mode}
             disabled={pending || locked || disabledReason !== undefined}
-            onChange={switchMode}
+            onChange={(v) => switchMode(v as DeviceMode)}
             options={[
               {
                 value: "auto",
