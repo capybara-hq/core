@@ -511,6 +511,13 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
           </RunDivider>
         );
       }
+      case "compact-failed":
+        // The raw reason (the kernel's English) stays the panel's detail, as a run row's does.
+        return (
+          <RunDivider kind="failed" text={t("divider.compactFailed")}>
+            {e.reason}
+          </RunDivider>
+        );
       case "fallback":
         return (
           <RunDivider
@@ -524,6 +531,8 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
   const run = (e: Extract<TimelineEntry, { kind: "run" }>): ReactNode => {
     const n = (v: number) => v.toLocaleString(locale);
     const parts = runParts(e, locale, (v) => t("run.tokens", { n: v }));
+    // a manual compaction's row says so instead of naming an ordinary step run
+    const label = e.compact === true ? t("compactionRun") : undefined;
     const facts = e.tokens
       ? [
           t("run.tokenSplit", {
@@ -542,11 +551,21 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
           },
         ]
       : [];
-    if (e.status === "ok") return <RunRow status="ok" parts={parts} facts={facts} links={links} />;
+    if (e.status === "ok")
+      return (
+        <RunRow
+          status="ok"
+          {...(label !== undefined ? { label } : {})}
+          parts={parts}
+          facts={facts}
+          links={links}
+        />
+      );
     if (e.status === "stopped") {
       return (
         <RunRow
           status="stopped"
+          {...(label !== undefined ? { label } : {})}
           parts={parts}
           statusText={t("run.stopped", {
             who: who(e.byAccountId),
@@ -573,6 +592,7 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
     return (
       <RunRow
         status="failed"
+        {...(label !== undefined ? { label } : {})}
         parts={parts}
         {...(e.retried ? { statusText: t("run.failedRetried"), defaultOpen: false } : {})}
         error={{ summary, ...(detail !== "" ? { detail } : {}) }}

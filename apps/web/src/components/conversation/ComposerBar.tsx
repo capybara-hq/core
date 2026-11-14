@@ -635,10 +635,11 @@ export function ComposerBar({
           ]
         : [];
 
-  // The built-in /compact command (context compaction spec §4.10) closes the `/` menu, after what
-  // the agent offers. It is not part of the `@` palette (there it would sit above the resources
-  // and start a compaction), and with nothing invocable the palette keeps its "no skills selected"
-  // guidance (spec §5 rule 11) — `/compact` is still typed and parsed.
+  // The built-in /compact command (context compaction spec §4.10) is always in the `/` menu, after
+  // what the agent offers (a command never takes the first Enter meant for a skill). It is not part
+  // of the `@` palette (there it would sit above the resources and start a compaction). With
+  // nothing invocable the "no skills selected" guidance (spec §5 rule 11) stands below the list,
+  // next to the command; `/compact` is also still typed and parsed.
   const commandGroup: CommandGroup | null =
     palette === "prompts" && onCompact !== undefined
       ? {
@@ -661,9 +662,15 @@ export function ComposerBar({
         }
       : null;
   const groups: CommandGroup[] =
-    commandGroup !== null && contentGroups.length > 0
-      ? [...contentGroups, commandGroup]
-      : contentGroups;
+    commandGroup !== null ? [...contentGroups, commandGroup] : contentGroups;
+  // Nothing to invoke (a skill or a prompt) but the command is offered: the guidance stands under
+  // the list instead of replacing it.
+  const notice =
+    palette === "prompts" && commandGroup !== null && contentGroups.length === 0
+      ? skillsHref !== undefined
+        ? { text: t("noInvocable"), action: { label: t("noInvocableAction"), href: skillsHref } }
+        : { text: t("noInvocableReadOnly") }
+      : undefined;
 
   const missingArgs =
     argsFor?.arguments.filter((a) => a.required && (args[a.name] ?? "").trim() === "") ?? [];
@@ -839,6 +846,7 @@ export function ComposerBar({
           }
         }}
         groups={groups}
+        {...(notice !== undefined ? { notice } : {})}
         {...(palette === "prompts" && groups.length === 0
           ? skillsHref !== undefined
             ? {

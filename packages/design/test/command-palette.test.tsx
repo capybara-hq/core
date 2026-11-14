@@ -132,6 +132,37 @@ describe("CommandPalette items", () => {
   });
 });
 
+describe("CommandPalette notice", () => {
+  it("stands under the list whatever it offers, with a link that closes the palette", async () => {
+    const onOpenChange = vi.fn();
+    render(
+      <DesignProvider locale="en">
+        <CommandPalette
+          open
+          onOpenChange={onOpenChange}
+          groups={[
+            {
+              label: "Commands",
+              items: [{ id: "compact", label: "/compact", onSelect: noop }],
+            },
+          ]}
+          notice={{
+            text: "This agent has no skills selected.",
+            action: { label: "Choose skills", href: "/agents/a1?s=skills" },
+          }}
+        />
+      </DesignProvider>,
+    );
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByRole("option", { name: /^\/compact/ })).toBeTruthy();
+    expect(within(dialog).getByText("This agent has no skills selected.")).toBeTruthy();
+    const link = within(dialog).getByRole("link", { name: "Choose skills" });
+    expect(link.getAttribute("href")).toBe("/agents/a1?s=skills");
+    await userEvent.setup().click(link);
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+});
+
 describe("CommandPalette empty state", () => {
   it("an empty list says why and offers the next step as a link that closes the palette", async () => {
     const onOpenChange = vi.fn();

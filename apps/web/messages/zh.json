@@ -180,6 +180,7 @@
       "storage_unavailable": "附件存储暂时不可用。",
       "hook_denied": "请求被扩展「{plugin}」的策略拦截。",
       "hook_denied_unknown": "请求被扩展策略拦截。",
+      "context_too_large": "会话内容超出了模型的上下文窗口。请先压缩会话，再重试。",
       "not_found": "这次运行不存在或不属于这个会话。"
     },
     "component": {
@@ -1424,8 +1425,10 @@
     "divider": {
       "compacted": "较早的会话已压缩",
       "compactedSaved": "较早的会话已压缩 · 节省 {n} tokens",
+      "compactFailed": "压缩失败",
       "fallback": "所选模型 {from} 已不可用，本条起改用智能体的模型 {to}"
     },
+    "compactionRun": "压缩",
     "compacting": "正在压缩会话…",
     "compactingChunk": "{chunk}/{chunks}",
     "compactingElapsed": "{seconds} 秒",

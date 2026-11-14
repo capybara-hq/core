@@ -9,7 +9,9 @@ export type RunRowStatus = "ok" | "failed" | "stopped";
 
 export type RunRowProps = {
   status: RunRowStatus;
-  /** What follows "运行" / "Run": the model, the duration, the tokens (unknown ones left out). */
+  /** The words before the parts; default "运行" / "Run" (a compact run names itself). */
+  label?: string;
+  /** What follows the label: the model, the duration, the tokens (unknown ones left out). */
   parts: string[];
   /** The status words after the mark; default 完成 / 失败 / 已停止 by status. */
   statusText?: string;
@@ -34,6 +36,7 @@ const MARK: Record<RunRowStatus, IconName> = { ok: "check", failed: "circle-x", 
  */
 export function RunRow({
   status,
+  label,
   parts,
   statusText,
   defaultOpen,
@@ -50,7 +53,7 @@ export function RunRow({
   const hasDetail = error !== undefined || (facts !== undefined && facts.length > 0) || hasActions;
   const line: ReactNode = (
     <>
-      <span className="cb-tool-label">{[t("run.label"), ...parts].join(" · ")}</span>
+      <span className="cb-tool-label">{[label ?? t("run.label"), ...parts].join(" · ")}</span>
       <span className="cb-run-status" data-part="run-status" data-status={status}>
         <span className="cb-run-mark" data-part="run-mark" aria-hidden="true">
           <Icon name={MARK[status]} size={12} />

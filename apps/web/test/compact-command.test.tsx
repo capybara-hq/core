@@ -261,6 +261,25 @@ describe("the / menu command entry", () => {
     expect(messagePosts(calls)).toHaveLength(0);
   });
 
+  it("is offered with no skills and no prompts, beside the no-skills guidance", async () => {
+    api({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+      [`GET ${INVOCABLE}`]: () => json(200, { skills: [] }),
+      [`GET ${ORG}/connectors/prompts`]: () => json(200, { prompts: [], unavailable: [] }),
+    });
+    await renderChatRoute();
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    await user.type(input(), "/");
+    const dialog = await screen.findByRole("dialog");
+    const headings = [...dialog.querySelectorAll("[cmdk-group-heading]")].map((h) => h.textContent);
+    expect(headings).toEqual([en.chat.commandsGroup]);
+    expect(await within(dialog).findByRole("option", { name: /^\/compact/ })).toBeTruthy();
+    // the guidance (and the next step for an owner) stands under the command
+    expect(within(dialog).getByText(en.chat.noInvocable)).toBeTruthy();
+    expect(within(dialog).getByRole("link", { name: en.chat.noInvocableAction })).toBeTruthy();
+  });
+
   it("is not in the @ resources palette (there it would sit above the resources)", async () => {
     const calls = api({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
@@ -314,6 +333,65 @@ describe("the compacting row", () => {
       act(() => es()?.emit("event", ev(seq++, type, payload, "cr1")));
       await vi.waitFor(() => expect(row()).toBeNull());
     }
+  });
+});
+
+describe("a failed manual compaction", () => {
+  const compactStarted = (seq: number) =>
+    ev(
+      seq,
+      "run_started",
+      {
+        agentVersion: 1,
+        model: { provider: "model-fake", model: "fake-1" },
+        triggerAccountId: "a1",
+        trigger: "compact",
+      },
+      "cr1",
+    );
+
+  it("shows a failed divider and names the run as a compaction", async () => {
+    api({
+      [`GET ${BASE}/events`]: () =>
+        json(200, {
+          events: [
+            userMsg(1, "hi"),
+            compactStarted(2),
+            ev(3, "compaction_failed", { attempt: 1, reason: "provider 500" }, "cr1"),
+            ev(4, "run_finished", { reason: "completed", consumedUpToSeq: 1 }, "cr1"),
+          ],
+        }),
+    });
+    await renderChatRoute();
+    await screen.findByText("hi");
+    // the person who clicked Compact conversation sees the outcome, not just the spinner going
+    expect(await screen.findByText(en.chat.divider.compactFailed)).toBeTruthy();
+    // the kernel's reason is the divider's detail, as a run row's raw error is
+    expect(screen.getByText("provider 500")).toBeTruthy();
+    // the run row names itself a compaction instead of an ordinary run
+    expect(screen.getByText(/^Compaction · /)).toBeTruthy();
+  });
+
+  it("stays silent for an automatic compaction failure (the step trims instead)", async () => {
+    api({
+      [`GET ${BASE}/events`]: () =>
+        json(200, {
+          events: [
+            userMsg(1, "hi"),
+            ev(
+              2,
+              "run_started",
+              { agentVersion: 1, model: { provider: "model-fake", model: "fake-1" } },
+              "r1",
+            ),
+            ev(3, "compaction_failed", { attempt: 1, reason: "provider 500" }, "r1"),
+            ev(4, "run_finished", { reason: "completed", consumedUpToSeq: 1 }, "r1"),
+          ],
+        }),
+    });
+    await renderChatRoute();
+    await screen.findByText("hi");
+    expect(screen.queryByText(en.chat.divider.compactFailed)).toBeNull();
   });
 });
 

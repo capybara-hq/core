@@ -33,6 +33,15 @@ describe("RunRow (spec §6.16.23)", () => {
     expect(region.textContent).toContain("Input 1,000");
   });
 
+  it("a label names the row instead of Run (a manual compaction)", () => {
+    const { container } = wrap(
+      <RunRow status="ok" label="Compaction" parts={["deepseek-flash", "3.7s"]} />,
+    );
+    expect(container.querySelector('[data-part="run-row"]')?.textContent).toContain(
+      "Compaction · deepseek-flash · 3.7s",
+    );
+  });
+
   it("without a detail the line is plain text, no disclosure", () => {
     const { container } = wrap(<RunRow status="ok" parts={["m"]} />);
     const line = container.querySelector('[data-part="run-row"]') as HTMLElement;

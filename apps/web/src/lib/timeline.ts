@@ -37,7 +37,8 @@ import { toolLabel, toolLabelOfKey, toolLabelText } from "./tool-label";
  *   `usage` events) and how it ended (spec §6.16.23); a run still going has none. A `user_message`
  *   with `retryOf` folds into the failed run of the message it repeats ("Retried") instead of a
  *   second bubble. `compaction_summary` and `model_switched { reason: "unavailable" }` become
- *   dividers.
+ *   dividers, and a manual compact run (`run_started.trigger: "compact"`) is named in its row; its
+ *   `compaction_failed` becomes a failed divider (an automatic one stays silent).
  * - Logs written before UI refresh B (no `description`, `view`, title or card) still render: rows
  *   fall back to the tool key and the first string argument, failures to `isError`.
  * - Sub-agents (phase C, Task 21): consecutive `agent` calls form one `subagents` entry, its rows
@@ -209,6 +210,7 @@ export interface ConnectItem {
 
 export type DividerData =
   | { divider: "compacted"; summary: string; savedTokens: number | null }
+  | { divider: "compact-failed"; reason: string }
   | { divider: "fallback"; from: ModelRef | null; to: ModelRef | null };
 
 /** A run's tokens: every `usage` of the run (its step calls and compaction). */
@@ -243,6 +245,8 @@ export type RunData = {
   runId: string | null;
   /** The run's last model call, else the model it started with; null when the log has neither. */
   model: ModelRef | null;
+  /** A manual compact run (`run_started.trigger: "compact"`): its row names itself. */
+  compact?: boolean;
   /**
    * The run's working time: from `run_started` to the terminal event without its waits for a
    * person (an approval or a question, until answered), the same derivation as the status bar's
@@ -765,25 +769,28 @@ export function buildEventTimeline(
       clock: RunClock | null;
       model: ModelRef | null;
       tokens: RunTokens | null;
+      /** `run_started.trigger`: `compact` is a manual compaction (its row names itself). */
+      compact: boolean;
     }
   >();
   const runOf = (runId: string) => {
     let r = runs.get(runId);
     if (r === undefined) {
-      r = { clock: null, model: null, tokens: null };
+      r = { clock: null, model: null, tokens: null, compact: false };
       runs.set(runId, r);
     }
     return r;
   };
   const runData = (
     e: ConversationEvent,
-  ): Pick<RunData, "runId" | "model" | "durationMs" | "tokens" | "at"> => {
+  ): Pick<RunData, "runId" | "model" | "compact" | "durationMs" | "tokens" | "at"> => {
     const r = e.runId === null ? undefined : runs.get(e.runId);
     // the run's working time, as the status bar counts it (waits for a person left out)
     r?.clock?.end(Date.parse(e.createdAt));
     return {
       runId: e.runId,
       model: r?.model ?? null,
+      ...(r?.compact ? { compact: true } : {}),
       durationMs: r?.clock == null ? null : Math.max(0, r.clock.workedMs),
       tokens: r?.tokens ?? null,
       at: e.createdAt,
@@ -871,6 +878,7 @@ export function buildEventTimeline(
           if (r.clock === null) r.clock = new RunClock(at);
           else r.clock.restart(at);
           if (r.model === null) r.model = e.payload.model;
+          if (e.payload.trigger === "compact") r.compact = true;
           models.set(e.runId, e.payload.model);
           if (e.payload.triggerAccountId !== undefined)
             starters.set(e.runId, e.payload.triggerAccountId);
@@ -1464,6 +1472,14 @@ export function buildEventTimeline(
           summary: e.payload.text,
           savedTokens: savedTokensOf(e.payload.savedTokens),
         });
+        break;
+      case "compaction_failed":
+        // A manual compact run's failure is its outcome (the person clicked "Compact
+        // conversation"): a divider says so. An automatic compaction's failure is the step's own
+        // concern (it trims instead) and a manual early skip writes nothing, so both stay silent.
+        if (e.runId !== null && runs.get(e.runId)?.compact === true) {
+          out.push({ kind: "divider", key, divider: "compact-failed", reason: e.payload.reason });
+        }
         break;
       case "run_finished":
         out.push({ kind: "run", key, ...runData(e), status: "ok" });

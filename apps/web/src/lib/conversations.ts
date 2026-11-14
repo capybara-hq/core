@@ -729,8 +729,9 @@ export const renameConversation = (orgId: string, id: string, title: string) =>
 /**
  * Manual compaction (context compaction spec §4.7): starts a compact run that summarizes the
  * conversation's earlier history, `202 { runId }`; the same run id comes back while one is queued
- * or running. The body is `{}`: the route validates its shape and a missing body is refused. A
- * busy conversation is `409 conversation.busy`; an eval or someone else's is not found.
+ * or running. The body is `{}` (the endpoint also accepts a bodyless POST; only an optional
+ * `clientRequestId` may go in it). A busy conversation is `409 conversation.busy`; an eval or
+ * someone else's is not found.
  */
 export const compactConversation = (orgId: string, id: string) =>
   apiFetch<{ runId: string }>(`${one(orgId, id)}/compact`, {

@@ -390,6 +390,33 @@ describe("buildTimeline", () => {
     ]);
   });
 
+  it("a manual compact run's row names itself and its failure is a failed divider", () => {
+    const events = [
+      ev(1, "run_started", {
+        agentVersion: 1,
+        model: { provider: "p", model: "m" },
+        trigger: "compact",
+      }),
+      ev(2, "compaction_failed", { attempt: 1, reason: "provider 500" }),
+      ev(3, "run_finished", { reason: "completed", consumedUpToSeq: 0 }),
+    ];
+    expect(buildTimeline(events, [], new Map(), "en")).toMatchObject([
+      { kind: "divider", key: "e2", divider: "compact-failed", reason: "provider 500" },
+      { kind: "run", status: "ok", compact: true },
+    ]);
+  });
+
+  it("an automatic compaction's failure writes no divider and leaves the run row unnamed", () => {
+    const events = [
+      ev(1, "run_started", { agentVersion: 1, model: { provider: "p", model: "m" } }),
+      ev(2, "compaction_failed", { attempt: 1, reason: "provider 500" }),
+      ev(3, "run_finished", { reason: "completed", consumedUpToSeq: 0 }),
+    ];
+    const out = buildTimeline(events, [], new Map(), "en");
+    expect(out.map((e) => e.kind)).toEqual(["run"]);
+    expect(out[0]).not.toHaveProperty("compact");
+  });
+
   it("a compaction that saved nothing (savedTokens 0) shows the plain divider", () => {
     const events = [
       ev(1, "compaction_summary", { coversUpToSeq: 1, text: "summary", savedTokens: 0 }),

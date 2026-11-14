@@ -180,6 +180,7 @@
       "storage_unavailable": "Attachment storage is temporarily unavailable.",
       "hook_denied": "The request was blocked by the policy of the \"{plugin}\" extension.",
       "hook_denied_unknown": "The request was blocked by an extension policy.",
+      "context_too_large": "The conversation is too large for the model's context window. Compact the conversation, then try again.",
       "not_found": "The run does not exist in this conversation."
     },
     "component": {
@@ -1424,8 +1425,10 @@
     "divider": {
       "compacted": "Earlier conversation compacted",
       "compactedSaved": "Earlier conversation compacted · saved {n} tokens",
+      "compactFailed": "Compaction failed",
       "fallback": "The chosen model {from} is unavailable; using the agent's model {to} from this message"
     },
+    "compactionRun": "Compaction",
     "compacting": "Compacting conversation…",
     "compactingChunk": "{chunk}/{chunks}",
     "compactingElapsed": "{seconds}s",
