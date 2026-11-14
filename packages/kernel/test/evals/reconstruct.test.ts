@@ -1847,6 +1847,93 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
         .execute();
     }
   });
+
+  it("a clamped output cap under the agent's maxOutputTokens knob replays byte-for-byte; a smaller window is context_fit", async () => {
+    reset();
+    // The reserve makes the fit target W - O - R reachable; the policy hook denies the compaction
+    // calls, so a request over the hard line is clamped and trimmed instead of summarized (the
+    // same request the reactive path sends after a failed compaction). fake-1: W 32000, O 4000.
+    await db
+      .updateTable("deployment_settings")
+      .set({ value: JSON.stringify({ reserveTokens: 20_000 }) })
+      .where("key", "=", "compaction")
+      .execute();
+    const enableProbe = async (enabled: boolean) => {
+      const res = await owner({
+        method: "PUT",
+        url: `/api/v1/orgs/${orgId}/extensions/hooks-probe`,
+        payload: { enabled },
+      });
+      expect(res.statusCode, res.body).toBe(200);
+    };
+    await enableProbe(true);
+    try {
+      const cfg = await owner({
+        method: "POST",
+        url: "/plugins/hooks-probe/config",
+        payload: { orgId, denyModelPurposes: ["compaction"] },
+      });
+      expect(cfg.statusCode, cfg.body).toBe(200);
+      const agentId = await createAgent(
+        { provider: "model-fake", model: "fake-1" },
+        { modelParams: { maxOutputTokens: 4000 } },
+      );
+      const conv = await createConv(owner, orgId, agentId);
+      // three long replies (~4k tokens each) and a 90k-character turn put the fourth request over
+      // W - O (28000); the fifth adds a 20k-character latest turn
+      let n = 0;
+      const turn = async (text: string) => {
+        await postMessage(owner, orgId, conv, text);
+        await waitForTerminal(db, conv, ++n, 30_000);
+      };
+      await turn("long:6000");
+      await turn("long:6000");
+      await turn("long:6000");
+      await turn("x".repeat(90_000));
+      await turn("y".repeat(20_000));
+
+      const events = await eventsOf(db, conv);
+      const calls = modelCalls(events);
+      expect(calls).toHaveLength(5);
+      // an over-window request is refused, not summarized, and the step trims instead
+      expect(events.filter((e) => e.type === "compaction_failed").length).toBeGreaterThan(0);
+      // the knob is recorded as a parameter and the clamp lowered the cap below it
+      const last = calls[4];
+      expect(last?.payload.request.params).toEqual({ maxOutputTokens: 4000 });
+      expect(last?.payload.request.maxOutputTokens).toBe(1);
+      // the latest turn fits once the older messages are gone: a trim, no truncation note
+      const fit = last?.payload.request.fit;
+      expect(fit?.droppedMessageIndexes.length).toBeGreaterThan(0);
+      expect(fit?.truncated).toEqual([]);
+
+      const info = await modelInfo("model-fake", "fake-1");
+      const snap = await snapshotOf(conv);
+      // every call reconstructs with zero drift and equals what the provider got: the baseline
+      // replays the recorded cap, not the cap recomputed from the knob
+      await expectZeroDrift(conv, snap);
+
+      // a candidate model with a smaller window leaves less room, so it trims the latest turn too
+      const smaller: ModelInfo = { ...info, contextWindow: 24_000 };
+      const cand = reconstructRequest(snap, last?.seq as number, {
+        model: smaller,
+        params: { maxOutputTokens: 4000 },
+        reserveTokens: 20_000,
+      });
+      expect(cand.drift).toEqual(["context_fit"]);
+    } finally {
+      await owner({
+        method: "POST",
+        url: "/plugins/hooks-probe/config",
+        payload: { orgId },
+      });
+      await enableProbe(false);
+      await db
+        .updateTable("deployment_settings")
+        .set({ value: JSON.stringify({ keepRecentTurns: 1, reserveTokens: 0 }) })
+        .where("key", "=", "compaction")
+        .execute();
+    }
+  });
 });
 
 describe("reconstructRequest: UI refresh B model switches", { timeout: 120_000 }, () => {

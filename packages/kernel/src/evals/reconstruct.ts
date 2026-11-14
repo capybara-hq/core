@@ -365,6 +365,12 @@ export function reconstructRequest(
     ...(opts.media !== undefined && { media: opts.media }),
     ...(budget !== undefined && { mediaBudgetBytes: budget }),
     defaultMaxOutputTokens: rec.maxOutputTokens ?? opts.model.maxOutputTokens,
+    // The baseline replays the recorded output cap as sent: the runtime may have clamped it below
+    // the agent's `maxOutputTokens` knob (context compaction spec §4.3), and recomputing it from the
+    // knob would replay a larger cap. A candidate below recomputes the clamp and the trim instead.
+    ...(baseline && rec.maxOutputTokens !== undefined
+      ? { recordedMaxOutputTokens: rec.maxOutputTokens }
+      : {}),
     // the baseline replays the recorded trim (no reserve needed); a candidate below recomputes it
     ...(baseline && rec.fit !== undefined ? { fit: rec.fit } : {}),
   });

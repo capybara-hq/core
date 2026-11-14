@@ -819,6 +819,12 @@ export interface AssembleModelRequestInput extends Omit<BuildModelRequestInput, 
   /** 参数里没有 `maxOutputTokens` 旋钮时的输出上限（运行时为 `runtime.maxOutputTokens`）。 */
   defaultMaxOutputTokens: number;
   /**
+   * The cap recorded in `model_call.request.maxOutputTokens` (a baseline replay only): the runtime
+   * may have clamped it below the knob (context compaction spec §4.3), so a replay that recomputed
+   * it from the knob would send a larger cap than the recorded one. Given, it wins over the knob.
+   */
+  recordedMaxOutputTokens?: number;
+  /**
    * A recorded hard-fit plan (context compaction spec §4.3/§4.9): applied after the pairing guard,
    * so a replayed request equals the one that was sent. The plan's message indexes refer to the
    * assembled (post-guard) request; the runtime computes it on the same list.
@@ -829,7 +835,8 @@ export interface AssembleModelRequestInput extends Omit<BuildModelRequestInput, 
 /**
  * 发给模型的请求（纯函数）：`buildModelRequest`（注入 `params` 与本步工具：模型不支持工具时不带；收尾调用带
  * `toolChoice: "none"`）→ `guardToolPairs` → the recorded `fit` plan (when given). 输出上限：参数里有
- * `maxOutputTokens` 旋钮时取 `min(模型上限, 旋钮)`，否则 `min(模型上限, defaultMaxOutputTokens)`。
+ * `maxOutputTokens` 旋钮时取 `min(模型上限, 旋钮)`，否则 `min(模型上限, defaultMaxOutputTokens)`；记录了输出
+ * 上限的基线回放（`recordedMaxOutputTokens`）原样取记录值，旋钮不再覆盖。
  * 运行时（{@link runModelStep}）与由日志还原请求（`evals/reconstruct.ts`）共用这一份，二者不会漂移。
  */
 export function assembleModelRequest(input: AssembleModelRequestInput): {
@@ -837,7 +844,7 @@ export function assembleModelRequest(input: AssembleModelRequestInput): {
   meta: ModelCallMeta;
   mediaTokens: number;
 } {
-  const { defaultMaxOutputTokens, tools, fit, ...rest } = input;
+  const { defaultMaxOutputTokens, recordedMaxOutputTokens, tools, fit, ...rest } = input;
   const built = buildModelRequest({
     ...rest,
     tools: input.model.capabilities.tools ? [...tools] : [],
@@ -849,6 +856,8 @@ export function assembleModelRequest(input: AssembleModelRequestInput): {
     input.model.maxOutputTokens,
     typeof knob === "number" ? knob : defaultMaxOutputTokens,
   );
+  // the recorded cap already carries the clamp against the recorded window and estimate
+  if (recordedMaxOutputTokens !== undefined) request.maxOutputTokens = recordedMaxOutputTokens;
   if (fit !== undefined) request.messages = applyFit(request, fit).messages;
   return built;
 }

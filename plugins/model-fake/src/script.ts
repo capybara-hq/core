@@ -46,8 +46,10 @@ const DEFAULT_CHUNK_DELAY_MS = 2;
 const COMPACTION_MARKER = "CAPYBARA_COMPACTION";
 
 /**
- * 每个模型声明的参数：三档 effort（只记录、不影响输出）与厂商专有参数 `model-fake.style`
- * （`shout` 时回复转大写），供测试与演示界面使用。都不给默认值：未设置时不进请求参数。
+ * The parameters every model declares: the three-step effort (recorded only; it does not change the
+ * output), the output cap knob (the kernel lowers it to the window and the reply is cut there) and
+ * the vendor parameter `model-fake.style` (`shout` upper-cases the reply), for tests and the demo
+ * UI. None has a default: an unset one does not enter the request parameters.
  */
 const parameters = (): ModelParameter[] => [
   {
@@ -58,6 +60,16 @@ const parameters = (): ModelParameter[] => [
     description: {
       zh: "假模型只记录该值，不影响输出",
       en: "Recorded only; the fake model's output does not change",
+    },
+  },
+  {
+    key: "maxOutputTokens",
+    standard: "maxOutputTokens",
+    schema: { type: "integer", minimum: 1 },
+    label: { zh: "输出上限", en: "Max output tokens" },
+    description: {
+      zh: "每次回复的最大 token 数；上下文窗口余量更小时内核会再收紧",
+      en: "Maximum tokens per reply; the kernel lowers it when the window leaves less room",
     },
   },
   {
