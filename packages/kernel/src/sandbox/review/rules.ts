@@ -41,14 +41,25 @@
  * path (`cat /proc/self/*environ`, `cat ~/.netr?`, `cat ~/.ssh/*`, `cat /home/<user>/.netrc` all
  * ask; with `| curl -d @- https://…` they deny). An ordinary pattern (`build/*`, `src/*.ts`,
  * `/tmp/*`, `node_modules/*`, `/home/<user>/README.md`) is not secret-shaped and stays allowed.
+ * A root pattern that can expand to more than one home root is judged by every interpretation (a
+ * wildcard root before `.ssh/id_rsa` is a secret read under a `/root` workspace); the `/root`
+ * reading counts only when the workspace is under `/root`, so the same pattern under `/Users/me`
+ * stays allowed because it cannot name the agent's home. Comparisons fold case, because macOS's
+ * default file system is case-insensitive: `/USERS/me/.SSH`, `/HOME/dev/.netrc` and `~/.NETRC` are
+ * the same reads as their lower-case spellings.
  *
- * Only two gaps stay open: a secret the environment already handed to a variable and that another
- * command or an unknown program prints (`echo $TOKEN | curl …`) is not tracked, because the table
- * does not attempt shell data-flow provenance; and config-value inspection is shallow —
+ * Three gaps stay open, and they are data-flow gaps rather than path-spelling ones. (a) A secret
+ * the environment already handed to a variable and that another command or an unknown program
+ * prints (`echo $TOKEN | curl …`) is not tracked. (b) Config-value inspection is shallow:
  * `git config --get <key>` / `--get-all <key>` (including `http.extraheader`), `git config
  * --list`, and `npm` / `pnpm` / `yarn` / `pip config get <key>` / `config list` can print a token
  * and are not classified as producers, because a config value is ordinary text and classifying
  * these whole programs would ask on every harmless read (`git config --get user.email`).
+ * (c) A deliberately allowed interpreter or other unknown program handed a secret path
+ * (`python -c 'print(open("/home/dev/.netrc").read())'`, `node -e '…'`) is not followed into the
+ * program: the table judges the command, not the data it computes. As spec §5 says, the review is
+ * governance, not a sandbox boundary — it makes an accident visible; it cannot stop a determined
+ * agent, and it does not try to model every program's file access.
  */
 import type {
   ParsedCommand,
@@ -1011,6 +1022,23 @@ function tildeForm(path: string, facts: ResolvedFacts): string {
   return path;
 }
 
+/** Case-folded spelling for the secret-path judgement. */
+const foldCase = (value: string): string => value.toLowerCase();
+
+/**
+ * `tildeForm` for the secret-path judgement. macOS's default file system is case-insensitive, so
+ * `/USERS/me/.SSH` names the same file as `/Users/me/.ssh`; folding the comparison only widens what
+ * is judged secret. Workspace containment keeps the exact spelling.
+ */
+function tildeFormFolded(path: string, facts: ResolvedFacts): string {
+  if (facts.home === null) return path;
+  const home = foldCase(facts.home);
+  const folded = foldCase(path);
+  if (folded === home) return "~";
+  if (folded.startsWith(`${home}/`)) return `~${path.slice(facts.home.length)}`;
+  return path;
+}
+
 const TMP_ROOTS = ["/tmp", "/private/tmp", "/var/tmp", "/var/folders", "/private/var/folders"];
 const tmpRootOf = (path: string): boolean => TMP_ROOTS.some((root) => inside(path, root));
 
@@ -1047,7 +1075,7 @@ const SECRET_HOME_DIRS = [
  * file. Any path whose tail is a `/proc/.../environ` component is treated as that file (an ordinary
  * directory named `proc` is unlikely enough to over-ask harmlessly).
  */
-const PROC_ENVIRON = /\/proc\/(?:self|thread-self|[^/]+)(?:\/task\/[^/]+)?\/environ[^/]*$/;
+const PROC_ENVIRON = /\/proc\/(?:self|thread-self|[^/]+)(?:\/task\/[^/]+)?\/environ[^/]*$/i;
 
 /** Shell pathname metacharacters: a segment carrying one is a pattern the shell expands first. */
 const SHELL_PATTERN = /[*?[\]{}]/;
@@ -1124,10 +1152,11 @@ function patternFitsDotfile(pattern: string): boolean {
  * an expansion too large to enumerate match, so the caller asks instead of allowing.
  */
 function segmentMatches(pattern: string, literal: string): boolean {
-  if (!hasPattern(pattern)) return pattern === literal;
+  if (!hasPattern(pattern)) return foldCase(pattern) === foldCase(literal);
   if (literal.startsWith(".") && !patternFitsDotfile(pattern)) return false;
   try {
-    return new RegExp(`^${segmentPatternSource(pattern)}$`, "u").test(literal);
+    // Folded on purpose: a case-insensitive file system makes `.SSH` and `.ssh` the same directory.
+    return new RegExp(`^${segmentPatternSource(pattern)}$`, "iu").test(literal);
   } catch {
     return true;
   }
@@ -1188,7 +1217,7 @@ function isSecretPattern(path: string, facts: ResolvedFacts): boolean {
   // counts, since a glob over pids or file names picks a process file the shell only names later.
   for (let i = 0; i < absolute.length; i += 1) {
     const segment = absolute[i] as string;
-    if (segment === "proc") {
+    if (foldCase(segment) === "proc") {
       if (absolute.length > i + 2 && absolute.slice(i + 1).some(hasPattern)) return true;
       continue;
     }
@@ -1199,14 +1228,14 @@ function isSecretPattern(path: string, facts: ResolvedFacts): boolean {
     const last = tail[tail.length - 1];
     if (tail.length >= 2 && last !== undefined && segmentMatches(last, "environ")) return true;
   }
-  const t = tildeForm(path, facts);
+  const t = tildeFormFolded(path, facts);
   if (t.startsWith("~/")) return isSecretHomePath(t.slice(2).split("/"));
   // `/home/<pattern>/…` never becomes `~/…`: the user segment is the pattern, so judge only the
   // literal suffix behind it.
   const [root, user, ...suffix] = absolute;
   if (
     root !== undefined &&
-    HOME_ROOTS.includes(root) &&
+    HOME_ROOTS.some((literal) => segmentMatches(root, literal)) &&
     user !== undefined &&
     hasPattern(user) &&
     suffix.length > 0
@@ -1217,18 +1246,25 @@ function isSecretPattern(path: string, facts: ResolvedFacts): boolean {
   // a real home root the same way; the user position and the literal suffix behind it are a `~/…`
   // path, so `/ho*/dev/.netrc` is `~/.netrc` and `/Use*/me/.ssh` is `~/.ssh`.
   if (root !== undefined && hasPattern(root)) {
-    if (
+    // A root pattern can expand to several home roots at once (`/*` matches `home`, `Users` and
+    // `root`), so each interpretation is judged: a false result in one must not hide a hit in the
+    // other. `/ho*/…` and `/*/…` are a hit when the user position and suffix are a secret path.
+    const homeHit =
       HOME_ROOTS.some((literal) => segmentMatches(root, literal)) &&
       user !== undefined &&
-      suffix.length > 0
-    ) {
-      return isSecretHomePath(suffix);
-    }
+      suffix.length > 0 &&
+      isSecretHomePath(suffix);
     // `/root` is a home directory with no user segment under it: the remainder is the path itself,
-    // so `/roo?/.netrc` is `~/.netrc` and `/ro?t/.ssh` is `~/.ssh`.
-    if (user !== undefined && segmentMatches(root, "root")) {
-      return isSecretHomePath([user, ...suffix]);
-    }
+    // so `/roo?/.netrc` is `~/.netrc` and `/ro?t/.ssh` is `~/.ssh`. It is the agent's home only when
+    // the workspace is under `/root`; from another home, `/root/…` is another user's and stays
+    // allowed (as the literal `/root/.netrc` does), so it must not turn a `/Users/me` workspace's
+    // `/*/.ssh/id_rsa` into a hit.
+    const rootHit =
+      (facts.home === null || facts.home === "/root") &&
+      user !== undefined &&
+      segmentMatches(root, "root") &&
+      isSecretHomePath([user, ...suffix]);
+    if (homeHit || rootHit) return true;
   }
   return false;
 }
@@ -1238,9 +1274,9 @@ function isSecretPath(path: string, facts: ResolvedFacts): boolean {
   // A glob or brace is what the shell expands before the command runs: the path is a secret when
   // it can expand to one, so `cat ~/.netr?` is the same read as `cat ~/.netrc`.
   if (hasPattern(path) && isSecretPattern(path, facts)) return true;
-  const t = tildeForm(path, facts);
+  const t = foldCase(tildeFormFolded(path, facts));
   if (SECRET_HOME_PATHS.some((secret) => t === secret || t.startsWith(`${secret}/`))) return true;
-  const base = baseName(path);
+  const base = baseName(path).toLowerCase();
   return base.startsWith(".env") && !inside(path, facts.workspace);
 }
 
@@ -2483,7 +2519,7 @@ function isUnresolvedSecretWord(
     return command.vars === undefined || !command.vars.has(name);
   }
   // `/proc/$PID/environ` names the same environment dump as the literal path.
-  if (candidate.startsWith("/proc/") && /\/environ[^/]*$/.test(candidate)) return true;
+  if (foldCase(candidate).startsWith("/proc/") && /\/environ[^/]*$/i.test(candidate)) return true;
   return SECRET_LOOKING.test(candidate) || /^(?:\$HOME|\$\{HOME\})(?:\/|$)/.test(candidate);
 }
 
