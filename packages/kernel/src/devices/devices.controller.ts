@@ -102,11 +102,12 @@ export class DevicesController {
   ): Promise<{ device: DeviceView }> {
     const p = requireUser(principal);
     const tokenId = patTokenId(p);
-    // a person changes their device's mode in a session (auto mode spec §4.3)
+    // a person changes their device's mode in a web session, narrowing or widening (auto mode
+    // spec §4.3, hardening D2): never an API token
     if (body.mode !== undefined && tokenId !== undefined) {
       throw new ApiError(
-        "auth.session_required",
-        "A device's mode is changed by its owner on the web, not with an API token",
+        "device.mode_requires_session",
+        "A device's mode is changed by its owner on the device page, not with an API token",
       );
     }
     return {

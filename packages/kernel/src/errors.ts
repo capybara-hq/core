@@ -386,6 +386,11 @@ export const ERROR_CODES = {
    * (`capybara-device mode` or the device page's policy op), and a cloud device has none to choose.
    */
   "device.mode_on_device": 409,
+  /**
+   * A cloud device's mode (`PATCH /devices/:id` `mode`, sandbox or null) sent with an API token:
+   * only its owner in a web session changes it (hardening spec D2, K4).
+   */
+  "device.mode_requires_session": 403,
   /** Device sign-in (RFC 8628 style): the person has not approved the code yet; keep polling. */
   "device_sign_in.authorization_pending": 400,
   /** Device sign-in: the program polls faster than the interval; add 5 seconds and keep polling. */

@@ -345,7 +345,8 @@
       "policy_refused": "这台设备不接受平台的这次修改，请在机器上修改。",
       "policy_unsupported": "这台设备不支持从平台修改网络设置，请在机器上升级设备程序。",
       "auto_mode_not_allowed": "该设备的机器以自动模式运行，但你的组织不允许自动模式。请在那台机器上运行 capybara-device mode sandbox 切换到沙箱模式。",
-      "mode_on_device": "该设备的模式保存在它所连接的机器上：请在设备页面切换到沙箱模式，或在那台机器上运行 capybara-device mode sandbox。"
+      "mode_on_device": "该设备的模式保存在它所连接的机器上：请在设备页面切换到沙箱模式，或在那台机器上运行 capybara-device mode sandbox。",
+      "mode_requires_session": "设备的模式只能由其所有者在设备页面修改，不能用 API 令牌修改。"
     },
     "device_sign_in": {
       "authorization_pending": "还未确认连接，请在网页上确认后稍候。",

@@ -168,11 +168,12 @@ export interface DevicePolicyChange {
 export interface DevicePatch {
   name?: string;
   /**
-   * A narrowing mode change (`sandbox` only): a cloud device stores it and applies the org's
-   * `cloudNetwork`; a local device refuses it here (`device.mode_on_device`, its mode is its
-   * machine's).
+   * A cloud device's mode choice: `sandbox` narrows it (the org's `cloudNetwork` applies), `null`
+   * clears the choice so it follows the org and the platform again (auto when they allow it;
+   * hardening spec D2). Only a person in a web session sends it (the controller refuses a token).
+   * A local device refuses it here (`device.mode_on_device`, its mode is its machine's).
    */
-  mode?: "sandbox";
+  mode?: "sandbox" | null;
 }
 
 /** The machine connected to a local device, as its owner sees it. */
@@ -496,30 +497,32 @@ export class DevicesService {
   ): Promise<void> {
     const before = await this.lockOwn(orgId, accountId, id);
     if (patch.mode !== undefined) {
-      // A cloud device's switch only narrows (auto → sandbox); a local device's mode lives on its
-      // machine (auto mode spec §4.3).
+      // A cloud device's owner narrows it to sandbox or clears the choice to follow the org (auto
+      // mode spec §4.3, hardening D2); a local device's mode lives on its machine.
       if (before.source !== "cloud") {
         throw new ApiError(
           "device.mode_on_device",
           "This device's mode is kept on its connected machine: switch to sandbox mode from the device page (sent to the machine) or run capybara-device mode sandbox there.",
         );
       }
-      if (before.mode !== "sandbox") {
-        // `from` is the mode it ran at before, which may already be sandbox (the org turned it off)
-        const effective = await this.sandbox.devicePolicy({ orgId, deviceId: id });
+      if ((before.mode ?? null) !== patch.mode) {
+        // `from` / `to` are the modes it runs at: the org may cap both at sandbox, and then the
+        // stored choice changes without a mode change, so nothing is audited
+        const from = (await this.sandbox.devicePolicy({ orgId, deviceId: id })).mode;
         await this.db
           .updateTable("devices")
-          .set({ mode: "sandbox", updated_at: sql<Date>`now()` })
+          .set({ mode: patch.mode, updated_at: sql<Date>`now()` })
           .where("id", "=", id)
           .execute();
-        if (effective.mode !== "sandbox") {
+        const to = (await this.sandbox.devicePolicy({ orgId, deviceId: id })).mode;
+        if (from !== to) {
           await audit(this.db.db, {
             actorAccountId: accountId,
             ...(actorTokenId !== undefined && { actorTokenId }),
             orgId,
             action: "device.mode_changed",
             target: id,
-            detail: { from: effective.mode, to: "sandbox", by: accountId, via: "web" },
+            detail: { from, to, by: accountId, via: "web" },
           });
         }
       }
@@ -1085,7 +1088,7 @@ export class DevicesService {
     ]);
     const summaryOf = (r: (typeof all)[number]) =>
       r.source === "local" ? localPolicyOf(r.machine_local_policy) : null;
-    /** The mode the device chose: its machine's report (local) or its switch (cloud, sandbox only). */
+    /** The mode the device chose: its machine's report (local) or its switch (cloud: sandbox, or null to follow the org). */
     const chosenOf = (r: (typeof all)[number]): SandboxMode | null =>
       r.source === "local" ? localModeOf(r.machine_features, r.machine_local_policy) : r.mode;
     const policyOf = (r: (typeof all)[number]): EffectiveDevicePolicy =>

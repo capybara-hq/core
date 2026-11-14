@@ -457,7 +457,7 @@ describe("devices API", () => {
   });
 });
 
-describe("a cloud device's narrowing mode switch (auto mode spec §4.3)", () => {
+describe("a cloud device's mode switch (auto mode spec §4.3, hardening D2)", () => {
   const patch = (req: Req, id: string, payload: Record<string, unknown>) =>
     req({ method: "PATCH", url: `${base()}/${id}`, payload });
   const modeAudits = (id: string) =>
@@ -519,8 +519,65 @@ describe("a cloud device's narrowing mode switch (auto mode spec §4.3)", () => 
       mode: { mode: "sandbox" },
     });
     expect(await modeAudits(env.id)).toHaveLength(1);
-    // a cloud device can never be switched back to auto from the web
+    // auto is never set as such: the owner clears the choice (mode null) to follow the org
     expect((await patch(me.req, env.id, { mode: "auto" })).statusCode).toBe(400);
+  });
+
+  it("the owner sends it back to auto with mode null (follow the org), audited (spec D2, K4)", async () => {
+    await setOrgNetwork({ mode: "allowlist" });
+    const me = await member();
+    const env = await create(me.req, "Back");
+    expect((await patch(me.req, env.id, { mode: "sandbox" })).statusCode).toBe(200);
+    const back = await patch(me.req, env.id, { mode: null });
+    expect(back.statusCode, back.body).toBe(200);
+    const view = (back.json() as { device: DeviceView }).device;
+    expect(view.mode).toMatchObject({ mode: "auto", allowedMode: "auto" });
+    expect(view.limits).toMatchObject({ mode: "auto", network: { kind: "open-public" } });
+    expect(view.mode.recent[0]).toMatchObject({
+      kind: "mode",
+      mode: { from: "sandbox", to: "auto" },
+      via: "web",
+    });
+    expect(await modeAudits(env.id)).toEqual([
+      { actor_account_id: me.id, detail: { from: "auto", to: "sandbox", by: me.id, via: "web" } },
+      { actor_account_id: me.id, detail: { from: "sandbox", to: "auto", by: me.id, via: "web" } },
+    ]);
+    // following the org again changes nothing and writes nothing
+    expect((await patch(me.req, env.id, { mode: null })).statusCode).toBe(200);
+    expect(await modeAudits(env.id)).toHaveLength(2);
+    const stored = await db
+      .selectFrom("devices")
+      .select("mode")
+      .where("id", "=", env.id)
+      .executeTakeFirstOrThrow();
+    expect(stored.mode).toBeNull();
+  });
+
+  it("mode null while the org allows only sandbox clears the choice and widens nothing", async () => {
+    const me = await member();
+    const env = await create(me.req, "Capped");
+    expect((await patch(me.req, env.id, { mode: "sandbox" })).statusCode).toBe(200);
+    const off = await owner({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/settings`,
+      payload: { autoMode: "off" },
+    });
+    expect(off.statusCode, off.body).toBe(200);
+    try {
+      const back = await patch(me.req, env.id, { mode: null });
+      expect(back.statusCode, back.body).toBe(200);
+      expect((back.json() as { device: DeviceView }).device.mode).toMatchObject({
+        mode: "sandbox",
+        allowedMode: "sandbox",
+      });
+      expect(await modeAudits(env.id)).toHaveLength(1);
+    } finally {
+      await owner({
+        method: "PATCH",
+        url: `/api/v1/orgs/${orgId}/settings`,
+        payload: { autoMode: null },
+      });
+    }
   });
 
   it("a used instance is pending until its next use", async () => {
@@ -570,9 +627,12 @@ describe("a cloud device's narrowing mode switch (auto mode spec §4.3)", () => 
         headers: { authorization: `Bearer ${token}`, "x-capybara-csrf": "1" },
         payload,
       });
-    const narrowed = await viaPat({ mode: "sandbox" });
-    expect(narrowed.statusCode, narrowed.body).toBe(403);
-    expect(errCode(narrowed)).toBe("auth.session_required");
+    // a device's mode is a person's choice in a web session, narrowing or widening (spec K4)
+    for (const mode of ["sandbox", null]) {
+      const res = await viaPat({ mode });
+      expect(res.statusCode, res.body).toBe(403);
+      expect(errCode(res)).toBe("device.mode_requires_session");
+    }
     const renamed = await viaPat({ name: "By token" });
     expect(renamed.statusCode, renamed.body).toBe(200);
     expect(await modeAudits(env.id)).toEqual([]);
@@ -586,8 +646,10 @@ describe("a cloud device's narrowing mode switch (auto mode spec §4.3)", () => 
     const local = await k.app
       .get(TransactionHost)
       .run(() => k.app.get(DevicesService).createLocal(orgId, me.id, "Laptop"));
-    const res = await patch(me.req, local.id, { mode: "sandbox" });
-    expect(res.statusCode, res.body).toBe(409);
-    expect(errCode(res)).toBe("device.mode_on_device");
+    for (const mode of ["sandbox", null]) {
+      const res = await patch(me.req, local.id, { mode });
+      expect(res.statusCode, res.body).toBe(409);
+      expect(errCode(res)).toBe("device.mode_on_device");
+    }
   });
 });
