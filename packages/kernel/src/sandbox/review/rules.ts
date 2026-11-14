@@ -33,8 +33,10 @@
  * expand rather than by what it names. A pattern under `/proc/<pid>[/task/<tid>]` (a glob over file
  * names or over process ids), inside a home secret directory (`.ssh`, `.aws`, `.config/gh`,
  * `.config/gcloud`, `.azure`, `.kube`, `.docker`), naming a dotfile directly in the home directory
- * (`cat .???*`), or standing in for the home-directory segment itself (`/home/<user>/.netrc`,
- * `/Users/<user>/.ssh/id_rsa`, judged by the literal suffix behind the pattern) is a secret read: it
+ * (`cat .???*`), standing in for the home-directory segment itself (`/home/<user>/.netrc`,
+ * `/Users/<user>/.ssh/id_rsa`), in the home root segment above it (`/ho<glob>/<user>/.netrc`,
+ * `/{home,Users}/<user>/.ssh`, `/roo?/.netrc`), or standing in for the `/proc` segment itself
+ * (`/pr<glob>c/self/environ`), each judged by what the pattern can expand to, is a secret read: it
  * asks, and is denied when piped or redirected into a network command, exactly like the literal
  * path (`cat /proc/self/*environ`, `cat ~/.netr?`, `cat ~/.ssh/*`, `cat /home/<user>/.netrc` all
  * ask; with `| curl -d @- https://…` they deny). An ordinary pattern (`build/*`, `src/*.ts`,
@@ -1170,7 +1172,12 @@ function isSecretHomePath(segments: string[]): boolean {
  * - a dotfile directly in the home directory (`~/.netr?`, `~/.git-credential?`, `.???*`);
  * - with a pattern in the home-directory position itself (`/home/<user>/.netrc`,
  *   `/Users/<user>/.ssh/id_rsa`), which expands to a real home directory: what follows the pattern
- *   is judged as a `~/…` path.
+ *   is judged as a `~/…` path;
+ * - with a pattern in the home root segment above it (`/ho<glob>/<user>/.netrc`,
+ *   `/{home,Users}/<user>/.ssh`) or in the `/root` home segment itself (`/roo?/.netrc`), which
+ *   expands to the same home directory, so the segments behind it are judged as a `~/…` path;
+ * - with a pattern standing in for the `/proc` segment itself (`/pr<glob>c/self/environ`), which
+ *   expands to the process environment named behind it.
  *
  * Any other pattern (`build/*`, `src/*.ts`, `/tmp/*`, `node_modules/*`, `/home/<user>/README.md`) is
  * an ordinary glob and stays allowed.
@@ -1180,8 +1187,17 @@ function isSecretPattern(path: string, facts: ResolvedFacts): boolean {
   // The literal form is matched first (`PROC_ENVIRON`); here a pattern anywhere below `/proc`
   // counts, since a glob over pids or file names picks a process file the shell only names later.
   for (let i = 0; i < absolute.length; i += 1) {
-    if (absolute[i] !== "proc") continue;
-    if (absolute.length > i + 2 && absolute.slice(i + 1).some(hasPattern)) return true;
+    const segment = absolute[i] as string;
+    if (segment === "proc") {
+      if (absolute.length > i + 2 && absolute.slice(i + 1).some(hasPattern)) return true;
+      continue;
+    }
+    // A pattern standing in for the root segment itself (`/pr*c/self/environ`): only the root can
+    // be the real `/proc`, and it is a process environment only when the tail names `environ`.
+    if (i !== 0 || !hasPattern(segment) || !segmentMatches(segment, "proc")) continue;
+    const tail = absolute.slice(i + 1);
+    const last = tail[tail.length - 1];
+    if (tail.length >= 2 && last !== undefined && segmentMatches(last, "environ")) return true;
   }
   const t = tildeForm(path, facts);
   if (t.startsWith("~/")) return isSecretHomePath(t.slice(2).split("/"));
@@ -1196,6 +1212,23 @@ function isSecretPattern(path: string, facts: ResolvedFacts): boolean {
     suffix.length > 0
   ) {
     return isSecretHomePath(suffix);
+  }
+  // A pattern in the home root segment itself (`/ho*/dev`, `/Use*/me`, `/{home,Users}`) expands to
+  // a real home root the same way; the user position and the literal suffix behind it are a `~/…`
+  // path, so `/ho*/dev/.netrc` is `~/.netrc` and `/Use*/me/.ssh` is `~/.ssh`.
+  if (root !== undefined && hasPattern(root)) {
+    if (
+      HOME_ROOTS.some((literal) => segmentMatches(root, literal)) &&
+      user !== undefined &&
+      suffix.length > 0
+    ) {
+      return isSecretHomePath(suffix);
+    }
+    // `/root` is a home directory with no user segment under it: the remainder is the path itself,
+    // so `/roo?/.netrc` is `~/.netrc` and `/ro?t/.ssh` is `~/.ssh`.
+    if (user !== undefined && segmentMatches(root, "root")) {
+      return isSecretHomePath([user, ...suffix]);
+    }
   }
   return false;
 }
