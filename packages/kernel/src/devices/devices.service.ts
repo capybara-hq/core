@@ -24,6 +24,7 @@ import type { DeviceModeLevel } from "../runtime/context/device-paths.js";
 import { oweDeviceDestroy, SandboxJobs } from "../sandbox/jobs.js";
 import {
   type DeviceNetwork,
+  deviceNetwork,
   type EffectiveDevicePolicy,
   effectiveDevicePolicy,
   type NetworkKind,
@@ -112,6 +113,12 @@ export interface DeviceModeView {
   /** A local device: the mode its machine reported and its own sandbox-mode allowlist; null for cloud. */
   local: { reported: SandboxMode | null; allowedDomains: string[] } | null;
   /**
+   * A cloud device: the network sandbox mode gives it, whatever mode it runs at now (the org's
+   * `cloudNetwork`, open by default; the kill switch empties it), so the page names what a switch
+   * to sandbox reaches before it is made (hardening spec D3). Null for a local device.
+   */
+  sandboxNetwork: { kind: NetworkKind; hosts: string[] } | null;
+  /**
    * A cloud device's instance runs another mode or network kind: its next use updates or recreates
    * it, files kept (「下次使用时生效，文件保留」).
    */
@@ -168,11 +175,12 @@ export interface DevicePolicyChange {
 export interface DevicePatch {
   name?: string;
   /**
-   * A narrowing mode change (`sandbox` only): a cloud device stores it and applies the org's
-   * `cloudNetwork`; a local device refuses it here (`device.mode_on_device`, its mode is its
-   * machine's).
+   * A cloud device's mode choice: `sandbox` narrows it (the org's `cloudNetwork` applies), `null`
+   * clears the choice so it follows the org and the platform again (auto when they allow it;
+   * hardening spec D2). Only a person in a web session sends it (the controller refuses a token).
+   * A local device refuses it here (`device.mode_on_device`, its mode is its machine's).
    */
-  mode?: "sandbox";
+  mode?: "sandbox" | null;
 }
 
 /** The machine connected to a local device, as its owner sees it. */
@@ -496,30 +504,32 @@ export class DevicesService {
   ): Promise<void> {
     const before = await this.lockOwn(orgId, accountId, id);
     if (patch.mode !== undefined) {
-      // A cloud device's switch only narrows (auto → sandbox); a local device's mode lives on its
-      // machine (auto mode spec §4.3).
+      // A cloud device's owner narrows it to sandbox or clears the choice to follow the org (auto
+      // mode spec §4.3, hardening D2); a local device's mode lives on its machine.
       if (before.source !== "cloud") {
         throw new ApiError(
           "device.mode_on_device",
           "This device's mode is kept on its connected machine: switch to sandbox mode from the device page (sent to the machine) or run capybara-device mode sandbox there.",
         );
       }
-      if (before.mode !== "sandbox") {
-        // `from` is the mode it ran at before, which may already be sandbox (the org turned it off)
-        const effective = await this.sandbox.devicePolicy({ orgId, deviceId: id });
+      if ((before.mode ?? null) !== patch.mode) {
+        // `from` / `to` are the modes it runs at: the org may cap both at sandbox, and then the
+        // stored choice changes without a mode change, so nothing is audited
+        const from = (await this.sandbox.devicePolicy({ orgId, deviceId: id })).mode;
         await this.db
           .updateTable("devices")
-          .set({ mode: "sandbox", updated_at: sql<Date>`now()` })
+          .set({ mode: patch.mode, updated_at: sql<Date>`now()` })
           .where("id", "=", id)
           .execute();
-        if (effective.mode !== "sandbox") {
+        const to = (await this.sandbox.devicePolicy({ orgId, deviceId: id })).mode;
+        if (from !== to) {
           await audit(this.db.db, {
             actorAccountId: accountId,
             ...(actorTokenId !== undefined && { actorTokenId }),
             orgId,
             action: "device.mode_changed",
             target: id,
-            detail: { from: effective.mode, to: "sandbox", by: accountId, via: "web" },
+            detail: { from, to, by: accountId, via: "web" },
           });
         }
       }
@@ -1085,11 +1095,12 @@ export class DevicesService {
     ]);
     const summaryOf = (r: (typeof all)[number]) =>
       r.source === "local" ? localPolicyOf(r.machine_local_policy) : null;
-    /** The mode the device chose: its machine's report (local) or its switch (cloud, sandbox only). */
+    /** The mode the device chose: its machine's report (local) or its switch (cloud: sandbox, or null to follow the org). */
     const chosenOf = (r: (typeof all)[number]): SandboxMode | null =>
       r.source === "local" ? localModeOf(r.machine_features, r.machine_local_policy) : r.mode;
     const policyOf = (r: (typeof all)[number]): EffectiveDevicePolicy =>
       effectiveDevicePolicy(deployment, settings, chosenOf(r));
+    const sandboxNetwork = deviceNetwork(deployment, settings, "sandbox");
     // each device's limits and its instance's pending change
     const perDevice = new Map(
       await Promise.all(
@@ -1168,6 +1179,7 @@ export class DevicesService {
             pendingNextUse: perDevice.get(r.id)?.state.pendingNextUse ?? false,
             pendingFilesReset: perDevice.get(r.id)?.state.pendingFilesReset ?? false,
             recent: recent.get(r.id) ?? [],
+            sandboxNetwork,
           },
           this.config.get().sandbox.limits.egress === "none",
         ),
@@ -1379,10 +1391,17 @@ export function deviceModeViewOf(
   settings: OrgDeviceSettings,
   local: boolean,
   summary: DeviceLocalPolicySummary | null,
-  extra: { pendingNextUse: boolean; pendingFilesReset: boolean; recent: DeviceModeChangeView[] },
+  extra: {
+    pendingNextUse: boolean;
+    pendingFilesReset: boolean;
+    recent: DeviceModeChangeView[];
+    /** The network sandbox mode gives a cloud device ({@link deviceNetwork} for `sandbox`). */
+    sandboxNetwork: DeviceNetwork;
+  },
   /** The platform kill switch (`sandbox.limits.egress: none`): the network is the platform's. */
   killSwitch = false,
 ): DeviceModeView {
+  const { sandboxNetwork, ...rest } = extra;
   const networkKind = local ? "allowlist" : policy.network.kind;
   const org = settings.cloudNetwork;
   // "org" only when the org supplied what is in effect: the kill switch always wins; auto mode
@@ -1418,6 +1437,7 @@ export function deviceModeViewOf(
           allowedDomains: [...(summary?.allowedDomains ?? [])],
         }
       : null,
-    ...extra,
+    sandboxNetwork: local ? null : { kind: sandboxNetwork.kind, hosts: [...sandboxNetwork.hosts] },
+    ...rest,
   };
 }

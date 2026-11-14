@@ -10,13 +10,14 @@ export const DeviceNameBody = z.object({ name: DeviceName }).strict();
 export const DeviceParams = z.object({ id: z.string().min(1).max(100) });
 
 /**
- * `PATCH /devices/:id`: a new name, and a cloud device's narrowing `mode` (`sandbox` only: auto
- * mode is never set from the web, auto mode spec §4.3). A local device's mode lives on its machine,
- * so the service refuses a `mode` for it (`device.mode_on_device`). The mode is a person's choice
- * in a web session: an API token gets `auth.session_required`.
+ * `PATCH /devices/:id`: a new name, and a cloud device's `mode`: `sandbox` narrows it, `null`
+ * follows the org and the platform again (auto when they allow it; hardening spec D2). `auto` is
+ * never stored. A local device's mode lives on its machine, so the service refuses a `mode` for it
+ * (`device.mode_on_device`). The mode is a person's choice in a web session: an API token gets
+ * `device.mode_requires_session`, and the Platform operation (`devices.rename`) omits it.
  */
 export const DevicePatchBody = z
-  .object({ name: DeviceName.optional(), mode: z.literal("sandbox").optional() })
+  .object({ name: DeviceName.optional(), mode: z.literal("sandbox").nullable().optional() })
   .strict()
   .refine((b) => b.name !== undefined || b.mode !== undefined, {
     message: "Give at least one of name or mode",

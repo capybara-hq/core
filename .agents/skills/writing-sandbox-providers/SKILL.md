@@ -131,8 +131,10 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   device and the allowlist network on a cloud one. The kernel computes one effective mode per use,
   `effectiveDevicePolicy`, from the platform's `devices.autoMode`, the org's `autoMode` and, on a
   local device, the machine's own reported mode (`packages/kernel/src/sandbox/modes.ts`, read live
-  in the caller's transaction). Only the machine turns auto on; the platform, the org and the web
-  may narrow to `sandbox`. A provider that ignores `mode` and `network` runs as an allowlisted
+  in the caller's transaction). Only the machine turns a local device's auto on; the platform, the
+  org and the web may narrow to `sandbox`, and a cloud device's owner may clear that narrowing on
+  the device page (`PATCH /devices/:id { mode: null }`, a web session only:
+  `device.mode_requires_session` for a token). A provider that ignores `mode` and `network` runs as an allowlisted
   sandbox, the safe direction.
 - **`network` (`{ kind: "open-public" | "allowlist", hosts }`)** is the network in effect: cloud
   instances get `open-public` in auto mode and the org's `cloudNetwork` (open by default, or its

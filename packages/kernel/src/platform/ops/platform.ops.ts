@@ -5,9 +5,11 @@ import { AgentsService } from "../../agents/agents.service.js";
 import { conversationSourceOf } from "../../conversations/source.js";
 import { AccountsService } from "../../identity/accounts.js";
 import { PreferencesSchema } from "../../identity/me.schemas.js";
+import { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import { can, type OrgAction } from "../../orgs/roles.js";
 import { OrgSettingsService } from "../../orgs/settings.service.js";
+import { effectiveDevicePolicy, readDeploymentDevicePolicy } from "../../sandbox/modes.js";
 import { resolveEffectiveSkills } from "../../skills/catalog.js";
 import { ThemesService } from "../../themes/themes.service.js";
 import { SANDBOX_TOOL_NAMES } from "../../tools/builtin-names.js";
@@ -51,6 +53,7 @@ export class PlatformOperationsProvider implements OnModuleInit {
     @Inject(AccountsService) private readonly accounts: AccountsService,
     @Inject(ThemesService) private readonly themes: ThemesService,
     @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(KernelConfigService) private readonly config: KernelConfigService,
   ) {}
 
   /**
@@ -153,11 +156,13 @@ export class PlatformOperationsProvider implements OnModuleInit {
           const sandbox = toolKeys.some((k) =>
             (SANDBOX_TOOL_NAMES as readonly string[]).includes(k),
           );
-          const org = await this.settings.get(ctx.orgId);
-          // a new device's mode and network (auto mode spec §4.3)
-          const deployment = await this.settings.deployment();
-          const mode =
-            deployment.autoMode.mode === "allowed" && org.autoMode !== "off" ? "auto" : "sandbox";
+          // a new device's mode and network (auto mode spec §4.3): the one derivation the
+          // devices use, so a sandbox-mode device on the open network reads as open
+          const policy = effectiveDevicePolicy(
+            await readDeploymentDevicePolicy(this.db.db, this.config),
+            await this.settings.get(ctx.orgId),
+            null,
+          );
           return {
             id: agent.id,
             name: d.name,
@@ -173,14 +178,7 @@ export class PlatformOperationsProvider implements OnModuleInit {
             disabledSkills: d.disabledSkills ?? [],
             subagents: d.subagents ?? null,
             sandbox: sandbox
-              ? {
-                  enabled: true,
-                  mode,
-                  network:
-                    mode === "auto" && deployment.cloudNetwork.mode === "open"
-                      ? "open-public"
-                      : "allowlist",
-                }
+              ? { enabled: true, mode: policy.mode, network: policy.network.kind }
               : { enabled: false },
             profile: {
               avatar: agent.profile.avatar,

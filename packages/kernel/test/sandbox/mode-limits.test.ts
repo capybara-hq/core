@@ -357,7 +357,7 @@ describe("a changed mode on use", () => {
   });
 });
 
-describe("a provider that refuses the open public network (openEgress off)", () => {
+describe("a provider that refuses the open public network", () => {
   /** The refusal and the tool text it becomes; the provider's own message never reaches it. */
   const refused = async (err: unknown) => {
     expect(err).toBeInstanceOf(ApiError);
@@ -368,6 +368,13 @@ describe("a provider that refuses the open public network (openEgress off)", () 
     expect(tool.message).toBe(SANDBOX_OPEN_NETWORK_REFUSED_TEXT);
     expect(tool.message).not.toContain(FAKE_REFUSAL_SECRET);
     expect(tool.message).not.toContain("openEgress");
+    // provider-neutral and actionable (hardening spec K5): what an admin can do now, never a
+    // provider setting that may not exist
+    for (const text of [(err as Error).message, tool.message]) {
+      expect(text).toMatch(/cloud network to an allowlist/);
+      expect(text).toMatch(/provider that offers the open network/);
+      expect(text).not.toMatch(/extension's settings|openEgress|refuseOpenNetwork/);
+    }
     expect(warned.some((m) => m.includes("refused an instance with the open public network"))).toBe(
       true,
     );

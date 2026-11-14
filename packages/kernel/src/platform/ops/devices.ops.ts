@@ -139,7 +139,7 @@ export class DevicesOperations implements OnModuleInit {
       defineOperation({
         id: "devices.get",
         description:
-          "Read one of your devices with its source (cloud or local), provider, state, instance, the machine of a local one and whether it is online, limits, its mode (the one its commands run at and the one this org allows, and which layer allows auto mode), its network and where that comes from, a pending change that applies on its next use, its recent mode and policy changes, and creation time. Takes the id from devices.list. Only the person changes a device's mode: a local device's on the machine, a cloud device's on the web and to sandbox only; enabling auto mode happens on the machine.",
+          "Read one of your devices with its source (cloud or local), provider, state, instance, the machine of a local one and whether it is online, limits, its mode (the one its commands run at and the one this org allows, and which layer allows auto mode), its network and where that comes from, a pending change that applies on its next use, its recent mode and policy changes, and creation time. Takes the id from devices.list. Only the person changes a device's mode: a local device's on the machine (auto mode is enabled only there), a cloud device's on its device page (to sandbox, or back to following the org's mode).",
         input: DeviceId,
         example: { deviceId: "4e8a0c1d-6b2f-4a37-8d19-3c5e7f9a1b20" },
         authz: { orgAction: "agents.use" },

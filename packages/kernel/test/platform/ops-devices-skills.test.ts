@@ -193,6 +193,15 @@ describe("devices", () => {
     ]);
   });
 
+  it("no operation changes a device's mode: widening (mode null) is a person's act (spec D2)", () => {
+    const rename = op("devices.rename").input;
+    const deviceId = "4e8a0c1d-6b2f-4a37-8d19-3c5e7f9a1b20";
+    for (const mode of [null, "sandbox", "auto"]) {
+      expect(rename.safeParse({ deviceId, name: "X", mode }).success).toBe(false);
+    }
+    expect(op("devices.rename").omits).toEqual(["mode"]);
+  });
+
   it("creates and renames with a card naming the objects, lists and reads, and audits the agent", async () => {
     const ctx = ctxOf(ownerId);
     expect(await classOf("devices.create", { name: "Analysis" }, ctx)).toBe("personal");

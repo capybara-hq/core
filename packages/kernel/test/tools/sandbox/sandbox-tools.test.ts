@@ -1228,7 +1228,7 @@ describe("a sandbox provider that refuses the open tier", () => {
       logLines.some(
         (l) =>
           l.includes("refused an instance with the open public network") &&
-          l.includes("openEgress"),
+          l.includes("refuseOpenNetwork"),
       ),
     ).toBe(true);
   });

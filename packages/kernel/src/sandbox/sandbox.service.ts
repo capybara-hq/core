@@ -221,14 +221,14 @@ export const deviceFilesLost = (local = false): ApiError =>
 
 /**
  * A cloud sandbox provider refused to make (or move) an instance with the open public network
- * (409; auto mode spec §4.2): above all a provider set to refuse it (sandbox-docker /
- * sandbox-e2b `openEgress: "off"`). The provider's own error goes only to the log: it may name
+ * (409; auto mode spec §4.2): a provider that cannot or is set not to offer it. The text is
+ * provider-neutral (hardening spec K5); the provider's own error goes only to the log: it may name
  * the provider's settings.
  */
 export const sandboxOpenNetworkRefused = (): ApiError =>
   new ApiError(
     "sandbox.open_network_refused",
-    "The cloud sandbox provider cannot give this device the open network: it refused to create the sandbox. An org admin can switch the organization's cloud network to the allowlist, or a super admin can allow the open network in the sandbox extension's settings.",
+    "The cloud sandbox provider refused to give this device the open network, so its sandbox was not created. An org admin can switch the organization's cloud network to an allowlist, with the device in sandbox mode (its owner switches it, or the org turns auto mode off), or a super admin can use a sandbox provider that offers the open network.",
   );
 
 /**
@@ -268,11 +268,11 @@ function providerRefusal(
   ) {
     return err;
   }
-  // a provider set to refuse the open network (`openEgress: "off"`) fails on it in either mode:
-  // auto always has it, a narrowed cloud device has it while the org's network is open
+  // a provider that refuses the open network fails on it in either mode: auto always has it, a
+  // narrowed cloud device has it while the org's network is open
   if (limits.network.kind === "open-public") {
     log.warn(
-      "the sandbox provider refused an instance with the open public network; check its openEgress setting or switch the org's cloud network to the allowlist",
+      "the sandbox provider refused an instance with the open public network; check the provider's network settings or switch the org's cloud network to the allowlist",
       { ...facts, err },
     );
     return sandboxOpenNetworkRefused();
@@ -320,25 +320,24 @@ function tagged<P>(
  * Sandbox config problems to tell operators at startup (English log lines):
  * - `runtime.maxRunSeconds` below `sandbox.limits.maxCommandSeconds`: long commands are cut by the
  *   run time limit (Ruling M20);
- * - auto mode is allowed but the current provider plugin sets `openEgress: "off"`: every creation
- *   of a cloud device with the open public network is refused.
+ * - the current provider plugin refuses the open public network (`refuseOpenNetwork: true` in its
+ *   startup config) while an org can be on it: auto mode always is, and a sandbox-mode cloud device
+ *   keeps its org's cloud network, open by default, so turning auto mode off does not avoid it
+ *   (auto mode hardening spec K3). Only the kill switch (`sandbox.limits.egress: none`) does.
  * No run duration limit (`runtime.maxRunSeconds` 0, the default) cuts no command, so there is
- * nothing to tell. `autoAllowed`: whether the deployment allows auto mode now (read live; the
- * startup config alone when absent).
+ * nothing to tell.
  */
 export function sandboxConfigWarnings(
-  cfg: Pick<KernelConfig, "runtime" | "sandbox" | "devices" | "extensionConfig">,
+  cfg: Pick<KernelConfig, "runtime" | "sandbox" | "extensionConfig">,
   providerPlugin?: string,
-  autoAllowed: boolean = cfg.devices.autoMode !== "off",
 ): { level: "warn"; message: string }[] {
   const out: { level: "warn"; message: string }[] = [];
-  if (autoAllowed && providerPlugin !== undefined) {
-    // absent means the plugin's default ("proxy"), which creates open instances
-    const pc = cfg.extensionConfig[providerPlugin] as { openEgress?: unknown } | undefined;
-    if (pc?.openEgress === "off") {
+  if (providerPlugin !== undefined && cfg.sandbox.limits.egress !== "none") {
+    const pc = cfg.extensionConfig[providerPlugin] as { refuseOpenNetwork?: unknown } | undefined;
+    if (pc?.refuseOpenNetwork === true) {
       out.push({
         level: "warn",
-        message: `auto mode is allowed but extensionConfig."${providerPlugin}".openEgress is "off": the ${providerPlugin} plugin refuses to create cloud devices with the open public network; set openEgress to "proxy" (or "direct" for trusted deployments only), or switch the organization's cloud network to the allowlist`,
+        message: `extensionConfig."${providerPlugin}".refuseOpenNetwork is true: the ${providerPlugin} plugin refuses cloud devices on the open public network, which every device in auto mode and every sandbox-mode device of an organization whose cloudNetwork is open (the default) uses; set refuseOpenNetwork to false, or turn auto mode off (devices.autoMode) and have every organization switch its cloudNetwork to the allowlist`,
       });
     }
   }
@@ -1928,7 +1927,7 @@ export class SandboxService {
           // the instance may run with half-applied limits and cannot be recreated here: stop it,
           // so the next use resumes it and applies them again
           await this.quarantine(held, id, handle, p, fence);
-          // a provider bound to its file system that refuses the new network (E2B, `openEgress: "off"`)
+          // a provider bound to its file system that refuses the new network (E2B)
           throw providerRefusal(
             this.log,
             err,
