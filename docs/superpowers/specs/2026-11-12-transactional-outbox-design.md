@@ -412,8 +412,9 @@ it removes the last user of the platform-migration retry.
   message transaction, the run job in `ensureRun`'s) and one claim transaction (BEGIN, select,
   delete, COMMIT) for the run job; the delayed backstop goes through the relay. Measured with the
   counting test (`runtime/latency.test.ts`): 27 PG statements and 6 Redis commands before the outbox,
-  34 and 4 after (the run job's Redis read-back is gone, and the duplicate-trigger guard reads PG
-  instead of BullMQ, R21). PR 2 measures message-to-run-job-added on the
+  33 and 4 after (the run job's Redis read-back is gone, and the duplicate-trigger guard reads PG
+  instead of BullMQ, R21). The counting test is the authority for this figure; this sentence follows
+  it. PR 2 measures message-to-run-job-added on the
   test stack before and after and reports it; the budget is +5 ms at p50 (**designer's call**).
 
 ## 12. Rollout (one PR each, in order)

@@ -38,6 +38,10 @@ import {
  * - `test-portfolio-missing-file`: a listed path with no file (reported on the list file).
  * - `test-portfolio-baseline-unjustified`: a grandfather entry (the baseline's `files` object
  *   maps a repo-relative path to the reason it stays) with an empty reason.
+ * - `test-portfolio-baseline-removed-claim`: a grandfather entry whose reason says the file was
+ *   removed (`removed`, `deleted`, `gone`) while the file still exists: a batch that only removed
+ *   the file's violations must drop the entry, and one that removed the file must not leave a
+ *   reason behind.
  * - `test-portfolio-baseline-stale`: a grandfather entry whose file no longer violates (or no
  *   longer exists); it is removed together with its batch, so it must not linger.
  *
@@ -59,8 +63,12 @@ const RULE = {
   overlap: "test-portfolio-list-overlap",
   missing: "test-portfolio-missing-file",
   unjustified: "test-portfolio-baseline-unjustified",
+  removedClaim: "test-portfolio-baseline-removed-claim",
   stale: "test-portfolio-baseline-stale",
 } as const;
+
+/** A grandfather reason that claims its file was removed; its file must therefore be gone. */
+const REMOVED_CLAIM = /removed|deleted|gone/i;
 
 const TEST_FILE = /\.test\.ts$/;
 const APP_IMPORT = /(?:^|\/)helpers\/http-app(?:\.[cm]?[jt]s)?$/;
@@ -485,6 +493,15 @@ export function checkTestPortfolio({ root, baseline, changed }: TestPortfolioOpt
         line,
         rule: RULE.unjustified,
         message: `"${entry.path}" is grandfathered without a reason; say why it stays or run its T1/T2 batch`,
+      });
+    }
+    const fileExists = existsSync(join(root, entry.path));
+    if (entry.reason !== "" && REMOVED_CLAIM.test(entry.reason) && fileExists) {
+      out.push({
+        file: baselineFile,
+        line,
+        rule: RULE.removedClaim,
+        message: `"${entry.path}" says it was removed, but the file still exists; drop the entry or rewrite the reason`,
       });
     }
     // In diff mode only a changed file can be judged stale; a full run judges every entry.

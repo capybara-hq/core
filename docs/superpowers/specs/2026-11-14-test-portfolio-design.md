@@ -1,7 +1,7 @@
 # Test portfolio design: fewer, better-placed, deterministic tests
 
 - date: 2026-11-14
-- status: approved by the maintainer, 2026-11-14; implementation plan:
+- status: implemented 2026-11-14; implementation plan:
   `docs/superpowers/plans/2026-11-14-test-portfolio.md`
 - input: findings `governance-load` and `test-timeout-ladder` in
   `docs/reviews/2026-11-12-2-design-review.md`, plus this pass's measurements; the follow-up
@@ -189,9 +189,46 @@ coverage has no effect on normal test runs.
 
 ### 7. Measurement and rollback
 
-Before/after table recorded in the implementing PR: test count, files, app-booting files,
-fixed waits, timeout overrides (all three forms), per-module coverage, CI per-job durations
-(`gh run view`). Each T1/T2 batch is revertible on its own.
+Measured on `feat/test-portfolio`; the before column is the pre-T1 base `399fd0aa6`, re-measured
+with the same tooling as the after column. The coarser first counts in "Intent" (6,014 tests, 239
+app-booting files, 166 sleeps) are superseded by this table.
+
+| Measure | Before | After |
+|---|---|---|
+| Kernel test files (`packages/kernel/test/**/*.test.ts`) | 578 | 555 |
+| Tests (static `it` / `test` declarations) | 6,016 | 6,012 |
+| App-booting files (an import of `helpers/http-app` or a call to a booting helper) | 295 | 273 |
+| App-booting files with at most 5 tests | 69 | 37 |
+| Fixed waits: `sleep(<number>)` | 162 | 136 |
+| Fixed waits: `new Promise(… setTimeout(…, <number>))` | 113 | 73 |
+| Per-test timeout overrides (both forms the check sees) | 1,201 | 0 |
+| Timeout bounds | 5 s local / 30 s CI `testTimeout`, 120 s global `hookTimeout` | unit 5 s / 10 s, integration 60 s / 120 s, container 240 s / 300 s |
+| Per-module line coverage | committed baseline (49 rows) | unchanged reference; per-batch deltas inside tolerance |
+| Kernel test shards (CI) | 348–535 s per shard | to be re-measured after the PR |
+
+Notes:
+
+- **Tests:** T1 preserved the collected count and added the two portfolio-list tests; T2 deleted
+  six tests (tools 2, channels 2, extensions 1 after one restore, infra 1). The run collects more
+  than the static count (7,076) because a few files declare tests in loops
+  (`runtime/checkpointer.test.ts`); both columns use the same static count so a lost declaration
+  stays visible.
+- **Fixed waits:** the check counts numeric literals only; a computed delay (`sleep(TIMEOUT)`) is
+  outside it, as `tools/checks/README.md` states.
+- **Timeout overrides:** zero findings across the tree; the 127 remaining grandfather entries are
+  fixed waits, small app files and double boots, each with its reason in
+  `tools/checks/test-portfolio-baseline.json`.
+- **Coverage:** the committed `docs/testing/coverage-baseline.md` stays the pre-T2 reference. Each
+  T2 batch measured its affected modules and every delta was inside the ≤5 lines / ≤0.2 pp noise
+  band (catalog 0, tools 0, channels 0, migrations no row, runtime +1, extensions 0, infra −1).
+  The final full `pnpm coverage` run on 2026-11-14 failed on one pre-existing timing-ratio test
+  (`log.test.ts` "redaction cost does not grow with the number of registered secrets": 988 ms
+  against a 935 ms bound) under a load average of 42 on 18 cores and wrote no summary, so the
+  document was not regenerated; the per-batch deltas are the record.
+- **CI:** durations come from the design review's baseline (six kernel test shards of 348–535 s);
+  the PR that lands this branch re-measures them with `gh run view <id> --json jobs`.
+
+Each T1/T2 batch is revertible on its own.
 
 ## Scope boundary
 

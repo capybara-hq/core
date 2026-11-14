@@ -44,9 +44,19 @@ describe("checkTestPortfolio", () => {
     expect(
       checkTestPortfolio({
         root: fixture("bad"),
-        baseline: [{ path: badFile, reason: "timeout override: removed by the T1 batch" }],
+        baseline: [{ path: badFile, reason: "timeout override: fixture latency (T1)" }],
       }),
     ).toEqual([]);
+  });
+
+  it("reports a reason that claims the file was removed while it still exists", () => {
+    const root = fixture("removed");
+    const got = checkTestPortfolio({ root });
+    expect(got.map((f) => [f.rule, f.line])).toEqual([
+      ["test-portfolio-baseline-removed-claim", 3],
+    ]);
+    expect(got[0]?.file).toBe(`${root}/tools/checks/test-portfolio-baseline.json`);
+    expect(got[0]?.message).toContain("waits.test.ts");
   });
 
   it("reports a grandfather entry without a reason and one that no longer violates", () => {
