@@ -10,7 +10,7 @@ const conditions = ["@capybara-hq/source", "module", "node", "development|produc
  * (`CAPYBARA_TEST_WORKERS=4 pnpm verify`). Anything that is not a positive integer is ignored,
  * keeping today's behaviour (no cap: one worker per core).
  */
-function maxWorkersFromEnv(raw: string | undefined): number | undefined {
+export function maxWorkersFromEnv(raw: string | undefined): number | undefined {
   if (raw === undefined || raw.trim() === "") return undefined;
   const n = Number(raw);
   return Number.isInteger(n) && n >= 1 ? n : undefined;
@@ -42,7 +42,8 @@ export default defineConfig({
     hookTimeout: 120_000,
     // CI 机器负载高：起子进程的双副本测试、每次都算密码哈希的登录测试在 5s 默认值附近超时（非回归），CI 上放宽。
     testTimeout: process.env.CI ? 30_000 : 5_000,
-    // Local runs only: a cap for a machine that must stay responsive (see maxWorkersFromEnv).
+    // Local runs only: a cap for a machine that must stay responsive (see maxWorkersFromEnv). It
+    // relies on every project keeping `extends: true` (Vitest 5 errors otherwise).
     ...(maxWorkers === undefined ? {} : { maxWorkers }),
     projects: [
       // Node 环境：所有包的 *.test.ts（含 apps/web 的代理路由测试）。

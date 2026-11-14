@@ -59,7 +59,7 @@ export function localTestPlan(files: string[], ws: Workspace): Plan {
 }
 
 export type VerifyOptions = {
-  /** Run only the fast checks (`--fast`): no git, no containers ({@link fastSteps}). */
+  /** Run only the fast checks (`--fast`): no upstream/plan work, no containers ({@link fastSteps}). */
   fast?: boolean;
   /** Run the full suite when the plan runs everything (`--full`). */
   full?: boolean;
@@ -77,8 +77,9 @@ function checkSteps(): VerifyStep[] {
 }
 
 /**
- * The fast, advisory steps (`--fast`): no containers, no database, no network and no git. The
- * kernel unit project plus the two no-container jsdom projects, so a UI change in design or
+ * The fast, advisory steps (`--fast`): no containers, no database, and no upstream/fetch/
+ * merge-base/plan work (the steps themselves may still use git: `pnpm check` lists tracked files).
+ * The kernel unit project plus the two no-container jsdom projects, so a UI change in design or
  * plugin-client is covered too.
  */
 export function fastSteps(): VerifyStep[] {
@@ -105,7 +106,8 @@ export function fastSteps(): VerifyStep[] {
 
 /** The local equivalent of CI's required jobs for this plan, in run order. */
 export function verifySteps(plan: Plan, base: string, opts: VerifyOptions = {}): VerifyStep[] {
-  // A fast check is an advisory signal and ignores the plan: no containers, no database, no git.
+  // A fast check is an advisory signal and ignores the plan: no containers, no database, no git
+  // state of its own.
   if (opts.fast) return fastSteps();
   const steps: VerifyStep[] = checkSteps();
   // CI runs it in the ci job when bootstrap.json changed (or on a full run); it needs the network

@@ -1,9 +1,10 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Plan, Workspace } from "@capybara-hq/ci/affected";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { maxWorkersFromEnv } from "../../../vitest.config.ts";
 import { printReport } from "../src/report.ts";
 import {
   baseChecks,
@@ -306,5 +307,62 @@ describe("tryChangedFiles / safePlan", () => {
     });
     expect(plan.all).toBe(true);
     expect(plan.reason).toBe("could not compute the plan: boom");
+  });
+});
+
+describe("maxWorkersFromEnv", () => {
+  it("accepts only a positive integer and ignores anything else", () => {
+    for (const raw of [undefined, "", "abc", "0", "-3", "3.5"]) {
+      expect(maxWorkersFromEnv(raw)).toBeUndefined();
+    }
+    expect(maxWorkersFromEnv("2")).toBe(2);
+    expect(maxWorkersFromEnv(" 4 ")).toBe(4);
+  });
+});
+
+describe("verify-cli --fast", () => {
+  it("needs no upstream remote, fetch, merge base or plan", { timeout: 300_000 }, () => {
+    const root = join(import.meta.dirname, "../../..");
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "cap-verify-cli-")));
+    try {
+      // A `git` first on PATH that hides every remote and fails the commands the plan needs. The
+      // fast path must never call them; anything else (the checks' `git ls-files`) passes through.
+      const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+      writeFileSync(
+        join(dir, "git"),
+        `#!/bin/sh
+if [ "$1" = config ] && [ "$2" = --get-regexp ]; then exit 128; fi
+case "$1" in fetch|merge-base) exit 128 ;; esac
+exec "${realGit}" "$@"
+`,
+        { mode: 0o755 },
+      );
+      const r = spawnSync(
+        join(root, "node_modules", ".bin", "tsx"),
+        ["tools/dev/src/verify-cli.ts", "--fast", "--json"],
+        {
+          cwd: root,
+          env: { ...process.env, PATH: `${dir}:${process.env.PATH ?? ""}` },
+          encoding: "utf8",
+          maxBuffer: 256 * 1024 * 1024,
+        },
+      );
+      expect(r.status).toBe(0);
+      const report = JSON.parse(r.stdout) as {
+        ok: boolean;
+        checks: { id: string; status: string }[];
+      };
+      expect(report.ok).toBe(true);
+      expect(report.checks.map((c) => [c.id, c.status])).toEqual([
+        ["lint", "pass"],
+        ["typecheck", "pass"],
+        ["check", "pass"],
+        ["unit", "pass"],
+      ]);
+      // No plan or diff header: the fast path never reads the diff.
+      expect(r.stderr).not.toMatch(/^(base|changed files|plan|local tests):/m);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

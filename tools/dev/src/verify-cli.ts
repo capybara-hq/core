@@ -6,7 +6,8 @@
  * When CI's plan runs everything, only the tests of the packages the diff touches run here (CI
  * runs the full suite); `--full` runs the full suite locally too. `--fast` runs lint, typecheck,
  * the custom checks and the container-free tests (kernel unit, design, plugin-client): a quick
- * advisory signal that reads no git state and is never the gate (it takes precedence over
+ * advisory signal that does no upstream/fetch/merge-base/plan work (the steps themselves may still
+ * use git: `pnpm check` lists tracked files) and is never the gate (it takes precedence over
  * `--full`).
  */
 import { spawnSync } from "node:child_process";
