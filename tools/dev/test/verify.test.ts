@@ -1,14 +1,23 @@
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Plan, Workspace } from "@capybara-hq/ci/affected";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { maxWorkersFromEnv } from "../../../vitest.config.ts";
 import { printReport } from "../src/report.ts";
 import {
   baseChecks,
   changedFiles,
   changesetWarning,
+  fastSteps,
   localTestPlan,
   safePlan,
   tryChangedFiles,
@@ -99,7 +108,7 @@ describe("verifySteps", () => {
     expect(find(basePlan, "web")).toBeUndefined();
   });
 
-  it("--fast runs only lint, typecheck, check and the unit tests", () => {
+  it("--fast runs only lint, typecheck, check and the container-free tests", () => {
     const everything = {
       ...basePlan,
       all: true,
@@ -116,9 +125,25 @@ describe("verifySteps", () => {
       ["lint", ["pnpm", "lint"]],
       ["typecheck", ["pnpm", "typecheck"]],
       ["check", ["pnpm", "check"]],
-      ["unit", ["pnpm", "test:unit"]],
+      [
+        "unit",
+        [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "--project",
+          "kernel-unit",
+          "--project",
+          "design",
+          "--project",
+          "plugin-client",
+        ],
+      ],
     ]);
     expect(fast.every((s) => s.cmd !== null)).toBe(true);
+    // The fast list depends on nothing but the flag: no plan and no base.
+    expect(fast).toEqual(fastSteps());
 
     // The same plan without --fast keeps the full step list.
     expect(verifySteps(everything, "abc", { full: true }).map((s) => s.id)).toEqual([
@@ -133,6 +158,11 @@ describe("verifySteps", () => {
       "e2e",
       "docker",
     ]);
+  });
+
+  it("--fast takes precedence over --full", () => {
+    const everything = { ...basePlan, all: true, test: true };
+    expect(verifySteps(everything, "abc", { fast: true, full: true })).toEqual(fastSteps());
   });
 });
 
@@ -284,5 +314,70 @@ describe("tryChangedFiles / safePlan", () => {
     });
     expect(plan.all).toBe(true);
     expect(plan.reason).toBe("could not compute the plan: boom");
+  });
+});
+
+describe("maxWorkersFromEnv", () => {
+  it("accepts only a positive integer and ignores anything else", () => {
+    for (const raw of [undefined, "", "abc", "0", "-3", "3.5"]) {
+      expect(maxWorkersFromEnv(raw)).toBeUndefined();
+    }
+    expect(maxWorkersFromEnv("2")).toBe(2);
+    expect(maxWorkersFromEnv(" 4 ")).toBe(4);
+  });
+});
+
+describe("verify-cli --fast --plan-only", () => {
+  it("plans the four steps without any git work", () => {
+    const root = join(import.meta.dirname, "../../..");
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "cap-verify-plan-")));
+    try {
+      // A `git` first on PATH that logs every call, hides every remote and fails the commands the
+      // plan needs. The fast path must never call them.
+      const log = join(dir, "git.log");
+      const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+      writeFileSync(
+        join(dir, "git"),
+        `#!/bin/sh
+printf '%s\\n' "$*" >> "$CAP_VERIFY_GIT_LOG"
+if [ "$1" = config ] && [ "$2" = --get-regexp ]; then exit 128; fi
+case "$1" in fetch|merge-base) exit 128 ;; esac
+exec "${realGit}" "$@"
+`,
+        { mode: 0o755 },
+      );
+      const r = spawnSync(
+        join(root, "node_modules", ".bin", "tsx"),
+        ["tools/dev/src/verify-cli.ts", "--fast", "--plan-only", "--json"],
+        {
+          cwd: root,
+          env: {
+            ...process.env,
+            PATH: `${dir}:${process.env.PATH ?? ""}`,
+            CAP_VERIFY_GIT_LOG: log,
+          },
+          encoding: "utf8",
+        },
+      );
+      expect(r.status).toBe(0);
+      const report = JSON.parse(r.stdout) as {
+        ok: boolean;
+        checks: { id: string; status: string; detail: string }[];
+      };
+      expect(report.ok).toBe(true);
+      expect(report.checks.map((c) => [c.id, c.status])).toEqual([
+        ["lint", "planned"],
+        ["typecheck", "planned"],
+        ["check", "planned"],
+        ["unit", "planned"],
+      ]);
+      expect(report.checks[3]?.detail).toContain("--project kernel-unit");
+      // No plan or diff header on stderr, and the shim never saw the plan's git commands.
+      expect(r.stderr).not.toMatch(/^(base|changed files|plan|local tests):/m);
+      const calls = existsSync(log) ? readFileSync(log, "utf8") : "";
+      expect(calls).not.toMatch(/^(config --get-regexp|fetch|merge-base)/m);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
