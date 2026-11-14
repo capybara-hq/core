@@ -1,5 +1,6 @@
+import { MAX_DEVICE_PROJECTS } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
-import { localPolicyOf } from "../../src/local-devices/policy-summary.js";
+import { deviceFeaturesOf, localPolicyOf } from "../../src/local-devices/policy-summary.js";
 
 /**
  * The local policy summary the kernel keeps from a device's hello or `policy` op (auto mode spec
@@ -46,5 +47,34 @@ describe("localPolicyOf", () => {
       allowedDomains: [],
       projects: [{ name: "core", path: "/w/core" }],
     });
+  });
+
+  it("applies the protocol's bounds: relative or control-character paths, bad names, the cap", () => {
+    const core = { name: "core", path: "/w/core" };
+    expect(
+      localPolicyOf({
+        mode: "auto",
+        allowedDomains: [],
+        projects: [
+          core,
+          { name: "rel", path: "w/rel" },
+          { name: "ctl", path: "/w/c\ntl" },
+          { name: "a/b", path: "/w/ab" },
+          { name: "x".repeat(65), path: "/w/long" },
+        ],
+      })?.projects,
+    ).toEqual([core]);
+    const many = Array.from({ length: MAX_DEVICE_PROJECTS + 5 }, (_, i) => ({
+      name: `p${i}`,
+      path: `/w/p${i}`,
+    }));
+    const kept = localPolicyOf({ mode: "auto", allowedDomains: [], projects: many })?.projects;
+    expect(kept).toEqual(many.slice(0, MAX_DEVICE_PROJECTS));
+  });
+});
+
+describe("deviceFeaturesOf", () => {
+  it("knows the projects feature", () => {
+    expect(deviceFeaturesOf(["projects", "mode", "teleport"])).toEqual(["mode", "projects"]);
   });
 });

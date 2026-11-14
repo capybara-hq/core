@@ -332,17 +332,19 @@ export interface SandboxProvider {
     signal: AbortSignal,
   ): Promise<{ size: number; isDir: boolean } | null>;
   /**
-   * Lists one directory's entries — each entry's `name` and whether it `isDir` — sorted by name. A
-   * directory that does not exist returns `[]`, never an error. Entries only: never file contents,
-   * never a recursive walk.
+   * Lists one directory's entries — each entry's `name` and whether it `isDir` — sorted by code
+   * unit (locale-independent), at most `limit` of them; `truncated` is true when the directory has
+   * more. Entries only: never file contents, never a recursive walk. Returns null when the path
+   * does not exist; a path that is a file, or a directory that cannot be read, throws. Whether a
+   * project root exists is answered by {@link SandboxProvider.stat}, not by `list`.
    *
    * Optional: a provider without it serves no projects, and its conversations stay in free mode.
    */
   list?(
     h: SandboxHandle,
     path: string,
-    signal: AbortSignal,
-  ): Promise<{ name: string; isDir: boolean }[]>;
+    opts: { limit: number; signal: AbortSignal },
+  ): Promise<{ entries: { name: string; isDir: boolean }[]; truncated: boolean } | null>;
 }
 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: 正是要拦控制字符

@@ -187,8 +187,8 @@ describe("project operations", () => {
     expect(res).toMatchObject({
       ok: true,
       result: [
-        { name: "alpha", path: join(home, "alpha") },
-        { name: "y", path: join(home, "x", "y") },
+        { path: join(home, "alpha"), suggestedName: "alpha" },
+        { path: join(home, "x", "y"), suggestedName: "y" },
       ],
     });
   });
@@ -205,6 +205,16 @@ describe("project operations", () => {
   it("answers unsupported when the device has no policy store", async () => {
     const res = await serveOp(new FakeExecutor(), r("projectList"), never);
     expect(res.res).toMatchObject({
+      ok: false,
+      error: { kind: "error", message: "unsupported operation" },
+    });
+  });
+
+  it("answers the list op as unsupported for now", async () => {
+    const { res } = await serveOp(new FakeExecutor(), r("list", { path: CORE, limit: 10 }), never, {
+      policy: store,
+    });
+    expect(res).toMatchObject({
       ok: false,
       error: { kind: "error", message: "unsupported operation" },
     });

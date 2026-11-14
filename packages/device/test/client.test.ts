@@ -110,7 +110,7 @@ describe("client", () => {
     writePolicy(dir, { ...DEFAULT_POLICY, allowedDomains: ["a.com"] });
     start({ policy: new PolicyStore(dir) });
     const hello = await kernel.waitFor("hello", () => kernel.of("hello")[0]);
-    expect(hello.features).toEqual(["networkReport", "policyOp", "policyOpId", "mode"]);
+    expect(hello.features).toEqual(["networkReport", "policyOp", "policyOpId", "mode", "projects"]);
     // No exec seen yet: the owner's choice, auto by default.
     expect(hello.policy).toEqual({ mode: "auto", allowedDomains: ["a.com"], projects: [] });
     kernel.send(
@@ -189,7 +189,7 @@ describe("client", () => {
     start({ policy: new PolicyStore(dir) });
     const hello = await kernel.waitFor("hello", () => kernel.of("hello")[0]);
     expect(hello.mode).toBe("docker");
-    expect(hello.features).toEqual(["policyOp", "policyOpId", "mode"]);
+    expect(hello.features).toEqual(["policyOp", "policyOpId", "mode", "projects"]);
     expect(hello.policy).toMatchObject({ mode: "auto" });
   });
 

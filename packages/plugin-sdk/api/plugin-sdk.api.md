@@ -795,7 +795,7 @@ export interface DeviceExecGrants {
 export type DeviceExecResult = ExecResult;
 
 // @public
-export type DeviceFeature = "networkReport" | "policyOp" | "policyOpId" | "mode";
+export type DeviceFeature = "networkReport" | "policyOp" | "policyOpId" | "mode" | "projects";
 
 // @public
 export type DeviceFrame = DeviceHello | DeviceRes | DevicePolicyChanged | KernelReq | KernelCancel;
@@ -824,6 +824,24 @@ export interface DeviceKillTaggedArgs {
 }
 
 // @public
+export interface DeviceListArgs {
+    limit: number;
+    path: string;
+}
+
+// @public
+export interface DeviceListEntry {
+    isDir: boolean;
+    name: string;
+}
+
+// @public
+export type DeviceListResult = {
+    entries: DeviceListEntry[];
+    truncated: boolean;
+} | null;
+
+// @public
 export interface DeviceLocalPolicySummary {
     allowedDomains: string[];
     mode: "auto" | "sandbox";
@@ -831,7 +849,7 @@ export interface DeviceLocalPolicySummary {
 }
 
 // @public
-export type DeviceOp = "create" | "exec" | "readFile" | "writeFile" | "stat" | "killTagged" | "killAll" | "stop" | "policy" | "policyStatus" | "projectList" | "projectCandidates" | "projectAdd" | "projectRemove";
+export type DeviceOp = "create" | "exec" | "readFile" | "writeFile" | "stat" | "killTagged" | "killAll" | "stop" | "policy" | "policyStatus" | "projectList" | "projectCandidates" | "projectAdd" | "projectRemove" | "list";
 
 // @public
 export interface DeviceOpResults {
@@ -839,10 +857,11 @@ export interface DeviceOpResults {
     exec: DeviceExecResult;
     killAll: null;
     killTagged: null;
+    list: DeviceListResult;
     policy: DevicePolicyResult;
     policyStatus: DevicePolicyStatus;
     projectAdd: DeviceProjectAddResult;
-    projectCandidates: DeviceProject[];
+    projectCandidates: DeviceProjectCandidate[];
     projectList: DeviceProject[];
     projectRemove: null;
     readFile: DeviceReadFileResult;
@@ -915,6 +934,12 @@ export type DeviceProjectAddResult = {
 } | {
     refused: string;
 };
+
+// @public
+export interface DeviceProjectCandidate {
+    path: string;
+    suggestedName: string;
+}
 
 // @public
 export type DeviceProjectCandidatesArgs = Record<string, never>;
@@ -1733,6 +1758,12 @@ export function isBackgroundLaunch(command: string): boolean;
 export function isChannelSendError(e: unknown): e is ChannelSendError;
 
 // @public
+export function isDeviceProjectName(v: unknown): v is string;
+
+// @public
+export function isDeviceProjectPath(v: unknown): v is string;
+
+// @public
 export function isDisallowedSkillRef(v: unknown): v is string;
 
 // @public
@@ -1923,6 +1954,15 @@ export type MarketplaceSource = {
         integrity: string;
     };
 };
+
+// @public
+export const MAX_DEVICE_LIST_ENTRIES = 1000;
+
+// @public
+export const MAX_DEVICE_PROJECT_NAME_LENGTH = 64;
+
+// @public
+export const MAX_DEVICE_PROJECTS = 100;
 
 // @public
 export const MAX_NETWORK_BLOCKED_HOSTS = 20;
@@ -2745,10 +2785,16 @@ export interface SandboxProvider {
     killAll(h: SandboxHandle, signal: AbortSignal): Promise<void>;
     killTagged(h: SandboxHandle, tags: string[], signal: AbortSignal): Promise<void>;
     readonly limitsApplyAt?: "instance" | "fileSystem";
-    list?(h: SandboxHandle, path: string, signal: AbortSignal): Promise<{
-        name: string;
-        isDir: boolean;
-    }[]>;
+    list?(h: SandboxHandle, path: string, opts: {
+        limit: number;
+        signal: AbortSignal;
+    }): Promise<{
+        entries: {
+            name: string;
+            isDir: boolean;
+        }[];
+        truncated: boolean;
+    } | null>;
     readFile(h: SandboxHandle, path: string, opts: {
         maxBytes: number;
         signal: AbortSignal;

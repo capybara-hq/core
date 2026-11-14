@@ -1,7 +1,10 @@
-import type {
-  DeviceFeature,
-  DeviceLocalPolicySummary,
-  DeviceProject,
+import {
+  type DeviceFeature,
+  type DeviceLocalPolicySummary,
+  type DeviceProject,
+  isDeviceProjectName,
+  isDeviceProjectPath,
+  MAX_DEVICE_PROJECTS,
 } from "@capybara-hq/plugin-sdk";
 import type { SandboxMode } from "../sandbox/modes.js";
 
@@ -10,6 +13,7 @@ const KNOWN_FEATURES: readonly DeviceFeature[] = [
   "policyOp",
   "policyOpId",
   "mode",
+  "projects",
 ];
 
 /**
@@ -22,18 +26,20 @@ export function deviceFeaturesOf(v: unknown): DeviceFeature[] {
 }
 
 /**
- * The projects `v` lists: an entry is a non-empty name and path, and anything else (a missing or
- * unreadable list, a malformed entry) is dropped, so an older program and a bad report both leave
- * the device with no projects rather than failing the summary.
+ * The projects `v` lists, within the protocol's bounds: an entry is a valid project name and an
+ * absolute path (`isDeviceProjectName` / `isDeviceProjectPath`), at most `MAX_DEVICE_PROJECTS` of
+ * them. Anything else (a missing or unreadable list, a malformed entry, entries past the cap) is
+ * dropped, so an older program and a bad report both leave the device with fewer or no projects
+ * rather than failing the summary.
  */
 function projectsOf(v: unknown): DeviceProject[] {
   if (!Array.isArray(v)) return [];
   const out: DeviceProject[] = [];
   for (const e of v) {
+    if (out.length >= MAX_DEVICE_PROJECTS) break;
     if (typeof e !== "object" || e === null) continue;
     const o = e as Record<string, unknown>;
-    if (typeof o.name !== "string" || o.name === "") continue;
-    if (typeof o.path !== "string" || o.path === "") continue;
+    if (!isDeviceProjectName(o.name) || !isDeviceProjectPath(o.path)) continue;
     out.push({ name: o.name, path: o.path });
   }
   return out;

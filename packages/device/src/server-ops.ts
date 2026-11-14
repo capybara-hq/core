@@ -551,6 +551,9 @@ export async function serveOp(
       case "killAll":
         await executor.killAll();
         return { res: ok(null) };
+      case "list":
+        // not served yet: the device-side `list` handler comes with the provider's `list`
+        return { res: unsupported(req) };
     }
   } catch (e) {
     return errorAnswer(req, e);

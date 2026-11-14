@@ -1,7 +1,15 @@
 import { readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
-import type { DeviceProject, SandboxRoots } from "@capybara-hq/plugin-sdk";
+import {
+  type DeviceProject,
+  type DeviceProjectCandidate,
+  isDeviceProjectName,
+  isDeviceProjectPath,
+  MAX_DEVICE_PROJECT_NAME_LENGTH,
+  MAX_DEVICE_PROJECTS,
+  type SandboxRoots,
+} from "@capybara-hq/plugin-sdk";
 import { isUnder } from "./exec/shared.js";
 import type { Policy, SandboxMode } from "./state.js";
 
@@ -80,18 +88,31 @@ export function addProject(
   scope: ProjectScope,
 ): { project: DeviceProject } | { refused: string } {
   const path = projectPath(scope, input.path);
+  if (!isDeviceProjectPath(path)) {
+    return { refused: "the path is too long or contains control characters" };
+  }
   if (!inScope(path, scope)) {
     return {
       refused: `${path} is outside the device's workspace; this device can offer only what is inside it`,
     };
   }
   const name = input.name ?? basename(path);
-  if (name === "" || name.includes("/")) {
-    return { refused: `${path} has no usable directory name; give the project a name` };
+  if (!isDeviceProjectName(name)) {
+    return {
+      refused:
+        input.name === undefined
+          ? `${path} has no usable directory name; give the project a name`
+          : `"${name}" is not a usable project name: at most ${MAX_DEVICE_PROJECT_NAME_LENGTH} characters, no "/" or control characters`,
+    };
   }
   if (policy.projects.some((p) => p.name === name)) {
     return {
       refused: `a project named "${name}" is already served; remove it or pick another name`,
+    };
+  }
+  if (policy.projects.length >= MAX_DEVICE_PROJECTS) {
+    return {
+      refused: `this device already serves ${MAX_DEVICE_PROJECTS} projects; remove one first`,
     };
   }
   return { project: { name, path } };
@@ -130,10 +151,11 @@ function looksLikeProject(dir: string): boolean {
  * Directories under `root` that look like projects, at most {@link MAX_CANDIDATE_DEPTH} levels
  * down and at most `limit` entries: suggestions for the owner, never a listing of the disk. Hidden
  * directories and symbolic links are skipped (noise, cycles, and in sandbox mode nothing outside
- * the workspace is readable anyway); the root itself is not a candidate.
+ * the workspace is readable anyway); the root itself is not a candidate, nor a directory whose
+ * name or path the protocol would refuse (see `isDeviceProjectName` / `isDeviceProjectPath`).
  */
-export function candidates(root: string, limit: number): DeviceProject[] {
-  const out: DeviceProject[] = [];
+export function candidates(root: string, limit: number): DeviceProjectCandidate[] {
+  const out: DeviceProjectCandidate[] = [];
   if (limit <= 0) return out;
   const queue: Array<{ dir: string; depth: number }> = [{ dir: root, depth: 0 }];
   while (queue.length > 0 && out.length < limit) {
@@ -142,7 +164,8 @@ export function candidates(root: string, limit: number): DeviceProject[] {
       if (out.length >= limit) break;
       if (entry.name.startsWith(".") || !entry.isDirectory()) continue;
       const child = join(dir, entry.name);
-      if (looksLikeProject(child)) out.push({ name: entry.name, path: child });
+      const usable = isDeviceProjectName(entry.name) && isDeviceProjectPath(child);
+      if (usable && looksLikeProject(child)) out.push({ path: child, suggestedName: entry.name });
       if (depth + 1 < MAX_CANDIDATE_DEPTH) queue.push({ dir: child, depth: depth + 1 });
     }
   }

@@ -16,7 +16,12 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { DeviceProject } from "@capybara-hq/plugin-sdk";
+import {
+  type DeviceProject,
+  isDeviceProjectName,
+  isDeviceProjectPath,
+  MAX_DEVICE_PROJECTS,
+} from "@capybara-hq/plugin-sdk";
 import type { DeviceMode } from "./args.js";
 
 /** What `login` stores: how to reach the deployment and who this machine is there. */
@@ -162,9 +167,12 @@ const isCeiling = (v: unknown): v is number | null =>
 const isProject = (v: unknown): v is DeviceProject => {
   if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
   const { name, path } = v as { name?: unknown; path?: unknown };
-  return typeof name === "string" && name !== "" && typeof path === "string" && path !== "";
+  return isDeviceProjectName(name) && isDeviceProjectPath(path);
 };
-const isProjectList = (v: unknown): v is DeviceProject[] => Array.isArray(v) && v.every(isProject);
+// The bounds the protocol puts on a summary's projects, so the summary this file yields is one the
+// kernel accepts.
+const isProjectList = (v: unknown): v is DeviceProject[] =>
+  Array.isArray(v) && v.length <= MAX_DEVICE_PROJECTS && v.every(isProject);
 
 const POLICY_KEYS: readonly string[] = Object.keys(DEFAULT_POLICY);
 /**
@@ -245,7 +253,10 @@ export function readPolicyFile(dir: string): PolicyFile {
   if (!isCeiling(policy.cpu)) throw bad("cpu", "a positive number or null");
   if (!isCeiling(policy.memoryMb)) throw bad("memoryMb", "a positive number or null");
   if (!isProjectList(policy.projects)) {
-    throw bad("projects", 'a list of objects with a non-empty "name" and "path"');
+    throw bad(
+      "projects",
+      `a list of at most ${MAX_DEVICE_PROJECTS} objects with a "name" (no "/", at most 64 characters) and an absolute "path"`,
+    );
   }
   const extra: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(o)) {

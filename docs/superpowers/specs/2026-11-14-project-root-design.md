@@ -235,11 +235,19 @@ replicas serving the same conversation read the same row and append to the same 
 
 ## 7. Contract and protocol changes (outline; the plan details them)
 
-- `@capybara-hq/plugin-sdk`: `DeviceLocalPolicySummary` gains `projects?: { name: string; path:
-  string }[]` — the summary is `{ mode, allowedDomains }` today, so this is one added field;
-  `DeviceOp` gains the four project operations (ten today, none of them a listing); `SandboxProvider`
-  gains `list(path, { depth })` (today `create`, `exec`, `readFile`, `writeFile`, `stat`); a
-  changeset and `pnpm gen:sdk-api`.
+- `@capybara-hq/plugin-sdk`: `DeviceLocalPolicySummary` gains `projects: { name: string; path:
+  string }[]`, always present once parsed (`[]` when the device reports none) — the summary is
+  `{ mode, allowedDomains }` today, so this is one added field. Bounds: at most 100 projects, a name
+  of at most 64 characters without `/` or control characters, a reported path absolute and free of
+  control characters (only `projectAdd`'s args may carry a base-relative path). `DeviceOp` gains the
+  four project operations (`projectCandidates` answers `{ path, suggestedName }` suggestions, not
+  served projects) and `list` (`{ path, limit }` → `{ entries: { name, isDir }[], truncated }`, or
+  null when the path does not exist), since a local device's provider forwards each file method as
+  one op. `DeviceFeature` gains `projects`: the kernel sends those five ops only to a device that
+  announced it, as it gates `policy` on `policyOp`. `SandboxProvider` gains an optional
+  `list(h, path, { limit, signal })` with the same result (entries sorted by code unit, never
+  contents, never recursive; a file or an unreadable directory throws; whether a project root exists
+  is answered by `stat`). A changeset and `pnpm gen:sdk-api`.
 - `capybara-hq/plugins`: `sandbox-docker` and `sandbox-e2b` implement `list` (v1 covers cloud
   devices, §4.2).
 - `packages/device`: the four project operations of §4.1, the containment check, `list`, the policy

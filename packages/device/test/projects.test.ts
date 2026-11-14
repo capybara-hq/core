@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { MAX_DEVICE_PROJECT_NAME_LENGTH, MAX_DEVICE_PROJECTS } from "@capybara-hq/plugin-sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   addProject,
@@ -105,10 +106,26 @@ describe("addProject", () => {
 
   it("refuses a name containing / and a path with no basename", () => {
     expect(addProject(policy(), { path: "/w/core", name: "a/b" }, sandbox("/w"))).toEqual({
-      refused: expect.stringContaining("no usable directory name"),
+      refused: expect.stringContaining("not a usable project name"),
     });
     expect(addProject(policy(), { path: "/" }, auto("/home/me"))).toEqual({
       refused: expect.stringContaining("no usable directory name"),
+    });
+  });
+
+  it("keeps to the protocol's bounds: name length, control characters, the project cap", () => {
+    const long = "x".repeat(MAX_DEVICE_PROJECT_NAME_LENGTH + 1);
+    expect(addProject(policy(), { path: "/w/core", name: long }, sandbox("/w"))).toEqual({
+      refused: expect.stringContaining("not a usable project name"),
+    });
+    expect(addProject(policy(), { path: "/w/co\u0001re" }, sandbox("/w"))).toEqual({
+      refused: expect.stringContaining("control characters"),
+    });
+    const full = policy(
+      Array.from({ length: MAX_DEVICE_PROJECTS }, (_, i) => ({ name: `p${i}`, path: `/w/p${i}` })),
+    );
+    expect(addProject(full, { path: "/w/core" }, sandbox("/w"))).toEqual({
+      refused: expect.stringContaining(`already serves ${MAX_DEVICE_PROJECTS} projects`),
     });
   });
 
@@ -175,9 +192,18 @@ describe("candidates", () => {
     dir("plain");
     dir("x", "y", ".git");
     expect(candidates(root, MAX_CANDIDATES)).toEqual([
-      { name: "a", path: join(root, "a") },
-      { name: "b", path: join(root, "b") },
-      { name: "y", path: join(root, "x", "y") },
+      { path: join(root, "a"), suggestedName: "a" },
+      { path: join(root, "b"), suggestedName: "b" },
+      { path: join(root, "x", "y"), suggestedName: "y" },
+    ]);
+  });
+
+  it("skips a directory whose name the protocol would refuse as a project name", () => {
+    dir("x".repeat(MAX_DEVICE_PROJECT_NAME_LENGTH + 1), ".git");
+    dir("bad\u0001name", ".git");
+    dir("ok", ".git");
+    expect(candidates(root, MAX_CANDIDATES)).toEqual([
+      { path: join(root, "ok"), suggestedName: "ok" },
     ]);
   });
 

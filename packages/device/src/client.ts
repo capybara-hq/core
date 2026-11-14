@@ -325,6 +325,8 @@ export function connect(
     // the policy op, logged by its op id (policy-ops.json next to the policy)
     if (opts.policy !== undefined) features.push("policyOp", "policyOpId");
     features.push("mode");
+    // the project ops live in the policy file; `list` is served with them
+    if (opts.policy !== undefined) features.push("projects");
     return {
       type: "hello",
       protocol: DEVICE_PROTOCOL_VERSION,
