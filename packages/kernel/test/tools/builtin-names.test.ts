@@ -307,7 +307,7 @@ describe("system texts naming builtins (tool naming spec §10)", () => {
     expect(text).toContain(SKILL_TEXTS.newSkills);
     expect(text).toContain(CATALOG_HEADER);
     expect(text).toContain("call Skill with");
-    expect(text).toContain("call ToolSearch with");
+    expect(text).toContain("call ToolSearch first with");
     expect(text).not.toMatch(/skill_load|tool_search/);
   });
 
