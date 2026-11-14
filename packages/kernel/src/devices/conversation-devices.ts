@@ -29,6 +29,12 @@ export interface NewConversationDevice {
   deviceId?: string;
   /** An IM thread: the person's IM default (`device_defaults`) when still usable. */
   im?: boolean;
+  /**
+   * The name of one of the chosen device's projects to bind the conversation to (project root
+   * design §4.3): resolved with `DeviceProjectsService.resolveForBinding` in the transaction that
+   * writes the conversation, its name and path stored and never changed. Absent: free mode.
+   */
+  project?: string;
 }
 
 /** What the command review needs to know about a call's device (auto mode spec §5.1, §5.4). */

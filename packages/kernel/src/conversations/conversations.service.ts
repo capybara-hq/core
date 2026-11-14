@@ -12,6 +12,7 @@ import {
   ConversationDevices,
   type NewConversationDevice,
 } from "../devices/conversation-devices.js";
+import { DeviceProjectsService } from "../devices/device-projects.service.js";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
@@ -399,6 +400,9 @@ export class ConversationsService {
     /** The device a new conversation is bound to (environments spec §4.1 item 1). */
     @Inject(ConversationDevices)
     private readonly devices: Pick<ConversationDevices, "forNew">,
+    /** The project of that device a new conversation is bound to (project root design §4.3). */
+    @Inject(DeviceProjectsService)
+    private readonly projects: Pick<DeviceProjectsService, "resolveForBinding">,
     /** A starter's message skips the run's pending questions (reply-while-question spec §8.1). */
     @Inject(QuestionsService)
     private readonly questions: Pick<QuestionsService, "skipPendingIn">,
@@ -413,9 +417,11 @@ export class ConversationsService {
    * Creates an empty conversation bound to its device (`pick`, see
    * {@link ConversationDevices.forNew}); an agent the account cannot use →
    * `agent.not_found`, a device it may not use → `device.not_found` /
-   * `device.unavailable`, and nothing is created. `opts.source` records where the conversation
-   * comes from.
+   * `device.unavailable`, and nothing is created. `pick.project` binds it to one of that device's
+   * projects ({@link bindingFor}), refused as that says. `opts.source` records where the
+   * conversation comes from.
    */
+  @Transactional()
   async create(
     orgId: string,
     accountId: string,
@@ -425,6 +431,7 @@ export class ConversationsService {
   ): Promise<ConversationView> {
     await this.agents.get(orgId, agentId, accountId);
     const deviceId = await this.devices.forNew(orgId, accountId, pick);
+    const project = await this.bindingFor(orgId, accountId, deviceId, pick.project);
     const row = await this.db
       .insertInto("conversations")
       .values({
@@ -433,6 +440,8 @@ export class ConversationsService {
         agent_id: agentId,
         account_id: accountId,
         device_id: deviceId,
+        project_name: project?.name ?? null,
+        project_path: project?.path ?? null,
         source: opts.source,
       })
       .returning(COLUMNS)
@@ -449,7 +458,9 @@ export class ConversationsService {
    * `events` are every event the create wrote, in seq order from seq 1 (a `model_switched` before
    * the message when the send switched), so a client can seed the new conversation's log whole.
    * `internal`: the conversation's source and, for kernel callers only, a scheduled task's marker,
-   * which also sets `conversations.scheduled_task_id`, and its zone override.
+   * which also sets `conversations.scheduled_task_id`, and its zone override. `pick.project` binds
+   * the conversation to one of its device's projects inside the write ({@link bindingFor}); a
+   * retry answers with the conversation the first send created, its binding unchanged.
    */
   async createWithMessage(
     orgId: string,
@@ -473,7 +484,7 @@ export class ConversationsService {
     const invoked = await this.prepareSkill(orgId, agentId, undefined, agent.definition, input);
     const id = randomUUID();
     const all = await this.createIn(
-      { id, orgId, accountId, agentId, deviceId },
+      { id, orgId, accountId, agentId, deviceId, project: pick.project },
       input,
       next,
       extra,
@@ -501,6 +512,8 @@ export class ConversationsService {
       accountId: string;
       agentId: string;
       deviceId: string | null;
+      /** The project name to bind ({@link bindingFor}); undefined: free mode. */
+      project: string | undefined;
     },
     input: UserMessageInput & { clientMessageId: string },
     next: Selection | null,
@@ -509,6 +522,7 @@ export class ConversationsService {
     internal: InternalMessageOptions & NewConversationOptions,
   ): Promise<ConversationEvent[] | undefined> {
     const { id, orgId, accountId } = conv;
+    const project = await this.bindingFor(orgId, accountId, conv.deviceId, conv.project);
     const row = await this.db
       .insertInto("conversations")
       .values({
@@ -517,6 +531,8 @@ export class ConversationsService {
         agent_id: conv.agentId,
         account_id: accountId,
         device_id: conv.deviceId,
+        project_name: project?.name ?? null,
+        project_path: project?.path ?? null,
         create_request_id: input.clientMessageId,
         scheduled_task_id: internal.schedule?.taskId ?? null,
         source: internal.source,
@@ -536,6 +552,30 @@ export class ConversationsService {
     return (
       await this.writeMessage(orgId, id, accountId, input, next, extra, blocks, invoked, internal)
     ).events;
+  }
+
+  /**
+   * The project a new conversation binds to (project root design §4.3): `name` resolved against
+   * the chosen device's projects by `DeviceProjectsService.resolveForBinding`, which reads only and
+   * checks the owner and the device's current mode (refused with `device.not_found`,
+   * `device.projects_unsupported`, `device.project_not_found` or `device.project_outside_mode`).
+   * Called inside the transaction that writes the conversation. A conversation without a device
+   * (no cloud provider, an anonymous IM sender) cannot have one. Undefined name: free mode.
+   */
+  private async bindingFor(
+    orgId: string,
+    accountId: string,
+    deviceId: string | null,
+    name: string | undefined,
+  ): Promise<{ name: string; path: string } | undefined> {
+    if (name === undefined) return undefined;
+    if (deviceId === null) {
+      throw new ApiError(
+        "device.projects_unsupported",
+        "This conversation has no device, so it cannot be bound to a project; choose one of your devices, or start it without a project",
+      );
+    }
+    return this.projects.resolveForBinding(orgId, deviceId, accountId, name);
   }
 
   /**

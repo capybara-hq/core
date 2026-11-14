@@ -315,10 +315,13 @@ export interface ConversationsTable {
    * root next starts a run. While set the tree's wakes are held (agent map spec §6).
    */
   tree_stopped_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
-  /** 0133: the project of its device it is bound to at creation (project root §4.3); null: free. */
-  project_name: ColumnType<string | null, string | null | undefined, string | null>;
+  /**
+   * 0133: the project of its device it is bound to at creation (project root §4.3); null: free.
+   * Written only by the insert, never updated (`never`: the binding is immutable).
+   */
+  project_name: ColumnType<string | null, string | null | undefined, never>;
   /** 0133: the absolute path the bound project resolved to at creation; null: free mode. */
-  project_path: ColumnType<string | null, string | null | undefined, string | null>;
+  project_path: ColumnType<string | null, string | null | undefined, never>;
 }
 
 /** 0060: an org's order of file-preview@1 previewers (UI refresh B Task 11). */

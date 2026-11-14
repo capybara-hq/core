@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BackgroundTaskPollJob } from "../../src/background/poll.job.js";
 import { AnonymousGuests } from "../../src/channels/threads.js";
@@ -12,6 +13,7 @@ import type { ConversationEvent } from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ConversationDevices } from "../../src/devices/conversation-devices.js";
+import { DevicesService } from "../../src/devices/devices.service.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
@@ -36,7 +38,8 @@ import {
  * Conversations bound to devices (spec 2026-11-07-environments-design §4.1 items 1-3, §4.2
  * items 8, 9, 12): bound at create (or on the first sandbox call when unbound), sub-agents in the
  * root's device, sessions of one device sharing its files, and only the owner's
- * devices usable. One kernel (api + worker), model-fake and the fake sandbox.
+ * devices usable; and bound to one of the device's projects at create (project root design
+ * §4.3). One kernel (api + worker), model-fake and the fake sandbox.
  */
 
 const SANDBOX_FAKE = fileURLToPath(
@@ -465,5 +468,233 @@ describe("conversations bound to devices", () => {
     // the guest got no device
     expect(await defaultOf(guest)).toBeUndefined();
     expect(await boundTo(conv.id)).toBeNull();
+  });
+});
+
+/**
+ * A local device of `accountId` whose machine (signed in, not connected) announced `features` and
+ * runs in `mode`, with `projects` stored for it.
+ */
+async function localDevice(
+  accountId: string,
+  opts: {
+    features?: string[];
+    mode?: "auto" | "sandbox";
+    projects?: { name: string; path: string }[];
+  } = {},
+): Promise<string> {
+  const { id } = await k.app
+    .get(DevicesService)
+    .createLocal(orgId, accountId, `box-${randomUUID().slice(0, 8)}`);
+  const features = opts.features ?? ALL_FEATURES;
+  const policy = JSON.stringify({ mode: opts.mode ?? "auto", allowedDomains: [] });
+  await sql`INSERT INTO capybara.device_machines
+      (org_id, device_id, account_id, credential_hash, name, os, arch, features, local_policy)
+    VALUES (${orgId}, ${id}, ${accountId}, ${randomUUID()}, 'mbp', 'darwin', 'arm64',
+      ${features}, ${policy}::jsonb)`.execute(raw);
+  for (const p of opts.projects ?? []) {
+    await db
+      .insertInto("device_projects")
+      .values({ device_id: id, name: p.name, path: p.path, created_by: accountId })
+      .execute();
+  }
+  return id;
+}
+
+const ALL_FEATURES = ["networkReport", "policyOp", "policyOpId", "mode", "projects"];
+const CORE = { name: "core", path: "/Users/o/src/core" };
+const PLUGINS = { name: "plugins", path: "/Users/o/src/plugins" };
+
+/** The conversations `accountId` owns in the org (to show a refusal created nothing). */
+async function countOf(accountId: string): Promise<number> {
+  const row = await db
+    .selectFrom("conversations")
+    .select((eb) => eb.fn.countAll<string>().as("n"))
+    .where("org_id", "=", orgId)
+    .where("account_id", "=", accountId)
+    .executeTakeFirstOrThrow();
+  return Number(row.n);
+}
+
+async function bindingOf(id: string) {
+  return db
+    .selectFrom("conversations")
+    .select(["device_id", "project_name", "project_path"])
+    .where("id", "=", id)
+    .executeTakeFirstOrThrow();
+}
+
+const createWith = (req: Req, payload: Record<string, unknown>) =>
+  req({ method: "POST", url: conversations(), payload });
+
+const firstMessage = () => ({ text: "hello", clientMessageId: randomUUID() });
+
+/** Both create paths: empty, and with a first message. */
+const BOTH = [undefined, "message"] as const;
+
+/** The error code and message of a refused create. */
+const errorOf = (res: { json(): unknown }) =>
+  (res.json() as { error: { code: string; message: string } }).error;
+
+describe("binding a conversation to a project", () => {
+  it("stores the name and the path of the device's project (empty create and first send)", async () => {
+    const m = await member();
+    const device = await localDevice(m.id, { projects: [CORE, PLUGINS] });
+    const empty = await createWith(m.req, { agentId, deviceId: device, project: "core" });
+    expect(empty.statusCode, empty.body).toBe(201);
+    const emptyId = (empty.json() as { conversation: { id: string } }).conversation.id;
+    expect(await bindingOf(emptyId)).toEqual({
+      device_id: device,
+      project_name: "core",
+      project_path: CORE.path,
+    });
+
+    const sent = await createWith(m.req, {
+      agentId,
+      deviceId: device,
+      project: "plugins",
+      message: firstMessage(),
+    });
+    expect(sent.statusCode, sent.body).toBe(201);
+    const sentId = (sent.json() as { conversation: { id: string } }).conversation.id;
+    expect(await bindingOf(sentId)).toEqual({
+      device_id: device,
+      project_name: "plugins",
+      project_path: PLUGINS.path,
+    });
+  });
+
+  it("a retried first send returns the existing conversation and its binding unchanged", async () => {
+    const m = await member();
+    const device = await localDevice(m.id, { projects: [CORE, PLUGINS] });
+    const message = firstMessage();
+    const first = await createWith(m.req, { agentId, deviceId: device, project: "core", message });
+    expect(first.statusCode, first.body).toBe(201);
+    const id = (first.json() as { conversation: { id: string } }).conversation.id;
+    // the project is re-pointed and the retry names another one: neither moves the conversation
+    await db
+      .updateTable("device_projects")
+      .set({ path: "/Users/o/elsewhere" })
+      .where("device_id", "=", device)
+      .where("name", "=", "core")
+      .execute();
+    const retry = await createWith(m.req, {
+      agentId,
+      deviceId: device,
+      project: "plugins",
+      message,
+    });
+    expect(retry.statusCode, retry.body).toBe(200);
+    expect((retry.json() as { conversation: { id: string } }).conversation.id).toBe(id);
+    expect(await bindingOf(id)).toEqual({
+      device_id: device,
+      project_name: "core",
+      project_path: CORE.path,
+    });
+    expect(await countOf(m.id)).toBe(1);
+  });
+
+  it("a conversation without a project stays in free mode", async () => {
+    const m = await member();
+    const device = await localDevice(m.id, { projects: [CORE] });
+    for (const message of BOTH) {
+      const res = await createWith(m.req, {
+        agentId,
+        deviceId: device,
+        ...(message !== undefined && { message: firstMessage() }),
+      });
+      expect(res.statusCode, res.body).toBe(201);
+      const id = (res.json() as { conversation: { id: string } }).conversation.id;
+      expect(await bindingOf(id)).toEqual({
+        device_id: device,
+        project_name: null,
+        project_path: null,
+      });
+    }
+  });
+
+  it("refuses a name the device does not have, and creates nothing", async () => {
+    const m = await member();
+    const device = await localDevice(m.id, { projects: [CORE] });
+    for (const message of BOTH) {
+      const res = await createWith(m.req, {
+        agentId,
+        deviceId: device,
+        project: "website",
+        ...(message !== undefined && { message: firstMessage() }),
+      });
+      expect(res.statusCode, res.body).toBe(404);
+      expect(errorOf(res).code).toBe("device.project_not_found");
+      expect(errorOf(res).message).toContain('"website"');
+    }
+    expect(await countOf(m.id)).toBe(0);
+  });
+
+  it("refuses a project outside the device's current mode, and creates nothing", async () => {
+    const m = await member();
+    // sandbox mode reads only the workspace; the project lies outside it
+    const device = await localDevice(m.id, { mode: "sandbox", projects: [CORE] });
+    for (const message of BOTH) {
+      const res = await createWith(m.req, {
+        agentId,
+        deviceId: device,
+        project: "core",
+        ...(message !== undefined && { message: firstMessage() }),
+      });
+      expect(res.statusCode, res.body).toBe(422);
+      expect(errorOf(res).code).toBe("device.project_outside_mode");
+      expect(errorOf(res).message).toContain(CORE.path);
+    }
+    expect(await countOf(m.id)).toBe(0);
+  });
+
+  it("refuses a device that offers no projects, and creates nothing", async () => {
+    const m = await member();
+    // an older capybara-device: no `projects` feature, whatever is stored for it
+    const older = await localDevice(m.id, {
+      features: ["networkReport", "policyOp", "mode"],
+      projects: [CORE],
+    });
+    for (const message of BOTH) {
+      const res = await createWith(m.req, {
+        agentId,
+        deviceId: older,
+        project: "core",
+        ...(message !== undefined && { message: firstMessage() }),
+      });
+      expect(res.statusCode, res.body).toBe(409);
+      expect(errorOf(res).code).toBe("device.projects_unsupported");
+      expect(errorOf(res).message).toContain("update capybara-device");
+    }
+    // no deviceId: the default device, a cloud device on the fake sandbox (no list / scan)
+    const cloud = await createWith(m.req, { agentId, project: "core" });
+    expect(cloud.statusCode, cloud.body).toBe(409);
+    expect(errorOf(cloud).code).toBe("device.projects_unsupported");
+    expect(await countOf(m.id)).toBe(0);
+  });
+
+  it("only the device's owner may bind one of its projects", async () => {
+    const a = await member();
+    const b = await member();
+    const theirs = await localDevice(b.id, { projects: [CORE] });
+    for (const message of BOTH) {
+      const res = await createWith(a.req, {
+        agentId,
+        deviceId: theirs,
+        project: "core",
+        ...(message !== undefined && { message: firstMessage() }),
+      });
+      expect(res.statusCode, res.body).toBe(404);
+      expect(errorOf(res).code).toBe("device.not_found");
+    }
+    expect(await countOf(a.id)).toBe(0);
+  });
+
+  it("refuses a malformed project name at the route", async () => {
+    const m = await member();
+    const device = await localDevice(m.id, { projects: [CORE] });
+    const res = await createWith(m.req, { agentId, deviceId: device, project: "a/b" });
+    expect(res.statusCode, res.body).toBe(400);
+    expect(await countOf(m.id)).toBe(0);
   });
 });
