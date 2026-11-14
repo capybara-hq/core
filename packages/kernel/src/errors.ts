@@ -334,7 +334,7 @@ export const ERROR_CODES = {
   "attachment.too_many_pending": 429,
   "sandbox.unavailable": 503,
   "sandbox.busy": 409,
-  /** A cloud sandbox provider refused an instance with the open public network (its `openEgress` is `off`). */
+  /** A cloud sandbox provider refused an instance with the open public network. */
   "sandbox.open_network_refused": 409,
   /** A cloud sandbox provider failed to create a device's sandbox for another reason. */
   "sandbox.create_failed": 502,

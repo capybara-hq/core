@@ -181,7 +181,7 @@ const deviceProtocolText = (detail: string): string =>
  * fixed text, never the provider's own message (it may name its settings).
  */
 export const SANDBOX_OPEN_NETWORK_REFUSED_TEXT =
-  "The cloud sandbox provider cannot give this device the open public network and refused to create it, so nothing ran in the sandbox and retrying won't help. Ask the person to have an org admin switch the organization's cloud network to the allowlist, or a super admin allow the open network in the sandbox extension's settings (Admin console → Extensions). Continue without the sandbox meanwhile.";
+  "The cloud sandbox provider refused to give this device the open public network, so nothing ran in the sandbox and retrying won't help. Ask the person to switch this device to sandbox mode and have an org admin switch the organization's cloud network to an allowlist, or have a super admin use a sandbox provider that offers the open network. Continue without the sandbox meanwhile.";
 /** A cloud provider failed to create the device's sandbox otherwise (`sandbox.create_failed`). */
 export const SANDBOX_CREATE_FAILED_TEXT =
   "The cloud sandbox provider could not create this device's sandbox, so nothing ran in it. Retry once; if it fails again, continue without the sandbox and ask the person to have a super admin check the sandbox extension's settings (Admin console → Extensions).";

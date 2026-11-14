@@ -328,7 +328,7 @@
       "file_not_found": "No file at this path in the sandbox.",
       "file_is_directory": "This path is a directory; pass one file.",
       "file_too_large": "The file is too large.",
-      "open_network_refused": "The cloud sandbox cannot give this device the open network and refused to create it. An org admin can switch the organization's cloud network to an allowlist, or a super admin can allow the open network in the sandbox extension's settings.",
+      "open_network_refused": "The cloud sandbox provider refused to give this device the open network, so its sandbox was not created. An org admin can switch the organization's cloud network to an allowlist, with the device in sandbox mode (its owner switches it, or the org turns auto mode off), or a super admin can use a sandbox provider that offers the open network.",
       "create_failed": "The cloud sandbox could not be created. Try again; if it keeps failing, ask the super admin to check the sandbox extension's settings."
     },
     "device": {

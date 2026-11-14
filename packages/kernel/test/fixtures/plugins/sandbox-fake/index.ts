@@ -69,7 +69,7 @@ import { z } from "zod";
  *   `update` got is appended to `root/limits.log` ({@link readFakeSandboxLimits}); an `update`
  *   also logs `update <id> <answer>` in `ops.log`.
  * - `root/refuse-open-egress` (optional, {@link setFakeSandboxRefuseOpenEgress}; read at each
- *   call): like sandbox-docker / sandbox-e2b with `openEgress: "off"`, limits with mode `auto` and
+ *   call): like sandbox-docker with `refuseOpenNetwork: true`, limits with mode `auto` and
  *   the open public network make `create`, `update` and (with `limitsApplyAt: "fileSystem"`)
  *   `createFileSystem` throw an ordinary error whose message carries {@link FAKE_REFUSAL_SECRET},
  *   so tests can check that it never reaches the model.
@@ -425,7 +425,7 @@ export async function setFakeSandboxFault(
   else await writeFile(join(root, "fault.json"), JSON.stringify(fault));
 }
 
-/** Makes the fake refuse the open public network, as a provider set to `openEgress: "off"` does (or stop). */
+/** Makes the fake refuse the open public network, as a provider set to `refuseOpenNetwork: true` does (or stop). */
 export async function setFakeSandboxRefuseOpenEgress(root: string, on: boolean): Promise<void> {
   await mkdir(root, { recursive: true });
   if (on) await writeFile(join(root, "refuse-open-egress"), "");
@@ -532,7 +532,7 @@ export function createFakeSandbox(
       )
     ) {
       throw new Error(
-        `Sandbox open public network is refused: the sandbox-fake setting openEgress is "off" (token ${FAKE_REFUSAL_SECRET})`,
+        `Sandbox open public network is refused: the sandbox-fake setting refuseOpenNetwork is true (token ${FAKE_REFUSAL_SECRET})`,
       );
     }
   };

@@ -221,14 +221,14 @@ export const deviceFilesLost = (local = false): ApiError =>
 
 /**
  * A cloud sandbox provider refused to make (or move) an instance with the open public network
- * (409; auto mode spec §4.2): above all a provider set to refuse it (sandbox-docker /
- * sandbox-e2b `openEgress: "off"`). The provider's own error goes only to the log: it may name
+ * (409; auto mode spec §4.2): a provider that cannot or is set not to offer it. The text is
+ * provider-neutral (hardening spec K5); the provider's own error goes only to the log: it may name
  * the provider's settings.
  */
 export const sandboxOpenNetworkRefused = (): ApiError =>
   new ApiError(
     "sandbox.open_network_refused",
-    "The cloud sandbox provider cannot give this device the open network: it refused to create the sandbox. An org admin can switch the organization's cloud network to the allowlist, or a super admin can allow the open network in the sandbox extension's settings.",
+    "The cloud sandbox provider refused to give this device the open network, so its sandbox was not created. An org admin can switch the organization's cloud network to an allowlist, with the device in sandbox mode (its owner switches it, or the org turns auto mode off), or a super admin can use a sandbox provider that offers the open network.",
   );
 
 /**
@@ -268,11 +268,11 @@ function providerRefusal(
   ) {
     return err;
   }
-  // a provider set to refuse the open network (`openEgress: "off"`) fails on it in either mode:
-  // auto always has it, a narrowed cloud device has it while the org's network is open
+  // a provider that refuses the open network fails on it in either mode: auto always has it, a
+  // narrowed cloud device has it while the org's network is open
   if (limits.network.kind === "open-public") {
     log.warn(
-      "the sandbox provider refused an instance with the open public network; check its openEgress setting or switch the org's cloud network to the allowlist",
+      "the sandbox provider refused an instance with the open public network; check the provider's network settings or switch the org's cloud network to the allowlist",
       { ...facts, err },
     );
     return sandboxOpenNetworkRefused();
@@ -1927,7 +1927,7 @@ export class SandboxService {
           // the instance may run with half-applied limits and cannot be recreated here: stop it,
           // so the next use resumes it and applies them again
           await this.quarantine(held, id, handle, p, fence);
-          // a provider bound to its file system that refuses the new network (E2B, `openEgress: "off"`)
+          // a provider bound to its file system that refuses the new network (E2B)
           throw providerRefusal(
             this.log,
             err,
