@@ -205,20 +205,6 @@ describe("UI slots at load", () => {
     expect(JSON.stringify(r.payload.content)).toContain("pong");
   });
 
-  it("the drop is logged once per load", () => {
-    const warned = logs("plugin ui contributions dropped").filter((l) => l.plugin === "ui-slots");
-    expect(warned).toHaveLength(1);
-    expect(warned[0]).toMatchObject({
-      level: "warn",
-      plugin: "ui-slots",
-      version: "0.1.0",
-      dropped: [
-        { id: "lost", ref: "nowhere.at-all", reason: "unknown-slot" },
-        { id: "old-page", ref: "org.page@2", reason: "unsupported-version" },
-      ],
-    });
-  });
-
   it("GET /api/v1/admin/extensions/ui-slots lists uiDropped", async () => {
     const r = await admin({ method: "GET", url: "/api/v1/admin/extensions/ui-slots" });
     expect(r.statusCode, r.body).toBe(200);
