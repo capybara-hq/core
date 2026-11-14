@@ -59,9 +59,10 @@ Let `W = model.contextWindow`, `O = min(agent maxOutputTokens, model.maxOutputTo
 
 Keep the current plan and tool-pair guard. Add a size budget:
 
-- Compute the kept tail (`keepRecentTurns` turns) plus system prompt and tools; if `tail + system + tools + O + R > W`, move the boundary earlier (keep fewer turns), down to the latest user turn.
+- Compute the kept tail (`keepRecentTurns` turns) plus system prompt and tools; if `tail + system + tools + O + R > W`, move the boundary later (keep fewer turns).
 - The configured `keepRecentTurns` is a maximum, not a hard rule.
-- If even one turn does not fit, 4.3 handles the remaining content.
+- **The latest user turn can be compacted too (revision 2026-11-15, maintainer decision: like Claude Code).** When the latest user turn alone does not fit, the boundary moves inside it, to a tool-pair boundary: a position where every tool call before it has its result before it. The kept tail shrinks pair by pair, down to the latest complete tool pair (the assistant tool calls and their results the next step answers); it never splits a pair. The latest user message may then be inside the summary; the summary template's "All user messages", "Current Work" and "Optional Next Step" sections carry the request forward, as in Claude Code. A long agent loop inside one user turn (sub-agents, scheduled tasks, one prompt with hundreds of tool calls) is compacted like any other history instead of only trimmed.
+- If even the latest tool pair does not fit, 4.3 handles the remaining content.
 
 ### 4.2.1 Summary instruction (Claude Code template)
 
@@ -79,13 +80,15 @@ Adopt Claude Code's structured summary prompt (2.1.183), not the current free-fo
 Applied to every request after compaction and before sending:
 
 1. Build the request and estimate its input.
-2. Fit target: `W - O - R`, not merely `< W`. Clamp output: `O' = clamp(O, 1, W - input)`. If `input <= W - O - R`, the provider-visible total fits with the safety reserve (providers that count `max_tokens` included).
-3. If `input > W - O - R`, apply a deterministic fit plan:
-   - Drop the oldest complete turns / tool pairs outside the latest user turn, preferring tool results, then assistant text, until the input is at or below the fit target.
-   - If the latest user turn alone is too large, truncate its largest text / `tool_result` blocks and insert the English note `[content truncated to fit the model's context window]`.
+2. Fit target: `W - O1 - R_eff`, not merely `< W`, where `O1 = min(O, W - 1)` (the cap bounded by the window only, never by the input) and `R_eff` is `R` reduced to what `O1` leaves. If `input <= target`, the provider-visible total fits with the safety reserve (providers that count `max_tokens` included).
+3. If `input > target`, apply a deterministic fit plan:
+   - Drop the oldest complete turns / tool pairs before the latest user turn, preferring tool results, then assistant text, until the input is at or below the fit target.
+   - Then the oldest complete tool pairs inside the latest user turn (revision 2026-11-15), keeping the latest user message (when it is not inside the summary) and the latest complete tool pair. Never a pair's half, never the summary.
+   - If that is still too large, truncate the kept messages' largest text / `tool_result` blocks and insert the English note `[content truncated to fit the model's context window]`.
    - Record the plan in `model_call.request.fit` (dropped seqs, truncated block identifiers). `buildRequest` applies a recorded plan, so reconstruction is byte-for-byte and old logs (no `fit`) rebuild as before. No `DriftReason`: it is in the log.
-4. If system prompt + tools + the latest user message still exceed the fit target, fail with a clear kernel error (`run.context_too_large`) before any provider call. This is a configuration/input problem, not a history overflow.
-5. Estimator error: a provider may still reject a request the estimate thought fits. On `context_overflow`, re-trim to progressively smaller targets (70%, then 80%, then 90% of `W`; most aggressive first, applying the first target the plan actually reaches) and retry, bounded; this is the real backstop, not the estimate.
+4. Clamp output **after** the plan, from the input actually sent: `O' = clamp(O1, 1, W - inputAfterFit)` (revision 2026-11-15: clamping from the pre-trim estimate sent a trimmed request with `maxOutputTokens: 1`). A plan that reached its target leaves `O' = O1`. The recorded `maxOutputTokens` is this `O'`.
+5. If the plan cannot reach the target, compact once with `force: true` (4.4, the rung's model) and fit again; only if system prompt + tools + summary + the kept latest pair still exceed it, fail with `run.context_too_large` before any provider call. This is a configuration/input problem, not a history overflow.
+6. Estimator error: a provider may still reject a request the estimate thought fits. On `context_overflow`, re-trim against 70%, then 80%, then 90% of `W` and use the most aggressive target the plan actually reaches (estimate after the plan at or below that target); when none is reached, the 70% plan (the most trimming possible) is sent. Bounded; this is the real backstop, not the estimate.
 
 ### 4.4 Reactive compaction
 
@@ -97,6 +100,8 @@ Applied to every request after compaction and before sending:
   4. Then surface `model.context_overflow`; never loop.
 - Compaction in the reactive path uses the model of the rung that failed (`info`), not necessarily the agent's model; a fallback rung may have a smaller window, and the summary must fit it.
 - Each overflow fix-up (media exclusion, compaction, trim) consumes one attempt; the ladder's three rungs are unchanged, so a step may write up to five `model_call` rows. Overflow fix-ups are bounded to one of each per rung.
+- A fallback rung whose smaller window the local guard cannot reach (4.3 point 5) gets the same forced compaction with its own model before `run.context_too_large`; that forced compaction counts as the rung's one compaction fix-up.
+- Every compaction a step runs has its own idempotency keys (revision 2026-11-15): the ordinal of the compaction among the step's `compaction_summary` / `compaction_failed` events, not the failure count. A proactive summary followed by a forced one in the same step therefore writes two summaries and two usage records; before, the second reused the first's key and was silently dropped while its call was still billed. Backoff keeps counting consecutive failures.
 
 ### 4.5 Chunked compaction fallback
 
@@ -164,11 +169,13 @@ UI: a "Conversation compaction" section on the platform settings page and the or
 |---|---|
 | Proactive compaction fails | `compaction_failed` + backoff; step sends if it fits, else 4.3 |
 | Hard guard trims | request sent with `fit`; no error |
-| Provider rejects despite the estimate | progressive trim (70 → 80 → 90% of W) + retry, bounded |
+| Provider rejects despite the estimate | progressive trim (most aggressive reachable of 70 / 80 / 90% of W) + retry, bounded |
 | Reactive compaction fails | trim + retry; then `model.context_overflow` |
 | Media rejection with bytes | `media_excluded` + in-step retry |
 | Chunk fails | one `compaction_failed` with the chunk; no partial summary |
-| Prompt + tools alone too large | `run.context_too_large` before any provider call |
+| One user turn with a long tool loop outgrows the window | compacted inside the turn at a tool-pair boundary (4.2) |
+| Guard cannot reach the target (incl. a smaller fallback window) | forced compaction once, fit again (4.3 point 5) |
+| Prompt + tools + summary + latest pair too large | `run.context_too_large` before any provider call |
 | Manual compact while busy | `409 conversation.busy` |
 | Abort during compaction | run aborted; no partial summary event |
 | `enabled: false` | no proactive early compaction; hard line/guard/reactive stay armed |
