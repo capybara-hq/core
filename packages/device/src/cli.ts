@@ -127,6 +127,7 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
       return status(dir, cmd.json, out, err);
     case "start":
       return start({
+        service: { home, platform },
         stateDir: dir,
         out,
         err,
@@ -134,7 +135,7 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
         ...(io.kill && { kill: io.kill }),
       });
     case "stop":
-      return stop(dir, out, err, io.kill);
+      return stop(dir, out, err, io.kill, { home, platform });
     case "drain":
       if (cmd.wait !== true) return drain(dir, out, err, io.kill);
       return drainAndWait(dir, out, err, {

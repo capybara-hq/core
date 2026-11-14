@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -7,7 +7,7 @@ import type { Connection } from "../src/client.js";
 import { drain, drainAndWait } from "../src/commands/drain.js";
 import { legacyPolicyNotice, start } from "../src/commands/start.js";
 import { stop } from "../src/commands/stop.js";
-import { pidPath, writePid } from "../src/pid.js";
+import { pidPath, readRunning, removePid, writePid } from "../src/pid.js";
 import type { PolicyStore } from "../src/policy-store.js";
 import { DEFAULT_POLICY, writeCredential, writePolicy } from "../src/state.js";
 import { FakeExecutor } from "./fake-kernel.js";
@@ -252,12 +252,14 @@ describe("start, stop, drain", () => {
       return true;
     }) as typeof process.kill;
     const err: string[] = [];
+    const noService = { home: dir, platform: "darwin" as const };
     expect(
       stop(
         dir,
         () => {},
         (l) => err.push(l),
         kill,
+        noService,
       ),
     ).toBe(1);
     writePid(dir, 777);
@@ -267,6 +269,7 @@ describe("start, stop, drain", () => {
         () => {},
         () => {},
         kill,
+        noService,
       ),
     ).toBe(0);
     expect(
@@ -325,5 +328,48 @@ describe("start, stop, drain", () => {
     ).toBe(1);
     expect(slept.reduce((a, b) => a + b, 0)).toBe(2000);
     expect(err.join("\n")).toContain("still draining after 2 s");
+  });
+});
+
+describe("a login service", () => {
+  it("stop refuses while one is installed, and never signals the program", () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "device-service-stop-")));
+    const sent: Array<[number, string | number | undefined]> = [];
+    const kill = ((pid: number, sig?: string | number) => {
+      sent.push([pid, sig]);
+      return true;
+    }) as typeof process.kill;
+    // the service file launchd would have written
+    mkdirSync(join(dir, "Library", "LaunchAgents"), { recursive: true });
+    writeFileSync(join(dir, "Library", "LaunchAgents", "top.capybara.device.plist"), "plist");
+    writePid(dir, 4242);
+    const err: string[] = [];
+    expect(
+      stop(
+        dir,
+        () => {},
+        (l) => err.push(l),
+        kill,
+        { home: dir, platform: "darwin" },
+      ),
+    ).toBe(1);
+    expect(err.join("\n")).toContain("capybara-device service stop");
+    expect(sent.filter(([, s]) => s !== 0)).toEqual([]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("the pid file carries the running version, and a bare pid reads as unknown", () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "device-pid-")));
+    writePid(dir, 1234, "0.1.0-rc.9");
+    expect(readRunning(dir, () => true)).toMatchObject({ pid: 1234, version: "0.1.0-rc.9" });
+    // a program older than the version field
+    writeFileSync(pidPath(dir), "1234\n");
+    const old = readRunning(dir, () => true);
+    expect(old?.pid).toBe(1234);
+    expect(old?.version).toBeUndefined();
+    // removePid still matches the JSON form
+    removePid(dir, 1234);
+    expect(existsSync(pidPath(dir))).toBe(false);
+    rmSync(dir, { recursive: true, force: true });
   });
 });

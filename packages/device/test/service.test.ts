@@ -24,7 +24,8 @@ import {
   plistPath,
   rotateServiceLog,
 } from "../src/service/launchd.js";
-import { unitContent, unitPath } from "../src/service/systemd.js";
+import { SYSTEMD_UNIT, unitContent, unitPath } from "../src/service/systemd.js";
+import { PROGRAM_VERSION } from "../src/version.js";
 
 const spec = {
   nodePath: "/opt/node 22/bin/node",
@@ -206,9 +207,19 @@ describe("service command", () => {
     );
   });
 
-  it("macOS status says whether the agent is loaded and the process running", async () => {
+  const installPlist = () => {
+    mkdirSync(dirname(plistPath(home)), { recursive: true });
+    writeFileSync(plistPath(home), plistContent(spec));
+  };
+  const installUnit = () => {
+    mkdirSync(dirname(unitPath(home)), { recursive: true });
+    writeFileSync(unitPath(home), unitContent(spec));
+  };
+
+  it("macOS status names the running version, and a restart when it is older", async () => {
     const stateDir = join(home, ".config", "capybara-device");
-    writePid(stateDir, process.pid);
+    installPlist();
+    writePid(stateDir, process.pid, PROGRAM_VERSION);
     expect(
       await serviceCommand("status", {
         ...base(),
@@ -216,10 +227,12 @@ describe("service command", () => {
         platform: "darwin",
       }),
     ).toBe(0);
-    expect(lines.join("\n")).toContain(`capybara-device is running (pid ${process.pid})`);
+    expect(lines.join("\n")).toContain(`running (pid ${process.pid}, ${PROGRAM_VERSION})`);
+    // current: no restart line
+    expect(lines.join("\n")).not.toContain("service restart");
 
-    // The agent is loaded but no pid file: the program is between restarts.
-    rmSync(pidPath(stateDir), { force: true });
+    // An older daemon after an upgrade: still running, and the line says how to make it current.
+    writePid(stateDir, process.pid, "0.1.0-rc.7");
     lines.length = 0;
     expect(
       await serviceCommand("status", {
@@ -227,26 +240,55 @@ describe("service command", () => {
         run: fakeLaunchctl({ loaded: true }),
         platform: "darwin",
       }),
-    ).toBe(1);
-    expect(lines.join("\n")).toContain("no capybara-device process is running");
+    ).toBe(0);
+    expect(lines.join("\n")).toContain(
+      `installed ${PROGRAM_VERSION} — restart it: capybara-device service restart`,
+    );
+
+    // A pid file from a program that wrote no version.
+    writeFileSync(pidPath(stateDir), `${process.pid}\n`);
+    lines.length = 0;
+    await serviceCommand("status", {
+      ...base(),
+      run: fakeLaunchctl({ loaded: true }),
+      platform: "darwin",
+    });
+    expect(lines.join("\n")).toContain(`running (pid ${process.pid}, version unknown)`);
   });
 
-  it("macOS status reports an agent that is not loaded", async () => {
+  it("macOS status separates not installed from installed but stopped", async () => {
+    const stateDir = join(home, ".config", "capybara-device");
     expect(
-      await serviceCommand("status", {
-        ...base(),
-        run: fakeLaunchctl({}),
-        platform: "darwin",
-      }),
+      await serviceCommand("status", { ...base(), run: fakeLaunchctl({}), platform: "darwin" }),
     ).toBe(1);
-    expect(lines.join("\n")).toContain("not loaded");
+    expect(lines.join("\n")).toContain("is not installed");
+
+    installPlist();
+    lines.length = 0;
+    expect(
+      await serviceCommand("status", { ...base(), run: fakeLaunchctl({}), platform: "darwin" }),
+    ).toBe(1);
+    expect(lines.join("\n")).toContain("installed, but nothing is running");
+
+    // loaded but the program is between restarts
+    writePid(stateDir, process.pid, PROGRAM_VERSION);
+    lines.length = 0;
+    const inactive = (cmd: string, args: string[]): void => {
+      calls.push([cmd, ...args]);
+      if (args[0] === "print") throw failed(113, "Could not find service");
+    };
+    expect(await serviceCommand("status", { ...base(), run: inactive, platform: "darwin" })).toBe(
+      1,
+    );
+    expect(lines.join("\n")).toContain("installed, but nothing is running");
   });
 
   it("Linux status follows systemctl and the pid file", async () => {
     const stateDir = join(home, ".config", "capybara-device");
-    writePid(stateDir, process.pid);
+    installUnit();
+    writePid(stateDir, process.pid, PROGRAM_VERSION);
     expect(await serviceCommand("status", { ...base(), platform: "linux" })).toBe(0);
-    expect(lines.join("\n")).toContain(`capybara-device is running (pid ${process.pid})`);
+    expect(lines.join("\n")).toContain(`running (pid ${process.pid}, ${PROGRAM_VERSION})`);
 
     const inactive = (cmd: string, args: string[]): void => {
       calls.push([cmd, ...args]);
@@ -254,7 +296,115 @@ describe("service command", () => {
     };
     lines.length = 0;
     expect(await serviceCommand("status", { ...base(), platform: "linux", run: inactive })).toBe(1);
-    expect(lines.join("\n")).toContain("not loaded");
+    expect(lines.join("\n")).toContain("installed, but nothing is running");
+  });
+
+  it("macOS start: refuses without an install, bootstraps an installed one, no-ops when loaded", async () => {
+    const launchctl = fakeLaunchctl({});
+    expect(await serviceCommand("start", { ...base(), run: launchctl, platform: "darwin" })).toBe(
+      1,
+    );
+    expect(lines.join("\n")).toContain("capybara-device service install");
+
+    installPlist();
+    lines.length = 0;
+    expect(await serviceCommand("start", { ...base(), run: launchctl, platform: "darwin" })).toBe(
+      0,
+    );
+    expect(calls.filter((c) => c[1] === "bootstrap")).toHaveLength(1);
+    expect(lines.join("\n")).toContain("Started the capybara-device login service.");
+
+    lines.length = 0;
+    expect(
+      await serviceCommand("start", {
+        ...base(),
+        run: fakeLaunchctl({ loaded: true }),
+        platform: "darwin",
+      }),
+    ).toBe(0);
+    expect(lines.join("\n")).toContain("already running");
+  });
+
+  it("macOS stop unloads the service and never signals", async () => {
+    expect(
+      await serviceCommand("stop", { ...base(), run: fakeLaunchctl({}), platform: "darwin" }),
+    ).toBe(1);
+    expect(lines.join("\n")).toContain("capybara-device service install");
+
+    installPlist();
+    lines.length = 0;
+    expect(
+      await serviceCommand("stop", { ...base(), run: fakeLaunchctl({}), platform: "darwin" }),
+    ).toBe(0);
+    expect(lines.join("\n")).toContain("not running");
+
+    const launchctl = fakeLaunchctl({ loaded: true });
+    lines.length = 0;
+    expect(await serviceCommand("stop", { ...base(), run: launchctl, platform: "darwin" })).toBe(0);
+    expect(calls.filter((c) => c[1] === "bootout")).toHaveLength(1);
+    expect(lines.join("\n")).toContain("capybara-device service start");
+  });
+
+  it("macOS restart reloads a loaded service, and bootstraps an unloaded one", async () => {
+    installPlist();
+    const launchctl = fakeLaunchctl({ loaded: true });
+    expect(await serviceCommand("restart", { ...base(), run: launchctl, platform: "darwin" })).toBe(
+      0,
+    );
+    expect(calls.filter((c) => c[1] === "kickstart")).toHaveLength(1);
+    expect(calls.find((c) => c[1] === "kickstart")).toEqual([
+      "launchctl",
+      "kickstart",
+      "-k",
+      label,
+    ]);
+
+    lines.length = 0;
+    calls.length = 0;
+    expect(
+      await serviceCommand("restart", {
+        ...base(),
+        run: fakeLaunchctl({}),
+        platform: "darwin",
+      }),
+    ).toBe(0);
+    expect(calls.filter((c) => c[1] === "bootstrap")).toHaveLength(1);
+    expect(lines.join("\n")).toContain("Restarted the capybara-device login service.");
+  });
+
+  it("macOS restart refuses without an install", async () => {
+    expect(
+      await serviceCommand("restart", {
+        ...base(),
+        run: fakeLaunchctl({}),
+        platform: "darwin",
+      }),
+    ).toBe(1);
+    expect(lines.join("\n")).toContain("capybara-device service install");
+  });
+
+  it("Linux start, stop and restart are systemctl verbs", async () => {
+    /** Records the call; answers `is-active` with `active`. */
+    const systemctl = (active: boolean) => (cmd: string, args: string[]) => {
+      calls.push([cmd, ...args]);
+      if (args.includes("is-active") && !active) throw failed(3, "inactive");
+    };
+    const inactive = systemctl(false);
+    const running = systemctl(true);
+    expect(await serviceCommand("start", { ...base(), run: inactive, platform: "linux" })).toBe(1);
+    installUnit();
+    lines.length = 0;
+    calls.length = 0;
+    expect(await serviceCommand("start", { ...base(), run: inactive, platform: "linux" })).toBe(0);
+    expect(calls).toContainEqual(["systemctl", "--user", "start", SYSTEMD_UNIT]);
+    lines.length = 0;
+    calls.length = 0;
+    expect(await serviceCommand("restart", { ...base(), run: running, platform: "linux" })).toBe(0);
+    expect(calls).toContainEqual(["systemctl", "--user", "restart", SYSTEMD_UNIT]);
+    lines.length = 0;
+    calls.length = 0;
+    expect(await serviceCommand("stop", { ...base(), run: running, platform: "linux" })).toBe(0);
+    expect(calls).toContainEqual(["systemctl", "--user", "stop", SYSTEMD_UNIT]);
   });
 
   it("macOS install stops waiting for the old service at the time limit", async () => {
@@ -291,7 +441,6 @@ describe("service command", () => {
     const text = lines.join("\n");
     expect(text).toContain("Input/output error");
     expect(text).toContain(`launchctl print ${label}`);
-    expect(text).toContain("capybara-device service install");
   });
 
   it("macOS install does not retry other bootstrap errors", async () => {

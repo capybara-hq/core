@@ -53,7 +53,7 @@ Commands: `login --url <url> [--no-browser] [--dir <path>] [--mode os|docker]`, 
 `status [--json]` (it prints the command mode too), `start`, `stop`,
 `drain [--wait] [--timeout <seconds>]`, `mode [auto|sandbox] [--yes]`,
 `policy [show | set <key> <value> [--yes] | add|remove <key> <value>]` and
-`service install|uninstall|status`.
+`service install|uninstall|start|stop|restart|status`.
 `mode` is the only way to switch the command mode (`policy set mode` points there); `mode auto`
 prints the risk text and asks for confirmation unless `--yes` is given.
 
@@ -224,8 +224,20 @@ need to allow single domains.
 (`~/Library/LaunchAgents/top.capybara.device.plist`, log `service.log` in the state directory), on
 Linux a systemd user unit (`~/.config/systemd/user/capybara-device.service`). The macOS agent
 restarts the program after every exit, at most every 30 s (`ThrottleInterval`); systemd restarts it
-when it exits non-zero, after 5 s. `capybara-device service status` reports whether the agent is
-loaded and the program running. A user unit runs only
+when it exits non-zero, after 5 s.
+
+`service start|stop|restart` control it without knowing launchctl or systemctl. `stop` unloads the
+service (the plist or unit stays) rather than signalling the program, which the service manager
+would start straight back up; running commands end with it. `restart` reloads the program from the
+installed `bin`, so it is **the way to apply a package upgrade**: `npm i -g
+@capybara-hq/device@latest && capybara-device service restart`. While a service is installed, the
+top-level `stop` refuses and points at `service stop` (a signal would be undone by the restart
+policy); `start` still runs, for a stopped service, and says how to restart the installed one.
+
+`capybara-device service status` reports whether the service is installed, whether the program is
+running and **at which version**, and when the running program is older than the installed package
+it says so with the restart command. The pid file records the version (`{pid, version, startedAt}`);
+one written by an older program reads as "version unknown". A user unit runs only
 while you have a session, so run `loginctl enable-linger $USER` to start it at boot and keep it
 running after you log out. `service.log` is emptied into `service.log.1` at 10 MiB when the program
 starts. The service runs `node <bin> start` with the `PATH` of the shell that installed it (so
