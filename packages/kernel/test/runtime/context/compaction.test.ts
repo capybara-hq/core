@@ -14,9 +14,14 @@ import {
   shouldCompact,
   summarySavedTokens,
 } from "../../../src/runtime/context/compaction.js";
+import { estimateTokens } from "../../../src/runtime/context/tokens.js";
 import { Log, NO_TAIL_LIMIT as NO_LIMIT, compactionSettings as settings } from "./fixtures.js";
 
 const WINDOW = 200_000;
+
+/** Estimated tokens of a plain text, the unit the chunk size is expressed in. */
+const textTokensOf = (text: string) =>
+  estimateTokens([{ role: "user", content: [{ type: "text", text }] }], []);
 
 describe("compactionInputBudget", () => {
   it("leaves room for the output cap and the reserve", () => {
@@ -215,21 +220,37 @@ describe("chunkTranscript", () => {
     expect(chunkTranscript("a\nb", 100)).toEqual(["a\nb"]);
   });
 
-  it("splits at line boundaries without exceeding the chunk size", () => {
-    // 4 ASCII characters are one token: 2 tokens hold two lines
-    expect(chunkTranscript("aaaa\nbbbb\ncccc", 2)).toEqual(["aaaa\nbbbb", "cccc"]);
+  it("splits at line boundaries and counts the separators", () => {
+    // 4 ASCII characters are one token and a separator one more, so two lines are 3 tokens
+    expect(chunkTranscript("aaaa\nbbbb\ncccc", 2)).toEqual(["aaaa", "bbbb", "cccc"]);
+    expect(chunkTranscript("aaaa\nbbbb\ncccc", 3)).toEqual(["aaaa\nbbbb", "cccc"]);
+    // the claim holds on the estimator: every chunk is at most the size
+    for (const chunk of chunkTranscript("aaaa\nbbbb\ncccc", 3)) {
+      expect(textTokensOf(chunk)).toBeLessThanOrEqual(3);
+    }
   });
 
   it("hard-splits a single line over the chunk size at a character boundary, with a marker", () => {
-    // 40 ASCII characters are 10 tokens; 4 tokens keep 16 characters
-    const chunks = chunkTranscript("x".repeat(40), 4);
-    expect(chunks).toEqual([
-      `${"x".repeat(16)}\n[chunk split]\n`,
-      `${"x".repeat(16)}\n[chunk split]\n`,
-      "x".repeat(8),
-    ]);
+    // 400 ASCII characters are 100 tokens; a piece is at most 20 tokens minus the marker's 4, and
+    // the 80-character tail is exactly 20 tokens so it stays whole
+    const chunks = chunkTranscript("x".repeat(400), 20);
+    expect(chunks).toHaveLength(6);
+    expect(chunks[0]).toBe(`${"x".repeat(64)}\n[chunk split]\n`);
+    expect(chunks.at(-1)).toBe("x".repeat(80));
     // the pieces reassemble into the original line
-    expect(chunks.join("").replaceAll("\n[chunk split]\n", "")).toBe("x".repeat(40));
+    expect(chunks.join("").replaceAll("\n[chunk split]\n", "")).toBe("x".repeat(400));
+    for (const chunk of chunks) expect(textTokensOf(chunk)).toBeLessThanOrEqual(20);
+  });
+
+  it("never cuts a UTF-16 surrogate pair", () => {
+    // an emoji is two UTF-16 units and one token; a cut inside it would leave a lone surrogate
+    const emoji = "\u{1F600}";
+    const chunks = chunkTranscript(emoji.repeat(20), 8);
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const chunk of chunks) {
+      const text = chunk.replaceAll("\n[chunk split]\n", "");
+      expect(text).toBe(emoji.repeat(text.length / 2));
+    }
   });
 });
 

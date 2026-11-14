@@ -315,54 +315,84 @@ export function extractSummary(text: string): string {
     .trim();
 }
 
-/**
- * Splits a transcript into chunks of at most `chunkSize` estimated tokens at line boundaries
- * (context compaction spec §4.5). A single line over the chunk size (usually a tool result) is
- * hard-split at a character boundary rather than failing, its pieces marked with
- * {@link CHUNK_SPLIT_MARKER}. Empty input returns no chunks; input that fits returns itself as the
- * only chunk.
- */
-export function chunkTranscript(transcript: string, chunkSize: number): string[] {
-  if (transcript.length === 0) return [];
-  const max = Math.max(1, chunkSize);
-  const chunks: string[] = [];
-  let lines: string[] = [];
-  let tokens = 0;
-  const flush = (): void => {
-    if (lines.length === 0) return;
-    chunks.push(lines.join("\n"));
-    lines = [];
-    tokens = 0;
-  };
-  for (const line of transcript.split("\n")) {
-    const lineTokens = textTokens(line);
-    if (lineTokens > max) {
-      flush();
-      const pieces = splitLine(line, max);
-      pieces.forEach((piece, i) => {
-        chunks.push(i === pieces.length - 1 ? piece : `${piece}${CHUNK_SPLIT_MARKER}`);
-      });
-      continue;
-    }
-    if (tokens + lineTokens > max) flush();
-    lines.push(line);
-    tokens += lineTokens;
-  }
-  flush();
-  return chunks;
-}
-
 /** The marker a hard-split line carries where it was cut (context compaction spec §4.5). */
 const CHUNK_SPLIT_MARKER = "\n[chunk split]\n";
 
-/** Cuts a line into pieces of at most `max` estimated tokens, at character boundaries. */
+/** Estimated tokens the split marker adds to a chunk. */
+const CHUNK_SPLIT_TOKENS = textTokens(CHUNK_SPLIT_MARKER);
+
+/** Estimated tokens a line separator adds to a chunk. */
+const NEWLINE_TOKENS = textTokens("\n");
+
+/**
+ * The next chunk of a transcript and what is left to summarise (context compaction spec §4.5):
+ * whole lines up to `chunkSize` estimated tokens, counting the line separators; a single line over
+ * the chunk size (usually a tool result) is hard-split at a character boundary with the split
+ * marker, never inside a UTF-16 surrogate pair, and the rest of the line stays for the next call.
+ * Null for empty input.
+ */
+export function nextTranscriptChunk(
+  transcript: string,
+  chunkSize: number,
+): { chunk: string; rest: string } | null {
+  if (transcript.length === 0) return null;
+  const max = Math.max(1, chunkSize);
+  const lines = transcript.split("\n");
+  const taken: string[] = [];
+  let tokens = 0;
+  let ended = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] as string;
+    const lineTokens = textTokens(line);
+    if (lineTokens > max && taken.length === 0) {
+      // the loop only breaks on the transcript's first line (every other line is taken or ends a
+      // chunk), so the rest is the transcript after the piece: no marker is left in it, or the
+      // next split would count the marker as content
+      const pieces = splitLine(line, Math.max(1, max - CHUNK_SPLIT_TOKENS));
+      const head = pieces[0] as string;
+      return { chunk: `${head}${CHUNK_SPLIT_MARKER}`, rest: transcript.slice(head.length) };
+    }
+    const cost = lineTokens + (taken.length > 0 ? NEWLINE_TOKENS : 0);
+    if (taken.length > 0 && tokens + cost > max) break;
+    taken.push(line);
+    tokens += cost;
+    ended = i + 1;
+  }
+  return { chunk: taken.join("\n"), rest: lines.slice(ended).join("\n") };
+}
+
+/**
+ * Splits a transcript into chunks of at most `chunkSize` estimated tokens at line boundaries
+ * (context compaction spec §4.5). A single line over the chunk size is hard-split at a character
+ * boundary rather than failing, its pieces marked with {@link CHUNK_SPLIT_MARKER}. Empty input
+ * returns no chunks; input that fits returns itself as the only chunk.
+ */
+export function chunkTranscript(transcript: string, chunkSize: number): string[] {
+  const chunks: string[] = [];
+  let rest: string | null = transcript;
+  while (rest !== null) {
+    const next = nextTranscriptChunk(rest, chunkSize);
+    if (next === null) break;
+    // an empty piece carries nothing (a transcript of blank lines only)
+    if (next.chunk !== "") chunks.push(next.chunk);
+    rest = next.rest.length === 0 ? null : next.rest;
+  }
+  return chunks;
+}
+
+/**
+ * Cuts a line into pieces of at most `max` estimated tokens, at character boundaries. Iterates
+ * code points (not UTF-16 units), so a surrogate pair is never split.
+ */
 function splitLine(line: string, max: number): string[] {
   const pieces: string[] = [];
   let start = 0;
   let ascii = 0;
   let other = 0;
-  for (let i = 0; i < line.length; i++) {
-    const isAscii = line.charCodeAt(i) < 128;
+  let i = 0;
+  while (i < line.length) {
+    const code = line.codePointAt(i) as number;
+    const isAscii = code < 128;
     const nextAscii = ascii + (isAscii ? 1 : 0);
     const nextOther = other + (isAscii ? 0 : 1);
     if (i > start && Math.ceil(nextAscii / 4 + nextOther) > max) {
@@ -374,6 +404,8 @@ function splitLine(line: string, max: number): string[] {
       ascii = nextAscii;
       other = nextOther;
     }
+    // a surrogate pair is two UTF-16 units, one code point
+    i += code > 0xffff ? 2 : 1;
   }
   pieces.push(line.slice(start));
   return pieces;

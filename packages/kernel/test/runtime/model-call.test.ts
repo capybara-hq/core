@@ -1492,7 +1492,7 @@ describe("runModelStep", () => {
           expect(attempts).toBe(2);
           const failed = await ofType("compaction_failed");
           expect(failed).toHaveLength(1);
-          expect(failed[0]?.payload.reason).toContain("chunk 2/3");
+          expect(failed[0]?.payload.reason).toContain("chunk 2");
           expect(await ofType("compaction_summary")).toEqual([]);
           // chunk 1's call is billed; chunk 2 failed before its usage existed
           const usage = (await ofType("usage")).filter((u) => u.payload.purpose === "compaction");
@@ -1521,11 +1521,52 @@ describe("runModelStep", () => {
           const failed = await ofType("compaction_failed");
           expect(failed).toHaveLength(1);
           expect(failed[0]?.payload.reason).toContain("no summary");
-          expect(failed[0]?.payload.reason).toContain("chunk 2/3");
+          expect(failed[0]?.payload.reason).toContain("chunk 2");
           expect(await ofType("compaction_summary")).toEqual([]);
           // both calls that ran are billed
           const usage = (await ofType("usage")).filter((u) => u.payload.purpose === "compaction");
           expect(usage.map((u) => u.payload.chunk)).toEqual([1, 2]);
+        });
+      });
+
+      it("a near-cap running summary shrinks the next chunk so every request fits the window", async () => {
+        // 800 characters ≈ 200 tokens: the full summary cap, over the 100-token allowance
+        const nearCap = `Summary: ${"s".repeat(791)}`;
+        const seen: ModelRequest[] = [];
+        stubImpl = stub([chunked()], (req) => {
+          seen.push(req);
+          return req.system.some((x) => x.text.includes(COMPACTION_MARKER)) ? nearCap : "answer";
+        });
+        const agent = agentWith({ model: { provider: "stub", model: "chunked" } });
+        await withSettings(settings, async () => {
+          await history();
+          await say("go");
+          expect((await step({ agent })).content).toEqual([{ type: "text", text: "answer" }]);
+
+          const calls = compactionCalls(seen);
+          expect(calls.length).toBeGreaterThanOrEqual(3);
+          const inner = (req: ModelRequest): string => {
+            const body = transcriptOf(req);
+            return body.slice("<transcript>\n".length, -"\n</transcript>".length);
+          };
+          // the base chunk is 500 tokens; the 200-token summary leaves 395, so the next chunk is
+          // one line shorter than the first
+          const first = inner(calls[0] as ModelRequest);
+          const second = inner(calls[1] as ModelRequest).replace(
+            `[Earlier summary]\n${nearCap}\n\n`,
+            "",
+          );
+          expect(second.length).toBeLessThan(first.length);
+          // the running summary may now be the full output cap: every real request still fits
+          for (const call of calls) {
+            const input = estimateTokens(call.messages, call.system, call.tools);
+            expect(input + (call.maxOutputTokens ?? 0)).toBeLessThanOrEqual(WINDOW);
+          }
+          // one summary event, from the last call
+          expect(await ofType("compaction_summary")).toHaveLength(1);
+          const usage = (await ofType("usage")).filter((u) => u.payload.purpose === "compaction");
+          expect(usage.map((u) => u.payload.chunk)).toEqual(calls.map((_c, i) => i + 1));
+          expect(usage.every((u) => u.payload.chunks === calls.length)).toBe(true);
         });
       });
     });

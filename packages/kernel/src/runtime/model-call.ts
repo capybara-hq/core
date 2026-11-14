@@ -42,12 +42,13 @@ import {
 import {
   acceptSummary,
   buildCompactionRequest,
-  chunkTranscript,
   compactionBackoff,
   compactionChunkSize,
   compactionInputBudget,
   compactionPlan,
+  compactionRequestOverhead,
   extractSummary,
+  nextTranscriptChunk,
   shouldCompact,
   summarySavedTokens,
 } from "./context/compaction.js";
@@ -930,6 +931,11 @@ function consecutiveCompactionFailures(events: ConversationEvent[]): number {
   return n;
 }
 
+/** Estimated input tokens of a plain text (a user message's only content). */
+function textTokens(text: string): number {
+  return estimateTokens([{ role: "user", content: [{ type: "text", text }] }], []);
+}
+
 /** Options of {@link maybeCompact}. */
 interface CompactOptions {
   /**
@@ -1034,36 +1040,56 @@ async function maybeCompact(
     provider: ref.provider,
     model: ref.model,
   };
-  // §4.5: one summary call's input room is B = Wc - Cmax - R. The room kept for the running
-  // summary the next call carries (half of the output cap) and the request's fixed overhead (the
+  // §4.5: one summary call's input room is B = Wc - Cmax - R. The room the running summary takes
+  // in the next call (at least half of the output cap) and the request's fixed overhead (the
   // instruction and the transcript wrapper) are subtracted from it, leaving the chunk size. A
   // transcript over it is summarised chunk by chunk, each call sent the running summary before its
-  // chunk; a degenerate budget (a window smaller than the cap, the reserve, the overhead and the
-  // allowance) leaves the single call as before.
+  // chunk; the actual running summary can be up to the full output cap, so each call after the
+  // first shrinks its chunk to that estimate. A degenerate budget (a window smaller than the cap,
+  // the reserve, the overhead and the allowance) leaves the single call as before.
   const budget = compactionInputBudget(info.contextWindow, summaryCap, compaction.reserveTokens);
-  const chunkSize = compactionChunkSize(budget, summaryCap);
-  const transcriptTokens = estimateTokens(
-    [{ role: "user", content: [{ type: "text", text: plan.transcript }] }],
-    [],
-  );
-  const overChunk = chunkSize > 0 && transcriptTokens > chunkSize;
-  const split = overChunk ? chunkTranscript(plan.transcript, chunkSize) : null;
-  // one chunk means the transcript still fits one call (per-line rounding): keep it as today
-  const chunked = split !== null && split.length > 1;
-  const chunks = split ?? [plan.transcript];
+  const overhead = compactionRequestOverhead();
+  const allowance = Math.ceil(summaryCap / 2);
+  const baseChunkSize = compactionChunkSize(budget, summaryCap);
+  // the whole transcript is one call unless it is over the base chunk size
+  let remaining: string | null =
+    baseChunkSize > 0 && textTokens(plan.transcript) > baseChunkSize ? plan.transcript : null;
 
   let failure: string | null = null;
   /** The 1-based chunk whose call failed or was denied, when the compaction was chunked. */
   let failedChunk: number | null = null;
   let denial: { verdict: HookDenial; chunk: number } | null = null;
   let summary = "";
+  /** Whether the compaction really took more than one call. */
+  let multiChunk = false;
+  /** The chunk calls made; the total is known only when the compaction ends. */
+  let attempted = 0;
   const usages: { chunk: number | undefined; usage: ModelUsage }[] = [];
-  for (let i = 0; i < chunks.length; i++) {
-    const chunkNo = i + 1;
+  for (;;) {
+    let chunkText: string;
+    if (remaining === null) {
+      chunkText = plan.transcript;
+    } else {
+      // this call's chunk: the previous call's summary may be longer than the allowance, so
+      // reserve its real estimate (the allowance is only the floor)
+      const held = Math.max(
+        allowance,
+        summary === "" ? 0 : textTokens(`[Earlier summary]\n${summary}\n\n`),
+      );
+      const next = nextTranscriptChunk(
+        remaining,
+        Math.min(baseChunkSize, budget - overhead - held),
+      );
+      if (next === null) break;
+      chunkText = next.chunk;
+      remaining = next.rest.length === 0 ? null : next.rest;
+      if (remaining !== null) multiChunk = true;
+    }
+    attempted++;
+    const chunkNo = attempted;
     // call 1 summarises chunk 1; call i carries the running summary before its chunk, which the
     // instruction merges (compactionPlan formats a previous summary the same way)
-    const callInput =
-      summary === "" ? (chunks[i] as string) : `[Earlier summary]\n${summary}\n\n${chunks[i]}`;
+    const callInput = summary === "" ? chunkText : `[Earlier summary]\n${summary}\n\n${chunkText}`;
     const request = buildCompactionRequest(callInput, info.id, summaryCap);
     if (hookBase && deps.hooks?.has("model.request")) {
       let verdict: Awaited<ReturnType<HookRunner["run"]>>;
@@ -1095,7 +1121,7 @@ async function maybeCompact(
           if (ev.type === "text_delta") partial += ev.text;
         },
       );
-      usages.push({ chunk: chunked ? chunkNo : undefined, usage: out.usage });
+      usages.push({ chunk: multiChunk ? chunkNo : undefined, usage: out.usage });
       if (hookBase && deps.hooks) {
         fireObserve(
           deps.hooks,
@@ -1117,15 +1143,15 @@ async function maybeCompact(
       summary = extractSummary(final || partial);
       // an intermediate call with nothing to carry forward would silently drop every chunk before
       // it: fail the compaction instead (spec §4.5), no partial summary
-      if (i < chunks.length - 1 && summary === "") {
+      if (remaining !== null && summary === "") {
         failure = "a chunk produced no summary";
-        failedChunk = chunked ? chunkNo : null;
+        failedChunk = multiChunk ? chunkNo : null;
         break;
       }
       // the last call's text is the summary, accepted against the full transcript (spec §4.5)
-      if (i === chunks.length - 1 && !acceptSummary(summary, plan.transcript)) {
+      if (remaining === null && !acceptSummary(summary, plan.transcript)) {
         failure = `summary too short (${summary.length} chars)`;
-        failedChunk = chunked ? chunkNo : null;
+        failedChunk = multiChunk ? chunkNo : null;
       }
     } catch (err) {
       if (err instanceof StepAborted) throw err;
@@ -1147,14 +1173,16 @@ async function maybeCompact(
         );
       }
       failure = err instanceof Error ? err.message : String(err);
-      failedChunk = chunked ? chunkNo : null;
+      failedChunk = multiChunk ? chunkNo : null;
       break;
     }
+    if (failure !== null || denial !== null) break;
+    // the whole transcript was this one call, or its last chunk is done
+    if (remaining === null) break;
   }
 
   /** The chunk a failure stopped at, for the reason (empty when the compaction was not chunked). */
-  const chunkNote = (chunk: number | null): string =>
-    chunk === null ? "" : ` (chunk ${chunk}/${chunks.length})`;
+  const chunkNote = (chunk: number | null): string => (chunk === null ? "" : ` (chunk ${chunk})`);
 
   /** One usage event per completed call (spec §4.5); a chunked call carries its chunk index. */
   const usageEvents = (): AppendEvent[] =>
@@ -1168,7 +1196,7 @@ async function maybeCompact(
         model: ref.model,
         ...usage,
         purpose: "compaction" as const,
-        ...(chunk !== undefined ? { chunk, chunks: chunks.length } : {}),
+        ...(chunk !== undefined ? { chunk, chunks: attempted } : {}),
       },
     }));
 
@@ -1192,7 +1220,7 @@ async function maybeCompact(
       runId,
       payload: {
         attempt: attemptNo,
-        reason: `compaction request blocked by the "${verdict.plugin}" policy hook (${verdict.cause})${chunkNote(chunked ? denial.chunk : null)}`,
+        reason: `compaction request blocked by the "${verdict.plugin}" policy hook (${verdict.cause})${chunkNote(multiChunk ? denial.chunk : null)}`,
       },
     };
     deps.log.warn("compaction blocked by a policy hook", {
