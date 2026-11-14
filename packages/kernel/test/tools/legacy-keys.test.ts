@@ -281,6 +281,20 @@ describe("prompt files and the stored-definition tool key normalization", () => 
     expect(readInstructionFiles(d)).toEqual(files);
   });
 
+  it("an invalid stored attribution mode reads as inherit, keeping the other fields", () => {
+    // stored data is not re-validated: the kernel and the agent page both read it as inherit
+    const bogus = normalizeStoredDefinition(
+      { ...stored, attribution: { mode: "bogus", commit: "Co-Authored-By: X" } },
+      scope,
+    );
+    expect(bogus.attribution).toEqual({ mode: "inherit", commit: "Co-Authored-By: X" });
+    // a valid mode is kept as it is
+    for (const mode of ["inherit", "custom", "off"] as const) {
+      const d = normalizeStoredDefinition({ ...stored, attribution: { mode } }, scope);
+      expect(d.attribution).toEqual({ mode });
+    }
+  });
+
   it("a save re-sending the joined text over a normalized current version keeps the files", () => {
     const current = normalizeStoredDefinition(stored, scope);
     const saved = deriveInstructions(

@@ -499,16 +499,19 @@ type AttributionDraft = Partial<Pick<PlatformAttributionView, AttributionField>>
 
 /**
  * The values the attribution section shows (the draft over the saved ones) and the patch: the
- * changed fields only, never one set in the startup config.
+ * changed fields only, never one set in the startup config. A locked field always shows its
+ * read-only (startup config) value, whatever a draft edit tried to put there.
  */
 function attributionOf(
   saved: PlatformAttributionView,
   draft: AttributionDraft,
 ): { value: Omit<PlatformAttributionView, "sources">; patch: AttributionPatch | null } {
+  const shown = <F extends AttributionField>(f: F): PlatformAttributionView[F] =>
+    lockedSource(saved.sources[f]) === null ? (draft[f] ?? saved[f]) : saved[f];
   const value = {
-    commit: draft.commit ?? saved.commit,
-    pr: draft.pr ?? saved.pr,
-    sessionUrl: draft.sessionUrl ?? saved.sessionUrl,
+    commit: shown("commit"),
+    pr: shown("pr"),
+    sessionUrl: shown("sessionUrl"),
   };
   const patch: AttributionPatch = {};
   for (const f of ATTRIBUTION_FIELDS) {
@@ -702,7 +705,18 @@ function AttributionSection({
           <Text pre>{value.pr === "" ? off : value.pr}</Text>
         </Stack>
         <div>
-          <Button variant="ghost" onClick={() => onChange({ ...ATTRIBUTION_DEFAULTS })}>
+          <Button
+            variant="ghost"
+            onClick={() => {
+              // only the fields this console may change: a field the startup config sets keeps its
+              // read-only value (restoring it to the built-in default would show a value not in effect)
+              const next: AttributionDraft = {};
+              if (locked("commit") === null) next.commit = ATTRIBUTION_DEFAULTS.commit;
+              if (locked("pr") === null) next.pr = ATTRIBUTION_DEFAULTS.pr;
+              if (locked("sessionUrl") === null) next.sessionUrl = ATTRIBUTION_DEFAULTS.sessionUrl;
+              onChange(next);
+            }}
+          >
             {t("restore")}
           </Button>
         </div>

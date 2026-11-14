@@ -229,7 +229,7 @@ export class AdminOperations implements OnModuleInit {
           },
           {
             code: "deployment.setting_readonly",
-            next: "That sandbox level is set in the deployment's startup config (environment, file or Nacos; admin.settings shows the source); it can only be changed there, by the operator.",
+            next: "That setting is fixed in the deployment's startup config (environment, file or Nacos; admin.settings shows the field's source); it can only be changed there, by the operator.",
           },
           {
             code: "theme.not_available",

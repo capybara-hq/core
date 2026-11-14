@@ -61,7 +61,11 @@ const agent = (definition: Record<string, unknown> = {}, ownerAccountId = "a1") 
   },
 });
 
-const routes = (definition: Record<string, unknown> = {}, ownerAccountId = "a1") => {
+const routes = (
+  definition: Record<string, unknown> = {},
+  ownerAccountId = "a1",
+  deployment: Record<string, unknown> = {},
+) => {
   const lead = agent(definition, ownerAccountId);
   return {
     calls: stubApi({
@@ -81,6 +85,8 @@ const routes = (definition: Record<string, unknown> = {}, ownerAccountId = "a1")
               pr: PLATFORM_PR,
               sessionUrl: false,
             },
+            publicUrl: true,
+            ...deployment,
           },
           sandboxLimits: { cpu: 1, memoryMb: 1024, source: "deployment" },
         }),
@@ -177,6 +183,40 @@ describe("the agent page's 提交与 PR 署名 section", () => {
     expect(within(s).getByText("Custom PR")).toBeTruthy();
     expect(within(s).queryByRole("radio")).toBeNull();
     expect(within(s).queryByRole("textbox")).toBeNull();
+  });
+
+  it("a requested link shows that no link can be added without a public URL", async () => {
+    routes(
+      {
+        attribution: {
+          mode: "custom",
+          commit: "Custom trailer",
+          pr: "Custom PR",
+          sessionUrl: true,
+        },
+      },
+      "a2",
+      { publicUrl: false },
+    );
+    await renderEditAgent({ me: as("member"), section: "attribution" });
+    const s = await section();
+    expect(await within(s).findByText(F.attributionSessionUrlNeedsPublicUrl)).toBeTruthy();
+    expect(within(s).queryByText(F.attributionSessionUrlOn)).toBeNull();
+  });
+
+  it("a requested link with a public URL reads Yes", async () => {
+    routes({ attribution: { mode: "custom", sessionUrl: true } }, "a2");
+    await renderEditAgent({ me: as("member"), section: "attribution" });
+    expect(await within(await section()).findByText(F.attributionSessionUrlOn)).toBeTruthy();
+  });
+
+  it("an invalid stored mode reads as following the platform on the page too", async () => {
+    routes({ attribution: { mode: "bogus", commit: "Should be ignored" } }, "a2");
+    await renderEditAgent({ me: as("member"), section: "attribution" });
+    const s = await section();
+    expect(await within(s).findByText(F.attributionMode_inherit)).toBeTruthy();
+    expect(within(s).getByText(PLATFORM_COMMIT)).toBeTruthy();
+    expect(within(s).queryByText("Should be ignored")).toBeNull();
   });
 
   it("renders in Chinese with the zh copy", async () => {

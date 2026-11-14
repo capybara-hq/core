@@ -293,6 +293,11 @@ export interface OrgSettingsDeployment {
   };
   /** The platform's effective attribution defaults for agent-created commits and pull requests. */
   attribution: PlatformAttribution;
+  /**
+   * Whether the deployment set `http.publicUrl`. Without it a requested conversation link cannot be
+   * added to a pull request, so the agent page can say why the link setting has no effect.
+   */
+  publicUrl: boolean;
 }
 
 /** 按值比较（`sandboxEgress` 是对象）；键序由 schema 固定。 */
@@ -374,6 +379,7 @@ export class OrgSettingsService {
         devHosts: [...lim.devHosts],
       },
       attribution,
+      publicUrl: this.config.get().http.publicUrl !== undefined,
     };
   }
 

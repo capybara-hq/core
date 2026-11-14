@@ -189,9 +189,36 @@ export function attributionLines(a: RunContext["attribution"]): string[] {
   return lines;
 }
 
-/** The line that turns an attribution off after a run's context had one. */
+/** The line that turns the whole attribution off after a run's context had one. */
 export const ATTRIBUTION_OFF_TEXT =
   "- Do not add an attribution line to git commits or pull requests.";
+
+/** The line that retracts the commit trailer while the pull-request line stays on. */
+export const ATTRIBUTION_COMMIT_OFF_TEXT =
+  "- Do not end git commit messages with an attribution trailer.";
+
+/** The line that retracts the pull-request line while other surfaces stay on. */
+export const ATTRIBUTION_PR_OFF_TEXT = "- Do not end pull request bodies with an attribution line.";
+
+/** The line that retracts the conversation link while the pull-request line stays on. */
+export const ATTRIBUTION_LINK_OFF_TEXT = "- Do not add the conversation link to pull requests.";
+
+/**
+ * The retraction lines of the surfaces `prev` had and `next` no longer has. An update's header
+ * says it replaces the earlier values, but the run-context design leaves unchanged fields unmentioned
+ * (as `locale` and `timeZone` are), so a removed surface must be named or the model keeps using it.
+ */
+function attributionRetractions(
+  prev: RunContext["attribution"],
+  next: RunContext["attribution"],
+): string[] {
+  if (prev === undefined || next === undefined) return [];
+  const lines: string[] = [];
+  if (prev.commit !== "" && next.commit === "") lines.push(ATTRIBUTION_COMMIT_OFF_TEXT);
+  if (prev.pr !== "" && next.pr === "") lines.push(ATTRIBUTION_PR_OFF_TEXT);
+  if (prev.sessionUrl !== null && next.sessionUrl === null) lines.push(ATTRIBUTION_LINK_OFF_TEXT);
+  return lines;
+}
 
 /**
  * The full snapshot text (the first `run_context`, or the current context restored right after a
@@ -269,10 +296,14 @@ export function runContextUpdateText(prev: RunContext, change: RunContext): stri
   }
   if (change.attribution !== undefined) {
     const attribution = attributionLines(change.attribution);
-    // the run had an instruction before and now has none: say so, or the model would keep using it
+    // the run had an instruction before and now has none: one line covers every surface, or the
+    // model would keep using it
     if (attribution.length === 0 && prev.attribution !== undefined) {
       lines.push(ATTRIBUTION_OFF_TEXT);
     } else {
+      // a surface that was on and is now off must be retracted by name; the header replaces the
+      // earlier values, but a field left unmentioned reads as unchanged
+      lines.push(...attributionRetractions(prev.attribution, change.attribution));
       lines.push(...attribution);
     }
   }

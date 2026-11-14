@@ -195,8 +195,10 @@ export interface RunAttribution {
 
 /**
  * The effective attribution of a run: the platform defaults, the agent's own values for a
- * `custom` override (a field it leaves out follows the platform), nothing for `off`. The link is
- * `conversationLink(publicUrl, conversationId)`; it is added only while the source asks for it.
+ * `custom` override, nothing for `off`. Any other stored mode (invalid data is not re-validated)
+ * reads as `inherit`, the value the agent page shows, so the kernel and the UI never disagree.
+ * The link is `conversationLink(publicUrl, conversationId)`; it is added only while the source
+ * asks for it.
  */
 export function effectiveAttribution(
   platform: PlatformAttribution,
@@ -204,15 +206,15 @@ export function effectiveAttribution(
   link: string | null,
 ): RunAttribution {
   const chosen =
-    agent === undefined || agent.mode === "inherit"
-      ? platform
-      : agent.mode === "off"
-        ? { commit: "", pr: "", sessionUrl: false }
-        : {
+    agent !== undefined && agent.mode === "off"
+      ? { commit: "", pr: "", sessionUrl: false }
+      : agent !== undefined && agent.mode === "custom"
+        ? {
             commit: agent.commit ?? platform.commit,
             pr: agent.pr ?? platform.pr,
             sessionUrl: agent.sessionUrl ?? platform.sessionUrl,
-          };
+          }
+        : platform;
   return {
     commit: chosen.commit,
     pr: chosen.pr,

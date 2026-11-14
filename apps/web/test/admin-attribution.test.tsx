@@ -127,6 +127,35 @@ describe("提交与 PR 署名 on /admin/settings", () => {
     expect(screen.getByRole("button", { name: en.admin.settings.save })).toBeTruthy();
   });
 
+  it("恢复默认 leaves a field the startup config sets at its read-only value", async () => {
+    const calls = routes({
+      ...ATTRIBUTION,
+      commit: "From env trailer",
+      pr: "Custom PR",
+      sources: { commit: "env", pr: "db", sessionUrl: "default" },
+    });
+    await renderRouteWithCache("/admin/settings", lastStubRoutes());
+    const section = await sectionOf(T.title);
+    const user = userEvent.setup();
+    const commit = within(section).getByRole("textbox", {
+      name: T.commitLabel,
+    }) as HTMLInputElement;
+    const pr = within(section).getByRole("textbox", { name: T.prLabel }) as HTMLInputElement;
+    expect(commit.value).toBe("From env trailer");
+    await user.click(within(section).getByRole("button", { name: T.restore }));
+    // the locked field keeps the value in effect; the unlocked one goes back to the default
+    expect(commit.value).toBe("From env trailer");
+    expect(commit.disabled).toBe(true);
+    expect(pr.value).toBe(DEFAULT_PR);
+    // the preview shows the read-only value too
+    expect(within(section).getAllByText("From env trailer").length).toBeGreaterThan(0);
+    await user.click(screen.getByRole("button", { name: en.admin.settings.save }));
+    await waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
+    expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({
+      attribution: { pr: DEFAULT_PR },
+    });
+  });
+
   it("renders in Chinese with the zh copy", async () => {
     routes();
     await renderRouteWithCache("/admin/settings", lastStubRoutes(), { locale: "zh" });

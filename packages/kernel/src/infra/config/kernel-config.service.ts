@@ -56,6 +56,10 @@ const HOT_APPLIERS: Record<string, (k: { log: KernelLogger }, value: unknown) =>
   "schedules.maxRunsPerHourCap": () => {},
   // Run start reads the skills catalog budget when it records a snapshot.
   "skills.catalogBudgetChars": () => {},
+  // The attribution defaults are read live at every run start, admin settings view and org settings.
+  "attribution.commit": () => {},
+  "attribution.pr": () => {},
+  "attribution.sessionUrl": () => {},
 };
 
 /**

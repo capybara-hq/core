@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  type AgentAttribution,
   ATTRIBUTION_DEFAULTS,
   conversationLink,
   effectiveAttribution,
@@ -99,6 +100,21 @@ describe("the effective attribution of a run", () => {
     expect(
       effectiveAttribution(platform, { mode: "off", commit: "ignored" }, DEFAULT_LINK),
     ).toEqual({ commit: "", pr: "", sessionUrl: null });
+  });
+
+  it("an invalid stored mode reads as inherit, the same value the agent page shows", () => {
+    // stored definitions are not re-validated: fail to the platform, never to a silent custom
+    expect(
+      effectiveAttribution(
+        platform,
+        { mode: "bogus" } as unknown as AgentAttribution,
+        DEFAULT_LINK,
+      ),
+    ).toEqual({
+      commit: platform.commit,
+      pr: platform.pr,
+      sessionUrl: DEFAULT_LINK,
+    });
   });
 
   it("the conversation link is added only with publicUrl, and only when the source asks for it", () => {

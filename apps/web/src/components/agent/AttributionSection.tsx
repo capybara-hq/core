@@ -36,15 +36,23 @@ interface Draft {
   sessionUrl: boolean;
 }
 
+/**
+ * A stored mode the current version knows, else `inherit`: stored definitions are not
+ * re-validated, and the kernel applies an unknown mode as `inherit` (spec 2026-11-14).
+ */
+const modeOf = (at: AgentAttribution | undefined): Mode =>
+  at?.mode === "custom" || at?.mode === "off" ? at.mode : "inherit";
+
 /** What a run with this agent's definition ends a commit and a pull request with. */
 function effective(a: Agent, platform: Platform): Effective {
   const at = a.definition.attribution;
-  if (at?.mode === "off") return { commit: "", pr: "", sessionUrl: false };
-  if (at?.mode === "custom") {
+  const mode = modeOf(at);
+  if (mode === "off") return { commit: "", pr: "", sessionUrl: false };
+  if (mode === "custom") {
     return {
-      commit: at.commit ?? platform.commit,
-      pr: at.pr ?? platform.pr,
-      sessionUrl: at.sessionUrl ?? platform.sessionUrl,
+      commit: at?.commit ?? platform.commit,
+      pr: at?.pr ?? platform.pr,
+      sessionUrl: at?.sessionUrl ?? platform.sessionUrl,
     };
   }
   return platform;
@@ -54,7 +62,7 @@ const draftOf = (a: Agent, platform: Platform): Draft => {
   const at = a.definition.attribution;
   const done = effective(a, platform);
   return {
-    mode: at?.mode ?? "inherit",
+    mode: modeOf(at),
     commit: done.commit,
     pr: done.pr,
     sessionUrl: done.sessionUrl,
@@ -63,7 +71,9 @@ const draftOf = (a: Agent, platform: Platform): Draft => {
 
 /**
  * The definition a save sends: `inherit` leaves the field out (the agent follows the platform and
- * gains no version for it), `off` and `custom` write it.
+ * gains no version for it), `off` and `custom` write it. `custom` writes all three fields, the
+ * values the inputs show (prefilled from the platform): a custom agent snapshots them, so a later
+ * platform change no longer reaches it (spec 2026-11-14).
  */
 function withAttribution(agent: Agent, d: Draft): Omit<AgentDefinitionInput, "instructionFiles"> {
   const { attribution: _current, ...rest } = savedDefinition(agent);
@@ -88,9 +98,8 @@ export function AttributionSection() {
   const read = usePageQuery(orgSettingsQuery(orgId));
   if (read.kind === "loading") return <AgentSectionFrame loading />;
   if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
-  const platform: Platform = (read.kind === "ready"
-    ? read.data.deployment?.attribution
-    : undefined) ?? {
+  const deployment = read.kind === "ready" ? read.data.deployment : undefined;
+  const platform: Platform = deployment?.attribution ?? {
     commit: "Co-Authored-By: Capybara <noreply@capybarahq.com>",
     pr: "🤖 Generated with [Capybara](https://github.com/capybara-hq/core)",
     sessionUrl: false,
@@ -98,7 +107,7 @@ export function AttributionSection() {
   return editable ? (
     <AttributionEdit platform={platform} />
   ) : (
-    <AttributionReadOnly platform={platform} />
+    <AttributionReadOnly platform={platform} publicUrl={deployment?.publicUrl} />
   );
 }
 
@@ -194,13 +203,27 @@ function AttributionEdit({ platform }: { platform: Platform }) {
   );
 }
 
-function AttributionReadOnly({ platform }: { platform: Platform }) {
+function AttributionReadOnly({
+  platform,
+  publicUrl,
+}: {
+  platform: Platform;
+  /** Whether the deployment set `http.publicUrl`; absent from an older kernel (unknown). */
+  publicUrl?: boolean | undefined;
+}) {
   const t = useTranslations("agents");
   const { agent } = useAgentPage();
   const at = agent.definition.attribution;
-  const mode = at?.mode ?? "inherit";
+  const mode = modeOf(at);
   const done = effective(agent, platform);
   const off = t("form.attributionNone");
+  // a requested link cannot be added without a public URL: say so instead of showing "Yes"
+  const link =
+    done.sessionUrl && publicUrl === false
+      ? t("form.attributionSessionUrlNeedsPublicUrl")
+      : done.sessionUrl
+        ? t("form.attributionSessionUrlOn")
+        : off;
   return (
     <AgentSectionFrame>
       <FormSection id="attribution" title={t("form.attributionSection")}>
@@ -209,10 +232,7 @@ function AttributionReadOnly({ platform }: { platform: Platform }) {
             { k: t("form.attributionMode"), v: t(`form.attributionMode_${mode}`) },
             { k: t("form.attributionCommit"), v: done.commit === "" ? off : done.commit },
             { k: t("form.attributionPr"), v: done.pr === "" ? off : done.pr },
-            {
-              k: t("form.attributionSessionUrl"),
-              v: done.sessionUrl ? t("form.attributionSessionUrlOn") : off,
-            },
+            { k: t("form.attributionSessionUrl"), v: link },
           ]}
         />
       </FormSection>

@@ -723,6 +723,7 @@
       "attributionSessionUrl": "附加会话链接",
       "attributionSessionUrlHint": "需要部署设置 http.publicUrl；默认关闭。",
       "attributionSessionUrlOn": "是",
+      "attributionSessionUrlNeedsPublicUrl": "已开启，但不会加链接：部署未设置 http.publicUrl",
       "attributionDefaults": "平台默认：提交 {commit}；PR {pr}。",
       "attributionNone": "无"
     },

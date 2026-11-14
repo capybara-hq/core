@@ -91,6 +91,10 @@ ev("run_context", z.object({
   `org`, `date`, `timeZone`, `locale`; sub-agent: §6). A **later** one holds only the fields that
   differ from the fold of the earlier ones. `agent` is replaced as a unit (a removed description is
   `agent: { name }`).
+- **`attribution`** (added by [spec 2026-11-14-agent-attribution](2026-11-14-agent-attribution.md)):
+  the commit trailer, pull-request line and resolved conversation link the run's requests carry; its
+  values, sources and rendering (including the per-surface retraction in an update) are described
+  there.
 - **Fold** (`currentRunContext(events, upToSeq)`): the latest value of each field over the
   `run_context` events up to `upToSeq`. Pure, log only.
 - Sources, read at run start: `agent.name` and `agent.description` from the run's effective

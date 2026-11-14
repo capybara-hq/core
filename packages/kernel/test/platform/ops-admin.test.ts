@@ -576,6 +576,15 @@ describe("admin and models", () => {
     expect(next).toMatch(/details list orgs/);
   });
 
+  it("admin.update-settings: deployment.setting_readonly names the startup config, not a sandbox setting", () => {
+    const next = op("admin.update-settings").errors?.find(
+      (e) => e.code === "deployment.setting_readonly",
+    )?.next;
+    expect(next).toMatch(/startup config/);
+    expect(next).toMatch(/admin\.settings shows the field's source/);
+    expect(next).not.toMatch(/sandbox/);
+  });
+
   it("lists the providers, then one provider's models; disables one platform-wide", async () => {
     const providers = (await run("models.platform-list", {})) as {
       items: { id: string; state: string; models: number }[];

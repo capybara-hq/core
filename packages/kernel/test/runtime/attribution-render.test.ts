@@ -77,6 +77,92 @@ describe("the attribution instruction in a model request", () => {
     );
   });
 
+  it("turning one surface off retracts it by name while the others stay on", () => {
+    const LINK = "https://capybara.example.com/chat/c1";
+    const log = new Log();
+    log.user("one");
+    log.add({
+      type: "run_context",
+      payload: ROOT(attribution({ sessionUrl: LINK })),
+    });
+    log.modelCall();
+    log.assistant("ok");
+    log.user("two");
+    // the pull-request line and the link are cleared; the commit trailer is unchanged
+    log.add({
+      type: "run_context",
+      payload: { attribution: { commit: ATTRIBUTION_DEFAULTS.commit, pr: "", sessionUrl: null } },
+    });
+    expect(systemTexts(log)).toContainEqual(
+      "Context update (replaces the earlier values):\n" +
+        "- Do not end pull request bodies with an attribution line.\n" +
+        "- Do not add the conversation link to pull requests.\n" +
+        `- When you create a git commit, end the commit message with this trailer: ${ATTRIBUTION_DEFAULTS.commit}`,
+    );
+  });
+
+  it("a removed conversation link is retracted while the pull-request line stays", () => {
+    const LINK = "https://capybara.example.com/chat/c1";
+    const log = new Log();
+    log.user("one");
+    log.add({
+      type: "run_context",
+      payload: ROOT(attribution({ sessionUrl: LINK })),
+    });
+    log.modelCall();
+    log.assistant("ok");
+    log.user("two");
+    // http.publicUrl went away: only the link is gone
+    log.add({
+      type: "run_context",
+      payload: { attribution: { ...attribution(), sessionUrl: null } },
+    });
+    const update = systemTexts(log).find((t) => t.startsWith("Context update")) ?? "";
+    expect(update).toContain("- Do not add the conversation link to pull requests.");
+    expect(update).toContain(
+      `- When you open a pull request, end the body with this line: ${ATTRIBUTION_DEFAULTS.pr}`,
+    );
+    expect(update).not.toContain("pull request bodies with an attribution line");
+    expect(update).not.toContain("attribution trailer");
+  });
+
+  it("turning the commit trailer off retracts it while the pull request stays", () => {
+    const log = new Log();
+    log.user("one");
+    log.add({ type: "run_context", payload: ROOT(attribution()) });
+    log.modelCall();
+    log.assistant("ok");
+    log.user("two");
+    log.add({
+      type: "run_context",
+      payload: { attribution: { ...attribution(), commit: "" } },
+    });
+    const update = systemTexts(log).find((t) => t.startsWith("Context update")) ?? "";
+    expect(update).toContain("- Do not end git commit messages with an attribution trailer.");
+    expect(update).toContain(
+      `- When you open a pull request, end the body with this line: ${ATTRIBUTION_DEFAULTS.pr}`,
+    );
+    expect(update).not.toContain("git commit message with this trailer");
+  });
+
+  it("an unchanged surface is not retracted when another changes", () => {
+    const LINK = "https://capybara.example.com/chat/c1";
+    const log = new Log();
+    log.user("one");
+    log.add({ type: "run_context", payload: ROOT(attribution()) });
+    log.modelCall();
+    log.assistant("ok");
+    log.user("two");
+    // the link is added; neither line is turned off
+    log.add({
+      type: "run_context",
+      payload: { attribution: attribution({ sessionUrl: LINK }) },
+    });
+    const update = systemTexts(log).find((t) => t.startsWith("Context update")) ?? "";
+    expect(update).not.toContain("Do not");
+    expect(update).toContain(`Then add this link to the conversation on a new line: ${LINK}`);
+  });
+
   it("an all-empty attribution is not written when there was none, but is when one is turned off", () => {
     const off = { commit: "", pr: "", sessionUrl: null };
     // a conversation that never had one stays as an old log does: no field, no instruction

@@ -723,6 +723,7 @@
       "attributionSessionUrl": "Add the conversation link",
       "attributionSessionUrlHint": "Needs http.publicUrl on the deployment; off by default.",
       "attributionSessionUrlOn": "Yes",
+      "attributionSessionUrlNeedsPublicUrl": "On, but no link is added: the deployment has no public URL (http.publicUrl)",
       "attributionDefaults": "Platform defaults: commit {commit}; pull request {pr}.",
       "attributionNone": "None"
     },

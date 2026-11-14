@@ -46,17 +46,34 @@ This is edited on the agent page's **提交与 PR 署名** section: 跟随平台
 with the platform defaults in the help text. A viewer who may not change the agent sees the effective
 values read-only.
 
+The agent page's 自定义 mode prefills every field from the platform and saves all three explicitly,
+so a `custom` agent snapshots the values it showed: a later platform change no longer reaches it.
+That is the one rule for both sides: `custom` means the agent's own full set. A definition written
+outside the page that leaves a field out follows the platform, and both the kernel and the page read
+it that way. A stored `mode` other than `inherit` / `custom` / `off` (stored data is not
+re-validated) reads as **`inherit`** everywhere, so the kernel applies and the page shows the same
+value.
+
+The section is an addition to the agent page described in
+[the agent profile spec](2026-11-04-agent-profile-and-new-chat-design.md) §3.2.
+
 ## How the model sees it, and replay
 
-At run start the kernel resolves the effective attribution (platform defaults or the agent's
+`attribution` is part of `RunContextSchema` ([run context spec](2026-11-08-run-context-design.md)
+§3.1): at run start the kernel resolves the effective attribution (platform defaults or the agent's
 override, including the resolved conversation link) and writes it into the run's `run_context`
-event as `attribution: { commit, pr, sessionUrl }`. Request building renders the instruction from
-that logged value only:
+event as `attribution: { commit, pr, sessionUrl }`. The first snapshot of a conversation carries it
+when the run has one; a later snapshot carries the full value only when it differs. Request building
+renders the instruction from that logged value only:
 
 - a git commit ends its message with the commit trailer, when `commit` is non-empty;
 - a pull request ends its body with the `pr` line and, when `sessionUrl` is resolved, the link, on
   the next line;
-- when a later run's context turns attribution off, the update says so explicitly.
+- when a later run's context turns the whole attribution off, the update says so in one line;
+- when a later run turns one surface off while another stays on, the update names the removed
+  surface (the commit trailer, the pull-request line, or the conversation link) instead of leaving
+  the old instruction in place: the update's fields left unmentioned read as unchanged, so a removed
+  surface must be retracted explicitly.
 
 Nothing reads deployment config or the database during request building, so replay reproduces the
 instruction exactly. The field is model-visible input fixed in the log, so it needs **no
@@ -79,10 +96,18 @@ rest of the context.
 ## Testing
 
 - `packages/kernel/test/config/attribution.test.ts`: config defaults, startup and stored overrides,
-  empty strings, the agent merge and the link.
+  empty strings, the agent merge, the link, and an invalid stored mode reading as `inherit`.
 - `packages/kernel/test/runtime/attribution-render.test.ts`: the instruction in the built request,
-  off, the link, a log without the field, a sub-agent, and that it never reaches a tool result.
+  off, the link, a log without the field, a sub-agent, turning one surface off at a time (the
+  retraction lines), and that it never reaches a tool result.
 - `packages/kernel/test/runtime/run-context.http.test.ts`: the values written at run start for the
   platform default, an agent's custom values with the link, off, and the admin console's default.
+- `packages/kernel/test/admin/admin.http.test.ts`: `PUT /admin/settings { attribution }` end to end:
+  saving, reading back with sources, an empty string turning a line off, null clearing, and the 409
+  for a field the startup config sets.
+- `packages/kernel/test/runtime/subagents/dispatch.test.ts`: a dispatched child inherits the parent's
+  custom and off attribution.
 - `apps/web/test/admin-attribution.test.tsx` and `apps/web/test/agent-attribution.test.tsx`: the two
-  UI surfaces (defaults, edits, save bodies, read-only sources, the three modes, zh copy).
+  UI surfaces (defaults, edits, save bodies, read-only sources, the three modes, restore keeping a
+  locked field, the link needing `http.publicUrl`, an invalid mode reading as follow-the-platform,
+  zh copy).

@@ -1328,6 +1328,7 @@ export const KernelConfigSchema = z.object({
         .optional()
         .meta(
           meta({
+            hot: true,
             description:
               "The trailer an agent ends the message of a git commit it creates with; an empty string turns it off. Overridable per agent; unset follows the admin console's value, else 'Co-Authored-By: Capybara <noreply@capybarahq.com>'",
           }),
@@ -1339,6 +1340,7 @@ export const KernelConfigSchema = z.object({
         .optional()
         .meta(
           meta({
+            hot: true,
             description:
               "The line an agent ends the body of a pull request it opens with; an empty string turns it off. Overridable per agent; unset follows the admin console's value, else '🤖 Generated with [Capybara](https://github.com/capybara-hq/core)'",
           }),
@@ -1348,6 +1350,7 @@ export const KernelConfigSchema = z.object({
         .optional()
         .meta(
           meta({
+            hot: true,
             description:
               "Whether agent-created pull requests also carry a link to the conversation; it needs http.publicUrl set, and unset follows the admin console's value, else false",
           }),

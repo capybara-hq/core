@@ -8,6 +8,7 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { normalizeStoredDefinition } from "../../../src/agents/definition.js";
+import { ATTRIBUTION_DEFAULTS } from "../../../src/attribution/platform-attribution.js";
 import { type AppendEvent, EventLog } from "../../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../../src/db/kernel-schema.js";
@@ -469,6 +470,61 @@ describe("dispatch", () => {
       expect(ofType(cev, "run_started")[0]?.payload.model).toEqual(SCRIPT_2);
       expect(ofType(cev, "model_switched")).toEqual([]);
     }
+  }, 90_000);
+
+  it("a general-purpose child inherits the parent's attribution: custom and off", async () => {
+    const save = (attribution: Record<string, unknown>) =>
+      owner({
+        method: "PATCH",
+        url: `/api/v1/orgs/${orgId}/agents/${agentId}`,
+        payload: {
+          definition: {
+            name: "Lead",
+            instructions: INSTRUCTIONS,
+            model: { provider: "model-script", model: "script-1" },
+            disabledTools: onlyBuiltins(
+              ["Agent", "Write", "Read", "Deliver"].map((name) => ({ kind: "builtin", name })),
+            ),
+            attribution,
+          },
+        },
+      });
+    const custom = { mode: "custom", commit: "Co-Authored-By: Parent <p@x>" };
+    expect((await save(custom)).statusCode).toBe(200);
+    const { conv: conv1 } = await converse("SCENARIO general");
+    await delivered(conv1);
+    const child1 = ((await children(conv1))[0] as { id: string }).id;
+    const cev1 = await eventsOf(db, child1);
+    // the child's frozen definition carries the parent's setting, so its replay matches
+    expect((cev1[0] as Ev<"subagent_started">).payload.definition.attribution).toEqual(custom);
+    expect(ofType(cev1, "run_context")[0]?.payload.attribution).toEqual({
+      commit: custom.commit,
+      pr: ATTRIBUTION_DEFAULTS.pr,
+      sessionUrl: null,
+    });
+    // and the child's request shows it
+    const childReq1 = capture.sent.find(
+      (r) => isChildRequest(r) && JSON.stringify(r.messages).includes("gp-task: do it"),
+    );
+    expect(JSON.stringify(childReq1?.messages)).toContain(custom.commit);
+
+    // off: the child's own run context has no attribution, and its request has no instruction
+    expect((await save({ mode: "off" })).statusCode).toBe(200);
+    const before = capture.sent.length;
+    const { conv: conv2 } = await converse("SCENARIO general");
+    await delivered(conv2);
+    const child2 = ((await children(conv2))[0] as { id: string }).id;
+    const cev2 = await eventsOf(db, child2);
+    expect((cev2[0] as Ev<"subagent_started">).payload.definition.attribution).toEqual({
+      mode: "off",
+    });
+    const ctx2 = ofType(cev2, "run_context")[0];
+    expect(ctx2?.payload).not.toHaveProperty("attribution");
+    const childReq2 = capture.sent
+      .slice(before)
+      .find((r) => isChildRequest(r) && JSON.stringify(r.messages).includes("gp-task: do it"));
+    expect(childReq2).toBeDefined();
+    expect(JSON.stringify(childReq2?.messages)).not.toContain("git commit");
   }, 90_000);
 
   it("three agent calls in one response run concurrently and the parent continues once", async () => {

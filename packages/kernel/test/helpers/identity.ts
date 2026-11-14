@@ -99,9 +99,9 @@ export function settingsFor(
   log: Pick<KernelLogger, "warn"> = quiet,
 ): SettingsService {
   const h = handlesFor(db);
-  // no startup config sets the sandbox tiers: the stored choice decides
+  // no startup config sets the sandbox tiers or the attribution: the stored choice decides
   const config = {
-    get: () => ({ sandbox: { tiers: {} } }) as unknown as KernelConfig,
+    get: () => ({ sandbox: { tiers: {} }, attribution: {} }) as unknown as KernelConfig,
     fieldSource: () => undefined,
   };
   return new SettingsService(h.db, h.txHost, adminLockFor(db), log, config);
