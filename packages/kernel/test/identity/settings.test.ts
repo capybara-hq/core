@@ -258,7 +258,7 @@ describe("SettingsService devicesAutoMode", () => {
       adminLockFor(db),
       { warn: () => {} },
       {
-        get: () => ({ devices: { autoMode } }) as never,
+        get: () => ({ devices: { autoMode }, attribution: {} }) as never,
         fieldSource: () => source,
       },
     );

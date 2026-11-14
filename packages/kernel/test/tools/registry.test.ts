@@ -449,6 +449,12 @@ describe("组织设置与 ToolSearch 启用条件", () => {
       deployment: {
         autoMode: { mode: "allowed", source: "default" },
         cloudNetwork: { mode: "open", allowHosts: baseCfg.sandbox.limits.allowHosts },
+        attribution: {
+          commit: "Co-Authored-By: Capybara <noreply@capybarahq.com>",
+          pr: "🤖 Generated with [Capybara](https://github.com/capybara-hq/core)",
+          sessionUrl: false,
+        },
+        publicUrl: false,
       },
       // 组织级沙箱限额只读（C19）：没有超级管理员的覆盖时取部署默认
       sandboxLimits: {
