@@ -625,6 +625,7 @@ describe("M3 第二段双副本验收", () => {
       toolKey: "mcp__big__op_delta",
       isError: true,
       content: notLoadedText("mcp__big__op_delta"),
+      view: { kind: "not_loaded" },
     });
     expect(bigMcp.calls).toEqual([]);
     const call1 = ofType(nl.evs, "model_call")[0]?.payload.request;

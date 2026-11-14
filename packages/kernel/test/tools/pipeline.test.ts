@@ -1624,6 +1624,8 @@ describe("ToolSearch 模式", () => {
         toolKey: "plugin__probe__echo",
         isError: true,
         content: notLoadedText("plugin__probe__echo"),
+        // the protocol working, not a failure: the row reads neutral (toMatchObject on the payload)
+        view: { kind: "not_loaded" },
       }),
     ]);
     expect(handlerCalls.echo).toBeUndefined();

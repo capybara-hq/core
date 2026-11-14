@@ -116,7 +116,9 @@ export type ToolView =
     }
   | { kind: "read"; path: string; fromLine?: number; toLine?: number }
   /** `Edit` / `Write` refused by the read-before-write check: a neutral outcome, not a failure. */
-  | { kind: "guard"; reason: "not_read" | "modified" };
+  | { kind: "guard"; reason: "not_read" | "modified" }
+  /** A call to a tool the step did not load: expected behaviour, a neutral notice, not a failure. */
+  | { kind: "not_loaded" };
 
 export type StopReason = "end_turn" | "tool_use" | "max_tokens" | "refusal" | "other" | "aborted";
 

@@ -198,6 +198,7 @@ export {
   summaryParts,
   type ToolGuard,
   type ToolKind,
+  type ToolNotice,
   type ToolVerbGroup,
   type ToolWaiting,
   verbGroup,

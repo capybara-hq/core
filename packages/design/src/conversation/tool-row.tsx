@@ -10,6 +10,7 @@ import {
   fillCopy,
   type ToolGuard,
   type ToolKind,
+  type ToolNotice,
   type ToolWaiting,
   waitingText,
 } from "./tool-copy";
@@ -53,6 +54,11 @@ export type ToolRowData = {
    * "已拦下：需先重新读取" / "Blocked: read the file again first" in `muted` (§6.16.9).
    */
   guard?: ToolGuard;
+  /**
+   * A done call with a protocol notice (the tool was not loaded): the row adds the neutral word
+   * "需先加载工具" / "Load the tool first" in `muted` (§6.16.9).
+   */
+  notice?: ToolNotice;
   /** The error; its first line is shown after "Failed". */
   error?: string;
   /** The extension whose policy hook denied the call. */
@@ -140,6 +146,11 @@ export function ToolLabel({ row }: { row: ToolRowData }): JSX.Element {
       {row.status === "done" && row.guard ? (
         <span className="cb-muted" data-part="guard-word">
           {` · ${t(`tool.guard.${row.guard}`)}`}
+        </span>
+      ) : null}
+      {row.status === "done" && row.notice ? (
+        <span className="cb-muted" data-part="notice-word">
+          {` · ${t(`tool.notice.${row.notice}`)}`}
         </span>
       ) : null}
       {row.status === "cancelled" ? (

@@ -204,6 +204,32 @@ describe("buildTimeline", () => {
     expect(summarizeTools(rows, "en")).toContain(" (2 blocked)");
   });
 
+  it("a call to a tool the step did not load (not_loaded view) is a neutral notice, not a failure", () => {
+    const text =
+      'Tool "plugin__memory__view" is not loaded. Call ToolSearch first with keywords for this tool, then call it in a later step.';
+    const events = [
+      user(1, "go"),
+      calls(2, [{ id: "v", name: "plugin__memory__view", input: { path: "user/x.md" } }]),
+      result(3, "v", "plugin__memory__view", {
+        content: text,
+        isError: true,
+        view: { kind: "not_loaded" },
+      }),
+    ];
+    const rows = tools(buildTimeline(events, [], new Map(), "zh"))[0]?.rows.map((r) => r.row) ?? [];
+    expect(rows[0]).toMatchObject({
+      status: "done",
+      notice: "not_loaded",
+      detail: { output: text },
+    });
+    expect(rows[0]).not.toHaveProperty("error");
+    expect(rows[0]).not.toHaveProperty("guard");
+    const zh = summarizeTools(rows, "zh");
+    expect(zh).not.toContain("失败");
+    expect(zh).not.toContain("已拦下");
+    expect(summarizeTools(rows, "en")).not.toContain("failed");
+  });
+
   it("the same refusal in an older log (no guard view) still renders as failed", () => {
     const events = [
       user(1, "go"),
