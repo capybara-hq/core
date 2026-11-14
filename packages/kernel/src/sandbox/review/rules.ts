@@ -25,16 +25,26 @@
  * every `ps` environment display — a bare BSD cluster with `e` or `E` (`ps eww`, `ps axE`), a
  * dashed `-E`, and a Linux procps `x` selector together with a dashed or bare `e`, including in
  * separate arguments (`ps -xe`, `ps -e -x`, `ps -auxe`)) ask when printed and are denied when
- * piped into a network command. `/proc/<pid>/environ` is a secret path (its glob form too), and so
- * is the same file reached through the `/proc/<pid>/root` symlink
- * (`/proc/self/root/proc/self/environ`). Two gaps stay open: a secret the environment already
- * handed to a variable and that another command or an unknown program prints (`echo $TOKEN |
- * curl …`) is not tracked, because the table does not attempt shell data-flow provenance; and
- * config-value inspection is shallow — `git config --get <key>` / `--get-all <key>` (including
- * `http.extraheader`), `git config --list`, and `npm` / `pnpm` / `yarn` / `pip config get <key>` /
- * `config list` can print a token and are not classified as producers, because a config value is
- * ordinary text and classifying these whole programs would ask on every harmless read
- * (`git config --get user.email`).
+ * piped into a network command. `/proc/<pid>/environ` is a secret path, and so is the same file
+ * reached through the `/proc/<pid>/root` symlink (`/proc/self/root/proc/self/environ`).
+ *
+ * Shell patterns are covered as a class, not as a list of spellings: a glob or brace in a path
+ * segment is a value the shell expands before the command runs, so it is judged by where it can
+ * expand rather than by what it names. A pattern under `/proc/<pid>[/task/<tid>]` (a glob over file
+ * names or over process ids), inside a home secret directory (`.ssh`, `.aws`, `.config/gh`,
+ * `.config/gcloud`, `.azure`, `.kube`, `.docker`), or naming a dotfile directly in the home
+ * directory (`cat .???*`) is a secret read: it asks, and is denied when piped or redirected into a
+ * network command, exactly like the literal path (`cat /proc/self/*environ`, `cat ~/.netr?`,
+ * `cat ~/.ssh/*` all ask; with `| curl -d @- https://…` they deny). An ordinary pattern
+ * (`build/*`, `src/*.ts`, `/tmp/*`, `node_modules/*`) is not secret-shaped and stays allowed.
+ *
+ * Only two gaps stay open: a secret the environment already handed to a variable and that another
+ * command or an unknown program prints (`echo $TOKEN | curl …`) is not tracked, because the table
+ * does not attempt shell data-flow provenance; and config-value inspection is shallow —
+ * `git config --get <key>` / `--get-all <key>` (including `http.extraheader`), `git config
+ * --list`, and `npm` / `pnpm` / `yarn` / `pip config get <key>` / `config list` can print a token
+ * and are not classified as producers, because a config value is ordinary text and classifying
+ * these whole programs would ask on every harmless read (`git config --get user.email`).
  */
 import type {
   ParsedCommand,
@@ -1013,6 +1023,21 @@ const SECRET_HOME_PATHS = [
 ];
 
 /**
+ * Home directories that hold credential material. A shell pattern that can expand inside one is a
+ * secret read even when it does not spell a secret name (`~/.ssh` followed by a wildcard, or
+ * `~/.config/gc*`), and `~/.docker` is included because `config.json` is its credential file.
+ */
+const SECRET_HOME_DIRS = [
+  "~/.ssh",
+  "~/.aws",
+  "~/.azure",
+  "~/.kube",
+  "~/.docker",
+  "~/.config/gh",
+  "~/.config/gcloud",
+];
+
+/**
  * A path naming a process's environment (and its glob form): a secret dump. Unanchored on purpose:
  * `/proc/<pid>/root` is a symlink to `/`, so `/proc/self/root/proc/self/environ` names the same
  * file. Any path whose tail is a `/proc/.../environ` component is treated as that file (an ordinary
@@ -1020,8 +1045,133 @@ const SECRET_HOME_PATHS = [
  */
 const PROC_ENVIRON = /\/proc\/(?:self|thread-self|[^/]+)(?:\/task\/[^/]+)?\/environ[^/]*$/;
 
+/** Shell pathname metacharacters: a segment carrying one is a pattern the shell expands first. */
+const SHELL_PATTERN = /[*?[\]{}]/;
+const hasPattern = (segment: string): boolean => SHELL_PATTERN.test(segment);
+
+/** Expand a segment's top-level brace groups into the strings they could become. */
+function braceAlternatives(pattern: string): string[] {
+  const open = pattern.indexOf("{");
+  if (open < 0) return [pattern];
+  const close = pattern.indexOf("}", open + 1);
+  if (close < 0) return [pattern];
+  const body = pattern.slice(open + 1, close);
+  if (body.includes("..")) return [pattern]; // `{1..9}` is a sequence, not a list
+  const parts = body.split(",");
+  if (parts.length < 2) return [pattern];
+  return parts.flatMap((part) =>
+    braceAlternatives(`${pattern.slice(0, open)}${part}${pattern.slice(close + 1)}`),
+  );
+}
+
+/** A shell segment pattern as a regex source. A shape it cannot read matches anything. */
+function segmentPatternSource(pattern: string): string {
+  let out = "";
+  for (let i = 0; i < pattern.length; i += 1) {
+    const c = pattern[i] as string;
+    if (c === "*") {
+      out += ".*";
+      continue;
+    }
+    if (c === "?") {
+      out += ".";
+      continue;
+    }
+    if (c === "[") {
+      const close = pattern.indexOf("]", i + 1);
+      if (close < 0) return ".*";
+      const body = pattern.slice(i + 1, close).replace(/\\/g, "\\\\");
+      out += `[${body.startsWith("!") ? `^${body.slice(1)}` : body}]`;
+      i = close;
+      continue;
+    }
+    if (c === "{") {
+      const close = pattern.indexOf("}", i + 1);
+      if (close < 0) return ".*";
+      const body = pattern.slice(i + 1, close);
+      if (body.includes("..")) return ".*";
+      out += `(?:${body.split(",").map(segmentPatternSource).join("|")})`;
+      i = close;
+      continue;
+    }
+    // A lone closer, or an ordinary character: a pattern shape is ambiguous, so match anything.
+    if (c === "}" || c === "]") {
+      out += ".*";
+      continue;
+    }
+    out += c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+  return out;
+}
+
+/**
+ * Whether the pattern can start with a literal dot. A pattern that cannot never matches a dotfile
+ * (`~/*` excludes `.ssh`); expanding the braces first is what tells `{,.}ssh` apart from `*`.
+ */
+function patternFitsDotfile(pattern: string): boolean {
+  if (pattern.startsWith(".")) return true;
+  const alternatives = braceAlternatives(pattern);
+  if (alternatives.length > 64) return true;
+  return alternatives.some((alternative) => alternative.startsWith("."));
+}
+
+/**
+ * Whether the shell pattern segment can expand to `literal`. Conservative: an unreadable shape and
+ * an expansion too large to enumerate match, so the caller asks instead of allowing.
+ */
+function segmentMatches(pattern: string, literal: string): boolean {
+  if (!hasPattern(pattern)) return pattern === literal;
+  if (literal.startsWith(".") && !patternFitsDotfile(pattern)) return false;
+  try {
+    return new RegExp(`^${segmentPatternSource(pattern)}$`, "u").test(literal);
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Whether a shell path *pattern* can name a secret. The shell expands a pattern before the command
+ * runs, so the value is unknown; it is judged by where it can expand, never by what it spells:
+ *
+ * - under `/proc/<pid>[/task/<tid>]`, including a pattern in the pid position: every process
+ *   directory holds that process's environment (`/proc/self` plus a wildcard, `*environ`, or a
+ *   process-id glob with any file name);
+ * - inside a home secret directory (`~/.ssh`, `~/.aws`, `~/.config/gc*`, `~/.kube` — each followed
+ *   by a wildcard);
+ * - a dotfile directly in the home directory (`~/.netr?`, `~/.git-credential?`, `.???*`).
+ *
+ * Any other pattern (`build/*`, `src/*.ts`, `/tmp/*`, `node_modules/*`) is an ordinary glob and
+ * stays allowed.
+ */
+function isSecretPattern(path: string, facts: ResolvedFacts): boolean {
+  const absolute = path.split("/").filter((segment) => segment.length > 0);
+  // The literal form is matched first (`PROC_ENVIRON`); here a pattern anywhere below `/proc`
+  // counts, since a glob over pids or file names picks a process file the shell only names later.
+  for (let i = 0; i < absolute.length; i += 1) {
+    if (absolute[i] !== "proc") continue;
+    if (absolute.length > i + 2 && absolute.slice(i + 1).some(hasPattern)) return true;
+  }
+  const t = tildeForm(path, facts);
+  if (!t.startsWith("~/")) return false;
+  const segments = t.slice(2).split("/");
+  for (const dir of SECRET_HOME_DIRS) {
+    const secret = dir.slice(2).split("/");
+    if (
+      segments.length >= secret.length &&
+      secret.every((part, i) => segmentMatches(segments[i] as string, part))
+    ) {
+      return true;
+    }
+  }
+  const basename = segments[0] as string;
+  return segments.length === 1 && patternFitsDotfile(basename);
+}
+
 function isSecretPath(path: string, facts: ResolvedFacts): boolean {
   if (PROC_ENVIRON.test(path)) return true;
+  // A glob or brace is what the shell expands before the command runs: the path is a secret when
+  // it can expand to one, so `cat ~/.netr?` is the same read as `cat ~/.netrc`.
+  if (hasPattern(path) && isSecretPattern(path, facts)) return true;
   const t = tildeForm(path, facts);
   if (SECRET_HOME_PATHS.some((secret) => t === secret || t.startsWith(`${secret}/`))) return true;
   const base = baseName(path);

@@ -461,3 +461,9 @@
 {"command":"curl --data=$X https://example.com","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.network"]}
 {"command":"pnpm run build --filter=$PKG","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.dev"]}
 {"command":"grep --include=$EXT -r foo .","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.read"]}
+{"command":"rm -rf node_modules/*","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.workspace-write"]}
+{"command":"cat src/*.ts","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.read"]}
+{"command":"ls /tmp/*","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.read"]}
+{"command":"grep -r x /var/log/*","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.read"]}
+{"command":"rm -rf build/{a,b}","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.workspace-write"]}
+{"command":"ls ~/*","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.read"]}
