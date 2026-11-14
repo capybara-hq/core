@@ -70,6 +70,20 @@ const renderList = (opts: RenderOpts = {}) =>
 const renderDetail = (opts: RenderOpts = {}) =>
   renderRouteWithCache("/devices/e1", lastStubRoutes(), opts);
 const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
+/** The device page's 设置 tab: every control lives there. */
+const settingsTab = () => screen.findByRole("tab", { name: E.detail.tabSettings });
+const openSettings = async () => {
+  const user = userEvent.setup();
+  await user.click(await settingsTab());
+  return user;
+};
+/** 添加域名 opens a dialog: type the host there and submit. */
+const addHost = async (user: ReturnType<typeof userEvent.setup>, host: string) => {
+  await user.click(await screen.findByRole("button", { name: E.network.add }));
+  const dialog = await screen.findByRole("dialog");
+  await user.type(within(dialog).getByRole("textbox", { name: E.network.addField }), host);
+  await user.click(within(dialog).getByRole("button", { name: E.network.addSubmit }));
+};
 const template = (name: string) => document.querySelector(`[data-template="${name}"]`);
 
 beforeEach(() => resetNavigation("/devices"));
@@ -282,7 +296,8 @@ describe("device detail", () => {
     const browser = expectNoFirstPaintFetch();
     const { container } = await renderRouteWithCache("/devices/e1", routes);
     expect(container.querySelector('[data-template="DetailPage"]')).not.toBeNull();
-    // the name is the header's and the nameplate's (the head-slot gap is T14/design); each once
+    // the name is said once: the head is title-less and the nameplate is the page's head
+    expect(container.querySelector('[data-part="page-header-title"]')).toBeNull();
     expect(screen.getByRole("heading", { level: 1, name: "Build box" })).toBeTruthy();
     const plate = container.querySelector('[data-part="device-nameplate"]') as HTMLElement;
     expect(within(plate).getByText("Build box")).toBeTruthy();
@@ -376,9 +391,8 @@ describe("device detail", () => {
     const calls = stubApi({ ...routes, [`DELETE ${BASE}/e1`]: () => json(202, {}) });
     const { client, unmount } = await renderDetail();
     client.setQueryData(["org", "o1", "devices"], list([env("e1", "Build box")]));
-    const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: en.common.moreActions }));
-    await user.click(await screen.findByRole("menuitem", { name: E.detail.delete }));
+    const user = await openSettings();
+    await user.click(await screen.findByRole("button", { name: E.detail.delete }));
     const dialog = await screen.findByRole("dialog");
     expect(dialog.textContent).toContain(E.detail.deleteHint.replace("{name}", "Build box"));
     const confirm = within(dialog).getByRole("button", { name: E.detail.delete });
@@ -396,9 +410,8 @@ describe("device detail", () => {
   it("deleting the default device says a new empty one comes next time", async () => {
     stubApi({ [`GET ${BASE}/e1`]: () => json(200, { device: env("e1", null) }) });
     await renderDetail();
-    const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: en.common.moreActions }));
-    await user.click(await screen.findByRole("menuitem", { name: E.detail.delete }));
+    const user = await openSettings();
+    await user.click(await screen.findByRole("button", { name: E.detail.delete }));
     const dialog = await screen.findByRole("dialog");
     expect(dialog.textContent).toContain(
       E.detail.deleteDefaultHint.replaceAll("{name}", E.personal),
@@ -588,22 +601,26 @@ describe("local devices (environments spec §6, §9)", () => {
     });
     const { client } = await renderDetail();
     client.setQueryData(["org", "o1", "devices"], list([device("e1", "Laptop")]));
-    expect(await screen.findByText("grant-mbp")).toBeTruthy();
+    const user = await openSettings();
+    expect(await screen.findByText(E.machine.title)).toBeTruthy();
     // origin and state are the nameplate's alone
     expect(screen.getByText(E.source.local)).toBeTruthy();
     expect(screen.getByText(E.state.online)).toBeTruthy();
-    expect(screen.getByText("macOS")).toBeTruthy();
-    expect(screen.getByText(E.runMode.os)).toBeTruthy();
     expect(screen.getByText("v0.1.0")).toBeTruthy();
+    // the machine's name is the device's name, and the nameplate carries its mode: neither is
+    // repeated in the machine block, which keeps 系统 and 断开
+    expect(screen.queryByText("grant-mbp")).toBeNull();
     // the cloud facts do not apply to a machine
     expect(screen.queryByText(E.detail.filesAndSuspendNote)).toBeNull();
-    const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: E.machine.revoke }));
     const dialog = await screen.findByRole("dialog");
     expect(calls.some((c) => c.method === "DELETE")).toBe(false);
     await user.click(within(dialog).getByRole("button", { name: E.machine.revokeSubmit }));
     await vi.waitFor(() => expect(calls.some((c) => c.method === "DELETE")).toBe(true));
-    expect(await screen.findByText(E.machine.none)).toBeTruthy();
+    // no machine left: the settings tab no longer offers 断开, and the overview has no 机器 block
+    await vi.waitFor(() =>
+      expect(screen.queryByRole("button", { name: E.machine.revoke })).toBeNull(),
+    );
     expect(client.getQueryState(["org", "o1", "devices"])?.isInvalidated).toBe(true);
   });
 
@@ -623,9 +640,8 @@ describe("local devices (environments spec §6, §9)", () => {
   it("deleting a local device says the files on the machine stay", async () => {
     stubApi({ [`GET ${BASE}/e1`]: () => json(200, { device: device("e1", "Laptop") }) });
     await renderDetail();
-    const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: en.common.moreActions }));
-    await user.click(await screen.findByRole("menuitem", { name: E.detail.delete }));
+    const user = await openSettings();
+    await user.click(await screen.findByRole("button", { name: E.detail.delete }));
     const dialog = await screen.findByRole("dialog");
     expect(dialog.textContent).toContain(E.detail.deleteLocalHint.replace("{name}", "Laptop"));
   });
@@ -688,8 +704,8 @@ describe("device network in sandbox mode (auto mode spec §4.4)", () => {
     });
     const { client } = await renderDetail();
     client.setQueryData(["org", "o1", "devices"], list([local()]));
+    const user = await openSettings();
     expect(await screen.findByText("files.example.com")).toBeTruthy();
-    const user = userEvent.setup();
     await user.click(
       screen.getByRole("button", { name: N.removeLabel.replace("{host}", "files.example.com") }),
     );
@@ -706,15 +722,8 @@ describe("device network in sandbox mode (auto mode spec §4.4)", () => {
       [`POST ${BASE}/e1/policy`]: () => json(200, { policy: policy() }),
     });
     await renderDetail();
-    const user = userEvent.setup();
-    const input = await screen.findByRole("textbox", { name: N.add });
-    await user.type(input, "https://slack.com");
-    await user.click(screen.getByRole("button", { name: N.addSubmit }));
-    expect(await screen.findByText(N.hostInvalid)).toBeTruthy();
-    expect(calls.some((c) => c.method === "POST")).toBe(false);
-    await user.clear(input);
-    await user.type(input, "*.Slack.com");
-    await user.click(screen.getByRole("button", { name: N.addSubmit }));
+    const user = await openSettings();
+    await addHost(user, "*.Slack.com");
     await vi.waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({ add: ["*.slack.com"] });
   });
@@ -732,9 +741,13 @@ describe("device network in sandbox mode (auto mode spec §4.4)", () => {
         }),
     });
     await renderDetail();
+    const user = await openSettings();
     expect(await screen.findByText(N.domainsEmpty)).toBeTruthy();
-    // the add field stays: the flow is the only way to widen the list
-    expect(screen.getByRole("textbox", { name: N.add })).toBeTruthy();
+    // the add flow stays: it is the only way to widen the list
+    const add = screen.getByRole("button", { name: N.add });
+    expect(add).toHaveProperty("disabled", false);
+    await user.click(add);
+    expect(await screen.findByRole("dialog")).toBeTruthy();
   });
 
   it("a program without policyOpId says to upgrade it", async () => {
@@ -743,6 +756,7 @@ describe("device network in sandbox mode (auto mode spec §4.4)", () => {
         json(200, { device: local({ features: ["networkReport", "policyOp"] }) }),
     });
     await renderDetail();
+    await openSettings();
     expect(await screen.findByText(N.upgrade)).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Remove files\.example\.com/ })).toBeNull();
   });
@@ -759,9 +773,8 @@ describe("device network in sandbox mode (auto mode spec §4.4)", () => {
         }),
     });
     await renderDetail();
-    const user = userEvent.setup();
-    await user.type(await screen.findByRole("textbox", { name: N.add }), "a.com");
-    await user.click(screen.getByRole("button", { name: N.addSubmit }));
+    const user = await openSettings();
+    await addHost(user, "a.com");
     expect(await screen.findByText(en.errors.device.policy_refused)).toBeTruthy();
     expect(screen.getByText(/capybara-device policy add allowedDomains a\.com/)).toBeTruthy();
   });
@@ -772,7 +785,8 @@ describe("device network in sandbox mode (auto mode spec §4.4)", () => {
         json(200, { device: local({}, { machine: { ...MACHINE, mode: "docker" } }) }),
     });
     await renderDetail();
-    expect(await screen.findByText(N.dockerNote)).toBeTruthy();
-    expect((screen.getByRole("textbox", { name: N.add }) as HTMLInputElement).disabled).toBe(true);
+    await openSettings();
+    expect(await screen.findByText(N.dockerNote, { exact: false })).toBeTruthy();
+    expect(screen.getByRole("button", { name: N.add })).toHaveProperty("disabled", true);
   });
 });

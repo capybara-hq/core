@@ -1588,10 +1588,6 @@
       "online": "Online",
       "offline": "Offline"
     },
-    "runMode": {
-      "os": "System sandbox",
-      "docker": "Docker"
-    },
     "mark": {
       "auto": "Auto",
       "sandbox": "Sandbox",
@@ -1654,32 +1650,40 @@
       "resourcesValue": "{cpu} CPU · {memory} memory · {disk} disk",
       "network": "Network",
       "filesAndSuspendNote": "Files are kept until the device is deleted. Suspending ends the processes that are running.",
-      "created": "Created"
+      "tabsLabel": "Device views",
+      "tabOverview": "Overview",
+      "tabSettings": "Settings",
+      "deleteDanger": "Deleting {name} also deletes its files and ends its processes, with no way back.",
+      "deleteDangerDefault": "Deleting {name} also deletes its files and ends its processes, with no way back. A new empty device is created the next time one is needed.",
+      "deleteDangerLocal": "Deleting {name} disconnects its machine, with no way back. The files on the machine stay."
     },
     "mode": {
       "description": {
-        "auto": "Commands run on this machine as you, with its network; each command is reviewed.",
-        "sandbox": "Commands run in a sandbox that reaches only the workspace, temporary files and the device's allowed hosts."
+        "auto": "Runs on this machine as you; each command is reviewed.",
+        "sandbox": "Runs in a sandbox; reaches the workspace and allowed hosts only."
       },
       "cloudDescription": {
-        "auto": "Commands run in the container and can reach any public address; private networks are blocked.",
-        "sandbox": "Commands run in the container; its network follows the organization's sandbox network setting."
+        "auto": "Runs in the container and can reach public addresses; private networks are blocked.",
+        "sandbox": "Runs in the container; its network follows the organization's setting."
       },
       "name": {
         "auto": "Auto",
         "sandbox": "Sandbox"
       },
-      "commandHint": "Run this in the machine's terminal to switch its mode.",
+      "commandHint": "Switch it on the machine:",
       "changedSandbox": "The device is in sandbox mode.",
       "pendingNextUse": "Takes effect at the next use; files are kept.",
-      "lockedNarrowed": "This cloud device is set to sandbox mode; a mode can only be narrowed here, not widened back to auto.",
+      "lockedNarrowed": "Sandbox mode can't be switched back to auto on the web.",
       "lockedSandbox": "Auto mode is not enabled, so cloud devices run in sandbox mode.",
       "unavailable": "Auto mode is not enabled",
-      "autoOnMachine": "Switch to auto on the machine: run the command below.",
+      "autoOnMachine": "It can only be switched on at the machine.",
       "noMachine": "Connect a machine to switch its mode here.",
       "offline": "This device is offline; run the command below on the machine to switch its mode.",
       "upgrade": "The device program on this machine can't change its mode from the platform. Upgrade capybara-device on the machine.",
-      "pendingFilesReset": "Takes effect after the files are reset."
+      "pendingFilesReset": "Takes effect after the files are reset.",
+      "title": "Run mode",
+      "overviewHint": "Auto runs on this machine as you; sandbox limits commands to the workspace and the allowed hosts.",
+      "cloudHint": "A cloud device runs in its container; the mode follows whether the organization allows auto."
     },
     "recent": {
       "title": "Recent changes",
@@ -1701,8 +1705,6 @@
     },
     "machine": {
       "title": "Machine",
-      "description": "The machine that runs this device's commands.",
-      "name": "Name",
       "os": "System",
       "none": "No machine is connected. Run capybara-device login on the machine to connect it.",
       "revoke": "Disconnect this machine",
@@ -1710,7 +1712,7 @@
       "revokeHint": "The machine's credential is revoked and the commands it is running end. The files on the machine stay. To connect again, run capybara-device login on the machine.",
       "revokeSubmit": "Disconnect",
       "revoked": "{name} disconnected.",
-      "runMode": "Runs in"
+      "description": "Disconnecting revokes this machine's credential and ends the commands it is running; the files on the machine stay."
     },
     "network": {
       "domains": "Allowed domains",
@@ -1718,8 +1720,8 @@
       "remove": "Remove",
       "removeLabel": "Remove {host}",
       "removed": "{host} removed.",
-      "add": "Add a domain",
-      "addHelp": "An exact host (files.example.com) or a wildcard (*.example.com).",
+      "add": "Add a host",
+      "addHelp": "An exact host or a wildcard (*.example.com).",
       "addDisabled": "This machine can't add domains from the platform.",
       "addSubmit": "Add",
       "added": "{host} added.",
@@ -1729,17 +1731,26 @@
       "dockerNote": "This machine runs commands in Docker, which can't limit single domains, so it accepts no widening from the platform.",
       "unknown": "The machine has not reported its network settings yet.",
       "title": "Network",
-      "description": "In sandbox mode, commands reach only the domains this machine allows; changes are sent to the machine.",
       "cloudTitle": "Network",
-      "cloudDescription": {
-        "open-public": "In sandbox mode this cloud device can reach any public address; private networks are blocked.",
-        "allowlist": "In sandbox mode this cloud device reaches only the domains the organization allows."
-      },
       "cloudHint": {
         "org": "The organization sets this in its settings.",
         "platform": "The platform sets this."
       },
-      "cloudEmpty": "No domains are allowed."
+      "cloudEmpty": "No domains are allowed.",
+      "overviewNote": "Commands reach these hosts only.",
+      "description": "Commands reach these hosts only; changes are sent to this machine.",
+      "addTitle": "Add a host",
+      "addField": "Host",
+      "cancel": "Cancel"
+    },
+    "overview": {
+      "editNetwork": "Change in settings"
+    },
+    "files": {
+      "title": "Files"
+    },
+    "danger": {
+      "title": "Danger zone"
     }
   },
   "nav": {

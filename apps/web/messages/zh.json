@@ -1576,10 +1576,6 @@
       "online": "在线",
       "offline": "离线"
     },
-    "runMode": {
-      "os": "系统沙箱",
-      "docker": "Docker"
-    },
     "mark": {
       "auto": "自动",
       "sandbox": "沙箱",
@@ -1642,32 +1638,40 @@
       "resourcesValue": "{cpu} CPU · 内存 {memory} · 磁盘 {disk}",
       "network": "网络",
       "filesAndSuspendNote": "文件保留到设备被删除。暂停会结束正在运行的进程。",
-      "created": "创建时间"
+      "tabsLabel": "设备视图",
+      "tabOverview": "概览",
+      "tabSettings": "设置",
+      "deleteDanger": "删除 {name} 会同时删除它的文件并结束其中的进程，且无法恢复。",
+      "deleteDangerDefault": "删除 {name} 会同时删除它的文件并结束其中的进程，且无法恢复。下次需要时会新建一个空的设备。",
+      "deleteDangerLocal": "删除 {name} 会断开它的机器，且无法恢复。机器上的文件会保留。"
     },
     "mode": {
       "description": {
-        "auto": "命令以你的身份在这台机器上运行，可以联网；每条命令都经过审查。",
-        "sandbox": "命令在沙箱里运行，只能访问工作区、临时目录和设备允许的域名。"
+        "auto": "以你的身份在本机运行，命令都会经过审查。",
+        "sandbox": "在沙箱里运行，只能访问工作区和允许的域名。"
       },
       "cloudDescription": {
-        "auto": "命令在容器里运行，可以访问公网，内网地址被挡住。",
-        "sandbox": "命令在容器里运行，网络按组织的沙箱网络设置。"
+        "auto": "在容器里运行，可以访问公网，内网地址被挡住。",
+        "sandbox": "在容器里运行，网络按组织的沙箱设置。"
       },
       "name": {
         "auto": "自动",
         "sandbox": "沙箱"
       },
-      "commandHint": "在这台机器的终端里运行，切换模式。",
+      "commandHint": "在机器上切换模式：",
       "changedSandbox": "已切换到沙箱模式。",
       "pendingNextUse": "下次使用时生效，文件保留。",
-      "lockedNarrowed": "这台云端设备已设为沙箱模式；这里只能收窄，不能切回自动。",
+      "lockedNarrowed": "沙箱模式不能在网页上切回自动。",
       "lockedSandbox": "未开放自动模式，云端设备运行沙箱。",
       "unavailable": "未开放自动模式",
-      "autoOnMachine": "在机器上切换到自动：运行下面的命令。",
+      "autoOnMachine": "只能在这台机器上切换。",
       "noMachine": "连接机器后才能在这里切换模式。",
       "offline": "这台设备离线；在机器上运行下面的命令即可切换。",
       "upgrade": "这台机器上的设备程序不支持从平台修改模式。请在机器上升级 capybara-device。",
-      "pendingFilesReset": "重置文件后生效。"
+      "pendingFilesReset": "重置文件后生效。",
+      "title": "运行模式",
+      "overviewHint": "自动以你的身份在这台机器上运行，沙箱把命令限制在工作区和允许的域名里。",
+      "cloudHint": "云端设备在容器里运行；模式由组织是否开放自动模式决定。"
     },
     "recent": {
       "title": "最近的修改",
@@ -1689,8 +1693,6 @@
     },
     "machine": {
       "title": "机器",
-      "description": "运行这个设备命令的机器。",
-      "name": "名称",
       "os": "系统",
       "none": "没有连接的机器。在机器上运行 capybara-device login 连接。",
       "revoke": "断开这台机器",
@@ -1698,7 +1700,7 @@
       "revokeHint": "这台机器的连接凭据会被撤销，正在运行的命令会结束。机器上的文件会保留。要再次连接，在机器上运行 capybara-device login。",
       "revokeSubmit": "断开",
       "revoked": "已断开 {name}。",
-      "runMode": "运行方式"
+      "description": "断开后这台机器的连接凭据会被撤销，正在运行的命令会结束；机器上的文件会保留。"
     },
     "network": {
       "domains": "允许的域名",
@@ -1707,7 +1709,7 @@
       "removeLabel": "移除 {host}",
       "removed": "已移除 {host}。",
       "add": "添加域名",
-      "addHelp": "完整主机名（files.example.com）或通配符（*.example.com）。",
+      "addHelp": "完整主机名或通配符（*.example.com）。",
       "addDisabled": "这台机器不能从平台添加域名。",
       "addSubmit": "添加",
       "added": "已添加 {host}。",
@@ -1717,17 +1719,26 @@
       "dockerNote": "这台机器用 Docker 运行命令，无法按域名限制，因此不接受平台放宽网络。",
       "unknown": "机器还没有上报它的网络设置。",
       "title": "网络",
-      "description": "沙箱模式下，命令只能访问这台机器允许的域名。添加或移除会发送到机器。",
       "cloudTitle": "网络",
-      "cloudDescription": {
-        "open-public": "沙箱模式下，这台云端设备可以访问公网，内网地址被挡住。",
-        "allowlist": "沙箱模式下，这台云端设备只能访问组织允许的域名。"
-      },
       "cloudHint": {
         "org": "组织在设置里修改这里。",
         "platform": "由平台设置。"
       },
-      "cloudEmpty": "没有允许的域名。"
+      "cloudEmpty": "没有允许的域名。",
+      "overviewNote": "命令只能访问这些域名。",
+      "description": "命令只能访问这些域名；改动会发送到这台机器。",
+      "addTitle": "添加域名",
+      "addField": "域名",
+      "cancel": "取消"
+    },
+    "overview": {
+      "editNetwork": "去设置修改"
+    },
+    "files": {
+      "title": "文件"
+    },
+    "danger": {
+      "title": "危险区"
     }
   },
   "nav": {

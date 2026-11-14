@@ -3,31 +3,33 @@
 import {
   Badge,
   Button,
-  ContentSection,
+  Callout,
   DangerConfirm,
-  DateTime,
+  DangerZone,
+  DangerZoneItem,
   DetailPage,
   DeviceNameplate,
   type DeviceNameplateState,
   Dialog,
   Field,
-  formatBytes,
   Input,
-  KeyValue,
   Stack,
   Text,
   useToast,
 } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
-import { DeviceModeSection } from "../../../../components/DeviceModeSection";
+import {
+  DeviceOverview,
+  DeviceSettings,
+  RecentChanges,
+} from "../../../../components/DeviceModeSection";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
 import { NoAccess } from "../../../../components/NoAccess";
 import { usePagePath } from "../../../../components/shell/path";
 import { useDeviceName } from "../../../../components/use-device-name";
 import { useRouter } from "../../../../i18n/navigation";
-import { osLabel } from "../../../../lib/device-sign-in";
 import {
   type Device,
   deleteDevice,
@@ -49,19 +51,20 @@ import NotFound from "../../not-found";
 
 /**
  * `/devices/[id]`: one device (DetailPage, one centred column). Its head is the `DeviceNameplate`
- * band — name, origin, status light and mode mark on the left, program version and last seen on
- * the right — the page's one bright element; everything below is quiet. The facts (each said once)
- * are 创建时间, and for a cloud device 提供方, 资源 and 网络 (split into two rows: CPU · memory ·
- * disk, and 开放（挡内网） / 白名单), the files and suspension notes are each said once, and
- * `DeviceModeSection` holds the 自动 / 沙箱 scale, its network section (sandbox mode only) and the
- * recent changes. A local device adds its machine block (name, system, run mode, 断开这台机器) and
- * deleting it keeps the files on the machine. 重命名, 重建文件 (only when its files are lost, behind a
- * confirmation; a job, so the page then polls until the files are back) and 删除 (typing its name;
- * the files are deleted with it, a destructive item of the ⋯ menu; deleting 个人设备 says a new
- * empty one is created the next time one is needed). A local device never offers 重建文件 (the
- * kernel refuses it): its files-lost note tells the person to run `capybara-device logout`, then
- * `capybara-device login` on the machine. From the query cache (the layout prefetched it on a first
- * load); a device the kernel does not find is the not-found state.
+ * band — name, origin, status light and mode mark on the left, program version, last seen and
+ * creation time on the right — the page's one bright element, and the page's title: the PageHeader
+ * is title-less, so the name is said once (`titleHidden`). Everything below is quiet and dense:
+ * the cloud facts (提供方, 资源 and 网络, each said once), the files and suspension notes, the
+ * `DeviceModeSection` (the compact 自动 / 沙箱 scale, its network section in sandbox mode only, and
+ * the recent changes), and for a local device its machine block (系统 and 断开这台机器). A local
+ * device's name is the machine's, and its mode is the nameplate's mark, so neither is repeated.
+ * 重命名, 重建文件 (only when its files are lost, behind a confirmation; a job, so the page then
+ * polls until the files are back) and 删除 (typing its name; the files are deleted with it, a
+ * destructive item of the ⋯ menu; deleting 个人设备 says a new empty one is created the next time
+ * one is needed). A local device never offers 重建文件 (the kernel refuses it): its files-lost note
+ * tells the person to run `capybara-device logout`, then `capybara-device login` on the machine.
+ * From the query cache (the layout prefetched it on a first load); a device the kernel does not
+ * find is the not-found state.
  */
 export default function DeviceView({ id }: { id: string }) {
   const ws = useWorkspace();
@@ -71,6 +74,7 @@ export default function DeviceView({ id }: { id: string }) {
 }
 
 function DevicePage({ orgId, id }: { orgId: string; id: string }) {
+  const t = useTranslations("devices");
   const scope = usePagePath("org");
   // 重建文件 is a job: after the request the page polls until the files are back
   const [resetting, setResetting] = useState(false);
@@ -88,10 +92,24 @@ function DevicePage({ orgId, id }: { orgId: string; id: string }) {
   if (read.kind === "loading") {
     return (
       <DetailPage
-        header={{ path: [...scope, { label: "devices", href: "/devices" }], title: "" }}
+        header={{
+          path: [...scope, { label: "devices", href: "/devices" }],
+          title: "",
+          titleHidden: true,
+          loading: { actions: 2 },
+        }}
+        tabs={{
+          label: t("detail.tabsLabel"),
+          items: [
+            { id: "overview", label: t("detail.tabOverview") },
+            { id: "settings", label: t("detail.tabSettings") },
+          ],
+          value: "overview",
+          onChange: () => {},
+        }}
         loading={{
-          // the nameplate band reserves its space so nothing shifts when the device lands
-          facts: { rows: 2, keyWidth: "10ch" },
+          // the nameplate band stays where the loaded band lands
+          band: true,
           content: [
             { kind: "key-value", rows: 4, keyWidth: "10ch" },
             { kind: "lines", lines: 2 },
@@ -121,10 +139,10 @@ function Detail({
 }) {
   const scope = usePagePath("org");
   const t = useTranslations("devices");
-  const tcm = useTranslations("common");
   const router = useRouter();
   const toast = useToast();
   const [open, setOpen] = useState<Dialogs>(null);
+  const [tab, setTab] = useState<"overview" | "settings">("overview");
   const name = useDeviceName()(e);
   const lang = labelLocale(useLocale());
   const state = deviceState(e);
@@ -159,6 +177,8 @@ function Detail({
         header={{
           path: [...scope, { label: "devices", href: "/devices" }, { label: name }],
           title: name,
+          // the nameplate is the page's visible head; the title stays an h1 for assistive tech
+          titleHidden: true,
           actions: [
             { label: t("detail.rename"), variant: "default", onSelect: () => setOpen("rename") },
             ...((e.filesLost || e.mode.pendingFilesReset) && e.available && !local
@@ -170,13 +190,16 @@ function Detail({
                   },
                 ]
               : []),
-            {
-              label: tcm("moreActions"),
-              menu: [
-                { label: t("detail.delete"), danger: true, onSelect: () => setOpen("delete") },
-              ],
-            },
           ],
+        }}
+        tabs={{
+          label: t("detail.tabsLabel"),
+          items: [
+            { id: "overview", label: t("detail.tabOverview") },
+            { id: "settings", label: t("detail.tabSettings") },
+          ],
+          value: tab,
+          onChange: (id) => setTab(id === "settings" ? "settings" : "overview"),
         }}
         facts={
           <DeviceNameplate
@@ -185,6 +208,7 @@ function Detail({
             state={npState}
             version={local ? (e.machine?.programVersion ?? null) : null}
             lastSeen={local ? (e.machine?.lastSeenAt ?? null) : (e.instance?.lastUsedAt ?? null)}
+            created={e.createdAt}
             badge={<Badge tone={mark.tone}>{t(`mark.${mark.kind}`)}</Badge>}
             labels={{
               origin: { cloud: t("source.cloud"), local: t("source.local") },
@@ -193,54 +217,45 @@ function Detail({
           />
         }
       >
-        <Stack gap={16}>
-          <KeyValue
-            keyWidth="10ch"
-            rows={[
-              // origin and state are the nameplate's alone, never repeated as facts
-              ...(local ? [] : [{ k: t("detail.provider"), v: e.provider ?? t("none") }]),
-              ...(local
-                ? []
-                : [
-                    {
-                      k: t("detail.resources"),
-                      v: t("detail.resourcesValue", {
-                        cpu: limits.cpu,
-                        memory: formatBytes(limits.memoryMb * 1024 * 1024),
-                        disk: formatBytes(limits.diskMb * 1024 * 1024),
-                      }),
-                    },
-                    {
-                      k: t("detail.network"),
-                      v: t(`networkKind.${e.mode.network.kind}`),
-                    },
-                  ]),
-              { k: t("detail.created"), v: <DateTime value={e.createdAt} /> },
-            ]}
-          />
-          {e.filesLost && (
-            <Text variant="prose" tone="warn">
-              {t(local ? "detail.localFilesLostNote" : "detail.filesLostNote")}
-            </Text>
-          )}
-          {e.demotedFrom !== null && (
-            <Text variant="prose" tone="muted">
-              {t("detail.demotedNote", {
-                provider: extensionLabel(
-                  { name: e.demotedFrom.provider, displayName: e.demotedFrom.displayName },
-                  lang,
-                ),
-              })}
-            </Text>
-          )}
-          {!e.filesLost && (
-            <Text variant="prose" tone="muted">
-              {t(local ? "detail.localFilesNote" : "detail.filesAndSuspendNote")}
-            </Text>
-          )}
-          <DeviceModeSection orgId={orgId} device={e} />
-          {local && <MachineSection device={e} onRevoke={() => setOpen("revoke")} />}
-        </Stack>
+        {e.filesLost && (
+          <Callout tone="warn">
+            {t(local ? "detail.localFilesLostNote" : "detail.filesLostNote")}
+          </Callout>
+        )}
+        {e.demotedFrom !== null && (
+          <Callout tone="info">
+            {t("detail.demotedNote", {
+              provider: extensionLabel(
+                { name: e.demotedFrom.provider, displayName: e.demotedFrom.displayName },
+                lang,
+              ),
+            })}
+          </Callout>
+        )}
+        {tab === "overview" ? (
+          <Stack gap={12}>
+            <DeviceOverview device={e} onOpenSettings={() => setTab("settings")} />
+            <RecentChanges recent={e.mode.recent} />
+          </Stack>
+        ) : (
+          <>
+            <DeviceSettings orgId={orgId} device={e} onDisconnect={() => setOpen("revoke")} />
+            <DangerZone title={t("danger.title")}>
+              <DangerZoneItem
+                title={t("detail.delete")}
+                description={t(
+                  local
+                    ? "detail.deleteDangerLocal"
+                    : e.isDefault
+                      ? "detail.deleteDangerDefault"
+                      : "detail.deleteDanger",
+                  { name },
+                )}
+                action={{ label: t("detail.delete"), onSelect: () => setOpen("delete") }}
+              />
+            </DangerZone>
+          </>
+        )}
       </DetailPage>
       {open === "rename" && (
         <RenameDialog
@@ -433,42 +448,6 @@ function ResetDialog({
         {error !== undefined && <FormError message={error} />}
       </Stack>
     </Dialog>
-  );
-}
-
-/**
- * A local device's machine: name, system and how it runs commands (系统沙箱 / Docker), with
- * 断开这台机器; or the line saying none is connected. The program version and last seen are the
- * nameplate's alone, never repeated here.
- */
-function MachineSection({ device: e, onRevoke }: { device: Device; onRevoke(): void }) {
-  const t = useTranslations("devices");
-  const m = e.machine;
-  return (
-    <ContentSection
-      title={t("machine.title")}
-      description={t("machine.description")}
-      {...(m === null
-        ? { empty: t("machine.none") }
-        : {
-            actions: (
-              <Button density="dense" onClick={onRevoke}>
-                {t("machine.revoke")}
-              </Button>
-            ),
-          })}
-    >
-      {m !== null && (
-        <KeyValue
-          keyWidth="10ch"
-          rows={[
-            { k: t("machine.name"), v: m.name },
-            { k: t("machine.os"), v: osLabel(m.os) },
-            ...(m.mode !== null ? [{ k: t("machine.runMode"), v: t(`runMode.${m.mode}`) }] : []),
-          ]}
-        />
-      )}
-    </ContentSection>
   );
 }
 
