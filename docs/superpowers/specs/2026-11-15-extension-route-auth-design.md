@@ -44,7 +44,7 @@ is invalid gets no call (409 `extension.needs_config`).
 
 - `access` is one of the four values; a missing or unknown value is refused.
 - `embed` paths start with `/ui/`; `member` / `admin` paths contain no `:orgId` parameter.
-- `public` and `embed` paths must not start with `/orgs/` (that segment is reserved for the org mount).
+- No path of any access level may start with `/orgs/` (that segment is reserved for the org mount; the validator rejects it for `public`, `embed`, `member` and `admin` alike).
 - An embed UI contribution's `path` must be declared as a `GET` with `access: "public"`: the
   sandboxed iframe loads the page before it holds a token.
 

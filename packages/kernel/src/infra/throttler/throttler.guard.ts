@@ -33,7 +33,8 @@ export function selectedThrottlers(context: ExecutionContext): readonly string[]
 /**
  * Opts a route (or controller) in to the named throttlers `names` (see `NAMED_THROTTLERS`).
  * Throttling is per-route opt-in because the kernel limits only credential-checking routes today;
- * health, SSE and extension routes stay unlimited.
+ * health and SSE stay unlimited; extension routes are limited by the plugin dispatch itself
+ * (public writes only).
  */
 export const Throttled = (...names: string[]) => {
   for (const n of names) {
