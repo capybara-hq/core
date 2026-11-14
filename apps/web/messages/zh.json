@@ -1424,6 +1424,9 @@
       "compactedSaved": "较早的会话已压缩 · 节省 {n} tokens",
       "fallback": "所选模型 {from} 已不可用，本条起改用智能体的模型 {to}"
     },
+    "compacting": "正在压缩会话…",
+    "compactingChunk": "{chunk}/{chunks}",
+    "compactingElapsed": "{seconds} 秒",
     "system": "系统",
     "fileRemoved": "已不可用",
     "noAgents": "没有可用的智能体。请先新建一个智能体。",

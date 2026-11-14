@@ -24,6 +24,7 @@ import { ExtensionUnloadedError } from "../extensions/inflight.js";
 import type { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { hasInvocation, skillLoadOffered } from "../skills/catalog.js";
 import type { ToolRegistry, UnavailableTool } from "../tools/registry.js";
+import type { CompactionProgress, CompactionProgressSink } from "./compaction-progress.js";
 import type {
   CompactionSettings,
   CompactionSettingsService,
@@ -42,12 +43,14 @@ import {
 import {
   acceptSummary,
   buildCompactionRequest,
+  chunkTranscript,
   compactionBackoff,
   compactionChunkSize,
   compactionInputBudget,
   compactionPlan,
   compactionRequestOverhead,
   extractSummary,
+  MIN_COMPACTION_CHUNK_TOKENS,
   nextTranscriptChunk,
   shouldCompact,
   summarySavedTokens,
@@ -171,6 +174,11 @@ export interface ModelStepDeps {
    * resolved once per model step.
    */
   compactionSettings: Pick<CompactionSettingsService, "resolve">;
+  /**
+   * Ephemeral compaction progress (context compaction spec §4.6): display-only, never in the log.
+   * Absent in eval replays and single-step replays, which have no live conversation to show it on.
+   */
+  compactionProgress?: CompactionProgressSink;
   log: Logger;
   /**
    * 会话附件（构建请求时解析日志里的媒体引用；见 AttachmentsService）。未提供时媒体引用一律按「不再可用」处理。
@@ -300,7 +308,11 @@ export const assistantIdemKey = (runId: string, step: number): string =>
 export const modelCallIdemKey = (runId: string, step: number, attempt: number): string =>
   `model_call:${runId}:${step}:${attempt}`;
 
-/** 一步最多的模型调用尝试次数（主模型、同模型重试、兜底，见 `ladder`）。 */
+/**
+ * The ladder's three rungs: the main model, one same-model retry and the fallback (see `ladder`).
+ * A step may make more calls than this: reactive `model.context_overflow` fix-ups retry on the same
+ * rung, all within {@link MAX_STEP_MODEL_CALLS}.
+ */
 export const MAX_MODEL_ATTEMPTS = 3;
 
 /**
@@ -312,8 +324,10 @@ export const MAX_STEP_MODEL_CALLS = MAX_MODEL_ATTEMPTS + 2;
 
 /**
  * The progressively smaller fit targets of a reactive trim, as fractions of the model's window
- * (context compaction spec §4.3 point 5 / §4.4 point 3). The trim fix-up retries once, choosing the
- * first target the fit plan can reach; if none is reachable it sends the 70% plan.
+ * (context compaction spec §4.3 point 5 / §4.4 point 3). The trim fix-up tries them most
+ * aggressive first (70%, then 80%, then 90% of the window) and uses the first target a fit plan
+ * actually reaches, so the retry really shrinks a request the provider rejected. `null` when the
+ * request already fits every target (nothing to trim).
  */
 export const REACTIVE_TRIM_FACTORS = [0.9, 0.8, 0.7] as const;
 
@@ -986,7 +1000,8 @@ async function maybeCompact(
     await loadMedia(deps, input, events, info, tools);
   } catch (err) {
     if (!(err instanceof MediaUnavailableError)) throw err;
-    // 存储暂时不可用：本步跳过压缩，交给降级梯子（会按可重试错误处理）
+    // storage is temporarily unavailable: skip compaction for this step and leave it to the
+    // fallback ladder, which treats it as a retryable error
     deps.log.warn("compaction skipped: attachment storage unavailable", {
       conversationId: input.conversationId,
       err,
@@ -1026,6 +1041,18 @@ async function maybeCompact(
 
   const { runId, step, signal, conversationId } = input;
   const ref = modelRef;
+  // §4.6 progress: from here the compaction is certain, so the conversation may show a row. It is
+  // display-only (Redis + a bus message, never the log); a lost update costs nothing.
+  const startedAt = Date.now();
+  const progressOf = (progress: CompactionProgress): void => {
+    deps.compactionProgress?.update({
+      runId,
+      conversationId,
+      ...(input.agentId !== undefined && { agentId: input.agentId }),
+      progress,
+    });
+  };
+  progressOf({ phase: "preparing", step, startedAt });
   // the summary call's output cap: the org's effective setting, never above the model's own cap
   // (context compaction spec §4.8)
   const summaryCap = Math.min(compaction.maxOutputTokens, info.maxOutputTokens);
@@ -1054,6 +1081,11 @@ async function maybeCompact(
   // the whole transcript is one call unless it is over the base chunk size
   let remaining: string | null =
     baseChunkSize > 0 && textTokens(plan.transcript) > baseChunkSize ? plan.transcript : null;
+  /** Whether this compaction is chunked (real `i/N` progress only in this path). */
+  const chunked = remaining !== null;
+  /** The chunk count the current chunk size plans (updated when the running summary shrinks it). */
+  let plannedChunks = chunked ? chunkTranscript(plan.transcript, baseChunkSize).length : 0;
+  let lastChunkSize = baseChunkSize;
 
   let failure: string | null = null;
   /** The 1-based chunk whose call failed or was denied, when the compaction was chunked. */
@@ -1076,17 +1108,36 @@ async function maybeCompact(
         allowance,
         summary === "" ? 0 : textTokens(`[Earlier summary]\n${summary}\n\n`),
       );
-      const next = nextTranscriptChunk(
-        remaining,
-        Math.min(baseChunkSize, budget - overhead - held),
-      );
+      const size = Math.min(baseChunkSize, budget - overhead - held);
+      // A chunk below the floor would make nextTranscriptChunk clamp to one token: fail with a
+      // clear reason instead of a call storm (context compaction spec §4.5).
+      if (size < MIN_COMPACTION_CHUNK_TOKENS) {
+        failure = `the running summary leaves too little room for a chunk (${Math.max(0, size)} tokens, at least ${MIN_COMPACTION_CHUNK_TOKENS} needed)`;
+        failedChunk = attempted + 1;
+        break;
+      }
+      const next = nextTranscriptChunk(remaining, size);
       if (next === null) break;
       chunkText = next.chunk;
       remaining = next.rest.length === 0 ? null : next.rest;
       if (remaining !== null) multiChunk = true;
+      // the real total, recomputed only when the running summary shrank this call's chunk
+      if (size !== lastChunkSize) {
+        lastChunkSize = size;
+        plannedChunks =
+          attempted + 1 + (remaining === null ? 0 : chunkTranscript(remaining, size).length);
+      }
     }
     attempted++;
     const chunkNo = attempted;
+    const current = {
+      phase: "summarizing" as const,
+      step,
+      startedAt,
+      ...(chunked ? { chunk: chunkNo, chunks: plannedChunks } : {}),
+      chars: 0,
+    };
+    progressOf(current);
     // call 1 summarises chunk 1; call i carries the running summary before its chunk, which the
     // instruction merges (compactionPlan formats a previous summary the same way)
     const callInput = summary === "" ? chunkText : `[Earlier summary]\n${summary}\n\n${chunkText}`;
@@ -1118,7 +1169,16 @@ async function maybeCompact(
         info.streamIdleTimeoutMs ?? runtime.streamIdleMs,
         signal,
         (ev) => {
-          if (ev.type === "text_delta") partial += ev.text;
+          if (ev.type !== "text_delta") return;
+          partial += ev.text;
+          // throttled by the sink (≤ once per 200 ms); real characters, never a percentage
+          progressOf({
+            phase: "summarizing",
+            step,
+            startedAt,
+            ...(chunked ? { chunk: chunkNo, chunks: plannedChunks } : {}),
+            chars: partial.length,
+          });
         },
       );
       usages.push({ chunk: multiChunk ? chunkNo : undefined, usage: out.usage });
@@ -1181,6 +1241,8 @@ async function maybeCompact(
     if (remaining === null) break;
   }
 
+  progressOf({ phase: "writing", step, startedAt });
+
   /** The chunk a failure stopped at, for the reason (empty when the compaction was not chunked). */
   const chunkNote = (chunk: number | null): string => (chunk === null ? "" : ` (chunk ${chunk})`);
 
@@ -1234,7 +1296,12 @@ async function maybeCompact(
     if (written.length > 0) {
       await deps.eventLog.notify(conversationId, Math.max(...written.map((e) => e.seq)));
     }
-    return mergeLocal(events, [...billed, ...written]);
+    const merged = await mergeAfterWrite(deps.eventLog, conversationId, events, [
+      ...billed,
+      ...written,
+    ]);
+    deps.compactionProgress?.clear(runId);
+    return merged;
   }
 
   if (failure !== null) {
@@ -1263,16 +1330,47 @@ async function maybeCompact(
   // skip it; a chunked compaction writes one per call, each keyed by its chunk
   const batch: AppendEvent[] = [event, ...usageEvents()];
   const written = await appendCounted(deps, input, batch);
-  return mergeLocal(events, written);
+  const merged = await mergeAfterWrite(deps.eventLog, conversationId, events, written);
+  deps.compactionProgress?.clear(runId);
+  return merged;
 }
 
-/** Merges written events into the local list (idempotent hits already in it are not added twice). */
-function mergeLocal(
+/**
+ * Merges events we just wrote into the step's local list, reading any gap first (the guarantee
+ * `appendLocal` gives): another writer may have appended an event between the local maximum and a
+ * seq we wrote, and a request built from a list that skipped it would claim (through its `toSeq`)
+ * to include an event it does not carry. Idempotent hits already in the list are not added twice;
+ * the result is ordered by seq.
+ */
+async function mergeAfterWrite(
+  eventLog: Pick<EventLog, "readAfter">,
+  conversationId: string,
   events: ConversationEvent[],
   written: readonly ConversationEvent[],
-): ConversationEvent[] {
-  const fresh = written.filter((w) => !events.some((e) => e.seq === w.seq));
-  return fresh.length === 0 ? events : [...events, ...fresh];
+): Promise<ConversationEvent[]> {
+  const fresh = written
+    .filter((w) => !events.some((e) => e.seq === w.seq))
+    .sort((a, b) => a.seq - b.seq);
+  if (fresh.length === 0) return events;
+  const out = [...events];
+  let after = events.reduce((m, e) => Math.max(m, e.seq), 0);
+  for (const w of fresh) {
+    while (w.seq > after + 1) {
+      const page = await eventLog.readAfter(
+        conversationId,
+        after,
+        Math.min(READ_PAGE, w.seq - after - 1),
+      );
+      const inGap = page.filter((e) => e.seq > after && e.seq < w.seq);
+      out.push(...inGap);
+      const last = inGap.at(-1);
+      if (!last || inGap.length < page.length) break;
+      after = last.seq;
+    }
+    out.push(w);
+    after = w.seq;
+  }
+  return out.sort((a, b) => a.seq - b.seq);
 }
 
 /**
@@ -1611,9 +1709,18 @@ async function ladder(
           if (sentMedia.length > 0 && !mediaFixup) {
             mediaFixup = true;
             // record the rejection and merge it in: the retry rebuilds from the log and the bytes
-            // become "rejected" placeholders
+            // become "rejected" placeholders. A failed write cannot change the log, so retrying
+            // the same bytes would overflow again: skip the media retry and fall through to the
+            // forced compaction instead.
+            let recorded = false;
             try {
-              evs = mergeLocal(evs, await excludeMedia(deps, input, attempt, sentMedia));
+              evs = await mergeAfterWrite(
+                deps.eventLog,
+                conversationId,
+                evs,
+                await excludeMedia(deps, input, attempt, sentMedia),
+              );
+              recorded = true;
             } catch (e) {
               deps.log.warn("cannot record media_excluded", {
                 conversationId,
@@ -1622,9 +1729,11 @@ async function ladder(
                 err: e,
               });
             }
-            last = f;
-            sameRung = true;
-            continue;
+            if (recorded) {
+              last = f;
+              sameRung = true;
+              continue;
+            }
           }
           if (!compactFixup) {
             compactFixup = true;
@@ -1650,7 +1759,8 @@ async function ladder(
         }
         if (!f.retryable) {
           if (REJECTS_MEDIA.has(f.code) && sentMedia.length > 0) {
-            // 记录失败不能掩盖原来的失败码：只记 warn，本次运行照常以原错误失败
+            // recording the failure must not hide the original code: log only, and fail the run
+            // with the original error as before
             try {
               await excludeMedia(deps, input, attempt, sentMedia);
             } catch (e) {

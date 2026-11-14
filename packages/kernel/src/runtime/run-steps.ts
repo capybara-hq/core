@@ -10,6 +10,7 @@ import type { KernelLogger } from "../log.js";
 import { ToolPipeline } from "../tools/pipeline.js";
 import { ToolRegistry } from "../tools/registry.js";
 import { KyselyCheckpointSaver } from "./checkpointer.js";
+import { CompactionProgressService } from "./compaction-progress.js";
 import { CompactionSettingsService } from "./compaction-settings.service.js";
 import { LangGraphLoop, type LoopDeps } from "./langgraph-loop.js";
 import type { AgentLoop } from "./loop.js";
@@ -64,6 +65,7 @@ export class RunSteps {
     @Inject(SubagentsService) subagents: SubagentsService,
     @Inject(AttachmentsService) attachments: AttachmentsService,
     @Inject(CompactionSettingsService) compactionSettings: CompactionSettingsService,
+    @Inject(CompactionProgressService) compactionProgress: CompactionProgressService,
   ) {
     this.deps = {
       get db(): KernelSchemaDb {
@@ -75,6 +77,8 @@ export class RunSteps {
       tools,
       config,
       compactionSettings,
+      // ephemeral, display-only: the run's progress on its own conversation's stream
+      compactionProgress,
       log,
       toolPipeline,
       // plugin hooks for chat runs; the full-run replay drops them (P-18)

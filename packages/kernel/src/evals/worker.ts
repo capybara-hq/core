@@ -298,6 +298,7 @@ export class EvalWorker {
             db: _snapshot,
             hooks: _noHooks,
             subagentProgress: _noProgress,
+            compactionProgress: _noCompactionProgress,
             skillForks: _noForks,
             ...replayDeps
           } = stepDeps;

@@ -67,6 +67,9 @@ export const conversationTopic = (conversationId: string): string => `conv.${con
  *   (sub-agents spec §14.2, agent map spec §8), `subagentId` the progressing agent: its step and
  *   tool call count so far, and its last tool's key. Not in any log; the SSE forwards it as
  *   `event: subagent_progress` (data without `kind`).
+ * - `compaction_progress`: a compaction of a run is running (context compaction spec §4.6), on that
+ *   run's own conversation's topic **only** (a child's compaction stays on the child's stream); the
+ *   SSE forwards the flat data as `event: compaction`. Ephemeral, display-only, not in the log.
  */
 export type ConversationBusMessage =
   | { kind: "events"; toSeq: number }
@@ -86,6 +89,18 @@ export type ConversationBusMessage =
       step: number;
       toolCalls: number;
       lastToolKey?: string;
+    }
+  | {
+      kind: "compaction_progress";
+      runId: string;
+      conversationId: string;
+      agentId?: string;
+      phase: "preparing" | "summarizing" | "writing";
+      step: number;
+      chunk?: number;
+      chunks?: number;
+      chars?: number;
+      startedAt: number;
     };
 
 /**

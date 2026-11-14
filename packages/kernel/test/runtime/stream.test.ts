@@ -303,4 +303,71 @@ describe("ConversationStreams", () => {
     expect(streams.size).toBe(1);
     h.close();
   });
+
+  it("a compaction progress bus message is forwarded as `event: compaction`", async () => {
+    let handler: ((m: unknown) => unknown) | undefined;
+    const out = output();
+    const streams = streamsWith({
+      eventLog: { readAfter: async () => [] },
+      bus: busWith(async (_t, h) => {
+        handler = h;
+        return async () => {};
+      }),
+      access: async () => true,
+      config: () => config,
+      log: { warn: () => {} },
+    });
+    const h = await streams.open(params, out);
+    h.begin();
+    await flush();
+    handler?.({
+      kind: "compaction_progress",
+      runId: "r",
+      conversationId: "c",
+      agentId: "a",
+      phase: "summarizing",
+      step: 1,
+      chunk: 2,
+      chunks: 3,
+      chars: 120,
+      startedAt: 5,
+    });
+    await flush();
+    expect(out.chunks).toEqual([
+      `event: compaction\ndata: ${JSON.stringify({
+        runId: "r",
+        conversationId: "c",
+        agentId: "a",
+        phase: "summarizing",
+        step: 1,
+        chunk: 2,
+        chunks: 3,
+        chars: 120,
+        startedAt: 5,
+      })}\n\n`,
+    ]);
+    h.close();
+  });
+
+  it("drops a malformed compaction progress message", async () => {
+    let handler: ((m: unknown) => unknown) | undefined;
+    const out = output();
+    const streams = streamsWith({
+      eventLog: { readAfter: async () => [] },
+      bus: busWith(async (_t, h) => {
+        handler = h;
+        return async () => {};
+      }),
+      access: async () => true,
+      config: () => config,
+      log: { warn: () => {} },
+    });
+    const h = await streams.open(params, out);
+    h.begin();
+    await flush();
+    handler?.({ kind: "compaction_progress", runId: "r", conversationId: "c" });
+    await flush();
+    expect(out.chunks).toEqual([]);
+    h.close();
+  });
 });

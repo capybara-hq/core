@@ -440,6 +440,7 @@ export function useConversationPage(
           entries={entries}
           info={info}
           reasoningOf={selection.reasoningOf}
+          compaction={conv.compaction}
           runLinks={{
             agentOwnerId: agent?.ownerAccountId,
             // a sub-agent conversation's trajectory is gated on the parent's agent: no link

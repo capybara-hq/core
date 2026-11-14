@@ -89,6 +89,13 @@ export function compactionChunkSize(budget: number, maxOutputTokens: number): nu
 }
 
 /**
+ * The floor of one summary chunk (context compaction spec §4.5): when the window leaves a chunk
+ * smaller than this, a chunked compaction fails with a clear reason instead of letting
+ * {@link nextTranscriptChunk} clamp to one token and make a call per token.
+ */
+export const MIN_COMPACTION_CHUNK_TOKENS = 256;
+
+/**
  * Compaction trigger (context compaction spec §4.1): the calibrated estimate reaches the lower of
  * `threshold × window` and the input budget, or it reaches the hard line `estimate + output >
  * window`, which fires even when proactive early compaction is turned off (`enabled: false`).

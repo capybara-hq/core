@@ -37,6 +37,7 @@ import {
   isModelSetupError,
   runParts,
 } from "../../lib/run-row";
+import type { CompactionProgress } from "../../lib/stream";
 import { shortTime } from "../../lib/time";
 import {
   type FailedRun,
@@ -51,6 +52,7 @@ import { ConnectCard } from "../ConnectCard";
 import { QuestionCard } from "../QuestionCard";
 import { useOpenDownload } from "../SessionFilePreview";
 import { useSession } from "../shell/session";
+import { CompactingRow } from "./CompactingRow";
 import { NetworkFacts } from "./NetworkFacts";
 import { SubagentWait } from "./SubagentWait";
 
@@ -145,6 +147,11 @@ export type ThreadProps = {
    * false, so the page has one live thread (I2).
    */
   live?: boolean;
+  /**
+   * The running compaction's progress (ephemeral, context compaction spec §4.6), shown as a row at
+   * the end of the thread until the compaction's event replaces it.
+   */
+  compaction?: CompactionProgress | null;
 };
 
 /** The callbacks an entry calls, read through a ref so they never re-render the entries. */
@@ -224,6 +231,7 @@ export function Thread({
   live = true,
   renderTask,
   runLinks,
+  compaction,
 }: ThreadProps) {
   const t = useTranslations("chat");
   const [openSummaries, setOpenSummaries] = useState<ReadonlySet<string>>(new Set());
@@ -360,7 +368,7 @@ export function Thread({
     ],
   );
 
-  if (entries.length === 0) return null;
+  if (entries.length === 0 && !compaction) return null;
 
   return (
     <div role="log" aria-live={live ? "polite" : "off"} aria-label={t("timeline")}>
@@ -368,6 +376,7 @@ export function Thread({
         {entries.map((e) => (
           <EntryView key={e.key} e={e} c={ctx} />
         ))}
+        {compaction ? <CompactingRow progress={compaction} /> : null}
       </Stack>
     </div>
   );

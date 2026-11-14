@@ -1424,6 +1424,9 @@
       "compactedSaved": "Earlier conversation compacted · saved {n} tokens",
       "fallback": "The chosen model {from} is unavailable; using the agent's model {to} from this message"
     },
+    "compacting": "Compacting conversation…",
+    "compactingChunk": "{chunk}/{chunks}",
+    "compactingElapsed": "{seconds}s",
     "system": "System",
     "fileRemoved": "No longer available",
     "noAgents": "No agent is available. Create an agent first.",

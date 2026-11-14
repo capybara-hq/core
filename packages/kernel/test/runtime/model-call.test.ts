@@ -1529,6 +1529,71 @@ describe("runModelStep", () => {
         });
       });
 
+      it("publishes preparing → summarizing (chars, chunk i/N) → writing, then clears", async () => {
+        stubImpl = stub([chunked()], (req) =>
+          req.system.some((x) => x.text.includes(COMPACTION_MARKER))
+            ? `Summary: ${"s".repeat(300)}`
+            : "answer",
+        );
+        const agent = agentWith({ model: { provider: "stub", model: "chunked" } });
+        const updates: {
+          phase: string;
+          step: number;
+          chunk?: number;
+          chunks?: number;
+          chars?: number;
+        }[] = [];
+        const cleared: string[] = [];
+        deps.compactionProgress = {
+          update: (u) => updates.push(u.progress),
+          clear: (runId) => cleared.push(runId),
+        };
+        try {
+          await withSettings(settings, async () => {
+            await history();
+            await say("go");
+            expect((await step({ agent })).content).toEqual([{ type: "text", text: "answer" }]);
+          });
+        } finally {
+          delete deps.compactionProgress;
+        }
+
+        expect(updates[0]?.phase).toBe("preparing");
+        // the first chunk's stream reports its characters and a real 1/3
+        const summarizing = updates.filter((u) => u.phase === "summarizing");
+        expect(summarizing.length).toBeGreaterThan(1);
+        expect(summarizing[0]).toMatchObject({ chunk: 1, chunks: 3, chars: 0 });
+        expect(summarizing.some((u) => (u.chars ?? 0) > 0)).toBe(true);
+        // the last chunk is numbered 3 (real progress, never a percentage)
+        expect(summarizing.at(-1)).toMatchObject({ chunk: 3, chunks: 3 });
+        expect(updates.at(-1)?.phase).toBe("writing");
+        expect(cleared).toHaveLength(1);
+      });
+
+      it("fails the compaction when the window leaves less than the minimum chunk size", async () => {
+        // base chunk size 100 < the 256 floor: chunking would clamp to 1 token and storm
+        const TINY = 100 + 300 + OVERHEAD;
+        const tiny = stubInfo("tiny", { contextWindow: TINY, maxOutputTokens: 200 });
+        const seen: ModelRequest[] = [];
+        stubImpl = stub([tiny], (req) => {
+          seen.push(req);
+          return req.system.some((x) => x.text.includes(COMPACTION_MARKER)) ? "never" : "answer";
+        });
+        const agent = agentWith({ model: { provider: "stub", model: "tiny" } });
+        await withSettings(settings, async () => {
+          await history();
+          await say("go");
+          // the step continues on the trimmed history after the failed compaction
+          expect((await step({ agent })).content).toEqual([{ type: "text", text: "answer" }]);
+          const failed = await ofType("compaction_failed");
+          expect(failed).toHaveLength(1);
+          expect(failed[0]?.payload.reason).toContain("256");
+          expect(await ofType("compaction_summary")).toEqual([]);
+          // no summary call was made: the floor fails before the first chunk
+          expect(compactionCalls(seen)).toHaveLength(0);
+        });
+      });
+
       it("a near-cap running summary shrinks the next chunk so every request fits the window", async () => {
         // 800 characters ≈ 200 tokens: the full summary cap, over the 100-token allowance
         const nearCap = `Summary: ${"s".repeat(791)}`;

@@ -32,7 +32,9 @@ import { refreshUiViews } from "../../lib/query/ui";
 import { HOME_PATH } from "../../lib/routes";
 import { useStopUnderWay } from "../../lib/stop";
 import {
+  acceptCompaction,
   type ChatState,
+  type CompactionProgress,
   type ConversationChange,
   initialChatState,
   openConversationStream,
@@ -99,6 +101,11 @@ export type ConversationState = {
   turnsBefore: number;
   /** The thread's top edge and the read of the page before it; undefined while the log loads. */
   history: { state: HistoryState; loadEarlier(): void } | undefined;
+  /**
+   * The running compaction of this conversation's own run (ephemeral, context compaction spec
+   * §4.6), or null. A child's compaction stays on the child's stream.
+   */
+  compaction: CompactionProgress | null;
   /** The log is still on its way (nothing cached): the thread shows its loading state. */
   loading: boolean;
   /** The conversation row (title, agent, selection); undefined while it loads. */
@@ -152,6 +159,8 @@ export function useConversation(orgId: string, conversationId: string): Conversa
   /** The deltas since the log last changed in a way that drops them (applied per frame). */
   const [deltas, setDeltas] = useState<readonly StreamDelta[]>([]);
   const [progress, dispatchProgress] = useReducer(reduceProgress, {});
+  // the running compaction's progress (ephemeral, not in the log); the row follows the stream
+  const [compaction, setCompaction] = useState<CompactionProgress | null>(null);
   // The log's state is rebuilt when the cached list changes; a delta frame only adds drafts (I3).
   const base = useMemo(
     () =>
@@ -186,6 +195,9 @@ export function useConversation(orgId: string, conversationId: string): Conversa
 
   useEffect(() => {
     if (!loaded) return;
+    // a different conversation (or this one's first open) starts with no compaction row: its own
+    // stream owns it, and progress is never replayed (it is display-only)
+    setCompaction(null);
     const c = keys.org(orgId).conversation(conversationId);
     // A hint that the server's data changed: read it again. A read in flight may have started
     // before the change, and `invalidateQueries` joins a first read (it cancels only a refetch of
@@ -298,12 +310,29 @@ export function useConversation(orgId: string, conversationId: string): Conversa
             catchingUp.current = false;
             for (const k of CONVERSATION_SIDE_KEYS(orgId, conversationId)) invalidate(k);
           }
+          // The compaction ended (`compaction_summary` / `compaction_failed`) or its run did: the
+          // row goes (a completed compaction shows the saved-tokens divider from the log instead).
+          if (
+            e.runId !== null &&
+            (e.type === "compaction_summary" ||
+              e.type === "compaction_failed" ||
+              e.type === "run_finished" ||
+              e.type === "run_failed" ||
+              e.type === "run_aborted")
+          ) {
+            setCompaction((cur) => (cur !== null && cur.runId === e.runId ? null : cur));
+          }
+          // A new run owns the row; a stale one from an aborted step does not linger.
+          if (e.type === "run_started") {
+            setCompaction((cur) => (cur !== null && cur.runId !== e.runId ? null : cur));
+          }
         },
         onDelta: (d) => {
           pending.push(d);
           scheduled ??= frame(flush);
         },
         onSubagentProgress: (p) => dispatchProgress({ progress: p }),
+        onCompaction: (p) => setCompaction((cur) => acceptCompaction(cur, p)),
         onError: ({ code }) => {
           if (disposed) return;
           if (code !== undefined) return fail(new ApiClientError(0, code, code));
@@ -466,6 +495,7 @@ export function useConversation(orgId: string, conversationId: string): Conversa
     history,
     loading: !loaded && log.error === null,
     conversation: row.data,
+    compaction,
     running: state.running,
     waiting: state.waiting,
     stopping: stopState.requested,

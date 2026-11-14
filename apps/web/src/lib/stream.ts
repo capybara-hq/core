@@ -62,6 +62,38 @@ export interface SubagentProgress {
   lastToolKey?: string;
 }
 
+/**
+ * SSE `event: compaction` (context compaction spec §4.6): a run of this conversation is compacting.
+ * Ephemeral and display-only, never in the log; the `compaction_summary` / `compaction_failed`
+ * event ends the row. `chunk` / `chunks` are set only in the chunked path (a real `i/N`); a
+ * single-call compaction never shows a percentage.
+ */
+export interface CompactionProgress {
+  runId: string;
+  conversationId: string;
+  agentId?: string;
+  phase: "preparing" | "summarizing" | "writing";
+  step: number;
+  chunk?: number;
+  chunks?: number;
+  chars?: number;
+  startedAt: number;
+}
+
+/**
+ * The compaction progress after a frame: a frame of another run is kept only when it is newer than
+ * what is shown (frames of different runs are separate compactions).
+ */
+export function acceptCompaction(
+  current: CompactionProgress | null,
+  next: CompactionProgress,
+): CompactionProgress | null {
+  if (current !== null && current.runId === next.runId && next.startedAt < current.startedAt) {
+    return current;
+  }
+  return next;
+}
+
 export interface StreamHandlers {
   onEvent(e: ConversationEvent): void;
   /**
@@ -72,6 +104,8 @@ export interface StreamHandlers {
   onDelta(d: StreamDelta): void;
   /** `event: subagent_progress`: one of this conversation's sub-agents made progress. */
   onSubagentProgress?(p: SubagentProgress): void;
+  /** `event: compaction`: a run of this conversation is compacting (ephemeral). */
+  onCompaction?(p: CompactionProgress): void;
   /** `event: ui`：插件的某个对话视图变了（去重新取）。 */
   onUi?(r: UiRefresh): void;
   /** `event: changed`: a part of the conversation outside the log changed (title, queue, …). */
@@ -156,6 +190,20 @@ export function openConversationStream(
     if (closed || typeof data?.subagentId !== "string" || typeof data.toolCalls !== "number")
       return;
     handlers.onSubagentProgress?.(data as SubagentProgress);
+  });
+  es.addEventListener("compaction", (e) => {
+    const data = parse(e) as Partial<CompactionProgress> | undefined;
+    // a child's compaction is published only on the child's own stream: a frame naming another
+    // conversation never draws a row here (the root does not render another agent's compaction)
+    if (
+      closed ||
+      typeof data?.runId !== "string" ||
+      data.conversationId !== conversationId ||
+      typeof data.step !== "number" ||
+      typeof data.startedAt !== "number"
+    )
+      return;
+    handlers.onCompaction?.(data as CompactionProgress);
   });
   es.addEventListener("ui", (e) => {
     const r = parseUiRefresh(parse(e));

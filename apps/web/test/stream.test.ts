@@ -415,6 +415,28 @@ describe("openConversationStream", () => {
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
 
+  it("`event: compaction` 交给 onCompaction；别的会话（子智能体）的帧被丢弃", () => {
+    vi.stubGlobal("EventSource", FakeEventSource);
+    const onCompaction = vi.fn();
+    openConversationStream("o1", "c1", 0, { onEvent: vi.fn(), onDelta: vi.fn(), onCompaction });
+    const es = FakeEventSource.instances[0] as FakeEventSource;
+    const own = {
+      runId: "r1",
+      conversationId: "c1",
+      phase: "summarizing",
+      step: 1,
+      chunk: 1,
+      chunks: 3,
+      chars: 40,
+      startedAt: 1000,
+    };
+    es.emit("compaction", own);
+    expect(onCompaction).toHaveBeenCalledWith(own);
+    // a child's frame says the child conversation: the root stream drops it
+    es.emit("compaction", { ...own, conversationId: "child", runId: "r2" });
+    expect(onCompaction).toHaveBeenCalledTimes(1);
+  });
+
   it("连接错误且浏览器已放弃重连（CLOSED）：回调不带错误码；仍在重连时不回调", () => {
     vi.stubGlobal("EventSource", FakeEventSource);
     const onError = vi.fn();
