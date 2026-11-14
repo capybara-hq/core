@@ -635,11 +635,12 @@ export function ComposerBar({
           ]
         : [];
 
-  // The built-in /compact command (context compaction spec §4.10) sits above what the agent
-  // offers, but only when the menu has something else: with nothing invocable the palette keeps
-  // its "no skills selected" guidance (spec §5 rule 11), and `/compact` is still typed and parsed.
+  // The built-in /compact command (context compaction spec §4.10) closes the `/` menu, after what
+  // the agent offers. It is not part of the `@` palette (there it would sit above the resources
+  // and start a compaction), and with nothing invocable the palette keeps its "no skills selected"
+  // guidance (spec §5 rule 11) — `/compact` is still typed and parsed.
   const commandGroup: CommandGroup | null =
-    onCompact !== undefined
+    palette === "prompts" && onCompact !== undefined
       ? {
           label: t("commandsGroup"),
           items: [
@@ -661,7 +662,7 @@ export function ComposerBar({
       : null;
   const groups: CommandGroup[] =
     commandGroup !== null && contentGroups.length > 0
-      ? [commandGroup, ...contentGroups]
+      ? [...contentGroups, commandGroup]
       : contentGroups;
 
   const missingArgs =

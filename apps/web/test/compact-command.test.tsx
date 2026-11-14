@@ -253,11 +253,42 @@ describe("the / menu command entry", () => {
     await user.type(input(), "/");
     const dialog = await screen.findByRole("dialog");
     const headings = [...dialog.querySelectorAll("[cmdk-group-heading]")].map((h) => h.textContent);
-    expect(headings).toEqual([en.chat.commandsGroup, en.chat.skillsGroup]);
+    // after the agent's skills (a command never takes the first Enter meant for a skill)
+    expect(headings).toEqual([en.chat.skillsGroup, en.chat.commandsGroup]);
     const command = await within(dialog).findByRole("option", { name: /^\/compact/ });
     await user.click(command);
     await vi.waitFor(() => expect(compactPosts(calls)).toHaveLength(1));
     expect(messagePosts(calls)).toHaveLength(0);
+  });
+
+  it("is not in the @ resources palette (there it would sit above the resources)", async () => {
+    const calls = api({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+      [`GET ${ORG}/connectors/resources`]: () =>
+        json(200, {
+          resources: [
+            {
+              connectorId: "a1",
+              connectorSlug: "docs",
+              connectorName: "Docs",
+              uri: "docs://handbook",
+              name: "Handbook",
+            },
+          ],
+          unavailable: [],
+        }),
+    });
+    await renderChatRoute();
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    await user.type(input(), "read @");
+    const dialog = await screen.findByRole("dialog");
+    await within(dialog).findByText("Handbook · docs://handbook");
+    const headings = [...dialog.querySelectorAll("[cmdk-group-heading]")].map((h) => h.textContent);
+    expect(headings).toEqual(["Docs"]);
+    expect(within(dialog).queryByRole("option", { name: /^\/compact/ })).toBeNull();
+    expect(within(dialog).queryByText(en.chat.commandsGroup)).toBeNull();
+    expect(compactPosts(calls)).toHaveLength(0);
   });
 });
 
