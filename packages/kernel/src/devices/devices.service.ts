@@ -768,7 +768,12 @@ export class DevicesService {
       const current = this.providers.cloud()?.plugin;
       if (inUseForDefault(live) || current === undefined) return live.id;
       const former = await this.formerDefaults(orgId, accountId, current);
-      if (!former.some((f) => f.holdsFiles)) return live.id;
+      // Two unlocked reads: a swap committed between them leaves `live` demoted and the restored
+      // default out of `former`. Only a default still live after `former` is the answer; else
+      // the locked path decides.
+      if (!former.some((f) => f.holdsFiles)) {
+        if ((await this.defaultOf(orgId, accountId))?.id === live.id) return live.id;
+      }
     }
     return this.insertDefault(orgId, accountId);
   }
