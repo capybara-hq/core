@@ -1,5 +1,12 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Plan, Workspace } from "@capybara-hq/ci/affected";
@@ -320,17 +327,19 @@ describe("maxWorkersFromEnv", () => {
   });
 });
 
-describe("verify-cli --fast", () => {
-  it("needs no upstream remote, fetch, merge base or plan", { timeout: 300_000 }, () => {
+describe("verify-cli --fast --plan-only", () => {
+  it("plans the four steps without any git work", () => {
     const root = join(import.meta.dirname, "../../..");
-    const dir = realpathSync(mkdtempSync(join(tmpdir(), "cap-verify-cli-")));
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "cap-verify-plan-")));
     try {
-      // A `git` first on PATH that hides every remote and fails the commands the plan needs. The
-      // fast path must never call them; anything else (the checks' `git ls-files`) passes through.
+      // A `git` first on PATH that logs every call, hides every remote and fails the commands the
+      // plan needs. The fast path must never call them.
+      const log = join(dir, "git.log");
       const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
       writeFileSync(
         join(dir, "git"),
         `#!/bin/sh
+printf '%s\\n' "$*" >> "$CAP_VERIFY_GIT_LOG"
 if [ "$1" = config ] && [ "$2" = --get-regexp ]; then exit 128; fi
 case "$1" in fetch|merge-base) exit 128 ;; esac
 exec "${realGit}" "$@"
@@ -339,28 +348,34 @@ exec "${realGit}" "$@"
       );
       const r = spawnSync(
         join(root, "node_modules", ".bin", "tsx"),
-        ["tools/dev/src/verify-cli.ts", "--fast", "--json"],
+        ["tools/dev/src/verify-cli.ts", "--fast", "--plan-only", "--json"],
         {
           cwd: root,
-          env: { ...process.env, PATH: `${dir}:${process.env.PATH ?? ""}` },
+          env: {
+            ...process.env,
+            PATH: `${dir}:${process.env.PATH ?? ""}`,
+            CAP_VERIFY_GIT_LOG: log,
+          },
           encoding: "utf8",
-          maxBuffer: 256 * 1024 * 1024,
         },
       );
       expect(r.status).toBe(0);
       const report = JSON.parse(r.stdout) as {
         ok: boolean;
-        checks: { id: string; status: string }[];
+        checks: { id: string; status: string; detail: string }[];
       };
       expect(report.ok).toBe(true);
       expect(report.checks.map((c) => [c.id, c.status])).toEqual([
-        ["lint", "pass"],
-        ["typecheck", "pass"],
-        ["check", "pass"],
-        ["unit", "pass"],
+        ["lint", "planned"],
+        ["typecheck", "planned"],
+        ["check", "planned"],
+        ["unit", "planned"],
       ]);
-      // No plan or diff header: the fast path never reads the diff.
+      expect(report.checks[3]?.detail).toContain("--project kernel-unit");
+      // No plan or diff header on stderr, and the shim never saw the plan's git commands.
       expect(r.stderr).not.toMatch(/^(base|changed files|plan|local tests):/m);
+      const calls = existsSync(log) ? readFileSync(log, "utf8") : "";
+      expect(calls).not.toMatch(/^(config --get-regexp|fetch|merge-base)/m);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

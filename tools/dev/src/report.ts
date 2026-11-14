@@ -1,4 +1,8 @@
-export type CheckStatus = "pass" | "fail" | "warn" | "skip";
+/**
+ * `planned` exists only for `verify --fast --plan-only`: the step list without a run (a testing
+ * aid). Every other status comes from a run.
+ */
+export type CheckStatus = "pass" | "fail" | "warn" | "skip" | "planned";
 
 export type Check = {
   id: string;

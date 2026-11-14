@@ -1,14 +1,15 @@
 /**
  * Runs locally what CI's required checks run for this branch's diff (`pnpm verify`).
  *
- *   tsx tools/dev/src/verify-cli.ts [--json] [--full] [--fast]
+ *   tsx tools/dev/src/verify-cli.ts [--json] [--full] [--fast] [--plan-only]
  *
  * When CI's plan runs everything, only the tests of the packages the diff touches run here (CI
  * runs the full suite); `--full` runs the full suite locally too. `--fast` runs lint, typecheck,
  * the custom checks and the container-free tests (kernel unit, design, plugin-client): a quick
  * advisory signal that does no upstream/fetch/merge-base/plan work (the steps themselves may still
  * use git: `pnpm check` lists tracked files) and is never the gate (it takes precedence over
- * `--full`).
+ * `--full`). `--plan-only` (with `--fast` only) reports the steps and their commands without
+ * running them: a testing aid for the fast path's own test.
  */
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -30,6 +31,7 @@ const root = fileURLToPath(new URL("../../../", import.meta.url)).replace(/\/$/,
 const json = process.argv.includes("--json");
 const full = process.argv.includes("--full");
 const fast = process.argv.includes("--fast");
+const planOnly = process.argv.includes("--plan-only");
 // In --json mode stdout carries only the report; progress goes to stderr.
 const say = (s: string) => (json ? console.error(s) : console.log(s));
 
@@ -68,10 +70,22 @@ function runSteps(steps: VerifyStep[]): Check[] {
 if (fast) {
   // Self-contained: no upstream remote, no fetch, no merge base, no plan, no changeset warning.
   if (full) say("--fast takes precedence over --full");
-  const checks = runSteps(fastSteps());
-  say("\nfast check only; pnpm verify (or CI) runs the affected tests before merge");
-  say("");
-  process.exitCode = printReport(checks, json);
+  if (planOnly) {
+    // A testing aid: the same step list, reported without spawning anything.
+    const checks: Check[] = fastSteps().map((step) => ({
+      id: step.id,
+      title: step.title,
+      status: "planned",
+      detail: step.cmd?.join(" ") ?? step.note ?? "",
+    }));
+    if (json) process.exitCode = printReport(checks, true);
+    else for (const c of checks) console.log(`${c.id}: ${c.detail}`);
+  } else {
+    const checks = runSteps(fastSteps());
+    say("\nfast check only; pnpm verify (or CI) runs the affected tests before merge");
+    say("");
+    process.exitCode = printReport(checks, json);
+  }
 } else {
   const upstream = findUpstream(readRemotes(root), "core");
   if (upstream === null) {
