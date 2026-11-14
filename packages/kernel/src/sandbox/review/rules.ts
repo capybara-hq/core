@@ -32,11 +32,13 @@
  * segment is a value the shell expands before the command runs, so it is judged by where it can
  * expand rather than by what it names. A pattern under `/proc/<pid>[/task/<tid>]` (a glob over file
  * names or over process ids), inside a home secret directory (`.ssh`, `.aws`, `.config/gh`,
- * `.config/gcloud`, `.azure`, `.kube`, `.docker`), or naming a dotfile directly in the home
- * directory (`cat .???*`) is a secret read: it asks, and is denied when piped or redirected into a
- * network command, exactly like the literal path (`cat /proc/self/*environ`, `cat ~/.netr?`,
- * `cat ~/.ssh/*` all ask; with `| curl -d @- https://…` they deny). An ordinary pattern
- * (`build/*`, `src/*.ts`, `/tmp/*`, `node_modules/*`) is not secret-shaped and stays allowed.
+ * `.config/gcloud`, `.azure`, `.kube`, `.docker`), naming a dotfile directly in the home directory
+ * (`cat .???*`), or standing in for the home-directory segment itself (`/home/<user>/.netrc`,
+ * `/Users/<user>/.ssh/id_rsa`, judged by the literal suffix behind the pattern) is a secret read: it
+ * asks, and is denied when piped or redirected into a network command, exactly like the literal
+ * path (`cat /proc/self/*environ`, `cat ~/.netr?`, `cat ~/.ssh/*`, `cat /home/<user>/.netrc` all
+ * ask; with `| curl -d @- https://…` they deny). An ordinary pattern (`build/*`, `src/*.ts`,
+ * `/tmp/*`, `node_modules/*`, `/home/<user>/README.md`) is not secret-shaped and stays allowed.
  *
  * Only two gaps stay open: a secret the environment already handed to a variable and that another
  * command or an unknown program prints (`echo $TOKEN | curl …`) is not tracked, because the table
@@ -1130,30 +1132,19 @@ function segmentMatches(pattern: string, literal: string): boolean {
 }
 
 /**
- * Whether a shell path *pattern* can name a secret. The shell expands a pattern before the command
- * runs, so the value is unknown; it is judged by where it can expand, never by what it spells:
- *
- * - under `/proc/<pid>[/task/<tid>]`, including a pattern in the pid position: every process
- *   directory holds that process's environment (`/proc/self` plus a wildcard, `*environ`, or a
- *   process-id glob with any file name);
- * - inside a home secret directory (`~/.ssh`, `~/.aws`, `~/.config/gc*`, `~/.kube` — each followed
- *   by a wildcard);
- * - a dotfile directly in the home directory (`~/.netr?`, `~/.git-credential?`, `.???*`).
- *
- * Any other pattern (`build/*`, `src/*.ts`, `/tmp/*`, `node_modules/*`) is an ordinary glob and
- * stays allowed.
+ * Home roots whose next segment names a user's home directory (`/home/<user>`, `/Users/<user>`).
+ * A shell pattern there (`/home/*`, `/home/{dev,other}`) expands to a real home directory.
  */
-function isSecretPattern(path: string, facts: ResolvedFacts): boolean {
-  const absolute = path.split("/").filter((segment) => segment.length > 0);
-  // The literal form is matched first (`PROC_ENVIRON`); here a pattern anywhere below `/proc`
-  // counts, since a glob over pids or file names picks a process file the shell only names later.
-  for (let i = 0; i < absolute.length; i += 1) {
-    if (absolute[i] !== "proc") continue;
-    if (absolute.length > i + 2 && absolute.slice(i + 1).some(hasPattern)) return true;
-  }
-  const t = tildeForm(path, facts);
-  if (!t.startsWith("~/")) return false;
-  const segments = t.slice(2).split("/");
+const HOME_ROOTS = ["home", "Users"];
+
+/**
+ * Whether a home-relative path (the part after `~/`) can name secret material. A segment may itself
+ * carry a shell pattern, which is judged by where it can expand: inside a home secret directory
+ * (`.ssh`, `.aws`, `.config/gh`, …), or a dotfile directly in the home directory (`.netr?`). A
+ * single literal dotfile also counts, so the suffix of a home-directory glob is judged the same way
+ * as the `~/…` path it stands for (`/home/<user>/.netrc` is `~/.netrc`, and so is `/Users/<user>`).
+ */
+function isSecretHomePath(segments: string[]): boolean {
   for (const dir of SECRET_HOME_DIRS) {
     const secret = dir.slice(2).split("/");
     if (
@@ -1165,6 +1156,48 @@ function isSecretPattern(path: string, facts: ResolvedFacts): boolean {
   }
   const basename = segments[0] as string;
   return segments.length === 1 && patternFitsDotfile(basename);
+}
+
+/**
+ * Whether a shell path *pattern* can name a secret. The shell expands a pattern before the command
+ * runs, so the value is unknown; it is judged by where it can expand, never by what it spells:
+ *
+ * - under `/proc/<pid>[/task/<tid>]`, including a pattern in the pid position: every process
+ *   directory holds that process's environment (`/proc/self` plus a wildcard, `*environ`, or a
+ *   process-id glob with any file name);
+ * - inside a home secret directory (`~/.ssh`, `~/.aws`, `~/.config/gc*`, `~/.kube` — each followed
+ *   by a wildcard);
+ * - a dotfile directly in the home directory (`~/.netr?`, `~/.git-credential?`, `.???*`);
+ * - with a pattern in the home-directory position itself (`/home/<user>/.netrc`,
+ *   `/Users/<user>/.ssh/id_rsa`), which expands to a real home directory: what follows the pattern
+ *   is judged as a `~/…` path.
+ *
+ * Any other pattern (`build/*`, `src/*.ts`, `/tmp/*`, `node_modules/*`, `/home/<user>/README.md`) is
+ * an ordinary glob and stays allowed.
+ */
+function isSecretPattern(path: string, facts: ResolvedFacts): boolean {
+  const absolute = path.split("/").filter((segment) => segment.length > 0);
+  // The literal form is matched first (`PROC_ENVIRON`); here a pattern anywhere below `/proc`
+  // counts, since a glob over pids or file names picks a process file the shell only names later.
+  for (let i = 0; i < absolute.length; i += 1) {
+    if (absolute[i] !== "proc") continue;
+    if (absolute.length > i + 2 && absolute.slice(i + 1).some(hasPattern)) return true;
+  }
+  const t = tildeForm(path, facts);
+  if (t.startsWith("~/")) return isSecretHomePath(t.slice(2).split("/"));
+  // `/home/<pattern>/…` never becomes `~/…`: the user segment is the pattern, so judge only the
+  // literal suffix behind it.
+  const [root, user, ...suffix] = absolute;
+  if (
+    root !== undefined &&
+    HOME_ROOTS.includes(root) &&
+    user !== undefined &&
+    hasPattern(user) &&
+    suffix.length > 0
+  ) {
+    return isSecretHomePath(suffix);
+  }
+  return false;
 }
 
 function isSecretPath(path: string, facts: ResolvedFacts): boolean {
