@@ -18,13 +18,53 @@ export interface RuleHit {
 }
 
 /**
- * Whether a rule id may back the person's `本会话允许同类` grant: one concrete rule class, never a
- * catch-all. The `unsure.*` hits (`unsure.uncovered`, `unsure.unparsed`) stand for "no rule decided
- * this", so remembering one would allow every future parser-unreadable command for the conversation
- * — the bucket the review keeps fail-closed. A classifier ask has no rule at all.
+ * The ask classes a person is asked about every time, never remembered for the session: printing or
+ * copying a credential (or a credential file), a link to a secret or a persistence location, a dynamic path argument (the floor of
+ * spec §5.2: what it names is only known when it runs) and `sudo` (any command at all). Remembering
+ * one would allow the next, different command of that class without the person seeing it.
+ */
+const NEVER_SESSION_CLASSES: ReadonlySet<string> = new Set([
+  "ask.credential-print",
+  "ask.secret-file",
+  "ask.credential-link",
+  "ask.dynamic-arg",
+  "ask.sudo",
+]);
+
+/**
+ * Whether a rule id may back the person's `本会话允许同类` grant: one concrete rule class the person
+ * can reason about, never a catch-all. The `unsure.*` hits stand for "no rule decided this", so
+ * remembering one would allow every future parser-unreadable command for the conversation — the
+ * bucket the review keeps fail-closed. A classifier ask has no rule at all.
  */
 export const isSessionGrantableRule = (rule: string | null): rule is string =>
-  rule !== null && !rule.startsWith("unsure.");
+  rule !== null && !rule.startsWith("unsure.") && !NEVER_SESSION_CLASSES.has(rule);
+
+/**
+ * The rule outcome once the person's session grants are applied (hardening spec 2026-11-15 R4): an
+ * `ask` line is allowed only when **every** ask hit's class is granted and **no** `unsure` hit is
+ * left — a grant for one class never lets another class, or an unread part of the line, through.
+ * Otherwise the outcome stays, and `hit` is the first hit the grants did not cover (the one the
+ * person or the classifier must decide). Not for `deny` or `allow` lines, which grants never touch.
+ */
+export function applySessionGrants(
+  result: ReviewResult,
+  granted: (rule: string) => boolean,
+): { outcome: RuleOutcome; hit: RuleHit | undefined } {
+  if (result.outcome !== "ask") {
+    return { outcome: result.outcome, hit: result.hits.find((h) => h.outcome === result.outcome) };
+  }
+  const open = result.hits.filter(
+    (h) =>
+      h.outcome === "unsure" ||
+      (h.outcome === "ask" && !(isSessionGrantableRule(h.id) && granted(h.id))),
+  );
+  const ask = open.find((h) => h.outcome === "ask");
+  if (ask !== undefined) return { outcome: "ask", hit: ask };
+  const unsure = open.find((h) => h.outcome === "unsure");
+  if (unsure !== undefined) return { outcome: "unsure", hit: unsure };
+  return { outcome: "allow", hit: result.hits.find((h) => h.outcome === "ask") };
+}
 
 /**
  * The facts of the run the rules read. Commands run in a device's workspace; `mode` says whether
@@ -38,6 +78,12 @@ export interface ReviewFacts {
   attended: boolean;
   /** The directory the command runs in; default: the workspace. */
   cwd?: string;
+  /**
+   * Absolute paths this conversation's own tool calls wrote (`Write` / `Edit`, and the write
+   * targets of its earlier `Bash` lines): running one of them with an interpreter is not a
+   * development command but code the run itself produced (hardening spec R1).
+   */
+  written?: readonly string[];
 }
 
 /** One shell redirection of a simple command. */

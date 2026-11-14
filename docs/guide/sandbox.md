@@ -73,8 +73,11 @@ review error, timeout or unreadable answer is a question, never an allow.
 - **Outcomes**: **deny** does not run the command and tells the model why and to do the work another
   way; **ask** shows a card (run once, or allow this kind for the conversation) and resumes the run
   with the person's decision; **allow** runs it. 「本会话允许同类」 remembers the rule that hit for
-  the conversation, not the exact command text; a deny rule is never grantable and a
-  classifier-decided ask has no rule to remember, so its card offers once only. An unattended run
+  the conversation, not the exact command text, and allows a later line only when everything it
+  asks about was granted; a deny rule is never grantable, credential prints, links to secrets,
+  dynamic paths and `sudo` are asked every time, and a classifier-decided ask has no rule to
+  remember, so its card offers once only. Inline interpreter code (`python -c`), fetched packages
+  (`npx some-tool`) and scripts the agent itself wrote are reviewed as code the rules cannot read. An unattended run
   (a scheduled task) never waits: an ask is refused with a note the model reads, and the run
   continues. Existing `ctx.hooks` policy hooks run after the review, so an org's policy extension
   can add rules.

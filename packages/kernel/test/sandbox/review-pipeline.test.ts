@@ -346,7 +346,7 @@ describe("the command review in the pipeline", () => {
     expect(r.payload.review).toMatchObject({
       decision: "deny",
       by: "rule",
-      rule: "deny.root-delete",
+      rule: "deny.root-destroy",
     });
     const events = await eventsOf(db, conv);
     expect(events.some((e) => e.type === "tool_call_started")).toBe(false);
@@ -606,7 +606,7 @@ describe("the command review in the pipeline", () => {
     const r = (await results(conv)).at(-1) as ToolResult;
     expect(r.payload.isError).toBe(true);
     expect(r.payload.content).toContain("too long to review");
-    expect(r.payload.content).toContain("script file");
+    expect(r.payload.content).toContain("Split it into shorter commands");
     expect(r.payload.review).toMatchObject({ decision: "deny", rule: null });
     const evs = await eventsOf(db, conv);
     expect(evs.some((e) => e.type === "tool_call_started")).toBe(false);

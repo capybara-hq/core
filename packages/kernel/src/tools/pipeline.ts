@@ -162,7 +162,7 @@ export const commandTooLongReason = (chars: number): string =>
   `The command is ${chars} characters long; commands over ${COMMAND_ASK_MAX_CHARS} are too long to review and approve.`;
 /** The model-visible result of a command over the ask ceiling (actionable, English). */
 export const commandTooLongText = (chars: number): string =>
-  `This command is too long to review (${chars} characters; the limit is ${COMMAND_ASK_MAX_CHARS}). Shorten it, or write it to a script file and run that instead.`;
+  `This command is too long to review (${chars} characters; the limit is ${COMMAND_ASK_MAX_CHARS}). Split it into shorter commands; long inline scripts are reviewed as code the review cannot read.`;
 /** The person declined a held command or write (P-D12); `reason` is what they said, if anything. */
 export const commandDeclinedText = (reason: string | null, kind: "command" | "write"): string => {
   const what = kind === "write" ? "this write" : "to run this command";
@@ -1558,6 +1558,18 @@ export class ToolPipeline {
     if (facts === null) return { kind: "continue" }; // no device: the tool fails on its own
     const kind = reviewKindOf(tool.key);
     const attended = ctx.unattended == null && ctx.accountId === facts.ownerAccountId;
+    // a command over the ceiling is refused before any review: no stage reads it in full, and no
+    // approval could bind a text the person cannot see (hardening spec R8)
+    if (kind === "command") {
+      const text = textField(input, "command");
+      if (text.length > COMMAND_ASK_MAX_CHARS) {
+        return {
+          kind: "result",
+          content: commandTooLongText(text.length),
+          review: denyRecord("rule", null, commandTooLongReason(text.length)),
+        };
+      }
+    }
     const verdict = await review.review({
       orgId: ctx.orgId,
       conversationId: rootConversationId,
@@ -1596,16 +1608,6 @@ export class ToolPipeline {
     }
     // ask
     const command = kind === "command" ? textField(input, "command") : tool.key;
-    // a command over the ceiling cannot be shown in full, and an approval must bind exactly what
-    // runs: refuse it (no approval, no grant) rather than approve a text the person cannot see
-    if (kind === "command" && command.length > COMMAND_ASK_MAX_CHARS) {
-      const reason = commandTooLongReason(command.length);
-      return {
-        kind: "result",
-        content: commandTooLongText(command.length),
-        review: denyRecord(verdict.by, null, reason),
-      };
-    }
     if (!attended) {
       const reason = verdict.reason;
       return {
