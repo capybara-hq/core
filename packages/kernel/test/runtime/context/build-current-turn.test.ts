@@ -3,12 +3,14 @@ import type { ModelInfo } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import type { ConversationEvent, LogContentBlock } from "../../../src/conversations/events.js";
 import { buildModelRequest, mediaRefs } from "../../../src/runtime/context/build.js";
+import { openingSeqs } from "../../../src/runtime/context/compaction.js";
 import { AGENT, Log, MODEL } from "./fixtures.js";
 
 /**
  * A summary that cuts inside a user turn (context compaction spec §4.2, revision 2026-11-15): the
- * turn's opening user message is covered, later events of the turn are not. Request building shows
- * that message again, verbatim, in the summary's user message.
+ * turn's opening user message is covered, later events of the turn are not. The summary records
+ * which messages started the run (`openingSeqs`, decided when it is written) and request building
+ * shows exactly those again, verbatim, in the summary's user message.
  */
 
 const build = (log: Log, model: ModelInfo = MODEL) =>
@@ -51,13 +53,13 @@ function userMessage(
 }
 
 describe("buildModelRequest: a summary inside the latest user turn", () => {
-  it("re-renders the turn's user message after the summary text, then the kept tool pairs", () => {
+  it("re-renders the summary's openingSeqs after the summary text, then the kept tool pairs", () => {
     const log = new Log();
-    log.user("audit the ledgers");
+    const task = log.user("audit the ledgers");
     log.runStarted();
     const first = step(log, 1);
     step(log, 2);
-    log.summary(first.result.seq, "The agent read ledger 1.");
+    log.summary(first.result.seq, "The agent read ledger 1.", [task.seq]);
     const { request, meta } = build(log);
     expect(request.messages).toEqual([
       {
@@ -79,60 +81,47 @@ describe("buildModelRequest: a summary inside the latest user turn", () => {
     expect(meta.fromSeq).toBe(first.result.seq + 1);
   });
 
-  it("leaves a summary at a user-message boundary as before (no message re-rendered)", () => {
+  it("a summary without openingSeqs (an older log) re-renders nothing, even inside a turn", () => {
     const log = new Log();
     log.user("audit the ledgers");
-    log.runStarted();
-    const first = step(log, 1);
-    log.add({
-      type: "run_finished",
-      payload: { reason: "completed", consumedUpToSeq: first.result.seq },
-    });
-    log.user("now the invoices");
-    log.summary(first.result.seq + 1, "The agent read ledger 1.");
-    const { request } = build(log);
-    expect(request.messages).toEqual([
-      { role: "user", content: [{ type: "text", text: SUMMARY }] },
-      { role: "user", content: [{ type: "text", text: "now the invoices" }] },
-    ]);
-  });
-
-  it("re-renders only the turn-opening message, not a covered interjection", () => {
-    const log = new Log();
-    log.user("audit the ledgers");
-    log.runStarted();
-    log.assistant(
-      [{ type: "tool_call", id: "call-1", name: "Read", input: { n: 1 } }],
-      "tool_use",
-      1,
-    );
-    log.user("interjection: skip March");
-    const r1 = log.add({
-      type: "tool_result",
-      payload: { step: 1, callId: "call-1", toolKey: "Read", content: "ledger 1", isError: false },
-    });
-    step(log, 2);
-    log.summary(r1.seq, "The agent read ledger 1; skip March.");
-    const { request } = build(log);
-    const head = request.messages[0];
-    expect(head?.content).toEqual([
-      {
-        type: "text",
-        text: "<conversation_summary>\nThe agent read ledger 1; skip March.\n</conversation_summary>",
-      },
-      { type: "text", text: "audit the ledgers" },
-    ]);
-    expect(JSON.stringify(request.messages)).not.toContain("interjection");
-    expect(request.messages[1]?.role).toBe("assistant");
-  });
-
-  it("renders the message as an ordinary user message: its sender line comes first", () => {
-    const log = new Log();
-    userMessage(log, [{ type: "text", text: "audit the ledgers" }], { name: "Ana", role: "admin" });
     log.runStarted();
     const first = step(log, 1);
     step(log, 2);
     log.summary(first.result.seq, "The agent read ledger 1.");
+    const { request } = build(log);
+    expect(request.messages[0]).toEqual({
+      role: "user",
+      content: [{ type: "text", text: SUMMARY }],
+    });
+    expect(request.messages[1]?.role).toBe("assistant");
+  });
+
+  it("re-renders several opening messages in seq order", () => {
+    const log = new Log();
+    const a = log.user("audit the ledgers");
+    log.runStarted();
+    const b = log.user("and the invoices");
+    const first = step(log, 1);
+    step(log, 2);
+    log.summary(first.result.seq, "The agent read ledger 1.", [a.seq, b.seq]);
+    const head = build(log).request.messages[0];
+    expect(head?.content).toEqual([
+      { type: "text", text: SUMMARY },
+      { type: "text", text: "audit the ledgers" },
+      { type: "text", text: "and the invoices" },
+    ]);
+  });
+
+  it("renders the message as an ordinary user message: its sender line comes first", () => {
+    const log = new Log();
+    const task = userMessage(log, [{ type: "text", text: "audit the ledgers" }], {
+      name: "Ana",
+      role: "admin",
+    });
+    log.runStarted();
+    const first = step(log, 1);
+    step(log, 2);
+    log.summary(first.result.seq, "The agent read ledger 1.", [task.seq]);
     // a later message from the same sender carries no line again
     userMessage(log, [{ type: "text", text: "and March?" }], { name: "Ana", role: "admin" });
     const { request } = build(log);
@@ -152,7 +141,7 @@ describe("buildModelRequest: a summary inside the latest user turn", () => {
     const img = randomUUID();
     const see: ModelInfo = { ...MODEL, capabilities: { ...MODEL.capabilities, vision: true } };
     const log = new Log();
-    userMessage(log, [
+    const task = userMessage(log, [
       { type: "text", text: "what is on this receipt?" },
       {
         type: "image",
@@ -164,7 +153,7 @@ describe("buildModelRequest: a summary inside the latest user turn", () => {
     log.runStarted();
     const first = step(log, 1);
     step(log, 2);
-    log.summary(first.result.seq, "The agent read ledger 1.");
+    log.summary(first.result.seq, "The agent read ledger 1.", [task.seq]);
     expect(mediaRefs(log.events, see)).toEqual([img]);
     // no row for the attachment here: the same placeholder an ordinary message gets
     const head = build(log, see).request.messages[0];
@@ -174,8 +163,66 @@ describe("buildModelRequest: a summary inside the latest user turn", () => {
       { type: "text", text: '[Attachment "receipt.png" is no longer available.]' },
     ]);
   });
+});
 
-  it("re-renders nothing for a run a finished background task woke (no message opened it)", () => {
+describe("openingSeqs: the messages a summary records to re-render", () => {
+  it("the run's opening message, only when the summary covers it", () => {
+    const log = new Log();
+    log.user("old question");
+    log.add(
+      {
+        type: "assistant_message",
+        payload: { step: 1, content: [{ type: "text", text: "old" }], stopReason: "end_turn" },
+      },
+      "run-0",
+    );
+    const task = log.user("audit the ledgers");
+    log.runStarted();
+    log.modelCall(task.seq);
+    const first = step(log, 1);
+    expect(openingSeqs(log.events, "run-1", first.result.seq)).toEqual([task.seq]);
+    // a summary that ends before the message covers no opening message
+    expect(openingSeqs(log.events, "run-1", task.seq - 1)).toEqual([]);
+  });
+
+  it("several messages before the run's first call: all of them", () => {
+    const log = new Log();
+    const a = log.user("audit the ledgers");
+    log.runStarted();
+    const b = log.user("and the invoices");
+    log.modelCall(b.seq);
+    const first = step(log, 1);
+    expect(openingSeqs(log.events, "run-1", first.result.seq)).toEqual([a.seq, b.seq]);
+  });
+
+  it("before the run's first call, the request about to be built decides the absorption", () => {
+    const log = new Log();
+    const a = log.user("audit the ledgers");
+    log.runStarted();
+    const b = log.user("and the invoices");
+    expect(openingSeqs(log.events, "run-1", b.seq, a.seq)).toEqual([a.seq]);
+    expect(openingSeqs(log.events, "run-1", b.seq, b.seq)).toEqual([a.seq, b.seq]);
+  });
+
+  it("a cut that lands on an interjection still records the run's opening message, not it", () => {
+    const log = new Log();
+    const task = log.user("audit the ledgers");
+    log.runStarted();
+    log.modelCall(task.seq);
+    log.assistant(
+      [{ type: "tool_call", id: "call-1", name: "Read", input: { n: 1 } }],
+      "tool_use",
+      1,
+    );
+    const interjection = log.user("interjection: skip March");
+    log.add({
+      type: "tool_result",
+      payload: { step: 1, callId: "call-1", toolKey: "Read", content: "ledger 1", isError: false },
+    });
+    expect(openingSeqs(log.events, "run-1", interjection.seq)).toEqual([task.seq]);
+  });
+
+  it("none for a run a finished background task woke (no message opened it)", () => {
     const log = new Log();
     log.user("start the export in the background");
     log.add({
@@ -188,9 +235,12 @@ describe("buildModelRequest: a summary inside the latest user turn", () => {
       },
     });
     const first = step(log, 1);
-    step(log, 2);
-    log.summary(first.result.seq, "The agent read ledger 1.");
-    const head = build(log).request.messages[0];
-    expect(head?.content).toEqual([{ type: "text", text: SUMMARY }]);
+    expect(openingSeqs(log.events, "run-1", first.result.seq)).toEqual([]);
+  });
+
+  it("none for a run that has not started (a manual compact run is another run)", () => {
+    const log = new Log();
+    const task = log.user("audit the ledgers");
+    expect(openingSeqs(log.events, "compact-run", task.seq)).toEqual([]);
   });
 });

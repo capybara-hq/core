@@ -3,14 +3,14 @@ import { describe, expect, it } from "vitest";
 import { buildModelRequest } from "../../../src/runtime/context/build.js";
 import {
   applyFit,
-  clampOutput,
-  effectiveReserve,
   estimateAfterFit,
   FIT_TRUNCATION_NOTE,
   type FitPlan,
-  fitTargetFor,
   planFit,
+  planningBounds,
+  planReactiveTrim,
   planSqueezedFit,
+  sentOutputCap,
 } from "../../../src/runtime/context/fit.js";
 import { estimateTokens } from "../../../src/runtime/context/tokens.js";
 import { AGENT, Log, MODEL } from "./fixtures.js";
@@ -39,16 +39,17 @@ function build(log: Log): { request: ModelRequest; estimate: number } {
   };
 }
 
-/** A reserve that, with `WINDOW` and `OUTPUT` under their clamps, makes the target equal `target`. */
-const reserveFor = (target: number): number => WINDOW - OUTPUT - target;
-
+/**
+ * A plan against exactly `target`: a window of `2 × target` with an unbounded output cap and no
+ * reserve plans with `O_p = W/2`, so `W - O_p - R_p = target` (the planning bounds).
+ */
 const plan = (log: Log, request: ModelRequest, estimate: number, target: number): FitPlan | null =>
   planFit({
     events: log.events,
     request,
-    model: MODEL_FIT,
-    maxOutputTokens: OUTPUT,
-    reserveTokens: reserveFor(target),
+    model: { ...MODEL_FIT, contextWindow: 2 * target },
+    maxOutputTokens: Number.MAX_SAFE_INTEGER,
+    reserveTokens: 0,
     estimate,
   });
 
@@ -68,39 +69,34 @@ function pairsIntact(messages: readonly ModelMessage[]): boolean {
   return calls.size === results.size && [...calls].every((id) => results.has(id));
 }
 
-describe("clampOutput / effectiveReserve / fitTargetFor", () => {
-  it("clampOutput lowers the cap so input + output fits the window, and keeps at least one token", () => {
-    expect(clampOutput(1_000, 5_000, 200)).toBe(800);
-    expect(clampOutput(1_000, 5_000, 999)).toBe(1);
-    // arithmetic only: the guard clamps from the post-fit estimate, never from an input over W
-    expect(clampOutput(1_000, 5_000, 1_200)).toBe(1);
-    // a cap that fits the window is unchanged
-    expect(clampOutput(10_000, 1_000, 200)).toBe(1_000);
-  });
-
-  it("keeps the reserve only when the output leaves room below the window", () => {
-    // W - O' - 1 = 8_999, so the configured 8_000 is kept
-    expect(effectiveReserve(10_000, 1_000, 8_000)).toBe(8_000);
-    // W - O' - 1 = 199, so the configured 8_000 is reduced to 199
-    expect(effectiveReserve(1_000, 800, 8_000)).toBe(199);
-    expect(effectiveReserve(1_000, 999, 8_000)).toBe(0);
-  });
-
-  it("fitTargetFor bounds the output by the window only, never by the input", () => {
-    expect(fitTargetFor(10_000, 1_000, 8_000)).toEqual({
-      output: 1_000,
+describe("planningBounds / sentOutputCap", () => {
+  it("plans with O_p = min(O, W/2) and R_p = min(R, W/8): common models are unchanged", () => {
+    expect(planningBounds(200_000, 32_000, 8_000)).toEqual({
+      output: 32_000,
       reserve: 8_000,
-      target: 1_000,
+      target: 160_000,
     });
-    // O1 = min(O, W - 1); R_eff = what O1 leaves
-    expect(fitTargetFor(1_000, 5_000, 8_000)).toEqual({ output: 999, reserve: 0, target: 1 });
-    expect(fitTargetFor(1_000, 800, 8_000)).toEqual({ output: 800, reserve: 199, target: 1 });
-    expect(fitTargetFor(4_000, 1_000, 500)).toEqual({ output: 1_000, reserve: 500, target: 2_500 });
+    // a model whose output cap is about its window, or a window under the reserve: the target
+    // stays at least 3W/8 instead of about one token
+    expect(planningBounds(2_000, 4_096, 8_000)).toEqual({
+      output: 1_000,
+      reserve: 250,
+      target: 750,
+    });
+    expect(planningBounds(1_000, 999, 0)).toEqual({ output: 500, reserve: 0, target: 500 });
     // at least one output token
-    expect(fitTargetFor(1, 1_000, 0).output).toBe(1);
+    expect(planningBounds(1, 1_000, 0).output).toBe(1);
   });
 
-  it("a request over the window is planned against W - O1 - R_eff, so the cap sent stays O1", () => {
+  it("sends clamp(O, 1, W - input - R_p): the configured cap whenever it fits, the reserve kept", () => {
+    expect(sentOutputCap(200_000, 32_000, 100_000, 8_000)).toBe(32_000);
+    // O above W/2 is still sent when the input leaves room for it (O_p only plans)
+    expect(sentOutputCap(2_000, 4_096, 100, 8_000)).toBe(2_000 - 100 - 250);
+    expect(sentOutputCap(2_000, 4_096, 1_900, 8_000)).toBe(1);
+    expect(sentOutputCap(10_000, 1_000, 200, 0)).toBe(1_000);
+  });
+
+  it("a request over the window is planned against W - O_p - R_p, so the cap sent stays O", () => {
     const log = new Log();
     log.user("question one");
     log.assistant("answer one ".repeat(400));
@@ -109,7 +105,7 @@ describe("clampOutput / effectiveReserve / fitTargetFor", () => {
     log.user(`latest ${"word ".repeat(400)}`);
     const { request, estimate } = build(log);
     const small: ModelInfo = { ...MODEL_FIT, contextWindow: 2_000 };
-    const { output, target } = fitTargetFor(small.contextWindow, 1_000, 500);
+    const { target } = planningBounds(small.contextWindow, 1_000, 500);
     expect(estimate).toBeGreaterThan(small.contextWindow);
     const trimmed = planFit({
       events: log.events,
@@ -123,7 +119,7 @@ describe("clampOutput / effectiveReserve / fitTargetFor", () => {
     const after = estimateAfterFit(request, estimate, trimmed);
     expect(after).toBeLessThanOrEqual(target);
     // the caller clamps after the plan, from the post-fit estimate: the full cap, not 1
-    expect(clampOutput(small.contextWindow, output, after)).toBe(1_000);
+    expect(sentOutputCap(small.contextWindow, 1_000, after, 500)).toBe(1_000);
     const fitted = applyFit(request, trimmed);
     expect(estimateTokens(fitted.messages, fitted.system, fitted.tools)).toBeLessThanOrEqual(
       target,
@@ -132,45 +128,45 @@ describe("clampOutput / effectiveReserve / fitTargetFor", () => {
 });
 
 describe("planSqueezedFit (the target is out of reach)", () => {
-  it("a window about the size of the output cap plans against the output the input leaves", () => {
+  it("plans against W - 1 - R_p: the output takes what the input leaves, the reserve stays", () => {
     const log = new Log();
     log.user("question one");
     log.assistant("answer one ".repeat(100));
     log.user("latest");
     const { request, estimate } = build(log);
-    // W 2000, O 4096, R 0: O1 = 1999 leaves a target of 1, which no plan reaches
-    const small: ModelInfo = { ...MODEL_FIT, contextWindow: 2_000 };
+    // a window whose planning target the request is over, but below W - 1 - R_p
+    const W = estimate + 200;
+    const small: ModelInfo = { ...MODEL_FIT, contextWindow: W };
     const input = {
-      events: log.events,
-      request,
-      model: small,
-      maxOutputTokens: 4_096,
-      reserveTokens: 0,
-      estimate,
-    };
-    const unreachable = planFit(input) as FitPlan;
-    expect(estimateAfterFit(request, estimate, unreachable)).toBeGreaterThan(1);
-    // squeezed: the output takes what the input leaves, so the request fits as it is
-    expect(planSqueezedFit(input)).toEqual({ plan: null, target: estimate });
-    expect(clampOutput(small.contextWindow, 1_999, estimate)).toBe(2_000 - estimate);
-  });
-
-  it("with a reserve, the squeezed plan trims to W - O_sq - R_eff", () => {
-    const log = new Log();
-    log.user("question one");
-    log.assistant("answer one ".repeat(100));
-    log.user("latest");
-    const { request, estimate } = build(log);
-    const small: ModelInfo = { ...MODEL_FIT, contextWindow: 2_000 };
-    const squeezed = planSqueezedFit({
       events: log.events,
       request,
       model: small,
       maxOutputTokens: 4_096,
       reserveTokens: 100,
       estimate,
+    };
+    const R_p = Math.min(100, Math.floor(W / 8));
+    expect(planSqueezedFit(input)).toEqual({ plan: null, target: W - 1 - R_p });
+    // the cap sent keeps the reserve: input + cap + R_p = W
+    expect(sentOutputCap(W, 4_096, estimate, 100)).toBe(W - estimate - R_p);
+  });
+
+  it("trims to W - 1 - R_p when the request is over it", () => {
+    const log = new Log();
+    log.user("question one");
+    log.assistant("answer one ".repeat(100));
+    log.user("latest");
+    const { request, estimate } = build(log);
+    const W = estimate - 50;
+    const squeezed = planSqueezedFit({
+      events: log.events,
+      request,
+      model: { ...MODEL_FIT, contextWindow: W },
+      maxOutputTokens: 4_096,
+      reserveTokens: 100,
+      estimate,
     });
-    expect(squeezed.target).toBe(estimate - 100);
+    expect(squeezed.target).toBe(W - 1 - Math.min(100, Math.floor(W / 8)));
     expect(squeezed.plan?.droppedMessageIndexes).toEqual([1]);
     expect(estimateAfterFit(request, estimate, squeezed.plan as FitPlan)).toBeLessThanOrEqual(
       squeezed.target,
@@ -178,9 +174,58 @@ describe("planSqueezedFit (the target is out of reach)", () => {
   });
 });
 
-/** The target planFit uses (output bounded by the window, effective reserve). */
-const fitTargetOf = (window: number, output: number, reserve: number): number =>
-  fitTargetFor(window, output, reserve).target;
+describe("planReactiveTrim (spec §4.3 point 6)", () => {
+  /** A request whose summary text (never dropped or truncated) takes `summaryTokens`. */
+  function withSummary(summaryChars: number): {
+    log: Log;
+    request: ModelRequest;
+    estimate: number;
+  } {
+    const log = new Log();
+    log.user("old question");
+    const covered = log.assistant("old answer");
+    log.summary(covered.seq, "s".repeat(summaryChars));
+    log.user(`latest ${"word ".repeat(200)}`);
+    log.assistant("answer ".repeat(200));
+    log.user("go on");
+    return { log, ...build(log) };
+  }
+
+  const trim = (log: Log, request: ModelRequest, estimate: number, W: number) =>
+    planReactiveTrim({
+      events: log.events,
+      request,
+      model: { ...MODEL_FIT, contextWindow: W },
+      maxOutputTokens: 100,
+      reserveTokens: 0,
+      estimate,
+    });
+
+  it("targets 70/80/90% of W - O_p - R_p and takes the most aggressive one it reaches", () => {
+    const { log, request, estimate } = withSummary(4 * 1_300);
+    // fit target W - 100: the ~1300-token summary is over 70% of it but under 80%
+    const W = 2_000;
+    const target = W - 100;
+    expect(estimate).toBeGreaterThan(Math.floor(0.7 * target));
+    const plan = trim(log, request, estimate, W) as FitPlan;
+    expect(plan).not.toBeNull();
+    const after = estimateAfterFit(request, estimate, plan);
+    expect(after).toBeGreaterThan(Math.floor(0.7 * target));
+    expect(after).toBeLessThanOrEqual(Math.floor(0.8 * target));
+  });
+
+  it("no target reachable: no trim (never a request whose kept text is all notes)", () => {
+    // the summary alone is over 90% of the fit target: every plan would replace the kept user
+    // text and results with notes and still not fit
+    const { log, request, estimate } = withSummary(4 * 2_000);
+    expect(trim(log, request, estimate, 2_000)).toBeNull();
+  });
+
+  it("nothing to trim (the request already fits 70%): no trim retry", () => {
+    const { log, request, estimate } = withSummary(40);
+    expect(trim(log, request, estimate, 100_000)).toBeNull();
+  });
+});
 
 /** A tool pair in the log: the assistant's call and its result. */
 function pair(log: Log, id: string, size: number): void {
@@ -283,7 +328,7 @@ describe("planFit inside the latest user turn", () => {
     const task = log.user(`the task ${"t".repeat(40_000)}`);
     log.runStarted();
     pair(log, "a", 300);
-    log.summary(task.seq + 3, "Earlier: the user asked for the task; call a ran.");
+    log.summary(task.seq + 3, "Earlier: the user asked for the task; call a ran.", [task.seq]);
     pair(log, "b", 300);
     pair(log, "c", 300);
     const { request, estimate } = build(log);
@@ -365,9 +410,7 @@ describe("planFit", () => {
     const target = estimate - tokens(request.messages[3] as ModelMessage);
     const one = plan(log, request, estimate, target);
     expect(one).toEqual({ droppedMessageIndexes: [3, 4], truncated: [] });
-    expect(estimateAfterFit(request, estimate, one as FitPlan)).toBeLessThanOrEqual(
-      fitTargetOf(WINDOW, OUTPUT, reserveFor(target)),
-    );
+    expect(estimateAfterFit(request, estimate, one as FitPlan)).toBeLessThanOrEqual(target);
     expect(pairsIntact(applyFit(request, one as FitPlan).messages)).toBe(true);
 
     // room for the pair and the oldest assistant text, not the second one
@@ -485,7 +528,7 @@ describe("planFit", () => {
     });
     log.user("latest");
     const { request, estimate } = build(log);
-    const target = estimate - 600;
+    const target = Math.floor(estimate / 2);
     const first = plan(log, request, estimate, target);
     expect(first).not.toBeNull();
     expect(plan(log, request, estimate, target)).toEqual(first);
@@ -500,9 +543,7 @@ describe("planFit", () => {
     const systemTokens = estimate - tokens(request.messages[0] as ModelMessage);
     const target = systemTokens - 1;
     const trimmed = plan(log, request, estimate, target) as FitPlan;
-    expect(estimateAfterFit(request, estimate, trimmed)).toBeGreaterThan(
-      fitTargetOf(WINDOW, OUTPUT, reserveFor(target)),
-    );
+    expect(estimateAfterFit(request, estimate, trimmed)).toBeGreaterThan(target);
     expect(applyFit(request, trimmed).messages).toHaveLength(1);
   });
 });

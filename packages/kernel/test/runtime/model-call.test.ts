@@ -895,13 +895,13 @@ describe("runModelStep", () => {
       });
     });
 
-    it("hard fit guard: a request over W - O - R drops the oldest assistant text and records the plan", async () => {
-      // W 5200, O 1000, R 2000 -> target 2200; the hard line is estimate + O > W (4200), and
-      // proactive compaction is off, so only the hard fit guard trims
-      const model = stubInfo("fit", { contextWindow: 5200, maxOutputTokens: 1000 });
+    it("hard fit guard: a request over W - O_p - R_p drops the oldest assistant text and records the plan", async () => {
+      // W 3600, O 1000, R 600 -> R_p = min(600, W/8) = 450, target 2150; the hard line is
+      // estimate + O_p > W (2600), and proactive compaction is off, so only the hard fit guard trims
+      const model = stubInfo("fit", { contextWindow: 3600, maxOutputTokens: 1000 });
       stubImpl = stub([model], () => "ok");
       const agent = agentWith({ model: { provider: "stub", model: "fit" } });
-      await withSettings({ enabled: false, reserveTokens: 2000 }, async () => {
+      await withSettings({ enabled: false, reserveTokens: 600 }, async () => {
         await say("old");
         await answer("x".repeat(9000));
         await say("latest");
@@ -914,6 +914,33 @@ describe("runModelStep", () => {
         const [call] = await ofType("model_call");
         expect(call?.payload.request.fit).toEqual({ droppedMessageIndexes: [1], truncated: [] });
         expect(call?.payload.request.estimatedInputTokens).toBeLessThan(500);
+      });
+    });
+
+    it("a model whose output cap is above its window plans with the bounds: no compaction, no fit, the cap the window leaves", async () => {
+      // W 2000, O 4096, R 8000 (the default): O_p 1000, R_p 250, target 750. Before the planning
+      // bounds the target was about one token, so every step compacted and trimmed (spec §4.1)
+      const model = stubInfo("wide-out", { contextWindow: 2000, maxOutputTokens: 4096 });
+      const s = stub([model], (req) =>
+        req.system.some((x) => x.text.includes(COMPACTION_MARKER))
+          ? `Summary: ${"s".repeat(300)}`
+          : "ok",
+      );
+      stubImpl = s;
+      const agent = agentWith({ model: { provider: "stub", model: "wide-out" } });
+      await withSettings({}, async () => {
+        await say("question");
+        await answer("short answer");
+        await say("go");
+        expect((await step({ agent })).content).toEqual([{ type: "text", text: "ok" }]);
+        expect(s.calls).toHaveLength(1);
+        expect(await ofType("compaction_summary")).toHaveLength(0);
+        expect(await ofType("compaction_failed")).toHaveLength(0);
+        const [call] = await ofType("model_call");
+        expect(call?.payload.request.fit).toBeUndefined();
+        const input = call?.payload.request.estimatedInputTokens as number;
+        expect(call?.payload.request.maxOutputTokens).toBe(2000 - input - 250);
+        expect(s.calls[0]?.maxOutputTokens).toBe(2000 - input - 250);
       });
     });
 
@@ -1287,7 +1314,7 @@ describe("runModelStep", () => {
         });
       });
 
-      it("four consecutive overflows (media, compaction, trim) end with model.context_overflow and no loop", async () => {
+      it("consecutive overflows: media exclusion, forced compaction, then no trim when nothing is left to trim (spec §4.3 point 6)", async () => {
         const id = randomUUID();
         let compactionCalls = 0;
         const s = stub([vision()], (req) => {
@@ -1307,8 +1334,9 @@ describe("runModelStep", () => {
               customStep({ ...deps, ...imageMedia(new Uint8Array([9, 9, 9])) }, agent),
             ),
           ).toBe("model.context_overflow");
-          // media exclusion, forced compaction, progressive trim: four attempts, then stop
-          expect(await ofType("model_call")).toHaveLength(4);
+          // media exclusion and forced compaction: three attempts; the compacted request already
+          // fits 70% of the fit target, so a trim would resend it unchanged: no fourth attempt
+          expect(await ofType("model_call")).toHaveLength(3);
           expect(compactionCalls).toBe(1);
           expect(await ofType("media_excluded")).toHaveLength(1);
         });
@@ -1355,9 +1383,9 @@ describe("runModelStep", () => {
       });
 
       it("a reactive trim uses the most aggressive target it reaches (80% when 70% is out of reach)", async () => {
-        // W 20000, O 100, R 0: the reactive targets are 13900 (70%), 15900 (80%), 17900 (90%). The
-        // ~14500-token system prompt alone is over the 70% target, so only the 80% plan reaches its
-        // target; the unreachable 70% plan would drop the whole history for nothing.
+        // W 20000, O 100, R 0: fit target 19900; reactive targets 13930 (70%), 15920 (80%) and
+        // 17910 (90%). The ~14500-token system prompt alone is over the 70% target, so only the 80%
+        // plan reaches its target; the unreachable 70% plan would drop the whole history for nothing.
         let calls = 0;
         stubImpl = stub(
           [stubInfo("aggressive", { contextWindow: 20_000, maxOutputTokens: 100 })],
@@ -1388,7 +1416,7 @@ describe("runModelStep", () => {
           const dropped = trim?.fit?.droppedMessageIndexes ?? [];
           expect(dropped.length).toBeGreaterThan(0);
           // the 80% plan: at or below its target, and part of the history is still sent
-          expect(trim?.estimatedInputTokens).toBeLessThanOrEqual(15_900);
+          expect(trim?.estimatedInputTokens).toBeLessThanOrEqual(15_920);
           expect(dropped.length).toBeLessThan(20);
           const sent = (stubImpl as Stub).calls.at(-1) as ModelRequest;
           expect(JSON.stringify(sent.messages)).toContain("turn 9 ");
@@ -1396,7 +1424,7 @@ describe("runModelStep", () => {
         });
       });
 
-      it("a persistent overflow across a fallback stops at five model_call rows with model.context_overflow", async () => {
+      it("a persistent overflow across a fallback stops at four model_call rows with model.context_overflow", async () => {
         const s = stub([stubInfo("main"), stubInfo("fb", { contextWindow: 4000 })], (req) => {
           if (req.system.some((x) => x.text.includes(COMPACTION_MARKER))) {
             return `Summary: ${"s".repeat(300)}`;
@@ -1412,9 +1440,9 @@ describe("runModelStep", () => {
         });
         await withSettings({ enabled: false, reserveTokens: 0 }, async () => {
           expect(await runErrorCode(step({ agent }))).toBe("model.context_overflow");
-          // main: initial + compaction + trim (3 rows); fallback: initial + compaction (2 rows) = 5,
-          // and the step ceiling stops before a sixth
-          expect(await ofType("model_call")).toHaveLength(5);
+          // main: initial + compaction (2 rows), nothing left to trim, so the fallback; fallback:
+          // initial + compaction (2 rows), nothing to trim: model.context_overflow, never a loop
+          expect(await ofType("model_call")).toHaveLength(4);
         });
       });
 
@@ -1515,29 +1543,36 @@ describe("runModelStep", () => {
         await say("go");
       };
 
-      it("a fallback rung the guard cannot fit compacts once with its own model before sending", async () => {
-        // the fallback's 2000-token window cannot hold the earlier summary, which the fit plan never
-        // drops: the guard compacts with the fallback's model, rebuilds and sends (spec §4.3 point 5)
+      /** The agent's model always fails; the fallback (W 2000) overflows on its first `overflows` calls. */
+      const fallbackStub = (overflows: number) => {
         let fbCalls = 0;
-        const s = stub(
+        return stub(
           [stubInfo("main"), stubInfo("fb", { contextWindow: 2000, maxOutputTokens: 100 })],
           (req) => {
             if (isCompactionCall(req)) return `Summary: ${"s".repeat(300)}`;
             if (req.model === "main") throw new ModelError("server", "down", { retryAfterMs: 1 });
             fbCalls++;
-            // the forced compaction was this rung's compaction fix-up: an overflow goes to the trim
-            if (fbCalls === 1) throw new ModelError("context_overflow", "too long");
+            if (fbCalls <= overflows) throw new ModelError("context_overflow", "too long");
             return "fb answer";
           },
         );
-        stubImpl = s;
-        await largeSummaryHistory();
-        const agent = agentWith({
+      };
+      const fallbackAgent = () =>
+        agentWith({
           model: { provider: "stub", model: "main" },
           fallback: { provider: "stub", model: "fb" },
         });
+
+      it("a fallback rung the guard cannot fit compacts once with its own model before sending", async () => {
+        // the fallback's 2000-token window cannot hold the earlier summary, which the fit plan never
+        // drops: the guard compacts with the fallback's model, rebuilds and sends (spec §4.3 point 5)
+        const s = fallbackStub(0);
+        stubImpl = s;
+        await largeSummaryHistory();
         await withSettings({ enabled: false, reserveTokens: 0 }, async () => {
-          expect((await step({ agent })).content).toEqual([{ type: "text", text: "fb answer" }]);
+          expect((await step({ agent: fallbackAgent() })).content).toEqual([
+            { type: "text", text: "fb answer" },
+          ]);
           // one compaction (chunked: the earlier summary is over the fallback's chunk size), with
           // the fallback's model, before any fallback request went out
           const compactions = s.calls.filter(isCompactionCall);
@@ -1545,14 +1580,69 @@ describe("runModelStep", () => {
           expect(compactions.every((c) => c.model === "fb")).toBe(true);
           const firstFb = s.calls.findIndex((c) => c.model === "fb" && !isCompactionCall(c));
           expect(s.calls.indexOf(compactions.at(-1) as ModelRequest)).toBeLessThan(firstFb);
-          // main twice, then the fallback's compacted request and its trim retry: no extra row for
-          // the compaction
+          // main twice, then the fallback's compacted request: no extra row for the compaction
           const rows = await ofType("model_call");
-          expect(rows.map((r) => r.payload.model)).toEqual(["main", "main", "fb", "fb"]);
+          expect(rows.map((r) => r.payload.model)).toEqual(["main", "main", "fb"]);
           const summaries = await ofType("compaction_summary");
           expect(summaries).toHaveLength(2);
           expect(rows[2]?.payload.request.summarySeq).toBe(summaries[1]?.seq);
+          expect(rows[2]?.payload.request.fit).toBeUndefined();
           expect(rows[2]?.payload.request.maxOutputTokens).toBe(100);
+        });
+      });
+
+      it("the guard's compaction is the rung's compaction fix-up: a later overflow does not compact again", async () => {
+        const s = fallbackStub(1);
+        stubImpl = s;
+        await largeSummaryHistory();
+        await withSettings({ enabled: false, reserveTokens: 0 }, async () => {
+          // the overflow goes to the trim; the compacted request already fits 70% of the target, so
+          // there is nothing to trim and the overflow surfaces (spec §4.3 point 6)
+          expect(await runErrorCode(step({ agent: fallbackAgent() }))).toBe(
+            "model.context_overflow",
+          );
+          const firstFb = s.calls.findIndex((c) => c.model === "fb" && !isCompactionCall(c));
+          const lastCompaction = s.calls.findLastIndex(isCompactionCall);
+          expect(lastCompaction).toBeLessThan(firstFb);
+          expect(await ofType("compaction_summary")).toHaveLength(2);
+          expect((await ofType("model_call")).map((r) => r.payload.model)).toEqual([
+            "main",
+            "main",
+            "fb",
+          ]);
+        });
+      });
+
+      it("a sub-agent whose budget the guard's compaction uses up makes no fallback request", async () => {
+        const parentRunId = randomUUID();
+        // one token below the configured cap: the compaction call's usage crosses it
+        await sql`INSERT INTO capybara.runs (id, conversation_id, status, agent_version, trigger_account_id, trigger_seq, subagent_tokens_used)
+          VALUES (${parentRunId}, ${conversationId}, 'waiting', 1, ${accountId}, 1, 4999999)`.execute(
+          raw,
+        );
+        const s = fallbackStub(0);
+        stubImpl = s;
+        await largeSummaryHistory();
+        await withSettings({ enabled: false, reserveTokens: 0 }, async () => {
+          const r = await runModelStep(deps, {
+            source: "web",
+            orgId,
+            conversationId,
+            runId,
+            step: 1,
+            agent: fallbackAgent(),
+            agentVersion: 1,
+            absorbedUpToSeq: ALL_ABSORBED,
+            signal: new AbortController().signal,
+            sink: () => {},
+            parentRunId,
+          });
+          expect(r.budget).toBe(true);
+          expect(s.calls.filter((c) => c.model === "fb" && !isCompactionCall(c))).toHaveLength(0);
+          expect((await ofType("model_call")).map((c) => c.payload.model)).toEqual([
+            "main",
+            "main",
+          ]);
         });
       });
 
@@ -2520,13 +2610,11 @@ describe("model.request hooks: stickiness, compaction (M-4, M-2, I-1)", () => {
     const { seen, hooks } = fakeHooks((p) => p.purpose === "compaction");
     const r = await hookedStep({ ...deps, hooks }, small());
     expect(r.content).toEqual([{ type: "text", text: "after compaction" }]);
-    // the proactive compaction is denied; fake-small's window cannot hold its own output cap, so
-    // the guard's strict target is out of reach and its forced compaction (spec §4.3 point 5) is
-    // denied too, with its own keys, before the squeezed fit sends the step
+    // one denied compaction: fake-small's output cap (4096) is above its window, but the planning
+    // bounds (spec §4.1) keep the guard's target reachable, so the guard needs no forced compaction
     const failures = await ofType("compaction_failed");
     expect(failures.map((f) => f.payload)).toEqual([
       { attempt: 1, reason: 'compaction request blocked by the "guard" policy hook (deny)' },
-      { attempt: 2, reason: 'compaction request blocked by the "guard" policy hook (deny)' },
     ]);
     expect(JSON.stringify(await all())).not.toContain("raw detail");
     expect(await ofType("compaction_summary")).toEqual([]);
@@ -2550,7 +2638,7 @@ describe("model.request hooks: stickiness, compaction (M-4, M-2, I-1)", () => {
       .where("action", "=", "hook.denied")
       .where("target", "=", conversationId)
       .execute();
-    expect(rows).toHaveLength(2);
+    expect(rows).toHaveLength(1);
     expect(rows[0]?.detail).toMatchObject({
       purpose: "compaction",
       plugin: "guard",

@@ -4,6 +4,7 @@ import type { ConversationEvent, EventPayload } from "../../conversations/events
 import type { CompactionSettings } from "../../identity/settings.js";
 import { renderSubagentDelivery } from "../subagents/render.js";
 import { latestSummary } from "./build.js";
+import { planningBounds } from "./fit.js";
 import { scheduleHeader, senderTranscriptLabel } from "./run-context.js";
 import { estimateTokens } from "./tokens.js";
 import { toolsChangedText } from "./tool-changes.js";
@@ -53,8 +54,9 @@ const COMPACTION_INSTRUCTION = [
 ].join("\n");
 
 /**
- * The input room a request leaves below the window: the output cap and the safety reserve are never
- * spent on input (context compaction spec §4.1).
+ * The input room one summary call leaves below the compaction model's window (context compaction
+ * spec §4.5, `B = Wc - Cmax - R`): the summary call's own output cap and the safety reserve are never
+ * spent on its input. A step's request plans with {@link planningBounds} instead.
  */
 export function compactionInputBudget(window: number, maxOutput: number, reserve: number): number {
   return window - maxOutput - reserve;
@@ -99,25 +101,24 @@ export const MIN_COMPACTION_CHUNK_TOKENS = 256;
 
 /**
  * Compaction trigger (context compaction spec §4.1): the calibrated estimate reaches the lower of
- * `threshold × window` and the input budget, or it reaches the hard line `estimate + output >
- * window`, which fires even when proactive early compaction is turned off (`enabled: false`).
- * `settings.maxOutputTokens` here carries `O`, the request's output cap (§4.1), not the summary cap (§4.8).
+ * `threshold × window` and the input target `W - O_p - R_p` (the planning bounds,
+ * {@link planningBounds}), or it reaches the hard line `estimate + O_p > window`, which fires even
+ * when proactive early compaction is turned off (`enabled: false`). `settings.maxOutputTokens` here
+ * carries `O`, the request's output cap (§4.1), not the summary cap (§4.8).
  */
 export function shouldCompact(
   estimate: number,
   window: number,
   settings: CompactionSettings,
 ): boolean {
-  const output = settings.maxOutputTokens;
+  const { output, target } = planningBounds(
+    window,
+    settings.maxOutputTokens,
+    settings.reserveTokens,
+  );
   if (estimate + output > window) return true;
   if (!settings.enabled) return false;
-  return (
-    estimate >=
-    Math.min(
-      settings.threshold * window,
-      compactionInputBudget(window, output, settings.reserveTokens),
-    )
-  );
+  return estimate >= Math.min(settings.threshold * window, target);
 }
 
 /**
@@ -197,6 +198,51 @@ export function compactionPlan(
 
   const parts = prev ? [`[Earlier summary]\n${prev.payload.text}`, ...lines] : lines;
   return { coversUpToSeq, transcript: parts.join("\n\n") };
+}
+
+/**
+ * The user messages that started run `runId`, among those a summary covering up to
+ * `coversUpToSeq` covers (context compaction spec §4.2, revision 2026-11-15): recorded in the
+ * summary as `openingSeqs` when it is written, so request building re-renders exactly these after
+ * the summary text and a request never depends on later events. The opening messages are the user
+ * messages the run's first model call absorbed (`absorbedUpToSeq` of that call, or of the request
+ * about to be built when the run has made none yet) that no earlier turn answered or absorbed:
+ * after the latest assistant message and model call before the run's `run_started`.
+ * Several when the person sent several before the first call. None for a run that no message
+ * started (a finished background task or a sub-agent's delivery woke it, a manual compact run),
+ * and a covered interjection (after the first call) is never one. Sorted by seq.
+ */
+export function openingSeqs(
+  events: readonly ConversationEvent[],
+  runId: string,
+  coversUpToSeq: number,
+  absorbedUpToSeq: number = Number.POSITIVE_INFINITY,
+): number[] {
+  const sorted = [...events].sort((a, b) => a.seq - b.seq);
+  const start = sorted.findLast((e) => e.type === "run_started" && e.runId === runId);
+  if (start?.type !== "run_started") return [];
+  const trigger = start.payload.trigger;
+  if (trigger !== undefined && trigger !== "message" && trigger !== "schedule") return [];
+  const first = sorted.find(
+    (e) => e.type === "model_call" && e.runId === runId && e.seq > start.seq,
+  );
+  const upTo =
+    first?.type === "model_call"
+      ? Math.min(first.payload.request.absorbedUpToSeq ?? first.seq, first.seq)
+      : absorbedUpToSeq;
+  let floor = Number.NEGATIVE_INFINITY;
+  for (const e of sorted) {
+    if (e.seq >= start.seq) break;
+    if (e.type === "assistant_message") floor = Math.max(floor, e.seq);
+    else if (e.type === "model_call") {
+      floor = Math.max(floor, e.payload.request.absorbedUpToSeq ?? e.seq);
+    }
+  }
+  return sorted
+    .filter(
+      (e) => e.type === "user_message" && e.seq > floor && e.seq <= upTo && e.seq <= coversUpToSeq,
+    )
+    .map((e) => e.seq);
 }
 
 /**

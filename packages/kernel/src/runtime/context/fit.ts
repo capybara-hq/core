@@ -24,46 +24,37 @@ export interface FitPlan {
 export const FIT_TRUNCATION_NOTE = "[content truncated to fit the model's context window]";
 
 /**
- * The output cap actually sent (`O'`, spec §4.3 point 4): the cap, lowered so the provider-visible
- * total (`input + O'`) fits the window. At least one output token is always left. The guard calls it
- * **after** the fit plan, with the post-fit estimate: a plan that reached its target leaves the cap
- * unchanged (clamping from the pre-trim estimate sent a trimmed request with a cap of 1).
+ * The planning bounds of a window (context compaction spec §4.1, revision 2026-11-15): every plan
+ * (the trigger, the compaction tail, the fit guard, the reactive trim) uses `O_p = min(O, ⌊W/2⌋)`
+ * (at least 1) and `R_p = min(R, ⌊W/8⌋)` in place of the output cap and the reserve, so the input
+ * target `W - O_p - R_p` is at least `3W/8` on any model. Without them a model whose output cap is
+ * about its window, or whose window is smaller than the reserve, had a target of about one token.
+ * Common models are unchanged (W 200k, O 32k, R 8k: `O_p = O`, `R_p = R`).
  */
-export function clampOutput(
-  contextWindow: number,
-  maxOutputTokens: number,
-  estimate: number,
-): number {
-  return Math.max(1, Math.min(maxOutputTokens, Math.max(1, contextWindow - estimate)));
-}
-
-/**
- * The reserve actually kept (`R_eff`, spec §4.3 point 2): the configured reserve, reduced to what
- * the output cap leaves below the window. A reserve larger than the window is sacrificed
- * (the hard bound is what must hold), so the target keeps at least one token of room.
- */
-export function effectiveReserve(
-  contextWindow: number,
-  clampedOutput: number,
-  reserveTokens: number,
-): number {
-  return Math.min(reserveTokens, Math.max(0, contextWindow - clampedOutput - 1));
-}
-
-/**
- * The fit target of a request (spec §4.3 point 2): `O1 = min(O, W - 1)` (at least 1; the cap bounded
- * by the window only, never by the input), `R_eff` the reserve `O1` leaves, and the input room
- * `W - O1 - R_eff`. A request at or below `target` fits with the safety reserve, so the output cap
- * the guard sends after a plan that reached it is `O1`.
- */
-export function fitTargetFor(
+export function planningBounds(
   contextWindow: number,
   maxOutputTokens: number,
   reserveTokens: number,
 ): { output: number; reserve: number; target: number } {
-  const output = Math.max(1, Math.min(maxOutputTokens, contextWindow - 1));
-  const reserve = effectiveReserve(contextWindow, output, reserveTokens);
+  const output = Math.max(1, Math.min(maxOutputTokens, Math.floor(contextWindow / 2)));
+  const reserve = Math.max(0, Math.min(reserveTokens, Math.floor(contextWindow / 8)));
   return { output, reserve, target: contextWindow - output - reserve };
+}
+
+/**
+ * The output cap actually sent (`O'`, spec §4.1 / §4.3 point 4): `clamp(O, 1, W - input - R_p)`,
+ * from the input actually sent (after the fit plan). The configured cap whenever it fits beside the
+ * input and the reserve; otherwise what is left, the reserve kept. Every path (ordinary, squeezed,
+ * reactive) clamps with it.
+ */
+export function sentOutputCap(
+  contextWindow: number,
+  maxOutputTokens: number,
+  inputSent: number,
+  reserveTokens: number,
+): number {
+  const { reserve } = planningBounds(contextWindow, maxOutputTokens, reserveTokens);
+  return Math.max(1, Math.min(maxOutputTokens, contextWindow - inputSent - reserve));
 }
 
 export interface PlanFitInput {
@@ -73,9 +64,9 @@ export interface PlanFitInput {
   request: ModelRequest;
   /** The model the request is for: its context window is the hard bound. */
   model: ModelInfo;
-  /** `O`: the requested output cap (`ModelRequest.maxOutputTokens`, unclamped). */
+  /** `O`: the requested output cap (`ModelRequest.maxOutputTokens`, unclamped; bounded here). */
   maxOutputTokens: number;
-  /** `R`: the safety reserve in effect for the run's organization (unreduced). */
+  /** `R`: the safety reserve in effect for the run's organization (unreduced; bounded here). */
   reserveTokens: number;
   /** The request's input-token estimate (uncalibrated, as recorded). */
   estimate: number;
@@ -121,8 +112,8 @@ const truncatable = (b: ContentBlock): boolean =>
   (b.type === "tool_result" && b.content !== FIT_TRUNCATION_NOTE);
 
 /**
- * The deterministic fit plan for a request over {@link fitTargetFor}'s `W - O1 - R_eff`, or null
- * when it already fits. A plan that cannot reach the target even after dropping every droppable
+ * The deterministic fit plan for a request over the planning target `W - O_p - R_p`
+ * ({@link planningBounds}), or null when it already fits. A plan that cannot reach the target even after dropping every droppable
  * message and truncating every kept text / `tool_result` block is still returned: the caller decides
  * (the ordinary guard fails before any provider call).
  *
@@ -137,8 +128,16 @@ const truncatable = (b: ContentBlock): boolean =>
  * re-rendered opening user message) are candidates.
  */
 export function planFit(input: PlanFitInput): FitPlan | null {
-  const { request, model, maxOutputTokens, reserveTokens, estimate } = input;
-  const { target } = fitTargetFor(model.contextWindow, maxOutputTokens, reserveTokens);
+  const { model, maxOutputTokens, reserveTokens } = input;
+  return planFitTo(
+    input,
+    planningBounds(model.contextWindow, maxOutputTokens, reserveTokens).target,
+  );
+}
+
+/** {@link planFit} against an explicit input target (the squeezed fit, the reactive trim). */
+function planFitTo(input: PlanFitInput, target: number): FitPlan | null {
+  const { request, estimate } = input;
   if (target <= 0 || estimate <= target) return null;
 
   const messages = request.messages;
@@ -240,22 +239,41 @@ export function planFit(input: PlanFitInput): FitPlan | null {
 }
 
 /**
- * The fallback when {@link planFit} cannot reach {@link fitTargetFor}'s target: the output cap is
- * squeezed to what the window leaves after the pre-trim input (`clampOutput(W, O1, estimate)`) and
- * the request is planned against `W - O_sq - R_eff` instead. This is the computation the guard used
- * before revision 2026-11-15 and only matters when the window cannot hold the cap with the input
- * (a model whose output cap is about its window, or a request that keeps more than `W - O1 - R`).
- * The caller still clamps the cap sent from the post-fit estimate, so a trimmed request never goes
- * out with a cap of 1 because of the input it no longer carries.
+ * The fallback when {@link planFit} cannot reach its target, even after one forced compaction
+ * (spec §4.3 point 5): plan against `W - 1 - R_p`, giving the output whatever the input leaves
+ * while the reserve stays. The caller sends the cap {@link sentOutputCap} gives from the post-fit
+ * estimate. A plan that cannot reach this target either means the system prompt, tools, summary and
+ * latest pair are too large (`run.context_too_large`).
  */
 export function planSqueezedFit(input: PlanFitInput): { plan: FitPlan | null; target: number } {
-  const { model, maxOutputTokens, reserveTokens, estimate } = input;
-  const { output } = fitTargetFor(model.contextWindow, maxOutputTokens, reserveTokens);
-  const squeezed = clampOutput(model.contextWindow, output, estimate);
-  return {
-    plan: planFit({ ...input, maxOutputTokens: squeezed }),
-    target: fitTargetFor(model.contextWindow, squeezed, reserveTokens).target,
-  };
+  const { model, maxOutputTokens, reserveTokens } = input;
+  const { reserve } = planningBounds(model.contextWindow, maxOutputTokens, reserveTokens);
+  const target = model.contextWindow - 1 - reserve;
+  return { plan: planFitTo(input, target), target };
+}
+
+/** The reactive trim's fractions of the fit target, most aggressive first (spec §4.3 point 6). */
+export const REACTIVE_TRIM_FACTORS = [0.7, 0.8, 0.9] as const;
+
+/**
+ * The deterministic plan for a reactive trim (spec §4.3 point 6 / §4.4): the provider rejected a
+ * request the estimate thought fit, so the retry is trimmed against 70%, 80% or 90% of the fit
+ * target `W - O_p - R_p`, the most aggressive one the plan actually reaches (its estimate after the
+ * plan at or below it). Null when none is reached (a plan that cannot reach even 90% would replace
+ * every kept block with notes) or when the request already fits 70% (nothing to trim, the same
+ * request would be rejected again): no trim retry, the step surfaces `model.context_overflow`. The
+ * plan is ordinary and replays byte-for-byte like any other.
+ */
+export function planReactiveTrim(input: PlanFitInput): FitPlan | null {
+  const { request, model, maxOutputTokens, reserveTokens, estimate } = input;
+  const { target } = planningBounds(model.contextWindow, maxOutputTokens, reserveTokens);
+  for (const factor of REACTIVE_TRIM_FACTORS) {
+    const t = Math.floor(factor * target);
+    const plan = planFitTo(input, t);
+    if (plan === null) return null;
+    if (estimateAfterFit(request, estimate, plan) <= t) return plan;
+  }
+  return null;
 }
 
 /**

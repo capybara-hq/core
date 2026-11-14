@@ -2,11 +2,11 @@ import type { ModelInfo, ModelMessage, ModelRequest } from "@capybara-hq/plugin-
 import { describe, expect, it } from "vitest";
 import { buildModelRequest } from "../../../src/runtime/context/build.js";
 import {
-  compactionInputBudget,
   compactionPlan,
+  openingSeqs,
   shouldCompact,
 } from "../../../src/runtime/context/compaction.js";
-import { applyFit, planFit } from "../../../src/runtime/context/fit.js";
+import { applyFit, planFit, planningBounds } from "../../../src/runtime/context/fit.js";
 import { estimateTokens } from "../../../src/runtime/context/tokens.js";
 import { AGENT, compactionSettings, Log, MODEL } from "./fixtures.js";
 
@@ -79,7 +79,7 @@ describe("compaction inside the current turn, end to end", () => {
     expect(shouldCompact(estimate(before), W, { ...SETTINGS, maxOutputTokens: O })).toBe(true);
 
     const tailBudget =
-      compactionInputBudget(W, O, SETTINGS.reserveTokens) -
+      planningBounds(W, O, SETTINGS.reserveTokens).target -
       estimateTokens([], before.system, before.tools);
     const plan = compactionPlan(log.events, SETTINGS, tailBudget);
     expect(plan).not.toBeNull();
@@ -93,7 +93,10 @@ describe("compaction inside the current turn, end to end", () => {
     expect(covers).toBeGreaterThan(taskSeq ?? 0);
     expect(plan?.transcript).toContain(`User: ${TASK}`);
     expect(plan?.transcript).toContain("ledger 1:");
-    log.summary(covers, "The agent read the oldest ledger files; no mismatch so far.");
+    // the summary records the run's opening message it covers (what the runtime writes)
+    const opening = openingSeqs(log.events, "run-1", covers);
+    expect(opening).toEqual([taskSeq]);
+    log.summary(covers, "The agent read the oldest ledger files; no mismatch so far.", opening);
 
     const after = build(log);
     const fit = planFit({
@@ -133,5 +136,40 @@ describe("compaction inside the current turn, end to end", () => {
     });
     // the latest result is kept whole
     expect(textOf(sent.messages.at(-1) as ModelMessage)).toContain(`ledger ${PAIRS}:`);
+  });
+
+  it("keepRecentTurns 0 mid-run: the next two requests share the same summary message (append-only)", () => {
+    const log = longToolLoop();
+    const settings = { ...SETTINGS, keepRecentTurns: 0 };
+    const plan = compactionPlan(log.events, settings, 1_000_000);
+    // keepRecentTurns 0 summarises everything, the run's own steps included
+    const covers = plan?.coversUpToSeq ?? 0;
+    expect(covers).toBe(log.events.at(-1)?.seq);
+    log.summary(
+      covers,
+      "The agent read all ledger files so far.",
+      openingSeqs(log.events, "run-1", covers),
+    );
+    const right = build(log);
+    expect(textOf(right.messages[0] as ModelMessage)).toContain(TASK);
+    // the next step: one more tool pair; the request before it is a prefix of this one
+    log.assistant(
+      [{ type: "tool_call", id: "call-next", name: "Read", input: { path: "/ledger/next.csv" } }],
+      "tool_use",
+      PAIRS + 1,
+    );
+    log.add({
+      type: "tool_result",
+      payload: {
+        step: PAIRS + 1,
+        callId: "call-next",
+        toolKey: "Read",
+        content: "next",
+        isError: false,
+      },
+    });
+    const next = build(log);
+    expect(next.messages[0]).toEqual(right.messages[0]);
+    expect(next.messages.slice(0, right.messages.length)).toEqual(right.messages);
   });
 });

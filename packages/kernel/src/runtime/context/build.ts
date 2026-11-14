@@ -203,17 +203,17 @@ function mediaMode(b: LogMedia, model: ModelInfo): "bytes" | "inline" | "placeho
 }
 
 /**
- * 最近摘要之后、会进请求的消息里，该模型需要字节的媒体块（按 seq 与块顺序）；摘要切在用户轮次内部时，
- * 也包括随摘要再次发送的该轮用户消息（{@link currentTurnMessage}）。
+ * 最近摘要之后、会进请求的消息里，该模型需要字节的媒体块（按 seq 与块顺序）；也包括随摘要再次发送的
+ * 用户消息（摘要的 `openingSeqs`，{@link summaryOpeners}）。
  */
 function mediaBlocks(events: readonly ConversationEvent[], model: ModelInfo): LogMedia[] {
   const sorted = [...events].sort((a, b) => a.seq - b.seq);
   const summary = latestSummary(sorted);
   const after = summary?.payload.coversUpToSeq ?? Number.NEGATIVE_INFINITY;
-  const opener = summary ? currentTurnMessage(sorted, after) : null;
+  const openers = new Set<ConversationEvent>(summaryOpeners(sorted, summary));
   const out: LogMedia[] = [];
   for (const e of sorted) {
-    if (e.seq <= after && e !== opener) continue;
+    if (e.seq <= after && !openers.has(e)) continue;
     if (e.type !== "user_message" && e.type !== "assistant_message") continue;
     for (const b of e.payload.content) {
       if ((b.type === "image" || b.type === "document") && mediaMode(b, model) !== "placeholder") {
@@ -527,39 +527,20 @@ type SummaryEvent = ConversationEvent & {
 };
 
 /**
- * The user message that opened the turn a summary cuts inside of (context compaction spec §4.2,
- * revision 2026-11-15), or null. The cut is inside a turn when the first message after
- * `coversUpToSeq` (a user message or a non-empty assistant message) is an assistant message: the
- * plan only moves inside the latest turn at a tool-pair boundary, so older logs, whose summaries
- * always end before a user message, have none. The opening message is the latest user message
- * before that assistant message's `run_started`; a run that no message started (a finished
- * background task or a sub-agent's delivery woke it, a manual compaction) has none, and a covered
- * interjection is never one. Request building sends it again, verbatim, with the summary.
- * `events` sorted by seq.
+ * The user messages a summary re-renders after its text (context compaction spec §4.2, revision
+ * 2026-11-15): exactly the ones its `openingSeqs` names, in seq order, decided when the summary was
+ * written. A summary without the field (every older log) re-renders nothing. `events` sorted by seq.
  */
-export function currentTurnMessage(
+export function summaryOpeners(
   events: readonly ConversationEvent[],
-  coversUpToSeq: number,
-): (ConversationEvent & { type: "user_message" }) | null {
-  const next = events.find(
-    (e) =>
-      e.seq > coversUpToSeq &&
-      (e.type === "user_message" ||
-        (e.type === "assistant_message" && e.payload.content.length > 0)),
-  );
-  if (next?.type !== "assistant_message") return null;
-  const start = events.findLast(
-    (e): e is ConversationEvent & { type: "run_started" } =>
-      e.type === "run_started" && e.runId === next.runId && e.seq < next.seq,
-  );
-  if (start === undefined) return null;
-  const trigger = start.payload.trigger;
-  if (trigger !== undefined && trigger !== "message" && trigger !== "schedule") return null;
-  const opener = events.findLast(
+  summary: SummaryEvent | null,
+): (ConversationEvent & { type: "user_message" })[] {
+  const seqs = new Set(summary?.payload.openingSeqs ?? []);
+  if (seqs.size === 0) return [];
+  return events.filter(
     (e): e is ConversationEvent & { type: "user_message" } =>
-      e.type === "user_message" && e.seq < start.seq,
+      e.type === "user_message" && seqs.has(e.seq),
   );
-  return opener !== undefined && opener.seq <= coversUpToSeq ? opener : null;
 }
 
 /** 最近一条 `compaction_summary` 事件（按 seq）；没有则 null。 */
@@ -585,7 +566,7 @@ export function summaryText(summary: string): string {
  * - 之后的 `skills_catalog` 在所在位置渲染为 system 变更提醒；被压缩摘要覆盖的，若摘要时生效的目录与 system 里的
  *   不同，紧随摘要补一条完整的当前目录；
  * - messages：最近一条摘要（若有）作为首条 user 消息（摘要切在用户轮次内部时，该轮的开头消息按普通
- *   user_message 的渲染接在摘要文本之后、同一条消息里：{@link currentTurnMessage}），其后按 seq 回放 `coversUpToSeq` 之后的
+ *   user_message 的渲染接在摘要文本之后、同一条消息里：摘要的 `openingSeqs`，{@link summaryOpeners}），其后按 seq 回放 `coversUpToSeq` 之后的
  *   `user_message` / `assistant_message`（content 原样，含 opaque；aborted 的也回放；媒体引用按
  *   {@link resolveMedia} 换成 base64 或文字占位）/ `reminder`
  *   （`role: "system"`，放在它所在的位置）/ `tools_changed` (`role: "system"`, the text of {@link toolsChangedText}, at its position) /
@@ -724,20 +705,24 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     racedPending = racedPending.filter((x) => x.seq > toSeq);
   };
   /**
-   * Context compaction spec §4.2 (revision 2026-11-15): the summary cuts inside a user turn, so the
-   * turn's opening message, covered by it, is sent again right after the summary text.
+   * Context compaction spec §4.2 (revision 2026-11-15): the user messages that started the run the
+   * summary cuts into, covered by it, are sent again right after the summary text (exactly the
+   * summary's `openingSeqs`).
    */
-  const opener = summary ? currentTurnMessage(events, after) : null;
+  const openers = summaryOpeners(events, summary);
+  const openerSet = new Set<ConversationEvent>(openers);
   /**
    * Run context spec §4: the sender lines, by the messages after the summary boundary (and the
-   * re-sent opening message first, which then counts as the message before them).
+   * re-sent opening messages first, which then count as the messages before them).
    */
-  const senders = opener
-    ? senderLines(
-        events.filter((e) => e.seq > after || e === opener),
-        opener.seq - 1,
-      )
-    : senderLines(events, after);
+  const firstOpener = openers[0];
+  const senders =
+    firstOpener !== undefined
+      ? senderLines(
+          events.filter((e) => e.seq > after || openerSet.has(e)),
+          firstOpener.seq - 1,
+        )
+      : senderLines(events, after);
   /**
    * A user message's blocks: its sender line first when the sender changed (a separate block, so
    * `content[0]` stays the typed text), then a scheduled task's header (scheduled tasks spec §12,
@@ -814,7 +799,7 @@ export function buildModelRequest(input: BuildModelRequestInput): {
       role: "user",
       content: [
         { type: "text", text: summaryText(summary.payload.text) },
-        ...(opener ? userBlocks(opener, false) : []),
+        ...openers.flatMap((o) => userBlocks(o, false)),
       ],
     });
     // run context spec §5: snapshots covered by the summary are not rendered; the context in

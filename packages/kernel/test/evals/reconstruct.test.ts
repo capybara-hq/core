@@ -890,7 +890,12 @@ describe("reconstructRequest：基线零漂移", () => {
 
   it("a summary inside the current turn (context compaction spec §4.2, revision 2026-11-15): the turn's message follows the summary, zero drift", async () => {
     reset();
-    const audit = await seedSkill("ledger-audit", "Audit the ledgers.");
+    // a skill body large enough that the turn's message and its tool pair are over the tail budget
+    // fake-small's planning bounds leave (W 1500: O_p 750, target 750 minus the system prompt)
+    const audit = await seedSkill(
+      "ledger-audit",
+      `Audit the ledgers. ${"Check each total. ".repeat(400)}`,
+    );
     const agentId = await createAgent(
       { provider: "model-fake", model: "fake-small" },
       { skills: [audit] },
@@ -1841,9 +1846,10 @@ describe("reconstructRequest：基线零漂移", () => {
 
   it("a trimmed request records its fit and replays byte-for-byte; a smaller candidate window is context_fit", async () => {
     reset();
-    // A window where the fit target W - O - R is reachable but proactive compaction does not fire:
-    // enabled: false leaves only the hard line (estimate + output > window), so the hard fit guard
-    // trims instead of compacting. fake-1: W 32000, O 4096, R 20000 -> target 7904.
+    // A window where the fit target W - O_p - R_p is reachable but proactive compaction does not
+    // fire: enabled: false leaves only the hard line (estimate + O_p > window), so the hard fit
+    // guard trims instead of compacting. fake-1: W 32000, O 4096, R 20000 -> R_p = W/8 = 4000,
+    // target 23904, hard line at 27904.
     await db
       .updateTable("deployment_settings")
       .set({ value: JSON.stringify({ enabled: false, reserveTokens: 20_000 }) })
@@ -1852,29 +1858,28 @@ describe("reconstructRequest：基线零漂移", () => {
     try {
       const agentId = await createAgent({ provider: "model-fake", model: "fake-1" });
       const conv = await createConv(owner, orgId, agentId);
-      // The fake model's reply to long:6000 is capped at 16384 characters (~4k tokens): the third
-      // request carries two of them (~8k), over the 7904 target and below the hard line
-      // (estimate + 4096 <= 32000), so the hard fit guard trims instead of compacting
-      await postMessage(owner, orgId, conv, "long:6000");
-      await waitForTerminal(db, conv, 1, 30_000);
-      await postMessage(owner, orgId, conv, "long:6000");
-      await waitForTerminal(db, conv, 2, 30_000);
+      // The fake model's reply to long:6000 is capped at 16384 characters (~4k tokens): the
+      // seventh request carries six of them (~24.6k), over the 23904 target and below the hard
+      // line, so the hard fit guard trims instead of compacting
+      const LONG = 6;
+      for (let i = 1; i <= LONG; i++) {
+        await postMessage(owner, orgId, conv, "long:6000");
+        await waitForTerminal(db, conv, i, 30_000);
+      }
       await postMessage(owner, orgId, conv, "echo:after");
-      await waitForTerminal(db, conv, 3, 30_000);
+      await waitForTerminal(db, conv, LONG + 1, 30_000);
 
       const events = await eventsOf(db, conv);
       const calls = modelCalls(events);
-      expect(calls).toHaveLength(3);
+      expect(calls).toHaveLength(LONG + 1);
       // the earlier requests fit: no plan (old logs without fit rebuild as before)
-      expect(calls[0]?.payload.request.fit).toBeUndefined();
-      expect(calls[1]?.payload.request.fit).toBeUndefined();
-      const fit = calls[2]?.payload.request.fit;
+      for (const c of calls.slice(0, LONG)) expect(c.payload.request.fit).toBeUndefined();
+      const fit = calls[LONG]?.payload.request.fit;
       expect(fit).toBeDefined();
       // the oldest assistant text is dropped
       expect(fit?.droppedMessageIndexes.length).toBeGreaterThan(0);
-      // the provider received the trimmed request, not the huge replies
-      expect(JSON.stringify(sent[2])).not.toContain("word6000");
-      expect(JSON.stringify(sent[2])).toContain("echo:after");
+      // the provider received the trimmed request with the latest message
+      expect(JSON.stringify(sent[LONG])).toContain("echo:after");
 
       const info = await modelInfo("model-fake", "fake-1");
       const snap = await snapshotOf(conv);
@@ -1887,7 +1892,7 @@ describe("reconstructRequest：基线零漂移", () => {
 
       // a candidate model with a smaller window recomputes the fit: a different plan -> context_fit
       const smaller: ModelInfo = { ...info, contextWindow: 24_000 };
-      const cand = reconstructRequest(snap, calls[2]?.seq as number, {
+      const cand = reconstructRequest(snap, calls[LONG]?.seq as number, {
         model: smaller,
         params: {},
         reserveTokens: 20_000,
@@ -1904,7 +1909,7 @@ describe("reconstructRequest：基线零漂移", () => {
 
   it("a clamped output cap under the agent's maxOutputTokens knob replays byte-for-byte; a smaller window is context_fit", async () => {
     reset();
-    // The reserve makes the fit target W - O - R reachable; the policy hook denies the compaction
+    // The reserve (bounded to W/8) makes the fit target W - O_p - R_p reachable; the policy hook denies the compaction
     // calls, so a request over the hard line is clamped and trimmed instead of summarized (the
     // same request the reactive path sends after a failed compaction). fake-1: W 32000, O 4000.
     await db
@@ -1967,8 +1972,9 @@ describe("reconstructRequest：基线零漂移", () => {
       // replays the recorded cap, not the cap recomputed from the knob
       await expectZeroDrift(conv, snap);
 
-      // a candidate model with a smaller window leaves less room, so it trims the latest turn too
-      const smaller: ModelInfo = { ...info, contextWindow: 24_000 };
+      // a candidate model with a much smaller window leaves less room, so it trims the latest turn
+      // too (W 8000: O_p 4000, R_p 1000, target 3000 under the ~5k latest turn)
+      const smaller: ModelInfo = { ...info, contextWindow: 8_000 };
       const cand = reconstructRequest(snap, last?.seq as number, {
         model: smaller,
         params: { maxOutputTokens: 4000 },

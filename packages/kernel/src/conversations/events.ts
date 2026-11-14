@@ -1263,6 +1263,14 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
        * logs have none.
        */
       savedTokens: count.optional(),
+      /**
+       * The user messages that started the run being compacted, when the summary covers them
+       * (context compaction spec §4.2, revision 2026-11-15), in seq order: request building
+       * re-renders exactly these after the summary text. Decided when the summary is written, so a
+       * request never depends on later events. Optional: older logs (and summaries that cover no
+       * opening message) have none and re-render nothing.
+       */
+      openingSeqs: z.array(seqNo).optional(),
     }),
   ),
   ev("compaction_failed", z.object({ attempt: count, reason: z.string() })),
