@@ -151,9 +151,10 @@ planning and building it; the sections they refine point here.
 **Rulings made while building** (all **(designer's call)**; only those that change what users or
 plugin authors see):
 
-- The npm registry is trusted by origin (an admin setting, https required) and fetched outside the
-  marketplace network rules; marketplace npm sources carry no tarball URL, so no marketplace-
-  controlled URL reaches it. A manual refresh in which every URL fails on the same network rule
+- The npm registry is trusted by its exact origin (an admin setting; https, or `http://` for that
+  exact origin only) and fetched through the same network rules as every other download
+  (`safeFetch`: no redirects, `net.httpsProxy`); a marketplace `tarballUrl` gets no trust from the
+  registry unless it shares that exact origin (amended 2026-11-15, fix/fetch-through-net). A manual refresh in which every URL fails on the same network rule
   returns 422 with that rule's code.
 - `allowPrivateHosts` IP and CIDR entries match **IP-literal URLs only**; a DNS name must be listed as
   a hostname, so a public name an attacker points into an allowed range is still refused. Link-local
