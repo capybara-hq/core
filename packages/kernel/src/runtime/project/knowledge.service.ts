@@ -16,10 +16,11 @@ import { runEndedIn } from "../run-status.js";
 import {
   type ProjectFiles,
   type ProjectRootPayload,
-  projectAbsence,
   projectRootIdemKey,
+  projectUnavailable,
   readProjectKnowledge,
   sameProjectRoot,
+  unavailableProject,
 } from "./knowledge.js";
 
 /**
@@ -64,10 +65,11 @@ export interface ProjectKnowledgeInput {
  *
  * Reads in the device's effective mode (`DeviceProjectsService.scopeFor`, the same scope the
  * binding was checked against) and through `SandboxService.withSandbox`, as a tool call does, so
- * a bound conversation starts its device eagerly (the accepted cost, spec §4.4). A root that is
- * gone, out of the mode or unreadable is recorded as `absent`; the device not being reachable
- * (offline, the provider down, the time limit, a device that offers no projects) records nothing
- * and the run goes on as it does today when its device is away. Nothing is cached in the process.
+ * a bound conversation starts its device eagerly (the accepted cost, spec §4.4). A project the
+ * run cannot use is recorded as `unavailable` with its reason: a root that is gone, out of the
+ * mode or unreadable, or a machine that does not announce projects (`unsupported`, not asked). The
+ * device not being reachable (offline, the provider down, the time limit) records nothing, and the
+ * run goes on as it does today when its device is away. Nothing is cached in the process.
  */
 @Injectable()
 export class ProjectKnowledgeService {
@@ -127,12 +129,14 @@ export class ProjectKnowledgeService {
       // the device a tool call of this conversation would enter, checked for its owner now
       const deviceId = await this.devices.forTool(input.orgId, input.conversationId);
       const scope = await this.projects.scopeFor(input.orgId, bound.accountId, deviceId);
+      // a machine that does not announce projects is not asked: the project is recorded as
+      // unavailable, so an older snapshot stops applying
       if (scope.source === "local" && !scope.supported) {
         this.log.warn("project knowledge not read: the device offers no projects", {
           ...where,
           deviceId,
         });
-        return null;
+        return unavailableProject(bound.project, bound.root, projectUnavailable.unsupported());
       }
       return await this.sandbox.withSandbox(
         {
@@ -149,12 +153,11 @@ export class ProjectKnowledgeService {
           const target = { project: bound.project, root: bound.root, mode: scope.mode };
           // the kernel's own check first: a root the mode cannot read is never asked about
           if (!withinMode(scope, bound.root, info.roots.workspace)) {
-            return {
-              project: bound.project,
-              root: bound.root,
-              absent: projectAbsence.outsideMode(bound.root, scope.mode),
-              skills: [],
-            };
+            return unavailableProject(
+              bound.project,
+              bound.root,
+              projectUnavailable.outsideMode(bound.root, scope.mode),
+            );
           }
           const list = p.list;
           const files: ProjectFiles = {

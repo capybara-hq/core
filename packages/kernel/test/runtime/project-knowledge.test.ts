@@ -8,6 +8,9 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { DevicesService } from "../../src/devices/devices.service.js";
+import { TransactionHost } from "../../src/infra/database/transaction-host.js";
+import { MachinesService } from "../../src/local-devices/machines.js";
 import { createLogger } from "../../src/log.js";
 import {
   AGENTS_MD_TRUNCATED_MARKER,
@@ -183,7 +186,7 @@ describe("project knowledge at run start", () => {
         { name: "review", description: "Review a PR." },
       ],
     });
-    expect(event.payload.absent).toBeUndefined();
+    expect(event.payload.unavailable).toBeUndefined();
     expect(JSON.stringify(event.payload)).not.toContain("The body of");
     const firstCall = events.find((e) => e.type === "model_call");
     expect(firstCall).toBeDefined();
@@ -214,18 +217,21 @@ describe("project knowledge at run start", () => {
     expect(cut[2]?.payload.agentsMd?.endsWith(AGENTS_MD_TRUNCATED_MARKER)).toBe(true);
   });
 
-  it("records a root that does not exist as absent and finishes the run", async () => {
+  it("records a root that does not exist as unavailable (gone) and finishes the run", async () => {
     const { convId } = await boundConversation(`missing-${randomUUID().slice(0, 8)}`);
     const events = await run(convId, 1);
     expect(events.find((e) => e.type === "run_finished")).toBeDefined();
     const roots = projectRoots(events);
     expect(roots).toHaveLength(1);
-    expect(roots[0]?.payload.absent).toMatch(/no longer exists/);
+    expect(roots[0]?.payload.unavailable).toEqual({
+      reason: "gone",
+      message: expect.stringMatching(/no longer exists/) as string,
+    });
     expect(roots[0]?.payload.skills).toEqual([]);
     expect(roots[0]?.payload.agentsMd).toBeUndefined();
   });
 
-  it("records a root outside the workspace a cloud device reads as absent, asking the device nothing about it", async () => {
+  it("records a root outside the workspace a cloud device reads as unavailable (outside_mode)", async () => {
     const convId = await createConv(owner, orgId, agentId);
     await db
       .updateTable("conversations")
@@ -234,7 +240,47 @@ describe("project knowledge at run start", () => {
       .execute();
     const roots = projectRoots(await run(convId, 1));
     expect(roots).toHaveLength(1);
-    expect(roots[0]?.payload.absent).toMatch(/outside what the device can read/);
+    expect(roots[0]?.payload.unavailable?.reason).toBe("outside_mode");
+    expect(roots[0]?.payload.unavailable?.message).toMatch(/outside what the device can read/);
+  });
+
+  it("records a machine that does not announce projects as unavailable (unsupported), asking it nothing", async () => {
+    const txHost = k.app.get(TransactionHost);
+    const deviceId = await txHost.run(async () => {
+      const { id } = await k.app.get(DevicesService).createLocal(orgId, ownerId, "Old box");
+      await k.app.get(MachinesService).issue({
+        orgId,
+        deviceId: id,
+        accountId: ownerId,
+        name: "old-box",
+        os: "linux",
+        arch: "x64",
+        programVersion: "0.1.0",
+      });
+      return id;
+    });
+    const convId = await createConv(owner, orgId, agentId);
+    await db
+      .updateTable("conversations")
+      .set({ device_id: deviceId, project_name: "app", project_path: "/home/me/app" })
+      .where("id", "=", convId)
+      .execute();
+    const events = await run(convId, 1);
+    const roots = projectRoots(events);
+    expect(roots).toHaveLength(1);
+    expect(roots[0]?.payload).toEqual({
+      project: "app",
+      root: "/home/me/app",
+      unavailable: { reason: "unsupported", message: expect.any(String) as string },
+      skills: [],
+    });
+    // the machine was never asked: no instance for the device
+    const instance = await db
+      .selectFrom("device_instances")
+      .select("handle")
+      .where("device_id", "=", deviceId)
+      .executeTakeFirst();
+    expect(instance?.handle ?? null).toBeNull();
   });
 
   it("reads nothing for a free conversation and leaves its device unstarted", async () => {

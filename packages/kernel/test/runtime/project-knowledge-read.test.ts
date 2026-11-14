@@ -6,9 +6,11 @@ import {
   AGENTS_MD_MAX_BYTES,
   AGENTS_MD_TRUNCATED_MARKER,
   capAgentsMd,
+  PROJECT_SKILLS_MAX,
   type ProjectFiles,
   type ProjectRootPayload,
   readProjectKnowledge,
+  SKILL_MD_MAX_BYTES,
   sameProjectRoot,
 } from "../../src/runtime/project/knowledge.js";
 
@@ -153,41 +155,105 @@ describe("readProjectKnowledge", () => {
     expect(lines.some((l) => l.endsWith("other"))).toBe(true);
   });
 
-  it("records a missing root as absent, without skills and without throwing", async () => {
+  it("records a missing root as unavailable (gone), without skills and without throwing", async () => {
     const p = await readProjectKnowledge(device({}), TARGET);
     expect(p).toEqual({
       project: "app",
       root: ROOT,
-      absent: expect.stringContaining("no longer exists") as string,
+      unavailable: {
+        reason: "gone",
+        message: expect.stringContaining("no longer exists") as string,
+      },
       skills: [],
     });
-    expect((p.absent as string).length).toBeLessThanOrEqual(500);
+    expect(p.unavailable?.message.length ?? 0).toBeLessThanOrEqual(500);
   });
 
-  it("says a project without AGENTS.md has none and still lists its skills", async () => {
+  it("omits AGENTS.md of a project without one, with no reason, and still lists its skills", async () => {
     const p = await readProjectKnowledge(
       device({ [`${ROOT}/.agents/skills/good/SKILL.md`]: skill("good", "Fine.") }),
       TARGET,
     );
-    expect(p.agentsMd).toBeUndefined();
-    expect(p.absent).toMatch(/no AGENTS\.md/);
-    expect(p.skills.map((s) => s.name)).toEqual(["good"]);
+    expect(p).toEqual({
+      project: "app",
+      root: ROOT,
+      skills: [expect.objectContaining({ name: "good" })],
+    });
   });
 
-  it("records a root the device refuses in its mode, or cannot read, as absent", async () => {
+  it("omits an AGENTS.md that cannot be read, with a log line, and keeps the skills", async () => {
+    const lines: string[] = [];
+    const p = await readProjectKnowledge(
+      device({
+        [`${ROOT}/AGENTS.md`]: new Error("EACCES"),
+        [`${ROOT}/.agents/skills/good/SKILL.md`]: skill("good", "Fine."),
+      }),
+      TARGET,
+      { log: (msg) => lines.push(msg) },
+    );
+    expect(p.agentsMd).toBeUndefined();
+    expect(p.unavailable).toBeUndefined();
+    expect(p.skills.map((s) => s.name)).toEqual(["good"]);
+    expect(lines).toHaveLength(1);
+  });
+
+  it("records a root refused in the mode, unreadable or a file with its reason code", async () => {
     const refused = await readProjectKnowledge(
       device({}, { statError: new ToolError(`${POLICY_REFUSAL_PREFIX}outside the sandbox`) }),
       { ...TARGET, mode: "sandbox" },
     );
-    expect(refused.absent).toMatch(/outside what the device can read in sandbox mode/);
+    expect(refused.unavailable?.reason).toBe("outside_mode");
+    expect(refused.unavailable?.message).toMatch(
+      /outside what the device can read in sandbox mode/,
+    );
     expect(refused.skills).toEqual([]);
     const unreadable = await readProjectKnowledge(
       device({}, { statError: new Error("EACCES") }),
       TARGET,
     );
-    expect(unreadable.absent).toMatch(/could not be read/);
+    expect(unreadable.unavailable).toEqual({
+      reason: "unreadable",
+      message: expect.stringMatching(/could not be read/) as string,
+    });
     const file = await readProjectKnowledge(device({ [ROOT]: "a file" }), TARGET);
-    expect(file.absent).toMatch(/not a directory/);
+    expect(file.unavailable).toEqual({
+      reason: "unreadable",
+      message: expect.stringMatching(/not a directory/) as string,
+    });
+  });
+
+  it("keeps the first 100 skill directories by name and says when there were more", async () => {
+    const tree: Tree = { [`${ROOT}/AGENTS.md`]: "rules" };
+    const name = (i: number) => `s-${String(i).padStart(3, "0")}`;
+    for (let i = 0; i < PROJECT_SKILLS_MAX + 5; i++) {
+      tree[`${ROOT}/.agents/skills/${name(i)}/SKILL.md`] = skill(name(i), "One.");
+    }
+    // files in the directory do not take a skill's place
+    tree[`${ROOT}/.agents/skills/a-readme.md`] = "a file";
+    const files = device(tree);
+    const p = await readProjectKnowledge(files, TARGET);
+    expect(p.skills).toHaveLength(PROJECT_SKILLS_MAX);
+    expect(p.skills[0]?.name).toBe(name(0));
+    expect(p.skills.at(-1)?.name).toBe(name(PROJECT_SKILLS_MAX - 1));
+    expect(p.skillsTruncated).toBe(true);
+    expect(files.reads.filter((r) => r.endsWith("SKILL.md"))).toHaveLength(PROJECT_SKILLS_MAX);
+    const few = await readProjectKnowledge(
+      device({ [`${ROOT}/.agents/skills/good/SKILL.md`]: skill("good", "Fine.") }),
+      TARGET,
+    );
+    expect("skillsTruncated" in few).toBe(false);
+  });
+
+  it("reads a SKILL.md up to 1 MiB and digests the bytes read", async () => {
+    const head = skill("big", "Large.");
+    const big = `${head}${"x".repeat(SKILL_MD_MAX_BYTES + 10)}`;
+    const p = await readProjectKnowledge(
+      device({ [`${ROOT}/.agents/skills/big/SKILL.md`]: big }),
+      TARGET,
+    );
+    expect(p.skills).toEqual([
+      { name: "big", description: "Large.", digest: sha(big.slice(0, SKILL_MD_MAX_BYTES)) },
+    ]);
   });
 
   it("reads AGENTS.md but no skills on a provider without list", async () => {
@@ -254,7 +320,7 @@ describe("readProjectKnowledge", () => {
     ).rejects.toBe(down);
     // without the predicate the same error is the root's problem
     const p = await readProjectKnowledge(device({}, { statError: down }), TARGET);
-    expect(p.absent).toMatch(/could not be read/);
+    expect(p.unavailable?.reason).toBe("unreadable");
   });
 });
 
@@ -280,7 +346,8 @@ describe("sameProjectRoot", () => {
     skills: [{ name: "good", description: "Fine.", digest: "d1" }],
   };
   it("is true for the same snapshot and false when any digest or the text differs", () => {
-    expect(sameProjectRoot(base, { ...base, agentsMdTruncated: false })).toBe(true);
+    expect(sameProjectRoot(base, { ...base })).toBe(true);
+    expect(sameProjectRoot(base, { ...base, skillsTruncated: true })).toBe(false);
     expect(sameProjectRoot(base, { ...base, agentsMd: "rules!" })).toBe(false);
     expect(
       sameProjectRoot(base, {
@@ -290,6 +357,11 @@ describe("sameProjectRoot", () => {
     ).toBe(false);
     expect(sameProjectRoot(base, { ...base, skills: [] })).toBe(false);
     const { agentsMd: _, ...rest } = base;
-    expect(sameProjectRoot(base, { ...rest, absent: "gone" })).toBe(false);
+    expect(
+      sameProjectRoot(
+        { ...rest, skills: [], unavailable: { reason: "gone", message: "Gone." } },
+        { ...rest, skills: [], unavailable: { reason: "unreadable", message: "Gone." } },
+      ),
+    ).toBe(false);
   });
 });

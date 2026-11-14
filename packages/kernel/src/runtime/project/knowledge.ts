@@ -2,11 +2,11 @@ import { createHash } from "node:crypto";
 import {
   isFileSystemGoneError,
   isSandboxGoneError,
+  MAX_DEVICE_LIST_ENTRIES,
   parseSkillMd,
   SKILL_ENTRY_FILE,
-  SKILL_LIMITS,
 } from "@capybara-hq/plugin-sdk";
-import { type EventPayload, SKILLS_CATALOG_MAX } from "../../conversations/events.js";
+import type { EventPayload } from "../../conversations/events.js";
 import { POLICY_REFUSAL_PREFIX } from "../../local-devices/relay.js";
 import type { SandboxMode } from "../../sandbox/modes.js";
 
@@ -33,8 +33,23 @@ export const PROJECT_SKILLS_DIR = ".agents/skills";
 /** How many `SKILL.md` files one run start reads at once. */
 const SKILL_READ_CONCURRENCY = 8;
 
-/** The longest `absent` reason the event takes. */
-const ABSENT_MAX_CHARS = 500;
+/**
+ * The most skill directories a run start reads, the first by name; a project with more says so
+ * (`skillsTruncated`).
+ */
+export const PROJECT_SKILLS_MAX = 100;
+
+/**
+ * The most of one `SKILL.md` a run start reads, in bytes: the name and description come from its
+ * frontmatter at the top, and the digest covers the bytes read.
+ */
+export const SKILL_MD_MAX_BYTES = 1024 * 1024;
+
+/** The most entries one listing of the skills directory asks for (files there take no skill's place). */
+const SKILLS_LIST_LIMIT = MAX_DEVICE_LIST_ENTRIES;
+
+/** The longest `unavailable.message` the event takes. */
+const MESSAGE_MAX_CHARS = 500;
 
 /** The device calls the reader makes, already bound to the instance, the mode and a signal. */
 export interface ProjectFiles {
@@ -79,23 +94,43 @@ function clipped(s: string, max = 200): string {
   return s.length <= max ? s : `${s.slice(0, max)}…`;
 }
 
-const reason = (s: string): string =>
-  s.length <= ABSENT_MAX_CHARS ? s : `${s.slice(0, ABSENT_MAX_CHARS - 1)}…`;
+/** Why a run cannot use its project: a `project_root` event's `unavailable`. */
+export type ProjectUnavailable = NonNullable<ProjectRootPayload["unavailable"]>;
 
-/** The model-visible reasons `absent` gives (English). */
-export const projectAbsence = {
-  rootGone: (root: string) =>
-    reason(`The project's root ${clipped(root)} no longer exists on the device.`),
+const unavailable = (reason: ProjectUnavailable["reason"], text: string): ProjectUnavailable => ({
+  reason,
+  message: text.length <= MESSAGE_MAX_CHARS ? text : `${text.slice(0, MESSAGE_MAX_CHARS - 1)}…`,
+});
+
+/** The `unavailable` values a reader records: a reason code and an English message for the model. */
+export const projectUnavailable = {
+  gone: (root: string) =>
+    unavailable("gone", `The project's root ${clipped(root)} no longer exists on the device.`),
   outsideMode: (root: string, mode: SandboxMode) =>
-    reason(
+    unavailable(
+      "outside_mode",
       `The project's root ${clipped(root)} is outside what the device can read in ${mode} mode.`,
     ),
-  notDirectory: (root: string) => reason(`The project's root ${clipped(root)} is not a directory.`),
-  rootUnreadable: (root: string, why: string) =>
-    reason(`The project's root ${clipped(root)} could not be read: ${clipped(why)}`),
-  noAgentsMd: () => "The project has no AGENTS.md.",
-  agentsMdUnreadable: (why: string) => reason(`AGENTS.md could not be read: ${clipped(why)}`),
+  notDirectory: (root: string) =>
+    unavailable("unreadable", `The project's root ${clipped(root)} is not a directory.`),
+  unreadable: (root: string, why: string) =>
+    unavailable(
+      "unreadable",
+      `The project's root ${clipped(root)} could not be read: ${clipped(why)}`,
+    ),
+  unsupported: () =>
+    unavailable(
+      "unsupported",
+      "The device does not offer projects; capybara-device on that machine needs an update.",
+    ),
 } as const;
+
+/** The snapshot of a project the run cannot use: the reason alone, no AGENTS.md, no skills. */
+export const unavailableProject = (
+  project: string,
+  root: string,
+  why: ProjectUnavailable,
+): ProjectRootPayload => ({ project, root, unavailable: why, skills: [] });
 
 /** A lost instance or file system: passed on, so the sandbox service recovers or records it. */
 const isGone = (e: unknown): boolean => isSandboxGoneError(e) || isFileSystemGoneError(e);
@@ -141,11 +176,13 @@ const decoder = new TextDecoder("utf-8");
 
 /**
  * Reads the project at `target.root` through `files` (project root spec §4.4, §4.7). Every failure
- * of the project itself is a recorded reason, never a throw: a root that is gone, refused in the
- * mode, not a directory or unreadable gives `absent` and no skills; a missing or unreadable
- * `AGENTS.md` gives `absent` with the skills still read; an unparsable, missing, oversized or
- * misnamed `SKILL.md` (its `name` must be its directory's, the name `Skill` loads it by) is
- * skipped and logged. Only a lost instance or file system (for the sandbox service) and a device
+ * of the project itself is recorded, never thrown: a root that is gone, refused in the mode, not a
+ * directory or unreadable gives `unavailable` with its reason code and nothing else; a missing
+ * `AGENTS.md` is simply left out (spec §4.7: a project with skills only), an unreadable one too,
+ * with a log line; the first {@link PROJECT_SKILLS_MAX} skill directories by name are read
+ * (`skillsTruncated` when there are more), each `SKILL.md` up to {@link SKILL_MD_MAX_BYTES}; an
+ * unparsable, missing or misnamed `SKILL.md` (its `name` must be its directory's, the name `Skill`
+ * loads it by) is skipped and logged. Only a lost instance or file system (for the sandbox service) and a device
  * failure ({@link ReadProjectKnowledgeOptions.isDeviceFailure}) are thrown.
  */
 export async function readProjectKnowledge(
@@ -159,65 +196,79 @@ export async function readProjectKnowledge(
     log: opts.log ?? (() => {}),
     fatal: (e) => isGone(e) || deviceFailure(e),
   };
-  const absent = (why: string): ProjectRootPayload => ({ project, root, absent: why, skills: [] });
+  const cannot = (why: ProjectUnavailable) => unavailableProject(project, root, why);
   let st: { isDir: boolean } | null;
   try {
     st = await files.stat(root);
   } catch (e) {
     if (r.fatal(e)) throw e;
-    if (isPolicyRefusal(e)) return absent(projectAbsence.outsideMode(root, mode));
-    return absent(projectAbsence.rootUnreadable(root, messageOf(e)));
+    if (isPolicyRefusal(e)) return cannot(projectUnavailable.outsideMode(root, mode));
+    return cannot(projectUnavailable.unreadable(root, messageOf(e)));
   }
-  if (st === null) return absent(projectAbsence.rootGone(root));
-  if (!st.isDir) return absent(projectAbsence.notDirectory(root));
+  if (st === null) return cannot(projectUnavailable.gone(root));
+  if (!st.isDir) return cannot(projectUnavailable.notDirectory(root));
 
   const out: ProjectRootPayload = { project, root, skills: [] };
+  const agentsMd = `${root}/AGENTS.md`;
   try {
-    const read = await files.readFile(`${root}/AGENTS.md`, AGENTS_MD_MAX_BYTES);
-    if (read === null) out.absent = projectAbsence.noAgentsMd();
-    else {
+    const read = await files.readFile(agentsMd, AGENTS_MD_MAX_BYTES);
+    // none: a project with skills only, nothing to say (spec §4.7)
+    if (read !== null) {
       const capped = capAgentsMd(decoder.decode(read.data), read.truncated);
       out.agentsMd = capped.text;
       if (capped.cut) out.agentsMdTruncated = true;
     }
   } catch (e) {
     if (r.fatal(e)) throw e;
-    out.absent = projectAbsence.agentsMdUnreadable(messageOf(e));
+    r.log("project AGENTS.md could not be read; left out this run", {
+      path: agentsMd,
+      reason: messageOf(e),
+    });
   }
-  out.skills = await readSkills(files, root, r);
+  const skills = await readSkills(files, root, r);
+  out.skills = skills.skills;
+  if (skills.truncated) out.skillsTruncated = true;
   return out;
 }
 
-/** The project's skills, in directory-name order (see {@link readProjectKnowledge}). */
+/**
+ * The project's skills, the first {@link PROJECT_SKILLS_MAX} directories in name order (see
+ * {@link readProjectKnowledge}); `truncated` when the directory holds more (or more entries than
+ * one listing returns, so more may exist).
+ */
 async function readSkills(
   files: ProjectFiles,
   root: string,
   r: Reading,
-): Promise<ProjectRootPayload["skills"]> {
-  if (files.list === undefined) return [];
+): Promise<{ skills: ProjectRootPayload["skills"]; truncated: boolean }> {
+  const none = { skills: [], truncated: false };
+  if (files.list === undefined) return none;
   const dir = `${root}/${PROJECT_SKILLS_DIR}`;
   let listed: Awaited<ReturnType<NonNullable<ProjectFiles["list"]>>>;
   try {
-    listed = await files.list(dir, SKILLS_CATALOG_MAX);
+    listed = await files.list(dir, SKILLS_LIST_LIMIT);
   } catch (e) {
     if (r.fatal(e)) throw e;
     r.log("project skills directory could not be listed; no project skills this run", {
       path: dir,
       reason: messageOf(e),
     });
-    return [];
+    return none;
   }
-  if (listed === null) return [];
-  if (listed.truncated) {
-    r.log(
-      "project skills directory has more entries than the catalog takes; the rest are left out",
-      {
-        path: dir,
-        limit: SKILLS_CATALOG_MAX,
-      },
-    );
+  if (listed === null) return none;
+  // the listing is sorted by code unit; sorted again so the cut never depends on the provider
+  const all = listed.entries
+    .filter((e) => e.isDir)
+    .map((e) => e.name)
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  const truncated = listed.truncated || all.length > PROJECT_SKILLS_MAX;
+  if (truncated) {
+    r.log("project has more skill directories than a run reads; the rest are left out", {
+      path: dir,
+      limit: PROJECT_SKILLS_MAX,
+    });
   }
-  const dirs = listed.entries.filter((e) => e.isDir).map((e) => e.name);
+  const dirs = all.slice(0, PROJECT_SKILLS_MAX);
   const found: (ProjectRootPayload["skills"][number] | null)[] = new Array(dirs.length).fill(null);
   let next = 0;
   const worker = async () => {
@@ -227,7 +278,7 @@ async function readSkills(
     }
   };
   await Promise.all(Array.from({ length: Math.min(SKILL_READ_CONCURRENCY, dirs.length) }, worker));
-  return found.filter((s) => s !== null);
+  return { skills: found.filter((s) => s !== null), truncated };
 }
 
 /** One skill's catalog entry, or null (skipped and logged). */
@@ -244,13 +295,13 @@ async function readSkill(
   };
   let read: { data: Uint8Array; truncated: boolean } | null;
   try {
-    read = await files.readFile(path, SKILL_LIMITS.fileBytes);
+    read = await files.readFile(path, SKILL_MD_MAX_BYTES);
   } catch (e) {
     if (r.fatal(e)) throw e;
     return skip(`could not be read: ${messageOf(e)}`);
   }
   if (read === null) return skip(`no ${SKILL_ENTRY_FILE}`);
-  if (read.truncated) return skip(`larger than ${SKILL_LIMITS.fileBytes} bytes`);
+  // a longer file is parsed and digested as far as it was read: its frontmatter is at the top
   const parsed = parseSkillMd(decoder.decode(read.data));
   if ("errors" in parsed) return skip(parsed.errors.join("; "));
   if (parsed.name !== name) {
@@ -261,7 +312,8 @@ async function readSkill(
 
 /**
  * Whether two snapshots are the same, so a run start appends nothing: the same project and root,
- * the same `AGENTS.md` text (or absence), and the same skills with the same digests.
+ * the same `AGENTS.md` text (or none), the same unavailability, and the same skills with the same
+ * digests (and the same cut).
  */
 export function sameProjectRoot(a: ProjectRootPayload, b: ProjectRootPayload): boolean {
   return (
@@ -269,7 +321,9 @@ export function sameProjectRoot(a: ProjectRootPayload, b: ProjectRootPayload): b
     a.root === b.root &&
     a.agentsMd === b.agentsMd &&
     (a.agentsMdTruncated ?? false) === (b.agentsMdTruncated ?? false) &&
-    a.absent === b.absent &&
+    a.unavailable?.reason === b.unavailable?.reason &&
+    a.unavailable?.message === b.unavailable?.message &&
+    (a.skillsTruncated ?? false) === (b.skillsTruncated ?? false) &&
     a.skills.length === b.skills.length &&
     a.skills.every((s, i) => {
       const t = b.skills[i];
