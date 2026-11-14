@@ -89,17 +89,23 @@ device operations) and a cloud device (its provider):
 
 | Call | Args | Returns |
 |---|---|---|
-| `list` | `{ path, limit, limits }` | `{ entries: { name, isDir }[], truncated }`, or null when the path does not exist; a file or an unreadable path throws |
-| `scan` | `{ base, limits }` | directories under `base`, at most two levels down and at most 50, that hold `.git` or `AGENTS.md`: `{ path, suggestedName }[]` |
+| `list` | `{ path, limit, limits }` | `{ entries: { name, isDir }[], truncated }`, or null when the path does not exist; a file, an unreadable path, or a path the request's mode cannot reach throws |
+| `scan` | `{ base, limits }` | `base` itself and the directories down to two levels under it that hold `.git` or `AGENTS.md`: `{ path, suggestedName }[]`, sorted by path, at most 50; `[]` when `base` does not exist |
 
 Both carry the kernel's **current** ceiling (`limits: { mode }`), and the device answers in the mode
 it would run that request in — never by a ceiling it saw on an earlier command **(designer's call,
 2026-11-15: before its first command a device has seen no ceiling)**.
 
+`scan` follows one traversal everywhere, so the local device and each cloud provider suggest the same
+list: it does not follow symbolic links or enter hidden directories, keeps descending after a hit (a
+monorepo's sub-projects are candidates too), skips paths its mode cannot reach, and skips a directory
+whose name breaks the name rule rather than truncating it **(designer's call, 2026-11-15)**.
+
 **Adding a project.**
 - The form takes the path **relative to the device's base**, shown as a fixed prefix, never a free
   absolute path **(maintainer, 2026-11-14)**; the base follows the mode (§4.2).
-- The kernel checks the name (at most 64 characters, no `/`, no control characters, unique on the
+- The kernel checks the name (at most 64 UTF-16 code units, not `.` or `..`, no `/`, no control
+  characters, no leading or trailing whitespace, unique on the
   device, defaulting to the directory's basename), resolves the path against the base, checks it is
   inside what the device may offer in its current mode (§4.2), then asks the device: `list(path,
   { limit: 1 })` returning entries means a readable directory; null means it does not exist; an error
