@@ -17,3 +17,8 @@ call. `POST …/conversations/:id/compact` starts a manual compact run
 (`run_started.trigger: "compact"`, no model step); the web conversation's title menu and the
 `/compact` command use it. Eval planning and trajectory step pairing skip compact runs, whose chunk
 usages still sum into the run's totals.
+
+The compaction knobs moved from the environment to the deployment and org settings:
+`CAPYBARA_RUNTIME__COMPACTION_THRESHOLD` and `CAPYBARA_RUNTIME__KEEP_RECENT_TURNS` are removed and
+have no effect any more. Set the threshold and the recent turns kept in full on the platform's
+compaction settings, or in the org's override, instead.

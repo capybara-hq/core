@@ -89,9 +89,11 @@ export function compactionChunkSize(budget: number, maxOutputTokens: number): nu
 }
 
 /**
- * The floor of one summary chunk (context compaction spec §4.5): when the window leaves a chunk
- * smaller than this, a chunked compaction fails with a clear reason instead of letting
- * {@link nextTranscriptChunk} clamp to one token and make a call per token.
+ * The floor of one summary chunk (context compaction spec §4.5): the running summary can shrink a
+ * later chunk below it, and such a chunk fails with a clear reason instead of letting
+ * {@link nextTranscriptChunk} clamp to one token and make a call per token. A base chunk below it
+ * (a window that leaves no room for a chunked compaction) falls back to one call over the whole
+ * transcript.
  */
 export const MIN_COMPACTION_CHUNK_TOKENS = 256;
 
