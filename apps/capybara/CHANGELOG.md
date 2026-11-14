@@ -1,5 +1,50 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.32
+
+### Patch Changes
+
+- 5e3cee2: Auto mode correctness (auto mode hardening spec §3, §5). Approving a network request adds its
+  hosts without turning an open cloud network into an allowlist. `platform.me` reports a new
+  device's mode and network from `effectiveDevicePolicy`. `sandbox.tiers`,
+  `sandbox.limits.devHosts` and `sandbox.limits.egress: "open"` in the loaded config now fail
+  startup with an error naming `devices.autoMode` and `cloudNetwork`; the startup warning fires when
+  the sandbox provider sets `refuseOpenNetwork` while an org can be on the open network. A cloud
+  device's owner may send it back to auto (`PATCH /devices/:id { mode: null }`, web session only;
+  an API token gets `device.mode_requires_session`), and the device view names the network sandbox
+  mode gives it (`mode.sandboxNetwork`). The device page confirms a cloud device's mode switch in
+  a dialog naming the network it will reach, and a card that cannot be chosen says why. The
+  open-network refusal text is provider-neutral.
+- 54d9c50: The sandbox-docker bootstrap pin moves to rc.15 (capybara-hq/plugins 08074e9): the egress proxy
+  refuses the Azure WireServer address and the deployment's `deniedCidrs`, and an open-public
+  instance made before `refuseOpenNetwork` is recreated. The compose sandbox build contexts point at
+  the same commit.
+- d8bddcf: OAuth discovery, client registration and token requests, npm registry downloads (packument,
+  tarball, a marketplace's `tarball` URL, the bootstrap download) and npm provenance now go through
+  the kernel's network rules (`packages/kernel/src/net`): a host must resolve to public addresses
+  unless `marketplaces.allowPrivateHosts` lists it, the connection is pinned to the checked address,
+  redirects are never followed, and https requests tunnel through `net.httpsProxy`. An OAuth URL
+  whose host is private fails with reason `address_refused` and says how to allow it. The configured
+  `packages.npmRegistry` origin stays trusted (an internal or `http://` registry keeps working); a
+  deployment with `net.httpsProxy` and an internal https registry lists it in `net.noProxy`.
+  
+  Migration: `NODE_USE_ENV_PROXY=1` / `HTTPS_PROXY` no longer route these requests (the kernel sets
+  its own connection). A deployment that relied on them sets `net.httpsProxy` instead, and lists an
+  internal https npm registry in `net.noProxy`.
+- 7e71aed: A call to a tool that the step's request did not load (ToolSearch mode) now carries a display-only
+  `not_loaded` view. It is expected behaviour — the kernel tells the model to load the tool with
+  `ToolSearch` and the model retries — so the conversation shows it as a neutral "需先加载工具" /
+  "Load the tool first" notice instead of a failure, and the tool group's header no longer counts it
+  as failed. The model-facing result is unchanged (`isError: true`, the same message).
+- Updated dependencies [5e3cee2]
+- Updated dependencies [54d9c50]
+- Updated dependencies [96d1df3]
+- Updated dependencies [aef5036]
+- Updated dependencies [d8bddcf]
+- Updated dependencies [7e71aed]
+- Updated dependencies [d3ba1d8]
+  - @capybara-hq/kernel@0.1.0-rc.31
+
 ## 0.1.0-rc.31
 
 ### Patch Changes
