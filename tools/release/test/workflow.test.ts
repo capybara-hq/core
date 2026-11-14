@@ -359,6 +359,9 @@ describe("ci.yml docker job", () => {
   const ci = parse(ciText) as { permissions: unknown; jobs: Record<string, Job> };
   const docker = ci.jobs.docker as Job;
   const builds = docker.steps.filter((s) => s.uses?.startsWith("docker/build-push-action@"));
+  // The api and web images are built together in one shell step; worker and gateway stay actions.
+  const buildStep = docker.steps.find((s) => s.name === "Build capybara-api and capybara-web");
+  const buildRun = buildStep?.run ?? "";
 
   it("runs when the plan says so, feeds ci-ok and only reads contents", () => {
     expect(docker.if).toBe("needs.changes.outputs.docker == 'true'");
@@ -367,26 +370,46 @@ describe("ci.yml docker job", () => {
     expect(docker.permissions).toEqual({ contents: "read" });
   });
 
-  it("never logs in or pushes: four builds loaded into the local Docker", () => {
+  it("never logs in or pushes: every image is loaded into the local Docker", () => {
     expect(jobText(docker)).not.toMatch(/login-action|docker login|docker push|push-by-digest/);
-    expect(builds).toHaveLength(4);
+    expect(builds).toHaveLength(2);
     for (const b of builds) {
       expect(b.with?.load).toBe(true);
       expect(b.with?.push).toBeUndefined();
       expect(b.with?.outputs).toBeUndefined();
       expect(b.with?.platforms).toBe("linux/amd64");
     }
+    // The api and web images come from the shell step, loaded and never pushed.
+    for (const image of ["capybara-api:test", "capybara-web:test"]) {
+      expect(buildRun).toContain(image);
+    }
+    expect(buildRun).toContain("--load");
+    expect(buildRun).toContain("--platform linux/amd64");
+    expect(buildRun).not.toContain("--push");
+    expect(buildRun).toContain("-f docker/kernel.Dockerfile");
+    expect(buildRun).toContain("--build-arg ROLES=api");
+    expect(buildRun).toContain("-f docker/web.Dockerfile");
   });
 
   it("writes the layer cache only on push", () => {
     expect(docker.env?.CACHE_TO).toBe(
       `\${{ github.event_name == 'push' && 'type=gha,mode=max' || '' }}`,
     );
+    // The shell step adds --cache-to only when CACHE_TO is non-empty: one guarded line per image.
+    const cacheToLines = buildRun.split("\n").filter((l) => l.includes("--cache-to"));
+    expect(cacheToLines).toHaveLength(2);
+    for (const l of cacheToLines) {
+      expect(l).toMatch(/\[ -n "\$\{CACHE_TO:-\}" \] && /);
+    }
+    expect(buildRun).toContain(`--cache-to "$CACHE_TO,scope=kernel-amd64"`);
+    expect(buildRun).toContain(`--cache-to "$CACHE_TO,scope=web-amd64"`);
+    // The action builds only read the cache; if one ever writes it, the push-only expression stays.
     for (const b of builds) {
+      expect(b.with?.["cache-from"]).toBeDefined();
       const to = b.with?.["cache-to"];
       if (to !== undefined) expect(String(to)).toMatch(/^\$\{\{ env\.CACHE_TO != '' && /);
+      expect(to).toBeUndefined();
     }
-    expect(builds.filter((b) => b.with?.["cache-to"] !== undefined).length).toBeGreaterThan(0);
   });
 
   it("pins its actions to commit SHAs", () => {
