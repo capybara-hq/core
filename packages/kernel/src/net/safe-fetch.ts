@@ -135,7 +135,7 @@ export async function safeFetch(
   try {
     // behind the proxy only an IP literal is checked here (no lookup); the proxy resolves names
     if (!proxied || isIP(host) !== 0) {
-      ips = await Promise.race([resolvePublic(host, policy, opts.lookup), aborted]);
+      ips = await Promise.race([resolvePublic(host, policy, opts.lookup, target.origin), aborted]);
     }
   } finally {
     init.signal.removeEventListener("abort", onAbort);
@@ -165,6 +165,7 @@ export async function safeFetch(
       "net.redirect",
       host,
       `${host} responded with a redirect (${res.status}); redirects are not followed.`,
+      res.status,
     );
   }
   const max = opts.maxBytes;

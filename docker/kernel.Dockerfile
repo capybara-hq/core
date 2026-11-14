@@ -15,8 +15,8 @@
 # default the public registry; a mirror must serve the same tarballs), checked against the pinned
 # sha512, once per manifest. Offline: mount a directory holding the pinned tgz files (any names,
 # e.g. `npm pack <package>@<version>`) at /app/bootstrap (CAPYBARA_BOOTSTRAP__DIR), or point
-# CAPYBARA_PACKAGES__NPM_REGISTRY at an internal mirror. Behind a proxy, Node's fetch uses
-# HTTPS_PROXY only with NODE_USE_ENV_PROXY=1 (both runtime environment variables).
+# CAPYBARA_PACKAGES__NPM_REGISTRY at an internal mirror. Behind a proxy, set
+# CAPYBARA_NET__HTTPS_PROXY (net.httpsProxy); HTTPS_PROXY / NODE_USE_ENV_PROXY are not read.
 #
 # Running it (compose / K8s): run with an init process (compose `init: true`) so signals reach node
 # and zombies are reaped, and allow a stop grace period longer than the kernel's drain

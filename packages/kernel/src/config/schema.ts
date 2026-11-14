@@ -482,7 +482,7 @@ export const KernelConfigSchema = z.object({
           meta({
             secret: true,
             description:
-              "HTTP(S) egress proxy for marketplace, archive and git downloads, e.g. http://user:password@proxy.internal:3128. https downloads tunnel through it with CONNECT and the kernel no longer resolves their hosts: the proxy does, so blocking private and internal addresses becomes the proxy's job (IP-literal URLs are still checked against marketplaces.allowPrivateHosts). Loopback hosts never use it. Credentials in the URL are sent as Basic Proxy-Authorization and never logged",
+              "HTTP(S) egress proxy for marketplace, archive and git downloads, npm registry downloads (packages, provenance, bootstrap plugins) and OAuth requests (discovery, registration, token endpoints), e.g. http://user:password@proxy.internal:3128. https downloads tunnel through it with CONNECT and the kernel no longer resolves their hosts: the proxy does, so blocking private and internal addresses becomes the proxy's job (IP-literal URLs are still checked against marketplaces.allowPrivateHosts). Loopback hosts never use it, nor does an http:// npm registry; list an internal https registry in net.noProxy. HTTPS_PROXY / NODE_USE_ENV_PROXY are not read. Credentials in the URL are sent as Basic Proxy-Authorization and never logged",
           }),
         ),
       noProxy: z

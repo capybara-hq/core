@@ -76,9 +76,13 @@ import {
  *   modules that only `WorkerModule` imports, transitively (see {@link checkWorkerOnly});
  * - kc-global-fetch: outbound HTTP that bypasses `net/` (`safeFetch`: public addresses only, the
  *   connection pinned to the checked address, `net.httpsProxy`, no redirects) outside `net/`: a
- *   call of the global `fetch` (a `fetch(` the file binds no other way, `globalThis.fetch(`) and an
- *   import of `fetch` / `request` from `undici`. Not seen: `node:http` / `node:https` requests and
- *   a global `fetch` passed around under another name.
+ *   call of the global `fetch` (a bare `fetch(`, or `globalThis.fetch(`) and any value use of
+ *   `undici` (a named, default or namespace import, a re-export, `require("undici")`,
+ *   `import("undici")`; a type-only import is fine). Known gaps: a file that binds the name `fetch`
+ *   anywhere (a variable, parameter, destructured name or another import: the check is
+ *   file-scoped, not scope-aware) is not checked for bare `fetch(` calls; a global `fetch` passed
+ *   around under another name; `node:http` / `node:https` requests; other HTTP clients
+ *   (`node-fetch`, `axios`, `got`, ...), which the kernel does not depend on today.
  *
  * Names are resolved, not matched as text ({@link buildResolver}): every rule above that looks for
  * a decorator, a function or a class follows aliased imports (`import { Cron as C }`), re-exports,
@@ -942,9 +946,6 @@ function collectKnown(files: FileInfo[], r: Resolver): Known {
   return known;
 }
 
-/** `undici` exports that send a request without the `net/` rules. */
-const UNDICI_REQUESTS = new Set(["fetch", "request"]);
-
 /**
  * Whether the file binds the name `fetch` itself (a variable, parameter, function, destructured
  * name or an import other than undici's), so a bare `fetch(` there need not be the global one.
@@ -1024,14 +1025,25 @@ function scanFile(
   const netHome = within(k, "net");
   const ownFetch = !netHome && bindsOwnFetch(parsed.program);
   if (!netHome) {
-    for (const s of parsed.program.body as Node[]) {
-      if (s.type !== "ImportDeclaration" || (s.source as Node).value !== "undici") continue;
-      for (const sp of (s.specifiers as Node[]) ?? []) {
-        if (sp.type === "ImportSpecifier" && UNDICI_REQUESTS.has(nameOf(sp.imported) ?? "")) {
-          hit("kc-global-fetch", sp, []);
-        }
+    // undici (an import, a re-export, require or a dynamic import) builds requests outside net/
+    const isUndici = (src: unknown) => isNode(src) && src.value === "undici";
+    visit(parsed.program, (n, anc) => {
+      if (
+        (n.type === "ImportDeclaration" && n.importKind !== "type") ||
+        ((n.type === "ExportNamedDeclaration" || n.type === "ExportAllDeclaration") &&
+          n.exportKind !== "type")
+      ) {
+        if (isUndici(n.source)) hit("kc-global-fetch", n, anc);
+      } else if (n.type === "ImportExpression") {
+        if (isUndici(n.source)) hit("kc-global-fetch", n, anc);
+      } else if (
+        n.type === "CallExpression" &&
+        nameOf(n.callee) === "require" &&
+        isUndici((n.arguments as Node[])[0])
+      ) {
+        hit("kc-global-fetch", n, anc);
       }
-    }
+    });
   }
   const bullmq = new Set<string>();
   const queueTyped = new Set<string>();

@@ -131,9 +131,10 @@ export async function npmGet(
     );
   } catch (e) {
     if (e instanceof NetDeniedError && e.code === "net.redirect") {
-      throw new NpmFetchError(`the ${what} responded with a redirect; redirects are not followed`, {
-        cause: e,
-      });
+      throw new NpmFetchError(
+        `the ${what} responded with a redirect (${e.status}); redirects are not followed`,
+        { cause: e },
+      );
     }
     throw new NpmFetchError(`cannot fetch the ${what}: ${errMsg(e)}`, { cause: e });
   }

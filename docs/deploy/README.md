@@ -394,8 +394,9 @@ into the CLI any more.
   `./bootstrap` from a source checkout) whose sha512 equals the pin is used, whatever its file name;
   otherwise the pinned version is downloaded from `packages.npmRegistry` (default the public npm
   registry; `packages.npmToken` for a private one) and must match its pinned sha512. Only the pin is
-  trusted; the registry's own metadata is not. npm downloads don't use `net.httpsProxy`: behind a proxy
-  set `NODE_USE_ENV_PROXY=1` and `HTTPS_PROXY` on the kernel containers.
+  trusted; the registry's own metadata is not. Behind a proxy set `net.httpsProxy` (see **Egress
+  proxy** below; `HTTPS_PROXY` / `NODE_USE_ENV_PROXY` are not read), and list an internal https
+  registry in `net.noProxy`.
   - **Offline deployments:** run `npm pack @capybara-hq/plugin-<name>@<version>` for every entry of
     `bootstrap.json` (its pinned versions; an optional entry left out only fails with a warning and is
     retried on the next start) on a machine with npm access, copy the files into a host directory and mount it at `/app/bootstrap`
@@ -524,7 +525,8 @@ other plugins) go through the catalog:
 
   **Egress proxy.** Set `net.httpsProxy` (`CAPYBARA_NET__HTTPS_PROXY=http://user:password@proxy.internal:3128`;
   `http://` or `https://`, credentials optional) to send marketplace, mirror, archive and git
-  downloads through an HTTP(S) proxy. The kernel tunnels each https download with `CONNECT` and does
+  downloads, npm registry downloads (packages, provenance, the bootstrap download) and OAuth
+  requests (discovery, client registration, token endpoints) through an HTTP(S) proxy. The kernel tunnels each https download with `CONNECT` and does
   TLS to the target itself (the certificate is still checked for the target's hostname); credentials
   in the URL go out as Basic `Proxy-Authorization` and never appear in logs or errors. The standard
   `HTTPS_PROXY` / `NODE_USE_ENV_PROXY` variables are not read. With a proxy:
@@ -537,7 +539,9 @@ other plugins) go through the catalog:
     hostnames or IPs that go direct (an entry also matches its subdomains). Those are resolved locally
     and pinned as above, so an internal host listed there also needs `marketplaces.allowPrivateHosts`.
     Loopback hosts never use the proxy.
-  - npm registry downloads (`packages.npmRegistry`) do not use the proxy.
+  - npm registry downloads (`packages.npmRegistry`) use the proxy too; an internal https registry
+    goes in `net.noProxy` (its origin is trusted, so it needs no `marketplaces.allowPrivateHosts`
+    entry). An `http://` registry is fetched directly.
 
   This is also the fix for a fake-IP DNS resolver (one that answers every name with an address in
   `198.18.0.0/15`, as some proxy and VPN clients do): without a proxy every host looks private and

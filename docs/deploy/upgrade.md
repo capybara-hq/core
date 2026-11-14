@@ -375,3 +375,14 @@ succeeds; plugins fall back (the memory plugin
 stores embeddings as `real[]` and ranks them in the plugin). To enable it later on a managed
 PostgreSQL, run `CREATE EXTENSION vector SCHEMA public` as a role allowed to: an extension in
 another schema is not visible to plugin schemas and counts as absent.
+
+### Egress proxy: `net.httpsProxy`, not `NODE_USE_ENV_PROXY`
+
+npm registry downloads (plugin packages, provenance, the bootstrap download) and OAuth requests
+(discovery, client registration, token endpoints) now go through the kernel's network rules
+(`packages/kernel/src/net`) like marketplace downloads, so Node's `NODE_USE_ENV_PROXY=1` /
+`HTTPS_PROXY` no longer route them. A deployment that relied on those variables sets
+`net.httpsProxy` (`CAPYBARA_NET__HTTPS_PROXY`) instead, and lists an internal https npm registry in
+`net.noProxy` (an `http://` registry is fetched directly). An OAuth or MCP endpoint, or a marketplace
+`tarball` URL, on a private or internal host is now refused unless `marketplaces.allowPrivateHosts`
+lists it.

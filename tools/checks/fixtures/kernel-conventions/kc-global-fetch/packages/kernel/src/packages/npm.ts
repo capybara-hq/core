@@ -1,7 +1,4 @@
-import {
-  fetch as undiciFetch, // expect: kc-global-fetch
-  request, // expect: kc-global-fetch
-} from "undici";
+import { fetch as undiciFetch, request } from "undici"; // expect: kc-global-fetch
 
 export async function get(url: string) {
   await request(url);

@@ -117,7 +117,7 @@ describe("fetchNpmPackage", () => {
 
   it("不跟随重定向", async () => {
     await expect(fetchNpmPackage(cfg(), "redirected", undefined, signal())).rejects.toThrow(
-      /redirect/,
+      /responded with a redirect \(30\d\); redirects are not followed/,
     );
   });
 
@@ -224,6 +224,21 @@ describe("fetchNpmPackage goes through packages/kernel/src/net", () => {
       expect((e as Error).message).toMatch(/^cannot fetch the npm registry/);
       expect((e as Error).message).not.toMatch(/private or reserved/);
     }
+  });
+
+  it("the registry is trusted by origin: another port on its host is refused", async () => {
+    // the trusted registry is registry.corp.invalid:1; a manifest tarball on port 2 of the same
+    // host that resolves privately needs marketplaces.allowPrivateHosts like any other host
+    const registry = "https://registry.corp.invalid:1/";
+    const e = await fetchNpmPackage(
+      cfg({ registry, lookup: toLoopback, net: net({ trustedOrigins: [registry] }) }),
+      "elsewhere",
+      "1.0.0",
+      signal(),
+      o("https://registry.corp.invalid:2/x.tgz"),
+    ).catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(NpmFetchError);
+    expect((e as Error).message).toMatch(/private or reserved address/);
   });
 
   it("the registry token goes only to the registry origin, never to a tarballUrl elsewhere", async () => {
