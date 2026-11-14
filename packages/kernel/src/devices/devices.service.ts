@@ -761,6 +761,14 @@ export class DevicesService {
    * the select that follows reads the winner. Needs a current sandbox provider
    * (`device.unavailable`). It is the person's baseline, so it is created even at
    * `devices.maxPersonal`.
+   *
+   * The unlocked fast path reads the live default and then the former defaults in two statements.
+   * When the live default is not in use, a concurrent replacement can commit between them (it
+   * restores a former default and demotes this one): the second read then finds no former default
+   * holding files, though the first one's default is no longer live. So that answer is confirmed
+   * by reading the live default again, and a changed one goes to {@link insertDefault}, which
+   * decides under the locks (issue #290). A live default in use needs no confirmation: a
+   * replacement never takes one that is in use and not stranded.
    */
   async ensureDefault(orgId: string, accountId: string): Promise<string> {
     const live = await this.defaultOf(orgId, accountId);
@@ -768,7 +776,10 @@ export class DevicesService {
       const current = this.providers.cloud()?.plugin;
       if (inUseForDefault(live) || current === undefined) return live.id;
       const former = await this.formerDefaults(orgId, accountId, current);
-      if (!former.some((f) => f.holdsFiles)) return live.id;
+      if (!former.some((f) => f.holdsFiles)) {
+        const still = await this.defaultOf(orgId, accountId);
+        if (still?.id === live.id) return live.id;
+      }
     }
     return this.insertDefault(orgId, accountId);
   }

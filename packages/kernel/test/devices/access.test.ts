@@ -343,6 +343,62 @@ describe("device access", () => {
     }
   });
 
+  it("a caller whose fast path reads around a concurrent restore gets the restored default (#290)", async () => {
+    const service = k.app.get(DevicesService);
+    const providers = k.app.get(SandboxProviders);
+    const login = `rr-${randomUUID().slice(0, 8)}`;
+    const me = (await accountsFor(db).createLocal({ login, password: PW, displayName: login })).id;
+    await testMembers(db).add(orgId, me, "member", ownerId);
+    const realCurrent = providers.cloud.bind(providers);
+    const switchTo = (plugin: string | null) => {
+      vi.restoreAllMocks();
+      if (plugin === null) return;
+      const impl = realCurrent()?.impl;
+      if (!impl) throw new Error("no current provider");
+      vi.spyOn(providers, "cloud").mockReturnValue({ plugin, impl });
+    };
+    // d1: the default with files at sandbox-fake; d2: the empty default made at sandbox-other
+    const d1 = await service.ensureDefault(orgId, me);
+    await sql`INSERT INTO capybara.device_instances
+        (device_id, org_id, provider, fs_handle, fs_status)
+      VALUES (${d1}, ${orgId}, 'sandbox-fake', '{"id":"fs-rr"}'::jsonb, 'ready')`.execute(raw);
+    try {
+      switchTo("sandbox-other");
+      const d2 = await service.ensureDefault(orgId, me);
+      switchTo(null);
+      // Force the interleaving instead of racing for it: the caller reads the live default (d2,
+      // empty, not stranded) and, just before its unlocked read of the former defaults, a whole
+      // concurrent call restores d1. That read then finds no former default holding files.
+      const seam = service as unknown as {
+        formerDefaults(o: string, a: string, p: string, lock?: boolean): Promise<unknown[]>;
+      };
+      const original = seam.formerDefaults.bind(service);
+      let concurrent: string | undefined;
+      vi.spyOn(seam, "formerDefaults").mockImplementation(async (o, a, p, lock = false) => {
+        if (!lock && concurrent === undefined) {
+          concurrent = "running";
+          concurrent = await service.ensureDefault(orgId, me);
+        }
+        return original(o, a, p, lock);
+      });
+      const got = await service.ensureDefault(orgId, me);
+      expect(concurrent).toBe(d1);
+      expect(got).toBe(d1);
+      expect(got).not.toBe(d2);
+      const defaults = await db
+        .selectFrom("devices")
+        .select("id")
+        .where("org_id", "=", orgId)
+        .where("owner_account_id", "=", me)
+        .where("is_default", "=", true)
+        .where("deleted_at", "is", null)
+        .execute();
+      expect(defaults).toEqual([{ id: d1 }]);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
   describe("which former default replaces the live one", () => {
     const member = async (prefix: string) => {
       const login = `${prefix}-${randomUUID().slice(0, 8)}`;
