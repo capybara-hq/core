@@ -157,9 +157,9 @@ export function connect(
 
   /**
    * Pushes the policy summary when it differs from the one the deployment last got: the owner
-   * changed the mode or the policy on the machine (`capybara-device mode` / `policy ...`), or an
-   * exec brought a new mode ceiling. Without it the deployment would learn the change only at the
-   * next connect.
+   * changed the mode or the policy on the machine (`capybara-device mode` / `policy ...`). Without
+   * it the deployment would learn the change only at the next connect. An exec's ceiling changes
+   * nothing here: the summary reports the owner's mode, which the kernel cuts itself.
    */
   const pushPolicy = (): void => {
     if (!isOpen()) return;
@@ -272,8 +272,6 @@ export function connect(
           sentPolicy = JSON.stringify((res.result as { policy: unknown }).policy);
         }
         deliver(res);
-        // an exec may have changed the ceiling (the effective mode)
-        pushPolicy();
       }
       maybeFinishDrain();
     });
@@ -314,7 +312,7 @@ export function connect(
   /**
    * The hello, built at each (re)connect: the OS mode reports blocked hosts per command (Docker
    * mode has no per-host view); the device applies `limits.mode` / `limits.network` (`mode`); the
-   * policy summary is the store's policy now, with the effective mode and the latest ceiling seen;
+   * policy summary is the store's policy now (the owner's mode, not cut by any ceiling);
    * then the outcomes of the latest policy ops by op id.
    */
   const hello = (): DeviceHello => {
