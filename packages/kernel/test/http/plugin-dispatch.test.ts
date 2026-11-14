@@ -1,6 +1,14 @@
+import type { RouteCaller } from "@capybara-hq/plugin-sdk";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Route } from "../../src/ctx/create-ctx.js";
+import { ApiError } from "../../src/errors.js";
 import type { KernelHttpApp } from "../../src/http/app.js";
+import {
+  createPluginRouter,
+  type PluginRouteTable,
+  type RouteAccessResolver,
+  stripKernelAuthorization,
+} from "../../src/http/plugin-dispatch.js";
 import { createLogger, type KernelLogger } from "../../src/log.js";
 import { testHttpApp } from "../helpers/http-app.js";
 
@@ -8,20 +16,38 @@ const apps: KernelHttpApp[] = [];
 
 async function app(
   log: KernelLogger = createLogger("info", { write: () => {} }),
+  routeAccess?: RouteAccessResolver,
 ): Promise<KernelHttpApp> {
-  const a = await testHttpApp({ log, servePlugins: true });
+  const a = await testHttpApp({
+    log,
+    servePlugins: true,
+    ...(routeAccess !== undefined && { routeAccess }),
+  });
   apps.push(a);
   return a;
 }
 
-const route = (method: Route["method"], path: string, handler: Route["handler"]): Route => ({
+const route = (
+  method: Route["method"],
+  path: string,
+  handler: Route["handler"],
+  access: Route["access"] = "public",
+): Route => ({
   plugin: "p",
   method,
   path,
-  access: "public",
+  access,
   handler,
   verifyEmbed: async () => null,
 });
+
+/** Echoes the caller and the credentials the handler received. */
+const echo: Route["handler"] = async (req, caller) =>
+  Response.json({
+    caller,
+    auth: req.headers.get("authorization"),
+    cookie: req.headers.get("cookie"),
+  });
 
 afterEach(async () => {
   await Promise.all(apps.splice(0).map((a) => a.close()));
@@ -349,5 +375,179 @@ describe("插件路由分发", () => {
     const urls = a.routes().map((x) => `${x.method} ${x.url}`);
     expect(urls).toContain("GET /healthz");
     expect(urls).toContain("GET /readyz");
+  });
+});
+
+describe("route access in the dispatch", () => {
+  /** A resolver that records its calls and answers `answer` (or throws it). */
+  const resolver = (answer: (route: Route, params: Record<string, string>) => RouteCaller) => {
+    const calls: { access: string; path: string; params: Record<string, string> }[] = [];
+    const r: RouteAccessResolver = {
+      async resolve(rt, _req, _reply, params) {
+        calls.push({ access: rt.access, path: rt.path, params });
+        return answer(rt, params);
+      },
+    };
+    return { r, calls };
+  };
+  const member = (orgId: string): RouteCaller => ({
+    access: "member",
+    orgId,
+    accountId: "a1",
+    role: "member",
+    config: {},
+  });
+
+  it("the router returns the matched record and its params; HEAD falls back to the GET record", () => {
+    const get = route("GET", "/plugins/p/orgs/:orgId/items", echo, "member");
+    const post = route("POST", "/plugins/p/hook", echo, "public");
+    const router = createPluginRouter([get, post]);
+    expect(router.find("GET", "/plugins/p/orgs/o1/items")).toEqual({
+      route: get,
+      params: { orgId: "o1" },
+    });
+    expect(router.find("HEAD", "/plugins/p/orgs/o2/items")).toEqual({
+      route: get,
+      params: { orgId: "o2" },
+    });
+    expect(router.find("POST", "/plugins/p/hook")?.route).toBe(post);
+    expect(router.find("HEAD", "/plugins/p/hook")).toBeUndefined();
+    expect(router.find("GET", "/plugins/p/items")).toBeUndefined();
+  });
+
+  it("stripKernelAuthorization drops kernel tokens and keeps everything else", () => {
+    for (const v of ["Bearer cap_pat_abc", "bearer  cap_svc_x", "cap_pat_bare"]) {
+      expect(stripKernelAuthorization(v), v).toBeUndefined();
+    }
+    for (const v of ["Bearer eyJ.abc", "Signature x", "Bearer cap_at_lookalike"]) {
+      expect(stripKernelAuthorization(v), v).toBe(v);
+    }
+  });
+
+  it("the resolved caller reaches the handler with the matched params", async () => {
+    const { r, calls } = resolver((_rt, params) => member(params.orgId as string));
+    const a = await app(undefined, r);
+    a.mountPlugins([route("GET", "/plugins/p/orgs/:orgId/items", echo, "member")]);
+    const res = await a.inject({ method: "GET", url: "/plugins/p/orgs/o1/items?x=1" });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json().caller).toEqual(member("o1"));
+    expect(calls).toEqual([
+      { access: "member", path: "/plugins/p/orgs/:orgId/items", params: { orgId: "o1" } },
+    ]);
+  });
+
+  it("a refusal answers its error envelope and never reaches the handler", async () => {
+    let called = false;
+    const { r } = resolver(() => {
+      throw new ApiError("org.not_found", "Organization not found");
+    });
+    const a = await app(undefined, r);
+    a.mountPlugins([
+      route(
+        "GET",
+        "/plugins/p/orgs/:orgId/items",
+        async () => {
+          called = true;
+          return new Response("x");
+        },
+        "member",
+      ),
+    ]);
+    const res = await a.inject({ method: "GET", url: "/plugins/p/orgs/o1/items" });
+    expect(res.statusCode).toBe(404);
+    expect(res.json()).toEqual({
+      error: { code: "org.not_found", message: "Organization not found" },
+    });
+    expect(called).toBe(false);
+  });
+
+  it("a resolver failure that is not an ApiError is a logged 500 internal", async () => {
+    const lines: Record<string, unknown>[] = [];
+    const { r } = resolver(() => {
+      throw new Error("pg down secret");
+    });
+    const a = await app(createLogger("info", { write: (l) => lines.push(JSON.parse(l)) }), r);
+    a.mountPlugins([route("GET", "/plugins/p/x", echo)]);
+    const res = await a.inject({ method: "GET", url: "/plugins/p/x" });
+    expect(res.statusCode).toBe(500);
+    expect(res.json().error.code).toBe("internal");
+    expect(res.body).not.toContain("secret");
+    expect(lines.some((l) => l.msg === "plugin route access failed")).toBe(true);
+  });
+
+  it("a refusal comes before the body is read: a 2 MiB body gets 401, not 413", async () => {
+    const { r } = resolver(() => {
+      throw new ApiError("auth.required", "Authentication required");
+    });
+    const a = await app(undefined, r);
+    a.mountPlugins([route("POST", "/plugins/p/big", echo, "member")]);
+    const res = await a.inject({
+      method: "POST",
+      url: "/plugins/p/big",
+      headers: { "content-type": "application/octet-stream" },
+      payload: Buffer.alloc(2 * 1024 * 1024),
+    });
+    expect(res.statusCode).toBe(401);
+    expect(res.json().error.code).toBe("auth.required");
+  });
+
+  it("the unavailable gate answers 503 before access is resolved", async () => {
+    const { r, calls } = resolver(() => ({ access: "public" }));
+    const a = await app(undefined, r);
+    a.mountPlugins({
+      routes: () => [route("GET", "/plugins/p/orgs/:orgId/items", echo, "member")],
+      revision: () => 0,
+      unavailable: () => true,
+    });
+    const res = await a.inject({ method: "GET", url: "/plugins/p/orgs/o1/items" });
+    expect(res.statusCode).toBe(503);
+    expect(res.json().error.code).toBe("extension.unavailable");
+    expect(calls).toEqual([]);
+  });
+
+  it("kernel tokens never reach the handler; an embed token and other cookies do", async () => {
+    const { r } = resolver((rt) => (rt.access === "member" ? member("o1") : { access: "public" }));
+    const a = await app(undefined, r);
+    a.mountPlugins([
+      route("GET", "/plugins/p/orgs/:orgId/items", echo, "member"),
+      route("GET", "/plugins/p/ui/data", echo, "public"),
+    ]);
+    const m = await a.inject({
+      method: "GET",
+      url: "/plugins/p/orgs/o1/items",
+      headers: { authorization: "Bearer cap_pat_secret", cookie: "cap_at=s; theme=dark" },
+    });
+    expect(m.json()).toMatchObject({ auth: null, cookie: "theme=dark" });
+    const e = await a.inject({
+      method: "GET",
+      url: "/plugins/p/ui/data",
+      headers: { authorization: "Bearer eyJhbGc.sig" },
+    });
+    expect(e.json().auth).toBe("Bearer eyJhbGc.sig");
+  });
+
+  it("routes follow the table revision: a route whose access changed is matched by its new record", async () => {
+    let revision = 0;
+    let routes = [route("GET", "/plugins/p/orgs/x", echo, "public")];
+    const table: PluginRouteTable = {
+      routes: () => routes,
+      revision: () => revision,
+      unavailable: () => false,
+    };
+    const { r, calls } = resolver((rt, params) =>
+      rt.access === "member" ? member(params.orgId as string) : { access: "public" },
+    );
+    const a = await app(undefined, r);
+    a.mountPlugins(table);
+    expect((await a.inject({ method: "GET", url: "/plugins/p/orgs/x" })).json().caller).toEqual({
+      access: "public",
+    });
+    // the extension reloaded with the route as a member route: the stale public record is gone
+    routes = [route("GET", "/plugins/p/orgs/:orgId/x", echo, "member")];
+    revision = 1;
+    expect((await a.inject({ method: "GET", url: "/plugins/p/orgs/x" })).statusCode).toBe(404);
+    const now = await a.inject({ method: "GET", url: "/plugins/p/orgs/o9/x" });
+    expect(now.json().caller).toEqual(member("o9"));
+    expect(calls.map((c) => c.access)).toEqual(["public", "member"]);
   });
 });

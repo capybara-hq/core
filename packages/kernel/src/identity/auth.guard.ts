@@ -111,17 +111,48 @@ export async function authenticateOrgUploader(
 }
 
 /**
- * 全局守卫（`APP_GUARD`），默认拒绝：
- * 1. `Authorization: Bearer cap_pat_…|cap_svc_…` → API 令牌；个人令牌再实时读账号状态。不做 CSRF 检查。
- * 2. 否则 Cookie `cap_at` → 会话 access token（Redis 吊销标记作快速路径，再以 PG `sessions.revoked_at` 为准，
- *    与账号读取合并为一条查询）→ 实时判断账号状态；非安全方法要求 CSRF 头。
- * 3. 都没有：`@Public` 放行，否则 `auth.required`。`@Public` 路由上凭据无效（`ApiError`）按无凭据处理
- *    （便于登出 / 刷新）；PG / Redis 故障等其他异常照常抛出。
- * 4. 路由约束：service principal 只能访问 `@AllowService` 路由（否则 `forbidden`）；
- *    `@SessionOnly` 要求 Web 会话：个人令牌 → `auth.session_required`，服务令牌（即使路由经 `@OrgAction`
- *    隐含 `@AllowService`）→ `forbidden`；`@SuperAdmin` 要求超级管理员（`forbidden`）。
- * 5. `@Public` 路由的非安全方法无论是否带 Cookie 都要求 CSRF 头。
- * 账号状态每个请求都从 PG 实时读取，不在进程内缓存。插件路由 `/plugins/*` 不经过 Nest，不受此守卫约束。
+ * Before the body is read, for an extension `member` / `admin` route (plugin-route-access.ts): only
+ * a personal API token (`Authorization: Bearer cap_pat_…`) authenticates; a session cookie is
+ * ignored (no credential), so no CSRF check applies. No or an unknown token -> `auth.required`; a
+ * service token -> `forbidden`; a disabled account -> `auth.account_disabled`; one that must change
+ * its password -> `auth.password_change_required`. Returns the account, read live from PG.
+ */
+export async function authenticatePersonalToken(
+  req: FastifyRequest,
+  s: Pick<AuthServices, "accounts" | "tokens">,
+): Promise<Account> {
+  const bearer = BEARER_RE.exec(req.headers.authorization ?? "")?.[1];
+  if (bearer === undefined) throw new ApiError("auth.required", "Authentication required");
+  const rec = await s.tokens.authenticate(bearer);
+  if (!rec) throw new ApiError("auth.required", "Authentication required");
+  if (rec.kind === "service") {
+    throw new ApiError("forbidden", "Service tokens cannot access this endpoint");
+  }
+  const account = await s.accounts.get(rec.accountId as string);
+  if (!account) throw new ApiError("auth.required", "Authentication required");
+  requireActive(account);
+  if (account.mustChangePassword) throw passwordChangeRequired();
+  return account;
+}
+
+/**
+ * The global guard (`APP_GUARD`), deny by default:
+ * 1. `Authorization: Bearer cap_pat_…|cap_svc_…` -> an API token; a personal token then reads the
+ *    account state live. No CSRF check.
+ * 2. Otherwise the `cap_at` cookie -> a session access token (the Redis revocation marker as the
+ *    fast path, then PG `sessions.revoked_at` decides, in one query with the account read) -> the
+ *    account state live; unsafe methods need the CSRF header.
+ * 3. Neither: `@Public` passes, otherwise `auth.required`. On a `@Public` route an invalid
+ *    credential (`ApiError`) counts as none (so logout / refresh work); other failures (PG / Redis
+ *    down) are thrown as usual.
+ * 4. Route constraints: a service principal reaches only `@AllowService` routes (else
+ *    `forbidden`); `@SessionOnly` needs a web session: a personal token -> `auth.session_required`,
+ *    a service token (even where `@OrgAction` implies `@AllowService`) -> `forbidden`;
+ *    `@SuperAdmin` needs a super admin (`forbidden`).
+ * 5. Unsafe methods of `@Public` routes need the CSRF header, cookie or not.
+ * The account state is read live from PG on every request, never cached in the process.
+ * Extension routes `/plugins/*` do not go through Nest or this guard: the plugin dispatch
+ * authenticates them by their declared access (plugin-route-access.ts, personal tokens only).
  */
 @Injectable()
 export class AuthGuard implements CanActivate {

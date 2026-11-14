@@ -23,9 +23,11 @@ import { type GatewayRoutes, registerGatewayRoutes } from "./gateway-routes.js";
 import {
   createPluginRouter,
   type PluginRouteTable,
+  type RouteAccessResolver,
   registerPluginDispatch,
   staticRouteTable,
 } from "./plugin-dispatch.js";
+import { PluginRouteAccess } from "./plugin-route-access.js";
 
 /** 内核 HTTP 的只读视图：进程内注入请求与列出路由（测试与元测试用）。 */
 export interface KernelHttp {
@@ -57,6 +59,11 @@ export interface CreateHttpAppOptions {
   log: Logger;
   /** Whether `/plugins/*` is dispatched to extension routes. */
   servePlugins: boolean;
+  /**
+   * Resolves the caller of an extension route from its declared access; default the application's
+   * {@link PluginRouteAccess}, looked up on the first extension request.
+   */
+  routeAccess?: RouteAccessResolver;
   /**
    * Gateway-role routes (the channel webhook), registered only when given: the kernel passes them
    * when `roles` includes `gateway` (`serveGateway`).
@@ -151,7 +158,8 @@ const LARGE_BODY_LIMIT = 6 * 1024 * 1024;
  * and returns it uninitialized: `init()` is the caller's (it runs the start sequence), `close()`
  * closes only the HTTP server (the rest of the application is closed by the caller's shutdown).
  * Extension routes do not go through Nest: `/plugins/*` is dispatched in its own Fastify scope
- * (see plugin-dispatch.ts) and answers 404 until extensions are loaded. Unmatched kernel routes
+ * (see plugin-dispatch.ts), which checks each route's declared access before the body is read, and
+ * answers 404 until extensions are loaded. Unmatched kernel routes
  * answer the 404 error envelope as well.
  */
 export async function createHttpApp(
@@ -250,8 +258,15 @@ export async function createHttpApp(
 
   let table: PluginRouteTable | undefined;
   let unwatch: (() => void) | undefined;
+  let routeAccess: RouteAccessResolver | undefined = opts.routeAccess;
+  const lazyRouteAccess: RouteAccessResolver = {
+    resolve: (...args) => {
+      if (routeAccess === undefined) routeAccess = app.get(PluginRouteAccess, { strict: false });
+      return (routeAccess as RouteAccessResolver).resolve(...args);
+    },
+  };
   const dispatch = opts.servePlugins
-    ? await registerPluginDispatch(fastify, () => table, opts.log)
+    ? await registerPluginDispatch(fastify, () => table, opts.log, lazyRouteAccess)
     : undefined;
   if (opts.gateway) await registerGatewayRoutes(fastify, opts.gateway, opts.log);
   if (opts.git) await registerGitGatewayRoute(fastify, opts.git, opts.log);

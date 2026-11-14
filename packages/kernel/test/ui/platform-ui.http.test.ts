@@ -234,6 +234,43 @@ describe("platform UI routes", () => {
     expect((await verify(body.token)).statusCode).toBe(200);
   });
 
+  it("a platform embed token through an embed route: the kernel resolves the platform caller", async () => {
+    const t = await root({
+      method: "POST",
+      url: `${ADMIN_UI}/embeds/ui-slots/platform-embed/token`,
+    });
+    expect(t.statusCode, t.body).toBe(200);
+    const { token } = t.json() as { token: string };
+    const viaEmbed = (tok: string) =>
+      k.http.inject({
+        method: "GET",
+        url: "/plugins/ui-slots/ui/caller",
+        headers: { authorization: `Bearer ${tok}` },
+      });
+    const ok = await viaEmbed(token);
+    expect(ok.statusCode, ok.body).toBe(200);
+    const caller = ok.json() as Record<string, unknown>;
+    expect(caller).toEqual({
+      access: "embed",
+      scope: "platform",
+      accountId: ids.root,
+      role: "superAdmin",
+      contribution: "platform-embed",
+      exp: expect.any(Number),
+    });
+    // no org and no org config on a platform caller
+    expect(caller).not.toHaveProperty("orgId");
+    expect(caller).not.toHaveProperty("config");
+    await setSuperAdmin(ids.root as string, false);
+    try {
+      const gone = await viaEmbed(token);
+      expect(gone.statusCode).toBe(401);
+      expect(errCode(gone)).toBe("auth.required");
+    } finally {
+      await setSuperAdmin(ids.root as string, true);
+    }
+  });
+
   it("an org token never verifies for a platform page", async () => {
     await enableExtensions(raw, orgId, "ui-slots");
     try {

@@ -350,7 +350,12 @@ describe("M4 第三段验收（双副本）", () => {
       bearer: page.token,
     });
     expect(claims.status).toBe(200);
-    expect(claims.json).toMatchObject({ orgId, plugin: "fake-embed", contribution: "panel" });
+    expect(claims.json).toMatchObject({
+      access: "embed",
+      scope: "org",
+      orgId,
+      contribution: "panel",
+    });
     const wrong = await at(1, "GET", "/plugins/fake-embed/ui/claims", undefined, {
       bearer: probe.token,
     });

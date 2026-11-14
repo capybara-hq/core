@@ -155,9 +155,12 @@ export async function queryEnabledPlugins(db: Kysely<any>, orgId: string): Promi
 }
 
 /**
- * 嵌入令牌校验时的一条查询：插件在该组织启用、组织未删除、账号 active、仍是成员；返回此刻的角色，不满足返回 undefined。
+ * One query for a person's live org role on behalf of an extension: the extension enabled in the
+ * org, the org not deleted, the account active and still a member; returns the role now, or
+ * undefined when any of that fails. An embed token's verification and the `member` / `admin`
+ * route check (plugin-route-access.ts) both use it.
  */
-async function currentEmbedRole(
+export async function currentOrgRole(
   db: KernelDeps["db"],
   plugin: string,
   orgId: string,
@@ -500,7 +503,7 @@ export function createExtensionContext(
     // the contribution's slot as loaded now: never `platform.page` through an org token, and the
     // current role still meets the slot's minRole (a demoted caller's token stops working)
     if (slot === undefined || slot.id === "platform.page") return null;
-    const role = await currentEmbedRole(deps.db, name, claims.orgId, claims.accountId);
+    const role = await currentOrgRole(deps.db, name, claims.orgId, claims.accountId);
     if (role === undefined || !canUseSlot(slot, role)) return null;
     return { ...claims, role };
   };

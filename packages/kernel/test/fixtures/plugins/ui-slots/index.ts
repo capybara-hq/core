@@ -67,6 +67,7 @@ export default defineExtension({
     http: [
       { method: "GET", path: "/ui/platform", access: "public" },
       { method: "GET", path: "/ui/platform-data", access: "public" },
+      { method: "GET", path: "/ui/caller", access: "embed" },
       { method: "POST", path: "/invalidate", access: "public" },
     ],
     ui: {
@@ -96,6 +97,8 @@ export default defineExtension({
       if (claims === null) return new Response(null, { status: 401 });
       return Response.json(claims);
     });
+    // an embed route: the kernel verifies the token and hands over the caller it resolved
+    ctx.http.route("GET", "/ui/caller", async (_req, caller) => Response.json(caller));
     ctx.http.route("POST", "/invalidate", async (req) => {
       try {
         await ctx.ui.invalidate(

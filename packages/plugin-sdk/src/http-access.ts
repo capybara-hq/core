@@ -35,6 +35,8 @@ export type RouteCaller =
       role: UiRole;
       contribution: string;
       conversationId?: string;
+      /** The token's expiry (Unix seconds): a long-lived response (SSE) ends by then. */
+      exp: number;
       config: unknown;
     }
   | {
@@ -43,6 +45,8 @@ export type RouteCaller =
       accountId: string;
       role: "superAdmin";
       contribution: string;
+      /** The token's expiry (Unix seconds): a long-lived response (SSE) ends by then. */
+      exp: number;
     }
   | {
       access: "member" | "admin";

@@ -829,7 +829,12 @@ describe("loaded by path in a kernel", () => {
         headers: { authorization },
       });
       expect(claims.statusCode, claims.body).toBe(200);
-      expect(claims.json()).toMatchObject({ plugin: "fake-embed", orgId, contribution: "panel" });
+      expect(claims.json()).toMatchObject({
+        access: "embed",
+        scope: "org",
+        orgId,
+        contribution: "panel",
+      });
 
       const ac = new AbortController();
       const res = await fetch(`http://127.0.0.1:${k.port}/plugins/fake-embed/ui/events`, {

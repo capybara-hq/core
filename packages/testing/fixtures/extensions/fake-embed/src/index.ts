@@ -14,12 +14,12 @@ import { z } from "zod";
  * - every data route is an `embed` route: the kernel checks the embed token (`Authorization: Bearer`
  *   or `?token=`) and hands the handler the caller; identity comes only from `caller` (an org-scope
  *   caller, 401 otherwise);
- * - `GET /ui/claims` returns the caller, with `plugin`;
+ * - `GET /ui/claims` returns the caller;
  * - `POST /ui/events` `{ text }` publishes `{ conversationId, text }` on the bus topic
  *   `events.<orgId>` (202);
  * - `GET /ui/events` is an SSE stream: `ready` first, then an `event` for each message in the
  *   token's scope (its conversation, or org-wide messages for a page token); it ends when the
- *   client disconnects.
+ *   client disconnects or the token expires (`caller.exp`).
  */
 
 const EventBody = z.object({ text: z.string().min(1).max(200) });
@@ -136,7 +136,7 @@ export default defineExtension({
 
     ctx.http.route("GET", "/ui/claims", async (_req, caller) => {
       const claims = auth(caller);
-      return claims ? json(200, { plugin: "fake-embed", ...claims }) : unauthorized();
+      return claims ? json(200, claims) : unauthorized();
     });
 
     ctx.http.route("POST", "/ui/events", async (req, caller) => {
@@ -156,7 +156,11 @@ export default defineExtension({
     ctx.http.route("GET", "/ui/events", async (req, caller) => {
       const claims = auth(caller);
       if (!claims) return unauthorized();
-      const done = req.signal;
+      // ends when the client disconnects or the token expires (`caller.exp`)
+      const done = AbortSignal.any([
+        req.signal,
+        AbortSignal.timeout(Math.max(1, claims.exp * 1000 - Date.now())),
+      ]);
       const enc = new TextEncoder();
       let closed = false;
       let unsubscribe: (() => Promise<void>) | undefined;

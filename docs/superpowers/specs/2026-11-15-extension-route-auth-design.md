@@ -30,8 +30,9 @@ is read and before the handler runs, and passes the handler the caller it establ
 | `admin` | as `member` with role ≥ `admin` | `/plugins/<name>/orgs/:orgId<path>` | `{ access: "admin", orgId, accountId, role, config }` |
 
 The `embed` caller is a union mirroring the embed token's scopes:
-`{ access: "embed", scope: "org", orgId, accountId, role, contribution, conversationId?, config }` or
-`{ access: "embed", scope: "platform", accountId, role: "superAdmin", contribution }`.
+`{ access: "embed", scope: "org", orgId, accountId, role, contribution, conversationId?, exp, config }` or
+`{ access: "embed", scope: "platform", accountId, role: "superAdmin", contribution, exp }`. `exp` is
+the token's expiry (Unix seconds), so a long-lived response (SSE) can end when the token does.
 
 `config` is the extension's effective config for that org (platform deployment config plus the org's
 copy of overridable fields), as on every other org-bound extension call; an org whose effective config

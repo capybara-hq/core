@@ -2656,6 +2656,7 @@ export type RouteCaller = {
     role: UiRole;
     contribution: string;
     conversationId?: string;
+    exp: number;
     config: unknown;
 } | {
     access: "embed";
@@ -2663,6 +2664,7 @@ export type RouteCaller = {
     accountId: string;
     role: "superAdmin";
     contribution: string;
+    exp: number;
 } | {
     access: "member" | "admin";
     orgId: string;

@@ -247,7 +247,8 @@ describe("嵌入令牌", () => {
     const claims = await asPlugin("GET", "/ui/claims", token);
     expect(claims.statusCode, claims.body).toBe(200);
     expect(claims.json()).toMatchObject({
-      plugin: "fake-embed",
+      access: "embed",
+      scope: "org",
       orgId,
       accountId: ownerId,
       role: "owner",
