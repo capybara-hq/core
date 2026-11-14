@@ -277,6 +277,37 @@ describe("planFit inside the latest user turn", () => {
     // the summary is never truncated
     expect(trimmed.truncated.every((t) => t.messageIndex !== 0)).toBe(true);
   });
+
+  it("truncates a huge re-rendered opening message after the summary, never the summary text", () => {
+    const log = new Log();
+    const task = log.user(`the task ${"t".repeat(40_000)}`);
+    log.runStarted();
+    pair(log, "a", 300);
+    log.summary(task.seq + 3, "Earlier: the user asked for the task; call a ran.");
+    pair(log, "b", 300);
+    pair(log, "c", 300);
+    const { request, estimate } = build(log);
+    // messages: 0 summary (block 0 the summary text, block 1 the opening message), 1 call b,
+    // 2 result b, 3 call c, 4 result c
+    const summary = request.messages[0] as ModelMessage;
+    expect(summary.content).toHaveLength(2);
+    expect(JSON.stringify(summary.content[0])).toContain("<conversation_summary>");
+    expect(JSON.stringify(summary.content[1])).toContain("the task ttt");
+    // room for the summary text, the latest pair and little else: the opening message must go
+    const target = estimate - 9_000;
+    const trimmed = plan(log, request, estimate, target) as FitPlan;
+    expect(trimmed.truncated).toContainEqual({
+      messageIndex: 0,
+      block: 1,
+      note: FIT_TRUNCATION_NOTE,
+    });
+    expect(trimmed.truncated).not.toContainEqual(expect.objectContaining({ block: 0 }));
+    expect(estimateAfterFit(request, estimate, trimmed)).toBeLessThanOrEqual(target);
+    const fitted = applyFit(request, trimmed);
+    expect(JSON.stringify(fitted.messages[0])).toContain("Earlier: the user asked for the task");
+    expect(JSON.stringify(fitted.messages)).not.toContain("tttttttttt");
+    expect(pairsIntact(fitted.messages)).toBe(true);
+  });
 });
 
 describe("planFit", () => {

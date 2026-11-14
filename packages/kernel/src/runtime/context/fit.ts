@@ -87,9 +87,15 @@ const NOTE_TOKENS = estimateTokens(
   [],
 );
 
-/** The conversation summary message (never dropped or truncated: it is the retained history). */
-const isSummary = (m: ModelMessage): boolean =>
-  m.role === "user" && m.content.some((b) => b.type === "text" && b.text.startsWith(SUMMARY_OPEN));
+/** The summary text block (never truncated: it is the retained history). */
+const isSummaryText = (b: ContentBlock): boolean =>
+  b.type === "text" && b.text.startsWith(SUMMARY_OPEN);
+
+/**
+ * The conversation summary message (never dropped; its summary text is never truncated, the
+ * re-rendered opening user message after it may be: spec §4.3 point 5).
+ */
+const isSummary = (m: ModelMessage): boolean => m.role === "user" && m.content.some(isSummaryText);
 
 /**
  * A typed user turn (a person's message): not a tool-result carrier and not the summary, which may
@@ -127,7 +133,8 @@ const truncatable = (b: ContentBlock): boolean =>
  * latest typed message stays (when the summary covers it, the turn starts after the summary). Never
  * a pair's half, never the summary or a system message. If that is not enough, it truncates the kept
  * messages' largest text / `tool_result` blocks (replacing the content with
- * {@link FIT_TRUNCATION_NOTE}).
+ * {@link FIT_TRUNCATION_NOTE}); in the summary message only the blocks after the summary text (the
+ * re-rendered opening user message) are candidates.
  */
 export function planFit(input: PlanFitInput): FitPlan | null {
   const { request, model, maxOutputTokens, reserveTokens, estimate } = input;
@@ -204,13 +211,15 @@ export function planFit(input: PlanFitInput): FitPlan | null {
   if (current <= target) return plan;
 
   // still too large: replace the kept messages' largest text / tool_result blocks with the note,
-  // largest first, ties by position
+  // largest first, ties by position. In the summary message only the summary text is protected:
+  // the turn's opening message re-rendered after it (spec §4.2) is a kept block like any other
   const candidates: { messageIndex: number; block: number; tokens: number }[] = [];
-  for (let i = keepFrom; i < messages.length; i++) {
+  for (let i = 0; i < messages.length; i++) {
     const m = messages[i];
-    if (m === undefined || dropped.has(i) || m.role === "system" || isSummary(m)) continue;
+    if (m === undefined || dropped.has(i) || m.role === "system") continue;
+    if (i < keepFrom && !isSummary(m)) continue;
     m.content.forEach((b, block) => {
-      if (!truncatable(b)) return;
+      if (!truncatable(b) || isSummaryText(b)) return;
       const tokens = blockTokens(b);
       if (tokens > NOTE_TOKENS) candidates.push({ messageIndex: i, block, tokens });
     });

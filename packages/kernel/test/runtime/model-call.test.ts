@@ -1417,6 +1417,176 @@ describe("runModelStep", () => {
           expect(await ofType("model_call")).toHaveLength(5);
         });
       });
+
+      const isCompactionCall = (req: ModelRequest): boolean =>
+        req.system.some((x) => x.text.includes(COMPACTION_MARKER));
+
+      const compactionUsages = async () =>
+        (await ofType("usage")).filter((e) => e.payload.purpose === "compaction");
+
+      it("a proactive summary and a forced one in the same step write two summaries and two usages", async () => {
+        // the agent's model (W 2000) compacts proactively and then fails; the fallback (W 700)
+        // overflows and compacts again with its own model: each compaction has its own keys, so
+        // the second summary and its usage are not dropped as a repeat of the first (spec §4.4)
+        let fbCalls = 0;
+        const s = stub(
+          [
+            stubInfo("main", { contextWindow: 2000, maxOutputTokens: 100 }),
+            stubInfo("fb", { contextWindow: 700, maxOutputTokens: 100 }),
+          ],
+          (req) => {
+            if (isCompactionCall(req)) return `Summary: ${"s".repeat(300)}`;
+            if (req.model === "main") throw new ModelError("server", "down", { retryAfterMs: 1 });
+            fbCalls++;
+            if (fbCalls === 1) throw new ModelError("context_overflow", "too long");
+            return "fb answer";
+          },
+        );
+        stubImpl = s;
+        for (let i = 0; i < 8; i++) {
+          await say(filler(i));
+          await answer(filler(i));
+        }
+        await say("go");
+        const agent = agentWith({
+          model: { provider: "stub", model: "main" },
+          fallback: { provider: "stub", model: "fb" },
+        });
+        await withSettings({ reserveTokens: 0 }, async () => {
+          expect((await step({ agent })).content).toEqual([{ type: "text", text: "fb answer" }]);
+          expect(s.calls.filter(isCompactionCall).map((c) => c.model)).toEqual(["main", "fb"]);
+          const summaries = await ofType("compaction_summary");
+          expect(summaries).toHaveLength(2);
+          expect(await compactionUsages()).toHaveLength(2);
+          // the retried fallback request carries the second summary
+          const last = (await ofType("model_call")).at(-1);
+          expect(last?.payload.request.summarySeq).toBe(summaries[1]?.seq);
+        });
+      });
+
+      it("a step re-run after a crash between the summary call and its write writes one summary", async () => {
+        await withSettings({ reserveTokens: 0 }, async () => {
+          for (let i = 0; i < 8; i++) {
+            await say(filler(i));
+            await answer(filler(i));
+          }
+          await say("echo:after compaction");
+          const agent = agentWith({ model: { provider: "model-fake", model: "fake-small" } });
+          const original = deps.stepLog.appendReported.bind(deps.stepLog);
+          let crashed = false;
+          const spy = vi
+            .spyOn(deps.stepLog, "appendReported")
+            .mockImplementation(async (conversation, evs) => {
+              if (!crashed && evs.some((e) => e.type === "compaction_summary")) {
+                crashed = true;
+                throw new Error("crash before the summary write");
+              }
+              return original(conversation, evs);
+            });
+          try {
+            await expect(step({ agent })).rejects.toThrow("crash before the summary write");
+            expect(await ofType("compaction_summary")).toHaveLength(0);
+            const r = await step({ agent });
+            expect(r.content).toEqual([{ type: "text", text: "after compaction" }]);
+          } finally {
+            spy.mockRestore();
+          }
+          expect(await ofType("compaction_summary")).toHaveLength(1);
+          expect(await compactionUsages()).toHaveLength(1);
+        });
+      });
+
+      /** An earlier summary of ~3000 tokens: the agent's model holds it, a 2000-token window cannot. */
+      const largeSummaryHistory = async () => {
+        await say("old");
+        await answer("old answer");
+        const covered = (await all()).at(-1) as ConversationEvent;
+        await eventLog.append(conversationId, [
+          {
+            type: "compaction_summary",
+            runId: "old-run",
+            payload: { coversUpToSeq: covered.seq, text: `Summary: ${"o".repeat(12_000)}` },
+          },
+        ]);
+        for (let i = 0; i < 6; i++) {
+          await say(filler(i));
+          await answer(filler(i));
+        }
+        await say("go");
+      };
+
+      it("a fallback rung the guard cannot fit compacts once with its own model before sending", async () => {
+        // the fallback's 2000-token window cannot hold the earlier summary, which the fit plan never
+        // drops: the guard compacts with the fallback's model, rebuilds and sends (spec §4.3 point 5)
+        let fbCalls = 0;
+        const s = stub(
+          [stubInfo("main"), stubInfo("fb", { contextWindow: 2000, maxOutputTokens: 100 })],
+          (req) => {
+            if (isCompactionCall(req)) return `Summary: ${"s".repeat(300)}`;
+            if (req.model === "main") throw new ModelError("server", "down", { retryAfterMs: 1 });
+            fbCalls++;
+            // the forced compaction was this rung's compaction fix-up: an overflow goes to the trim
+            if (fbCalls === 1) throw new ModelError("context_overflow", "too long");
+            return "fb answer";
+          },
+        );
+        stubImpl = s;
+        await largeSummaryHistory();
+        const agent = agentWith({
+          model: { provider: "stub", model: "main" },
+          fallback: { provider: "stub", model: "fb" },
+        });
+        await withSettings({ enabled: false, reserveTokens: 0 }, async () => {
+          expect((await step({ agent })).content).toEqual([{ type: "text", text: "fb answer" }]);
+          // one compaction (chunked: the earlier summary is over the fallback's chunk size), with
+          // the fallback's model, before any fallback request went out
+          const compactions = s.calls.filter(isCompactionCall);
+          expect(compactions.length).toBeGreaterThan(0);
+          expect(compactions.every((c) => c.model === "fb")).toBe(true);
+          const firstFb = s.calls.findIndex((c) => c.model === "fb" && !isCompactionCall(c));
+          expect(s.calls.indexOf(compactions.at(-1) as ModelRequest)).toBeLessThan(firstFb);
+          // main twice, then the fallback's compacted request and its trim retry: no extra row for
+          // the compaction
+          const rows = await ofType("model_call");
+          expect(rows.map((r) => r.payload.model)).toEqual(["main", "main", "fb", "fb"]);
+          const summaries = await ofType("compaction_summary");
+          expect(summaries).toHaveLength(2);
+          expect(rows[2]?.payload.request.summarySeq).toBe(summaries[1]?.seq);
+          expect(rows[2]?.payload.request.maxOutputTokens).toBe(100);
+        });
+      });
+
+      it("run.context_too_large only after the forced compaction still cannot fit the rung", async () => {
+        // the system prompt alone is over the fallback's window: compaction cannot help
+        const s = stub(
+          [stubInfo("main"), stubInfo("fb", { contextWindow: 2000, maxOutputTokens: 100 })],
+          (req) => {
+            if (isCompactionCall(req)) return `Summary: ${"s".repeat(300)}`;
+            throw new ModelError("server", "down", { retryAfterMs: 1 });
+          },
+        );
+        stubImpl = s;
+        await largeSummaryHistory();
+        const agent = agentWith({
+          instructions: "x".repeat(4 * 2500),
+          model: { provider: "stub", model: "main" },
+          fallback: { provider: "stub", model: "fb" },
+        });
+        await withSettings({ enabled: false, reserveTokens: 0 }, async () => {
+          expect(await runErrorCode(step({ agent }))).toBe("run.context_too_large");
+          // one (chunked) compaction with the fallback's model, then the failure
+          const compactions = s.calls.filter(isCompactionCall);
+          expect(compactions.length).toBeGreaterThan(0);
+          expect(compactions.every((c) => c.model === "fb")).toBe(true);
+          expect(await ofType("compaction_summary")).toHaveLength(2);
+          // no fallback request was sent or logged
+          expect(s.calls.filter((c) => c.model === "fb" && !isCompactionCall(c))).toHaveLength(0);
+          expect((await ofType("model_call")).map((r) => r.payload.model)).toEqual([
+            "main",
+            "main",
+          ]);
+        });
+      });
     });
 
     describe("chunked compaction (spec §4.5)", () => {
@@ -2350,11 +2520,14 @@ describe("model.request hooks: stickiness, compaction (M-4, M-2, I-1)", () => {
     const { seen, hooks } = fakeHooks((p) => p.purpose === "compaction");
     const r = await hookedStep({ ...deps, hooks }, small());
     expect(r.content).toEqual([{ type: "text", text: "after compaction" }]);
-    const [failed] = await ofType("compaction_failed");
-    expect(failed?.payload).toEqual({
-      attempt: 1,
-      reason: 'compaction request blocked by the "guard" policy hook (deny)',
-    });
+    // the proactive compaction is denied; fake-small's window cannot hold its own output cap, so
+    // the guard's strict target is out of reach and its forced compaction (spec §4.3 point 5) is
+    // denied too, with its own keys, before the squeezed fit sends the step
+    const failures = await ofType("compaction_failed");
+    expect(failures.map((f) => f.payload)).toEqual([
+      { attempt: 1, reason: 'compaction request blocked by the "guard" policy hook (deny)' },
+      { attempt: 2, reason: 'compaction request blocked by the "guard" policy hook (deny)' },
+    ]);
     expect(JSON.stringify(await all())).not.toContain("raw detail");
     expect(await ofType("compaction_summary")).toEqual([]);
     expect(await ofType("hook_denied")).toEqual([]);
@@ -2377,7 +2550,7 @@ describe("model.request hooks: stickiness, compaction (M-4, M-2, I-1)", () => {
       .where("action", "=", "hook.denied")
       .where("target", "=", conversationId)
       .execute();
-    expect(rows).toHaveLength(1);
+    expect(rows).toHaveLength(2);
     expect(rows[0]?.detail).toMatchObject({
       purpose: "compaction",
       plugin: "guard",
