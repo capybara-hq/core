@@ -51,7 +51,7 @@ import {
   hookScope,
 } from "../runtime/hook-calls.js";
 import { type SubagentParent, subagentWaitingIdemKey, type WaitingFor } from "../runtime/loop.js";
-import { assistantIdemKey, MAX_MODEL_ATTEMPTS, modelCallIdemKey } from "../runtime/model-call.js";
+import { assistantIdemKey, MAX_STEP_MODEL_CALLS, modelCallIdemKey } from "../runtime/model-call.js";
 import { rootSurfaceOf } from "../runtime/subagents/child.js";
 import type { DispatchArgs, DispatchOutcome } from "../runtime/subagents/dispatch.js";
 import { type MessageOutcome, SubagentMessages } from "../runtime/subagents/messages.js";
@@ -1830,7 +1830,8 @@ export class ToolPipeline {
    * old key that was offered (in flight across the rename) from one that never was.
    */
   private async requestToolKeys(ctx: ToolStepContext): Promise<Set<string> | null> {
-    for (let attempt = MAX_MODEL_ATTEMPTS; attempt >= 1; attempt--) {
+    // attempts can reach MAX_STEP_MODEL_CALLS after reactive overflow fix-ups; scan from the top
+    for (let attempt = MAX_STEP_MODEL_CALLS; attempt >= 1; attempt--) {
       const e = await this.deps.eventLog.findByIdem(
         ctx.conversationId,
         modelCallIdemKey(ctx.runId, ctx.step, attempt),
@@ -1848,7 +1849,9 @@ export class ToolPipeline {
    * 或找不到 model_call 时返回 null（不做加载检查）。已加载集合由此从日志得出，不放进程内存。
    */
   private async sentTools(ctx: ToolStepContext): Promise<Set<string> | null> {
-    for (let attempt = MAX_MODEL_ATTEMPTS; attempt >= 1; attempt--) {
+    // attempts can reach MAX_STEP_MODEL_CALLS after reactive overflow fix-ups; the assistant_message
+    // comes from the last attempt, so scan from the top
+    for (let attempt = MAX_STEP_MODEL_CALLS; attempt >= 1; attempt--) {
       const e = await this.deps.eventLog.findByIdem(
         ctx.conversationId,
         modelCallIdemKey(ctx.runId, ctx.step, attempt),

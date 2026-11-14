@@ -728,6 +728,61 @@ describe("buildTrajectory: hook denials", () => {
     );
   });
 
+  it("a compact run has no step: its chunked compaction usages sum into the run's totals", () => {
+    const { events, e } = log();
+    e(0, "r9", {
+      type: "run_started",
+      payload: {
+        agentVersion: 1,
+        model: { provider: "p", model: "m1" },
+        triggerAccountId: "acc-1",
+        trigger: "compact",
+      },
+    });
+    // the two chunk calls as the kernel writes them: one usage per call, purpose compaction
+    e(100, "r9", {
+      type: "usage",
+      payload: {
+        step: 0,
+        provider: "p",
+        model: "m1",
+        ...U0,
+        purpose: "compaction",
+        chunk: 1,
+        chunks: 2,
+      },
+    });
+    e(200, "r9", {
+      type: "usage",
+      payload: {
+        step: 0,
+        provider: "p",
+        model: "m1",
+        ...U1,
+        purpose: "compaction",
+        chunk: 2,
+        chunks: 2,
+      },
+    });
+    // the summary's own estimate is not usage: it never enters the totals
+    e(300, "r9", {
+      type: "compaction_summary",
+      payload: { coversUpToSeq: 0, text: "summary", savedTokens: 5000 },
+    });
+    e(400, "r9", { type: "run_finished", payload: { reason: "completed", consumedUpToSeq: 0 } });
+    const [run] = buildTrajectory(events, table(PRICE_M1));
+    // no model step to pair: the usage lands in the totals only
+    expect(run?.steps).toEqual([]);
+    expect(run?.totals.modelCalls).toBe(0);
+    expect(run?.totals.toolCalls).toBe(0);
+    expect(run?.totals.usage).toEqual(usage(3000, 250, 500, 100));
+    expect(run?.totals.cost).toBeCloseTo(
+      (costOf(U0, PRICE_M1) as number) + (costOf(U1, PRICE_M1) as number),
+      10,
+    );
+    expect(run?.end).toEqual({ kind: "finished", detail: "completed" });
+  });
+
   it("a fork invocation's run carries the fork span: the skill, the child it ran and its report (phase D)", () => {
     const { events, e } = log();
     const forkRun = (runId: string, ms: number, skill: string) => {

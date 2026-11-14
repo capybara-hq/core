@@ -162,7 +162,8 @@
       "artifact_removed": "这个文件已不可用。",
       "queue_full": "排队的消息已满。请等排队消息发出，或删掉一些。",
       "queue_item_not_found": "这条排队消息已发出或已删除。",
-      "read_only": "这是子智能体的会话，不能在这里发消息。"
+      "read_only": "这是子智能体的会话，不能在这里发消息。",
+      "busy": "这个会话正在运行，请等它结束后再试。"
     },
     "background_task": {
       "not_found": "这个后台任务不存在或已被清理。",
@@ -179,6 +180,7 @@
       "storage_unavailable": "附件存储暂时不可用。",
       "hook_denied": "请求被扩展「{plugin}」的策略拦截。",
       "hook_denied_unknown": "请求被扩展策略拦截。",
+      "context_too_large": "会话内容超出了模型的上下文窗口。请先压缩会话，再重试。",
       "not_found": "这次运行不存在或不属于这个会话。"
     },
     "component": {
@@ -378,6 +380,7 @@
       "case_exists": "这次运行已经在该评测集里了。",
       "too_many_cases": "评测集已满，无法再加入用例。",
       "agent_mismatch": "这次运行不属于该评测集的智能体。",
+      "compact_not_replayable": "手动压缩运行没有可回放的模型步骤，不能作为评测用例。请选择该对话的普通运行。",
       "run_not_finished": "运行还没结束，结束后才能加入评测集。",
       "case_too_large": "这次运行太大，不能加入评测集。",
       "call_not_found": "快照里找不到这次模型调用。",
@@ -1448,8 +1451,18 @@
     "divider": {
       "compacted": "较早的会话已压缩",
       "compactedSaved": "较早的会话已压缩 · 节省 {n} tokens",
+      "compactFailed": "压缩失败",
       "fallback": "所选模型 {from} 已不可用，本条起改用智能体的模型 {to}"
     },
+    "compactionRun": "压缩",
+    "compacting": "正在压缩会话…",
+    "compactingChunk": "{chunk}/{chunks}",
+    "compactingElapsed": "{seconds} 秒",
+    "compact": "压缩会话",
+    "compactCommandHint": "总结较早的消息，释放上下文",
+    "compactNoArgs": "「/compact」命令不接受参数。",
+    "compactBusy": "会话正在运行，结束后再压缩。",
+    "commandsGroup": "命令",
     "system": "系统",
     "fileRemoved": "已不可用",
     "noAgents": "没有可用的智能体。请先新建一个智能体。",
@@ -2424,6 +2437,30 @@
       "label": "默认时区"
     }
   },
+  "compaction": {
+    "title": "对话压缩",
+    "description": "长对话在填满模型的上下文窗口之前先压缩成摘要，长期进行的对话仍能带着最近的轮次继续。",
+    "follow": "跟随平台设置",
+    "followHint": "关闭后可以为这个组织单独设置压缩参数。",
+    "enabled": "自动压缩长对话",
+    "enabledHint": "关闭后这里不再提前压缩；接近上下文窗口时仍会裁剪或压缩本次请求，使其放得下。",
+    "threshold": {
+      "label": "触发阈值",
+      "help": "达到模型上下文窗口的这个比例时开始压缩（0.5–0.95，默认 0.8）。"
+    },
+    "keepRecentTurns": {
+      "label": "完整保留的最近轮次",
+      "help": "摘要之外原样保留最近多少个用户轮次（0–20，默认 4）。"
+    },
+    "reserveTokens": {
+      "label": "预留 token",
+      "help": "上下文窗口下方为回复和下一次请求留出的余量（0–50,000，默认 8,000）。"
+    },
+    "maxOutputTokens": {
+      "label": "摘要输出上限",
+      "help": "摘要最多生成多少 token（1,024–32,000，默认 20,000）。"
+    }
+  },
   "configForm": {
     "none": "—",
     "issues": "配置有问题：",
@@ -3363,6 +3400,7 @@
       "params_changed": "模型参数有变化",
       "media_missing": "附件已不可用",
       "media_changed": "附件有变化",
+      "context_fit": "候选模型的上下文窗口使请求的裁剪方式不同",
       "tool_unmatched": "有工具调用没有对应的记录",
       "subagent_changed": "子智能体的定义与记录时不同",
       "model_switched": "候选模型替换了会话中切换的模型"

@@ -40,7 +40,8 @@ import { toolLabel, toolLabelOfKey, toolLabelText } from "./tool-label";
  *   `usage` events) and how it ended (spec §6.16.23); a run still going has none. A `user_message`
  *   with `retryOf` folds into the failed run of the message it repeats ("Retried") instead of a
  *   second bubble. `compaction_summary` and `model_switched { reason: "unavailable" }` become
- *   dividers.
+ *   dividers, and a manual compact run (`run_started.trigger: "compact"`) is named in its row; its
+ *   `compaction_failed` becomes a failed divider (an automatic one stays silent).
  * - Logs written before UI refresh B (no `description`, `view`, title or card) still render: rows
  *   fall back to the tool key and the first string argument, failures to `isError`.
  * - Sub-agents (phase C, Task 21): consecutive `agent` calls form one `subagents` entry, its rows
@@ -216,6 +217,7 @@ export interface ConnectItem {
 
 export type DividerData =
   | { divider: "compacted"; summary: string; savedTokens: number | null }
+  | { divider: "compact-failed"; reason: string }
   | { divider: "fallback"; from: ModelRef | null; to: ModelRef | null };
 
 /** A run's tokens: every `usage` of the run (its step calls and compaction). */
@@ -250,6 +252,8 @@ export type RunData = {
   runId: string | null;
   /** The run's last model call, else the model it started with; null when the log has neither. */
   model: ModelRef | null;
+  /** A manual compact run (`run_started.trigger: "compact"`): its row names itself. */
+  compact?: boolean;
   /**
    * The run's working time: from `run_started` to the terminal event without its waits for a
    * person (an approval or a question, until answered), the same derivation as the status bar's
@@ -421,6 +425,13 @@ const stepKey = (runId: string, step: number) => `${runId}:${step}`;
 const callKey = (runId: string | null, callId: string) => `${runId ?? ""}\u0000${callId}`;
 /** A row id that is a call key (an `agent` call never dispatched), not a sub-agent id. */
 export const isCallKey = (id: string) => id.includes("\u0000");
+
+/**
+ * What a compaction divider shows as saved: the summary event's estimate, or null when the log has
+ * none (older logs) or nothing was saved (0): "saved 0 tokens" is no news, the divider stays plain.
+ */
+const savedTokensOf = (saved: number | undefined): number | null =>
+  saved === undefined || saved === 0 ? null : saved;
 
 const joinText = (blocks: { type: string; text?: string }[], type: "text" | "thinking") =>
   blocks
@@ -777,25 +788,28 @@ export function buildEventTimeline(
       clock: RunClock | null;
       model: ModelRef | null;
       tokens: RunTokens | null;
+      /** `run_started.trigger`: `compact` is a manual compaction (its row names itself). */
+      compact: boolean;
     }
   >();
   const runOf = (runId: string) => {
     let r = runs.get(runId);
     if (r === undefined) {
-      r = { clock: null, model: null, tokens: null };
+      r = { clock: null, model: null, tokens: null, compact: false };
       runs.set(runId, r);
     }
     return r;
   };
   const runData = (
     e: ConversationEvent,
-  ): Pick<RunData, "runId" | "model" | "durationMs" | "tokens" | "at"> => {
+  ): Pick<RunData, "runId" | "model" | "compact" | "durationMs" | "tokens" | "at"> => {
     const r = e.runId === null ? undefined : runs.get(e.runId);
     // the run's working time, as the status bar counts it (waits for a person left out)
     r?.clock?.end(Date.parse(e.createdAt));
     return {
       runId: e.runId,
       model: r?.model ?? null,
+      ...(r?.compact ? { compact: true } : {}),
       durationMs: r?.clock == null ? null : Math.max(0, r.clock.workedMs),
       tokens: r?.tokens ?? null,
       at: e.createdAt,
@@ -807,8 +821,6 @@ export function buildEventTimeline(
   let switched: ModelRef | null = null;
   /** A fallback divider waiting for its run's `run_started` (its `to`). */
   const fallbacks = new Map<string, number>();
-  /** Usage of the latest compaction call (the `saved` of the next summary). */
-  let compactionUsage: number | null = null;
   /** `agent` calls by (runId, callId). */
   const agentCalls = new Map<string, { sub: TimelineSubagent; runId: string | null }>();
   /** `agent` calls whose tool result is in the log. */
@@ -885,6 +897,7 @@ export function buildEventTimeline(
           if (r.clock === null) r.clock = new RunClock(at);
           else r.clock.restart(at);
           if (r.model === null) r.model = e.payload.model;
+          if (e.payload.trigger === "compact") r.compact = true;
           models.set(e.runId, e.payload.model);
           if (e.payload.triggerAccountId !== undefined)
             starters.set(e.runId, e.payload.triggerAccountId);
@@ -1485,13 +1498,6 @@ export function buildEventTimeline(
           tk.total += p.inputTokens + p.cacheReadTokens + p.cacheWriteTokens + p.outputTokens;
           r.tokens = tk;
         }
-        if (e.payload.purpose === "compaction") {
-          const p = e.payload;
-          compactionUsage = Math.max(
-            0,
-            p.inputTokens + p.cacheReadTokens + p.cacheWriteTokens - p.outputTokens,
-          );
-        }
         break;
       case "background_task_finished": {
         const p = e.payload;
@@ -1507,14 +1513,23 @@ export function buildEventTimeline(
         break;
       }
       case "compaction_summary":
+        // the summary event's own estimate (context compaction spec §4.9); with no value (an older
+        // log) or nothing saved there is no number to show, so the divider stays plain
         out.push({
           kind: "divider",
           key,
           divider: "compacted",
           summary: e.payload.text,
-          savedTokens: compactionUsage,
+          savedTokens: savedTokensOf(e.payload.savedTokens),
         });
-        compactionUsage = null;
+        break;
+      case "compaction_failed":
+        // A manual compact run's failure is its outcome (the person clicked "Compact
+        // conversation"): a divider says so. An automatic compaction's failure is the step's own
+        // concern (it trims instead) and a manual early skip writes nothing, so both stay silent.
+        if (e.runId !== null && runs.get(e.runId)?.compact === true) {
+          out.push({ kind: "divider", key, divider: "compact-failed", reason: e.payload.reason });
+        }
         break;
       case "run_finished":
         out.push({ kind: "run", key, ...runData(e), status: "ok" });

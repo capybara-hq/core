@@ -21,6 +21,7 @@ import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { createLogger } from "../../src/log.js";
+import { COMPACTION_SETTINGS } from "../../src/runtime/compaction-settings.service.js";
 import {
   type MediaBytes,
   type MediaInfo,
@@ -139,6 +140,7 @@ beforeAll(async () => {
         attachments: { ...config.attachments, requestMediaBytes: budget },
       }),
     },
+    compactionSettings: { resolve: async () => COMPACTION_SETTINGS.parse({}) },
     log: silent,
     media: {
       info: async (_o, _c, ids) =>

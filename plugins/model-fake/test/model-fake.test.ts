@@ -66,7 +66,7 @@ describe("model-fake", () => {
     expect(plugin.provides).toEqual([MODEL_PROVIDER_EXTENSION_POINT_V2]);
   });
 
-  it("declares effort (three tiers) and the vendor parameter model-fake.style; no capabilities.effort", async () => {
+  it("declares effort (three tiers), the maxOutputTokens knob and model-fake.style; no capabilities.effort", async () => {
     const [m] = await mk().listModels();
     expect(m?.capabilities).not.toHaveProperty("effort");
     expect(m?.parameters).toEqual([
@@ -75,6 +75,13 @@ describe("model-fake", () => {
         standard: "effort",
         schema: { type: "string", enum: ["low", "medium", "high"] },
         label: { zh: "思考深度", en: "Effort" },
+        description: expect.any(Object),
+      },
+      {
+        key: "maxOutputTokens",
+        standard: "maxOutputTokens",
+        schema: { type: "integer", minimum: 1 },
+        label: { zh: "输出上限", en: "Max output tokens" },
         description: expect.any(Object),
       },
       {

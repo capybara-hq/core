@@ -16,6 +16,7 @@ import {
 import type { ConversationEvent, EventPayload } from "../conversations/events.js";
 import { sameModel, selectionAt } from "../conversations/selection.js";
 import { ApiError } from "../errors.js";
+import { COMPACTION_SETTINGS } from "../identity/settings.js";
 import {
   type MediaBytes,
   type MediaInfo,
@@ -24,6 +25,8 @@ import {
   planMedia,
   type RequestTool,
 } from "../runtime/context/build.js";
+import { applyFit, clampOutput, type FitPlan, planFit } from "../runtime/context/fit.js";
+import { estimateTokens } from "../runtime/context/tokens.js";
 import { assembleModelRequest, type MediaSourceDeps } from "../runtime/model-call.js";
 import { CHILD_REMOVED_TOOLS } from "../runtime/subagents/definition.js";
 import { AGENT_TOOL } from "../tools/builtin-names.js";
@@ -43,6 +46,26 @@ const pinsSkills = (d: unknown): boolean => {
       : undefined;
   return Array.isArray(pinned) && pinned.length > 0;
 };
+
+/** `R` when the caller did not resolve the org's settings (the built-in platform default). */
+const DEFAULT_RESERVE_TOKENS = COMPACTION_SETTINGS.parse({}).reserveTokens;
+
+/** Two hard-fit plans trim the same messages and blocks (the recorded plan may be absent). */
+function samePlan(a: FitPlan | null | undefined, b: FitPlan | undefined): boolean {
+  if (a === null || a === undefined || b === undefined) return (a ?? undefined) === b;
+  if (a.droppedMessageIndexes.length !== b.droppedMessageIndexes.length) return false;
+  if (a.droppedMessageIndexes.some((x, i) => x !== b.droppedMessageIndexes[i])) return false;
+  if (a.truncated.length !== b.truncated.length) return false;
+  return a.truncated.every((t, i) => {
+    const o = b.truncated[i];
+    return (
+      o !== undefined &&
+      t.messageIndex === o.messageIndex &&
+      t.block === o.block &&
+      t.note === o.note
+    );
+  });
+}
 
 /**
  * 由用例快照还原某次模型请求（单步回放的基础，D2 / C5）。与运行时共用 {@link assembleModelRequest}，
@@ -67,7 +90,10 @@ const pinsSkills = (d: unknown): boolean => {
  * - `params_changed`：没给候选参数时，记录的参数按所用模型的声明清洗后有键被丢弃或值变了（换了模型或模型声明变了）；
  * - `media_missing`：某附件记录里不是「不再可用」，还原时却取不到；
  * - `media_changed`（只在基线判定）：其余任何媒体结果与记录不同（按附件 id 比 outcome 与 etag：预算省略、
- *   图片数 / 页数上限、对象被替换后 etag 变了等）。
+ *   图片数 / 页数上限、对象被替换后 etag 变了等）；
+ * - `context_fit` (context compaction spec §4.9, never for a baseline): the candidate model's window
+ *   makes the hard fit guard plan a different trim than the recorded `model_call.request.fit` (the
+ *   recorded plan is replayed for a baseline; a candidate applies its recomputed plan).
  */
 
 /** 还原结果与原请求不一致的原因。 */
@@ -92,6 +118,12 @@ export type DriftReason =
   | "model_switched"
   | "media_missing"
   | "media_changed"
+  /**
+   * Context compaction spec §4.9: a candidate model whose context window makes the hard-fit guard
+   * trim differently from the recorded plan (`model_call.request.fit`). The fitted request still
+   * goes out against the candidate's window.
+   */
+  | "context_fit"
   /** 整轮回放（T5）：有工具调用没有匹配到记录（模型收到 REPLAY_NO_RECORDING）。 */
   | "tool_unmatched";
 
@@ -107,6 +139,7 @@ const DRIFT_ORDER: readonly DriftReason[] = [
   "model_switched",
   "media_missing",
   "media_changed",
+  "context_fit",
   "tool_unmatched",
 ];
 
@@ -139,6 +172,12 @@ export interface ReconstructOptions {
    * that version.
    */
   subagentVersion?: AgentDefinition;
+  /**
+   * The safety reserve (`R`) the run's organization had when the call was recorded: a candidate
+   * model recomputes the hard fit against `W - O - R` with it (context compaction spec §4.9).
+   * Defaults to the built-in platform default; the eval worker passes the resolved settings.
+   */
+  reserveTokens?: number;
 }
 
 export interface ReconstructResult {
@@ -311,7 +350,7 @@ export function reconstructRequest(
   }
   const budget = opts.mediaBudgetBytes ?? rec.mediaBudgetBytes;
 
-  const { request, meta, mediaTokens } = assembleModelRequest({
+  const built = assembleModelRequest({
     events: inputEvents(all, call),
     agent,
     agentVersion: version,
@@ -326,7 +365,41 @@ export function reconstructRequest(
     ...(opts.media !== undefined && { media: opts.media }),
     ...(budget !== undefined && { mediaBudgetBytes: budget }),
     defaultMaxOutputTokens: rec.maxOutputTokens ?? opts.model.maxOutputTokens,
+    // The baseline replays the recorded output cap as sent: the runtime may have clamped it below
+    // the agent's `maxOutputTokens` knob (context compaction spec §4.3), and recomputing it from the
+    // knob would replay a larger cap. A candidate below recomputes the clamp and the trim instead.
+    ...(baseline && rec.maxOutputTokens !== undefined
+      ? { recordedMaxOutputTokens: rec.maxOutputTokens }
+      : {}),
+    // the baseline replays the recorded trim (no reserve needed); a candidate below recomputes it
+    ...(baseline && rec.fit !== undefined ? { fit: rec.fit } : {}),
   });
+  const { request, meta, mediaTokens } = built;
+
+  if (!baseline) {
+    // The hard fit guard against the candidate's window (spec §4.9): clamp the output cap and the
+    // reserve to that window, apply the fit the candidate would have used, and report
+    // `context_fit` when the plan differs from the recorded one.
+    const reserve = opts.reserveTokens ?? DEFAULT_RESERVE_TOKENS;
+    const estimate = estimateTokens(request.messages, request.system, request.tools, mediaTokens);
+    request.maxOutputTokens = clampOutput(
+      opts.model.contextWindow,
+      request.maxOutputTokens,
+      estimate,
+    );
+    const recomputed = planFit({
+      events: inputEvents(all, call),
+      request,
+      model: opts.model,
+      maxOutputTokens: request.maxOutputTokens,
+      reserveTokens: reserve,
+      estimate,
+    });
+    if (!samePlan(recomputed, rec.fit)) drift.add("context_fit");
+    if (recomputed !== null) {
+      request.messages = applyFit(request, recomputed).messages;
+    }
+  }
 
   if (baseline) {
     if (meta.systemHash !== rec.systemHash) drift.add("system_hash");

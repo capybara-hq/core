@@ -205,15 +205,24 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
   });
 
   it.each([
-    // the radio cards of tool search; the read-only note only for a member
-    ["/settings/organization", `GET ${O}/settings`, { radios: 1, kv: 0, items: 0, switches: 0 }],
+    // the radio cards of tool search, and the compaction section's follow checkbox and switch
+    // (its four numbers are plain fields); the read-only note only for a member
+    [
+      "/settings/organization",
+      `GET ${O}/settings`,
+      { radios: 1, kv: 0, items: 0, switches: 1, groups: 0, hints: 0 },
+    ],
     // the tool policy, auto mode and cloud network radios, the resources' key-value
-    ["/settings/sandbox", `GET ${O}/settings`, { radios: 3, kv: 1, items: 0, switches: 0 }],
+    [
+      "/settings/sandbox",
+      `GET ${O}/settings`,
+      { radios: 3, kv: 1, items: 0, switches: 0, groups: 0, hints: 0 },
+    ],
     // the 用途默认 tab: the kernel's seven purposes as item rows, each with its model select
     [
       "/settings/models?tab=purposes",
       `GET ${O}/model-purposes`,
-      { radios: 0, kv: 0, items: 7, switches: 0 },
+      { radios: 0, kv: 0, items: 7, switches: 0, groups: 0, hints: 0 },
     ],
   ] as const)(
     "%s: the loading state draws the page's static shapes (Q6)",
@@ -237,13 +246,13 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
         document.querySelectorAll(
           '[data-part="loading-item-group"] > [data-part="loading-item-row"]',
         ),
-      ).toHaveLength(shapes.switches * 2);
+      ).toHaveLength(shapes.groups);
       expect(
         // the hint is Text variant="prose": its slot is at the prose-small line (the body size)
         document.querySelectorAll(
           '.cb-form-section-fields > [data-part="skeleton-text"][data-size="body"]',
         ),
-      ).toHaveLength(shapes.switches);
+      ).toHaveLength(shapes.hints);
       await release();
       await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
     },
@@ -282,7 +291,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     await r2();
   });
 
-  it("/settings/organization: the loading page keeps its four sections and an owner's danger zone (the role is the session's)", async () => {
+  it("/settings/organization: the loading page keeps its five sections and an owner's danger zone (the role is the session's)", async () => {
     const loading = async (me: ReturnType<typeof as>) => {
       await renderRouteEmptyCache(
         "/settings/organization",
@@ -294,10 +303,11 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
       });
     };
     await loading(as("owner"));
-    expect(document.querySelectorAll('[data-part="form-section"]')).toHaveLength(4);
+    expect(document.querySelectorAll('[data-part="form-section"]')).toHaveLength(5);
     expect(screen.getByRole("heading", { name: en.orgSettings.toolSearch.title })).toBeTruthy();
     expect(screen.getByRole("heading", { name: en.orgSettings.timeZone.title })).toBeTruthy();
     expect(screen.getByRole("heading", { name: en.orgSettings.platformTool.title })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: en.compaction.title })).toBeTruthy();
     expect(document.querySelectorAll('[data-part="danger-zone"]')).toHaveLength(1);
     expect(screen.getByRole("button", { name: en.orgLifecycle.delete.action })).toBeTruthy();
     // one busy announcement for the page (the sections do not announce)

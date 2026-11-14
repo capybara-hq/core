@@ -190,7 +190,7 @@ describe("the / menu", () => {
     const dialog = await screen.findByRole("dialog");
     await within(dialog).findByText("/fix-issue");
     const headings = [...dialog.querySelectorAll("[cmdk-group-heading]")].map((h) => h.textContent);
-    expect(headings).toEqual([en.chat.skillsGroup, "Docs"]);
+    expect(headings).toEqual([en.chat.skillsGroup, "Docs", en.chat.commandsGroup]);
     const options = within(dialog)
       .getAllByRole("option")
       .map((o) => o.textContent);
@@ -200,6 +200,8 @@ describe("the / menu", () => {
       `/release-check${en.chat.skillTag.manual}Run the release checks`,
       `/review[path]${en.chat.skillTag.fork}Review in a sub-agent`,
       "/docs:summarizeSummarize a topic",
+      // the built-in command closes the `/` menu, after the agent's skills and prompts
+      `/compact${en.chat.compactCommandHint}`,
     ]);
     // the plugin a skill came from is its secondary label (spec §3.2)
     const brainstorming = within(dialog).getAllByRole("option")[0] as HTMLElement;

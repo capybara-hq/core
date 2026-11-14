@@ -78,6 +78,15 @@ const DEFAULT_ATTRIBUTION = {
   sources: { commit: "default", pr: "default", sessionUrl: "default" },
 };
 
+/** The compaction settings with no stored platform value or org override (spec §4.8). */
+const DEFAULT_COMPACTION = {
+  enabled: true,
+  threshold: 0.8,
+  keepRecentTurns: 4,
+  reserveTokens: 8000,
+  maxOutputTokens: 20_000,
+};
+
 const errCode = (res: { json(): unknown }) =>
   (res.json() as { error?: { code?: string } }).error?.code;
 
@@ -538,6 +547,7 @@ describe("超级管理员端点", () => {
       clientExtensions: { enabled: true, disabled: [] },
       devicesAutoMode: DEFAULT_AUTO_MODE,
       attribution: DEFAULT_ATTRIBUTION,
+      compaction: DEFAULT_COMPACTION,
     });
     const put = await adminReq({
       method: "PUT",
@@ -559,6 +569,7 @@ describe("超级管理员端点", () => {
       clientExtensions: { enabled: true, disabled: [] },
       devicesAutoMode: DEFAULT_AUTO_MODE,
       attribution: DEFAULT_ATTRIBUTION,
+      compaction: DEFAULT_COMPACTION,
     });
     const bad = await adminReq({
       method: "PUT",
@@ -600,6 +611,7 @@ describe("超级管理员端点", () => {
       clientExtensions: { enabled: true, disabled: [] },
       devicesAutoMode: DEFAULT_AUTO_MODE,
       attribution: DEFAULT_ATTRIBUTION,
+      compaction: DEFAULT_COMPACTION,
     });
 
     // 配额读取部署设置：orgA 上限 1，第二个运行进不去；未覆盖的组织用 runtime.orgConcurrency
@@ -629,6 +641,7 @@ describe("超级管理员端点", () => {
       clientExtensions: { enabled: true, disabled: [] },
       devicesAutoMode: DEFAULT_AUTO_MODE,
       attribution: DEFAULT_ATTRIBUTION,
+      compaction: DEFAULT_COMPACTION,
     });
     expect(await limit("orgA")).toBe(k.app.get(KernelConfigService).get().runtime.orgConcurrency);
     expect(await quota.tryEnter("orgA", "r2", await limit("orgA"))).toBe(true);
@@ -659,7 +672,68 @@ describe("超级管理员端点", () => {
       clientExtensions: { enabled: true, disabled: [] },
       devicesAutoMode: DEFAULT_AUTO_MODE,
       attribution: DEFAULT_ATTRIBUTION,
+      compaction: DEFAULT_COMPACTION,
     });
+  });
+
+  it("PUT /admin/settings compaction: a partial merges into the stored platform settings; out of range or unknown fields → 400", async () => {
+    const adminReq = await session("admin");
+    const put = (compaction: Record<string, unknown>) =>
+      adminReq({ method: "PUT", url: "/api/v1/admin/settings", payload: { compaction } });
+    const read = async () =>
+      (
+        (await adminReq({ method: "GET", url: "/api/v1/admin/settings" })).json() as {
+          compaction: unknown;
+        }
+      ).compaction;
+
+    const ok = await put({ threshold: 0.7 });
+    expect(ok.statusCode).toBe(200);
+    expect((ok.json() as { compaction: unknown }).compaction).toEqual({
+      ...DEFAULT_COMPACTION,
+      threshold: 0.7,
+    });
+    expect(await read()).toEqual({ ...DEFAULT_COMPACTION, threshold: 0.7 });
+    // a second partial keeps what the first set and changes only its own field
+    const second = await put({ keepRecentTurns: 2 });
+    expect(second.statusCode).toBe(200);
+    expect(await read()).toEqual({
+      ...DEFAULT_COMPACTION,
+      threshold: 0.7,
+      keepRecentTurns: 2,
+    });
+
+    for (const compaction of [
+      { threshold: 0.49 },
+      { threshold: 0.96 },
+      { keepRecentTurns: 21 },
+      { keepRecentTurns: 1.5 },
+      { reserveTokens: -1 },
+      { reserveTokens: 50_001 },
+      { maxOutputTokens: 1023 },
+      { maxOutputTokens: 32_001 },
+      { enabled: "yes" },
+      { treshold: 0.6 },
+    ]) {
+      const res = await put(compaction);
+      expect(res.statusCode, JSON.stringify(compaction)).toBe(400);
+      expect(errCode(res)).toBe("validation_failed");
+    }
+    // the refused writes changed nothing
+    expect(await read()).toEqual({
+      ...DEFAULT_COMPACTION,
+      threshold: 0.7,
+      keepRecentTurns: 2,
+    });
+
+    // an org's settings answer carries the stored platform values, so its page can show what
+    // following the platform means after the admin changed them
+    const org = await orgs.create({ name: "Compaction Org" }, admin);
+    const orgRead = await adminReq({ method: "GET", url: `/api/v1/orgs/${org.id}/settings` });
+    expect(orgRead.statusCode).toBe(200);
+    expect(
+      (orgRead.json() as { deployment: { compaction: unknown } }).deployment.compaction,
+    ).toEqual({ ...DEFAULT_COMPACTION, threshold: 0.7, keepRecentTurns: 2 });
   });
 
   it("PUT /admin/settings sandboxLimitOverrides：合并后可读回；cpu / memoryMb 越界 → 400", async () => {

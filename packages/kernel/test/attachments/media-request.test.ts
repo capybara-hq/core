@@ -16,7 +16,13 @@ import {
 } from "../../src/runtime/context/build.js";
 import { compactionPlan } from "../../src/runtime/context/compaction.js";
 import { estimateTokens } from "../../src/runtime/context/tokens.js";
-import { AGENT, Log, MODEL } from "../runtime/context/fixtures.js";
+import {
+  AGENT,
+  compactionSettings,
+  Log,
+  MODEL,
+  NO_TAIL_LIMIT,
+} from "../runtime/context/fixtures.js";
 
 const SEE: ModelInfo = {
   ...MODEL,
@@ -279,7 +285,11 @@ describe("压缩记录", () => {
     ]);
     log.assistant("ok");
     log.user("next");
-    const plan = compactionPlan(log.events, 1);
+    const plan = compactionPlan(
+      log.events,
+      compactionSettings({ keepRecentTurns: 1 }),
+      NO_TAIL_LIMIT,
+    );
     expect(plan?.transcript).toContain('[image: "cat.png"]');
     expect(plan?.transcript).toContain('[document: "spec.pdf"]');
     expect(plan?.transcript).toContain('[document: "notes.txt"]');

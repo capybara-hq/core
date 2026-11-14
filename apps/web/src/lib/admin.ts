@@ -1,6 +1,7 @@
 import type { ExtensionStatus } from "./admin-extensions";
 import { apiFetch } from "./api";
 import type { LocalizedName } from "./catalog";
+import type { CompactionSettings, CompactionSettingsPatch } from "./compaction";
 import type { DevicesAutoModeView } from "./org-settings";
 import type { UiArrangementEntry } from "./ui";
 
@@ -320,6 +321,11 @@ export interface DeploymentSettings {
    * kernel before the setting.
    */
   attribution?: PlatformAttributionView;
+  /**
+   * Conversation compaction (context compaction spec §4.8): the platform defaults an organization
+   * may override. Absent from a kernel before the setting (read as the built-in defaults).
+   */
+  compaction?: CompactionSettings;
 }
 
 /** The attribution fields, in display order. */
@@ -379,6 +385,7 @@ export type DeploymentSettingsPatch = Partial<
     | "clientExtensions"
     | "devicesAutoMode"
     | "attribution"
+    | "compaction"
   >
 > & {
   subagentLimitOverrides?: Record<string, SubagentLimitOverride | null>;
@@ -392,6 +399,8 @@ export type DeploymentSettingsPatch = Partial<
   attribution?: AttributionPatch;
   /** The platform's auto-mode switch: `mode` replaced, null clears it (the default). */
   devicesAutoMode?: DevicesAutoModePatch;
+  /** Each given field replaces the stored one; fields left out keep their value. */
+  compaction?: CompactionSettingsPatch;
 };
 
 export interface NewAccountInput {

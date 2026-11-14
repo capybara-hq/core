@@ -24,6 +24,11 @@ import { ExtensionUnloadedError } from "../extensions/inflight.js";
 import type { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { hasInvocation, skillLoadOffered } from "../skills/catalog.js";
 import type { ToolRegistry, UnavailableTool } from "../tools/registry.js";
+import type { CompactionProgress, CompactionProgressSink } from "./compaction-progress.js";
+import type {
+  CompactionSettings,
+  CompactionSettingsService,
+} from "./compaction-settings.service.js";
 import {
   type BuildModelRequestInput,
   buildModelRequest,
@@ -38,10 +43,27 @@ import {
 import {
   acceptSummary,
   buildCompactionRequest,
+  chunkTranscript,
   compactionBackoff,
+  compactionChunkSize,
+  compactionInputBudget,
   compactionPlan,
+  compactionRequestOverhead,
+  extractSummary,
+  MIN_COMPACTION_CHUNK_TOKENS,
+  nextTranscriptChunk,
   shouldCompact,
+  summarySavedTokens,
 } from "./context/compaction.js";
+import {
+  applyFit,
+  clampOutput,
+  effectiveReserve,
+  estimateAfterFit,
+  type FitPlan,
+  fitTarget,
+  planFit,
+} from "./context/fit.js";
 import { guardToolPairs } from "./context/pairing.js";
 import { TOOLS_UNSUPPORTED_REMINDER, turnLimitReminder } from "./context/reminders.js";
 import { calibrate, estimateTokens } from "./context/tokens.js";
@@ -49,6 +71,7 @@ import { toolSetChange } from "./context/tool-changes.js";
 import {
   type ConversationKindForHooks,
   fireObserve,
+  type HookDenial,
   type HookRunner,
   hookDeniedAudit,
   hookDeniedEvent,
@@ -98,6 +121,17 @@ export function toolsUnavailableReminder(unavailable: readonly UnavailableTool[]
 export const modelDeniedText = (plugin: string, reason: string) =>
   `Model request blocked by the "${plugin}" policy hook: ${reason}`;
 
+/**
+ * The `run.context_too_large` message (user-facing, not model-visible): the hard fit guard could
+ * not bring the request under `W - O - R` even after dropping all older history and truncating the
+ * latest turn, so the system prompt, tools and the latest message are themselves too large
+ * (context compaction spec §4.3 point 4).
+ */
+export const contextTooLargeText = (model: ModelInfo, target: number, estimate: number) =>
+  `The request is too large for the model "${model.displayName}" (estimated ${estimate} input tokens, ` +
+  `at most ${target} fit in its ${model.contextWindow}-token context window after the output cap and ` +
+  "reserve). Shorten the message or choose a model with a larger context window.";
+
 /** 可重试错误在同一模型上重试前的默认等待（供应商未给 retryAfterMs 时）。 */
 const DEFAULT_RETRY_DELAY_MS = 1000;
 
@@ -135,6 +169,16 @@ export interface ModelStepDeps {
   /** 工具注册表：每步开始时解析 agent 引用的工具（状态可能在步骤之间变化）。 */
   tools: Pick<ToolRegistry, "forAgent">;
   config: Pick<KernelConfigService, "get">;
+  /**
+   * The compaction settings in effect for the run's organization (context compaction spec §4.8):
+   * resolved once per model step.
+   */
+  compactionSettings: Pick<CompactionSettingsService, "resolve">;
+  /**
+   * Ephemeral compaction progress (context compaction spec §4.6): display-only, never in the log.
+   * Absent in eval replays and single-step replays, which have no live conversation to show it on.
+   */
+  compactionProgress?: CompactionProgressSink;
   log: Logger;
   /**
    * 会话附件（构建请求时解析日志里的媒体引用；见 AttachmentsService）。未提供时媒体引用一律按「不再可用」处理。
@@ -264,15 +308,106 @@ export const assistantIdemKey = (runId: string, step: number): string =>
 export const modelCallIdemKey = (runId: string, step: number, attempt: number): string =>
   `model_call:${runId}:${step}:${attempt}`;
 
-/** 一步最多的模型调用尝试次数（主模型、同模型重试、兜底，见 `ladder`）。 */
+/**
+ * The ladder's three rungs: the main model, one same-model retry and the fallback (see `ladder`).
+ * A step may make more calls than this: reactive `model.context_overflow` fix-ups retry on the same
+ * rung, all within {@link MAX_STEP_MODEL_CALLS}.
+ */
 export const MAX_MODEL_ATTEMPTS = 3;
 
+/**
+ * The most `model_call` rows one step may write (context compaction spec §4.4): the ladder's three
+ * rungs plus up to two reactive-overflow fix-up retries. The ladder stops before a further attempt,
+ * so a persistent `model.context_overflow` cannot loop.
+ */
+export const MAX_STEP_MODEL_CALLS = MAX_MODEL_ATTEMPTS + 2;
+
+/**
+ * The progressively smaller fit targets of a reactive trim, as fractions of the model's window
+ * (context compaction spec §4.3 point 5 / §4.4 point 3). The trim fix-up tries them most
+ * aggressive first (70%, then 80%, then 90% of the window) and uses the first target a fit plan
+ * actually reaches, so the retry really shrinks a request the provider rejected. `null` when the
+ * request already fits every target (nothing to trim).
+ */
+export const REACTIVE_TRIM_FACTORS = [0.9, 0.8, 0.7] as const;
+
 /** 本步解析出的工具与是否启用 ToolSearch（见 `ToolRegistry.forAgent`），以及本步已取的附件字节。 */
-interface StepTools {
+export interface StepTools {
   list: RequestTool[];
   toolSearch: boolean;
   /** 本步已取到的附件信息与字节；同一步的多次构建（压缩估算、各次尝试）共用。只缓存成功的结果。 */
   media: StepMedia;
+}
+
+/** What `ToolRegistry.forAgent` resolved for one request: the tools, ToolSearch and unavailable ones. */
+export interface ResolvedAgentTools {
+  tools: RequestTool[];
+  toolSearch: boolean;
+  unavailable: UnavailableTool[];
+}
+
+/**
+ * The agent's tools for one request, resolved now (connectors and extensions can change between
+ * steps): disabled tools and disabled sub-agent tools, a sub-agent's narrower roster, sandbox
+ * scoping and replay mode, with `Skill` offered when the log has a catalog snapshot or an
+ * invocation. The automatic step path and a manual compact run resolve them the same way, so the
+ * compaction sees the same history a step would.
+ */
+export async function resolveAgentTools(
+  deps: Pick<ModelStepDeps, "tools">,
+  input: Pick<
+    ModelStepInput,
+    | "orgId"
+    | "conversationId"
+    | "agent"
+    | "parent"
+    | "parentRunId"
+    | "subagent"
+    | "source"
+    | "conversationKind"
+  >,
+  events: readonly ConversationEvent[],
+): Promise<ResolvedAgentTools> {
+  const resolved = await deps.tools.forAgent(input.orgId, {
+    disabledTools: input.agent.disabledTools,
+    subagentTools: input.agent.subagentTools,
+    subagents: input.agent.subagents,
+    child: input.parent !== undefined || input.parentRunId !== undefined || input.subagent === true,
+    forkChild: input.parent?.forSkill === true,
+    sandboxConversationId: input.parent?.rootConversationId ?? input.conversationId,
+    replay: input.conversationKind === "eval",
+    source: input.source,
+    skillLoad: skillLoadOffered(
+      events.findLast(
+        (e): e is Extract<ConversationEvent, { type: "skills_catalog" }> =>
+          e.type === "skills_catalog",
+      ),
+      hasInvocation(events),
+    ),
+  });
+  return {
+    tools: resolved.tools,
+    toolSearch: resolved.toolSearch === true,
+    unavailable: resolved.unavailable,
+  };
+}
+
+/** The step's {@link StepTools} from resolved tools: a fresh attachment cache unless one is shared. */
+export function stepToolsOf(
+  resolved: ResolvedAgentTools,
+  input: Pick<ModelStepInput, "mediaCache">,
+  deps: Pick<ModelStepDeps, "config">,
+): StepTools {
+  return {
+    list: resolved.tools,
+    toolSearch: resolved.toolSearch,
+    media: {
+      looked: new Set(),
+      info: new Map(),
+      bytes: new Map(),
+      run: input.mediaCache ?? new MediaCache(deps.config.get().attachments.requestMediaBytes),
+    },
+  };
 }
 
 /**
@@ -300,9 +435,24 @@ const idem = {
   modelCall: modelCallIdemKey,
   hookDenied: (runId: string, step: number, attempt: number) =>
     `hook_denied:${runId}:${step}:${attempt}`,
-  /** Usage of a compaction call: `n` is the compaction attempt (consecutive failures + 1). */
-  compactionUsage: (runId: string, step: number, n: number) =>
-    `usage_compaction:${runId}:${step}:${n}`,
+  /**
+   * Usage of a compaction call: `n` is the compaction attempt (consecutive failures + 1). A
+   * chunked compaction sends one call per chunk, so the chunk index (1-based) is part of the key
+   * (context compaction spec §4.5).
+   */
+  compactionUsage: (runId: string, step: number, n: number, chunk?: number) =>
+    chunk === undefined
+      ? `usage_compaction:${runId}:${step}:${n}`
+      : `usage_compaction:${runId}:${step}:${n}:${chunk}`,
+  /**
+   * The outcome of one compaction attempt: `n` is the attempt (consecutive failures + 1). Retrying
+   * the same attempt after a crash writes nothing new; a manual compact run is keyed by its run id
+   * and step 0 (context compaction spec §4.7).
+   */
+  compactionSummary: (runId: string, step: number, n: number) =>
+    `compaction_summary:${runId}:${step}:${n}`,
+  compactionFailed: (runId: string, step: number, n: number) =>
+    `compaction_failed:${runId}:${step}:${n}`,
   mediaExcluded: (runId: string, step: number, attempt: number, part: number) =>
     `media_excluded:${runId}:${step}:${attempt}:${part}`,
 };
@@ -376,7 +526,7 @@ async function runStep(
   const streamed = { text: "" };
   try {
     if (signal.aborted) throw new StepAborted();
-    let events = await readAll(deps.eventLog, conversationId);
+    let events = await readAllEvents(deps.eventLog, conversationId);
     // an earlier execution of this run already sent this step (it streamed, then crashed or was
     // handed over): this one starts at offset 0, so viewers drop that attempt's draft first
     if (
@@ -399,36 +549,12 @@ async function runStep(
     // 每步实时解析（连接器 / 插件状态可能在步骤之间变化），解析结果记在 model_call；收尾调用同样带工具
     // a skills catalog snapshot (Ruling M17; an empty one too) or a person's skill invocation in the
     // log → Skill is offered (see skillLoadOffered)
-    const resolved = await deps.tools.forAgent(input.orgId, {
-      disabledTools: input.agent.disabledTools,
-      subagentTools: input.agent.subagentTools,
-      subagents: input.agent.subagents,
-      child:
-        input.parent !== undefined || input.parentRunId !== undefined || input.subagent === true,
-      forkChild: input.parent?.forSkill === true,
-      sandboxConversationId: input.parent?.rootConversationId ?? input.conversationId,
-      replay: input.conversationKind === "eval",
-      source: input.source,
-      skillLoad: skillLoadOffered(
-        events.findLast(
-          (e): e is Extract<ConversationEvent, { type: "skills_catalog" }> =>
-            e.type === "skills_catalog",
-        ),
-        hasInvocation(events),
-      ),
-    });
-    const tools: StepTools = {
-      list: resolved.tools,
-      toolSearch: resolved.toolSearch === true,
-      media: {
-        looked: new Set(),
-        info: new Map(),
-        bytes: new Map(),
-        run: input.mediaCache ?? new MediaCache(deps.config.get().attachments.requestMediaBytes),
-      },
-    };
+    const resolved = await resolveAgentTools(deps, input, events);
+    const tools: StepTools = stepToolsOf(resolved, input, deps);
     const beforeCompaction = events.length;
-    events = await maybeCompact(deps, input, events, runtime, tools);
+    // the org's effective compaction settings, once for this step (org > platform > built-in)
+    const compaction = await deps.compactionSettings.resolve(input.orgId);
+    events = await maybeCompact(deps, input, events, runtime, compaction, tools);
     // a sub-agent checks its budget again after a compaction call, so the step's own request is
     // not a second call over the cap (review M5; the loop checks before each step); the budget
     // wrap-up is the one call allowed over it
@@ -494,6 +620,7 @@ async function runStep(
       input,
       events,
       runtime,
+      compaction,
       tools,
       wrapUpReason,
       streamed,
@@ -638,8 +765,11 @@ function lastToolsReminder(events: ConversationEvent[], runId: string): string |
   return text;
 }
 
-/** 读会话的全部事件（读到当前 last_seq），按 seq 升序。 */
-async function readAll(eventLog: EventLog, conversationId: string): Promise<ConversationEvent[]> {
+/** 读会话的全部事件（读到当前 last_seq），按 seq 升序。A manual compact run reads it the same way. */
+export async function readAllEvents(
+  eventLog: Pick<EventLog, "readAfter">,
+  conversationId: string,
+): Promise<ConversationEvent[]> {
   const out: ConversationEvent[] = [];
   let after = 0;
   for (;;) {
@@ -653,14 +783,9 @@ async function readAll(eventLog: EventLog, conversationId: string): Promise<Conv
 
 /**
  * Appends one event and merges it into the step's local event list (an idempotent hit already in
- * the list is not added twice).
- *
- * Events written elsewhere after `readAll` (an interjection, a fork report the wait sweep wrote)
- * have a lower seq than this one: when the written seq is more than one above the local maximum,
- * the gap is read from the log and merged first (batch 5 review I2). So every event with
- * seq ≤ the request's `toSeq` is in hand when the request is built, exactly as `reconstruct`
- * (evals) reads the log; gap user_messages above `absorbedUpToSeq` are skipped by placement in
- * both.
+ * the list is not added twice). The gap merge is {@link mergeWritten}'s: events written elsewhere
+ * after `readAll` have a lower seq than this one, and a list that skipped them would claim to
+ * include them through the request's `toSeq`.
  */
 async function appendLocal(
   eventLog: EventLog,
@@ -669,23 +794,8 @@ async function appendLocal(
   event: AppendEvent,
 ): Promise<ConversationEvent[]> {
   const [written] = await eventLog.append(conversationId, [event]);
-  if (!written || events.some((e) => e.seq === written.seq)) return events;
-  const localMax = events.reduce((m, e) => Math.max(m, e.seq), 0);
-  const gap: ConversationEvent[] = [];
-  let after = localMax;
-  while (written.seq > after + 1) {
-    const page = await eventLog.readAfter(
-      conversationId,
-      after,
-      Math.min(READ_PAGE, written.seq - after - 1),
-    );
-    const inGap = page.filter((e) => e.seq < written.seq);
-    gap.push(...inGap);
-    const last = inGap.at(-1);
-    if (!last || inGap.length < page.length) break;
-    after = last.seq;
-  }
-  return [...events, ...gap, written];
+  if (!written) return events;
+  return mergeWritten(eventLog, conversationId, events, [written]);
 }
 
 /**
@@ -708,12 +818,25 @@ export interface AssembleModelRequestInput extends Omit<BuildModelRequestInput, 
   tools: readonly RequestTool[];
   /** 参数里没有 `maxOutputTokens` 旋钮时的输出上限（运行时为 `runtime.maxOutputTokens`）。 */
   defaultMaxOutputTokens: number;
+  /**
+   * The cap recorded in `model_call.request.maxOutputTokens` (a baseline replay only): the runtime
+   * may have clamped it below the knob (context compaction spec §4.3), so a replay that recomputed
+   * it from the knob would send a larger cap than the recorded one. Given, it wins over the knob.
+   */
+  recordedMaxOutputTokens?: number;
+  /**
+   * A recorded hard-fit plan (context compaction spec §4.3/§4.9): applied after the pairing guard,
+   * so a replayed request equals the one that was sent. The plan's message indexes refer to the
+   * assembled (post-guard) request; the runtime computes it on the same list.
+   */
+  fit?: FitPlan;
 }
 
 /**
  * 发给模型的请求（纯函数）：`buildModelRequest`（注入 `params` 与本步工具：模型不支持工具时不带；收尾调用带
- * `toolChoice: "none"`）→ `guardToolPairs`。输出上限：参数里有 `maxOutputTokens` 旋钮时取
- * `min(模型上限, 旋钮)`，否则 `min(模型上限, defaultMaxOutputTokens)`。
+ * `toolChoice: "none"`）→ `guardToolPairs` → the recorded `fit` plan (when given). 输出上限：参数里有
+ * `maxOutputTokens` 旋钮时取 `min(模型上限, 旋钮)`，否则 `min(模型上限, defaultMaxOutputTokens)`；记录了输出
+ * 上限的基线回放（`recordedMaxOutputTokens`）原样取记录值，旋钮不再覆盖。
  * 运行时（{@link runModelStep}）与由日志还原请求（`evals/reconstruct.ts`）共用这一份，二者不会漂移。
  */
 export function assembleModelRequest(input: AssembleModelRequestInput): {
@@ -721,7 +844,7 @@ export function assembleModelRequest(input: AssembleModelRequestInput): {
   meta: ModelCallMeta;
   mediaTokens: number;
 } {
-  const { defaultMaxOutputTokens, tools, ...rest } = input;
+  const { defaultMaxOutputTokens, recordedMaxOutputTokens, tools, fit, ...rest } = input;
   const built = buildModelRequest({
     ...rest,
     tools: input.model.capabilities.tools ? [...tools] : [],
@@ -733,6 +856,9 @@ export function assembleModelRequest(input: AssembleModelRequestInput): {
     input.model.maxOutputTokens,
     typeof knob === "number" ? knob : defaultMaxOutputTokens,
   );
+  // the recorded cap already carries the clamp against the recorded window and estimate
+  if (recordedMaxOutputTokens !== undefined) request.maxOutputTokens = recordedMaxOutputTokens;
+  if (fit !== undefined) request.messages = applyFit(request, fit).messages;
   return built;
 }
 
@@ -865,56 +991,138 @@ function consecutiveCompactionFailures(events: ConversationEvent[]): number {
   return n;
 }
 
+/** Estimated input tokens of a plain text (a user message's only content). */
+function textTokens(text: string): number {
+  return estimateTokens([{ role: "user", content: [{ type: "text", text }] }], []);
+}
+
+/** Options of {@link maybeCompact}. */
+interface CompactOptions {
+  /**
+   * The reactive path (context compaction spec §4.4): summarise regardless of the trigger,
+   * `enabled: false` and the failure backoff. A proactive call leaves all of them in force.
+   */
+  force?: boolean;
+  /**
+   * The model to summarise with (default the agent's main model). The reactive path passes the rung
+   * that overflowed: a fallback rung may have a smaller window and the summary must fit it.
+   */
+  ref?: ModelRef;
+  /** Whether `ref` is the fallback rung (its saved params are `fallbackParams`). */
+  fallback?: boolean;
+}
+
+/** What one compaction execution wrote: the events, the summary's seq and whether it failed. */
+export interface CompactionOutcome {
+  /** The step's event list with what the compaction wrote merged in (unchanged when it wrote none). */
+  events: ConversationEvent[];
+  /** The seq of the `compaction_summary` written; null when none was (skipped or failed). */
+  summarySeq: number | null;
+  /** Whether a `compaction_failed` was written (a failed call, a denial or a failed acceptance). */
+  failed: boolean;
+}
+
 /**
- * 压缩：校正后的估算达到阈值、且不在失败退避期内时，用主模型生成摘要（非流式消费）。
- * 通过 → `compaction_summary`；过短或出错 → `compaction_failed`（attempt 从 1 起，连续失败递增），
- * 本步按原样继续。主模型此刻解析不了时跳过压缩，交给降级梯子处理。
+ * Compaction: summarize the earlier conversation with the main model (consumed non-streaming) when
+ * the calibrated estimate crosses the trigger (context compaction spec §4.1). The hard line
+ * (`estimate + output > window`) ignores `enabled: false` and the failure backoff; the proactive
+ * trigger respects both. Accepted → `compaction_summary`; too short or an error →
+ * `compaction_failed` (attempt from 1, consecutive failures increment), and the step continues
+ * unchanged. When the main model cannot be resolved right now, compaction is skipped and the
+ * fallback ladder handles the step.
+ *
+ * `opts.force` (the reactive path, spec §4.4, and a manual compact run, spec §4.7) bypasses the
+ * trigger, `enabled` and the backoff, and `opts.ref` makes it summarise with the rung's model rather
+ * than the agent's main model.
+ *
+ * The one execution both paths run: the automatic step path through {@link maybeCompact} and a
+ * manual compact run through `CompactionService.force`.
  */
-async function maybeCompact(
+export async function runCompaction(
   deps: ModelStepDeps,
   input: ModelStepInput,
   events: ConversationEvent[],
   runtime: Runtime,
+  compaction: CompactionSettings,
   tools: StepTools,
-): Promise<ConversationEvent[]> {
-  if (compactionBackoff(events)) return events;
+  opts: CompactOptions = {},
+): Promise<CompactionOutcome> {
+  /** Nothing was written (the compaction was skipped): the step's own path just continues. */
+  const skipped = (evs: ConversationEvent[]): CompactionOutcome => ({
+    events: evs,
+    summarySeq: null,
+    failed: false,
+  });
+  const modelRef = opts.ref ?? input.agent.model;
   let provider: BoundProvider;
   let info: ModelInfo;
   try {
-    ({ provider, info } = await deps.registry.resolve(input.orgId, input.agent.model));
+    ({ provider, info } = await deps.registry.resolve(input.orgId, modelRef));
   } catch (err) {
-    deps.log.warn("compaction skipped: model unavailable", { model: input.agent.model, err });
-    return events;
+    deps.log.warn("compaction skipped: model unavailable", { model: modelRef, err });
+    return skipped(events);
   }
   try {
     await loadMedia(deps, input, events, info, tools);
   } catch (err) {
     if (!(err instanceof MediaUnavailableError)) throw err;
-    // 存储暂时不可用：本步跳过压缩，交给降级梯子（会按可重试错误处理）
+    // storage is temporarily unavailable: skip compaction for this step and leave it to the
+    // fallback ladder, which treats it as a retryable error
     deps.log.warn("compaction skipped: attachment storage unavailable", {
       conversationId: input.conversationId,
       err,
     });
-    return events;
+    return skipped(events);
   }
-  const { estimate: raw } = buildRequest(
+  const { request: built, estimate: raw } = buildRequest(
     deps,
     events,
     input,
     info,
-    attemptParams(input.agent, info, false).value,
+    attemptParams(input.agent, info, opts.fallback === true).value,
     runtime,
     tools,
     false,
   );
   const estimate = calibrate(raw, lastActual(events));
-  if (!shouldCompact(estimate, info, runtime.compactionThreshold)) return events;
-  const plan = compactionPlan(events, runtime.keepRecentTurns);
-  if (!plan) return events;
+  // The trigger's output cap is the step's own cap, min(agent max, model max) (spec §4.1), not the
+  // settings' maxOutputTokens — that one caps the summary call (spec §4.8).
+  const output = built.maxOutputTokens;
+  // The hard line ignores both gates: enabled: false turns proactive early compaction off only,
+  // and backoff only delays proactive attempts (context compaction spec §4.1). The reactive path
+  // (`force`) ignores the trigger entirely (spec §4.4).
+  if (!opts.force) {
+    if (estimate + output <= info.contextWindow && compactionBackoff(events))
+      return skipped(events);
+    if (!shouldCompact(estimate, info.contextWindow, { ...compaction, maxOutputTokens: output })) {
+      return skipped(events);
+    }
+  }
+  // the input room left for the kept tail: the window minus the output cap and the reserve
+  // (compactionInputBudget), minus the system prompt and tool definitions every request carries
+  const tailBudget =
+    compactionInputBudget(info.contextWindow, output, compaction.reserveTokens) -
+    estimateTokens([], built.system, built.tools);
+  const plan = compactionPlan(events, compaction, tailBudget);
+  if (!plan) return skipped(events);
 
   const { runId, step, signal, conversationId } = input;
-  const ref = input.agent.model;
-  const request = buildCompactionRequest(plan.transcript, info.id);
+  const ref = modelRef;
+  // §4.6 progress: from here the compaction is certain, so the conversation may show a row. It is
+  // display-only (Redis + a bus message, never the log); a lost update costs nothing.
+  const startedAt = Date.now();
+  const progressOf = (progress: CompactionProgress): void => {
+    deps.compactionProgress?.update({
+      runId,
+      conversationId,
+      ...(input.agentId !== undefined && { agentId: input.agentId }),
+      progress,
+    });
+  };
+  progressOf({ phase: "preparing", step, startedAt });
+  // the summary call's output cap: the org's effective setting, never above the model's own cap
+  // (context compaction spec §4.8)
+  const summaryCap = Math.min(compaction.maxOutputTokens, info.maxOutputTokens);
   const attemptNo = consecutiveCompactionFailures(events) + 1;
   // hooks see compaction calls like step attempts (I-1): same scope, chat runs only
   const scope = hookScope(deps.hooks, input);
@@ -926,150 +1134,352 @@ async function maybeCompact(
     provider: ref.provider,
     model: ref.model,
   };
-  if (hookBase && deps.hooks?.has("model.request")) {
-    let verdict: Awaited<ReturnType<HookRunner["run"]>>;
-    try {
-      verdict = await deps.hooks.run(
-        "model.request",
-        { ...hookBase, request: hookRequestOf(request, deps.log) },
-        signal,
-      );
-    } catch (e) {
-      // run() rejects only when the run's signal aborted: an abort, never a deny
-      if (signal.aborted) throw new StepAborted();
-      throw e;
-    }
-    if (!verdict.allowed) {
-      // compaction fails (generic reason in the log, raw detail only in the audit row, R12); the
-      // step continues and its own request meets the hooks next
-      const site = {
-        orgId: input.orgId,
-        conversationId,
-        runId,
-        ...(input.accountId !== undefined && { accountId: input.accountId }),
-        ...(input.agentId !== undefined && { agentId: input.agentId }),
-        idemKey: `hook_denied_compaction:${runId}:${step}:${attemptNo}`,
-      };
-      const denied = hookDeniedEvent(site, "model.request", verdict, { step, attempt: 1 });
-      const entry = hookDeniedAudit(site, denied.payload, verdict);
-      entry.detail = { ...entry.detail, purpose: "compaction" };
-      const failed: AppendEvent = {
-        type: "compaction_failed",
-        runId,
-        payload: {
-          attempt: attemptNo,
-          reason: `compaction request blocked by the "${verdict.plugin}" policy hook (${verdict.cause})`,
-        },
-      };
-      deps.log.warn("compaction blocked by a policy hook", {
-        conversationId,
-        plugin: verdict.plugin,
-        cause: verdict.cause,
-      });
-      const written = await deps.stepLog.appendAudited(conversationId, [failed], entry);
-      if (written.length > 0) {
-        await deps.eventLog.notify(conversationId, Math.max(...written.map((e) => e.seq)));
-      }
-      return mergeLocal(events, written);
-    }
-  }
+  // §4.5: one summary call's input room is B = Wc - Cmax - R. The room the running summary takes
+  // in the next call (at least half of the output cap) and the request's fixed overhead (the
+  // instruction and the transcript wrapper) are subtracted from it, leaving the chunk size. A
+  // transcript over it is summarised chunk by chunk, each call sent the running summary before its
+  // chunk; the actual running summary can be up to the full output cap, so each call after the
+  // first shrinks its chunk to that estimate. A degenerate budget (a window smaller than the cap,
+  // the reserve, the overhead and the allowance, or one that leaves less than a usable chunk)
+  // leaves the single call as before: a chunk below the floor would fail the first call instead.
+  const budget = compactionInputBudget(info.contextWindow, summaryCap, compaction.reserveTokens);
+  const overhead = compactionRequestOverhead();
+  const allowance = Math.ceil(summaryCap / 2);
+  const baseChunkSize = compactionChunkSize(budget, summaryCap);
+  // the whole transcript is one call unless it is over a usable base chunk size
+  let remaining: string | null =
+    baseChunkSize >= MIN_COMPACTION_CHUNK_TOKENS && textTokens(plan.transcript) > baseChunkSize
+      ? plan.transcript
+      : null;
+  /** Whether this compaction is chunked (real `i/N` progress only in this path). */
+  const chunked = remaining !== null;
+  /** The chunk count the current chunk size plans (updated when the running summary shrinks it). */
+  let plannedChunks = chunked ? chunkTranscript(plan.transcript, baseChunkSize).length : 0;
+  let lastChunkSize = baseChunkSize;
 
   let failure: string | null = null;
+  /** The 1-based chunk whose call failed or was denied, when the compaction was chunked. */
+  let failedChunk: number | null = null;
+  let denial: { verdict: HookDenial; chunk: number } | null = null;
   let summary = "";
-  let usage: ModelUsage | null = null;
-  const sentAt = Date.now();
-  try {
-    let partial = "";
-    const out = await consumeModelStream(
-      provider,
-      request,
-      info.streamIdleTimeoutMs ?? runtime.streamIdleMs,
-      signal,
-      (ev) => {
-        if (ev.type === "text_delta") partial += ev.text;
-      },
-    );
-    usage = out.usage;
-    if (hookBase && deps.hooks) {
-      fireObserve(
-        deps.hooks,
-        "model.response",
-        {
-          ...hookBase,
-          outcome: "ok",
-          content: out.content,
-          stopReason: out.stopReason,
-          usage: out.usage,
-          latencyMs: Date.now() - sentAt,
-        },
-        signal,
-        deps.log,
+  /** Whether the compaction really took more than one call. */
+  let multiChunk = false;
+  /** The chunk calls made; the total is known only when the compaction ends. */
+  let attempted = 0;
+  const usages: { chunk: number | undefined; usage: ModelUsage }[] = [];
+  for (;;) {
+    let chunkText: string;
+    if (remaining === null) {
+      chunkText = plan.transcript;
+    } else {
+      // this call's chunk: the previous call's summary may be longer than the allowance, so
+      // reserve its real estimate (the allowance is only the floor)
+      const held = Math.max(
+        allowance,
+        summary === "" ? 0 : textTokens(`[Earlier summary]\n${summary}\n\n`),
       );
+      const size = Math.min(baseChunkSize, budget - overhead - held);
+      // A chunk below the floor would make nextTranscriptChunk clamp to one token: fail with a
+      // clear reason instead of a call storm (context compaction spec §4.5).
+      if (size < MIN_COMPACTION_CHUNK_TOKENS) {
+        failure = `the running summary leaves too little room for a chunk (${Math.max(0, size)} tokens, at least ${MIN_COMPACTION_CHUNK_TOKENS} needed)`;
+        failedChunk = attempted + 1;
+        break;
+      }
+      const next = nextTranscriptChunk(remaining, size);
+      if (next === null) break;
+      chunkText = next.chunk;
+      remaining = next.rest.length === 0 ? null : next.rest;
+      if (remaining !== null) multiChunk = true;
+      // the real total, recomputed only when the running summary shrank this call's chunk
+      if (size !== lastChunkSize) {
+        lastChunkSize = size;
+        plannedChunks =
+          attempted + 1 + (remaining === null ? 0 : chunkTranscript(remaining, size).length);
+      }
     }
-    const final = out.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
-    summary = (final || partial).trim();
-    if (!acceptSummary(summary, plan.transcript)) {
-      failure = `summary too short (${summary.length} chars)`;
+    attempted++;
+    const chunkNo = attempted;
+    const current = {
+      phase: "summarizing" as const,
+      step,
+      startedAt,
+      ...(chunked ? { chunk: chunkNo, chunks: plannedChunks } : {}),
+      chars: 0,
+    };
+    progressOf(current);
+    // call 1 summarises chunk 1; call i carries the running summary before its chunk, which the
+    // instruction merges (compactionPlan formats a previous summary the same way)
+    const callInput = summary === "" ? chunkText : `[Earlier summary]\n${summary}\n\n${chunkText}`;
+    const request = buildCompactionRequest(callInput, info.id, summaryCap);
+    if (hookBase && deps.hooks?.has("model.request")) {
+      let verdict: Awaited<ReturnType<HookRunner["run"]>>;
+      try {
+        verdict = await deps.hooks.run(
+          "model.request",
+          { ...hookBase, request: hookRequestOf(request, deps.log) },
+          signal,
+        );
+      } catch (e) {
+        // run() rejects only when the run's signal aborted: an abort, never a deny
+        if (signal.aborted) {
+          // an aborted attempt leaves no partial summary: drop the progress key now rather than
+          // leaving the writer-local throttle entry behind until the TTL (folded review Minor)
+          deps.compactionProgress?.clear(runId);
+          throw new StepAborted();
+        }
+        throw e;
+      }
+      if (!verdict.allowed) {
+        denial = { verdict, chunk: chunkNo };
+        break;
+      }
     }
-  } catch (err) {
-    if (err instanceof StepAborted) throw err;
-    if (hookBase && deps.hooks) {
-      fireObserve(
-        deps.hooks,
-        "model.response",
-        {
-          ...hookBase,
-          outcome: "failed",
-          content: [],
-          stopReason: null,
-          usage: null,
-          latencyMs: Date.now() - sentAt,
-          errorCode: classify(err).code,
-        },
+    const sentAt = Date.now();
+    try {
+      let partial = "";
+      const out = await consumeModelStream(
+        provider,
+        request,
+        info.streamIdleTimeoutMs ?? runtime.streamIdleMs,
         signal,
-        deps.log,
+        (ev) => {
+          if (ev.type !== "text_delta") return;
+          partial += ev.text;
+          // throttled by the sink (≤ once per 200 ms); real characters, never a percentage
+          progressOf({
+            phase: "summarizing",
+            step,
+            startedAt,
+            ...(chunked ? { chunk: chunkNo, chunks: plannedChunks } : {}),
+            chars: partial.length,
+          });
+        },
       );
+      usages.push({ chunk: multiChunk ? chunkNo : undefined, usage: out.usage });
+      if (hookBase && deps.hooks) {
+        fireObserve(
+          deps.hooks,
+          "model.response",
+          {
+            ...hookBase,
+            outcome: "ok",
+            content: out.content,
+            stopReason: out.stopReason,
+            usage: out.usage,
+            latencyMs: Date.now() - sentAt,
+          },
+          signal,
+          deps.log,
+        );
+      }
+      const final = out.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
+      // store only the <summary> block: the <analysis> scratchpad must not enter later requests
+      summary = extractSummary(final || partial);
+      // an intermediate call with nothing to carry forward would silently drop every chunk before
+      // it: fail the compaction instead (spec §4.5), no partial summary
+      if (remaining !== null && summary === "") {
+        failure = "a chunk produced no summary";
+        failedChunk = multiChunk ? chunkNo : null;
+        break;
+      }
+      // the last call's text is the summary, accepted against the full transcript (spec §4.5)
+      if (remaining === null && !acceptSummary(summary, plan.transcript)) {
+        failure = `summary too short (${summary.length} chars)`;
+        failedChunk = multiChunk ? chunkNo : null;
+      }
+    } catch (err) {
+      if (err instanceof StepAborted) {
+        // aborted mid-call: clear the progress key here (the success and failure paths clear at
+        // the end; the abort path throws past them)
+        deps.compactionProgress?.clear(runId);
+        throw err;
+      }
+      if (hookBase && deps.hooks) {
+        fireObserve(
+          deps.hooks,
+          "model.response",
+          {
+            ...hookBase,
+            outcome: "failed",
+            content: [],
+            stopReason: null,
+            usage: null,
+            latencyMs: Date.now() - sentAt,
+            errorCode: classify(err).code,
+          },
+          signal,
+          deps.log,
+        );
+      }
+      failure = err instanceof Error ? err.message : String(err);
+      failedChunk = multiChunk ? chunkNo : null;
+      break;
     }
-    failure = err instanceof Error ? err.message : String(err);
+    if (failure !== null || denial !== null) break;
+    // the whole transcript was this one call, or its last chunk is done
+    if (remaining === null) break;
   }
 
+  // only a compaction that still has something to write shows the writing phase: a failed or denied
+  // one jumps straight to its failure event (folded review Minor)
+  if (failure === null && denial === null) {
+    progressOf({ phase: "writing", step, startedAt });
+  }
+
+  /** The chunk a failure stopped at, for the reason (empty when the compaction was not chunked). */
+  const chunkNote = (chunk: number | null): string => (chunk === null ? "" : ` (chunk ${chunk})`);
+
+  /** One usage event per completed call (spec §4.5); a chunked call carries its chunk index. */
+  const usageEvents = (): AppendEvent[] =>
+    usages.map(({ chunk, usage }) => ({
+      type: "usage" as const,
+      runId,
+      idemKey: idem.compactionUsage(runId, step, attemptNo, chunk),
+      payload: {
+        step,
+        provider: ref.provider,
+        model: ref.model,
+        ...usage,
+        purpose: "compaction" as const,
+        ...(chunk !== undefined ? { chunk, chunks: attempted } : {}),
+      },
+    }));
+
+  if (denial !== null) {
+    // compaction fails (generic reason in the log, raw detail only in the audit row, R12); the
+    // step continues and its own request meets the hooks next
+    const verdict = denial.verdict;
+    const site = {
+      orgId: input.orgId,
+      conversationId,
+      runId,
+      ...(input.accountId !== undefined && { accountId: input.accountId }),
+      ...(input.agentId !== undefined && { agentId: input.agentId }),
+      idemKey: `hook_denied_compaction:${runId}:${step}:${attemptNo}`,
+    };
+    const denied = hookDeniedEvent(site, "model.request", verdict, { step, attempt: 1 });
+    const entry = hookDeniedAudit(site, denied.payload, verdict);
+    entry.detail = { ...entry.detail, purpose: "compaction" };
+    const failed: AppendEvent = {
+      type: "compaction_failed",
+      runId,
+      idemKey: idem.compactionFailed(runId, step, attemptNo),
+      payload: {
+        attempt: attemptNo,
+        reason: `compaction request blocked by the "${verdict.plugin}" policy hook (${verdict.cause})${chunkNote(multiChunk ? denial.chunk : null)}`,
+      },
+    };
+    deps.log.warn("compaction blocked by a policy hook", {
+      conversationId,
+      plugin: verdict.plugin,
+      cause: verdict.cause,
+    });
+    // the chunk calls that completed before the denial are still billed and reported
+    const billed = usages.length > 0 ? await appendCounted(deps, input, usageEvents()) : [];
+    const written = await deps.stepLog.appendAudited(conversationId, [failed], entry);
+    if (written.length > 0) {
+      await deps.eventLog.notify(conversationId, Math.max(...written.map((e) => e.seq)));
+    }
+    const merged = await mergeWritten(deps.eventLog, conversationId, events, [
+      ...billed,
+      ...written,
+    ]);
+    deps.compactionProgress?.clear(runId);
+    return { events: merged, summarySeq: null, failed: true };
+  }
+
+  if (failure !== null) {
+    deps.log.warn("compaction failed", { conversationId, reason: failure });
+  }
   const event: AppendEvent =
     failure === null
       ? {
           type: "compaction_summary",
           runId,
-          payload: { coversUpToSeq: plan.coversUpToSeq, text: summary },
+          // the manual compact run's run id is in it; a crash-retried attempt writes nothing twice
+          idemKey: idem.compactionSummary(runId, step, attemptNo),
+          payload: {
+            coversUpToSeq: plan.coversUpToSeq,
+            text: summary,
+            // what compaction saved: the estimated transcript input minus the stored summary
+            // output (context compaction spec §4.9)
+            savedTokens: summarySavedTokens(plan.transcript, summary),
+          },
         }
       : {
           type: "compaction_failed",
           runId,
-          payload: { attempt: attemptNo, reason: failure },
+          idemKey: idem.compactionFailed(runId, step, attemptNo),
+          payload: { attempt: attemptNo, reason: `${failure}${chunkNote(failedChunk)}` },
         };
-  if (failure !== null) {
-    deps.log.warn("compaction failed", { conversationId, reason: failure });
-  }
-  // the compaction call's usage (I-1): logged with the outcome in one append (one transaction), marked
-  // `purpose: "compaction"` so step consumers (calibration, trajectory steps, replay plans) skip it
-  const batch: AppendEvent[] = [event];
-  if (usage !== null) {
-    batch.push({
-      type: "usage",
-      runId,
-      idemKey: idem.compactionUsage(runId, step, attemptNo),
-      payload: { step, provider: ref.provider, model: ref.model, ...usage, purpose: "compaction" },
-    });
-  }
+  // the compaction calls' usage (I-1): logged with the outcome in one append (one transaction),
+  // marked `purpose: "compaction"` so step consumers (calibration, trajectory steps, replay plans)
+  // skip it; a chunked compaction writes one per call, each keyed by its chunk
+  const batch: AppendEvent[] = [event, ...usageEvents()];
   const written = await appendCounted(deps, input, batch);
-  return mergeLocal(events, written);
+  const merged = await mergeWritten(deps.eventLog, conversationId, events, written);
+  deps.compactionProgress?.clear(runId);
+  return {
+    events: merged,
+    summarySeq:
+      failure === null ? (written.find((e) => e.type === "compaction_summary")?.seq ?? null) : null,
+    failed: failure !== null,
+  };
 }
 
-/** Merges written events into the local list (idempotent hits already in it are not added twice). */
-function mergeLocal(
+/**
+ * The automatic path's compaction: {@link runCompaction} under the trigger's gates, returning only
+ * the step's event list (the step does not care whether a summary was written).
+ */
+async function maybeCompact(
+  deps: ModelStepDeps,
+  input: ModelStepInput,
+  events: ConversationEvent[],
+  runtime: Runtime,
+  compaction: CompactionSettings,
+  tools: StepTools,
+  opts: CompactOptions = {},
+): Promise<ConversationEvent[]> {
+  return (await runCompaction(deps, input, events, runtime, compaction, tools, opts)).events;
+}
+
+/**
+ * Merges events we just wrote into the step's local list, reading any gap first (the guarantee
+ * {@link appendLocal} gives): another writer may have appended an event between the local maximum
+ * and a seq we wrote, and a request built from a list that skipped it would claim (through its
+ * `toSeq`) to include an event it does not carry. Idempotent hits already in the list are not added
+ * twice; the result is ordered by seq.
+ */
+async function mergeWritten(
+  eventLog: Pick<EventLog, "readAfter">,
+  conversationId: string,
   events: ConversationEvent[],
   written: readonly ConversationEvent[],
-): ConversationEvent[] {
-  const fresh = written.filter((w) => !events.some((e) => e.seq === w.seq));
-  return fresh.length === 0 ? events : [...events, ...fresh];
+): Promise<ConversationEvent[]> {
+  const fresh = written
+    .filter((w) => !events.some((e) => e.seq === w.seq))
+    .sort((a, b) => a.seq - b.seq);
+  if (fresh.length === 0) return events;
+  const out = [...events];
+  let after = events.reduce((m, e) => Math.max(m, e.seq), 0);
+  for (const w of fresh) {
+    while (w.seq > after + 1) {
+      const page = await eventLog.readAfter(
+        conversationId,
+        after,
+        Math.min(READ_PAGE, w.seq - after - 1),
+      );
+      const inGap = page.filter((e) => e.seq > after && e.seq < w.seq);
+      out.push(...inGap);
+      const last = inGap.at(-1);
+      if (!last || inGap.length < page.length) break;
+      after = last.seq;
+    }
+    out.push(w);
+    after = w.seq;
+  }
+  return out.sort((a, b) => a.seq - b.seq);
 }
 
 /**
@@ -1088,6 +1498,7 @@ async function ladder(
   input: ModelStepInput,
   events: ConversationEvent[],
   runtime: Runtime,
+  compaction: CompactionSettings,
   tools: StepTools,
   wrapUpReason: WrapUpReason | null,
   streamed: { text: string },
@@ -1112,13 +1523,15 @@ async function ladder(
   let last: Failure | undefined;
   /** The agent's model did not resolve (`agent.model_unavailable`): only the fallback is left. */
   let mainUnavailable = false;
+  /** A reactive overflow used up this step's fix-ups: only the fallback (a different window) is left. */
+  let skipToFallback = false;
   let attempt = 0;
   // hooks fire only for chat runs that have a registry (eval replays omit it, P-18)
   const scope = hookScope(deps.hooks, input);
-  /** 本次尝试发出的请求里带了字节的附件（供应商拒收时写 media_excluded）。 */
+  /** The attachments whose bytes the last sent request carried (a provider rejection excludes them). */
   let sentMedia: string[] = [];
   for (const rung of rungs) {
-    if (mainUnavailable && !rung.fallback) continue;
+    if ((mainUnavailable || skipToFallback) && !rung.fallback) continue;
     if (last && !rung.fallback && (last.retryAfterMs ?? 0) > MAX_RETRY_AFTER_MS) {
       deps.log.warn("model retry skipped: suggested wait exceeds cap", {
         conversationId,
@@ -1128,58 +1541,210 @@ async function ladder(
       });
       continue;
     }
-    attempt++;
-    if (last) {
-      sink({ kind: "step_reset", runId, step });
-      streamed.text = "";
-      if (!rung.fallback) await abortableSleep(last.retryAfterMs ?? DEFAULT_RETRY_DELAY_MS, signal);
-    }
-    sentMedia = [];
-    /** When the request went out (model.response fires only for sent requests). */
-    let sentAt: number | undefined;
-    /** Whether this attempt resolved its model (a failure before it is a resolve failure). */
-    let resolved = false;
-    try {
-      const { provider, info } = await deps.registry.resolve(input.orgId, rung.ref);
-      resolved = true;
-      if (tools.list.length > 0 && !info.capabilities.tools) {
-        evs = await appendLocal(deps.eventLog, conversationId, evs, {
-          type: "reminder",
-          runId,
-          idemKey: idem.toolsUnsupported(runId, step),
-          payload: { step, text: TOOLS_UNSUPPORTED_REMINDER },
-        });
+    // reactive `model.context_overflow` fix-ups, at most one of each per rung (context compaction
+    // spec §4.4): media exclusion, forced compaction, then a progressive trim
+    let mediaFixup = false;
+    let compactFixup = false;
+    let trimFixup = false;
+    /** Force a compaction call before this rung's next attempt. */
+    let forceCompact = false;
+    /** Apply the progressive reactive trim to this rung's next attempt. */
+    let trimPending = false;
+    /** This attempt is a same-rung overflow fix-up (no same-model retry delay). */
+    let sameRung = false;
+    for (;;) {
+      // a step writes at most MAX_STEP_MODEL_CALLS model_call rows, then stops: never a loop
+      if (attempt >= MAX_STEP_MODEL_CALLS) break;
+      attempt++;
+      if (last) {
+        sink({ kind: "step_reset", runId, step });
+        streamed.text = "";
+        if (!rung.fallback && !sameRung) {
+          await abortableSleep(last.retryAfterMs ?? DEFAULT_RETRY_DELAY_MS, signal);
+        }
       }
-      if (turnReminder !== null) {
-        evs = await appendLocal(deps.eventLog, conversationId, evs, {
-          type: "reminder",
-          runId,
-          idemKey: idem.reminder(runId, step),
-          payload: { step, text: turnReminder },
-        });
-      }
-      const params = attemptParams(agent, info, rung.fallback);
-      await loadMedia(deps, input, evs, info, tools);
-      const { request, meta, estimate } = buildRequest(
-        deps,
-        evs,
-        input,
-        info,
-        params.value,
-        runtime,
-        tools,
-        wrapUp,
-      );
-      sentMedia = (meta.media ?? []).flatMap((m) =>
-        m.outcome === "bytes" ? [m.attachmentId] : [],
-      );
-      // model.request before model_call: a denied request is never logged as sent nor sent (a denial
-      // logged before a crash is sticky: runStep checks it before compaction)
-      if (scope && deps.hooks?.has("model.request")) {
-        let verdict: Awaited<ReturnType<HookRunner["run"]>>;
-        try {
-          verdict = await deps.hooks.run(
-            "model.request",
+      sameRung = false;
+      sentMedia = [];
+      /** Whether this attempt applies the reactive trim. */
+      const trimForAttempt = trimPending;
+      trimPending = false;
+      /** When the request went out (model.response fires only for sent requests). */
+      let sentAt: number | undefined;
+      /** Whether this attempt resolved its model (a failure before it is a resolve failure). */
+      let resolved = false;
+      try {
+        const { provider, info } = await deps.registry.resolve(input.orgId, rung.ref);
+        resolved = true;
+        if (forceCompact) {
+          forceCompact = false;
+          // the rung's model, not the agent's: a fallback may have a smaller window (spec §4.4)
+          evs = await maybeCompact(deps, input, evs, runtime, compaction, tools, {
+            force: true,
+            ref: rung.ref,
+            fallback: rung.fallback,
+          });
+        }
+        if (tools.list.length > 0 && !info.capabilities.tools) {
+          evs = await appendLocal(deps.eventLog, conversationId, evs, {
+            type: "reminder",
+            runId,
+            idemKey: idem.toolsUnsupported(runId, step),
+            payload: { step, text: TOOLS_UNSUPPORTED_REMINDER },
+          });
+        }
+        if (turnReminder !== null) {
+          evs = await appendLocal(deps.eventLog, conversationId, evs, {
+            type: "reminder",
+            runId,
+            idemKey: idem.reminder(runId, step),
+            payload: { step, text: turnReminder },
+          });
+        }
+        const params = attemptParams(agent, info, rung.fallback);
+        await loadMedia(deps, input, evs, info, tools);
+        const { request, meta, estimate } = buildRequest(
+          deps,
+          evs,
+          input,
+          info,
+          params.value,
+          runtime,
+          tools,
+          wrapUp,
+        );
+        // the hard fit guard (context compaction spec §4.3): the output cap is first clamped to what
+        // the window leaves after the input, the reserve to what the clamped cap leaves, and a request
+        // over the resulting target is trimmed deterministically. The plan is recorded and replayed
+        // byte-for-byte; a request the system prompt, tools and latest turn cannot bring under the
+        // target fails before any provider call.
+        request.maxOutputTokens = clampOutput(
+          info.contextWindow,
+          request.maxOutputTokens,
+          estimate,
+        );
+        const reserve = effectiveReserve(
+          info.contextWindow,
+          request.maxOutputTokens,
+          compaction.reserveTokens,
+        );
+        const target = fitTarget(info.contextWindow, request.maxOutputTokens, reserve);
+        const planned = trimForAttempt
+          ? reactiveTrimPlan(evs, request, info, request.maxOutputTokens, reserve, estimate)
+          : planFit({
+              events: evs,
+              request,
+              model: info,
+              maxOutputTokens: request.maxOutputTokens,
+              reserveTokens: reserve,
+              estimate,
+            });
+        let sentRequest = request;
+        let sentEstimate = estimate;
+        if (planned !== null) {
+          const after = estimateAfterFit(request, estimate, planned);
+          // a reactive trim is best effort (the estimate may be wrong; the provider is the backstop);
+          // the ordinary hard-fit guard stays strict and fails before any provider call
+          if (!trimForAttempt && after > target) {
+            throw new RunError("run.context_too_large", contextTooLargeText(info, target, after));
+          }
+          sentRequest = applyFit(request, planned);
+          sentEstimate = after;
+        }
+        sentMedia = (meta.media ?? []).flatMap((m) =>
+          m.outcome === "bytes" ? [m.attachmentId] : [],
+        );
+        // model.request before model_call: a denied request is never logged as sent nor sent (a denial
+        // logged before a crash is sticky: runStep checks it before compaction)
+        if (scope && deps.hooks?.has("model.request")) {
+          let verdict: Awaited<ReturnType<HookRunner["run"]>>;
+          try {
+            verdict = await deps.hooks.run(
+              "model.request",
+              {
+                ...scope,
+                purpose: "step",
+                step,
+                attempt,
+                provider: rung.ref.provider,
+                model: rung.ref.model,
+                request: hookRequestOf(sentRequest, deps.log),
+              },
+              signal,
+            );
+          } catch (e) {
+            // run() rejects only when the run's signal aborted: an abort, never a deny
+            if (signal.aborted) throw new StepAborted();
+            throw e;
+          }
+          if (!verdict.allowed) {
+            await recordHookDenial(
+              deps,
+              {
+                orgId: input.orgId,
+                conversationId,
+                runId,
+                ...(input.accountId !== undefined && { accountId: input.accountId }),
+                ...(input.agentId !== undefined && { agentId: input.agentId }),
+                idemKey: idem.hookDenied(runId, step, attempt),
+              },
+              "model.request",
+              verdict,
+              { step, attempt },
+            );
+            throw new RunError("run.hook_denied", modelDeniedText(verdict.plugin, verdict.reason));
+          }
+        }
+        // 请求里的工具定义（含目录里的）按指纹存进 tool_specs，与 model_call 同一事务
+        // （请求可由日志 + tool_specs 还原）
+        const sent = new Set([...meta.tools, ...(meta.catalog ?? [])].map((t) => t.specHash));
+        const written = await deps.stepLog.appendWithSpecs(
+          conversationId,
+          tools.list.filter((x) => sent.has(x.specHash)),
+          [
+            {
+              type: "model_call",
+              runId,
+              idemKey: idem.modelCall(runId, step, attempt),
+              payload: {
+                step,
+                attempt,
+                provider: rung.ref.provider,
+                model: rung.ref.model,
+                fallback: rung.fallback,
+                request: {
+                  ...meta,
+                  maxOutputTokens: request.maxOutputTokens,
+                  ...(params.dropped.length > 0 && { droppedParams: params.dropped }),
+                  ...(planned !== null && { fit: planned }),
+                  // the request actually sent (post-fit): calibration and the trigger read this value
+                  estimatedInputTokens: sentEstimate,
+                },
+              },
+            },
+          ],
+        );
+        await deps.eventLog.notify(conversationId, Math.max(...written.map((e) => e.seq)));
+        sentAt = Date.now();
+        const outcome = await consumeModelStream(
+          provider,
+          sentRequest,
+          info.streamIdleTimeoutMs ?? runtime.streamIdleMs,
+          signal,
+          (ev) => {
+            if (ev.type === "text_delta") {
+              streamed.text += ev.text;
+              sink({ kind: "text", runId, step, text: ev.text });
+            } else {
+              sink({ kind: "thinking", runId, step, text: ev.text });
+            }
+          },
+        );
+        // the draft's last write, before the assistant_message is logged
+        sink({ kind: "stream_end", runId, step });
+        if (scope && deps.hooks) {
+          fireObserve(
+            deps.hooks,
+            "model.response",
             {
               ...scope,
               purpose: "step",
@@ -1187,180 +1752,196 @@ async function ladder(
               attempt,
               provider: rung.ref.provider,
               model: rung.ref.model,
-              request: hookRequestOf(request, deps.log),
+              outcome: "ok",
+              content: outcome.content,
+              stopReason: outcome.stopReason,
+              usage: outcome.usage,
+              latencyMs: Date.now() - sentAt,
             },
             signal,
+            deps.log,
           );
-        } catch (e) {
-          // run() rejects only when the run's signal aborted: an abort, never a deny
-          if (signal.aborted) throw new StepAborted();
-          throw e;
         }
-        if (!verdict.allowed) {
-          await recordHookDenial(
-            deps,
+        return { outcome, ref: rung.ref };
+      } catch (err) {
+        if (err instanceof StepAborted) throw err;
+        if (signal.aborted) throw new StepAborted();
+        // a hook denial is final (not retried, not reclassified)
+        if (err instanceof RunError) throw err;
+        const f = classify(err);
+        if (scope && deps.hooks && sentAt !== undefined) {
+          fireObserve(
+            deps.hooks,
+            "model.response",
             {
-              orgId: input.orgId,
-              conversationId,
-              runId,
-              ...(input.accountId !== undefined && { accountId: input.accountId }),
-              ...(input.agentId !== undefined && { agentId: input.agentId }),
-              idemKey: idem.hookDenied(runId, step, attempt),
-            },
-            "model.request",
-            verdict,
-            { step, attempt },
-          );
-          throw new RunError("run.hook_denied", modelDeniedText(verdict.plugin, verdict.reason));
-        }
-      }
-      // 请求里的工具定义（含目录里的）按指纹存进 tool_specs，与 model_call 同一事务
-      // （请求可由日志 + tool_specs 还原）
-      const sent = new Set([...meta.tools, ...(meta.catalog ?? [])].map((t) => t.specHash));
-      const written = await deps.stepLog.appendWithSpecs(
-        conversationId,
-        tools.list.filter((x) => sent.has(x.specHash)),
-        [
-          {
-            type: "model_call",
-            runId,
-            idemKey: idem.modelCall(runId, step, attempt),
-            payload: {
+              ...scope,
+              purpose: "step",
               step,
               attempt,
               provider: rung.ref.provider,
               model: rung.ref.model,
-              fallback: rung.fallback,
-              request: {
-                ...meta,
-                maxOutputTokens: request.maxOutputTokens,
-                ...(params.dropped.length > 0 && { droppedParams: params.dropped }),
-                estimatedInputTokens: estimate,
-              },
+              outcome: "failed",
+              content: [],
+              stopReason: null,
+              usage: null,
+              latencyMs: Date.now() - sentAt,
+              errorCode: f.code,
             },
-          },
-        ],
-      );
-      await deps.eventLog.notify(conversationId, Math.max(...written.map((e) => e.seq)));
-      sentAt = Date.now();
-      const outcome = await consumeModelStream(
-        provider,
-        request,
-        info.streamIdleTimeoutMs ?? runtime.streamIdleMs,
-        signal,
-        (ev) => {
-          if (ev.type === "text_delta") {
-            streamed.text += ev.text;
-            sink({ kind: "text", runId, step, text: ev.text });
-          } else {
-            sink({ kind: "thinking", runId, step, text: ev.text });
-          }
-        },
-      );
-      // the draft's last write, before the assistant_message is logged
-      sink({ kind: "stream_end", runId, step });
-      if (scope && deps.hooks) {
-        fireObserve(
-          deps.hooks,
-          "model.response",
-          {
-            ...scope,
-            purpose: "step",
-            step,
-            attempt,
-            provider: rung.ref.provider,
-            model: rung.ref.model,
-            outcome: "ok",
-            content: outcome.content,
-            stopReason: outcome.stopReason,
-            usage: outcome.usage,
-            latencyMs: Date.now() - sentAt,
-          },
-          signal,
-          deps.log,
-        );
-      }
-      return { outcome, ref: rung.ref };
-    } catch (err) {
-      if (err instanceof StepAborted) throw err;
-      if (signal.aborted) throw new StepAborted();
-      // a hook denial is final (not retried, not reclassified)
-      if (err instanceof RunError) throw err;
-      const f = classify(err);
-      if (scope && deps.hooks && sentAt !== undefined) {
-        fireObserve(
-          deps.hooks,
-          "model.response",
-          {
-            ...scope,
-            purpose: "step",
-            step,
-            attempt,
-            provider: rung.ref.provider,
-            model: rung.ref.model,
-            outcome: "failed",
-            content: [],
-            stopReason: null,
-            usage: null,
-            latencyMs: Date.now() - sentAt,
-            errorCode: f.code,
-          },
-          signal,
-          deps.log,
-        );
-      }
-      deps.log.warn("model call attempt failed", {
-        conversationId,
-        runId,
-        step,
-        attempt,
-        code: f.code,
-        retryable: f.retryable,
-        error: f.message,
-      });
-      if (
-        !resolved &&
-        !rung.fallback &&
-        agent.fallback &&
-        err instanceof ApiError &&
-        !(err instanceof ProviderListError) &&
-        err.code === "agent.model_unavailable"
-      ) {
-        mainUnavailable = true;
-        last = f;
-        continue;
-      }
-      if (!f.retryable) {
-        if (REJECTS_MEDIA.has(f.code) && sentMedia.length > 0) {
-          // 记录失败不能掩盖原来的失败码：只记 warn，本次运行照常以原错误失败
-          try {
-            await excludeMedia(deps, input, attempt, sentMedia);
-          } catch (e) {
-            deps.log.warn("cannot record media_excluded", { conversationId, runId, step, err: e });
-          }
+            signal,
+            deps.log,
+          );
         }
-        throw new RunError(f.code, f.message);
+        deps.log.warn("model call attempt failed", {
+          conversationId,
+          runId,
+          step,
+          attempt,
+          code: f.code,
+          retryable: f.retryable,
+          error: f.message,
+        });
+        if (
+          !resolved &&
+          !rung.fallback &&
+          agent.fallback &&
+          err instanceof ApiError &&
+          !(err instanceof ProviderListError) &&
+          err.code === "agent.model_unavailable"
+        ) {
+          mainUnavailable = true;
+          last = f;
+          break;
+        }
+        if (f.code === "model.context_overflow") {
+          // reactive fix-ups, one of each per rung (context compaction spec §4.4). Each retries this
+          // rung in the same step, so it consumes one attempt.
+          if (sentMedia.length > 0 && !mediaFixup) {
+            mediaFixup = true;
+            // record the rejection and merge it in: the retry rebuilds from the log and the bytes
+            // become "rejected" placeholders. A failed write cannot change the log, so retrying
+            // the same bytes would overflow again: skip the media retry and fall through to the
+            // forced compaction instead.
+            let recorded = false;
+            try {
+              evs = await mergeWritten(
+                deps.eventLog,
+                conversationId,
+                evs,
+                await excludeMedia(deps, input, attempt, sentMedia),
+              );
+              recorded = true;
+            } catch (e) {
+              deps.log.warn("cannot record media_excluded", {
+                conversationId,
+                runId,
+                step,
+                err: e,
+              });
+            }
+            if (recorded) {
+              last = f;
+              sameRung = true;
+              continue;
+            }
+          }
+          if (!compactFixup) {
+            compactFixup = true;
+            forceCompact = true;
+            last = f;
+            sameRung = true;
+            continue;
+          }
+          if (!trimFixup) {
+            trimFixup = true;
+            trimPending = true;
+            last = f;
+            sameRung = true;
+            continue;
+          }
+          // exhausted: a fallback model (a different window) is the only rung worth trying
+          if (!rung.fallback && agent.fallback) {
+            skipToFallback = true;
+            last = f;
+            break;
+          }
+          throw new RunError(f.code, f.message);
+        }
+        if (!f.retryable) {
+          if (REJECTS_MEDIA.has(f.code) && sentMedia.length > 0) {
+            // recording the failure must not hide the original code: log only, and fail the run
+            // with the original error as before
+            try {
+              await excludeMedia(deps, input, attempt, sentMedia);
+            } catch (e) {
+              deps.log.warn("cannot record media_excluded", {
+                conversationId,
+                runId,
+                step,
+                err: e,
+              });
+            }
+          }
+          throw new RunError(f.code, f.message);
+        }
+        last = f;
+        break;
       }
-      last = f;
     }
   }
   const f = last as Failure;
   throw new RunError(f.code, f.message);
 }
 
+/**
+ * The deterministic fit plan for a reactive trim (context compaction spec §4.3 point 5 / §4.4): the
+ * request is trimmed to fit 70%, then 80%, then 90% of the model's window, applying the first target
+ * a plan actually reaches. Most aggressive first: the provider rejected a request the estimate
+ * thought fit, so the retry must really shrink it, not leave the optimistic request unchanged.
+ * Returns null only when the request already fits every target (nothing to trim). The plan is
+ * ordinary and replays byte-for-byte like any other.
+ */
+function reactiveTrimPlan(
+  events: ConversationEvent[],
+  request: ModelRequest,
+  model: ModelInfo,
+  maxOutputTokens: number,
+  reserveTokens: number,
+  estimate: number,
+): FitPlan | null {
+  for (let i = REACTIVE_TRIM_FACTORS.length - 1; i >= 0; i--) {
+    const window = Math.max(
+      1,
+      Math.floor((REACTIVE_TRIM_FACTORS[i] as number) * model.contextWindow),
+    );
+    const plan = planFit({
+      events,
+      request,
+      model: { ...model, contextWindow: window },
+      maxOutputTokens,
+      reserveTokens,
+      estimate,
+    });
+    if (plan !== null) return plan;
+  }
+  return null;
+}
+
 /** 不可重试、且可能由请求里的媒体引起的失败：带了媒体字节时写 `media_excluded`（Ruling M8）。 */
-const REJECTS_MEDIA = new Set(["model.invalid_request", "model.context_overflow"]);
+const REJECTS_MEDIA = new Set(["model.invalid_request"]);
 
 /**
  * 供应商拒收了带媒体的请求：把这些附件记进 `media_excluded`（每条最多 {@link MEDIA_EXCLUDED_MAX_IDS} 个），
- * 之后的请求一律换成占位，会话不会因同一个附件永久卡住（可由日志推出）。本次运行照常失败。
+ * 之后的请求一律换成占位，会话不会因同一个附件永久卡住（可由日志推出）。
+ *
+ * The reactive path merges the returned events into the step's local list and retries in the same
+ * step (context compaction spec §4.4); the non-retryable path lets the run fail as before.
  */
 async function excludeMedia(
   deps: ModelStepDeps,
   input: ModelStepInput,
   attempt: number,
   ids: readonly string[],
-): Promise<void> {
+): Promise<ConversationEvent[]> {
   const { conversationId, runId, step } = input;
   const events: AppendEvent[] = [];
   for (let i = 0; i < ids.length; i += MEDIA_EXCLUDED_MAX_IDS) {
@@ -1380,7 +1961,7 @@ async function excludeMedia(
     step,
     attachmentIds: ids,
   });
-  await deps.eventLog.append(conversationId, events);
+  return deps.eventLog.append(conversationId, events);
 }
 
 function classify(err: unknown): Failure {

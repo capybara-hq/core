@@ -133,7 +133,11 @@ export interface TrajectoryRun {
   skillFork?: TrajectorySkillFork;
   steps: TrajectoryStep[];
   totals: {
-    /** Usage of the step calls plus the compaction calls (`usage` events with `purpose: "compaction"`). */
+    /**
+     * Usage of the step calls plus the non-step calls (`usage` with a `purpose`: a compaction,
+     * title or `web_fetch` call). A compact run has only the latter, so its totals are the sum of
+     * its (possibly chunked) compaction calls, and it has no steps.
+     */
     usage: ModelUsage;
     /** 各次成功调用的成本之和（含压缩调用）；任一成功调用没有价格时为 null（部分求和会误导）。 */
     cost: number | null;
@@ -311,7 +315,9 @@ function buildRun(
         assistants.set(e.payload.step, [...(assistants.get(e.payload.step) ?? []), e]);
         break;
       case "usage":
-        // a compaction, title, web_fetch or review call's usage is not a step call's: counted in the totals only (I-1)
+        // a compaction, title, web_fetch or review call's usage is not a step call's: counted in the
+        // totals only (I-1). A compact run's chunked calls land here too (step 0, no model step), so
+        // no step is paired with them.
         if (e.payload.purpose !== undefined) {
           compactions.push(e);
           break;

@@ -19,11 +19,17 @@ import { useState } from "react";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { ExtensionSlot } from "../../../../components/extension-ui/ExtensionSlot";
 import { NoAccess } from "../../../../components/NoAccess";
+import { CompactionSection } from "../../../../components/settings/CompactionSection";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
 import { useSession } from "../../../../components/shell/session";
 import { timeZoneOptions } from "../../../../lib/account-preferences";
 import { navigateBrowser } from "../../../../lib/browser";
+import {
+  COMPACTION_DEFAULTS,
+  type CompactionSettingsPatch,
+  effectiveCompaction,
+} from "../../../../lib/compaction";
 import { myRole } from "../../../../lib/members";
 import {
   canUpdateOrg,
@@ -58,10 +64,20 @@ export default function OrganizationSettingsView() {
   return <OrganizationSettings orgId={ws.orgId} />;
 }
 
+/**
+ * The page's draft: an edit of one of the plain fields, or of the compaction override (null: follow
+ * the platform again).
+ */
+type OrgDraft = Pick<
+  Partial<OrgSettings>,
+  "toolSearch" | "locale" | "platformTool" | "timeZone"
+> & { compaction?: CompactionSettingsPatch | null };
+
 function OrganizationSettings({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
   const t = useTranslations("orgSettings");
   const tc = useTranslations("common");
+  const tcp = useTranslations("compaction");
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const nav = useOrgSettingsNav();
@@ -69,9 +85,7 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
   const manage = canUpdateOrg(me);
   const qc = useQueryClient();
   const read = usePageQuery(orgSettingsQuery(orgId));
-  const [draft, setDraft] = useState<
-    Pick<Partial<OrgSettings>, "toolSearch" | "locale" | "platformTool" | "timeZone">
-  >({});
+  const [draft, setDraft] = useState<OrgDraft>({});
   // The answer is the new settings: it replaces the cached ones (the response may leave out the
   // read-only parts the sandbox page shows, so the cached ones are kept).
   const update = useAppMutation({
@@ -128,6 +142,22 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
           description={t("platformTool.description")}
           loading={{ fields: [{ control: "select", help: true }] }}
         />
+        <FormSection
+          id="compaction"
+          title={tcp("title")}
+          description={tcp("description")}
+          loading={{
+            // row for row with the loaded section: follow checkbox, enabled switch, four numbers
+            fields: [
+              { control: "radios", options: 1 },
+              { control: "switch", help: true },
+              { control: "input", help: true },
+              { control: "input", help: true },
+              { control: "input", help: true },
+              { control: "input", help: true },
+            ],
+          }}
+        />
         {myRole(me) === "owner" ? <DeleteOrg orgId={orgId} /> : null}
       </SettingsPage>
     );
@@ -138,6 +168,26 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
   const locale = draft.locale ?? saved.locale ?? "en";
   const platformTool = draft.platformTool ?? saved.platformTool ?? "on";
   const timeZone = draft.timeZone ?? saved.timeZone ?? "UTC";
+  // The org's compaction override: absent follows the platform, null (an explicit choice) too.
+  // The draft holds only the fields the admin set, merged over the stored override, so fields
+  // left alone keep following the platform; the fields show the values the org actually gets.
+  const platformCompaction = read.data.deployment?.compaction ?? COMPACTION_DEFAULTS;
+  const compactionDraft = draft.compaction;
+  const compactionOverride =
+    compactionDraft === undefined
+      ? saved.compaction
+      : compactionDraft === null
+        ? undefined
+        : { ...saved.compaction, ...compactionDraft };
+  const compaction = effectiveCompaction(platformCompaction, compactionOverride);
+  const followingPlatform = compactionOverride === undefined;
+  // An empty draft (follow turned off, nothing edited yet) is no change: the kernel treats an
+  // empty override as following the platform anyway.
+  const compactionPatch =
+    compactionDraft === undefined ||
+    (compactionDraft !== null && Object.keys(compactionDraft).length === 0)
+      ? undefined
+      : compactionDraft;
   // 只提交改过的项
   const patch: OrgSettingsPatch = {
     ...(toolSearch !== saved.toolSearch ? { toolSearch } : {}),
@@ -147,6 +197,7 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
     ...(timeZone !== (saved.timeZone ?? "UTC")
       ? { timeZone: timeZone === "UTC" ? null : timeZone }
       : {}),
+    ...(compactionPatch !== undefined ? { compaction: compactionPatch } : {}),
   };
   const unsaved = Object.keys(patch).length;
   const dirty = unsaved > 0;
@@ -255,6 +306,31 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
           />
         </Field>
       </FormSection>
+      <CompactionSection
+        value={compaction}
+        disabled={!manage || followingPlatform}
+        follow={{
+          checked: followingPlatform,
+          disabled: !manage,
+          onChange: (next) =>
+            setDraft((d) => {
+              const { compaction: current, ...rest } = d;
+              // following: clear a stored override (nothing to do when there is none); not
+              // following: keep the stored override (no change) or start an empty draft
+              const compaction = next
+                ? saved.compaction === undefined
+                  ? undefined
+                  : null
+                : (current ?? (saved.compaction === undefined ? {} : undefined));
+              return compaction === undefined ? rest : { ...rest, compaction };
+            }),
+        }}
+        onChange={(p) =>
+          // only the fields the admin edits: the rest keep following the platform (or the stored
+          // override), and a later platform change reaches the org
+          setDraft((d) => ({ ...d, compaction: { ...(d.compaction ?? {}), ...p } }))
+        }
+      />
       {manage ? <ExtensionSlot slot="org.settings.section" args={{ orgId }} /> : null}
       {myRole(me) === "owner" ? <DeleteOrg orgId={orgId} /> : null}
     </SettingsPage>

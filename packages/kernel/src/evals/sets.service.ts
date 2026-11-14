@@ -546,8 +546,9 @@ export class EvalSetsService {
 
   /**
    * 把某次运行加为用例。对话不在本组织（或是 eval 对话）→ `conversation.not_found`；对话的 agent 不是集合的 agent →
-   * `eval.agent_mismatch`；已在集合里 → `eval.case_exists`；集合满了 → `eval.too_many_cases`；
-   * 运行未终态 / 快照超大 → `eval.run_not_finished` / `eval.case_too_large`（`takeSnapshot`）。
+   * `eval.agent_mismatch`；手动压缩运行（无模型步骤）→ `eval.compact_not_replayable`；已在集合里 →
+   * `eval.case_exists`；集合满了 → `eval.too_many_cases`；运行未终态 / 快照超大 →
+   * `eval.run_not_finished` / `eval.case_too_large`（`takeSnapshot`）。
    */
   async addCase(
     orgId: string,
@@ -571,6 +572,20 @@ export class EvalSetsService {
     }
     if (conv.agent_id !== set.agent_id) {
       throw new ApiError("eval.agent_mismatch", "The run belongs to a different agent");
+    }
+    // a manual compaction run has no model step to replay (context compaction spec §4.7): it would
+    // take a set slot and never produce a result, so it is refused with a clear code
+    const run = await this.db
+      .selectFrom("runs")
+      .select("compact")
+      .where("id", "=", input.runId)
+      .where("conversation_id", "=", input.conversationId)
+      .executeTakeFirst();
+    if (run?.compact === true) {
+      throw new ApiError(
+        "eval.compact_not_replayable",
+        "A manual compaction run has no model step to replay, so it cannot be an eval case",
+      );
     }
     const exists = await this.db
       .selectFrom("eval_cases")
@@ -625,6 +640,8 @@ export class EvalSetsService {
       .where("c.agent_id", "=", set.agent_id)
       .where("c.kind", "=", "chat")
       .where("r.status", "in", STATUSES[input.status ?? "completed"])
+      // a manual compaction run has no model step to replay (context compaction spec §4.7)
+      .where("r.compact", "=", false)
       .where((eb) =>
         eb.not(
           eb.exists(

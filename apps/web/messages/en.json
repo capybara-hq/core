@@ -162,7 +162,8 @@
       "artifact_removed": "This file is no longer available.",
       "queue_full": "The queue is full. Wait for queued messages to go out, or remove some.",
       "queue_item_not_found": "The queued message has already been sent or removed.",
-      "read_only": "This is a sub-agent's conversation; it doesn't take messages."
+      "read_only": "This is a sub-agent's conversation; it doesn't take messages.",
+      "busy": "The conversation is busy. Wait for the current run to finish."
     },
     "background_task": {
       "not_found": "The background task does not exist or has been cleaned up.",
@@ -179,6 +180,7 @@
       "storage_unavailable": "Attachment storage is temporarily unavailable.",
       "hook_denied": "The request was blocked by the policy of the \"{plugin}\" extension.",
       "hook_denied_unknown": "The request was blocked by an extension policy.",
+      "context_too_large": "The conversation is too large for the model's context window. Compact the conversation, then try again.",
       "not_found": "The run does not exist in this conversation."
     },
     "component": {
@@ -378,6 +380,7 @@
       "case_exists": "This run is already in the eval set.",
       "too_many_cases": "The eval set is full.",
       "agent_mismatch": "This run belongs to a different agent than the eval set.",
+      "compact_not_replayable": "A manual compaction run has no model step to replay, so it cannot be an eval case. Pick an ordinary run of the conversation.",
       "run_not_finished": "The run has not finished yet. Add it after it ends.",
       "case_too_large": "This run is too large to add to an eval set.",
       "call_not_found": "This model call is not in the snapshot.",
@@ -1448,8 +1451,18 @@
     "divider": {
       "compacted": "Earlier conversation compacted",
       "compactedSaved": "Earlier conversation compacted · saved {n} tokens",
+      "compactFailed": "Compaction failed",
       "fallback": "The chosen model {from} is unavailable; using the agent's model {to} from this message"
     },
+    "compactionRun": "Compaction",
+    "compacting": "Compacting conversation…",
+    "compactingChunk": "{chunk}/{chunks}",
+    "compactingElapsed": "{seconds}s",
+    "compact": "Compact conversation",
+    "compactCommandHint": "Summarize earlier messages to free context",
+    "compactNoArgs": "The /compact command takes no arguments.",
+    "compactBusy": "A run is in progress. Compact the conversation when it finishes.",
+    "commandsGroup": "Commands",
     "system": "System",
     "fileRemoved": "No longer available",
     "noAgents": "No agent is available. Create an agent first.",
@@ -2436,6 +2449,30 @@
       "label": "Default time zone"
     }
   },
+  "compaction": {
+    "title": "Conversation compaction",
+    "description": "Long conversations are summarized before they fill the model's context window, so a long-running conversation keeps going with the recent turns in full.",
+    "follow": "Follow the platform settings",
+    "followHint": "Turn this off to set the compaction values for this organization only.",
+    "enabled": "Compact long conversations automatically",
+    "enabledHint": "When off, early compaction does not run here; approaching the context window still trims or compacts the request so it fits.",
+    "threshold": {
+      "label": "Trigger threshold",
+      "help": "The share of the model's context window at which a compaction starts (0.5–0.95; 0.8 is the default)."
+    },
+    "keepRecentTurns": {
+      "label": "Recent turns kept in full",
+      "help": "How many of the latest user turns the summary leaves untouched (0–20; 4 is the default)."
+    },
+    "reserveTokens": {
+      "label": "Reserved tokens",
+      "help": "Room left below the context window for the reply and the next request (0–50,000; 8,000 is the default)."
+    },
+    "maxOutputTokens": {
+      "label": "Summary output cap",
+      "help": "The most tokens the summary may produce (1,024–32,000; 20,000 is the default)."
+    }
+  },
   "configForm": {
     "none": "—",
     "issues": "The config has problems:",
@@ -3375,6 +3412,7 @@
       "params_changed": "Model parameters changed",
       "media_missing": "An attachment is no longer available",
       "media_changed": "An attachment changed",
+      "context_fit": "The candidate model's context window trims the request differently",
       "tool_unmatched": "A tool call had no recorded result",
       "subagent_changed": "A sub-agent's definition changed since the recording",
       "model_switched": "The candidate model replaces a model switch made in the conversation"

@@ -37,6 +37,7 @@ import {
   isModelSetupError,
   runParts,
 } from "../../lib/run-row";
+import type { CompactionProgress } from "../../lib/stream";
 import { shortTime } from "../../lib/time";
 import {
   type FailedRun,
@@ -52,6 +53,7 @@ import { DeviceCodeCard } from "../DeviceCodeCard";
 import { QuestionCard } from "../QuestionCard";
 import { useOpenDownload } from "../SessionFilePreview";
 import { useSession } from "../shell/session";
+import { CompactingRow } from "./CompactingRow";
 import { NetworkFacts } from "./NetworkFacts";
 import { SubagentWait } from "./SubagentWait";
 
@@ -146,6 +148,11 @@ export type ThreadProps = {
    * false, so the page has one live thread (I2).
    */
   live?: boolean;
+  /**
+   * The running compaction's progress (ephemeral, context compaction spec §4.6), shown as a row at
+   * the end of the thread until the compaction's event replaces it.
+   */
+  compaction?: CompactionProgress | null;
 };
 
 /** The callbacks an entry calls, read through a ref so they never re-render the entries. */
@@ -225,6 +232,7 @@ export function Thread({
   live = true,
   renderTask,
   runLinks,
+  compaction,
 }: ThreadProps) {
   const t = useTranslations("chat");
   const [openSummaries, setOpenSummaries] = useState<ReadonlySet<string>>(new Set());
@@ -361,7 +369,7 @@ export function Thread({
     ],
   );
 
-  if (entries.length === 0) return null;
+  if (entries.length === 0 && !compaction) return null;
 
   return (
     <div role="log" aria-live={live ? "polite" : "off"} aria-label={t("timeline")}>
@@ -369,6 +377,7 @@ export function Thread({
         {entries.map((e) => (
           <EntryView key={e.key} e={e} c={ctx} />
         ))}
+        {compaction ? <CompactingRow progress={compaction} /> : null}
       </Stack>
     </div>
   );
@@ -503,6 +512,13 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
           </RunDivider>
         );
       }
+      case "compact-failed":
+        // The raw reason (the kernel's English) stays the panel's detail, as a run row's does.
+        return (
+          <RunDivider kind="failed" text={t("divider.compactFailed")}>
+            {e.reason}
+          </RunDivider>
+        );
       case "fallback":
         return (
           <RunDivider
@@ -516,6 +532,8 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
   const run = (e: Extract<TimelineEntry, { kind: "run" }>): ReactNode => {
     const n = (v: number) => v.toLocaleString(locale);
     const parts = runParts(e, locale, (v) => t("run.tokens", { n: v }));
+    // a manual compaction's row says so instead of naming an ordinary step run
+    const label = e.compact === true ? t("compactionRun") : undefined;
     const facts = e.tokens
       ? [
           t("run.tokenSplit", {
@@ -534,11 +552,21 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
           },
         ]
       : [];
-    if (e.status === "ok") return <RunRow status="ok" parts={parts} facts={facts} links={links} />;
+    if (e.status === "ok")
+      return (
+        <RunRow
+          status="ok"
+          {...(label !== undefined ? { label } : {})}
+          parts={parts}
+          facts={facts}
+          links={links}
+        />
+      );
     if (e.status === "stopped") {
       return (
         <RunRow
           status="stopped"
+          {...(label !== undefined ? { label } : {})}
           parts={parts}
           statusText={t("run.stopped", {
             who: who(e.byAccountId),
@@ -565,6 +593,7 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
     return (
       <RunRow
         status="failed"
+        {...(label !== undefined ? { label } : {})}
         parts={parts}
         {...(e.retried ? { statusText: t("run.failedRetried"), defaultOpen: false } : {})}
         error={{ summary, ...(detail !== "" ? { detail } : {}) }}

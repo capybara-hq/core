@@ -22,6 +22,7 @@ import { useState } from "react";
 import { platformOwned } from "../../../../components/AdminComponents";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
+import { CompactionSection } from "../../../../components/settings/CompactionSection";
 import { usePagePath } from "../../../../components/shell/path";
 import { builtinChoice, type ThemeChoice, ThemePicker } from "../../../../components/ThemePicker";
 import {
@@ -42,6 +43,11 @@ import {
   type PlatformAttributionView,
   updateDeploymentSettings,
 } from "../../../../lib/admin";
+import {
+  COMPACTION_DEFAULTS,
+  type CompactionSettings,
+  type CompactionSettingsPatch,
+} from "../../../../lib/compaction";
 import { componentName, type PlatformComponent } from "../../../../lib/components";
 import { extensionLabel, labelLocale } from "../../../../lib/extension-label";
 import type { DevicesAutoModeSource, DevicesAutoModeView } from "../../../../lib/org-settings";
@@ -49,6 +55,7 @@ import {
   adminExtensionsQuery,
   deploymentSettingsQuery,
   invalidateAttribution,
+  invalidateCompactionSettings,
   invalidateDeviceModes,
   settingsChangeKeys,
 } from "../../../../lib/query/admin";
@@ -111,6 +118,7 @@ function AdminSettingsRead() {
   const read = usePageQuery(deploymentSettingsQuery());
   const ta = useTranslations("appearance.platform");
   const tk = useTranslations("admin.settings.clientCode");
+  const tcp = useTranslations("compaction");
   const header = { path: [...scope, { label: "settings" }], title: t("title") };
   if (read.kind === "notFound") return <NotFound />;
   if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
@@ -141,6 +149,20 @@ function AdminSettingsRead() {
           title={t("autoMode.title")}
           description={t("autoMode.description")}
           loading={{ fields: [{ control: "radio-cards", options: 2 }, { control: "text" }] }}
+        />
+        <FormSection
+          id="compaction"
+          title={tcp("title")}
+          description={tcp("description")}
+          loading={{
+            fields: [
+              { control: "switch", help: true },
+              { control: "input", help: true },
+              { control: "input", help: true },
+              { control: "input", help: true },
+              { control: "input", help: true },
+            ],
+          }}
         />
         <FormSection
           id="appearance"
@@ -187,6 +209,8 @@ function AdminSettings({
       if (patch.devicesAutoMode !== undefined) await invalidateDeviceModes(qc);
       // the attribution defaults ride on every org's settings (the agent page's help text)
       if (patch.attribution !== undefined) await invalidateAttribution(qc);
+      // the platform's compaction defaults are what an org that follows the platform shows
+      if (patch.compaction !== undefined) await invalidateCompactionSettings(qc);
       return r;
     },
     invalidates: (patch) => settingsChangeKeys(patch),
@@ -197,6 +221,7 @@ function AdminSettings({
   const [clientDraft, setClientDraft] = useState<ClientExtensionsSetting | undefined>(undefined);
   const [attributionDraft, setAttributionDraft] = useState<AttributionDraft>({});
   const [autoDraft, setAutoDraft] = useState<"allowed" | "off" | undefined>(undefined);
+  const [compactionDraft, setCompactionDraft] = useState<CompactionSettingsPatch>({});
   const cq = adminComponentsQuery("theme");
   const eligible = (
     useQuery({ ...cq, retryOnMount: retryOnMountOf(cq.queryKey) }).data?.components ?? []
@@ -239,6 +264,10 @@ function AdminSettings({
   ) {
     patch.devicesAutoMode = { mode: autoDraft };
   }
+  const savedCompaction = saved.compaction ?? COMPACTION_DEFAULTS;
+  const compaction: CompactionSettings = { ...savedCompaction, ...compactionDraft };
+  const compactionPatch = compactionChange(savedCompaction, compaction);
+  if (compactionPatch !== null) patch.compaction = compactionPatch;
   const unsaved = Object.keys(patch).length;
 
   async function save() {
@@ -250,6 +279,7 @@ function AdminSettings({
       setClientDraft(undefined);
       setAttributionDraft({});
       setAutoDraft(undefined);
+      setCompactionDraft({});
       toast.success(t("saved"));
     } catch (e) {
       const off = themeOffOrgs(e);
@@ -293,6 +323,7 @@ function AdminSettings({
             setClientDraft(undefined);
             setAttributionDraft({});
             setAutoDraft(undefined);
+            setCompactionDraft({});
           },
         },
         primary: {
@@ -352,6 +383,10 @@ function AdminSettings({
           onChange={(d) => setAttributionDraft((cur) => ({ ...cur, ...d }))}
         />
       )}
+      <CompactionSection
+        value={compaction}
+        onChange={(d) => setCompactionDraft((cur) => ({ ...cur, ...d }))}
+      />
       <FormSection
         id="appearance"
         title={ta("platform.title")}
@@ -369,6 +404,24 @@ function AdminSettings({
       <UiPlacementSection scope={{ kind: "platform" }} canEdit />
     </FormPage>
   );
+}
+
+/** The compaction patch: only the fields that differ from the saved platform settings, or null. */
+function compactionChange(
+  saved: CompactionSettings,
+  next: CompactionSettings,
+): CompactionSettingsPatch | null {
+  const change: CompactionSettingsPatch = {};
+  for (const f of [
+    "enabled",
+    "threshold",
+    "keepRecentTurns",
+    "reserveTokens",
+    "maxOutputTokens",
+  ] as const) {
+    if (next[f] !== saved[f]) Object.assign(change, { [f]: next[f] });
+  }
+  return Object.keys(change).length > 0 ? change : null;
 }
 
 /** The kill switch patch: only the fields that differ from the saved setting, or null. */

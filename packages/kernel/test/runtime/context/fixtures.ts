@@ -5,6 +5,26 @@ import type {
   ConversationEventBody,
   LogContentBlock,
 } from "../../../src/conversations/events.js";
+import type { CompactionSettings } from "../../../src/identity/settings.js";
+
+/**
+ * Compaction settings shared by the context tests: the trigger and plan test values (a 16k output
+ * cap and an 8k reserve), with any field overridden. `maxOutputTokens` here is the `O` the trigger
+ * tests exercise, not the 20k summary cap of the settings schema.
+ */
+export function compactionSettings(over: Partial<CompactionSettings> = {}): CompactionSettings {
+  return {
+    enabled: true,
+    threshold: 0.8,
+    keepRecentTurns: 4,
+    reserveTokens: 8000,
+    maxOutputTokens: 16_000,
+    ...over,
+  };
+}
+
+/** A tail budget large enough that the size-aware tail keeps all the turns a test asks for. */
+export const NO_TAIL_LIMIT = Number.POSITIVE_INFINITY;
 
 export const MODEL: ModelInfo = {
   id: "fake-1",

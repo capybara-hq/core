@@ -19,7 +19,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "../../i18n/navigation";
 import { avatarValue } from "../../lib/agents";
-import type { ModelRef } from "../../lib/conversations";
+import { compactConversation, type ModelRef } from "../../lib/conversations";
 import { canEditAgent } from "../../lib/org-settings";
 import { agentsQuery } from "../../lib/query/agents";
 import { retryOnMountOf } from "../../lib/query/client";
@@ -346,6 +346,34 @@ export function useConversationPage(
     }
   };
 
+  // Manual compaction (context compaction spec §4.10): the title menu's entry and the composer's
+  // /compact share one request. Its progress and its end come from the stream (`compaction`
+  // frames, then the run's events).
+  const compactMutation = useAppMutation({
+    fn: () => compactConversation(orgId, conversationId),
+    invalidates: () => [],
+  });
+  // Throws on failure so the composer keeps its draft; the title menu reports it itself.
+  const compact = async () => {
+    await compactMutation.mutateAsync();
+  };
+  // Where compaction is possible: an eval conversation never renders this page (the kernel answers
+  // 404; the trajectory viewer shows it), and a sub-agent's is refused (conversation.read_only).
+  const canCompact = conv.conversation !== undefined && !conv.conversation.parentConversationId;
+  const compactItem: TitleBarMenuItem[] = canCompact
+    ? [
+        {
+          id: "compact",
+          label: t("compact"),
+          icon: "chevrons-up-down",
+          disabled: active,
+          onSelect: () => {
+            void compact().catch((e: unknown) => toast.error(errorMessage(e)));
+          },
+        },
+      ]
+    : [];
+
   const menu: TitleBarMenuItem[] = [
     { id: "rename", label: t("rename"), icon: "square-pen", onSelect: () => setRenaming(true) },
     {
@@ -358,6 +386,7 @@ export function useConversationPage(
           () => {},
         ),
     },
+    ...compactItem,
   ];
 
   // Context: the latest step call's usage against its model's window.
@@ -440,6 +469,7 @@ export function useConversationPage(
           entries={entries}
           info={info}
           reasoningOf={selection.reasoningOf}
+          compaction={conv.compaction}
           runLinks={{
             agentOwnerId: agent?.ownerAccountId,
             // a sub-agent conversation's trajectory is gated on the parent's agent: no link
@@ -489,6 +519,7 @@ export function useConversationPage(
           }}
           placeholder={t("placeholder")}
           control={composer}
+          {...(canCompact ? { onCompact: compact } : {})}
           // the agent's quick actions, as on a new conversation: a zap menu that fills the composer
           {...(quickActions.length > 0
             ? {

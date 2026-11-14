@@ -96,6 +96,7 @@ const noRuns: RunControl = {
   abortQueued: async () => false,
   abortWaiting: async () => false,
   requestAbort: async () => {},
+  startCompaction: async () => "",
   stopTree: async () => 0,
 };
 

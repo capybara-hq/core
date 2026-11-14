@@ -338,6 +338,10 @@ export class EvalsOperations implements OnModuleInit {
           },
           { code: "eval.case_exists", next: "That run is already a case of the set." },
           {
+            code: "eval.compact_not_replayable",
+            next: "A manual compaction run has no step to replay; pick an ordinary run of the conversation.",
+          },
+          {
             code: "eval.too_many_cases",
             next: "The set is full; remove a case with evals.remove-case or use another set.",
           },
@@ -388,7 +392,7 @@ export class EvalsOperations implements OnModuleInit {
           }
           const run = await this.kdb.db
             .selectFrom("runs")
-            .select("status")
+            .select(["status", "compact"])
             .where("id", "=", i.runId)
             .where("conversation_id", "=", i.conversationId)
             .executeTakeFirst();
@@ -397,6 +401,13 @@ export class EvalsOperations implements OnModuleInit {
               ok: false,
               code: "conversation.not_found",
               message: "Conversation or run not found",
+            };
+          }
+          if (run.compact) {
+            return {
+              ok: false,
+              code: "eval.compact_not_replayable",
+              message: "A manual compaction run has no model step to replay",
             };
           }
           if (run.status === "running" || run.status === "queued") {

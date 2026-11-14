@@ -423,6 +423,11 @@ export interface RunsTable {
    * inherited by its unattended descendants); null = a person's run.
    */
   scheduled_task_run_id: ColumnType<string | null, string | null | undefined, string | null>;
+  /**
+   * 0132: a manual compaction run (context compaction spec §4.7): it calls the shared compaction
+   * execution with `force: true` instead of the agent loop, and writes no model step.
+   */
+  compact: ColumnType<boolean, boolean | undefined, boolean>;
 }
 
 /** 0053: one row per sub-agent dispatch (an `Agent` call of a parent run). */

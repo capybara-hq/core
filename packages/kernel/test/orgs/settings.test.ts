@@ -5,6 +5,7 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import type { ApiError } from "../../src/errors.js";
+import { COMPACTION_SETTINGS } from "../../src/identity/settings.js";
 import {
   type CloudNetworkSetting,
   type OrgSettings,
@@ -369,6 +370,8 @@ describe("org cloudNetwork", () => {
         sessionUrl: false,
       },
       publicUrl: false,
+      // the platform's compaction defaults the org page follows (context compaction spec §4.8)
+      compaction: COMPACTION_SETTINGS.parse({}),
     });
   });
 });

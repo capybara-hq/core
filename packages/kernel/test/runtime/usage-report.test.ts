@@ -4,6 +4,7 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
@@ -248,6 +249,78 @@ describe("usage.report delivery", () => {
       runId: "",
       provider: "model-fake",
       model: "fake-1",
+    });
+  });
+
+  it("a chunked compaction's usage events are reported as compaction calls, one per chunk (context compaction §4.5)", async () => {
+    await probe({});
+    const conv = await createConv(owner, orgId, agentId);
+    await postMessage(owner, orgId, conv, "echo:chunked usage");
+    await waitForTerminal(db, conv, 1, 20_000);
+    const [step] = (await eventsOf(db, conv)).filter((e) => e.type === "usage");
+    const runId = (step as ConversationEvent).runId;
+    if (runId === null) throw new Error("the turn's usage event has no run");
+    // the two calls of a chunked compaction, as the kernel writes them
+    const appended = await k.app.get(EventLog).append(conv, [
+      {
+        type: "usage",
+        runId,
+        payload: {
+          step: 0,
+          provider: "model-fake",
+          model: "fake-1",
+          inputTokens: 1200,
+          outputTokens: 80,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          purpose: "compaction",
+          chunk: 1,
+          chunks: 2,
+        },
+      },
+      {
+        type: "usage",
+        runId,
+        payload: {
+          step: 0,
+          provider: "model-fake",
+          model: "fake-1",
+          inputTokens: 800,
+          outputTokens: 70,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          purpose: "compaction",
+          chunk: 2,
+          chunks: 2,
+        },
+      },
+    ]);
+    const ids = appended.map(idOf);
+    for (const e of appended) {
+      await addJob({ conversationId: conv, seq: e.seq }, usageReportJobId(conv, e.seq));
+    }
+    const got = await waitFor(
+      async () => {
+        const d = await probeUsage(ids);
+        return ids.every((id) => d[id]?.calls === 1 && d[id]?.last != null) ? d : null;
+      },
+      10_000,
+      "chunk usages delivered",
+    );
+    // each chunk call is its own reported compaction call: no step pairing, no chunk fields needed
+    expect(got[ids[0] as string]?.last).toMatchObject({
+      eventId: ids[0],
+      purpose: "compaction",
+      conversationId: conv,
+      runId,
+      provider: "model-fake",
+      model: "fake-1",
+      usage: { inputTokens: 1200, outputTokens: 80, cacheReadTokens: 0, cacheWriteTokens: 0 },
+    });
+    expect(got[ids[1] as string]?.last).toMatchObject({
+      eventId: ids[1],
+      purpose: "compaction",
+      usage: { inputTokens: 800, outputTokens: 70, cacheReadTokens: 0, cacheWriteTokens: 0 },
     });
   });
 

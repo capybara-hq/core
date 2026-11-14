@@ -168,7 +168,13 @@ type EventBody =
     }
   | {
       type: "run_started";
-      payload: { agentVersion: number; model: ModelRef; triggerAccountId?: string };
+      payload: {
+        agentVersion: number;
+        model: ModelRef;
+        triggerAccountId?: string;
+        /** `compact`: a manual compact run, which runs no model step (display only). */
+        trigger?: "message" | "background_task" | "subagent" | "schedule" | "compact";
+      };
     }
   | {
       type: "model_call";
@@ -204,6 +210,9 @@ type EventBody =
          * classifier, also with the reviewed call's `callId`).
          */
         purpose?: "compaction" | "title" | "web_fetch" | "review";
+        /** A chunked compaction call's 1-based chunk and the calls the compaction attempted. */
+        chunk?: number;
+        chunks?: number;
         callId?: string;
       };
     }
@@ -382,7 +391,15 @@ type EventBody =
         stoppedBy?: "person" | "deletion" | "subagent_end";
       };
     }
-  | { type: "compaction_summary"; payload: { coversUpToSeq: number; text: string } }
+  | {
+      type: "compaction_summary";
+      payload: {
+        coversUpToSeq: number;
+        text: string;
+        /** What compaction saved (estimated transcript minus summary); absent in older logs. */
+        savedTokens?: number;
+      };
+    }
   | { type: "compaction_failed"; payload: { attempt: number; reason: string } }
   | {
       type: "media_excluded";
@@ -747,6 +764,19 @@ export const renameConversation = (orgId: string, id: string, title: string) =>
   apiFetch<{ conversation: Conversation }>(one(orgId, id), {
     method: "PATCH",
     body: JSON.stringify({ title }),
+  });
+
+/**
+ * Manual compaction (context compaction spec §4.7): starts a compact run that summarizes the
+ * conversation's earlier history, `202 { runId }`; the same run id comes back while one is queued
+ * or running. The body is `{}` (the endpoint also accepts a bodyless POST; only an optional
+ * `clientRequestId` may go in it). A busy conversation is `409 conversation.busy`; an eval or
+ * someone else's is not found.
+ */
+export const compactConversation = (orgId: string, id: string) =>
+  apiFetch<{ runId: string }>(`${one(orgId, id)}/compact`, {
+    method: "POST",
+    body: JSON.stringify({}),
   });
 
 /** Archive or unarchive (owner only); archiving does not stop a running run. */

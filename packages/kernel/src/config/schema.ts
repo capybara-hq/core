@@ -753,23 +753,6 @@ export const KernelConfigSchema = z.object({
               "Default output-token limit per model call when the agent does not set maxOutputTokens (an agent's maxOutputTokens overrides it; either is capped by the model's own maximum)",
           }),
         ),
-      compactionThreshold: z
-        .number()
-        .gt(0)
-        .max(1)
-        .default(0.8)
-        .meta(
-          meta({
-            description:
-              "Compact the conversation when the estimated input reaches this fraction of the context window",
-          }),
-        ),
-      keepRecentTurns: z
-        .number()
-        .int()
-        .nonnegative()
-        .default(4)
-        .meta(meta({ description: "Number of recent user turns kept verbatim when compacting" })),
       workerConcurrency: z
         .number()
         .int()
@@ -841,8 +824,6 @@ export const KernelConfigSchema = z.object({
       maxRunSeconds: 0,
       streamIdleMs: 60000,
       maxOutputTokens: 16000,
-      compactionThreshold: 0.8,
-      keepRecentTurns: 4,
       workerConcurrency: 10,
       orgConcurrency: 10,
       jobLockMs: 30000,

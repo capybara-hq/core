@@ -17,6 +17,9 @@ import { SkillsModule } from "../skills/skills.module.js";
 import { ToolsModule } from "../tools/tools.module.js";
 import { RunAbort } from "./abort.js";
 import { KyselyCheckpointSaver } from "./checkpointer.js";
+import { CompactionService } from "./compaction.service.js";
+import { CompactionProgressService } from "./compaction-progress.js";
+import { CompactionSettingsService } from "./compaction-settings.service.js";
 import { ConversationLock } from "./conversation-lock.js";
 import { MAINTENANCE_QUEUE_NAME } from "./maintenance-queue.js";
 import { PluginContextService } from "./plugin-context.service.js";
@@ -81,6 +84,12 @@ import { Waits } from "./waits.js";
     RunContextService,
     PluginContextService,
     RunWorker,
+    // the org's effective compaction settings, one read per model step
+    CompactionSettingsService,
+    // ephemeral compaction progress for the conversation SSE (spec 2026-11-14 §4.6)
+    CompactionProgressService,
+    // the manual compaction execution of a compact run (spec 2026-11-14 §4.7)
+    CompactionService,
     // a finished background task wakes an idle conversation (background Bash spec §3)
     BackgroundWake,
     // one quota per key prefix (the org run quota, the org eval quota)
@@ -111,6 +120,8 @@ import { Waits } from "./waits.js";
     AgentLoops,
     RunSteps,
     RunWorker,
+    CompactionSettingsService,
+    CompactionService,
     RUN_QUOTA,
     EVAL_QUOTA,
     ProvidersModule,

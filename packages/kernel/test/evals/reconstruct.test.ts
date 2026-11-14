@@ -137,7 +137,7 @@ beforeAll(async () => {
           HOOKS_PROBE,
           SANDBOX_FAKE,
         ],
-        runtime: { maxSteps: 4, keepRecentTurns: 1 },
+        runtime: { maxSteps: 4 },
         tools: { searchThresholdTools: 1 },
         extensionConfig: {
           "model-fake": {
@@ -162,6 +162,16 @@ beforeAll(async () => {
     // run context spec §10: the day a run start reads (a test moves it forward)
     { overrides: [{ provide: RUN_CONTEXT_CLOCK, useValue: () => clockMs ?? Date.now() }] },
   );
+  // the compaction settings this fixture used to set through `runtime.keepRecentTurns` (context
+  // compaction spec §4.8 moved them to the deployment settings, read live per model step). The
+  // zero reserve keeps the hard fit guard's target reachable for the small-window fake model
+  await db
+    .insertInto("deployment_settings")
+    .values({
+      key: "compaction",
+      value: JSON.stringify({ keepRecentTurns: 1, reserveTokens: 0 }),
+    })
+    .execute();
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
   owner = await session(k, "owner");
@@ -429,6 +439,7 @@ async function expectZeroDrift(convId: string, snap: CaseSnapshot, upTo = sent.l
       maxOutputTokens: _m,
       droppedParams: _d,
       estimatedInputTokens: _e,
+      fit: _f,
       ...meta
     } = c.payload.request;
     expect(out.meta).toEqual(meta);
@@ -1602,6 +1613,9 @@ describe("reconstructRequest：基线零漂移", () => {
       const opts = {
         model: info,
         mediaBudgetBytes: k.app.get(KernelConfigService).get().attachments.requestMediaBytes,
+        // the run's reserve (the fixture's deployment setting): the candidate's fit recomputes
+        // against the same target, so it matches the recorded request
+        reserveTokens: 0,
       };
       const out = reconstructRequest(snap, c.seq, opts);
       expect(out.drift, `model_call seq ${c.seq}`).toEqual([]);
@@ -1773,6 +1787,156 @@ describe("reconstructRequest：基线零漂移", () => {
       });
     } finally {
       machine.close();
+    }
+  });
+
+  it("a trimmed request records its fit and replays byte-for-byte; a smaller candidate window is context_fit", async () => {
+    reset();
+    // A window where the fit target W - O - R is reachable but proactive compaction does not fire:
+    // enabled: false leaves only the hard line (estimate + output > window), so the hard fit guard
+    // trims instead of compacting. fake-1: W 32000, O 4096, R 20000 -> target 7904.
+    await db
+      .updateTable("deployment_settings")
+      .set({ value: JSON.stringify({ enabled: false, reserveTokens: 20_000 }) })
+      .where("key", "=", "compaction")
+      .execute();
+    try {
+      const agentId = await createAgent({ provider: "model-fake", model: "fake-1" });
+      const conv = await createConv(owner, orgId, agentId);
+      // The fake model's reply to long:6000 is capped at 16384 characters (~4k tokens): the third
+      // request carries two of them (~8k), over the 7904 target and below the hard line
+      // (estimate + 4096 <= 32000), so the hard fit guard trims instead of compacting
+      await postMessage(owner, orgId, conv, "long:6000");
+      await waitForTerminal(db, conv, 1, 30_000);
+      await postMessage(owner, orgId, conv, "long:6000");
+      await waitForTerminal(db, conv, 2, 30_000);
+      await postMessage(owner, orgId, conv, "echo:after");
+      await waitForTerminal(db, conv, 3, 30_000);
+
+      const events = await eventsOf(db, conv);
+      const calls = modelCalls(events);
+      expect(calls).toHaveLength(3);
+      // the earlier requests fit: no plan (old logs without fit rebuild as before)
+      expect(calls[0]?.payload.request.fit).toBeUndefined();
+      expect(calls[1]?.payload.request.fit).toBeUndefined();
+      const fit = calls[2]?.payload.request.fit;
+      expect(fit).toBeDefined();
+      // the oldest assistant text is dropped
+      expect(fit?.droppedMessageIndexes.length).toBeGreaterThan(0);
+      // the provider received the trimmed request, not the huge replies
+      expect(JSON.stringify(sent[2])).not.toContain("word6000");
+      expect(JSON.stringify(sent[2])).toContain("echo:after");
+
+      const info = await modelInfo("model-fake", "fake-1");
+      const snap = await snapshotOf(conv);
+      // every call reconstructs with zero drift and equals what the provider got: the recorded plan
+      // is applied to the rebuilt request
+      await expectZeroDrift(conv, snap);
+      const first = reconstructRequest(snap, calls[0]?.seq as number, { model: info });
+      expect(first.drift).toEqual([]);
+      expect(first.request).toEqual(sent[0]);
+
+      // a candidate model with a smaller window recomputes the fit: a different plan -> context_fit
+      const smaller: ModelInfo = { ...info, contextWindow: 24_000 };
+      const cand = reconstructRequest(snap, calls[2]?.seq as number, {
+        model: smaller,
+        params: {},
+        reserveTokens: 20_000,
+      });
+      expect(cand.drift).toEqual(["context_fit"]);
+    } finally {
+      await db
+        .updateTable("deployment_settings")
+        .set({ value: JSON.stringify({ keepRecentTurns: 1, reserveTokens: 0 }) })
+        .where("key", "=", "compaction")
+        .execute();
+    }
+  });
+
+  it("a clamped output cap under the agent's maxOutputTokens knob replays byte-for-byte; a smaller window is context_fit", async () => {
+    reset();
+    // The reserve makes the fit target W - O - R reachable; the policy hook denies the compaction
+    // calls, so a request over the hard line is clamped and trimmed instead of summarized (the
+    // same request the reactive path sends after a failed compaction). fake-1: W 32000, O 4000.
+    await db
+      .updateTable("deployment_settings")
+      .set({ value: JSON.stringify({ reserveTokens: 20_000 }) })
+      .where("key", "=", "compaction")
+      .execute();
+    const enableProbe = async (enabled: boolean) => {
+      const res = await owner({
+        method: "PUT",
+        url: `/api/v1/orgs/${orgId}/extensions/hooks-probe`,
+        payload: { enabled },
+      });
+      expect(res.statusCode, res.body).toBe(200);
+    };
+    await enableProbe(true);
+    try {
+      const cfg = await owner({
+        method: "POST",
+        url: "/plugins/hooks-probe/config",
+        payload: { orgId, denyModelPurposes: ["compaction"] },
+      });
+      expect(cfg.statusCode, cfg.body).toBe(200);
+      const agentId = await createAgent(
+        { provider: "model-fake", model: "fake-1" },
+        { modelParams: { maxOutputTokens: 4000 } },
+      );
+      const conv = await createConv(owner, orgId, agentId);
+      // three long replies (~4k tokens each) and a 90k-character turn put the fourth request over
+      // W - O (28000); the fifth adds a 20k-character latest turn
+      let n = 0;
+      const turn = async (text: string) => {
+        await postMessage(owner, orgId, conv, text);
+        await waitForTerminal(db, conv, ++n, 30_000);
+      };
+      await turn("long:6000");
+      await turn("long:6000");
+      await turn("long:6000");
+      await turn("x".repeat(90_000));
+      await turn("y".repeat(20_000));
+
+      const events = await eventsOf(db, conv);
+      const calls = modelCalls(events);
+      expect(calls).toHaveLength(5);
+      // an over-window request is refused, not summarized, and the step trims instead
+      expect(events.filter((e) => e.type === "compaction_failed").length).toBeGreaterThan(0);
+      // the knob is recorded as a parameter and the clamp lowered the cap below it
+      const last = calls[4];
+      expect(last?.payload.request.params).toEqual({ maxOutputTokens: 4000 });
+      expect(last?.payload.request.maxOutputTokens).toBe(1);
+      // the latest turn fits once the older messages are gone: a trim, no truncation note
+      const fit = last?.payload.request.fit;
+      expect(fit?.droppedMessageIndexes.length).toBeGreaterThan(0);
+      expect(fit?.truncated).toEqual([]);
+
+      const info = await modelInfo("model-fake", "fake-1");
+      const snap = await snapshotOf(conv);
+      // every call reconstructs with zero drift and equals what the provider got: the baseline
+      // replays the recorded cap, not the cap recomputed from the knob
+      await expectZeroDrift(conv, snap);
+
+      // a candidate model with a smaller window leaves less room, so it trims the latest turn too
+      const smaller: ModelInfo = { ...info, contextWindow: 24_000 };
+      const cand = reconstructRequest(snap, last?.seq as number, {
+        model: smaller,
+        params: { maxOutputTokens: 4000 },
+        reserveTokens: 20_000,
+      });
+      expect(cand.drift).toEqual(["context_fit"]);
+    } finally {
+      await owner({
+        method: "POST",
+        url: "/plugins/hooks-probe/config",
+        payload: { orgId },
+      });
+      await enableProbe(false);
+      await db
+        .updateTable("deployment_settings")
+        .set({ value: JSON.stringify({ keepRecentTurns: 1, reserveTokens: 0 }) })
+        .where("key", "=", "compaction")
+        .execute();
     }
   });
 });

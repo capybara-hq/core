@@ -26,7 +26,7 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   Also add a matching reason to `DriftReason` (`reconstruct.ts`, and add it to `DRIFT_ORDER` in order). It marks "an old log has no record of this"
   or "it can't be fetched at reconstruction", and add a case to the "drift reasons" group in `reconstruct.test.ts`. Existing reasons: `system_hash`,
   `tools_changed` (baseline check only), `tool_spec_missing`, `definition_missing`, `pinned_changed` (step replay, see "Pinned skills in old logs and the tool map"),
-  `subagent_changed` (child cases, see "Sub-agents"), `legacy_event`, `params_changed`, `model_switched` (see below), `media_missing`, `media_changed` (baseline check only), `tool_unmatched` (full-run replay).
+  `subagent_changed` (child cases, see "Sub-agents"), `legacy_event`, `params_changed`, `model_switched` (see below), `media_missing`, `media_changed` (baseline check only), `context_fit` (context compaction spec §4.9), `tool_unmatched` (full-run replay).
 - The runtime (request building, the loop, waits) lives in `packages/kernel/src/runtime`. An agent's `instructions` is derived from its
   `instructionFiles` on save.
 - The history sent to the model is append-only; model-visible text that appears in replay (such as `REPLAY_NO_RECORDING`) is always English.

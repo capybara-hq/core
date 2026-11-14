@@ -273,6 +273,8 @@ export const ERROR_CODES = {
   /** An org template was saved since the editor read it (`expectedVersion` is stale, P4-12). */
   "agent_template.version_conflict": 409,
   "conversation.not_found": 404,
+  /** A manual compaction asked for while an ordinary run is active (context compaction §4.7). */
+  "conversation.busy": 409,
   "conversation.output_not_found": 404,
   "conversation.artifact_not_found": 404,
   "conversation.artifact_not_previewable": 400,
@@ -452,6 +454,7 @@ export const ERROR_CODES = {
   "eval.case_exists": 409,
   "eval.too_many_cases": 409,
   "eval.agent_mismatch": 409,
+  "eval.compact_not_replayable": 422,
   "eval.run_not_found": 404,
   "eval.token_cap_invalid": 400,
   "eval.run_finished": 409,

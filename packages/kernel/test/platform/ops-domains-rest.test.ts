@@ -143,7 +143,15 @@ describe("registration", () => {
 });
 
 /** A finished run with one step in a conversation of `agentId`: what a case snapshot is taken of. */
-async function seedFinishedRun(agentId: string, accountId: string) {
+/**
+ * A finished run of a fresh conversation: an ordinary answered run, or with `opts.compact` a manual
+ * compaction run (context compaction spec §4.7: no model step).
+ */
+async function seedFinishedRun(
+  agentId: string,
+  accountId: string,
+  opts: { compact?: boolean } = {},
+) {
   const conv = await env.k.app
     .get(ConversationsService)
     .create(env.orgId, accountId, agentId, {}, { source: "web" });
@@ -167,10 +175,45 @@ async function seedFinishedRun(agentId: string, accountId: string) {
       agent_version: 1,
       trigger_account_id: accountId,
       trigger_seq: msg?.seq ?? 0,
+      ...(opts.compact === true && { compact: true }),
       started_at: new Date(),
       finished_at: new Date(),
     })
     .execute();
+  if (opts.compact === true) {
+    await log.append(conv.id, [
+      {
+        type: "run_started",
+        runId,
+        payload: { agentVersion: 1, model: MODEL, triggerAccountId: accountId, trigger: "compact" },
+      },
+      {
+        type: "compaction_summary",
+        runId,
+        payload: { coversUpToSeq: msg?.seq ?? 0, text: "summary" },
+      },
+      {
+        type: "usage",
+        runId,
+        payload: {
+          step: 0,
+          provider: MODEL.provider,
+          model: MODEL.model,
+          inputTokens: 100,
+          outputTokens: 10,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          purpose: "compaction",
+        },
+      },
+      {
+        type: "run_finished",
+        runId,
+        payload: { reason: "completed", consumedUpToSeq: msg?.seq ?? 0 },
+      },
+    ]);
+    return { conversationId: conv.id, runId };
+  }
   await log.append(conv.id, [
     {
       type: "run_started",
@@ -316,6 +359,22 @@ describe("evals", () => {
         c,
       ),
     ).toMatchObject({ ok: false, code: "eval.case_exists" });
+    // a manual compaction run has no step to replay: refused before the card, not silently skipped
+    const compact = await seedFinishedRun(agent, env.memId, { compact: true });
+    expect(
+      await precheck(
+        "evals.add-case",
+        { setId: set.id, conversationId: compact.conversationId, runId: compact.runId },
+        c,
+      ),
+    ).toMatchObject({ ok: false, code: "eval.compact_not_replayable" });
+    await expect(
+      run(
+        "evals.add-case",
+        { setId: set.id, conversationId: compact.conversationId, runId: compact.runId },
+        c,
+      ),
+    ).rejects.toThrow(/compaction/);
     await expect(
       run(
         "evals.add-case",

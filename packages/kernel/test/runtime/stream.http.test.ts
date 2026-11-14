@@ -373,6 +373,44 @@ describe("会话 SSE（单副本 api+worker）", () => {
     }
   });
 
+  it("a compaction progress bus message reaches the stream as `event: compaction`", async () => {
+    const s = await openSse(streamUrl(k, orgId, convId), { cookie: owner.cookie() });
+    try {
+      await redis.publish(
+        `cap:kernel:${conversationTopic(convId)}`,
+        JSON.stringify({
+          kind: "compaction_progress",
+          runId: "run-x",
+          conversationId: convId,
+          agentId: "agent-x",
+          phase: "summarizing",
+          step: 1,
+          chunk: 2,
+          chunks: 3,
+          chars: 40,
+          startedAt: 1000,
+        }),
+      );
+      await s.until((m) => m.some((x) => x.event === "compaction"), 10_000, "compaction frame");
+      const frame = JSON.parse(
+        s.messages.find((x) => x.event === "compaction")?.data as string,
+      ) as Record<string, unknown>;
+      expect(frame).toEqual({
+        runId: "run-x",
+        conversationId: convId,
+        agentId: "agent-x",
+        phase: "summarizing",
+        step: 1,
+        chunk: 2,
+        chunks: 3,
+        chars: 40,
+        startedAt: 1000,
+      });
+    } finally {
+      s.close();
+    }
+  });
+
   it("after=<seq> 只回放其后的事件；Last-Event-ID 优先于 after，重连不重复不遗漏", async () => {
     await postMessage(owner.req, orgId, convId, "echo:one");
     await waitForTerminal(db, convId, 1);

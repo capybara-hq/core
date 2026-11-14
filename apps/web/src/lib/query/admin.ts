@@ -151,13 +151,15 @@ export const settingsChangeKeys = (patch: DeploymentSettingsPatch): (readonly un
   ];
 };
 
+/** Whether a query key starts with `prefix`. */
+const under = (k: readonly unknown[], prefix: readonly unknown[]) =>
+  prefix.every((p, i) => k[i] === p);
+
 /**
  * After a change of the platform's auto-mode switch: every cached org's settings (the platform's
  * answer rides on them) and devices (their allowed and effective mode) are stale.
  */
 export function invalidateDeviceModes(qc: QueryClient): Promise<void> {
-  const under = (k: readonly unknown[], prefix: readonly unknown[]) =>
-    prefix.every((p, i) => k[i] === p);
   return qc.invalidateQueries({
     predicate: ({ queryKey: k }) =>
       k[0] === "org" &&
@@ -169,12 +171,22 @@ export function invalidateDeviceModes(qc: QueryClient): Promise<void> {
 }
 
 /**
+ * After a change of the platform's conversation compaction defaults: every cached org's settings
+ * are stale (the org settings page's "follow the platform" state and the values it shows ride on
+ * them, as `deployment.compaction`).
+ */
+export function invalidateCompactionSettings(qc: QueryClient): Promise<void> {
+  return qc.invalidateQueries({
+    predicate: ({ queryKey: k }) =>
+      k[0] === "org" && typeof k[1] === "string" && under(k, keys.org(k[1]).orgSettings()),
+  });
+}
+
+/**
  * After a change of the platform's attribution defaults: every cached org's settings are stale
  * (the agent page shows the defaults in its attribution section), like the sandbox levels.
  */
 export function invalidateAttribution(qc: QueryClient): Promise<void> {
-  const under = (k: readonly unknown[], prefix: readonly unknown[]) =>
-    prefix.every((p, i) => k[i] === p);
   return qc.invalidateQueries({
     predicate: ({ queryKey: k }) =>
       k[0] === "org" && typeof k[1] === "string" && under(k, keys.org(k[1]).orgSettings()),

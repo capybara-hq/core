@@ -6,21 +6,23 @@ import { replyParts } from "./diff.js";
 import { type CaseSnapshot, replayableCalls } from "./snapshot.js";
 
 /**
- * 用例的回放计划（D5 估算、预建结果）：写入用例时由快照算好存进 `eval_cases.plan_step` / `plan_run`，
- * 估算与启动只读这些列，不读快照。
+ * A case's replay plan (D5 estimate, pre-built results): computed from the snapshot when the case is
+ * written and stored in `eval_cases.plan_step` / `plan_run`; estimates and starts read only those
+ * columns, never the snapshot.
  */
 
-/** 一个用例要回放的调用与原运行的用量（估算与预建结果用）。 */
+/** The calls a case replays and the original run's usage (for estimates and pre-built results). */
 export interface CasePlan {
-  /** step 模式：每个可回放调用一行；run 模式：整个用例一行（step / seq 为 null）。 */
+  /** Step mode: one row per replayable call; run mode: one row for the case (step / seq null). */
   results: { step: number | null; modelCallSeq: number | null }[];
-  /** 预计的模型请求数。 */
+  /** The expected number of model requests. */
   modelRequests: number;
-  /** 这些请求在原运行里的用量（逐项相加）。 */
+  /** Those requests' usage in the original run (summed per field). */
   usage: ModelUsage;
   /**
-   * 评委的上下文估算：各条结果的「用户请求」token + 两边回复（基线输出 token × 2，候选按与基线同量估算）。
-   * 评委的系统提示词、评分标准与输出上限按运行时的设置另加（见 `runs.service.ts`）。
+   * The judge's context estimate: each result's "user request" tokens plus both replies (the
+   * baseline's output tokens × 2; the candidate is estimated at the same amount). The judge's system
+   * prompt, rubric and output cap are added at run time from the settings (`runs.service.ts`).
    */
   judgeContextTokens: number;
   /**
@@ -30,7 +32,7 @@ export interface CasePlan {
   switchedModel?: ModelRef;
 }
 
-/** 存在 `eval_cases.plan_step` / `plan_run` 的计划（与 {@link CasePlan} 同形）。 */
+/** A plan as stored in `eval_cases.plan_step` / `plan_run` (the same shape as {@link CasePlan}). */
 export type StoredCasePlan = CasePlan;
 
 const ZERO: ModelUsage = {
@@ -50,11 +52,11 @@ const asUsage = (p: unknown): ModelUsage => {
   };
 };
 
-/** 一段文本的 token 估算（与运行时同一个估算器）。 */
+/** The token estimate of a text (the same estimator as the runtime). */
 export const textTokens = (text: string): number =>
   estimateTokens([], [{ text, cache: false }], []);
 
-/** 快照里 `beforeSeq` 之前最近一条用户消息的文本（评委看的「用户请求」）。 */
+/** The newest user message before `beforeSeq` in the snapshot (the "user request" the judge sees). */
 export function userRequestOf(s: CaseSnapshot, beforeSeq: number): string {
   const msg = s.events.findLast((e) => e.type === "user_message" && e.seq < beforeSeq);
   const content = (msg?.payload as { content?: ContentBlock[] } | undefined)?.content ?? [];
@@ -62,12 +64,39 @@ export function userRequestOf(s: CaseSnapshot, beforeSeq: number): string {
 }
 
 /**
- * 一个用例的回放计划：
- * - `step`：请求 = 可回放的调用（`replayableCalls`），用量 = 这些调用各自记录的 usage（该步该调用之后第一条）；
- * - `run`：请求 = 原运行的全部 `model_call`，用量 = 原运行的全部 usage。
- * 写入用例时算好存进 `plan_step` / `plan_run`（{@link casePlans}），估算与启动不再读快照。
+ * Whether the case's run is a manual compact run (`run_started.trigger: "compact"`, context
+ * compaction spec §4.7): it ran no model step (its boundary message was consumed by an earlier
+ * run), so there is nothing to replay and planning it as an ordinary run would dispatch a step the
+ * original never made.
+ */
+function compactRun(s: CaseSnapshot): boolean {
+  return s.events.some(
+    (e) =>
+      e.runId === s.runId &&
+      e.type === "run_started" &&
+      (e.payload as { trigger?: string }).trigger === "compact",
+  );
+}
+
+/** A plan with nothing to replay (no result rows, no requests, no usage). */
+const NO_PLAN: CasePlan = {
+  results: [],
+  modelRequests: 0,
+  usage: { ...ZERO },
+  judgeContextTokens: 0,
+};
+
+/**
+ * A case's replay plan:
+ * - `step`: requests = the replayable calls (`replayableCalls`), usage = each call's recorded usage
+ *   (the first one after that call, same step);
+ * - `run`: requests = every `model_call` of the original run, usage = every usage of the run.
+ * Computed when the case is written and stored in `plan_step` / `plan_run` ({@link casePlans}), so
+ * estimates and starts do not read the snapshot.
+ * A compact run has no plan in either mode ({@link compactRun}): estimates and starts skip it.
  */
 export function casePlan(s: CaseSnapshot, mode: "step" | "run"): CasePlan {
+  if (compactRun(s)) return { ...NO_PLAN, results: [], usage: { ...ZERO } };
   const own = s.events.filter((e) => e.runId === s.runId);
   if (mode === "run") {
     let usage = ZERO;

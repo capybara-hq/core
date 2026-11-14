@@ -380,13 +380,23 @@ describe("client delivery", () => {
     vi.spyOn(store, "write").mockImplementation(async (st) => {
       if (st.plugin !== "cx-stale") await write(st);
     });
-    await env.db
-      .updateTable("extension_replica_status")
-      .set({ heartbeat_at: new Date(Date.now() - 3_600_000) })
-      .where("plugin", "=", "cx-stale")
-      .execute();
-    const r = await rawGet(env, path, mem.cookie());
-    expectNotFound(r, rawCode(r));
+    const stale = () =>
+      env.db
+        .updateTable("extension_replica_status")
+        .set({ heartbeat_at: new Date(Date.now() - 3_600_000) })
+        .where("plugin", "=", "cx-stale")
+        .execute();
+    // a reconcile round already in flight when the stubs were installed can still refresh this
+    // row once (its heartbeat commits after the update); stale it again on each pass until the
+    // request sees it, instead of racing that single write on the first read
+    await vi.waitFor(
+      async () => {
+        await stale();
+        const r = await rawGet(env, path, mem.cookie());
+        expectNotFound(r, rawCode(r));
+      },
+      { timeout: 5_000 },
+    );
     expect(await listedBuilds()).not.toHaveProperty("cx-stale");
   });
 

@@ -176,6 +176,73 @@ async function seedRun(
   ]);
 }
 
+/**
+ * A manual compaction run (context compaction spec §4.7): a finished compact run with a summary and
+ * its compaction usage, no model step.
+ */
+async function seedCompactRun(
+  convId: string,
+  runId: string,
+  triggerAccountId: string,
+): Promise<void> {
+  const [msg] = await eventLog.append(convId, [
+    {
+      type: "user_message",
+      payload: {
+        content: [{ type: "text", text: `question before ${runId}` }],
+        authorAccountId: triggerAccountId,
+      },
+    },
+  ]);
+  await db
+    .insertInto("runs")
+    .values({
+      id: runId,
+      conversation_id: convId,
+      status: "completed",
+      compact: true,
+      agent_version: 1,
+      trigger_account_id: triggerAccountId,
+      trigger_seq: msg?.seq ?? 0,
+      started_at: new Date(),
+      finished_at: new Date(),
+    })
+    .execute();
+  await eventLog.append(convId, [
+    {
+      type: "run_started",
+      runId,
+      payload: {
+        agentVersion: 1,
+        model: { provider: "model-fake", model: "fake-1" },
+        triggerAccountId,
+        trigger: "compact",
+      },
+    },
+    {
+      type: "compaction_summary",
+      runId,
+      payload: { coversUpToSeq: msg?.seq ?? 0, text: "summary", savedTokens: 900 },
+    },
+    {
+      type: "usage",
+      runId,
+      payload: {
+        step: 0,
+        provider: "model-fake",
+        model: "fake-1",
+        ...USAGE,
+        purpose: "compaction",
+      },
+    },
+    {
+      type: "run_finished",
+      runId,
+      payload: { reason: "completed", consumedUpToSeq: msg?.seq ?? 0 },
+    },
+  ]);
+}
+
 beforeEach(async () => {
   await truncateTables(
     raw,
@@ -384,6 +451,19 @@ describe("评测集 CRUD 与加用例", () => {
     expect(errCode(sample)).toBe("eval.too_many_cases");
   });
 
+  it("a manual compaction run is refused as a case: 422 eval.compact_not_replayable, nothing stored", async () => {
+    const set = await createSet(admin, agentA);
+    const conv = await createConv(alice, orgId, agentA);
+    await seedCompactRun(conv, "compact-1", aliceId);
+    const res = await addCase(admin, set.id, conv, "compact-1");
+    expect(res.statusCode, res.body).toBe(422);
+    expect(errCode(res)).toBe("eval.compact_not_replayable");
+    // no case takes a slot; the set stays empty
+    expect(
+      await db.selectFrom("eval_cases").select("id").where("set_id", "=", set.id).execute(),
+    ).toEqual([]);
+  });
+
   it("删除用例；不存在的集合 / 用例 404；非 uuid 也是 404", async () => {
     const set = await createSet(admin, agentA);
     const conv = await createConv(alice, orgId, agentA);
@@ -536,6 +616,31 @@ describe("抽样", () => {
       payload: { count: 5, minToolCalls: 3 },
     });
     expect(res.json()).toEqual({ added: 0, skipped: 1 });
+  });
+
+  it("never samples a manual compaction run", async () => {
+    const set = await createSet(admin, agentA);
+    const conv = await createConv(alice, orgId, agentA);
+    await seedCompactRun(conv, "compact-1", aliceId);
+    for (let i = 0; i < 3; i++) await seedRun(conv, `normal-${i}`, aliceId);
+    const res = await admin({
+      method: "POST",
+      url: `${base()}/${set.id}/cases/sample`,
+      payload: { count: 50, status: "any" },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    // the compact run is not even a pick: three ordinary runs, nothing skipped
+    expect(res.json()).toEqual({ added: 3, skipped: 0 });
+    const ids = (
+      await db
+        .selectFrom("eval_cases")
+        .select("source_run_id")
+        .where("set_id", "=", set.id)
+        .execute()
+    )
+      .map((r) => r.source_run_id)
+      .sort();
+    expect(ids).toEqual(["normal-0", "normal-1", "normal-2"]);
   });
 });
 

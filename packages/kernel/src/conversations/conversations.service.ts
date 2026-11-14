@@ -201,6 +201,11 @@ export interface RunControl {
   /** 请求中止运行（广播到所有副本）。 */
   requestAbort(runId: string, byAccountId: string): Promise<void>;
   /**
+   * A manual compaction run (context compaction spec §4.7): the compact run already queued/running,
+   * or a new one; `conversation.busy` while an ordinary run is active.
+   */
+  startCompaction(conversationId: string, accountId: string): Promise<string>;
+  /**
    * Stops a sub-agent with its descendants (with `includeSelf: false` only the sub-agent
    * conversations below); the number of runs asked to stop (agent map spec §6).
    */
@@ -1551,6 +1556,17 @@ export class ConversationsService {
     const last = await latest();
     if (n === 0 || !last) throw new ApiError("run.not_active", "No active run to abort");
     return last.id;
+  }
+
+  /**
+   * Manual compaction (context compaction spec §4.7): starts a compact run for the caller's own
+   * chat conversation, or returns the compact run already queued/running. Eval conversations and
+   * other people's are `conversation.not_found`; a sub-agent's is `conversation.read_only`; while
+   * an ordinary run is active the run start is `conversation.busy`.
+   */
+  async compact(orgId: string, conversationId: string, accountId: string): Promise<string> {
+    await this.writable(orgId, conversationId, accountId);
+    return this.runs.startCompaction(conversationId, accountId);
   }
 
   /**

@@ -477,6 +477,17 @@
   padding: 8px 12px;
   color: var(--cb-muted);
 }
+/* Guidance under the list (spec §5 rule 11): the empty state's muted block, shown while items are
+   offered too (a command entry may be the only one). */
+.cb-palette-notice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--cb-space-2);
+  padding: 8px 12px;
+  border-top: 1px solid var(--cb-line-soft);
+  color: var(--cb-muted);
+}
 .cb-palette-hints {
   display: flex;
   gap: 16px;

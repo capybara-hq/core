@@ -541,9 +541,11 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
        * What started the run (display only): absent or `message` = a person's message (or a
        * sub-agent's task), `background_task` = a finished background task woke the conversation
        * (spec 2026-11-05-background-bash-design §3), `subagent` = a sub-agent's delivery woke it
-       * (agent map spec §5.3), `schedule` = a scheduled task's message (scheduled tasks spec §6).
+       * (agent map spec §5.3), `schedule` = a scheduled task's message (scheduled tasks spec §6),
+       * `compact` = a manual compaction run (context compaction spec §4.7): no message, no model
+       * step, only the summary and its usage.
        */
-      trigger: z.enum(["message", "background_task", "subagent", "schedule"]).optional(),
+      trigger: z.enum(["message", "background_task", "subagent", "schedule", "compact"]).optional(),
       /**
        * A wake run's boundary: the seq of the finish or delivery that woke it (full-run replay
        * seeds from it).
@@ -630,6 +632,20 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
          * 还原时用它重现同样的省略结果。较早的事件没有。
          */
         mediaBudgetBytes: count.optional(),
+        /**
+         * The hard fit guard's plan (context compaction spec §4.3): indexes into the assembled
+         * request's message list that were dropped, and text / tool_result blocks replaced by the
+         * truncation note. `assembleModelRequest` applies it (the runtime `buildRequest` calls it,
+         * and `evals/reconstruct` calls it directly), so the request replays byte-for-byte; absent
+         * when the request fit (and in older recordings). A candidate model with another window
+         * recomputes it and reports `context_fit`.
+         */
+        fit: z
+          .object({
+            droppedMessageIndexes: z.array(count),
+            truncated: z.array(z.object({ messageIndex: count, block: count, note: z.string() })),
+          })
+          .optional(),
       }),
     }),
   ),
@@ -659,6 +675,13 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       model: z.string(),
       ...ModelUsageShape,
       purpose: z.enum(["compaction", "title", "web_fetch", "review"]).optional(),
+      /**
+       * The chunk a chunked compaction call summarised (1-based), with the number of calls the
+       * compaction attempted (the full chunk count on a completed one; on a failed or hook-denied
+       * run only the calls that were made). Absent on a single-call compaction: older logs have none.
+       */
+      chunk: count.optional(),
+      chunks: count.optional(),
       /** The tool call a `web_fetch` or `review` usage belongs to. */
       callId: z.string().optional(),
     }),
@@ -1225,7 +1248,19 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       stoppedBy: z.enum(["person", "deletion", "subagent_end"]).optional(),
     }),
   ),
-  ev("compaction_summary", z.object({ coversUpToSeq: seqNo, text: z.string() })),
+  ev(
+    "compaction_summary",
+    z.object({
+      coversUpToSeq: seqNo,
+      text: z.string(),
+      /**
+       * The estimated transcript input minus the stored summary output (context compaction spec
+       * §4.9), so the UI needs no chunked usage to show what compaction saved. Optional: older
+       * logs have none.
+       */
+      savedTokens: count.optional(),
+    }),
+  ),
   ev("compaction_failed", z.object({ attempt: count, reason: z.string() })),
   ev(
     "run_finished",

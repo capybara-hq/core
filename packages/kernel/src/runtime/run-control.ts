@@ -24,6 +24,7 @@ export class RunControl {
       | "abortQueued"
       | "wakeHeldTree"
       | "oweHeldTreeIn"
+      | "startCompaction"
     >,
     @Inject(Waits)
     private readonly waits: Pick<
@@ -41,6 +42,14 @@ export class RunControl {
   /** 有未消费的消息且没有进行中的运行时投递一轮运行；返回 runId 或 null。 */
   ensureRun(conversationId: string): Promise<string | null> {
     return this.queue.ensureRun(conversationId);
+  }
+
+  /**
+   * A manual compaction run (context compaction spec §4.7): the run already queued/running, or a
+   * new `compact` run; `conversation.busy` while an ordinary run is active.
+   */
+  startCompaction(conversationId: string, accountId: string): Promise<string> {
+    return this.queue.startCompaction(conversationId, accountId);
   }
 
   /**

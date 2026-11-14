@@ -72,6 +72,7 @@ export function CommandPalette({
   defaultSearch,
   emptyText,
   emptyAction,
+  notice,
 }: {
   open: boolean;
   onOpenChange(open: boolean): void;
@@ -87,6 +88,12 @@ export function CommandPalette({
    * that closes the palette, such as the agent's skills section when it has none to invoke.
    */
   emptyAction?: { label: string; href: string };
+  /**
+   * Guidance under the list, whatever it offers (spec §5 rule 11): a note and an optional next-step
+   * link. Unlike {@link emptyText} it stays while items are listed, so a command entry and the
+   * "no skills to invoke" guidance can stand together.
+   */
+  notice?: { text: string; action?: { label: string; href: string } };
 }) {
   const t = useDesignT();
   const focusReturn = useFocusReturn();
@@ -97,6 +104,7 @@ export function CommandPalette({
       {...(defaultSearch !== undefined ? { defaultSearch } : {})}
       {...(emptyText !== undefined ? { emptyText } : {})}
       {...(emptyAction !== undefined ? { emptyAction } : {})}
+      {...(notice !== undefined ? { notice } : {})}
     />
   );
   if (inline) {
@@ -132,15 +140,16 @@ function PaletteBody({
   defaultSearch,
   emptyText,
   emptyAction,
+  notice,
 }: {
   groups: CommandGroup[];
   onOpenChange(open: boolean): void;
   defaultSearch?: string;
   emptyText?: string;
   emptyAction?: { label: string; href: string };
+  notice?: { text: string; action?: { label: string; href: string } };
 }) {
   const t = useDesignT();
-  const Link = useDesignLink();
   const [query, setQuery] = useState(defaultSearch ?? "");
   return (
     <Command className="cb-palette-cmd" label={t("palette.title")} loop filter={filter}>
@@ -155,20 +164,7 @@ function PaletteBody({
       <Command.List className="cb-palette-list">
         <Command.Empty className="cb-palette-empty" data-part="palette-empty">
           <span>{emptyText ?? t("palette.empty")}</span>
-          {emptyAction ? (
-            // The link (a keyboard Enter clicks it too) closes the palette as it navigates
-            // biome-ignore lint/a11y/noStaticElementInteractions: the click comes from the link inside
-            // biome-ignore lint/a11y/useKeyWithClickEvents: the link handles the keyboard itself
-            <span className="cb-palette-empty-action" onClick={() => onOpenChange(false)}>
-              <Link
-                href={emptyAction.href}
-                className="cb-text-link"
-                data-part="palette-empty-action"
-              >
-                {emptyAction.label}
-              </Link>
-            </span>
-          ) : null}
+          {emptyAction ? <PaletteAction action={emptyAction} onOpenChange={onOpenChange} /> : null}
         </Command.Empty>
         {groups.map((g) => (
           <Command.Group key={g.label} heading={g.label} className="cb-palette-group">
@@ -211,6 +207,14 @@ function PaletteBody({
           </Command.Group>
         ))}
       </Command.List>
+      {notice !== undefined ? (
+        <div className="cb-palette-notice" data-part="palette-notice">
+          <span>{notice.text}</span>
+          {notice.action !== undefined ? (
+            <PaletteAction action={notice.action} onOpenChange={onOpenChange} />
+          ) : null}
+        </div>
+      ) : null}
       <div className="cb-palette-hints">
         <span>
           <Kbd>↑↓</Kbd> {t("palette.hintMove")}
@@ -223,5 +227,26 @@ function PaletteBody({
         </span>
       </div>
     </Command>
+  );
+}
+
+/** The next-step link under the empty text or the notice: it closes the palette as it navigates. */
+function PaletteAction({
+  action,
+  onOpenChange,
+}: {
+  action: { label: string; href: string };
+  onOpenChange(open: boolean): void;
+}) {
+  const Link = useDesignLink();
+  return (
+    // The link (a keyboard Enter clicks it too) closes the palette as it navigates
+    // biome-ignore lint/a11y/noStaticElementInteractions: the click comes from the link inside
+    // biome-ignore lint/a11y/useKeyWithClickEvents: the link handles the keyboard itself
+    <span className="cb-palette-empty-action" onClick={() => onOpenChange(false)}>
+      <Link href={action.href} className="cb-text-link" data-part="palette-empty-action">
+        {action.label}
+      </Link>
+    </span>
   );
 }

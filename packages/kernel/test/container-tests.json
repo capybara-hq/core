@@ -16,6 +16,7 @@
   "channels/supervisor-share.dual.test.ts",
   "channels/supervisor.dual.test.ts",
   "channels/webhook.dual.test.ts",
+  "conversations/compact.dual.test.ts",
   "conversations/queue.dual.test.ts",
   "conversations/titles.dual.test.ts",
   "evals/m6-segment1.dual.test.ts",

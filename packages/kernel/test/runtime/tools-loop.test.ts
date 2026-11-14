@@ -21,6 +21,7 @@ import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { createLogger } from "../../src/log.js";
 import type { KyselyCheckpointSaver } from "../../src/runtime/checkpointer.js";
+import { COMPACTION_SETTINGS } from "../../src/runtime/compaction-settings.service.js";
 import { UNKNOWN_RESULT_TEXT } from "../../src/runtime/context/pairing.js";
 import { LangGraphLoop, type LoopDeps } from "../../src/runtime/langgraph-loop.js";
 import type { LoopContext } from "../../src/runtime/loop.js";
@@ -181,6 +182,7 @@ describe("tools 节点（LangGraphLoop + 执行管线）", () => {
       ),
       tools: registry,
       config: { get: () => config },
+      compactionSettings: { resolve: async () => COMPACTION_SETTINGS.parse({}) },
       log: silent,
       toolPipeline: pipelineFor({
         db,

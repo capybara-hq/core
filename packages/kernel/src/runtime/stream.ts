@@ -103,6 +103,22 @@ function isBusMessage(m: unknown): m is ConversationBusMessage {
       typeof x.toolCalls === "number"
     );
   }
+  if (k === "compaction_progress") {
+    const x = m as {
+      runId?: unknown;
+      conversationId?: unknown;
+      phase?: unknown;
+      step?: unknown;
+      startedAt?: unknown;
+    };
+    return (
+      typeof x.runId === "string" &&
+      typeof x.conversationId === "string" &&
+      typeof x.step === "number" &&
+      typeof x.startedAt === "number" &&
+      (x.phase === "preparing" || x.phase === "summarizing" || x.phase === "writing")
+    );
+  }
   return k === "delta" && typeof (m as { runId?: unknown }).runId === "string";
 }
 
@@ -303,6 +319,13 @@ class Connection implements StreamHandle {
       // a sub-agent's step (spec §14.2): only on its parent's topic, which this viewer may read
       const { kind: _k, ...progress } = m;
       const frame = `event: subagent_progress\ndata: ${JSON.stringify(progress)}\n\n`;
+      this.enqueue(() => this.write(frame));
+      return;
+    }
+    if (m.kind === "compaction_progress") {
+      // a run of this conversation is compacting (§4.6): display-only, never in the log
+      const { kind: _k, ...progress } = m;
+      const frame = `event: compaction\ndata: ${JSON.stringify(progress)}\n\n`;
       this.enqueue(() => this.write(frame));
       return;
     }

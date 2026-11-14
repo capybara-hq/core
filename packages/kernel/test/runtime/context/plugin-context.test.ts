@@ -11,7 +11,7 @@ import {
   pluginContextIdemKey,
   pluginContextText,
 } from "../../../src/runtime/context/plugin-context.js";
-import { AGENT, Log, MODEL } from "./fixtures.js";
+import { AGENT, compactionSettings, Log, MODEL, NO_TAIL_LIMIT } from "./fixtures.js";
 
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 
@@ -150,7 +150,11 @@ describe("plugin_context: request building", () => {
     log.user("question");
     log.assistant("answer");
     log.user("latest");
-    const plan = compactionPlan(log.events, 1);
+    const plan = compactionPlan(
+      log.events,
+      compactionSettings({ keepRecentTurns: 1 }),
+      NO_TAIL_LIMIT,
+    );
     expect(plan?.transcript).toBe("User: question\n\nAssistant: answer");
   });
 });

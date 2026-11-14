@@ -4,7 +4,7 @@ import { renderBackgroundFinished } from "../../src/background/render.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import { buildModelRequest } from "../../src/runtime/context/build.js";
 import { compactionPlan } from "../../src/runtime/context/compaction.js";
-import { AGENT, Log, MODEL } from "./context/fixtures.js";
+import { AGENT, compactionSettings, Log, MODEL, NO_TAIL_LIMIT } from "./context/fixtures.js";
 
 /**
  * A finished background task reaches the model (spec 2026-11-05-background-bash-design §2.4): the
@@ -213,7 +213,11 @@ describe("placement in the request", () => {
     log.turn(1);
     finished(log);
     log.turn(2);
-    const plan = compactionPlan(log.events, 1);
+    const plan = compactionPlan(
+      log.events,
+      compactionSettings({ keepRecentTurns: 1 }),
+      NO_TAIL_LIMIT,
+    );
     expect(plan?.transcript).toContain(`System reminder: ${SPEC_TEXT}`);
   });
 });

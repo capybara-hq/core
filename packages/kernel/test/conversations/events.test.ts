@@ -104,6 +104,21 @@ describe("media_excluded 与 model_call.request.media（Ruling M8）", () => {
   });
 });
 
+describe("compaction_summary", () => {
+  it("keeps savedTokens and still parses older logs without it", () => {
+    const old = ConversationEventSchema.safeParse({
+      type: "compaction_summary",
+      payload: { coversUpToSeq: 4, text: "summary" },
+    });
+    expect(old.success).toBe(true);
+    const now = ConversationEventSchema.parse({
+      type: "compaction_summary",
+      payload: { coversUpToSeq: 4, text: "summary", savedTokens: 1200 },
+    });
+    expect(now.type === "compaction_summary" ? now.payload.savedTokens : undefined).toBe(1200);
+  });
+});
+
 describe("approval_decided", () => {
   const decided = (reason: string) =>
     ConversationEventSchema.safeParse({

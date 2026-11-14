@@ -158,6 +158,68 @@ export function parseClientExtensions(
   return clientExtensionsDefault();
 }
 
+/**
+ * The compaction field schemas and their bounds, before defaults: the partial form below shares
+ * them, so a patch validates the same ranges as a stored value without filling defaults for the
+ * fields it leaves out.
+ */
+const COMPACTION_FIELDS = {
+  enabled: z.boolean(),
+  threshold: z.number().min(0.5).max(0.95),
+  keepRecentTurns: z.number().int().min(0).max(20),
+  reserveTokens: z.number().int().min(0).max(50_000),
+  maxOutputTokens: z.number().int().min(1024).max(32_000),
+};
+
+/**
+ * Conversation compaction (context compaction spec §4.8): the platform's defaults and the bounds
+ * every organization's override is validated against. `enabled: false` turns proactive early
+ * compaction off; the hard line, hard fit guard and reactive path stay armed. `reserveTokens` is
+ * the safety margin left below the window, `maxOutputTokens` the summary call's output cap.
+ */
+export const COMPACTION_SETTINGS = z.object({
+  enabled: COMPACTION_FIELDS.enabled.default(true),
+  threshold: COMPACTION_FIELDS.threshold.default(0.8),
+  keepRecentTurns: COMPACTION_FIELDS.keepRecentTurns.default(4),
+  reserveTokens: COMPACTION_FIELDS.reserveTokens.default(8000),
+  maxOutputTokens: COMPACTION_FIELDS.maxOutputTokens.default(20_000),
+});
+
+export type CompactionSettings = z.infer<typeof COMPACTION_SETTINGS>;
+
+/**
+ * The partial form the platform and org patches carry: only the given fields, validated against
+ * the same bounds, so merging them into the stored settings never injects a default for a field
+ * the caller left out.
+ */
+export const COMPACTION_SETTINGS_PARTIAL = z.object(COMPACTION_FIELDS).partial();
+
+/**
+ * The patch form both settings writers take: the partial form above, strict, so a misspelled
+ * field (`treshold`) is a 400 instead of being silently stripped into an empty no-op. Stored
+ * values stay lenient ({@link COMPACTION_SETTINGS_PARTIAL}); only the request bodies are strict.
+ */
+export const COMPACTION_SETTINGS_PATCH = COMPACTION_SETTINGS_PARTIAL.strict();
+
+export type CompactionSettingsPatch = z.infer<typeof COMPACTION_SETTINGS_PARTIAL>;
+
+/**
+ * The compaction settings in effect for an organization (spec §4.8): every field the org gives wins,
+ * the rest follow the platform's settings, which are themselves the built-in defaults when unset.
+ */
+export function effectiveCompactionSettings(
+  platform: CompactionSettings,
+  org: CompactionSettingsPatch | undefined,
+): CompactionSettings {
+  return {
+    enabled: org?.enabled ?? platform.enabled,
+    threshold: org?.threshold ?? platform.threshold,
+    keepRecentTurns: org?.keepRecentTurns ?? platform.keepRecentTurns,
+    reserveTokens: org?.reserveTokens ?? platform.reserveTokens,
+    maxOutputTokens: org?.maxOutputTokens ?? platform.maxOutputTokens,
+  };
+}
+
 export const DEPLOYMENT_SETTINGS = z.object({
   orgCreation: z.enum(["anyone", "super_admin"]).default("anyone"),
   /** 按组织覆盖运行并发上限（orgId → 上限）；未列出的组织用 `runtime.orgConcurrency`。 */
@@ -193,6 +255,11 @@ export const DEPLOYMENT_SETTINGS = z.object({
   uiArrangement: UiArrangementSchema.default({}),
   /** The client code kill switch (client extensions spec §10.2). */
   clientExtensions: ClientExtensionsSetting.default(clientExtensionsDefault),
+  /**
+   * Conversation compaction (context compaction spec §4.8): the platform defaults, with the built-in
+   * values; an organization may override any field in its own settings.
+   */
+  compaction: COMPACTION_SETTINGS.prefault({}),
 });
 export type DeploymentSettings = z.infer<typeof DEPLOYMENT_SETTINGS>;
 
@@ -274,6 +341,11 @@ export const DEPLOYMENT_SETTINGS_PATCH = z
      * read-only (409 `deployment.setting_readonly`).
      */
     attribution: PLATFORM_ATTRIBUTION_PATCH.optional(),
+    /**
+     * Conversation compaction (context compaction spec §4.8): each given field replaces the stored
+     * one, fields left out keep their value.
+     */
+    compaction: COMPACTION_SETTINGS_PATCH.optional(),
   })
   .strict();
 export type DeploymentSettingsPatch = z.infer<typeof DEPLOYMENT_SETTINGS_PATCH>;
@@ -321,6 +393,23 @@ export async function readSubagentLimitOverride(
   }
   const parsed = SUBAGENT_LIMIT_OVERRIDE.safeParse((all as Record<string, unknown>)[orgId]);
   return parsed.success ? parsed.data : undefined;
+}
+
+/**
+ * The platform's conversation compaction settings, read live from PG (the org settings page shows
+ * what an organization that follows the platform gets): missing or invalid -> the built-in
+ * defaults, as {@link SettingsService.get} reads them.
+ */
+export async function readPlatformCompactionSettings(
+  db: KernelSchemaDb,
+): Promise<CompactionSettings> {
+  const row = await db
+    .selectFrom("deployment_settings")
+    .select("value")
+    .where("key", "=", "compaction")
+    .executeTakeFirst();
+  const parsed = COMPACTION_SETTINGS.safeParse(row?.value ?? {});
+  return parsed.success ? parsed.data : DEFAULTS.compaction;
 }
 
 /**
@@ -623,13 +712,15 @@ export class SettingsService {
       subagentLimitOverrides: subagentPatch,
       uiArrangement: arrangementPatch,
       clientExtensions: clientPatch,
+      compaction: compactionPatch,
     } = patch;
     if (
       runPatch !== undefined ||
       sandboxPatch !== undefined ||
       subagentPatch !== undefined ||
       arrangementPatch !== undefined ||
-      clientPatch !== undefined
+      clientPatch !== undefined ||
+      compactionPatch !== undefined
     ) {
       const current = await this.get();
       if (clientPatch !== undefined) {
@@ -639,6 +730,15 @@ export class SettingsService {
             clientPatch.disabled === undefined
               ? current.clientExtensions.disabled
               : [...new Set(clientPatch.disabled)].sort(),
+        };
+      }
+      if (compactionPatch !== undefined) {
+        next.compaction = {
+          enabled: compactionPatch.enabled ?? current.compaction.enabled,
+          threshold: compactionPatch.threshold ?? current.compaction.threshold,
+          keepRecentTurns: compactionPatch.keepRecentTurns ?? current.compaction.keepRecentTurns,
+          reserveTokens: compactionPatch.reserveTokens ?? current.compaction.reserveTokens,
+          maxOutputTokens: compactionPatch.maxOutputTokens ?? current.compaction.maxOutputTokens,
         };
       }
       if (arrangementPatch !== undefined) {

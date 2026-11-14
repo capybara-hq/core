@@ -10,7 +10,7 @@ import { buildModelRequest } from "../../src/runtime/context/build.js";
 import { compactionPlan } from "../../src/runtime/context/compaction.js";
 import { renderSubagentDelivery } from "../../src/runtime/subagents/render.js";
 import { agentResultText } from "../../src/tools/builtins/agent.js";
-import { AGENT, Log, MODEL } from "./context/fixtures.js";
+import { AGENT, compactionSettings, Log, MODEL, NO_TAIL_LIMIT } from "./context/fixtures.js";
 
 /**
  * A sub-agent's delivery reaches its parent's model (spec 2026-11-06-agent-map-design §4.5): the
@@ -274,7 +274,11 @@ describe("placement in the request", () => {
     log.turn(1);
     delivered(log);
     log.turn(2);
-    const plan = compactionPlan(log.events, 1);
+    const plan = compactionPlan(
+      log.events,
+      compactionSettings({ keepRecentTurns: 1 }),
+      NO_TAIL_LIMIT,
+    );
     expect(plan?.transcript).toContain(`System reminder: ${REPORT_TEXT}`);
   });
 });

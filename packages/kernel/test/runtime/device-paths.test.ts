@@ -16,7 +16,7 @@ import {
 import { assistantIdemKey } from "../../src/runtime/model-call.js";
 import { type SandboxToolDeps, sandboxTools } from "../../src/tools/builtins/sandbox/index.js";
 import type { BuiltinTool } from "../../src/tools/registry.js";
-import { AGENT, Log, MODEL } from "./context/fixtures.js";
+import { AGENT, compactionSettings, Log, MODEL, NO_TAIL_LIMIT } from "./context/fixtures.js";
 
 /**
  * Devices, local phase (environments spec §13.1, ruling R22): the first sandbox call of every conversation
@@ -230,7 +230,11 @@ describe("device_paths: recorded by the sandbox tools", () => {
     log.assistant("done");
     log.user("more");
     log.assistant("ok");
-    const plan = compactionPlan(log.events, 1);
+    const plan = compactionPlan(
+      log.events,
+      compactionSettings({ keepRecentTurns: 1 }),
+      NO_TAIL_LIMIT,
+    );
     expect(plan?.transcript).toContain("User: hi");
     expect(JSON.stringify(plan)).not.toContain("This device's directories");
   });
