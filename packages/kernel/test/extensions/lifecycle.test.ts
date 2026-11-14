@@ -494,8 +494,9 @@ describe("插件生命周期（单副本，不重启）", () => {
     expect(inst.inflight.size).toBe(1);
     await setState("conn", "disable");
     await waitFor(async () => loadedVersion("conn") === undefined, 15_000, "conn off the registry");
-    // 排空中：实例已摘下，但登记还在（等会话关闭）。Nothing-happened window: a drain that
-    // dropped the registrations early would fail only after some time has passed.
+    // Draining: the instance is off the registry but its registrations stay until the session
+    // closes. Nothing-happened window: a drain that dropped the registrations early would fail
+    // only after some time has passed.
     await new Promise((r) => setTimeout(r, 300));
     expect(inst.registrations().length).toBeGreaterThan(0);
     release();

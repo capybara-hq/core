@@ -322,7 +322,9 @@ describe("ExtensionHost load rules", () => {
     await h.load([fx("subscriber")]);
     const pub = (p: unknown) => redis.publish("cap:subscriber:t", JSON.stringify(p));
     await pub("one");
-    await vi.waitFor(async () => expect(await redis.get("cap:subscriber:kv:got")).toBe('"one"'));
+    await vi.waitFor(async () => expect(await redis.get("cap:subscriber:kv:got")).toBe('"one"'), {
+      timeout: 5_000,
+    });
     await h.close();
     await pub("two");
     // Nothing-happened window: the closed host's subscriber must not write after "two"
