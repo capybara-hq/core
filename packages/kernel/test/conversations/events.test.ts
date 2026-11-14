@@ -119,6 +119,43 @@ describe("compaction_summary", () => {
   });
 });
 
+describe("project_root", () => {
+  const event = (payload: Record<string, unknown>) =>
+    ConversationEventSchema.safeParse({ type: "project_root", payload });
+
+  it("a project with an absent AGENTS.md parses, and skills default to []", () => {
+    const parsed = ConversationEventSchema.parse({
+      type: "project_root",
+      payload: { project: "core", root: "/home/dev/core", absent: "missing" },
+    });
+    expect(parsed.type === "project_root" ? parsed.payload.skills : undefined).toEqual([]);
+    expect(parsed.type === "project_root" ? parsed.payload.agentsMd : "x").toBeUndefined();
+  });
+
+  it("carries the AGENTS.md text, the truncation flag and each skill's digest", () => {
+    const payload = {
+      project: "core",
+      root: "/home/dev/core",
+      agentsMd: "# Rules\n",
+      agentsMdTruncated: true,
+      skills: [{ name: "fix-issue", description: "Fix one issue", digest: "a1b2c3" }],
+    };
+    const parsed = ConversationEventSchema.parse({ type: "project_root", payload });
+    expect(parsed).toEqual({ type: "project_root", payload });
+  });
+
+  it("refuses a skill name the catalog cannot take, and an empty project or root", () => {
+    const skill = { name: "fix-issue", description: "Fix one issue", digest: "a1b2c3" };
+    expect(event({ project: "core", root: "/home/dev/core" }).success).toBe(true);
+    expect(event({ project: "", root: "/home/dev/core" }).success).toBe(false);
+    expect(event({ project: "core", root: "" }).success).toBe(false);
+    expect(
+      event({ project: "core", root: "/home/dev/core", skills: [{ ...skill, name: "Fix Issue" }] })
+        .success,
+    ).toBe(false);
+  });
+});
+
 describe("approval_decided", () => {
   const decided = (reason: string) =>
     ConversationEventSchema.safeParse({

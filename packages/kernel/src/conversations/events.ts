@@ -752,6 +752,52 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       local: z.boolean().optional(),
     }),
   ),
+  /**
+   * The project a bound conversation's run read at its start (project root spec §4.4): the
+   * project's name and root, its `AGENTS.md` text (or why it is absent), and per skill its name,
+   * description and digest. The payload holds everything the event renders, so the request is
+   * reconstructable from the log. A run writes it before its first model call when any digest
+   * differs from the conversation's latest recorded one; within a run the snapshot is fixed, so
+   * the request stays append-only. **Model-visible**: rendered at its position as a system
+   * message, after the agent's own instructions (`project root` spec §4.5); a summary covering it
+   * is followed by the latest one again. A new event type's new content needs no `DriftReason`.
+   */
+  ev(
+    "project_root",
+    z.object({
+      /** The project's name, as the conversation's binding resolved it. */
+      project: z.string().min(1).max(255),
+      /** Its root on the device, the run's working directory. */
+      root: z.string().min(1).max(4096),
+      /**
+       * The project's `AGENTS.md` as read at run start, cut at 64 KiB by the reader (the visible
+       * marker is part of that cap). Absent when the project has none — `absent` says why.
+       */
+      agentsMd: z.string().optional(),
+      /** `agentsMd` ends at the reader's cap and carries the marker. False or absent: not cut. */
+      agentsMdTruncated: z.boolean().optional(),
+      /**
+       * Why there is no `agentsMd`: the project's root is gone, `AGENTS.md` is missing, or it
+       * could not be read.
+       */
+      absent: z.string().min(1).max(500).optional(),
+      /**
+       * The project's `.agents/skills/*` SKILL.md files: name, description and a digest of the
+       * file. Bodies are never recorded (`Skill` reads one on demand, and its result is a
+       * `tool_result`). Empty for a project without skills; the catalog's ceiling bounds it.
+       */
+      skills: z
+        .array(
+          z.object({
+            name: z.string().refine(isSkillName, "invalid skill name"),
+            description: z.string().max(4096),
+            digest: z.string().min(1).max(128),
+          }),
+        )
+        .max(SKILLS_CATALOG_MAX)
+        .default([]),
+    }),
+  ),
   /** 工具调用开始执行之前写入（续跑时「有开始无结果」的调用记为结果未知，不再执行）。 */
   ev(
     "tool_call_started",
