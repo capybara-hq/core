@@ -67,7 +67,7 @@ no guarantee, and make every addition follow a stated level policy so the suite 
   affects (`tools/ci/src/affected.ts`).
 - Tests use real PostgreSQL, Valkey and the full Nest app; that is deliberate and stays.
 - A merged file still starts at most one app; isolation between tests stays explicit.
-- vitest is 5.0.x; the shard split is by file count (`FULL_SHARDS = 6`).
+- vitest is 5.0.x; the shard split is by file count (`FULL_SHARDS = 10`).
 
 ## Approaches considered
 
@@ -169,7 +169,7 @@ the list for an explicit confirmation before it is deleted. Batch order: `catalo
 a documented command (one full run, `--coverage`), and per-module line coverage is recorded in
 `docs/testing/coverage-baseline.md`. After each T2 batch the same command runs on the branch; the
 affected modules' coverage is compared and the PR states the delta. This is a review guardrail
-for now. The intended end state, chosen by the maintainer, is a hard gate: merge the six shards'
+for now. The intended end state, chosen by the maintainer, is a hard gate: merge the ten shards'
 reports and fail a batch whose affected modules drop below the baseline. That needs a new CI job
 and check, so it is a follow-up (see Out of scope) rather than part of this design. Running
 coverage has no effect on normal test runs.
