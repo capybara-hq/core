@@ -23,20 +23,25 @@ an existing connected one of yours) after reading what the program can do. Loggi
 another machine into the same device replaces the first machine (its credential is revoked).
 `stop` ends the running program, `drain` makes it accept no new commands and exit when the running
 ones finish (`drain --wait [--timeout <seconds>]` returns only once it has exited, at most 600 s by
-default). `logout` stops a running program, then forgets the credential (the machine stays
+default). On macOS, when the login service is installed, launchd starts the program again after
+`stop` or `drain`; run `capybara-device service uninstall` to keep it stopped. `logout` stops a
+running program, then forgets the credential (the machine stays
 connected on the platform until it is revoked there). Deleting the device in the web app
 revokes the machine and stops the program; the files in the working directory stay on your machine.
 
 The deployment must route `/device/connect` on its public URL to the gateway role (see
 [Connected devices](https://github.com/capybara-hq/core/blob/main/docs/deploy/README.md#connected-devices)).
-While connecting keeps failing, `start` retries and prints why at most once a minute: the HTTP
-status (a 404 usually means that route is missing), the close reason, or the network error.
+While connecting keeps failing, `start` retries with exponential backoff (capped at 60 s, with
+jitter) and never gives up: a failure different from the last one is printed at once, the same one
+at most once a minute. The message is the HTTP status (a 404 usually means that route is missing),
+the close reason, or the network error.
 
 `start` exits 0, after printing why, when retrying cannot help: the machine was revoked or the
 device deleted, the program is too old for the deployment (426), another login replaced this
-connection, or the machine is not logged in. Other failures exit non-zero, so a service (below)
-restarts the program after those and leaves it stopped after the terminal ones; fix the cause
-(log in again, upgrade), then run `start` or `service install` again.
+connection, or the machine is not logged in. Other failures exit non-zero. On macOS the login
+service (below) restarts the program after any exit, at most every 30 s, so fix the cause (log in
+again, upgrade): the running agent then reconnects by itself. `capybara-device service status`
+shows whether the agent is loaded and the program running.
 
 If the working directory (or its marker `.capybara-device`, or one of `workspace/`, `skills/`,
 `tmp/`) is removed, the program never recreates it: operations answer that the files are lost and
@@ -47,7 +52,8 @@ and the platform rebuilds the device on its next use.
 Commands: `login --url <url> [--no-browser] [--dir <path>] [--mode os|docker]`, `logout`,
 `status [--json]` (it prints the command mode too), `start`, `stop`,
 `drain [--wait] [--timeout <seconds>]`, `mode [auto|sandbox] [--yes]`,
-`policy [show | set <key> <value> | add|remove <key> <value>]` and `service install|uninstall`.
+`policy [show | set <key> <value> [--yes] | add|remove <key> <value>]` and
+`service install|uninstall|status`.
 `mode` is the only way to switch the command mode (`policy set mode` points there); `mode auto`
 prints the risk text and asks for confirmation unless `--yes` is given.
 
@@ -216,9 +222,10 @@ need to allow single domains.
 
 `capybara-device service install` makes the program start at login: on macOS a launchd agent
 (`~/Library/LaunchAgents/top.capybara.device.plist`, log `service.log` in the state directory), on
-Linux a systemd user unit (`~/.config/systemd/user/capybara-device.service`). Both restart the
-program when it exits non-zero (systemd after 5 s) and leave it stopped after a terminal exit (code
-0, see above); once the cause is fixed, `service install` again starts it. A user unit runs only
+Linux a systemd user unit (`~/.config/systemd/user/capybara-device.service`). The macOS agent
+restarts the program after every exit, at most every 30 s (`ThrottleInterval`); systemd restarts it
+when it exits non-zero, after 5 s. `capybara-device service status` reports whether the agent is
+loaded and the program running. A user unit runs only
 while you have a session, so run `loginctl enable-linger $USER` to start it at boot and keep it
 running after you log out. `service.log` is emptied into `service.log.1` at 10 MiB when the program
 starts. The service runs `node <bin> start` with the `PATH` of the shell that installed it (so

@@ -370,7 +370,7 @@ describe("disable", { timeout: 90_000 }, () => {
     const connectors = () =>
       env.db
         .selectFrom("connectors")
-        .select("id")
+        .select(["id", "status", "disabled_by_plugin_id"])
         .where("org_id", "=", env.orgId)
         .where("catalog_item_id", "=", itemId)
         .where("deleted_at", "is", null)
@@ -391,8 +391,10 @@ describe("disable", { timeout: 90_000 }, () => {
     expect(off.statusCode, off.body).toBe(200);
     await idle();
     await waitFor(async () => (await liveOrgs(itemId)).length === 0, 30_000, "uninstalled");
-    // the connector and its credentials stay as the org's own
-    expect(await connectors()).toEqual([{ id: connector.id }]);
+    // the connector is kept with its credentials but switched off with the plugin (spec §5 rule 8)
+    expect(await connectors()).toEqual([
+      { id: connector.id, status: "disabled", disabled_by_plugin_id: itemId },
+    ]);
     expect((await secrets()).length).toBeGreaterThan(0);
     const removed = await env.db
       .selectFrom("audit_events")
@@ -403,15 +405,18 @@ describe("disable", { timeout: 90_000 }, () => {
     expect(removed).toHaveLength(1);
     expect(removed[0]?.detail).toMatchObject({
       via: "scope",
-      kept: [{ kind: "connector", ref: connector.id, reason: "org_owned" }],
+      kept: [{ kind: "connector", ref: connector.id, reason: "disabled_with_plugin" }],
     });
     // re-enabling: the switch is still on, but the install needs the template's input again, so
-    // the sync leaves it `needs_config` and creates no second connector
+    // the sync leaves it `needs_config` and creates no second connector; the connector stays
+    // switched off until the organization installs again (which reuses and re-enables it)
     const back = await putDisabled(itemId, { disabled: false });
     expect(back.statusCode, back.body).toBe(200);
     await idle();
     expect(await liveOrgs(itemId)).toEqual([]);
-    expect(await connectors()).toEqual([{ id: connector.id }]);
+    expect(await connectors()).toEqual([
+      { id: connector.id, status: "disabled", disabled_by_plugin_id: itemId },
+    ]);
     const list = await env.boss({ method: "GET", url: `/api/v1/orgs/${env.orgId}/catalog` });
     const item = (list.json() as { items: { id: string; state: string }[] }).items.find(
       (i) => i.id === itemId,

@@ -484,7 +484,10 @@ export function SwitchOffDialog({
   const installs = useQuery({ ...iq, retryOnMount: retryOnMountOf(iq.queryKey) }).data?.installs;
   const refOf = (c: { kind: string; ref: string }) =>
     c.kind === "plugin" ? (installs?.find((i) => i.id === c.ref)?.name ?? c.ref) : c.ref;
-  const removed = preview.components.filter((c) => c.created);
+  // Connectors are kept but switched off with the plugin, not removed: their row stays
+  const removed = preview.components.filter((c) => c.created && c.kind !== "connector");
+  const disabled = preview.kept.filter((c) => c.reason === "disabled_with_plugin");
+  const kept = preview.kept.filter((c) => c.reason !== "disabled_with_plugin");
   return (
     <Dialog
       open
@@ -543,9 +546,25 @@ export function SwitchOffDialog({
               empty: t("none"),
             },
             {
+              id: "disabled",
+              title: t("disabled"),
+              items: disabled.map((c) => ({
+                id: `${c.kind}:${c.ref}`,
+                title: refOf(c),
+                code: kind(c.kind),
+                notes: [
+                  {
+                    text: tk.has(`report.reason.${c.reason}`)
+                      ? tk(`report.reason.${c.reason}`)
+                      : c.reason,
+                  },
+                ],
+              })),
+            },
+            {
               id: "kept",
               title: t("kept"),
-              items: preview.kept.map((c) => ({
+              items: kept.map((c) => ({
                 id: `${c.kind}:${c.ref}`,
                 title: refOf(c),
                 code: kind(c.kind),

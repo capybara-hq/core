@@ -2,8 +2,11 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readRunningPid } from "../pid.js";
 import { LAUNCHD_LABEL, plistContent, plistPath, type ServiceSpec } from "../service/launchd.js";
 import { SYSTEMD_UNIT, unitContent, unitPath } from "../service/systemd.js";
+
+export type ServiceAction = "install" | "uninstall" | "status";
 
 export interface ServiceDeps {
   stateDir: string;
@@ -51,13 +54,10 @@ export const SERVICE_GONE_TIMEOUT_MS = 10_000;
 export const BOOTSTRAP_BACKOFF_MS = [500, 1000, 2000] as const;
 
 /**
- * `service install|uninstall`: runs `capybara-device start` at login (launchd) or boot (systemd
- * user).
+ * `service install|uninstall|status`: runs `capybara-device start` at login (launchd) or boot
+ * (systemd user), removes it, or reports whether it is loaded and running.
  */
-export async function serviceCommand(
-  action: "install" | "uninstall",
-  deps: ServiceDeps,
-): Promise<number> {
+export async function serviceCommand(action: ServiceAction, deps: ServiceDeps): Promise<number> {
   const run = deps.run ?? defaultRun;
   const spec: ServiceSpec = {
     nodePath: deps.nodePath ?? process.execPath,
@@ -94,8 +94,23 @@ function isBootstrapIoError(e: unknown): boolean {
   return (e as { status?: unknown }).status === 5 || /Bootstrap failed: 5:/.test(failureText(e));
 }
 
+/** One status report, once the caller knows whether launchd/systemd has the service loaded. */
+function reportStatus(deps: ServiceDeps, loaded: boolean): number {
+  if (!loaded) {
+    deps.out("capybara-device service is not loaded. Install it: capybara-device service install");
+    return 1;
+  }
+  const pid = readRunningPid(deps.stateDir);
+  if (pid === undefined) {
+    deps.out("capybara-device service is loaded, but no capybara-device process is running.");
+    return 1;
+  }
+  deps.out(`capybara-device service is loaded; capybara-device is running (pid ${pid}).`);
+  return 0;
+}
+
 async function launchd(
-  action: "install" | "uninstall",
+  action: ServiceAction,
   spec: ServiceSpec,
   deps: ServiceDeps,
   run: (cmd: string, args: string[]) => void,
@@ -120,6 +135,7 @@ async function launchd(
       return false;
     }
   };
+  if (action === "status") return reportStatus(deps, loaded());
   /** Boots the service out and waits until launchd has let it go (bootout returns before that). */
   const bootout = async (): Promise<void> => {
     tryRun(["bootout", service]);
@@ -163,12 +179,22 @@ async function launchd(
 }
 
 function systemd(
-  action: "install" | "uninstall",
+  action: ServiceAction,
   spec: ServiceSpec,
   deps: ServiceDeps,
   run: (cmd: string, args: string[]) => void,
 ): number {
   const file = unitPath(deps.home);
+  if (action === "status") {
+    let active = false;
+    try {
+      run("systemctl", ["--user", "is-active", "--quiet", SYSTEMD_UNIT]);
+      active = true;
+    } catch {
+      // Inactive or not installed.
+    }
+    return reportStatus(deps, active);
+  }
   if (action === "install") {
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, unitContent(spec));

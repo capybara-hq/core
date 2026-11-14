@@ -184,8 +184,12 @@ Rules:
    confirming cuts access. Affected agents show the item as unavailable in the agent editor; at run
    time the item is simply absent (a skill drops out of the catalog, a tool out of the tool list),
    which the replay rules already record (`tools_changed`, `pinned_changed`). Uninstalling a plugin
-   at deployment level follows the same preview and removes its components except connectors, which
-   stay as the orgs' own (they hold the orgs' credentials) (designer's call on connectors).
+   follows the same preview and removes its components except connectors (maintainer decision
+   2026-11-14): a connector recorded on the uninstalled install — one it created, or one it took
+   back from an earlier switch-off — keeps its endpoint and credentials but is switched off with the
+   plugin, and its tools stop being offered. Switching the plugin back on in the org reuses that
+   connector and switches it back on; one an org admin disabled by hand stays disabled. Only the
+   rollback of a failed install deletes the connectors that install created.
 9. **Dependencies** (designer's call): a plugin's dependencies are available wherever the plugin is.
    Turning A on in an org turns on the dependencies it needs there, whatever their own scope says;
    the dependency's row shows "A 依赖" as the reason. At import a newly imported dependency takes
@@ -517,7 +521,8 @@ they win. Cited in code and docs as "ruling <id>".
 - **P2-5** (§13.5) Clashing org skills are renamed `<name>-org` only during the first migration run;
   later clashes are only logged (P2-3 prevents new ones).
 - **P2-6** Connector templates honour component state: installs and scope syncs create connectors only
-  from templates on in the org; a template switched off later leaves existing connectors as the org's.
+  from templates on in the org; a template switched off on its own (its plugin still on) leaves
+  existing connectors as the org's, switched on.
 - **P2-7** (§7.3) An update that drops a component soft-deletes it unless agents in any org use it; a
   used one stays and is listed as kept.
 - **P2-8** An update clears the pins of linked copies only in orgs where the component is on.
@@ -741,7 +746,7 @@ Rulings made during implementation (2026-11-06)
 - **P3-40** An `optional` item stays `optional` after transfer; the former owner is then an ordinary
   org.
 - **P3-41** An owner delete with no other users uninstalls the item in the owner org through the normal
-  uninstall path (connectors kept as the org's own).
+  uninstall path (connectors kept, switched off with the plugin; §5 rule 8).
 - **P3-42** Promotion and owner versions split into prepare (files, outside the transaction) and a
   `mandatory`-transaction write.
 - **P3-43** The owner's promoted copy serves its own stored version while it equals the platform's (no

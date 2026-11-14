@@ -451,6 +451,49 @@ describe("/plugins: states and actions follow the scope and the switch", () => {
     expect(bodyOf(calls.filter((c) => c.method === "PUT")[0])).toEqual({ enabled: false });
   });
 
+  it("停用 lists the plugin's connectors as disabled with it (settings kept), not removed", async () => {
+    const p = en.plugins;
+    const preview = {
+      ...PREVIEW,
+      components: [
+        { kind: "connector", ref: "docs", created: true },
+        { kind: "skill", ref: "notes", created: true },
+      ],
+      kept: [
+        { kind: "connector", ref: "docs", reason: "disabled_with_plugin" },
+        { kind: "extension", ref: "crm", reason: "pre_existing" },
+      ],
+    };
+    stubApi({
+      [`GET ${ORG}/catalog`]: () =>
+        json(200, {
+          items: [
+            orgItem({
+              name: "crm",
+              state: "on",
+              installed: { pluginInstallId: "i1", version: "1.0.0", upgradeAvailable: null },
+            }),
+          ],
+        }),
+      [`PUT ${ORG}/catalog/${ID}/switch`]: () => json(200, { preview, confirm: "h1" }),
+    });
+    await renderPlugins();
+    const list = await screen.findByRole("list", { name: p.title });
+    const user = userEvent.setup();
+    await user.click(within(rowOf(list, "crm")).getByRole("button", { name: "More actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: p.action.disable }));
+    const dialog = await screen.findByRole("dialog");
+    // the connector is kept but switched off with the plugin, with the reason; the skill is removed
+    const disabled = within(dialog).getByRole("list", { name: p.switchOff.disabled });
+    expect(within(disabled).getByText("docs")).toBeTruthy();
+    expect(
+      within(disabled).getByText(en.catalog.plugins.report.reason.disabled_with_plugin),
+    ).toBeTruthy();
+    const removed = within(dialog).getByRole("list", { name: p.switchOff.removed });
+    expect(within(removed).queryByText("docs")).toBeNull();
+    expect(within(removed).getByText("notes")).toBeTruthy();
+  });
+
   it("停用 of a plugin with skills says every agent loses them: confirmed first without an install, in the preview with one", async () => {
     const p = zh.plugins;
     const skill = (id: string, name: string, over: Record<string, unknown> = {}) => ({

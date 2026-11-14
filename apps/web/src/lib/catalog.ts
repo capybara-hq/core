@@ -1114,7 +1114,7 @@ export const KEPT_REASONS = [
   "used_by_connectors",
   "used_by_plugins",
   "wanted_by_scope",
-  "org_owned",
+  "disabled_with_plugin",
 ] as const;
 export type KeptReason = (typeof KEPT_REASONS)[number];
 

@@ -82,7 +82,12 @@ describe("parseCommandLine", () => {
       command: "service",
       action: "install",
     });
+    expect(parseCommandLine(["service", "status"])).toEqual({
+      command: "service",
+      action: "status",
+    });
     expect(() => parseCommandLine(["service"])).toThrow(UsageError);
+    expect(() => parseCommandLine(["service", "status", "now"])).toThrow(UsageError);
     expect(parseCommandLine([])).toEqual({ command: "help" });
   });
 });

@@ -1299,8 +1299,9 @@ export class CatalogScopeService {
           orgId: org.id,
           orgName: org.name,
           agents: p.agents.map((a) => ({ id: a.id, name: a.name })),
-          // The sync's uninstall keeps the connectors the install created as the org's own
-          connectorsKept: p.components.filter((c) => c.kind === "connector" && c.created).length,
+          // A switch-off keeps every connector recorded on the install but disables it with the
+          // plugin (spec §5 rule 8); reused ones (created: false) are disabled too
+          connectorsKept: p.components.filter((c) => c.kind === "connector").length,
         });
         continue;
       }

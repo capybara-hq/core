@@ -31,7 +31,7 @@ export type Command =
       /** `--yes`: confirms `mode auto` without asking. */
       yes?: true;
     }
-  | { command: "service"; action: "install" | "uninstall" }
+  | { command: "service"; action: "install" | "uninstall" | "status" }
   | { command: "help" };
 
 export const USAGE = `Usage:
@@ -56,7 +56,8 @@ export const USAGE = `Usage:
   capybara-device policy add|remove allowCredentials <name>
                                   Allow or stop allowing a credential in sandbox mode
   capybara-device service install|uninstall
-                                  Run at login as a user service`;
+                                  Run at login as a user service
+  capybara-device service status  Report whether the login service is loaded and running`;
 
 /** Thrown for a bad command line; the message is shown with the usage. */
 export class UsageError extends Error {}
@@ -165,10 +166,13 @@ export function parseCommandLine(argv: string[]): Command {
     case "service": {
       const { positionals } = parse(rest, {});
       const [action, ...extra] = positionals;
-      if ((action === "install" || action === "uninstall") && extra.length === 0) {
+      if (
+        (action === "install" || action === "uninstall" || action === "status") &&
+        extra.length === 0
+      ) {
         return { command: "service", action };
       }
-      throw new UsageError("usage: service install|uninstall");
+      throw new UsageError("usage: service install|uninstall|status");
     }
     default:
       throw new UsageError(`unknown command ${name}`);

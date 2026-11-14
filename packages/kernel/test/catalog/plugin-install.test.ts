@@ -1,9 +1,12 @@
+import { randomUUID } from "node:crypto";
+import { connectorToolKey } from "@capybara-hq/plugin-sdk";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { InstallFailure, PluginInstaller, planActions } from "../../src/catalog/plugin-install.js";
 import { ApiError } from "../../src/errors.js";
 import { runOutsideTransaction } from "../../src/infra/database/transaction-host.js";
 import { SkillsService } from "../../src/skills/skills.service.js";
 import { usableSkills } from "../../src/skills/usable.js";
+import { ToolRegistry } from "../../src/tools/registry.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { SKILL_MD } from "../skills/zip.js";
 import {
@@ -100,7 +103,8 @@ async function installConnectorPlugin(): Promise<{ itemId: string; connectorId: 
 
 /**
  * Leaves an agent on (it implicitly uses every connector), switches the plugin off and confirms
- * the preview: the connector is kept for the agent, so the next install would reuse it.
+ * the preview: the connector is kept but switched off with the plugin, so the next install would
+ * reuse it.
  */
 async function switchOffKeepingConnector(itemId: string): Promise<void> {
   const agent = await env.boss({
@@ -228,7 +232,7 @@ describe("org plugin install", { timeout: 60_000 }, () => {
 });
 
 describe("org plugin uninstall", { timeout: 60_000 }, () => {
-  it("keeps the connector an agent uses and the connector extension a connector still uses, removes the rest", async () => {
+  it("disables the connector it created (keeping its config), keeps the connector extension a connector still uses, removes the rest", async () => {
     const a = await seedPlugin(env, { name: "fake-connector", extension: true });
     const b = await seedPlugin(env, { name: "notes", templates: false, skills: ["notes"] });
     // The install under test is what enables the connector extension here
@@ -270,14 +274,22 @@ describe("org plugin uninstall", { timeout: 60_000 }, () => {
     expect(report.removed).toEqual([]);
     expect(report.kept).toEqual(
       expect.arrayContaining([
-        { kind: "connector", ref: conn?.id, reason: "used_by_agents" },
+        { kind: "connector", ref: conn?.id, reason: "disabled_with_plugin" },
         { kind: "extension", ref: "fake-connector", reason: "used_by_connectors" },
       ]),
     );
     expect(report.kept).toHaveLength(2);
     expect(await enabledPlugins(true)).toEqual(["fake-connector"]);
     expect(await usableNames()).toEqual(["platform:notes"]);
+    // Kept, but switched off with its plugin: endpoint and credentials stay for the next switch-on
     expect(await liveConnectors()).toHaveLength(1);
+    expect(
+      await env.db
+        .selectFrom("connectors")
+        .select(["status", "disabled_by_plugin_id"])
+        .where("id", "=", conn?.id as string)
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ status: "disabled", disabled_by_plugin_id: a });
     const audit = await env.db
       .selectFrom("audit_events")
       .select("detail")
@@ -291,7 +303,7 @@ describe("org plugin uninstall", { timeout: 60_000 }, () => {
     expect((list.json() as { installs: unknown[] }).installs).toHaveLength(1);
   });
 
-  it("switching the plugin back on reuses the connector an earlier switch-off kept, instead of creating a second one", async () => {
+  it("switching the plugin back on reuses the connector an earlier switch-off disabled and switches it back on", async () => {
     const a = await seedPlugin(env, { name: "fake-connector", extension: true });
     await env.db
       .deleteFrom("extension_org_configs")
@@ -328,7 +340,15 @@ describe("org plugin uninstall", { timeout: 60_000 }, () => {
     });
     expect(done.statusCode, done.body).toBe(200);
     expect(await liveConnectors()).toHaveLength(1);
-    // switching back on: the kept connector is taken back, not duplicated (its slug would clash)
+    const statusOf = () =>
+      env.db
+        .selectFrom("connectors")
+        .select(["status", "disabled_by_plugin_id"])
+        .where("id", "=", conn?.id as string)
+        .executeTakeFirstOrThrow();
+    expect(await statusOf()).toEqual({ status: "disabled", disabled_by_plugin_id: a });
+    // switching back on: the disabled connector is taken back (not duplicated; its slug would
+    // clash) and switched back on
     const on = await env.boss({
       method: "PUT",
       url: `/api/v1/orgs/${env.orgId}/catalog/${a}/switch`,
@@ -336,6 +356,172 @@ describe("org plugin uninstall", { timeout: 60_000 }, () => {
     });
     expect(on.statusCode, on.body).toBe(200);
     expect((await liveConnectors()).map((c) => c.id)).toEqual([conn?.id]);
+    expect(await statusOf()).toEqual({ status: "active", disabled_by_plugin_id: null });
+  });
+
+  it("switching back on leaves a connector an org admin disabled by hand off", async () => {
+    const { itemId, connectorId } = await installConnectorPlugin();
+    const statusOf = () =>
+      env.db
+        .selectFrom("connectors")
+        .select(["status", "disabled_by_plugin_id"])
+        .where("id", "=", connectorId)
+        .executeTakeFirstOrThrow();
+    // The org's own disable before the switch-off: not the plugin's, and no marker is left on
+    // the switch-off (a marker would let a later switch-on turn it back on)
+    const off = await env.boss({
+      method: "PATCH",
+      url: `/api/v1/orgs/${env.orgId}/connectors/${connectorId}`,
+      payload: { status: "disabled" },
+    });
+    expect(off.statusCode, off.body).toBe(200);
+    const preview = await env.boss({
+      method: "PUT",
+      url: `/api/v1/orgs/${env.orgId}/catalog/${itemId}/switch`,
+      payload: { enabled: false },
+    });
+    expect(preview.statusCode, preview.body).toBe(200);
+    const done = await env.boss({
+      method: "PUT",
+      url: `/api/v1/orgs/${env.orgId}/catalog/${itemId}/switch`,
+      payload: { enabled: false, confirm: (preview.json() as { confirm: string }).confirm },
+    });
+    expect(done.statusCode, done.body).toBe(200);
+    expect(await statusOf()).toEqual({ status: "disabled", disabled_by_plugin_id: null });
+    // The install takes the connector back, but does not switch it back on
+    const on = await env.boss({
+      method: "PUT",
+      url: `/api/v1/orgs/${env.orgId}/catalog/${itemId}/switch`,
+      payload: { enabled: true, inputs: pluginBody() },
+    });
+    expect(on.statusCode, on.body).toBe(200);
+    expect((await liveConnectors()).map((c) => c.id)).toEqual([connectorId]);
+    expect(await statusOf()).toEqual({ status: "disabled", disabled_by_plugin_id: null });
+  });
+
+  it("switch-off switches off the connectors on the install's ledger and leaves one the organization made from the same template alone", async () => {
+    const { itemId, connectorId } = await installConnectorPlugin();
+    expect(await liveConnectors()).toHaveLength(1);
+    // A second connector from the same template, made by the organization and not recorded on any
+    // install: the ledger is what a switch-off may touch
+    const tpl = await env.db
+      .selectFrom("platform_connector_templates")
+      .select("id")
+      .where("catalog_item_id", "=", itemId)
+      .executeTakeFirstOrThrow();
+    const own = randomUUID();
+    await env.db
+      .insertInto("connectors")
+      .values({
+        id: own,
+        org_id: env.orgId,
+        slug: "gh-own",
+        name: "GitHub (own)",
+        connector: "mcp",
+        endpoint: JSON.stringify({ url: env.mcp.url }),
+        auth: JSON.stringify({ type: "none" }),
+        created_by: env.bossId,
+        catalog_item_id: itemId,
+        platform_template_id: tpl.id,
+      })
+      .execute();
+    const preview = await env.boss({
+      method: "PUT",
+      url: `/api/v1/orgs/${env.orgId}/catalog/${itemId}/switch`,
+      payload: { enabled: false },
+    });
+    expect(preview.statusCode, preview.body).toBe(200);
+    const done = await env.boss({
+      method: "PUT",
+      url: `/api/v1/orgs/${env.orgId}/catalog/${itemId}/switch`,
+      payload: { enabled: false, confirm: (preview.json() as { confirm: string }).confirm },
+    });
+    expect(done.statusCode, done.body).toBe(200);
+    const rows = await env.db
+      .selectFrom("connectors")
+      .select(["id", "status", "disabled_by_plugin_id"])
+      .where("id", "in", [connectorId, own])
+      .orderBy("id")
+      .execute();
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        { id: connectorId, status: "disabled", disabled_by_plugin_id: itemId },
+        { id: own, status: "active", disabled_by_plugin_id: null },
+      ]),
+    );
+  });
+
+  it("the switch-off preview lists the plugin's connectors as disabled with it, not removed", async () => {
+    const { itemId, connectorId } = await installConnectorPlugin();
+    const r = await env.boss({
+      method: "PUT",
+      url: `/api/v1/orgs/${env.orgId}/catalog/${itemId}/switch`,
+      payload: { enabled: false },
+    });
+    expect(r.statusCode, r.body).toBe(200);
+    const { preview } = r.json() as {
+      preview: {
+        components: { kind: string; ref: string; created: boolean }[];
+        kept: { kind: string; ref: string; reason: string }[];
+      };
+    };
+    expect(preview.components).toEqual(
+      expect.arrayContaining([{ kind: "connector", ref: connectorId, created: true }]),
+    );
+    expect(preview.kept).toEqual(
+      expect.arrayContaining([
+        { kind: "connector", ref: connectorId, reason: "disabled_with_plugin" },
+      ]),
+    );
+  });
+
+  it("a connector switched off with its plugin offers no tools to agents", async () => {
+    const { itemId, connectorId } = await installConnectorPlugin();
+    const { slug } = await env.db
+      .selectFrom("connectors")
+      .select("slug")
+      .where("id", "=", connectorId)
+      .executeTakeFirstOrThrow();
+    const preview = await env.boss({
+      method: "PUT",
+      url: `/api/v1/orgs/${env.orgId}/catalog/${itemId}/switch`,
+      payload: { enabled: false },
+    });
+    expect(preview.statusCode, preview.body).toBe(200);
+    const done = await env.boss({
+      method: "PUT",
+      url: `/api/v1/orgs/${env.orgId}/catalog/${itemId}/switch`,
+      payload: { enabled: false, confirm: (preview.json() as { confirm: string }).confirm },
+    });
+    expect(done.statusCode, done.body).toBe(200);
+    const { tools, hidden } = await env.k.app
+      .get(ToolRegistry)
+      .forAgent(env.orgId, { source: "web", disabledTools: [] });
+    expect(tools.map((t) => t.key).filter((k) => k.startsWith(`mcp__${slug}__`))).toEqual([]);
+    expect(hidden).toContainEqual({
+      ref: connectorToolKey(slug, "*"),
+      reason: `App ${slug} is disabled`,
+    });
+  });
+
+  it("cleaning up a failed install still deletes the connector that install created", async () => {
+    const { itemId } = await installConnectorPlugin();
+    const row = await env.db
+      .selectFrom("plugin_installs")
+      .select("id")
+      .where("item_id", "=", itemId)
+      .executeTakeFirstOrThrow();
+    // A failed install (its rollback did not finish): the cleanup is a rollback, not a switch-off
+    await env.db
+      .updateTable("plugin_installs")
+      .set({ status: "failed" })
+      .where("id", "=", row.id)
+      .execute();
+    const report = await uninstallOf(row.id);
+    expect(report.removed).toEqual(
+      expect.arrayContaining([{ kind: "connector", ref: expect.any(String) }]),
+    );
+    expect(await liveConnectors()).toHaveLength(0);
   });
 
   it("the item detail marks the template whose connector a switch-off kept (connected), and stops once that connector is deleted", async () => {
@@ -533,8 +719,10 @@ describe("org plugin install: the template's connector extension is an implied d
       url: `/api/v1/orgs/${env.orgId}/plugin-installs/${r.json().installed.pluginInstallId}`,
     });
     expect(del.statusCode, del.body).toBe(200);
-    expect(await enabledPlugins(true)).toEqual([]);
-    expect(await liveConnectors()).toHaveLength(0);
+    // The connector is kept but switched off with its plugin; the provider extension stays
+    // enabled because that kept connector still uses its kind (it is needed to switch it back on)
+    expect(await enabledPlugins(true)).toEqual(["fake-connector"]);
+    expect(await liveConnectors()).toHaveLength(1);
     expect(await liveInstalls()).toEqual([]);
   });
 
