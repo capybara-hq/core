@@ -1,6 +1,6 @@
 # Auto mode hardening: P0 command review, P1 correctness
 
-Status: proposed, 2026-11-15. Areas: `packages/kernel` (command review, settings, devices, platform
+Status: accepted 2026-11-15 (D1–D4 as recommended). Areas: `packages/kernel` (command review, settings, devices, platform
 ops, config), `packages/device`, `apps/web` (device page), `capybara-hq/plugins`
 (`sandbox-docker`, `sandbox-e2b`).
 
@@ -24,7 +24,7 @@ rebinding and address-encoding tricks — but:
 This spec fixes those. Design-system process gaps, loading shapes, weakened tests, compatibility
 layers and duplicated derivations are the follow-up "A" and are out of scope here (§7).
 
-## 1. Decisions needed (the reviewer's recommendation in bold)
+## 1. Decisions (accepted 2026-11-15: the recommendation in bold)
 
 - **D1 E2B and the open network.** `sandbox-e2b` refuses `open-public` because the Firecracker
   metadata service (MMDS, `169.254.169.254`) cannot be blocked — but its own live checks show MMDS
