@@ -43,7 +43,11 @@ describe("runOp", () => {
     ex.stat = async () => {
       throw new DeviceOpError("policy", "blocked by local policy");
     };
-    const res = await runOp(ex, r("stat", { path: "/p" }), new AbortController().signal);
+    const res = await runOp(
+      ex,
+      r("stat", { path: "/p", limits: { mode: "sandbox" } }),
+      new AbortController().signal,
+    );
     expect(res).toEqual({
       type: "res",
       id: "x",
@@ -53,7 +57,13 @@ describe("runOp", () => {
     ex.stat = async () => {
       throw new Error("boom");
     };
-    expect(await runOp(ex, r("stat", { path: "/p" }), new AbortController().signal)).toMatchObject({
+    expect(
+      await runOp(
+        ex,
+        r("stat", { path: "/p", limits: { mode: "sandbox" } }),
+        new AbortController().signal,
+      ),
+    ).toMatchObject({
       error: { kind: "error", message: "boom" },
     });
   });

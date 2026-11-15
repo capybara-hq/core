@@ -28,6 +28,14 @@ class SandboxedReader extends FakeExecutor {
       throw new DeviceOpError("policy", `${path} is outside the device's workspace`);
     }
   }
+  async stat(path: string) {
+    this.inside(path);
+    return super.stat(path);
+  }
+  async readFile(path: string, maxBytes: number) {
+    this.inside(path);
+    return super.readFile(path, maxBytes);
+  }
   async list(mode: SandboxMode, path: string, limit: number) {
     this.reads.push(mode);
     this.inside(path);
@@ -87,6 +95,54 @@ beforeEach(() => {
 afterEach(() => {
   ex.dispose();
   rmSync(tmp, { recursive: true, force: true });
+});
+
+describe("project reads carry the current ceiling", () => {
+  it("reads the project root and AGENTS.md in auto mode before any command", async () => {
+    setMode("auto");
+    const root = join(home, "code/core");
+    writeFileSync(join(root, "AGENTS.md"), "Project rules");
+    expect(
+      await runOp(ex, req("stat", { path: root, limits: { mode: "auto" } }), signal, ctx()),
+    ).toMatchObject({ ok: true, result: { isDir: true } });
+    expect(
+      await runOp(
+        ex,
+        req("readFile", { path: join(root, "AGENTS.md"), maxBytes: 100, limits: { mode: "auto" } }),
+        signal,
+        ctx(),
+      ),
+    ).toMatchObject({
+      ok: true,
+      result: { dataB64: Buffer.from("Project rules").toString("base64"), truncated: false },
+    });
+  });
+
+  it("a prior auto exec cannot widen a later read with a sandbox ceiling", async () => {
+    setMode("auto");
+    const seen = ctx();
+    await runOp(ex, execUnder("auto"), signal, seen);
+    const root = join(home, "code/core");
+    expect(
+      errorOf(
+        await runOp(ex, req("stat", { path: root, limits: { mode: "sandbox" } }), signal, seen),
+      ),
+    ).toMatchObject({ kind: "policy" });
+  });
+
+  it("a local switch back to sandbox wins over an auto read request", async () => {
+    setMode("sandbox");
+    expect(
+      errorOf(
+        await runOp(
+          ex,
+          req("stat", { path: join(home, "code/core"), limits: { mode: "auto" } }),
+          signal,
+          ctx(),
+        ),
+      ),
+    ).toMatchObject({ kind: "policy" });
+  });
 });
 
 describe("list and scan in the request's own ceiling", () => {

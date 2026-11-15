@@ -11,10 +11,10 @@ import { DeviceOpError, type ExecMode, type Executor } from "./types.js";
 export type { ExecMode } from "./types.js";
 
 /**
- * How long the latest command's limits decide file operations. The kernel judges the mode at each
- * exec, and file operations carry no limits, so a decision older than this no longer counts: file
- * operations fall back to the sandboxed helper (the safe default for an organization whose ceiling
- * is sandbox), until the next command decides again. A minute covers a turn's file operations
+ * How long the latest command's limits decide file writes. The kernel judges the mode at each
+ * exec, and file writes carry no limits, so a decision older than this no longer counts: file
+ * writes fall back to the sandboxed helper (the safe default for an organization whose ceiling
+ * is sandbox), until the next command decides again. A minute covers a turn's file writes
  * around its commands while bounding how long an organization's change takes to reach a device
  * that runs no more commands.
  */
@@ -29,21 +29,21 @@ export const SANDBOX_BACK_ON =
   "not run. Run it again: it runs in the sandbox now.";
 
 /**
- * The refusal of a file operation on a machine without the OS sandbox when no recent command
- * decided the mode: file operations never pass command review, so they cannot exceed a ceiling
+ * The refusal of a file write on a machine without the OS sandbox when no recent command
+ * decided the mode: file writes never pass command review, so they cannot exceed a ceiling
  * the deployment has not confirmed.
  */
 export const NO_FRESH_DECISION =
   "The OS sandbox is unavailable on this machine and no recent command decided this device's " +
-  "mode, so file operations are refused until the next command runs (the deployment decides the " +
+  "mode, so file writes are refused until the next command runs (the deployment decides the " +
   "mode at each command).";
 
 /**
  * The OS-mode executor the program serves: each command runs in the sandbox or, in auto mode,
  * directly on the machine ({@link effectiveMode}). The policy is read per operation, so a change
- * applies at the next command. File operations use the host executor's direct IO (any absolute
+ * applies at the next command. File writes use the host executor's direct IO (any absolute
  * path in auto mode, the roots in the sandbox) only while the latest command's decision is fresh;
- * before any command, or once its limits are stale, the sandboxed helper runs (file operations
+ * before any command, or once its limits are stale, the sandboxed helper runs (file writes
  * never pass command review, so the org's ceiling may not be exceeded). When the policy turns the
  * sandbox back on, every auto-mode command still running (and what it left in the background) is
  * killed, and one still starting is refused right before its spawn; while auto mode is on, the
@@ -61,7 +61,7 @@ export class SwitchingExecutor implements Executor {
    */
   private readonly sandboxReady: boolean;
   private watch: NodeJS.Timeout | undefined;
-  /** The latest command's limits and when they came (file operations follow their decision). */
+  /** The latest command's limits and when they came (file writes follow their decision). */
   private lastLimits: Pick<SandboxLimits, "mode"> | undefined;
   private lastLimitsAt = 0;
 
@@ -107,7 +107,7 @@ export class SwitchingExecutor implements Executor {
   }
 
   /**
-   * Records an exec's limits, refused ones included, so file operations follow the latest
+   * Records an exec's limits, refused ones included, so file writes follow the latest
    * decision (see {@link FILE_OPS_DECISION_TTL_MS}).
    */
   noteLimits(limits: Pick<SandboxLimits, "mode">): void {
@@ -116,7 +116,7 @@ export class SwitchingExecutor implements Executor {
   }
 
   /**
-   * The executor for file operations now. File operations carry no limits and never pass command
+   * The executor for file writes now. File writes carry no limits and never pass command
    * review, so they only follow an exec's decision when it is fresh: the sandboxed helper before
    * any exec and once those limits are stale (the safe default for an organization whose ceiling
    * is sandbox), else `effectiveMode(policy, limits)`. On a machine without the OS sandbox there is
@@ -124,7 +124,7 @@ export class SwitchingExecutor implements Executor {
    * run on the host; a fresh auto decision runs them on the host, a sandbox one is refused by the
    * sandboxed executor with the reason.
    */
-  private async files(): Promise<Executor> {
+  private async writeFiles(): Promise<Executor> {
     const policy = this.policy();
     await this.sync(policy);
     if (policy.mode === "sandbox") return this.sandboxed;
@@ -166,16 +166,18 @@ export class SwitchingExecutor implements Executor {
     return this.host.exec(args, signal, { beforeSpawn });
   }
 
-  async readFile(path: string, maxBytes: number) {
-    return (await this.files()).readFile(path, maxBytes);
+  async readFile(path: string, maxBytes: number, mode: SandboxMode = "sandbox") {
+    const r = await this.readerFor(mode);
+    return r.ex.readFile(path, maxBytes);
   }
 
   async writeFile(path: string, data: Uint8Array): Promise<void> {
-    return (await this.files()).writeFile(path, data);
+    return (await this.writeFiles()).writeFile(path, data);
   }
 
-  async stat(path: string) {
-    return (await this.files()).stat(path);
+  async stat(path: string, mode: SandboxMode = "sandbox") {
+    const r = await this.readerFor(mode);
+    return r.ex.stat(path);
   }
 
   /**
@@ -188,6 +190,11 @@ export class SwitchingExecutor implements Executor {
     const policy = this.policy();
     await this.sync(policy);
     const auto = mode === "auto" && policy.mode === "auto";
+    if (!auto && !this.sandboxReady)
+      throw new DeviceOpError(
+        "policy",
+        "The OS sandbox is unavailable; this file request requires sandbox mode.",
+      );
     return auto ? { ex: this.host, mode: "auto" } : { ex: this.sandboxed, mode: "sandbox" };
   }
 

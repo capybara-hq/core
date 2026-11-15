@@ -191,8 +191,8 @@ export class ProjectKnowledgeService {
         });
         return unavailableProject(bound.project, bound.root, projectUnavailable.unsupported());
       }
-      // stat / readFile carry no ceiling: a machine running a wider mode than the org allows is
-      // not read unasked (exec refuses it too)
+      // A machine reporting a wider mode than the org allows is not read unasked. The local
+      // provider rechecks the current ceiling on every readFile / stat request as well.
       if (scope.widerThanAllowed) {
         this.log.warn("project knowledge not read: the device runs a wider mode than allowed", {
           ...where,

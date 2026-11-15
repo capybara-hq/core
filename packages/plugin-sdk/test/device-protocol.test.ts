@@ -21,7 +21,7 @@ import {
 
 const hello = {
   type: "hello",
-  protocol: 1,
+  protocol: 2,
   programVersion: "0.1.0",
   os: "darwin",
   arch: "arm64",
@@ -177,6 +177,9 @@ describe("device protocol", () => {
       ["readFile", { path: 1, maxBytes: 1 }],
       ["writeFile", { path: "/a" }],
       ["stat", {}],
+      ["stat", { path: "/a" }],
+      ["readFile", { path: "/a", maxBytes: 100 }],
+      ["stat", { path: "/a", limits: { mode: "wide" } }],
       ["killTagged", { tags: [1] }],
       ["killAll", []],
       ["create", {}],
@@ -187,9 +190,9 @@ describe("device protocol", () => {
     }
     const goods: [string, unknown][] = [
       ["exec", { ...exec, cwd: "/w", env: { A: "b" } }],
-      ["readFile", { path: "/a", maxBytes: 0 }],
+      ["readFile", { path: "/a", maxBytes: 0, limits: { mode: "auto" } }],
       ["writeFile", { path: "/a", dataB64: "" }],
-      ["stat", { path: "/a" }],
+      ["stat", { path: "/a", limits: { mode: "sandbox" } }],
       ["killTagged", { tags: ["a"] }],
       ["create", { limits }],
       [

@@ -266,7 +266,12 @@ describe("LocalDeviceRelay", () => {
     expect(isOffline(e)).toBe(true);
     const ac = new AbortController();
     const aborted = rejection(
-      relay.call(env, "stat", { path: "/w" }, { deadlineMs: 5000, signal: ac.signal }),
+      relay.call(
+        env,
+        "stat",
+        { path: "/w", limits: { mode: "sandbox" } },
+        { deadlineMs: 5000, signal: ac.signal },
+      ),
     );
     await sleep(100);
     ac.abort(new Error("stop"));
@@ -402,7 +407,12 @@ describe("LocalDeviceRelay", () => {
     const ac = new AbortController();
     ac.abort(new Error("early"));
     const e = await rejection(
-      relay.call(h.deviceId, "stat", { path: "/x" }, { deadlineMs: 5000, signal: ac.signal }),
+      relay.call(
+        h.deviceId,
+        "stat",
+        { path: "/x", limits: { mode: "sandbox" } },
+        { deadlineMs: 5000, signal: ac.signal },
+      ),
     );
     expect((e as Error).message).toBe("early");
     expect(await redis.exists(deviceReqKey(h.deviceId))).toBe(0);
@@ -426,7 +436,9 @@ describe("LocalDeviceRelay", () => {
     const env = h.deviceId;
     const fsGone = await rejection(relay.call(env, "create", { limits: LIMITS }, opts()));
     expect(isFileSystemGoneError(fsGone)).toBe(true);
-    const gone = await rejection(relay.call(env, "stat", { path: "/w" }, opts()));
+    const gone = await rejection(
+      relay.call(env, "stat", { path: "/w", limits: { mode: "sandbox" } }, opts()),
+    );
     expect(isSandboxGoneError(gone)).toBe(true);
     const policy = await rejection(
       relay.call(env, "writeFile", { path: "/w", dataB64: "" }, opts()),
@@ -436,7 +448,9 @@ describe("LocalDeviceRelay", () => {
       "Refused by the machine's local policy: writeFile failed",
     );
     // ruling R28: the machine's own failure reaches the model as it said it
-    const plain = await rejection(relay.call(env, "readFile", { path: "/w", maxBytes: 1 }, opts()));
+    const plain = await rejection(
+      relay.call(env, "readFile", { path: "/w", maxBytes: 1, limits: { mode: "sandbox" } }, opts()),
+    );
     expect(plain).toBeInstanceOf(ToolError);
     expect((plain as Error).message).toBe("On the connected machine: readFile failed");
     await h.disconnect();
@@ -512,7 +526,12 @@ describe("LocalDeviceRelay", () => {
     expect(first).toBeGreaterThan(20_000 + 5000);
     expect(first).toBeLessThanOrEqual(20_000 + 5000 + LIST_TTL_MARGIN_MS);
     const short = rejection(
-      relay.call(env, "stat", { path: "/w" }, { deadlineMs: 100, signal: ac.signal }),
+      relay.call(
+        env,
+        "stat",
+        { path: "/w", limits: { mode: "sandbox" } },
+        { deadlineMs: 100, signal: ac.signal },
+      ),
     );
     await sleep(200);
     expect(await redis.llen(listKey)).toBe(2);

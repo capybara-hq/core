@@ -98,7 +98,16 @@ export function execArgs(command: string, tag = "t1"): DeviceExecArgs {
 }
 
 export function req(id: string, op: string, args: unknown) {
-  return { type: "req", id, op, args, deadlineMs: 5000 };
+  return {
+    type: "req",
+    id,
+    op,
+    args:
+      op === "readFile" || op === "stat"
+        ? { limits: { mode: "sandbox" }, ...(args as object) }
+        : args,
+    deadlineMs: 5000,
+  };
 }
 
 /** Commands block until `release(command)` is called or the request is aborted. */

@@ -176,7 +176,7 @@ describe("MachinesService", () => {
     const m = await connected(a);
     const hello: DeviceHello = {
       type: "hello",
-      protocol: 1,
+      protocol: 2,
       programVersion: "0.3.0",
       os: "linux",
       arch: "x64",
@@ -233,7 +233,7 @@ describe("MachinesService", () => {
     const m = await connected(a);
     const hello: DeviceHello = {
       type: "hello",
-      protocol: 1,
+      protocol: 2,
       programVersion: "0.3.0",
       os: "linux",
       arch: "x64",
@@ -349,7 +349,7 @@ describe("MachinesService", () => {
     const m = await connected(a);
     await machines.recordHello(m.machineId, {
       type: "hello",
-      protocol: 1,
+      protocol: 2,
       programVersion: "0.2.0",
       os: "linux",
       arch: "arm64",
@@ -400,7 +400,7 @@ describe("MachinesService", () => {
     const m = await connected(a);
     const hello: DeviceHello = {
       type: "hello",
-      protocol: 1,
+      protocol: 2,
       programVersion: "0.2.0",
       os: "linux",
       arch: "x64",

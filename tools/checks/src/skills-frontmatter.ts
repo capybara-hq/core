@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { parseSkillMd } from "@capybara-hq/plugin-sdk";
 import { parse } from "yaml";
 import type { Finding } from "./source.js";
 
@@ -13,7 +14,8 @@ export const MAX_DESCRIPTION = 1024;
  * English (AGENTS.md, "Rules by area", Language). Flags CJK characters in the frontmatter block of every
  * `<skillsDir>/<skill>/SKILL.md`, frontmatter that is not valid YAML (strict loaders reject the skill;
  * the usual cause is an unquoted `: ` inside a plain value), a `description` longer than the Agent
- * Skills limit of 1024 characters, and a SKILL.md with no frontmatter at all. The body is not checked.
+ * Skills limit of 1024 characters, and a SKILL.md with no frontmatter at all. Frontmatter must also
+ * pass the runtime parser, so repository skills cannot silently disappear from project context.
  */
 export function checkSkillsFrontmatter(skillsDir: string): Finding[] {
   if (!existsSync(skillsDir)) return [];
@@ -25,6 +27,7 @@ export function checkSkillsFrontmatter(skillsDir: string): Finding[] {
   for (const name of names) {
     const file = join(skillsDir, name, "SKILL.md");
     if (!existsSync(file)) continue;
+    const firstFinding = findings.length;
     const lines = readFileSync(file, "utf8").split(/\r?\n/);
     const end = lines[0]?.trim() === "---" ? lines.indexOf("---", 1) : -1;
     if (end === -1) {
@@ -74,6 +77,25 @@ export function checkSkillsFrontmatter(skillsDir: string): Finding[] {
           "and loaders that validate it skip the skill. Keep the trigger keywords and move the " +
           "detailed enumerations into the body.",
       });
+    }
+    if (findings.length === firstFinding) {
+      const parsed = parseSkillMd(lines.join("\n"));
+      const errors =
+        "errors" in parsed
+          ? parsed.errors
+          : parsed.name === name
+            ? []
+            : [`name must match its directory ${name}`];
+      if (errors.length > 0) {
+        findings.push({
+          file,
+          line: 1,
+          rule: "skills-frontmatter-invalid",
+          message:
+            `The runtime cannot load this skill: ${errors.join("; ")}. ` +
+            "Fix the frontmatter; use plain words for placeholders in the description.",
+        });
+      }
     }
   }
   return findings;

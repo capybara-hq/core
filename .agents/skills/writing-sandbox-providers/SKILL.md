@@ -344,6 +344,15 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   are the plugin's; see its skill.
 - Logs and errors carry no secrets and no other orgs' ids.
 
+## Local file-read ceiling
+
+Device protocol v2 requires `limits: { mode }` on `readFile` and `stat`, just as `list` and
+`scan` do. `LocalDeviceProvider` resolves the current org ceiling for every read, never from the
+instance handle. The device intersects it with its live local choice and routes reads through
+`SwitchingExecutor.readerFor`, independent of the latest command and its 60-second window.
+Only file writes still use that window; their command-review behavior is unchanged. Kernels and
+device programs upgrade together: protocol v1 connections are refused, not silently adapted.
+
 ## Tests
 
 - **Kernel tests use the fake sandbox**: `packages/kernel/test/fixtures/plugins/sandbox-fake`, deployment config `{ root }`; multiple replicas sharing one

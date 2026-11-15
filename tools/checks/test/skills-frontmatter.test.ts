@@ -89,6 +89,35 @@ describe("checkSkillsFrontmatter", () => {
     expect(checkSkillsFrontmatter(dir)).toEqual([]);
   });
 
+  it("rejects descriptions the runtime cannot load, including XML-shaped placeholders", () => {
+    const dir = skills({
+      a: "---\nname: a\ndescription: 'Use the <plugin>:<name> skill'\n---\n",
+    });
+    expect(checkSkillsFrontmatter(dir)).toEqual([
+      expect.objectContaining({
+        rule: "skills-frontmatter-invalid",
+        message: expect.stringContaining("description must not contain XML tags"),
+      }),
+    ]);
+  });
+
+  it("allows placeholders in the skill body and comparison operators in its description", () => {
+    const dir = skills({
+      a: "---\nname: a\ndescription: 'Use when a < b and c > d'\n---\n\nUse <plugin>:<name>.\n",
+    });
+    expect(checkSkillsFrontmatter(dir)).toEqual([]);
+  });
+
+  it("rejects a name that differs from the project skill directory", () => {
+    const dir = skills({ a: "---\nname: b\ndescription: A skill\n---\n" });
+    expect(checkSkillsFrontmatter(dir)).toEqual([
+      expect.objectContaining({
+        rule: "skills-frontmatter-invalid",
+        message: expect.stringContaining("name must match its directory a"),
+      }),
+    ]);
+  });
+
   it("passes on the repository skills", () => {
     expect(checkSkillsFrontmatter(join(repoRoot, ".agents/skills"))).toEqual([]);
   });

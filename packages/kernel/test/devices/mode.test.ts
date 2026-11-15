@@ -78,7 +78,7 @@ afterAll(async () => {
 
 const HELLO: DeviceHello = {
   type: "hello",
-  protocol: 1,
+  protocol: 2,
   programVersion: "0.3.0",
   os: "darwin",
   arch: "arm64",
