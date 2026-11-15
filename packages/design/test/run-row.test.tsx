@@ -8,6 +8,29 @@ afterEach(cleanup);
 const wrap = (ui: React.ReactElement, locale: "zh" | "en" = "en") =>
   render(<DesignProvider locale={locale}>{ui}</DesignProvider>);
 
+it("opens a warning with a named detail and keeps the action separate from its disclosure", async () => {
+  const { container } = wrap(
+    <RunRow
+      status="warning"
+      label="Project · core"
+      parts={[]}
+      statusText="Context not loaded"
+      detailsLabel="Project context"
+      defaultOpen
+    >
+      <p>Project instructions and skills were not loaded.</p>
+      <a href="/devices/e1">View device</a>
+    </RunRow>,
+  );
+  const line = container.querySelector('[data-part="run-row"]') as HTMLElement;
+  const region = screen.getByRole("region", { name: "Project context" });
+  expect(region.textContent).toContain("Project instructions and skills were not loaded.");
+  expect(line.contains(screen.getByRole("link", { name: "View device" }))).toBe(false);
+  line.focus();
+  await userEvent.keyboard("{Enter}");
+  expect(screen.queryByRole("region", { name: "Project context" })).toBeNull();
+});
+
 describe("RunRow (spec §6.16.23)", () => {
   it("a finished run is one quiet collapsed line: Run · parts, the check and Done", async () => {
     const { container } = wrap(

@@ -1474,12 +1474,20 @@
       "loaded": "项目 {name} · {path} · 已读取 {file}",
       "noAgentsMd": "项目 {name} · {path} · 没有 {file}",
       "unavailable": {
-        "gone": "项目 {name} 不可用：它的目录已不在设备上，本对话以自由模式继续",
-        "outside_mode": "项目 {name} 不可用：设备当前的运行模式读不到它，本对话以自由模式继续",
-        "unreadable": "项目 {name} 不可用：读取它失败，本对话以自由模式继续",
-        "unsupported": "项目 {name} 不可用：这台设备不支持项目，本对话以自由模式继续",
-        "removed": "项目 {name} 不可用：它已从设备的项目中移除，本对话以自由模式继续"
-      }
+        "gone": "项目目录已不在设备上。",
+        "outside_mode": "设备拒绝了对项目目录的访问，请检查设备的运行模式和访问权限。",
+        "unreadable": "读取项目目录失败。",
+        "unsupported": "这台设备不支持项目。",
+        "removed": "项目已从设备的项目列表中移除。"
+      },
+      "title": "项目 · {name}",
+      "unloaded": "上下文未加载",
+      "details": "项目上下文",
+      "summary": "未能读取项目目录，本轮未加载项目指令和技能。",
+      "viewDevice": "查看设备",
+      "newFreeConversation": "新建自由对话",
+      "snapshotHint": "对话可以继续。此状态来自上一轮运行；恢复访问权限后，下一轮会重新读取。",
+      "composerUnavailable": "项目未加载"
     },
     "deviceDeleted": "设备已删除",
     "pickEffort": "思考档位",

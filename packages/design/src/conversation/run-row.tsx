@@ -5,7 +5,7 @@ import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
 import { useDesignT } from "../provider";
 
-export type RunRowStatus = "ok" | "failed" | "stopped";
+export type RunRowStatus = "ok" | "failed" | "stopped" | "warning";
 
 export type RunRowProps = {
   status: RunRowStatus;
@@ -15,6 +15,13 @@ export type RunRowProps = {
   parts: string[];
   /** The status words after the mark; default 完成 / 失败 / 已停止 by status. */
   statusText?: string;
+  /** Optional controlled disclosure, shared with a related status entry. */
+  open?: boolean;
+  onOpenChange?(open: boolean): void;
+  /** Accessible name when the row describes project context instead of a run. */
+  detailsLabel?: string;
+  /** Neutral detail content, using the same guide and spacing as run errors. */
+  children?: ReactNode;
   /** Open at first; default open for a failed run only. */
   defaultOpen?: boolean;
   /** The failure: one sentence in the reader's language and the raw text (spec §6.24). */
@@ -28,7 +35,12 @@ export type RunRowProps = {
   links?: { label: string; href: string }[];
 };
 
-const MARK: Record<RunRowStatus, IconName> = { ok: "check", failed: "circle-x", stopped: "ban" };
+const MARK: Record<RunRowStatus, IconName> = {
+  ok: "check",
+  failed: "circle-x",
+  stopped: "ban",
+  warning: "circle-alert",
+};
 
 /**
  * A run row (spec §6.16.23): the quiet mono line that closes a run, "运行 · <model> · <duration> ·
@@ -40,6 +52,10 @@ export function RunRow({
   parts,
   statusText,
   defaultOpen,
+  open: controlledOpen,
+  onOpenChange,
+  detailsLabel,
+  children,
   error,
   facts,
   onRetry,
@@ -47,10 +63,15 @@ export function RunRow({
   links,
 }: RunRowProps): JSX.Element {
   const t = useDesignT();
-  const [open, setOpen] = useState(defaultOpen ?? status === "failed");
+  const [localOpen, setLocalOpen] = useState(defaultOpen ?? status === "failed");
+  const open = controlledOpen ?? localOpen;
   const id = useId();
   const hasActions = onRetry !== undefined || (links !== undefined && links.length > 0);
-  const hasDetail = error !== undefined || (facts !== undefined && facts.length > 0) || hasActions;
+  const hasDetail =
+    error !== undefined ||
+    (facts !== undefined && facts.length > 0) ||
+    hasActions ||
+    children !== undefined;
   const line: ReactNode = (
     <>
       <span className="cb-tool-label">{[label ?? t("run.label"), ...parts].join(" · ")}</span>
@@ -72,7 +93,10 @@ export function RunRow({
           data-part="run-row"
           aria-expanded={open}
           aria-controls={open ? id : undefined}
-          onClick={() => setOpen((o) => !o)}
+          onClick={() => {
+            setLocalOpen(!open);
+            onOpenChange?.(!open);
+          }}
         >
           {line}
         </button>
@@ -86,7 +110,7 @@ export function RunRow({
           id={id}
           className="cb-run-detail"
           data-part="run-detail"
-          aria-label={t("run.details")}
+          aria-label={detailsLabel ?? t("run.details")}
         >
           {error !== undefined ? (
             <ErrorDetail
@@ -94,6 +118,7 @@ export function RunRow({
               {...(error.detail !== undefined ? { detail: error.detail } : {})}
             />
           ) : null}
+          {children}
           {facts?.map((f) => (
             <div key={f} className="cb-run-fact">
               {f}

@@ -104,6 +104,30 @@ const box = (over: Partial<ComposerBoxProps> = {}) => (
   />
 );
 
+it("shows a project warning in phone options and closes the sheet before inspecting it", async () => {
+  const onInspect = vi.fn();
+  wrap(
+    box({
+      pickers: {
+        model: modelPicker(),
+        device: {
+          ...devicePicker(),
+          value: "Laptop · core",
+          locked: { hint: "Fixed device", warning: { label: "项目未加载", onInspect } },
+        },
+      },
+    }),
+  );
+  const trigger = document.querySelector('[data-part="composer-options"]') as HTMLElement;
+  expect(trigger.getAttribute("aria-label")).toContain("项目未加载");
+  expect(trigger.querySelector('[data-part="options-warning"]')).not.toBeNull();
+  await userEvent.click(trigger);
+  const dialog = screen.getByRole("dialog");
+  await userEvent.click(within(dialog).getByRole("button", { name: "项目未加载" }));
+  expect(onInspect).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole("dialog")).toBeNull();
+});
+
 describe("the composer's options button (phones, §6.16.2)", () => {
   it("shows the current values, shortened, and the whole values in its name", () => {
     wrap(box());

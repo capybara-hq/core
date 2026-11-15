@@ -1649,6 +1649,11 @@ States: `single`, `running`, `collapsed`, `collapsed-failed`, `one-object`, `exp
 
 #### 6.16.9 Tool row
 
+A single tool line reserves its complete waiting state without shrinking or wrapping it. Long
+tool descriptions yield space with an ellipsis before the status, in both languages and at phone
+widths; the disclosure chevron remains visible.
+
+
 - `row.dense` minimum height, padding `pad.default`, gap `space.2`, `small` `muted`; `hover` ground on hover (over `motion.hover`), a 1px `accent` outline at -1px on focus. A row with detail is a `button` with `aria-expanded` and a chevron at its end.
 - **Label** (one line, ellipsis), as the Claude Code VS Code extension draws it: the **name** in bold (600, the bold face; §2.2), then the key-argument preview (`muted`), then extra information after " · " (`faint`).
   - **Name**: a builtin's tool name as is (`Bash`, `Read`, `Edit`, `Grep` …), untranslated, as a proper noun; a connector tool's connector display name, or an extension tool's plugin display name, followed by its local tool name in brackets (`Acme 工单 [search_tickets]`). The brackets show the local name, never the declared `title`: the title is the row's tooltip (`title` attribute).
@@ -2143,7 +2148,7 @@ States: `image`, `text`, `markdown`, `csv`, `none`, `failed`
 - **Detail**: `space.1` below the line, `space.2` between its parts, under a 1px `line` guide on the left, indented `space.3` (the thinking body's guide): the failure as an `ErrorDetail` (§6.24: the localized sentence, the raw text behind its toggle); `facts`, plain mono `small` `muted` lines (the token split, the start time); then the actions, a row `space.2` apart of `dense` buttons: Retry ("重试" / "Retry", default) and the `links` as `LinkButton`s (default): "查看轨迹" / "View trajectory", "去配置模型服务" / "Configure model services". The page decides which actions a role gets; the row never draws one the reader cannot use.
 
 <!-- states: run-row -->
-States: `ok`, `ok-open`, `failed`, `stopped`
+States: `ok`, `ok-open`, `failed`, `stopped`, `warning`
 
 <!-- size-table: run-row -->
 | Part | State | Property | Value |
@@ -2162,6 +2167,19 @@ States: `ok`, `ok-open`, `failed`, `stopped`
 | error-detail-summary | failed | color | color.fail |
 | run-status | stopped | color | color.muted |
 | run-mark | stopped | color | color.muted |
+| run-status | warning | color | color.warn |
+| run-mark | warning | color | color.warn |
+| run-detail | warning | padding-left | space.3 |
+
+A bound project whose context did not load uses the same disclosure with `warning`: the circle-alert
+mark and status use `warn`; its detail is neutral, expanded at first, with the directory, reason,
+and a last-run snapshot hint. View device links to the bound device. Start a free conversation opens
+a new conversation with the same agent; it never clears or disguises the original binding. The
+composer retains the bound name with a warning action that reopens the same disclosure. Controlled
+`open` / `onOpenChange`, `detailsLabel`, and neutral children support this shared presentation.
+Project paths wrap even within long directory names. Opening details from the composer scrolls
+after expansion layout settles, so the conversation's follow-bottom behavior cannot hide them again.
+
 
 #### 6.16.24 Working line
 

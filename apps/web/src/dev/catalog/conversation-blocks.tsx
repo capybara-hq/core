@@ -30,6 +30,7 @@ import {
   RunDivider,
   RunRow,
   Stack,
+  Text,
   TextOutput,
   TextPreview,
   ThinkingRow,
@@ -212,6 +213,25 @@ function runRowBlocks(): ReactNode {
           onRetry={noop}
           links={[{ label: "去配置模型服务", href: "/admin/extensions" }, RUN_TRAJECTORY]}
         />
+      </Block>
+      <Block id="run-row-warning">
+        <RunRow
+          status="warning"
+          label="项目 · core"
+          parts={[]}
+          statusText="上下文未加载"
+          detailsLabel="项目上下文"
+          defaultOpen
+          links={[
+            { label: "查看设备", href: "/devices/e1" },
+            { label: "新建自由对话", href: "/" },
+          ]}
+        >
+          <Text variant="prose">未能读取项目目录，本轮未加载项目指令和技能。</Text>
+          <Text variant="small" tone="muted" pre>
+            /Users/grant/Capybara/core
+          </Text>
+        </RunRow>
       </Block>
       <Block id="run-row-stopped">
         <RunRow

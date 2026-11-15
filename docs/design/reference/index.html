@@ -32,7 +32,7 @@
 <body>
 <header>
   <h1>Reference set review</h1>
-  <div>310 blocks × dark | light, rendered at 2× from docs/design/reference/src (sizes are token steps of docs/design/tokens.json).</div>
+  <div>316 blocks × dark | light, rendered at 2× from docs/design/reference/src (sizes are token steps of docs/design/tokens.json).</div>
   <nav><div><a class="g" href="#g-0">UI refresh A: shell, list and form pages</a> <a href="#c-template-list">template-list</a> <a href="#c-template-form">template-form</a> <a href="#c-sidebar">sidebar</a> <a href="#c-page-header">page-header</a> <a href="#c-stat-cards">stat-cards</a> <a href="#c-status-bar">status-bar</a> <a href="#c-action-row">action-row</a> <a href="#c-button">button</a> <a href="#c-input">input</a> <a href="#c-segmented">segmented</a> <a href="#c-switch">switch</a> <a href="#c-filter-chip">filter-chip</a> <a href="#c-table">table</a> <a href="#c-icon">icon</a></div><div><a class="g" href="#g-1">UI refresh B: conversation page</a> <a href="#c-template-conversation">template-conversation</a> <a href="#c-title-bar">title-bar</a> <a href="#c-composer">composer</a> <a href="#c-picker-menu">picker-menu</a> <a href="#c-command-palette">command-palette</a> <a href="#c-prose">prose</a> <a href="#c-thinking-row">thinking-row</a> <a href="#c-user-bubble">user-bubble</a> <a href="#c-run-divider">run-divider</a> <a href="#c-tool-group">tool-group</a> <a href="#c-tool-row">tool-row</a> <a href="#c-diff-block">diff-block</a> <a href="#c-approval-block">approval-block</a> <a href="#c-network-facts">network-facts</a> <a href="#c-question-block">question-block</a> <a href="#c-connect-block">connect-block</a> <a href="#c-queued-message">queued-message</a> <a href="#c-subagent-group">subagent-group</a> <a href="#c-agent-map">agent-map</a> <a href="#c-inline-card">inline-card</a> <a href="#c-property-section">property-section</a> <a href="#c-right-panel">right-panel</a> <a href="#c-file-card">file-card</a> <a href="#c-file-outputs">file-outputs</a> <a href="#c-attachment-strip">attachment-strip</a> <a href="#c-file-preview">file-preview</a> <a href="#c-run-row">run-row</a> <a href="#c-working-line">working-line</a> <a href="#c-greeting">greeting</a> <a href="#c-agent-row">agent-row</a> <a href="#c-quick-actions">quick-actions</a></div><div><a class="g" href="#g-2">Agents: avatar presets and picker</a> <a href="#c-avatar">avatar</a></div><div><a class="g" href="#g-3">Role pass: no access, danger zone, secret reveal</a> <a href="#c-no-access">no-access</a> <a href="#c-danger-zone">danger-zone</a> <a href="#c-secret-reveal">secret-reveal</a> <a href="#c-content-section">content-section</a></div><div><a class="g" href="#g-4">Config forms: repeater, field row, key / value editor</a> <a href="#c-repeater">repeater</a> <a href="#c-field-row">field-row</a> <a href="#c-key-value-editor">key-value-editor</a></div><div><a class="g" href="#g-5">Loading states: skeleton primitives and template loading states</a> <a href="#c-skeleton">skeleton</a> <a href="#c-template-detail">template-detail</a> <a href="#c-template-overview">template-overview</a> <a href="#c-template-inbox">template-inbox</a> <a href="#c-template-trace">template-trace</a> <a href="#c-template-settings">template-settings</a> <a href="#c-template-wizard">template-wizard</a> <a href="#c-template-auth">template-auth</a></div> <a href="#tokens">tokens</a></nav>
 </header>
 <main>
@@ -243,7 +243,7 @@
     <div class="shot light"><img src="sidebar-setup-waiting-light.png" alt="sidebar-setup-waiting, light" loading="lazy"></div>
   </div>
 </figure></section>
-<section><h2 id="c-page-header">page-header <small>8 blocks</small></h2>
+<section><h2 id="c-page-header">page-header <small>9 blocks</small></h2>
 <figure id="page-header-breadcrumb">
   <figcaption><a href="#page-header-breadcrumb">page-header-breadcrumb</a></figcaption>
   <div class="pair">
@@ -284,6 +284,13 @@
   <div class="pair">
     <div class="shot dark"><img src="page-header-narrow-loading-dark.png" alt="page-header-narrow-loading, dark" loading="lazy"></div>
     <div class="shot light"><img src="page-header-narrow-loading-light.png" alt="page-header-narrow-loading, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="page-header-no-title">
+  <figcaption><a href="#page-header-no-title">page-header-no-title</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="page-header-no-title-dark.png" alt="page-header-no-title, dark" loading="lazy"></div>
+    <div class="shot light"><img src="page-header-no-title-light.png" alt="page-header-no-title, light" loading="lazy"></div>
   </div>
 </figure>
 <figure id="page-header-path">
@@ -1618,7 +1625,7 @@
     <div class="shot light"><img src="file-preview-text-light.png" alt="file-preview-text, light" loading="lazy"></div>
   </div>
 </figure></section>
-<section><h2 id="c-run-row">run-row <small>4 blocks</small></h2>
+<section><h2 id="c-run-row">run-row <small>5 blocks</small></h2>
 <figure id="run-row-failed">
   <figcaption><a href="#run-row-failed">run-row-failed</a></figcaption>
   <div class="pair">
@@ -1645,6 +1652,13 @@
   <div class="pair">
     <div class="shot dark"><img src="run-row-stopped-dark.png" alt="run-row-stopped, dark" loading="lazy"></div>
     <div class="shot light"><img src="run-row-stopped-light.png" alt="run-row-stopped, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="run-row-warning">
+  <figcaption><a href="#run-row-warning">run-row-warning</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="run-row-warning-dark.png" alt="run-row-warning, dark" loading="lazy"></div>
+    <div class="shot light"><img src="run-row-warning-light.png" alt="run-row-warning, light" loading="lazy"></div>
   </div>
 </figure></section>
 <section><h2 id="c-working-line">working-line <small>2 blocks</small></h2>
@@ -1979,7 +1993,7 @@
     <div class="shot light"><img src="template-auth-loading-light.png" alt="template-auth-loading, light" loading="lazy"></div>
   </div>
 </figure></section>
-<section><h2 id="c-other">other <small>42 blocks</small></h2>
+<section><h2 id="c-other">other <small>46 blocks</small></h2>
 <figure id="callout-in-box">
   <figcaption><a href="#callout-in-box">callout-in-box</a></figcaption>
   <div class="pair">
@@ -2041,6 +2055,34 @@
   <div class="pair">
     <div class="shot dark"><img src="card-grid-no-description-dark.png" alt="card-grid-no-description, dark" loading="lazy"></div>
     <div class="shot light"><img src="card-grid-no-description-light.png" alt="card-grid-no-description, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="device-nameplate-cloud">
+  <figcaption><a href="#device-nameplate-cloud">device-nameplate-cloud</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="device-nameplate-cloud-dark.png" alt="device-nameplate-cloud, dark" loading="lazy"></div>
+    <div class="shot light"><img src="device-nameplate-cloud-light.png" alt="device-nameplate-cloud, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="device-nameplate-local">
+  <figcaption><a href="#device-nameplate-local">device-nameplate-local</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="device-nameplate-local-dark.png" alt="device-nameplate-local, dark" loading="lazy"></div>
+    <div class="shot light"><img src="device-nameplate-local-light.png" alt="device-nameplate-local, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="device-nameplate-offline">
+  <figcaption><a href="#device-nameplate-offline">device-nameplate-offline</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="device-nameplate-offline-dark.png" alt="device-nameplate-offline, dark" loading="lazy"></div>
+    <div class="shot light"><img src="device-nameplate-offline-light.png" alt="device-nameplate-offline, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="device-nameplate-suspended">
+  <figcaption><a href="#device-nameplate-suspended">device-nameplate-suspended</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="device-nameplate-suspended-dark.png" alt="device-nameplate-suspended, dark" loading="lazy"></div>
+    <div class="shot light"><img src="device-nameplate-suspended-light.png" alt="device-nameplate-suspended, light" loading="lazy"></div>
   </div>
 </figure>
 <figure id="error-detail-default">

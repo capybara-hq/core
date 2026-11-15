@@ -86,6 +86,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   FakeEventSource.instances = [];
 });
@@ -298,6 +299,48 @@ describe("an existing conversation's project", () => {
       }
     },
   );
+
+  it("marks an unavailable project in the composer and opens its details from that mark", async () => {
+    resetNavigation("/chat/c1");
+    chatApi([userMsg(1, "hi")], {}, CORE, () => ({ unavailable: "outside_mode" }));
+    const { container } = await renderChatRoute({ locale: "zh" });
+    await screen.findByText("hi");
+    const region = screen.getByRole("region", { name: "项目上下文" });
+    expect(within(region).getByText(ROOT)).toBeTruthy();
+    expect(within(region).getByRole("link", { name: "查看设备" }).getAttribute("href")).toBe(
+      "/devices/e1",
+    );
+    expect(within(region).getByRole("link", { name: "新建自由对话" }).getAttribute("href")).toBe(
+      "/?agent=ag1",
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /项目 · core.*上下文未加载/ }));
+    expect(screen.queryByRole("region", { name: "项目上下文" })).toBeNull();
+    const composer = container.querySelector('[data-part="composer"]') as HTMLElement;
+    await user.click(
+      within(composer).getByRole("button", { name: new RegExp(`^${zh.chat.pickDevice}:`) }),
+    );
+    expect(screen.getByRole("region", { name: "项目上下文" })).toBeTruthy();
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+  });
+
+  it("opens project details before scrolling to them from the composer", async () => {
+    resetNavigation("/chat/c1");
+    chatApi([userMsg(1, "hi")], {}, CORE, () => ({ unavailable: "outside_mode" }));
+    const { container } = await renderChatRoute({ locale: "zh" });
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /项目 · core.*上下文未加载/ }));
+    const detailsAtScroll: boolean[] = [];
+    vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(() => {
+      detailsAtScroll.push(screen.queryByRole("region", { name: "项目上下文" }) !== null);
+    });
+    const composer = container.querySelector('[data-part="composer"]') as HTMLElement;
+    await user.click(
+      within(composer).getByRole("button", { name: new RegExp(`^${zh.chat.pickDevice}:`) }),
+    );
+    await vi.waitFor(() => expect(detailsAtScroll).toEqual([true]));
+  });
 
   it("a snapshot outside the loaded window still shows its state", async () => {
     resetNavigation("/chat/c1");

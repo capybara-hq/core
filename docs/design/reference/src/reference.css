@@ -6452,3 +6452,9 @@ span.r-scal-daynum {
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
 }
+
+.r-run-status[data-status="warning"],
+.r-run-status[data-status="warning"] .r-run-mark { color: var(--cb-warn); }
+
+.r-tline > [data-part="waiting-word"],
+.r-tool-toggle > [data-part="waiting-word"] { flex: none; white-space: nowrap; }
