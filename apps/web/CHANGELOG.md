@@ -1,5 +1,14 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.34
+
+### Patch Changes
+
+- 8e6fc07: Leaving a sign-in page for the workspace is a full navigation everywhere: 查看设备 and the way home
+  on the device link page, and the way home on the bind and invite pages no longer navigate inside
+  the client, where the workspace's import map was rendered by React (a console error) and never ran,
+  so a plugin's client code could not load.
+
 ## 0.1.0-rc.33
 
 No changes in this release.
