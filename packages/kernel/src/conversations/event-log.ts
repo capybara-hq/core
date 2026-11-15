@@ -360,9 +360,9 @@ export class EventLog {
 
   /**
    * The conversation's latest event of `type` (by seq); undefined without one. `skills_catalog`
-   * (0025) and `device_paths` (0094) have partial indexes that answer it directly; other
-   * types scan the conversation's events backwards on the (conversation_id, seq) key, the whole
-   * conversation when it has none.
+   * (0025), `device_paths` (0094) and `project_root` (0133) have partial indexes that answer it
+   * directly; other types scan the conversation's events backwards on the (conversation_id, seq)
+   * key, the whole conversation when it has none.
    */
   async latestOfType<T extends ConversationEventType>(
     conversationId: string,

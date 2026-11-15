@@ -16,15 +16,15 @@ export interface WorkingProject {
 }
 
 /**
- * A root above every home directory: `/` (also `/root`'s parent), `/home`, `/Users`. Too broad to
- * be the review's workspace (every user's files would be ordinary writes), so it is never the
- * working root. The owner's home itself may be: the review judges its home-level sensitive paths
- * (shell rc files, SSH, credentials) inside the workspace too.
+ * A root above the owner's home: `/`, every ancestor of the reported `home` (`/var/lib` for
+ * `/var/lib/u`), and `/home` / `/Users` whatever the home. Too broad to be the review's workspace
+ * (other users' files would be ordinary writes), so it is never the working root. The owner's home
+ * itself may be: the review judges its home-level sensitive paths (shell rc files, SSH,
+ * credentials) inside the workspace too.
  */
-function aboveHomes(root: string): boolean {
-  const parts = root.split("/").filter((p) => p.length > 0);
-  if (parts.length === 0) return true;
-  return parts.length === 1 && (parts[0] === "home" || parts[0] === "Users");
+function aboveHome(root: string, home: string | null | undefined): boolean {
+  if (root === "/" || root === "/home" || root === "/Users") return true;
+  return home != null && home !== root && isInside(home, root);
 }
 
 const isInside = (path: string, dir: string): boolean =>
@@ -36,12 +36,12 @@ const isInside = (path: string, dir: string): boolean =>
  * command review's `workspace` fact. It is the project's root when the latest snapshot is usable,
  * else the device's `workspace` (free mode). It never widens anything: a root that is not a clean
  * absolute path, one the run cannot use, one outside the workspace in sandbox mode (where the
- * device reads nothing else), and one above every home ({@link aboveHomes}) all fall back
+ * device reads nothing else), and one above the owner's home ({@link aboveHome}) all fall back
  * to the device's workspace.
  */
 export function workingRootOf(
   project: WorkingProject | null | undefined,
-  device: { mode: SandboxMode; workspace: string },
+  device: { mode: SandboxMode; workspace: string; home?: string | null },
 ): string {
   if (project == null || project.unavailable) return device.workspace;
   const root =
@@ -50,7 +50,7 @@ export function workingRootOf(
       : project.root;
   if (validateSandboxPathShape(root).length > 0) return device.workspace;
   if (device.mode !== "auto" && !isInside(root, device.workspace)) return device.workspace;
-  if (aboveHomes(root)) return device.workspace;
+  if (aboveHome(root, device.home)) return device.workspace;
   return root;
 }
 

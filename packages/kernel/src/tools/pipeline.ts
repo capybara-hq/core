@@ -1581,6 +1581,8 @@ export class ToolPipeline {
       mode: facts.mode,
       // the working root: a bound project's root, where commands start and writes need no ask
       workspace: facts.workingRoot,
+      // the owner's home, never the project root: the home-level rules stay where they were
+      home: facts.home,
       attended,
       step: ctx.step,
       callId: call.id,

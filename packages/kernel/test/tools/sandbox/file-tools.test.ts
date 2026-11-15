@@ -11,6 +11,7 @@ import type { ConversationEvent } from "../../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
 import { ConversationDevices } from "../../../src/devices/conversation-devices.js";
+import { CommandReviewService } from "../../../src/sandbox/review/index.js";
 import { SandboxService } from "../../../src/sandbox/sandbox.service.js";
 import { checkToolPath, checkToolWritable } from "../../../src/tools/builtins/sandbox/common.js";
 import { onlyBuiltins } from "../../helpers/disabled-tools.js";
@@ -397,6 +398,35 @@ describe("the review's facts name the working root", () => {
 
   const facts = (convId: string) => k.app.get(ConversationDevices).reviewFacts(orgId, convId);
 
+  it("the review judges home-level paths against the home it is given, not the project root", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    const review = (command: string, home: string | null) =>
+      k.app.get(CommandReviewService).review({
+        orgId,
+        conversationId: conv,
+        runId: randomUUID(),
+        accountId: ownerId,
+        toolKey: "Bash",
+        input: { command },
+        mode: "auto",
+        workspace: "/opt/app",
+        home,
+        attended: true,
+        step: 1,
+        callId: `c-${randomUUID()}`,
+        signal: new AbortController().signal,
+      });
+    expect(await review("cat /Users/u/.ssh/id_rsa", "/Users/u")).toMatchObject({
+      decision: "ask",
+      rule: "ask.ssh",
+    });
+    expect(await review("cat /Users/u/.aws/credentials", "/Users/u")).toMatchObject({
+      decision: "ask",
+      rule: "ask.secret-file",
+    });
+    expect(await review("cat README.md", "/Users/u")).toMatchObject({ decision: "allow" });
+  });
+
   it("a partial index answers the latest project_root lookup", async () => {
     const r = await sql<{ indexdef: string }>`SELECT indexdef FROM pg_indexes
       WHERE schemaname = 'capybara' AND indexname = 'conversation_events_project_root_idx'`.execute(
@@ -437,6 +467,15 @@ describe("the review's facts name the working root", () => {
       skills: [],
     });
     expect((await facts(conv))?.workingRoot).toBe("/workspace");
+
+    // the owner's home comes from the machine or the device workspace, never from the project root
+    const other = await boundConversation("/home/other/app");
+    await appendProjectRoot(other, { project: "app", root: "/home/other/app", skills: [] });
+    expect(await facts(other)).toMatchObject({
+      workspace: "/workspace",
+      home: null,
+      workingRoot: "/home/other/app",
+    });
 
     // the owner's home is a working root (the review keeps its home-level rules there); a root
     // above every home is too broad

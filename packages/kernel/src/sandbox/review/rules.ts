@@ -924,7 +924,8 @@ interface ResolvedFacts {
   written: ReadonlySet<string>;
 }
 
-function homeOf(workspace: string): string | null {
+/** The home directory a path lies in by its `/home/<u>`, `/Users/<u>` or `/root` prefix, or null. */
+export function homeOf(workspace: string): string | null {
   const parts = workspace.split("/").filter((p) => p.length > 0);
   if ((parts[0] === "home" || parts[0] === "Users") && parts.length >= 2)
     return `/${parts[0]}/${parts[1]}`;
@@ -938,7 +939,8 @@ function resolveFacts(facts: ReviewFacts): ResolvedFacts {
   return {
     workspace,
     cwd,
-    home: homeOf(workspace),
+    // the owner's home as the pipeline knows it (the machine's), else the workspace's prefix
+    home: facts.home?.startsWith("/") ? normalizePath(facts.home) : homeOf(workspace),
     written: new Set(
       (facts.written ?? []).map((p) =>
         p.endsWith("/**") ? `${normalizePath(p.slice(0, -3))}/**` : normalizePath(p),
@@ -1068,6 +1070,7 @@ const SECRET_HOME_PATHS = [
   "~/.vault-token",
   "~/.terraform.d/credentials.tfrc.json",
   "~/.config/op",
+  "~/.gnupg",
   "~/.bash_history",
   "~/.zsh_history",
   "~/.sh_history",
@@ -1333,6 +1336,7 @@ function isPersistencePath(path: string, facts: ResolvedFacts): boolean {
     return true;
   }
   if (t === "~/.config/fish/config.fish" || t.startsWith("~/.config/fish/conf.d/")) return true;
+  if (isEditorOrLogoutRc(t) || isRunLaterHomePath(t, facts)) return true;
   if (t === "~/.ssh" || t.startsWith("~/.ssh/")) return true;
   if (t.startsWith("~/Library/LaunchAgents") || t.startsWith("~/Library/LaunchDaemons"))
     return true;
@@ -4217,6 +4221,27 @@ const CONFIG_REASONS: Record<ConfigClass, string> = {
   "ask.secret-file": "Prints, copies or changes a credential file; this needs approval each time.",
 };
 
+/** Logout and editor rc files: read by a program the person starts later, like a shell rc file. */
+function isEditorOrLogoutRc(t: string): boolean {
+  if (/^~\/\.(bash_logout|zlogout|logout|vimrc|gvimrc|exrc|nanorc|emacs)$/.test(t)) return true;
+  return t.startsWith("~/.vim/") || t.startsWith("~/.config/nvim/") || t.startsWith("~/.emacs.d/");
+}
+
+/**
+ * Home locations whose files run later without the person asking: PATH shims (`~/.local/bin`),
+ * desktop autostart entries, and the device's own work directory `~/capybara-device` (other
+ * conversations' background task scripts live there). The work directory counts only when the
+ * workspace is not inside it: a free conversation's workspace is a directory of it.
+ */
+function isRunLaterHomePath(t: string, facts: ResolvedFacts): boolean {
+  const under = (dir: string) => t === dir || t.startsWith(`${dir}/`);
+  if (under("~/.local/bin") || under("~/.config/autostart")) return true;
+  return (
+    under("~/capybara-device") &&
+    !tildeForm(facts.workspace, facts).startsWith("~/capybara-device/")
+  );
+}
+
 /** The grant class of a secret or persistence path. */
 function configClassOf(path: string, facts: ResolvedFacts): ConfigClass {
   const t = tildeForm(path, facts);
@@ -4227,7 +4252,8 @@ function configClassOf(path: string, facts: ResolvedFacts): ConfigClass {
     t === "/etc/crontab" ||
     t.startsWith("/var/spool/cron") ||
     t.startsWith("/etc/cron.") ||
-    t.startsWith("~/.config/systemd")
+    t.startsWith("~/.config/systemd") ||
+    isRunLaterHomePath(t, facts)
   ) {
     return "ask.persistence";
   }
@@ -4331,14 +4357,17 @@ function linkSources(inv: Invocation, command: SimpleCommand, ctx: RuleContext):
 }
 
 /**
- * What a link would expose (hardening spec R3): a credential, SSH, persistence or device path is
+ * What a link would expose (hardening spec R3): a credential, SSH, persistence or device path, and
+ * the home directory or `/` itself (a link to them reaches every secret under them), is
  * `sensitive` wherever it lies, inside the workspace too (a project at the owner's home makes the
- * home the workspace: project root spec §4.3); the home directory or `/` itself (a link to them
- * reaches every secret under them) is `sensitive` outside the workspace; anything else outside the
- * workspace and temporary files is `outside`.
+ * home the workspace: project root spec §4.3); a parent of the workspace is `sensitive` outside
+ * it; anything else outside the workspace and temporary files is `outside`.
  */
 function linkClass(path: string, ctx: RuleContext): "sensitive" | "outside" | null {
   if (isHomeLevelSensitive(path, ctx.facts) || isDevicePath(path, ctx.facts)) return "sensitive";
+  // the home directory and `/` themselves reach every secret under them, whatever the workspace
+  const t = tildeForm(globBase(path), ctx.facts);
+  if (t === "/" || t === "~") return "sensitive";
   if (inside(path, ctx.facts.workspace) || tmpRootOf(path)) return null;
   if (isDangerousDelete(path, ctx)) return "sensitive";
   return "outside";

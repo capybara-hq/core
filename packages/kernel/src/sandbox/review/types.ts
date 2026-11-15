@@ -81,6 +81,14 @@ export interface ReviewFacts {
   /** The directory the command runs in; default: the workspace. */
   cwd?: string;
   /**
+   * The owner's home directory, which `~` and the home-level sensitive paths (shell rc files,
+   * SSH, credentials) are judged against. The pipeline passes it from the machine (or the device's
+   * workspace), never from a project root, so a project outside the home keeps every home rule
+   * (project root spec §4.3). Absent or null: derived from the workspace's `/home/<u>`,
+   * `/Users/<u>` or `/root` prefix.
+   */
+  home?: string | null;
+  /**
    * Absolute paths this conversation's own tool calls wrote (`Write` / `Edit`, and the write
    * targets of its earlier `Bash` lines): running one of them with an interpreter is not a
    * development command but code the run itself produced (hardening spec R1).

@@ -58,6 +58,14 @@ describe("workingRootOf", () => {
     expect(workingRootOf(usable("/Users/u"), auto)).toBe("/Users/u");
     expect(workingRootOf(usable("/home/u/"), auto)).toBe("/home/u");
     expect(workingRootOf(usable("/root"), auto)).toBe("/root");
+    // every ancestor of the owner's reported home is too broad, wherever that home is
+    const varHome = { ...auto, home: "/var/lib/u" };
+    for (const broad of ["/var", "/var/lib", "/var/lib/"]) {
+      expect(workingRootOf(usable(broad), varHome), broad).toBe(ROOTS.workspace);
+    }
+    expect(workingRootOf(usable("/var/lib/u"), varHome)).toBe("/var/lib/u");
+    expect(workingRootOf(usable("/var/lib/u/app"), varHome)).toBe("/var/lib/u/app");
+    expect(workingRootOf(usable("/var/lib/other"), varHome)).toBe("/var/lib/other");
     expect(workingRootOf(usable("/home/u/app"), auto)).toBe("/home/u/app");
     expect(workingRootOf(usable("/root/app"), auto)).toBe("/root/app");
   });
@@ -139,7 +147,11 @@ describe("the sandbox tools in a bound conversation", () => {
    */
   function device(
     project: WorkingProject | null,
-    { mode = "auto", fresh = false }: { mode?: SandboxMode; fresh?: boolean } = {},
+    {
+      mode = "auto",
+      fresh = false,
+      recorded = ROOTS.workspace,
+    }: { mode?: SandboxMode; fresh?: boolean; recorded?: string } = {},
   ) {
     const files = new Map<string, Uint8Array>();
     const dirs = new Set([ROOTS.workspace, PROJECT, `${ROOTS.workspace}/app`]);
@@ -183,9 +195,9 @@ describe("the sandbox tools in a bound conversation", () => {
           network: { kind: "open-public", hosts: [] },
           local: true,
         }),
-        workingProject: async (_orgId: string, conversationId: string) => {
-          asked.push(conversationId);
-          return project;
+        workingFacts: async (_orgId: string, rootConversationId: string) => {
+          asked.push(rootConversationId);
+          return { workspace: recorded, home: "/Users/u", project };
         },
       },
       background: {
@@ -239,6 +251,21 @@ describe("the sandbox tools in a bound conversation", () => {
     const gone = device({ root: PROJECT, unavailable: true });
     await gone.tool("Bash").run(bash, ctx);
     expect(gone.execs.map((e) => e.cwd)).toEqual([ROOTS.workspace]);
+  });
+
+  it("the project decision uses the review's workspace source; a fallback runs in the instance's workspace", async () => {
+    // sandbox mode: the review's recorded workspace does not hold the project, so neither does the
+    // tool's decision, even though the held instance's workspace would
+    const stale = device(usable(`${ROOTS.workspace}/app`), {
+      mode: "sandbox",
+      recorded: "/workspace",
+    });
+    await stale.tool("Bash").run(bash, ctx);
+    expect(stale.execs.map((e) => e.cwd)).toEqual([ROOTS.workspace]);
+    // free mode with a stale record: the command runs where the instance really is
+    const free = device(null, { recorded: "/workspace" });
+    await free.tool("Bash").run(bash, ctx);
+    expect(free.execs.map((e) => e.cwd)).toEqual([ROOTS.workspace]);
   });
 
   it("a sub-agent's call reads its root conversation's project", async () => {

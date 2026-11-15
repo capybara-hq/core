@@ -20,6 +20,7 @@ import type { EventLog } from "../../../conversations/event-log.js";
 import {
   ANONYMOUS_NO_DEVICE,
   type ConversationDevices,
+  type WorkingFacts,
 } from "../../../devices/conversation-devices.js";
 import { workingRootOf } from "../../../devices/working-root.js";
 import { ApiError } from "../../../errors.js";
@@ -49,11 +50,11 @@ export interface SandboxToolDeps {
   /**
    * The device a call enters: the root conversation's, checked for its owner every call.
    * `usableNow` (absent in test stubs: only the cloud provider counts) tells a listing whether a
-   * conversation's device can run without a cloud provider (ruling R8). `workingProject` (absent
-   * in test stubs: free mode) gives the project snapshot that decides the working root.
+   * conversation's device can run without a cloud provider (ruling R8). `workingFacts` (absent
+   * in test stubs: free mode) gives what decides the working root, read as the review reads it.
    */
   devices: Pick<ConversationDevices, "forTool"> &
-    Partial<Pick<ConversationDevices, "usableNow" | "modeLevel" | "workingProject">>;
+    Partial<Pick<ConversationDevices, "usableNow" | "modeLevel" | "workingFacts">>;
   /** Background `Bash` tasks; absent in test stubs, where `run_in_background` is refused. */
   background?: Pick<
     BackgroundTaskStore,
@@ -641,10 +642,15 @@ export async function inSandbox<T>(
   try {
     const deviceId = await deps.devices.forTool(ctx.orgId, sandboxConversationOf(ctx));
     // the mode once per call: the path checks follow it and the device_paths event records it;
-    // the project snapshot of the root conversation decides the working root
-    const [level, project] = await Promise.all([
+    // the working facts (workspace, home, project snapshot) are read as the review reads them
+    const [level, working] = await Promise.all([
       deps.devices.modeLevel?.(ctx.orgId, deviceId) ?? null,
-      deps.devices.workingProject?.(ctx.orgId, sandboxConversationOf(ctx)) ?? null,
+      deps.devices.workingFacts?.(
+        ctx.orgId,
+        sandboxConversationOf(ctx),
+        ctx.conversationId,
+        deviceId,
+      ) ?? null,
     ]);
     return await deps.sandbox.withSandbox(
       {
@@ -667,7 +673,7 @@ export async function inSandbox<T>(
           mode,
           h,
           roots: info.roots,
-          workingRoot: workingRootOf(project, { mode, workspace: info.roots.workspace }),
+          workingRoot: workingRootFor(working, mode, info.roots.workspace),
           p,
           signal,
         };
@@ -708,6 +714,21 @@ async function recordDevicePaths(
   const latest = await deps.eventLog.latestOfType(ctx.conversationId, "device_paths");
   const change = devicePathsChange(latest, roots, ctx.runId, level ?? undefined);
   if (change) await deps.eventLog.append(ctx.conversationId, [change]);
+}
+
+/**
+ * The working root of a call: the project root exactly as the review decides it (from the same
+ * {@link WorkingFacts}); when that falls back to the device's workspace, the held instance's own
+ * workspace (`workspace`), where the call really runs.
+ */
+function workingRootFor(
+  working: WorkingFacts | null,
+  mode: SandboxMode,
+  workspace: string,
+): string {
+  if (working === null) return workspace;
+  const root = workingRootOf(working.project, { mode, ...working });
+  return root === working.workspace ? workspace : root;
 }
 
 /** The conversation whose device a call uses (the root conversation's for a sub-agent). */
