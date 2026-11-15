@@ -57,6 +57,11 @@ export interface ProjectKnowledgeInput {
   runId: string;
   /** The conversation's kind: only a chat conversation can be bound to a project. */
   kind: "chat" | "eval" | "subagent";
+  /**
+   * A sub-agent run's root conversation: the child works in its root's project, so its run start
+   * copies the root's latest snapshot (no device call). Absent for any other run.
+   */
+  rootConversationId?: string;
   /** The run's shutdown signal (the read has its own time limit as well). */
   signal: AbortSignal;
 }
@@ -67,7 +72,10 @@ export interface ProjectKnowledgeInput {
  * skills on its device before the run's first model call ({@link readProjectKnowledge}), outside
  * any transaction, and appends a `project_root` event when the snapshot differs from the
  * conversation's latest one. A free conversation reads nothing, so its device still starts lazily
- * at its first sandbox call; an eval replay or a sub-agent never reads a device here.
+ * at its first sandbox call; an eval replay or a sub-agent never reads a device here. A sub-agent's
+ * run start copies its **root** conversation's latest `project_root` into its own log instead (it
+ * works in the same project), under its own run's idempotency key, and again only when the root's
+ * latest snapshot differs from the child's latest; the renderer then shows it to the child as is.
  *
  * Reads in the device's effective mode (`DeviceProjectsService.scopeFor`, the same scope the
  * binding was checked against) and through `SandboxService.withSandbox`, as a tool call does, so
@@ -99,6 +107,7 @@ export class ProjectKnowledgeService {
    * not go on (as `PluginContextService.record`).
    */
   async record(input: ProjectKnowledgeInput): Promise<boolean> {
+    if (input.kind === "subagent") return this.copyFromRoot(input);
     if (input.kind !== "chat") return true;
     const conv = await this.db.db
       .selectFrom("conversations")
@@ -114,6 +123,30 @@ export class ProjectKnowledgeService {
     });
     if (payload === null) return true;
     const seq = await this.append(input, payload);
+    if (seq === "ended") return false;
+    if (seq !== null) await this.eventLog.notify(input.conversationId, seq);
+    return true;
+  }
+
+  /**
+   * A sub-agent's run start: the root conversation's latest snapshot appended to the child's log
+   * when it differs from the child's latest ({@link append}); nothing when the root has none. No
+   * device call, so a replay of the child (which copies the child's own event) never needs one.
+   */
+  private async copyFromRoot(input: ProjectKnowledgeInput): Promise<boolean> {
+    const rootId = input.rootConversationId;
+    if (rootId === undefined || rootId === input.conversationId) return true;
+    const latest = await this.db.db
+      .selectFrom("conversation_events")
+      .select("payload")
+      .where("conversation_id", "=", rootId)
+      .where("type", "=", "project_root")
+      .orderBy("seq", "desc")
+      .limit(1)
+      .executeTakeFirst();
+    if (latest === undefined) return true;
+    // the stored payload passed the event schema when the root's run start appended it
+    const seq = await this.append(input, latest.payload as ProjectRootPayload);
     if (seq === "ended") return false;
     if (seq !== null) await this.eventLog.notify(input.conversationId, seq);
     return true;

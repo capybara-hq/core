@@ -161,7 +161,10 @@ a phased rollout)**. A local device reports its owner's home directory in its he
   conversation **(designer's call: the log is the source of truth; a mid-conversation root change
   makes both replay and context unexplainable)**.
 - A sub-agent's runs inherit its root conversation's binding; a scheduled task's run inherits the
-  binding of the conversation it fires.
+  binding of the conversation it fires. A sub-agent's run start copies the root's latest
+  `project_root` into the child's own log (no device call, the child run's idempotency key; again
+  only when the root's latest snapshot differs from the child's latest), so the child sees the
+  project's instructions and skills and its replay needs no device **(ruling, 2026-11-15)**.
 - **The project root becomes the conversation's working directory** **(maintainer, 2026-11-14)**:
   `Bash` takes its `cwd` from it (`tools/builtins/sandbox/bash.ts` sets `cwd: roots.workspace`
   today), `Glob` and `Grep` default under it, and a relative path in `Read` / `Write` / `Edit`

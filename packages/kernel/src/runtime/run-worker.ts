@@ -794,12 +794,15 @@ export class RunWorker {
       if (!pluginContexted) return "finished";
       // project knowledge (project root spec §4.4): a conversation bound to a project reads its
       // AGENTS.md and skills on the device before the first model call, outside any transaction;
-      // a free one reads nothing. Its append re-reads the run under the locks, as above.
+      // a free one reads nothing, a sub-agent copies its root's latest snapshot. Its append
+      // re-reads the run under the locks, as above.
       const projectRead = await this.projectKnowledge.record({
         orgId: conv.org_id,
         conversationId,
         runId,
         kind: conv.kind,
+        // a sub-agent copies its root's snapshot: it works in the root's project
+        ...(parent !== undefined && { rootConversationId: parent.rootConversationId }),
         signal: state.shutdown.signal,
       });
       if (!projectRead) return "finished";

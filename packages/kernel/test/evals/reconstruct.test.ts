@@ -42,6 +42,7 @@ import type { MediaInfo } from "../../src/runtime/context/build.js";
 import { CLAUDE_CODE_TOOL_MAP } from "../../src/runtime/context/claude-tools.js";
 import { MORE_SKILLS_HEADER } from "../../src/runtime/context/skills.js";
 import { WRAP_UP_REMINDER } from "../../src/runtime/model-call.js";
+import { ProjectKnowledgeService } from "../../src/runtime/project/knowledge.service.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { RUN_CONTEXT_CLOCK } from "../../src/runtime/run-context.service.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
@@ -1052,6 +1053,139 @@ describe("reconstructRequest：基线零漂移", () => {
       const last = systemTexts(sent.at(-1));
       expect(last.some((t) => t.includes("no longer exists on the device"))).toBe(true);
       await expectZeroDrift(conv, await snapshotOf(conv));
+      expect(withSandbox).not.toHaveBeenCalled();
+    } finally {
+      withSandbox.mockRestore();
+    }
+  });
+
+  it("a sub-agent's run copies its root's project_root into its own log: its first request carries the project, zero drift, no device touched", async () => {
+    reset();
+    const withSandbox = vi.spyOn(k.app.get(SandboxService), "withSandbox");
+    try {
+      const agentId = await createAgent(
+        { provider: "model-fake", model: "fake-1" },
+        { tools: [{ kind: "builtin", name: "Agent" }] },
+      );
+      const conv = await createConv(owner, orgId, agentId);
+      const usable: EventPayload<"project_root"> = {
+        project: "ledger",
+        root: "/Users/u/src/ledger",
+        agentsMd: "# Ledger\n\nThe child must see this rule.",
+        skills: [{ name: "close-month", description: "Close the month.", digest: "b".repeat(64) }],
+      };
+      // written directly, as a bound root's run start records it
+      await k.app
+        .get(EventLog)
+        .append(conv, [
+          { type: "project_root", idemKey: `test_project_root:${conv}:child`, payload: usable },
+        ]);
+      const dispatch = (prompt: string) =>
+        `tool:Agent:${JSON.stringify({ description: "Check", prompt, subagent_type: "general-purpose" })}`;
+      await postMessage(owner, orgId, conv, dispatch("echo:child one"));
+      // the root goes quiet once a model call of it has read the child's delivery (its own run's,
+      // or the wake run's the delivery started) and that run ended
+      await waitFor(
+        async () => {
+          const events = await eventsOf(db, conv);
+          const delivery = events.find((e) => e.type === "subagent_delivery");
+          if (delivery === undefined) return false;
+          const read = events.find((e) => e.type === "model_call" && e.seq > delivery.seq);
+          const busy = (await runsOf(db, conv)).some((r) => r.status !== "completed");
+          return (
+            read !== undefined &&
+            !busy &&
+            events.some((e) => e.type === "run_finished" && e.seq > read.seq)
+          );
+        },
+        30_000,
+        "the root's runs to finish after the child's delivery",
+      );
+      const dispatched = (await eventsOf(db, conv)).find((e) => e.type === "subagent_dispatched");
+      const child = (dispatched as Extract<ConversationEvent, { type: "subagent_dispatched" }>)
+        .payload.subagentId;
+      const childEvents = await eventsOf(db, child);
+      const copies = childEvents.filter((e) => e.type === "project_root");
+      expect(copies).toHaveLength(1);
+      const copy = copies[0] as Extract<ConversationEvent, { type: "project_root" }>;
+      expect(copy.payload).toEqual(usable);
+      const childRun = await lastRunId(child);
+      expect(copy.runId).toBe(childRun);
+      const firstCall = modelCalls(childEvents)[0] as ModelCallEvent;
+      expect(copy.seq).toBeLessThan(firstCall.seq);
+      // the child's first request: the project's instructions and its skill
+      // (the root's requests name the prompt inside their Agent call)
+      const request = sent.find((r) => {
+        const text = JSON.stringify(r.messages);
+        return text.includes("child one") && !text.includes("tool:Agent");
+      });
+      const systemTexts = (request?.messages ?? [])
+        .filter((m) => m.role === "system")
+        .map((m) => String(m.content));
+      const segment = systemTexts.find((t) => t.includes("The child must see this rule."));
+      expect(segment).toContain("- project:close-month: Close the month.");
+      // the child's replay rebuilds that request exactly
+      const snap = await snapshotOf(child, childRun);
+      const info = await modelInfo("model-fake", "fake-1");
+      const out = reconstructRequest(snap, firstCall.seq, { model: info });
+      expect(out.drift).toEqual([]);
+      expect(out.request).toEqual(request);
+
+      // later child runs copy again only once the root's latest snapshot differs from the child's
+      const service = k.app.get(ProjectKnowledgeService);
+      const childRunStart = async () => {
+        const runId = randomUUID();
+        await db
+          .insertInto("runs")
+          .values({
+            id: runId,
+            conversation_id: child,
+            status: "running",
+            agent_version: 1,
+            trigger_account_id: ownerId,
+            trigger_seq: 0,
+            started_at: new Date(),
+          })
+          .execute();
+        try {
+          const input = {
+            orgId,
+            conversationId: child,
+            runId,
+            kind: "subagent" as const,
+            rootConversationId: conv,
+            signal: new AbortController().signal,
+          };
+          expect(await service.record(input)).toBe(true);
+          // a retried run start finds its own copy
+          expect(await service.record(input)).toBe(true);
+        } finally {
+          await db
+            .updateTable("runs")
+            .set({ status: "completed" })
+            .where("id", "=", runId)
+            .execute();
+        }
+        return runId;
+      };
+      const childCopies = async () =>
+        (await eventsOf(db, child)).filter(
+          (e): e is Extract<ConversationEvent, { type: "project_root" }> =>
+            e.type === "project_root",
+        );
+      await childRunStart();
+      expect(await childCopies()).toHaveLength(1);
+      const changed = { ...usable, agentsMd: "# Ledger\n\nA changed rule." };
+      await k.app
+        .get(EventLog)
+        .append(conv, [
+          { type: "project_root", idemKey: `test_project_root:${conv}:child2`, payload: changed },
+        ]);
+      const third = await childRunStart();
+      const after = await childCopies();
+      expect(after).toHaveLength(2);
+      expect(after[1]?.payload).toEqual(changed);
+      expect(after[1]?.runId).toBe(third);
       expect(withSandbox).not.toHaveBeenCalled();
     } finally {
       withSandbox.mockRestore();
