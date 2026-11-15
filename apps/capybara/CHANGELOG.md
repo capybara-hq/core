@@ -1,5 +1,24 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.35
+
+### Patch Changes
+
+- abf2e18: The sandbox-docker bootstrap pin moves to rc.16 (capybara-hq/plugins 85aaf65): a cloud Docker device
+  answers the `list` and `scan` calls, so its projects can be added and scanned from the device page.
+  The compose sandbox build contexts point at the same commit.
+- a6b1441: An organization's sandbox network follows the platform: it stores the hosts it adds and drops
+  (`cloudNetwork: { mode?, base?, extraHosts?, excludedHosts? }`) instead of a copy of
+  `sandbox.limits.allowHosts`, and approving a network request adds only the requested hosts, so
+  platform changes keep reaching it. The new `sandbox.limits.orgHosts: within` makes the platform
+  allowlist a ceiling organizations cannot go beyond (default `extend`). The settings responses carry
+  the computed `effectiveNetwork`; `deployment.cloudNetwork` is now `{ allowHosts, orgHosts, off }`.
+  Migration 0134 keeps each organization's current list exactly; see docs/deploy/upgrade.md.
+- Updated dependencies [abf2e18]
+- Updated dependencies [a6b1441]
+- Updated dependencies [a5a4c79]
+  - @capybara-hq/kernel@0.1.0-rc.34
+
 ## 0.1.0-rc.34
 
 ### Minor Changes
