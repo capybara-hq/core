@@ -651,8 +651,8 @@ function projectProblemText(asked: string, p: ProjectSkillProblem): string {
 }
 
 /**
- * `Skill` for `project:<name>`: resolved from the latest `project_root` of the root conversation
- * (a sub-agent's call uses its root's, which only the root records), then
+ * `Skill` for `project:<name>`: resolved from the latest `project_root` of the calling
+ * conversation (a sub-agent's is the copy of its root's its run start recorded), then
  * `<root>/.agents/skills/<name>/SKILL.md` is read through the conversation's device
  * ({@link readProjectSkill}) and its body rendered (args, `${CLAUDE_SKILL_DIR}` = the skill's
  * directory on the device). Nothing is copied: the skill's other files are already in the project.
@@ -666,7 +666,9 @@ async function loadProjectSkill(
   bare: string,
   args: string | undefined,
 ): Promise<BuiltinResult> {
-  const latest = await deps.eventLog.latestOfType(sandboxConversationOf(ctx), "project_root");
+  // the caller's own log: a sub-agent's run start copied its root's snapshot there, so what the
+  // child was shown is what it can load (the working root still follows the root conversation)
+  const latest = await deps.eventLog.latestOfType(ctx.conversationId, "project_root");
   if (latest?.type !== "project_root") throw new ToolError(NO_PROJECT_TEXT(asked));
   const project = latest.payload;
   if (project.unavailable !== undefined) {

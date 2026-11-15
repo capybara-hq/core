@@ -261,9 +261,17 @@ async function deviceOf(convId: string): Promise<string> {
   return r.device_id;
 }
 
-/** Binds a new conversation to the project `app` at `path` (the binding is set at creation). */
+/**
+ * Binds a new conversation to the project `app` at `path` (the binding is set at creation); the
+ * device keeps the project at that path (a run start checks it), replacing an earlier test's.
+ */
 async function boundConversation(path: string): Promise<string> {
   const convId = await createConv(owner, orgId, agentId);
+  await db
+    .insertInto("device_projects")
+    .values({ device_id: await deviceOf(convId), name: "app", path, created_by: ownerId })
+    .onConflict((c) => c.columns(["device_id", "name"]).doUpdateSet({ path }))
+    .execute();
   await db
     .updateTable("conversations")
     // biome-ignore lint/suspicious/noExplicitAny: the binding columns are insert-only in the schema
@@ -411,6 +419,41 @@ describe("a bound conversation works in its project's root", () => {
     expect(r.payload.content).toMatch(/^\/workspace\n/m);
   });
 
+  it("a free conversation's ask records the root it judged; the approved call still runs where the instance is", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    await k.app.get(EventLog).append(conv, [
+      {
+        type: "device_paths",
+        payload: { roots: { workspace: "/stale", skills: "/skills", tmp: "/tmp" } },
+      } as never,
+    ]);
+    const line = { command: "pwd && touch /workspace/../outside-free.txt", description: "Where" };
+    await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(line)}`);
+    const ask = await waitFor(
+      async () =>
+        db
+          .selectFrom("approvals")
+          .select(["id", "detail"])
+          .where("conversation_id", "=", conv)
+          .where("kind", "=", "command")
+          .where("status", "=", "pending")
+          .executeTakeFirst(),
+      30_000,
+      "the command ask",
+    );
+    expect(ask.detail as Record<string, unknown>).toMatchObject({ workingRoot: "/stale" });
+    const approved = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/approvals/${ask.id}/decision`,
+      payload: { decision: "approve", scope: "once" },
+    });
+    expect(approved.statusCode, approved.body).toBe(200);
+    await waitForTerminal(db, conv, 1, 30_000);
+    const r = (await results(conv)).at(-1) as ToolResult;
+    expect(r.payload.isError).toBe(false);
+    expect(r.payload.content).toMatch(/^\/workspace\n/m);
+  });
+
   it("an approved command resumed after a mode switch decides its working root afresh", async () => {
     const dir = `p-${randomUUID().slice(0, 8)}`;
     const conv = await boundConversation(`/workspace/${dir}`);
@@ -499,7 +542,7 @@ describe("the review's facts name the working root", () => {
 
   it("the review judges home-level paths against the home it is given, not the project root", async () => {
     const conv = await createConv(owner, orgId, agentId);
-    const review = (command: string, home: string | null) =>
+    const review = (command: string, home: string | null, deviceHome?: string) =>
       k.app.get(CommandReviewService).review({
         orgId,
         conversationId: conv,
@@ -510,6 +553,7 @@ describe("the review's facts name the working root", () => {
         mode: "auto",
         workspace: "/opt/app",
         home,
+        ...(deviceHome !== undefined && { deviceHome }),
         attended: true,
         step: 1,
         callId: `c-${randomUUID()}`,
@@ -524,6 +568,11 @@ describe("the review's facts name the working root", () => {
       rule: "ask.secret-file",
     });
     expect(await review("cat README.md", "/Users/u")).toMatchObject({ decision: "allow" });
+    // an implausible reported home: the device workspace's home is still judged
+    expect(await review("cat /Users/u/.ssh/id_rsa", "/", "/Users/u")).toMatchObject({
+      decision: "ask",
+      rule: "ask.ssh",
+    });
   });
 
   it("a partial index answers the latest project_root lookup", async () => {

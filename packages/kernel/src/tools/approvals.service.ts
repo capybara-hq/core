@@ -183,8 +183,9 @@ export interface CommandAskDetail {
   /** A write's target path. */
   path?: string;
   /**
-   * The working root the call was reviewed against (project root spec §4.3): the approved call runs
-   * there, whatever snapshot came after the ask. Absent on asks made before it was recorded.
+   * The working root the call was reviewed against (project root spec §4.3), always recorded (the
+   * device's workspace in free mode): the approved call runs in a project root recorded here,
+   * whatever snapshot came after the ask. Absent when no device was resolved.
    */
   workingRoot?: string;
   /** The rule that asked, or null for a classifier ask (which offers `once` only). */

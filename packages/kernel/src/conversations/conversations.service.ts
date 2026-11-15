@@ -92,7 +92,7 @@ export interface ConversationView {
 /** The state a conversation's latest `project_root` event records ({@link ConversationView}). */
 export type ProjectState =
   | { loaded: true; agentsMd: boolean }
-  | { unavailable: "gone" | "outside_mode" | "unreadable" | "unsupported" };
+  | { unavailable: "gone" | "outside_mode" | "unreadable" | "unsupported" | "removed" };
 
 /**
  * SQL for the {@link ProjectState} of the conversation row aliased/named `ref` (a correlated

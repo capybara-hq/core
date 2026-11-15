@@ -155,6 +155,24 @@ describe("readProjectKnowledge", () => {
     expect(lines.some((l) => l.endsWith("other"))).toBe(true);
   });
 
+  it("skips a SKILL.md that is not UTF-8 with a log line, as Skill would refuse to load it", async () => {
+    const lines: string[] = [];
+    const bad = Buffer.concat([Buffer.from(skill("latin", "Caf")), Buffer.from([0xe9, 0x0a])]);
+    const p = await readProjectKnowledge(
+      device({
+        [`${ROOT}/.agents/skills/good/SKILL.md`]: skill("good", "Fine."),
+        [`${ROOT}/.agents/skills/latin/SKILL.md`]: new Uint8Array(bad),
+      }),
+      TARGET,
+      {
+        log: (msg, detail) => lines.push(`${msg} ${String(detail.skill)} ${String(detail.reason)}`),
+      },
+    );
+    expect(p.skills.map((s) => s.name)).toEqual(["good"]);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/latin .*UTF-8/);
+  });
+
   it("records a missing root as unavailable (gone), without skills and without throwing", async () => {
     const p = await readProjectKnowledge(device({}), TARGET);
     expect(p).toEqual({

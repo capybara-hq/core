@@ -25,6 +25,7 @@ import {
   ProjectKnowledgeService,
 } from "../../src/runtime/project/knowledge.service.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
+import { skillLoadOfferedIn } from "../../src/skills/catalog.js";
 import {
   SANDBOX_FILES_RESET_NOTICE,
   SANDBOX_RESTARTED_NOTICE,
@@ -155,7 +156,9 @@ async function deviceOf(convId: string): Promise<string> {
 
 /**
  * A conversation inserted already bound (a binding is fixed at creation; inserting it directly
- * also makes bindings the create route refuses, such as a root outside the mode).
+ * also makes bindings the create route refuses, such as a root outside the mode). The device keeps
+ * the project under that name and path (the run start checks it is still there), replacing an
+ * earlier test's path for the name.
  */
 async function insertBound(opts: {
   accountId?: string;
@@ -165,6 +168,16 @@ async function insertBound(opts: {
   path: string;
 }): Promise<string> {
   const id = randomUUID();
+  await db
+    .insertInto("device_projects")
+    .values({
+      device_id: opts.deviceId ?? ownerDevice,
+      name: opts.name ?? "app",
+      path: opts.path,
+      created_by: opts.accountId ?? ownerId,
+    })
+    .onConflict((c) => c.columns(["device_id", "name"]).doUpdateSet({ path: opts.path }))
+    .execute();
   await db
     .insertInto("conversations")
     .values({
@@ -341,6 +354,115 @@ describe("project knowledge at run start", () => {
     expect(roots[0]?.payload.unavailable?.message).toMatch(/outside what the device can read/);
   });
 
+  it("records a project removed from the device as removed, and usable again once re-added", async () => {
+    const dir = `p-${randomUUID().slice(0, 8)}`;
+    const name = `rm-${randomUUID().slice(0, 8)}`;
+    const convId = await insertBound({ name, path: `/workspace/${dir}` });
+    await put(ownerDevice, {
+      [`${dir}/AGENTS.md`]: "rules",
+      [`${dir}/.agents/skills/fix/SKILL.md`]: skill("fix", "Fix it."),
+    });
+    expect(projectRoots(await run(convId, 1))[0]?.payload.unavailable).toBeUndefined();
+    const projects = k.app.get(DeviceProjectsService);
+    await projects.remove(orgId, ownerId, ownerDevice, name);
+    const removed = projectRoots(await run(convId, 2));
+    expect(removed).toHaveLength(2);
+    expect(removed[1]?.payload).toEqual({
+      project: name,
+      root: `/workspace/${dir}`,
+      unavailable: { reason: "removed", message: expect.stringMatching(/removed/) as string },
+      skills: [],
+    });
+    // everything that follows the latest usable snapshot falls back
+    const facts = await k.app.get(ConversationDevices).reviewFacts(orgId, convId);
+    expect(facts?.workingRoot).toBe("/workspace");
+    const invoked = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${convId}/messages`,
+      payload: { text: "", skill: { name: "project:fix" } },
+    });
+    expect(invoked.statusCode, invoked.body).toBe(422);
+    expect(invoked.json().error).toMatchObject({
+      code: "skill.project_unavailable",
+      details: [{ reason: "removed" }],
+    });
+    // re-added under the same name with another path: the binding (name + path) is still gone
+    await db
+      .insertInto("device_projects")
+      .values({ device_id: ownerDevice, name, path: "/workspace", created_by: ownerId })
+      .execute();
+    expect(projectRoots(await run(convId, 3))).toHaveLength(2);
+    // re-added with the same path: usable again
+    await projects.remove(orgId, ownerId, ownerDevice, name);
+    await db
+      .insertInto("device_projects")
+      .values({ device_id: ownerDevice, name, path: `/workspace/${dir}`, created_by: ownerId })
+      .execute();
+    const back = projectRoots(await run(convId, 4));
+    expect(back).toHaveLength(3);
+    expect(back[2]?.payload).toMatchObject({ project: name, agentsMd: "rules" });
+    expect(back[2]?.payload.unavailable).toBeUndefined();
+    expect((await k.app.get(ConversationDevices).reviewFacts(orgId, convId))?.workingRoot).toBe(
+      `/workspace/${dir}`,
+    );
+  });
+
+  it("records a root above the owner's home as outside_mode, as the working root would refuse it", async () => {
+    const projects = k.app.get(DeviceProjectsService);
+    let read = 0;
+    // a machine in auto mode with a reported home: its scope reads anything the owner can
+    const service = new ProjectKnowledgeService(
+      k.app.get(KernelDb),
+      k.app.get(EventLog),
+      k.app.get(TransactionHost),
+      k.app.get(ConversationDevices),
+      {
+        scopeFor: async () => ({
+          source: "local" as const,
+          mode: "auto" as const,
+          workspace: "/Users/u/capybara-device/d/workspace",
+          home: "/Users/u",
+          supported: true,
+          widerThanAllowed: false,
+        }),
+        keeps: (...args: Parameters<DeviceProjectsService["keeps"]>) => projects.keeps(...args),
+      },
+      {
+        withSandbox: (async (_opts: unknown, fn: (...a: unknown[]) => unknown) =>
+          fn(
+            {},
+            {
+              stat: async () => {
+                read++;
+                return { size: 0, isDir: true };
+              },
+              readFile: async () => null,
+            },
+            { roots: { workspace: "/Users/u/capybara-device/d/workspace" } },
+            new AbortController().signal,
+          )) as never,
+      },
+      createLogger("warn", { write: () => {} }),
+    );
+    for (const root of ["/Users", "/"]) {
+      const convId = await insertBound({ name: `top-${randomUUID().slice(0, 8)}`, path: root });
+      const ok = await service.record({
+        orgId,
+        conversationId: convId,
+        runId: randomUUID(),
+        kind: "chat",
+        signal: new AbortController().signal,
+      });
+      expect(ok).toBe(true);
+      const roots = projectRoots(await eventsOf(db, convId));
+      expect(
+        roots.map((e) => e.payload.unavailable?.reason),
+        root,
+      ).toEqual(["outside_mode"]);
+    }
+    expect(read).toBe(0);
+  });
+
   it("records a machine that does not announce projects as unavailable (unsupported), asking it nothing", async () => {
     const deviceId = await localDevice();
     const convId = await insertBound({ deviceId, path: "/home/me/app" });
@@ -435,6 +557,48 @@ describe("project knowledge at run start", () => {
     expect(idem.map((r) => r.idem_key)).toEqual([projectRootIdemKey(runId)]);
   });
 
+  it("a retried sub-agent run start copies its root's snapshot once, the first content kept", async () => {
+    const dir = `p-${randomUUID().slice(0, 8)}`;
+    const { convId } = await boundConversation(dir);
+    await put(ownerDevice, { [`${dir}/AGENTS.md`]: "A" });
+    await run(convId, 1);
+    const child = randomUUID();
+    await db
+      .insertInto("conversations")
+      .values({
+        id: child,
+        org_id: orgId,
+        agent_id: agentId,
+        account_id: ownerId,
+        title: "Child",
+        kind: "subagent",
+        source: "subagent",
+        parent_conversation_id: convId,
+        subagent_type: "general-purpose",
+        subagent_depth: 1,
+      })
+      .execute();
+    const service = k.app.get(ProjectKnowledgeService);
+    const input = {
+      orgId,
+      conversationId: child,
+      rootConversationId: convId,
+      runId: randomUUID(),
+      kind: "subagent" as const,
+      signal: new AbortController().signal,
+    };
+    expect(await service.record(input)).toBe(true);
+    // the root records a newer snapshot, then the same child run start is retried
+    await put(ownerDevice, { [`${dir}/AGENTS.md`]: "B" });
+    await run(convId, 2);
+    expect(projectRoots(await eventsOf(db, convId)).at(-1)?.payload.agentsMd).toBe("B");
+    expect(await service.record(input)).toBe(true);
+    const copies = projectRoots(await eventsOf(db, child));
+    expect(copies).toHaveLength(1);
+    expect(copies[0]?.payload.agentsMd).toBe("A");
+    expect(copies[0]?.runId).toBe(input.runId);
+  });
+
   it("records a machine that runs a wider mode than the organization allows as outside_mode, asking it nothing", async () => {
     const deviceId = await localDevice({
       features: ["mode", "projects"],
@@ -497,6 +661,7 @@ describe("project knowledge at run start", () => {
           ...(await projects.scopeFor(...args)),
           supported: false,
         }),
+        keeps: (...args: Parameters<DeviceProjectsService["keeps"]>) => projects.keeps(...args),
       },
       {
         withSandbox: async () => {
@@ -542,6 +707,25 @@ describe("project knowledge at run start", () => {
     expect(lines.some((l) => l.msg.includes("project knowledge") && l.timedOut === true)).toBe(
       true,
     );
+  });
+
+  it("offers Skill from the log only for a project skill it can be called with", async () => {
+    const convId = await createConv(owner, orgId, agentId);
+    const offered = () => skillLoadOfferedIn(db, k.app.get(EventLog), convId);
+    const overlong = { name: "x".repeat(57), description: "Too long a name.", digest: "d" };
+    await k.app
+      .get(EventLog)
+      .append(convId, [
+        { type: "project_root", payload: { project: "app", root: "/w", skills: [overlong] } },
+      ]);
+    expect(await offered()).toBe(false);
+    await k.app.get(EventLog).append(convId, [
+      {
+        type: "project_root",
+        payload: { project: "app", root: "/w", skills: [{ ...overlong, name: "x".repeat(56) }] },
+      },
+    ]);
+    expect(await offered()).toBe(true);
   });
 
   describe("the model's device notices survive the run-start read", () => {

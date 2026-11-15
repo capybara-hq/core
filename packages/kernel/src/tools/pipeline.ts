@@ -1585,10 +1585,16 @@ export class ToolPipeline {
     if (asked !== null) {
       const settled = this.settledCommandAsk(asked, tool.key);
       // an approved call runs in the root it was reviewed against only while the device still runs
-      // in the mode recorded with the ask; otherwise the tool decides its working root afresh
+      // in the mode recorded with the ask; otherwise the tool decides its working root afresh. A
+      // judged root that is the recorded workspace (free mode) is not carried either
+      // ({@link carriedRoot}): the tool maps it to the held instance's workspace as always
       if (settled.kind === "continue" && settled.workingRoot !== undefined) {
         const now = await devices.reviewFacts(ctx.orgId, rootConversationId, ctx.conversationId);
-        if (now === null || now.mode !== asked.command?.mode) {
+        if (
+          now === null ||
+          now.mode !== asked.command?.mode ||
+          carriedRoot({ workspace: now.workspace, workingRoot: settled.workingRoot }) === undefined
+        ) {
           return { ...settled, workingRoot: undefined };
         }
       }
@@ -1622,6 +1628,8 @@ export class ToolPipeline {
       workspace: facts.workingRoot,
       // the owner's home, never the project root: the home-level rules stay where they were
       home: facts.home,
+      // and the device workspace's home, so a project outside every home still protects it
+      deviceHome: facts.deviceHome,
       attended,
       step: ctx.step,
       callId: call.id,
@@ -1659,7 +1667,6 @@ export class ToolPipeline {
         review: denyRecord(verdict.by, verdict.rule, reason),
       };
     }
-    const carried = carriedRoot(facts);
     const detail: CommandAskDetail = {
       deviceId: facts.deviceId,
       deviceName: facts.deviceName,
@@ -1678,8 +1685,9 @@ export class ToolPipeline {
       }),
       rule: verdict.rule,
       reason: clipText(verdict.reason, COMMAND_ASK_TEXT_MAX_CHARS),
-      // the approved call runs against what the person approved, not a later snapshot
-      ...(carried !== undefined && { workingRoot: carried }),
+      // the root the review judged, always (the workspace in free mode): the approved call runs
+      // against what the person approved, not a later snapshot
+      ...(facts.workingRoot !== undefined && { workingRoot: facts.workingRoot }),
     };
     let ask: ApprovalRecord;
     try {

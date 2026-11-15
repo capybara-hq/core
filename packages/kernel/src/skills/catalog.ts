@@ -12,6 +12,7 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { CLAUDE_CODE_TOOL_MAP } from "../runtime/context/claude-tools.js";
+import { PROJECT_SKILL_PREFIX, SKILL_NAME_MAX_CHARS } from "../runtime/context/project-root.js";
 import {
   type CatalogSkill,
   catalogLine,
@@ -319,10 +320,12 @@ export async function skillLoadOfferedIn(
     .where((eb) =>
       eb.or([
         eb.and([eb("type", "=", "user_message"), sql<boolean>`payload -> 'skill' IS NOT NULL`]),
-        // a project with skills (hasProjectSkills)
+        // a project with a skill Skill can be called with (hasProjectSkills: `project:<name>`
+        // within the schema's cap; skill names are ASCII, so characters are UTF-16 code units)
         eb.and([
           eb("type", "=", "project_root"),
-          sql<boolean>`jsonb_array_length(payload -> 'skills') > 0`,
+          sql<boolean>`EXISTS (SELECT 1 FROM jsonb_array_elements(payload -> 'skills') s
+            WHERE length(${PROJECT_SKILL_PREFIX}::text || (s ->> 'name')) <= ${SKILL_NAME_MAX_CHARS})`,
         ]),
       ]),
     )

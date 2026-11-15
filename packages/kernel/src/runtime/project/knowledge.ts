@@ -121,6 +121,11 @@ export const projectUnavailable = {
       "outside_mode",
       `The project's root ${clipped(root)} was not read: the device runs a wider mode than the organization allows.`,
     ),
+  removed: (project: string) =>
+    unavailable(
+      "removed",
+      `The project "${clipped(project, 80)}" was removed from the device's projects.`,
+    ),
   unsupported: () =>
     unavailable(
       "unsupported",
@@ -176,6 +181,12 @@ export function capAgentsMd(text: string, readTruncated: boolean): { text: strin
 }
 
 const decoder = new TextDecoder("utf-8");
+
+/**
+ * A SKILL.md is decoded strictly, as `readProjectSkill` decodes it when `Skill` loads it: a file
+ * that is not UTF-8 is skipped here, so the catalog never lists a skill that cannot be loaded.
+ */
+const skillDecoder = new TextDecoder("utf-8", { fatal: true });
 
 /**
  * Reads the project at `target.root` through `files` (project root spec §4.4, §4.7). Every failure
@@ -306,7 +317,13 @@ async function readSkill(
   }
   if (read === null) return skip(`no ${SKILL_ENTRY_FILE}`);
   // a longer file is parsed and digested as far as it was read: its frontmatter is at the top
-  const parsed = parseSkillMd(decoder.decode(read.data));
+  let text: string;
+  try {
+    text = skillDecoder.decode(read.data);
+  } catch {
+    return skip("it is not UTF-8 text");
+  }
+  const parsed = parseSkillMd(text);
   if ("errors" in parsed) return skip(parsed.errors.join("; "));
   if (parsed.name !== name) {
     return skip(`its name "${parsed.name}" is not its directory's name`);

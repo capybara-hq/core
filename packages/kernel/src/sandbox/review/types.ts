@@ -89,6 +89,12 @@ export interface ReviewFacts {
    */
   home?: string | null;
   /**
+   * The home prefix of the device's own workspace (`homeOf` of it), judged beside `home` and the
+   * working root's prefix: a project outside every home (`/opt/app`) with an implausible reported
+   * home (`/`) still protects the real home. Absent or null: none.
+   */
+  deviceHome?: string | null;
+  /**
    * Absolute paths this conversation's own tool calls wrote (`Write` / `Edit`, and the write
    * targets of its earlier `Bash` lines): running one of them with an interpreter is not a
    * development command but code the run itself produced (hardening spec R1).

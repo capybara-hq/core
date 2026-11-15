@@ -137,7 +137,8 @@ export type ProjectUnavailableReason =
   | "outside_mode"
   | "unreadable"
   | "unparsable"
-  | "unsupported";
+  | "unsupported"
+  | "removed";
 
 /** A project skill the project lists but cannot be used now: the person is told why. */
 const projectUnavailable = (reason: ProjectUnavailableReason, message: string) =>

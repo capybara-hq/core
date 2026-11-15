@@ -247,4 +247,13 @@ describe("project_root: Skill is offered", () => {
     pr(log, gone);
     expect(hasProjectSkills(log.events)).toBe(true);
   });
+
+  it("hasProjectSkills counts only skills Skill can be called with", () => {
+    const log = new Log();
+    const overlong = { name: "x".repeat(57), description: "Too long a name.", digest: "d" };
+    pr(log, usable({ skills: [overlong] }));
+    expect(hasProjectSkills(log.events)).toBe(false);
+    pr(log, usable({ skills: [{ ...overlong, name: "x".repeat(56) }] }));
+    expect(hasProjectSkills(log.events)).toBe(true);
+  });
 });

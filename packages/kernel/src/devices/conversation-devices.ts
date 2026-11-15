@@ -55,6 +55,11 @@ export interface CommandReviewFacts {
    */
   home: string | null;
   /**
+   * The home prefix of the device's workspace (`homeOf`), judged by the review beside `home`: a
+   * project outside every home with an implausible reported home still protects the real one.
+   */
+  deviceHome: string | null;
+  /**
    * The conversation's working root ({@link workingRootOf}): the project's root when the root
    * conversation's latest `project_root` is usable, else `workspace`. The review's `workspace`
    * fact: commands start here, and a write inside it needs no ask (project root spec §4.3).
@@ -161,6 +166,7 @@ export class ConversationDevices {
       allowedMode: level?.allowedMode ?? "sandbox",
       workspace,
       home,
+      deviceHome: homeOf(workspace),
       workingRoot: workingRootOf(project, { mode, workspace, home }),
     };
   }

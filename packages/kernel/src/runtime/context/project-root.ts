@@ -117,8 +117,9 @@ export function latestProjectRoot(
 }
 
 /**
- * Whether the log ever recorded a project with skills: then `Skill` is offered (like a skills
- * catalog snapshot, never taken back, so the tool set and the cache prefix stay stable).
+ * Whether the log ever recorded a project with a skill `Skill` can be called with (the ones the
+ * rendering lists, {@link callableProjectSkills}): then `Skill` is offered (like a skills catalog
+ * snapshot, never taken back, so the tool set and the cache prefix stay stable).
  */
 export const hasProjectSkills = (events: readonly ConversationEvent[]): boolean =>
-  events.some((e) => e.type === "project_root" && e.payload.skills.length > 0);
+  events.some((e) => e.type === "project_root" && callableProjectSkills(e.payload).length > 0);

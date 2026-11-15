@@ -3,6 +3,7 @@ import { Inject, Injectable, Optional } from "@nestjs/common";
 import { EventLog } from "../../conversations/event-log.js";
 import { ConversationDevices } from "../../devices/conversation-devices.js";
 import { DeviceProjectsService, withinMode } from "../../devices/device-projects.service.js";
+import { aboveHome } from "../../devices/working-root.js";
 import { ApiError } from "../../errors.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import { TransactionHost } from "../../infra/database/transaction-host.js";
@@ -10,6 +11,7 @@ import { Transactional } from "../../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../../infra/tokens.js";
 import type { KernelLogger } from "../../log.js";
 import { SandboxLockLostError, SandboxPathBusyError } from "../../sandbox/leases.js";
+import { homeOf } from "../../sandbox/review/rules.js";
 import { SandboxService } from "../../sandbox/sandbox.service.js";
 import { providerConnectionFailure } from "../../sandbox/unreachable.js";
 import { runEndedIn } from "../run-status.js";
@@ -80,8 +82,10 @@ export interface ProjectKnowledgeInput {
  * Reads in the device's effective mode (`DeviceProjectsService.scopeFor`, the same scope the
  * binding was checked against) and through `SandboxService.withSandbox`, as a tool call does, so
  * a bound conversation starts its device eagerly (the accepted cost, spec §4.4). A project the
- * run cannot use is recorded as `unavailable` with its reason: a root that is gone, out of the
- * mode or unreadable, or a machine that does not announce projects (`unsupported`, not asked). The
+ * run cannot use is recorded as `unavailable` with its reason: a project the device no longer
+ * keeps under the bound name and path (`removed`, not asked), a root that is gone, out of the mode
+ * (or above the owner's home) or unreadable, or a machine that does not announce projects
+ * (`unsupported`, not asked). The
  * device not being reachable (offline, the provider down, the time limit) records nothing, and the
  * run goes on as it does today when its device is away. Nothing is cached in the process.
  */
@@ -93,7 +97,7 @@ export class ProjectKnowledgeService {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(ConversationDevices) private readonly devices: Pick<ConversationDevices, "forTool">,
     @Inject(DeviceProjectsService)
-    private readonly projects: Pick<DeviceProjectsService, "scopeFor">,
+    private readonly projects: Pick<DeviceProjectsService, "scopeFor" | "keeps">,
     @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "withSandbox">,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     @Optional()
@@ -168,6 +172,15 @@ export class ProjectKnowledgeService {
       // the device a tool call of this conversation would enter, checked for its owner now
       const deviceId = await this.devices.forTool(input.orgId, input.conversationId);
       const scope = await this.projects.scopeFor(input.orgId, bound.accountId, deviceId);
+      // the binding is the name and the path: a project removed from the device (or re-added
+      // under its name with another path) no longer serves the conversation, which goes on free
+      if (!(await this.projects.keeps(deviceId, bound.project, bound.root))) {
+        return unavailableProject(
+          bound.project,
+          bound.root,
+          projectUnavailable.removed(bound.project),
+        );
+      }
       // a device that cannot serve list / scan (a machine without `projects`, a provider without
       // them) is not asked: the project is recorded as unavailable, so an older snapshot stops
       // applying
@@ -208,7 +221,11 @@ export class ProjectKnowledgeService {
         async (h, p, info, sig) => {
           const target = { project: bound.project, root: bound.root, mode: scope.mode };
           // the kernel's own check first: a root the mode cannot read is never asked about
-          if (!withinMode(scope, bound.root, info.roots.workspace)) {
+          // a root above the owner's home is refused as the working root's rule refuses it
+          // (`workingRootOf`, the same home: the reported one, else the workspace's prefix)
+          const reported = scope.home;
+          const home = reported?.startsWith("/") ? reported : homeOf(info.roots.workspace);
+          if (!withinMode(scope, bound.root, info.roots.workspace) || aboveHome(bound.root, home)) {
             return unavailableProject(
               bound.project,
               bound.root,

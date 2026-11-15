@@ -72,6 +72,11 @@ export interface ReviewInput {
    * null: the rules derive it from `workspace`.
    */
   home?: string | null | undefined;
+  /**
+   * The home prefix of the device's own workspace, judged beside `home` (a project outside every
+   * home still protects it). Absent or null: none.
+   */
+  deviceHome?: string | null | undefined;
   /** Whether a person is present to answer an `ask` (rules may read it; the pipeline decides). */
   attended: boolean;
   /** Hook payload facts (optional: without enough of them no model hook fires). */
@@ -207,6 +212,7 @@ export class CommandReviewService implements CommandReview {
       workspace,
       cwd: workspace,
       home: input.home ?? null,
+      deviceHome: input.deviceHome ?? null,
       mode: input.mode,
       attended: input.attended,
     };
@@ -374,6 +380,7 @@ export class CommandReviewService implements CommandReview {
       workspace: string;
       cwd: string;
       home: string | null;
+      deviceHome: string | null;
       mode: "auto" | "sandbox";
       attended: boolean;
     },

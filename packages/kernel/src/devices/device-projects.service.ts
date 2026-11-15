@@ -406,7 +406,7 @@ export class DeviceProjectsService {
    * The project a new conversation of `accountId` binds to (project root §4.3): one of the
    * owner's device's projects that its current mode can read. Refused with `device.not_found`
    * (not the caller's device), `device.projects_unsupported`, `device.project_not_found` or
-   * `device.project_outside_mode`. Reads only (the caller's transaction, if any); the device is
+   * `device.project_outside_mode` or `device.project_path_too_broad`. Reads only (the caller's transaction, if any); the device is
    * not asked: it enforces its mode on every access anyway.
    */
   async resolveForBinding(
@@ -425,7 +425,26 @@ export class DeviceProjectsService {
       .executeTakeFirst();
     if (row === undefined) throw projectNotFound(name);
     if (!withinMode(scope, row.path)) throw outsideMode(row.path, scope.mode);
+    // a home reported after the project was added can put it above the home: the working root
+    // would fall back for it, so it is not bound (the add rule, project root §4.3)
+    if (aboveHome(row.path, scope.home)) throw tooBroad(row.path);
     return { name: row.name, path: row.path };
+  }
+
+  /**
+   * Whether the device still keeps the project `name` at `path` (project root §4.3): a binding is
+   * the name and the path, so a project removed, or re-added under that name with another path, no
+   * longer serves the conversations bound to it. Reads only.
+   */
+  async keeps(deviceId: string, name: string, path: string): Promise<boolean> {
+    const row = await this.db
+      .selectFrom("device_projects")
+      .select("name")
+      .where("device_id", "=", deviceId)
+      .where("name", "=", name)
+      .where("path", "=", path)
+      .executeTakeFirst();
+    return row !== undefined;
   }
 
   /**
@@ -466,6 +485,9 @@ export class DeviceProjectsService {
       .where("e.deleted_at", "is", null)
       .executeTakeFirst();
     if (row === undefined) throw deviceNotFound();
+    // `devicePolicy`, not `modeLevel` as the command review reads: a cloud device with a pending
+    // files reset is scoped by the narrower mode it will run at, never the wider one its instance
+    // still has, on purpose (projects are offered for what the device will read; no effect today)
     const { mode, allowedMode } = await this.sandbox.devicePolicy({ orgId, deviceId });
     if (row.source === "local") {
       return {

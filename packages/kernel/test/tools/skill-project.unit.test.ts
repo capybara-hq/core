@@ -147,16 +147,14 @@ describe("Skill: project skills", () => {
     expect(text).not.toContain("\u0000");
   });
 
-  it("a sub-agent resolves the root conversation's project", async () => {
+  it("a sub-agent resolves its own copy of the project, the one it was shown", async () => {
     const t = setup({ project: usable, files: { [PATH]: skillMd("fix-issue", "Body.") } });
     await t.run(
       { skill: "project:fix-issue" },
       { conversationId: "child", sandboxConversationId: "root" },
     );
-    expect(t.asked).toContainEqual({ conversation: "root", type: "project_root" });
-    expect(t.asked.some((a) => a.conversation === "child" && a.type === "project_root")).toBe(
-      false,
-    );
+    expect(t.asked).toContainEqual({ conversation: "child", type: "project_root" });
+    expect(t.asked.some((a) => a.conversation === "root" && a.type === "project_root")).toBe(false);
   });
 
   it("a name the project does not list: an actionable error naming the listed ones", async () => {

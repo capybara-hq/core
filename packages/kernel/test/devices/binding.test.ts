@@ -751,6 +751,28 @@ describe("binding a conversation to a project", () => {
     expect(await countOf(m.id)).toBe(0);
   });
 
+  it("refuses a project a later reported home puts above the home, and creates nothing", async () => {
+    const m = await member();
+    const device = await localDevice(m.id, { projects: [{ name: "srv", path: "/srv" }] });
+    // the machine reports a home under the stored path after it was added
+    await db
+      .updateTable("device_machines")
+      .set({ home: "/srv/me" })
+      .where("device_id", "=", device)
+      .execute();
+    for (const message of BOTH) {
+      const res = await createWith(m.req, {
+        agentId,
+        deviceId: device,
+        project: "srv",
+        ...(message !== undefined && { message: firstMessage() }),
+      });
+      expect(res.statusCode, res.body).toBe(422);
+      expect(errorOf(res).code).toBe("device.project_path_too_broad");
+    }
+    expect(await countOf(m.id)).toBe(0);
+  });
+
   it("refuses a device that offers no projects, and creates nothing", async () => {
     const m = await member();
     // an older capybara-device: no `projects` feature, whatever is stored for it

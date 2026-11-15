@@ -781,12 +781,13 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
         agentsMdTruncated: z.literal(true).optional(),
         /**
          * The run cannot use the project: its root is `gone`, `outside_mode` (the device's current
-         * mode cannot read it), `unreadable`, or the device offers no projects (`unsupported`);
-         * `message` says so in English for the model. Set alone: no `agentsMd`, no skills.
+         * mode cannot read it), `unreadable`, the device offers no projects (`unsupported`), or the
+         * device no longer keeps the bound name and path (`removed`); `message` says so in English
+         * for the model. Set alone: no `agentsMd`, no skills.
          */
         unavailable: z
           .object({
-            reason: z.enum(["gone", "outside_mode", "unreadable", "unsupported"]),
+            reason: z.enum(["gone", "outside_mode", "unreadable", "unsupported", "removed"]),
             message: z.string().min(1).max(500),
           })
           .strict()

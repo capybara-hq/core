@@ -919,12 +919,12 @@ function isDynamicScript(script: string): boolean {
 interface ResolvedFacts {
   workspace: string;
   cwd: string;
-  /** The home `~` and `$HOME` expand to: the reported one, else the workspace's. */
+  /** The home `~` and `$HOME` expand to: the reported one, else the workspace's, else the device's. */
   home: string | null;
   /**
-   * Every home the home-level rules are judged against: the reported home and the workspace's
-   * `/home/<u>`, `/Users/<u>` or `/root` prefix, both when they differ (project root fix round 2:
-   * a reported home never replaces the derived one).
+   * Every home the home-level rules are judged against: the reported home, the workspace's
+   * `/home/<u>`, `/Users/<u>` or `/root` prefix and the device workspace's, all that differ
+   * (project root fix round 2: a reported home never replaces a derived one).
    */
   homes: readonly string[];
   /** Absolute paths this conversation's tool calls wrote before this line (hardening spec R1). */
@@ -943,11 +943,16 @@ export function homeOf(workspace: string): string | null {
 function resolveFacts(facts: ReviewFacts): ResolvedFacts {
   const workspace = normalizePath(facts.workspace);
   const derived = homeOf(workspace);
-  // an implausible reported home (`/`, or an ancestor of the workspace's home such as `/Users`)
-  // would make every path a home path: it is ignored and only the derived home is used
+  // the home of the device's own workspace: a project outside every home keeps protecting it
+  const device = facts.deviceHome?.startsWith("/") ? normalizePath(facts.deviceHome) : null;
+  const deviceHome = device === null || device === "/" ? null : device;
+  // an implausible reported home (`/`, or an ancestor of a derived home such as `/Users`) would
+  // make every path a home path: it is ignored and only the derived homes are used
   const given = facts.home?.startsWith("/") ? normalizePath(facts.home) : null;
   const reported =
-    given === null || given === "/" || (derived !== null && isAncestor(given, derived))
+    given === null ||
+    given === "/" ||
+    [derived, deviceHome].some((d) => d !== null && isAncestor(given, d))
       ? null
       : given;
   const cwd = facts.cwd === undefined ? workspace : normalizePath(facts.cwd);
@@ -955,8 +960,8 @@ function resolveFacts(facts: ReviewFacts): ResolvedFacts {
     workspace,
     cwd,
     // the owner's home as the pipeline knows it (the machine's), else the workspace's prefix
-    home: reported ?? derived,
-    homes: [...new Set([reported, derived].filter((h): h is string => h !== null))],
+    home: reported ?? derived ?? deviceHome,
+    homes: [...new Set([reported, derived, deviceHome].filter((h): h is string => h !== null))],
     written: new Set(
       (facts.written ?? []).map((p) =>
         p.endsWith("/**") ? `${normalizePath(p.slice(0, -3))}/**` : normalizePath(p),
