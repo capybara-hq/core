@@ -434,9 +434,9 @@ describe("agent skills", () => {
     };
     expect(own.items).toMatchObject([{ name: "notes", state: "active" }]);
     const inv = (await run("agents.invocable-skills", { agentId }, ctx)) as {
-      items: { name: string }[];
+      items: { name: string; source: string }[];
     };
-    expect(inv.items.map((s) => s.name)).toContain("notes");
+    expect(inv.items.find((s) => s.name === "notes")).toMatchObject({ source: "agent" });
     // another person's private agent is not visible
     await expect(run("agents.skills", { agentId }, ctxOf(memberId))).rejects.toThrow(
       /agents\.list/,

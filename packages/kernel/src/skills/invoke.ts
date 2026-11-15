@@ -7,21 +7,35 @@ import {
   SKILL_ENTRY_FILE,
   SKILL_INVOCATION_LIMITS,
   skillDigest,
+  skillSandboxDir,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { AgentLookup } from "../agents/agent-lookup.js";
 import { type AgentDefinition, builtinDisabled } from "../agents/definition.js";
+import { EventLog } from "../conversations/event-log.js";
 import type { EventPayload } from "../conversations/events.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
+import { ConversationDevices } from "../devices/conversation-devices.js";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import {
+  callableProjectSkills,
+  type ProjectRootPayload,
+  projectSkillName,
+  projectSkillOf,
+} from "../runtime/context/project-root.js";
 import { isGeneralAlias, resolveSkillForkType } from "../runtime/subagents/roster.js";
+import { SandboxService } from "../sandbox/sandbox.service.js";
 import { StorageService } from "../storage/storage.service.js";
 import { BUILTIN } from "../tools/builtin-names.js";
 import {
   findSkillVersion,
+  PROJECT_DIR_DIGEST,
+  type ProjectSkillProblem,
+  ProjectSkillReadError,
+  readProjectSkill,
   readSkillFile,
   SkillIntegrityError,
 } from "../tools/builtins/skill-load.js";
@@ -37,10 +51,20 @@ import { skillFileStore } from "./usable.js";
  * `content[0]` of the `user_message` together with {@link RenderedInvocation.skill}.
  */
 
+/**
+ * Where a `/` menu entry comes from (project root spec §4.6; the palette groups by it): the agent's
+ * own skill, a plugin's, the org library or the platform (`platform`), or the conversation's
+ * project.
+ */
+export type InvocableSource = "platform" | "plugin" | "agent" | "project";
+
 /** One skill of the `/` menu (`GET …/agents/:agentId/invocable-skills`). */
 export interface InvocableSkill {
+  /** A project skill's is its callable name, `project:<name>` (it has no row). */
   id: string;
+  /** The bare name; a project skill's callable name `project:<name>`. */
   name: string;
+  source: InvocableSource;
   /** The plugin (catalog item) it came from. */
   plugin?: string;
   description: string;
@@ -104,6 +128,82 @@ export const notInvocable = (reason: NotInvocableReason, name: string) =>
     [{ reason }],
   );
 
+/** A project skill the project lists but cannot be used now (`reason: project_unavailable`). */
+const projectUnavailable = (message: string) =>
+  new ApiError("skill.not_invocable", message, [{ reason: "project_unavailable" }]);
+
+/** The person's text for a {@link ProjectSkillProblem}. */
+function projectProblemMessage(name: string, p: ProjectSkillProblem): string {
+  switch (p.kind) {
+    case "outside_mode":
+      return `Skill "${name}" cannot be invoked: ${p.path} is outside what the device can read in ${p.mode} mode now`;
+    case "gone":
+      return `Skill "${name}" cannot be invoked: ${p.path} is no longer on the device`;
+    case "read_failed":
+      return `Skill "${name}" cannot be invoked: reading ${p.path} on the device failed (${p.why.slice(0, 300)})`;
+    case "invalid":
+      return `Skill "${name}" cannot be invoked: ${p.path} is not a valid SKILL.md (${p.why.slice(0, 300)})`;
+  }
+}
+
+/** The longest a person's invocation waits for its project skill's SKILL.md on the device. */
+const PROJECT_SKILL_READ_TIMEOUT_MS = 30_000;
+
+/** Where an effective skill comes from, for the `/` menu ({@link InvocableSource}). */
+export const invocableSource = (r: {
+  scope: ResolvedSkill["scope"];
+  skill: { plugin?: string | undefined };
+}): InvocableSource =>
+  r.scope === "agent" ? "agent" : r.skill.plugin !== undefined ? "plugin" : "platform";
+
+/**
+ * The `/` menu entries of a conversation's latest `project_root` (project root spec §4.6: what the
+ * model saw, never a fresh read of the device): its skills as `project:<name>`, sorted, none for an
+ * unavailable project or none. A skill whose callable name `Skill` cannot take is left out, as in
+ * the model's list.
+ */
+export function projectInvocables(p: ProjectRootPayload | undefined): InvocableSkill[] {
+  if (p === undefined || p.unavailable !== undefined) return [];
+  return callableProjectSkills(p)
+    .map((s) => ({
+      id: projectSkillName(s.name),
+      name: projectSkillName(s.name),
+      source: "project" as const,
+      description: s.description,
+      version: 0,
+      manual: false,
+      fork: false,
+    }))
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+}
+
+/**
+ * Whether a recorded project skill invocation (`project:<name>`) is still one of the latest usable
+ * `project_root`'s skills; null when it is.
+ */
+export function projectSkillBlocked(
+  p: ProjectRootPayload | undefined,
+  name: string,
+): NotInvocableReason | null {
+  return projectInvocables(p).some((s) => s.name === name) ? null : "not_found";
+}
+
+/** The payload of the conversation's latest `project_root`, read with `db`. */
+async function latestProjectRoot(
+  db: KernelSchemaDb,
+  conversationId: string,
+): Promise<ProjectRootPayload | undefined> {
+  const row = await db
+    .selectFrom("conversation_events")
+    .select("payload")
+    .where("conversation_id", "=", conversationId)
+    .where("type", "=", "project_root")
+    .orderBy("seq", "desc")
+    .limit(1)
+    .executeTakeFirst();
+  return row?.payload as ProjectRootPayload | undefined;
+}
+
 /**
  * Whether the skill a queued invocation recorded is still one a person can invoke in this
  * conversation (phase D Task 9, checked again at dispatch): the same skill (by id) among the
@@ -120,6 +220,9 @@ export async function recordedSkillBlocked(
     skillId: string;
   },
 ): Promise<NotInvocableReason | null> {
+  if (projectSkillOf(a.skillId) !== undefined) {
+    return projectSkillBlocked(await latestProjectRoot(db, a.conversationId), a.skillId);
+  }
   const found = (await resolveSkills(db, a)).find((r) => r.skill.id === a.skillId);
   if (!found) return "not_found";
   return invocationOf(found.manifest).user ? null : "not_user_invocable";
@@ -147,12 +250,19 @@ export class SkillInvoker {
     @Inject(StorageService) private readonly storage: StorageService,
     @Inject(AgentLookup) private readonly agents: Pick<AgentLookup, "get">,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
+    /** A bound conversation's latest `project_root` (its project skills). */
+    @Inject(EventLog) private readonly eventLog: Pick<EventLog, "latestOfType">,
+    /** A project skill's SKILL.md is read through the conversation's device. */
+    @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "withSandbox">,
+    @Inject(ConversationDevices)
+    private readonly devices: Pick<ConversationDevices, "forTool" | "modeLevel">,
   ) {}
 
   /**
    * The `/` menu for `accountId`: the agent must be usable by them (`agent.not_found`), and with
    * `conversationId` the conversation must be theirs and the agent's (`conversation.not_found`);
-   * then its trial drafts apply.
+   * then its trial drafts apply, and its latest usable `project_root` adds the project's skills
+   * after the agent's ({@link projectInvocables}).
    */
   async listFor(
     orgId: string,
@@ -173,12 +283,15 @@ export class SkillInvoker {
         .executeTakeFirst();
       if (!row) throw new ApiError("conversation.not_found", "Conversation not found");
     }
-    return this.list({
+    const skills = await this.list({
       orgId,
       agentId,
       agent: agent.definition,
       ...(conversationId !== undefined && { conversationId }),
     });
+    if (conversationId === undefined) return skills;
+    const latest = await this.eventLog.latestOfType(conversationId, "project_root");
+    return [...skills, ...projectInvocables(latest?.payload)];
   }
 
   /**
@@ -199,6 +312,7 @@ export class SkillInvoker {
       out.push({
         id: r.skill.id,
         name: r.skill.name,
+        source: invocableSource(r),
         ...(r.skill.plugin !== undefined && { plugin: r.skill.plugin }),
         description: r.skill.description,
         version: r.skill.version,
@@ -216,16 +330,22 @@ export class SkillInvoker {
    * invocation (spec §4.2, §4.3, §6.3). Refusals: `skill.not_invocable` (400); arguments or a
    * rendered text over the limits → `validation_failed` (400); a storage failure or a SKILL.md
    * that fails its integrity check → `storage.unavailable` (503). Nothing is written here.
+   * `project:<name>` is the conversation's project skill ({@link prepareProject}).
    */
   async prepare(a: {
     orgId: string;
     agentId: string;
+    /** The person sending (a project skill is read on the device as them). */
+    accountId: string;
     /** Absent for the first message of a conversation not created yet. */
     conversationId?: string;
     agent: AgentDefinition;
     name: string;
     args: string;
   }): Promise<RenderedInvocation> {
+    // project root spec §4.6: the prefix is the project's, never a plugin's qualified name
+    const bare = projectSkillOf(a.name);
+    if (bare !== undefined) return this.prepareProject(a, bare);
     const all = await resolveSkills(this.db.db, a);
     const found = findSkill(all, a.name);
     if (!found) throw notInvocable("not_found", a.name);
@@ -281,6 +401,113 @@ export class SkillInvoker {
         warning: forkAgentUnknownText(a.name, type.unknown),
       }),
     };
+  }
+
+  /**
+   * A person's invocation of `project:<name>` (project root spec §4.6): resolved from the
+   * conversation's latest `project_root` (what the model saw), then its SKILL.md is read through
+   * the conversation's device as `Skill` reads it ({@link readProjectSkill}) and rendered like any
+   * invocation, `${CLAUDE_SKILL_DIR}` being the skill's directory in the project. Always inline
+   * (`context: fork` is not honoured for project skills, as in `Skill`). Refusals:
+   * `skill.not_invocable` `not_found` (no conversation yet, no project, a name it does not list),
+   * `project_unavailable` (the latest project is unavailable, or its file cannot be used), the
+   * device's own refusals as they are (`device.offline`, ...), `device.projects_unavailable` when
+   * the device cannot be asked.
+   */
+  private async prepareProject(
+    a: {
+      orgId: string;
+      accountId: string;
+      conversationId?: string;
+      agent: AgentDefinition;
+      name: string;
+      args: string;
+    },
+    bare: string,
+  ): Promise<RenderedInvocation> {
+    const { conversationId } = a;
+    if (conversationId === undefined) throw notInvocable("not_found", a.name);
+    const latest = (await this.eventLog.latestOfType(conversationId, "project_root"))?.payload;
+    if (latest?.unavailable !== undefined) {
+      throw projectUnavailable(
+        `Skill "${a.name}" cannot be invoked: the project "${latest.project}" is not available (${latest.unavailable.message})`,
+      );
+    }
+    if (projectSkillBlocked(latest, a.name) !== null || latest === undefined) {
+      throw notInvocable("not_found", a.name);
+    }
+    const file = await this.readProjectFile({ ...a, conversationId }, latest.root, bare);
+    const args = a.args.trim();
+    // the renderer's skills-root directory becomes the skill's directory in the project (a closing
+    // tag in the path stays inert, as in the body)
+    const dir = file.dir.replace(/<\//g, "<\\/");
+    const text = rendered(() =>
+      renderSkillInvocation({
+        name: a.name,
+        skillName: bare,
+        digest: PROJECT_DIR_DIGEST,
+        version: 0,
+        body: file.body,
+        invocation: file.invocation,
+        args: a.args,
+        lines: {
+          ...(hasShellInjection(file.body) &&
+            hasBuiltin(a.agent, BUILTIN.Bash) && { shellHint: true as const }),
+        },
+      }),
+    ).replaceAll(skillSandboxDir(bare, PROJECT_DIR_DIGEST), dir);
+    return {
+      text: `${text}\n\nIts other files, if any, are in ${dir}/ on the device; use them there.`,
+      skill: {
+        id: a.name,
+        version: 0,
+        source: "project",
+        name: a.name,
+        arguments: args,
+        mode: "inline",
+      },
+    };
+  }
+
+  /** {@link readProjectSkill} in a silent use of the conversation's device, as its owner. */
+  private async readProjectFile(
+    a: { orgId: string; accountId: string; conversationId: string; name: string },
+    root: string,
+    bare: string,
+  ) {
+    try {
+      const deviceId = await this.devices.forTool(a.orgId, a.conversationId);
+      // unknown mode: the strict (sandbox) path checks stay (fail closed), as in a tool call
+      const mode = (await this.devices.modeLevel(a.orgId, deviceId))?.mode ?? "sandbox";
+      return await this.sandbox.withSandbox(
+        {
+          orgId: a.orgId,
+          deviceId,
+          holderConversationId: a.conversationId,
+          // tells the model nothing: its next tool call still learns what the device did
+          silent: true,
+          actor: { accountId: a.accountId, conversationId: a.conversationId },
+        },
+        (h, p, info, signal) =>
+          readProjectSkill({ deviceId, mode, h, roots: info.roots, p, signal }, root, bare),
+        AbortSignal.timeout(PROJECT_SKILL_READ_TIMEOUT_MS),
+      );
+    } catch (e) {
+      if (e instanceof ProjectSkillReadError) {
+        throw projectUnavailable(projectProblemMessage(a.name, e.problem));
+      }
+      if (e instanceof ApiError) throw e;
+      this.log.warn("project skill unreadable: the device could not be asked", {
+        orgId: a.orgId,
+        conversationId: a.conversationId,
+        skill: a.name,
+        err: e,
+      });
+      throw new ApiError(
+        "device.projects_unavailable",
+        "The device could not be reached to read the project skill; retry later",
+      );
+    }
   }
 
   /**

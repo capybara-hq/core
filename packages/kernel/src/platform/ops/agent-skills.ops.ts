@@ -214,7 +214,7 @@ export class AgentSkillsOperations implements OnModuleInit {
       defineOperation({
         id: "agents.invocable-skills",
         description:
-          "List the skills a person can invoke with / on an agent (its effective skills: org, platform and its own), by name: id, name, state (manual for manual-only), description, version and the plugin. Optionally pass a conversation of yours with that agent to include its trial drafts.",
+          "List the skills a person can invoke with / on an agent (its effective skills: org, platform and its own), by name: id, name, source (platform, plugin, agent or project), state (manual for manual-only), description, version and the plugin. Optionally pass a conversation of yours with that agent to include its trial drafts and, for a conversation bound to a project, the project's skills as project:<name>.",
         input: z
           .object({
             agentId: AgentId,
@@ -246,6 +246,7 @@ export class AgentSkillsOperations implements OnModuleInit {
           ).map((s) => ({
             id: s.id,
             name: s.name,
+            source: s.source,
             state: s.manual ? "manual" : "active",
             description: clip(s.description),
             version: s.version,

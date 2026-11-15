@@ -548,6 +548,15 @@ describe("binding a conversation to a project", () => {
       project_name: "core",
       project_path: CORE.path,
     });
+    // the view carries the binding (the conversation header shows it)
+    expect((empty.json() as { conversation: { project: unknown } }).conversation.project).toEqual(
+      CORE,
+    );
+    const read = await m.req({ method: "GET", url: `${conversations()}/${emptyId}` });
+    expect(read.statusCode, read.body).toBe(200);
+    expect((read.json() as { conversation: { project: unknown } }).conversation.project).toEqual(
+      CORE,
+    );
 
     const sent = await createWith(m.req, {
       agentId,
@@ -557,6 +566,9 @@ describe("binding a conversation to a project", () => {
     });
     expect(sent.statusCode, sent.body).toBe(201);
     const sentId = (sent.json() as { conversation: { id: string } }).conversation.id;
+    expect((sent.json() as { conversation: { project: unknown } }).conversation.project).toEqual(
+      PLUGINS,
+    );
     expect(await bindingOf(sentId)).toEqual({
       device_id: device,
       project_name: "plugins",
@@ -605,6 +617,9 @@ describe("binding a conversation to a project", () => {
       });
       expect(res.statusCode, res.body).toBe(201);
       const id = (res.json() as { conversation: { id: string } }).conversation.id;
+      expect(
+        (res.json() as { conversation: { project: unknown } }).conversation.project,
+      ).toBeNull();
       expect(await bindingOf(id)).toEqual({
         device_id: device,
         project_name: null,

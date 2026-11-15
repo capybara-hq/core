@@ -70,6 +70,12 @@ export interface ConversationView {
   /** The scheduled task that created it (a `new`-mode task's run); null otherwise (spec §4). */
   scheduledTaskId: string | null;
   /**
+   * The device project it is bound to (project root spec §4.3: chosen at creation, never
+   * changed), as resolved then: its name and absolute path on the device; null in free mode (a
+   * sub-agent's is null too: it works in its root conversation's).
+   */
+  project: { name: string; path: string } | null;
+  /**
    * What the latest run is doing: `running` (queued or running), `waiting` (an approval or a
    * question), else null. Only the list queries compute it; other responses carry null.
    */
@@ -248,6 +254,8 @@ const COLUMNS = [
   "archived_at",
   "device_id",
   "scheduled_task_id",
+  "project_name",
+  "project_path",
 ] as const;
 
 function toView(r: {
@@ -266,6 +274,8 @@ function toView(r: {
   archived_at: Date | null;
   device_id: string | null;
   scheduled_task_id: string | null;
+  project_name: string | null;
+  project_path: string | null;
   activity?: "running" | "waiting" | null;
 }): ConversationView {
   return {
@@ -284,6 +294,10 @@ function toView(r: {
     archivedAt: r.archived_at,
     deviceId: r.device_id,
     scheduledTaskId: r.scheduled_task_id,
+    project:
+      r.project_name !== null && r.project_path !== null
+        ? { name: r.project_name, path: r.project_path }
+        : null,
     activity: r.activity ?? null,
   };
 }
@@ -481,7 +495,14 @@ export class ConversationsService {
     const deviceId = await this.devices.forNew(orgId, accountId, pick);
     const next = await this.planSwitch(orgId, agent.definition, NO_SELECTION, input);
     const extra = await this.resolveExtra(orgId, accountId, input);
-    const invoked = await this.prepareSkill(orgId, agentId, undefined, agent.definition, input);
+    const invoked = await this.prepareSkill(
+      orgId,
+      accountId,
+      agentId,
+      undefined,
+      agent.definition,
+      input,
+    );
     const id = randomUUID();
     const all = await this.createIn(
       { id, orgId, accountId, agentId, deviceId, project: pick.project },
@@ -903,6 +924,8 @@ export class ConversationsService {
       subagent_type: string | null;
       archived_at: Date | null;
       device_id: string | null;
+      project_name: string | null;
+      project_path: string | null;
       activity: "running" | "waiting" | null;
     }>`
       WITH g AS (
@@ -921,14 +944,16 @@ export class ConversationsService {
       SELECT page.agent_id, page.latest_at, v.definition ->> 'name' AS agent_name,
         a.profile_avatar, a.profile_updated_at, cs.id, cs.org_id, cs.account_id, cs.title, cs.title_source, cs.selection, cs.last_seq,
         cs.created_at, cs.updated_at, cs.parent_conversation_id, cs.subagent_type,
-        cs.archived_at, cs.device_id, cs.scheduled_task_id, cs.activity
+        cs.archived_at, cs.device_id, cs.scheduled_task_id, cs.project_name, cs.project_path,
+        cs.activity
       FROM page
       JOIN capybara.agents a ON a.id = page.agent_id
       JOIN capybara.agent_versions v ON v.agent_id = a.id AND v.version = a.current_version
       CROSS JOIN LATERAL (
         SELECT c.id, c.org_id, c.account_id, c.title, c.title_source, c.selection, c.last_seq,
           c.created_at, c.updated_at, c.parent_conversation_id, c.subagent_type,
-          c.archived_at, c.device_id, c.scheduled_task_id, ${activitySql("c")} AS activity
+          c.archived_at, c.device_id, c.scheduled_task_id, c.project_name, c.project_path,
+          ${activitySql("c")} AS activity
         FROM capybara.conversations c
         WHERE c.org_id = ${orgId} AND c.account_id = ${accountId} AND c.kind = 'chat'
           AND c.deleted_at IS NULL AND ${archivedFilter} ${searchFilter} ${stateFilter}
@@ -1211,7 +1236,7 @@ export class ConversationsService {
     const invoked =
       agent === undefined
         ? undefined
-        : await this.prepareSkill(orgId, conv.agentId, conversationId, agent, input);
+        : await this.prepareSkill(orgId, accountId, conv.agentId, conversationId, agent, input);
     // one transaction: the sender, time zone and language are read with the message's write
     // (run context spec §3.2)
     const { event, skipped, toSeq } = await this.postIn(
@@ -1451,6 +1476,7 @@ export class ConversationsService {
    */
   private async prepareSkill(
     orgId: string,
+    accountId: string,
     agentId: string,
     conversationId: string | undefined,
     agent: AgentDefinition,
@@ -1460,6 +1486,7 @@ export class ConversationsService {
     return this.invoker.prepare({
       orgId,
       agentId,
+      accountId,
       ...(conversationId !== undefined && { conversationId }),
       agent,
       name: input.skill.name,
@@ -1480,7 +1507,7 @@ export class ConversationsService {
   ): Promise<RenderedInvocation | undefined> {
     if (input.skill === undefined) return undefined;
     const agent = await this.agents.get(orgId, conv.agentId, accountId);
-    return this.prepareSkill(orgId, conv.agentId, conv.id, agent.definition, input);
+    return this.prepareSkill(orgId, accountId, conv.agentId, conv.id, agent.definition, input);
   }
 
   /**
