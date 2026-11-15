@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { Inject, Injectable } from "@nestjs/common";
 import { type LeaseHandle, LockService } from "../infra/lock/lock.service.js";
 
@@ -11,6 +12,7 @@ const RUN_LOCK_PREFIX = "capk:conv-run:";
 export interface Lease {
   readonly conversationId: string;
   readonly runId: string;
+  readonly executionId: string;
   /** 续租时发现锁已不属于自己（过期后被他人取得，或续租一直失败到过期）；此后不再续租。 */
   readonly lost: boolean;
   /** 立即续租一次；锁已不属于自己 → false（并标记 lost）。 */
@@ -25,7 +27,7 @@ export interface Lease {
 
 /**
  * A per-conversation lease on {@link LockService.hold}: key `<prefix><conversationId>`, value the
- * holder's run id (other replicas read it with {@link holder}), renewed every TTL/3 by the lock
+ * holder's run id plus a unique acquisition id (`holder` exposes the run id), renewed every TTL/3 by the lock
  * service while held; a crashed holder's key expires within the TTL and another replica can take
  * it. Built by {@link ConversationLock} (the run lock) and its {@link ConversationLock.scoped}
  * views (the same lock for another purpose, e.g. the channel delivery `capk:channel-deliver:`).
@@ -46,29 +48,35 @@ export class ConversationLeases {
     runId: string,
     ttlMs = CONVERSATION_LOCK_TTL_MS,
   ): Promise<Lease | null> {
-    const held = await this.locks.hold(this.lockKey(conversationId), runId, ttlMs);
+    const executionId = randomUUID();
+    const held = await this.locks.hold(
+      this.lockKey(conversationId),
+      `${runId}/${executionId}`,
+      ttlMs,
+    );
     if (!held) return null;
-    return toLease(held, conversationId, runId);
+    return toLease(held, conversationId, runId, executionId);
   }
 
-  /**
-   * 释放某个运行持有的锁（只在仍由该 runId 持有时删除），不需要 Lease：用于 BullMQ 已判定任务失败
-   * （例如持有者崩溃、stalled 次数超限）后清理死去持有者留下的锁，不必等 TTL 过期。
-   */
-  async releaseFor(conversationId: string, runId: string): Promise<void> {
-    await this.locks.releaseIf(this.lockKey(conversationId), runId);
-  }
-
-  /** 当前持有者的 runId；无人持有 → null。 */
-  holder(conversationId: string): Promise<string | null> {
-    return this.locks.holderOf(this.lockKey(conversationId));
+  /** The current holder's run id, independent of its unique acquisition token. */
+  async holder(conversationId: string): Promise<string | null> {
+    const value = await this.locks.holderOf(this.lockKey(conversationId));
+    return value === null
+      ? null
+      : value.slice(0, value.lastIndexOf("/") < 0 ? value.length : value.lastIndexOf("/"));
   }
 }
 
-function toLease(held: LeaseHandle, conversationId: string, runId: string): Lease {
+function toLease(
+  held: LeaseHandle,
+  conversationId: string,
+  runId: string,
+  executionId: string,
+): Lease {
   return {
     conversationId,
     runId,
+    executionId,
     get lost() {
       return held.lost.aborted;
     },
@@ -82,10 +90,7 @@ function toLease(held: LeaseHandle, conversationId: string, runId: string): Leas
   };
 }
 
-/**
- * 会话级运行锁（spec 4.3「同一会话同一时刻只跑一轮」）：Redis 键 `capk:conv-run:<id>`，值为 runId，
- * 带 TTL，由 {@link LockService} 每 TTL/3 续租。持有方崩溃时停止续租，锁在 TTL 后过期，其他副本可以取得。
- */
+/** The run lease: each acquisition has its own token, even when the same run is taken over. */
 @Injectable()
 export class ConversationLock extends ConversationLeases {
   constructor(@Inject(LockService) locks: LockService) {

@@ -393,7 +393,15 @@ export interface ConversationEventsTable {
 }
 
 /** 0006_conversations.sql：一次 agent 运行。 */
+export interface RunRecoveryCursorsTable {
+  name: string;
+  since: TsNullable;
+  run_id: string | null;
+}
+
 export interface RunsTable {
+  /** 0135: the worker acquisition currently authorized to mutate this run. */
+  execution_id: string | null;
   id: string;
   conversation_id: string;
   status: "queued" | "running" | "waiting" | "completed" | "failed" | "aborted";
@@ -1457,6 +1465,7 @@ export interface KernelDatabase {
   file_previewers: FilePreviewersTable;
   org_extension_point_defaults: OrgExtensionPointDefaultsTable;
   runs: RunsTable;
+  run_recovery_cursors: RunRecoveryCursorsTable;
   subagent_dispatches: SubagentDispatchesTable;
   agent_templates: AgentTemplatesTable;
   agent_template_versions: AgentTemplateVersionsTable;

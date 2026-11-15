@@ -34,7 +34,7 @@ describe("ConversationLock", () => {
     const b = lockOn(redisB);
     const lease = await a.acquire("c1", "run-a");
     expect(lease).not.toBeNull();
-    expect(await redisA.get("capk:conv-run:c1")).toBe("run-a");
+    expect(await redisA.get("capk:conv-run:c1")).toBe(`run-a/${lease?.executionId}`);
     const ttl = await redisA.pttl("capk:conv-run:c1");
     expect(ttl).toBeGreaterThan(0);
     expect(ttl).toBeLessThanOrEqual(30_000);
@@ -45,6 +45,24 @@ describe("ConversationLock", () => {
     const lb = await b.acquire("c1", "run-b");
     expect(lb).not.toBeNull();
     await lb?.release();
+  });
+
+  it("a late release cannot remove a replacement acquisition of the same run", async () => {
+    const a = lockOn(redisA);
+    const b = lockOn(redisB);
+    const old = await a.acquire("same-run", "run-a");
+    old?.abandon();
+    // Simulate expiry deterministically; no wall-clock wait is needed for takeover.
+    await redisB.del("capk:conv-run:same-run");
+    const replacement = await b.acquire("same-run", "run-a");
+    expect(replacement).not.toBeNull();
+    try {
+      await old?.release();
+      expect(await b.holder("same-run")).toBe("run-a");
+      expect(await replacement?.renew()).toBe(true);
+    } finally {
+      await replacement?.release();
+    }
   });
 
   it("A「崩溃」（停止续租）后 TTL 到期，B 拿到锁；A 之后 release 不影响 B", async () => {

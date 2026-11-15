@@ -469,3 +469,21 @@ permanent exceptions, each with its reason.
 13. Migrations that change state owing work insert the outbox rows themselves.
 14. New job names on `cap-kernel-maintenance`.
 15. Latency budget +5 ms p50 on message-to-run-job-added.
+
+## Conversation delivery recovery amendment (2026-11-16)
+
+A dead run-job delivery is not active work. Recovery fails its still-queued run visibly with
+`run.delivery_failed` and consumes that trigger; the user explicitly sends a new message to retry.
+A super-admin transport retry never resurrects a terminal run. Run-job retries take the conversation
+lock before their outbox row and advance the queued delivery generation, so a stale scan cannot
+fail a retry which the relay has already delivered and deleted. Pending retries take precedence,
+and dead rows older than the current delivery generation are historical evidence.
+
+Recovery advances a shared PG keyset cursor across bounded passes instead of restarting at the
+oldest run. Deleted organizations/conversations are cancellation recovery, never queue loss.
+Deleted-org cleanup and the cancellation of workers already settled in PG are platform-owned
+outbox obligations that survive org purges.
+
+The measured idle-message path is now exactly 35 PG statements and 4 Redis commands: two PG
+statements above the previous 33/4 baseline are the message's ownership/deletion row lock and the
+deleted-org gate in ensureRun. The outbox insert/claim count is unchanged.

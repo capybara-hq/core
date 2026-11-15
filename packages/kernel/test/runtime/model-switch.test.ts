@@ -1,6 +1,7 @@
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { ConversationsService } from "../../src/conversations/conversations.service.js";
 import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
@@ -13,6 +14,7 @@ import {
   createConv,
   createOrg,
   eventsOf,
+  gate,
   PW,
   type Req,
   runConfig,
@@ -131,6 +133,55 @@ describe("model and effort switching", () => {
     const run3 = (await runsOf(db, conv))[2]?.id as string;
     expect(callsOfRun(events, run3).map((c) => c.payload.model)).toEqual(["fake-1"]);
     expect(await selectionOf(conv)).toEqual({ model: null, effort: null });
+  });
+
+  it("an effort-only send retains a model switch committed while its resources resolve", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    const service = k.app.get(ConversationsService);
+    const entered = gate();
+    const release = gate();
+    const resolve = service.resolveExtra.bind(service);
+    let first = true;
+    const spy = vi.spyOn(service, "resolveExtra").mockImplementation(async (...args) => {
+      if (first) {
+        first = false;
+        entered.open();
+        await release.promise;
+      }
+      return resolve(...args);
+    });
+    const effort = send(conv, { text: "echo:effort", effort: "high" });
+    try {
+      await entered.promise;
+      expect((await send(conv, { text: "echo:model", model: FAKE_2 })).statusCode).toBe(202);
+      release.open();
+      expect((await effort).statusCode).toBe(202);
+      expect(await selectionOf(conv)).toEqual({ model: FAKE_2, effort: "high" });
+      const switches = ofType(await eventsOf(db, conv), "model_switched");
+      expect(switches.at(-1)?.payload).toMatchObject({ model: FAKE_2, effort: "high" });
+    } finally {
+      release.open();
+      await effort;
+      spy.mockRestore();
+    }
+  });
+
+  it("returns a committed duplicate before validating a changed effort pick", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    const first = await send(conv, {
+      text: "echo:one",
+      effort: "high",
+      clientMessageId: "same-message",
+    });
+    expect(first.statusCode, first.body).toBe(202);
+    const duplicate = await send(conv, {
+      text: "echo:one",
+      effort: "xhigh",
+      clientMessageId: "same-message",
+    });
+    expect(duplicate.statusCode, duplicate.body).toBe(202);
+    expect(duplicate.json()).toEqual(first.json());
+    expect(ofType(await eventsOf(db, conv), "model_switched")).toHaveLength(1);
   });
 
   it("effort: a declared value reaches the request; an undeclared one is 400 and nothing is written", async () => {

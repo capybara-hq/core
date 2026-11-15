@@ -393,12 +393,12 @@ function renderBlocks(blocks: EventPayload<"user_message">["content"]): string {
  * result fails the attempt.
  */
 export function extractSummary(text: string): string {
-  const block = /<summary>([\s\S]*?)<\/summary>/i.exec(text);
+  // Strip scratchpads before looking for a summary: a truncated analysis can itself contain
+  // summary-shaped draft text. An unclosed analysis consumes the rest of the response.
+  const answer = text.replace(/<analysis>[\s\S]*?(?:<\/analysis>|$)/gi, "");
+  const block = /<summary>([\s\S]*?)<\/summary>/i.exec(answer);
   if (block) return (block[1] ?? "").trim();
-  return text
-    .replace(/<analysis>[\s\S]*?<\/analysis>/gi, "")
-    .replace(/<\/?summary>/gi, "")
-    .trim();
+  return answer.replace(/<\/?summary>/gi, "").trim();
 }
 
 /** The marker a hard-split line carries where it was cut (context compaction spec §4.5). */

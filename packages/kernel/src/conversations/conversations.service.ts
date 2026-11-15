@@ -5,7 +5,6 @@ import { sql } from "kysely";
 import { AgentLookup, visibleTo } from "../agents/agent-lookup.js";
 import type { AgentDefinition, ModelRef } from "../agents/definition.js";
 import type { AgentAvatar } from "../agents/profile.js";
-import { BackgroundTaskStopper } from "../background/stop.js";
 import { unbindConversation } from "../channels/threads.js";
 import type { TitleSource } from "../db/kernel-schema.js";
 import {
@@ -20,6 +19,7 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KernelEvents } from "../infra/events/kernel-events.js";
 import { ProviderRegistry } from "../runtime/providers.js";
 import { RunControl as RunControlService } from "../runtime/run-control.js";
+import { RunDeletion } from "../runtime/run-deletion.js";
 import { rootConversationOf } from "../runtime/subagents/child.js";
 import type { ScheduleMarker } from "../schedules/types.js";
 import { type RenderedInvocation, SkillInvoker } from "../skills/invoke.js";
@@ -37,7 +37,13 @@ import {
   type MessageContext,
   readMessageContext,
 } from "./message-context.js";
-import { NO_SELECTION, planSelection, readSelection, type Selection } from "./selection.js";
+import {
+  NO_SELECTION,
+  planSelection,
+  readSelection,
+  type Selection,
+  sameSelection,
+} from "./selection.js";
 import { conversationTree } from "./tree.js";
 
 /** 对外的会话视图。 */
@@ -444,8 +450,8 @@ export class ConversationsService {
     /** Renders a person's skill invocation (phase D). */
     @Inject(SkillInvoker) private readonly invoker: Pick<SkillInvoker, "prepare">,
     /** Stops a deleted conversation's background tasks. */
-    @Inject(BackgroundTaskStopper)
-    private readonly background: Pick<BackgroundTaskStopper, "stopForDeletedConversation">,
+    @Inject(RunDeletion)
+    private readonly deletion: Pick<RunDeletion, "stopTree">,
     /** The device a new conversation is bound to (environments spec §4.1 item 1). */
     @Inject(ConversationDevices)
     private readonly devices: Pick<ConversationDevices, "forNew">,
@@ -757,20 +763,10 @@ export class ConversationsService {
    * log, runs and trajectory stay (super admins still see them).
    */
   async remove(orgId: string, conversationId: string, accountId: string): Promise<void> {
-    const conv = await this.writable(orgId, conversationId, accountId);
-    // the root's own run only: the tree stops below, after the mark (a sub-agent's conversation
-    // is read-only, so `writable` refused it)
-    if (conv.parentConversationId === null) {
-      await this.abortRootRun(conversationId, accountId);
-    }
+    await this.writable(orgId, conversationId, accountId);
+    // Close entrances before the direct stop. The outbox owes the same claim-revoking cleanup.
     await this.markDeleted(orgId, conversationId, accountId);
-    // after the mark, so no finish or delivery of the stops below can start a run on the deleted
-    // root (`ensureRun` refuses it). The sandbox's tasks stop first, so the sub-agents' tasks end
-    // as a deletion; the tree stop then only stops a task a sub-agent started in between
-    // (`stoppedBy: "subagent_end"`, which never wakes either)
-    await this.background.stopForDeletedConversation(conversationId);
-    // the whole tree stops (agent map spec §10)
-    await this.runs.stopTree(conversationId, accountId, { includeSelf: false });
+    await this.deletion.stopTree(conversationId, accountId);
     await this.eventLog.publishChanged(conversationId, "deleted");
   }
 
@@ -782,6 +778,16 @@ export class ConversationsService {
     conversationId: string,
     accountId: string,
   ): Promise<void> {
+    const row = await this.db
+      .selectFrom("conversations")
+      .select("id")
+      .where("id", "=", conversationId)
+      .where("org_id", "=", orgId)
+      .where("account_id", "=", accountId)
+      .where("deleted_at", "is", null)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!row) throw notFound();
     await this.db
       .updateTable("conversations")
       .set({ deleted_at: sql<Date>`now()` })
@@ -1252,13 +1258,8 @@ export class ConversationsService {
     input: UserMessageInput,
   ): Promise<ConversationEvent> {
     const conv = await this.writable(orgId, conversationId, accountId);
-    const refs = input.attachments ?? [];
-    const files = input.files ?? [];
-    // A retry returns the written event (no resource read, no file check, no skill resolution)
-    if (
-      (refs.length > 0 || files.length > 0 || input.skill !== undefined) &&
-      input.clientMessageId !== undefined
-    ) {
+    // A retry returns the written event before resolving today's model or resources.
+    if (input.clientMessageId !== undefined) {
       const existing = await this.eventLog.findByIdem(
         conversationId,
         userMessageIdemKey(input.clientMessageId),
@@ -1273,10 +1274,6 @@ export class ConversationsService {
     const agent = needsAgent
       ? (await this.agents.get(orgId, conv.agentId, accountId)).definition
       : undefined;
-    const next =
-      agent === undefined || (input.model === undefined && input.effort === undefined)
-        ? null
-        : await this.planSwitch(orgId, agent, conv.selection, input);
     const extra = await this.resolveExtra(orgId, accountId, input);
     const invoked =
       agent === undefined
@@ -1284,15 +1281,32 @@ export class ConversationsService {
         : await this.prepareSkill(orgId, accountId, conv.agentId, conversationId, agent, input);
     // one transaction: the sender, time zone and language are read with the message's write
     // (run context spec §3.2)
-    const { event, skipped, toSeq } = await this.postIn(
-      orgId,
-      conversationId,
-      accountId,
-      input,
-      next,
-      extra,
-      invoked,
-    );
+    let current = conv.selection;
+    let posted: { event: ConversationEvent; skipped: ReplySkips; toSeq: number } | undefined;
+    let next: Selection | null = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      next = agent === undefined ? null : await this.planSwitch(orgId, agent, current, input);
+      const result = await this.postIn(
+        orgId,
+        conversationId,
+        accountId,
+        input,
+        next,
+        extra,
+        invoked,
+        input.model !== undefined || input.effort !== undefined ? current : undefined,
+      );
+      if ("selection" in result) {
+        current = result.selection;
+        continue;
+      }
+      posted = result;
+      break;
+    }
+    if (posted === undefined) {
+      throw new ApiError("conflict", "The conversation selection changed; send the message again");
+    }
+    const { event, skipped, toSeq } = posted;
     await this.eventLog.notify(conversationId, toSeq);
     await this.announceSkipped(skipped);
     if (next !== null) await this.eventLog.publishChanged(conversationId, "selection");
@@ -1323,7 +1337,27 @@ export class ConversationsService {
     next: Selection | null,
     extra: ResolvedExtra,
     invoked: RenderedInvocation | undefined,
-  ): Promise<{ event: ConversationEvent; skipped: ReplySkips; toSeq: number }> {
+    expectedSelection: Selection | undefined,
+  ): Promise<
+    { event: ConversationEvent; skipped: ReplySkips; toSeq: number } | { selection: Selection }
+  > {
+    // Serialize the partial pick with the append. Provider resolution runs outside this
+    // transaction; if another send changed the selection, revalidate its model before retrying.
+    const row = await this.db
+      .selectFrom("conversations")
+      .select("id")
+      .where("id", "=", conversationId)
+      .where("org_id", "=", orgId)
+      .where("account_id", "=", accountId)
+      .where("deleted_at", "is", null)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!row) throw notFound();
+    if (expectedSelection !== undefined) {
+      const selection = await readSelection(this.db.db, conversationId);
+      if (!sameSelection(expectedSelection, selection)) return { selection };
+    }
+
     const blocks = await this.bindIn(orgId, conversationId, accountId, input.files ?? []);
     const written = await this.writeMessage(
       orgId,

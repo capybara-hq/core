@@ -134,6 +134,7 @@ export class KyselyCheckpointSaver extends BaseCheckpointSaver {
     }
   }
 
+  @Transactional({ propagation: "requires_new" })
   async put(
     config: RunnableConfig,
     checkpoint: Checkpoint,

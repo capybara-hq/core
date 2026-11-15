@@ -7,12 +7,13 @@ import {
   type TestContainer,
 } from "@capybara-hq/testing";
 import { sql } from "kysely";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { ConversationsService } from "../../src/conversations/conversations.service.js";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { EventLog } from "../../src/conversations/event-log.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import type { EvalResultView, EvalRunView } from "../../src/evals/runs.service.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
+import { RunQueue } from "../../src/runtime/run-queue.js";
 import { ToolRegistry } from "../../src/tools/registry.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -156,21 +157,30 @@ describe("extension tools by conversation source", () => {
     // a conversation of the owner's whose run a member triggers (as in a group chat)
     const conv = await createConv(owner, orgId, agentId);
     await setSource(conv, "channel_dm");
-    const svc = k.app.get(ConversationsService);
-    const view = await svc.writable(orgId, conv, ownerId);
-    const spy = vi.spyOn(svc, "writable").mockResolvedValueOnce(view);
-    try {
-      const r = await callIn(conv, member);
-      expect(r.isError).toBe(false);
-      expect(JSON.parse(r.content)).toEqual({
-        source: "channel_dm",
-        ownerAccountId: ownerId,
-        accountId: memberId,
-        role: "member",
-      });
-    } finally {
-      spy.mockRestore();
-    }
+    // Seed the already-authorized channel message directly. The HTTP entrance always checks
+    // conversation ownership; this test exercises the runtime's independent trigger identity.
+    await k.app.get(EventLog).append(conv, [
+      {
+        type: "user_message",
+        payload: {
+          content: [{ type: "text", text: CALL }],
+          authorAccountId: memberId,
+        },
+      },
+    ]);
+    await k.app.get(RunQueue).ensureRun(conv);
+    await waitForTerminal(db, conv, 1, 20_000);
+    const result = (await eventsOf(db, conv)).find(
+      (e) => e.type === "tool_result" && e.payload.toolKey === KEY,
+    );
+    if (result?.type !== "tool_result") throw new Error("missing channel tool result");
+    expect(result.payload.isError).toBe(false);
+    expect(JSON.parse(result.payload.content)).toEqual({
+      source: "channel_dm",
+      ownerAccountId: ownerId,
+      accountId: memberId,
+      role: "member",
+    });
   });
 
   it("a call in a source the tool leaves out is refused with the reason", async () => {

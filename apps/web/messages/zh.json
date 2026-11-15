@@ -177,6 +177,7 @@
       "not_found": "这个后台任务已不存在。"
     },
     "run": {
+      "delivery_failed": "回复未能开始。请重新发送消息后再试。",
       "not_active": "当前没有进行中的回复。",
       "model_unavailable": "模型不可用。",
       "provider_unavailable": "模型供应商列表暂时读不到。",

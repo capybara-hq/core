@@ -72,6 +72,8 @@ export const RUN_STOP_JOB = "run-stop";
 
 /** The `run-stop` job's data. */
 export interface RunStopJobData {
+  /** A deletion already settled PG; cancellation still needs delivery to its old worker. */
+  deleted?: true;
   conversationId: string;
   runId: string;
 }
@@ -476,6 +478,10 @@ export class Offboarding {
    * A failure throws (the job is retried).
    */
   async stopRun(data: RunStopJobData): Promise<void> {
+    if (data.deleted) {
+      await this.runs.requestAbort(data.runId, null);
+      return;
+    }
     const run = await this.db
       .selectFrom("runs")
       .select("status")

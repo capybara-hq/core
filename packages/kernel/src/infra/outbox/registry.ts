@@ -80,6 +80,17 @@ export const OUTBOX_JOBS = {
   },
   // `orgs/offboarding.ts` RUN_STOP_JOB: owed by the offboard transaction for each of the departed
   // member's active runs in the org, under `runStopJobId` (spec §8.1)
+  "stop-deleted-org": {
+    queue: "cap-kernel-maintenance",
+    idempotent: "only active runs are settled and only running background tasks are stopped",
+    processedIn: "packages/kernel/src/runtime/maintenance.ts",
+    opts: {
+      attempts: 5,
+      backoff: { type: "exponential", delay: 5_000 },
+      removeOnComplete: true,
+      removeOnFail: { age: 7 * 86_400, count: 1_000 },
+    },
+  },
   "run-stop": {
     queue: "cap-kernel-maintenance",
     idempotent: "stopping a finished run is a no-op",

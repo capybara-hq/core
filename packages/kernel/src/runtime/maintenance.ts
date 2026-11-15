@@ -40,6 +40,7 @@ import { DRIFT_CONNECTOR_JOB } from "../tools/job-ids.js";
 import { ToolsModule } from "../tools/tools.module.js";
 import { MAINTENANCE_QUEUE_NAME } from "./maintenance-queue.js";
 import { RETIRED_SCHEDULER_IDS } from "./retired-schedulers.js";
+import { RunDeletion, STOP_DELETED_ORG_JOB, type StopDeletedOrgData } from "./run-deletion.js";
 import { ENSURE_RUN_JOB, type EnsureRunJobData, RunQueue } from "./run-queue.js";
 import { RuntimeModule } from "./runtime.module.js";
 import {
@@ -83,6 +84,7 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
     private readonly sandbox: Pick<SandboxService, "destroyDevice" | "resetFileSystem">,
     @Inject(ToolDrift) private readonly drift: Pick<ToolDrift, "check">,
     @Inject(DirectorySync) private readonly directory: Pick<DirectorySync, "runSyncJob">,
+    @Inject(RunDeletion) private readonly deletion: Pick<RunDeletion, "stopOrg" | "stopTree">,
     @Inject(Offboarding) private readonly offboarding: Pick<Offboarding, "stopRun">,
     @Inject(RunQueue) private readonly runs: Pick<RunQueue, "ensureRun">,
     @Inject(OwnedPluginCleanup) private readonly ownedCleanup: Pick<OwnedPluginCleanup, "run">,
@@ -117,6 +119,9 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
 
   private async dispatch(job: Job, token: string | undefined): Promise<void> {
     switch (job.name) {
+      case STOP_DELETED_ORG_JOB:
+        await this.deletion.stopOrg(job.data as StopDeletedOrgData);
+        return;
       case WAIT_TIMEOUT_JOB:
         await this.waits.processTimeout(job as Job<WaitTimeoutData>, token);
         return;
@@ -163,7 +168,7 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
         return;
       // the stops a run's end or a root's delete owes its sub-agent tree (outbox spec §6)
       case STOP_TREE_JOB:
-        await processStopTree(this.waits, job.data as StopTreeJobData);
+        await processStopTree(this.waits, job.data as StopTreeJobData, this.deletion);
         return;
       // a finished sub-agent run's delivery to its parent (transactional outbox spec §6)
       case DELIVER_TO_PARENT_JOB:

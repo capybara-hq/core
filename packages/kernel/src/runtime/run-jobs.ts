@@ -256,6 +256,16 @@ export class RunResume {
       .where("id", "=", runId)
       .forUpdate()
       .executeTakeFirst();
+    const live = await t
+      .selectFrom("runs as r")
+      .innerJoin("conversations as c", "c.id", "r.conversation_id")
+      .innerJoin("orgs as o", "o.id", "c.org_id")
+      .select("r.id")
+      .where("r.id", "=", runId)
+      .where("c.deleted_at", "is", null)
+      .where("o.deleted_at", "is", null)
+      .executeTakeFirst();
+    if (!live) return "not-waiting";
     if (run?.status === "running") return "still-running";
     if (run?.status !== "waiting") return "not-waiting";
     const row = await t

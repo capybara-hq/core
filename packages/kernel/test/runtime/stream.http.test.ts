@@ -1,14 +1,17 @@
+import { once } from "node:events";
 import { connect } from "node:net";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelConfig } from "../../src/config/schema.js";
-import { conversationTopic } from "../../src/conversations/event-log.js";
+import { conversationTopic, EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
+import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
 import { createKeyring } from "../../src/ctx/secrets.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { RunDrafts } from "../../src/runtime/run-drafts.js";
+import { ConversationStreams } from "../../src/runtime/stream.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, type CookieJar, cookieJar } from "../helpers/http.js";
 import { accountsFor, apiTokensFor, sessionsFor } from "../helpers/identity.js";
@@ -17,6 +20,7 @@ import {
   createConv,
   createOrg,
   eventsOf,
+  gate,
   PW,
   postMessage,
   type Req,
@@ -333,6 +337,76 @@ describe("会话 SSE（单副本 api+worker）", () => {
     orgId = await createOrg(owner.req);
     const agentId = await createAgent(owner.req, orgId);
     convId = await createConv(owner.req, orgId, agentId);
+  });
+
+  it("reconciles the PG terminal event after a real subscriber disconnect loses the final hint", async () => {
+    const writer = new Redis(rd.url);
+    const reader = new Redis(rd.url, { lazyConnect: true });
+    const subscriber = createBusSubscriber(() => reader);
+    const bus = createBus(writer, subscriber, "kernel");
+    const config = runConfig(urls(), { runtime: { sseHeartbeatMs: 60_000, sseRecheckMs: 100 } });
+    const chunks: string[] = [];
+    const initial = gate();
+    const streams = new ConversationStreams(
+      k.app.get(EventLog),
+      bus,
+      { isAccessible: async () => true },
+      { get: () => config },
+      { warn: () => {} },
+      {
+        live: async () => {
+          initial.open();
+          return [];
+        },
+      },
+    );
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      const stream = await streams.open(
+        {
+          orgId,
+          conversationId: convId,
+          viewerAccountId: "owner",
+          afterSeq: 0,
+          credential: async () => null,
+        },
+        {
+          write: (chunk) => {
+            chunks.push(chunk);
+          },
+          backlog: () => 0,
+          end: () => {},
+          abort: () => {},
+        },
+      );
+      stream.begin();
+      await initial.promise;
+      const ended = once(reader, "end");
+      reader.disconnect(false);
+      await ended;
+      const [event] = await k.app.get(EventLog).append(convId, [
+        {
+          type: "run_failed",
+          payload: { error: { code: "run.internal", message: "terminal while disconnected" } },
+        },
+      ]);
+      await reader.connect();
+      expect(chunks.join("")).not.toContain("terminal while disconnected");
+      await vi.advanceTimersByTimeAsync(100);
+      await waitFor(
+        async () => chunks.join("").includes("terminal while disconnected"),
+        5_000,
+        "PG catch-up after lost Redis hint",
+      );
+      expect(chunks.join("").match(/terminal while disconnected/g)).toHaveLength(1);
+      expect(chunks.join("")).toContain(`id: ${event?.seq}`);
+    } finally {
+      streams.closeAll();
+      vi.useRealTimers();
+      await subscriber.close();
+      writer.disconnect();
+      reader.disconnect();
+    }
   });
 
   it("连接后发 echo → user_message、多个 delta、assistant_message、run_finished，delta 拼起来等于回复", async () => {

@@ -1051,6 +1051,47 @@ describe("runModelStep", () => {
       expect((await ofType("reminder")).at(-1)?.payload.text).toBe(BUDGET_WRAP_UP_REMINDER);
     });
 
+    it("keeps raw context when a capped compaction stops inside analysis", async () => {
+      const scratchpad = `<analysis>${"unfinished reasoning ".repeat(30)}`;
+      const s = stub(
+        [stubInfo("small", { contextWindow: 15_000, maxOutputTokens: 1000 })],
+        (req) =>
+          req.system.some((x) => x.text.includes(COMPACTION_MARKER)) ? scratchpad : "answer",
+      );
+      stubImpl = {
+        ...s,
+        async *stream(req, options) {
+          for await (const event of s.stream(req, options)) {
+            yield event.type === "message_complete" &&
+            req.system.some((x) => x.text.includes(COMPACTION_MARKER))
+              ? { ...event, stopReason: "max_tokens" as const }
+              : event;
+          }
+        },
+      };
+      const marker = "original context must survive";
+      for (let i = 0; i < 8; i++) {
+        await say(`${marker} turn ${i}`.padEnd(3000, "x"));
+        await answer(`answer ${i}`.padEnd(3000, "x"));
+      }
+      await say("go");
+      const cap = 200;
+      const reserve = 15_000 - cap - (11_000 + Math.ceil(cap / 2) + compactionRequestOverhead());
+      await withSettings({ reserveTokens: reserve, maxOutputTokens: cap }, async () => {
+        const result = await step({
+          agent: agentWith({ model: { provider: "stub", model: "small" } }),
+        });
+        expect(result.content).toEqual([{ type: "text", text: "answer" }]);
+        expect(await ofType("compaction_summary")).toHaveLength(0);
+        expect(await ofType("compaction_failed")).toHaveLength(1);
+        const request = s.calls.find(
+          (c) => !c.system.some((x) => x.text.includes(COMPACTION_MARKER)),
+        );
+        expect(JSON.stringify(request?.messages)).toContain(marker);
+        expect(JSON.stringify(request?.messages)).not.toContain(scratchpad);
+      });
+    });
+
     it("a too-short summary writes compaction_failed (attempt 1) and the step completes; the next turn is skipped by the backoff; after it lapses attempt 2 fails again", async () => {
       // a window above the output cap (O = 1000) keeps the proactive trigger below the hard line,
       // where the backoff still applies

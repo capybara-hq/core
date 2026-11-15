@@ -202,6 +202,10 @@ describe("MaintenanceProcessor (the one consumer)", () => {
         },
       },
       { runSyncJob: async (d) => void calls.push(["directory", d]) },
+      {
+        stopOrg: async (d) => void calls.push(["stop-org", d]),
+        stopTree: async (id, by) => void calls.push(["stop-deleted-tree", id, by]),
+      },
       { stopRun: async (d) => void calls.push(["run-stop", d]) },
       {
         ensureRun: async (id) => {
@@ -257,7 +261,7 @@ describe("MaintenanceProcessor (the one consumer)", () => {
       ["wake", "c2"],
       ["stop-children", "r1", null],
       ["stop-descendants", "r1"],
-      ["stop-tree", "c3", "a1", { includeSelf: false }],
+      ["stop-deleted-tree", "c3", "a1"],
       ["deliver", "r2"],
       ["owned-cleanup", "i1"],
       ["sched-fire", "tr1"],

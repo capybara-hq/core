@@ -173,6 +173,13 @@ export class RunQueue {
     if (!conv || conv.deleted_at !== null || conv.kind !== "chat") {
       throw new ApiError("conversation.not_found", "Conversation not found");
     }
+    const org = await t
+      .selectFrom("orgs")
+      .select("deleted_at")
+      .where("id", "=", conv.org_id)
+      .executeTakeFirst();
+    if (!org || org.deleted_at !== null)
+      throw new ApiError("conversation.not_found", "Conversation not found");
     const active = await t
       .selectFrom("runs")
       .select(["id", "compact"])
@@ -240,6 +247,12 @@ export class RunQueue {
     if (conv?.kind !== "chat" && conv?.kind !== "subagent") return null;
     // A deleted conversation starts no run, whatever is still unconsumed or queued
     if (conv.deleted_at !== null) return null;
+    const org = await t
+      .selectFrom("orgs")
+      .select("deleted_at")
+      .where("id", "=", conv.org_id)
+      .executeTakeFirst();
+    if (!org || org.deleted_at !== null) return null;
     if (conv.kind === "subagent") return this.childWakeIn(conversationId, conv, st);
     const newest = await t
       .selectFrom("conversation_events")

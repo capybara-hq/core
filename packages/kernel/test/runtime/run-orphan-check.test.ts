@@ -7,7 +7,8 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { OutboxDeadService } from "../../src/admin/outbox-dead.service.js";
 import { AdminOverviewService } from "../../src/admin/overview.service.js";
 import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
@@ -32,6 +33,7 @@ import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
+import { drainOutbox } from "../helpers/outbox.js";
 import {
   createConv,
   createOrg,
@@ -383,6 +385,76 @@ describe("run-orphan-check", () => {
     expect(errors.map((e) => e.msg)).not.toContain("queued run without a job: the queue lost jobs");
   });
 
+  it("deleting an org cancels an in-flight model and settles its run without stale output", async () => {
+    scriptRules([
+      {
+        when: { lastUserIncludes: "delete-running" },
+        reply: {
+          text: "stale output",
+          barrier: { name: "deleted-model", count: 99, timeoutMs: 60_000 },
+        },
+      },
+    ]);
+    const conv = await createConv(owner, orgId, agentId);
+    await postMessage(owner, orgId, conv, "delete-running");
+    const call = await waitFor(
+      async () => (await eventsOf(db, conv)).find((e) => e.type === "model_call"),
+      10_000,
+      "in-flight model",
+    );
+    const deleted = await owner({ method: "DELETE", url: `/api/v1/orgs/${orgId}` });
+    expect(deleted.statusCode, deleted.body).toBe(204);
+    await waitForRunJobDone(db, runQueue, call.runId as string, 15_000);
+    expect(await runStatus(db, call.runId as string)).toBe("aborted");
+    const events = await eventsOf(db, conv);
+    expect(
+      events.some((e) => e.type === "assistant_message" || e.type === "tool_call_started"),
+    ).toBe(false);
+    expect(events.filter((e) => e.type === "run_aborted")).toHaveLength(1);
+  });
+
+  it("deleting an org settles a waiting run and cancels its approval", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    await postMessage(owner, orgId, conv, "SCENARIO ask");
+    const asked = await waitFor(
+      async () => (await eventsOf(db, conv)).find((e) => e.type === "approval_requested"),
+      10_000,
+      "pending approval",
+    );
+    await waitFor(
+      async () => (await runStatus(db, asked.runId as string)) === "waiting",
+      10_000,
+      "waiting run",
+    );
+    const deleted = await owner({ method: "DELETE", url: `/api/v1/orgs/${orgId}` });
+    expect(deleted.statusCode, deleted.body).toBe(204);
+    await waitFor(
+      async () => (await runStatus(db, asked.runId as string)) === "aborted",
+      10_000,
+      "deleted waiting run",
+    );
+    const pending = await db
+      .selectFrom("approvals")
+      .select("id")
+      .where("run_id", "=", asked.runId as string)
+      .where("status", "=", "pending")
+      .execute();
+    expect(pending).toEqual([]);
+  });
+
+  it("settles a deleted org's run even if deletion cleanup was never delivered", async () => {
+    const { conv, runId } = await runningOrphan();
+    await db
+      .updateTable("orgs")
+      .set({ deleted_at: sql<Date>`now()` })
+      .where("id", "=", orgId)
+      .execute();
+    await check();
+    expect(await runStatus(db, runId)).toBe("aborted");
+    expect((await eventsOf(db, conv)).some((e) => e.type === "run_aborted")).toBe(true);
+    expect(await runQueue.getJob(runJobId(conv, 1))).toBeUndefined();
+  });
+
   it("a deleted org's queued run whose owed job went with the org is no lost job; its usage stays owed", async () => {
     // queued, its job still owed by the outbox (Redis was down): the org's deletion purges the row
     const owed = await runningOrphan();
@@ -435,7 +507,42 @@ describe("run-orphan-check", () => {
     ).toEqual([]);
   });
 
-  it("reaches an orphan behind a full page of healthy candidates, and skips a dead-lettered job", async () => {
+  it("rotates across bounded passes to reach an orphan behind 5001 healthy runs", async () => {
+    // 600 queued runs older than the orphan, each with its job still owed (Redis was down): a
+    // first page of candidates the check must pass over
+    await sql`
+      WITH c AS (
+        INSERT INTO capybara.conversations (id, org_id, agent_id, account_id, title)
+        SELECT gen_random_uuid()::text, ${orgId}, ${agentId}, ${ownerId}, 'Waiting'
+        FROM generate_series(1, 5001)
+        RETURNING id
+      ), r AS (
+        INSERT INTO capybara.runs
+          (id, conversation_id, status, agent_version, trigger_account_id, trigger_seq,
+           created_at, queued_at)
+        SELECT gen_random_uuid()::text, id, 'queued', 1, ${ownerId}, 1,
+          now() - interval '10 minutes', now() - interval '10 minutes'
+        FROM c
+        RETURNING id, conversation_id
+      )
+      INSERT INTO capybara.outbox (queue, job_name, job_id, data, org_id, next_attempt_at)
+      SELECT ${RUN_QUEUE_NAME}, 'run', 'run-' || conversation_id || '-1',
+        jsonb_build_object('runId', id, 'conversationId', conversation_id), ${orgId},
+        now() + interval '1 hour'
+      FROM r`.execute(db);
+    const { runId } = await runningOrphan();
+    await db
+      .updateTable("runs")
+      .set({ started_at: sql<Date>`now() - interval '2 minutes'` })
+      .where("id", "=", runId)
+      .execute();
+    expect(await check()).toEqual({ runningRepaired: 0, queuedReadded: 0 });
+    expect(await runStatus(db, runId)).toBe("running");
+    expect(await check()).toEqual({ runningRepaired: 1, queuedReadded: 0 });
+    expect(await runStatus(db, runId)).toBe("failed");
+  });
+
+  it("reaches an orphan behind healthy candidates and fails exhausted run delivery", async () => {
     // 600 queued runs older than the orphan, each with its job still owed (Redis was down): a
     // first page of candidates the check must pass over
     await sql`
@@ -482,8 +589,70 @@ describe("run-orphan-check", () => {
       .execute();
     expect(await check()).toEqual({ runningRepaired: 1, queuedReadded: 0 });
     expect(await runStatus(db, runId)).toBe("failed");
-    expect(await runStatus(db, dead.runId)).toBe("queued");
+    expect(await runStatus(db, dead.runId)).toBe("failed");
+    expect(
+      (await eventsOf(db, dead.conv)).find((e) => e.type === "run_failed")?.payload,
+    ).toMatchObject({ error: { code: "run.delivery_failed" } });
     expect(errors.map((e) => e.msg)).not.toContain("queued run without a job: the queue lost jobs");
+    const row = await db
+      .selectFrom("outbox")
+      .select("id")
+      .where("job_id", "=", runJobId(dead.conv, dead.seq))
+      .where("dead_at", "is not", null)
+      .executeTakeFirstOrThrow();
+    await k.app.get(OutboxDeadService).retry(row.id, { accountId: ownerId });
+    await drainOutbox(k.app, { jobId: runJobId(dead.conv, dead.seq) });
+    await waitForRunJobDone(db, runQueue, dead.runId, 15_000);
+    expect(await runStatus(db, dead.runId)).toBe("failed");
+    expect((await eventsOf(db, dead.conv)).filter((e) => e.type === "model_call")).toHaveLength(0);
+    await postMessage(owner, orgId, dead.conv, "retry explicitly");
+    await waitForTerminal(db, dead.conv, 2, 15_000);
+    expect((await runsOf(dead.conv)).map((r) => r.status)).toEqual(["failed", "completed"]);
+  });
+
+  it("does not fail a live admin retry when another historical dead row remains", async () => {
+    await runQueue.pause();
+    const dead = await runningOrphan();
+    await db.updateTable("runs").set({ status: "queued" }).where("id", "=", dead.runId).execute();
+    const jobId = runJobId(dead.conv, dead.seq);
+    const rows = await db
+      .insertInto("outbox")
+      .values(
+        [1, 2].map(() => ({
+          queue: RUN_QUEUE_NAME,
+          job_name: "run",
+          job_id: jobId,
+          data: JSON.stringify({ runId: dead.runId, conversationId: dead.conv }),
+          org_id: orgId,
+          attempts: 20,
+          dead_at: sql<Date>`now()`,
+        })),
+      )
+      .returning("id")
+      .execute();
+    const service = k.app.get(RunOrphanCheck) as unknown as {
+      failIn(candidate: unknown, deliveryFailed?: boolean): Promise<number | null>;
+    };
+    const fail = service.failIn.bind(service);
+    const spy = vi
+      .spyOn(service, "failIn")
+      .mockImplementationOnce(async (candidate, deliveryFailed) => {
+        await k.app.get(OutboxDeadService).retry(rows[1]?.id as string, { accountId: ownerId });
+        await drainOutbox(k.app, { jobId });
+        expect(await runQueue.getJob(jobId)).toBeDefined();
+        return fail(candidate, deliveryFailed);
+      });
+    try {
+      await check();
+      expect(spy).toHaveBeenCalledOnce();
+      expect(await runStatus(db, dead.runId)).toBe("queued");
+      expect((await eventsOf(db, dead.conv)).some((e) => e.type === "run_failed")).toBe(false);
+    } finally {
+      spy.mockRestore();
+      await runQueue.resume();
+    }
+    await waitForTerminal(db, dead.conv, 1, 15_000);
+    expect(await runStatus(db, dead.runId)).toBe("completed");
   });
 
   it("GET events and opening SSE never change run state", async () => {

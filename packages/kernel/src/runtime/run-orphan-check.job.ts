@@ -14,6 +14,7 @@ import type { KernelLogger } from "../log.js";
 import { KyselyCheckpointSaver } from "./checkpointer.js";
 import { ConversationLock } from "./conversation-lock.js";
 import { QueueLostJobs } from "./queue-lost-jobs.js";
+import { RunDeletion } from "./run-deletion.js";
 import { notifyFinished, RunFinish } from "./run-finish.js";
 import { RunJobs, runJobId, runQueueNameFor } from "./run-jobs.js";
 import { RunQueue } from "./run-queue.js";
@@ -37,7 +38,7 @@ export const RUN_ORPHAN_CHECK_BATCH = 500;
 /**
  * The most pages one pass reads: a bound on its work. Healthy long runs and queued runs waiting
  * for a quota slot are passed over page by page, so a real orphan behind them is still reached;
- * beyond this many candidates the rest wait for the next minute.
+ * the shared cursor resumes after the last inspected row on the next pass.
  */
 export const RUN_ORPHAN_CHECK_MAX_PAGES = 10;
 
@@ -59,6 +60,7 @@ export interface OrphanCandidate {
   orgId: string;
   kind: ConversationKind;
   status: "queued" | "running";
+  deleted: boolean;
   /** The run's job id (a resume's `runs.job_id`, else its trigger's) and queue. */
   jobId: string;
   queue: string;
@@ -72,10 +74,8 @@ const SINCE = sql<Date>`GREATEST(COALESCE(r.queued_at, r.created_at), COALESCE(r
 /**
  * One page of the active runs of chat and sub-agent conversations in `statuses` that entered their
  * state more than `minAgeMs` ago, by (state start, id), after `after` (an eval's hidden
- * conversation drives its runs itself). A deleted org's runs are never candidates, running ones
- * included: its deletion purged its owed jobs on purpose, so their absence is no lost job and
- * nothing is re-added, and the org's data is invisible from then on, so a running orphan is left
- * as it is rather than failed.
+ * conversation drives its runs itself). Deleted rows are included for cancellation recovery;
+ * their intentionally removed jobs are never interpreted as queue loss or re-added.
  */
 export async function orphanCandidates(
   db: KernelSchemaDb,
@@ -96,11 +96,12 @@ export async function orphanCandidates(
       "r.trigger_seq",
       "c.kind",
       "c.org_id",
+      "c.deleted_at as conversation_deleted",
+      "o.deleted_at as org_deleted",
       sql<string>`${SINCE}::text`.as("since"),
     ])
     .where("r.status", "in", statuses)
     .where("c.kind", "in", ["chat", "subagent"])
-    .where("o.deleted_at", "is", null)
     .where(SINCE, "<", sql<Date>`now() - ${minAgeMs}::integer * interval '1 millisecond'`);
   if (after !== undefined) {
     q = q.where(sql<boolean>`(${SINCE}, r.id) > (${after.since}::timestamptz, ${after.runId})`);
@@ -112,16 +113,14 @@ export async function orphanCandidates(
     orgId: r.org_id,
     kind: r.kind,
     status: r.status as "queued" | "running",
+    deleted: r.conversation_deleted !== null || r.org_deleted !== null,
     jobId: r.job_id ?? runJobId(r.conversation_id, Number(r.trigger_seq)),
     queue: runQueueNameFor(r.kind),
     since: r.since,
   }));
 }
 
-/**
- * Whether the outbox holds the job `jobId` on `queue`: a pending row (it is still owed) or a dead
- * one (the outbox gave up on it; the super admin sees it under `outbox_dead` and retries or
- * discards it, so it is not a job the queue lost).
+/** Whether delivery is still owed by a pending outbox row; dead copies are not active work.
  */
 export async function jobInOutbox(
   db: KernelSchemaDb,
@@ -133,6 +132,7 @@ export async function jobInOutbox(
     .select("id")
     .where("queue", "=", queue)
     .where("job_id", "=", jobId)
+    .where("dead_at", "is", null)
     .executeTakeFirst();
   return row !== undefined;
 }
@@ -142,8 +142,8 @@ async function* candidatePages(
   db: KernelSchemaDb,
   statuses: readonly ("queued" | "running")[],
   minAgeMs: number,
+  after?: Pick<OrphanCandidate, "since" | "runId">,
 ): AsyncGenerator<OrphanCandidate[]> {
-  let after: OrphanCandidate | undefined;
   for (let page = 0; page < RUN_ORPHAN_CHECK_MAX_PAGES; page++) {
     const rows = await orphanCandidates(db, statuses, minAgeMs, RUN_ORPHAN_CHECK_BATCH, after);
     if (rows.length > 0) yield rows;
@@ -168,6 +168,7 @@ export async function queuedRunsWithoutJob(
   const out: OrphanCandidate[] = [];
   for await (const page of candidatePages(db, ["queued"], opts.minAgeMs)) {
     for (const c of page) {
+      if (c.deleted) continue;
       if (await jobInOutbox(db, c.queue, c.jobId)) continue;
       if (await jobExists(c.queue, c.jobId)) continue;
       const now = await db
@@ -191,7 +192,7 @@ export async function queuedRunsWithoutJob(
  *   `run.orphaned` (its terminal transaction cancels its waits and owes what every run end owes),
  *   then, after the commit, its checkpoints are dropped, its fork child stopped (`run.orphaned`), a
  *   sub-agent's failure delivered to its parent at once and the conversation's next run started.
- * - `queued`, with no outbox row either (pending or dead): a canary. Every queued run has its job
+ * - `queued`, with no pending or current-generation dead delivery: a canary. Every queued run has its job
  *   owed in its own transaction, so this means Redis lost data. It is logged as an error, counted
  *   for the admin overview ({@link QueueLostJobs}) and its job owed again so the run is not stuck.
  * Redis is read before each repair's transaction, which then re-reads the run under its
@@ -212,6 +213,7 @@ export class RunOrphanCheck {
     @Inject(Waits) private readonly waits: Pick<Waits, "childFinished">,
     /** The conversation's next run, after a repaired run's end. */
     @Inject(RunQueue) private readonly queue: Pick<RunQueue, "ensureRun">,
+    @Inject(RunDeletion) private readonly deletion: Pick<RunDeletion, "stopDeletedConversation">,
     @Inject(QueueLostJobs) private readonly lostJobs: Pick<QueueLostJobs, "report">,
     @Inject(KernelEvents) private readonly events: KernelEvents,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
@@ -233,13 +235,28 @@ export class RunOrphanCheck {
   async check(): Promise<RunOrphanCheckResult> {
     const out: RunOrphanCheckResult = { runningRepaired: 0, queuedReadded: 0 };
     const lost: OrphanCandidate[] = [];
-    const pages = candidatePages(this.db, ["queued", "running"], RUN_ORPHAN_MIN_AGE_MS);
+    const cursor = await this.db
+      .selectFrom("run_recovery_cursors")
+      .select(["run_id", sql<string | null>`since::text`.as("since")])
+      .where("name", "=", "active-runs")
+      .executeTakeFirst();
+    const after =
+      cursor?.since && cursor.run_id ? { since: cursor.since, runId: cursor.run_id } : undefined;
+    const pages = candidatePages(this.db, ["queued", "running"], RUN_ORPHAN_MIN_AGE_MS, after);
+    let inspected = 0;
     for await (const page of pages) {
+      inspected++;
       for (const c of page) {
         try {
+          if (c.deleted) {
+            await this.deletion.stopDeletedConversation(c.conversationId, null);
+            continue;
+          }
           if (!(await this.withoutJobOrHolder(c))) continue;
           if (c.status === "running") {
             if (await this.failRunning(c)) out.runningRepaired++;
+          } else if (await this.hasDeadDelivery(c)) {
+            await this.failRunning(c, true);
           } else if (await this.oweAgainIn(c)) {
             out.queuedReadded++;
             lost.push(c);
@@ -248,7 +265,10 @@ export class RunOrphanCheck {
           this.log.error("run-orphan-check: cannot repair a run", { runId: c.runId, err });
         }
       }
+      const last = page.at(-1);
+      if (last) await this.saveCursorIn(last);
     }
+    if (inspected < RUN_ORPHAN_CHECK_MAX_PAGES) await this.saveCursorIn(null);
     if (lost.length > 0) {
       this.log.error(QUEUE_LOST_JOBS_MESSAGE, {
         count: lost.length,
@@ -259,9 +279,36 @@ export class RunOrphanCheck {
     return out;
   }
 
+  @Transactional({ propagation: "requires_new" })
+  private async saveCursorIn(
+    cursor: Pick<OrphanCandidate, "since" | "runId"> | null,
+  ): Promise<void> {
+    const values = {
+      since: cursor === null ? null : sql<Date>`${cursor.since}::timestamptz`,
+      run_id: cursor?.runId ?? null,
+    };
+    await this.db
+      .insertInto("run_recovery_cursors")
+      .values({ name: "active-runs", ...values })
+      .onConflict((oc) => oc.column("name").doUpdateSet(values))
+      .execute();
+  }
+
+  private async hasDeadDelivery(c: OrphanCandidate): Promise<boolean> {
+    return (
+      (await this.db
+        .selectFrom("outbox")
+        .select("id")
+        .where("queue", "=", c.queue)
+        .where("job_id", "=", c.jobId)
+        .where("dead_at", ">=", sql<Date>`${c.since}::timestamptz`)
+        .executeTakeFirst()) !== undefined
+    );
+  }
+
   /**
    * Neither a conversation lock holder nor the run's job in BullMQ (nor, queued, in the outbox: an
-   * owed row is delivered by the relay, a dead one waits for the super admin).
+   * owed row is delivered by the relay; a dead current delivery is settled visibly).
    */
   private async withoutJobOrHolder(c: OrphanCandidate): Promise<boolean> {
     if ((await this.lock.holder(c.conversationId)) !== null) return false;
@@ -274,8 +321,8 @@ export class RunOrphanCheck {
    * the open pages hear it, its checkpoints go, its fork child stops, a sub-agent reports to its
    * parent and the conversation's next run starts (each also owed by the terminal transaction).
    */
-  private async failRunning(c: OrphanCandidate): Promise<boolean> {
-    const seq = await this.failIn(c);
+  private async failRunning(c: OrphanCandidate, deliveryFailed = false): Promise<boolean> {
+    const seq = await this.failIn(c, deliveryFailed);
     if (seq === null) return false;
     this.log.warn("run-orphan-check: failed a running run nobody runs", {
       runId: c.runId,
@@ -303,8 +350,26 @@ export class RunOrphanCheck {
 
   /** {@link failRunning}'s transaction: the terminal state, if the run is still the same orphan. */
   @Transactional({ propagation: "requires_new" })
-  private async failIn(c: OrphanCandidate): Promise<number | null> {
+  private async failIn(c: OrphanCandidate, deliveryFailed = false): Promise<number | null> {
     if (!(await this.stillIn(c))) return null;
+    if (deliveryFailed) {
+      // Lock dead rows against admin retry. A pending retry always takes precedence over a
+      // historical dead copy. Producers of replacement jobs also hold this conversation lock.
+      const deliveries = await this.db
+        .selectFrom("outbox")
+        .select("dead_at")
+        .where("queue", "=", c.queue)
+        .where("job_id", "=", c.jobId)
+        .where((eb) =>
+          eb.or([
+            eb("dead_at", "is", null),
+            eb("dead_at", ">=", sql<Date>`${c.since}::timestamptz`),
+          ]),
+        )
+        .forUpdate()
+        .execute();
+      if (deliveries.length === 0 || deliveries.some((row) => row.dead_at === null)) return null;
+    }
     return this.finisher.finishIn({
       conversationId: c.conversationId,
       runId: c.runId,
@@ -313,7 +378,12 @@ export class RunOrphanCheck {
       event: {
         type: "run_failed",
         payload: {
-          error: { code: "run.orphaned", message: "The run was lost and will not continue" },
+          error: deliveryFailed
+            ? {
+                code: "run.delivery_failed",
+                message: "The run could not be delivered. Send a new message to retry.",
+              }
+            : { code: "run.orphaned", message: "The run was lost and will not continue" },
         },
       },
     });
