@@ -407,6 +407,14 @@ describe("extractSummary", () => {
     expect(extractSummary("<analysis>only thinking</analysis>")).toBe("");
   });
 
+  it("rejects an analysis scratchpad truncated before its closing tag", () => {
+    expect(extractSummary(`<analysis>${"unfinished reasoning ".repeat(30)}`)).toBe("");
+  });
+
+  it("does not extract summary-shaped text from inside an unfinished analysis", () => {
+    expect(extractSummary("<analysis>draft <summary>not a final summary</summary>")).toBe("");
+  });
+
   it("removes an analysis block from an untagged answer", () => {
     expect(extractSummary("<analysis>t</analysis>\nThe summary.")).toBe("The summary.");
   });

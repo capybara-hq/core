@@ -1,5 +1,6 @@
 import type { OutboxService } from "../../infra/outbox/outbox.service.js";
 import { MAINTENANCE_QUEUE_NAME } from "../maintenance-queue.js";
+import type { RunDeletion } from "../run-deletion.js";
 import type { Waits } from "../waits.js";
 
 /**
@@ -8,8 +9,8 @@ import type { Waits } from "../waits.js";
  * - `{ runId }`: what a run's terminal transaction owes its children: its active fork invocation
  *   child stops (`Waits.stopChildren`, sub-agents spec §12), and a sub-agent run a person stopped
  *   stops its descendants (`Waits.stopDescendantsOfStopped`, agent map spec §6);
- * - `{ conversationId, byAccountId }`: a deleted root's whole tree below it stops
- *   (`Waits.stopTree` without the root, agent map spec §10).
+ * - `{ conversationId, byAccountId }`: a deleted root's whole tree including the root stops
+ *   (`Waits.stopTree` including the root, agent map spec §10).
  *
  * The caller still stops them right after its commit; the job is the backstop for a process that
  * died in between, {@link TREE_JOB_BACKSTOP_MS} later.
@@ -110,13 +111,14 @@ export function oweDeliverToParent(
 export async function processStopTree(
   waits: Pick<Waits, "stopChildren" | "stopDescendantsOfStopped" | "stopTree">,
   data: StopTreeJobData,
+  deletion: Pick<RunDeletion, "stopTree">,
 ): Promise<void> {
   if ("runId" in data) {
     await waits.stopChildren(data.runId, null);
     await waits.stopDescendantsOfStopped(data.runId);
     return;
   }
-  await waits.stopTree(data.conversationId, data.byAccountId, { includeSelf: false });
+  await deletion.stopTree(data.conversationId, data.byAccountId);
 }
 
 /**

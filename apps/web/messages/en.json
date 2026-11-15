@@ -177,6 +177,7 @@
       "not_found": "The background job no longer exists."
     },
     "run": {
+      "delivery_failed": "The reply could not start. Send a new message to try again.",
       "not_active": "There is no reply in progress.",
       "model_unavailable": "The model is unavailable.",
       "provider_unavailable": "The model provider list is temporarily unavailable.",

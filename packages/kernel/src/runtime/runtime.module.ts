@@ -30,7 +30,9 @@ import { ProvidersModule } from "./providers.js";
 import { EVAL_QUOTA, EVAL_QUOTA_PREFIX, OrgQuota, RUN_QUOTA, RUN_QUOTA_PREFIX } from "./quota.js";
 import { RunContextService } from "./run-context.service.js";
 import { RunControl } from "./run-control.js";
+import { RunDeletion } from "./run-deletion.js";
 import { RunDrafts } from "./run-drafts.js";
+import { RunExecution } from "./run-execution.js";
 import { RunFinish } from "./run-finish.js";
 import { RunJobsModule } from "./run-jobs.js";
 import { RunQueue } from "./run-queue.js";
@@ -77,6 +79,8 @@ import { Waits } from "./waits.js";
   ],
   providers: [
     ConversationLock,
+    RunExecution,
+    RunDeletion,
     ConversationStreams,
     RunAbort,
     KyselyCheckpointSaver,
@@ -115,6 +119,8 @@ import { Waits } from "./waits.js";
   ],
   exports: [
     ConversationLock,
+    RunExecution,
+    RunDeletion,
     ConversationStreams,
     RunAbort,
     KyselyCheckpointSaver,

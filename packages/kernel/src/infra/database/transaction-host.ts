@@ -22,6 +22,16 @@ interface TransactionStore {
 /** One store for the process: `afterCommit` (a free function) reads it without a host instance. */
 const storage = new AsyncLocalStorage<TransactionStore>();
 
+/** A caller's execution authority, checked inside every new transaction before domain writes. */
+const fences = new AsyncLocalStorage<() => Promise<void>>();
+
+export function withTransactionFence<T>(
+  fence: () => Promise<void>,
+  fn: () => Promise<T>,
+): Promise<T> {
+  return fences.run(fence, fn);
+}
+
 export type Propagation = "required" | "requires_new" | "mandatory";
 
 export interface TransactionOptions {
@@ -79,7 +89,7 @@ export function currentStore(): TransactionStore | undefined {
  * join (or write through) a transaction that may already be committed or rolled back.
  */
 export function runOutsideTransaction<T>(fn: () => T): T {
-  return storage.exit(fn);
+  return fences.exit(() => storage.exit(fn));
 }
 
 @Injectable()
@@ -127,7 +137,12 @@ export class TransactionHost {
       if (opts.accessMode !== undefined) builder = builder.setAccessMode(opts.accessMode);
       result = await builder.execute((trx) => {
         store = { pool: this.pool, trx, hooks, done: false };
-        return storage.run(store, fn);
+        return storage.run(store, async () => {
+          // PostgreSQL forbids row locks in a read-only snapshot and enforces that it cannot
+          // mutate. Every later mutation or external dispatch still enters a writable fence.
+          if (opts.accessMode !== "read only") await fences.getStore()?.();
+          return fn();
+        });
       });
     } finally {
       if (store) store.done = true;

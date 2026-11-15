@@ -333,7 +333,7 @@ class Connection implements StreamHandle {
     this.enqueue(() => this.write(`event: delta\ndata: ${JSON.stringify(delta)}\n\n`));
   }
 
-  private enqueue(fn: () => unknown): void {
+  private enqueue(fn: () => unknown): Promise<void> {
     this.chain = this.chain
       .then(async () => {
         if (!this.closed) await fn();
@@ -345,11 +345,12 @@ class Connection implements StreamHandle {
         });
         this.close("abort");
       });
+    return this.chain;
   }
 
   /** 读 lastSeq 之后的全部事件并发送（按 seq 去重：只发大于已发送值的）。 */
-  private async catchUp(): Promise<void> {
-    for (;;) {
+  private async catchUp(maxPages = Number.POSITIVE_INFINITY): Promise<void> {
+    for (let page = 0; page < maxPages; page++) {
       const evs = await this.d.eventLog.readAfter(this.p.conversationId, this.lastSeq, PAGE);
       for (const e of evs) {
         if (this.closed) return;
@@ -410,6 +411,11 @@ class Connection implements StreamHandle {
     try {
       const denied = await authorize(this.d, this.p);
       if (denied !== null) this.fail(denied);
+      else {
+        // Pub/sub is a hint: a lost final notification must not leave an open stream stale.
+        // One page per authorized recheck bounds PG work; the shared chain deduplicates hints.
+        await this.enqueue(() => this.catchUp(1));
+      }
     } catch (err) {
       this.d.log.warn("conversation stream access re-check failed; closing", {
         conversationId: this.p.conversationId,

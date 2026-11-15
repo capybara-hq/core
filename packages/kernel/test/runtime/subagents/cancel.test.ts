@@ -12,6 +12,7 @@ import type { KernelSchemaDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
 import { LockedIntervalScheduler } from "../../../src/infra/schedule/locked-interval.js";
 import { RunAbort } from "../../../src/runtime/abort.js";
+import { RunDeletion } from "../../../src/runtime/run-deletion.js";
 import { RUN_ORPHAN_CHECK_JOB, RunOrphanCheck } from "../../../src/runtime/run-orphan-check.job.js";
 import { SUBAGENT_RUN_QUEUE_NAME } from "../../../src/runtime/run-queue.js";
 import { processStopTree } from "../../../src/runtime/subagents/tree-jobs.js";
@@ -545,7 +546,11 @@ describe("stopping a sub-agent stops its descendants", () => {
       .set({ deleted_at: new Date() })
       .where("id", "=", conv)
       .execute();
-    await processStopTree(k.app.get(Waits), { conversationId: conv, byAccountId: null });
+    await processStopTree(
+      k.app.get(Waits),
+      { conversationId: conv, byAccountId: null },
+      k.app.get(RunDeletion),
+    );
     await allStopped([t1.runId, t2.runId, t3.runId, sibling.runId]);
   });
 });

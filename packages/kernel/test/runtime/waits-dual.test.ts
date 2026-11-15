@@ -1,28 +1,48 @@
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import { emptyCheckpoint } from "@langchain/langgraph-checkpoint";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { AgentLookup } from "../../src/agents/agent-lookup.js";
+import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
+import { KernelDb } from "../../src/infra/database/kernel-db.js";
+import { TransactionHost } from "../../src/infra/database/transaction-host.js";
+import { OrgLock } from "../../src/orgs/org-lock.js";
+import { KyselyCheckpointSaver } from "../../src/runtime/checkpointer.js";
+import type { LoopContext, LoopOutcome } from "../../src/runtime/loop.js";
+import { assistantIdemKey } from "../../src/runtime/model-call.js";
+import { RunExecution } from "../../src/runtime/run-execution.js";
+import { RunJobs, runJobId } from "../../src/runtime/run-jobs.js";
+import { AGENT_LOOP_FACTORY } from "../../src/runtime/run-steps.js";
+import { RunWorker } from "../../src/runtime/run-worker.js";
 import { MAINTENANCE_QUEUE_NAME, Waits, waitTimeoutJobId } from "../../src/runtime/waits.js";
+import { ToolPipeline, type ToolStepContext } from "../../src/tools/pipeline.js";
+import { ToolRegistry } from "../../src/tools/registry.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
+import { toolsCountState } from "../fixtures/plugins/tools-count/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
+  createAgent,
   createConv,
   createOrg,
   eventsOf,
+  gate,
   PW,
   postMessage,
   type Req,
   runConfig,
+  session,
   startKernel,
   type TestKernel,
   waitFor,
@@ -233,5 +253,433 @@ describe("双副本续跑", () => {
       outcomes.push(decided[0]?.payload.decision ?? "");
     }
     expect(outcomes.slice(0, 2)).toEqual(["approved", "expired"]);
+  });
+});
+
+describe("execution claim ownership across replicas", () => {
+  let pg: TestContainer;
+  let redis: TestContainer;
+  let k: TestKernel;
+  let replica: TestKernel;
+  let toolContext: ToolStepContext;
+  let scenarioA: (ctx: LoopContext) => Promise<LoopOutcome>;
+  let scenarioB: (ctx: LoopContext) => Promise<LoopOutcome>;
+
+  let conversationId: string;
+  let runId: string;
+  beforeAll(async () => {
+    [pg, redis] = await Promise.all([startTestPostgres(), startTestRedis()]);
+    const config = runConfig(
+      { pg: pg.url, redis: redis.url },
+      {
+        roles: ["api"],
+        extensions: [
+          MODEL_FAKE,
+          fileURLToPath(new URL("../fixtures/plugins/tools-count/index.ts", import.meta.url)),
+        ],
+      },
+    );
+    k = await startKernel(config, {
+      overrides: [
+        {
+          provide: AGENT_LOOP_FACTORY,
+          useValue: () => ({ run: (ctx: LoopContext) => scenarioA(ctx) }),
+        },
+      ],
+    });
+    replica = await startKernel(config, {
+      overrides: [
+        {
+          provide: AGENT_LOOP_FACTORY,
+          useValue: () => ({ run: (ctx: LoopContext) => scenarioB(ctx) }),
+        },
+      ],
+    });
+    const db = k.app.get(KernelDb);
+    const owner = await accountsFor(db.db).createLocal({
+      login: "owner",
+      password: PW,
+      displayName: "O",
+    });
+    const req = await session(k, "owner");
+    const orgId = await createOrg(req);
+    const enabled = await req({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgId}/extensions/tools-count`,
+      payload: { enabled: true },
+    });
+    expect(enabled.statusCode, enabled.body).toBe(200);
+    const agentId = await createAgent(req, orgId);
+    conversationId = await createConv(req, orgId, agentId);
+    runId = randomUUID();
+    const agent = (await k.app.get(AgentLookup).get(orgId, agentId, owner.id)).definition;
+    toolContext = {
+      orgId,
+      conversationId,
+      runId,
+      step: 1,
+      agentId,
+      agentVersion: 1,
+      agent,
+      accountId: owner.id,
+      source: "web",
+      ownerAccountId: owner.id,
+      role: "owner",
+      signal: new AbortController().signal,
+    };
+    await db
+      .insertInto("runs")
+      .values({
+        id: runId,
+        conversation_id: conversationId,
+        trigger_account_id: owner.id,
+        trigger_seq: "1",
+        agent_version: 1,
+        status: "queued",
+      })
+      .execute();
+  });
+  afterAll(async () => {
+    await replica?.close();
+    await k?.close();
+    await Promise.all([pg?.stop(), redis?.stop()]);
+  });
+
+  it("a replacement claim rejects every old transaction before its first write", async () => {
+    const execution = k.app.get(RunExecution);
+    const log = k.app.get(EventLog);
+    const tx = k.app.get(TransactionHost);
+    const db = k.app.get(KernelDb);
+    const old = await execution.claim(conversationId, runId, randomUUID());
+    expect(old).not.toBeNull();
+    const replacement = await replica.app
+      .get(RunExecution)
+      .claim(conversationId, runId, randomUUID());
+    expect(replacement).not.toBeNull();
+    if (old === null || replacement === null) throw new Error("missing execution claim");
+    const append = () =>
+      log.append(conversationId, [
+        {
+          type: "run_failed",
+          runId,
+          payload: { error: { code: "run.internal", message: "stale" } },
+        },
+      ]);
+    await expect(execution.withClaim(old, () => true, append)).rejects.toThrow("execution revoked");
+    // A builtin tool's transaction must be fenced even when it does not append an event.
+    await expect(
+      execution.withClaim(
+        old,
+        () => true,
+        () =>
+          tx.run(async () => {
+            await db
+              .updateTable("conversations")
+              .set({ title: "stale tool side effect" })
+              .where("id", "=", conversationId)
+              .execute();
+          }),
+      ),
+    ).rejects.toThrow("execution revoked");
+    expect(
+      (
+        await db
+          .selectFrom("conversations")
+          .select("title")
+          .where("id", "=", conversationId)
+          .executeTakeFirst()
+      )?.title,
+    ).not.toBe("stale tool side effect");
+    const saver = k.app.get(KyselyCheckpointSaver);
+    const config = { configurable: { thread_id: runId } };
+    const checkpoint = emptyCheckpoint();
+    await replica.app.get(RunExecution).withClaim(
+      replacement,
+      () => true,
+      () =>
+        replica.app
+          .get(KyselyCheckpointSaver)
+          .put(config, checkpoint, { source: "loop", step: 1, parents: {} }, {}),
+    );
+    await expect(
+      execution.withClaim(
+        old,
+        () => true,
+        () => saver.put(config, emptyCheckpoint(), { source: "loop", step: 2, parents: {} }, {}),
+      ),
+    ).rejects.toThrow("execution revoked");
+    await expect(
+      execution.withClaim(
+        old,
+        () => true,
+        () => saver.deleteThread(runId),
+      ),
+    ).rejects.toThrow("execution revoked");
+    expect((await saver.getTuple(config))?.checkpoint.id).toBe(checkpoint.id);
+    const tool = (
+      await k.app.get(ToolRegistry).forAgent(toolContext.orgId, { source: "web" })
+    ).tools.find((t) => t.key === "plugin__tools-count__count");
+    expect(tool).toBeDefined();
+    if (!tool) throw new Error("missing counter tool");
+    toolsCountState().count = 0;
+    await execution.withClaim(
+      old,
+      () => true,
+      () => k.app.get(ToolPipeline).execute(tool, { n: 1 }, toolContext, "old-call"),
+    );
+    expect(toolsCountState().count).toBe(0);
+    await execution.withClaim(
+      replacement,
+      () => true,
+      () => k.app.get(ToolPipeline).execute(tool, { n: 1 }, toolContext, "new-call"),
+    );
+    expect(toolsCountState().count).toBe(1);
+    const snapshot = await execution.withClaim(
+      replacement,
+      () => true,
+      () =>
+        tx.run(
+          () =>
+            db.selectFrom("runs").select("id").where("id", "=", runId).executeTakeFirstOrThrow(),
+          {
+            propagation: "requires_new",
+            isolationLevel: "repeatable read",
+            accessMode: "read only",
+          },
+        ),
+    );
+    expect(snapshot.id).toBe(runId);
+    await execution.withClaim(replacement, () => true, append);
+    await expect(execution.withClaim(replacement, () => false, append)).rejects.toThrow(
+      "execution revoked",
+    );
+  });
+
+  it("claim admission does not block references to the conversation row", async () => {
+    let admitted = false;
+    let pending = Promise.resolve<Awaited<ReturnType<RunExecution["claim"]>>>(null);
+    try {
+      await k.app.get(TransactionHost).run(async () => {
+        // A session grant's FK holds KEY SHARE on the root while its approval locks a child.
+        await k.app
+          .get(KernelDb)
+          .selectFrom("conversations")
+          .select("id")
+          .where("id", "=", conversationId)
+          .forKeyShare()
+          .execute();
+        pending = replica.app
+          .get(RunExecution)
+          .claim(conversationId, runId, randomUUID())
+          .then((claim) => {
+            admitted = claim !== null;
+            return claim;
+          });
+        await waitFor(async () => admitted, 2_000, "claim compatible with conversation references");
+      });
+    } finally {
+      await pending;
+    }
+  });
+
+  it("a lost acquisition cannot overwrite a replacement claim after waiting for admission", async () => {
+    const execution = k.app.get(RunExecution);
+    const current = await replica.app.get(RunExecution).claim(conversationId, runId, randomUUID());
+    if (!current) throw new Error("missing replacement claim");
+    const entered = gate();
+    let live = true;
+    let pending = Promise.resolve<Awaited<ReturnType<RunExecution["claim"]>>>(null);
+    await k.app.get(TransactionHost).run(async () => {
+      await k.app
+        .get(OrgLock)
+        .lockAndAuthorize(toolContext.orgId, toolContext.accountId, "org.update");
+      pending = execution.claim(conversationId, runId, randomUUID(), () => {
+        entered.open();
+        return live;
+      });
+      await entered.promise;
+      live = false;
+    });
+    const obsolete = await pending;
+    expect(obsolete).toBeNull();
+    await replica.app.get(RunExecution).withClaim(
+      current,
+      () => true,
+      () => replica.app.get(TransactionHost).run(async () => {}),
+    );
+  });
+
+  it("admits org writes before conversation locks so offboarding cannot invert their order", async () => {
+    const replacement = await replica.app
+      .get(RunExecution)
+      .claim(conversationId, runId, randomUUID());
+    if (!replacement) throw new Error("missing replacement claim");
+    const db = k.app.get(KernelDb);
+    let workerEntered = false;
+    let worker: Promise<void> = Promise.resolve();
+    try {
+      await k.app.get(TransactionHost).run(async () => {
+        // The beginning of offboarding: org authorization, then the member's conversation tree.
+        await k.app
+          .get(OrgLock)
+          .lockAndAuthorize(toolContext.orgId, toolContext.accountId, "org.members.manage");
+        worker = replica.app.get(RunExecution).withClaim(
+          replacement,
+          () => true,
+          () =>
+            replica.app.get(TransactionHost).run(async () => {
+              workerEntered = true;
+              // A Platform org write reauthorizes with this same lock inside its service.
+              await replica.app
+                .get(OrgLock)
+                .lockAndAuthorize(toolContext.orgId, toolContext.accountId, "org.update");
+            }),
+        );
+        await waitFor(
+          async () =>
+            (
+              await sql<{ blocked: boolean }>`select exists (
+        select 1 from pg_stat_activity where datname = current_database() and pid <> pg_backend_pid()
+        and wait_event_type = 'Lock') as blocked`.execute(db.db)
+            ).rows[0]?.blocked,
+          5_000,
+          "worker waiting for org admission",
+        );
+        expect(workerEntered).toBe(false);
+        await db
+          .selectFrom("conversations")
+          .select("id")
+          .where("id", "=", conversationId)
+          .forUpdate()
+          .execute();
+      });
+    } finally {
+      await worker;
+    }
+    expect(workerEntered).toBe(true);
+  });
+  it("a real replacement worker fences a paused old worker before its tool and checkpoint writes", async () => {
+    const req = await session(k, "owner");
+    const conv = await createConv(req, toolContext.orgId, toolContext.agentId);
+    const seq = await postMessage(req, toolContext.orgId, conv, "takeover");
+    const job = await waitFor(
+      () => k.app.get(RunJobs).getJob(runJobId(conv, seq)),
+      5_000,
+      "queued takeover job",
+    );
+    const oldEntered = gate();
+    const newEntered = gate();
+    const releaseOld = gate();
+    const releaseNew = gate();
+    const rejected: boolean[] = [];
+    const checkpoint = emptyCheckpoint();
+    const contextOf = (ctx: LoopContext): ToolStepContext => ({
+      ...ctx,
+      step: 1,
+      accountId: ctx.triggerAccountId,
+    });
+    const attempt = async (fn: () => Promise<unknown>) => {
+      try {
+        await fn();
+        rejected.push(false);
+      } catch (error) {
+        rejected.push(error instanceof Error && error.message === "execution revoked");
+      }
+    };
+    scenarioA = async (ctx) => {
+      await k.app.get(EventLog).append(conv, [
+        {
+          type: "assistant_message",
+          runId: ctx.runId,
+          idemKey: assistantIdemKey(ctx.runId, 1),
+          payload: {
+            step: 1,
+            content: [
+              {
+                type: "tool_call",
+                id: "effect",
+                name: "plugin__tools-count__count",
+                input: { n: 1 },
+              },
+            ],
+            stopReason: "tool_use",
+          },
+        },
+      ]);
+      oldEntered.open();
+      await releaseOld.promise;
+      await attempt(() => k.app.get(ToolPipeline).runStep(contextOf(ctx)));
+      await attempt(() => k.app.get(KyselyCheckpointSaver).deleteThread(ctx.runId));
+      await attempt(() =>
+        k.app.get(EventLog).append(conv, [
+          {
+            type: "run_failed",
+            runId: ctx.runId,
+            payload: { error: { code: "run.internal", message: "stale worker" } },
+          },
+        ]),
+      );
+      return { kind: "completed", consumedUpToSeq: seq };
+    };
+    scenarioB = async (ctx) => {
+      await replica.app
+        .get(KyselyCheckpointSaver)
+        .put(
+          { configurable: { thread_id: ctx.runId } },
+          checkpoint,
+          { source: "loop", step: 1, parents: {} },
+          {},
+        );
+      newEntered.open();
+      await releaseNew.promise;
+      await replica.app.get(ToolPipeline).runStep(contextOf(ctx));
+      return { kind: "completed", consumedUpToSeq: seq };
+    };
+    const observer = new Redis(redis.url);
+    const delayed = vi.spyOn(job, "moveToDelayed").mockResolvedValue(undefined);
+    toolsCountState().count = 0;
+    const oldRun = k.app
+      .get(RunWorker)
+      .process(job, undefined)
+      .catch((error: unknown) => error);
+    let newRun: Promise<unknown> = Promise.resolve();
+    try {
+      await oldEntered.promise;
+      // Force lease expiry without sleeping; B takes the same run on its own pool and worker.
+      await observer.del(`capk:conv-run:${conv}`);
+      newRun = replica.app.get(RunWorker).process(job, undefined);
+      await newEntered.promise;
+      releaseOld.open();
+      await oldRun;
+      expect(rejected).toEqual([true, true, true]);
+      expect(toolsCountState().count).toBe(0);
+      expect(
+        (
+          await replica.app
+            .get(KyselyCheckpointSaver)
+            .getTuple({ configurable: { thread_id: job.data.runId } })
+        )?.checkpoint.id,
+      ).toBe(checkpoint.id);
+      expect(await observer.zcard(`capk:org-runs:${toolContext.orgId}`)).toBe(1);
+      releaseNew.open();
+      await newRun;
+      expect(toolsCountState().count).toBe(1);
+      expect(
+        (
+          await k.app
+            .get(KernelDb)
+            .selectFrom("runs")
+            .select("status")
+            .where("id", "=", job.data.runId)
+            .executeTakeFirst()
+        )?.status,
+      ).toBe("completed");
+    } finally {
+      releaseOld.open();
+      releaseNew.open();
+      await Promise.allSettled([oldRun, newRun]);
+      delayed.mockRestore();
+      observer.disconnect();
+    }
   });
 });

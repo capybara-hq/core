@@ -13,6 +13,7 @@ import { ApiError } from "../../src/errors.js";
 import { RunAbort } from "../../src/runtime/abort.js";
 import { ConversationLock } from "../../src/runtime/conversation-lock.js";
 import { subagentsWaitId } from "../../src/runtime/loop.js";
+import { RunDeletion } from "../../src/runtime/run-deletion.js";
 import { RUN_QUEUE_NAME } from "../../src/runtime/run-queue.js";
 import { processDeliverToParent, processStopTree } from "../../src/runtime/subagents/tree-jobs.js";
 import { MAINTENANCE_QUEUE_NAME, Waits, waitTimeoutJobId } from "../../src/runtime/waits.js";
@@ -727,7 +728,7 @@ async function dispatched(
 describe("the sub-agent jobs a run's end owes (agent map spec §5.4)", () => {
   it("a finished parent run's stop-tree job leaves its active background child alone", async () => {
     const d = await dispatched("completed", false);
-    await processStopTree(k.app.get(Waits), { runId: d.runId });
+    await processStopTree(k.app.get(Waits), { runId: d.runId }, k.app.get(RunDeletion));
     expect(await runStatus(d.childRun)).toBe("running");
     expect(ofType(await eventsOf(db, d.childConv), "run_aborted")).toEqual([]);
   });

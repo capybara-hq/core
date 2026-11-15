@@ -92,7 +92,20 @@ export class RunFinish {
     const t = this.kdb.db;
     const conv = await t
       .selectFrom("conversations")
-      .select(["kind", "org_id"])
+      .select((eb) => [
+        "kind",
+        "org_id",
+        "deleted_at",
+        eb
+          .exists(
+            eb
+              .selectFrom("orgs")
+              .select("orgs.id")
+              .whereRef("orgs.id", "=", "conversations.org_id")
+              .where("orgs.deleted_at", "is", null),
+          )
+          .as("org_live"),
+      ])
       .where("id", "=", a.conversationId)
       .forUpdate()
       .executeTakeFirst();
@@ -127,7 +140,7 @@ export class RunFinish {
       .execute();
     await t
       .updateTable("runs")
-      .set({ status: a.status, finished_at: sql`now()` })
+      .set({ status: a.status, finished_at: sql`now()`, execution_id: null })
       .where("id", "=", a.runId)
       .execute();
     await this.taskRuns.onRunFinished(a.runId, a.status, failureMessage(a.event));
@@ -139,10 +152,14 @@ export class RunFinish {
     // what arrived during the run starts the next one after the commit (the run worker's post-job
     // ensureRun); owed here too, for when that never happens (an eval's hidden conversation never
     // starts runs)
-    if (conv && (conv.kind === "chat" || conv.kind === "subagent")) {
+    if (
+      conv?.org_live &&
+      conv.deleted_at === null &&
+      (conv.kind === "chat" || conv.kind === "subagent")
+    ) {
       await oweEnsureRun(this.outbox, a.conversationId, seq, conv.org_id);
     }
-    if (conv) await this.oweTreeWork(a, conv.kind, conv.org_id);
+    if (conv?.org_live) await this.oweTreeWork(a, conv.kind, conv.org_id);
     return seq;
   }
 

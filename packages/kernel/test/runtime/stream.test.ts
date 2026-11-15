@@ -138,6 +138,95 @@ describe("ConversationStreams", () => {
     expect(out.end).not.toHaveBeenCalled();
   });
 
+  it("periodically catches up durable events when the last bus notification was lost", async () => {
+    vi.useFakeTimers();
+    const events: ConversationEvent[] = [];
+    const readAfter = vi.fn(async (_id: string, after: number) =>
+      events.filter((e) => e.seq > after),
+    );
+    const out = output();
+    const streams = streamsWith({
+      eventLog: { readAfter },
+      bus: busWith(async () => async () => {}),
+      access: async () => true,
+      config: () => config,
+      log: { warn: () => {} },
+    });
+    try {
+      const handle = await streams.open(params, out);
+      handle.begin();
+      await vi.advanceTimersByTimeAsync(0);
+      events.push({
+        conversationId: "c",
+        seq: 1,
+        runId: "r",
+        type: "run_finished",
+        payload: { reason: "completed", consumedUpToSeq: 1 },
+        createdAt: new Date(),
+      } as ConversationEvent);
+      // No subscriber callback is delivered: Redis lost the final notification.
+      await vi.advanceTimersByTimeAsync(config.runtime.sseRecheckMs);
+      expect(out.chunks.join("")).toContain('"type":"run_finished"');
+      expect(readAfter).toHaveBeenLastCalledWith("c", 0, expect.any(Number));
+      await vi.advanceTimersByTimeAsync(config.runtime.sseRecheckMs);
+      expect(out.chunks.join("").match(/"type":"run_finished"/g)).toHaveLength(1);
+    } finally {
+      streams.closeAll();
+      vi.useRealTimers();
+    }
+  });
+
+  it("bounds each periodic catch-up to one page and stops reading after access is revoked", async () => {
+    vi.useFakeTimers();
+    let visible = true;
+    let available = false;
+    const readAfter = vi.fn(async (_id: string, after: number, limit: number) =>
+      available
+        ? Array.from(
+            { length: Math.min(limit, 1001 - after) },
+            (_, i) =>
+              ({
+                conversationId: "c",
+                seq: after + i + 1,
+                runId: "r",
+                type: "run_finished",
+                payload: { reason: "completed", consumedUpToSeq: 1 },
+                createdAt: new Date(),
+              }) as ConversationEvent,
+          )
+        : [],
+    );
+    const streams = streamsWith({
+      eventLog: { readAfter },
+      bus: busWith(async () => async () => {}),
+      access: async () => visible,
+      config: () => config,
+      log: { warn: () => {} },
+    });
+    const out = output();
+    try {
+      const handle = await streams.open(params, out);
+      handle.begin();
+      await vi.advanceTimersByTimeAsync(0);
+      available = true;
+      readAfter.mockClear();
+      await vi.advanceTimersByTimeAsync(config.runtime.sseRecheckMs);
+      expect(readAfter).toHaveBeenCalledTimes(1);
+      expect(out.chunks.join("").match(/event: event/g)).toHaveLength(500);
+      await vi.advanceTimersByTimeAsync(config.runtime.sseRecheckMs);
+      expect(readAfter).toHaveBeenCalledTimes(2);
+      expect(out.chunks.join("").match(/event: event/g)).toHaveLength(1000);
+      visible = false;
+      await vi.advanceTimersByTimeAsync(config.runtime.sseRecheckMs);
+      expect(readAfter).toHaveBeenCalledTimes(2);
+      expect(out.end).toHaveBeenCalledOnce();
+      expect(out.chunks.join("")).toContain("conversation.not_found");
+    } finally {
+      streams.closeAll();
+      vi.useRealTimers();
+    }
+  });
+
   it("停机 closeAll：正常 end", async () => {
     const out = output();
     const streams = streamsWith({
@@ -214,7 +303,7 @@ describe("ConversationStreams", () => {
       seq: 3,
       type: "model_call",
       runId: "r",
-      payload: {},
+      payload: { reason: "completed", consumedUpToSeq: 1 },
       createdAt: new Date(0),
     } as unknown as ConversationEvent;
     let readAt: number | undefined;

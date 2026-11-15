@@ -578,7 +578,7 @@ describe.each(LOOPS)("RunWorker（%s）", (_name, loopFactory) => {
     expect(await runsOf(db, convId)).toMatchObject([{ status: "completed" }]);
     await waitFor(async () => (await redis.exists(`capk:conv-run:${convId}`)) === 0, 2_000);
   });
-  it("conversation lock lost mid-run (R27) -> handled like a shutdown: no terminal event, the other holder's lock kept, the job requeued and resumed to completion once", async () => {
+  it("conversation lease loss cancels the in-flight step, preserves the replacement lock, and resumes once", async () => {
     // Step 1 is held open until the worker has seen the loss, so the loop meets it at the first
     // step boundary however slow the machine is (with a fixed sleep, a slow step looked like a
     // missing one). The TTL is long enough that the worker never loses the lock on its own.
@@ -616,7 +616,7 @@ describe.each(LOOPS)("RunWorker（%s）", (_name, loopFactory) => {
         false,
       );
       expect(evs.filter((e) => e.type === "model_call")).toHaveLength(1);
-      expect(evs.filter((e) => e.type === "assistant_message")).toHaveLength(1);
+      expect(evs.filter((e) => e.type === "assistant_message")).toHaveLength(0);
       expect((await runsOf(db, convId))[0]?.status).toBe("running");
       // Once the other holder's lock is gone, the requeued job is picked up again and completes
       await redis.del(lockKey);
@@ -973,7 +973,7 @@ describe("RunWorker（默认 loop、R29 失败与孤儿运行）", () => {
       "job stalled more than allowable limit",
     );
     // 死去的持有者留下的会话锁
-    await redis.set(`capk:conv-run:${convId}`, run?.id as string, "PX", 60_000);
+    await redis.set(`capk:conv-run:${convId}`, `${run?.id}/abandoned-acquisition`, "PX", 1000);
     await worker();
     const [t] = await waitForTerminal(db, convId);
     expect(t?.type).toBe("run_failed");
@@ -981,7 +981,7 @@ describe("RunWorker（默认 loop、R29 失败与孤儿运行）", () => {
     expect(t?.payload).toMatchObject({ error: { code: "run.stalled" } });
     await waitFor(async () => (await runsOf(db, convId))[0]?.status === "failed", 3_000);
     expect(await consumedSeq(db, convId)).toBe(seq);
-    // 死去持有者的锁已清理：新消息立即起新一轮并完成
+    // A dead acquisition expires; failure cleanup never deletes a replacement by run id.
     await waitFor(async () => (await redis.exists(`capk:conv-run:${convId}`)) === 0, 3_000);
     const next = await postMessage(req, orgId, convId, "echo:next");
     const terms = await waitForTerminal(db, convId, 2);

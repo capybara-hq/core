@@ -262,6 +262,12 @@ describe("org deletion", () => {
 
     await orgs.softDelete(gone.id, alice);
 
-    expect((await rows()).map((r) => r.job_id)).toEqual(["gone-dead", "other-org", "platform"]);
+    expect((await rows()).map((r) => r.job_id)).toEqual([
+      "gone-dead",
+      "other-org",
+      "platform",
+      `stop-deleted-org-${gone.id}`,
+    ]);
+    expect((await rows()).at(-1)).toMatchObject({ org_id: null });
   });
 });

@@ -5,7 +5,10 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createDb } from "../../src/db/pool.js";
 import { afterCommit } from "../../src/infra/database/after-commit.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
-import { TransactionHost } from "../../src/infra/database/transaction-host.js";
+import {
+  TransactionHost,
+  withTransactionFence,
+} from "../../src/infra/database/transaction-host.js";
 import { Transactional } from "../../src/infra/database/transactional.decorator.js";
 import { createLogger } from "../../src/log.js";
 
@@ -106,6 +109,31 @@ class Svc {
 const svc = () => new Svc(host);
 
 describe("TransactionHost and @Transactional", () => {
+  it("checks an execution fence inside each new transaction and does not leak it into afterCommit", async () => {
+    const fence = vi.fn(async () => {
+      expect(host.current()).toBeDefined();
+      throw new Error("execution revoked");
+    });
+    await expect(withTransactionFence(fence, () => svc().inner("fenced-write"))).rejects.toThrow(
+      "execution revoked",
+    );
+    expect(await ids()).not.toContain("fenced-write");
+    expect(fence).toHaveBeenCalledOnce();
+    let allowed = true;
+    await withTransactionFence(
+      async () => {
+        if (!allowed) throw new Error("execution revoked");
+        afterCommit(() => {
+          allowed = false;
+        });
+      },
+      () => svc().decideWithHook("fenced-hook"),
+    );
+    expect(await ids()).toContain("fenced-hook-hook");
+    await svc().inner("unscoped-write");
+    expect(await ids()).toContain("unscoped-write");
+  });
+
   it("nested REQUIRED calls share one transaction: an outer throw rolls back the inner row", async () => {
     await expect(svc().outer("n1", true)).rejects.toThrow("outer failed");
     expect((await ids()).filter((i) => i.startsWith("n1"))).toEqual([]);

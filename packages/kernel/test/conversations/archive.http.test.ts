@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { RunDeletion } from "../../src/runtime/run-deletion.js";
 import { legacyDbFor, seedQueued } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -12,6 +13,7 @@ import {
   createAgent,
   createConv,
   createOrg,
+  gate,
   PW,
   postMessage,
   type Req,
@@ -119,6 +121,35 @@ describe("archive and soft delete", () => {
     const again = await owner({ method: "DELETE", url: `${base()}/${conv}` });
     expect(again.statusCode).toBe(404);
     expect((again.json() as { error: { code: string } }).error.code).toBe("conversation.not_found");
+  });
+
+  it("an idle-root deletion closes the message entrance before its stop snapshot returns", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    const service = k.app.get(RunDeletion);
+    const stopped = gate();
+    const release = gate();
+    const abort = service.stopTree.bind(service);
+    const spy = vi.spyOn(service, "stopTree").mockImplementation(async (...args) => {
+      const result = await abort(...args);
+      stopped.open();
+      await release.promise;
+      return result;
+    });
+    const deletion = owner({ method: "DELETE", url: `${base()}/${conv}` });
+    try {
+      await stopped.promise;
+      const message = await owner({
+        method: "POST",
+        url: `${base()}/${conv}/messages`,
+        payload: { text: "stall" },
+      });
+      expect(message.statusCode, message.body).toBe(404);
+      expect(message.json().error.code).toBe("conversation.not_found");
+    } finally {
+      release.open();
+      await deletion;
+      spy.mockRestore();
+    }
   });
 
   it("delete stops a waiting run and clears its pending question", async () => {

@@ -139,7 +139,7 @@ export function conversationsFor(
     { resolveAttachments: d.resolveAttachments ?? refuse("resolveAttachments") },
     { bindForMessage: d.bindFiles ?? refuse("bindFiles") },
     { prepare: invoker ? (a) => invoker.prepare(a) : refuse("invoker") },
-    { stopForDeletedConversation: async () => {} },
+    { stopTree: async () => {} },
     // no sandbox provider here: new conversations stay unbound
     { forNew: async () => null },
     // unbound conversations have no project to bind

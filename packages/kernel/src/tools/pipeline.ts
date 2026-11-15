@@ -2074,7 +2074,11 @@ export class ToolPipeline {
       }
       const r = await this.bounded(
         ctx.signal,
-        (signal) => handler(input, { ...base, ...config, signal }),
+        async (signal) => {
+          await this.txHost.run(async () => {});
+          signal.throwIfAborted();
+          return handler(input, { ...base, ...config, signal });
+        },
         undefined,
         timeoutMs,
       );
@@ -2227,6 +2231,8 @@ export class ToolPipeline {
             },
           });
           const session = await opened;
+          await this.txHost.run(async () => {});
+          signal.throwIfAborted();
           return source.resources
             ? runResourceTool(session, source.name, input)
             : // 交回已复核的定义（connector_tools.spec，含 connectorData）：连接器按它路由，远端变化须先经漂移复核

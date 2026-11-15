@@ -10,9 +10,11 @@ import { createDb } from "../../src/db/pool.js";
 import { ExtensionPointDefaults } from "../../src/extensions/point-defaults.js";
 import { OUTBOX_DISPATCH_FAILS } from "../../src/infra/outbox/outbox.dispatcher.js";
 import { RUN_STOP_JOB } from "../../src/orgs/offboarding.js";
+import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
 import { PluginContextService } from "../../src/runtime/plugin-context.service.js";
 import { RunContextService } from "../../src/runtime/run-context.service.js";
 import { RunControl } from "../../src/runtime/run-control.js";
+import { STOP_DELETED_ORG_JOB } from "../../src/runtime/run-deletion.js";
 import { RUN_QUEUE_NAME } from "../../src/runtime/run-jobs.js";
 import { RunQueue } from "../../src/runtime/run-queue.js";
 import { RUN_HOOKS, type RunHooks } from "../../src/runtime/run-worker.js";
@@ -70,6 +72,7 @@ let ownerId: string;
 let askerId: string;
 /** While true, the outbox's adds to the run queue fail (a resume job stays owed). */
 let failing = false;
+let failingStops = false;
 
 /** The worker's seams: each test sets the pauses it needs. */
 const hooks: RunHooks = {};
@@ -86,7 +89,9 @@ beforeAll(async () => {
         { provide: RUN_HOOKS, useValue: hooks },
         {
           provide: OUTBOX_DISPATCH_FAILS,
-          useValue: (queue: string) => failing && queue === RUN_QUEUE_NAME,
+          useValue: (queue: string) =>
+            (failing && queue === RUN_QUEUE_NAME) ||
+            (failingStops && queue === MAINTENANCE_QUEUE_NAME),
         },
       ],
     },
@@ -134,6 +139,7 @@ afterAll(async () => {
 
 beforeEach(() => {
   failing = false;
+  failingStops = false;
   delete hooks.afterRunRead;
   delete hooks.beforeRunStarted;
   delete hooks.beforeRunning;
@@ -308,12 +314,8 @@ describe("a run resumed from waiting back to queued is stopped in PG too", () =>
       expect(await runStatus(runId)).toBe("aborted");
       const forRun = (calls: unknown[][]) =>
         calls.filter((c) => (c[0] as { runId?: string }).runId === runId);
-      // the catalog's transaction re-reads the run under the locks: ended, nothing appended
-      const tried = catalog.mock.calls.flatMap((c, i) =>
-        (c[0] as { runId?: string }).runId === runId ? [catalog.mock.results[i]?.value] : [],
-      );
-      expect(tried.length).toBeGreaterThan(0);
-      expect(await Promise.all(tried)).toEqual(tried.map(() => false));
+      // Claim acquisition rejects the terminal run before entering catalog or context work.
+      expect(forRun(catalog.mock.calls)).toEqual([]);
       expect(forRun(context.mock.calls)).toEqual([]);
       expect(await afterAbort(conv, runId)).toEqual([]);
     } finally {
@@ -396,7 +398,7 @@ describe("a run resumed from waiting back to queued is stopped in PG too", () =>
       expect(await runStatus(runId)).toBe("aborted");
       // the run context's transaction saw the end: nothing appended, the run does not go on
       expect(context).toHaveBeenCalledTimes(1);
-      expect(await context.mock.results[0]?.value).toBe(false);
+      await expect(context.mock.results[0]?.value).rejects.toThrow("execution revoked");
       expect(plugin).not.toHaveBeenCalled();
       expect(await afterAbort(conv, runId)).toEqual([]);
     } finally {
@@ -443,7 +445,7 @@ describe("a run resumed from waiting back to queued is stopped in PG too", () =>
       );
       expect(tried.length).toBe(1);
       // the append transaction re-read the run under the locks: ended, nothing appended
-      expect(await tried[0]).toBe(false);
+      await expect(tried[0]).rejects.toThrow("execution revoked");
       expect(await afterAbort(conv, runId)).toEqual([]);
       expect(await types(conv)).not.toContain("plugin_context");
     } finally {
@@ -471,4 +473,44 @@ describe("a run resumed from waiting back to queued is stopped in PG too", () =>
     expect(await runStatus(runId)).toBe("aborted");
     expect(await afterAbort(conv, runId)).toEqual([]);
   });
+});
+
+it("deleting an org settles a queued job already read by a worker before deletion", async () => {
+  const deletingOrg = await createOrg(req, "Deleting org");
+  const agent = await createAgent(req, deletingOrg);
+  const conv = await createConv(req, deletingOrg, agent);
+  const pause = pauseAt("afterRunRead", conv);
+  await postMessage(req, deletingOrg, conv, "stall");
+  const id = await pause.reached;
+  try {
+    failingStops = true;
+    const response = await req({ method: "DELETE", url: `/api/v1/orgs/${deletingOrg}` });
+    expect(response.statusCode, response.body).toBe(204);
+    const owed = await db
+      .selectFrom("outbox")
+      .select(["org_id", "data"])
+      .where("job_name", "=", STOP_DELETED_ORG_JOB)
+      .executeTakeFirstOrThrow();
+    expect(owed.org_id).toBeNull();
+    expect(owed.data).toEqual({ orgId: deletingOrg, byAccountId: ownerId });
+  } finally {
+    pause.release();
+    failingStops = false;
+  }
+  await drainOutbox(k.app, { jobName: STOP_DELETED_ORG_JOB });
+  await waitForRunJobDone(db, runQueue, id, 15_000);
+  await waitFor(
+    async () => (await runsOf(db, conv)).find((r) => r.id === id)?.status === "aborted",
+    15_000,
+    "deleted org run aborted",
+  );
+  expect(await types(conv)).not.toContain("model_call");
+  expect(
+    await db
+      .selectFrom("outbox")
+      .select("id")
+      .where("org_id", "=", deletingOrg)
+      .where("dead_at", "is", null)
+      .execute(),
+  ).toEqual([]);
 });

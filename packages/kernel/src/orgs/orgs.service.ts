@@ -17,6 +17,9 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KernelEvents } from "../infra/events/kernel-events.js";
+import { OutboxService } from "../infra/outbox/outbox.service.js";
+import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
+import { STOP_DELETED_ORG_JOB, type StopDeletedOrgData } from "../runtime/run-deletion.js";
 import { USAGE_REPORT_QUEUE } from "../runtime/usage-report-jobs.js";
 import { OrgLock } from "./org-lock.js";
 import type { OrgRole } from "./roles.js";
@@ -85,6 +88,7 @@ async function slugGuard<T>(p: Promise<T>): Promise<T> {
 export class OrgsService {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(SettingsService) private readonly settings: SettingsService,
     @Inject(ApiTokenService) private readonly apiTokens: ApiTokenService,
@@ -262,6 +266,7 @@ export class OrgsService {
     actor: Account,
     actorTokenId: string | undefined,
   ): Promise<void> {
+    // The same org authorization lock admits fenced worker writes before conversation locks.
     await this.orgLock.lockAndAuthorize(orgId, actor.id, "org.delete");
     await this.db
       .updateTable("orgs")
@@ -277,6 +282,12 @@ export class OrgsService {
       .where("dead_at", "is", null)
       .where("queue", "<>", USAGE_REPORT_QUEUE)
       .execute();
+    await this.outbox.add<StopDeletedOrgData>({
+      queue: MAINTENANCE_QUEUE_NAME,
+      name: STOP_DELETED_ORG_JOB,
+      jobId: `stop-deleted-org-${orgId}`,
+      data: { orgId, byAccountId: actor.id },
+    });
     // after the org is marked deleted, so it counts as no user of what it shared (P3-18)
     await this.ownedItems.onOrgDeleted(orgId, actor.id, {
       ...(actorTokenId !== undefined && { actorTokenId }),

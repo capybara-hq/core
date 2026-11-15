@@ -45,6 +45,7 @@ import { ProviderListError, ProviderRegistry } from "./providers.js";
 import { ORG_QUOTA_LEASE_MS, type OrgQuota, orgRunLimit, RUN_QUOTA } from "./quota.js";
 import { RunContextService } from "./run-context.service.js";
 import { RunDrafts, streamSink } from "./run-drafts.js";
+import { type ExecutionClaim, ExecutionRevoked, RunExecution } from "./run-execution.js";
 import { type FinishRunArgs, RunFinish } from "./run-finish.js";
 import { type RunJobData, TERMINAL_STATUSES } from "./run-jobs.js";
 import { RunQueue } from "./run-queue.js";
@@ -92,6 +93,7 @@ export interface RunHooks {
 /** 本进程正在执行的运行（本进程持有的资源）。 */
 interface ActiveRun {
   shutdown: AbortController;
+  executionAbort: AbortController;
   /** 停机超出预算：放弃本进程的执行，交给 BullMQ stalled 机制由其他 worker 续跑。 */
   abandoned: boolean;
   /** 会话锁已丢失（续租发现被他人持有）：按停机处理，不写终态、不释放锁，任务回到队列。 */
@@ -195,6 +197,7 @@ export class RunWorker {
     private readonly projectKnowledge: Pick<ProjectKnowledgeService, "record">,
     /** The run's resolved tools, for the plugin context's `tools` (chat runs with providers). */
     @Inject(ToolRegistry) private readonly tools: Pick<ToolRegistry, "forAgent">,
+    @Inject(RunExecution) private readonly execution: RunExecution,
     @Inject(RunFinish) private readonly finisher: Pick<RunFinish, "finish">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     /** The steps' live drafts this process writes for the runs it executes. */
@@ -356,14 +359,15 @@ export class RunWorker {
   }
 
   /**
-   * BullMQ 判定任务失败（R29）：stalled 次数超过上限（持有者反复崩溃），或处理函数在自己的终态处理之外抛错。
-   * 运行若仍未结束：清理死去持有者留下的会话锁，写 `run_failed`（stalled → `run.stalled`，
-   * 其他 → `run.internal`），status 置为 failed，consumed_seq 至少推进到触发消息，删除 checkpoint，然后 ensureRun（带重试）。
+   * A final BullMQ failure settles the run and revokes its PG claim. Never release a Redis
+   * acquisition by run id: another execution of that same run may now own it. The abandoned
+   * acquisition expires; terminal follow-up consumes the trigger and clears its checkpoints.
    */
   private async onJobFailed(data: RunJobData, err: Error): Promise<void> {
     const { runId, conversationId } = data;
     const stalled = /stalled/i.test(err.message);
-    await this.lock.releaseFor(conversationId, runId);
+    // Never release by run id: a newer acquisition may own the same run. The terminal
+    // transaction revokes the persisted claim; the acquisition itself expires or releases.
     // 运行已进入 waiting（暂停后任务才失败）：它有自己的续跑路径（人工决定 / 超时任务），不标记失败。
     const cur = await this.db
       .selectFrom("runs")
@@ -518,6 +522,7 @@ export class RunWorker {
     let settle!: () => void;
     const state: ActiveRun = {
       shutdown: new AbortController(),
+      executionAbort: new AbortController(),
       abandoned: false,
       leaseLost: false,
       lease,
@@ -529,34 +534,77 @@ export class RunWorker {
     this.active.set(runId, state);
     // 停机开始后才登记的运行（close() 的快照之后）：同样在步骤边界停下。
     if (this.closing) state.shutdown.abort();
-    // 锁丢失（R27）：走与停机相同的路径——loop 在下一个步骤边界返回 interrupted，任务回到队列。
+    // Lease loss cancels the in-flight request now; PG claim fencing rejects stale writes.
     lease.onLost(() => {
       state.leaseLost = true;
       state.shutdown.abort();
+      state.executionAbort.abort();
+      state.quota?.abandon();
+      if (this.active.get(runId) === state) this.drafts.release(runId);
     });
+    let claim: ExecutionClaim | null = null;
     let entered = false;
     let delayMs: number | null = null;
     try {
       const limit = await orgRunLimit(this.settings, this.config, conv.org_id);
-      const slot = await this.quota.enter(conv.org_id, runId, limit, ORG_QUOTA_LEASE_MS);
+      const slot = await this.quota.enter(
+        conv.org_id,
+        `${runId}/${lease.executionId}`,
+        limit,
+        ORG_QUOTA_LEASE_MS,
+      );
       if (slot !== undefined) state.quota = slot;
       entered = slot !== undefined;
       if (!entered) {
         delayMs = QUOTA_FULL_DELAY_MS;
       } else {
-        const r = await this.execute(run, { id: conversationId, ...conv }, state).catch(
-          async (err: unknown): Promise<ExecResult> => {
+        claim = await this.execution.claim(
+          conversationId,
+          runId,
+          lease.executionId,
+          () => !lease.lost && !state.abandoned,
+        );
+        if (claim === null) return "ensure";
+        const r = await this.execution
+          .withClaim(
+            claim,
+            () => !lease.lost && !state.abandoned,
+            async () => {
+              const result = await this.execute(run, { id: conversationId, ...conv }, state);
+              if (state.suspended) {
+                await this.waits.suspend(
+                  runId,
+                  conversationId,
+                  state.suspended.waitingFor,
+                  state.suspended.abort,
+                );
+              }
+              return result;
+            },
+          )
+          .catch(async (err: unknown): Promise<ExecResult> => {
             if (state.abandoned) return "abandoned";
-            if (state.leaseLost) return "interrupted";
+            if (state.leaseLost || err instanceof ExecutionRevoked) return "interrupted";
             // 编排自身出错（如写事件失败）：尽力把运行标记为失败，避免会话卡在 running。
             this.log.error("run orchestration failed", { conversationId, runId, err });
-            await this.finish(conversationId, runId, "failed", null, {
-              type: "run_failed",
-              payload: { error: { code: "run.internal", message: "The run failed unexpectedly" } },
-            }).catch((e) => this.log.error("cannot mark run as failed", { runId, err: e }));
+            try {
+              await this.execution.withClaim(
+                claim as ExecutionClaim,
+                () => !lease.lost && !state.abandoned,
+                () =>
+                  this.finish(conversationId, runId, "failed", null, {
+                    type: "run_failed",
+                    payload: {
+                      error: { code: "run.internal", message: "The run failed unexpectedly" },
+                    },
+                  }),
+              );
+            } catch (failure) {
+              if (failure instanceof ExecutionRevoked) return "interrupted";
+              this.log.error("cannot mark run as failed", { runId, err: failure });
+            }
             return "broken";
-          },
-        );
+          });
         if (r === "interrupted") delayMs = 0;
       }
     } finally {
@@ -571,23 +619,22 @@ export class RunWorker {
             .catch((err) => this.log.warn("conversation lock release failed", { runId, err }));
         }
       }
-      this.active.delete(runId);
+      if (this.active.get(runId) === state) this.active.delete(runId);
       settle();
     }
     if (state.abandoned) return;
     if (delayMs !== null) return requeue(job, token, delayMs);
-    // 暂停：会话锁与配额已释放，checkpoint 保留；置 waiting 并投递超时任务。任务就此完成，不 ensureRun
-    // （等待期间的新消息在续跑后作为插话吸收）。
-    if (state.suspended) {
-      await this.waits.suspend(
-        runId,
-        conversationId,
-        state.suspended.waitingFor,
-        state.suspended.abort,
-      );
-      return;
-    }
-    // 运行已到达终态（broken 时已尽力标记失败）：checkpoint 只用于续跑，删除。
+    // Suspension was committed under the execution fence before releasing the lease. Keep its
+    // checkpoint; the decision/timeout owns resumption and this job starts no follow-up run.
+    if (state.suspended) return;
+    // Terminal states are immutable. A stale execution cannot delete a running/waiting
+    // successor's checkpoint, while a completed run no longer needs any checkpoint.
+    const settled = await this.db
+      .selectFrom("runs")
+      .select("status")
+      .where("id", "=", runId)
+      .executeTakeFirst();
+    if (!settled || !TERMINAL_STATUSES.has(settled.status)) return;
     await this.dropCheckpoints(runId);
     if (conv.kind === "subagent") await this.childFinished(runId);
     else await this.stopChildren(runId);
@@ -808,13 +855,7 @@ export class RunWorker {
       if (!projectRead) return "finished";
       await this.hooks?.beforeRunning?.(runId, conversationId);
       // never over a terminal status: a run finished meanwhile stays finished
-      const updated = await this.db
-        .updateTable("runs")
-        .set({ status: "running", started_at: sql<Date>`COALESCE(started_at, now())` })
-        .where("id", "=", runId)
-        .where("status", "in", ["queued", "running"])
-        .returning("started_at")
-        .executeTakeFirst();
+      const updated = await this.markRunning(runId);
       if (updated === undefined) return "finished";
       startedAt = updated.started_at as Date;
     }
@@ -896,9 +937,15 @@ export class RunWorker {
           role,
           agent,
           agentVersion: run.agent_version,
-          signal: ac.signal,
+          signal: AbortSignal.any([ac.signal, state.executionAbort.signal]),
           shutdown: state.shutdown.signal,
-          sink: this.sinkFor(conversationId),
+          sink: (() => {
+            const sink = this.sinkFor(conversationId);
+            return (delta) => {
+              if (!state.lease.lost && !state.abandoned && this.active.get(runId) === state)
+                sink(delta);
+            };
+          })(),
           pendingAbsorbable,
           limits: {
             ...(maxSteps !== undefined && { maxSteps }),
@@ -911,7 +958,7 @@ export class RunWorker {
         });
       } catch (e) {
         if (state.abandoned) return "abandoned";
-        if (state.leaseLost) return "interrupted";
+        if (state.leaseLost || e instanceof ExecutionRevoked) return "interrupted";
         const err =
           e instanceof RunError ? e : new RunError("run.internal", "The run failed unexpectedly");
         if (!(e instanceof RunError)) {
@@ -926,7 +973,7 @@ export class RunWorker {
         return "finished";
       } finally {
         // the execution here ended: what this process held of the run's drafts goes
-        this.drafts.release(runId);
+        if (this.active.get(runId) === state) this.drafts.release(runId);
       }
       if (state.abandoned) return "abandoned";
       // 锁在运行中丢失：无论 loop 返回什么都不写终态，任务回到队列由持锁者续跑。
@@ -1037,13 +1084,7 @@ export class RunWorker {
       }
       await this.hooks?.beforeRunning?.(runId, conversationId);
       // never over a terminal status: a run finished meanwhile stays finished
-      const updated = await this.db
-        .updateTable("runs")
-        .set({ status: "running", started_at: sql<Date>`COALESCE(started_at, now())` })
-        .where("id", "=", runId)
-        .where("status", "in", ["queued", "running"])
-        .returning("started_at")
-        .executeTakeFirst();
+      const updated = await this.markRunning(runId);
       if (updated === undefined) return "finished";
     }
     // the conversation lock is held: nothing absorbed the trigger seq meanwhile, and the summary
@@ -1296,7 +1337,19 @@ export class RunWorker {
     return written ?? null;
   }
 
-  /** 删除已结束运行的 checkpoint thread（失败只记日志）。 */
+  /** Transition only an active run, within the execution fence. */
+  @Transactional({ propagation: "requires_new" })
+  private async markRunning(runId: string) {
+    return this.db
+      .updateTable("runs")
+      .set({ status: "running", started_at: sql<Date>`COALESCE(started_at, now())` })
+      .where("id", "=", runId)
+      .where("status", "in", ["queued", "running"])
+      .returning("started_at")
+      .executeTakeFirst();
+  }
+
+  /** Delete a terminal run's checkpoint thread; log cleanup failures. */
   private async dropCheckpoints(runId: string): Promise<void> {
     await this.checkpoints
       .deleteThread(runId)

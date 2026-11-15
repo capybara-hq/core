@@ -149,6 +149,7 @@ export class OutboxDeadService {
     actor: WriteActor,
     detail: Record<string, unknown>,
   ): Promise<{ outcome: OutboxRetryOutcome }> {
+    await this.lockRunRetryIn(id);
     const row = await this.lockDead(id);
     const owed = await this.db.db
       .selectFrom("outbox")
@@ -172,6 +173,38 @@ export class OutboxDeadService {
     }
     await this.audit("outbox.retried", id, row, actor, { ...detail, outcome });
     return { outcome };
+  }
+
+  /** A run-job retry is a new delivery generation, serialized with its terminal transition. */
+  @Transactional({ propagation: "mandatory" })
+  private async lockRunRetryIn(id: string): Promise<void> {
+    // Read before taking any outbox lock: the lock order is conversation, then outbox. The
+    // subsequent lockDead rechecks this row, so a concurrent discard/retry rolls this back.
+    const row = await this.db
+      .selectFrom("outbox")
+      .select(["job_name", "job_id", "data"])
+      .where("id", "=", id)
+      .where("dead_at", "is not", null)
+      .executeTakeFirst();
+    if (row?.job_name !== "run" || row.data === null || typeof row.data !== "object") return;
+    const data = row.data as { conversationId?: unknown; runId?: unknown };
+    if (typeof data.conversationId !== "string" || typeof data.runId !== "string") return;
+    await this.db
+      .selectFrom("conversations")
+      .select("id")
+      .where("id", "=", data.conversationId)
+      .forUpdate()
+      .execute();
+    await this.db
+      .updateTable("runs")
+      .set({ queued_at: sql<Date>`clock_timestamp()` })
+      .where("id", "=", data.runId)
+      .where("conversation_id", "=", data.conversationId)
+      .where("status", "=", "queued")
+      .where(
+        sql<boolean>`COALESCE(job_id, 'run-' || conversation_id || '-' || trigger_seq::text) = ${row.job_id}`,
+      )
+      .execute();
   }
 
   /** Deletes a dead row: its job is never delivered. `outbox.not_found` (404) when none. */
