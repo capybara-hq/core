@@ -2177,6 +2177,8 @@ and a last-run snapshot hint. View device links to the bound device. Start a fre
 a new conversation with the same agent; it never clears or disguises the original binding. The
 composer retains the bound name with a warning action that reopens the same disclosure. Controlled
 `open` / `onOpenChange`, `detailsLabel`, and neutral children support this shared presentation.
+Project paths wrap even within long directory names. Opening details from the composer scrolls
+after expansion layout settles, so the conversation's follow-bottom behavior cannot hide them again.
 
 
 #### 6.16.24 Working line

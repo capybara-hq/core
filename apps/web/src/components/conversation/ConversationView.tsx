@@ -219,9 +219,23 @@ export function useConversationPage(
   const deviceName = useDeviceName();
   const [projectOpen, setProjectOpen] = useState(true);
   const projectNotice = useRef<HTMLDivElement>(null);
+  const projectScrollFrame = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (projectScrollFrame.current !== null) cancelAnimationFrame(projectScrollFrame.current);
+    },
+    [],
+  );
   const inspectProject = () => {
     setProjectOpen(true);
-    projectNotice.current?.scrollIntoView?.({ block: "nearest" });
+    if (projectScrollFrame.current !== null) cancelAnimationFrame(projectScrollFrame.current);
+    // Let disclosure layout and follow-bottom observers settle before moving the viewport.
+    projectScrollFrame.current = requestAnimationFrame(() => {
+      projectScrollFrame.current = requestAnimationFrame(() => {
+        projectScrollFrame.current = null;
+        projectNotice.current?.scrollIntoView?.({ block: "nearest" });
+      });
+    });
   };
   const devicePicker = lockedDevicePicker(
     {
@@ -668,7 +682,7 @@ function ProjectLine({
         ]}
       >
         <Text variant="prose">{t("summary")}</Text>
-        <Text variant="small" tone="muted">
+        <Text variant="small" tone="muted" pre>
           {project.path}
         </Text>
         <Text variant="prose" tone="muted">

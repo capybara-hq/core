@@ -228,7 +228,7 @@ function runRowBlocks(): ReactNode {
           ]}
         >
           <Text variant="prose">未能读取项目目录，本轮未加载项目指令和技能。</Text>
-          <Text variant="small" tone="muted">
+          <Text variant="small" tone="muted" pre>
             /Users/grant/Capybara/core
           </Text>
         </RunRow>
