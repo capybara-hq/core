@@ -34,22 +34,26 @@ export class OrgSettingsOperations implements OnModuleInit {
       defineOperation({
         id: "org-settings.get",
         description:
-          "Read this org's settings: toolSearch, locale, sandboxToolPolicy, platformTool (on, read-only or off), autoMode (allowed or off: whether the org's devices may run in auto mode; absent follows the deployment's switch, and the org may never exceed it), cloudNetwork (the network of a cloud device in sandbox mode: open, or allowlist with its hosts; open means any public host, while loopback, private and cloud metadata addresses stay blocked), wakeOnBackgroundTask (absent means it follows the deployment), theme (the org's default theme id, null or absent following the platform, and personal: allowed or locked), uiArrangement (per list slot, the extension contributions the org hides and their order; per single slot, the contribution that replaces the built-in as use, null for the built-in; a slot not listed follows the platform), the deployment's auto-mode switch and cloud-network defaults, and the sandbox cpu / memory limits in effect.",
+          "Read this org's settings: toolSearch, locale, sandboxToolPolicy, platformTool (on, read-only or off), autoMode (allowed or off: whether the org's devices may run in auto mode; absent follows the deployment's switch, and the org may never exceed it), cloudNetwork (the org's sandbox-mode network stored as a delta over the platform's allowlist: mode open or allowlist for a cloud device in sandbox mode, absent following the platform; base platform or none; extraHosts the org adds; excludedHosts platform hosts it drops; open means any public host, while loopback, private and cloud metadata addresses stay blocked), wakeOnBackgroundTask (absent means it follows the deployment), theme (the org's default theme id, null or absent following the platform, and personal: allowed or locked), uiArrangement (per list slot, the extension contributions the org hides and their order; per single slot, the contribution that replaces the built-in as use, null for the built-in; a slot not listed follows the platform), the deployment's auto-mode switch and network (its allowlist, orgHosts: extend lets the org go beyond it, within makes it the ceiling, and off for the platform kill switch), effectiveNetwork (the mode and hosts the org's sandbox mode really gets), and the sandbox cpu / memory limits in effect.",
         input: z.object({}).strict(),
         example: {},
         authz: { orgAction: "org.read" },
         mirrors: ["GET /api/v1/orgs/:orgId/settings"],
         confirm: "read",
-        run: async (_input, ctx) => ({
-          settings: await this.settings.get(ctx.orgId),
-          deployment: await this.settings.deployment(),
-          sandboxLimits: await this.settings.sandboxLimits(ctx.orgId),
-        }),
+        run: async (_input, ctx) => {
+          const settings = await this.settings.get(ctx.orgId);
+          return {
+            settings,
+            deployment: await this.settings.deployment(),
+            effectiveNetwork: this.settings.effectiveNetwork(settings),
+            sandboxLimits: await this.settings.sandboxLimits(ctx.orgId),
+          };
+        },
       }),
       defineOperation({
         id: "org-settings.update",
         description:
-          "Change this org's settings (org admins). Give only the settings to change; null clears autoMode, cloudNetwork or wakeOnBackgroundTask so they follow the deployment again (refused when the deployment value is wider than what this tool may set). autoMode (allowed or off; the platform must allow it) and cloudNetwork ({ mode: open | allowlist, allowHosts? }, replaced whole, hosts left out following the deployment's list) may only narrow the org's devices here: turning auto mode on where the org has it off, switching the cloud network from allowlist to open, or adding a network host is refused and needs a person in the organization settings on the web. theme: { id, personal } sets the org's default theme (a theme id from themes.list, or null to follow the platform) and whether members may pick their own (allowed) or not (locked); null clears it. uiArrangement: { <slot>: { hidden, order } } (a list slot) or { <slot>: { use } } (a single slot: shell.brand, conversation.empty, conversation.composer.frame) replaces that slot's entry, where hidden, order and use name contribution keys <extension>/<contribution> (hidden ones are not listed in the web UI but their pages still open by URL; use null is the built-in); null for a slot makes it follow the platform again; platform.page is refused. Setting platformTool to off or read-only takes effect from the next call and cuts this Platform tool off in the org, so say so before asking; an org admin switches it back on in the web settings.",
+          "Change this org's settings (org admins). Give only the settings to change; null clears autoMode, cloudNetwork or wakeOnBackgroundTask so they follow the deployment again (refused when the deployment value is wider than what this tool may set). autoMode (allowed or off; the platform must allow it) and cloudNetwork ({ mode?, base?: platform | none, extraHosts?, excludedHosts? }, replaced whole, so send the stored fields you keep) may only narrow the org's devices here: turning auto mode on where the org has it off, switching the cloud network from allowlist to open, adding an extra host, dropping an exclusion or moving base from none to platform is refused and needs a person in the organization settings on the web. theme: { id, personal } sets the org's default theme (a theme id from themes.list, or null to follow the platform) and whether members may pick their own (allowed) or not (locked); null clears it. uiArrangement: { <slot>: { hidden, order } } (a list slot) or { <slot>: { use } } (a single slot: shell.brand, conversation.empty, conversation.composer.frame) replaces that slot's entry, where hidden, order and use name contribution keys <extension>/<contribution> (hidden ones are not listed in the web UI but their pages still open by URL; use null is the built-in); null for a slot makes it follow the platform again; platform.page is refused. Setting platformTool to off or read-only takes effect from the next call and cuts this Platform tool off in the org, so say so before asking; an org admin switches it back on in the web settings.",
         input: OrgSettingsPatchSchema.refine((i) => Object.values(i).some((v) => v !== undefined), {
           message: "give at least one setting",
         }),
@@ -60,7 +64,7 @@ export class OrgSettingsOperations implements OnModuleInit {
         errors: [
           {
             code: "org.sandbox_egress_not_allowed",
-            next: "Through this tool the org's cloud network may only be narrowed: the host list may keep or lose hosts, and an open network may become an allowlist of hosts that list already has, but no change may add a host or switch an allowlist back to open (the host list is the local sandbox-mode ceiling whatever the cloud mode). To widen it, ask an org admin to change it in the organization settings on the web.",
+            next: "Through this tool the org's cloud network may only be narrowed: it may drop extra hosts, exclude platform hosts, move base to none or switch open to allowlist, but never add an extra host, drop an exclusion or switch back to open (the hosts are the local sandbox-mode ceiling whatever the cloud mode). To widen it, ask an org admin to change it in the organization settings on the web. When the platform limits hosts to its allowlist (deployment.cloudNetwork.orgHosts within), a host outside it needs a super admin.",
           },
           {
             code: "org.auto_mode_not_allowed",
@@ -78,7 +82,9 @@ export class OrgSettingsOperations implements OnModuleInit {
         precheck: (i, ctx) =>
           precheckBy(async () => {
             await this.settings.check(i);
-            await this.settings.assertOnlyNarrows(await this.settings.get(ctx.orgId), i);
+            const before = await this.settings.get(ctx.orgId);
+            this.settings.assertWithinCeiling(before, i);
+            await this.settings.assertOnlyNarrows(before, i);
           }),
         summary: async (i, ctx) => {
           const { theme, ...rest } = i;
@@ -132,7 +138,11 @@ export class OrgSettingsOperations implements OnModuleInit {
             input.platformTool === undefined
               ? undefined
               : PLATFORM_TOOL_NOTE[settings.platformTool];
-          return { settings, ...(note !== undefined && { note }) };
+          return {
+            settings,
+            effectiveNetwork: this.settings.effectiveNetwork(settings),
+            ...(note !== undefined && { note }),
+          };
         },
       }),
     ]);

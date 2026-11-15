@@ -159,7 +159,11 @@ cloud devices keep the container and follow the org's `cloudNetwork` setting (�
 default; the allowlist when the org sets one) — a closed network is the org's choice there, not an
 automatic consequence of the platform switch (2026-11-14).
 
-The org's `cloudNetwork` hosts are also the ceiling a local device in sandbox mode may reach: the
+The org's `cloudNetwork` hosts are a delta over the platform's `sandbox.limits.allowHosts`
+(`base`, `extraHosts`, `excludedHosts`; never a copy, so platform changes reach the org), and the
+super admin may make the platform list a ceiling with `sandbox.limits.orgHosts: within` (org egress
+ceiling spec 2026-11-15, which supersedes the "replaces" wording here). The org's effective hosts
+are also the ceiling a local device in sandbox mode may reach: the
 device intersects them with its own list (§4.4). An org on `open` still caps local devices at the
 deployment's `sandbox.limits.allowHosts`, so switching to an allowlist that carries a host outside
 that list raises the local ceiling — that is why only a person may widen the network, never the
@@ -174,7 +178,7 @@ ask-to-allow flow for auto-mode devices, the org's `sandboxTier`, the platform's
 Sandbox mode keeps the network ask-to-allow flow (it is the only way to widen it).
 A device in auto mode has no network settings at all: on a local device the machine's network is a
 fact, and a cloud auto device is 开放（挡内网）. The device network page exists in sandbox mode only.
-`sandbox.limits.allowHosts` becomes the default host list of 白名单 and of sandbox mode.
+`sandbox.limits.allowHosts` becomes the host list of 白名单 and of sandbox mode, which organizations follow with their own additions and removals (org egress ceiling spec 2026-11-15).
 Sandbox mode is today's `strict` profile only: the `dev` tier goes away as well **(decided
 2026-11-13)**; a person who wants to develop without the OS sandbox uses auto mode, which covers
 that need and is the default.

@@ -86,9 +86,10 @@ const ROUTES: Routes = {
       settings: { toolSearch: "off", locale: "en", sandboxToolPolicy: "ask" },
       deployment: {
         autoMode: { mode: "allowed", source: "default" },
-        cloudNetwork: { mode: "open", allowHosts: [] },
+        cloudNetwork: { allowHosts: [], orgHosts: "extend", off: false },
       },
       sandboxLimits: { cpu: 2, memoryMb: 4096, source: "deployment" },
+      effectiveNetwork: { mode: "open", hosts: [] },
     }),
   [`GET ${O}/ui/contributions`]: () => json(200, { items: [] }),
   [`GET ${O}/members`]: () => json(200, { members: MEMBERS }),

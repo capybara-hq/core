@@ -6,8 +6,11 @@ import {
   type EffectiveDevicePolicy,
   effectiveDevicePolicy,
   instanceLimitsJson,
+  type NetworkLimits,
   type OrgDeviceSettings,
-  orgSandboxNetwork,
+  orgCloudMode,
+  orgEffectiveHosts,
+  orgHostOutsideCeiling,
   readInstanceLimits,
   sameApplied,
 } from "../../src/sandbox/modes.js";
@@ -17,7 +20,8 @@ const L = ["registry.npmjs.org", "example.com"];
 const deployment = (
   autoMode: DeploymentDevicePolicy["autoMode"] = "allowed",
   egress: "none" | "allowlist" = "allowlist",
-): DeploymentDevicePolicy => ({ autoMode, limits: { egress, allowHosts: L } });
+  orgHosts: "extend" | "within" = "extend",
+): DeploymentDevicePolicy => ({ autoMode, limits: { egress, allowHosts: L, orgHosts } });
 
 const NO_ORG: OrgDeviceSettings = {};
 
@@ -120,9 +124,28 @@ describe("effectiveDevicePolicy", () => {
       },
     ],
     [
-      "the org's cloud allowlist replaces the deployment's",
+      "the org's cloud allowlist is its delta over the deployment's",
       deployment(),
-      { cloudNetwork: { mode: "allowlist", allowHosts: ["a.com"] } },
+      {
+        cloudNetwork: {
+          mode: "allowlist",
+          extraHosts: ["a.com"],
+          excludedHosts: ["example.com"],
+        },
+      },
+      "sandbox",
+      {
+        mode: "sandbox",
+        allowedMode: "auto",
+        modeSource: "device",
+        network: { kind: "allowlist", hosts: ["registry.npmjs.org", "a.com"] },
+        localAllowedDomains: ["registry.npmjs.org", "a.com"],
+      },
+    ],
+    [
+      "the org lists only its own hosts",
+      deployment(),
+      { cloudNetwork: { mode: "allowlist", base: "none", extraHosts: ["a.com"] } },
       "sandbox",
       {
         mode: "sandbox",
@@ -145,7 +168,7 @@ describe("effectiveDevicePolicy", () => {
       effectiveDevicePolicy(
         deployment("allowed", "none"),
         {
-          cloudNetwork: { mode: "open", allowHosts: ["a.com"] },
+          cloudNetwork: { mode: "open", extraHosts: ["a.com"] },
         },
         null,
       ).network,
@@ -167,32 +190,107 @@ describe("effectiveDevicePolicy", () => {
     expect(
       deviceNetwork(
         deployment(),
-        { cloudNetwork: { mode: "open", allowHosts: ["a.com"] } },
+        { cloudNetwork: { mode: "open", extraHosts: ["a.com"] } },
         "auto",
       ),
     ).toEqual({ kind: "open-public", hosts: [] });
-  });
-
-  it("orgSandboxNetwork: the org's choice over the deployment default", () => {
-    const dep = { mode: "open" as const, allowHosts: L };
-    expect(orgSandboxNetwork(dep, undefined)).toEqual({ kind: "open-public", hosts: [] });
-    expect(orgSandboxNetwork(dep, { mode: "allowlist" })).toEqual({
+    // the platform ceiling makes sandbox mode's cloud network the allowlist, whatever the org says;
+    // auto mode stays the open public network (devices.autoMode governs it)
+    expect(deviceNetwork(deployment("allowed", "allowlist", "within"), NO_ORG, "sandbox")).toEqual({
       kind: "allowlist",
       hosts: L,
     });
-    expect(orgSandboxNetwork(dep, { mode: "allowlist", allowHosts: ["a.com"] })).toEqual({
-      kind: "allowlist",
-      hosts: ["a.com"],
-    });
-    expect(orgSandboxNetwork({ mode: "allowlist", allowHosts: L }, undefined)).toEqual({
-      kind: "allowlist",
-      hosts: L,
-    });
-    // the platform kill switch forces an empty allowlist here too (R20, every read)
-    expect(orgSandboxNetwork(dep, { mode: "allowlist", allowHosts: ["a.com"] }, "none")).toEqual({
-      kind: "allowlist",
+    expect(deviceNetwork(deployment("allowed", "allowlist", "within"), NO_ORG, "auto")).toEqual({
+      kind: "open-public",
       hosts: [],
     });
+  });
+});
+
+const limits = (
+  orgHosts: "extend" | "within" = "extend",
+  egress: "none" | "allowlist" = "allowlist",
+  allowHosts: string[] = ["registry.npmjs.org", "*.example.com", "github.com"],
+): NetworkLimits => ({ egress, allowHosts, orgHosts });
+
+describe("orgEffectiveHosts", () => {
+  it("follows the platform list when the org stores nothing", () => {
+    expect(orgEffectiveHosts(limits(), undefined)).toEqual([
+      "registry.npmjs.org",
+      "*.example.com",
+      "github.com",
+    ]);
+  });
+
+  it("applies the org's delta: platform entries minus exclusions, then extras, deduped", () => {
+    expect(
+      orgEffectiveHosts(limits(), {
+        excludedHosts: ["github.com", "not-on-the-platform.org"],
+        extraHosts: ["pypi.org", "registry.npmjs.org"],
+      }),
+    ).toEqual(["registry.npmjs.org", "*.example.com", "pypi.org"]);
+  });
+
+  it("base none: only the org's own hosts", () => {
+    expect(orgEffectiveHosts(limits(), { base: "none" })).toEqual([]);
+    expect(
+      orgEffectiveHosts(limits(), { base: "none", extraHosts: ["pypi.org"], excludedHosts: [] }),
+    ).toEqual(["pypi.org"]);
+  });
+
+  it("a platform change reaches an org with a delta", () => {
+    const org = { extraHosts: ["pypi.org"] };
+    expect(orgEffectiveHosts(limits("extend", "allowlist", ["a.org"]), org)).toEqual([
+      "a.org",
+      "pypi.org",
+    ]);
+    expect(orgEffectiveHosts(limits("extend", "allowlist", ["b.org"]), org)).toEqual([
+      "b.org",
+      "pypi.org",
+    ]);
+  });
+
+  it("the kill switch empties it", () => {
+    expect(orgEffectiveHosts(limits("extend", "none"), { extraHosts: ["pypi.org"] })).toEqual([]);
+  });
+
+  it("within: extras outside the platform list are ignored, covered ones kept", () => {
+    expect(
+      orgEffectiveHosts(limits("within"), {
+        base: "none",
+        extraHosts: ["pypi.org", "api.example.com", "*.a.example.com", "github.com"],
+      }),
+    ).toEqual(["api.example.com", "*.a.example.com", "github.com"]);
+    // `*.d` is not covered by `d`
+    expect(
+      orgEffectiveHosts(limits("within", "allowlist", ["example.com"]), {
+        base: "none",
+        extraHosts: ["*.example.com", "example.com"],
+      }),
+    ).toEqual(["example.com"]);
+  });
+});
+
+describe("orgCloudMode", () => {
+  it("the org's mode, open by default", () => {
+    expect(orgCloudMode(limits(), undefined)).toBe("open");
+    expect(orgCloudMode(limits(), { mode: "allowlist" })).toBe("allowlist");
+  });
+
+  it("the allowlist under the kill switch or the platform ceiling", () => {
+    expect(orgCloudMode(limits("extend", "none"), { mode: "open" })).toBe("allowlist");
+    expect(orgCloudMode(limits("within"), { mode: "open" })).toBe("allowlist");
+    expect(orgCloudMode(limits("within"), undefined)).toBe("allowlist");
+  });
+});
+
+describe("orgHostOutsideCeiling", () => {
+  it("only under within, for hosts no platform entry covers", () => {
+    expect(orgHostOutsideCeiling(limits(), "pypi.org")).toBe(false);
+    expect(orgHostOutsideCeiling(limits("within"), "pypi.org")).toBe(true);
+    expect(orgHostOutsideCeiling(limits("within"), "API.example.com")).toBe(false);
+    expect(orgHostOutsideCeiling(limits("within"), "example.com")).toBe(true);
+    expect(orgHostOutsideCeiling(limits("within"), "github.com")).toBe(false);
   });
 });
 

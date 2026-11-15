@@ -18,11 +18,12 @@ import { orgAllows } from "../local-devices/network-grants.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { roleAtLeast } from "../orgs/roles.js";
 import {
+  type CloudNetworkSetting,
   ORG_SANDBOX_ALLOW_HOSTS_MAX,
   OrgSettingsService,
   readOrgSettings,
 } from "../orgs/settings.service.js";
-import { orgSandboxNetwork } from "../sandbox/modes.js";
+import { type NetworkLimits, orgEffectiveHosts, orgHostOutsideCeiling } from "../sandbox/modes.js";
 import { CatalogService, type MarketplaceImportResult } from "./catalog.service.js";
 import { CatalogScopeService } from "./catalog-scope.service.js";
 import { assertEntryNotDeprecated, loadMarketplaceEntry } from "./marketplaces.service.js";
@@ -160,23 +161,24 @@ const deploymentEgressNone = () =>
   );
 
 /**
- * The allowlist the organization's sandbox-mode devices reach (auto mode spec §4.1, §5.2): the
- * hosts of `orgSandboxNetwork` when the org or the deployment chose an allowlist, else the org's
- * own hosts (the deployment's list when the org gave none). An open cloud network does not make a
- * host "already allowed": a local device in sandbox mode always receives the allowlist, so a host
- * its network ask tells the person to ask an admin about must be addable (network ask spec §5.3).
+ * The allowlist the organization's sandbox-mode devices reach (org egress ceiling spec §D3): the
+ * org's effective hosts, whatever its cloud mode. An open cloud network does not make a host
+ * "already allowed": a local device in sandbox mode always receives the allowlist, so a host its
+ * network ask tells the person to ask an admin about must be addable (network ask spec §5.3).
  */
 function sandboxAllowlist(
-  deployment: { mode: "open" | "allowlist"; allowHosts: string[] },
-  org: { mode: "open" | "allowlist"; allowHosts?: string[] | undefined } | undefined,
+  limits: NetworkLimits,
+  org: CloudNetworkSetting | undefined,
 ): { kind: "allowlist"; hosts: string[] } {
-  const network = orgSandboxNetwork(deployment, org);
-  return {
-    kind: "allowlist",
-    hosts:
-      network.kind === "allowlist" ? network.hosts : (org?.allowHosts ?? deployment.allowHosts),
-  };
+  return { kind: "allowlist", hosts: orgEffectiveHosts(limits, org) };
 }
+
+/** Hosts beyond the platform's ceiling: only a super admin adds them (spec §D2). */
+const outsideCeiling = (hosts: string[]) =>
+  new ApiError(
+    "catalog.request_invalid",
+    `The platform limits sandbox hosts to its allowlist; only a super admin can add ${hosts.join(", ")} (sandbox.limits.allowHosts)`,
+  );
 
 /** A unique violation (the partial index of pending requests). */
 const isUniqueViolation = (e: unknown) =>
@@ -368,16 +370,18 @@ export class CatalogRequestsService {
     const t = this.db;
     await this.orgLock.lockAndAuthorize(orgId, actor, "catalog.request");
     const hosts = [...new Set(input.hosts.map((h) => h.toLowerCase()))].sort();
-    if (this.config.get().sandbox.limits.egress === "none") throw deploymentEgressNone();
-    const deployment = (await this.orgSettings.deployment()).cloudNetwork;
+    const limits = this.config.get().sandbox.limits;
+    if (limits.egress === "none") throw deploymentEgressNone();
     const settings = await readOrgSettings(t, orgId);
-    const network = sandboxAllowlist(deployment, settings.cloudNetwork);
+    const network = sandboxAllowlist(limits, settings.cloudNetwork);
     if (hosts.every((h) => orgAllows(h, { network }))) {
       throw new ApiError(
         "catalog.request_invalid",
         "This organization's sandbox network already allows these hosts; nothing to request",
       );
     }
+    const beyond = hosts.filter((h) => orgHostOutsideCeiling(limits, h));
+    if (beyond.length > 0) throw outsideCeiling(beyond);
     if (input.conversationId !== undefined) {
       const c = await t
         .selectFrom("conversations")
@@ -841,12 +845,14 @@ export class CatalogRequestsService {
 
   /**
    * Approves a `network_allowlist` request inside its decision's transaction: the hosts the org's
-   * sandbox allowlist does not hold yet are added to the host list of the org's `cloudNetwork`,
-   * through {@link OrgSettingsService.update} (audited `org.settings_updated` with `requestId`).
-   * An org following the deployment default starts from the deployment's list (it keeps its own
-   * list from then on). The org's network mode is kept: the list caps local sandbox devices, and
-   * approving a host never turns an open cloud network into an allowlist (auto mode hardening
-   * spec K1). The platform kill switch, more
+   * sandbox allowlist does not hold yet are added to the org's `cloudNetwork` delta (an extra
+   * host, or out of the exclusions for a platform host the org had dropped), through
+   * {@link OrgSettingsService.update} (audited `org.settings_updated` with `requestId`). The
+   * platform's list is never copied, so the org keeps following it (org egress ceiling spec §D1).
+   * The org's network mode is kept: the hosts cap local sandbox devices, and approving a host
+   * never turns an open cloud network into an allowlist (auto mode hardening spec K1). A host
+   * beyond the platform's ceiling (`orgHosts: within`) refuses the whole request. The platform
+   * kill switch, more
    * than {@link ORG_SANDBOX_ALLOW_HOSTS_MAX} hosts -> `catalog.request_invalid`; decided with an API
    * token -> `org.sandbox_egress_not_allowed` (only a person widens the network). Hosts all allowed
    * already: nothing is written.
@@ -859,27 +865,46 @@ export class CatalogRequestsService {
     opts: RequestActorOpts,
   ): Promise<void> {
     const hosts = (detail as Partial<NetworkRequestDetail> | null)?.hosts ?? [];
-    if (this.config.get().sandbox.limits.egress === "none") throw deploymentEgressNone();
-    const deployment = (await this.orgSettings.deployment()).cloudNetwork;
+    const limits = this.config.get().sandbox.limits;
+    if (limits.egress === "none") throw deploymentEgressNone();
     const current = (await readOrgSettings(this.db, orgId)).cloudNetwork;
     // the hosts the org's sandbox-mode devices reach now (an open cloud network still gives them
     // the allowlist: a host their network ask names must be addable)
-    const network = sandboxAllowlist(deployment, current);
+    const network = sandboxAllowlist(limits, current);
     const missing = hosts.filter((h) => !orgAllows(h, { network }));
     if (missing.length === 0) return;
-    const base = current?.allowHosts ?? deployment.allowHosts;
-    const allowHosts = [...new Set([...base, ...missing])];
-    if (allowHosts.length > ORG_SANDBOX_ALLOW_HOSTS_MAX) {
+    // the whole request is refused when a host is beyond the platform's ceiling (never partly)
+    const beyond = missing.filter((h) => orgHostOutsideCeiling(limits, h));
+    if (beyond.length > 0) throw outsideCeiling(beyond);
+    // a delta, never a copy of the platform's list: a host the org had dropped from the platform's
+    // list comes back out of the exclusions (base platform), any other becomes an extra
+    const excluded = current?.excludedHosts ?? [];
+    const platformBase = (current?.base ?? "platform") === "platform";
+    const readmit = platformBase
+      ? missing.filter((h) => excluded.includes(h) && limits.allowHosts.includes(h))
+      : [];
+    const added = missing.filter((h) => !readmit.includes(h));
+    const extraHosts = [...new Set([...(current?.extraHosts ?? []), ...added])];
+    if (extraHosts.length > ORG_SANDBOX_ALLOW_HOSTS_MAX) {
       throw new ApiError(
         "catalog.request_invalid",
-        `The organization's sandbox allowlist would exceed ${ORG_SANDBOX_ALLOW_HOSTS_MAX} hosts; remove some in the organization settings first`,
+        `The organization's sandbox allowlist would exceed ${ORG_SANDBOX_ALLOW_HOSTS_MAX} extra hosts; remove some in the organization settings first`,
       );
     }
+    const excludedHosts = excluded.filter((h) => !readmit.includes(h));
+    // the stored value is sent back whole with the hosts changed; the mode is never written
+    // (approving a host never turns an open cloud network into an allowlist, K1)
+    const cloudNetwork: CloudNetworkSetting = {
+      ...current,
+      ...(extraHosts.length > 0 ? { extraHosts } : {}),
+      ...(excludedHosts.length > 0 ? { excludedHosts } : {}),
+    };
+    if (excludedHosts.length === 0) delete cloudNetwork.excludedHosts;
     // approving widens the org's network allowlist: only a person in a session does that, never an
     // API token (auto mode spec §4.3; the Platform tool has no decide operation at all)
     await this.orgSettings.update(
       orgId,
-      { cloudNetwork: { mode: current?.mode ?? deployment.mode, allowHosts } },
+      { cloudNetwork },
       actor,
       opts.actorTokenId,
       { requestId },

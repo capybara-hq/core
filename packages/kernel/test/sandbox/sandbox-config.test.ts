@@ -36,6 +36,7 @@ describe("配置 sandbox", () => {
         "objects.githubusercontent.com",
         "release-assets.githubusercontent.com",
       ],
+      orgHosts: "extend",
     });
     // unset in the config: the deployment setting `devicesAutoMode` decides (default: allowed)
     expect(c.devices.autoMode).toBeUndefined();

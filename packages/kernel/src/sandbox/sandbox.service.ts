@@ -360,11 +360,15 @@ function tagged<P>(
  *   startup config) while an org can be on it: auto mode always is, and a sandbox-mode cloud device
  *   keeps its org's cloud network, open by default, so turning auto mode off does not avoid it
  *   (auto mode hardening spec K3). Only the kill switch (`sandbox.limits.egress: none`) does.
+ * - `sandbox.limits.orgHosts: within` while the startup config does not turn auto mode off: the
+ *   ceiling limits sandbox mode only, and auto mode (the default of every device) keeps the open
+ *   network (org egress ceiling spec §D2). The admin console's runtime choice is not seen here.
  * No run duration limit (`runtime.maxRunSeconds` 0, the default) cuts no command, so there is
  * nothing to tell.
  */
 export function sandboxConfigWarnings(
-  cfg: Pick<KernelConfig, "runtime" | "sandbox" | "extensionConfig">,
+  cfg: Pick<KernelConfig, "runtime" | "sandbox" | "extensionConfig"> &
+    Partial<Pick<KernelConfig, "devices">>,
   providerPlugin?: string,
 ): { level: "warn"; message: string }[] {
   const out: { level: "warn"; message: string }[] = [];
@@ -376,6 +380,17 @@ export function sandboxConfigWarnings(
         message: `extensionConfig."${providerPlugin}".refuseOpenNetwork is true: the ${providerPlugin} plugin refuses cloud devices on the open public network, which every device in auto mode and every sandbox-mode device of an organization whose cloudNetwork is open (the default) uses; set refuseOpenNetwork to false, or turn auto mode off (devices.autoMode) and have every organization switch its cloudNetwork to the allowlist`,
       });
     }
+  }
+  if (
+    cfg.sandbox.limits.orgHosts === "within" &&
+    cfg.sandbox.limits.egress !== "none" &&
+    cfg.devices?.autoMode !== "off"
+  ) {
+    out.push({
+      level: "warn",
+      message:
+        "sandbox.limits.orgHosts is within but devices.autoMode is not off: the platform allowlist limits sandbox mode only; devices in auto mode (the default) still reach the open public network. Set devices.autoMode to off (or turn auto mode off in the admin console) for a hard ceiling",
+    });
   }
   const run = cfg.runtime.maxRunSeconds;
   const cmd = cfg.sandbox.limits.maxCommandSeconds;

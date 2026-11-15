@@ -1405,16 +1405,21 @@ export function deviceModeViewOf(
   const networkKind = local ? "allowlist" : policy.network.kind;
   const org = settings.cloudNetwork;
   // "org" only when the org supplied what is in effect: the kill switch always wins; auto mode
-  // ignores the org's network; a local device's list is the org's only when the org gave hosts;
-  // a sandbox cloud device's kind is the org's when it matches the mode the org chose
+  // ignores the org's network; a local device's list is the org's only when the org changed the
+  // platform's (its own base or a delta); a sandbox cloud device's kind is the org's when it
+  // matches the mode the org chose (the platform ceiling may force the allowlist)
+  const orgHosts =
+    org?.base === "none" ||
+    (org?.extraHosts?.length ?? 0) > 0 ||
+    (org?.excludedHosts?.length ?? 0) > 0;
   const source: "org" | "platform" = killSwitch
     ? "platform"
     : local
-      ? policy.mode === "sandbox" && org?.allowHosts !== undefined
+      ? policy.mode === "sandbox" && orgHosts
         ? "org"
         : "platform"
       : policy.mode === "sandbox" &&
-          org !== undefined &&
+          org?.mode !== undefined &&
           (org.mode === "open" ? networkKind === "open-public" : networkKind === "allowlist")
         ? "org"
         : "platform";

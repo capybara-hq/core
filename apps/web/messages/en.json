@@ -122,7 +122,11 @@
     },
     "org": {
       "not_found": "The organization does not exist or you are no longer a member.",
-      "sandbox_egress_not_allowed": "Widening the organization's cloud network needs a person in the organization settings.",
+      "sandbox_egress_not_allowed": {
+        "default": "Widening the organization's cloud network needs a person in the organization settings.",
+        "outside_ceiling": "The platform limits sandbox hosts to its list: ask a super admin to add the host to the platform's allowlist.",
+        "open_not_allowed": "The platform limits sandbox networks to its allowlist: the open cloud network is not available."
+      },
       "last_owner": "An organization must keep at least one org owner.",
       "owner_required": "Only an org owner can do this.",
       "creation_disabled": "Creating organizations is turned off on this deployment.",
@@ -2118,7 +2122,7 @@
       "decidedLabel": "Network request decided",
       "title": "{name} asks to allow domains",
       "hosts": "Domains",
-      "hint": "Approving adds these domains to the organization's sandbox network. If the organization follows the platform's list, it keeps its own copy of that list from now on.",
+      "hint": "Approving adds these domains to the organization's sandbox network; the rest of its list does not change.",
       "approve": "Allow",
       "reasonLabel": "Reason",
       "reasonHelp": "Sent to the member if you reject the request.",
@@ -2536,12 +2540,18 @@
       "open": "Open (internal blocked)",
       "openHint": "Any public address and port.",
       "allowlist": "Allowlist",
-      "allowlistHint": "Only the hosts below; replaces the platform's list.",
+      "allowlistHint": "Only the hosts below.",
       "platformClosed": "The platform turned the network off: only the platform can turn it back on.",
+      "withinClosed": "The platform limits hosts to its list: only the allowlist is available.",
+      "outsideCeiling": "The platform limits hosts to its list: ask a super admin to add {hosts} to the platform's allowlist.",
       "hosts": "Allowed hosts",
-      "hostsHelp": "One host per line, such as registry.npmjs.org or *.example.com (subdomains only). No IP addresses, ports or internal names; at most 200.",
+      "hostsHelp": "The hosts sandbox mode may reach: the cloud allowlist, and the ceiling of every local device in sandbox mode even when the cloud network is open. Starts from the platform's list with this organization's changes; one host per line, such as registry.npmjs.org or *.example.com (subdomains only). No IP addresses, ports or internal names.",
       "invalidHost": "{host} is not a valid host: lowercase, no scheme, port or path, and not an internal-only name.",
       "prefilled": "Added {hosts} from a blocked command. Save to allow it.",
+      "ownNetwork": "This organization keeps its own changes to the platform's host list.",
+      "followPlatform": "Follow the platform",
+      "followPlatformBody": "The organization's own added and removed hosts and its cloud network choice are dropped. It then follows the platform's host list and default network, including later changes a super admin makes.",
+      "followPlatformDone": "Now following the platform",
       "publicOnly": "Only public addresses are reachable; loopback, private and cloud metadata addresses are blocked outside the container."
     },
     "limits": {

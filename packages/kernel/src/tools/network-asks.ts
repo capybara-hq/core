@@ -99,6 +99,12 @@ export const orgLayerNote = (hosts: readonly string[]) =>
     ? `[network] ${list(hosts)} is not in the organization's network allowlist. Only an organization admin can add it; the user can ask an admin from the conversation. Continue without it or tell the user.`
     : `[network] ${list(hosts)} are not in the organization's network allowlist. Only an organization admin can add them; the user can ask an admin from the conversation. Continue without them or tell the user.`;
 
+/** An org-layer host beyond the platform's ceiling (org egress ceiling spec §D2): only a super admin. */
+export const platformCeilingNote = (hosts: readonly string[]) =>
+  one(hosts)
+    ? `[network] ${list(hosts)} is not in the platform's network allowlist, which limits this organization. Only a super admin can add it; organization admins cannot. Continue without it or tell the user.`
+    : `[network] ${list(hosts)} are not in the platform's network allowlist, which limits this organization. Only a super admin can add them; organization admins cannot. Continue without them or tell the user.`;
+
 /** The address layer (spec §6.6): nobody can lift it. */
 export const addressLayerNote = (hosts: readonly string[]) =>
   one(hosts)
@@ -123,6 +129,11 @@ export interface NetworkPlanContext {
   device: { features: readonly DeviceFeature[]; policy: DeviceLocalPolicySummary | null } | null;
   /** The scheduled task run the run serves (null / undefined: attended). */
   unattended: UnattendedRun | null | undefined;
+  /**
+   * Whether a host is beyond the platform's ceiling (`sandbox.limits.orgHosts: within`, org egress
+   * ceiling spec §D2): only a super admin can add it, so its note names the super admin.
+   */
+  outsideCeiling?: (host: string) => boolean;
 }
 
 /** What to do with a command's refused hosts. */
@@ -178,6 +189,7 @@ export function planNetworkAsk(
 ): NetworkPlan {
   const address: string[] = [];
   const org: string[] = [];
+  const platform: string[] = [];
   const refused: string[] = [];
   const unattended: string[] = [];
   const taskIgnored: string[] = [];
@@ -191,7 +203,8 @@ export function planNetworkAsk(
   for (const b of hostsOf(blocked)) {
     if (b.layer === "address") address.push(b.host);
     else if (b.layer === "org") {
-      org.push(b.host);
+      if (ctx.outsideCeiling?.(b.host) === true) platform.push(b.host);
+      else org.push(b.host);
       if (unattendedRules(ctx.unattended)) missingGrants.push(networkGrantKey(b.host));
     } else if (b.layer === "device") {
       if (!canAsk) continue;
@@ -218,6 +231,7 @@ export function planNetworkAsk(
     else ask = candidates.slice(0, NETWORK_ASK_MAX_HOSTS);
   }
   if (org.length > 0) notes.push(orgLayerNote(org));
+  if (platform.length > 0) notes.push(platformCeilingNote(platform));
   if (address.length > 0) notes.push(addressLayerNote(address));
   return { ask, scopes: ["once", "always"], notes, missingGrants };
 }

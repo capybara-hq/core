@@ -1,6 +1,8 @@
 "use client";
 
 import {
+  Button,
+  Dialog,
   Field,
   FormSection,
   KeyValue,
@@ -19,10 +21,12 @@ import { NoAccess } from "../../../../components/NoAccess";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
 import { useSession } from "../../../../components/shell/session";
+import { ApiClientError } from "../../../../lib/api";
 import { allowHostProblem } from "../../../../lib/network-hosts";
 import {
   type CloudNetworkSetting,
   canUpdateOrg,
+  cloudNetworkToSave,
   type OrgSettings,
   type OrgSettingsPatch,
   type OrgSettingsResponse,
@@ -41,8 +45,13 @@ import NotFound from "../../not-found";
  * `/settings/sandbox`: the organization's sandbox settings (SettingsPage): the default policy of the
  * sandbox tools (run directly / ask for approval), the org's auto-mode switch (auto mode spec §4.3:
  * the org may follow the platform or turn it off; 「平台未开放」 when the platform turned it off)
- * and the network of its cloud devices in sandbox mode (开放挡内网 / an allowlist whose hosts default
- * to the platform's list), plus the sandbox resources (cpu / memory, read-only: super admins
+ * and its sandbox network (egress ceiling spec §D4): the cloud mode (开放挡内网 / allowlist) and the
+ * host editor, shown in both modes because the hosts are also the ceiling of every local device in
+ * sandbox mode; it starts from the effective hosts and saves a delta over the platform's list. The
+ * kill switch makes both read-only; the platform ceiling (`within`) disables the open mode. An org
+ * with a stored network gets 跟随平台 (after a confirmation: `cloudNetwork: null`, which drops its
+ * own additions and removals; spec §D5: how an org migrated to base none re-attaches). Plus
+ * the sandbox resources (cpu / memory, read-only: super admins
  * override them per organization in the deployment settings, C19). Members can see, admins can
  * change; changes show an ActionRow. The org-settings PATCH is shared with the general page: this
  * page sends only its own fields. From the query cache (the layout prefetched it on a first load;
@@ -74,7 +83,7 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
   const [draft, setDraft] = useState<{
     sandboxToolPolicy?: NonNullable<OrgSettings["sandboxToolPolicy"]>;
     autoMode?: "allowed" | "off";
-    cloudMode?: CloudNetworkSetting["mode"];
+    cloudMode?: NonNullable<CloudNetworkSetting["mode"]>;
     hostsText?: string;
   }>({});
   // The answer is the new settings; the read-only parts it leaves out keep their cached values.
@@ -91,11 +100,13 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
         settings: res.settings,
         ...(res.deployment !== undefined ? { deployment: res.deployment } : {}),
         ...(res.sandboxLimits !== undefined ? { sandboxLimits: res.sandboxLimits } : {}),
+        ...(res.effectiveNetwork !== undefined ? { effectiveNetwork: res.effectiveNetwork } : {}),
       })),
   });
-  // `?allowHost=`: once the settings are in, an org admin's draft becomes an allowlist with the
-  // hosts appended (those not listed yet); nothing is saved until the person saves.
+  // `?allowHost=`: once the settings are in, an org admin's host editor gets the hosts appended
+  // (those not listed yet); the mode is left alone; nothing is saved until the person saves.
   const [prefilled, setPrefilled] = useState<string[] | null>(null);
+  const [confirmingFollow, setConfirmingFollow] = useState(false);
   const loaded = read.kind === "ready" ? read.data : null;
   useEffect(() => {
     if (prefilled !== null || loaded === null || !manage || allowHosts.length === 0) return;
@@ -103,20 +114,16 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
     // the kernel always answers with the deployment defaults; no list to add to without them
     if (platformNetwork === undefined) return;
     // no list to add to: the platform turned the network off
-    if (platformNetwork.mode === "allowlist") return;
-    const own = loaded.settings.cloudNetwork;
-    const base = own?.allowHosts ?? platformNetwork.allowHosts;
+    if (platformNetwork.off) return;
+    const base = loaded.effectiveNetwork?.hosts;
+    if (base === undefined) return;
     const added = allowHosts.filter((h) => !base.includes(h));
     if (added.length === 0) {
       setPrefilled([]);
       return;
     }
     setPrefilled(added);
-    setDraft((d) => ({
-      ...d,
-      cloudMode: "allowlist",
-      hostsText: [...base, ...added].join("\n"),
-    }));
+    setDraft((d) => ({ ...d, hostsText: [...base, ...added].join("\n") }));
   }, [loaded, manage, allowHosts, prefilled]);
   const header = {
     path: [...scope, { label: "settings", href: "/settings/organization" }, { label: "sandbox" }],
@@ -167,8 +174,8 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
   const saved = data.settings;
   // The kernel always sends the deployment defaults; without them "follow the platform" has no
   // meaning, so the page fails visibly instead of guessing.
-  const deployment = data.deployment;
-  if (deployment === undefined) {
+  const { deployment, effectiveNetwork } = data;
+  if (deployment === undefined || effectiveNetwork === undefined) {
     return (
       <ErrorFrame
         reset={() => void qc.invalidateQueries({ queryKey: orgSettingsQuery(orgId).queryKey })}
@@ -185,26 +192,34 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
   const autoMode = platformOff ? "off" : (draft.autoMode ?? savedAutoMode);
   const autoChanged =
     !platformOff && draft.autoMode !== undefined && draft.autoMode !== savedAutoMode;
-  // The cloud-device network (sandbox mode): absent follows the platform's default; the platform's
-  // kill switch forces an empty allowlist and cannot be reopened here.
+  // The sandbox network (egress ceiling spec §D4): the page shows the effective mode and hosts. The
+  // kill switch (`off`) makes it read-only and it is never sent; the ceiling (`within`) forces the
+  // allowlist, so the open choice is disabled. A host outside the ceiling is the kernel's to refuse.
   const platformNetwork = deployment.cloudNetwork;
-  const networkOff = platformNetwork.mode === "allowlist";
-  const savedCloudMode: CloudNetworkSetting["mode"] = networkOff
-    ? "allowlist"
-    : (saved.cloudNetwork?.mode ?? platformNetwork.mode);
+  const networkOff = platformNetwork.off;
+  const within = platformNetwork.orgHosts === "within";
+  const savedCloudMode = effectiveNetwork.mode;
   const cloudMode = networkOff ? "allowlist" : (draft.cloudMode ?? savedCloudMode);
-  const baseHosts = saved.cloudNetwork?.allowHosts ?? platformNetwork.allowHosts;
+  const modeChanged = !networkOff && cloudMode !== savedCloudMode;
+  const baseHosts = effectiveNetwork.hosts;
   const hostsText = draft.hostsText ?? baseHosts.join("\n");
   const hosts = parseHostList(hostsText);
-  const badHost = hosts.find((h) => allowHostProblem(h, { wildcard: true }) !== null);
-  // Only an allowlist is validated and sent: a stale draft keeps its text when the person switches
-  // to open, so it must not block unrelated saves (and open mode never sends the hosts).
-  const hostsInvalid = cloudMode === "allowlist" && (badHost !== undefined || hosts.length > 200);
-  const cloudChanged =
-    cloudMode !== savedCloudMode ||
-    (cloudMode === "allowlist" && draft.hostsText !== undefined && !sameList(hosts, baseHosts));
-  const cloudValue: CloudNetworkSetting =
-    cloudMode === "open" ? { mode: "open" } : { mode: "allowlist", allowHosts: hosts };
+  const hostsChanged = !networkOff && draft.hostsText !== undefined && !sameList(hosts, baseHosts);
+  const cloudChanged = modeChanged || hostsChanged;
+  // PATCH replaces the stored value whole: the stored value with the edited fields changed
+  const cloudValue = cloudNetworkToSave(
+    saved.cloudNetwork,
+    platformNetwork.allowHosts,
+    hosts,
+    modeChanged ? cloudMode : undefined,
+  );
+  const badHost = networkOff
+    ? undefined
+    : hosts.find((h) => allowHostProblem(h, { wildcard: true }) !== null);
+  const hostsInvalid =
+    badHost !== undefined ||
+    (cloudValue.extraHosts?.length ?? 0) > 200 ||
+    (cloudValue.excludedHosts?.length ?? 0) > 200;
   // Only the changed fields
   const patch: OrgSettingsPatch = {
     ...(autoChanged && draft.autoMode !== undefined ? { autoMode: draft.autoMode } : {}),
@@ -224,8 +239,33 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
       setPrefilled([]);
       toast.success(ts("saved"));
     } catch (e) {
-      toast.error(errorMessage(e));
+      toast.error(saveError(e));
     }
+  }
+
+  // 跟随平台: clears the stored network (and any unsaved network draft); other drafts stay.
+  async function followPlatform() {
+    try {
+      await update.mutateAsync({ cloudNetwork: null });
+      setDraft(({ cloudMode: _m, hostsText: _h, ...rest }) => rest);
+      setPrefilled([]);
+      setConfirmingFollow(false);
+      toast.success(t("cloudNetwork.followPlatformDone"));
+    } catch (e) {
+      setConfirmingFollow(false);
+      toast.error(saveError(e));
+    }
+  }
+
+  // A host outside the platform ceiling: the kernel's refusal names it (spec §D2).
+  function saveError(e: unknown): string {
+    if (e instanceof ApiClientError && e.code === "org.sandbox_egress_not_allowed") {
+      const d = e.rawDetails[0] as { reason?: unknown; hosts?: unknown } | undefined;
+      if (d?.reason === "outside_ceiling" && Array.isArray(d.hosts) && d.hosts.length > 0) {
+        return t("cloudNetwork.outsideCeiling", { hosts: d.hosts.join(", ") });
+      }
+    }
+    return errorMessage(e);
   }
 
   return (
@@ -326,35 +366,83 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
             value={cloudMode}
             disabled={!manage || networkOff}
             onChange={(v) =>
-              setDraft((d) => ({ ...d, cloudMode: v as CloudNetworkSetting["mode"] }))
+              setDraft((d) => ({
+                ...d,
+                cloudMode: v as NonNullable<CloudNetworkSetting["mode"]>,
+              }))
             }
-            options={(["open", "allowlist"] as const).map((v) => ({
-              value: v,
-              label: t(`cloudNetwork.${v}`),
-              description: t(`cloudNetwork.${v}Hint`),
-            }))}
+            options={(["open", "allowlist"] as const).map((v) => {
+              const closed = v === "open" && within && !networkOff;
+              return {
+                value: v,
+                label: t(`cloudNetwork.${v}`),
+                description: closed ? t("cloudNetwork.withinClosed") : t(`cloudNetwork.${v}Hint`),
+                ...(closed ? { disabled: true } : {}),
+              };
+            })}
           />
           {networkOff && (
             <Text variant="small" tone="muted">
               {t("cloudNetwork.platformClosed")}
             </Text>
-          )}{" "}
-          {cloudMode === "allowlist" && (
-            <Field
-              label={t("cloudNetwork.hosts")}
-              help={t("cloudNetwork.hostsHelp")}
-              {...(badHost !== undefined
-                ? { error: t("cloudNetwork.invalidHost", { host: badHost }) }
-                : {})}
+          )}
+          <Field
+            label={t("cloudNetwork.hosts")}
+            help={t("cloudNetwork.hostsHelp")}
+            {...(badHost !== undefined
+              ? { error: t("cloudNetwork.invalidHost", { host: badHost }) }
+              : {})}
+          >
+            <Textarea
+              code
+              rows={8}
+              value={hostsText}
+              disabled={!manage || networkOff}
+              onChange={(e) => setDraft((d) => ({ ...d, hostsText: e.target.value }))}
+            />
+          </Field>
+          {manage && !networkOff && saved.cloudNetwork !== undefined && (
+            <Stack gap={4}>
+              <Text variant="prose" tone="muted">
+                {t("cloudNetwork.ownNetwork")}
+              </Text>
+              <Stack direction="row" gap={8}>
+                <Button
+                  density="dense"
+                  disabled={update.isPending}
+                  onClick={() => setConfirmingFollow(true)}
+                >
+                  {t("cloudNetwork.followPlatform")}
+                </Button>
+              </Stack>
+            </Stack>
+          )}
+          {confirmingFollow && (
+            <Dialog
+              open
+              onOpenChange={(o) => {
+                if (!o) setConfirmingFollow(false);
+              }}
+              title={t("cloudNetwork.followPlatform")}
+              danger
+              initialFocus="cancel"
+              footer={
+                <>
+                  <Button variant="ghost" onClick={() => setConfirmingFollow(false)}>
+                    {tc("cancel")}
+                  </Button>
+                  <Button
+                    variant="danger-solid"
+                    loading={update.isPending}
+                    onClick={() => void followPlatform()}
+                  >
+                    {t("cloudNetwork.followPlatform")}
+                  </Button>
+                </>
+              }
             >
-              <Textarea
-                code
-                rows={8}
-                value={hostsText}
-                disabled={!manage || networkOff}
-                onChange={(e) => setDraft((d) => ({ ...d, hostsText: e.target.value }))}
-              />
-            </Field>
+              <Text variant="prose">{t("cloudNetwork.followPlatformBody")}</Text>
+            </Dialog>
           )}
           {prefilled !== null && prefilled.length > 0 && (
             <Text variant="small" tone="muted">

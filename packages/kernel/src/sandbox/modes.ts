@@ -1,7 +1,7 @@
 import type { KernelConfig } from "../config/schema.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import type { KernelConfigService } from "../infra/config/kernel-config.service.js";
-import type { OrgSettings } from "../orgs/settings.service.js";
+import type { CloudNetworkSetting, OrgSettings } from "../orgs/settings.service.js";
 import { type DevicesAutoMode, readDevicesAutoMode } from "./platform-auto-mode.js";
 
 /**
@@ -29,7 +29,60 @@ export interface DeviceNetwork {
  */
 export interface DeploymentDevicePolicy {
   autoMode: DevicesAutoMode;
-  limits: Pick<KernelConfig["sandbox"]["limits"], "egress" | "allowHosts">;
+  limits: NetworkLimits;
+}
+
+/**
+ * The platform's network fields (`sandbox.limits`): the kill switch, the allowlist and whether
+ * organizations may go beyond it (org egress ceiling spec §D2).
+ */
+export type NetworkLimits = Pick<
+  KernelConfig["sandbox"]["limits"],
+  "egress" | "allowHosts" | "orgHosts"
+>;
+
+/** Whether the allowlist entry `pattern` admits `host` (`*.x.com`: subdomains, never the apex). */
+export const coversHost = (pattern: string, host: string): boolean =>
+  pattern === host || (pattern.startsWith("*.") && host.endsWith(pattern.slice(1)));
+
+/**
+ * Whether `host` is beyond the platform's ceiling: `sandbox.limits.orgHosts` is `within` and no
+ * entry of `sandbox.limits.allowHosts` covers it (a wildcard host is covered by a wider wildcard).
+ * Only a super admin can allow such a host.
+ */
+export function orgHostOutsideCeiling(limits: NetworkLimits, host: string): boolean {
+  if (limits.orgHosts !== "within") return false;
+  const h = host.toLowerCase();
+  return !limits.allowHosts.some((p) => coversHost(p.toLowerCase(), h));
+}
+
+/**
+ * The org's effective allowlist (org egress ceiling spec §D1): empty under the kill switch; else
+ * the org's extras (only those inside the ceiling under `within`) on top of the platform's list
+ * minus the org's exclusions, or the extras alone when the org's base is `none`. The one place
+ * that combines the platform's hosts with the org's.
+ */
+export function orgEffectiveHosts(
+  limits: NetworkLimits,
+  org: CloudNetworkSetting | undefined,
+): string[] {
+  if (limits.egress === "none") return [];
+  const extra = (org?.extraHosts ?? []).filter((h) => !orgHostOutsideCeiling(limits, h));
+  if (org?.base === "none") return [...new Set(extra)];
+  const excluded = new Set(org?.excludedHosts ?? []);
+  return [...new Set([...limits.allowHosts.filter((h) => !excluded.has(h)), ...extra])];
+}
+
+/**
+ * The org's cloud network in sandbox mode (spec §D2): the allowlist under the kill switch or the
+ * platform ceiling (`orgHosts: within`), else the org's mode (open by default).
+ */
+export function orgCloudMode(
+  limits: NetworkLimits,
+  org: CloudNetworkSetting | undefined,
+): "open" | "allowlist" {
+  if (limits.egress === "none" || limits.orgHosts === "within") return "allowlist";
+  return org?.mode ?? "open";
 }
 
 /**
@@ -73,22 +126,18 @@ export function allowedDeviceMode(
   return platform === "allowed" && org !== "off" ? "auto" : "sandbox";
 }
 
-/**
- * The org's allowlist (the hosts a local device in sandbox mode may reach): the org's own list when
- * it gave one, else `sandbox.limits.allowHosts`; empty under the platform kill switch.
- */
+/** The org's allowlist (the hosts a local device in sandbox mode may reach): {@link orgEffectiveHosts}. */
 export function orgAllowedDomains(
   deployment: DeploymentDevicePolicy,
   org: OrgDeviceSettings,
 ): string[] {
-  if (deployment.limits.egress === "none") return [];
-  return [...(org.cloudNetwork?.allowHosts ?? deployment.limits.allowHosts)];
+  return orgEffectiveHosts(deployment.limits, org.cloudNetwork);
 }
 
 /**
- * The cloud network (auto mode spec §4.3): `open-public` in auto mode while the org's
- * `cloudNetwork` is `open` (the default), else the org's allowlist. `sandbox.limits.egress: none`
- * forces an empty allowlist (the platform kill switch, R20).
+ * The cloud network (auto mode spec §4.3): `open-public` in auto mode; in sandbox mode the org's
+ * cloud network ({@link orgCloudMode}). `sandbox.limits.egress: none` forces an empty allowlist
+ * (the platform kill switch, R20).
  */
 export function deviceNetwork(
   deployment: DeploymentDevicePolicy,
@@ -98,26 +147,10 @@ export function deviceNetwork(
   if (deployment.limits.egress === "none") return { kind: "allowlist", hosts: [] };
   // auto mode is 开放挡内网 whatever the org says; only sandbox mode applies `cloudNetwork`
   if (mode === "auto") return { kind: "open-public", hosts: [] };
-  if ((org.cloudNetwork?.mode ?? "open") === "open") {
+  if (orgCloudMode(deployment.limits, org.cloudNetwork) === "open") {
     return { kind: "open-public", hosts: [] };
   }
   return { kind: "allowlist", hosts: orgAllowedDomains(deployment, org) };
-}
-
-/**
- * The org's sandbox-mode network, from the deployment default, the org's `cloudNetwork` choice and
- * the platform kill switch: `sandbox.limits.egress: "none"` forces an empty allowlist (R20, every
- * read); otherwise `open-public` when either says open, else the org's hosts over the deployment's
- * list.
- */
-export function orgSandboxNetwork(
-  deployment: { mode: "open" | "allowlist"; allowHosts: string[] },
-  org: OrgDeviceSettings["cloudNetwork"],
-  egress: "none" | "allowlist" = "allowlist",
-): DeviceNetwork {
-  if (egress === "none") return { kind: "allowlist", hosts: [] };
-  if ((org?.mode ?? deployment.mode) === "open") return { kind: "open-public", hosts: [] };
-  return { kind: "allowlist", hosts: [...(org?.allowHosts ?? deployment.allowHosts)] };
 }
 
 /**

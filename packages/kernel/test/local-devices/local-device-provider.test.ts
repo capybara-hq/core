@@ -66,7 +66,7 @@ const ROOTS = {
 /** The deployment's switch and network (auto allowed, the allowlist unless a test changes it). */
 const DEPLOYMENT: DeploymentDevicePolicy = {
   autoMode: "allowed",
-  limits: { egress: "allowlist", allowHosts: ["example.com"] },
+  limits: { egress: "allowlist", allowHosts: ["example.com"], orgHosts: "extend" },
 };
 /** The limits every local exec carries by default: the allowed mode and the sandbox allowlist. */
 const DEV_LIMITS: SandboxLimits = {
@@ -661,7 +661,9 @@ describe("LocalDeviceProvider: modes (auto mode spec §4.2, §4.3)", () => {
       network: { kind: "allowlist", hosts: ["example.com"] },
     });
     // the org's cloud allowlist is the sandbox-mode list too
-    orgSettings = { cloudNetwork: { mode: "allowlist", allowHosts: ["a.com"] } };
+    orgSettings = {
+      cloudNetwork: { mode: "allowlist", excludedHosts: ["example.com"], extraHosts: ["a.com"] },
+    };
     expect((await execOnce(attended)).args?.limits).toMatchObject({
       mode: "auto",
       network: { kind: "allowlist", hosts: ["a.com"] },

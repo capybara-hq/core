@@ -58,6 +58,7 @@ import type { DispatchArgs, DispatchOutcome } from "../runtime/subagents/dispatc
 import { type MessageOutcome, SubagentMessages } from "../runtime/subagents/messages.js";
 import { pairStoppedForks } from "../runtime/subagents/skill-fork.js";
 import { SubagentsService } from "../runtime/subagents/subagents.service.js";
+import { orgHostOutsideCeiling } from "../sandbox/modes.js";
 import {
   type CommandReview,
   isSessionGrantableRule,
@@ -1799,7 +1800,12 @@ export class ToolPipeline {
     const run = hosts.some((h) => h.layer === "device")
       ? await network.grants.runState(ctx.runId, report.deviceId)
       : null;
-    const plan = planNetworkAsk(hosts, run, { device, unattended: ctx.unattended });
+    const limits = this.config.get().sandbox.limits;
+    const plan = planNetworkAsk(hosts, run, {
+      device,
+      unattended: ctx.unattended,
+      outsideCeiling: (h) => orgHostOutsideCeiling(limits, h),
+    });
     if (ctx.unattended != null) {
       for (const key of plan.missingGrants) {
         await appendMissingGrant(this.deps.db, ctx.unattended.taskRunId, key);

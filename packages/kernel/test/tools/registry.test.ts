@@ -456,7 +456,11 @@ describe("组织设置与 ToolSearch 启用条件", () => {
           maxOutputTokens: 20000,
         },
         autoMode: { mode: "allowed", source: "default" },
-        cloudNetwork: { mode: "open", allowHosts: baseCfg.sandbox.limits.allowHosts },
+        cloudNetwork: {
+          allowHosts: baseCfg.sandbox.limits.allowHosts,
+          orgHosts: "extend",
+          off: false,
+        },
         attribution: {
           commit: "Co-Authored-By: Capybara <noreply@capybarahq.com>",
           pr: "🤖 Generated with [Capybara](https://github.com/capybara-hq/core)",
@@ -464,6 +468,8 @@ describe("组织设置与 ToolSearch 启用条件", () => {
         },
         publicUrl: false,
       },
+      // the org follows the platform: its sandbox mode gets the platform's list
+      effectiveNetwork: { mode: "open", hosts: baseCfg.sandbox.limits.allowHosts },
       // 组织级沙箱限额只读（C19）：没有超级管理员的覆盖时取部署默认
       sandboxLimits: {
         cpu: baseCfg.sandbox.limits.cpu,
@@ -567,19 +573,20 @@ describe("组织设置与 ToolSearch 启用条件", () => {
     const patch = (payload: Record<string, unknown>) =>
       req({ method: "PATCH", url: settingsUrl(), payload });
     for (const bad of [
-      { cloudNetwork: { mode: "open", allowHosts: ["10.0.0.1"] } },
-      { cloudNetwork: { mode: "allowlist", allowHosts: ["localhost"] } },
-      { cloudNetwork: { mode: "allowlist", allowHosts: ["Example.com"] } },
+      { cloudNetwork: { mode: "open", extraHosts: ["10.0.0.1"] } },
+      { cloudNetwork: { mode: "allowlist", extraHosts: ["localhost"] } },
+      { cloudNetwork: { mode: "allowlist", excludedHosts: ["Example.com"] } },
+      { cloudNetwork: { mode: "allowlist", allowHosts: ["registry.npmjs.org"] } },
       {
         cloudNetwork: {
           mode: "allowlist",
-          allowHosts: ["a.example.com", "a.example.com"],
+          extraHosts: ["a.example.com", "a.example.com"],
         },
       },
       {
         cloudNetwork: {
           mode: "allowlist",
-          allowHosts: Array.from({ length: 201 }, (_, i) => `h${i}.example.com`),
+          extraHosts: Array.from({ length: 201 }, (_, i) => `h${i}.example.com`),
         },
       },
       { cloudNetwork: { mode: "allowlist", extra: 1 } },
@@ -589,12 +596,17 @@ describe("组织设置与 ToolSearch 启用条件", () => {
       expect(r.statusCode, JSON.stringify(bad)).toBe(400);
     }
     const ok = await patch({
-      cloudNetwork: { mode: "allowlist", allowHosts: ["registry.npmjs.org"] },
+      cloudNetwork: { mode: "allowlist", base: "none", extraHosts: ["registry.npmjs.org"] },
     });
     expect(ok.statusCode, ok.body).toBe(200);
     expect(ok.json().settings.cloudNetwork).toEqual({
       mode: "allowlist",
-      allowHosts: ["registry.npmjs.org"],
+      base: "none",
+      extraHosts: ["registry.npmjs.org"],
+    });
+    expect(ok.json().effectiveNetwork).toEqual({
+      mode: "allowlist",
+      hosts: ["registry.npmjs.org"],
     });
     const narrowed = await patch({ autoMode: "off" });
     expect(narrowed.statusCode, narrowed.body).toBe(200);

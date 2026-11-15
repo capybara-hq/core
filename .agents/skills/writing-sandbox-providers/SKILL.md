@@ -157,6 +157,14 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   allowlist) in sandbox mode; a local device's sandbox mode intersects the org's allowlist with the
   machine's own list, and `open-public` is for cloud instances only. The provider just enforces the
   `limits` it receives and does not read org settings or the platform switch.
+  - **The org's hosts are a delta over the platform's** (org egress ceiling spec): the org's
+    `cloudNetwork` stores `base` (`platform` | `none`), `extraHosts` and `excludedHosts`, never a
+    copy of `sandbox.limits.allowHosts`, so platform changes reach every org. `orgEffectiveHosts`
+    and `orgCloudMode` in `sandbox/modes.ts` are the only places that combine the two; every
+    reader (device policy, network requests, the settings response's `effectiveNetwork`) calls
+    them. `sandbox.limits.orgHosts: within` makes the platform list the ceiling (extras outside it
+    ignored, sandbox mode's cloud network always the allowlist, `orgHostOutsideCeiling` for the
+    super-admin wording); it does not limit auto mode.
   - `open-public` (开放挡内网): any public host on any port, and the provider refuses loopback of
     the host, private ranges (`10/8`, `172.16/12`, `192.168/16`, `fc00::/7`), link-local and cloud
     metadata (`169.254/16`, `fe80::/10`) and the deployment's own internal addresses. This is

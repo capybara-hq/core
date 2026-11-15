@@ -21,6 +21,7 @@ import type { KernelLogger } from "../log.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { can, type OrgRole, roleAtLeast } from "../orgs/roles.js";
 import { ProviderRegistry } from "../runtime/providers.js";
+import { orgHostOutsideCeiling } from "../sandbox/modes.js";
 import { SandboxService } from "../sandbox/sandbox.service.js";
 import { isTimeZone } from "../time-zone.js";
 import { ToolRegistry } from "../tools/registry.js";
@@ -1470,7 +1471,8 @@ export class ScheduledTasksService {
    */
   private async networkGrantContext(orgId: string): Promise<NetworkGrantContext> {
     const limits = await this.sandbox.ceilingLimits(orgId);
-    return { limits };
+    const platform = this.config.get().sandbox.limits;
+    return { limits, outsideCeiling: (h) => orgHostOutsideCeiling(platform, h) };
   }
 
   /**

@@ -27,7 +27,7 @@ const PLATFORM = {
 
 const DEPLOYMENT = {
   autoMode: { mode: "allowed", source: "default" },
-  cloudNetwork: { mode: "open", allowHosts: [] as string[] },
+  cloudNetwork: { allowHosts: [] as string[], orgHosts: "extend" as const, off: false },
   compaction: PLATFORM,
 };
 
@@ -60,10 +60,19 @@ const adminRoutes = () =>
 
 const orgRoutes = (settings: Record<string, unknown>) =>
   stubApi({
-    "GET /api/v1/orgs/o1/settings": () => json(200, { settings, deployment: DEPLOYMENT }),
+    "GET /api/v1/orgs/o1/settings": () =>
+      json(200, {
+        settings,
+        deployment: DEPLOYMENT,
+        effectiveNetwork: { mode: "open", hosts: [] },
+      }),
     "GET /api/v1/orgs/o1/ui/contributions": () => json(200, { items: [] }),
     "PATCH /api/v1/orgs/o1/settings": (c: Call) =>
-      json(200, { settings: bodyOf(c), deployment: DEPLOYMENT }),
+      json(200, {
+        settings: bodyOf(c),
+        deployment: DEPLOYMENT,
+        effectiveNetwork: { mode: "open", hosts: [] },
+      }),
   });
 
 const sectionOf = async (title: string) =>

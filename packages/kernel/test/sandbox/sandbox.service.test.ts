@@ -226,11 +226,11 @@ describe("组织云网络设置（auto mode spec §4.3）", () => {
   const limitsOf = async (s: SandboxService, id = envId) =>
     (await fakeSandboxMeta(root, (await use(s, id)).h.id))?.limits;
 
-  it("an org allowlist replaces the deployment's hosts; a changed host list reaches only later instances", async () => {
+  it("an org's own host list (base none) applies; a changed host list reaches only later instances", async () => {
     const s = service();
     await setOrg({
       autoMode: "off",
-      cloudNetwork: { mode: "allowlist", allowHosts: ["example.com"] },
+      cloudNetwork: { mode: "allowlist", base: "none", extraHosts: ["example.com"] },
     });
     expect(await limitsOf(s, await newDevice())).toMatchObject({
       mode: "sandbox",
@@ -247,7 +247,7 @@ describe("组织云网络设置（auto mode spec §4.3）", () => {
     // auto mode ignores the org's allowlist: the cloud device's network is open
     await setOrg({
       autoMode: "allowed",
-      cloudNetwork: { mode: "allowlist", allowHosts: ["example.com"] },
+      cloudNetwork: { mode: "allowlist", base: "none", extraHosts: ["example.com"] },
     });
     const first = await use(s);
     expect((await fakeSandboxMeta(root, first.h.id))?.limits).toMatchObject({
@@ -257,14 +257,14 @@ describe("组织云网络设置（auto mode spec §4.3）", () => {
     // a host change under the same (ignored) network changes nothing
     await setOrg({
       autoMode: "allowed",
-      cloudNetwork: { mode: "allowlist", allowHosts: ["other.example.com"] },
+      cloudNetwork: { mode: "allowlist", base: "none", extraHosts: ["other.example.com"] },
     });
     const same = await use(s);
     expect(same.h).toEqual(first.h);
     // switching to sandbox mode applies the org's allowlist: the instance is recreated
     await setOrg({
       autoMode: "off",
-      cloudNetwork: { mode: "allowlist", allowHosts: ["other.example.com"] },
+      cloudNetwork: { mode: "allowlist", base: "none", extraHosts: ["other.example.com"] },
     });
     const again = await use(s);
     expect(again.h).not.toEqual(first.h);

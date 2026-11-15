@@ -752,7 +752,7 @@ describe("platform", () => {
     const id = await agentOf(env.memId, "private");
     const c = await inConversation(ctxOf(env.memId, id));
     const OPEN = { mode: "open" as const };
-    const LIST = { mode: "allowlist" as const, allowHosts: ["pypi.org"] };
+    const LIST = { mode: "allowlist" as const, base: "none" as const, extraHosts: ["pypi.org"] };
     const cases: {
       platform: "allowed" | "off";
       org: "off" | null;
