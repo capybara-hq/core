@@ -942,8 +942,14 @@ export function homeOf(workspace: string): string | null {
 
 function resolveFacts(facts: ReviewFacts): ResolvedFacts {
   const workspace = normalizePath(facts.workspace);
-  const reported = facts.home?.startsWith("/") ? normalizePath(facts.home) : null;
   const derived = homeOf(workspace);
+  // an implausible reported home (`/`, or an ancestor of the workspace's home such as `/Users`)
+  // would make every path a home path: it is ignored and only the derived home is used
+  const given = facts.home?.startsWith("/") ? normalizePath(facts.home) : null;
+  const reported =
+    given === null || given === "/" || (derived !== null && isAncestor(given, derived))
+      ? null
+      : given;
   const cwd = facts.cwd === undefined ? workspace : normalizePath(facts.cwd);
   return {
     workspace,
@@ -1062,8 +1068,9 @@ function homeForms(path: string, facts: ResolvedFacts): string[] {
   for (const h of facts.homes) {
     const home = foldCase(h);
     if (folded === home) out.push("~");
-    else if (folded.startsWith(home === "/" ? "/" : `${home}/`))
-      out.push(`~${path.slice(h.length)}`);
+    // a root home keeps the path's own leading slash: `/.ssh/x` is `~/.ssh/x`, never `~.ssh/x`
+    else if (home === "/") out.push(`~${path}`);
+    else if (folded.startsWith(`${home}/`)) out.push(`~${path.slice(h.length)}`);
   }
   out.push(path);
   return out;
@@ -1277,8 +1284,9 @@ function isSecretPattern(path: string, facts: ResolvedFacts): boolean {
     const last = tail[tail.length - 1];
     if (tail.length >= 2 && last !== undefined && segmentMatches(last, "environ")) return true;
   }
+  // every home the path lies in is tried; none matching falls through to the checks below
   for (const t of homeForms(path, facts)) {
-    if (t.startsWith("~/")) return isSecretHomePath(t.slice(2).split("/"));
+    if (t.startsWith("~/") && isSecretHomePath(t.slice(2).split("/"))) return true;
   }
   // `/home/<pattern>/…` never becomes `~/…`: the user segment is the pattern, so judge only the
   // literal suffix behind it.
@@ -1409,8 +1417,11 @@ function isDevicePath(path: string, facts: ResolvedFacts): boolean {
   return isDeviceIdentifier(baseName(path));
 }
 
-const isGitHook = (path: string): boolean =>
-  path.includes("/.git/hooks/") || path.endsWith("/.git/hooks");
+/** A git hook, in any letter case (a case-insensitive file system names the same directory). */
+const isGitHook = (path: string): boolean => {
+  const p = foldCase(path);
+  return p.includes("/.git/hooks/") || p.endsWith("/.git/hooks");
+};
 
 function looksLikePath(token: string): boolean {
   if (token.length === 0 || token === "-" || token.startsWith("-")) return false;

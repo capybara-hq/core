@@ -398,6 +398,67 @@ describe("a bound conversation works in its project's root", () => {
     expect(r.payload.content).toMatch(new RegExp(`/workspace/${dir}\\n`));
   });
 
+  it("a free conversation with a stale recorded workspace runs where the instance is", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    await k.app.get(EventLog).append(conv, [
+      {
+        type: "device_paths",
+        payload: { roots: { workspace: "/stale", skills: "/skills", tmp: "/tmp" } },
+      } as never,
+    ]);
+    const r = await call(conv, "Bash", { command: "pwd", description: "Where" }, 1);
+    expect(r.payload.isError).toBe(false);
+    expect(r.payload.content).toMatch(/^\/workspace\n/m);
+  });
+
+  it("an approved command resumed after a mode switch decides its working root afresh", async () => {
+    const dir = `p-${randomUUID().slice(0, 8)}`;
+    const conv = await boundConversation(`/workspace/${dir}`);
+    await put(await deviceOf(conv), {
+      [`${dir}/notes.txt`]: "x\n",
+      [`${dir}-later/notes.txt`]: "y\n",
+    });
+    const line = { command: "pwd && touch /workspace/elsewhere3.txt", description: "Where" };
+    await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(line)}`);
+    const ask = await waitFor(
+      async () =>
+        db
+          .selectFrom("approvals")
+          .select(["id", "detail"])
+          .where("conversation_id", "=", conv)
+          .where("kind", "=", "command")
+          .where("status", "=", "pending")
+          .executeTakeFirst(),
+      30_000,
+      "the command ask",
+    );
+    expect(ask.detail as Record<string, unknown>).toMatchObject({
+      mode: "auto",
+      workingRoot: `/workspace/${dir}`,
+    });
+    // a newer snapshot and a switch to sandbox mode land while the run waits
+    await appendProjectRoot(conv, { project: "app", root: `/workspace/${dir}-later`, skills: [] });
+    const off = await owner({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/settings`,
+      payload: { autoMode: "off" },
+    });
+    expect(off.statusCode, off.body).toBe(200);
+    try {
+      const approved = await owner({
+        method: "POST",
+        url: `/api/v1/orgs/${orgId}/approvals/${ask.id}/decision`,
+        payload: { decision: "approve", scope: "once" },
+      });
+      expect(approved.statusCode, approved.body).toBe(200);
+      await waitForTerminal(db, conv, 1, 30_000);
+      const r = (await results(conv)).at(-1) as ToolResult;
+      expect(r.payload.content).toMatch(new RegExp(`/workspace/${dir}-later\\n`));
+    } finally {
+      await followPlatformMode();
+    }
+  });
+
   it("the command ask card shows a relative write's path resolved against the project root", async () => {
     const dir = `p-${randomUUID().slice(0, 8)}`;
     const conv = await boundConversation(`/workspace/${dir}`);

@@ -544,6 +544,19 @@ type ReviewOutcome =
   /** The call ends now with this model-visible error result and its review record. */
   | { kind: "result"; content: string; review: ReviewRecord };
 
+/**
+ * The working root a reviewed call carries to its tool: a project root only. In free mode the
+ * reviewed root is the recorded workspace, which may be stale; the tool then maps it to the held
+ * instance's own workspace as it always has.
+ */
+const carriedRoot = (facts: {
+  workspace: string | undefined;
+  workingRoot: string | undefined;
+}): string | undefined =>
+  facts.workingRoot !== undefined && facts.workingRoot !== facts.workspace
+    ? facts.workingRoot
+    : undefined;
+
 /** The review record of an allowed call. */
 const allowRecord = (v: ReviewVerdict): ReviewRecord => ({
   decision: "allow",
@@ -1568,8 +1581,19 @@ export class ToolPipeline {
     if (review === undefined || devices === undefined) return { kind: "continue" };
     if (!REVIEWED_TOOL_KEYS.has(tool.key)) return { kind: "continue" };
     const asked = await this.deps.approvals.commandForCall(ctx.runId, call.id);
-    if (asked !== null) return this.settledCommandAsk(asked, tool.key);
     const rootConversationId = ctx.parent?.rootConversationId ?? ctx.conversationId;
+    if (asked !== null) {
+      const settled = this.settledCommandAsk(asked, tool.key);
+      // an approved call runs in the root it was reviewed against only while the device still runs
+      // in the mode recorded with the ask; otherwise the tool decides its working root afresh
+      if (settled.kind === "continue" && settled.workingRoot !== undefined) {
+        const now = await devices.reviewFacts(ctx.orgId, rootConversationId, ctx.conversationId);
+        if (now === null || now.mode !== asked.command?.mode) {
+          return { ...settled, workingRoot: undefined };
+        }
+      }
+      return settled;
+    }
     const facts = await devices.reviewFacts(ctx.orgId, rootConversationId, ctx.conversationId);
     if (facts === null) return { kind: "continue" }; // no device: the tool fails on its own
     const kind = reviewKindOf(tool.key);
@@ -1616,7 +1640,7 @@ export class ToolPipeline {
       ...(ctx.conversationKind !== undefined && { conversationKind: ctx.conversationKind }),
     });
     if (verdict.decision === "allow") {
-      return { kind: "continue", review: allowRecord(verdict), workingRoot: facts.workingRoot };
+      return { kind: "continue", review: allowRecord(verdict), workingRoot: carriedRoot(facts) };
     }
     if (verdict.decision === "deny") {
       return {
@@ -1635,6 +1659,7 @@ export class ToolPipeline {
         review: denyRecord(verdict.by, verdict.rule, reason),
       };
     }
+    const carried = carriedRoot(facts);
     const detail: CommandAskDetail = {
       deviceId: facts.deviceId,
       deviceName: facts.deviceName,
@@ -1654,7 +1679,7 @@ export class ToolPipeline {
       rule: verdict.rule,
       reason: clipText(verdict.reason, COMMAND_ASK_TEXT_MAX_CHARS),
       // the approved call runs against what the person approved, not a later snapshot
-      ...(facts.workingRoot !== undefined && { workingRoot: facts.workingRoot }),
+      ...(carried !== undefined && { workingRoot: carried }),
     };
     let ask: ApprovalRecord;
     try {
