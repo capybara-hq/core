@@ -97,9 +97,13 @@ it would run that request in — never by a ceiling it saw on an earlier command
 2026-11-15: before its first command a device has seen no ceiling)**.
 
 `scan` follows one traversal everywhere, so the local device and each cloud provider suggest the same
-list: it does not follow symbolic links or enter hidden directories, keeps descending after a hit (a
-monorepo's sub-projects are candidates too), skips paths its mode cannot reach, and skips a directory
-whose name breaks the name rule rather than truncating it **(designer's call, 2026-11-15)**.
+list: it does not follow symbolic links or enter hidden directories, never enters the directories
+the SDK names (`DEVICE_SCAN_SKIPPED_DIRS` at any depth: `node_modules`; `DEVICE_SCAN_SKIPPED_BASE_DIRS`
+directly under `base`: `Library`), keeps descending after a hit (a monorepo's sub-projects are
+candidates too), skips paths its mode cannot reach, and does not return a directory whose name breaks
+the name rule rather than truncating it, while still walking below it **(designer's call,
+2026-11-15)**. An unreadable directory counts as one of the 500 visits. In `list`, a symbolic link
+whose target the request's mode cannot reach is not a directory (`isDir: false`).
 
 **Adding a project.**
 - The form takes the path **relative to the device's base**, shown as a fixed prefix, never a free
@@ -164,7 +168,9 @@ a phased rollout)**. A local device reports its owner's home directory in its he
   binding of the conversation it fires. A sub-agent's run start copies the root's latest
   `project_root` into the child's own log (no device call, the child run's idempotency key; again
   only when the root's latest snapshot differs from the child's latest), so the child sees the
-  project's instructions and skills and its replay needs no device **(ruling, 2026-11-15)**.
+  project's instructions and skills and its replay needs no device **(ruling, 2026-11-15)**. The
+  child's `Skill` resolves `project:<name>` from that copy, so what it was shown is what it can
+  load; its working root still follows the root conversation.
 - **The project root becomes the conversation's working directory** **(maintainer, 2026-11-14)**:
   `Bash` takes its `cwd` from it (`tools/builtins/sandbox/bash.ts` sets `cwd: roots.workspace`
   today), `Glob` and `Grep` default under it, and a relative path in `Read` / `Write` / `Edit`
@@ -172,9 +178,14 @@ a phased rollout)**. A local device reports its owner's home directory in its he
   `review.service.ts` takes the device's root as `workspace` and uses it both as the default `cwd`
   and as the inside/outside test for writes; with a project root outside the device's workspace,
   every write inside the project would be judged "outside the workspace" and ask every time. This
-  amends the auto-mode design's "the working directory stays the device's `workspace/`".
-- A conversation whose bound project was removed, is outside the device's current mode, or whose
-  directory is gone continues in free mode, with a notice in the conversation **(designer's call:
+  amends the auto-mode design's "the working directory stays the device's `workspace/`". The
+  home-level rules are judged against the reported home (ignored when implausible: `/` or an
+  ancestor of a derived home), the working root's home prefix and the device workspace's, so a
+  project outside every home still protects the owner's real home. Every command ask records the
+  working root the review judged, the device's workspace in free mode included.
+- A conversation whose bound project was removed (the binding is the name and the path: a name
+  re-added with another path counts as removed), is outside the device's current mode or above the
+  owner's home, or whose directory is gone continues in free mode, with a notice in the conversation **(designer's call:
   losing a project must never fail a run)**.
 
 ### 4.4 Reading the project knowledge
@@ -207,7 +218,9 @@ The result is recorded as one `project_root` event: the project name, the root p
 its name, description and digest (at most 100 skills, `skillsTruncated` when more exist; each
 `SKILL.md` read up to 1 MiB). A project the run cannot use records `unavailable: { reason, message }`
 instead, with `reason` one of `gone`, `outside_mode`, `unreadable`, `unsupported` (a device that does
-not announce `projects`), so an earlier snapshot stops applying. The event
+not announce `projects`), `removed` (the binding's name and path are no longer among the device's
+projects: removed, or re-added under that name with another path), so an earlier snapshot stops
+applying. The event
 is model-visible and rendered with the run's first system block, before the model's first turn.
 
 A run records the event again when any digest differs from the conversation's latest recorded one;
