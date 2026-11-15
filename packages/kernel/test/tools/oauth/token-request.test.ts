@@ -1,4 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import {
   type FakeOAuthServer,
   type FakeOAuthServerOptions,
@@ -6,6 +8,8 @@ import {
 } from "@capybara-hq/testing";
 import { afterEach, describe, expect, it } from "vitest";
 import { createLogger } from "../../../src/log.js";
+import type { LookupFn } from "../../../src/net/public-address.js";
+import { OAuthSetupError } from "../../../src/tools/oauth/discovery.js";
 import {
   type OAuthClientRecord,
   OAuthGrantError,
@@ -23,7 +27,10 @@ import {
  * `token_type: "user"` (G1) and reports every error as HTTP 200 `{ ok: false, error }` (G2).
  */
 
-const HTTP = { allowInsecureLoopback: true, timeoutMs: 5_000 };
+const HTTP = {
+  net: { allowInsecureLoopback: true, allowPrivateHosts: [], trustedOrigins: [] },
+  timeoutMs: 5_000,
+};
 const REDIRECT = "https://cb.example.com/cb";
 const CLIENT = { clientId: "slack-client", clientSecret: "slack-secret" };
 const stops: (() => Promise<void>)[] = [];
@@ -264,5 +271,54 @@ describe("refresh against a Slack-like token endpoint (G2)", () => {
     const gone = await rejection(oauth.accessToken("org", "conn", auth, owner));
     expect(gone).toBeInstanceOf(OAuthReconnectRequired);
     expect(current()).toBeNull();
+  });
+});
+
+describe("the token endpoint goes through packages/kernel/src/net", () => {
+  const client = (tokenEndpoint: string): OAuthClientRecord => ({
+    ...CLIENT,
+    authMethod: "client_secret_post",
+    tokenEndpoint,
+  });
+  const params = { grant_type: "client_credentials" };
+
+  it("a token endpoint that resolves to a private address is refused before connecting", async () => {
+    const lookup: LookupFn = async () => [{ address: "10.0.0.9", family: 4 }];
+    const err = await rejection(
+      tokenRequest(client("https://as.corp.invalid/token"), params, { ...HTTP, lookup }),
+    );
+    expect(err).toBeInstanceOf(OAuthSetupError);
+    expect(err).toMatchObject({ reason: "address_refused" });
+    expect((err as Error).message).toMatch(/marketplaces\.allowPrivateHosts/);
+  });
+
+  it("loopback http without allowInsecureLoopback is refused", async () => {
+    const as = await server();
+    const strict = { ...HTTP, net: { ...HTTP.net, allowInsecureLoopback: false } };
+    const err = await rejection(tokenRequest(clientOf(as), params, strict));
+    expect(err).toMatchObject({ reason: "insecure_url" });
+    expect(as.tokenRequests).toHaveLength(0);
+  });
+
+  it("a redirect from the token endpoint is not followed (and the secret goes nowhere else)", async () => {
+    const hits: string[] = [];
+    const target = createServer((req, res) => {
+      hits.push(req.url ?? "");
+      res.end("{}");
+    });
+    await new Promise<void>((r) => target.listen(0, "127.0.0.1", r));
+    const to = `http://127.0.0.1:${(target.address() as AddressInfo).port}/stolen`;
+    const redirector = createServer((_req, res) => {
+      res.writeHead(307, { location: to }).end();
+    });
+    await new Promise<void>((r) => redirector.listen(0, "127.0.0.1", r));
+    stops.push(
+      () => new Promise<void>((r) => target.close(() => r())),
+      () => new Promise<void>((r) => redirector.close(() => r())),
+    );
+    const from = `http://127.0.0.1:${(redirector.address() as AddressInfo).port}/token`;
+    const err = await rejection(tokenRequest(client(from), params, HTTP));
+    expect(err).toBeInstanceOf(OAuthUnavailable);
+    expect(hits).toEqual([]);
   });
 });

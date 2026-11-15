@@ -149,6 +149,18 @@ migration its device queries fail and its settings read as the new default (auto
 every replica runs the new build. Stop the old replicas, run `capybara migrate` (and
 `capybara bootstrap`), then start the new version.
 
+**Check the auto mode settings after the upgrade.** 0130 maps the stored tiers by their `max`
+only: the platform's `sandboxTiers` with `max: "open"` or no `max` becomes `devicesAutoMode:
+allowed`, anything lower `off`; an org's `sandboxTier` with `max: "open"` becomes `autoMode:
+allowed`, any other stored `sandboxTier` `off`. `allowUnsandboxed` is not read, and the source keys
+are deleted, so no later migration can recover it. If you set `allowUnsandboxed: false` (open
+egress, but no command outside the sandbox), auto mode is now allowed where you had kept the
+sandbox on: after upgrading, turn auto mode off for those orgs (org settings, `autoMode: off`) or
+for the platform (`devices.autoMode: off`, or the admin console). Leftover `sandbox.tiers`,
+`sandbox.limits.devHosts` or `sandbox.limits.egress: "open"` in the config file, Nacos or the
+environment now stop the kernel at startup with an error naming `devices.autoMode` and
+`cloudNetwork`: remove them and set those instead.
+
 ### 0.1.0: IM long connections move to the gateway role
 
 IM long connections (Slack Socket Mode, Lark long connection) now run **only on processes with the
@@ -375,3 +387,14 @@ succeeds; plugins fall back (the memory plugin
 stores embeddings as `real[]` and ranks them in the plugin). To enable it later on a managed
 PostgreSQL, run `CREATE EXTENSION vector SCHEMA public` as a role allowed to: an extension in
 another schema is not visible to plugin schemas and counts as absent.
+
+### Egress proxy: `net.httpsProxy`, not `NODE_USE_ENV_PROXY`
+
+npm registry downloads (plugin packages, provenance, the bootstrap download) and OAuth requests
+(discovery, client registration, token endpoints) now go through the kernel's network rules
+(`packages/kernel/src/net`) like marketplace downloads, so Node's `NODE_USE_ENV_PROXY=1` /
+`HTTPS_PROXY` no longer route them. A deployment that relied on those variables sets
+`net.httpsProxy` (`CAPYBARA_NET__HTTPS_PROXY`) instead, and lists an internal https npm registry in
+`net.noProxy` (an `http://` registry is fetched directly). An OAuth or MCP endpoint, or a marketplace
+`tarball` URL, on a private or internal host is now refused unless `marketplaces.allowPrivateHosts`
+lists it.

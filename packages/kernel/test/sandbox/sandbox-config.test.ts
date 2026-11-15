@@ -70,6 +70,6 @@ describe("配置 sandbox", () => {
     ).toBe(false);
     const open = KernelConfigSchema.safeParse({ ...base, sandbox: { limits: { egress: "open" } } });
     expect(open.success).toBe(false);
-    expect(open.error?.issues[0]?.message).toContain("the open public network is a cloud device's");
+    expect(open.error?.issues[0]?.message).toMatch(/devices\.autoMode.*cloudNetwork/);
   });
 });

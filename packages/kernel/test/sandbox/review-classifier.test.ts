@@ -28,6 +28,7 @@ import {
   REVIEW_MAX_OUTPUT_TOKENS,
   REVIEW_REASONS,
   REVIEW_SYSTEM_PROMPT,
+  REVIEW_TRUNCATED_ASK_REASON,
   REVIEW_TRUNCATED_MARKER,
   REVIEW_UNAVAILABLE_PREFIX,
   type ReviewCall,
@@ -429,26 +430,83 @@ describe("CommandReviewService", () => {
         })
         .execute();
 
-    const sudo = { input: { command: "sudo apt-get update" } };
-    await expect(call(sudo)).resolves.toMatchObject({ decision: "ask", rule: "ask.sudo" });
-    await grant("ask.sudo");
-    await expect(call(sudo)).resolves.toEqual({
-      decision: "allow",
-      by: "rule",
-      reason: REVIEW_REASONS.sessionGrant,
-      rule: "ask.sudo",
-    });
-    // another rule class is not covered by the grant
-    await expect(call({ input: { command: "rm /etc/hosts" } })).resolves.toMatchObject({
+    const outside = { input: { command: "rm /etc/hosts" } };
+    await expect(call(outside)).resolves.toMatchObject({
       decision: "ask",
       rule: "ask.outside-write",
     });
+    await grant("ask.outside-write");
+    await expect(call(outside)).resolves.toEqual({
+      decision: "allow",
+      by: "rule",
+      reason: REVIEW_REASONS.sessionGrant,
+      rule: "ask.outside-write",
+    });
+    // another rule class is not covered by the grant, even in the same line
+    await expect(
+      call({ input: { command: "rm /etc/hosts; crontab /tmp/c" } }),
+    ).resolves.toMatchObject({ decision: "ask", rule: "ask.persistence" });
+    // a never-session class is asked every time, whatever was stored
+    await grant("ask.sudo");
+    await expect(call({ input: { command: "sudo apt-get update" } })).resolves.toMatchObject({
+      decision: "ask",
+      rule: "ask.sudo",
+    });
     // a deny is never turned into an allow
-    await grant("deny.root-delete");
+    await grant("deny.root-destroy");
     await expect(call({ input: { command: "rm -rf /" } })).resolves.toMatchObject({
       decision: "deny",
-      rule: "deny.root-delete",
+      rule: "deny.root-destroy",
     });
+  });
+
+  it("an unattended run never uses a session grant", async () => {
+    await db
+      .insertInto("conversation_tool_grants")
+      .values({
+        conversation_id: conv,
+        tool_key: "command:ask.outside-write",
+        spec_hash: "command",
+        connector_id: null,
+      })
+      .execute();
+    await expect(
+      call({ attended: false, input: { command: "rm /etc/hosts" } }),
+    ).resolves.toMatchObject({ decision: "ask", rule: "ask.outside-write" });
+  });
+
+  it("running a file the conversation wrote is reviewed as code it cannot read", async () => {
+    await expect(call({ input: { command: "python3 gen.py" } })).resolves.toMatchObject({
+      decision: "allow",
+    });
+    // the agent wrote gen.py with the Write tool, then a helper script with a Bash redirection
+    await k.app.get(EventLog).append(conv, [
+      {
+        type: "assistant_message",
+        payload: {
+          step: 1,
+          stopReason: "tool_use",
+          content: [
+            {
+              type: "tool_call",
+              id: "w1",
+              name: "Write",
+              input: { file_path: `${WORKSPACE}/gen.py`, content: "print(1)" },
+            },
+            {
+              type: "tool_call",
+              id: "b1",
+              name: "Bash",
+              input: { command: "printf 'echo hi' > tools/run.sh" },
+            },
+          ],
+        },
+      },
+    ]);
+    for (const command of ["python3 gen.py", "bash tools/run.sh"]) {
+      const verdict = await call({ input: { command } });
+      expect(verdict.decision, command).not.toBe("allow");
+    }
   });
 
   it("a model.request policy hook denial is an ask: the tool result says review is unavailable", async () => {
@@ -509,6 +567,52 @@ describe("CommandReviewService", () => {
     expect(await reviewUsage()).toHaveLength(1);
   });
 
+  it("a file a sub-agent wrote counts for every agent of the tree", async () => {
+    const child = randomUUID();
+    await db
+      .insertInto("conversations")
+      .values({
+        id: child,
+        org_id: orgId,
+        agent_id: agentId,
+        account_id: ownerId,
+        kind: "subagent",
+        source: "subagent",
+        parent_conversation_id: conv,
+        subagent_depth: 1,
+      })
+      .execute();
+    await k.app.get(EventLog).append(child, [
+      {
+        type: "assistant_message",
+        payload: {
+          step: 1,
+          stopReason: "tool_use",
+          content: [
+            {
+              type: "tool_call",
+              id: "w-child",
+              name: "Write",
+              input: { file_path: `${WORKSPACE}/child.sh`, content: "echo hi" },
+            },
+          ],
+        },
+      },
+    ]);
+    // the root's own call and the sub-agent's call both see the sub-agent's write
+    for (const over of [
+      {},
+      {
+        conversationId: child,
+        conversationKind: "subagent" as const,
+        parent: { conversationId: conv, runId, callId: "agent-call" },
+      },
+    ]) {
+      const verdict = await call({ ...over, input: { command: "bash child.sh" } });
+      expect(verdict.decision).not.toBe("allow");
+    }
+  });
+
   it("a sub-agent's conversation resolves to the root: its task text is never seen", async () => {
     answer("allow", "Fine.");
     const child = randomUUID();
@@ -559,7 +663,8 @@ describe("CommandReviewService", () => {
         sent = request;
       },
     });
-    expect(verdict.decision).toBe("allow");
+    // the model read only the beginning: its allow cannot cover the rest (hardening spec R8)
+    expect(verdict).toMatchObject({ decision: "ask", reason: REVIEW_TRUNCATED_ASK_REASON });
     const req = sent as ModelRequest;
     const limits = await purposes.chatLimits(orgId, "review");
     expect(estimateTokens(req.messages, req.system, [])).toBeLessThanOrEqual(

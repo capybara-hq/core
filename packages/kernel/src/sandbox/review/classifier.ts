@@ -62,6 +62,10 @@ export const REVIEW_MAX_OUTPUT_TOKENS = 300;
 /** The marker a command (or path) cut to fit the review model's context ends with. */
 export const REVIEW_TRUNCATED_MARKER = " [command truncated to fit the review model's context]";
 
+/** The reason of a classifier allow turned into an ask because the command did not fit. */
+export const REVIEW_TRUNCATED_ASK_REASON =
+  "The command is too long for the review to read in full; it needs the person's approval.";
+
 /** The reason of an `ask` the classifier could not decide (timeout, error, unparseable answer). */
 export const REVIEW_ASK_REASON =
   "The command review could not decide; this command needs the person's approval.";
@@ -459,7 +463,16 @@ export async function runClassifier(
   }
   observe(deps, hookBase, sent, out, null, args.signal);
   await logUsage(deps, args, out);
-  return parseReviewAnswer(textOf(out.content)) ?? { decision: "ask", reason: REVIEW_ASK_REASON };
+  const answer = parseReviewAnswer(textOf(out.content)) ?? {
+    decision: "ask",
+    reason: REVIEW_ASK_REASON,
+  };
+  // the model saw only the beginning of the command: its allow cannot cover the part it never read
+  // (hardening spec R8); its deny or ask stands
+  if (answer.decision === "allow" && fitted.text !== input.text) {
+    return { decision: "ask", reason: REVIEW_TRUNCATED_ASK_REASON };
+  }
+  return answer;
 }
 
 /**

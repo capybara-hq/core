@@ -200,29 +200,48 @@ A pure function over the parsed command (shell words, pipes, redirections, `&&` 
 attended or not). Each rule returns **allow**, **ask**, **deny** or **unsure**; the strictest wins.
 
 - **Allow** (the bulk of development): reading anything except the secret paths below; builds,
-  tests, linters, formatters, package managers (`npm`, `pnpm`, `pip`, `uv`, `cargo`, `go`, …),
+  tests, linters, formatters, package managers (`npm`, `pnpm`, `pip`, `uv`, `cargo`, `go`, …) and
+  the project's own scripts — but not code the review cannot read (see **Unsure**);
   `git` except the cases below, `gh` reads and `gh pr create/edit/comment`, `curl`/`wget` GETs that
   write to stdout or the workspace, starting servers, browsers, `docker`/`docker compose` without
   `--privileged` or host mounts outside the workspace, writes and deletes inside the workspace and
   tmp.
-- **Ask**: deleting or overwriting outside the workspace and tmp; `git push --force` /
+- **Ask**: deleting or overwriting outside the workspace and tmp; a link (`ln`) to a path outside
+  them (`ask.outside-link`; to a secret, SSH, startup or device path or the home directory itself,
+  `ask.credential-link`); `gh api` calls that change GitHub (`ask.remote-write`, a DELETE
+  `ask.remote-destroy`; a GraphQL query is a read); `git push --force` /
   `--force-with-lease` to a default or protected branch, deleting remote branches or tags,
   `gh repo delete`, `gh release delete`; changing shell rc files, `~/.ssh`, `~/.gitconfig`, git
   hooks, launch agents, crontab; `sudo`; installing global packages; `docker` with `--privileged` or
   host mounts outside the workspace; `kill` of processes the device did not start.
 - **Deny**: sending the contents of a secret path anywhere (a secret path read piped or attached
-  to a network command); `rm -rf` of `/`, `~` or a parent of the workspace; disabling or editing
+  to a network command); destroying `/`, `~` or a parent of the workspace with any program —
+  deleting it (`rm`, `rmdir`, `shred`, `truncate`, `find -delete`, `rsync --delete`), moving it away
+  (`mv`) or changing it recursively (`chmod -R`, `chown -R`); the workspace root itself counts,
+  except as the start of a selective `find -delete` or `git clean` (`deny.root-destroy`,
+  2026-11-15); a work-tree-rewriting git command elsewhere (`git -C ~/x checkout -- .`) asks; disabling or editing
   Capybara's own device files; turning off the OS firewall or security tools.
 - **Secret paths**: `~/.ssh/*` (private keys), `~/.aws`, `~/.config/gcloud`, `~/.azure`,
   `~/.kube/config`, `~/.docker/config.json`, `~/.netrc`, `~/.git-credentials`, `~/.config/gh/hosts.yml`,
-  macOS keychain dumps (`security find-*-password -w`, `dump-keychain`), `.env*` files outside the
+  `~/.npmrc`, `~/.pypirc`, `~/.vault-token`, `~/.terraform.d/credentials.tfrc.json`, `~/.config/op`,
+  shell and REPL history files (2026-11-15), macOS keychain dumps (`security find-*-password -w`, `dump-keychain`), `.env*` files outside the
   workspace. Reading them for use by their own tool is allowed (`git push` reads `~/.ssh` itself);
   printing or copying them is **ask**, sending them is **deny**.
 - **Wrappers**: a command is unwrapped before matching — `timeout`, `nice`, `nohup`, `stdbuf`,
   `command`, `builtin`, `noglob` and a bare `xargs`; `watch`, `setsid`, `flock`, `ionice` and a
   `find` with `-exec`, `-delete` or `-fprint` are never allowed by prefix **(2026-11-14)**.
 - **Unsure**: anything the parser cannot read with confidence (heredocs that build scripts, long
-  pipelines into an interpreter, obfuscation such as base64 into `sh`), and commands no rule covers.
+  pipelines into an interpreter, obfuscation such as base64 into `sh`), commands no rule covers, and
+  code the review cannot read (`unsure.interpreter`, 2026-11-15): inline code for an interpreter
+  (`python -c`, `node -e`, `perl -e`, `deno eval`, …), code fed to an interpreter on stdin or from a
+  URL, a package or module a runner fetches (`npx`, `pnpm dlx`, `uvx`, `deno x`, `go run
+  module@v` — a known development tool named exactly, such as `npx tsc`, stays allowed; a package
+  option that changes what is fetched, `--package` or `--registry`, never does), the same through a
+  launcher (`uv run`, `poetry run`, `pnpm exec`, `yarn node`, `bundle exec`, `bun run`), programs
+  whose own script runs commands (`awk` `system()`, `sed` `e`, `make -f -`), and running a file
+  any agent of the conversation tree wrote — with `Write` / `Edit`, by a redirection, copy,
+  download or clone of its earlier or same-line commands — whether as a script, a path, a preload
+  (`node -r`) or a module (`python -m`); globs and letter case are matched too.
 
 The rule set lives in one module with a table-driven test of a few hundred command lines taken from
 real sessions (the acceptance conversations of 2026-11-12/13 are the first corpus) **(designer's
@@ -264,7 +283,14 @@ describe it that way, and never say the org can govern nothing.
 - **Ask**, attended run: the run waits on an approval card in the conversation (the existing
   approval flow, kind `command`): the command, the reason, 允许一次 / 本会话允许同类 / 拒绝.
   本会话允许同类 records the rule hit (not the exact text) for the rest of the conversation
-  **(decided 2026-11-13)**.
+  **(decided 2026-11-13)**. A line is allowed by grants only when **every** ask hit's class is
+  granted and nothing in it is unsure; grants are consulted in attended runs only. The classes are
+  `ask.outside-write`, `ask.shell-config` (shell rc files, global git config),
+  `ask.persistence` (crontab, launch agents, systemd units, git hooks), `ask.force-push`,
+  `ask.remote-destroy`, `ask.remote-write`, `ask.global-install`, `ask.docker-privileged`,
+  `ask.kill-other`, `ask.git-exec`; `ask.credential-print`, `ask.secret-file`, `ask.ssh`,
+  `ask.credential-link`, `ask.outside-link`, `ask.dynamic-arg` and `ask.sudo` are asked every time
+  (2026-11-15).
 - **Ask**, unattended run: treated as **deny** at once, no waiting **(decided)**. The model gets
   the reason and "No one can approve this now; do the work another way or leave it for the person."
 - **Deny**: the tool call fails with the reason (model-visible, English, actionable); the person

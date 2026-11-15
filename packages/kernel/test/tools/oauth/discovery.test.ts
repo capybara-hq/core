@@ -5,6 +5,7 @@ import {
   startFakeOAuthServer,
 } from "@capybara-hq/testing";
 import { afterEach, describe, expect, it } from "vitest";
+import type { LookupFn, NetPolicy } from "../../../src/net/public-address.js";
 import {
   discoverMcp,
   OAuthSetupError,
@@ -15,7 +16,16 @@ import {
  * Task 15：MCP OAuth 发现（RFC 9728 → RFC 8414 / OpenID 回退）与 DCR（RFC 7591）。只用本地夹具，不起内核。
  */
 
-const HTTP = { allowInsecureLoopback: true, timeoutMs: 5_000 };
+const LOOPBACK_NET: NetPolicy = {
+  allowInsecureLoopback: true,
+  allowPrivateHosts: [],
+  trustedOrigins: [],
+};
+const HTTP = { net: LOOPBACK_NET, timeoutMs: 5_000 };
+/** The network rules of a deployment without test exemptions. */
+const STRICT = { net: { ...LOOPBACK_NET, allowInsecureLoopback: false }, timeoutMs: 5_000 };
+/** A DNS answer in a private range (`.invalid` never resolves for real: RFC 6761). */
+const toPrivate: LookupFn = async () => [{ address: "10.0.0.7", family: 4 }];
 const CALLBACK = "https://capybara.example.com/api/v1/oauth/callback";
 
 const stops: (() => Promise<void>)[] = [];
@@ -73,7 +83,7 @@ describe("discoverMcp", () => {
 
   it("本机 http 未放行 → insecure_url；服务不要求 OAuth → discovery_failed", async () => {
     const { mcp } = await setup("header");
-    await expect(discoverMcp(mcp.url, { ...HTTP, allowInsecureLoopback: false })).rejects.toThrow(
+    await expect(discoverMcp(mcp.url, STRICT)).rejects.toThrow(
       expect.objectContaining({ reason: "insecure_url" }),
     );
     const open = await startFakeMcpServer({ tools: [] });
@@ -148,5 +158,33 @@ describe("registerClient（DCR）", () => {
     await expect(registerClient(meta, CALLBACK, HTTP)).rejects.toThrow(
       expect.objectContaining({ reason: "dcr_unsupported" }),
     );
+  });
+});
+
+describe("OAuth round trips go through packages/kernel/src/net", () => {
+  it("discovery refuses an endpoint that resolves to a private address, with an actionable error", async () => {
+    const err = await discoverMcp("https://mcp.corp.invalid/mcp", {
+      ...STRICT,
+      lookup: toPrivate,
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(OAuthSetupError);
+    expect(err).toMatchObject({ reason: "address_refused" });
+    expect((err as Error).message).toMatch(/private or reserved address/);
+    expect((err as Error).message).toMatch(/marketplaces\.allowPrivateHosts/);
+  });
+
+  it("an authorization server that points into a private range is refused too", async () => {
+    // the MCP server is reachable (loopback, test exemption); its metadata names an issuer whose
+    // host resolves to a private address: the metadata fetch from there is refused
+    const as = await startFakeOAuthServer();
+    stops.push(() => as.stop());
+    const mcp = await startFakeMcpServer({
+      tools: [],
+      verifyBearer: (t) => as.verify(t),
+      protectedResource: { authorizationServers: ["https://as.corp.invalid"], advertise: "header" },
+    });
+    stops.push(() => mcp.stop());
+    const err = await discoverMcp(mcp.url, { ...HTTP, lookup: toPrivate }).catch((e: unknown) => e);
+    expect(err).toMatchObject({ reason: "address_refused" });
   });
 });

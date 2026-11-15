@@ -121,7 +121,13 @@ fails closed.
   classifier answer is an ask, never an allow.
 - **Resume.** A decided `command` approval is the whole truth for that call: a resumed call is
   never reviewed twice. 「本会话允许同类」 is a `session` grant written as a conversation tool grant
-  (`command:<ruleId>`); a deny rule is never grantable.
+  (`command:<ruleId>`); a deny rule is never grantable, nor are `unsure.*`, `ask.credential-print`,
+  `ask.secret-file`, `ask.credential-link`, `ask.dynamic-arg` and `ask.sudo`
+  (`isSessionGrantableRule`). Grants allow a line only when every ask hit is granted and nothing is
+  unsure (`applySessionGrants`), and only in attended runs.
+- **Code it cannot read.** Inline interpreter code, stdin or URL scripts, fetched packages and files
+  the conversation wrote are `unsure.interpreter`; `review-guarantees.test.ts` (acts × spellings that
+  must never be `allow`) is the authority over the ordered-hit corpus.
 - **The log.** The verdict is carried on `tool_result.review` (display only; request building reads
   only `callId` / `content` / `isError`, so replay never re-reviews) and needs **no
   `DriftReason`**. The review's own classifier call is a `model_call` with `purpose: "review"` (not

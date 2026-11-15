@@ -50,6 +50,7 @@ const cloudMode = (over: Record<string, unknown> = {}) => ({
   allowedBy: "org",
   network: { kind: "open-public", hosts: [], source: "org" },
   local: null,
+  sandboxNetwork: { kind: "open-public", hosts: [] },
   pendingNextUse: false,
   pendingFilesReset: false,
   recent: [],
@@ -61,6 +62,7 @@ const localMode = (over: Record<string, unknown> = {}) => ({
   allowedBy: "org",
   network: { kind: "allowlist", hosts: [], source: "platform" },
   local: { reported: "auto", allowedDomains: [] },
+  sandboxNetwork: null,
   pendingNextUse: false,
   pendingFilesReset: false,
   recent: [],
@@ -221,9 +223,13 @@ describe("the settings tab's run mode", () => {
     expect(calls.every((c) => c.method === "GET")).toBe(true);
   });
 
-  it("a cloud auto device narrows to 沙箱 with a PATCH (never to auto)", async () => {
+  it("a cloud auto device narrows to 沙箱 only after a confirmation naming the effect", async () => {
     const calls = stubApi({
-      ...detail(cloud()),
+      ...detail(
+        cloud({
+          mode: cloudMode({ sandboxNetwork: { kind: "allowlist", hosts: ["a.com", "b.com"] } }),
+        }),
+      ),
       [`PATCH ${BASE}/e1`]: () => json(200, { device: cloud() }),
     });
     await renderDetail();
@@ -233,12 +239,69 @@ describe("the settings tab's run mode", () => {
       true,
     );
     await user.click(within(group).getByRole("radio", { name: /^Sandbox/ }));
+    const dialog = await screen.findByRole("dialog", { name: E.mode.confirm.title.sandbox });
+    // the effect: the network it will reach, the processes that may end, the way back
+    expect(
+      within(dialog).getByText(/reaches only the organization's allowlist: 2 hosts/),
+    ).toBeTruthy();
+    expect(within(dialog).getByText(E.mode.confirm.processes)).toBeTruthy();
+    expect(within(dialog).getByText(E.mode.confirm.back.sandbox)).toBeTruthy();
+    expect(calls.some((c) => c.method === "PATCH")).toBe(false);
+    // the card stays on auto until the switch is made (the page behind the dialog is inert)
+    expect(
+      (within(group).getByRole("radio", { name: /^Auto/, hidden: true }) as HTMLInputElement)
+        .checked,
+    ).toBe(true);
+    await user.click(within(dialog).getByRole("button", { name: E.mode.confirm.submit.sandbox }));
     await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
     expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ mode: "sandbox" });
     expect(calls.some((c) => String(c.body ?? "").includes('"auto"'))).toBe(false);
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
-  it("a mode change in flight disables the cards: a second click sends no second PATCH", async () => {
+  it("cancelling the confirmation sends nothing and keeps the mode", async () => {
+    const calls = stubApi(detail(cloud()));
+    await renderDetail();
+    const user = await openSettings();
+    const group = await modeGroup();
+    await user.click(within(group).getByRole("radio", { name: /^Sandbox/ }));
+    const dialog = await screen.findByRole("dialog", { name: E.mode.confirm.title.sandbox });
+    await user.click(within(dialog).getByRole("button", { name: E.mode.confirm.cancel }));
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await settle();
+    expect(calls.every((c) => c.method === "GET")).toBe(true);
+    expect((within(group).getByRole("radio", { name: /^Auto/ }) as HTMLInputElement).checked).toBe(
+      true,
+    );
+  });
+
+  it("on the org's open cloud network the 沙箱 card and the dialog say it stays open (D3)", async () => {
+    stubApi(detail(cloud()));
+    await renderDetail();
+    const user = await openSettings();
+    const group = await modeGroup();
+    const sandbox = within(group).getByRole("radio", { name: /^Sandbox/ });
+    expect(sandbox.closest("label")?.textContent).toContain(E.mode.cloudSandboxNetwork.open);
+    await user.click(sandbox);
+    const dialog = await screen.findByRole("dialog", { name: E.mode.confirm.title.sandbox });
+    expect(within(dialog).getByText(E.mode.confirm.network.open)).toBeTruthy();
+  });
+
+  it("the 沙箱 card of an allowlist org counts its hosts, in Chinese too", async () => {
+    stubApi(
+      detail(
+        cloud({ mode: cloudMode({ sandboxNetwork: { kind: "allowlist", hosts: ["a.com"] } }) }),
+      ),
+    );
+    await renderDetail({ locale: "zh" });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("tab", { name: "设置" }));
+    const group = await screen.findByRole("radiogroup", { name: "运行模式" });
+    const sandbox = within(group).getByRole("radio", { name: /^沙箱/ });
+    expect(sandbox.closest("label")?.textContent).toContain("只能访问组织白名单里的 1 个域名");
+  });
+
+  it("a mode change in flight disables the cards: a second confirm sends no second PATCH", async () => {
     let release: () => void = () => {};
     const held = new Promise<void>((r) => {
       release = r;
@@ -254,11 +317,15 @@ describe("the settings tab's run mode", () => {
     const user = await openSettings();
     let group = await modeGroup();
     await user.click(within(group).getByRole("radio", { name: /^Sandbox/ }));
+    const dialog = await screen.findByRole("dialog", { name: E.mode.confirm.title.sandbox });
+    const submit = within(dialog).getByRole("button", { name: E.mode.confirm.submit.sandbox });
+    await user.click(submit);
     await vi.waitFor(() => expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(1));
-    group = screen.getByRole("radiogroup", { name: E.mode.title });
-    const sandbox = within(group).getByRole("radio", { name: /^Sandbox/ }) as HTMLInputElement;
-    expect(sandbox.disabled).toBe(true);
-    await user.click(sandbox);
+    expect((submit as HTMLButtonElement).disabled).toBe(true);
+    await user.click(submit);
+    group = screen.getByRole("radiogroup", { name: E.mode.title, hidden: true });
+    const sandbox = within(group).getByRole("radio", { name: /^Sandbox/, hidden: true });
+    expect((sandbox as HTMLInputElement).disabled).toBe(true);
     await settle();
     expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(1);
     await act(async () => release());
@@ -290,28 +357,55 @@ describe("the settings tab's run mode", () => {
     await act(async () => release());
   });
 
-  it("a cloud device in sandbox cannot widen back on the web", async () => {
-    stubApi(
-      detail(
+  it("a cloud sandbox device's owner switches back to auto after a confirmation (D2)", async () => {
+    const calls = stubApi({
+      ...detail(
         cloud({
           mode: cloudMode({
             mode: "sandbox",
-            network: { kind: "allowlist", hosts: [], source: "platform" },
+            network: { kind: "allowlist", hosts: [], source: "org" },
+            sandboxNetwork: { kind: "allowlist", hosts: [] },
           }),
         }),
       ),
-    );
+      [`PATCH ${BASE}/e1`]: () => json(200, { device: cloud() }),
+    });
     await renderDetail();
-    await openSettings();
-    // the section says why, in one statement, without repeating the mode it shows
-    expect(await screen.findByText(E.mode.lockedNarrowed)).toBeTruthy();
-    const group = screen.getByRole("radiogroup", { name: E.mode.title });
-    const cards = within(group).getAllByRole("radio");
-    expect(cards.every((s) => (s as HTMLInputElement).disabled)).toBe(true);
+    const user = await openSettings();
+    const group = await modeGroup();
+    const auto = within(group).getByRole("radio", { name: /^Auto/ }) as HTMLInputElement;
+    expect(auto.disabled).toBe(false);
+    await user.click(auto);
+    const dialog = await screen.findByRole("dialog", { name: E.mode.confirm.title.auto });
+    expect(within(dialog).getByText(E.mode.confirm.network.auto)).toBeTruthy();
+    expect(within(dialog).getByText(E.mode.confirm.processes)).toBeTruthy();
+    expect(within(dialog).getByText(E.mode.confirm.back.auto)).toBeTruthy();
+    expect(calls.some((c) => c.method === "PATCH")).toBe(false);
+    await user.click(within(dialog).getByRole("button", { name: E.mode.confirm.submit.auto }));
+    await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
+    // widening clears the device's choice: it follows the org and the platform again
+    expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ mode: null });
+    expect(await screen.findByText(E.mode.changedAuto)).toBeTruthy();
   });
 
-  it("a cloud device the organization keeps in sandbox says so", async () => {
-    stubApi(
+  it("a refused switch closes the dialog and shows the error", async () => {
+    stubApi({
+      ...detail(cloud()),
+      [`PATCH ${BASE}/e1`]: () =>
+        json(403, { error: { code: "device.mode_requires_session", message: "no" } }),
+    });
+    await renderDetail();
+    const user = await openSettings();
+    const group = await modeGroup();
+    await user.click(within(group).getByRole("radio", { name: /^Sandbox/ }));
+    const dialog = await screen.findByRole("dialog", { name: E.mode.confirm.title.sandbox });
+    await user.click(within(dialog).getByRole("button", { name: E.mode.confirm.submit.sandbox }));
+    expect(await screen.findByText(en.errors.device.mode_requires_session)).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("a cloud device the organization keeps in sandbox: the auto card is disabled with the reason", async () => {
+    const calls = stubApi(
       detail(
         cloud({
           mode: cloudMode({
@@ -324,8 +418,28 @@ describe("the settings tab's run mode", () => {
       ),
     );
     await renderDetail();
+    const user = await openSettings();
+    const group = await modeGroup();
+    const auto = within(group).getByRole("radio", { name: /^Auto/ }) as HTMLInputElement;
+    expect(auto.disabled).toBe(true);
+    // the reason is on the card itself, not the section's description
+    expect(auto.closest("label")?.textContent).toContain(E.mode.lockedSandbox);
+    await user.click(auto);
+    await settle();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(calls.every((c) => c.method === "GET")).toBe(true);
+  });
+
+  it("the section description does not repeat the cards", async () => {
+    stubApi(detail(cloud()));
+    await renderDetail();
     await openSettings();
-    expect(await screen.findByText(E.mode.lockedSandbox)).toBeTruthy();
+    const heading = await screen.findByRole("heading", { name: E.mode.title });
+    const section = heading.closest("section") as HTMLElement;
+    expect(within(section).getByText(E.mode.section.cloud)).toBeTruthy();
+    // each card's text appears once, on its card
+    expect(within(section).getAllByText(E.mode.cloudDescription.auto)).toHaveLength(1);
+    expect(within(section).getAllByText(E.mode.cloudSandboxNetwork.open)).toHaveLength(1);
   });
 
   it("a local device whose organization forbids auto disables that card with the reason", async () => {
@@ -338,15 +452,18 @@ describe("the settings tab's run mode", () => {
     expect(within(group).getByText(E.mode.unavailable)).toBeTruthy();
   });
 
-  it("a local device offline cannot be changed from here", async () => {
-    stubApi(detail(local({ online: false })));
+  it("a local device offline cannot be narrowed from here: the 沙箱 card says why", async () => {
+    const calls = stubApi(detail(local({ online: false })));
     await renderDetail();
-    await openSettings();
-    expect(await screen.findByText(E.mode.offline)).toBeTruthy();
-    const group = screen.getByRole("radiogroup", { name: E.mode.title });
-    for (const card of within(group).getAllByRole("radio")) {
-      expect((card as HTMLInputElement).disabled).toBe(true);
-    }
+    const user = await openSettings();
+    const group = await modeGroup();
+    const sandbox = within(group).getByRole("radio", { name: /^Sandbox/ }) as HTMLInputElement;
+    expect(sandbox.disabled).toBe(true);
+    expect(sandbox.closest("label")?.textContent).toContain(E.mode.offline);
+    await user.click(sandbox);
+    await settle();
+    expect(calls.every((c) => c.method === "GET")).toBe(true);
+    expect(screen.queryByRole("dialog")).toBeNull();
     // the command stays: it works on the machine
     expect(screen.getByRole("button", { name: `Copy ${COMMAND}` })).toBeTruthy();
   });

@@ -76,24 +76,51 @@ describe("运行时限与命令超时（纯函数）", () => {
     ).toEqual([]);
   });
 
-  it('warns when auto mode is allowed and the provider plugin sets openEgress "off" (absent is the plugin default, proxy)', () => {
+  it("warns when the provider refuses the open network while an org can be on it, auto mode on or off", () => {
+    // an org's cloud network is open by default, and a sandbox-mode cloud device keeps it, so
+    // turning auto mode off does not make the warning moot (auto mode hardening spec K3)
     const long = { ...cfg, runtime: { ...cfg.runtime, maxRunSeconds: 7200 } };
-    const off = { ...long, extensionConfig: { "sandbox-docker": { openEgress: "off" } } };
-    const [w] = sandboxConfigWarnings(off, "sandbox-docker", true);
-    expect(w?.level).toBe("warn");
-    expect(w?.message).toContain('extensionConfig."sandbox-docker".openEgress is "off"');
-    expect(w?.message).toContain("auto mode is allowed");
-    expect(sandboxConfigWarnings(off, "sandbox-docker", false)).toEqual([]);
-    for (const openEgress of ["proxy", "direct"]) {
+    const refusing = {
+      ...long,
+      extensionConfig: { "sandbox-docker": { refuseOpenNetwork: true } },
+    };
+    for (const autoMode of [undefined, "allowed", "off"] as const) {
+      // the whole config, whatever its devices.autoMode says
+      const whole = { ...refusing, devices: { ...refusing.devices, autoMode } };
+      const [w, ...rest] = sandboxConfigWarnings(whole, "sandbox-docker");
+      expect(rest).toEqual([]);
+      expect(w?.level).toBe("warn");
+      expect(w?.message).toContain('extensionConfig."sandbox-docker".refuseOpenNetwork');
+      expect(w?.message).toContain("cloudNetwork");
+      expect(w?.message).not.toContain("openEgress");
+    }
+    // the kill switch: no org reaches the open network
+    expect(
+      sandboxConfigWarnings(
+        {
+          ...refusing,
+          sandbox: { ...refusing.sandbox, limits: { ...refusing.sandbox.limits, egress: "none" } },
+        },
+        "sandbox-docker",
+      ),
+    ).toEqual([]);
+    // the provider does not refuse, or no provider
+    for (const refuseOpenNetwork of [false, undefined]) {
       expect(
         sandboxConfigWarnings(
-          { ...off, extensionConfig: { "sandbox-docker": { openEgress } } },
+          { ...long, extensionConfig: { "sandbox-docker": { refuseOpenNetwork } } },
           "sandbox-docker",
-          true,
         ),
       ).toEqual([]);
     }
-    expect(sandboxConfigWarnings(off)).toEqual([]);
+    // the removed setting no longer means anything
+    expect(
+      sandboxConfigWarnings(
+        { ...long, extensionConfig: { "sandbox-docker": { openEgress: "off" } } },
+        "sandbox-docker",
+      ),
+    ).toEqual([]);
+    expect(sandboxConfigWarnings(refusing)).toEqual([]);
   });
 });
 

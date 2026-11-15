@@ -29,6 +29,16 @@ export const SANDBOX_BACK_ON =
   "not run. Run it again: it runs in the sandbox now.";
 
 /**
+ * The refusal of a file operation on a machine without the OS sandbox when no recent command
+ * decided the mode: file operations never pass command review, so they cannot exceed a ceiling
+ * the deployment has not confirmed.
+ */
+export const NO_FRESH_DECISION =
+  "The OS sandbox is unavailable on this machine and no recent command decided this device's " +
+  "mode, so file operations are refused until the next command runs (the deployment decides the " +
+  "mode at each command).";
+
+/**
  * The OS-mode executor the program serves: each command runs in the sandbox or, in auto mode,
  * directly on the machine ({@link effectiveMode}). The policy is read per operation, so a change
  * applies at the next command. File operations use the host executor's direct IO (any absolute
@@ -109,9 +119,10 @@ export class SwitchingExecutor implements Executor {
    * The executor for file operations now. File operations carry no limits and never pass command
    * review, so they only follow an exec's decision when it is fresh: the sandboxed helper before
    * any exec and once those limits are stale (the safe default for an organization whose ceiling
-   * is sandbox), else `effectiveMode(policy, limits)`. On a machine without the OS sandbox, auto
-   * mode still works: without a fresh sandbox decision the host runs them (a sandbox decision is
-   * refused by the sandboxed executor with the reason).
+   * is sandbox), else `effectiveMode(policy, limits)`. On a machine without the OS sandbox there is
+   * no safe default: without a fresh decision they are refused ({@link NO_FRESH_DECISION}), never
+   * run on the host; a fresh auto decision runs them on the host, a sandbox one is refused by the
+   * sandboxed executor with the reason.
    */
   private async files(): Promise<Executor> {
     const policy = this.policy();
@@ -121,7 +132,8 @@ export class SwitchingExecutor implements Executor {
       this.lastLimits === undefined ||
       Date.now() - this.lastLimitsAt > FILE_OPS_DECISION_TTL_MS
     ) {
-      return this.sandboxReady ? this.sandboxed : this.host;
+      if (!this.sandboxReady) throw new DeviceOpError("policy", NO_FRESH_DECISION);
+      return this.sandboxed;
     }
     return this.lastLimits.mode === "sandbox" ? this.sandboxed : this.host;
   }

@@ -72,10 +72,42 @@ export function deepMerge(base: unknown, override: unknown): unknown {
   return out;
 }
 
+/**
+ * Removed sandbox keys still present in the loaded config (file, Nacos or environment), each with
+ * the setting that replaces it (auto mode hardening spec K3). The schema would strip an unknown
+ * key silently, and an ignored security key reads as a widening, so the config fails instead.
+ */
+export function removedConfigProblems(merged: unknown): string[] {
+  const sandbox = isPlainObject(merged) ? merged.sandbox : undefined;
+  if (!isPlainObject(sandbox)) return [];
+  const limits = isPlainObject(sandbox.limits) ? sandbox.limits : {};
+  const out: string[] = [];
+  if (sandbox.tiers !== undefined) {
+    out.push(
+      "sandbox.tiers: removed; auto mode replaces the sandbox tiers. Set devices.autoMode (allowed | off) for the platform; each organization chooses its autoMode and its cloud network (cloudNetwork: open | allowlist) in its settings",
+    );
+  }
+  if (limits.devHosts !== undefined) {
+    out.push(
+      "sandbox.limits.devHosts: removed with the dev tier; put the hosts in sandbox.limits.allowHosts (the default allowlist) or in an organization's cloudNetwork hosts",
+    );
+  }
+  if (limits.egress === "open") {
+    out.push(
+      'sandbox.limits.egress: "open" was removed; the open public network is set by devices.autoMode (auto mode reaches public hosts) and by an organization\'s cloudNetwork; use "allowlist" or "none" here',
+    );
+  }
+  return out;
+}
+
 /** 原始配置深合并环境变量覆盖（优先级最高）后校验；热更新与启动共用。错误只列路径不列值。 */
 export function resolveConfig(raw: unknown, env: NodeJS.ProcessEnv): KernelConfig {
   if (!isPlainObject(raw)) throw new ConfigError("config file root must be a mapping");
   const merged = deepMerge(raw, envOverrides(env));
+  const removed = removedConfigProblems(merged);
+  if (removed.length > 0) {
+    throw new ConfigError(`invalid configuration:\n${removed.map((l) => `  - ${l}`).join("\n")}`);
+  }
   const result = KernelConfigSchema.safeParse(merged);
   if (!result.success) {
     const lines = result.error.issues.map(

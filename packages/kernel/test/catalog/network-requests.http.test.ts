@@ -221,8 +221,10 @@ describe("network requests", () => {
     const res = await decide(ownerReq, r.id, { approve: true });
     expect(res.statusCode, res.body).toBe(200);
     expect((res.json() as { request: RequestView }).request.status).toBe("approved");
+    // the deployment's network mode (open) is kept: approving adds hosts, it never closes the
+    // cloud network (auto mode hardening spec K1)
     expect(await orgNetwork()).toEqual({
-      mode: "allowlist",
+      mode: "open",
       allowHosts: ["pypi.org", "*.github.com", "files.slack.com"],
     });
     const audit = await db
@@ -253,14 +255,15 @@ describe("network requests", () => {
     });
   });
 
-  it("an open cloud network still lets its sandbox devices' hosts be added", async () => {
+  it("an open cloud network stays open while its sandbox devices' hosts are added", async () => {
     // the org's cloud network is open (the default for cloud devices); a local device in sandbox
-    // mode still gets the allowlist, so a host its network ask names must be addable
+    // mode still gets the allowlist, so a host its network ask names must be addable, and
+    // approving it must not turn the open cloud network into an allowlist (spec K1)
     await setOrgNetwork({ mode: "open" });
     const r = await fileOk({ hosts: ["files.slack.com"] });
     expect((await decide(ownerReq, r.id, { approve: true })).statusCode).toBe(200);
     expect(await orgNetwork()).toEqual({
-      mode: "allowlist",
+      mode: "open",
       allowHosts: ["pypi.org", "*.github.com", "files.slack.com"],
     });
   });

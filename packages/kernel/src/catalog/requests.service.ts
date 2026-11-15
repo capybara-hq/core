@@ -841,11 +841,12 @@ export class CatalogRequestsService {
 
   /**
    * Approves a `network_allowlist` request inside its decision's transaction: the hosts the org's
-   * sandbox allowlist does not hold yet are added to the org's `cloudNetwork` as an allowlist with
-   * them, through {@link OrgSettingsService.update} (audited `org.settings_updated` with
-   * `requestId`). An org following the deployment default starts from the deployment's list (it
-   * keeps its own list from then on); an org whose cloud network is open is narrowed to the
-   * allowlist, which is what its sandbox-mode devices already use. The platform kill switch, more
+   * sandbox allowlist does not hold yet are added to the host list of the org's `cloudNetwork`,
+   * through {@link OrgSettingsService.update} (audited `org.settings_updated` with `requestId`).
+   * An org following the deployment default starts from the deployment's list (it keeps its own
+   * list from then on). The org's network mode is kept: the list caps local sandbox devices, and
+   * approving a host never turns an open cloud network into an allowlist (auto mode hardening
+   * spec K1). The platform kill switch, more
    * than {@link ORG_SANDBOX_ALLOW_HOSTS_MAX} hosts -> `catalog.request_invalid`; decided with an API
    * token -> `org.sandbox_egress_not_allowed` (only a person widens the network). Hosts all allowed
    * already: nothing is written.
@@ -878,7 +879,7 @@ export class CatalogRequestsService {
     // API token (auto mode spec §4.3; the Platform tool has no decide operation at all)
     await this.orgSettings.update(
       orgId,
-      { cloudNetwork: { mode: "allowlist", allowHosts } },
+      { cloudNetwork: { mode: current?.mode ?? deployment.mode, allowHosts } },
       actor,
       opts.actorTokenId,
       { requestId },

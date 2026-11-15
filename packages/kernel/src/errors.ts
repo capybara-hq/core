@@ -334,7 +334,7 @@ export const ERROR_CODES = {
   "attachment.too_many_pending": 429,
   "sandbox.unavailable": 503,
   "sandbox.busy": 409,
-  /** A cloud sandbox provider refused an instance with the open public network (its `openEgress` is `off`). */
+  /** A cloud sandbox provider refused an instance with the open public network. */
   "sandbox.open_network_refused": 409,
   /** A cloud sandbox provider failed to create a device's sandbox for another reason. */
   "sandbox.create_failed": 502,
@@ -386,6 +386,11 @@ export const ERROR_CODES = {
    * (`capybara-device mode` or the device page's policy op), and a cloud device has none to choose.
    */
   "device.mode_on_device": 409,
+  /**
+   * A cloud device's mode (`PATCH /devices/:id` `mode`, sandbox or null) sent with an API token:
+   * only its owner in a web session changes it (hardening spec D2, K4).
+   */
+  "device.mode_requires_session": 403,
   /**
    * The device offers no projects (project root §4.1): its `capybara-device` does not announce
    * `projects` (update it), or its cloud sandbox provider has no `list` / `scan`.

@@ -1,5 +1,5 @@
 import type { Command } from "../args.js";
-import { sandboxUnavailableSwitchRefusal } from "../exec/sandbox-messages.js";
+import { SANDBOX_INSTALL_HINT, sandboxUnavailableSwitchRefusal } from "../exec/sandbox-messages.js";
 import { PolicyStore } from "../policy-store.js";
 import { policyPath, readCredential, type SandboxMode } from "../state.js";
 
@@ -52,6 +52,40 @@ export const AUTO_POLICY_REFUSED_LOGIN_LINE =
   "This organization does not allow auto mode, but this machine's local policy is auto mode: the " +
   "deployment refuses every command until you run `capybara-device mode sandbox`.";
 
+/** The line `login --mode docker` prints when the device runs in auto mode. */
+export const DOCKER_AUTO_MODE_LOGIN_LINE =
+  "New logins start in auto mode: agent commands run in this device's Docker container with its " +
+  "network, file operations reach any path in the container, and the deployment reviews every " +
+  "command. Switch with `capybara-device mode sandbox`.";
+
+/** The line `login --mode docker` prints when the local policy is sandbox mode. */
+export const DOCKER_SANDBOX_MODE_LOGIN_LINE =
+  "This device runs in sandbox mode: agent commands run in this device's Docker container " +
+  "without a network, and file operations stay in the device's directories.";
+
+/**
+ * The line `login` prints when the organization forbids auto mode and the OS sandbox cannot run
+ * here: no sandbox policy is written (it could not run a command either).
+ */
+export function sandboxUnavailableLoginLine(reason: string): string {
+  return (
+    "This organization does not allow auto mode, and the OS sandbox is unavailable on this " +
+    `machine (${reason}), so no command can run here yet: ${SANDBOX_INSTALL_HINT}, then run ` +
+    "`capybara-device mode sandbox`; or log in again with --mode docker."
+  );
+}
+
+/** The OS sandbox check `login` and `mode` use (default: the runtime's, loaded on demand). */
+export type SandboxCheck = () => { ok: true } | { ok: false; reason: string };
+
+export async function checkSandbox(
+  check: SandboxCheck | undefined,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  if (check !== undefined) return check();
+  const os = await import("../exec/os.js");
+  return os.sandboxAvailability();
+}
+
 export interface ModeDeps {
   stateDir: string;
   out: (line: string) => void;
@@ -65,7 +99,7 @@ export interface ModeDeps {
    * Whether the OS sandbox can run here (default: the runtime's check). `mode sandbox` is refused
    * when it cannot; injectable for tests.
    */
-  sandboxAvailable?: () => { ok: true } | { ok: false; reason: string };
+  sandboxAvailable?: SandboxCheck;
 }
 
 /** Whether this machine is logged in in Docker mode (false when unknown). */
@@ -121,8 +155,7 @@ export async function modeCommand(
   if (mode === "sandbox" && !dockerRunMode(stateDir)) {
     // Sandbox mode cannot run a command without the OS sandbox; refuse the switch on such a
     // machine and leave the policy as it is (auto mode keeps working).
-    const os = await import("../exec/os.js");
-    const available = deps.sandboxAvailable?.() ?? os.sandboxAvailability();
+    const available = await checkSandbox(deps.sandboxAvailable);
     if (!available.ok) {
       err(sandboxUnavailableSwitchRefusal(available.reason));
       return 1;

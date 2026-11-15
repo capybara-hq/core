@@ -18,8 +18,9 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { REDIS } from "../infra/tokens.js";
 import type { ConnectorAuth } from "../tools/credentials.js";
 import { Credentials } from "../tools/credentials.js";
+import { oauthNetPolicy } from "../tools/oauth/discovery.js";
 import { callbackUrl } from "../tools/oauth/flow-paths.js";
-import { probeNetPolicy, probeTokenEndpoint } from "./oauth-token-probe.js";
+import { probeTokenEndpoint } from "./oauth-token-probe.js";
 import { checkRedactor } from "./redact-check.js";
 import type { KernelCheckArgs } from "./setup-check-registry.js";
 import { SetupCheckRegistry } from "./setup-check-registry.js";
@@ -336,7 +337,7 @@ export class KernelChecks implements OnModuleInit {
     return probeTokenEndpoint({
       client,
       redirectUri: callbackUrl(publicUrl),
-      net: probeNetPolicy(config),
+      net: oauthNetPolicy(config),
       signal: a.signal,
     });
   }

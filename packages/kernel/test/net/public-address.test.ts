@@ -146,6 +146,17 @@ describe("resolvePublic", () => {
     );
   });
 
+  it("a trusted origin exempts only that exact origin, not its host on another port or scheme", async () => {
+    const policy: NetPolicy = { ...POLICY, trustedOrigins: ["https://npm.corp:8443"] };
+    await expect(
+      resolvePublic("npm.corp", policy, fixed("10.9.9.9"), "https://npm.corp:8443"),
+    ).resolves.toEqual(["10.9.9.9"]);
+    for (const origin of ["https://npm.corp", "http://npm.corp:8443", undefined]) {
+      const e = await denied(resolvePublic("npm.corp", policy, fixed("10.9.9.9"), origin));
+      expect(e.code, String(origin)).toBe("net.private_address");
+    }
+  });
+
   it("link-local stays refused for exempt hostnames, trusted origins and CIDR entries", async () => {
     const policy: NetPolicy = {
       ...POLICY,
@@ -158,7 +169,7 @@ describe("resolvePublic", () => {
       ["npm.corp", "169.254.169.254"],
       ["npm.corp", "fe80::1"],
     ] as const) {
-      const e = await denied(resolvePublic(host, policy, fixed(ip)));
+      const e = await denied(resolvePublic(host, policy, fixed(ip), `https://${host}`));
       expect(e.code, `${host} -> ${ip}`).toBe("net.private_address");
       expect(e.message).toMatch(/link-local/);
     }
@@ -200,13 +211,6 @@ describe("resolvePublic", () => {
     );
     const ok = marketplaces.safeParse({ allowPrivateHosts: ["gitlab.internal", "10.1.0.0/16"] });
     expect(ok.success).toBe(true);
-  });
-
-  it("trusts the hosts of trustedOrigins (the configured npm registry)", async () => {
-    const policy: NetPolicy = { ...POLICY, trustedOrigins: ["https://npm.corp:8443"] };
-    await expect(resolvePublic("npm.corp", policy, fixed("10.9.9.9"))).resolves.toEqual([
-      "10.9.9.9",
-    ]);
   });
 
   it("allows loopback hosts only with allowInsecureLoopback", async () => {

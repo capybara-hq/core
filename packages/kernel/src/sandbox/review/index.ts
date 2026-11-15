@@ -22,6 +22,7 @@ export {
   REVIEW_MAX_OUTPUT_TOKENS,
   REVIEW_PURPOSE,
   REVIEW_SYSTEM_PROMPT,
+  REVIEW_TRUNCATED_ASK_REASON,
   REVIEW_TRUNCATED_MARKER,
   REVIEW_UNAVAILABLE_PREFIX,
   reviewSystemPrompt,
@@ -36,6 +37,7 @@ export {
   parseCommand,
   reviewRules,
   reviewWrite,
+  writtenPaths,
 } from "./rules.js";
 export type {
   ParsedCommand,
@@ -46,4 +48,4 @@ export type {
   RuleOutcome,
   SimpleCommand,
 } from "./types.js";
-export { isSessionGrantableRule } from "./types.js";
+export { applySessionGrants, isSessionGrantableRule } from "./types.js";

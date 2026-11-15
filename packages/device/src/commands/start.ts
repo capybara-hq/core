@@ -3,10 +3,11 @@ import { type Connection, connect } from "../client.js";
 import { CommandLog } from "../command-log.js";
 import { sandboxUnavailableMessage } from "../exec/sandbox-messages.js";
 import type { Executor } from "../exec/types.js";
-import { readRunningPid, removePid, writePid } from "../pid.js";
+import { type ProcessLookup, readRunningPid, removePid, writePid } from "../pid.js";
 import { PolicyStore } from "../policy-store.js";
 import { hasLoginService } from "../service/installed.js";
 import { rotateServiceLog } from "../service/launchd.js";
+import { startedByServiceManager } from "../service/manager.js";
 import { type Credential, readCredential } from "../state.js";
 import { PROGRAM_VERSION } from "../version.js";
 
@@ -24,6 +25,9 @@ export interface StartDeps {
   /** The process whose signals stop and drain the program. */
   proc?: Pick<NodeJS.Process, "on" | "off" | "pid">;
   kill?: typeof process.kill;
+  ps?: ProcessLookup;
+  /** The environment (default: process.env): tells whether the service manager started this. */
+  env?: Record<string, string | undefined>;
   connect?: typeof connect;
 }
 
@@ -47,7 +51,9 @@ export async function start(deps: StartDeps): Promise<number> {
     return 1;
   }
   if (cred === undefined) {
-    // Terminal: exit 0 so a service manager does not restart it until someone logs in.
+    // A deliberate stop: exit 0, which the service manager does not restart (launchd
+    // `KeepAlive { SuccessfulExit: false }`, systemd `Restart=on-failure`) until someone logs in
+    // and starts it.
     err("Not logged in. Run capybara-device login --url <url> first.");
     return 0;
   }
@@ -56,15 +62,21 @@ export async function start(deps: StartDeps): Promise<number> {
     return 1;
   }
   const where = deps.service ?? { home: homedir(), platform: process.platform };
-  if (hasLoginService(where.home, where.platform)) {
-    // The service manager runs exactly this command, so it must keep working; say how to control
-    // the one that is installed.
+  if (
+    hasLoginService(where.home, where.platform) &&
+    !startedByServiceManager(deps.env ?? process.env, proc.pid)
+  ) {
+    // Started in a terminal while a service is installed: say how to control the installed one.
+    // The service manager runs exactly this command, so it must keep working, without the hint.
     out(
       "capybara-device runs as a login service on this machine. Restart it with: capybara-device service restart",
     );
   }
   rotateServiceLog(stateDir);
-  const running = readRunningPid(stateDir, deps.kill);
+  const running = readRunningPid(stateDir, {
+    ...(deps.kill && { kill: deps.kill }),
+    ...(deps.ps && { ps: deps.ps }),
+  });
   if (running !== undefined && running !== proc.pid) {
     err(`capybara-device is already running (pid ${running}). Stop it first: capybara-device stop`);
     return 1;

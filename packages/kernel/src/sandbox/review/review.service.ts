@@ -16,8 +16,13 @@ import {
   REVIEW_PURPOSE,
   runClassifier,
 } from "./classifier.js";
-import { reviewRules, reviewWrite } from "./rules.js";
-import { isSessionGrantableRule, type RuleHit, type RuleOutcome } from "./types.js";
+import { reviewRules, reviewWrite, writtenPaths } from "./rules.js";
+import {
+  applySessionGrants,
+  isSessionGrantableRule,
+  type RuleHit,
+  type RuleOutcome,
+} from "./types.js";
 
 /**
  * The command review the tool pipeline calls (auto mode spec §5): stage 1 the pure rule table, stage
@@ -107,6 +112,9 @@ export const REVIEW_REASONS = {
 /** The tools the review covers: the shell, and the file tools whose writes may leave the workspace. */
 const REVIEWED_TOOLS: ReadonlySet<string> = new Set(["Bash", "Write", "Edit"]);
 
+/** How many of a conversation tree's latest assistant messages the review reads for its writes. */
+const WRITTEN_EVENTS_READ = 200;
+
 /** How many of the root conversation's latest person messages are read before bounding the text. */
 const PERSON_MESSAGES_READ = 20;
 
@@ -194,8 +202,14 @@ export class CommandReviewService implements CommandReview {
       mode: input.mode,
       attended: input.attended,
     };
-    const result = isWrite ? reviewWrite(target, facts) : reviewRules(target, facts);
-    const hit = decidingHit(result.hits, result.outcome);
+    // running a file this conversation wrote is not a development command (hardening spec R1)
+    const result = isWrite
+      ? reviewWrite(target, facts)
+      : reviewRules(target, {
+          ...facts,
+          written: await this.writtenInTree(await rootOf(), facts),
+        });
+    let hit = decidingHit(result.hits, result.outcome);
 
     if (result.outcome === "deny") {
       return {
@@ -209,14 +223,23 @@ export class CommandReviewService implements CommandReview {
       return allow(hit?.reason ?? "The command review allows this command.", hit?.id ?? null);
     }
     if (result.outcome === "ask") {
-      return (await this.sessionGranted(await rootOf(), hit?.id ?? null))
-        ? allow(REVIEW_REASONS.sessionGrant, hit?.id ?? null)
-        : {
-            decision: "ask",
-            by: "rule",
-            reason: hit?.reason ?? "This command needs the person's approval.",
-            rule: hit?.id ?? null,
-          };
+      // a session grant covers its own class only, and only while the person is there to have
+      // given it (hardening spec R4, R6): every ask hit granted and nothing unsure left
+      const granted = input.attended ? await this.grantedRules(await rootOf()) : new Set<string>();
+      const after = applySessionGrants(result, (rule) => granted.has(rule));
+      if (after.outcome === "allow") {
+        return allow(REVIEW_REASONS.sessionGrant, after.hit?.id ?? null);
+      }
+      if (after.outcome === "ask") {
+        return {
+          decision: "ask",
+          by: "rule",
+          reason: after.hit?.reason ?? "This command needs the person's approval.",
+          rule: after.hit?.id ?? null,
+        };
+      }
+      // the granted asks are settled; what is left is unsure, which the classifier decides
+      hit = after.hit;
     }
 
     // unsure: the classifier decides when the purpose is mapped; without one the deciding hit is a
@@ -314,20 +337,64 @@ export class CommandReviewService implements CommandReview {
   }
 
   /**
-   * Whether the root conversation holds a session grant for this rule class (`command:<ruleId>`).
+   * The rule classes the root conversation holds session grants for (`command:<ruleId>` rows).
    * Command grants carry no tool-spec fingerprint: the approval records the rule, not the command.
-   * Only a concrete rule class can match: a catch-all (`unsure.*`) or a missing rule never does,
-   * so a stored `command:unsure.*` row (old data) can cover nothing.
+   * Only a concrete grantable class counts: a stored catch-all or never-session class (old data)
+   * covers nothing.
    */
-  private async sessionGranted(rootConversationId: string, rule: string | null): Promise<boolean> {
-    if (!isSessionGrantableRule(rule)) return false;
-    const grant = await this.db
+  private async grantedRules(rootConversationId: string): Promise<Set<string>> {
+    const rows = await this.db
       .selectFrom("conversation_tool_grants")
       .select("tool_key")
       .where("conversation_id", "=", rootConversationId)
-      .where("tool_key", "=", `command:${rule}`)
-      .executeTakeFirst();
-    return grant !== undefined;
+      .where("tool_key", "like", "command:%")
+      .execute();
+    const rules = rows.map((r) => r.tool_key.slice("command:".length));
+    return new Set(rules.filter((rule) => isSessionGrantableRule(rule)));
+  }
+
+  /**
+   * The absolute paths the conversation tree's own tool calls wrote — the root's and every
+   * sub-agent's: `Write` / `Edit` targets and the write targets (downloads and copies included) of
+   * their `Bash` lines, from the latest {@link WRITTEN_EVENTS_READ} assistant messages of the tree.
+   * All agents of a tree share the device, so a file one of them wrote is code the run produced,
+   * whoever runs it (hardening spec R1).
+   */
+  private async writtenInTree(
+    rootConversationId: string,
+    facts: { workspace: string; cwd: string; mode: "auto" | "sandbox"; attended: boolean },
+  ): Promise<string[]> {
+    const rows = await this.db
+      .withRecursive("tree(id)", (db) =>
+        db
+          .selectFrom("conversations")
+          .select("id")
+          .where("id", "=", rootConversationId)
+          .unionAll((q) =>
+            q
+              .selectFrom("conversations as c")
+              .innerJoin("tree", "tree.id", "c.parent_conversation_id")
+              .select("c.id"),
+          ),
+      )
+      .selectFrom("conversation_events")
+      .select("payload")
+      .where("conversation_id", "in", (q) => q.selectFrom("tree").select("id"))
+      .where("type", "=", "assistant_message")
+      .orderBy("created_at", "desc")
+      .limit(WRITTEN_EVENTS_READ)
+      .execute();
+    const written = new Set<string>();
+    for (const row of rows) {
+      for (const call of toolCallsOf(row.payload)) {
+        if ((call.name === "Write" || call.name === "Edit") && typeof call.path === "string") {
+          written.add(call.path.startsWith("/") ? call.path : `${facts.workspace}/${call.path}`);
+        } else if (call.name === "Bash" && typeof call.command === "string") {
+          for (const path of writtenPaths(call.command, facts)) written.add(path);
+        }
+      }
+    }
+    return [...written];
   }
 
   /**
@@ -346,6 +413,19 @@ export class CommandReviewService implements CommandReview {
     const texts = rows.map((r) => textOfUserMessage(r.payload)).filter((t) => t !== "");
     return boundMessages(texts, this.config.get().sandbox.review.messageTokens);
   }
+}
+
+/** The tool calls of an `assistant_message` payload, with the fields the review reads. */
+function toolCallsOf(payload: unknown): { name: string; path?: unknown; command?: unknown }[] {
+  const content = (payload as { content?: unknown } | null)?.content;
+  if (!Array.isArray(content)) return [];
+  return content.flatMap((b) => {
+    if (b === null || typeof b !== "object") return [];
+    const block = b as { type?: unknown; name?: unknown; input?: unknown };
+    if (block.type !== "tool_call" || typeof block.name !== "string") return [];
+    const input = (block.input ?? {}) as { file_path?: unknown; command?: unknown };
+    return [{ name: block.name, path: input.file_path, command: input.command }];
+  });
 }
 
 /** The text blocks of a `user_message` payload (its images, documents and attachments are skipped). */

@@ -371,7 +371,7 @@ describe("acceptance: auto mode on a real kernel", () => {
       1,
     );
     expect(denied.payload.isError).toBe(true);
-    expect(denied.payload.review).toMatchObject({ decision: "deny", rule: "deny.root-delete" });
+    expect(denied.payload.review).toMatchObject({ decision: "deny", rule: "deny.root-destroy" });
     expect(denied.payload.content).not.toContain("Started background task");
     const tasks = await db
       .selectFrom("background_tasks")

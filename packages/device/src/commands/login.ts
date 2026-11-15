@@ -5,6 +5,7 @@ import { isAbsolute, resolve } from "node:path";
 import { ApiError, authorize, type FetchFn, programVersion, token } from "../api.js";
 import type { Command } from "../args.js";
 import { prepareDeviceDir } from "../exec/shared.js";
+import { hasLoginService } from "../service/installed.js";
 import {
   DEFAULT_MAX_FRAME_BYTES,
   DEFAULT_POLICY,
@@ -21,8 +22,13 @@ import {
   AUTO_MODE_LOGIN_LINE,
   AUTO_MODE_RISK_TEXT,
   AUTO_POLICY_REFUSED_LOGIN_LINE,
+  checkSandbox,
+  DOCKER_AUTO_MODE_LOGIN_LINE,
+  DOCKER_SANDBOX_MODE_LOGIN_LINE,
   SANDBOX_MODE_LOGIN_LINE,
   SANDBOX_POLICY_LOGIN_LINE,
+  type SandboxCheck,
+  sandboxUnavailableLoginLine,
 } from "./mode.js";
 
 export interface LoginDeps {
@@ -36,6 +42,8 @@ export interface LoginDeps {
   platform?: NodeJS.Platform;
   arch?: string;
   hostname?: string;
+  /** Whether the OS sandbox can run here (default: the runtime's check); injectable for tests. */
+  sandboxAvailable?: SandboxCheck;
 }
 
 const SLOW_DOWN_STEP_SECONDS = 5;
@@ -149,9 +157,21 @@ export async function login(
         // the login final. An existing policy is the owner's choice: the kernel refuses auto mode
         // at every command if the organization forbids it and the owner keeps auto.
         let mode: SandboxMode = "auto";
+        /** Why no sandbox policy was written: the OS sandbox cannot run here (OS mode only). */
+        let noSandbox: string | undefined;
         if (granted.autoMode === "off") {
           try {
-            mode = persistSandboxPolicy(deps.stateDir) ? "sandbox" : readPolicy(deps.stateDir).mode;
+            // A sandbox policy on a machine without the OS sandbox could not run a command either:
+            // it is not written, and the line says what to install (Docker needs no OS sandbox).
+            if (cmd.mode !== "docker" && !existsSync(policyPath(deps.stateDir))) {
+              const available = await checkSandbox(deps.sandboxAvailable);
+              if (!available.ok) noSandbox = available.reason;
+            }
+            if (noSandbox === undefined) {
+              mode = persistSandboxPolicy(deps.stateDir)
+                ? "sandbox"
+                : readPolicy(deps.stateDir).mode;
+            }
           } catch (e) {
             err(`Cannot set the local policy in ${deps.stateDir}: ${(e as Error).message}`);
           }
@@ -174,8 +194,15 @@ export async function login(
           maxFrameBytes: granted.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES,
         });
         out(`Logged in. Device ${granted.deviceId}, working directory ${dir}`);
-        // The risk text is shown once at login (spec §8), and only when this machine runs auto.
-        if (granted.autoMode === "off") {
+        // The risk text is shown once at login (spec §8), and only when commands run on this
+        // machine as the owner (auto mode outside Docker).
+        if (cmd.mode === "docker") {
+          if (granted.autoMode === "off" && mode !== "sandbox") out(AUTO_POLICY_REFUSED_LOGIN_LINE);
+          else
+            out(mode === "sandbox" ? DOCKER_SANDBOX_MODE_LOGIN_LINE : DOCKER_AUTO_MODE_LOGIN_LINE);
+        } else if (noSandbox !== undefined) {
+          out(sandboxUnavailableLoginLine(noSandbox));
+        } else if (granted.autoMode === "off") {
           out(mode === "sandbox" ? SANDBOX_MODE_LOGIN_LINE : AUTO_POLICY_REFUSED_LOGIN_LINE);
         } else if (mode === "sandbox") {
           out(SANDBOX_POLICY_LOGIN_LINE);
@@ -183,8 +210,12 @@ export async function login(
           out(AUTO_MODE_LOGIN_LINE);
           out(AUTO_MODE_RISK_TEXT);
         }
+        // An installed service stays stopped after a deliberate exit (not logged in, logged out):
+        // it needs starting again, not a second program.
         out(
-          "Run `capybara-device start` to bring it online (or `capybara-device service install` to connect at login).",
+          hasLoginService(deps.home, platform)
+            ? "The login service is installed: bring it online with `capybara-device service restart`."
+            : "Run `capybara-device start` to bring it online (or `capybara-device service install` to connect at login).",
         );
         return 0;
       } catch (e) {

@@ -920,6 +920,8 @@ interface ResolvedFacts {
   workspace: string;
   cwd: string;
   home: string | null;
+  /** Absolute paths this conversation's tool calls wrote before this line (hardening spec R1). */
+  written: ReadonlySet<string>;
 }
 
 function homeOf(workspace: string): string | null {
@@ -933,7 +935,16 @@ function homeOf(workspace: string): string | null {
 function resolveFacts(facts: ReviewFacts): ResolvedFacts {
   const workspace = normalizePath(facts.workspace);
   const cwd = facts.cwd === undefined ? workspace : normalizePath(facts.cwd);
-  return { workspace, cwd, home: homeOf(workspace) };
+  return {
+    workspace,
+    cwd,
+    home: homeOf(workspace),
+    written: new Set(
+      (facts.written ?? []).map((p) =>
+        p.endsWith("/**") ? `${normalizePath(p.slice(0, -3))}/**` : normalizePath(p),
+      ),
+    ),
+  };
 }
 
 function normalizePath(path: string): string {
@@ -1052,6 +1063,20 @@ const SECRET_HOME_PATHS = [
   "~/.netrc",
   "~/.git-credentials",
   "~/.config/gh/hosts.yml",
+  "~/.npmrc",
+  "~/.pypirc",
+  "~/.vault-token",
+  "~/.terraform.d/credentials.tfrc.json",
+  "~/.config/op",
+  "~/.bash_history",
+  "~/.zsh_history",
+  "~/.sh_history",
+  "~/.history",
+  "~/.python_history",
+  "~/.node_repl_history",
+  "~/.psql_history",
+  "~/.mysql_history",
+  "~/.local/share/fish/fish_history",
 ];
 
 /**
@@ -1553,6 +1578,8 @@ const READ_PROGRAMS = new Set([
 
 const DEV_PROGRAMS = new Set([
   "node",
+  "tsx",
+  "ts-node",
   "nodejs",
   "deno",
   "bun",
@@ -1652,6 +1679,284 @@ const DEV_PROGRAMS = new Set([
 ]);
 
 const SHELL_PROGRAMS = new Set(["bash", "sh", "zsh", "dash", "ksh", "fish"]);
+
+/**
+ * Interpreters and the options that make them run code written on the command line (hardening
+ * spec R1): `python3 -c`, `node -e`, `perl -e` … run whatever the line says, which no rule can read,
+ * so they are not development commands. A short option counts when its cluster carries the letter
+ * (`python3 -Ic`, `perl -ne`).
+ */
+const INLINE_CODE_OPTIONS: Readonly<Record<string, readonly string[]>> = {
+  python: ["-c"],
+  python2: ["-c"],
+  python3: ["-c"],
+  pypy: ["-c"],
+  pypy3: ["-c"],
+  node: ["-e", "--eval", "-p", "--print"],
+  nodejs: ["-e", "--eval", "-p", "--print"],
+  bun: ["-e", "--eval", "-p", "--print"],
+  tsx: ["-e", "--eval", "-p", "--print"],
+  "ts-node": ["-e", "--eval", "-p", "--print"],
+  ruby: ["-e"],
+  perl: ["-e", "-E"],
+  php: ["-r"],
+  lua: ["-e"],
+  Rscript: ["-e"],
+  julia: ["-e", "-E", "--eval"],
+  elixir: ["-e", "--eval"],
+  osascript: ["-e"],
+  swift: ["-e"],
+  scala: ["-e"],
+};
+
+/** Programs that run a script file named as their first operand (or read one from stdin). */
+const SCRIPT_RUNNERS: ReadonlySet<string> = new Set([
+  ...Object.keys(INLINE_CODE_OPTIONS),
+  "deno",
+  "source",
+  ".",
+  ...SHELL_PROGRAMS,
+]);
+
+/** The script-runner families whose option tables {@link RUNNER_OPTIONS} keys by. */
+function runnerFamily(program: string): string {
+  if (/^(python[0-9.]*|pypy3?)$/.test(program)) return "python";
+  if (["node", "nodejs", "bun", "tsx", "ts-node"].includes(program)) return "node";
+  if (SHELL_PROGRAMS.has(program)) return "shell";
+  return program;
+}
+
+/**
+ * Per family: the options that take the next word as their value (so it is not the script), and
+ * the ones whose value is itself code the runner loads first (`node -r ./x.js`, `ruby -r`).
+ */
+const RUNNER_OPTIONS: Readonly<
+  Record<string, { value: readonly string[]; preload: readonly string[] }>
+> = {
+  python: { value: ["-W", "-X", "--check-hash-based-pycs"], preload: [] },
+  node: {
+    value: [
+      "-r",
+      "--require",
+      "--import",
+      "--loader",
+      "--experimental-loader",
+      "--env-file",
+      "--conditions",
+      "-C",
+      "--title",
+      "--tsconfig",
+      "-P",
+      "--project",
+      "-O",
+      "--compiler-options",
+      "--cwd",
+      "--config",
+      "--preload",
+    ],
+    preload: ["-r", "--require", "--import", "--loader", "--experimental-loader", "--preload"],
+  },
+  deno: {
+    value: [
+      "--config",
+      "-c",
+      "--import-map",
+      "--lock",
+      "--cert",
+      "--location",
+      "--seed",
+      "--env-file",
+    ],
+    preload: [],
+  },
+  shell: { value: ["-o", "+o", "-O", "+O", "--rcfile", "--init-file"], preload: [] },
+  ruby: { value: ["-r", "-I", "-C"], preload: ["-r"] },
+  perl: { value: ["-I", "-M"], preload: [] },
+  php: { value: ["-c", "-d", "-f"], preload: [] },
+  lua: { value: ["-l"], preload: [] },
+};
+
+const NO_OPTIONS: { value: readonly string[]; preload: readonly string[] } = {
+  value: [],
+  preload: [],
+};
+
+/** The subcommands of a script runner that run no script file (`tsx watch` runs the next one). */
+const RUNNER_SUBCOMMANDS: Readonly<Record<string, readonly string[]>> = {
+  tsx: ["watch"],
+};
+
+/**
+ * Packages a package runner may fetch and run as development tools without the review reading
+ * them: the development programs this table already allows, plus the usual locally installed
+ * project tools. Matched by exact bare name only (no scope, no `npm:` alias, no tag other than a
+ * version), so `npx @evil/tsc` or `npx tsc@npm:evil` is not this list.
+ */
+const RUNNER_TOOLS: ReadonlySet<string> = new Set([
+  "playwright",
+  "prisma",
+  "turbo",
+  "changeset",
+  "husky",
+  "lint-staged",
+  "tailwindcss",
+  "nx",
+  "wrangler",
+  "drizzle-kit",
+  "astro",
+  "storybook",
+  "rollup",
+  "webpack",
+  "esbuild",
+  "nodemon",
+  "concurrently",
+  "typescript",
+  "vite-node",
+]);
+
+/** Scoped packages matched exactly by {@link RUNNER_TOOLS}' rule. */
+const RUNNER_SCOPED_TOOLS: ReadonlySet<string> = new Set([
+  "@biomejs/biome",
+  "@playwright/test",
+  "@changesets/cli",
+]);
+
+/** Options of a package manager or runner that take the next word as their value. */
+const PM_VALUE_OPTIONS: ReadonlySet<string> = new Set([
+  "--dir",
+  "-C",
+  "--filter",
+  "-F",
+  "--workspace",
+  "-w",
+  "--prefix",
+  "--cwd",
+  "--registry",
+  "--userconfig",
+  "--reporter",
+  "--loglevel",
+  "--python",
+  "-p",
+  "--with",
+  "--from",
+  "--project",
+  "--directory",
+  "--env-file",
+  "--index-url",
+  "--extra-index-url",
+  "-n",
+  "--name",
+]);
+
+/** The first operand of `args` (skipping options and their values) and what follows it. */
+function subcommandOf(args: string[]): {
+  sub: string | undefined;
+  rest: string[];
+  options: string[];
+} {
+  const options: string[] = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const a = args[i] as string;
+    if (a === "--") return { sub: args[i + 1], rest: args.slice(i + 2), options };
+    if (a.startsWith("-")) {
+      options.push(a);
+      if (!a.includes("=") && PM_VALUE_OPTIONS.has(a)) {
+        options.push(args[i + 1] ?? "");
+        i += 1;
+      }
+      continue;
+    }
+    return { sub: a, rest: args.slice(i + 1), options };
+  }
+  return { sub: undefined, rest: [], options };
+}
+
+/**
+ * Package runners: they fetch a package and run it (`npx rimraf`, `pnpm dlx`, `uvx`, `deno x`).
+ * `name` is the package (null when an option chooses or relocates what is fetched, which the review
+ * cannot vouch for: `--package`, `--registry`, `--from`, `--with`), `rest` its arguments.
+ */
+function runnerPackage(inv: Invocation): { name: string | null; rest: string[] } | undefined {
+  const { program, args } = inv;
+  let rest: string[] | null = null;
+  let options: string[] = [];
+  if (["npx", "pnpx", "bunx", "uvx"].includes(program)) rest = args;
+  else if (["pnpm", "yarn", "npm", "bun", "pipx", "uv", "deno"].includes(program)) {
+    const top = subcommandOf(args);
+    options = top.options;
+    if ((program === "pnpm" || program === "yarn") && top.sub === "dlx") rest = top.rest;
+    else if (program === "npm" && (top.sub === "exec" || top.sub === "x")) rest = top.rest;
+    else if (program === "bun" && top.sub === "x") rest = top.rest;
+    else if (program === "pipx" && top.sub === "run") rest = top.rest;
+    else if (program === "uv" && top.sub === "tool" && top.rest[0] === "run")
+      rest = top.rest.slice(1);
+    else if (program === "deno" && (top.sub === "x" || top.sub === "install")) rest = top.rest;
+  }
+  if (rest === null) return undefined;
+  const relocated = (a: string): boolean =>
+    /^(--package|--registry|--userconfig|--from|--with|--index-url|--extra-index-url)(=|$)/.test(
+      a,
+    ) ||
+    a === "-p" ||
+    a === "-c" ||
+    a === "--call";
+  if (options.some(relocated)) return { name: null, rest: [] };
+  const inner = subcommandOf(rest);
+  if (inner.options.some(relocated)) return { name: null, rest: [] };
+  return { name: inner.sub ?? null, rest: inner.rest };
+}
+
+/**
+ * The tool a runner package spec names when it is a known development tool: a bare name (or one
+ * of {@link RUNNER_SCOPED_TOOLS}) with at most a version, never an alias (`npm:`, `jsr:`, a URL, a
+ * git or file spec); otherwise null.
+ */
+function knownRunnerTool(spec: string): string | null {
+  const scoped = /^(@[a-z0-9-]+\/[a-z0-9._-]+)(?:@[0-9][0-9A-Za-z.+-]*)?$/.exec(spec);
+  if (scoped !== null)
+    return RUNNER_SCOPED_TOOLS.has(scoped[1] as string) ? (scoped[1] as string) : null;
+  const bare = /^([a-z0-9][a-z0-9._-]*)(?:@[0-9][0-9A-Za-z.+-]*)?$/.exec(spec);
+  if (bare === null) return null;
+  const name = bare[1] as string;
+  return DEV_PROGRAMS.has(name) || RUNNER_TOOLS.has(name) ? name : null;
+}
+
+/**
+ * Launchers that run another program in a project environment (`uv run`, `poetry run`, `pnpm
+ * exec`, `yarn node`, `bundle exec`, `bun run`): the program they launch, judged as if it ran
+ * directly; undefined when `inv` launches nothing.
+ */
+function launchedInvocation(inv: Invocation): Invocation | undefined {
+  const { program, args } = inv;
+  const top = subcommandOf(args);
+  const after = (rest: string[]): string[] => {
+    const inner = subcommandOf(rest);
+    return inner.sub === undefined ? [] : [inner.sub, ...inner.rest];
+  };
+  let launched: string[] | undefined;
+  if (ENV_LAUNCHERS.has(program) && top.sub === "run") launched = after(top.rest);
+  else if (program === "bundle" && top.sub === "exec") launched = top.rest;
+  else if (program === "pnpm" || program === "yarn" || program === "bun") {
+    if (top.sub === "exec" || (program === "bun" && top.sub === "run")) launched = after(top.rest);
+    else if (top.sub !== undefined && (top.sub in INLINE_CODE_OPTIONS || /[/.]/.test(top.sub))) {
+      launched = [top.sub, ...top.rest];
+    }
+  }
+  if (launched === undefined || launched.length === 0) return undefined;
+  const raw = launched[0] as string;
+  return { program: baseName(raw), raw, args: launched.slice(1), argv: launched };
+}
+
+/** Project-environment launchers whose `run` subcommand runs another program. */
+const ENV_LAUNCHERS: ReadonlySet<string> = new Set([
+  "uv",
+  "poetry",
+  "pipenv",
+  "pdm",
+  "hatch",
+  "rye",
+  "conda",
+]);
 
 const SAFE_SERVE_PROGRAMS = new Set([
   "open",
@@ -1912,11 +2217,74 @@ function gitPushKind(args: string[]): "force" | "remote-destroy" | "protected" |
   return forced ? "force" : null;
 }
 
+/**
+ * What a `gh api` call does: `read` for a GET or HEAD without fields, `destroy` for a DELETE,
+ * `write` for anything else (another method, or `-f` / `-F` / `--input`, which make it a POST).
+ */
+function ghApiMethod(args: string[]): "read" | "write" | "destroy" {
+  let method: string | null = null;
+  let fields = false;
+  for (let i = 0; i < args.length; i += 1) {
+    const a = args[i] as string;
+    if (a === "-X" || a === "--method") method = (args[i + 1] ?? "").toUpperCase();
+    else if (a.startsWith("--method=")) method = a.slice("--method=".length).toUpperCase();
+    else if (/^-X./.test(a)) method = a.slice(2).toUpperCase();
+    else if (
+      ["-f", "-F", "--field", "--raw-field", "--input"].includes(a) ||
+      /^-[fF]./.test(a) ||
+      /^--(raw-)?field=/.test(a) ||
+      a.startsWith("--input=")
+    )
+      fields = true;
+  }
+  if (method === "DELETE") return "destroy";
+  // a GraphQL query is a read even though it is sent as a POST; a mutation is a write
+  // `args` starts with the `api` subcommand; the endpoint is the first operand after it
+  const endpoint = args.find((a, i) => i > 0 && !a.startsWith("-") && !isOptionValue(args, i));
+  if (endpoint === "graphql" && (method === null || method === "POST")) {
+    // a body from a file (`--input`, `-F query=@q.graphql`) may hold a mutation the review cannot see
+    const fromFile = args.some(
+      (a, i) => a === "--input" || a.startsWith("--input=") || (/=@/.test(a) && i > 0),
+    );
+    return fromFile || args.some((a) => /\bmutation\b/.test(a)) ? "write" : "read";
+  }
+  if (method !== null && method !== "GET" && method !== "HEAD") return "write";
+  return fields && method === null ? "write" : "read";
+}
+
+/** Whether `args[i]` is the value of the option before it (`-X GET`, `-f key=value`). */
+function isOptionValue(args: string[], i: number): boolean {
+  const before = args[i - 1];
+  return (
+    before !== undefined &&
+    [
+      "-X",
+      "--method",
+      "-f",
+      "-F",
+      "--field",
+      "--raw-field",
+      "--input",
+      "-H",
+      "--header",
+      "--jq",
+      "-q",
+      "--template",
+      "-t",
+      "--hostname",
+      "--cache",
+      "-p",
+      "--preview",
+    ].includes(before)
+  );
+}
+
 function ghIsSafe(args: string[]): boolean {
   const cleaned = args.filter((a) => !a.startsWith("-"));
   const sub = cleaned[0];
   const action = cleaned[1];
-  if (sub === undefined || sub === "api" || sub === "search") return true;
+  if (sub === undefined || sub === "search") return true;
+  if (sub === "api") return ghApiMethod(args) === "read";
   if (sub === "auth")
     return ["login", "logout", "status", "switch", "setup-git", "token"].includes(action ?? "");
   if (sub === "pr") {
@@ -2192,6 +2560,32 @@ const TAR_VALUE_LETTERS: ReadonlySet<string> = new Set([
   "X",
 ]);
 
+/** The files a `tar` command names (its operands other than the archive `-f` names). */
+function tarMembers(args: string[]): string[] {
+  const index = args.findIndex((a) => a === "-f" || a === "--file" || /^-[A-Za-z]*f$/.test(a));
+  const archive = index >= 0 ? args[index + 1] : undefined;
+  return operands(args).filter((op) => op !== archive);
+}
+
+/** git subcommands that rewrite files in the work tree they run in. */
+const GIT_WORKTREE_WRITERS: ReadonlySet<string> = new Set([
+  "clean",
+  "checkout",
+  "restore",
+  "reset",
+  "rm",
+  "mv",
+  "stash",
+  "switch",
+  "pull",
+  "merge",
+  "rebase",
+  "am",
+  "apply",
+  "cherry-pick",
+  "revert",
+]);
+
 function writeTargetsOf(inv: Invocation): string[] {
   const { program, args } = inv;
   const positional = nonOptionArgs(args);
@@ -2267,12 +2661,17 @@ function writeTargetsOf(inv: Invocation): string[] {
     case "rsync": {
       const last = positional[positional.length - 1];
       // `host:path` and `rsync://...` are remote: the command writes there, not here.
-      return last !== undefined && !isRemoteSpec(last) ? [last] : [];
+      const out = last !== undefined && !isRemoteSpec(last) ? [last] : [];
+      // `--remove-source-files` deletes the local sources it sent
+      if (program === "rsync" && args.includes("--remove-source-files")) {
+        out.push(...positional.slice(0, -1).filter((op) => !isRemoteSpec(op)));
+      }
+      return out;
     }
     case "tar": {
       // `-C DIR` extracts into DIR; `-cf ARCHIVE` writes ARCHIVE. `-C` on create only selects
-      // the files read, so it is not a write target there.
-      const targets: string[] = [];
+      // the files read, so it is not a write target there. `--remove-files` deletes its members.
+      const targets: string[] = args.includes("--remove-files") ? tarMembers(args) : [];
       let directory: string | null = null;
       let extract = false;
       let create = false;
@@ -2365,6 +2764,11 @@ function writeTargetsOf(inv: Invocation): string[] {
       return dirs.length > 0 ? dirs : ["."];
     }
     case "git": {
+      // a subcommand that rewrites the work tree writes where it runs (`git -C ~/x checkout -- .`)
+      if (GIT_WORKTREE_WRITERS.has(args[0] ?? "")) {
+        const paths = args[0] === "clean" ? operands(args.slice(1)) : [];
+        return [inv.dir ?? ".", ...paths];
+      }
       if (args[0] !== "clone") return [];
       // `git clone [opts] <url> [dest]`: option values are skipped, so `--depth 1` does not shift
       // the destination into the URL's place.
@@ -2438,6 +2842,218 @@ interface RuleContext {
   commands: SimpleCommand[];
   unsure: string | null;
   venv: boolean;
+  /** The paths each command's earlier commands in the same line write (`printf … > x.py && …`). */
+  writtenBefore: ReadonlyMap<SimpleCommand, ReadonlySet<string>>;
+}
+
+/** Whether `command` reads the output of an earlier command of the same pipeline (`a | b`). */
+function pipedInto(command: SimpleCommand, commands: readonly SimpleCommand[]): boolean {
+  const index = commands.indexOf(command);
+  return commands
+    .slice(0, Math.max(index, 0))
+    .some((c) => c.pipeline === command.pipeline && c.block === command.block);
+}
+
+/** The option table of a script runner. */
+const optionsOf = (program: string) => RUNNER_OPTIONS[runnerFamily(program)] ?? NO_OPTIONS;
+
+/** Whether a short or long option of `inv` makes its interpreter run code given inline. */
+function inlineCodeOption(inv: Invocation): boolean {
+  if (inv.program === "deno") return inv.args[0] === "eval";
+  const options = INLINE_CODE_OPTIONS[inv.program];
+  if (options === undefined) return false;
+  const values = optionsOf(inv.program).value;
+  const letters = options.filter((o) => /^-[A-Za-z]$/.test(o)).map((o) => o.slice(1));
+  const longs = options.filter((o) => o.startsWith("--"));
+  for (let i = 0; i < inv.args.length; i += 1) {
+    const a = inv.args[i] as string;
+    if (a === "--") return false;
+    if (longs.some((l) => a === l || a.startsWith(`${l}=`))) return true;
+    if (/^-[A-Za-z]+$/.test(a)) {
+      if ([...a.slice(1)].some((letter) => letters.includes(letter))) return true;
+      // `python -m module`: what follows is the module's own arguments
+      if (a === "-m") return false;
+      if (values.includes(a)) i += 1;
+      continue;
+    }
+    if (a.startsWith("-") || a.startsWith("+")) {
+      if (values.includes(a)) i += 1;
+      continue;
+    }
+    // the first operand is the script; what follows is the script's own arguments
+    return false;
+  }
+  return false;
+}
+
+/** The file extensions of scripts: a word with one names a file a runner or launcher would run. */
+const SCRIPT_FILE =
+  /\.(py|pyw|js|mjs|cjs|ts|mts|cts|tsx|jsx|sh|bash|zsh|fish|rb|pl|php|lua|[rR]|jl|exs?|swift|scala|go)$/;
+
+/**
+ * The runner's operands after its options: the first is the script (or `-` for stdin); null when
+ * there is none (it reads stdin or starts a REPL), undefined when the runner runs something else
+ * (`python -m pytest`, `deno test`, `bun install`).
+ */
+function scriptOperand(inv: Invocation): string | null | undefined {
+  let args = inv.args;
+  const subcommands = RUNNER_SUBCOMMANDS[inv.program] ?? [];
+  if (inv.program === "deno") {
+    if (args[0] === "run" || args[0] === "serve") args = args.slice(1);
+    else {
+      const first = subcommandOf(args).sub;
+      if (first === undefined || !(first.includes("/") || SCRIPT_FILE.test(first)))
+        return undefined;
+    }
+  }
+  const values = optionsOf(inv.program).value;
+  for (let i = 0; i < args.length; i += 1) {
+    const a = args[i] as string;
+    if (a === "--") return args[i + 1] ?? null;
+    if (a === "-") return "-";
+    if (a === "-m") return undefined;
+    if (a.startsWith("-") || (a.startsWith("+") && runnerFamily(inv.program) === "shell")) {
+      if (!a.includes("=") && values.includes(a)) i += 1;
+      continue;
+    }
+    if (subcommands.includes(a)) continue;
+    // `bun install`, `bun test`: a bun subcommand or package script, not a file
+    if (inv.program === "bun" && !a.includes("/") && !SCRIPT_FILE.test(a)) return undefined;
+    return a;
+  }
+  return null;
+}
+
+/** The module `python -m <module>` runs, as the files it may load (`a.b` → `a/b.py`, `a/b/__main__.py`). */
+function moduleFiles(inv: Invocation): string[] {
+  if (runnerFamily(inv.program) !== "python") return [];
+  const index = inv.args.indexOf("-m");
+  const module = index < 0 ? undefined : inv.args[index + 1];
+  if (module === undefined || !/^[A-Za-z_][\w.]*$/.test(module)) return [];
+  const path = module.replaceAll(".", "/");
+  return [`${path}.py`, `${path}/__main__.py`, `${path}/__init__.py`];
+}
+
+/** The values of a runner's preload options (`node -r ./x.js`, `--import`, `ruby -r`). */
+function preloadValues(inv: Invocation): string[] {
+  const preload = optionsOf(inv.program).preload;
+  const out: string[] = [];
+  for (let i = 0; i < inv.args.length; i += 1) {
+    const a = inv.args[i] as string;
+    const eq = a.indexOf("=");
+    if (eq > 0 && preload.includes(a.slice(0, eq))) out.push(a.slice(eq + 1));
+    else if (preload.includes(a) && inv.args[i + 1] !== undefined)
+      out.push(inv.args[i + 1] as string);
+  }
+  return out;
+}
+
+/** A shell glob as an anchored regular expression over a full path. */
+function globRegex(pattern: string): RegExp {
+  let source = "";
+  for (const ch of pattern) {
+    if (ch === "*") source += "[^/]*";
+    else if (ch === "?") source += "[^/]";
+    else source += ch.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  }
+  return new RegExp(`^${source}$`, "i");
+}
+
+/**
+ * Whether a path word names something this conversation (or an earlier command of the line)
+ * wrote: compared without case (macOS file systems ignore it), a glob matched against every
+ * written path, and a cloned directory counting for everything under it.
+ */
+function writtenMatcher(command: SimpleCommand, ctx: RuleContext): (word: string) => boolean {
+  const written = [...ctx.facts.written, ...(ctx.writtenBefore.get(command) ?? [])].map((p) =>
+    p.toLowerCase(),
+  );
+  const cwd = cwdOf(command, ctx.facts);
+  return (word) => {
+    const resolved = expandPath(word, ctx.facts, cwd, command.vars);
+    if (resolved === null) return false;
+    const path = resolved.toLowerCase();
+    if (SHELL_PATTERN.test(word)) {
+      const re = globRegex(path);
+      return written.some((w) => re.test(w.endsWith("/**") ? w.slice(0, -3) : w));
+    }
+    return written.some((w) => (w.endsWith("/**") ? path.startsWith(w.slice(0, -2)) : w === path));
+  };
+}
+
+const RISK_INLINE = "Runs code written inline for an interpreter; the review cannot read it.";
+const RISK_FETCHED = "Runs a package or module it fetches; the review cannot read its code.";
+const RISK_STDIN = "Feeds code to an interpreter on its standard input; the review cannot read it.";
+const RISK_URL = "Runs code from a URL or package registry; the review cannot read it.";
+const RISK_WROTE = "Runs a file this conversation wrote; the review cannot vouch for its code.";
+
+/**
+ * Why running `inv` is code the review cannot read (hardening spec R1), or null when it is an
+ * ordinary development command: inline code (also through a launcher such as `uv run` or `pnpm
+ * exec`), a fetched package or module, code fed on stdin or from a URL, a program whose own
+ * script language runs commands (`awk` `system()`, `sed` `e`), or a file this conversation (or an
+ * earlier command of the line) wrote — run directly, as a script, a preload or a module.
+ */
+function interpreterRisk(inv: Invocation, command: SimpleCommand, ctx: RuleContext): string | null {
+  const launched = launchedInvocation(inv);
+  if (launched !== undefined) return interpreterRisk(launched, command, ctx);
+  const written = writtenMatcher(command, ctx);
+  const cwd = cwdOf(command, ctx.facts);
+  const pkg = runnerPackage(inv);
+  if (pkg !== undefined) {
+    const tool = pkg.name === null ? null : knownRunnerTool(pkg.name);
+    if (tool === null) return RISK_FETCHED;
+    // a local bin the conversation replaced is not the tool any more
+    if (written(`${cwd}/node_modules/.bin/${baseName(tool)}`)) return RISK_WROTE;
+    return SCRIPT_RUNNERS.has(tool)
+      ? interpreterRisk({ ...inv, program: tool, raw: tool, args: pkg.rest }, command, ctx)
+      : null;
+  }
+  if (inv.program === "go" && inv.args[0] === "run") {
+    const target = subcommandOf(inv.args.slice(1)).sub;
+    if (target === undefined) return null;
+    if (target.includes("@") || /^[a-z0-9-]+(\.[a-z0-9-]+)+\//i.test(target)) return RISK_FETCHED;
+    return written(target) ? RISK_WROTE : null;
+  }
+  if (inv.program === "make" || inv.program === "gmake") {
+    const file = inv.args.find((_, i) =>
+      ["-f", "--file", "--makefile"].includes(inv.args[i - 1] ?? ""),
+    );
+    if (file === "-" || file === "/dev/stdin") return RISK_STDIN;
+    return written(file ?? "Makefile") ? RISK_WROTE : null;
+  }
+  if (["awk", "gawk", "mawk", "nawk"].includes(inv.program)) {
+    const program = inv.args.find((a) => !a.startsWith("-"));
+    if (program !== undefined && /\bsystem\s*\(|\|\s*getline|print[^;]*\|\s*"/.test(program)) {
+      return RISK_INLINE;
+    }
+    return null;
+  }
+  if (inv.program === "sed") {
+    const scripts = inv.args.filter((a, i) => !a.startsWith("-") || inv.args[i - 1] === "-e");
+    if (scripts.some((sc) => /(^|[;\n])\s*e(\s|$)|\/[gpiImMw0-9]*e[gpiImMw0-9]*\s*$/.test(sc))) {
+      return RISK_INLINE;
+    }
+    return null;
+  }
+  if (!SCRIPT_RUNNERS.has(inv.program)) {
+    // a program run by its path (`./x.sh`, `bin/tool`) or by its script name
+    return (inv.raw.includes("/") || SCRIPT_FILE.test(inv.raw)) && written(inv.raw)
+      ? RISK_WROTE
+      : null;
+  }
+  if (inlineCodeOption(inv)) return RISK_INLINE;
+  if (SHELL_PROGRAMS.has(inv.program) && wrapperScript(inv) !== null) return null;
+  if (preloadValues(inv).some((value) => written(value))) return RISK_WROTE;
+  if (moduleFiles(inv).some((file) => written(file))) return RISK_WROTE;
+  const script = scriptOperand(inv);
+  if (script === undefined) return null;
+  if (script === null || script === "-") {
+    const fed = command.redirects.some((r) => r.op === "<") || pipedInto(command, ctx.commands);
+    return fed ? RISK_STDIN : null;
+  }
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(script) || /^(npm|jsr):/.test(script)) return RISK_URL;
+  return written(script) ? RISK_WROTE : null;
 }
 
 /** A rule's verdict plus the commands it covered (a command no rule covers makes the line unsure). */
@@ -3225,6 +3841,14 @@ function gitConfigIsDangerous(key: string, value: string): boolean {
     return !plainProgram(value, EDITOR_PROGRAMS);
   }
   if (k === "core.askpass" || k === "diff.external" || /^http\..*\.cmd$/.test(k)) return true;
+  // hooks, the file system monitor and filter / diff / merge drivers run programs too
+  if (k === "core.hookspath" || k === "core.gitproxy") return true;
+  if (k === "core.fsmonitor") return !/^(true|false|0|1|yes|no|on|off)$/i.test(value.trim());
+  if (
+    /^(filter\..*\.(clean|smudge|process)|diff\..*\.(textconv|command)|merge\..*\.driver)$/.test(k)
+  ) {
+    return true;
+  }
   return false;
 }
 
@@ -3440,20 +4064,6 @@ function writesOutside(inv: Invocation, command: SimpleCommand, ctx: RuleContext
   return false;
 }
 
-function rmIsRecursiveForce(args: string[]): boolean {
-  let recursive = false;
-  let force = false;
-  for (const a of args) {
-    if (a === "--recursive") recursive = true;
-    else if (a === "--force") force = true;
-    else if (/^-[A-Za-z]+$/.test(a)) {
-      if (a.includes("r") || a.includes("R")) recursive = true;
-      if (a.includes("f")) force = true;
-    }
-  }
-  return recursive && force;
-}
-
 /** The part of a path before its first glob segment: `rm -rf /home/*` deletes `/home`. */
 function globBase(path: string): string {
   const parts = path.split("/");
@@ -3462,11 +4072,73 @@ function globBase(path: string): string {
   return parts.slice(0, index).join("/") || "/";
 }
 
+/**
+ * The paths an invocation destroys rather than writes into (hardening spec R2): what `rm`, `rmdir`,
+ * `unlink`, `shred` and `truncate` name, the sources `mv` moves away, the targets of a recursive
+ * `chmod` / `chown` / `chgrp`, where `find … -delete` starts, and the destination `rsync --delete`
+ * prunes. A directory that `cp` or `ln` writes into is not destroyed.
+ */
+function destroyTargetsOf(inv: Invocation): string[] {
+  const { program, args } = inv;
+  switch (program) {
+    case "rm":
+    case "rmdir":
+    case "unlink":
+    case "shred":
+    case "truncate":
+      return operands(args);
+    case "mv": {
+      const ops = operands(args);
+      return targetDirectory(args) !== null ? ops : ops.slice(0, -1);
+    }
+    case "chmod":
+    case "chown":
+    case "chgrp":
+      return args.some((a) => a === "--recursive" || /^-[A-Za-z]*R/.test(a))
+        ? operands(args).slice(1)
+        : [];
+    case "find": {
+      if (!args.includes("-delete")) return [];
+      const starts: string[] = [];
+      for (let i = 0; i < args.length; i += 1) {
+        const a = args[i] as string;
+        // the symlink and optimisation options come before the start paths
+        if (["-H", "-L", "-P"].includes(a) || /^-O[0-9]$/.test(a)) continue;
+        if (a === "-D") {
+          i += 1;
+          continue;
+        }
+        if (a.startsWith("-") || a === "(" || a === "!") break;
+        starts.push(a);
+      }
+      return starts.length > 0 ? starts : ["."];
+    }
+    case "rsync": {
+      const ops = operands(args).filter((op) => !isRemoteSpec(op));
+      const out: string[] = [];
+      if (args.includes("--remove-source-files")) out.push(...ops.slice(0, -1));
+      if (args.some((a) => a.startsWith("--delete"))) {
+        const last = operands(args).at(-1);
+        if (last !== undefined && !isRemoteSpec(last)) out.push(last);
+      }
+      return out;
+    }
+    case "tar":
+      return args.includes("--remove-files") ? tarMembers(args) : [];
+    case "git":
+      // `git clean <path>`: what it names; without a path it cleans untracked files, not the tree
+      return args[0] === "clean" ? operands(args.slice(1)) : [];
+    default:
+      return [];
+  }
+}
+
 function isDangerousDelete(resolved: string, ctx: RuleContext): boolean {
   const base = globBase(resolved);
   const t = tildeForm(base, ctx.facts);
   if (t === "/" || t === "~" || t === "~/") return true;
-  return isAncestor(base, ctx.facts.workspace);
+  // the workspace root itself and every directory above it (hardening spec R2)
+  return base === ctx.facts.workspace || isAncestor(base, ctx.facts.workspace);
 }
 
 function modifiesDevice(command: SimpleCommand, ctx: RuleContext): boolean {
@@ -3509,6 +4181,154 @@ function modifiesDevice(command: SimpleCommand, ctx: RuleContext): boolean {
       ].includes(inv.program),
     ).length > 0
   );
+}
+
+/**
+ * The grant classes of the old `ask.rc-files` (hardening spec R5), so that 本会话允许同类 names
+ * something the person can reason about: shell rc files and the global git configuration, things
+ * that run later (crontab, launch agents, systemd units, git hooks), SSH keys and configuration,
+ * and credential files (asked every time).
+ */
+type ConfigClass = "ask.shell-config" | "ask.persistence" | "ask.ssh" | "ask.secret-file";
+
+const CONFIG_REASONS: Record<ConfigClass, string> = {
+  "ask.shell-config":
+    "Changes a shell rc file or the global git configuration; this needs approval.",
+  "ask.persistence":
+    "Installs something that runs later (crontab, a launch agent, a systemd unit or a git hook); this needs approval.",
+  "ask.ssh": "Changes or prints SSH keys or configuration; this needs approval.",
+  "ask.secret-file": "Prints, copies or changes a credential file; this needs approval each time.",
+};
+
+/** The grant class of a secret or persistence path. */
+function configClassOf(path: string, facts: ResolvedFacts): ConfigClass {
+  const t = tildeForm(path, facts);
+  if (t === "~/.ssh" || t.startsWith("~/.ssh/")) return "ask.ssh";
+  if (
+    isGitHook(path) ||
+    /^(~|)\/Library\/Launch(Agents|Daemons)/.test(t) ||
+    t === "/etc/crontab" ||
+    t.startsWith("/var/spool/cron") ||
+    t.startsWith("/etc/cron.") ||
+    t.startsWith("~/.config/systemd")
+  ) {
+    return "ask.persistence";
+  }
+  return isPersistencePath(path, facts) ? "ask.shell-config" : "ask.secret-file";
+}
+
+/**
+ * What each config class matched in the line: the programs that change those locations
+ * themselves (crontab, launchctl, ssh-keygen, `git config --global`, a keychain dump), unresolved
+ * words that may name a credential, and every secret or persistence path a command touches other
+ * than as its own tool's credential.
+ */
+function configMatches(
+  ctx: RuleContext,
+): Map<ConfigClass, { why: string; commands: SimpleCommand[] }> {
+  const found = new Map<ConfigClass, { why: string; commands: SimpleCommand[] }>();
+  const add = (cls: ConfigClass, command: SimpleCommand, why?: string): void => {
+    const entry = found.get(cls);
+    if (entry === undefined)
+      found.set(cls, { why: why ?? CONFIG_REASONS[cls], commands: [command] });
+    else if (!entry.commands.includes(command)) entry.commands.push(command);
+  };
+  for (const command of ctx.commands) {
+    for (const inv of invocationsOf(command)) {
+      if (
+        inv.program === "crontab" &&
+        (!inv.args.includes("-l") || nonOptionArgs(inv.args).length > 0)
+      ) {
+        add("ask.persistence", command, "Changes crontab; this needs approval.");
+      }
+      if (inv.program === "launchctl") {
+        const action = nonOptionArgs(inv.args)[0];
+        if (action !== undefined && LAUNCHCTL_CHANGES.includes(action)) {
+          add("ask.persistence", command, "Changes a launch agent; this needs approval.");
+        }
+      }
+      if (inv.program === "ssh-keygen")
+        add("ask.ssh", command, "Changes ~/.ssh; this needs approval.");
+      if (
+        inv.program === "git" &&
+        inv.args[0] === "config" &&
+        hasArg(inv.args.slice(1), "--global", "--system")
+      ) {
+        add("ask.shell-config", command, "Changes ~/.gitconfig; this needs approval.");
+      }
+      if (inv.program === "security" && inv.args.some((a) => KEYCHAIN_DUMP.test(a))) {
+        add("ask.secret-file", command, "Prints a macOS keychain item; this needs approval.");
+      }
+    }
+    if (commandHasUnresolvedSecret(command, ctx)) add("ask.secret-file", command);
+    const touched = [...persistenceTokens(command, ctx.facts), ...secretTokens(command, ctx.facts)];
+    if (touched.length === 0) continue;
+    const ownersOnly =
+      eachInvocation([command], (inv) => isSecretOwner(inv.program, touched, ctx.facts)).length > 0;
+    const credentials = credentialSecretTokens(command, ctx);
+    if (ownersOnly || touched.every((path) => credentials.has(path))) continue;
+    for (const path of touched) {
+      if (!credentials.has(path)) add(configClassOf(path, ctx.facts), command);
+    }
+  }
+  return found;
+}
+
+function configRule(id: ConfigClass): Rule {
+  return {
+    id,
+    outcome: "ask",
+    check: (ctx) => {
+      const match = configMatches(ctx).get(id);
+      return match === undefined ? null : { reason: match.why, commands: match.commands };
+    },
+  };
+}
+
+/** The paths an `ln` links to (its sources), resolved against the command's directory. */
+function linkSources(inv: Invocation, command: SimpleCommand, ctx: RuleContext): string[] {
+  const cpLink =
+    inv.program === "cp" &&
+    inv.args.some((a) => ["--symbolic-link", "--link"].includes(a) || /^-[A-Za-z]*[sl]/.test(a));
+  if (inv.program !== "ln" && !cpLink) return [];
+  const ops = operands(inv.args);
+  const directory = targetDirectory(inv.args);
+  const sources = directory !== null || ops.length < 2 ? ops : ops.slice(0, -1);
+  const symbolic = cpLink || inv.args.some((a) => a === "--symbolic" || /^-[A-Za-z]*s/.test(a));
+  const cwd = cwdOf(command, ctx.facts);
+  // a relative symbolic link points from the link's own directory, not from where ln ran
+  const linkDir =
+    directory ?? (ops.length >= 2 ? (ops.at(-1) as string).replace(/\/[^/]*$/, "") || "." : ".");
+  const base = symbolic ? (expandPath(linkDir, ctx.facts, cwd, command.vars) ?? cwd) : cwd;
+  const out: string[] = [];
+  for (const source of sources) {
+    const resolved = expandPath(
+      source,
+      ctx.facts,
+      source.startsWith("/") ? cwd : base,
+      command.vars,
+    );
+    if (resolved !== null) out.push(resolved);
+  }
+  return out;
+}
+
+/**
+ * What a link would expose (hardening spec R3): a credential, SSH, persistence or device path, or
+ * the home directory or `/` itself (a link to them reaches every secret under them) is
+ * `sensitive`; anything else outside the workspace and temporary files is `outside`.
+ */
+function linkClass(path: string, ctx: RuleContext): "sensitive" | "outside" | null {
+  if (inside(path, ctx.facts.workspace) || tmpRootOf(path)) return null;
+  if (
+    isSecretPath(path, ctx.facts) ||
+    isPersistencePath(path, ctx.facts) ||
+    isDevicePath(path, ctx.facts) ||
+    isDangerousDelete(path, ctx)
+  ) {
+    return "sensitive";
+  }
+  return "outside";
 }
 
 const RULES: readonly Rule[] = [
@@ -3581,8 +4401,10 @@ const RULES: readonly Rule[] = [
     id: "allow.dev",
     outcome: "allow",
     check: (ctx) => {
-      const matched = eachInvocation(ctx.commands, (inv) => {
+      const matched = eachInvocation(ctx.commands, (inv, command) => {
         if (credentialProducer(inv)) return false;
+        // code the review cannot read is not a development command (`unsure.interpreter`)
+        if (interpreterRisk(inv, command, ctx) !== null) return false;
         if (globalInstallOf(inv.program, inv.args, ctx.venv || venvBinary(inv.raw))) return false;
         const local = inv.raw.startsWith("./") || inv.raw.startsWith("../");
         const isDev =
@@ -3600,6 +4422,20 @@ const RULES: readonly Rule[] = [
             commands: matched,
           }
         : null;
+    },
+  },
+  {
+    id: "unsure.interpreter",
+    outcome: "unsure",
+    check: (ctx) => {
+      let why: string | null = null;
+      const matched = eachInvocation(ctx.commands, (inv, command) => {
+        const risk = interpreterRisk(inv, command, ctx);
+        if (risk === null) return false;
+        why ??= risk;
+        return true;
+      });
+      return why === null ? null : { reason: why, commands: matched };
     },
   },
   {
@@ -3797,7 +4633,6 @@ const RULES: readonly Rule[] = [
               isDevicePath(resolved, ctx.facts))
           )
             continue;
-          if (resolved !== null && isDangerousDelete(resolved, ctx)) continue;
           matched.push(command);
           why ??=
             resolved === null
@@ -3859,75 +4694,65 @@ const RULES: readonly Rule[] = [
           why ??= "Deletes a GitHub release; this needs approval.";
           return true;
         }
+        if (inv.program === "gh" && inv.args[0] === "api" && ghApiMethod(inv.args) === "destroy") {
+          why ??= "Deletes something on GitHub through the API; this needs approval.";
+          return true;
+        }
         return false;
       });
       return why === null ? null : { reason: why, commands: matched };
     },
   },
   {
-    id: "ask.rc-files",
+    id: "ask.remote-write",
     outcome: "ask",
     check: (ctx) => {
-      let why: string | null = null;
-      const matched = eachInvocation(ctx.commands, (inv) => {
-        if (
-          inv.program === "crontab" &&
-          (!inv.args.includes("-l") || nonOptionArgs(inv.args).length > 0)
-        ) {
-          why ??= "Changes crontab; this needs approval.";
-          return true;
-        }
-        if (inv.program === "launchctl") {
-          const action = nonOptionArgs(inv.args)[0];
-          if (action !== undefined && LAUNCHCTL_CHANGES.includes(action)) {
-            why ??= "Changes a launch agent; this needs approval.";
-            return true;
-          }
-        }
-        if (inv.program === "ssh-keygen") {
-          why ??= "Changes ~/.ssh; this needs approval.";
-          return true;
-        }
-        if (
-          inv.program === "git" &&
-          inv.args[0] === "config" &&
-          hasArg(inv.args.slice(1), "--global", "--system")
-        ) {
-          why ??= "Changes ~/.gitconfig; this needs approval.";
-          return true;
-        }
-        return false;
-      });
-      for (const command of ctx.commands) {
-        if (commandHasUnresolvedSecret(command, ctx)) {
-          matched.push(command);
-          why ??=
-            "Changes or prints a shell rc file, SSH configuration or another secret/persistence location; this needs approval.";
-        }
-        const touched = [
-          ...persistenceTokens(command, ctx.facts),
-          ...secretTokens(command, ctx.facts),
-        ];
-        if (touched.length === 0) continue;
-        const ownersOnly =
-          eachInvocation([command], (inv) => isSecretOwner(inv.program, touched, ctx.facts))
-            .length > 0;
-        const credentials = credentialSecretTokens(command, ctx);
-        if (!ownersOnly && !touched.every((path) => credentials.has(path))) {
-          matched.push(command);
-          why ??=
-            "Changes or prints a shell rc file, SSH configuration or another secret/persistence location; this needs approval.";
-        }
-      }
-      const keychain = eachInvocation(
+      const matched = eachInvocation(
         ctx.commands,
-        (inv) => inv.program === "security" && inv.args.some((a) => KEYCHAIN_DUMP.test(a)),
+        (inv) => inv.program === "gh" && inv.args[0] === "api" && ghApiMethod(inv.args) === "write",
       );
-      if (keychain.length > 0) {
-        matched.push(...keychain);
-        why ??= "Prints a macOS keychain item; this needs approval.";
-      }
-      return why === null ? null : { reason: why, commands: matched };
+      return matched.length > 0
+        ? {
+            reason: "Changes something on GitHub through the API; this needs approval.",
+            commands: matched,
+          }
+        : null;
+    },
+  },
+  configRule("ask.shell-config"),
+  configRule("ask.persistence"),
+  configRule("ask.ssh"),
+  configRule("ask.secret-file"),
+  {
+    id: "ask.outside-link",
+    outcome: "ask",
+    check: (ctx) => {
+      const matched = eachInvocation(ctx.commands, (inv, command) =>
+        linkSources(inv, command, ctx).some((path) => linkClass(path, ctx) === "outside"),
+      );
+      return matched.length > 0
+        ? {
+            reason:
+              "Links to a path outside the workspace and temporary files; this needs approval.",
+            commands: matched,
+          }
+        : null;
+    },
+  },
+  {
+    id: "ask.credential-link",
+    outcome: "ask",
+    check: (ctx) => {
+      const matched = eachInvocation(ctx.commands, (inv, command) =>
+        linkSources(inv, command, ctx).some((path) => linkClass(path, ctx) === "sensitive"),
+      );
+      return matched.length > 0
+        ? {
+            reason:
+              "Links to a credential, SSH or startup file, or to the home directory itself; this needs approval each time.",
+            commands: matched,
+          }
+        : null;
     },
   },
   {
@@ -4090,20 +4915,25 @@ const RULES: readonly Rule[] = [
     },
   },
   {
-    id: "deny.root-delete",
+    id: "deny.root-destroy",
     outcome: "deny",
     check: (ctx) => {
       const matched = eachInvocation(ctx.commands, (inv, command) => {
-        if (inv.program !== "rm" || !rmIsRecursiveForce(inv.args)) return false;
-        for (const target of nonOptionArgs(inv.args)) {
+        // `find` and `git clean` remove what they select below a start path, so the workspace
+        // as their start is ordinary cleanup; `/`, `~` and the workspace's parents still count
+        const selects = inv.program === "find" || inv.program === "git";
+        for (const target of destroyTargetsOf(inv)) {
           const resolved = expandPath(target, ctx.facts, cwdOf(command, ctx.facts), command.vars);
-          if (resolved !== null && isDangerousDelete(resolved, ctx)) return true;
+          if (resolved === null || !isDangerousDelete(resolved, ctx)) continue;
+          if (selects && globBase(resolved) === ctx.facts.workspace) continue;
+          return true;
         }
         return false;
       });
       return matched.length > 0
         ? {
-            reason: "Deletes /, the home directory or a parent of the workspace with rm -rf.",
+            reason:
+              "Deletes, moves away or recursively changes /, the home directory or a parent of the workspace.",
             commands: matched,
           }
         : null;
@@ -4360,6 +5190,123 @@ function strictest(hits: RuleHit[]): RuleOutcome {
   return outcome;
 }
 
+/** The last path segment of a URL's path (`https://h/a/x.sh?q` → `x.sh`), or null. */
+function urlBaseName(url: string): string | null {
+  const match = /^[a-z][a-z0-9+.-]*:\/\/[^/]+(\/[^?#]*)/i.exec(url);
+  const name = match?.[1]?.split("/").pop();
+  return name === undefined || name === "" ? null : name;
+}
+
+/**
+ * What a command writes beyond its write targets, for the record of what the conversation wrote:
+ * a file copied into a directory (`cp a.py sub/` writes `sub/a.py`), a download saved under the
+ * URL's name (`curl -O`, `wget URL`) or by an option cluster (`curl -sSLo x.sh`), and a cloned
+ * repository (everything under its directory, as `<dir>/**`).
+ */
+function extraWrites(inv: Invocation): string[] {
+  const { program, args } = inv;
+  const ops = operands(args);
+  switch (program) {
+    case "cp":
+    case "mv":
+    case "install":
+    case "ln": {
+      const directory = targetDirectory(args);
+      const dest = directory ?? ops.at(-1);
+      const sources = directory !== null ? ops : ops.slice(0, -1);
+      return dest === undefined ? [] : sources.map((src) => `${dest}/${baseName(src)}`);
+    }
+    case "curl": {
+      const out: string[] = [];
+      const urls = args.filter((a) => /^[a-z][a-z0-9+.-]*:\/\//i.test(a));
+      for (let i = 0; i < args.length; i += 1) {
+        const a = args[i] as string;
+        if (/^-[A-Za-z]*o$/.test(a) && args[i + 1] !== undefined) out.push(args[i + 1] as string);
+        if (
+          /^-[A-Za-z]*O[A-Za-z]*$/.test(a) ||
+          a === "--remote-name" ||
+          a === "--remote-name-all"
+        ) {
+          for (const url of urls) {
+            const name = urlBaseName(url);
+            if (name !== null) out.push(name);
+          }
+        }
+      }
+      return out;
+    }
+    case "wget": {
+      const named = args.findIndex((a) => /^-[A-Za-z]*O$/.test(a) || a === "--output-document");
+      if (named >= 0)
+        return args[named + 1] === undefined || args[named + 1] === "-"
+          ? []
+          : [args[named + 1] as string];
+      if (args.some((a) => a.startsWith("--output-document="))) return [];
+      const index = args.findIndex((a) => a === "-P" || a === "--directory-prefix");
+      const dir = index >= 0 ? args[index + 1] : undefined;
+      return args
+        .filter((a) => /^[a-z][a-z0-9+.-]*:\/\//i.test(a))
+        .map((url) => urlBaseName(url) ?? "index.html")
+        .map((name) => (dir === undefined ? name : `${dir}/${name}`));
+    }
+    case "git": {
+      if (args[0] !== "clone") return [];
+      const cloneOps = operands(args.slice(1));
+      const url = cloneOps[0];
+      if (url === undefined) return [];
+      const dir = cloneOps[1] ?? repoName(url);
+      return dir === undefined ? [] : [`${dir}/**`];
+    }
+    default:
+      return [];
+  }
+}
+
+/** The absolute paths `command` writes (its write targets and output redirections). */
+function writtenBy(command: SimpleCommand, facts: ResolvedFacts): string[] {
+  const out: string[] = [];
+  const cwd = cwdOf(command, facts);
+  const targets = [
+    ...writeTargets(command),
+    ...invocationsOf(command).flatMap((inv) => extraWrites(inv)),
+  ];
+  for (const target of targets) {
+    const glob = target.endsWith("/**");
+    const resolved = expandPath(glob ? target.slice(0, -3) : target, facts, cwd, command.vars);
+    if (resolved !== null) out.push(glob ? `${resolved}/**` : resolved);
+  }
+  return out;
+}
+
+/** For each command, what the commands before it in the line wrote. */
+function writtenBeforeEach(
+  commands: SimpleCommand[],
+  facts: ResolvedFacts,
+): Map<SimpleCommand, ReadonlySet<string>> {
+  const before = new Map<SimpleCommand, ReadonlySet<string>>();
+  const seen = new Set<string>();
+  for (const command of commands) {
+    before.set(command, new Set(seen));
+    for (const path of writtenBy(command, facts)) seen.add(path);
+  }
+  return before;
+}
+
+/**
+ * The absolute paths a command line writes, for the review's record of what a conversation wrote
+ * (hardening spec R1: running one of them later is not a development command). An unparseable line
+ * writes nothing the review can name.
+ */
+export function writtenPaths(command: string, facts: ReviewFacts): string[] {
+  const resolved = resolveFacts(facts);
+  const parsed = parseDetailed(command);
+  if (!parsed.ok) return [];
+  const withCwds = assignCwds(parsed.value, resolved);
+  if (!withCwds.ok) return [];
+  assignVariables(withCwds.value, resolved);
+  return [...new Set(withCwds.value.flatMap((c) => writtenBy(c, resolved)))];
+}
+
 /**
  * The rule table over a command line: the strictest outcome and every hit, in rule order. A parse
  * the tokenizer cannot make confidently yields only `unsure.unparsed`; a command no rule covers
@@ -4382,6 +5329,7 @@ export function reviewRules(command: string, facts: ReviewFacts): ReviewResult {
     commands,
     unsure,
     venv: commandLineActivatesVenv(commands),
+    writtenBefore: writtenBeforeEach(commands, resolved),
   };
   const hits: RuleHit[] = [];
   const covered = new Set<SimpleCommand>();
@@ -4445,7 +5393,11 @@ export function reviewWrite(path: string, facts: ReviewFacts): ReviewResult {
     return {
       outcome: "ask",
       hits: [
-        { id: "ask.rc-files", outcome: "ask", reason: "Changes a git hook; this needs approval." },
+        {
+          id: "ask.persistence",
+          outcome: "ask",
+          reason: "Changes a git hook; this needs approval.",
+        },
       ],
     };
   }
@@ -4474,17 +5426,8 @@ export function reviewWrite(path: string, facts: ReviewFacts): ReviewResult {
     };
   }
   if (isPersistencePath(absolute, resolved) || isSecretPath(absolute, resolved)) {
-    return {
-      outcome: "ask",
-      hits: [
-        {
-          id: "ask.rc-files",
-          outcome: "ask",
-          reason:
-            "Changes a shell rc file, SSH configuration or another secret/persistence location; this needs approval.",
-        },
-      ],
-    };
+    const id = configClassOf(absolute, resolved);
+    return { outcome: "ask", hits: [{ id, outcome: "ask", reason: CONFIG_REASONS[id] }] };
   }
   return {
     outcome: "ask",

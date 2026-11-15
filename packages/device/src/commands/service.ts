@@ -1,11 +1,20 @@
-import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readRunning } from "../pid.js";
-import { LAUNCHD_LABEL, plistContent, plistPath, type ServiceSpec } from "../service/launchd.js";
+import { type ProcessChecks, type RunningProgram, readRunning } from "../pid.js";
+import { hasLoginService } from "../service/installed.js";
+import { plistContent, plistPath, type ServiceSpec } from "../service/launchd.js";
+import {
+  defaultRunSystem,
+  launchdTarget,
+  type ManagerState,
+  managerState,
+  packageVersionAt,
+  type RunSystem,
+  type ServiceWhere,
+  serviceBinPath,
+} from "../service/manager.js";
 import { SYSTEMD_UNIT, unitContent, unitPath } from "../service/systemd.js";
-import { PROGRAM_VERSION } from "../version.js";
 
 export type ServiceAction = "install" | "uninstall" | "start" | "stop" | "restart" | "status";
 
@@ -17,19 +26,18 @@ export interface ServiceDeps {
   out: (line: string) => void;
   err: (line: string) => void;
   /**
-   * Runs a system command; throws when it fails (default: execFileSync, whose error carries the
-   * exit `status` and `stderr`).
+   * Runs a system command and returns its output; throws when it fails (default: execFileSync,
+   * whose error carries the exit `status` and `stderr`).
    */
-  run?: (cmd: string, args: string[]) => void;
-  /** Waits between launchctl checks (default: setTimeout). */
+  run?: RunSystem;
+  /** Waits between service manager checks (default: setTimeout). */
   sleep?: (ms: number) => Promise<void>;
+  /** How the pid file's program is checked (default: `kill(pid, 0)` and `ps`). */
+  kill?: typeof process.kill;
+  ps?: ProcessChecks["ps"];
   uid?: number;
   nodePath?: string;
   binPath?: string;
-}
-
-function defaultRun(cmd: string, args: string[]): void {
-  execFileSync(cmd, args, { stdio: "pipe" });
 }
 
 /** The bin script next to this package's `dist` (or `src`) directory. */
@@ -51,6 +59,8 @@ export function serviceEnv(env: Record<string, string | undefined>): Record<stri
 export const SERVICE_POLL_MS = 200;
 /** How long install / uninstall wait for `launchctl bootout` to finish (it is asynchronous). */
 export const SERVICE_GONE_TIMEOUT_MS = 10_000;
+/** How long `service start|restart` wait for the program to be running. */
+export const SERVICE_UP_TIMEOUT_MS = 10_000;
 /** The waits before each retry of a `launchctl bootstrap` that failed with error 5. */
 export const BOOTSTRAP_BACKOFF_MS = [500, 1000, 2000] as const;
 
@@ -59,7 +69,7 @@ export const BOOTSTRAP_BACKOFF_MS = [500, 1000, 2000] as const;
  * (systemd user), removes it, or reports whether it is loaded and running.
  */
 export async function serviceCommand(action: ServiceAction, deps: ServiceDeps): Promise<number> {
-  const run = deps.run ?? defaultRun;
+  const run = deps.run ?? defaultRunSystem;
   const spec: ServiceSpec = {
     nodePath: deps.nodePath ?? process.execPath,
     binPath: deps.binPath ?? defaultBinPath(),
@@ -68,7 +78,7 @@ export async function serviceCommand(action: ServiceAction, deps: ServiceDeps): 
   };
   try {
     if (deps.platform === "darwin") return await launchd(action, spec, deps, run);
-    if (deps.platform === "linux") return systemd(action, spec, deps, run);
+    if (deps.platform === "linux") return await systemd(action, spec, deps, run);
   } catch (e) {
     deps.err(
       `capybara-device service ${action} failed: ${e instanceof Error ? e.message : String(e)}`,
@@ -95,46 +105,110 @@ function isBootstrapIoError(e: unknown): boolean {
   return (e as { status?: unknown }).status === 5 || /Bootstrap failed: 5:/.test(failureText(e));
 }
 
+/** The pid file's program, checked to be this program (never trusted on the file alone). */
+function running(deps: ServiceDeps): RunningProgram | undefined {
+  return readRunning(deps.stateDir, {
+    ...(deps.kill && { kill: deps.kill }),
+    ...(deps.ps && { ps: deps.ps }),
+  });
+}
+
+function where(deps: ServiceDeps): ServiceWhere {
+  return {
+    home: deps.home,
+    platform: deps.platform,
+    ...(deps.uid !== undefined && { uid: deps.uid }),
+  };
+}
+
+const NOT_INSTALLED =
+  "capybara-device service is not installed. Install it: capybara-device service install";
+
 /**
- * One status report: installed? running (and at which version)? When the running program is older
- * than the installed package, a stale daemon after an upgrade — a restart makes it current.
+ * One status report, in four shapes: not installed; installed but not loaded; loaded but the
+ * program is not running (it exited: the reason is in service.log); running, with its pid and
+ * version, plus a restart line when the package the service file runs is a different version (a
+ * stale daemon after an upgrade). Exit code 0 only when running.
  */
-function reportStatus(
-  deps: ServiceDeps,
-  state: { installed: boolean; loaded: boolean },
-  installedVersion: string,
-): number {
-  if (!state.installed) {
+function reportStatus(deps: ServiceDeps, run: RunSystem): number {
+  const at = where(deps);
+  if (!hasLoginService(at.home, at.platform)) {
+    deps.out(NOT_INSTALLED);
+    return 1;
+  }
+  const state = managerState(at, run);
+  if (!state.loaded) {
     deps.out(
-      "capybara-device service is not installed. Install it: capybara-device service install",
+      "capybara-device service is installed but not loaded. Start it: capybara-device service start",
     );
     return 1;
   }
-  const running = readRunning(deps.stateDir);
-  if (running === undefined || !state.loaded) {
+  if (state.pid === undefined) {
     deps.out(
-      "capybara-device service is installed, but nothing is running. Start it: capybara-device service start",
+      "capybara-device service is loaded, but the program is not running: it exited. The reason " +
+        `is at the end of ${join(deps.stateDir, "service.log")}; once it is fixed: ` +
+        "capybara-device service restart",
     );
     return 1;
   }
+  const program = running(deps);
+  const version = program?.pid === state.pid ? program.version : undefined;
   deps.out(
-    `capybara-device service is loaded; running (pid ${running.pid}, ${running.version ?? "version unknown"}).`,
+    `capybara-device service is loaded; running (pid ${state.pid}, ${version ?? "version unknown"}).`,
   );
-  if (running.version !== installedVersion) {
-    deps.out(`installed ${installedVersion} — restart it: capybara-device service restart`);
+  const bin = serviceBinPath(at);
+  const installed = bin === undefined ? undefined : packageVersionAt(bin);
+  if (installed !== undefined && version !== installed) {
+    deps.out(`installed ${installed} — restart it: capybara-device service restart`);
   }
   return 0;
+}
+
+/**
+ * Refuses to start the service while a program started outside it runs (`capybara-device start`
+ * in a terminal): two programs would fight over the one connection of this device.
+ */
+function foregroundRunning(deps: ServiceDeps, state: ManagerState): boolean {
+  const program = running(deps);
+  if (program === undefined || program.pid === state.pid) return false;
+  deps.err(
+    `capybara-device is already running outside the service (pid ${program.pid}). Stop it first: capybara-device stop`,
+  );
+  return true;
+}
+
+/** Waits until the service manager runs the program (a pid other than `previous`). */
+async function cameUp(
+  deps: ServiceDeps,
+  run: RunSystem,
+  sleep: (ms: number) => Promise<void>,
+  previous: number | undefined,
+): Promise<boolean> {
+  for (let waited = 0; ; waited += SERVICE_POLL_MS) {
+    const pid = managerState(where(deps), run).pid;
+    if (pid !== undefined && pid !== previous) return true;
+    if (waited >= SERVICE_UP_TIMEOUT_MS) return false;
+    await sleep(SERVICE_POLL_MS);
+  }
+}
+
+/** The failure of a start or restart whose program is not running afterwards. */
+function didNotComeBack(deps: ServiceDeps, action: "start" | "restart"): number {
+  deps.err(
+    `capybara-device service ${action} failed: the program is not running. The reason is at the ` +
+      `end of ${join(deps.stateDir, "service.log")}.`,
+  );
+  return 1;
 }
 
 async function launchd(
   action: ServiceAction,
   spec: ServiceSpec,
   deps: ServiceDeps,
-  run: (cmd: string, args: string[]) => void,
+  run: RunSystem,
 ): Promise<number> {
   const file = plistPath(deps.home);
-  const domain = `gui/${deps.uid ?? process.getuid?.() ?? 501}`;
-  const service = `${domain}/${LAUNCHD_LABEL}`;
+  const { domain, service } = launchdTarget(deps.uid);
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const tryRun = (args: string[]): void => {
     try {
@@ -144,14 +218,7 @@ async function launchd(
     }
   };
   /** Whether launchd still knows the service (`launchctl print` fails once it is gone). */
-  const loaded = (): boolean => {
-    try {
-      run("launchctl", ["print", service]);
-      return true;
-    } catch {
-      return false;
-    }
-  };
+  const loaded = (): boolean => managerState(where(deps), run).loaded;
   /** Boots the service out and waits until launchd has let it go (bootout returns before that). */
   const bootout = async (): Promise<void> => {
     tryRun(["bootout", service]);
@@ -183,28 +250,30 @@ async function launchd(
       }
     }
   };
-  const installed = (): boolean => existsSync(file);
-  if (action === "status") {
-    return reportStatus(deps, { installed: installed(), loaded: loaded() }, PROGRAM_VERSION);
-  }
+  const installed = (): boolean => hasLoginService(deps.home, "darwin");
+  if (action === "status") return reportStatus(deps, run);
   if (action === "start" || action === "restart") {
     if (!installed()) {
-      deps.err(
-        "capybara-device service is not installed. Install it: capybara-device service install",
-      );
+      deps.err(NOT_INSTALLED);
       return 1;
     }
-    if (action === "start" && loaded()) {
+    const state = managerState(where(deps), run);
+    if (action === "start" && state.pid !== undefined) {
       deps.out("The capybara-device login service is already running.");
       return 0;
     }
-    if (action === "restart" && loaded()) {
-      // Reloads the program from the plist's bin, so a newer package takes effect.
-      tryRun(["kickstart", "-k", service]);
-      deps.out("Restarted the capybara-device login service.");
-      return 0;
+    if (foregroundRunning(deps, state)) return 1;
+    if (state.loaded) {
+      // Loaded: run the program again from the plist's bin (a newer package takes effect); a
+      // loaded service whose program exited is started without a kill.
+      run(
+        "launchctl",
+        state.pid === undefined ? ["kickstart", service] : ["kickstart", "-k", service],
+      );
+    } else if (!(await bootstrap())) {
+      return 1;
     }
-    if (!(await bootstrap())) return 1;
+    if (!(await cameUp(deps, run, sleep, state.pid))) return didNotComeBack(deps, action);
     deps.out(
       action === "restart"
         ? "Restarted the capybara-device login service."
@@ -214,17 +283,21 @@ async function launchd(
   }
   if (action === "stop") {
     if (!installed()) {
-      deps.err(
-        "capybara-device service is not installed. Install it: capybara-device service install",
-      );
+      deps.err(NOT_INSTALLED);
       return 1;
     }
     if (!loaded()) {
       deps.out("The capybara-device login service is not running.");
       return 0;
     }
-    // Unload, never a signal: KeepAlive would start a signalled program straight back up.
+    // Unload, never a signal: KeepAlive would start a program that exits non-zero straight back.
     await bootout();
+    if (loaded()) {
+      deps.err(
+        `capybara-device service stop failed: launchd still has the service loaded. Check with: launchctl print ${service}`,
+      );
+      return 1;
+    }
     deps.out(
       "Stopped the capybara-device login service; running commands ended. It starts again at the next login or with: capybara-device service start",
     );
@@ -245,47 +318,50 @@ async function launchd(
   return 0;
 }
 
-function systemd(
+async function systemd(
   action: ServiceAction,
   spec: ServiceSpec,
   deps: ServiceDeps,
-  run: (cmd: string, args: string[]) => void,
-): number {
+  run: RunSystem,
+): Promise<number> {
   const file = unitPath(deps.home);
-  const active = (): boolean => {
-    try {
-      run("systemctl", ["--user", "is-active", "--quiet", SYSTEMD_UNIT]);
-      return true;
-    } catch {
-      return false;
-    }
-  };
-  const installed = (): boolean => existsSync(file);
-  if (action === "status") {
-    return reportStatus(deps, { installed: installed(), loaded: active() }, PROGRAM_VERSION);
-  }
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const active = (): boolean => managerState(where(deps), run).loaded;
+  const installed = (): boolean => hasLoginService(deps.home, "linux");
+  if (action === "status") return reportStatus(deps, run);
   if (action === "start" || action === "stop" || action === "restart") {
     if (!installed()) {
-      deps.err(
-        "capybara-device service is not installed. Install it: capybara-device service install",
-      );
+      deps.err(NOT_INSTALLED);
       return 1;
     }
-    if (action === "start" && active()) {
+    const state = managerState(where(deps), run);
+    if (action === "start" && state.loaded) {
       deps.out("The capybara-device login service is already running.");
       return 0;
     }
-    if (action === "stop" && !active()) {
+    if (action === "stop" && !state.loaded) {
       deps.out("The capybara-device login service is not running.");
       return 0;
     }
+    if (action !== "stop" && !state.loaded && foregroundRunning(deps, state)) return 1;
     run("systemctl", ["--user", action, SYSTEMD_UNIT]);
+    if (action === "stop") {
+      if (active()) {
+        deps.err(
+          `capybara-device service stop failed: the unit is still active. Check with: systemctl --user status ${SYSTEMD_UNIT}`,
+        );
+        return 1;
+      }
+      deps.out(
+        "Stopped the capybara-device login service; running commands ended. It starts again at the next login or with: capybara-device service start",
+      );
+      return 0;
+    }
+    if (!(await cameUp(deps, run, sleep, state.pid))) return didNotComeBack(deps, action);
     deps.out(
       action === "start"
         ? "Started the capybara-device login service."
-        : action === "restart"
-          ? "Restarted the capybara-device login service."
-          : "Stopped the capybara-device login service; running commands ended. It starts again at the next login or with: capybara-device service start",
+        : "Restarted the capybara-device login service.",
     );
     return 0;
   }

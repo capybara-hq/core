@@ -36,6 +36,7 @@ const MODE = {
   allowedBy: "org",
   network: { kind: "open-public", hosts: [], source: "org" },
   local: null,
+  sandboxNetwork: { kind: "open-public", hosts: [] },
   pendingNextUse: false,
   pendingFilesReset: false,
   recent: [],
@@ -387,6 +388,37 @@ describe("device detail", () => {
     });
   });
 
+  it("a cloud mode switch invalidates the list and the device, only after its confirmation", async () => {
+    const sandboxed = {
+      ...MODE,
+      mode: "sandbox",
+      network: { ...MODE.network, source: "platform" },
+    };
+    const calls = stubApi({
+      ...routes,
+      [`GET ${BASE}/e1`]: () => json(200, { device: env("e1", "Build box", { mode: sandboxed }) }),
+      [`PATCH ${BASE}/e1`]: () => json(200, { device: env("e1", "Build box") }),
+    });
+    const { client } = await renderDetail();
+    client.setQueryData(["org", "o1", "devices"], list([env("e1", "Build box")]));
+    const user = await openSettings();
+    const group = await screen.findByRole("radiogroup", { name: E.mode.title });
+    await user.click(within(group).getByRole("radio", { name: /^Auto/ }));
+    const dialog = await screen.findByRole("dialog", { name: E.mode.confirm.title.auto });
+    // nothing is sent before the person confirms
+    expect(calls.some((c) => c.method === "PATCH")).toBe(false);
+    await user.click(within(dialog).getByRole("button", { name: E.mode.confirm.submit.auto }));
+    await vi.waitFor(() =>
+      expect(client.getQueryState(["org", "o1", "devices"])?.isInvalidated).toBe(true),
+    );
+    expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ mode: null });
+    await vi.waitFor(() => {
+      const names = calls.map((c) => `${c.method} ${c.url}`);
+      expect(names.slice(names.indexOf(`PATCH ${BASE}/e1`))).toContain(`GET ${BASE}/e1`);
+    });
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
   it("delete invalidates devices and forgets the detail once the page is left", async () => {
     const calls = stubApi({ ...routes, [`DELETE ${BASE}/e1`]: () => json(202, {}) });
     const { client, unmount } = await renderDetail();
@@ -667,6 +699,7 @@ describe("device network in sandbox mode (auto mode spec §4.4)", () => {
     mode: "sandbox",
     network: { kind: "allowlist", hosts: ["files.example.com"], source: "org" },
     local: { reported: "sandbox", allowedDomains: ["files.example.com"] },
+    sandboxNetwork: null,
     ...pol,
   });
   const local = (

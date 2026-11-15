@@ -415,6 +415,28 @@ describe("SwitchingExecutor", () => {
     }
   });
 
+  it("without the OS sandbox, file operations wait for a fresh exec decision", async () => {
+    setup();
+    sandboxed = Object.assign(new FakeExecutor(), { available: false });
+    sandboxed.files.set("/f", Buffer.from("sandboxed"));
+    ex.dispose();
+    ex = new SwitchingExecutor(sandboxed, host, () => policy);
+    // Local policy auto, no exec yet: refused, never served by the host.
+    await expect(read()).rejects.toMatchObject({ kind: "policy" });
+    await expect(ex.stat("/f")).rejects.toMatchObject({ kind: "policy" });
+    let now = 1_000_000;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      await ex.exec(modeArgs("auto"), never);
+      expect(await read()).toBe("host");
+      now += FILE_OPS_DECISION_TTL_MS + 1;
+      // Stale again: refused.
+      await expect(read()).rejects.toMatchObject({ kind: "policy" });
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it("kills reach both executors' commands", async () => {
     setup();
     await ex.killTagged(["a"]);

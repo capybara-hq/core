@@ -99,7 +99,8 @@ planning and building it; the sections they refine point here.
 1. **Private addresses with an allowlist** (§5.1). Every download whose URL comes from a marketplace
    or an admin (manifests, mirrors, archive sources, git sources, git marketplaces, direct git import)
    goes through one network layer (`packages/kernel/src/net`): https only (`http` only to loopback
-   with `marketplaces.allowInsecureLoopback`, testing only), no redirects, every resolved address
+   with `marketplaces.allowInsecureLoopback`, testing only, or to exactly the `packages.npmRegistry`
+   origin when the admin configured it as `http://`: same scheme, host and port), no redirects, every resolved address
    public (the ranges of the sandbox egress proxy, including v4-mapped, NAT64 and 6to4), and the
    connection pinned to the checked address (no second DNS lookup). Exceptions:
    `marketplaces.allowPrivateHosts` (default `[]`, for internal GitLab and mirrors, the offline case
@@ -150,9 +151,10 @@ planning and building it; the sections they refine point here.
 **Rulings made while building** (all **(designer's call)**; only those that change what users or
 plugin authors see):
 
-- The npm registry is trusted by origin (an admin setting, https required) and fetched outside the
-  marketplace network rules; marketplace npm sources carry no tarball URL, so no marketplace-
-  controlled URL reaches it. A manual refresh in which every URL fails on the same network rule
+- The npm registry is trusted by its exact origin (an admin setting; https, or `http://` for that
+  exact origin only) and fetched through the same network rules as every other download
+  (`safeFetch`: no redirects, `net.httpsProxy`); a marketplace `tarballUrl` gets no trust from the
+  registry unless it shares that exact origin (amended 2026-11-15, fix/fetch-through-net). A manual refresh in which every URL fails on the same network rule
   returns 422 with that rule's code.
 - `allowPrivateHosts` IP and CIDR entries match **IP-literal URLs only**; a DNS name must be listed as
   a hostname, so a public name an attacker points into an allowed range is still refused. Link-local
@@ -249,8 +251,9 @@ change what users, operators or plugin authors see are summarized here (all **(d
     (unless `allowPrivateHosts`), and still applies `allowedHosts`, https only and no redirects.
     `noProxy` hosts and loopback go direct with local resolution and pinning. A non-2xx answer is
     `net.proxy_refused`. Opening the tunnel is bounded by 10 s. npm registry downloads
-    (`packages.npmRegistry`, trusted by origin) do not use the proxy yet; A3 revisits this when the
-    bootstrap entries move to npm (only the image build downloads them; init stays offline).
+    (`packages.npmRegistry`, trusted by origin: packages, provenance, the bootstrap download) use
+    the proxy too since fix/fetch-through-net (2026-11-15), as do the OAuth requests; an internal
+    https registry goes in `noProxy`, an `http://` registry is fetched directly.
 
 **Not built in A2**: the network half of `check:bootstrap` (comparing entries with the official
 marketplace at `marketplace.commit`) and `"source": "npm"` entries in the real manifest (A3); bootstrap

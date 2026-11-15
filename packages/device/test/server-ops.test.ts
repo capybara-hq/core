@@ -391,7 +391,7 @@ describe("modes in the summary and the command log", () => {
     limits: { ...execArgs("now").limits, mode },
   });
 
-  it("the summary cuts the owner's choice to the latest exec's ceiling", async () => {
+  it("the summary keeps the owner's choice after an exec's ceiling", async () => {
     writePolicy(dir, { ...DEFAULT_POLICY, mode: "auto", allowedDomains: ["a.com"] });
     const store = new PolicyStore(dir);
     const seen: SeenState = {};
@@ -407,11 +407,11 @@ describe("modes in the summary and the command log", () => {
     );
     expect(res).toMatchObject({
       ok: true,
-      result: { policy: { mode: "sandbox", allowedDomains: ["a.com"] } },
+      result: { policy: { mode: "auto", allowedDomains: ["a.com"] } },
     });
   });
 
-  it("reports the owner's mode before any exec", () => {
+  it("reports the owner's mode, before and after an exec's ceiling", () => {
     expect(policySummary({ ...DEFAULT_POLICY, mode: "auto" }, { mode: "os" })).toEqual({
       mode: "auto",
       allowedDomains: [],
@@ -425,7 +425,8 @@ describe("modes in the summary and the command log", () => {
         { ...DEFAULT_POLICY, mode: "auto" },
         { mode: "os", limits: { mode: "sandbox" } },
       ),
-    ).toEqual({ mode: "sandbox", allowedDomains: [] });
+      // The kernel takes min(allowed, reported): an org that later allows auto follows at once.
+    ).toEqual({ mode: "auto", allowedDomains: [] });
   });
 
   it("the executor runs the decision the log records", async () => {

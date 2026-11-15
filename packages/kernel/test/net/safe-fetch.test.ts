@@ -150,6 +150,19 @@ describe("safeFetch", () => {
     expect(seen).toHaveLength(0);
   });
 
+  it("allows http to exactly a trusted origin configured as http (an internal npm registry)", async () => {
+    const origin = `http://127.0.0.1:${port}`;
+    const trusting: NetPolicy = { ...STRICT, trustedOrigins: [origin] };
+    const res = await safeFetch(`${origin}/registry`, init(), trusting);
+    expect(res.status).toBe(200);
+    await res.body?.cancel();
+    // another port of the same host is another origin
+    expect((await denied(safeFetch(`http://127.0.0.1:1/`, init(), trusting))).code).toBe(
+      "net.insecure_url",
+    );
+    expect(seen).toHaveLength(1);
+  });
+
   it("refuses a 3xx with net.redirect and never follows it", async () => {
     handler = (_req, res) => {
       res.writeHead(302, { location: `http://127.0.0.1:${port}/elsewhere` });

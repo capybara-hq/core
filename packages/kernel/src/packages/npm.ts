@@ -1,15 +1,25 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { isIP } from "node:net";
 import semver from "semver";
+import { type LookupFn, NetDeniedError, type NetPolicy } from "../net/public-address.js";
+import { safeFetch } from "../net/safe-fetch.js";
 
 /**
- * 从 npm registry 下载插件包（D14 / C21 / C26）。registry 地址来自配置（可信），但它返回的内容一律当作外部输入：
- * - 不跟随重定向（3xx 直接失败）：否则 registry 的一次重定向就能把下载（连同令牌）引到任意地址；
- * - 元数据与 tarball 都边读边计数，超过上限立即中止；
- * - 没有 `opts` 时 tarball 必须与 registry 同源（令牌只发往该源），并按 packument 的 `dist.integrity`
- *   （sha512 SRI）校验；给了 `opts.expectedIntegrity`（清单引入，T24）时只认它；
- * - `opts.tarballUrl`（清单直接给出的下载地址）必须是 https，测试里可经 `allowInsecureLoopback` 允许回环 http，
- *   且必须同时给出 `expectedIntegrity`；不会带 registry 令牌。
+ * Downloads plugin packages from an npm registry (D14 / C21 / C26). The registry URL comes from
+ * the config (trusted), but whatever it returns is external input:
+ * - every request goes through `packages/kernel/src/net` ({@link safeFetch}) under `cfg.net`
+ *   (the kernel passes `marketplaceNetPolicy`: the registry's origin is trusted, any other host
+ *   must resolve to public addresses unless `marketplaces.allowPrivateHosts` exempts it, https
+ *   tunnels through `net.httpsProxy`, and the connection is pinned to the checked address);
+ * - redirects are never followed (a 3xx fails): one registry redirect could otherwise send the
+ *   download (and the token) anywhere;
+ * - metadata and tarball are counted while read and aborted past their caps;
+ * - without `opts` the tarball must be on the registry's origin (the only origin the token goes
+ *   to) and is verified against the packument's `dist.integrity` (sha512 SRI); with
+ *   `opts.expectedIntegrity` (marketplace imports, T24) only that integrity counts;
+ * - `opts.tarballUrl` (a download URL the marketplace gives) must be https (loopback http in tests
+ *   under `net.allowInsecureLoopback`), needs `expectedIntegrity`, and never gets the registry
+ *   token unless it is on the registry's origin.
  */
 
 /** 下载或校验失败（HTTP 层映射为 `packages.npm_failed`，502）。消息为英文，不含令牌。 */
@@ -44,8 +54,13 @@ export interface NpmFetchConfig {
   registry: string;
   token?: string;
   maxBytes: number;
-  /** 只供测试：允许 `opts.tarballUrl` 用回环地址上的 http。 */
-  allowInsecureLoopback?: boolean;
+  /**
+   * The network rules of every request (`marketplaceNetPolicy` in the kernel, which trusts the
+   * registry's origin). `allowInsecureLoopback` also lets `opts.tarballUrl` use loopback http.
+   */
+  net: NetPolicy;
+  /** Tests only: replaces the DNS lookup. */
+  lookup?: LookupFn;
 }
 
 /** packument（包元数据）的大小上限：热门包的完整元数据可以有几十 MB，插件包不会这么多。 */
@@ -95,7 +110,12 @@ export async function readCapped(
   return Buffer.concat(chunks);
 }
 
-async function get(
+/**
+ * One GET through {@link safeFetch} under `cfg.net` (no redirects, the network rules); a refusal,
+ * a network error or a non-2xx answer is an {@link NpmFetchError} with an English message.
+ */
+export async function npmGet(
+  cfg: Pick<NpmFetchConfig, "net" | "lookup">,
   url: URL,
   headers: Record<string, string>,
   signal: AbortSignal,
@@ -103,15 +123,20 @@ async function get(
 ): Promise<Response> {
   let res: Response;
   try {
-    res = await fetch(url, { headers, redirect: "manual", signal });
-  } catch (e) {
-    throw new NpmFetchError(`cannot fetch the ${what}: ${errMsg(e)}`, { cause: e });
-  }
-  if (res.status >= 300 && res.status < 400) {
-    await res.body?.cancel().catch(() => {});
-    throw new NpmFetchError(
-      `the ${what} responded with a redirect (${res.status}); redirects are not followed`,
+    res = await safeFetch(
+      url.toString(),
+      { headers, signal },
+      cfg.net,
+      cfg.lookup !== undefined ? { lookup: cfg.lookup } : {},
     );
+  } catch (e) {
+    if (e instanceof NetDeniedError && e.code === "net.redirect") {
+      throw new NpmFetchError(
+        `the ${what} responded with a redirect (${e.status}); redirects are not followed`,
+        { cause: e },
+      );
+    }
+    throw new NpmFetchError(`cannot fetch the ${what}: ${errMsg(e)}`, { cause: e });
   }
   if (!res.ok) {
     await res.body?.cancel().catch(() => {});
@@ -182,20 +207,19 @@ export async function fetchNpmPackage(
       throw new NpmFetchError("the tarball URL is not a valid URL");
     }
     const insecureOk =
-      cfg.allowInsecureLoopback === true &&
-      tarball.protocol === "http:" &&
-      isLoopback(tarball.hostname);
+      cfg.net.allowInsecureLoopback && tarball.protocol === "http:" && isLoopback(tarball.hostname);
     if (tarball.protocol !== "https:" && !insecureOk) {
       throw new NpmFetchError("the tarball URL must use https");
     }
-    // 令牌只发给 registry 源
+    // the token goes only to the registry origin
     if (tarball.origin !== registry.origin) tarballHeaders = {};
     resolved = version;
     integrity = opts.expectedIntegrity;
   } else {
     // scope 包名里的 `/` 按 npm 客户端的写法编码为 %2f
     const docUrl = new URL(name.replace("/", "%2f"), registry);
-    const res = await get(
+    const res = await npmGet(
+      cfg,
       docUrl,
       { ...authHeaders, accept: "application/json" },
       signal,
@@ -254,7 +278,7 @@ export async function fetchNpmPackage(
     resolved = picked;
   }
 
-  const res = await get(tarball, tarballHeaders, signal, "package tarball");
+  const res = await npmGet(cfg, tarball, tarballHeaders, signal, "package tarball");
   const bytes = await readCapped(res, cfg.maxBytes, tooLarge);
   verify(
     bytes,

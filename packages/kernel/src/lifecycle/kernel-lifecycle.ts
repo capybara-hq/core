@@ -47,7 +47,6 @@ import type { KernelLogger } from "../log.js";
 import { GatewayRole } from "../roles/gateway-role.js";
 import { WorkerRole } from "../roles/worker-role.js";
 import { UsageReporter } from "../runtime/usage-report.js";
-import { readDevicesAutoMode } from "../sandbox/platform-auto-mode.js";
 import { sandboxConfigWarnings } from "../sandbox/sandbox.service.js";
 import { warnLegacyToolKeys } from "../tools/legacy-data.js";
 import { KERNEL_APP_OPTIONS } from "./tokens.js";
@@ -262,9 +261,7 @@ export class KernelLifecycle
       .list("sandbox")
       .find((x) => x.capability === SANDBOX_EXTENSION_POINT);
     if (sandboxEntry !== undefined) {
-      const autoAllowed =
-        (await readDevicesAutoMode(this.kdb.db, this.configService, this.log)).mode === "allowed";
-      for (const w of sandboxConfigWarnings(cfg(), sandboxEntry.plugin, autoAllowed)) {
+      for (const w of sandboxConfigWarnings(cfg(), sandboxEntry.plugin)) {
         this.log[w.level](w.message);
       }
     }

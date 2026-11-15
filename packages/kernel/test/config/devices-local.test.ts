@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveConfig } from "../../src/config/load.js";
+import { ConfigError, resolveConfig } from "../../src/config/load.js";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 
 const base = {
@@ -66,47 +66,60 @@ describe("devices.local config", () => {
   });
 });
 
-describe("removed sandbox keys are ignored", () => {
-  it("sandbox.tiers and sandbox.limits.devHosts still start the kernel, and are dropped", () => {
-    const c = KernelConfigSchema.parse({
-      ...base,
-      sandbox: {
-        tiers: { max: "open", default: "dev", allowUnsandboxed: true },
-        limits: { devHosts: ["dev.example.com"] },
-      },
-    });
-    expect(c.sandbox).not.toHaveProperty("tiers");
-    expect(c.sandbox.limits).not.toHaveProperty("devHosts");
-    // the surviving network fields keep their values and defaults
-    expect(c.sandbox.limits.egress).toBe("allowlist");
-    expect(c.sandbox.limits.allowHosts.length).toBeGreaterThan(0);
+describe("removed sandbox keys fail loudly", () => {
+  // a silently ignored security key reads as a widening (auto mode hardening spec K3)
+  const env = {
+    CAPYBARA_DB__URL: base.db.url,
+    CAPYBARA_REDIS__URL: base.redis.url,
+    CAPYBARA_MASTER_KEY: base.masterKey,
+  };
+
+  it("sandbox.tiers in the loaded config fails, naming devices.autoMode and cloudNetwork", () => {
+    const run = () =>
+      resolveConfig({ ...base, sandbox: { tiers: { max: "open", allowUnsandboxed: false } } }, {});
+    expect(run).toThrow(ConfigError);
+    expect(run).toThrow(/sandbox\.tiers.*removed/);
+    expect(run).toThrow(/devices\.autoMode/);
+    expect(run).toThrow(/cloudNetwork/);
   });
 
-  it("the same keys from the environment are ignored too", () => {
-    const c = resolveConfig(
-      {},
-      {
-        CAPYBARA_DB__URL: base.db.url,
-        CAPYBARA_REDIS__URL: base.redis.url,
-        CAPYBARA_MASTER_KEY: base.masterKey,
-        CAPYBARA_SANDBOX__TIERS__MAX: "open",
-        CAPYBARA_SANDBOX__LIMITS__DEV_HOSTS: '["dev.example.com"]',
-      },
+  it("sandbox.limits.devHosts fails, naming the allowlist that replaces it", () => {
+    const run = () =>
+      resolveConfig({ ...base, sandbox: { limits: { devHosts: ["dev.example.com"] } } }, {});
+    expect(run).toThrow(/sandbox\.limits\.devHosts.*removed/);
+    expect(run).toThrow(/sandbox\.limits\.allowHosts/);
+  });
+
+  it("the same keys from the environment fail too", () => {
+    expect(() => resolveConfig({}, { ...env, CAPYBARA_SANDBOX__TIERS__MAX: "open" })).toThrow(
+      /sandbox\.tiers.*devices\.autoMode/s,
     );
-    expect(c.sandbox).not.toHaveProperty("tiers");
-    expect(c.sandbox.limits).not.toHaveProperty("devHosts");
+    expect(() =>
+      resolveConfig({}, { ...env, CAPYBARA_SANDBOX__LIMITS__DEV_HOSTS: '["dev.example.com"]' }),
+    ).toThrow(/sandbox\.limits\.devHosts/);
   });
 
-  it("sandbox.limits.egress still names the open tier as gone", () => {
-    const r = KernelConfigSchema.safeParse({
-      ...base,
-      sandbox: { limits: { egress: "open" } },
-    });
-    expect(r.success).toBe(false);
-    expect(r.error?.issues[0]?.message).toContain("auto mode");
+  it("sandbox.limits.egress: open fails, naming devices.autoMode and cloudNetwork", () => {
+    const run = () => resolveConfig({}, { ...env, CAPYBARA_SANDBOX__LIMITS__EGRESS: "open" });
+    expect(run).toThrow(/sandbox\.limits\.egress/);
+    expect(run).toThrow(/devices\.autoMode/);
+    expect(run).toThrow(/cloudNetwork/);
   });
 
-  it("sandbox.review defaults and env names", () => {
+  it("every removed key is listed at once", () => {
+    const run = () =>
+      resolveConfig(
+        { ...base, sandbox: { tiers: {}, limits: { devHosts: [], egress: "open" } } },
+        {},
+      );
+    expect(run).toThrow(
+      /sandbox\.tiers[\s\S]*sandbox\.limits\.devHosts[\s\S]*sandbox\.limits\.egress/,
+    );
+  });
+});
+
+describe("sandbox.review", () => {
+  it("defaults and env names", () => {
     const c = KernelConfigSchema.parse(base);
     expect(c.sandbox.review).toEqual({ timeoutMs: 10_000, messageTokens: 1_500 });
     const env = resolveConfig(

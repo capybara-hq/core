@@ -1,3 +1,5 @@
+import { NetDeniedError } from "../net/public-address.js";
+import { safeFetch } from "../net/safe-fetch.js";
 import { type NpmFetchConfig, readCapped } from "./npm.js";
 
 /**
@@ -7,7 +9,9 @@ import { type NpmFetchConfig, readCapped } from "./npm.js";
  * workflow it was built from. This is display only: the sigstore signatures are not verified, and
  * nothing here ever fails an import. A registry without provenance, a network error, a timeout, an
  * oversized or malformed answer all give `{ checked: false, reason }` ("provenance not checked").
- * The registry token goes only to the registry (the attestation URL is always on its origin).
+ * The registry token goes only to the registry (the attestation URL is always on its origin). The
+ * request goes through `packages/kernel/src/net` under `cfg.net` like every npm download (no
+ * redirects, the network rules, `net.httpsProxy`); a refused address is "not checked" too.
  */
 
 /** What the SLSA provenance of an npm package says about its build. */
@@ -85,14 +89,18 @@ export async function fetchProvenance(
       `-/npm/v1/attestations/${name.replace("/", "%2f")}@${encodeURIComponent(version)}`,
       registry,
     );
-    const res = await fetch(url, {
-      headers: {
-        accept: "application/json",
-        ...(cfg.token !== undefined && { authorization: `Bearer ${cfg.token}` }),
+    const res = await safeFetch(
+      url.toString(),
+      {
+        headers: {
+          accept: "application/json",
+          ...(cfg.token !== undefined && { authorization: `Bearer ${cfg.token}` }),
+        },
+        signal,
       },
-      redirect: "manual",
-      signal,
-    });
+      cfg.net,
+      cfg.lookup !== undefined ? { lookup: cfg.lookup } : {},
+    );
     if (res.status === 404) {
       await res.body?.cancel().catch(() => {});
       return notChecked("the registry has no provenance for this version");
@@ -109,6 +117,9 @@ export async function fetchProvenance(
     body = JSON.parse(raw.toString("utf8"));
   } catch (e) {
     if (signal.aborted) return notChecked("the registry did not answer in time");
+    if (e instanceof NetDeniedError) {
+      return notChecked(`the network rules refused the attestations: ${e.message}`);
+    }
     return notChecked(`cannot read the attestations: ${errMsg(e)}`);
   }
   try {

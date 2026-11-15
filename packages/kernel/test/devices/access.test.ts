@@ -343,6 +343,47 @@ describe("device access", () => {
     }
   });
 
+  it("a swap committed between the unlocked reads never returns the demoted default", async () => {
+    const service = k.app.get(DevicesService);
+    const providers = k.app.get(SandboxProviders);
+    const login = `sw-${randomUUID().slice(0, 8)}`;
+    const me = (await accountsFor(db).createLocal({ login, password: PW, displayName: login })).id;
+    await testMembers(db).add(orgId, me, "member", ownerId);
+    const realCurrent = providers.cloud.bind(providers);
+    // d1 holds files at sandbox-fake; switching away and back leaves an empty live default d2
+    const d1 = await service.ensureDefault(orgId, me);
+    await sql`INSERT INTO capybara.device_instances
+        (device_id, org_id, provider, fs_handle, fs_status)
+      VALUES (${d1}, ${orgId}, 'sandbox-fake', '{"id":"fs-sw"}'::jsonb, 'ready')`.execute(raw);
+    try {
+      const impl = realCurrent()?.impl;
+      if (!impl) throw new Error("no current provider");
+      vi.spyOn(providers, "cloud").mockReturnValue({ plugin: "sandbox-other", impl });
+      const d2 = await service.ensureDefault(orgId, me);
+      expect(d2).not.toBe(d1);
+      vi.restoreAllMocks();
+
+      // The caller reads the live default (d2), then another caller commits the swap back to d1
+      // before this one reads the former defaults: it must not answer with the demoted d2.
+      const reads = service as unknown as {
+        formerDefaults(o: string, a: string, p: string, lock?: boolean): Promise<unknown>;
+      };
+      const formerDefaults = reads.formerDefaults.bind(service);
+      let raced = false;
+      vi.spyOn(reads, "formerDefaults").mockImplementation(async (o, a, p, lock) => {
+        if (!lock && !raced) {
+          raced = true;
+          expect(await service.ensureDefault(orgId, me)).toBe(d1);
+        }
+        return formerDefaults(o, a, p, lock);
+      });
+      expect(await service.ensureDefault(orgId, me)).toBe(d1);
+      expect(raced).toBe(true);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
   describe("which former default replaces the live one", () => {
     const member = async (prefix: string) => {
       const login = `${prefix}-${randomUUID().slice(0, 8)}`;
