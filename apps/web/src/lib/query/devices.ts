@@ -34,13 +34,21 @@ export const deviceProjectsQuery = (orgId: string, id: string) =>
     freshness: "live",
   });
 
+/** How long one scan stays fresh: longer than an add dialog stays open. */
+const CANDIDATES_FRESH_MS = 10 * 60_000;
+
 /**
  * A device's project suggestions (one `scan` of its base). Never prefetched: asking the device
- * starts or resumes it, so only the open add form reads it.
+ * starts or resumes it, so only the open add form reads it, and an open form scans once (no
+ * refetch on window focus, reconnect or a "live" staleness window).
  */
-export const deviceProjectCandidatesQuery = (orgId: string, id: string) =>
-  defineQuery({
+export const deviceProjectCandidatesQuery = (orgId: string, id: string) => ({
+  ...defineQuery({
     key: keys.org(orgId).deviceProjectCandidates(id),
     fn: () => listDeviceProjectCandidates(orgId, id),
     freshness: "live",
-  });
+  }),
+  staleTime: CANDIDATES_FRESH_MS,
+  refetchOnWindowFocus: false,
+  refetchOnReconnect: false,
+});
