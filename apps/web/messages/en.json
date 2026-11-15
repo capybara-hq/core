@@ -2793,7 +2793,7 @@
       "reason": {
         "secrets": "can read and write secrets",
         "public_routes": "these routes are reachable without signing in",
-        "embed_routes": "Reachable by embedded pages with an embed token (membership checked by the kernel)",
+        "embed_routes": "reachable by embedded pages holding an embed token (membership checked by the kernel)",
         "tools": "agents in organizations can call these tools",
         "hooks": "can hook into kernel flows",
         "ui_embed": "embeds the extension's own pages in the web app",

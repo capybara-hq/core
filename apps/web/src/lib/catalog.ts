@@ -1681,7 +1681,8 @@ export function declaredPermissions(
     { category: "optional", items: m.optional },
     { category: "secrets", items: p.secrets ? ["secrets"] : [] },
     { category: "storage", items: p.storage ? ["storage"] : [] },
-    // routes show their access; public and embed routes take no sign-in (the kernel's grouping)
+    // routes show their access; public (no sign-in) and embed (embed token) routes form their own
+    // groups, as in the kernel
     { category: "http", items: http.filter((r) => signedIn(r.access)).map(routeItem) },
     { category: "publicRoutes", items: http.filter((r) => r.access === "public").map(routeItem) },
     { category: "embedRoutes", items: http.filter((r) => r.access === "embed").map(routeItem) },

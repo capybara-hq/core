@@ -64,7 +64,7 @@ async function resolveBearer(
   return { kind: "user", account: requireActive(account), via: "pat", tokenId: rec.id };
 }
 
-/** 解析凭据；无凭据返回 undefined，凭据无效抛对应的 ApiError。 */
+/** Resolves the credentials: undefined without any, the matching ApiError when they are invalid. */
 async function resolvePrincipal(req: FastifyRequest, s: AuthServices): Promise<Resolved> {
   const viaToken = await resolveBearer(req, s);
   if (viaToken !== undefined) return { principal: viaToken, cookie: false };
