@@ -133,6 +133,45 @@ const isDigit = (c: string): boolean => c >= "0" && c <= "9";
 const isAlphaNum = (c: string): boolean => /[A-Za-z0-9]/.test(c);
 
 /** The public parser: the parsed command, or null when the tokenizer is not confident. */
+/** `git config` options that only read (the long-standing spelling). */
+const GIT_CONFIG_READ_OPTIONS = new Set([
+  "--get",
+  "--get-all",
+  "--get-regexp",
+  "--get-urlmatch",
+  "--get-color",
+  "--get-colorbool",
+  "-l",
+  "--list",
+]);
+/** `git config` options that change the file whatever else the line says. */
+const GIT_CONFIG_WRITE_OPTIONS = new Set([
+  "--add",
+  "--unset",
+  "--unset-all",
+  "--replace-all",
+  "--rename-section",
+  "--remove-section",
+  "-e",
+  "--edit",
+]);
+
+/**
+ * `git config --global` / `--system` that changes the user's or the system's config file: a value
+ * set, an `--unset`, an edit, a section rename (`git config [--global] name value`, the subcommands
+ * `set` / `unset` / `edit` / `rename-section` / `remove-section`). Reading it (`--get…`, `--list`,
+ * `get`, `list`) changes nothing; plain `git config --list` already prints the global values.
+ */
+function gitConfigChangesUserFile(args: string[]): boolean {
+  if (args[0] !== "config") return false;
+  const rest = args.slice(1);
+  if (!hasArg(rest, "--global", "--system")) return false;
+  if (rest.some((a) => GIT_CONFIG_WRITE_OPTIONS.has(a))) return true;
+  const sub = rest.find((a) => !a.startsWith("-"));
+  if (sub === "get" || sub === "list") return false;
+  return !rest.some((a) => GIT_CONFIG_READ_OPTIONS.has(a));
+}
+
 export function parseCommand(command: string): ParsedCommand | null {
   const parsed = parseDetailed(command);
   return parsed.ok ? { commands: parsed.value } : null;
@@ -4249,11 +4288,7 @@ function configMatches(
       }
       if (inv.program === "ssh-keygen")
         add("ask.ssh", command, "Changes ~/.ssh; this needs approval.");
-      if (
-        inv.program === "git" &&
-        inv.args[0] === "config" &&
-        hasArg(inv.args.slice(1), "--global", "--system")
-      ) {
+      if (inv.program === "git" && gitConfigChangesUserFile(inv.args)) {
         add("ask.shell-config", command, "Changes ~/.gitconfig; this needs approval.");
       }
       if (inv.program === "security" && inv.args.some((a) => KEYCHAIN_DUMP.test(a))) {
@@ -4450,8 +4485,7 @@ const RULES: readonly Rule[] = [
         // plain git command (`ask.git-exec`).
         if (gitRunsArbitraryProgram(command)) return false;
         if (inv.args[0] === "push" && gitPushKind(inv.args.slice(1)) !== null) return false;
-        if (inv.args[0] === "config" && hasArg(inv.args.slice(1), "--global", "--system"))
-          return false;
+        if (gitConfigChangesUserFile(inv.args)) return false;
         return true;
       });
       return matched.length > 0
