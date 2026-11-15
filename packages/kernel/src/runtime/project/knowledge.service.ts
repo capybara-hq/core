@@ -1,5 +1,5 @@
 import { DeviceProtocolError } from "@capybara-hq/plugin-sdk";
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import { EventLog } from "../../conversations/event-log.js";
 import { ConversationDevices } from "../../devices/conversation-devices.js";
 import { DeviceProjectsService, withinMode } from "../../devices/device-projects.service.js";
@@ -28,6 +28,12 @@ import {
  * one bound): past it the run goes on without a new snapshot, as when the device is unreachable.
  */
 export const PROJECT_KNOWLEDGE_TIMEOUT_MS = 30_000;
+
+/**
+ * Test seam (`KernelSeams`): the read's time limit in ms, asked at every read; default
+ * {@link PROJECT_KNOWLEDGE_TIMEOUT_MS}.
+ */
+export const PROJECT_KNOWLEDGE_TIMEOUT = Symbol("PROJECT_KNOWLEDGE_TIMEOUT");
 
 /**
  * An error that says the device could not be asked, not that the project is unreadable: the
@@ -82,6 +88,9 @@ export class ProjectKnowledgeService {
     private readonly projects: Pick<DeviceProjectsService, "scopeFor">,
     @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "withSandbox">,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
+    @Optional()
+    @Inject(PROJECT_KNOWLEDGE_TIMEOUT)
+    private readonly timeoutMs: () => number = () => PROJECT_KNOWLEDGE_TIMEOUT_MS,
   ) {}
 
   /**
@@ -121,28 +130,42 @@ export class ProjectKnowledgeService {
       runId: input.runId,
       project: bound.project,
     };
-    const signal = AbortSignal.any([
-      input.signal,
-      AbortSignal.timeout(PROJECT_KNOWLEDGE_TIMEOUT_MS),
-    ]);
+    const signal = AbortSignal.any([input.signal, AbortSignal.timeout(this.timeoutMs())]);
     try {
       // the device a tool call of this conversation would enter, checked for its owner now
       const deviceId = await this.devices.forTool(input.orgId, input.conversationId);
       const scope = await this.projects.scopeFor(input.orgId, bound.accountId, deviceId);
-      // a machine that does not announce projects is not asked: the project is recorded as
-      // unavailable, so an older snapshot stops applying
-      if (scope.source === "local" && !scope.supported) {
+      // a device that cannot serve list / scan (a machine without `projects`, a provider without
+      // them) is not asked: the project is recorded as unavailable, so an older snapshot stops
+      // applying
+      if (!scope.supported) {
         this.log.warn("project knowledge not read: the device offers no projects", {
           ...where,
           deviceId,
         });
         return unavailableProject(bound.project, bound.root, projectUnavailable.unsupported());
       }
+      // stat / readFile carry no ceiling: a machine running a wider mode than the org allows is
+      // not read unasked (exec refuses it too)
+      if (scope.widerThanAllowed) {
+        this.log.warn("project knowledge not read: the device runs a wider mode than allowed", {
+          ...where,
+          deviceId,
+        });
+        return unavailableProject(
+          bound.project,
+          bound.root,
+          projectUnavailable.widerMode(bound.root),
+        );
+      }
       return await this.sandbox.withSandbox(
         {
           orgId: input.orgId,
           deviceId,
           holderConversationId: input.conversationId,
+          // the read tells the model nothing: its first tool call still learns that the device
+          // started, restarted or had its files reset
+          silent: true,
           actor: {
             accountId: bound.accountId,
             conversationId: input.conversationId,

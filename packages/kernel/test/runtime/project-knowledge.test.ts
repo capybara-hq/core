@@ -5,10 +5,14 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { ConversationDevices } from "../../src/devices/conversation-devices.js";
+import { DeviceProjectsService } from "../../src/devices/device-projects.service.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
+import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { MachinesService } from "../../src/local-devices/machines.js";
 import { createLogger } from "../../src/log.js";
@@ -16,9 +20,21 @@ import {
   AGENTS_MD_TRUNCATED_MARKER,
   projectRootIdemKey,
 } from "../../src/runtime/project/knowledge.js";
-import { ProjectKnowledgeService } from "../../src/runtime/project/knowledge.service.js";
+import {
+  PROJECT_KNOWLEDGE_TIMEOUT,
+  ProjectKnowledgeService,
+} from "../../src/runtime/project/knowledge.service.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
-import { setFakeSandboxFault } from "../fixtures/plugins/sandbox-fake/index.js";
+import {
+  SANDBOX_FILES_RESET_NOTICE,
+  SANDBOX_RESTARTED_NOTICE,
+} from "../../src/tools/builtins/sandbox/common.js";
+import {
+  removeFakeSandbox,
+  setFakeSandboxDelays,
+  setFakeSandboxFault,
+} from "../fixtures/plugins/sandbox-fake/index.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -48,7 +64,9 @@ const SANDBOX_FAKE = fileURLToPath(
   new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
 );
 
-type Line = { level: string; msg: string };
+type Line = { level: string; msg: string; timedOut?: boolean };
+
+const SANDBOX_TOOLS = ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "Deliver"];
 type ProjectRootEvent = Extract<ConversationEvent, { type: "project_root" }>;
 
 let pgc: TestContainer;
@@ -61,6 +79,12 @@ let owner: Req;
 let ownerId: string;
 let orgId: string;
 let agentId: string;
+/** An agent with the sandbox tools on. */
+let coderId: string;
+/** The owner's default cloud device. */
+let ownerDevice: string;
+/** The run-start read's time limit (the seam); tests shorten it. */
+let readTimeoutMs = 30_000;
 const lines: Line[] = [];
 
 beforeAll(async () => {
@@ -77,13 +101,18 @@ beforeAll(async () => {
         extensionConfig: { "sandbox-fake": { root, list: true } },
       },
     ),
-    { logger: createLogger("warn", { write: (l) => lines.push(JSON.parse(l) as Line) }) },
+    {
+      logger: createLogger("warn", { write: (l) => lines.push(JSON.parse(l) as Line) }),
+      overrides: [{ provide: PROJECT_KNOWLEDGE_TIMEOUT, useValue: () => readTimeoutMs }],
+    },
   );
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
   owner = await session(k, "owner");
   orgId = await createOrg(owner);
   agentId = await newAgent(owner);
+  coderId = await newAgent(owner, SANDBOX_TOOLS);
+  ownerDevice = await deviceOf(await createConv(owner, orgId, agentId));
 });
 
 afterAll(async () => {
@@ -93,7 +122,7 @@ afterAll(async () => {
   if (root) await rm(root, { recursive: true, force: true });
 });
 
-async function newAgent(req: Req): Promise<string> {
+async function newAgent(req: Req, tools?: string[]): Promise<string> {
   const res = await req({
     method: "POST",
     url: `/api/v1/orgs/${orgId}/agents`,
@@ -102,6 +131,9 @@ async function newAgent(req: Req): Promise<string> {
         name: "Coder",
         instructions: "Be brief.",
         model: { provider: "model-fake", model: "fake-1" },
+        ...(tools !== undefined && {
+          disabledTools: onlyBuiltins(tools.map((name) => ({ kind: "builtin", name }))),
+        }),
       },
       visibility: "org",
     },
@@ -121,15 +153,80 @@ async function deviceOf(convId: string): Promise<string> {
   return r.device_id;
 }
 
+/**
+ * A conversation inserted already bound (a binding is fixed at creation; inserting it directly
+ * also makes bindings the create route refuses, such as a root outside the mode).
+ */
+async function insertBound(opts: {
+  accountId?: string;
+  deviceId?: string;
+  agent?: string;
+  name?: string;
+  path: string;
+}): Promise<string> {
+  const id = randomUUID();
+  await db
+    .insertInto("conversations")
+    .values({
+      id,
+      org_id: orgId,
+      agent_id: opts.agent ?? agentId,
+      account_id: opts.accountId ?? ownerId,
+      device_id: opts.deviceId ?? ownerDevice,
+      project_name: opts.name ?? "app",
+      project_path: opts.path,
+      source: "web",
+    })
+    .execute();
+  return id;
+}
+
 /** A new conversation of the owner bound to `/workspace/<dir>` as the project `app`. */
 async function boundConversation(dir: string): Promise<{ convId: string; deviceId: string }> {
-  const convId = await createConv(owner, orgId, agentId);
-  await db
-    .updateTable("conversations")
-    .set({ project_name: "app", project_path: `/workspace/${dir}` })
-    .where("id", "=", convId)
-    .execute();
-  return { convId, deviceId: await deviceOf(convId) };
+  const convId = await insertBound({ path: `/workspace/${dir}` });
+  return { convId, deviceId: ownerDevice };
+}
+
+/** A new member of the org with a session and a default cloud device of their own. */
+async function newMember(): Promise<{ id: string; req: Req; deviceId: string }> {
+  const login = `m-${randomUUID().slice(0, 8)}`;
+  const id = (await accountsFor(db).createLocal({ login, password: PW, displayName: "M" })).id;
+  await testMembers(db).add(orgId, id, "member", ownerId);
+  const req = await session(k, login);
+  const deviceId = await deviceOf(await createConv(req, orgId, agentId));
+  return { id, req, deviceId };
+}
+
+/** A local device of the owner whose machine signed in (never connected), as `features` says. */
+async function localDevice(machine: { features?: string[]; localPolicy?: unknown } = {}) {
+  const deviceId = await k.app.get(TransactionHost).run(async () => {
+    const { id } = await k.app
+      .get(DevicesService)
+      .createLocal(orgId, ownerId, `Box ${randomUUID().slice(0, 8)}`);
+    await k.app.get(MachinesService).issue({
+      orgId,
+      deviceId: id,
+      accountId: ownerId,
+      name: "box",
+      os: "linux",
+      arch: "x64",
+      programVersion: "0.1.0",
+    });
+    return id;
+  });
+  if (machine.features !== undefined || machine.localPolicy !== undefined) {
+    await db
+      .updateTable("device_machines")
+      .set({
+        ...(machine.features !== undefined && { features: machine.features }),
+        ...(machine.localPolicy !== undefined && {
+          local_policy: JSON.stringify(machine.localPolicy),
+        }),
+      })
+      .where("device_id", "=", deviceId)
+      .execute();
+  }
+  return deviceId;
 }
 
 /** Writes files into the device's file system (paths relative to `/workspace`). */
@@ -154,8 +251,13 @@ const skill = (name: string, description: string) =>
   `---\nname: ${name}\ndescription: ${description}\n---\n\nThe body of ${name}.\n`;
 
 /** Sends a message and waits for the conversation's `n`-th terminal event. */
-async function run(convId: string, n: number, req: Req = owner): Promise<ConversationEvent[]> {
-  await postMessage(req, orgId, convId, `hello ${n}`);
+async function run(
+  convId: string,
+  n: number,
+  req: Req = owner,
+  text = `hello ${n}`,
+): Promise<ConversationEvent[]> {
+  await postMessage(req, orgId, convId, text);
   await waitForTerminal(db, convId, n, 30_000);
   return eventsOf(db, convId);
 }
@@ -232,12 +334,7 @@ describe("project knowledge at run start", () => {
   });
 
   it("records a root outside the workspace a cloud device reads as unavailable (outside_mode)", async () => {
-    const convId = await createConv(owner, orgId, agentId);
-    await db
-      .updateTable("conversations")
-      .set({ project_name: "etc", project_path: "/etc" })
-      .where("id", "=", convId)
-      .execute();
+    const convId = await insertBound({ name: "etc", path: "/etc" });
     const roots = projectRoots(await run(convId, 1));
     expect(roots).toHaveLength(1);
     expect(roots[0]?.payload.unavailable?.reason).toBe("outside_mode");
@@ -245,26 +342,8 @@ describe("project knowledge at run start", () => {
   });
 
   it("records a machine that does not announce projects as unavailable (unsupported), asking it nothing", async () => {
-    const txHost = k.app.get(TransactionHost);
-    const deviceId = await txHost.run(async () => {
-      const { id } = await k.app.get(DevicesService).createLocal(orgId, ownerId, "Old box");
-      await k.app.get(MachinesService).issue({
-        orgId,
-        deviceId: id,
-        accountId: ownerId,
-        name: "old-box",
-        os: "linux",
-        arch: "x64",
-        programVersion: "0.1.0",
-      });
-      return id;
-    });
-    const convId = await createConv(owner, orgId, agentId);
-    await db
-      .updateTable("conversations")
-      .set({ device_id: deviceId, project_name: "app", project_path: "/home/me/app" })
-      .where("id", "=", convId)
-      .execute();
+    const deviceId = await localDevice();
+    const convId = await insertBound({ deviceId, path: "/home/me/app" });
     const events = await run(convId, 1);
     const roots = projectRoots(events);
     expect(roots).toHaveLength(1);
@@ -354,5 +433,167 @@ describe("project knowledge at run start", () => {
       .where("type", "=", "project_root")
       .execute();
     expect(idem.map((r) => r.idem_key)).toEqual([projectRootIdemKey(runId)]);
+  });
+
+  it("records a machine that runs a wider mode than the organization allows as outside_mode, asking it nothing", async () => {
+    const deviceId = await localDevice({
+      features: ["mode", "projects"],
+      localPolicy: { mode: "auto", allowedDomains: [] },
+    });
+    const convId = await insertBound({ deviceId, path: "/home/me/app" });
+    // the organization allows only sandbox mode, the machine's own policy says auto
+    const { settings } = await db
+      .selectFrom("orgs")
+      .select("settings")
+      .where("id", "=", orgId)
+      .executeTakeFirstOrThrow();
+    await db
+      .updateTable("orgs")
+      .set({ settings: JSON.stringify({ ...(settings as object), autoMode: "off" }) })
+      .where("id", "=", orgId)
+      .execute();
+    let roots: ProjectRootEvent[];
+    try {
+      roots = projectRoots(await run(convId, 1));
+    } finally {
+      await db
+        .updateTable("orgs")
+        .set({ settings: JSON.stringify(settings) })
+        .where("id", "=", orgId)
+        .execute();
+    }
+    expect(roots).toHaveLength(1);
+    expect(roots[0]?.payload).toEqual({
+      project: "app",
+      root: "/home/me/app",
+      unavailable: {
+        reason: "outside_mode",
+        message: expect.stringMatching(/wider mode than the organization allows/) as string,
+      },
+      skills: [],
+    });
+    const instance = await db
+      .selectFrom("device_instances")
+      .select("handle")
+      .where("device_id", "=", deviceId)
+      .executeTakeFirst();
+    expect(instance?.handle ?? null).toBeNull();
+  });
+
+  it("records a cloud device whose provider cannot list as unsupported, asking it nothing", async () => {
+    const dir = `p-${randomUUID().slice(0, 8)}`;
+    const { convId, deviceId } = await boundConversation(dir);
+    await put(deviceId, { [`${dir}/AGENTS.md`]: "rules" });
+    const projects = k.app.get(DeviceProjectsService);
+    let asked = 0;
+    // the same service over a provider without list / scan: its scope says so
+    const service = new ProjectKnowledgeService(
+      k.app.get(KernelDb),
+      k.app.get(EventLog),
+      k.app.get(TransactionHost),
+      k.app.get(ConversationDevices),
+      {
+        scopeFor: async (...args: Parameters<DeviceProjectsService["scopeFor"]>) => ({
+          ...(await projects.scopeFor(...args)),
+          supported: false,
+        }),
+      },
+      {
+        withSandbox: async () => {
+          asked++;
+          throw new Error("the device must not be asked");
+        },
+      },
+      createLogger("warn", { write: () => {} }),
+    );
+    const ok = await service.record({
+      orgId,
+      conversationId: convId,
+      runId: randomUUID(),
+      kind: "chat",
+      signal: new AbortController().signal,
+    });
+    expect(ok).toBe(true);
+    expect(asked).toBe(0);
+    const roots = projectRoots(await eventsOf(db, convId));
+    expect(roots).toHaveLength(1);
+    expect(roots[0]?.payload.unavailable?.reason).toBe("unsupported");
+  });
+
+  it("gives up a read past its time limit, records nothing and finishes the run", async () => {
+    const member = await newMember();
+    const convId = await insertBound({
+      accountId: member.id,
+      deviceId: member.deviceId,
+      path: "/workspace/app",
+    });
+    lines.length = 0;
+    // the member's device has no instance yet: the read's create waits until the limit aborts it
+    await setFakeSandboxDelays(root, { create: 120_000 });
+    readTimeoutMs = 200;
+    try {
+      const events = await run(convId, 1, member.req);
+      expect(events.find((e) => e.type === "run_finished")).toBeDefined();
+      expect(projectRoots(events)).toEqual([]);
+    } finally {
+      readTimeoutMs = 30_000;
+      await setFakeSandboxDelays(root, {});
+    }
+    expect(lines.some((l) => l.msg.includes("project knowledge") && l.timedOut === true)).toBe(
+      true,
+    );
+  });
+
+  describe("the model's device notices survive the run-start read", () => {
+    const bash = (command: string) =>
+      `tool:Bash:${JSON.stringify({ description: "Test step", command })}`;
+    const firstToolResult = (events: ConversationEvent[], runId: string) =>
+      events.find(
+        (e): e is Extract<ConversationEvent, { type: "tool_result" }> =>
+          e.type === "tool_result" && e.runId === runId,
+      );
+    const lastRunId = (events: ConversationEvent[]) =>
+      events.filter((e) => e.type === "run_started").at(-1)?.runId as string;
+
+    it("a fresh device's first tool call says it started, and a recreated one that it restarted", async () => {
+      const member = await newMember();
+      const convId = await insertBound({
+        accountId: member.id,
+        deviceId: member.deviceId,
+        agent: coderId,
+        path: "/workspace",
+      });
+      const first = await run(convId, 1, member.req, bash("echo one"));
+      expect(projectRoots(first)).toHaveLength(1);
+      const r1 = firstToolResult(first, lastRunId(first));
+      expect(r1?.payload.content, JSON.stringify(r1?.payload)).toMatch(/^Device started/);
+      // the provider loses the instance between the runs: the read of run 2 recreates it
+      const row = await db
+        .selectFrom("device_instances")
+        .select("handle")
+        .where("device_id", "=", member.deviceId)
+        .executeTakeFirst();
+      await removeFakeSandbox(root, (row?.handle as { id: string } | undefined)?.id as string);
+      const second = await run(convId, 2, member.req, bash("echo two"));
+      const r2 = firstToolResult(second, lastRunId(second));
+      expect(r2?.payload.content).toContain(SANDBOX_RESTARTED_NOTICE);
+    });
+
+    it("a files reset between runs is still told at the next run's first tool call", async () => {
+      const member = await newMember();
+      const convId = await insertBound({
+        accountId: member.id,
+        deviceId: member.deviceId,
+        agent: coderId,
+        path: "/workspace",
+      });
+      await run(convId, 1, member.req, bash("echo one > /workspace/r.txt"));
+      await k.app.get(SandboxService).resetFileSystem(member.deviceId);
+      const second = await run(convId, 2, member.req, bash("ls -A /workspace; echo done"));
+      const r2 = firstToolResult(second, lastRunId(second));
+      expect(r2?.payload.content.startsWith(SANDBOX_FILES_RESET_NOTICE), r2?.payload.content).toBe(
+        true,
+      );
+    });
   });
 });

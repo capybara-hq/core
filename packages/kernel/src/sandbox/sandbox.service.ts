@@ -87,6 +87,35 @@ const PENDING_KILL_TIMEOUT_MS = 30_000;
 /** A background task's session id as `echo $!` printed it; anything else is never put in a command. */
 const SID_RE = /^[1-9][0-9]{0,9}$/;
 
+/** What a silent use caused, kept for the holder's next ordinary use (`SandboxService.deferNotice`). */
+interface DeferredNotice {
+  /** `<created_at>:<fs_resets>` of the instance it entered. */
+  seen: string;
+  fresh: boolean;
+  restarted: boolean;
+  filesReset: boolean;
+}
+
+const noticeKey = (deviceId: string, holder: string): string =>
+  `capk:sandbox-notice:${deviceId}:${holder}`;
+
+/** A stored {@link DeferredNotice}, or null (none, or not one). */
+function parseDeferred(raw: string | null): DeferredNotice | null {
+  if (raw === null) return null;
+  try {
+    const v = JSON.parse(raw) as Partial<DeferredNotice>;
+    if (typeof v.seen !== "string") return null;
+    return {
+      seen: v.seen,
+      fresh: v.fresh === true,
+      restarted: v.restarted === true,
+      filesReset: v.filesReset === true,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** The third argument of the `withSandbox` callback. */
 export interface SandboxUseInfo {
   /** This call created the instance (first use, or a rebuild). */
@@ -120,6 +149,13 @@ export interface SandboxUseContext {
   holderConversationId: string;
   /** Passed with every `exec` (audit and attribution). */
   actor: SandboxActor;
+  /**
+   * A use that tells the model nothing (the run-start read of a bound project): it does not mark
+   * the holder as having seen the instance, so the holder's next ordinary use still learns that
+   * the instance started, restarted or had its files reset ({@link SandboxUseInfo}); what this use
+   * itself caused (a creation, a rebuild) is kept for that next use.
+   */
+  silent?: true;
 }
 
 export type { SandboxProviderEntry } from "./providers.js";
@@ -466,7 +502,7 @@ export class SandboxService {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     /** The record of the instance each holder last used (`capk:sandbox-seen:…`). */
-    @Inject(REDIS) private readonly redis: Pick<Redis, "set">,
+    @Inject(REDIS) private readonly redis: Pick<Redis, "set" | "getdel">,
     @Inject(SandboxLeases) private readonly leases: SandboxLeases,
     /** The providers (read at every call: providers are ready after the extension load). */
     @Inject(SandboxProviders)
@@ -860,7 +896,9 @@ export class SandboxService {
     // decides the shared fast path only (read again before each shared lease is used): the
     // exclusive path reads it again under the lease
     const want = () => this.wantedLimits(ctx, p);
-    let e = await this.seenBy(env, holder, await this.enter(ctx, p, signal, null, want));
+    const seen = (x: Entered) =>
+      ctx.silent ? this.deferNotice(env, holder, x) : this.seenBy(env, holder, x);
+    let e = await seen(await this.enter(ctx, p, signal, null, want));
     try {
       try {
         return await this.runAs(e, ctx, p, fn, signal);
@@ -871,7 +909,7 @@ export class SandboxService {
         const gone: Instance = { handle: e.handle, createdAt: e.createdAt };
         const prev = e;
         await this.leave(env, prev);
-        e = await this.seenBy(env, holder, await this.enter(ctx, p, signal, gone, want));
+        e = await seen(await this.enter(ctx, p, signal, gone, want));
         // a reset seen on the first try still has to be told (it covers the restart)
         const info: EnteredInfo = prev.info.filesReset
           ? { fresh: true, restarted: false, filesReset: true }
@@ -931,6 +969,42 @@ export class SandboxService {
   }
 
   /**
+   * A silent use ({@link SandboxUseContext.silent}) of `holder`: the seen record is left alone, so
+   * the holder's next ordinary use compares against the instance it last saw itself (and learns
+   * of a restart or a files reset since); a creation or rebuild this use caused is kept
+   * (`capk:sandbox-notice:<env>:<holder>`, merged with an earlier one for the same instance, same
+   * TTL as the seen record) for {@link seenBy} to tell. Best effort: a Redis error only logs.
+   */
+  private async deferNotice(deviceId: string, holder: string, e: Entered): Promise<Entered> {
+    if (!e.info.fresh && !e.info.restarted && e.info.filesReset !== true) return e;
+    try {
+      const ttl = (this.config.get().sandbox.limits.destroyAfterInactiveDays + 1) * 86_400;
+      const seen = `${e.createdAt}:${e.fsResets}`;
+      const key = noticeKey(deviceId, holder);
+      const mine: DeferredNotice = {
+        seen,
+        fresh: e.info.fresh,
+        restarted: e.info.restarted,
+        filesReset: e.info.filesReset === true,
+      };
+      // swapped in, then merged with an earlier silent use's notice for the same instance
+      const prev = parseDeferred(await this.redis.set(key, JSON.stringify(mine), "EX", ttl, "GET"));
+      if (prev !== null && prev.seen === seen) {
+        const merged: DeferredNotice = {
+          seen,
+          fresh: mine.fresh || prev.fresh,
+          restarted: mine.restarted || prev.restarted,
+          filesReset: mine.filesReset || prev.filesReset,
+        };
+        await this.redis.set(key, JSON.stringify(merged), "EX", ttl);
+      }
+    } catch (err) {
+      this.log.warn("cannot keep the sandbox notice of a silent use", { deviceId, holder, err });
+    }
+    return e;
+  }
+
+  /**
    * Records that `holder` uses the instance of `e` (`capk:sandbox-seen:<env>:<holder>` =
    * `<created_at>:<fs_resets>`, with a TTL of the inactivity destruction plus a day). When the
    * holder last used another instance under the same reset count `e` is marked restarted (files
@@ -939,10 +1013,25 @@ export class SandboxService {
    * (sandbox-docker's volumes are named after the device). Best effort: a Redis error only
    * logs.
    */
-  private async seenBy(deviceId: string, holder: string, e: Entered): Promise<Entered> {
+  private async seenBy(deviceId: string, holder: string, entered: Entered): Promise<Entered> {
+    let e = entered;
     try {
       const ttl = (this.config.get().sandbox.limits.destroyAfterInactiveDays + 1) * 86_400;
       const seen = `${e.createdAt}:${e.fsResets}`;
+      // what a silent use of this holder caused on this same instance is told now
+      const deferred = parseDeferred(await this.redis.getdel(noticeKey(deviceId, holder)));
+      if (deferred !== null && deferred.seen === seen) {
+        e = {
+          ...e,
+          info:
+            e.info.filesReset === true || deferred.filesReset
+              ? { fresh: e.info.fresh || deferred.fresh, restarted: false, filesReset: true }
+              : {
+                  fresh: e.info.fresh || deferred.fresh,
+                  restarted: e.info.restarted || deferred.restarted,
+                },
+        };
+      }
       const prev = await this.redis.set(
         `capk:sandbox-seen:${deviceId}:${holder}`,
         seen,

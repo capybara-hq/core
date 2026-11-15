@@ -70,7 +70,7 @@ import { z } from "zod";
  *   also logs `update <id> <answer>` in `ops.log`.
  * - `list` (deployment config or {@link FakeSandboxOptions}; off by default, so the fake offers no
  *   projects unless a test asks): lists one directory as `SandboxProvider.list` does, with the
- *   instance's directories mapped as for `readFile`.
+ *   instance's directories mapped as for `readFile`, and adds a `scan` that suggests nothing.
  * - `root/refuse-open-egress` (optional, {@link setFakeSandboxRefuseOpenEgress}; read at each
  *   call): like sandbox-docker with `refuseOpenNetwork: true`, limits with mode `auto` and
  *   the open public network make `create`, `update` and (with `limitsApplyAt: "fileSystem"`)
@@ -98,7 +98,7 @@ export interface FakeSandboxOptions {
   /** `update`'s answer (`throw`: it fails with an ordinary error); `none` (default): no `update`. */
   updateMode?: "updated" | "recreate" | "throw" | "none";
   limitsApplyAt?: "instance" | "fileSystem";
-  /** Gives the provider a `list` (see the file header). */
+  /** Gives the provider a `list` and a `scan` (see the file header). */
   list?: boolean;
 }
 
@@ -911,6 +911,12 @@ export function createFakeSandbox(
       );
       entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
       return { entries: entries.slice(0, opts.limit), truncated: entries.length > opts.limit };
+    };
+    // offering projects takes both; the fake suggests none
+    provider.scan = async (h, _base, opts) => {
+      opts.signal.throwIfAborted();
+      await requireRunning(h);
+      return [];
     };
   }
   const mode = options.updateMode ?? "none";

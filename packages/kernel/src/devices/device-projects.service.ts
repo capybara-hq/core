@@ -20,7 +20,7 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { projectsUnsupported } from "../local-devices/local-device-provider.js";
-import { deviceFeaturesOf } from "../local-devices/policy-summary.js";
+import { deviceFeaturesOf, localModeOf } from "../local-devices/policy-summary.js";
 import { POLICY_REFUSAL_PREFIX } from "../local-devices/relay.js";
 import type { SandboxMode } from "../sandbox/modes.js";
 import { providerForDevice, SandboxProviders } from "../sandbox/providers.js";
@@ -88,6 +88,11 @@ export interface DeviceProjectScope {
   /** The owner's home a local machine reported; null when unknown (and for a cloud device). */
   home: string | null;
   supported: boolean;
+  /**
+   * A machine whose own policy is auto mode while the organization allows only sandbox mode: exec
+   * refuses it (`device.auto_mode_not_allowed`), and the kernel reads nothing on it unasked.
+   */
+  widerThanAllowed: boolean;
 }
 
 type Scope = DeviceProjectScope;
@@ -429,6 +434,7 @@ export class DeviceProjectsService {
         "e.source",
         "e.provider",
         "m.features",
+        "m.local_policy",
         "m.home",
         sql<string | null>`m.roots->>'workspace'`.as("machine_workspace"),
         "i.handle",
@@ -440,11 +446,13 @@ export class DeviceProjectsService {
       .where("e.deleted_at", "is", null)
       .executeTakeFirst();
     if (row === undefined) throw deviceNotFound();
-    const { mode } = await this.sandbox.devicePolicy({ orgId, deviceId });
+    const { mode, allowedMode } = await this.sandbox.devicePolicy({ orgId, deviceId });
     if (row.source === "local") {
       return {
         source: "local",
         mode,
+        widerThanAllowed:
+          allowedMode === "sandbox" && localModeOf(row.features, row.local_policy) === "auto",
         workspace: row.machine_workspace ?? DEFAULT_SANDBOX_ROOTS.workspace,
         home: row.home,
         supported: deviceFeaturesOf(row.features).includes("projects"),
@@ -455,6 +463,7 @@ export class DeviceProjectsService {
     return {
       source: "cloud",
       mode,
+      widerThanAllowed: false,
       workspace: handle === null ? DEFAULT_SANDBOX_ROOTS.workspace : rootsOf(handle).workspace,
       home: null,
       supported: typeof impl?.list === "function" && typeof impl.scan === "function",

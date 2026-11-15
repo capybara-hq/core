@@ -113,10 +113,13 @@ export const projectUnavailable = {
     ),
   notDirectory: (root: string) =>
     unavailable("unreadable", `The project's root ${clipped(root)} is not a directory.`),
-  unreadable: (root: string, why: string) =>
+  /** The device's own error text is logged, never recorded: the message stays the same per root. */
+  unreadable: (root: string) =>
+    unavailable("unreadable", `The project's root ${clipped(root)} could not be read.`),
+  widerMode: (root: string) =>
     unavailable(
-      "unreadable",
-      `The project's root ${clipped(root)} could not be read: ${clipped(why)}`,
+      "outside_mode",
+      `The project's root ${clipped(root)} was not read: the device runs a wider mode than the organization allows.`,
     ),
   unsupported: () =>
     unavailable(
@@ -203,7 +206,8 @@ export async function readProjectKnowledge(
   } catch (e) {
     if (r.fatal(e)) throw e;
     if (isPolicyRefusal(e)) return cannot(projectUnavailable.outsideMode(root, mode));
-    return cannot(projectUnavailable.unreadable(root, messageOf(e)));
+    r.log("project root could not be read", { path: root, reason: messageOf(e) });
+    return cannot(projectUnavailable.unreadable(root));
   }
   if (st === null) return cannot(projectUnavailable.gone(root));
   if (!st.isDir) return cannot(projectUnavailable.notDirectory(root));

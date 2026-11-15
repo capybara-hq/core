@@ -215,6 +215,17 @@ describe("readProjectKnowledge", () => {
       reason: "unreadable",
       message: expect.stringMatching(/could not be read/) as string,
     });
+    // the raw error goes to the log, never into the recorded message: the same root records the
+    // same message whatever the error said
+    const logged: unknown[] = [];
+    const other = await readProjectKnowledge(
+      device({}, { statError: new Error("EIO: i/o error, scandir 0x7f3a") }),
+      TARGET,
+      { log: (_msg, detail) => logged.push(detail.reason) },
+    );
+    expect(unreadable.unavailable?.message).not.toContain("EACCES");
+    expect(other.unavailable).toEqual(unreadable.unavailable);
+    expect(logged).toEqual(["EIO: i/o error, scandir 0x7f3a"]);
     const file = await readProjectKnowledge(device({ [ROOT]: "a file" }), TARGET);
     expect(file.unavailable).toEqual({
       reason: "unreadable",
