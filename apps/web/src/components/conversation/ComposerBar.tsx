@@ -196,7 +196,8 @@ function useObjectUrls(files: DraftFile[]): ReadonlyMap<string, string> {
  * Skills (phase D spec §3): picking one shows its chip, and the text after it is the arguments
  * (Backspace at the start or the chip's × removes it and keeps the text). A draft typed as
  * `/name args` that names a listed skill is sent as its invocation; anything else as text (and a
- * typed one the kernel refuses as `skill.not_invocable`, from a stale list, is resent as text). The
+ * typed one the kernel refuses as an unknown skill, `skill.not_invocable` `not_found`, from a stale
+ * list, is resent as text; any other refusal keeps the draft and shows why). The
  * list is read for `agentId` (with `conversationId` once the conversation exists, so its trial
  * drafts apply) when the menu opens or a typed `/name` is sent.
  */
@@ -452,10 +453,12 @@ export function ComposerBar({
         !r.ok &&
         typedInvoke &&
         r.error instanceof ApiClientError &&
-        r.error.code === "skill.not_invocable"
+        r.error.code === "skill.not_invocable" &&
+        (r.error.rawDetails[0] as { reason?: unknown } | undefined)?.reason === "not_found"
       ) {
         // A typed `/name` from a stale list (the skill was deselected since it was read): an
-        // unknown name is sent as text (spec §3.2), and the list is read again.
+        // unknown name is sent as text (spec §3.2), and the list is read again. Any other refusal
+        // (a project skill the project cannot serve now, ...) keeps the draft and says why.
         void loadSkills(true);
         r = await onSend(message(value, undefined));
       }

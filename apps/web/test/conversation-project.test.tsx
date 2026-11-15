@@ -154,6 +154,30 @@ describe("binding a new conversation to a project (the device picker)", () => {
     expect(body).not.toHaveProperty("project");
   });
 
+  it("back to the first device: its project is not picked again (A → B → A)", async () => {
+    resetNavigation("/");
+    const calls = stubApi({
+      [`GET ${ORG}/devices/e2/projects`]: () => json(200, projectsOf()),
+      [`POST ${ORG}/conversations`]: createdAt,
+    });
+    await renderRouteWithCache("/", newRoutes());
+    const user = userEvent.setup();
+    await user.click(devicePicker());
+    await user.click(await screen.findByRole("menuitemradio", { name: "core" }));
+    await user.click(devicePicker());
+    await user.click(await screen.findByRole("menuitemradio", { name: /Build box/ }));
+    await user.click(devicePicker());
+    await user.click(
+      await screen.findByRole("menuitemradio", { name: new RegExp(en.devices.personal) }),
+    );
+    expect(devicePicker().textContent).not.toContain("core");
+    await user.type(input(), "go{Enter}");
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
+    const body = bodyOf(calls.find((c) => c.method === "POST"));
+    expect(body).toMatchObject({ deviceId: "e1" });
+    expect(body).not.toHaveProperty("project");
+  });
+
   it("a device that does not support projects offers no project choice", async () => {
     resetNavigation("/");
     await renderRouteWithCache(
@@ -354,4 +378,35 @@ describe("the / menu groups entries by source", () => {
       skill: { name: "project:fix-issue" },
     });
   });
+
+  it.each(["zh", "en"] as const)(
+    "a typed project skill the project cannot serve is not resent as text; the draft stays and the reason shows (%s)",
+    async (locale) => {
+      resetNavigation("/chat/c1");
+      const calls = chatApi([userMsg(1, "hi"), runStarted(2), projectRoot(3, {})], {
+        [`GET ${INVOCABLE}`]: () => json(200, SKILLS),
+        [`GET ${ORG}/connectors/prompts`]: () => json(200, { prompts: [], unavailable: [] }),
+        [`POST ${BASE}/messages`]: () =>
+          json(422, {
+            error: {
+              code: "skill.project_unavailable",
+              message: "Skill cannot be invoked",
+              details: [{ reason: "gone" }],
+            },
+          }),
+      });
+      await renderChatRoute({ locale });
+      await screen.findByText("hi");
+      const m = locale === "zh" ? zh : en;
+      const user = userEvent.setup();
+      await user.click(input(m));
+      await user.paste("/project:fix-issue 42");
+      await user.keyboard("{Enter}");
+      expect(await screen.findByText(m.errors.skill.project_unavailable.gone)).toBeTruthy();
+      const post = calls.filter((c) => c.method === "POST" && c.url === `${BASE}/messages`);
+      expect(post).toHaveLength(1);
+      expect(bodyOf(post[0] as Call)).toMatchObject({ skill: { name: "project:fix-issue" } });
+      expect(input(m)).toHaveProperty("value", "/project:fix-issue 42");
+    },
+  );
 });

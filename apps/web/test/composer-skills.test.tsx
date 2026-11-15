@@ -397,7 +397,13 @@ describe("a typed /name from a stale list", () => {
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
       [`POST ${BASE}/messages`]: (c) =>
         (bodyOf(c) as { skill?: unknown }).skill !== undefined
-          ? json(400, { error: { code: "skill.not_invocable", message: "not invocable" } })
+          ? json(400, {
+              error: {
+                code: "skill.not_invocable",
+                message: "not invocable",
+                details: [{ reason: "not_found" }],
+              },
+            })
           : echo(c),
     });
     const { calls: server } = await renderChatRoute();

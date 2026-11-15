@@ -16,6 +16,7 @@ import { EventLog } from "../conversations/event-log.js";
 import type { EventPayload } from "../conversations/events.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ConversationDevices } from "../devices/conversation-devices.js";
+import { providerUnreachable } from "../devices/device-projects.service.js";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
@@ -28,6 +29,7 @@ import {
 } from "../runtime/context/project-root.js";
 import { isGeneralAlias, resolveSkillForkType } from "../runtime/subagents/roster.js";
 import { SandboxService } from "../sandbox/sandbox.service.js";
+import { SandboxProviderUnreachableError } from "../sandbox/unreachable.js";
 import { StorageService } from "../storage/storage.service.js";
 import { BUILTIN } from "../tools/builtin-names.js";
 import {
@@ -128,21 +130,41 @@ export const notInvocable = (reason: NotInvocableReason, name: string) =>
     [{ reason }],
   );
 
-/** A project skill the project lists but cannot be used now (`reason: project_unavailable`). */
-const projectUnavailable = (message: string) =>
-  new ApiError("skill.not_invocable", message, [{ reason: "project_unavailable" }]);
+/** Why a listed project skill cannot be used now (`skill.project_unavailable` details). */
+export type ProjectUnavailableReason =
+  | "gone"
+  | "outside_mode"
+  | "unreadable"
+  | "unparsable"
+  | "unsupported";
 
-/** The person's text for a {@link ProjectSkillProblem}. */
-function projectProblemMessage(name: string, p: ProjectSkillProblem): string {
+/** A project skill the project lists but cannot be used now: the person is told why. */
+const projectUnavailable = (reason: ProjectUnavailableReason, message: string) =>
+  new ApiError("skill.project_unavailable", message, [{ reason }]);
+
+/** The refusal of a {@link ProjectSkillProblem}: its reason and the person's text. */
+function projectProblemRefusal(name: string, p: ProjectSkillProblem): ApiError {
   switch (p.kind) {
     case "outside_mode":
-      return `Skill "${name}" cannot be invoked: ${p.path} is outside what the device can read in ${p.mode} mode now`;
+      return projectUnavailable(
+        "outside_mode",
+        `Skill "${name}" cannot be invoked: ${p.path} is outside what the device can read in ${p.mode} mode now`,
+      );
     case "gone":
-      return `Skill "${name}" cannot be invoked: ${p.path} is no longer on the device`;
+      return projectUnavailable(
+        "gone",
+        `Skill "${name}" cannot be invoked: ${p.path} is no longer on the device`,
+      );
     case "read_failed":
-      return `Skill "${name}" cannot be invoked: reading ${p.path} on the device failed (${p.why.slice(0, 300)})`;
+      return projectUnavailable(
+        "unreadable",
+        `Skill "${name}" cannot be invoked: reading ${p.path} on the device failed (${p.why.slice(0, 300)})`,
+      );
     case "invalid":
-      return `Skill "${name}" cannot be invoked: ${p.path} is not a valid SKILL.md (${p.why.slice(0, 300)})`;
+      return projectUnavailable(
+        "unparsable",
+        `Skill "${name}" cannot be invoked: ${p.path} is not a valid SKILL.md (${p.why.slice(0, 300)})`,
+      );
   }
 }
 
@@ -410,9 +432,9 @@ export class SkillInvoker {
    * invocation, `${CLAUDE_SKILL_DIR}` being the skill's directory in the project. Always inline
    * (`context: fork` is not honoured for project skills, as in `Skill`). Refusals:
    * `skill.not_invocable` `not_found` (no conversation yet, no project, a name it does not list),
-   * `project_unavailable` (the latest project is unavailable, or its file cannot be used), the
-   * device's own refusals as they are (`device.offline`, ...), `device.projects_unavailable` when
-   * the device cannot be asked.
+   * `skill.project_unavailable` with its reason (the latest project is unavailable, or its file
+   * cannot be used), the device's own refusals as they are (`device.offline`, ...),
+   * `device.projects_unavailable` when the device cannot be asked.
    */
   private async prepareProject(
     a: {
@@ -430,6 +452,7 @@ export class SkillInvoker {
     const latest = (await this.eventLog.latestOfType(conversationId, "project_root"))?.payload;
     if (latest?.unavailable !== undefined) {
       throw projectUnavailable(
+        latest.unavailable.reason,
         `Skill "${a.name}" cannot be invoked: the project "${latest.project}" is not available (${latest.unavailable.message})`,
       );
     }
@@ -456,8 +479,26 @@ export class SkillInvoker {
         },
       }),
     ).replaceAll(skillSandboxDir(bare, PROJECT_DIR_DIGEST), dir);
+    const full = [
+      text,
+      ...(file.truncated
+        ? [
+            `Its SKILL.md was cut at 1 MiB when it was read; the rest of its instructions is missing.`,
+          ]
+        : []),
+      `Its other files, if any, are in ${dir}/ on the device; use them there.`,
+    ].join("\n\n");
+    // the closing lines count toward the limit too
+    if (full.length > SKILL_INVOCATION_LIMITS.renderedMaxChars) {
+      throw new ApiError("validation_failed", "Request validation failed", [
+        {
+          path: "text",
+          message: `the rendered skill must be at most ${SKILL_INVOCATION_LIMITS.renderedMaxChars} characters; shorten the arguments`,
+        },
+      ]);
+    }
     return {
-      text: `${text}\n\nIts other files, if any, are in ${dir}/ on the device; use them there.`,
+      text: full,
       skill: {
         id: a.name,
         version: 0,
@@ -493,10 +534,9 @@ export class SkillInvoker {
         AbortSignal.timeout(PROJECT_SKILL_READ_TIMEOUT_MS),
       );
     } catch (e) {
-      if (e instanceof ProjectSkillReadError) {
-        throw projectUnavailable(projectProblemMessage(a.name, e.problem));
-      }
+      if (e instanceof ProjectSkillReadError) throw projectProblemRefusal(a.name, e.problem);
       if (e instanceof ApiError) throw e;
+      if (e instanceof SandboxProviderUnreachableError) throw providerUnreachable();
       this.log.warn("project skill unreadable: the device could not be asked", {
         orgId: a.orgId,
         conversationId: a.conversationId,

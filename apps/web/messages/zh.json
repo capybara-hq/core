@@ -370,6 +370,14 @@
       "not_found": "技能不存在或已删除。",
       "invalid_package": "技能包不合法：",
       "not_invocable": "这个智能体不能调用该技能，请从 / 菜单中选择。",
+      "project_unavailable": {
+        "gone": "项目技能不能调用：项目或它的 SKILL.md 已不在设备上。",
+        "outside_mode": "项目技能不能调用：设备当前的运行模式读不到它。",
+        "unreadable": "项目技能不能调用：读取设备上的 SKILL.md 失败，请稍后重试。",
+        "unparsable": "项目技能不能调用：它的 SKILL.md 格式不正确，请在项目里修正。",
+        "unsupported": "项目技能不能调用：这台设备不支持项目。",
+        "default": "项目技能现在不能调用。"
+      },
       "name_exists": "本组织已有同名技能，请换一个名字。",
       "agent_cap": "这个智能体的技能数已达上限。请先删除一个，或为已有技能（同名）上传新版本。",
       "subagent_register": "子智能体不能登记技能，只有与你对话的智能体可以。",

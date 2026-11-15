@@ -496,12 +496,7 @@ export class DeviceProjectsService {
       );
     } catch (e) {
       if (e instanceof ApiError) throw e;
-      if (e instanceof SandboxProviderUnreachableError) {
-        throw new ApiError(
-          "device.projects_unavailable",
-          "The device's sandbox provider cannot be reached now; try again shortly",
-        );
-      }
+      if (e instanceof SandboxProviderUnreachableError) throw providerUnreachable();
       throw unavailable(e);
     }
   }
@@ -521,6 +516,16 @@ export class DeviceProjectsService {
     if (row === undefined) throw deviceNotFound();
   }
 }
+
+/**
+ * A project read on a device whose sandbox provider cannot be reached (the projects routes, a
+ * person's project skill invocation).
+ */
+export const providerUnreachable = (): ApiError =>
+  new ApiError(
+    "device.projects_unavailable",
+    "The device's sandbox provider cannot be reached now; try again shortly",
+  );
 
 const limitReached = (): ApiError =>
   new ApiError(

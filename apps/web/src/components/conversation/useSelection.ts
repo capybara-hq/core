@@ -311,6 +311,8 @@ export function useDeviceChoice(orgId: string, list: DeviceList | undefined): De
       note: t("deviceNote"),
       onPick: (choice) => {
         if (!choice.startsWith(PROJECT_ITEM)) {
+          // a project belongs to its device: another device (even back to this one) starts free
+          if (choice !== id) setPickedProject(null);
           setPicked(choice);
           return;
         }

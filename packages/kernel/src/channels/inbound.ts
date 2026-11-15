@@ -79,11 +79,30 @@ type MessageEvent = Extract<InboundEvent, { type: "message" }>;
  *    (bot mention stripped) is `/name args` is posted as a skill invocation (phase D spec §9): the
  *    same kernel path as the web, so the skill is resolved among the connection's agent's skills
  *    for the bound person; a refusal (`skill.not_invocable`: unknown, not user-invocable, gone
- *    since; `validation_failed`: over the limits) posts the text as typed, so nothing is lost.
+ *    since; `validation_failed`: over the limits) posts the text as typed, so nothing is lost; a
+ *    project skill the project cannot serve (`skill.project_unavailable`) is refused with its
+ *    reason and nothing is posted.
  * `directory_changed` → 投递通讯录同步（Task 12）；`card_action` 见 actions.ts。
  * 边界（已接受）：同一 chat 的连续消息由不同任务并发处理，极少数情况下写入顺序可能与平台顺序不同；
  * 处理在写入用户消息之后失败而重试时，固定话术 / 卡片回复可能再发一次。
  */
+/** The note for a `skill.project_unavailable` refusal, by its reason. */
+function projectSkillPhrase(err: ApiError): ChannelPhrase {
+  const reason = (err.details?.[0] as { reason?: unknown } | undefined)?.reason;
+  switch (reason) {
+    case "gone":
+      return "projectSkillGone";
+    case "outside_mode":
+      return "projectSkillOutsideMode";
+    case "unparsable":
+      return "projectSkillUnparsable";
+    case "unsupported":
+      return "projectSkillUnsupported";
+    default:
+      return "projectSkillUnreadable";
+  }
+}
+
 @Injectable()
 export class ChannelInbound {
   private readonly actions: ChannelCardActions;
@@ -315,6 +334,11 @@ export class ChannelInbound {
         );
       }
     } catch (err) {
+      // a project skill the project cannot serve now: say why, post nothing (project root §4.6)
+      if (err instanceof ApiError && err.code === "skill.project_unavailable") {
+        await reply(projectSkillPhrase(err));
+        return;
+      }
       // agent 已对此人不可用（改了可见范围 / 已删除）：会话按不存在处理
       if (err instanceof ApiError && err.code === "conversation.not_found") {
         await reply("agentUnavailable");

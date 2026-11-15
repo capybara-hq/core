@@ -1,6 +1,8 @@
+import { SKILL_INVOCATION_LIMITS } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import { ApiError } from "../../src/errors.js";
+import { SandboxProviderUnreachableError } from "../../src/sandbox/unreachable.js";
 import {
   invocableSource,
   projectInvocables,
@@ -101,6 +103,10 @@ interface Setup {
   files?: Record<string, string>;
   readError?: Error;
   mode?: "auto" | "sandbox";
+  /** The SKILL.md was cut at the read limit. */
+  truncated?: boolean;
+  /** What entering the device throws (the provider unreachable, ...). */
+  useError?: Error;
 }
 
 function setup(s: Setup) {
@@ -112,7 +118,9 @@ function setup(s: Setup) {
       reads.push(path);
       if (s.readError) throw s.readError;
       const text = s.files?.[path];
-      return text === undefined ? null : { data: new TextEncoder().encode(text), truncated: false };
+      return text === undefined
+        ? null
+        : { data: new TextEncoder().encode(text), truncated: s.truncated === true };
     },
   };
   const invoker = new SkillInvoker(
@@ -139,6 +147,7 @@ function setup(s: Setup) {
         fn: (...a: unknown[]) => unknown,
         sig?: AbortSignal,
       ) => {
+        if (s.useError) throw s.useError;
         uses.push({
           holderConversationId: c.holderConversationId,
           ...(c.silent ? { silent: c.silent } : {}),
@@ -238,27 +247,54 @@ describe("SkillInvoker.prepare: project:<name>", () => {
     expect([...a.reads, ...b.reads]).toEqual([]);
   });
 
-  it("an unavailable project: a readable refusal, nothing read", async () => {
+  it("an unavailable project: skill.project_unavailable with the project's reason, nothing read", async () => {
     const t = setup({ project: gone });
     const e = await refusal(t.prepare("project:fix-issue"));
-    expect(e.code).toBe("skill.not_invocable");
-    expect(e.details).toEqual([{ reason: "project_unavailable" }]);
+    expect(e.code).toBe("skill.project_unavailable");
+    expect(e.details).toEqual([{ reason: "gone" }]);
     expect(e.message).toContain('"core"');
     expect(t.reads).toEqual([]);
   });
 
-  it("the file is gone, unreadable or invalid on the device: a readable refusal naming it", async () => {
-    for (const s of [
-      { files: {} },
-      { readError: new Error("permission denied") },
-      { files: { [PATH]: "no frontmatter" } },
-    ] satisfies Setup[]) {
+  it("the file is gone, unreadable or unparsable on the device: the reason, and the path named", async () => {
+    for (const [s, reason] of [
+      [{ files: {} }, "gone"],
+      [{ readError: new Error("permission denied") }, "unreadable"],
+      [{ files: { [PATH]: "no frontmatter" } }, "unparsable"],
+    ] as [Setup, string][]) {
       const t = setup({ project: usable, ...s });
       const e = await refusal(t.prepare("project:fix-issue"));
-      expect(e.code).toBe("skill.not_invocable");
-      expect(e.details).toEqual([{ reason: "project_unavailable" }]);
+      expect(e.code).toBe("skill.project_unavailable");
+      expect(e.details).toEqual([{ reason }]);
       expect(e.message).toContain(PATH);
     }
+  });
+
+  it("a SKILL.md cut at the read limit says so in the invocation", async () => {
+    const t = setup({
+      project: usable,
+      truncated: true,
+      files: { [PATH]: skillMd("fix-issue", "Body.") },
+    });
+    const r = await t.prepare("project:fix-issue");
+    expect(r.text).toContain("cut at 1 MiB");
+  });
+
+  it("an invocation over the rendered limit with its closing lines is refused", async () => {
+    const body = "x".repeat(SKILL_INVOCATION_LIMITS.renderedMaxChars - 150);
+    const t = setup({ project: usable, files: { [PATH]: skillMd("fix-issue", body) } });
+    const e = await refusal(t.prepare("project:fix-issue"));
+    expect(e.code).toBe("validation_failed");
+  });
+
+  it("an unreachable sandbox provider keeps its own text", async () => {
+    const t = setup({
+      project: usable,
+      useError: new SandboxProviderUnreachableError("connect", new Error("ECONNREFUSED")),
+    });
+    const e = await refusal(t.prepare("project:fix-issue"));
+    expect(e.code).toBe("device.projects_unavailable");
+    expect(e.message).toMatch(/sandbox provider cannot be reached/);
   });
 
   it("a mode narrowed to sandbox: the root outside the roots is refused, nothing read", async () => {
@@ -268,7 +304,8 @@ describe("SkillInvoker.prepare: project:<name>", () => {
       files: { [PATH]: skillMd("fix-issue", "B.") },
     });
     const e = await refusal(t.prepare("project:fix-issue"));
-    expect(e.code).toBe("skill.not_invocable");
+    expect(e.code).toBe("skill.project_unavailable");
+    expect(e.details).toEqual([{ reason: "outside_mode" }]);
     expect(e.message).toContain("sandbox mode");
     expect(t.reads).toEqual([]);
   });

@@ -470,6 +470,14 @@ export const ERROR_CODES = {
    */
   "skill.not_invocable": 400,
   /**
+   * A person's `/project:<name>`: the conversation's project lists the skill but it cannot be used
+   * now (project root spec §4.6, §4.7). `details: [{ reason }]`: `gone` (the project or its
+   * SKILL.md is no longer on the device), `outside_mode` (the device's current mode cannot read
+   * it), `unreadable` (the read failed), `unparsable` (not a valid SKILL.md), `unsupported` (the
+   * device offers no projects). Never sent as text instead: the person is told.
+   */
+  "skill.project_unavailable": 422,
+  /**
    * Uploading or sharing a skill: an org-level skill with this name already exists in the org
    * (P3-24, F18).
    */
