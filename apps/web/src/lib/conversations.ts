@@ -583,6 +583,11 @@ export interface ProjectRootPayload {
   };
 }
 
+/** The state a conversation's latest `project_root` records (kernel `ProjectState`). */
+export type ProjectState =
+  | { loaded: true; agentsMd: boolean }
+  | { unavailable: NonNullable<ProjectRootPayload["unavailable"]>["reason"] };
+
 /** 已写入日志的会话事件。 */
 export type ConversationEvent = (EventBody | SkillForkResultBody) & {
   conversationId: string;
@@ -628,6 +633,12 @@ export interface Conversation {
    * null in free mode.
    */
   project?: { name: string; path: string } | null;
+  /**
+   * Its latest `project_root` snapshot, wherever it lies in the log: loaded (and whether the
+   * project's `AGENTS.md` was found) or why the project is unavailable; null before the first run
+   * start recorded one (and in a list row).
+   */
+  projectState?: ProjectState | null;
   /** What it is doing now: a run in progress, or waiting for me (absent on older kernels). */
   activity?: "running" | "waiting" | null;
 }

@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BackgroundTaskPollJob } from "../../src/background/poll.job.js";
 import { AnonymousGuests } from "../../src/channels/threads.js";
 import { ConversationsService } from "../../src/conversations/conversations.service.js";
+import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
@@ -642,6 +643,55 @@ describe("binding a conversation to a project", () => {
     expect(second.created).toBe(false);
     expect(second.conversation.id).toBe(first?.conversation.id);
     expect(await countOf(m.id)).toBe(1);
+  });
+
+  it("the view carries the latest project_root state, however long the log after it", async () => {
+    const m = await member();
+    const device = await localDevice(m.id, { projects: [CORE] });
+    const res = await createWith(m.req, { agentId, deviceId: device, project: "core" });
+    expect(res.statusCode, res.body).toBe(201);
+    const view = (res.json() as { conversation: { id: string; projectState: unknown } })
+      .conversation;
+    // before the first run start: no snapshot yet
+    expect(view.projectState).toBeNull();
+    const read = async () => {
+      const r = await m.req({ method: "GET", url: `${conversations()}/${view.id}` });
+      expect(r.statusCode, r.body).toBe(200);
+      return (r.json() as { conversation: { projectState: unknown } }).conversation.projectState;
+    };
+    const log = k.app.get(EventLog);
+    const snapshot = (payload: Record<string, unknown>) =>
+      log.append(view.id, [
+        {
+          type: "project_root",
+          payload: { project: "core", root: CORE.path, skills: [], ...payload },
+        },
+      ] as never);
+    await snapshot({ agentsMd: "# Core" });
+    // many events after the snapshot: the state does not depend on a window of the log
+    for (let i = 0; i < 5; i++) {
+      await log.append(view.id, [
+        {
+          type: "user_message",
+          payload: { content: [{ type: "text", text: `m${i}` }], authorAccountId: m.id },
+        },
+      ] as never);
+    }
+    expect(await read()).toEqual({ loaded: true, agentsMd: true });
+    await snapshot({});
+    expect(await read()).toEqual({ loaded: true, agentsMd: false });
+    await snapshot({ unavailable: { reason: "gone", message: "The project's root is gone." } });
+    expect(await read()).toEqual({ unavailable: "gone" });
+    // a rename answers with the same state
+    const renamed = await m.req({
+      method: "PATCH",
+      url: `${conversations()}/${view.id}`,
+      payload: { title: "Renamed" },
+    });
+    expect(renamed.statusCode, renamed.body).toBe(200);
+    expect(
+      (renamed.json() as { conversation: { projectState: unknown } }).conversation.projectState,
+    ).toEqual({ unavailable: "gone" });
   });
 
   it("a conversation without a project stays in free mode", async () => {

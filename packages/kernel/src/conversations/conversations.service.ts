@@ -76,11 +76,44 @@ export interface ConversationView {
    */
   project: { name: string; path: string } | null;
   /**
+   * The latest `project_root` snapshot of its log (project root spec §4.7), however far back:
+   * `loaded` with whether the project's `AGENTS.md` was found, or the reason the project is
+   * `unavailable`; null when no run start has recorded one (a free conversation, a bound one before
+   * its first run). Single-conversation responses compute it; the list queries carry null.
+   */
+  projectState: ProjectState | null;
+  /**
    * What the latest run is doing: `running` (queued or running), `waiting` (an approval or a
    * question), else null. Only the list queries compute it; other responses carry null.
    */
   activity: "running" | "waiting" | null;
 }
+
+/** The state a conversation's latest `project_root` event records ({@link ConversationView}). */
+export type ProjectState =
+  | { loaded: true; agentsMd: boolean }
+  | { unavailable: "gone" | "outside_mode" | "unreadable" | "unsupported" };
+
+/**
+ * SQL for the {@link ProjectState} of the conversation row aliased/named `ref` (a correlated
+ * subquery on the latest `project_root` event, served by `conversation_events_project_root_idx`).
+ */
+function projectStateSql(ref: string) {
+  const id = sql.ref(`${ref}.id`);
+  return sql<ProjectState | null>`(
+    SELECT CASE
+      WHEN pe.payload ? 'unavailable'
+        THEN jsonb_build_object('unavailable', pe.payload->'unavailable'->>'reason')
+      ELSE jsonb_build_object('loaded', true, 'agentsMd', pe.payload ? 'agentsMd') END
+    FROM capybara.conversation_events pe
+    WHERE pe.conversation_id = ${id} AND pe.type = 'project_root'
+    ORDER BY pe.seq DESC LIMIT 1
+  )`;
+}
+
+/** The columns of a single-conversation response: {@link COLUMNS} and its project state. */
+const viewColumns = () =>
+  [...COLUMNS, projectStateSql("conversations").as("project_state")] as const;
 
 /** Escapes `\`, `%` and `_` so user text is matched literally by `LIKE … ESCAPE '\'`. */
 export function escapeLike(s: string): string {
@@ -277,6 +310,7 @@ function toView(r: {
   project_name: string | null;
   project_path: string | null;
   activity?: "running" | "waiting" | null;
+  project_state?: ProjectState | null;
 }): ConversationView {
   return {
     id: r.id,
@@ -298,6 +332,7 @@ function toView(r: {
       r.project_name !== null && r.project_path !== null
         ? { name: r.project_name, path: r.project_path }
         : null,
+    projectState: r.project_state ?? null,
     activity: r.activity ?? null,
   };
 }
@@ -627,7 +662,7 @@ export class ConversationsService {
   } | null> {
     const row = await this.db
       .selectFrom("conversations")
-      .select(COLUMNS)
+      .select(viewColumns())
       .where("org_id", "=", orgId)
       .where("account_id", "=", accountId)
       .where("create_request_id", "=", clientMessageId)
@@ -662,7 +697,7 @@ export class ConversationsService {
     return toView(
       await this.db
         .selectFrom("conversations")
-        .select(COLUMNS)
+        .select(viewColumns())
         .where("id", "=", id)
         .executeTakeFirstOrThrow(),
     );
@@ -683,7 +718,7 @@ export class ConversationsService {
       .updateTable("conversations")
       .set({ title, title_source: "manual" })
       .where("id", "=", conversationId)
-      .returning(COLUMNS)
+      .returning(viewColumns())
       .executeTakeFirstOrThrow();
     await this.eventLog.publishChanged(conversationId, "title");
     return toView(row);
@@ -704,7 +739,7 @@ export class ConversationsService {
       .updateTable("conversations")
       .set({ archived_at: archived ? sql<Date>`now()` : null })
       .where("id", "=", conversationId)
-      .returning(COLUMNS)
+      .returning(viewColumns())
       .executeTakeFirstOrThrow();
     await this.eventLog.publishChanged(conversationId, "archived");
     return toView(row);
@@ -791,7 +826,7 @@ export class ConversationsService {
   private async readable(orgId: string, conversationId: string, viewerAccountId: string) {
     const row = await this.db
       .selectFrom("conversations")
-      .select([...COLUMNS, "kind"])
+      .select([...viewColumns(), "kind"])
       .where("id", "=", conversationId)
       .where("org_id", "=", orgId)
       .where("account_id", "=", viewerAccountId)

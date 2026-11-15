@@ -1,4 +1,4 @@
-import { cleanup, screen, within } from "@testing-library/react";
+import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
@@ -25,7 +25,8 @@ import { expectNoFirstPaintFetch } from "./support/server";
  * Project root spec §4.3, §4.6 (plan Task 12): a new conversation is bound to one of its device's
  * projects from the composer's device picker (自由模式 by default); an existing conversation shows
  * its binding read only; the conversation names its project and whether it loaded (or why it is
- * unavailable) from the latest `project_root` event; the `/` menu groups its entries by source,
+ * unavailable) from the view's `projectState` (the latest `project_root` event, wherever it lies in
+ * the log); the `/` menu groups its entries by source,
  * the project's skills under their own heading.
  */
 
@@ -192,14 +193,19 @@ describe("binding a new conversation to a project (the device picker)", () => {
   });
 });
 
-/** The conversation page's reads for a conversation bound to `core` (or `project`). */
+/**
+ * The conversation page's reads for a conversation bound to `core` (or `project`); its view
+ * carries `projectState` (the state of its latest `project_root`).
+ */
 function chatApi(
   events: unknown[],
   extra: Record<string, (c: Call) => Response | Promise<Response>> = {},
   project: unknown = CORE,
+  projectState: () => unknown = () => null,
 ) {
   return stubApi({
-    [`GET ${BASE}`]: () => json(200, CONV("c1", { deviceId: "e1", project })),
+    [`GET ${BASE}`]: () =>
+      json(200, CONV("c1", { deviceId: "e1", project, projectState: projectState() })),
     [`GET ${BASE}/device`]: () => json(200, { device: envView("e1", "Laptop") }),
     [`GET ${BASE}/events`]: () => json(200, { events }),
     [`GET ${ORG}/agents`]: () => json(200, AGENTS),
@@ -230,7 +236,12 @@ describe("an existing conversation's project", () => {
     "names the project, its root and that AGENTS.md was loaded (%s)",
     async (locale) => {
       resetNavigation("/chat/c1");
-      chatApi([userMsg(1, "hi"), runStarted(2), projectRoot(3, { agentsMd: "Rules." })]);
+      chatApi(
+        [userMsg(1, "hi"), runStarted(2), projectRoot(3, { agentsMd: "Rules." })],
+        {},
+        CORE,
+        () => ({ loaded: true, agentsMd: true }),
+      );
       await renderChatRoute({ locale });
       await screen.findByText("hi");
       const m = locale === "zh" ? zh : en;
@@ -244,7 +255,10 @@ describe("an existing conversation's project", () => {
 
   it("a project without AGENTS.md says so", async () => {
     resetNavigation("/chat/c1");
-    chatApi([userMsg(1, "hi"), runStarted(2), projectRoot(3, {})]);
+    chatApi([userMsg(1, "hi"), runStarted(2), projectRoot(3, {})], {}, CORE, () => ({
+      loaded: true,
+      agentsMd: false,
+    }));
     await renderChatRoute({ locale: "zh" });
     await screen.findByText("hi");
     const text = zh.chat.project.noAgentsMd
@@ -259,12 +273,17 @@ describe("an existing conversation's project", () => {
     async (reason) => {
       for (const locale of ["zh", "en"] as const) {
         resetNavigation("/chat/c1");
-        chatApi([
-          userMsg(1, "hi"),
-          runStarted(2),
-          projectRoot(3, { agentsMd: "Rules." }),
-          projectRoot(4, { unavailable: { reason, message: "Model text." } }),
-        ]);
+        chatApi(
+          [
+            userMsg(1, "hi"),
+            runStarted(2),
+            projectRoot(3, { agentsMd: "Rules." }),
+            projectRoot(4, { unavailable: { reason, message: "Model text." } }),
+          ],
+          {},
+          CORE,
+          () => ({ unavailable: reason }),
+        );
         await renderChatRoute({ locale });
         await screen.findByText("hi");
         const m = locale === "zh" ? zh : en;
@@ -276,6 +295,50 @@ describe("an existing conversation's project", () => {
       }
     },
   );
+
+  it("a snapshot outside the loaded window still shows its state", async () => {
+    resetNavigation("/chat/c1");
+    // the loaded window holds no project_root: only the view knows the latest one
+    chatApi([userMsg(1, "hi"), runStarted(2)], {}, CORE, () => ({
+      loaded: true,
+      agentsMd: true,
+    }));
+    await renderChatRoute({ locale: "zh" });
+    await screen.findByText("hi");
+    const text = zh.chat.project.loaded
+      .replace("{name}", "core")
+      .replace("{path}", ROOT)
+      .replace("{file}", "AGENTS.md");
+    expect(screen.getByText(text)).toBeTruthy();
+  });
+
+  it("a new snapshot from the stream reads the view again", async () => {
+    resetNavigation("/chat/c1");
+    let state: unknown = { loaded: true, agentsMd: true };
+    chatApi(
+      [userMsg(1, "hi"), runStarted(2), projectRoot(3, { agentsMd: "Rules." })],
+      {},
+      CORE,
+      () => state,
+    );
+    await renderChatRoute();
+    await screen.findByText("hi");
+    // the stream's first event ends its catch-up (which reads the side queries again)
+    act(() => {
+      FakeEventSource.instances[0]?.emit("event", userMsg(4, "more"));
+    });
+    await screen.findByText("more");
+    state = { unavailable: "gone" };
+    act(() => {
+      FakeEventSource.instances[0]?.emit(
+        "event",
+        projectRoot(5, { unavailable: { reason: "gone", message: "Model text." } }),
+      );
+    });
+    expect(
+      await screen.findByText(en.chat.project.unavailable.gone.replace("{name}", "core")),
+    ).toBeTruthy();
+  });
 
   it("before its first run only the name shows", async () => {
     resetNavigation("/chat/c1");

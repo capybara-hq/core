@@ -301,6 +301,8 @@ export function useConversation(orgId: string, conversationId: string): Conversa
           const { added } = appendEvents(qc, orgId, conversationId, [e]);
           // The agent changed something for the person: what the pages show may be stale.
           if (added > 0 && isPlatformCallDone(e)) void invalidateAfterPlatformCall(qc);
+          // A run start recorded a new project snapshot: the header's project state is the row's.
+          if (added > 0 && e.type === "project_root") invalidate(c.row());
           // A pending approval changed without a decision: its card reads it again.
           if (added > 0 && e.type === "approval_updated") {
             invalidate(keys.org(orgId).approval(e.payload.approvalId));
