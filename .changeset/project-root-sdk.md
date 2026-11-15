@@ -23,3 +23,6 @@ stops after `MAX_DEVICE_SCAN_DIRS` (500) visits, so every provider answers the s
 `home?: string`, the owner's home directory. `SandboxProvider` gains optional
 `list(h, path, { limit, limits, signal })` and `scan(h, base, { limits, signal })` with the same
 results; a provider without them offers no projects, and its conversations stay in free mode.
+
+The device keeps no project list: the policy summary carries no projects and there are no project
+operations; a device's projects live in the kernel.
