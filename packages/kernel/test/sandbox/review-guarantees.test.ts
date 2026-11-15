@@ -60,6 +60,16 @@ const NEVER_ALLOWED: Record<string, string[]> = {
     "ln -sf /tmp/evil ~/.zshrc",
     "cp /tmp/evil ~/.zshrc",
     "crontab /tmp/c",
+    "git config --global core.pager evil",
+    "git config --global --add include.path /tmp/x",
+    "git config --global --unset user.name",
+    "git config --global --replace-all user.name x",
+    "git config --global --edit",
+    "git config --global -e",
+    "git config set --global user.name x",
+    "git config unset --global user.name",
+    "git config --system --remove-section user",
+    "git config --global --get-regexp proxy --unset http.proxy",
   ],
   "change a remote without asking": [
     "gh api -X DELETE repos/o/r",
@@ -292,6 +302,23 @@ describe("the routes the second review found", () => {
       "tsx src/index.ts",
       "gh api repos/a/b",
       "gh api graphql -f query='{ viewer { login } }'",
+    ]) {
+      expect(reviewRules(line, facts()).outcome, line).toBe("allow");
+    }
+  });
+
+  it("reading the global git config is not a change to it", () => {
+    for (const line of [
+      "git config --global --get user.name",
+      "git config --global --get-all include.path",
+      "git config --global --get-regexp 'proxy|http'",
+      "git config --global --get-urlmatch http https://github.com",
+      "git config --global --list",
+      "git config --global -l",
+      "git config --global --list --show-origin",
+      "git config --system --list --name-only",
+      "git config get --global user.name",
+      "git config list --global",
     ]) {
       expect(reviewRules(line, facts()).outcome, line).toBe("allow");
     }

@@ -171,4 +171,4 @@
 {"command":"scp -r dist user@host:/var/www","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.network"]}
 {"command":"ls ~/.ssh","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"ask","rules":["ask.ssh"]}
 {"command":"cat ~/.gitconfig","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"ask","rules":["allow.read","ask.shell-config"]}
-{"command":"git config --global --get user.email","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"ask","rules":["ask.shell-config"]}
+{"command":"git config --global --get user.email","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.git"]}
