@@ -355,6 +355,9 @@ git commit -m "feat(kernel): the device project routes"
 
 ### Task 10: Free-mode fallbacks and notices
 
+> **Absorbed during execution (2026-11-15):** the model-visible line for an unavailable project is Task 7's (it owns the `project_root` renderer), the fallback of the working directory to the device workspace is Task 8's, and the notice in the web is Task 12's (the conversation header shows the project's state). Nothing is left for this task.
+
+
 **Files:**
 - Modify: `packages/kernel/src/runtime/project/knowledge.service.ts`
 - Modify: the conversation surface that renders a notice (the `device_paths` notice path is the model)
