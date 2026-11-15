@@ -348,7 +348,7 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
       live,
     );
     expect(r.stdout).toBe("started\n");
-    expect(sleeps()).toBe("2");
+    await until(() => sleeps() === "2");
     await ex.killTagged(["bg"]);
     // a killed process lingers until the container's init reaps it: wait for that, not a fixed time
     await until(() => sleeps() === "1");
@@ -356,7 +356,7 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
 
   it("killAll stops everything, background children included", async () => {
     await ex.exec(execArgs("(sleep 300 >/dev/null 2>&1 &)", { tag: "bg2" }), live);
-    expect(sleeps()).toBe("2");
+    await until(() => sleeps() === "2");
     await ex.killAll();
     await until(() => sleeps() === "1");
   });
