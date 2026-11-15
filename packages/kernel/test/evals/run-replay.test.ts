@@ -277,6 +277,7 @@ async function seedRun(
   catalog?: EventPayload<"skills_catalog">,
   runContext?: EventPayload<"run_context">,
   pluginContexts: EventPayload<"plugin_context">[] = [],
+  projectRoot?: EventPayload<"project_root">,
 ): Promise<{ userSeq: number; interjectionSeq: number | null }> {
   const [msg] = await eventLog.append(convId, [
     {
@@ -350,6 +351,9 @@ async function seedRun(
       ? [{ type: "run_context" as const, runId, payload: runContext }]
       : []),
     ...pluginContexts.map((payload) => ({ type: "plugin_context" as const, runId, payload })),
+    ...(projectRoot !== undefined
+      ? [{ type: "project_root" as const, runId, payload: projectRoot }]
+      : []),
     call(1, userSeq),
   ]);
   let interjectionSeq: number | null = null;
@@ -1017,6 +1021,36 @@ describe("整轮回放", () => {
     expect(copied[0]?.runId).toBeNull();
     expect(new Set(copied.slice(1).map((e) => e.runId)).size).toBe(1);
     expect(copied[1]?.runId).not.toBeNull();
+  });
+
+  it("the run's project_root event is copied unchanged (project root spec §5)", async () => {
+    const setId = await createSet();
+    const conv = await createConv(admin, orgId, agentId);
+    const projectRoot: EventPayload<"project_root"> = {
+      project: "ledger",
+      root: "/Users/u/src/ledger",
+      agentsMd: "Run the ledger checks.",
+      skills: [{ name: "close-month", description: "Close the month.", digest: "a".repeat(64) }],
+    };
+    await seedRun(
+      conv,
+      "project-root-copy",
+      'tool:plugin__tools-count__count:{"n":1}',
+      [{ name: "plugin__tools-count__count", input: { n: 1 }, content: "recorded count" }],
+      undefined,
+      undefined,
+      undefined,
+      [],
+      projectRoot,
+    );
+    await addCase(setId, conv, "project-root-copy");
+    const run = await startRun(setId, {});
+    expect((await finished(run.id)).status).toBe("completed");
+    const [r] = await results(run.id);
+    expect(r?.status, JSON.stringify(r?.error)).toBe("done");
+    const copied = (await evalEvents(r as EvalResultView)).filter((e) => e.type === "project_root");
+    expect(copied.map((e) => e.payload)).toEqual([projectRoot]);
+    expect(copied[0]?.runId).not.toBeNull();
   });
 
   /** A fork invocation's run (phase D) written by hand: dispatch, report (optional), one reply. */

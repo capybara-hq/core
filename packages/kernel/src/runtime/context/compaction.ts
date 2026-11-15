@@ -346,6 +346,8 @@ function transcriptLine(e: ConversationEvent): string | null {
     case "skill_fork_result":
       return `User: ${e.payload.text}`;
     // device_paths is left out too: the latest one follows the summary (build.ts)
+    // project_root likewise (project root spec §4.5): the latest one follows the summary whole,
+    // so the summary never carries the project's instructions in a paraphrase
     // run_context is left out: its current values follow the summary anyway (build.ts), and
     // stale names should not be summarised as current
     case "tool_result":

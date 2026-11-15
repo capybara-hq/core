@@ -44,6 +44,7 @@ import { MORE_SKILLS_HEADER } from "../../src/runtime/context/skills.js";
 import { WRAP_UP_REMINDER } from "../../src/runtime/model-call.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { RUN_CONTEXT_CLOCK } from "../../src/runtime/run-context.service.js";
+import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { ScheduledTaskFirer } from "../../src/schedules/fire.js";
 import { ScheduledTaskStore } from "../../src/schedules/store.js";
 import { catalogLineChars, SkillsCatalogService } from "../../src/skills/catalog.js";
@@ -993,6 +994,68 @@ describe("reconstructRequest：基线零漂移", () => {
     const lastSys = (sent.at(-1)?.messages ?? []).filter((m) => m.role === "system");
     expect(lastSys.some((m) => String(m.content).includes("prefers tea"))).toBe(false);
     await expectZeroDrift(conv, await snapshotOf(conv));
+  });
+
+  it("project_root events, usable then unavailable, before and after a summary (project root spec §5): zero drift, no device touched", async () => {
+    reset();
+    const withSandbox = vi.spyOn(k.app.get(SandboxService), "withSandbox");
+    try {
+      const agentId = await createAgent({ provider: "model-fake", model: "fake-small" });
+      const conv = await createConv(owner, orgId, agentId);
+      // written directly, as a bound run start records them: the runtime only renders the log
+      const record = async (key: string, payload: EventPayload<"project_root">) => {
+        await k.app
+          .get(EventLog)
+          .append(conv, [
+            { type: "project_root", idemKey: `test_project_root:${conv}:${key}`, payload },
+          ]);
+      };
+      const usable: EventPayload<"project_root"> = {
+        project: "ledger",
+        root: "/Users/u/src/ledger",
+        agentsMd: "# Ledger\n\nRun the ledger checks before you answer.",
+        skills: [{ name: "close-month", description: "Close the month.", digest: "a".repeat(64) }],
+      };
+      const gone: EventPayload<"project_root"> = {
+        project: "ledger",
+        root: "/Users/u/src/ledger",
+        skills: [],
+        unavailable: {
+          reason: "gone",
+          message: "The project's root /Users/u/src/ledger no longer exists on the device.",
+        },
+      };
+      await record("1", usable);
+      let n = 0;
+      for (let i = 0; i < 5; i++) {
+        if (i === 4) await record("2", gone);
+        await postMessage(owner, orgId, conv, `long:${300 + i}`);
+        await waitForTerminal(db, conv, ++n, 30_000);
+      }
+      const events = await eventsOf(db, conv);
+      expect(events.some((e) => e.type === "compaction_summary")).toBe(true);
+      const systemTexts = (r: ModelRequest | undefined) =>
+        (r?.messages ?? []).filter((m) => m.role === "system").map((m) => String(m.content));
+      // before any summary: at its position, with AGENTS.md and the project:<name> skill
+      const first = systemTexts(sent[0]).find((t) => t.includes("Run the ledger checks"));
+      expect(first).toContain("- project:close-month: Close the month.");
+      // Skill is offered by the project's skills alone (the agent has no skills)
+      expect(sent[0]?.tools.map((t) => t.name)).toContain("Skill");
+      // a summary covering it: the project's instructions follow the summary again
+      const covered = sent.find(
+        (r) =>
+          JSON.stringify(r.messages[0]?.content ?? "").includes("<conversation_summary>") &&
+          systemTexts(r).some((t) => t.includes("Run the ledger checks")),
+      );
+      expect(covered).toBeDefined();
+      // the unavailable event: its line in the last request, the earlier text gone after a summary
+      const last = systemTexts(sent.at(-1));
+      expect(last.some((t) => t.includes("no longer exists on the device"))).toBe(true);
+      await expectZeroDrift(conv, await snapshotOf(conv));
+      expect(withSandbox).not.toHaveBeenCalled();
+    } finally {
+      withSandbox.mockRestore();
+    }
   });
 
   it("run context: snapshots, a rename, a day change, sender lines and a compaction over them: zero drift", async () => {

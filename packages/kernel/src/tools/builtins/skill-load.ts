@@ -7,6 +7,7 @@ import {
   SKILL_INVOCATION_LIMITS,
   SKILLS_SANDBOX_ROOT,
   skillDigest,
+  skillInvocation,
   skillSandboxDir,
   skillSandboxPath,
   ToolError,
@@ -18,17 +19,24 @@ import type { EventLog } from "../../conversations/event-log.js";
 import type { ConversationEvent } from "../../conversations/events.js";
 import type { KernelSchemaDb, SkillManifest } from "../../db/kernel-schema.js";
 import { ApiError } from "../../errors.js";
+import {
+  callableProjectSkills,
+  projectSkillName,
+  projectSkillOf,
+} from "../../runtime/context/project-root.js";
 import { type CatalogSkill, latestInvocation } from "../../runtime/context/skills.js";
+import { PROJECT_SKILLS_DIR, SKILL_MD_MAX_BYTES } from "../../runtime/project/knowledge.js";
 import { dispatchOfChildRun } from "../../runtime/subagents/child.js";
 import { resolveSkillForkType } from "../../runtime/subagents/roster.js";
 import { invocationOf, resolveSkills } from "../../skills/catalog.js";
 import { PLATFORM_SOURCE, skillFileStore } from "../../skills/usable.js";
 import { AGENT_TOOL, SANDBOX_TOOL_NAMES } from "../builtin-names.js";
-import type { BuiltinCallContext, BuiltinTool } from "../registry.js";
+import type { BuiltinCallContext, BuiltinResult, BuiltinTool } from "../registry.js";
 import {
   clip,
   display,
   inSandbox,
+  mapSandboxError,
   type SandboxSession,
   type SandboxToolDeps,
   sandboxBaseTimeoutMs,
@@ -508,6 +516,122 @@ async function forkLine(
   return type.inRoster ? forkAvailableText(type.agentType) : FORK_UNAVAILABLE_TEXT;
 }
 
+// ---- project skills (project root spec §4.5) ----
+
+/** Stands in for the skills root while a project skill renders, then becomes its directory. */
+const PROJECT_DIR_SENTINEL = "\u0000project-skill-root";
+/** A digest of the right shape for the renderer; only inside the sentinel directory. */
+const PROJECT_DIR_DIGEST = "000000000000";
+
+const NO_PROJECT_TEXT = (asked: string): string =>
+  `Skill "${clip(asked, 80)}" is a project skill, but this conversation has no project; call Skill with a name from the skills list instead.`;
+
+const projectUnavailableText = (asked: string, message: string): string =>
+  `Skill "${clip(asked, 80)}" cannot be loaded: the project is not available this run. ${message} Call Skill only with names from the skills list, or do the task without the project's skills.`;
+
+const notInProject = (asked: string, project: string, names: readonly string[]): string => {
+  const shown = names.slice(0, MAX_LISTED_NAMES);
+  const more = names.length > shown.length ? ", …" : "";
+  return `Skill "${clip(asked, 80)}" is not one of the skills of the project "${project}"; call Skill with one of the project's skills (${shown.length === 0 ? "it lists none" : `${shown.join(", ")}${more}`}).`;
+};
+
+const projectFileGoneText = (asked: string, path: string): string =>
+  `Skill "${asked}" cannot be loaded: ${path} is no longer on the device. Check the project's .agents/skills directory with Glob or Read, or do the task without the skill.`;
+
+const projectReadFailedText = (asked: string, path: string, why: string): string =>
+  `Skill "${asked}" cannot be loaded: reading ${path} on the device failed (${clip(why, 300)}). Retry once; if it fails again, do the task without the skill.`;
+
+const projectParseText = (asked: string, path: string, why: string): string =>
+  `Skill "${asked}" cannot be loaded: ${path} is not a valid SKILL.md (${clip(why, 300)}). Ask the user to fix it, or do the task without the skill.`;
+
+/**
+ * `Skill` for `project:<name>`: resolved from the latest `project_root` of the root conversation
+ * (a sub-agent's call uses its root's, which only the root records), then
+ * `<root>/.agents/skills/<name>/SKILL.md` is read through the conversation's device and its body
+ * rendered (args, `${CLAUDE_SKILL_DIR}` = the skill's directory on the device). Nothing is copied:
+ * the skill's other files are already in the project. The result is an ordinary tool result in
+ * the log, so a replay renders it as recorded and never reads the device.
+ */
+async function loadProjectSkill(
+  deps: SkillLoadDeps,
+  ctx: BuiltinCallContext,
+  asked: string,
+  bare: string,
+  args: string | undefined,
+): Promise<BuiltinResult> {
+  const latest = await deps.eventLog.latestOfType(sandboxConversationOf(ctx), "project_root");
+  if (latest?.type !== "project_root") throw new ToolError(NO_PROJECT_TEXT(asked));
+  const project = latest.payload;
+  if (project.unavailable !== undefined) {
+    throw new ToolError(projectUnavailableText(asked, project.unavailable.message));
+  }
+  const skills = callableProjectSkills(project);
+  if (!skills.some((s) => s.name === bare)) {
+    throw new ToolError(
+      notInProject(
+        asked,
+        project.project,
+        skills.map((s) => projectSkillName(s.name)),
+      ),
+    );
+  }
+  const dir = `${project.root}/${PROJECT_SKILLS_DIR}/${bare}`;
+  const path = `${dir}/${SKILL_ENTRY_FILE}`;
+  const r = await inSandbox(deps, ctx, async (s) => {
+    try {
+      return await s.p.readFile(s.h, path, { maxBytes: SKILL_MD_MAX_BYTES, signal: s.signal });
+    } catch (e) {
+      // the sandbox's own failures (offline, lost files, ...) are mapped by inSandbox
+      if (mapSandboxError(e, undefined) !== e || ctx.signal.aborted) throw e;
+      throw new ToolError(
+        projectReadFailedText(asked, path, e instanceof Error ? e.message : String(e)),
+      );
+    }
+  });
+  const read = r.value;
+  if (read === null) throw new ToolError(projectFileGoneText(asked, path));
+  let parsed: ReturnType<typeof parseSkillMd>;
+  try {
+    parsed = parseSkillMd(new TextDecoder("utf-8", { fatal: true }).decode(read.data), {
+      invocationKeys: false,
+    });
+  } catch {
+    throw new ToolError(projectParseText(asked, path, "it is not UTF-8 text"));
+  }
+  if ("errors" in parsed)
+    throw new ToolError(projectParseText(asked, path, parsed.errors.join("; ")));
+  if (parsed.name !== bare) {
+    throw new ToolError(
+      projectParseText(asked, path, `its name "${clip(parsed.name, 80)}" is not its directory's`),
+    );
+  }
+  let instructions: string;
+  try {
+    instructions = renderSkillBody(
+      parsed.body.trim(),
+      skillInvocation(parsed.frontmatter),
+      args ?? "",
+      bare,
+      PROJECT_DIR_DIGEST,
+      PROJECT_DIR_SENTINEL,
+    ).replaceAll(skillSandboxDir(bare, PROJECT_DIR_DIGEST, PROJECT_DIR_SENTINEL), dir);
+  } catch (e) {
+    if (!(e instanceof RangeError)) throw e;
+    throw new ToolError(
+      `Skill "${asked}" cannot be rendered: ${e.message}; check the args against the skill's placeholders and retry with shorter args.`,
+    );
+  }
+  const text = [
+    `Loaded project skill "${asked}" from ${path}${read.truncated ? " (cut at 1 MiB)" : ""}.`,
+    `Its other files, if any, are in ${dir}/ on the device; use them there.`,
+    `<skill name="${asked}">\n${instructions}\n</skill>`,
+  ].join("\n\n");
+  return {
+    content: [{ type: "text", text: withNotices(r.notices, text) }],
+    display: display(`加载项目技能 ${asked}`, `Loaded project skill ${asked}`),
+  };
+}
+
 /** 内置工具 `Skill`（见文件头）。 */
 export function skillLoadTool(deps: SkillLoadDeps): BuiltinTool {
   return {
@@ -517,6 +641,9 @@ export function skillLoadTool(deps: SkillLoadDeps): BuiltinTool {
     timeoutMs: () => sandboxBaseTimeoutMs(deps.config.get()),
     async run(input, ctx: BuiltinCallContext) {
       const { skill: asked, args } = input as { skill: string; args?: string };
+      // project root spec §4.5: the prefix is the project's, never a plugin's qualified name
+      const bare = projectSkillOf(asked);
+      if (bare !== undefined) return loadProjectSkill(deps, ctx, asked, bare, args);
       const snap = await deps.eventLog.latestOfType(ctx.conversationId, "skills_catalog");
       const skills = snap?.payload.skills ?? [];
       let entry = findEntry(skills, asked);

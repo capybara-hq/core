@@ -292,8 +292,13 @@ export function skillLoadOffered(
    * files. Derived from the log, so a replay recomputes it.
    */
   invoked = false,
+  /**
+   * Project root spec §4.5: the log recorded a bound project with skills (`hasProjectSkills`),
+   * which `Skill` loads as `project:<name>`. Derived from the log, never taken back.
+   */
+  projectSkills = false,
 ): boolean {
-  return latest !== undefined || invoked;
+  return latest !== undefined || invoked || projectSkills;
 }
 
 /** Whether `events` hold a person's skill invocation (a `user_message` with `skill`). */
@@ -311,8 +316,16 @@ export async function skillLoadOfferedIn(
     .selectFrom("conversation_events")
     .select("seq")
     .where("conversation_id", "=", conversationId)
-    .where("type", "=", "user_message")
-    .where(sql<boolean>`payload -> 'skill' IS NOT NULL`)
+    .where((eb) =>
+      eb.or([
+        eb.and([eb("type", "=", "user_message"), sql<boolean>`payload -> 'skill' IS NOT NULL`]),
+        // a project with skills (hasProjectSkills)
+        eb.and([
+          eb("type", "=", "project_root"),
+          sql<boolean>`jsonb_array_length(payload -> 'skills') > 0`,
+        ]),
+      ]),
+    )
     .limit(1)
     .executeTakeFirst();
   return row !== undefined;
