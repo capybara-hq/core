@@ -15,6 +15,14 @@ provider test infrastructure; real E2B only with configured test credentials and
 
 **Spec:** `docs/superpowers/specs/2026-11-16-conversation-approval-profiles-design.md`
 
+## Execution status (2026-11-16)
+
+The bounded available investigation is complete; the feature and feasibility gate remain open.
+See the [results report](../specs/2026-11-16-permission-profile-feasibility-results.md).
+Checked items mean the stated investigation/evidence handling was performed, not that a provider
+passed the gate. All aggregate profiles remain unverified. Provider workers wrote disjoint scratch
+results, followed by one documentation synthesis; no production implementation was added.
+
 ## Global constraints
 
 - The default is Approve for me; all three options use identical neutral text/icon colors.
@@ -75,11 +83,11 @@ Failure to enforce a required scope is `unsupported`; missing access or an incon
 The fixture contains `deviceWorkspace`, a separate `project`, `sibling`, `syntheticSecrets`,
 `scratch`, `skills`, and resource cleanup callbacks. It contains no user data.
 
-- [ ] Write collector tests: reject a demonstrated result with a skipped check, a missing positive
+- [x] Write collector tests: reject a demonstrated result with a skipped check, a missing positive
   network control, missing concurrency handshake, changed device identity or incomplete cleanup.
-- [ ] Run `node --test "$SPIKE_ROOT/probe.test.mjs"`; verify the tests fail before implementing
+- [x] Run `node --test "$SPIKE_ROOT/probe.test.mjs"`; verify the tests fail before implementing
   `validateEvidence`, then implement it and require all collector tests to pass.
-- [ ] Define the same mandatory scenarios for every adapter:
+- [x] Define the same mandatory scenarios for every adapter:
   1. Read a synthetic package.json, run inline Python/Node and edit the selected project outside
      `deviceWorkspace`; verify output and resulting bytes.
   2. Refuse an outside write and a synthetic-secret read; verify that the sibling bytes remain
@@ -97,7 +105,7 @@ The fixture contains `deviceWorkspace`, a separate `project`, `sibling`, `synthe
      remain visible before/after profile changes without recreating the device.
   8. Give trusted preparation a skills-write capability; ensure the next user operation cannot
      reuse it. A following restricted file operation cannot inherit the preceding Full grant.
-- [ ] Use readiness messages/barriers and bounded condition waits, never fixed sleeps to order
+- [x] Use readiness messages/barriers and bounded condition waits, never fixed sleeps to order
   the concurrency assertions. Track every created resource before using it and clean up on error
   and cancellation; do not delete resources by a broad name prefix.
 
@@ -112,19 +120,25 @@ runtime and cannot establish actual confinement.
 **Interfaces:** Implements `probeProvider` for the current macOS runtime. Record Linux as unverified
 unless a disposable supported Linux environment is actually exercised.
 
-- [ ] Resolve the installed runtime's types/source and platform dependencies. Establish whether
+- [x] Resolve the installed runtime's types/source and platform dependencies. Establish whether
   its per-wrap configuration can express independent roots and egress without `updateConfig`
   affecting other operations. Record the exact API used; do not infer support from its name.
-- [ ] Run the scenarios against today's executor as a baseline; record the outside-project and
+- [x] Run the scenarios against today's executor as a baseline; record the outside-project and
   stale-grant limitations without changing production code.
-- [ ] If a supported operation-local mechanism exists, implement only the throwaway adapter and
+- [x] If a supported operation-local mechanism exists, implement only the throwaway adapter and
   run `node "$SPIKE_ROOT/probe.mjs" local`. Full operations use the synthetic fixture scope and
   must not change the connected device's policy or the process-wide runtime configuration.
-- [ ] Require positive controls and all mandatory scenarios for a demonstrated result. On an
+- [x] Require positive controls and all mandatory scenarios for a demonstrated result. On an
   unsupported mechanism, retain a minimal reproducer and stop that adapter rather than building
   a replacement sandbox. Dispose the isolated runtime and verify fixture cleanup.
 
 ### Task 3: Validate Docker without changing its outer boundary
+
+Disposition: bounded primitive investigation and cleanup complete. The unchecked compound steps
+below were only partially exercised: the provider import/exact context image were unavailable;
+CLI reproduced hardening and tested namespace refusal, Landlock filesystem and direct TCP ports.
+Proxy-aware operation network enforcement and the full provider scenarios remain unverified.
+The namespace route is unsupported; this does not establish whole-architecture impossibility.
 
 **Files:** Create `SPIKE_ROOT/docker.mjs`; append evidence to the results document.
 
@@ -134,7 +148,7 @@ unless a disposable supported Linux environment is actually exercised.
 **Interfaces:** Implements `probeProvider` for a uniquely labelled disposable provider device,
 retaining the same instance and shared volumes throughout the scenarios.
 
-- [ ] Record the actual configured Docker runtime, capabilities, seccomp, user and mounts. Use
+- [x] Record the actual configured Docker runtime, capabilities, seccomp, user and mounts. Use
   existing test images/helpers where possible, and record image digests. Never select a weaker
   runtime to make the result pass.
 - [ ] Reproduce today's device-wide roots/network behavior on disposable data. Investigate a
@@ -149,6 +163,10 @@ retaining the same instance and shared volumes throughout the scenarios.
 
 ### Task 4: Validate E2B with an existing real test environment
 
+Disposition: prescribed unavailable-environment path complete. No configured existing test
+template; all live VM/runtime/network/deletion steps below remain unexecuted and unchecked.
+The collector's host fixture was removed; no remote resource existed to delete.
+
 **Files:** Create `SPIKE_ROOT/e2b.mjs`; append evidence to the results document.
 
 **Read-only references in plugins:** `plugins/sandbox-e2b/src/provider.ts`, `src/e2b-api.ts`,
@@ -157,7 +175,7 @@ retaining the same instance and shared volumes throughout the scenarios.
 **Interfaces:** Implements `probeProvider` for one disposable microVM using configured
 `CAPYBARA_TEST_E2B_API_KEY` and an existing `CAPYBARA_TEST_E2B_TEMPLATE`.
 
-- [ ] Check only presence of test credentials/template without printing values. If unavailable,
+- [x] Check only presence of test credentials/template without printing values. If unavailable,
   produce an unverified result and continue to Task 5. Do not substitute the running device,
   build a new template or request a production API key.
 - [ ] Create one uniquely identified test VM with bounded lifetime, record its identity before
@@ -174,17 +192,22 @@ retaining the same instance and shared volumes throughout the scenarios.
 
 ### Task 5: Review evidence and return the architectural decision
 
+Disposition: results/design synthesis and fresh 31-test scratch verification complete. Historical
+negative evidence remains recorded; all three authoritative results validate structurally. The
+gate-pass branch is inapplicable and stays unchecked. Final documentation diff review/commit is
+reserved for the controller after independent review; this worker made no commit.
+
 **Files:** Complete the results document; update the design and plan status only.
 
 **Interfaces:** Consumes all provider evidence; produces a concise local/Docker/E2B comparison,
 minimal reproduction commands, exact limitations and a recommended next design decision.
 
-- [ ] Run `node --test "$SPIKE_ROOT/probe.test.mjs"` again and validate every collected result.
+- [x] Run `node --test "$SPIKE_ROOT/probe.test.mjs"` again and validate every collected result.
   Include negative results and exact cleanup state. Sanitize logs before retaining evidence;
   never commit credentials, bearer tokens, user file contents or raw service configuration.
-- [ ] Check that baseline limitations are distinguished from experimentally demonstrated
+- [x] Check that baseline limitations are distinguished from experimentally demonstrated
   mechanisms. A demonstrated primitive is not a completed product integration.
-- [ ] If a provider fails the gate, present the concrete tradeoff to the maintainer: revise the
+- [x] If a provider fails the gate, present the concrete tradeoff to the maintainer: revise the
   single-instance architecture, restrict supported profiles/devices, or defer the feature.
   Do not choose one implicitly. An unverified E2B result keeps the cloud completion gate open.
 - [ ] If the gate passes, revise the design around the proven operation context and capability
@@ -196,6 +219,6 @@ minimal reproduction commands, exact limitations and a recommended next design d
 ## Self-review
 
 This plan covers only the spec's feasibility gate. Every required gate behavior is represented in
-Task 1 and exercised by Tasks 2–4; Task 5 prevents unsupported or missing evidence from becoming a
-support claim. All five Review Focus conditions have explicit checks. Full product behavior and
+Task 1; Tasks 2–4 record actual coverage and explicitly unverified paths. Task 5 prevents
+unsupported or missing evidence from becoming a support claim. All five Review Focus conditions have explicit checks. Full product behavior and
 cross-replica/replay tests deliberately remain for the later reviewed implementation plan.

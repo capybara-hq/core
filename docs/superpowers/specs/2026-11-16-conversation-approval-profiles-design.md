@@ -4,7 +4,9 @@ Status: product model and technical direction approved by the maintainer on 2026
 conversation-independent permissions, device/scope-bound Full access consent, and applying profile
 changes to subsequent operations while existing work retains its starting grant. The bounded
 feasibility plan was approved for subagent execution on the same date; product implementation
-follows the gate and a further reviewed design and plan.
+follows the gate and a further reviewed design and plan. The bounded investigation is complete;
+its [results](2026-11-16-permission-profile-feasibility-results.md) leave all three aggregate
+provider profiles unverified. The feature remains unimplemented.
 
 ## Intent and evidence
 
@@ -109,9 +111,9 @@ trusted, operation-scoped execution boundary under the actual local/Docker/E2B r
 change shared instance policy to temporarily elevate one conversation, and do not weaken an outer
 container's seccomp/capabilities to make a demonstration pass.
 
-The proposed first step is a bounded throwaway feasibility spike, after maintainer approval of this
-technical direction. It is not product implementation and its artifacts are not kept as production
-code without a later reviewed design and plan. It must demonstrate:
+The approved bounded throwaway feasibility spike has completed its available investigation.
+Its artifacts are not production code and require a later reviewed design and plan before product
+integration. The gate still requires all of the following demonstrations:
 
 1. A restricted operation can read/edit the selected project and execute ordinary inline code,
    but cannot write outside approved roots or reach an unapproved network destination.
@@ -136,6 +138,31 @@ Both official cloud providers must have demonstrated behavior before this featur
 complete. Third-party or unupgraded providers must report unsupported profiles before execution;
 never fall back to host/environment execution under a restricted profile. The full implementation
 plan follows a revised design incorporating the spike results.
+
+### Evidence status and remaining proofs (2026-11-16)
+
+The [results report](2026-11-16-permission-profile-feasibility-results.md) separates current
+integration, runtime primitives and missing product integration. Local macOS passed seven of eight
+experimental scenarios; native operation-local scope remains missing. The fixed deny-default
+network experiment passed controlled checks, but runtime command IDs are attribution rather than
+an authority boundary; discovery/replay resistance remains unverified. Cancellation covered known
+registered groups, not arbitrary detached rediscovery. Linux was not exercised.
+
+Under unchanged Docker hardening the tested nested-namespace route returned EPERM. Landlock
+provided a limited per-process filesystem boundary, but stat metadata stayed visible and its
+port-based TCP rule allowed another address at the permitted port. The actual provider could not
+load against the installed SDK, and the exact build-context image was unavailable; Docker CLI
+reproduced the relevant hardening, not complete provider integration. E2B had no configured test
+template, so no VM/API/runtime experiment occurred. Missing current API scope or environment is
+not evidence that the shared-device architecture is impossible.
+
+Preserve the approved architecture while obtaining native grant/skills separation, enforceable
+network authority, safe detached cancellation, actual Docker provider/native/network/concurrency
+coverage, Linux coverage and E2B runtime proof in one existing test environment. No SDK signatures
+or new product decisions are established by this evidence. A full product plan remains premature;
+if a remaining required boundary is proven infeasible, the maintainer must explicitly choose an
+architecture change, narrower supported profiles/devices or deferral. The existing cloud completion
+gate remains unchanged.
 
 ## Device and execution model
 
