@@ -146,7 +146,7 @@ describe("接受邀请页（AuthPage）", () => {
       expect(screen.getByText(`${en.errors[group][key]}`)).toBeTruthy();
       expect(screen.queryByRole("button", { name: en.invite.accept })).toBeNull();
       await userEvent.setup().click(screen.getByRole("button", { name: en.invite.goHome }));
-      expect(router.replace).toHaveBeenCalledWith("/");
+      expect(navigateBrowser).toHaveBeenCalledWith("/");
     },
   );
 });

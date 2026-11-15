@@ -127,7 +127,7 @@ export default function InviteView({ token }: { token: string }) {
               {tc("retry")}
             </Button>
           )}
-          <Button density="prominent" onClick={() => router.replace(HOME_PATH)}>
+          <Button density="prominent" onClick={() => navigateBrowser(HOME_PATH)}>
             {t("goHome")}
           </Button>
         </Stack>
