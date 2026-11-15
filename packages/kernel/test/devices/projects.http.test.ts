@@ -427,6 +427,30 @@ describe("device projects", () => {
     expect((sandboxed.json() as { candidates: unknown[] }).candidates).toEqual([]);
   });
 
+  it("refuses a root above the owner's home, without asking the device; the home itself is fine", async () => {
+    const d = await owned();
+    const machine = await connect(d);
+    // `/home` (and `/Users`) whatever the home, `/`, and every ancestor of the reported home
+    for (const path of ["..", "../..", "../../Users"]) {
+      const res = await add(d.req, d.deviceId, { path, name: "wide" });
+      expect(res.statusCode, `${path}: ${res.body}`).toBe(422);
+      expect(errCode(res)).toBe("device.project_path_too_broad");
+    }
+    expect(reqsOf(machine, "list")).toEqual([]);
+    expect(await storedOf(d.deviceId)).toEqual([]);
+    expect((await add(d.req, d.deviceId, { path: "", name: "me" })).statusCode).toBe(201);
+  });
+
+  it("refuses every ancestor of a home outside /home and /Users", async () => {
+    const d = await owned();
+    const machine = await connect(d, { ...AUTO, home: "/var/lib/svc" });
+    const res = await add(d.req, d.deviceId, { path: "..", name: "lib" });
+    expect(res.statusCode, res.body).toBe(422);
+    expect(errCode(res)).toBe("device.project_path_too_broad");
+    expect((res.json() as { error: { message: string } }).error.message).toContain("/var/lib");
+    expect(reqsOf(machine, "list")).toEqual([]);
+  });
+
   it("auto mode without a reported home refuses a relative path", async () => {
     const d = await owned();
     const { home: _home, ...noHome } = AUTO;

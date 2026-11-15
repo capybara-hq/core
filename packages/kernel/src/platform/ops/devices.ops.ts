@@ -444,6 +444,10 @@ export class DevicesOperations implements OnModuleInit {
             next: "Check the path with devices.project-candidates or ask the person for it.",
           },
           {
+            code: "device.project_path_too_broad",
+            next: "Pass the project's own directory: the owner's home or a directory below it, never / or an ancestor of the home.",
+          },
+          {
             code: "device.project_path_unreadable",
             next: "Pass a directory the device can read (not a file).",
           },

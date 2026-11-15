@@ -135,6 +135,22 @@ const outsideMode = (path: string, mode: SandboxMode): ApiError =>
       ? `${clipped(path)} is outside the device's workspace, the only directory it can read in sandbox mode`
       : `${clipped(path)} is outside the device's workspace, the only directory a cloud device can read`,
   );
+const tooBroad = (path: string): ApiError =>
+  new ApiError(
+    "device.project_path_too_broad",
+    `${clipped(path)} holds the owner's home directory (or other people's): pick the project's own directory, the home or below it`,
+  );
+
+/**
+ * `path` lies above the owner's home: `/`, `/home` and `/Users` whatever the home, and every
+ * ancestor of the reported `home`. Never stored as a project (the working root would fall back for
+ * it anyway, project root §4.3); the home itself may be one.
+ */
+function aboveHome(path: string, home: string | null): boolean {
+  if (path === "/" || path === "/home" || path === "/Users") return true;
+  return home !== null && home !== path && home.startsWith(`${path}/`);
+}
+
 const homeUnknown = (): ApiError =>
   new ApiError(
     "device.project_home_unknown",
@@ -276,7 +292,8 @@ export class DeviceProjectsService {
 
   /**
    * Adds a project: `path` is resolved against the base of the device's current mode and must
-   * stay inside what that mode reads; `name` defaults to the directory's basename. The device is
+   * stay inside what that mode reads and not lie above the owner's home ({@link aboveHome},
+   * `device.project_path_too_broad`); `name` defaults to the directory's basename. The device is
    * asked `list(path, { limit: 1 })` first, outside any transaction: an answer (even no entries)
    * is a readable directory, null a missing one, an error a file, an unreadable path or one the
    * device refused in its mode; each is a readable refusal. Then the insert, serialized per device.
@@ -546,6 +563,7 @@ function resolve(scope: Scope, workspace: string, relative: string): string {
   if (validateSandboxPathShape(path).length > 0 || !withinMode(scope, path, workspace)) {
     throw outsideMode(path, scope.mode);
   }
+  if (aboveHome(path, scope.home)) throw tooBroad(path);
   return path;
 }
 

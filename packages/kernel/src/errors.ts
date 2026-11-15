@@ -413,6 +413,11 @@ export const ERROR_CODES = {
   "device.project_outside_mode": 422,
   /** Auto mode resolves a relative path against the owner's home, which the device has not reported. */
   "device.project_home_unknown": 409,
+  /**
+   * The project's path lies above the owner's home (`/`, `/home`, `/Users`, an ancestor of the
+   * reported home): too broad to be a project.
+   */
+  "device.project_path_too_broad": 422,
   /** The project's directory does not exist on the device. */
   "device.project_path_missing": 422,
   /** The project's path is a file, cannot be read, or the device refused it in its current mode. */

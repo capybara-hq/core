@@ -353,6 +353,7 @@
       "project_outside_mode": "This directory is outside what the device can read in its current mode. In sandbox mode only the workspace can be a project.",
       "project_home_unknown": "In auto mode a project's path is relative to your home directory, which this machine has not reported. Update capybara-device on the machine and reconnect it.",
       "project_path_missing": "This directory does not exist on the device. Check the path.",
+      "project_path_too_broad": "This directory holds your home directory (or other people's files), which is too broad. Pick the project's own directory, your home or a directory below it.",
       "project_path_unreadable": "This path is a file or cannot be read on the device. Choose a readable directory.",
       "project_not_found": "This device has no project with this name.",
       "projects_unsupported": "This device does not support projects.",
