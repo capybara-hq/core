@@ -86,6 +86,13 @@ describe("schedule math", () => {
     expect(minGapMinutes(cron("0,5 9 * * *"), now)).toBe(5);
   });
 
+  it("a yearly or rarer cron samples the ticks it can, never throws", () => {
+    // the cron library refuses to look more than 8 years past the current date: a yearly task's
+    // 50-tick gap sample used to throw there (a 500 on create, live acceptance 2026-11-15)
+    expect(minGapMinutes(cron("0 3 1 1 *"), now)).toBeGreaterThanOrEqual(365 * 1440);
+    expect(minGapMinutes(cron("0 3 29 2 *"), now)).toBeGreaterThanOrEqual(4 * 365 * 1440);
+  });
+
   it("jitter is stable per id and <= 300 s and <= 10 % of the interval", () => {
     // sample each gap once; the per-id properties use jitterForGap (no 50-tick walk per id)
     const daily = cron("0 9 * * *");
