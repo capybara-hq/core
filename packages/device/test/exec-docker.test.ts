@@ -509,6 +509,32 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
     expect(existsSync(join(dir, "workspace"))).toBe(false);
   });
 
+  it("list and scan never recreate a removed root or a vanished directory", async () => {
+    await ex.dispose();
+    rmSync(join(dir, "workspace"), { recursive: true });
+    // a fresh program over the marked directory whose workspace was removed
+    ex = new DockerExecutor({ dir, deviceId: envId, policy: () => DEFAULT_POLICY });
+    expect(await ex.scan("auto", "/workspace", live)).toEqual([]);
+    expect(await ex.list("auto", "/workspace", 10, live)).toBeNull();
+    expect(existsSync(join(dir, "workspace"))).toBe(false);
+    expect(await ex.ensureRoot()).toBe("gone");
+    // the device directory itself is gone: the same answers, nothing created
+    rmSync(dir, { recursive: true });
+    expect(await ex.list("sandbox", "/workspace", 10, live)).toBeNull();
+    expect(await ex.scan("sandbox", "/workspace", live)).toEqual([]);
+    expect(existsSync(dir)).toBe(false);
+  });
+
+  it("list and scan do not create the roots of an unmarked directory", async () => {
+    await ex.dispose();
+    const fresh = join(base, "fresh");
+    mkdirSync(fresh);
+    ex = new DockerExecutor({ dir: fresh, deviceId: envId, policy: () => DEFAULT_POLICY });
+    expect(await ex.list("auto", "/workspace", 10, live)).toBeNull();
+    expect(await ex.scan("auto", "/workspace", live)).toEqual([]);
+    expect(readdirSync(fresh)).toEqual([]);
+  });
+
   it("a reused container whose mounts lost the directory is recreated", async () => {
     await ex.writeFile("/workspace/old", Buffer.from("old"));
     const id = () =>

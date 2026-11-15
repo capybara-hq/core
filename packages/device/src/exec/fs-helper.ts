@@ -1,5 +1,9 @@
-import { MAX_DEVICE_SCAN_DEPTH, MAX_DEVICE_SCAN_DIRS } from "@capybara-hq/plugin-sdk";
-import { SCAN_SKIP_ANYWHERE, SCAN_SKIP_AT_BASE } from "./listing.js";
+import {
+  DEVICE_SCAN_SKIPPED_BASE_DIRS,
+  DEVICE_SCAN_SKIPPED_DIRS,
+  MAX_DEVICE_SCAN_DEPTH,
+  MAX_DEVICE_SCAN_DIRS,
+} from "@capybara-hq/plugin-sdk";
 
 /**
  * The file-operation helper the OS executor runs **inside the sandbox** (`node -e`), so a
@@ -137,8 +141,8 @@ export const FS_HELPER_SCRIPT = `
         const entries = ents.slice(0, limit).map((e) => ({ name: e.name, isDir: isDir(e) }));
         return out({ r: { entries, truncated: ents.length > limit } });
       }
-      const skipAny = ${JSON.stringify(SCAN_SKIP_ANYWHERE)};
-      const skipBase = ${JSON.stringify(SCAN_SKIP_AT_BASE)};
+      const skipAny = ${JSON.stringify(DEVICE_SCAN_SKIPPED_DIRS)};
+      const skipBase = ${JSON.stringify(DEVICE_SCAN_SKIPPED_BASE_DIRS)};
       const found = [];
       let visits = 1;
       // a hit is recorded; the directories to visit below are returned

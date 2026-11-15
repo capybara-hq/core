@@ -4,6 +4,8 @@ import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node
 import { join, resolve } from "node:path";
 import {
   DEFAULT_SANDBOX_ROOTS,
+  DEVICE_SCAN_SKIPPED_BASE_DIRS,
+  DEVICE_SCAN_SKIPPED_DIRS,
   type DeviceExecArgs,
   type DeviceListResult,
   type DeviceScanResult,
@@ -16,7 +18,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { effectiveMode } from "../policy.js";
 import type { Policy, SandboxMode } from "../state.js";
-import { finishScan, SCAN_SKIP_ANYWHERE, SCAN_SKIP_AT_BASE } from "./listing.js";
+import { finishScan } from "./listing.js";
 import { EXEC_MARKER } from "./procs.js";
 import {
   ENV_NAME_RE,
@@ -26,6 +28,7 @@ import {
   osRoots,
   PIPE_GRACE_MS,
   policyError,
+  ROOT_MARKER,
   RootGuard,
 } from "./shared.js";
 import { FILE_OPS_DECISION_TTL_MS } from "./switch.js";
@@ -244,8 +247,8 @@ def is_dir(d, e):
         return False
 if op == "list":
     out({"r": {"entries": [{"name": e.name, "isDir": is_dir(r, e)} for e in ents[:limit]], "truncated": len(ents) > limit}})
-skip_any = ${JSON.stringify(SCAN_SKIP_ANYWHERE)}
-skip_base = ${JSON.stringify(SCAN_SKIP_AT_BASE)}
+skip_any = ${JSON.stringify(DEVICE_SCAN_SKIPPED_DIRS)}
+skip_base = ${JSON.stringify(DEVICE_SCAN_SKIPPED_BASE_DIRS)}
 found = []
 def below(d, rep, es, depth):
     if any(e.name == ".git" or (e.name == "AGENTS.md" and not e.is_dir(follow_symlinks=False)) for e in es):
@@ -915,6 +918,18 @@ export class DockerExecutor implements Executor {
   }
 
   /**
+   * Whether the device directory is marked and holds all three roots. `list` and `scan` only
+   * read: a removed root under a marked directory lost its files and is never recreated empty
+   * (`ensureContainer` would create it), and an unmarked or vanished directory gets no roots either.
+   */
+  private rootsIntact(): boolean {
+    return (
+      existsSync(join(this.dir, ROOT_MARKER)) &&
+      Object.values(this.hostRoots).every((r) => existsSync(r))
+    );
+  }
+
+  /**
    * Runs {@link LIST_SCRIPT} in the container (as the `sandbox` user, like the file operations):
    * links resolve in the container, so whatever a command there does to the workspace, the answer
    * shows only what the container itself can see, never the host behind the bind mount. A stopped
@@ -971,7 +986,10 @@ export class DockerExecutor implements Executor {
     limit: number,
     signal?: AbortSignal,
   ): Promise<DeviceListResult> {
-    const r = await this.listOp("list", this.workspacePath(path), limit, signal);
+    const p = this.workspacePath(path);
+    // nothing under the workspace exists (as the OS reader answers)
+    if (!this.rootsIntact()) return null;
+    const r = await this.listOp("list", p, limit, signal);
     if (r !== null && !Array.isArray((r as { entries?: unknown }).entries)) {
       throw new DeviceOpError("error", `list ${path} answered an invalid result`);
     }
@@ -980,7 +998,9 @@ export class DockerExecutor implements Executor {
 
   /** Scans a container workspace directory, read in the container ({@link list}'s rules). */
   async scan(_mode: SandboxMode, base: string, signal?: AbortSignal): Promise<DeviceScanResult> {
-    const r = await this.listOp("scan", this.workspacePath(base), 0, signal);
+    const p = this.workspacePath(base);
+    if (!this.rootsIntact()) return [];
+    const r = await this.listOp("scan", p, 0, signal);
     if (!Array.isArray(r) || !r.every((x) => typeof x === "string")) {
       throw new DeviceOpError("error", `scan ${base} answered an invalid result`);
     }

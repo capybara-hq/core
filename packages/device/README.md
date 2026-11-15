@@ -79,14 +79,17 @@ with `capybara-device mode`):
   network. It is what a coding agent without an OS sandbox has, and what Claude Code calls auto
   mode. The deployment reviews every command before it runs and blocks, or asks about, the
   dangerous ones (deleting outside the workspace, sending a secret away, force-pushing a protected
-  branch). The platform's file tools reach any absolute path on the machine.
+  branch). The platform's file tools reach any absolute path on the machine. The hello reports
+  your home directory, and the deployment can list any directory you can read and scan your home
+  for projects (directory entries only, never file contents).
 - **sandbox**: today's strict `@anthropic-ai/sandbox-runtime` profile (macOS Seatbelt, Linux
   bubblewrap; Linux needs `bwrap` and `socat`). Writes only under `workspace/` and `tmp/`,
   `skills/` read only, `HOME` = the workspace, `~/.ssh`, cloud CLI credentials, `~/.netrc`,
   `~/.gnupg`, browser profiles and this program's state directory unreadable, no local binding or
   unix sockets, and network only to the domains of the local policy that the organization's
   allowlist also admits (with an empty list, no network at all). Commands keep their package
-  caches in the workspace like any other file.
+  caches in the workspace like any other file. The hello still reports your home directory, but
+  the deployment's directory listing and project scan cover the workspace only.
 
 If the OS sandbox is unavailable on the machine (an unsupported platform or missing dependencies,
 such as `bwrap` / `socat` on Linux), the device still starts and serves: auto mode works, and every
@@ -221,6 +224,9 @@ Docker mode has no per-domain network filter, so the mode alone decides:
 - **auto**: the container runs on Docker's default bridge (the whole internet and this machine's
   network), and the platform's file tools reach any absolute path in the container.
 - **sandbox**: the container has no network at all, and file operations stay in the mounted roots.
+
+In both, the hello reports your home directory, while the deployment's directory listing and
+project scan cover the container's `/workspace` only (directory entries, never file contents).
 
 The network is switched between the two without recreating the container (a container disconnected
 from every network has no network, the same as `--network none`). Use OS mode's sandbox when you

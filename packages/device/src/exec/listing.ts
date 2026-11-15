@@ -2,6 +2,8 @@ import type { Dirent } from "node:fs";
 import { readdir, realpath, stat } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import {
+  DEVICE_SCAN_SKIPPED_BASE_DIRS,
+  DEVICE_SCAN_SKIPPED_DIRS,
   type DeviceListResult,
   type DeviceProjectCandidate,
   type DeviceScanResult,
@@ -19,14 +21,6 @@ import { DeviceOpError } from "./types.js";
  * through the sandboxed helper (`fs-helper.ts`) and a container device in its container
  * (`docker.ts`'s `LIST_SCRIPT`): each follows the same rules, so every reader answers the same.
  */
-
-/** Directory names a scan never enters at any depth: dependency trees, not projects. */
-export const SCAN_SKIP_ANYWHERE: readonly string[] = ["node_modules"];
-/**
- * Directory names a scan does not enter right under its base: the owner's macOS `Library` (app
- * data, huge, partly privacy-protected) is not where projects live.
- */
-export const SCAN_SKIP_AT_BASE: readonly string[] = ["Library"];
 
 /** `a` before `b` in UTF-16 code-unit order (locale-independent). */
 export function byCodeUnit(a: string, b: string): number {
@@ -97,16 +91,16 @@ export async function listDirectory(path: string, limit: number): Promise<Device
 /** Whether a scan enters a directory named `name` found at `depth` (0: right under the base). */
 export function enterable(name: string, depth: number): boolean {
   if (name.startsWith(".")) return false;
-  if (SCAN_SKIP_ANYWHERE.includes(name)) return false;
-  return !(depth === 0 && SCAN_SKIP_AT_BASE.includes(name));
+  if (DEVICE_SCAN_SKIPPED_DIRS.includes(name)) return false;
+  return !(depth === 0 && DEVICE_SCAN_SKIPPED_BASE_DIRS.includes(name));
 }
 
 /**
  * Directories that look like projects under `base` (`SandboxProvider.scan`'s traversal): `base`
  * and the directories at most `MAX_DEVICE_SCAN_DEPTH` levels below it holding a `.git` entry or an
- * `AGENTS.md` file. Symbolic links are never followed below `base`; hidden directories and
- * {@link SCAN_SKIP_ANYWHERE} / {@link SCAN_SKIP_AT_BASE} are not entered. Directories are visited
- * breadth-first, each level in code-unit order of path, at most `MAX_DEVICE_SCAN_DIRS` visits with
+ * `AGENTS.md` file. Symbolic links are never followed below `base`; hidden directories and the
+ * SDK's `DEVICE_SCAN_SKIPPED_DIRS` / `DEVICE_SCAN_SKIPPED_BASE_DIRS` are not entered. Directories
+ * are visited breadth-first, each level in code-unit order of path, at most `MAX_DEVICE_SCAN_DIRS` visits with
  * `base` the first; a subdirectory that cannot be read is skipped (it counts as visited). Reads are
  * async and `signal` is checked before each visit. A missing base answers `[]`; a file or an
  * unreadable one throws.

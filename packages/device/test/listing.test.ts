@@ -1,7 +1,12 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { MAX_DEVICE_SCAN_DIRS, MAX_DEVICE_SCAN_RESULTS } from "@capybara-hq/plugin-sdk";
+import {
+  DEVICE_SCAN_SKIPPED_BASE_DIRS,
+  DEVICE_SCAN_SKIPPED_DIRS,
+  MAX_DEVICE_SCAN_DIRS,
+  MAX_DEVICE_SCAN_RESULTS,
+} from "@capybara-hq/plugin-sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { HostExecutor } from "../src/exec/host.js";
 import { finishScan, listDirectory, scanDirectory } from "../src/exec/listing.js";
@@ -112,6 +117,19 @@ describe("scanDirectory", () => {
   it("skips a directory whose name breaks the project name rule, never renaming it", async () => {
     dirs("b/ lead/.git", `b/${"n".repeat(65)}/.git`, "b/ok/.git");
     expect((await scanDirectory(join(base, "b"))).map((c) => c.suggestedName)).toEqual(["ok"]);
+  });
+
+  it("still walks below a directory whose name breaks the rule", async () => {
+    dirs("b/ lead/inner/.git");
+    expect(await scanDirectory(join(base, "b"))).toEqual([
+      { path: join(base, "b/ lead/inner"), suggestedName: "inner" },
+    ]);
+  });
+
+  it("skips exactly the SDK's directory lists", async () => {
+    for (const n of DEVICE_SCAN_SKIPPED_DIRS) dirs(`b/x/${n}/p/.git`);
+    for (const n of DEVICE_SCAN_SKIPPED_BASE_DIRS) dirs(`b/${n}/p/.git`);
+    expect(await scanDirectory(join(base, "b"))).toEqual([]);
   });
 
   it("answers the first 50 by path", async () => {
