@@ -958,12 +958,20 @@ function isDynamicScript(script: string): boolean {
 interface ResolvedFacts {
   workspace: string;
   cwd: string;
+  /** The home `~` and `$HOME` expand to: the reported one, else the workspace's, else the device's. */
   home: string | null;
+  /**
+   * Every home the home-level rules are judged against: the reported home, the workspace's
+   * `/home/<u>`, `/Users/<u>` or `/root` prefix and the device workspace's, all that differ
+   * (project root fix round 2: a reported home never replaces a derived one).
+   */
+  homes: readonly string[];
   /** Absolute paths this conversation's tool calls wrote before this line (hardening spec R1). */
   written: ReadonlySet<string>;
 }
 
-function homeOf(workspace: string): string | null {
+/** The home directory a path lies in by its `/home/<u>`, `/Users/<u>` or `/root` prefix, or null. */
+export function homeOf(workspace: string): string | null {
   const parts = workspace.split("/").filter((p) => p.length > 0);
   if ((parts[0] === "home" || parts[0] === "Users") && parts.length >= 2)
     return `/${parts[0]}/${parts[1]}`;
@@ -973,11 +981,26 @@ function homeOf(workspace: string): string | null {
 
 function resolveFacts(facts: ReviewFacts): ResolvedFacts {
   const workspace = normalizePath(facts.workspace);
+  const derived = homeOf(workspace);
+  // the home of the device's own workspace: a project outside every home keeps protecting it
+  const device = facts.deviceHome?.startsWith("/") ? normalizePath(facts.deviceHome) : null;
+  const deviceHome = device === null || device === "/" ? null : device;
+  // an implausible reported home (`/`, or an ancestor of a derived home such as `/Users`) would
+  // make every path a home path: it is ignored and only the derived homes are used
+  const given = facts.home?.startsWith("/") ? normalizePath(facts.home) : null;
+  const reported =
+    given === null ||
+    given === "/" ||
+    [derived, deviceHome].some((d) => d !== null && isAncestor(given, d))
+      ? null
+      : given;
   const cwd = facts.cwd === undefined ? workspace : normalizePath(facts.cwd);
   return {
     workspace,
     cwd,
-    home: homeOf(workspace),
+    // the owner's home as the pipeline knows it (the machine's), else the workspace's prefix
+    home: reported ?? derived ?? deviceHome,
+    homes: [...new Set([reported, derived, deviceHome].filter((h): h is string => h !== null))],
     written: new Set(
       (facts.written ?? []).map((p) =>
         p.endsWith("/**") ? `${normalizePath(p.slice(0, -3))}/**` : normalizePath(p),
@@ -1072,22 +1095,34 @@ function tildeForm(path: string, facts: ResolvedFacts): string {
   return path;
 }
 
-/** Case-folded spelling for the secret-path judgement. */
+/** Case-folded spelling for the home-level judgements. */
 const foldCase = (value: string): string => value.toLowerCase();
 
 /**
- * `tildeForm` for the secret-path judgement. macOS's default file system is case-insensitive, so
- * `/USERS/me/.SSH` names the same file as `/Users/me/.ssh`; folding the comparison only widens what
- * is judged secret. Workspace containment keeps the exact spelling.
+ * Every spelling of `path` the home-level rules (secrets, shell and editor rc files, persistence,
+ * the device's files) judge: its `~` form against each of {@link ResolvedFacts.homes} it lies in,
+ * then the path itself. macOS's default file system is case-insensitive, so `/USERS/me/.SSH` names
+ * the same file as `/Users/me/.ssh`: the home is matched case-folded and the rules compare the
+ * case-folded forms ({@link foldedForms}), which only widens what they catch. Workspace containment
+ * keeps the exact spelling.
  */
-function tildeFormFolded(path: string, facts: ResolvedFacts): string {
-  if (facts.home === null) return path;
-  const home = foldCase(facts.home);
+function homeForms(path: string, facts: ResolvedFacts): string[] {
   const folded = foldCase(path);
-  if (folded === home) return "~";
-  if (folded.startsWith(`${home}/`)) return `~${path.slice(facts.home.length)}`;
-  return path;
+  const out: string[] = [];
+  for (const h of facts.homes) {
+    const home = foldCase(h);
+    if (folded === home) out.push("~");
+    // a root home keeps the path's own leading slash: `/.ssh/x` is `~/.ssh/x`, never `~.ssh/x`
+    else if (home === "/") out.push(`~${path}`);
+    else if (folded.startsWith(`${home}/`)) out.push(`~${path.slice(h.length)}`);
+  }
+  out.push(path);
+  return out;
 }
+
+/** {@link homeForms}, case-folded: what the home-level rules compare against lowercase patterns. */
+const foldedForms = (path: string, facts: ResolvedFacts): string[] =>
+  homeForms(path, facts).map(foldCase);
 
 const TMP_ROOTS = ["/tmp", "/private/tmp", "/var/tmp", "/var/folders", "/private/var/folders"];
 const tmpRootOf = (path: string): boolean => TMP_ROOTS.some((root) => inside(path, root));
@@ -1107,6 +1142,7 @@ const SECRET_HOME_PATHS = [
   "~/.vault-token",
   "~/.terraform.d/credentials.tfrc.json",
   "~/.config/op",
+  "~/.gnupg",
   "~/.bash_history",
   "~/.zsh_history",
   "~/.sh_history",
@@ -1292,8 +1328,10 @@ function isSecretPattern(path: string, facts: ResolvedFacts): boolean {
     const last = tail[tail.length - 1];
     if (tail.length >= 2 && last !== undefined && segmentMatches(last, "environ")) return true;
   }
-  const t = tildeFormFolded(path, facts);
-  if (t.startsWith("~/")) return isSecretHomePath(t.slice(2).split("/"));
+  // every home the path lies in is tried; none matching falls through to the checks below
+  for (const t of homeForms(path, facts)) {
+    if (t.startsWith("~/") && isSecretHomePath(t.slice(2).split("/"))) return true;
+  }
   // `/home/<pattern>/…` never becomes `~/…`: the user segment is the pattern, so judge only the
   // literal suffix behind it.
   const [root, user, ...suffix] = absolute;
@@ -1324,7 +1362,7 @@ function isSecretPattern(path: string, facts: ResolvedFacts): boolean {
     // allowed (as the literal `/root/.netrc` does), so it must not turn a `/Users/me` workspace's
     // `/*/.ssh/id_rsa` into a hit.
     const rootHit =
-      (facts.home === null || facts.home === "/root") &&
+      (facts.homes.length === 0 || facts.homes.includes("/root")) &&
       user !== undefined &&
       segmentMatches(root, "root") &&
       isSecretHomePath([user, ...suffix]);
@@ -1334,19 +1372,41 @@ function isSecretPattern(path: string, facts: ResolvedFacts): boolean {
 }
 
 function isSecretPath(path: string, facts: ResolvedFacts): boolean {
-  if (PROC_ENVIRON.test(path)) return true;
-  // A glob or brace is what the shell expands before the command runs: the path is a secret when
-  // it can expand to one, so `cat ~/.netr?` is the same read as `cat ~/.netrc`.
-  if (hasPattern(path) && isSecretPattern(path, facts)) return true;
-  const t = foldCase(tildeFormFolded(path, facts));
-  if (SECRET_HOME_PATHS.some((secret) => t === secret || t.startsWith(`${secret}/`))) return true;
+  if (isHomeSecretPath(path, facts)) return true;
   const base = baseName(path).toLowerCase();
   return base.startsWith(".env") && !inside(path, facts.workspace);
 }
 
+/** {@link isSecretPath} without `.env*`: the secrets judged wherever they lie. */
+function isHomeSecretPath(path: string, facts: ResolvedFacts): boolean {
+  if (PROC_ENVIRON.test(path)) return true;
+  // A glob or brace is what the shell expands before the command runs: the path is a secret when
+  // it can expand to one, so `cat ~/.netr?` is the same read as `cat ~/.netrc`.
+  if (hasPattern(path) && isSecretPattern(path, facts)) return true;
+  return foldedForms(path, facts).some((t) =>
+    SECRET_HOME_PATHS.some((secret) => t === secret || t.startsWith(`${secret}/`)),
+  );
+}
+
+/**
+ * A home-level sensitive path (auto mode spec §5.2: shell rc files, `~/.ssh`, `~/.gitconfig`,
+ * launch agents, crontab and the secret paths), judged by its absolute path against the owner's
+ * home. These rules apply whether or not the path is inside the workspace fact: the workspace's
+ * exemption covers ordinary files only, so a project at the owner's home (project root spec
+ * §4.3) never makes `~/.bashrc` an ordinary write. (`.env*` stays a secret only outside the
+ * workspace: {@link isSecretPath}.)
+ */
+function isHomeLevelSensitive(path: string, facts: ResolvedFacts): boolean {
+  return isHomeSecretPath(path, facts) || isPersistencePath(path, facts);
+}
+
 function isPersistencePath(path: string, facts: ResolvedFacts): boolean {
-  const t = tildeForm(path, facts);
-  if (t === "~/.gitconfig" || t.startsWith("~/.gitconfig.")) return true;
+  return foldedForms(path, facts).some((t) => isPersistenceForm(t, facts)) || isGitHook(path);
+}
+
+/** One case-folded {@link homeForms} spelling of a persistence path (patterns in lowercase). */
+function isPersistenceForm(t: string, facts: ResolvedFacts): boolean {
+  if (isGitConfigForm(t)) return true;
   if (
     /^~\/\.(bashrc|bash_profile|bash_login|profile|zshrc|zshenv|zprofile|zlogin|tcshrc|cshrc|kshrc)$/.test(
       t,
@@ -1355,10 +1415,9 @@ function isPersistencePath(path: string, facts: ResolvedFacts): boolean {
     return true;
   }
   if (t === "~/.config/fish/config.fish" || t.startsWith("~/.config/fish/conf.d/")) return true;
+  if (isEditorOrLogoutRc(t) || isRunLaterHomePath(t, facts)) return true;
   if (t === "~/.ssh" || t.startsWith("~/.ssh/")) return true;
-  if (t.startsWith("~/Library/LaunchAgents") || t.startsWith("~/Library/LaunchDaemons"))
-    return true;
-  if (t.startsWith("/Library/LaunchAgents") || t.startsWith("/Library/LaunchDaemons")) return true;
+  if (isLaunchForm(t)) return true;
   if (
     [
       "/etc/profile",
@@ -1374,9 +1433,15 @@ function isPersistencePath(path: string, facts: ResolvedFacts): boolean {
   }
   if (t === "/etc/crontab" || t.startsWith("/var/spool/cron") || t.startsWith("/etc/cron."))
     return true;
-  if (t.startsWith("~/.config/systemd")) return true;
-  return isGitHook(path);
+  return t.startsWith("~/.config/systemd");
 }
+
+/** The global git configuration: `~/.gitconfig` (and its lock / backups) or `~/.config/git/config`. */
+const isGitConfigForm = (t: string): boolean =>
+  t === "~/.gitconfig" || t.startsWith("~/.gitconfig.") || t === "~/.config/git/config";
+
+/** A launch agent or daemon, the owner's or the machine's. */
+const isLaunchForm = (t: string): boolean => /^(~|)\/library\/launch(agents|daemons)/.test(t);
 
 const DEVICE_DIRS = [
   "~/.config/capybara-device",
@@ -1388,14 +1453,19 @@ const DEVICE_DIRS = [
 ];
 
 function isDevicePath(path: string, facts: ResolvedFacts): boolean {
-  const t = tildeForm(path, facts);
-  if (DEVICE_DIRS.some((dir) => t === dir || t.startsWith(`${dir}/`))) return true;
+  const dirs = DEVICE_DIRS.map(foldCase);
+  if (foldedForms(path, facts).some((t) => dirs.some((d) => t === d || t.startsWith(`${d}/`)))) {
+    return true;
+  }
   // The device binary, its unit file and its launch agent anywhere on disk.
-  return isDeviceIdentifier(baseName(t));
+  return isDeviceIdentifier(baseName(path));
 }
 
-const isGitHook = (path: string): boolean =>
-  path.includes("/.git/hooks/") || path.endsWith("/.git/hooks");
+/** A git hook, in any letter case (a case-insensitive file system names the same directory). */
+const isGitHook = (path: string): boolean => {
+  const p = foldCase(path);
+  return p.includes("/.git/hooks/") || p.endsWith("/.git/hooks");
+};
 
 function looksLikePath(token: string): boolean {
   if (token.length === 0 || token === "-" || token.startsWith("-")) return false;
@@ -4174,8 +4244,7 @@ function destroyTargetsOf(inv: Invocation): string[] {
 
 function isDangerousDelete(resolved: string, ctx: RuleContext): boolean {
   const base = globBase(resolved);
-  const t = tildeForm(base, ctx.facts);
-  if (t === "/" || t === "~" || t === "~/") return true;
+  if (base === "/" || homeForms(base, ctx.facts).some((t) => t === "~" || t === "~/")) return true;
   // the workspace root itself and every directory above it (hardening spec R2)
   return base === ctx.facts.workspace || isAncestor(base, ctx.facts.workspace);
 }
@@ -4239,17 +4308,46 @@ const CONFIG_REASONS: Record<ConfigClass, string> = {
   "ask.secret-file": "Prints, copies or changes a credential file; this needs approval each time.",
 };
 
-/** The grant class of a secret or persistence path. */
+/** Logout and editor rc files: read by a program the person starts later, like a shell rc file. */
+function isEditorOrLogoutRc(t: string): boolean {
+  if (/^~\/\.(bash_logout|zlogout|logout|vimrc|gvimrc|exrc|nanorc|emacs)$/.test(t)) return true;
+  return t.startsWith("~/.vim/") || t.startsWith("~/.config/nvim/") || t.startsWith("~/.emacs.d/");
+}
+
+/**
+ * Home locations whose files run later without the person asking: PATH shims (`~/.local/bin`,
+ * `~/bin`, `~/.cargo/bin`),
+ * desktop autostart entries, and the device's own work directory `~/capybara-device` (other
+ * conversations' background task scripts live there). The work directory counts only when the
+ * workspace is not inside it: a free conversation's workspace is a directory of it.
+ */
+function isRunLaterHomePath(t: string, facts: ResolvedFacts): boolean {
+  const under = (dir: string) => t === dir || t.startsWith(`${dir}/`);
+  if (RUN_LATER_HOME_DIRS.some(under)) return true;
+  return (
+    under("~/capybara-device") &&
+    !foldedForms(facts.workspace, facts).some((w) => w.startsWith("~/capybara-device/"))
+  );
+}
+
+/** PATH shims and desktop autostart entries in the home (case-folded). */
+const RUN_LATER_HOME_DIRS = ["~/.local/bin", "~/bin", "~/.cargo/bin", "~/.config/autostart"];
+
+/** The grant class of a secret or persistence path (judged on every case-folded home spelling). */
 function configClassOf(path: string, facts: ResolvedFacts): ConfigClass {
-  const t = tildeForm(path, facts);
-  if (t === "~/.ssh" || t.startsWith("~/.ssh/")) return "ask.ssh";
+  const forms = foldedForms(path, facts);
+  if (forms.some((t) => t === "~/.ssh" || t.startsWith("~/.ssh/"))) return "ask.ssh";
   if (
     isGitHook(path) ||
-    /^(~|)\/Library\/Launch(Agents|Daemons)/.test(t) ||
-    t === "/etc/crontab" ||
-    t.startsWith("/var/spool/cron") ||
-    t.startsWith("/etc/cron.") ||
-    t.startsWith("~/.config/systemd")
+    forms.some(
+      (t) =>
+        isLaunchForm(t) ||
+        t === "/etc/crontab" ||
+        t.startsWith("/var/spool/cron") ||
+        t.startsWith("/etc/cron.") ||
+        t.startsWith("~/.config/systemd") ||
+        isRunLaterHomePath(t, facts),
+    )
   ) {
     return "ask.persistence";
   }
@@ -4349,20 +4447,19 @@ function linkSources(inv: Invocation, command: SimpleCommand, ctx: RuleContext):
 }
 
 /**
- * What a link would expose (hardening spec R3): a credential, SSH, persistence or device path, or
- * the home directory or `/` itself (a link to them reaches every secret under them) is
- * `sensitive`; anything else outside the workspace and temporary files is `outside`.
+ * What a link would expose (hardening spec R3): a credential, SSH, persistence or device path, and
+ * the home directory or `/` itself (a link to them reaches every secret under them), is
+ * `sensitive` wherever it lies, inside the workspace too (a project at the owner's home makes the
+ * home the workspace: project root spec §4.3); a parent of the workspace is `sensitive` outside
+ * it; anything else outside the workspace and temporary files is `outside`.
  */
 function linkClass(path: string, ctx: RuleContext): "sensitive" | "outside" | null {
+  if (isHomeLevelSensitive(path, ctx.facts) || isDevicePath(path, ctx.facts)) return "sensitive";
+  // the home directory and `/` themselves reach every secret under them, whatever the workspace
+  const base = globBase(path);
+  if (base === "/" || homeForms(base, ctx.facts).some((t) => t === "~")) return "sensitive";
   if (inside(path, ctx.facts.workspace) || tmpRootOf(path)) return null;
-  if (
-    isSecretPath(path, ctx.facts) ||
-    isPersistencePath(path, ctx.facts) ||
-    isDevicePath(path, ctx.facts) ||
-    isDangerousDelete(path, ctx)
-  ) {
-    return "sensitive";
-  }
+  if (isDangerousDelete(path, ctx)) return "sensitive";
   return "outside";
 }
 
@@ -5392,9 +5489,10 @@ export function reviewRules(command: string, facts: ReviewFacts): ReviewResult {
 }
 
 /**
- * The same table for a file-tool write: workspace and tmp writes pass; the device's own files are
- * denied; git hooks, shell rc files and secret files ask; anything else outside asks to write
- * outside.
+ * The same table for a file-tool write: the device's own files are denied; git hooks and
+ * home-level sensitive paths (shell rc files, SSH, launch agents, credentials) ask wherever they
+ * lie, inside the workspace too; other workspace and tmp writes pass; a `.env*` file outside the
+ * workspace asks; anything else outside asks to write outside.
  */
 export function reviewWrite(path: string, facts: ReviewFacts): ReviewResult {
   const resolved = resolveFacts(facts);
@@ -5435,6 +5533,11 @@ export function reviewWrite(path: string, facts: ReviewFacts): ReviewResult {
       ],
     };
   }
+  // home-level sensitive paths ask wherever they lie, inside the workspace fact too
+  if (isHomeLevelSensitive(absolute, resolved)) {
+    const id = configClassOf(absolute, resolved);
+    return { outcome: "ask", hits: [{ id, outcome: "ask", reason: CONFIG_REASONS[id] }] };
+  }
   if (inside(absolute, resolved.workspace)) {
     return {
       outcome: "allow",
@@ -5459,7 +5562,7 @@ export function reviewWrite(path: string, facts: ReviewFacts): ReviewResult {
       ],
     };
   }
-  if (isPersistencePath(absolute, resolved) || isSecretPath(absolute, resolved)) {
+  if (isSecretPath(absolute, resolved)) {
     const id = configClassOf(absolute, resolved);
     return { outcome: "ask", hits: [{ id, outcome: "ask", reason: CONFIG_REASONS[id] }] };
   }

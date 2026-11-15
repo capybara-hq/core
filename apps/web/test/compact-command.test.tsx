@@ -49,6 +49,7 @@ const SKILLS = {
     {
       id: "s1",
       name: "brainstorming",
+      source: "platform",
       description: "Think before building",
       version: 1,
       manual: false,
@@ -254,7 +255,7 @@ describe("the / menu command entry", () => {
     const dialog = await screen.findByRole("dialog");
     const headings = [...dialog.querySelectorAll("[cmdk-group-heading]")].map((h) => h.textContent);
     // after the agent's skills (a command never takes the first Enter meant for a skill)
-    expect(headings).toEqual([en.chat.skillsGroup, en.chat.commandsGroup]);
+    expect(headings).toEqual([en.chat.skillSource.platform, en.chat.commandsGroup]);
     const command = await within(dialog).findByRole("option", { name: /^\/compact/ });
     await user.click(command);
     await vi.waitFor(() => expect(compactPosts(calls)).toHaveLength(1));

@@ -12,6 +12,7 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { CLAUDE_CODE_TOOL_MAP } from "../runtime/context/claude-tools.js";
+import { PROJECT_SKILL_PREFIX, SKILL_NAME_MAX_CHARS } from "../runtime/context/project-root.js";
 import {
   type CatalogSkill,
   catalogLine,
@@ -292,8 +293,13 @@ export function skillLoadOffered(
    * files. Derived from the log, so a replay recomputes it.
    */
   invoked = false,
+  /**
+   * Project root spec §4.5: the log recorded a bound project with skills (`hasProjectSkills`),
+   * which `Skill` loads as `project:<name>`. Derived from the log, never taken back.
+   */
+  projectSkills = false,
 ): boolean {
-  return latest !== undefined || invoked;
+  return latest !== undefined || invoked || projectSkills;
 }
 
 /** Whether `events` hold a person's skill invocation (a `user_message` with `skill`). */
@@ -311,8 +317,18 @@ export async function skillLoadOfferedIn(
     .selectFrom("conversation_events")
     .select("seq")
     .where("conversation_id", "=", conversationId)
-    .where("type", "=", "user_message")
-    .where(sql<boolean>`payload -> 'skill' IS NOT NULL`)
+    .where((eb) =>
+      eb.or([
+        eb.and([eb("type", "=", "user_message"), sql<boolean>`payload -> 'skill' IS NOT NULL`]),
+        // a project with a skill Skill can be called with (hasProjectSkills: `project:<name>`
+        // within the schema's cap; skill names are ASCII, so characters are UTF-16 code units)
+        eb.and([
+          eb("type", "=", "project_root"),
+          sql<boolean>`EXISTS (SELECT 1 FROM jsonb_array_elements(payload -> 'skills') s
+            WHERE length(${PROJECT_SKILL_PREFIX}::text || (s ->> 'name')) <= ${SKILL_NAME_MAX_CHARS})`,
+        ]),
+      ]),
+    )
     .limit(1)
     .executeTakeFirst();
   return row !== undefined;

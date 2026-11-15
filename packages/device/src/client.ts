@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import {
   DEVICE_PROTOCOL_VERSION,
   type DeviceFeature,
@@ -5,6 +6,7 @@ import {
   type DeviceRes,
   type KernelReq,
   parseDeviceFrame,
+  validateSandboxPathShape,
 } from "@capybara-hq/plugin-sdk";
 import WebSocket from "ws";
 import type { CommandLog } from "./command-log.js";
@@ -51,6 +53,12 @@ export interface ConnectOptions {
   random?: () => number;
   now?: () => number;
   programVersion?: string;
+  /**
+   * The owner's home directory, reported in the hello (the base of an auto-mode project path).
+   * Defaults to the user's home; left out of the hello when it is not a clean absolute path, and
+   * by a docker-mode device (it offers its container's workspace only).
+   */
+  home?: string;
   /** A connection must stay up this long before the backoff resets (default 10 s). */
   stableMs?: number;
   /** Terminate a socket that heard nothing from the server for this long (default 60 s). */
@@ -317,6 +325,12 @@ export function connect(
    * policy summary is the store's policy now (the owner's mode, not cut by any ceiling);
    * then the outcomes of the latest policy ops by op id.
    */
+  // A container device offers only its container's workspace: the host's home is not its base.
+  const ownerHome = opts.home ?? homedir();
+  const home =
+    executor.mode === "os" && validateSandboxPathShape(ownerHome).length === 0
+      ? ownerHome
+      : undefined;
   const hello = (): DeviceHello => {
     const summary = summaryNow();
     sentPolicy = summary === undefined ? undefined : JSON.stringify(summary);
@@ -325,6 +339,8 @@ export function connect(
     // the policy op, logged by its op id (policy-ops.json next to the policy)
     if (opts.policy !== undefined) features.push("policyOp", "policyOpId");
     features.push("mode");
+    // `list` and `scan`, read in each request's own mode (they need the owner's policy)
+    if (opts.policy !== undefined) features.push("projects");
     return {
       type: "hello",
       protocol: DEVICE_PROTOCOL_VERSION,
@@ -335,6 +351,7 @@ export function connect(
       roots: executor.roots,
       sessionIsolation: false,
       features,
+      ...(home !== undefined && { home }),
       ...(summary !== undefined && { policy: summary }),
       // what became of the latest policy ops, so an answer lost with a connection is not lost
       ...(opts.policy !== undefined && { recentOps: opts.policy.ops.recent() }),

@@ -1,3 +1,4 @@
+import { isDeviceProjectName } from "@capybara-hq/plugin-sdk";
 import {
   Controller,
   Delete,
@@ -13,6 +14,7 @@ import {
 import type { FastifyReply } from "fastify";
 import { z } from "zod";
 import { ModelRef } from "../agents/definition.js";
+import type { NewConversationDevice } from "../devices/conversation-devices.js";
 import type { DeviceView } from "../devices/devices.service.js";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
@@ -157,12 +159,21 @@ const MessageBody = MessageFields.strict().refine(...textRule);
  * first send; `clientMessageId` is required and makes a retry return the same conversation).
  * Without it the conversation is created empty (API clients; the web never does).
  * `deviceId` binds it to one of the caller's devices; without it the caller's default
- * device (environments spec §4.1 item 1).
+ * device (environments spec §4.1 item 1). `project` binds it to one of that device's projects
+ * (project root design §4.3; the device's owner only, refused when the device's current mode
+ * cannot read it); without it the conversation runs in free mode.
  */
 const CreateBody = z
   .object({
     agentId: z.string().min(1).max(100),
     deviceId: z.string().min(1).max(100).optional(),
+    project: z
+      .string()
+      .refine(isDeviceProjectName, {
+        message:
+          "A project name is 1-64 characters, not . or .., without / or control characters, and without leading or trailing spaces",
+      })
+      .optional(),
     message: MessageFields.omit({ retryOf: true })
       .extend({ clientMessageId: z.string().min(1).max(200) })
       .strict()
@@ -246,7 +257,10 @@ export class ConversationsController {
     events?: ConversationEvent[];
   }> {
     const p = requireUser(principal);
-    const pick = body.deviceId === undefined ? {} : { deviceId: body.deviceId };
+    const pick: NewConversationDevice = {
+      ...(body.deviceId !== undefined && { deviceId: body.deviceId }),
+      ...(body.project !== undefined && { project: body.project }),
+    };
     if (body.message === undefined) {
       return {
         conversation: await this.conversations.create(org.orgId, p.account.id, body.agentId, pick, {

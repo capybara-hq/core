@@ -346,7 +346,18 @@
       "policy_unsupported": "This device can't change its network settings from the platform. Upgrade the device program on the machine.",
       "auto_mode_not_allowed": "This device's machine runs in auto mode, which your organization does not allow. Run capybara-device mode sandbox on that machine to switch it to sandbox mode.",
       "mode_on_device": "This device's mode is kept on its connected machine: switch to sandbox mode from the device page, or run capybara-device mode sandbox there.",
-      "mode_requires_session": "A device's mode is changed by its owner on the device page, not with an API token."
+      "mode_requires_session": "A device's mode is changed by its owner on the device page, not with an API token.",
+      "project_name_invalid": "This project name is not allowed: use 1-64 characters, not . or .., without / or control characters, and without spaces at either end.",
+      "project_name_taken": "This device already has a project with this name. Choose another name.",
+      "project_limit_reached": "This device has reached its limit of 100 projects. Remove one to add another.",
+      "project_outside_mode": "This directory is outside what the device can read in its current mode. In sandbox mode only the workspace can be a project.",
+      "project_home_unknown": "In auto mode a project's path is relative to your home directory, which this machine has not reported. Update capybara-device on the machine and reconnect it.",
+      "project_path_missing": "This directory does not exist on the device. Check the path.",
+      "project_path_too_broad": "This directory holds your home directory (or other people's files), which is too broad. Pick the project's own directory, your home or a directory below it.",
+      "project_path_unreadable": "This path is a file or cannot be read on the device. Choose a readable directory.",
+      "project_not_found": "This device has no project with this name.",
+      "projects_unsupported": "This device does not support projects.",
+      "projects_unavailable": "The device could not be asked about this directory right now. Try again in a moment."
     },
     "device_sign_in": {
       "authorization_pending": "The connection is not confirmed yet. Confirm it on the web page and wait a moment.",
@@ -360,6 +371,15 @@
       "not_found": "The skill does not exist or has been deleted.",
       "invalid_package": "The skill package is invalid:",
       "not_invocable": "This skill is not available to invoke with this agent; pick one from the / menu.",
+      "project_unavailable": {
+        "gone": "This project skill cannot be invoked: the project or its SKILL.md is no longer on the device.",
+        "outside_mode": "This project skill cannot be invoked: the device's current mode cannot read it.",
+        "unreadable": "This project skill cannot be invoked: reading its SKILL.md on the device failed; try again later.",
+        "unparsable": "This project skill cannot be invoked: its SKILL.md is not valid; fix it in the project.",
+        "unsupported": "This project skill cannot be invoked: this device does not support projects.",
+        "removed": "This project skill cannot be invoked: the project was removed from the device's projects.",
+        "default": "This project skill cannot be invoked now."
+      },
       "name_exists": "A skill with this name already exists in the organization. Choose another name.",
       "agent_cap": "This agent already has the maximum number of skills. Delete one, or upload a new version of an existing skill (same name).",
       "subagent_register": "A sub-agent cannot register skills; only the agent you talk with can.",
@@ -1374,7 +1394,12 @@
     "noInvocable": "This agent has no skills selected to invoke. A skill the organization turned on must be selected in the agent's skills before you can invoke it with /.",
     "noInvocableAction": "Choose skills",
     "noInvocableReadOnly": "This agent has no skills selected to invoke. A skill the organization turned on must be selected in the agent's skills first; ask its owner or an org admin.",
-    "skillsGroup": "Skills",
+    "skillSource": {
+      "platform": "Skills",
+      "plugin": "Plugin skills",
+      "agent": "Agent skills",
+      "project": "Project skills"
+    },
     "skillTag": {
       "manual": "manual",
       "fork": "sub-agent"
@@ -1437,6 +1462,20 @@
     "deviceNote": "Fixed once the first message is sent",
     "deviceOffline": "No device is available: your local devices are offline. Start capybara-device on the machine, then send.",
     "deviceLocked": "A conversation keeps its device",
+    "projectGroup": "Project",
+    "freeMode": "Free mode",
+    "project": {
+      "bound": "Project {name} · {path}",
+      "loaded": "Project {name} · {path} · {file} loaded",
+      "noAgentsMd": "Project {name} · {path} · no {file}",
+      "unavailable": {
+        "gone": "Project {name} is unavailable: its directory is no longer on the device; this conversation continues in free mode",
+        "outside_mode": "Project {name} is unavailable: the device's current mode cannot read it; this conversation continues in free mode",
+        "unreadable": "Project {name} is unavailable: reading it failed; this conversation continues in free mode",
+        "unsupported": "Project {name} is unavailable: this device does not support projects; this conversation continues in free mode",
+        "removed": "Project {name} is unavailable: it was removed from the device's projects; this conversation continues in free mode"
+      }
+    },
     "deviceDeleted": "Device deleted",
     "pickEffort": "Effort",
     "nextMessage": "Applies from the next message",
@@ -1778,6 +1817,44 @@
     },
     "danger": {
       "title": "Danger zone"
+    },
+    "projects": {
+      "title": "Projects",
+      "description": "Directories on this device a conversation can bind. A new conversation may pick one; the agent then reads its {file} and its skills.",
+      "overviewEmpty": "No projects yet",
+      "empty": "No projects yet",
+      "manage": "Manage projects",
+      "hidden": "{count, plural, one {# more project is} other {# more projects are}} outside what the current mode can read, so hidden. Switch the mode back to see them.",
+      "unsupportedLocal": "This machine's capybara-device does not support projects. Update capybara-device on the machine and reconnect it to add one.",
+      "unsupportedCloud": "This cloud device's sandbox provider does not support projects. Its conversations work as usual, without one.",
+      "homeUnknown": "In auto mode a project's path is relative to your home directory, which this machine has not reported. Update capybara-device on the machine and reconnect it.",
+      "add": "Add project",
+      "addTitle": "Add project",
+      "pathLabel": "Directory",
+      "pathHelpWorkspace": "Relative to the device's workspace. Leave it empty for the workspace itself.",
+      "pathHelpHome": "Relative to your home directory. Leave it empty for the home directory itself.",
+      "pathInvalid": "Enter a path relative to {prefix}, without control characters or backslashes.",
+      "pathAbsolute": "Enter a path relative to {prefix}, not an absolute path.",
+      "nameLabel": "Name",
+      "nameHelp": "Leave it empty to use the directory's name.",
+      "candidates": "Suggestions",
+      "candidatesHelp": "Directories holding .git or {file}, up to two levels down.",
+      "candidatesLoading": "Looking for directories on the device…",
+      "candidatesEmpty": "No directory with .git or {file} found",
+      "candidatesFailed": "The suggestions could not be read. Type the directory instead.",
+      "pick": "Use",
+      "pickLabel": "Use {path}",
+      "addSubmit": "Add",
+      "cancel": "Cancel",
+      "added": "Project {name} added",
+      "remove": "Remove",
+      "removeLabel": "Remove project {name}",
+      "removeTitle": "Remove project {name}?",
+      "removeHint": "It leaves this device's list only: the directory and its files stay. Conversations bound to it continue without a project.",
+      "removeSubmit": "Remove",
+      "removed": "Project {name} removed",
+      "loadFailed": "The projects could not be read.",
+      "retry": "Retry"
     }
   },
   "nav": {

@@ -1,6 +1,7 @@
-import type { SandboxRoots } from "@capybara-hq/plugin-sdk";
+import type { DeviceFeature, SandboxRoots } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { KernelDb } from "../infra/database/kernel-db.js";
+import { deviceFeaturesOf } from "./policy-summary.js";
 
 /**
  * Whether a local device can still be served: `active` (live and an unrevoked machine),
@@ -67,5 +68,19 @@ export class DeviceTargets {
     if (!r || typeof r !== "object") return null;
     if (!ROOT_KEYS.every((k) => typeof r[k] === "string")) return null;
     return r as SandboxRoots;
+  }
+
+  /**
+   * The features the device's active machine announced in its last hello (known ones only);
+   * empty without an active machine.
+   */
+  async machineFeatures(deviceId: string): Promise<DeviceFeature[]> {
+    const row = await this.db
+      .selectFrom("device_machines")
+      .select("features")
+      .where("device_id", "=", deviceId)
+      .where("revoked_at", "is", null)
+      .executeTakeFirst();
+    return deviceFeaturesOf(row?.features);
   }
 }

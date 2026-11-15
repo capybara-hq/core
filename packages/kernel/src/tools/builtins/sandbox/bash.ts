@@ -23,9 +23,11 @@ import {
   noSandboxError,
   runBudgetNote,
   runTimeLeftMs,
+  type SandboxSession,
   type SandboxToolDeps,
   sandboxBaseTimeoutMs,
   sandboxConversationOf,
+  shellQuote,
   unavailableWhenNoSandbox,
   withNotices,
 } from "./common.js";
@@ -283,7 +285,8 @@ async function runInBackground(
   let launch: Launch;
   let notices: string[];
   try {
-    ({ value: launch, notices } = await inSandbox(deps, ctx, async ({ h, roots, p, signal }) => {
+    ({ value: launch, notices } = await inSandbox(deps, ctx, async (s) => {
+      const { h, roots, p, signal } = s;
       workspace = roots.workspace;
       // right after the launch a process may fork while it is killed: killSession repeats
       const kill = (sid: string): Promise<boolean> => killSession(p, h, sid);
@@ -302,7 +305,9 @@ async function runInBackground(
       let r: ExecResult;
       try {
         r = await p.exec(h, {
-          command: launchScript(id, input.command, seconds),
+          // the launch keeps its task files under the workspace (`.capybara/tasks`, where
+          // TaskOutput and TaskStop find them); the command itself starts in the working root
+          command: launchScript(id, inWorkingRoot(input.command, s), seconds),
           cwd: roots.workspace,
           timeoutMs: LAUNCH_EXEC_TIMEOUT_MS,
           maxOutputBytes: LAUNCH_MAX_OUTPUT_BYTES,
@@ -409,6 +414,17 @@ async function runInBackground(
   };
 }
 
+/**
+ * A background command's script, started in the conversation's working root: the launch itself
+ * runs in the workspace (its task files live under `.capybara/tasks` there), so for a bound
+ * project the script first changes into the project's root, and ends (exit 1) without running the
+ * command when it cannot.
+ */
+function inWorkingRoot(command: string, s: Pick<SandboxSession, "roots" | "workingRoot">): string {
+  if (s.workingRoot === s.roots.workspace) return command;
+  return `cd -- ${shellQuote(s.workingRoot)} || exit 1\n${command}`;
+}
+
 /** 内置工具 `Bash`：在本对话的沙箱里执行命令。 */
 export function sandboxBashTool(deps: SandboxToolDeps): BuiltinTool {
   return {
@@ -448,7 +464,8 @@ export function sandboxBashTool(deps: SandboxToolDeps): BuiltinTool {
         deviceId = s.deviceId;
         return s.p.exec(s.h, {
           command,
-          cwd: s.roots.workspace,
+          // the working root: a bound project's root, else the workspace
+          cwd: s.workingRoot,
           timeoutMs: ms,
           maxOutputBytes: MAX_OUTPUT_BYTES,
           signal: s.signal,

@@ -1,6 +1,6 @@
 ---
 name: writing-sandbox-providers
-description: 'Use when changing the kernel side of sandbox@2 or anything that drives a sandbox from the kernel: the contract as the kernel relies on it (devices, file system versus instance lifecycle, FileSystemGoneError, abort, SandboxGoneError versus ordinary errors, auto-start, in-sandbox time limits, killAll / killTagged, required concurrentExec, exec tags and actor, optional image, same-name replacement), effective limits, modes and networks (sandboxLimitOverrides, cloudNetwork, update, limitsApplyAt), the SandboxService lifecycle keyed by device id (shared and exclusive leases, intent, holder records, path leases, maxConcurrentCommands, TTL, lockWaitSeconds, fencing generation, idle suspension, maxRunning, inactivity destruction of the instance, rebuild and notices, devices-legacy-cleanup), the socket proxy config and compose sandbox profile core ships, and kernel tests on the sandbox-fake fixture. To write a sandbox extension (sandbox-docker, sandbox-e2b) see writing-sandbox-providers in capybara-hq/plugins.'
+description: 'Use when changing the kernel side of sandbox@2 or anything that drives a sandbox from the kernel: the contract as the kernel relies on it (devices, file system versus instance lifecycle, FileSystemGoneError, abort, SandboxGoneError versus ordinary errors, auto-start, in-sandbox time limits, killAll / killTagged, required concurrentExec, exec tags, actor, image, same-name replacement, list / scan), effective limits, modes and networks (sandboxLimitOverrides, cloudNetwork, update, limitsApplyAt), the SandboxService lifecycle keyed by device id (shared and exclusive leases, intent, holder records, path leases, maxConcurrentCommands, TTL, lockWaitSeconds, fencing generation, idle suspension, maxRunning, inactivity destruction of the instance, rebuild and notices, devices-legacy-cleanup), the socket proxy config and compose sandbox profile core ships, and kernel tests on the sandbox-fake fixture. To write a sandbox extension (sandbox-docker, sandbox-e2b) see writing-sandbox-providers in capybara-hq/plugins.'
 ---
 
 # Sandboxes: the kernel side of `sandbox@2`
@@ -46,6 +46,9 @@ interface SandboxProvider {
   readFile(h, path, { maxBytes, signal }): Promise<{ data; truncated } | null>;  // missing or a directory → null
   writeFile(h, path, data, signal): Promise<void>;                               // parent directories are created automatically
   stat(h, path, signal): Promise<{ size; isDir } | null>;
+  // optional, both or neither (project root spec §4.1); without them the device offers no projects
+  list?(h, path, { limit, limits, signal }): Promise<{ entries: { name; isDir }[]; truncated } | null>;
+  scan?(h, base, { limits, signal }): Promise<{ path; suggestedName }[]>;
 }
 ```
 
@@ -111,6 +114,19 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
 - **File operations resolve as the sandbox user**: permissions and symlinks are resolved as the non-root user, never as root through the daemon.
 - Paths have already passed `validateSandboxPath` (only `/workspace`, `/skills`, `/tmp` are accepted); the working directory is `/workspace` and attachments are in
   `/workspace/attachments/<conversation>/` (the first 12 hex digits of the root conversation id).
+- **`list` and `scan` (projects, project root spec §4.1, §4.2)**: the kernel keeps a device's projects itself (`device_projects`) and asks
+  the provider only what it can read. Both carry the kernel's **current** ceiling (`limits: { mode }`, `Pick<SandboxLimits, "mode">`) and are answered
+  in that mode, never in one an earlier command saw (before its first command a device has seen none). `list` is one directory's entries, sorted
+  by code unit, at most `limit` (the kernel asks `limit: 1` as the existence check when a project is added and up to
+  `MAX_DEVICE_LIST_ENTRIES` for the skills tree at run start), never `.` / `..`, `isDir` following links (a dangling one `false`), `truncated`
+  when more; null only for a missing path the mode could reach; a file, an unreadable directory or a path outside the mode throws.
+  `scan(base)` answers `base` and the directories at most `MAX_DEVICE_SCAN_DEPTH` (2) below it that hold `.git` or `AGENTS.md`, as
+  `{ path, suggestedName }` with a name passing `isDeviceProjectName`, sorted by path, at most `MAX_DEVICE_SCAN_RESULTS` (50); one traversal
+  for every provider so the suggestions agree: breadth-first in code-unit order, `base` first, at most `MAX_DEVICE_SCAN_DIRS` (500)
+  directories read, no symbolic links, no hidden directories, descending past a hit, skipping (never renaming) a directory with an invalid
+  name and paths the mode cannot reach (`node_modules` and a macOS `Library` may be skipped); a missing `base` is `[]`. Entries only, never
+  file contents. The kernel checks every answer again (shape, inside the base and the mode, the name rule, the bound). A cloud provider
+  answers inside the container's workspace in both modes (the kernel scopes a cloud device's projects to it).
 - **Background tasks** (`Bash` `run_in_background`, spec `docs/superpowers/specs/2026-11-05-background-bash-design.md` §4; no contract
   change): the kernel launches a task with one short `exec` (`cwd: /workspace`, relative paths `.capybara/tasks/<id>.*`) that runs
   `setsid nohup sh -c 'timeout -s KILL <s> bash <id>.sh; echo $? > <id>.exit'` in the background and prints the session id; liveness is
@@ -214,6 +230,13 @@ no plugin can take the name.
   (`validateSandboxPathShape`). Each conversation records an `device_paths` event on its first
   sandbox call and whenever the roots change, including back to the defaults; it is in the log, so it
   needs no `DriftReason`. A new tool must use the roots too.
+- **Projects.** A machine that serves the device operations `list` and `scan` announces the `projects`
+  feature in its hello, plus the owner's home (`DeviceHello.home`, stored with the machine: the base of
+  a project path in auto mode). `@local`'s `list` / `scan` forward them only to a machine that
+  announced `projects` (the device answers in the ceiling the request carries: auto reads with the
+  owner's rights, sandbox through the sandboxed helper, a docker-mode device in its container); for
+  any other the device offers no projects (`device.projects_unsupported`). The device keeps no project
+  list and has no project operations; projects live only in the kernel's `device_projects`.
 
 ## Lifecycle: `SandboxService` (`packages/kernel/src/sandbox/sandbox.service.ts`)
 

@@ -31,6 +31,7 @@ import type { LoopDeps } from "../runtime/langgraph-loop.js";
 import { runDeadline, tightestLimit } from "../runtime/limits.js";
 import type { AgentLoop, LoopOutcome } from "../runtime/loop.js";
 import { type MediaSourceDeps, RunError } from "../runtime/model-call.js";
+import { projectRootIdemKey } from "../runtime/project/knowledge.js";
 import type { BoundProvider, ProviderRegistry } from "../runtime/providers.js";
 import { runContextIdemKey } from "../runtime/run-context.service.js";
 import type { RunFinish } from "../runtime/run-finish.js";
@@ -170,12 +171,18 @@ export interface ReplaySeed {
    * replays never call context providers.
    */
   pluginContexts: { payload: { plugin: string } }[];
+  /**
+   * The original run's `project_root` event (project root spec §5), copied as is: a candidate sees
+   * the project as the original run read it; replays never read a device.
+   */
+  projectRoot: { payload: unknown } | undefined;
 }
 
 /**
  * The seed of a full-run replay (C6): the `kind = 'eval'` conversation with the events before the
  * original run at their original seqs, the run row and its `run_started` (and the original
- * `skills_catalog`, `run_context` and `plugin_context` events), in one transaction of its own.
+ * `skills_catalog`, `run_context`, `plugin_context` and `project_root` events), in one transaction
+ * of its own.
  */
 @Injectable()
 export class EvalReplaySeeder {
@@ -283,6 +290,16 @@ export class EvalReplaySeeder {
         idemKey: pluginContextIdemKey(runId, c.payload.plugin),
         payload: c.payload,
       })),
+      ...(p.projectRoot
+        ? [
+            {
+              type: "project_root" as const,
+              runId,
+              idemKey: projectRootIdemKey(runId),
+              payload: p.projectRoot.payload,
+            },
+          ]
+        : []),
     ]);
     if (onSeeded && !(await onSeeded(conversationId))) throw new ReplayClaimLost();
   }
@@ -498,6 +515,9 @@ export async function replayRun(
   const pluginContexts = s.events
     .filter((e) => e.runId === s.runId && e.type === "plugin_context" && e.seq > R)
     .map((e) => ({ payload: e.payload as { plugin: string } }));
+  const projectRoot = s.events.find(
+    (e) => e.runId === s.runId && e.type === "project_root" && e.seq > R,
+  );
 
   // a sub-agent's case (spec §15.3) runs the effective definition frozen in its subagent_started
   // (the request renders that event's preamble and instructions; its tools come from it too), with
@@ -544,6 +564,7 @@ export async function replayRun(
       catalog,
       runContext,
       pluginContexts,
+      projectRoot,
     },
     d.onSeeded,
   );

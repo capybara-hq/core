@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type {
   DeviceExecGrants,
+  DeviceFeature,
   ExtensionContext,
   KernelReq,
   SandboxLimits,
@@ -81,6 +82,8 @@ let orgSettings: OrgDeviceSettings;
 /** The mode the machine last reported (null: unknown). */
 let reportedMode: EffectiveDevicePolicy["mode"] | null;
 let machineRoots: typeof ROOTS | null;
+/** The features the machine announced in its last hello. */
+let machineFeatures: DeviceFeature[];
 let orgOfEnv: string | null;
 let maxFrameBytes: number;
 /** What `NetworkGrants.forExec` answers, and the calls it got. */
@@ -93,6 +96,7 @@ beforeEach(() => {
   orgSettings = {};
   reportedMode = "sandbox";
   machineRoots = ROOTS;
+  machineFeatures = ["projects"];
   orgOfEnv = "org-1";
   maxFrameBytes = 16 * 1024 * 1024;
   runGrants = undefined;
@@ -125,6 +129,17 @@ function machine(): (req: KernelReq) => Answer {
         const d = files.get(a.path as string);
         return { ok: true, result: d === undefined ? null : { dataB64: d, truncated: false } };
       }
+      case "list":
+        return a.path === "/missing"
+          ? { ok: true, result: null }
+          : a.path === `${ROOTS.workspace}/file.txt`
+            ? { ok: false, error: { kind: "error", message: "not a directory" } }
+            : { ok: true, result: { entries: [{ name: "src", isDir: true }], truncated: true } };
+      case "scan":
+        return {
+          ok: true,
+          result: [{ path: `${ROOTS.workspace}/app`, suggestedName: "app" }],
+        };
       case "stat": {
         const d = files.get(a.path as string);
         return {
@@ -158,6 +173,7 @@ beforeAll(async () => {
     {
       orgOf: async () => orgOfEnv,
       machineRoots: async () => machineRoots,
+      machineFeatures: async () => machineFeatures,
     },
     {
       devicePolicy: async () => effectiveDevicePolicy(deployment, orgSettings, null),
@@ -307,6 +323,75 @@ describe("LocalDeviceProvider", () => {
       { op: "killTagged", args: { tags: ["tag-1"] }, deadlineMs: 30_000 },
       { op: "killAll", args: {}, deadlineMs: 30_000 },
     ]);
+    await h.disconnect();
+  });
+
+  it("list and scan relay the ops with the kernel's ceiling (project root §4.1)", async () => {
+    const h = new TestHolder(redis, bus, randomUUID(), machine());
+    await h.connect();
+    const handle = { id: h.deviceId, roots: ROOTS, limits: LIMITS };
+    const listed = await provider.list(handle, ROOTS.workspace, {
+      limit: 1,
+      limits: { mode: "sandbox" },
+      signal: signal(),
+    });
+    expect(listed).toEqual({ entries: [{ name: "src", isDir: true }], truncated: true });
+    expect(h.frames[0]).toMatchObject({
+      op: "list",
+      deadlineMs: 30_000,
+      args: { path: ROOTS.workspace, limit: 1, limits: { mode: "sandbox" } },
+    });
+    // the ceiling is the mode alone: nothing else of the limits goes with it
+    expect((h.frames[0] as KernelReq).args).toEqual({
+      path: ROOTS.workspace,
+      limit: 1,
+      limits: { mode: "sandbox" },
+    });
+    expect(
+      await provider.list(handle, "/missing", {
+        limit: 1,
+        limits: { mode: "auto" },
+        signal: signal(),
+      }),
+    ).toBeNull();
+    // a file is the machine's error, never null
+    const file = await rejection(
+      provider.list(handle, `${ROOTS.workspace}/file.txt`, {
+        limit: 1,
+        limits: { mode: "auto" },
+        signal: signal(),
+      }),
+    );
+    expect(file).toBeInstanceOf(Error);
+    expect(
+      await provider.scan(handle, ROOTS.workspace, { limits: { mode: "auto" }, signal: signal() }),
+    ).toEqual([{ path: `${ROOTS.workspace}/app`, suggestedName: "app" }]);
+    expect(h.frames.at(-1)).toMatchObject({
+      op: "scan",
+      args: { base: ROOTS.workspace, limits: { mode: "auto" } },
+    });
+    await h.disconnect();
+  });
+
+  it("list and scan throw for a machine that does not announce projects, never asking it", async () => {
+    const h = new TestHolder(redis, bus, randomUUID(), machine());
+    await h.connect();
+    machineFeatures = ["networkReport", "policyOp", "policyOpId", "mode"];
+    const handle = { id: h.deviceId, roots: ROOTS, limits: LIMITS };
+    const listed = await rejection(
+      provider.list(handle, ROOTS.workspace, {
+        limit: 1,
+        limits: { mode: "sandbox" },
+        signal: signal(),
+      }),
+    );
+    expect(listed).toBeInstanceOf(ApiError);
+    expect((listed as ApiError).code).toBe("device.projects_unsupported");
+    const scanned = await rejection(
+      provider.scan(handle, ROOTS.workspace, { limits: { mode: "sandbox" }, signal: signal() }),
+    );
+    expect((scanned as ApiError).code).toBe("device.projects_unsupported");
+    expect(h.frames).toEqual([]);
     await h.disconnect();
   });
 

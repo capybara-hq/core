@@ -2,12 +2,13 @@ import { ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
 import type { BuiltinTool } from "../../registry.js";
 import { viewPath } from "../../view.js";
 import {
-  checkPathShape,
+  checkFilePathShape,
   checkToolPath,
   clip,
   display,
   inSandbox,
   looksBinary,
+  resolveToolPath,
   type SandboxToolDeps,
   sandboxBaseTimeoutMs,
   unavailableWhenNoSandbox,
@@ -109,11 +110,11 @@ export function sandboxReadTool(deps: SandboxToolDeps): BuiltinTool {
     timeoutMs: () => sandboxBaseTimeoutMs(deps.config.get()),
     async run(input, ctx) {
       const { offset = 1, limit = DEFAULT_LIMIT } = input as ReadInput;
-      checkPathShape((input as ReadInput).file_path, "file_path");
+      checkFilePathShape((input as ReadInput).file_path);
       let path = "";
       const { value, notices } = await inSandbox(deps, ctx, async (s) => {
         const { h, p, signal } = s;
-        path = checkToolPath((input as ReadInput).file_path, s, "file_path");
+        path = checkToolPath(resolveToolPath((input as ReadInput).file_path, s), s, "file_path");
         const st = await p.stat(h, path, signal);
         if (st === null) throw new ToolError(notFound(path));
         if (st.isDir) throw new ToolError(isDirectory(path));

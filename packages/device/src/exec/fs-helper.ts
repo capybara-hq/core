@@ -1,3 +1,10 @@
+import {
+  DEVICE_SCAN_SKIPPED_BASE_DIRS,
+  DEVICE_SCAN_SKIPPED_DIRS,
+  MAX_DEVICE_SCAN_DEPTH,
+  MAX_DEVICE_SCAN_DIRS,
+} from "@capybara-hq/plugin-sdk";
+
 /**
  * The file-operation helper the OS executor runs **inside the sandbox** (`node -e`), so a
  * kernel-side read or write never touches the host file system with the program's own privileges:
@@ -5,13 +12,17 @@
  * could reach anyway.
  *
  * argv: `<mode> <op> <path> <maxBytes> <root>...`, mode `auto` | `sandbox`, op `read` | `stat` |
- * `write` (data on stdin). A missing or unknown mode is refused. In sandbox mode the roots are
+ * `write` (data on stdin) | `list` (`maxBytes` is the entry limit) | `scan`. A missing or unknown mode is refused. In sandbox mode the roots are
  * enforced; in auto mode any clean absolute path is accepted (shape checks: absolute, no `..`
  * segments, no control characters). The `auto` branch is required by this contract but has no
  * production caller today: the OS executor runs the helper in sandbox mode only, and auto mode
  * reads and writes directly through `HostExecutor`. stdout: one JSON object, `{ "r": <result> }`
  * or `{ "e": "policy" | "error", "m": <message> }`. read → `null` | `{ b64, truncated }`; stat →
- * `null` | `{ size, isDir }`; write → `null`. Non-regular files (FIFOs, sockets, devices) are
+ * `null` | `{ size, isDir }`; write → `null`; list → `null` | `{ entries, truncated }`; scan → the
+ * paths of the directories found, unfiltered and unsorted (the caller applies the name rule, the
+ * order and the cut: `finishScan`). `list` and `scan` follow `listing.ts`'s `listDirectory` and
+ * `scanDirectory` (same traversal, same budget); in sandbox mode their path must also lie lexically
+ * under a root, so a missing path outside the roots is refused, never `null`. Non-regular files (FIFOs, sockets, devices) are
  * refused without blocking (`O_NONBLOCK`).
  */
 export const FS_HELPER_SCRIPT = `
@@ -94,6 +105,69 @@ export const FS_HELPER_SCRIPT = `
         fs.closeSync(fd);
       }
       return out({ r: null });
+    }
+    if (op === "list" || op === "scan") {
+      const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+      const fail = (e) => {
+        const code = e && typeof e.code === "string" && /^[A-Z0-9_]+$/.test(e.code) ? " (" + e.code + ")" : "";
+        return out({ e: "error", m: p + " cannot be read" + code });
+      };
+      const away = () => out({ e: "policy", m: p + " is outside the device's workspace; in this mode the device reads only that" });
+      if (typeof p !== "string" || !path.isAbsolute(p)) return out({ e: "policy", m: p + " is not an absolute path" });
+      const q = path.resolve(p);
+      if (mode === "sandbox" && !roots.some((x) => q === x || q.startsWith(x + "/"))) return away();
+      let r;
+      try { r = real(q); } catch (e) { return fail(e); }
+      if (r === null) return out({ r: op === "list" ? null : [] });
+      if (!allowed(r)) return away();
+      let st;
+      try { st = fs.statSync(r); } catch (e) { return fail(e); }
+      if (!st.isDirectory()) return out({ e: "error", m: p + " is not a directory" });
+      let ents;
+      try { ents = fs.readdirSync(r, { withFileTypes: true }); } catch (e) { return fail(e); }
+      ents.sort((a, b) => cmp(a.name, b.name));
+      if (op === "list") {
+        const limit = Number(maxS);
+        // a link counts as a directory only when its target is one inside what the mode reads
+        const isDir = (e) => {
+          if (e.isDirectory()) return true;
+          if (!e.isSymbolicLink()) return false;
+          try {
+            const t = fs.realpathSync(path.join(r, e.name));
+            if (mode !== "auto" && !under(t)) return false;
+            return fs.statSync(t).isDirectory();
+          } catch { return false; }
+        };
+        const entries = ents.slice(0, limit).map((e) => ({ name: e.name, isDir: isDir(e) }));
+        return out({ r: { entries, truncated: ents.length > limit } });
+      }
+      const skipAny = ${JSON.stringify(DEVICE_SCAN_SKIPPED_DIRS)};
+      const skipBase = ${JSON.stringify(DEVICE_SCAN_SKIPPED_BASE_DIRS)};
+      const found = [];
+      let visits = 1;
+      // a hit is recorded; the directories to visit below are returned
+      const below = (node, es, depth) => {
+        if (es.some((e) => e.name === ".git" || (e.name === "AGENTS.md" && !e.isDirectory()))) found.push(node.rep);
+        if (depth >= ${MAX_DEVICE_SCAN_DEPTH}) return [];
+        return es
+          .filter((e) => e.isDirectory() && !e.name.startsWith(".") && !skipAny.includes(e.name) && !(depth === 0 && skipBase.includes(e.name)))
+          .map((e) => ({ dir: path.join(node.dir, e.name), rep: path.join(node.rep, e.name) }));
+      };
+      let level = below({ dir: r, rep: q }, ents, 0);
+      // breadth-first, each level in code-unit order of path, until the visit budget is spent
+      walk: for (let depth = 1; level.length > 0; depth++) {
+        level.sort((a, b) => cmp(a.rep, b.rep));
+        const next = [];
+        for (const node of level) {
+          if (visits >= ${MAX_DEVICE_SCAN_DIRS}) break walk;
+          visits += 1;
+          let es;
+          try { es = fs.readdirSync(node.dir, { withFileTypes: true }); } catch { continue; }
+          next.push(...below(node, es, depth));
+        }
+        level = next;
+      }
+      return out({ r: found });
     }
     out({ e: "error", m: "unknown helper op " + op });
   } catch (e) {

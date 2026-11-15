@@ -35,6 +35,18 @@ export const maxReadBytes = (maxFrameBytes: number): number =>
 const NAME_PREFIX = "cap-device-";
 
 /**
+ * The device offers no projects (project root §4.1): a local machine whose `capybara-device`
+ * does not announce `projects`, or a cloud provider without `list` / `scan`.
+ */
+export const projectsUnsupported = (local: boolean): ApiError =>
+  new ApiError(
+    "device.projects_unsupported",
+    local
+      ? "This device's capybara-device does not support projects; update capybara-device on that machine and reconnect it."
+      : "This device's sandbox provider does not support projects; its conversations work without one.",
+  );
+
+/**
  * The refusal of a command on a machine whose local policy is auto mode while the organization (or
  * the platform) allows only sandbox mode (auto mode spec §4.3): re-checked at every exec, so a
  * machine switched locally is refused at the next command.
@@ -82,7 +94,7 @@ export class LocalDeviceProvider implements SandboxProvider {
   constructor(
     @Inject(LocalDeviceRelay) private readonly relay: LocalDeviceRelay,
     @Inject(DeviceTargets)
-    private readonly targets: Pick<DeviceTargets, "orgOf" | "machineRoots">,
+    private readonly targets: Pick<DeviceTargets, "orgOf" | "machineRoots" | "machineFeatures">,
     @Inject(SandboxService)
     private readonly sandbox: Pick<SandboxService, "devicePolicy" | "deviceLimits">,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
@@ -245,6 +257,53 @@ export class LocalDeviceProvider implements SandboxProvider {
     signal: AbortSignal,
   ): Promise<{ size: number; isDir: boolean } | null> {
     return this.relay.call(h.id, "stat", { path }, { deadlineMs: OP_DEADLINE_MS, signal });
+  }
+
+  /**
+   * Lists one directory on the machine (the `list` op, project root §4.1), read in the mode the
+   * kernel's current ceiling gives. A machine that did not announce `projects` throws
+   * `device.projects_unsupported` (never null, which would read as "does not exist").
+   */
+  async list(
+    h: SandboxHandle,
+    path: string,
+    opts: { limit: number; limits: Pick<SandboxLimits, "mode">; signal: AbortSignal },
+  ): Promise<{ entries: { name: string; isDir: boolean }[]; truncated: boolean } | null> {
+    await this.requireProjects(h.id);
+    opts.signal.throwIfAborted();
+    return this.relay.call(
+      h.id,
+      "list",
+      { path, limit: opts.limit, limits: { mode: opts.limits.mode } },
+      { deadlineMs: OP_DEADLINE_MS, signal: opts.signal },
+    );
+  }
+
+  /**
+   * Looks for project-like directories under `base` on the machine (the `scan` op, project root
+   * §4.1), read in the mode the kernel's current ceiling gives. A machine that did not announce
+   * `projects` throws `device.projects_unsupported`.
+   */
+  async scan(
+    h: SandboxHandle,
+    base: string,
+    opts: { limits: Pick<SandboxLimits, "mode">; signal: AbortSignal },
+  ): Promise<{ path: string; suggestedName: string }[]> {
+    await this.requireProjects(h.id);
+    opts.signal.throwIfAborted();
+    return this.relay.call(
+      h.id,
+      "scan",
+      { base, limits: { mode: opts.limits.mode } },
+      { deadlineMs: OP_DEADLINE_MS, signal: opts.signal },
+    );
+  }
+
+  /** The kernel never sends `list` or `scan` to a machine that did not announce `projects`. */
+  private async requireProjects(deviceId: string): Promise<void> {
+    if (!(await this.targets.machineFeatures(deviceId)).includes("projects")) {
+      throw projectsUnsupported(true);
+    }
   }
 
   /**

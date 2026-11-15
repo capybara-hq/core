@@ -4,6 +4,10 @@
  */
 import {
   type ExecResult,
+  isDeviceProjectName,
+  MAX_DEVICE_PROJECT_NAME_LENGTH,
+  MAX_DEVICE_SCAN_DEPTH,
+  MAX_DEVICE_SCAN_RESULTS,
   type NetworkBlockedHost,
   type NetworkBlockLayer,
   type SandboxActor,
@@ -27,7 +31,9 @@ export type DeviceOp =
   | "killAll"
   | "stop"
   | "policy"
-  | "policyStatus";
+  | "policyStatus"
+  | "list"
+  | "scan";
 
 const DEVICE_OPS: readonly DeviceOp[] = [
   "create",
@@ -40,6 +46,8 @@ const DEVICE_OPS: readonly DeviceOp[] = [
   "stop",
   "policy",
   "policyStatus",
+  "list",
+  "scan",
 ];
 
 /**
@@ -47,23 +55,47 @@ const DEVICE_OPS: readonly DeviceOp[] = [
  * op; `policyOpId`: it also logs each `policy` op's outcome by its `opId`, answers `policyStatus`
  * and reports recent outcomes in its hello (`recentOps`); `networkReport` means exec results may
  * carry `network`; `mode` means the device applies `limits.mode` / `limits.network` (without it
- * the device behaves as an allowlisted sandbox).
+ * the device behaves as an allowlisted sandbox); `projects` means the device serves `list` and
+ * `scan` (the kernel keeps a device's projects itself and asks the device only what it can read).
+ * The kernel gates each op on its feature, as it gates `policy` on `policyOp` / `policyOpId`: it
+ * never sends `list` or `scan` to a device that did not announce `projects`.
  */
-export type DeviceFeature = "networkReport" | "policyOp" | "policyOpId" | "mode";
+export type DeviceFeature = "networkReport" | "policyOp" | "policyOpId" | "mode" | "projects";
 const DEVICE_FEATURES: readonly DeviceFeature[] = [
   "networkReport",
   "policyOp",
   "policyOpId",
   "mode",
+  "projects",
 ];
 
-/** What the kernel knows of a device's local policy (from the hello or a `policy` op). */
+/** The most entries a `list` op may ask for and its result may carry. */
+export const MAX_DEVICE_LIST_ENTRIES = 1000;
+
+/** What a device knows of its local policy and reports (in the hello or a `policy` op). */
 export interface DeviceLocalPolicySummary {
   /** `auto` = no OS sandbox (the owner's machine); `sandbox` = the OS sandbox. */
   mode: "auto" | "sandbox";
   /** The device's sandbox-mode allowlist; meaningful in sandbox mode only. */
   allowedDomains: string[];
 }
+
+/**
+ * A directory a `scan` found that looks like a project (it holds `.git` or `AGENTS.md`): a
+ * suggestion, not a project. `path` is absolute ({@link validateSandboxPathShape});
+ * `suggestedName` is a guess from its basename ({@link isDeviceProjectName}) the owner may change.
+ */
+export interface DeviceProjectCandidate {
+  path: string;
+  suggestedName: string;
+}
+
+/**
+ * The kernel's current ceiling on a request that reads the device's file system outside a command
+ * (`list`, `scan`): the device answers in the mode it would run this request in, the owner's
+ * choice cut to `mode`, never by a ceiling it saw on an earlier command.
+ */
+export type DeviceRequestCeiling = Pick<SandboxLimits, "mode">;
 
 /**
  * The first line of the kernel's background task launch command (`Bash` `run_in_background`), a
@@ -121,6 +153,11 @@ export interface DeviceHello {
    * the parser).
    */
   recentOps?: DevicePolicyOpReport[];
+  /**
+   * The owner's home directory, an absolute path (a local device; the base of an auto-mode
+   * project's relative path). A malformed value is dropped by the parser.
+   */
+  home?: string;
 }
 
 /** Error kinds a device reports for a failed request. */
@@ -247,6 +284,48 @@ export interface DevicePolicyStatus {
   policy?: DeviceLocalPolicySummary;
   message?: string;
 }
+/**
+ * Lists one directory (absolute `path`, {@link validateSandboxPathShape}): at most `limit` entries
+ * (at most {@link MAX_DEVICE_LIST_ENTRIES}), read in the mode `limits` gives. See
+ * `SandboxProvider.list` for the semantics.
+ */
+export interface DeviceListArgs {
+  path: string;
+  limit: number;
+  limits: DeviceRequestCeiling;
+}
+/**
+ * One entry of a listed directory: `name` is never empty, `.` or `..` and holds no `/`. `isDir`
+ * follows symbolic links (stat semantics): a link to a directory is `true`, a dangling link `false`,
+ * and so is a link whose target the request's mode cannot reach.
+ */
+export interface DeviceListEntry {
+  name: string;
+  isDir: boolean;
+}
+/**
+ * The directory's entries sorted by code unit, `truncated` when more than `limit` exist; null only
+ * when the path does not exist and the request's mode could reach it (like `stat` / `readFile`).
+ * A file, an unreadable directory, or a path the request's mode cannot reach is an error (the
+ * latter a `policy` refusal), never null.
+ */
+export type DeviceListResult = { entries: DeviceListEntry[]; truncated: boolean } | null;
+/**
+ * Looks for project-like directories under `base` (absolute, {@link validateSandboxPathShape}),
+ * read in the mode `limits` gives. A `base` that does not exist answers `[]`; a `base` that is a
+ * file, unreadable, or outside the request's mode is an error. See `SandboxProvider.scan` for the
+ * traversal.
+ */
+export interface DeviceScanArgs {
+  base: string;
+  limits: DeviceRequestCeiling;
+}
+/**
+ * `base` itself and the directories at most {@link MAX_DEVICE_SCAN_DEPTH} levels below it that
+ * hold a `.git` entry or an `AGENTS.md` file, sorted by `path` in code-unit order and cut to the
+ * first {@link MAX_DEVICE_SCAN_RESULTS}. Never file contents. See `SandboxProvider.scan`.
+ */
+export type DeviceScanResult = DeviceProjectCandidate[];
 
 /** A frame that is not valid protocol v1 (or came from the wrong side). */
 export class DeviceProtocolError extends Error {
@@ -363,6 +442,79 @@ function hostArray(o: Record<string, unknown>, k: string): string[] {
   return v;
 }
 
+/** A bounded array field of a result or summary, refused when it is longer than `max`. */
+function boundedArray(v: unknown, label: string, max: number, what: string): unknown[] {
+  if (!Array.isArray(v)) {
+    throw new DeviceProtocolError(`field "${label}" must be an array of ${what}`);
+  }
+  if (v.length > max) {
+    throw new DeviceProtocolError(`field "${label}" must have at most ${max} entries`);
+  }
+  return v;
+}
+
+/** A project name field (see {@link isDeviceProjectName}), named by `what` in the message. */
+function projectName(v: unknown, what: string): string {
+  if (!isDeviceProjectName(v)) {
+    throw new DeviceProtocolError(
+      `${what} must be a non-empty name of at most ${MAX_DEVICE_PROJECT_NAME_LENGTH} UTF-16 code units, not "." or "..", without "/", control characters or leading or trailing whitespace`,
+    );
+  }
+  return v;
+}
+
+/** An absolute path field ({@link validateSandboxPathShape}), named by `what` in the message. */
+function absolutePath(v: unknown, what: string): string {
+  if (typeof v !== "string") throw new DeviceProtocolError(`${what} must be a string`);
+  const problems = validateSandboxPathShape(v);
+  if (problems.length > 0) throw new DeviceProtocolError(`${what}: ${problems.join("; ")}`);
+  return v;
+}
+
+/** A request's ceiling (`limits` of `list` / `scan`): only its mode. */
+function parseCeiling(v: unknown): DeviceRequestCeiling {
+  return { mode: oneOf(obj(v, 'field "limits"'), "mode", ["auto", "sandbox"] as const) };
+}
+
+/** A `list` result: null, or at most {@link MAX_DEVICE_LIST_ENTRIES} named entries. */
+function parseListResult(result: unknown): DeviceListResult {
+  if (result === null) return null;
+  const r = obj(result, "list result");
+  const entries = boundedArray(r.entries, "entries", MAX_DEVICE_LIST_ENTRIES, "entries").map(
+    (e, i) => {
+      const what = `field "entries[${i}]"`;
+      if (!isRecord(e)) throw new DeviceProtocolError(`${what} must be an object`);
+      const name = e.name;
+      if (
+        typeof name !== "string" ||
+        name === "" ||
+        name === "." ||
+        name === ".." ||
+        name.includes("/")
+      ) {
+        throw new DeviceProtocolError(
+          `${what}.name must be a non-empty string without "/", other than "." and ".."`,
+        );
+      }
+      return { name, isDir: bool(e, "isDir") };
+    },
+  );
+  return { entries, truncated: bool(r, "truncated") };
+}
+
+/** A `scan` result: at most {@link MAX_DEVICE_SCAN_RESULTS} candidates. */
+function parseScanResult(v: unknown): DeviceScanResult {
+  const label = "scan result";
+  return boundedArray(v, label, MAX_DEVICE_SCAN_RESULTS, "candidates").map((e, i) => {
+    const what = `field "${label}[${i}]"`;
+    if (!isRecord(e)) throw new DeviceProtocolError(`${what} must be an object`);
+    return {
+      path: absolutePath(e.path, `${what}.path`),
+      suggestedName: projectName(e.suggestedName, `${what}.suggestedName`),
+    };
+  });
+}
+
 function parsePolicySummary(v: unknown): DeviceLocalPolicySummary {
   const o = obj(v, 'field "policy"');
   return {
@@ -412,12 +564,15 @@ function parseRecentOps(v: unknown[]): DevicePolicyOpReport[] {
 /** Optional hello fields: malformed values are ignored so old and new peers interoperate. */
 function optionalHelloFields(
   o: Record<string, unknown>,
-): Pick<DeviceHello, "features" | "policy" | "recentOps"> {
-  const out: Pick<DeviceHello, "features" | "policy" | "recentOps"> = {};
+): Pick<DeviceHello, "features" | "policy" | "recentOps" | "home"> {
+  const out: Pick<DeviceHello, "features" | "policy" | "recentOps" | "home"> = {};
   if (Array.isArray(o.features)) {
     out.features = DEVICE_FEATURES.filter((f) => (o.features as unknown[]).includes(f));
   }
   if (Array.isArray(o.recentOps)) out.recentOps = parseRecentOps(o.recentOps);
+  if (typeof o.home === "string" && validateSandboxPathShape(o.home).length === 0) {
+    out.home = o.home;
+  }
   return { ...out, ...optionalPolicy(o.policy) };
 }
 
@@ -583,6 +738,19 @@ function validateArgs(op: DeviceOp, a: Record<string, unknown>): void {
     case "policyStatus":
       opId(a);
       return;
+    case "list": {
+      absolutePath(a.path, 'field "path"');
+      const limit = posInt(a, "limit");
+      if (limit > MAX_DEVICE_LIST_ENTRIES) {
+        throw new DeviceProtocolError(`field "limit" must be at most ${MAX_DEVICE_LIST_ENTRIES}`);
+      }
+      parseCeiling(a.limits);
+      return;
+    }
+    case "scan":
+      absolutePath(a.base, 'field "base"');
+      parseCeiling(a.limits);
+      return;
   }
 }
 
@@ -598,6 +766,8 @@ export interface DeviceOpResults {
   stop: null;
   policy: DevicePolicyResult;
   policyStatus: DevicePolicyStatus;
+  list: DeviceListResult;
+  scan: DeviceScanResult;
 }
 
 /** Validates the `result` of a successful `res` for `op`; throws {@link DeviceProtocolError}. */
@@ -645,6 +815,10 @@ export function parseOpResult(op: DeviceOp, result: unknown): DeviceOpResults[De
     }
     case "create":
       return { roots: parseRoots(obj(result, "create result").roots) };
+    case "list":
+      return parseListResult(result);
+    case "scan":
+      return parseScanResult(result);
     default:
       if (result !== null) throw new DeviceProtocolError(`${op} result must be null`);
       return null;

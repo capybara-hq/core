@@ -14,6 +14,7 @@ import {
 import { type ConnectorSummary, canManageConnectors, personalConnectors } from "../connectors";
 import type { Conversation } from "../conversations";
 import { codeParam, defaultDeviceOrg } from "../device-sign-in";
+import { chosenDeviceId, type DeviceList } from "../devices";
 import type { EvalSetDetail } from "../evals";
 import { labelLocale } from "../extension-label";
 import type { InboxItem } from "../inbox";
@@ -81,7 +82,7 @@ import {
   queueQuery,
 } from "./conversation";
 import { pendingDeviceQuery } from "./device-sign-in";
-import { deviceQuery, devicesQuery } from "./devices";
+import { deviceProjectsQuery, deviceQuery, devicesQuery } from "./devices";
 import {
   type EvalRunState,
   evalCaseQuery,
@@ -730,6 +731,11 @@ export const ROUTES: readonly RouteEntry[] = [
           q(devicesQuery(orgId)),
         ].map((o) => qc.prefetchQuery({ ...o, retry: false })),
       );
+      // the projects of the device the composer starts on (its device picker binds one)
+      const devices = qc.getQueryData<DeviceList>(devicesQuery(orgId).queryKey);
+      const deviceId = devices === undefined ? undefined : chosenDeviceId(devices);
+      if (deviceId === undefined) return;
+      await qc.prefetchQuery({ ...q(deviceProjectsQuery(orgId, deviceId)), retry: false });
     },
   },
   {
@@ -853,7 +859,11 @@ export const ROUTES: readonly RouteEntry[] = [
   {
     pattern: "/devices/[id]",
     queries: ({ orgId, params }) =>
-      orgId === null || params.id === undefined ? [] : [q(deviceQuery(orgId, params.id))],
+      orgId === null || params.id === undefined
+        ? []
+        : // the projects are read from the database only; their suggestions ask the device and
+          // wait for the add form
+          [q(deviceQuery(orgId, params.id)), q(deviceProjectsQuery(orgId, params.id))],
   },
   {
     pattern: "/connectors/install",

@@ -40,6 +40,7 @@ import { runDeadline, tightestLimit } from "./limits.js";
 import type { AgentLoop, LoopOutcome, SubagentParent, WaitingFor } from "./loop.js";
 import { RunError, type StreamSink } from "./model-call.js";
 import { PluginContextService } from "./plugin-context.service.js";
+import { ProjectKnowledgeService } from "./project/knowledge.service.js";
 import { ProviderListError, ProviderRegistry } from "./providers.js";
 import { ORG_QUOTA_LEASE_MS, type OrgQuota, orgRunLimit, RUN_QUOTA } from "./quota.js";
 import { RunContextService } from "./run-context.service.js";
@@ -189,6 +190,9 @@ export class RunWorker {
     /** Run start's plugin context (memory plugin spec §6.1): the `context@1` providers' text. */
     @Inject(PluginContextService)
     private readonly pluginContext: Pick<PluginContextService, "record">,
+    /** Run start's project knowledge (project root spec §4.4): a bound project's AGENTS.md, skills. */
+    @Inject(ProjectKnowledgeService)
+    private readonly projectKnowledge: Pick<ProjectKnowledgeService, "record">,
     /** The run's resolved tools, for the plugin context's `tools` (chat runs with providers). */
     @Inject(ToolRegistry) private readonly tools: Pick<ToolRegistry, "forAgent">,
     @Inject(RunFinish) private readonly finisher: Pick<RunFinish, "finish">,
@@ -788,6 +792,20 @@ export class RunWorker {
         signal: state.shutdown.signal,
       });
       if (!pluginContexted) return "finished";
+      // project knowledge (project root spec §4.4): a conversation bound to a project reads its
+      // AGENTS.md and skills on the device before the first model call, outside any transaction;
+      // a free one reads nothing, a sub-agent copies its root's latest snapshot. Its append
+      // re-reads the run under the locks, as above.
+      const projectRead = await this.projectKnowledge.record({
+        orgId: conv.org_id,
+        conversationId,
+        runId,
+        kind: conv.kind,
+        // a sub-agent copies its root's snapshot: it works in the root's project
+        ...(parent !== undefined && { rootConversationId: parent.rootConversationId }),
+        signal: state.shutdown.signal,
+      });
+      if (!projectRead) return "finished";
       await this.hooks?.beforeRunning?.(runId, conversationId);
       // never over a terminal status: a run finished meanwhile stays finished
       const updated = await this.db

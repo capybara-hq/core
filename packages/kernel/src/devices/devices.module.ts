@@ -5,6 +5,7 @@ import { SandboxModule } from "../sandbox/sandbox.module.js";
 import { SandboxFileReader } from "../sandbox/sandbox-file-reader.js";
 import { DeviceAccess } from "./access.js";
 import { ConversationDevices } from "./conversation-devices.js";
+import { DeviceProjectsService } from "./device-projects.service.js";
 import { DevicesService } from "./devices.service.js";
 
 /**
@@ -19,7 +20,19 @@ import { DevicesService } from "./devices.service.js";
   imports: [SandboxModule, ExtensionsModule, LocalDevicesModule],
   // SandboxFileReader lives here, not in SandboxModule: it needs ConversationDevices, and this
   // module already imports SandboxModule (the other way would be a module cycle)
-  providers: [DeviceAccess, DevicesService, ConversationDevices, SandboxFileReader],
-  exports: [DeviceAccess, DevicesService, ConversationDevices, SandboxFileReader],
+  providers: [
+    DeviceAccess,
+    DevicesService,
+    ConversationDevices,
+    SandboxFileReader,
+    DeviceProjectsService,
+  ],
+  exports: [
+    DeviceAccess,
+    DevicesService,
+    ConversationDevices,
+    SandboxFileReader,
+    DeviceProjectsService,
+  ],
 })
 export class DevicesModule {}

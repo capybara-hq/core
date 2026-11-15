@@ -6,6 +6,7 @@ const KNOWN_FEATURES: readonly DeviceFeature[] = [
   "policyOp",
   "policyOpId",
   "mode",
+  "projects",
 ];
 
 /**

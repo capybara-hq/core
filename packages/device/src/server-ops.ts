@@ -1,18 +1,22 @@
 import {
   type DeviceExecArgs,
   type DeviceKillTaggedArgs,
+  type DeviceListArgs,
   type DeviceLocalPolicySummary,
   type DevicePolicyArgs,
   type DevicePolicyStatus,
   type DevicePolicyStatusArgs,
   type DeviceReadFileArgs,
   type DeviceRes,
+  type DeviceScanArgs,
   type DeviceStatArgs,
   type DeviceWriteFileArgs,
   isPolicyOpId,
   type KernelReq,
+  MAX_DEVICE_LIST_ENTRIES,
   type SandboxLimits,
   validateAllowHost,
+  validateSandboxPathShape,
 } from "@capybara-hq/plugin-sdk";
 import type { CommandLogEntry } from "./command-log.js";
 import { DeviceOpError, type ExecMode, type Executor } from "./exec/types.js";
@@ -262,6 +266,27 @@ function servePolicyOp(
   }
 }
 
+/** The operations answered from the local policy file. */
+type LocalPolicyOp = "policy" | "policyStatus";
+
+/**
+ * Whether `op` is answered from the local policy file: it lives in the state directory, so these
+ * work while the device directory is gone, like the `policy` ops.
+ */
+function isLocalPolicyOp(op: KernelReq["op"]): op is LocalPolicyOp {
+  return op === "policy" || op === "policyStatus";
+}
+
+/** The answer to an operation this program does not serve (no policy store, or no reader). */
+function unsupported(req: KernelReq): DeviceRes {
+  return {
+    type: "res",
+    id: req.id,
+    ok: false,
+    error: { kind: "error", message: "unsupported operation" },
+  };
+}
+
 /** What the log says of an op id, with the summary now. Read-only. */
 function policyStatus(store: PolicyStore, args: unknown, facts: SummaryFacts): DevicePolicyStatus {
   const opId: unknown = (args as Partial<DevicePolicyStatusArgs> | null)?.opId;
@@ -274,6 +299,73 @@ function policyStatus(store: PolicyStore, args: unknown, facts: SummaryFacts): D
     policy: policySummary(store.current(), facts),
     ...(known?.outcome === "refused" && known.message !== undefined && { message: known.message }),
   };
+}
+
+/** A `list` / `scan` field that must be a clean absolute path, checked again here. */
+function requestPath(v: unknown, key: string): string {
+  const errors = typeof v === "string" ? validateSandboxPathShape(v) : ["path must be a string"];
+  if (errors.length > 0) {
+    throw new DeviceOpError("error", `invalid request: field "${key}": ${errors.join("; ")}`);
+  }
+  return v as string;
+}
+
+/** A `list` / `scan` request's ceiling (`limits.mode`), checked again here. */
+function requestCeiling(args: unknown): Pick<SandboxLimits, "mode"> {
+  const mode = (args as { limits?: { mode?: unknown } } | null)?.limits?.mode;
+  if (mode !== "auto" && mode !== "sandbox") {
+    throw new DeviceOpError(
+      "error",
+      'invalid request: field "limits.mode" must be "auto" or "sandbox"',
+    );
+  }
+  return { mode };
+}
+
+/**
+ * A `list` or `scan` request (a trust boundary: the device decides what a web session sees of its
+ * machine). Each is read in the mode it would run in now, `effectiveMode` of the owner's policy and
+ * the ceiling the request carries, never one an earlier command saw nor the file operations'
+ * window. Answered without the device directory: it reads the owner's machine, not that
+ * directory. Throws like the executor (a path its mode cannot reach is a `policy` refusal).
+ */
+async function serveRead(
+  executor: Executor,
+  req: KernelReq,
+  signal: AbortSignal,
+  store: PolicyStore,
+): Promise<{ result: unknown; detail: string }> {
+  const args = req.args as Partial<DeviceListArgs & DeviceScanArgs> | null;
+  const limits = requestCeiling(args);
+  if (req.op === "list") {
+    const path = requestPath(args?.path, "path");
+    const limit = args?.limit;
+    if (
+      typeof limit !== "number" ||
+      !Number.isInteger(limit) ||
+      limit < 1 ||
+      limit > MAX_DEVICE_LIST_ENTRIES
+    ) {
+      throw new DeviceOpError(
+        "error",
+        `invalid request: field "limit" must be an integer from 1 to ${MAX_DEVICE_LIST_ENTRIES}`,
+      );
+    }
+    const mode = effectiveMode(store.current(), limits);
+    signal.throwIfAborted();
+    const result = await (executor.list as NonNullable<Executor["list"]>)(
+      mode,
+      path,
+      limit,
+      signal,
+    );
+    return { result, detail: `list ${clean(path, 300)} in ${mode} mode` };
+  }
+  const base = requestPath(args?.base, "base");
+  const mode = effectiveMode(store.current(), limits);
+  signal.throwIfAborted();
+  const result = await (executor.scan as NonNullable<Executor["scan"]>)(mode, base, signal);
+  return { result, detail: `scan ${clean(base, 300)} in ${mode} mode` };
 }
 
 /** The audit line of an exec whose grants applied (sandbox mode only: auto mode ignores grants). */
@@ -295,7 +387,7 @@ function grantsDetail(
 /**
  * Runs one request and returns the answer plus its local audit line and, for an exec, its mode
  * (for the local command log). A vanished device directory answers `fs_gone` for every operation
- * except `stop`, `policy` and `policyStatus`. Never throws.
+ * except `stop`, `policy`, `policyStatus`, `list` and `scan`. Never throws.
  */
 export async function serveOp(
   executor: Executor,
@@ -307,20 +399,26 @@ export async function serveOp(
   try {
     if (req.op === "stop") return { res: ok(null) };
     // The policy lives in the state directory, not the device directory.
-    if (req.op === "policy" || req.op === "policyStatus") {
-      if (ctx.policy === undefined) {
-        return {
-          res: {
-            type: "res",
-            id: req.id,
-            ok: false,
-            error: { kind: "error", message: "unsupported operation" },
-          },
-        };
-      }
+    if (isLocalPolicyOp(req.op)) {
+      if (ctx.policy === undefined) return { res: unsupported(req) };
       const facts = summaryFacts(executor, ctx);
       if (req.op === "policyStatus") return { res: ok(policyStatus(ctx.policy, req.args, facts)) };
       return servePolicyOp(req, ctx.policy, facts);
+    }
+    // They read the owner's machine in the request's own mode, not the device directory, so they
+    // work while that directory is gone. Served only with a policy store (the mode needs the
+    // owner's choice) and by an executor that can read in a given mode.
+    if (req.op === "list" || req.op === "scan") {
+      const can = req.op === "list" ? executor.list : executor.scan;
+      if (ctx.policy === undefined || can === undefined) return { res: unsupported(req) };
+      try {
+        const { result, detail } = await serveRead(executor, req, signal, ctx.policy);
+        return { res: ok(result), detail };
+      } catch (e) {
+        const { res } = errorAnswer(req, e);
+        const message = res.ok ? "" : clean(res.error.message, 300);
+        return { res, detail: `${req.op} refused: ${message}` };
+      }
     }
     if ((await executor.ensureRoot()) === "gone") {
       return {

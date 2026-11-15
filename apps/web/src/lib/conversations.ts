@@ -376,6 +376,8 @@ type EventBody =
       type: "device_paths";
       payload: { roots: { workspace: string; skills: string; tmp: string } };
     }
+  /** A bound conversation's project as a run start read it (project root §4.4). */
+  | { type: "project_root"; payload: ProjectRootPayload }
   /** A background `Bash` task ended (background Bash spec §2): the thread's one-line notice. */
   | {
       type: "background_task_finished";
@@ -563,6 +565,29 @@ export interface Approver {
   approverRole?: OrgRole | null;
 }
 
+/**
+ * A `project_root` event's payload (kernel `events.ts`): the project and its root, its `AGENTS.md`
+ * when found, its skills (name, description, digest), or why it is unavailable (then no
+ * `AGENTS.md` and no skills).
+ */
+export interface ProjectRootPayload {
+  project: string;
+  root: string;
+  agentsMd?: string;
+  agentsMdTruncated?: true;
+  skills: { name: string; description: string; digest: string }[];
+  skillsTruncated?: true;
+  unavailable?: {
+    reason: "gone" | "outside_mode" | "unreadable" | "unsupported" | "removed";
+    message: string;
+  };
+}
+
+/** The state a conversation's latest `project_root` records (kernel `ProjectState`). */
+export type ProjectState =
+  | { loaded: true; agentsMd: boolean }
+  | { unavailable: NonNullable<ProjectRootPayload["unavailable"]>["reason"] };
+
 /** 已写入日志的会话事件。 */
 export type ConversationEvent = (EventBody | SkillForkResultBody) & {
   conversationId: string;
@@ -603,6 +628,17 @@ export interface Conversation {
   deviceId?: string | null;
   /** The scheduled task that started it (a `new`-mode task); null otherwise. */
   scheduledTaskId?: string | null;
+  /**
+   * The device project it is bound to (project root §4.3: chosen at creation, never changed);
+   * null in free mode.
+   */
+  project?: { name: string; path: string } | null;
+  /**
+   * Its latest `project_root` snapshot, wherever it lies in the log: loaded (and whether the
+   * project's `AGENTS.md` was found) or why the project is unavailable; null before the first run
+   * start recorded one (and in a list row).
+   */
+  projectState?: ProjectState | null;
   /** What it is doing now: a run in progress, or waiting for me (absent on older kernels). */
   activity?: "running" | "waiting" | null;
 }
@@ -746,6 +782,8 @@ export const createConversationWithMessage = (
   agentId: string,
   message: Omit<MessageInput, "retryOf">,
   deviceId?: string,
+  /** One of the device's projects to bind (project root §4.3); undefined: free mode. */
+  project?: string,
 ) =>
   apiFetch<{
     conversation: Conversation;
@@ -758,6 +796,7 @@ export const createConversationWithMessage = (
       agentId,
       message: messageBody(message),
       ...(deviceId !== undefined ? { deviceId } : {}),
+      ...(project !== undefined ? { project } : {}),
     }),
   });
 

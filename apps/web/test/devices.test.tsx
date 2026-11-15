@@ -19,6 +19,11 @@ vi.mock("next/navigation", () => ({
 
 type RenderOpts = Parameters<typeof renderRouteWithCache>[2];
 const BASE = "/api/v1/orgs/o1/devices";
+/** The device page also reads the device's projects (project root §4.1): none here. */
+const NO_PROJECTS = {
+  [`GET ${BASE}/e1/projects`]: () =>
+    json(200, { projects: [], hidden: 0, mode: "auto", base: "/workspace", supported: true }),
+};
 const T = "2026-11-07T08:00:00.000Z";
 const E = en.devices;
 
@@ -102,6 +107,7 @@ const routes = {
         env("e2", "Build box", { sessionIsolation: true, filesLost: true }),
       ]),
     ),
+  ...NO_PROJECTS,
   [`GET ${BASE}/e1`]: () => json(200, { device: env("e1", "Build box") }),
 };
 
@@ -166,6 +172,7 @@ describe("devices list", () => {
 
   it("a former default's page says it comes back with its provider", async () => {
     stubApi({
+      ...NO_PROJECTS,
       [`GET ${BASE}/e1`]: () =>
         json(200, {
           device: env("e1", null, {
@@ -315,6 +322,7 @@ describe("device detail", () => {
       release = r;
     });
     await renderRouteEmptyCache("/devices/e1", {
+      ...NO_PROJECTS,
       [`GET ${BASE}/e1`]: async () => {
         await held;
         return routes[`GET ${BASE}/e1`]();
@@ -330,6 +338,7 @@ describe("device detail", () => {
 
   it("an unavailable device shows 不可用 and offers no 重建文件 even when its files are lost", async () => {
     stubApi({
+      ...NO_PROJECTS,
       [`GET ${BASE}/e1`]: () =>
         json(200, { device: env("e1", "Build box", { available: false, filesLost: true }) }),
     });
@@ -340,6 +349,7 @@ describe("device detail", () => {
 
   it("a usable device that lost its files offers 重建文件", async () => {
     stubApi({
+      ...NO_PROJECTS,
       [`GET ${BASE}/e1`]: () => json(200, { device: env("e1", "Build box", { filesLost: true }) }),
     });
     await renderDetail();
@@ -357,6 +367,7 @@ describe("device detail", () => {
 
   it("a missing device is the not-found state", async () => {
     stubApi({
+      ...NO_PROJECTS,
       [`GET ${BASE}/e1`]: () => json(404, { error: { code: "device.not_found", message: "no" } }),
     });
     await renderDetail();
@@ -396,6 +407,7 @@ describe("device detail", () => {
     };
     const calls = stubApi({
       ...routes,
+      ...NO_PROJECTS,
       [`GET ${BASE}/e1`]: () => json(200, { device: env("e1", "Build box", { mode: sandboxed }) }),
       [`PATCH ${BASE}/e1`]: () => json(200, { device: env("e1", "Build box") }),
     });
@@ -440,7 +452,7 @@ describe("device detail", () => {
   });
 
   it("deleting the default device says a new empty one comes next time", async () => {
-    stubApi({ [`GET ${BASE}/e1`]: () => json(200, { device: env("e1", null) }) });
+    stubApi({ ...NO_PROJECTS, [`GET ${BASE}/e1`]: () => json(200, { device: env("e1", null) }) });
     await renderDetail();
     const user = await openSettings();
     await user.click(await screen.findByRole("button", { name: E.detail.delete }));
@@ -456,6 +468,7 @@ describe("device detail", () => {
     let posted = false;
     stubApi({
       [`GET ${BASE}`]: () => json(200, list([lost])),
+      ...NO_PROJECTS,
       [`GET ${BASE}/e1`]: () => {
         if (posted) reads += 1;
         // the job is still running on the first read after the request
@@ -485,6 +498,7 @@ describe("device detail", () => {
     let reads = 0;
     const calls = stubApi({
       [`GET ${BASE}`]: () => json(200, list([lost])),
+      ...NO_PROJECTS,
       [`GET ${BASE}/e1`]: () => {
         reads += 1;
         return json(200, { device: reads > 1 ? env("e1", "Build box") : lost });
@@ -622,6 +636,7 @@ describe("local devices (environments spec §6, §9)", () => {
     let revoked = false;
     const calls = stubApi({
       [`GET ${BASE}`]: () => json(200, list([device("e1", "Laptop")])),
+      ...NO_PROJECTS,
       [`GET ${BASE}/e1`]: () =>
         json(200, {
           device: device("e1", "Laptop", revoked ? { machine: null, online: false } : {}),
@@ -658,6 +673,7 @@ describe("local devices (environments spec §6, §9)", () => {
 
   it("a local device that lost its files says to log out and in again and offers no 重建文件", async () => {
     stubApi({
+      ...NO_PROJECTS,
       [`GET ${BASE}/e1`]: () => json(200, { device: device("e1", "Laptop", { filesLost: true }) }),
     });
     await renderDetail();
@@ -670,7 +686,10 @@ describe("local devices (environments spec §6, §9)", () => {
   });
 
   it("deleting a local device says the files on the machine stay", async () => {
-    stubApi({ [`GET ${BASE}/e1`]: () => json(200, { device: device("e1", "Laptop") }) });
+    stubApi({
+      ...NO_PROJECTS,
+      [`GET ${BASE}/e1`]: () => json(200, { device: device("e1", "Laptop") }),
+    });
     await renderDetail();
     const user = await openSettings();
     await user.click(await screen.findByRole("button", { name: E.detail.delete }));
@@ -723,6 +742,7 @@ describe("device network in sandbox mode (auto mode spec §4.4)", () => {
   it("removes a domain: the change goes to the machine and the device is read again", async () => {
     let removed = false;
     const calls = stubApi({
+      ...NO_PROJECTS,
       [`GET ${BASE}/e1`]: () =>
         json(200, {
           device: local(
@@ -751,6 +771,7 @@ describe("device network in sandbox mode (auto mode spec §4.4)", () => {
 
   it("adds a wildcard domain and refuses an invalid one before sending", async () => {
     const calls = stubApi({
+      ...NO_PROJECTS,
       [`GET ${BASE}/e1`]: () => json(200, { device: local() }),
       [`POST ${BASE}/e1/policy`]: () => json(200, { policy: policy() }),
     });
@@ -763,6 +784,7 @@ describe("device network in sandbox mode (auto mode spec §4.4)", () => {
 
   it("an empty allowlist is one muted line, not an empty-state page", async () => {
     stubApi({
+      ...NO_PROJECTS,
       [`GET ${BASE}/e1`]: () =>
         json(200, {
           device: local(
@@ -785,6 +807,7 @@ describe("device network in sandbox mode (auto mode spec §4.4)", () => {
 
   it("a program without policyOpId says to upgrade it", async () => {
     stubApi({
+      ...NO_PROJECTS,
       [`GET ${BASE}/e1`]: () =>
         json(200, { device: local({ features: ["networkReport", "policyOp"] }) }),
     });
@@ -796,6 +819,7 @@ describe("device network in sandbox mode (auto mode spec §4.4)", () => {
 
   it("a refused change shows why with the machine's message", async () => {
     stubApi({
+      ...NO_PROJECTS,
       [`GET ${BASE}/e1`]: () => json(200, { device: local() }),
       [`POST ${BASE}/e1/policy`]: () =>
         json(409, {
@@ -814,6 +838,7 @@ describe("device network in sandbox mode (auto mode spec §4.4)", () => {
 
   it("a Docker-mode machine says it has no per-domain control", async () => {
     stubApi({
+      ...NO_PROJECTS,
       [`GET ${BASE}/e1`]: () =>
         json(200, { device: local({}, { machine: { ...MACHINE, mode: "docker" } }) }),
     });

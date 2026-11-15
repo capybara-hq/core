@@ -133,6 +133,76 @@ describe("compaction_summary", () => {
   });
 });
 
+describe("project_root", () => {
+  const event = (payload: Record<string, unknown>) =>
+    ConversationEventSchema.safeParse({ type: "project_root", payload });
+
+  it("a project without AGENTS.md parses with no reason, and skills default to []", () => {
+    const parsed = ConversationEventSchema.parse({
+      type: "project_root",
+      payload: { project: "core", root: "/home/dev/core" },
+    });
+    expect(parsed.type === "project_root" ? parsed.payload.skills : undefined).toEqual([]);
+    expect(parsed.type === "project_root" ? parsed.payload.agentsMd : "x").toBeUndefined();
+  });
+
+  it("an unusable project carries a reason code and a message, and nothing else", () => {
+    const base = { project: "core", root: "/home/dev/core" };
+    for (const reason of ["gone", "outside_mode", "unreadable", "unsupported"]) {
+      expect(event({ ...base, unavailable: { reason, message: "Why." } }).success).toBe(true);
+    }
+    expect(event({ ...base, unavailable: { reason: "offline", message: "Why." } }).success).toBe(
+      false,
+    );
+    expect(event({ ...base, unavailable: { reason: "gone", message: "" } }).success).toBe(false);
+    expect(
+      event({ ...base, unavailable: { reason: "gone", message: "x".repeat(501) } }).success,
+    ).toBe(false);
+    const gone = { reason: "gone", message: "Gone." };
+    expect(event({ ...base, unavailable: gone, agentsMd: "rules" }).success).toBe(false);
+    expect(event({ ...base, unavailable: gone, agentsMdTruncated: true }).success).toBe(false);
+    expect(event({ ...base, unavailable: gone, skillsTruncated: true }).success).toBe(false);
+    expect(
+      event({
+        ...base,
+        unavailable: gone,
+        skills: [{ name: "fix-issue", description: "Fix one issue", digest: "a1b2c3" }],
+      }).success,
+    ).toBe(false);
+    // the free-text field is gone
+    expect(event({ ...base, absent: "missing" }).success).toBe(false);
+  });
+
+  it("says when the project has more skill directories than were read", () => {
+    const base = { project: "core", root: "/home/dev/core" };
+    expect(event({ ...base, skillsTruncated: true }).success).toBe(true);
+    expect(event({ ...base, skillsTruncated: false }).success).toBe(false);
+  });
+
+  it("carries the AGENTS.md text, the truncation flag and each skill's digest", () => {
+    const payload = {
+      project: "core",
+      root: "/home/dev/core",
+      agentsMd: "# Rules\n",
+      agentsMdTruncated: true,
+      skills: [{ name: "fix-issue", description: "Fix one issue", digest: "a1b2c3" }],
+    };
+    const parsed = ConversationEventSchema.parse({ type: "project_root", payload });
+    expect(parsed).toEqual({ type: "project_root", payload });
+  });
+
+  it("refuses a skill name the catalog cannot take, and an empty project or root", () => {
+    const skill = { name: "fix-issue", description: "Fix one issue", digest: "a1b2c3" };
+    expect(event({ project: "core", root: "/home/dev/core" }).success).toBe(true);
+    expect(event({ project: "", root: "/home/dev/core" }).success).toBe(false);
+    expect(event({ project: "core", root: "" }).success).toBe(false);
+    expect(
+      event({ project: "core", root: "/home/dev/core", skills: [{ ...skill, name: "Fix Issue" }] })
+        .success,
+    ).toBe(false);
+  });
+});
+
 describe("approval_decided", () => {
   const decided = (reason: string) =>
     ConversationEventSchema.safeParse({

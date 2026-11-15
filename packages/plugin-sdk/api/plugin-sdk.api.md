@@ -756,6 +756,12 @@ export function defineExtension(m: ExtensionManifest): ExtensionManifest;
 export const DEVICE_PROTOCOL_VERSION = 1;
 
 // @public
+export const DEVICE_SCAN_SKIPPED_BASE_DIRS: readonly string[];
+
+// @public
+export const DEVICE_SCAN_SKIPPED_DIRS: readonly string[];
+
+// @public
 export interface DeviceCreateArgs {
     limits: SandboxLimits;
 }
@@ -795,7 +801,7 @@ export interface DeviceExecGrants {
 export type DeviceExecResult = ExecResult;
 
 // @public
-export type DeviceFeature = "networkReport" | "policyOp" | "policyOpId" | "mode";
+export type DeviceFeature = "networkReport" | "policyOp" | "policyOpId" | "mode" | "projects";
 
 // @public
 export type DeviceFrame = DeviceHello | DeviceRes | DevicePolicyChanged | KernelReq | KernelCancel;
@@ -804,6 +810,7 @@ export type DeviceFrame = DeviceHello | DeviceRes | DevicePolicyChanged | Kernel
 export interface DeviceHello {
     arch: string;
     features?: DeviceFeature[];
+    home?: string;
     mode: "os" | "docker";
     os: "darwin" | "linux";
     policy?: DeviceLocalPolicySummary;
@@ -824,13 +831,32 @@ export interface DeviceKillTaggedArgs {
 }
 
 // @public
+export interface DeviceListArgs {
+    limit: number;
+    limits: DeviceRequestCeiling;
+    path: string;
+}
+
+// @public
+export interface DeviceListEntry {
+    isDir: boolean;
+    name: string;
+}
+
+// @public
+export type DeviceListResult = {
+    entries: DeviceListEntry[];
+    truncated: boolean;
+} | null;
+
+// @public
 export interface DeviceLocalPolicySummary {
     allowedDomains: string[];
     mode: "auto" | "sandbox";
 }
 
 // @public
-export type DeviceOp = "create" | "exec" | "readFile" | "writeFile" | "stat" | "killTagged" | "killAll" | "stop" | "policy" | "policyStatus";
+export type DeviceOp = "create" | "exec" | "readFile" | "writeFile" | "stat" | "killTagged" | "killAll" | "stop" | "policy" | "policyStatus" | "list" | "scan";
 
 // @public
 export interface DeviceOpResults {
@@ -838,9 +864,11 @@ export interface DeviceOpResults {
     exec: DeviceExecResult;
     killAll: null;
     killTagged: null;
+    list: DeviceListResult;
     policy: DevicePolicyResult;
     policyStatus: DevicePolicyStatus;
     readFile: DeviceReadFileResult;
+    scan: DeviceScanResult;
     stat: DeviceStatResult;
     stop: null;
     writeFile: DeviceWriteFileResult;
@@ -893,6 +921,12 @@ export interface DevicePolicyStatusArgs {
 }
 
 // @public
+export interface DeviceProjectCandidate {
+    path: string;
+    suggestedName: string;
+}
+
+// @public
 export class DeviceProtocolError extends Error {
     constructor(message: string);
 }
@@ -910,6 +944,9 @@ export type DeviceReadFileResult = {
 } | null;
 
 // @public
+export type DeviceRequestCeiling = Pick<SandboxLimits, "mode">;
+
+// @public
 export type DeviceRes = {
     type: "res";
     id: string;
@@ -924,6 +961,15 @@ export type DeviceRes = {
         message: string;
     };
 };
+
+// @public
+export interface DeviceScanArgs {
+    base: string;
+    limits: DeviceRequestCeiling;
+}
+
+// @public
+export type DeviceScanResult = DeviceProjectCandidate[];
 
 // @public
 export interface DeviceStatArgs {
@@ -1707,6 +1753,9 @@ export function isBackgroundLaunch(command: string): boolean;
 export function isChannelSendError(e: unknown): e is ChannelSendError;
 
 // @public
+export function isDeviceProjectName(v: unknown): v is string;
+
+// @public
 export function isDisallowedSkillRef(v: unknown): v is string;
 
 // @public
@@ -1897,6 +1946,21 @@ export type MarketplaceSource = {
         integrity: string;
     };
 };
+
+// @public
+export const MAX_DEVICE_LIST_ENTRIES = 1000;
+
+// @public
+export const MAX_DEVICE_PROJECT_NAME_LENGTH = 64;
+
+// @public
+export const MAX_DEVICE_SCAN_DEPTH = 2;
+
+// @public
+export const MAX_DEVICE_SCAN_DIRS = 500;
+
+// @public
+export const MAX_DEVICE_SCAN_RESULTS = 50;
 
 // @public
 export const MAX_NETWORK_BLOCKED_HOSTS = 20;
@@ -2747,6 +2811,17 @@ export interface SandboxProvider {
     killAll(h: SandboxHandle, signal: AbortSignal): Promise<void>;
     killTagged(h: SandboxHandle, tags: string[], signal: AbortSignal): Promise<void>;
     readonly limitsApplyAt?: "instance" | "fileSystem";
+    list?(h: SandboxHandle, path: string, opts: {
+        limit: number;
+        limits: Pick<SandboxLimits, "mode">;
+        signal: AbortSignal;
+    }): Promise<{
+        entries: {
+            name: string;
+            isDir: boolean;
+        }[];
+        truncated: boolean;
+    } | null>;
     readFile(h: SandboxHandle, path: string, opts: {
         maxBytes: number;
         signal: AbortSignal;
@@ -2755,6 +2830,13 @@ export interface SandboxProvider {
         truncated: boolean;
     } | null>;
     resume(h: SandboxHandle, signal: AbortSignal): Promise<"resumed" | "gone">;
+    scan?(h: SandboxHandle, base: string, opts: {
+        limits: Pick<SandboxLimits, "mode">;
+        signal: AbortSignal;
+    }): Promise<{
+        path: string;
+        suggestedName: string;
+    }[]>;
     readonly sessionIsolation?: boolean;
     stat(h: SandboxHandle, path: string, signal: AbortSignal): Promise<{
         size: number;

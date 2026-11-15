@@ -1,6 +1,8 @@
 import type {
   DeviceErrorKind,
   DeviceExecArgs,
+  DeviceListResult,
+  DeviceScanResult,
   ExecResult,
   SandboxRoots,
 } from "@capybara-hq/plugin-sdk";
@@ -38,6 +40,23 @@ export interface Executor {
   writeFile(path: string, data: Uint8Array): Promise<void>;
   /** null when the path does not exist. */
   stat(path: string): Promise<{ size: number; isDir: boolean } | null>;
+  /**
+   * Lists one directory as a device in `mode` reads (`SandboxProvider.list`'s semantics): `mode`
+   * is the request's own, `effectiveMode(policy, limits)` on the ceiling that came with it, never
+   * the latest command's decision. Auto mode reads with the owner's rights; sandbox mode through
+   * the sandboxed helper, the workspace only; a container device its workspace only, in either
+   * mode. A path the mode cannot reach throws a `policy` refusal. Works without the device
+   * directory (it is not called through `ensureRoot`). Optional: without it (and {@link scan})
+   * the device answers `list` and `scan` as unsupported.
+   */
+  list?(
+    mode: SandboxMode,
+    path: string,
+    limit: number,
+    signal: AbortSignal,
+  ): Promise<DeviceListResult>;
+  /** Looks for projects under `base` as a device in `mode` reads ({@link list}'s rules). */
+  scan?(mode: SandboxMode, base: string, signal: AbortSignal): Promise<DeviceScanResult>;
   killTagged(tags: string[]): Promise<void>;
   killAll(): Promise<void>;
   /**

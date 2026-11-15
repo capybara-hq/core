@@ -9,6 +9,7 @@ import {
   realpathSync,
   rmSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -56,6 +57,17 @@ describe("OsExecutor: roots, ensureRoot and the skills root", () => {
     ex = new OsExecutor({ dir, policy: () => DEFAULT_POLICY });
   });
   afterEach(() => rmSync(base, { recursive: true, force: true }));
+
+  it("answers list null and scan [] while the device directory is gone, starting no helper", async () => {
+    rmSync(dir, { recursive: true, force: true });
+    const ws = ex.roots.workspace;
+    expect(await ex.list("sandbox", ws, 10)).toBeNull();
+    expect(await ex.list("sandbox", join(ws, "proj"), 10)).toBeNull();
+    expect(await ex.scan("sandbox", ws)).toEqual([]);
+    // outside the workspace is still refused
+    const e = await ex.list("sandbox", base, 10).catch((err: unknown) => err);
+    expect((e as DeviceOpError).kind).toBe("policy");
+  });
 
   it("reports <dir>/workspace, <dir>/skills and <dir>/tmp as its roots", () => {
     expect(ex.mode).toBe("os");
@@ -319,6 +331,72 @@ describe.skipIf(!availability.ok)(
         expect(existsSync(join(state, "w"))).toBe(false);
         expect(readFileSync(join(state, "f"), "utf8")).toBe("OUTSIDE SECRET");
       }, 30_000);
+    });
+
+    describe("list and scan (in the sandboxed helper, the workspace only)", () => {
+      let ws: string;
+      beforeAll(() => {
+        ws = ex.roots.workspace;
+        mkdirSync(join(ws, "proj/.git"), { recursive: true });
+        symlinkSync(state, join(ws, "to-state"));
+      });
+      afterAll(() => {
+        unlinkSync(join(ws, "to-state"));
+        rmSync(join(ws, "proj"), { recursive: true });
+      });
+
+      it("lists the workspace; a link out of it is not a directory", async () => {
+        expect((await ex.list("sandbox", ws, 1000))?.entries).toEqual(
+          expect.arrayContaining([
+            { name: "proj", isDir: true },
+            { name: "to-state", isDir: false },
+          ]),
+        );
+        expect(await ex.list("sandbox", join(ws, "no-such-dir"), 10)).toBeNull();
+      });
+
+      it("scans the workspace", async () => {
+        expect(await ex.scan("sandbox", ws)).toEqual(
+          expect.arrayContaining([{ path: join(ws, "proj"), suggestedName: "proj" }]),
+        );
+      });
+
+      it("refuses the tmp root, the state directory, a link out and the home", async () => {
+        for (const path of [ex.roots.tmp, state, join(ws, "to-state"), fakeHome]) {
+          const e = await ex.list("auto", path, 10).catch((err: unknown) => err);
+          expect((e as DeviceOpError).kind, path).toBe("policy");
+        }
+        const s = await ex.scan("auto", state).catch((err: unknown) => err);
+        expect((s as DeviceOpError).kind).toBe("policy");
+      });
+
+      it("stops the helper when the request is cancelled", async () => {
+        const ac = new AbortController();
+        const p = ex.scan("sandbox", ws, ac.signal);
+        ac.abort();
+        await expect(p).rejects.toThrow();
+      });
+
+      it("kills the helper's process group when the abort lands while it is being spawned", async () => {
+        const ac = new AbortController();
+        // biome-ignore lint/suspicious/noExplicitAny: test seam on a private method
+        const target = ex as any;
+        const original = target.spawnSandboxed;
+        let spawned: import("node:child_process").ChildProcess | undefined;
+        target.spawnSandboxed = async (...args: unknown[]) => {
+          const r = await original.apply(ex, args);
+          spawned = r.child;
+          // the helper runs now, and the abort arrives before the caller has its listener
+          ac.abort();
+          return r;
+        };
+        try {
+          await expect(ex.scan("sandbox", ws, ac.signal)).rejects.toThrow();
+        } finally {
+          target.spawnSandboxed = original;
+        }
+        expect(spawned?.signalCode).toBe("SIGKILL");
+      });
     });
 
     it("runs a command in the workspace with HOME and TMPDIR set", async () => {

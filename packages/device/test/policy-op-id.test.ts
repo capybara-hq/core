@@ -219,7 +219,7 @@ describe("the hello and op outcomes", () => {
   it("the hello announces policyOpId only with a policy store", async () => {
     start(true);
     const hello = await kernel.waitFor("hello", () => kernel.of("hello")[0]);
-    expect(hello.features).toEqual(["networkReport", "policyOp", "policyOpId", "mode"]);
+    expect(hello.features).toEqual(["networkReport", "policyOp", "policyOpId", "mode", "projects"]);
     expect(hello.recentOps).toEqual([]);
     conn?.stop();
     await conn?.done;

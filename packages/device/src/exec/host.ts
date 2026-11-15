@@ -2,8 +2,16 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import { resolve } from "node:path";
-import type { DeviceExecArgs, ExecResult, SandboxRoots } from "@capybara-hq/plugin-sdk";
+import type {
+  DeviceExecArgs,
+  DeviceListResult,
+  DeviceScanResult,
+  ExecResult,
+  SandboxRoots,
+} from "@capybara-hq/plugin-sdk";
+import type { SandboxMode } from "../state.js";
 import { dirKeyOf, GroupTracker } from "./groups.js";
+import { listDirectory, scanDirectory } from "./listing.js";
 import { EXEC_MARKER, killMarked } from "./procs.js";
 import {
   ENV_NAME_RE,
@@ -15,6 +23,10 @@ import {
   RootGuard,
 } from "./shared.js";
 import type { ExecHooks, Executor } from "./types.js";
+
+/** The refusal of a sandbox-mode read sent to the executor without a sandbox. */
+const UNSANDBOXED_READ =
+  "sandbox mode reads only through the sandbox, and this executor runs without one";
 
 export interface HostExecutorOptions {
   /** The device directory (from login). */
@@ -177,6 +189,23 @@ export class HostExecutor implements Executor {
 
   async stat(path: string): Promise<{ size: number; isDir: boolean } | null> {
     return this.files.stat(path);
+  }
+
+  /**
+   * Lists a directory with the owner's rights: auto mode only. This executor has no sandbox, so a
+   * request decided as sandbox mode is refused here rather than read unsandboxed.
+   */
+  async list(mode: SandboxMode, path: string, limit: number): Promise<DeviceListResult> {
+    this.files.lexical(path);
+    if (mode !== "auto") throw policyError(UNSANDBOXED_READ);
+    return listDirectory(path, limit);
+  }
+
+  /** Scans with the owner's rights: auto mode only ({@link list}). */
+  async scan(mode: SandboxMode, base: string, signal: AbortSignal): Promise<DeviceScanResult> {
+    this.files.lexical(base);
+    if (mode !== "auto") throw policyError(UNSANDBOXED_READ);
+    return scanDirectory(base, { signal });
   }
 
   async killTagged(tags: string[]): Promise<void> {

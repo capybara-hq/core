@@ -57,6 +57,20 @@ export const keys = {
       device: (id: string): readonly unknown[] => [...all, "device", id],
       /** Every device detail read (an invalidation prefix). */
       deviceAll: (): readonly unknown[] => [...all, "device"],
+      /**
+       * The projects of one of the person's devices: under the device's key, so a change of the
+       * device (its mode) reads them again.
+       */
+      deviceProjects: (id: string): readonly unknown[] => [...all, "device", id, "projects"],
+      /**
+       * The project suggestions of a device: outside the device's key, so no device change reads
+       * them again (asking the device starts or resumes it).
+       */
+      deviceProjectCandidates: (id: string): readonly unknown[] => [
+        ...all,
+        "device-project-candidates",
+        id,
+      ],
       /** Scheduled task lists (an invalidation prefix: mine and the org's). */
       schedulesAll: (): readonly unknown[] => [...all, "schedules"],
       /** My scheduled tasks (`all`: every task of the org, org admins). */

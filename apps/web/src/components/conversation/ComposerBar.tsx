@@ -45,7 +45,13 @@ import {
   invocableSkillsQuery,
 } from "../../lib/query/conversation";
 import { useAppMutation } from "../../lib/query/mutation";
-import { findInvocable, type InvocableSkill, parseSlashCommand } from "../../lib/skills";
+import {
+  findInvocable,
+  type InvocableSkill,
+  type InvocableSource,
+  parseSlashCommand,
+  skillChipLabel,
+} from "../../lib/skills";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { useRunStateValue } from "../client-ext/run-state";
 import { ExtensionSlot } from "../extension-ui/ExtensionSlot";
@@ -135,6 +141,9 @@ export const isUndoKey = (e: {
   altKey: boolean;
 }) => (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "z";
 
+/** The `/` menu's skill headings, in order (project root §4.6). */
+const SKILL_SOURCES: readonly InvocableSource[] = ["project", "agent", "platform", "plugin"];
+
 /** The name a picked skill is invoked by: `<plugin>:<name>` for a plugin's skill. */
 const invokeName = (s: InvocableSkill) => (s.plugin ? `${s.plugin}:${s.name}` : s.name);
 
@@ -187,7 +196,8 @@ function useObjectUrls(files: DraftFile[]): ReadonlyMap<string, string> {
  * Skills (phase D spec §3): picking one shows its chip, and the text after it is the arguments
  * (Backspace at the start or the chip's × removes it and keeps the text). A draft typed as
  * `/name args` that names a listed skill is sent as its invocation; anything else as text (and a
- * typed one the kernel refuses as `skill.not_invocable`, from a stale list, is resent as text). The
+ * typed one the kernel refuses as an unknown skill, `skill.not_invocable` `not_found`, from a stale
+ * list, is resent as text; any other refusal keeps the draft and shows why). The
  * list is read for `agentId` (with `conversationId` once the conversation exists, so its trial
  * drafts apply) when the menu opens or a typed `/name` is sent.
  */
@@ -426,7 +436,7 @@ export function ComposerBar({
         // the chip shows the bare name, as the thread's bubble does
         display: {
           files: shownFiles,
-          ...(name !== undefined ? { skill: `/${name.slice(name.indexOf(":") + 1)}` } : {}),
+          ...(name !== undefined ? { skill: skillChipLabel(name) } : {}),
         },
         draft: {
           text: sentText,
@@ -443,10 +453,12 @@ export function ComposerBar({
         !r.ok &&
         typedInvoke &&
         r.error instanceof ApiClientError &&
-        r.error.code === "skill.not_invocable"
+        r.error.code === "skill.not_invocable" &&
+        (r.error.rawDetails[0] as { reason?: unknown } | undefined)?.reason === "not_found"
       ) {
         // A typed `/name` from a stale list (the skill was deselected since it was read): an
-        // unknown name is sent as text (spec §3.2), and the list is read again.
+        // unknown name is sent as text (spec §3.2), and the list is read again. Any other refusal
+        // (a project skill the project cannot serve now, ...) keeps the draft and says why.
         void loadSkills(true);
         r = await onSend(message(value, undefined));
       }
@@ -571,38 +583,37 @@ export function ComposerBar({
     return [...groups.values()];
   };
 
-  const skillItems = skills ?? [];
+  const skillItem = (sk: InvocableSkill) => ({
+    id: `skill:${sk.id}`,
+    label: `/${sk.name}`,
+    ...(sk.argumentHint !== undefined ? { hint: sk.argumentHint } : {}),
+    ...(sk.manual || sk.fork
+      ? {
+          tags: [
+            ...(sk.manual ? [t("skillTag.manual")] : []),
+            ...(sk.fork ? [t("skillTag.fork")] : []),
+          ],
+        }
+      : {}),
+    ...(sk.plugin !== undefined ? { search: `${sk.plugin}:${sk.name}`, source: sk.plugin } : {}),
+    ...(sk.description !== "" ? { description: sk.description } : {}),
+    onSelect: () => {
+      picked();
+      setSkill(sk);
+    },
+  });
+  // One menu, a heading per source (project root §4.6): the conversation's project first, then
+  // the agent's own, the library's and the plugins'.
+  const skillGroups: CommandGroup[] = SKILL_SOURCES.flatMap((source) => {
+    const items = (skills ?? []).filter((sk) => sk.source === source);
+    return items.length === 0
+      ? []
+      : [{ label: t(`skillSource.${source}`), items: items.map(skillItem) }];
+  });
   const contentGroups: CommandGroup[] =
     palette === "prompts"
       ? [
-          ...(skillItems.length > 0
-            ? [
-                {
-                  label: t("skillsGroup"),
-                  items: skillItems.map((sk) => ({
-                    id: `skill:${sk.id}`,
-                    label: `/${sk.name}`,
-                    ...(sk.argumentHint !== undefined ? { hint: sk.argumentHint } : {}),
-                    ...(sk.manual || sk.fork
-                      ? {
-                          tags: [
-                            ...(sk.manual ? [t("skillTag.manual")] : []),
-                            ...(sk.fork ? [t("skillTag.fork")] : []),
-                          ],
-                        }
-                      : {}),
-                    ...(sk.plugin !== undefined
-                      ? { search: `${sk.plugin}:${sk.name}`, source: sk.plugin }
-                      : {}),
-                    ...(sk.description !== "" ? { description: sk.description } : {}),
-                    onSelect: () => {
-                      picked();
-                      setSkill(sk);
-                    },
-                  })),
-                },
-              ]
-            : []),
+          ...skillGroups,
           ...byConnector(prompts?.prompts ?? []).map((g) => ({
             label: g.label,
             items: g.items.map((p) => ({

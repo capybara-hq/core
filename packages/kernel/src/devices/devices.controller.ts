@@ -11,6 +11,12 @@ import {
 } from "../identity/principal.js";
 import { ZBody, ZParam } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
+import {
+  type DeviceProjectCandidates,
+  type DeviceProjectList,
+  DeviceProjectsService,
+  type DeviceProjectView,
+} from "./device-projects.service.js";
 import { type DeviceList, DevicesService, type DeviceView } from "./devices.service.js";
 import {
   DeviceCreateBodyDto,
@@ -21,6 +27,10 @@ import {
   DevicePatchBodyDto,
   type DevicePolicyBody,
   DevicePolicyBodyDto,
+  type DeviceProjectAddBody,
+  DeviceProjectAddBodyDto,
+  type DeviceProjectParams,
+  DeviceProjectParamsDto,
 } from "./dto.js";
 
 /**
@@ -48,10 +58,18 @@ import {
  *   a person changes their own machine's network policy, nothing model-driven does. Offline → 503
  *   `device.offline`; cloud or an older program → 409 `device.policy_unsupported`; the machine's
  *   refusal → 409 `device.policy_refused`.
+ * - a device's projects (project root design §4.1, §4.2), owner only (anyone else:
+ *   `device.not_found`): `GET /:id/projects` → the ones its current mode can read;
+ *   `GET /:id/projects/candidates` → the device's suggestions under its base;
+ *   `POST /:id/projects { path, name? }` → 201 `{ project }` (path relative to the base);
+ *   `DELETE /:id/projects/:name` → 204 (idempotent).
  */
 @Controller("api/v1/orgs/:orgId/devices")
 export class DevicesController {
-  constructor(@Inject(DevicesService) private readonly devices: DevicesService) {}
+  constructor(
+    @Inject(DevicesService) private readonly devices: DevicesService,
+    @Inject(DeviceProjectsService) private readonly projects: DeviceProjectsService,
+  ) {}
 
   @Get()
   @OrgAction("agents.use")
@@ -174,5 +192,59 @@ export class DevicesController {
     return {
       policy: await this.devices.changePolicy(org.orgId, p.account, params.id, body),
     };
+  }
+
+  @Get(":id/projects")
+  @OrgAction("agents.use")
+  async listProjects(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @ZParam(DeviceParamsDto) params: z.infer<typeof DeviceParams>,
+  ): Promise<DeviceProjectList> {
+    const p = requireUser(principal);
+    return this.projects.list(org.orgId, p.account.id, params.id);
+  }
+
+  @Get(":id/projects/candidates")
+  @OrgAction("agents.use")
+  async projectCandidates(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @ZParam(DeviceParamsDto) params: z.infer<typeof DeviceParams>,
+  ): Promise<DeviceProjectCandidates> {
+    const p = requireUser(principal);
+    return this.projects.candidates(org.orgId, p.account.id, params.id);
+  }
+
+  @Post(":id/projects")
+  @OrgAction("agents.use")
+  async addProject(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @ZParam(DeviceParamsDto) params: z.infer<typeof DeviceParams>,
+    @ZBody(DeviceProjectAddBodyDto) body: z.infer<typeof DeviceProjectAddBody>,
+  ): Promise<{ project: DeviceProjectView }> {
+    const p = requireUser(principal);
+    return {
+      project: await this.projects.add(
+        org.orgId,
+        p.account.id,
+        params.id,
+        { path: body.path, ...(body.name !== undefined && { name: body.name }) },
+        patTokenId(p),
+      ),
+    };
+  }
+
+  @Delete(":id/projects/:name")
+  @HttpCode(204)
+  @OrgAction("agents.use")
+  async removeProject(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @ZParam(DeviceProjectParamsDto) params: z.infer<typeof DeviceProjectParams>,
+  ): Promise<void> {
+    const p = requireUser(principal);
+    await this.projects.remove(org.orgId, p.account.id, params.id, params.name, patTokenId(p));
   }
 }

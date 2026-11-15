@@ -4,14 +4,21 @@ import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node
 import { join, resolve } from "node:path";
 import {
   DEFAULT_SANDBOX_ROOTS,
+  DEVICE_SCAN_SKIPPED_BASE_DIRS,
+  DEVICE_SCAN_SKIPPED_DIRS,
   type DeviceExecArgs,
+  type DeviceListResult,
+  type DeviceScanResult,
   type ExecResult,
+  MAX_DEVICE_SCAN_DEPTH,
+  MAX_DEVICE_SCAN_DIRS,
   type SandboxLimits,
   type SandboxRoots,
   validateSandboxPathShape,
 } from "@capybara-hq/plugin-sdk";
 import { effectiveMode } from "../policy.js";
 import type { Policy, SandboxMode } from "../state.js";
+import { finishScan } from "./listing.js";
 import { EXEC_MARKER } from "./procs.js";
 import {
   ENV_NAME_RE,
@@ -21,6 +28,7 @@ import {
   osRoots,
   PIPE_GRACE_MS,
   policyError,
+  ROOT_MARKER,
   RootGuard,
 } from "./shared.js";
 import { FILE_OPS_DECISION_TTL_MS } from "./switch.js";
@@ -70,7 +78,7 @@ interface DockerRun {
 /** Runs `docker <args>` to completion (not a command of the device). */
 function docker(
   args: string[],
-  o: { input?: Uint8Array; timeoutMs?: number; maxBytes?: number } = {},
+  o: { input?: Uint8Array; timeoutMs?: number; maxBytes?: number; signal?: AbortSignal } = {},
 ): Promise<DockerRun> {
   return new Promise((resolvePromise, reject) => {
     const child = spawn("docker", args, { stdio: [o.input ? "pipe" : "ignore", "pipe", "pipe"] });
@@ -89,12 +97,18 @@ function docker(
     }
     const timer =
       o.timeoutMs !== undefined ? setTimeout(() => child.kill("SIGKILL"), o.timeoutMs) : undefined;
+    const onAbort = (): void => {
+      child.kill("SIGKILL");
+    };
+    o.signal?.addEventListener("abort", onAbort, { once: true });
     child.once("error", (e) => {
       if (timer) clearTimeout(timer);
+      o.signal?.removeEventListener("abort", onAbort);
       reject(e);
     });
     child.once("close", (code) => {
       if (timer) clearTimeout(timer);
+      o.signal?.removeEventListener("abort", onAbort);
       resolvePromise({ code, stdout: Buffer.concat(out), stderr: Buffer.concat(err) });
     });
   });
@@ -180,6 +194,90 @@ f="$rp/$(basename -- "$p")"
 if [ -L "$f" ]; then r=$(realpath -e -- "$f" 2>/dev/null) || exit ${E_DANGLING}; allowed "$r" || exit ${E_OUTSIDE}; f=$r; fi
 if [ -e "$f" ] && [ ! -f "$f" ]; then exit ${E_NOT_FILE}; fi
 cat > "$f" || exit ${E_FAIL}`;
+
+/**
+ * `list` / `scan` in the container (python3, which the sandbox image carries): argv `<op> <path>
+ * <limit>`, the path lexically under /workspace already. The same rules as `listing.ts`'s
+ * `listDirectory` / `scanDirectory` with /workspace as the area: realpath containment, a link
+ * leaving the workspace is not a directory, null / [] for a missing path, the same breadth-first
+ * walk and budget. Names sort by UTF-16 code unit (`utf-16-be` bytes). stdout: `{"r": ...}` or
+ * `{"e": "policy" | "error", "m": ...}`; scan answers raw paths (the caller applies `finishScan`).
+ */
+const LIST_SCRIPT = `
+import errno, json, os, sys
+op, p, limit = sys.argv[1], sys.argv[2], int(sys.argv[3])
+W = "/workspace"
+def out(o):
+    sys.stdout.write(json.dumps(o)); sys.exit(0)
+def key(s):
+    return s.encode("utf-16-be", "surrogatepass")
+def under(r):
+    return r == W or r.startswith(W + "/")
+def fail(e):
+    c = errno.errorcode.get(getattr(e, "errno", None) or 0)
+    out({"e": "error", "m": p + " cannot be read" + (" (" + c + ")" if c else "")})
+away = {"e": "policy", "m": p + " is outside the container's workspace (/workspace); this device reads only that"}
+q = os.path.normpath(p)
+if not os.path.isabs(q) or not under(q):
+    out(away)
+try:
+    r = os.path.realpath(q, strict=True)
+except (FileNotFoundError, NotADirectoryError):
+    out({"r": None if op == "list" else []})
+except OSError as e:
+    fail(e)
+if not under(r):
+    out(away)
+if not os.path.isdir(r):
+    out({"e": "error", "m": p + " is not a directory"})
+try:
+    with os.scandir(r) as it:
+        ents = sorted(it, key=lambda e: key(e.name))
+except OSError as e:
+    fail(e)
+def is_dir(d, e):
+    try:
+        if e.is_dir(follow_symlinks=False):
+            return True
+        if not e.is_symlink():
+            return False
+        t = os.path.realpath(os.path.join(d, e.name), strict=True)
+        return under(t) and os.path.isdir(t)
+    except OSError:
+        return False
+if op == "list":
+    out({"r": {"entries": [{"name": e.name, "isDir": is_dir(r, e)} for e in ents[:limit]], "truncated": len(ents) > limit}})
+skip_any = ${JSON.stringify(DEVICE_SCAN_SKIPPED_DIRS)}
+skip_base = ${JSON.stringify(DEVICE_SCAN_SKIPPED_BASE_DIRS)}
+found = []
+def below(d, rep, es, depth):
+    if any(e.name == ".git" or (e.name == "AGENTS.md" and not e.is_dir(follow_symlinks=False)) for e in es):
+        found.append(rep)
+    if depth >= ${MAX_DEVICE_SCAN_DEPTH}:
+        return []
+    return [(os.path.join(d, e.name), os.path.join(rep, e.name)) for e in es
+            if e.is_dir(follow_symlinks=False) and not e.name.startswith(".")
+            and e.name not in skip_any and not (depth == 0 and e.name in skip_base)]
+visits = 1
+level = below(r, q, ents, 0)
+depth = 1
+while level and visits < ${MAX_DEVICE_SCAN_DIRS}:
+    level.sort(key=lambda n: key(n[1]))
+    nxt = []
+    for d, rep in level:
+        if visits >= ${MAX_DEVICE_SCAN_DIRS}:
+            break
+        visits += 1
+        try:
+            with os.scandir(d) as it:
+                es = list(it)
+        except OSError:
+            continue
+        nxt.extend(below(d, rep, es, depth))
+    level = nxt
+    depth += 1
+out({"r": found})
+`;
 
 export interface DockerExecutorOptions {
   /** The device directory (from login). */
@@ -802,6 +900,111 @@ export class DockerExecutor implements Executor {
     if (r === null) return null;
     const [size, kind] = r.stdout.toString("utf8").split(" ");
     return { size: Number(size), isDir: kind === "d" };
+  }
+
+  /**
+   * `path` made absolute and normalized, refused unless it lies lexically under the container's
+   * workspace: a container device offers its workspace only, in either mode (spec §4.2).
+   */
+  private workspacePath(path: string): string {
+    if (!path.startsWith("/")) throw policyError(`${path} is not an absolute path`);
+    const p = resolve(path);
+    if (!isUnder(p, ROOTS.workspace)) {
+      throw policyError(
+        `${path} is outside the container's workspace (${ROOTS.workspace}); this device reads only that`,
+      );
+    }
+    return p;
+  }
+
+  /**
+   * Whether the device directory is marked and holds all three roots. `list` and `scan` only
+   * read: a removed root under a marked directory lost its files and is never recreated empty
+   * (`ensureContainer` would create it), and an unmarked or vanished directory gets no roots either.
+   */
+  private rootsIntact(): boolean {
+    return (
+      existsSync(join(this.dir, ROOT_MARKER)) &&
+      Object.values(this.hostRoots).every((r) => existsSync(r))
+    );
+  }
+
+  /**
+   * Runs {@link LIST_SCRIPT} in the container (as the `sandbox` user, like the file operations):
+   * links resolve in the container, so whatever a command there does to the workspace, the answer
+   * shows only what the container itself can see, never the host behind the bind mount. A stopped
+   * container is started first, as for the file operations.
+   */
+  private async listOp(
+    op: "list" | "scan",
+    path: string,
+    limit: number,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    signal?.throwIfAborted();
+    await this.serial(() => this.ensureContainer({ anySpec: true }));
+    signal?.throwIfAborted();
+    const r = await docker(
+      [
+        "exec",
+        this.name,
+        "timeout",
+        "-s",
+        "KILL",
+        String(FILE_OP_TIMEOUT_S),
+        "python3",
+        "-I",
+        "-c",
+        LIST_SCRIPT,
+        op,
+        path,
+        String(limit),
+      ],
+      { timeoutMs: (FILE_OP_TIMEOUT_S + 5) * 1000, ...(signal !== undefined && { signal }) },
+    );
+    signal?.throwIfAborted();
+    let res: { r?: unknown; e?: "policy" | "error"; m?: string };
+    try {
+      res = JSON.parse(r.stdout.toString("utf8")) as typeof res;
+    } catch {
+      this.noteFailure(r.stderr.toString("utf8"));
+      throw new DeviceOpError(
+        "error",
+        `${op} ${path} failed in the container: ${r.stderr.toString("utf8").trim().slice(0, 300)}`,
+      );
+    }
+    if (res.e !== undefined) {
+      throw new DeviceOpError(res.e === "policy" ? "policy" : "error", res.m ?? "failed");
+    }
+    return res.r ?? null;
+  }
+
+  /** Lists a container workspace directory, read in the container, in either mode. */
+  async list(
+    _mode: SandboxMode,
+    path: string,
+    limit: number,
+    signal?: AbortSignal,
+  ): Promise<DeviceListResult> {
+    const p = this.workspacePath(path);
+    // nothing under the workspace exists (as the OS reader answers)
+    if (!this.rootsIntact()) return null;
+    const r = await this.listOp("list", p, limit, signal);
+    if (r !== null && !Array.isArray((r as { entries?: unknown }).entries)) {
+      throw new DeviceOpError("error", `list ${path} answered an invalid result`);
+    }
+    return r as DeviceListResult;
+  }
+
+  /** Scans a container workspace directory, read in the container ({@link list}'s rules). */
+  async scan(_mode: SandboxMode, base: string, signal?: AbortSignal): Promise<DeviceScanResult> {
+    const p = this.workspacePath(base);
+    if (!this.rootsIntact()) return [];
+    const r = await this.listOp("scan", p, 0, signal);
+    if (!Array.isArray(r) || !r.every((x) => typeof x === "string")) {
+      throw new DeviceOpError("error", `scan ${base} answered an invalid result`);
+    }
+    return finishScan(r);
   }
 
   /** Kills the container processes of one marker (exact) or marker prefix. */

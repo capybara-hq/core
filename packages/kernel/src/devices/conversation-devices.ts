@@ -8,9 +8,11 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import type { DeviceModeLevel } from "../runtime/context/device-paths.js";
 import type { SandboxMode } from "../sandbox/modes.js";
 import { isInternalProvider, SandboxProviders } from "../sandbox/providers.js";
+import { homeOf } from "../sandbox/review/rules.js";
 import { deviceNotFound, sandboxUnavailable } from "../sandbox/sandbox.service.js";
 import { DeviceAccess } from "./access.js";
 import { DevicesService } from "./devices.service.js";
+import { type WorkingProject, workingRootOf } from "./working-root.js";
 
 /** `details[0].reason` of the error an anonymous IM conversation's sandbox call gets. */
 export const ANONYMOUS_NO_DEVICE = "anonymous";
@@ -29,6 +31,12 @@ export interface NewConversationDevice {
   deviceId?: string;
   /** An IM thread: the person's IM default (`device_defaults`) when still usable. */
   im?: boolean;
+  /**
+   * The name of one of the chosen device's projects to bind the conversation to (project root
+   * design §4.3): resolved with `DeviceProjectsService.resolveForBinding` in the transaction that
+   * writes the conversation, its name and path stored and never changed. Absent: free mode.
+   */
+  project?: string;
 }
 
 /** What the command review needs to know about a call's device (auto mode spec §5.1, §5.4). */
@@ -39,8 +47,40 @@ export interface CommandReviewFacts {
   ownerAccountId: string;
   mode: SandboxMode;
   allowedMode: SandboxMode;
-  /** The workspace root commands start in; absent: no device bound (the review is skipped). */
+  /** The device's workspace root; absent: no device bound (the review is skipped). */
   workspace: string | undefined;
+  /**
+   * The owner's home ({@link WorkingFacts.home}): `~` and the home-level sensitive paths are
+   * judged against it, never against a project root. Null: unknown.
+   */
+  home: string | null;
+  /**
+   * The home prefix of the device's workspace (`homeOf`), judged by the review beside `home`: a
+   * project outside every home with an implausible reported home still protects the real one.
+   */
+  deviceHome: string | null;
+  /**
+   * The conversation's working root ({@link workingRootOf}): the project's root when the root
+   * conversation's latest `project_root` is usable, else `workspace`. The review's `workspace`
+   * fact: commands start here, and a write inside it needs no ask (project root spec §4.3).
+   */
+  workingRoot: string | undefined;
+}
+
+/**
+ * What decides the working root of a call (project root spec §4.3), read the same way for a
+ * sandbox tool and for the command review, so both decide the same root.
+ */
+export interface WorkingFacts {
+  /**
+   * The device's workspace: the latest `device_paths` roots recorded in the calling conversation,
+   * else the root's, else the machine's reported roots, else the default.
+   */
+  workspace: string;
+  /** The owner's home: the machine's reported home, else the workspace's home prefix; null: unknown. */
+  home: string | null;
+  /** The root conversation's latest project snapshot; null: free, or none recorded yet. */
+  project: WorkingProject | null;
 }
 
 /**
@@ -111,21 +151,78 @@ export class ConversationDevices {
       this.modeLevel(orgId, deviceId),
     ]);
     if (device === undefined) return null;
-    const workspace =
-      (await this.recordedWorkspace(conversationId)) ??
-      (conversationId === rootConversationId
-        ? null
-        : await this.recordedWorkspace(rootConversationId)) ??
-      (await this.machineWorkspace(deviceId)) ??
-      DEFAULT_SANDBOX_ROOTS.workspace;
+    const mode = level?.mode ?? "sandbox";
+    const { workspace, home, project } = await this.workingFacts(
+      orgId,
+      rootConversationId,
+      conversationId,
+      deviceId,
+    );
     return {
       deviceId,
       deviceName: device.name ?? deviceId,
       ownerAccountId: conv.account_id,
-      mode: level?.mode ?? "sandbox",
+      mode,
       allowedMode: level?.allowedMode ?? "sandbox",
       workspace,
+      home,
+      deviceHome: homeOf(workspace),
+      workingRoot: workingRootOf(project, { mode, workspace, home }),
     };
+  }
+
+  /**
+   * The {@link WorkingFacts} of a call in `deviceId` by `conversationId` of the tree rooted at
+   * `rootConversationId`: the one source of the workspace, home and project snapshot that the
+   * sandbox tools and the command review decide the working root from.
+   */
+  async workingFacts(
+    orgId: string,
+    rootConversationId: string,
+    conversationId: string,
+    deviceId: string,
+  ): Promise<WorkingFacts> {
+    const [recorded, recordedRoot, machine, project] = await Promise.all([
+      this.recordedWorkspace(conversationId),
+      conversationId === rootConversationId ? null : this.recordedWorkspace(rootConversationId),
+      this.machineRoots(deviceId),
+      this.workingProject(orgId, rootConversationId),
+    ]);
+    const workspace =
+      recorded ?? recordedRoot ?? machine?.workspace ?? DEFAULT_SANDBOX_ROOTS.workspace;
+    // never from a project root: the machine's home, else the device workspace's home prefix
+    const reported = machine?.home;
+    const home = reported?.startsWith("/") ? reported : homeOf(workspace);
+    return { workspace, home, project };
+  }
+
+  /**
+   * The project snapshot that decides the working root of the conversation tree rooted at
+   * `rootConversationId` (project root spec §4.3): its latest `project_root` event, read only when
+   * the conversation is bound to a project (a free conversation reads one row by its key). Null:
+   * free, or bound with no snapshot recorded yet.
+   */
+  async workingProject(orgId: string, rootConversationId: string): Promise<WorkingProject | null> {
+    const conv = await this.db
+      .selectFrom("conversations")
+      .select("project_path")
+      .where("id", "=", rootConversationId)
+      .where("org_id", "=", orgId)
+      .executeTakeFirst();
+    if (conv?.project_path == null) return null;
+    const row = await this.db
+      .selectFrom("conversation_events")
+      .select([
+        sql<string | null>`payload->>'root'`.as("root"),
+        sql<boolean>`payload ? 'unavailable'`.as("unavailable"),
+      ])
+      .where("conversation_id", "=", rootConversationId)
+      .where("type", "=", "project_root")
+      .orderBy("seq", "desc")
+      .limit(1)
+      .executeTakeFirst();
+    if (row === undefined || typeof row.root !== "string") return null;
+    return { root: row.root, unavailable: row.unavailable !== false };
   }
 
   /** The workspace root of a conversation's latest `device_paths` event, or null. */
@@ -141,15 +238,20 @@ export class ConversationDevices {
     return row?.workspace ?? null;
   }
 
-  /** The workspace root the device's active machine last reported, or null (cloud: none). */
-  private async machineWorkspace(deviceId: string): Promise<string | null> {
+  /**
+   * The workspace root and the owner's home the device's active machine last reported, or null
+   * (cloud: no machine).
+   */
+  private async machineRoots(
+    deviceId: string,
+  ): Promise<{ workspace: string | null; home: string | null } | null> {
     const row = await this.db
       .selectFrom("device_machines")
-      .select(sql<string | null>`roots->>'workspace'`.as("workspace"))
+      .select([sql<string | null>`roots->>'workspace'`.as("workspace"), "home"])
       .where("device_id", "=", deviceId)
       .where("revoked_at", "is", null)
       .executeTakeFirst();
-    return row?.workspace ?? null;
+    return row === undefined ? null : { workspace: row.workspace ?? null, home: row.home ?? null };
   }
 
   /**

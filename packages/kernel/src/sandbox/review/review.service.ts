@@ -61,10 +61,22 @@ export interface ReviewInput {
   input: unknown;
   mode: "auto" | "sandbox";
   /**
-   * The device's workspace root. Absent: no device is bound, so the tool fails on its own and
-   * there is nothing to review.
+   * The conversation's working root: the device's workspace root, or the bound project's root
+   * (project root spec §4.3). Commands start here and a write inside it needs no ask. Absent: no
+   * device is bound, so the tool fails on its own and there is nothing to review.
    */
   workspace?: string | undefined;
+  /**
+   * The owner's home directory (the machine's, else the device workspace's prefix), never derived
+   * from a project root: `~` and the home-level sensitive paths are judged against it. Absent or
+   * null: the rules derive it from `workspace`.
+   */
+  home?: string | null | undefined;
+  /**
+   * The home prefix of the device's own workspace, judged beside `home` (a project outside every
+   * home still protects it). Absent or null: none.
+   */
+  deviceHome?: string | null | undefined;
   /** Whether a person is present to answer an `ask` (rules may read it; the pipeline decides). */
   attended: boolean;
   /** Hook payload facts (optional: without enough of them no model hook fires). */
@@ -199,6 +211,8 @@ export class CommandReviewService implements CommandReview {
     const facts = {
       workspace,
       cwd: workspace,
+      home: input.home ?? null,
+      deviceHome: input.deviceHome ?? null,
       mode: input.mode,
       attended: input.attended,
     };
@@ -362,7 +376,14 @@ export class CommandReviewService implements CommandReview {
    */
   private async writtenInTree(
     rootConversationId: string,
-    facts: { workspace: string; cwd: string; mode: "auto" | "sandbox"; attended: boolean },
+    facts: {
+      workspace: string;
+      cwd: string;
+      home: string | null;
+      deviceHome: string | null;
+      mode: "auto" | "sandbox";
+      attended: boolean;
+    },
   ): Promise<string[]> {
     const rows = await this.db
       .withRecursive("tree(id)", (db) =>

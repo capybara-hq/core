@@ -211,7 +211,8 @@ export class MachinesService {
    * device's mode and sandbox-mode allowlist; a change of what the owner sets, made on the machine
    * while it was away, is audited `device.policy_changed` / `device.mode_changed`
    * ({@link reportedPolicy}). The outcomes of its recent policy ops (`recentOps`) backfill the
-   * platform's ops still pending on the row ({@link backfillOps}).
+   * platform's ops still pending on the row ({@link backfillOps}). The owner's home directory
+   * (`home`) replaces the stored one too (null when the hello has none).
    */
   @Transactional()
   async recordHello(
@@ -275,6 +276,8 @@ export class MachinesService {
         session_isolation: hello.sessionIsolation,
         features: deviceFeaturesOf(hello.features),
         local_policy: jsonOrNull(policy),
+        // the base of an auto-mode project's relative path (project root §4.2); absent: unknown
+        home: hello.home ?? null,
         last_seen_at: sql<Date>`now()`,
       })
       .where("id", "=", machineId)

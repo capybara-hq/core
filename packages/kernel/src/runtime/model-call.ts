@@ -67,6 +67,7 @@ import {
   sentOutputCap,
 } from "./context/fit.js";
 import { guardToolPairs } from "./context/pairing.js";
+import { hasProjectSkills, overlongProjectSkills } from "./context/project-root.js";
 import { TOOLS_UNSUPPORTED_REMINDER, turnLimitReminder } from "./context/reminders.js";
 import { calibrate, estimateTokens } from "./context/tokens.js";
 import { toolSetChange } from "./context/tool-changes.js";
@@ -376,6 +377,7 @@ export async function resolveAgentTools(
           e.type === "skills_catalog",
       ),
       hasInvocation(events),
+      hasProjectSkills(events),
     ),
   });
   return {
@@ -545,6 +547,30 @@ export function runFinalWrapUp(
   return runStep(deps, input, reason);
 }
 
+/**
+ * Project root spec §4.5: a project skill whose callable name `project:<name>` is longer than the
+ * `Skill` schema takes is left out of the rendered list; said once, at the first step of the run
+ * that recorded the `project_root` (the rendering itself is pure and logs nothing).
+ */
+function logOverlongProjectSkills(
+  deps: Pick<ModelStepDeps, "log">,
+  input: Pick<ModelStepInput, "conversationId" | "runId">,
+  events: readonly ConversationEvent[],
+): void {
+  const { conversationId, runId } = input;
+  const recorded = events.findLast((e) => e.type === "project_root");
+  if (recorded?.type !== "project_root" || recorded.runId !== runId) return;
+  if (events.some((e) => e.type === "model_call" && e.runId === runId)) return;
+  const names = overlongProjectSkills(recorded.payload);
+  if (names.length === 0) return;
+  deps.log.warn("project skills left out: their project:<name> is longer than Skill takes", {
+    conversationId,
+    runId,
+    project: recorded.payload.project,
+    skills: names,
+  });
+}
+
 async function runStep(
   deps: ModelStepDeps,
   input: ModelStepInput,
@@ -573,6 +599,7 @@ async function runStep(
     ) {
       sink({ kind: "step_reset", runId, step });
     }
+    logOverlongProjectSkills(deps, input, events);
     // sticky (M-4): a model.request denial already logged for this step (any attempt, e.g. a crash
     // after recording it) is final: fail the same way, before compaction or any model call. Read from
     // the events just loaded, so it costs no query (M-2).

@@ -144,8 +144,15 @@ export function useNewConversationPage(
       message: MessageInput;
       sentAt: number;
       deviceId: string | undefined;
+      project: string | undefined;
     }) => {
-      const r = await createConversationWithMessage(orgId, v.agentId, v.message, v.deviceId);
+      const r = await createConversationWithMessage(
+        orgId,
+        v.agentId,
+        v.message,
+        v.deviceId,
+        v.project,
+      );
       seedNewConversation(qc, orgId, r.conversation, r, v.sentAt);
       return r;
     },
@@ -156,7 +163,7 @@ export function useNewConversationPage(
     ...devicesQ,
     retryOnMount: retryOnMountOf(devicesQ.queryKey),
   }).data;
-  const device = useDeviceChoice(devices);
+  const device = useDeviceChoice(orgId, devices);
   const selection = useSelection(providers, agent, undefined, { newConversation: true });
   const pending = usePendingSends(undefined);
   /** A failed create's draft, for the composer the new layout mounts again. */
@@ -177,6 +184,7 @@ export function useNewConversationPage(
         agentId: agent.id,
         message: { ...m, ...selection.pending },
         deviceId: device.deviceId,
+        project: device.project,
         // this tab's clock at the send: the working line's backstop counts from it
         sentAt: Date.now(),
       });

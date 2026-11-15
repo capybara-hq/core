@@ -140,6 +140,34 @@ export const CHANNEL_PHRASES = {
     zh: "技能没有运行：参数或技能内容过长。你的消息已按普通文本发送。",
     en: "The skill was not run: its arguments or instructions are too long. Your message was sent as plain text.",
   },
+  /**
+   * Project root spec §4.6: `/project:<name>` named a skill of the conversation's project, but the
+   * kernel refused it (`skill.project_unavailable`, one phrase per reason); nothing was posted.
+   */
+  projectSkillGone: {
+    zh: "项目技能没有运行：项目或它的 SKILL.md 已不在设备上。你的消息没有发送。",
+    en: "The project skill was not run: the project is no longer on the device. Your message was not sent.",
+  },
+  projectSkillOutsideMode: {
+    zh: "项目技能没有运行：设备当前的运行模式读不到它。你的消息没有发送。",
+    en: "The project skill was not run: the device's current mode cannot read it. Your message was not sent.",
+  },
+  projectSkillUnreadable: {
+    zh: "项目技能没有运行：读取设备上的 SKILL.md 失败，请稍后重试。你的消息没有发送。",
+    en: "The project skill was not run: reading its SKILL.md on the device failed; try again later. Your message was not sent.",
+  },
+  projectSkillUnparsable: {
+    zh: "项目技能没有运行：它的 SKILL.md 格式不正确，请在项目里修正。你的消息没有发送。",
+    en: "The project skill was not run: its SKILL.md is not valid; fix it in the project. Your message was not sent.",
+  },
+  projectSkillUnsupported: {
+    zh: "项目技能没有运行：这台设备不支持项目。你的消息没有发送。",
+    en: "The project skill was not run: this device does not support projects. Your message was not sent.",
+  },
+  projectSkillRemoved: {
+    zh: "项目技能没有运行：这个项目已从设备的项目中移除。你的消息没有发送。",
+    en: "The project skill was not run: the project was removed from the device's projects. Your message was not sent.",
+  },
   /** 运行被中止（收尾挂着的草稿时附在已有文本之后）。 */
   runStopped: { zh: "已停止。", en: "Stopped." },
   /** 运行失败。 */

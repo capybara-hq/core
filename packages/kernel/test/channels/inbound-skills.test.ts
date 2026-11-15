@@ -18,6 +18,7 @@ import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { CHANNEL_QUEUE_NAME, inboundJobId } from "../../src/channels/outbound.js";
+import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb, type SkillManifest } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
@@ -391,5 +392,45 @@ describe("skill invocations from IM (phase D Task 8)", () => {
       "reply in the thread",
     );
     expect(reply?.message.text.length).toBeGreaterThan(0);
+  });
+
+  it("a project skill the project cannot serve is refused with the reason, never sent as text", async () => {
+    const conv = await push(dm("d-proj-0", "u-owner", "hello"));
+    await k.app.get(EventLog).append(conv, [
+      {
+        type: "project_root",
+        payload: {
+          project: "core",
+          root: "/Users/o/src/core",
+          skills: [],
+          unavailable: { reason: "gone", message: "The project's root no longer exists." },
+        },
+      },
+    ]);
+    const before = im.sent.length;
+    await push(dm("d-proj", "u-owner", "/project:fix-issue 1"));
+    const row = await db
+      .selectFrom("conversation_events")
+      .select("seq")
+      .where("idem_key", "like", `%${connId}:d-proj`)
+      .executeTakeFirst();
+    expect(row).toBeUndefined();
+    const notes = await waitFor(
+      async () => {
+        const got = im.sent
+          .slice(before)
+          .filter(
+            (s) =>
+              s.target.chatId === "dm-u-owner" &&
+              s.message.text.includes("project skill was not run"),
+          );
+        return got.length > 0 ? got : undefined;
+      },
+      10_000,
+      "the refusal note",
+    );
+    expect(notes.map((s) => s.message.text)).toEqual([
+      "The project skill was not run: the project is no longer on the device. Your message was not sent.",
+    ]);
   });
 });

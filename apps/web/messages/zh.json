@@ -346,7 +346,18 @@
       "policy_unsupported": "这台设备不支持从平台修改网络设置，请在机器上升级设备程序。",
       "auto_mode_not_allowed": "该设备的机器以自动模式运行，但你的组织不允许自动模式。请在那台机器上运行 capybara-device mode sandbox 切换到沙箱模式。",
       "mode_on_device": "该设备的模式保存在它所连接的机器上：请在设备页面切换到沙箱模式，或在那台机器上运行 capybara-device mode sandbox。",
-      "mode_requires_session": "设备的模式只能由其所有者在设备页面修改，不能用 API 令牌修改。"
+      "mode_requires_session": "设备的模式只能由其所有者在设备页面修改，不能用 API 令牌修改。",
+      "project_name_invalid": "该项目名称不可用：请使用 1-64 个字符，不能是 . 或 ..，不含 / 或控制字符，首尾不留空格。",
+      "project_name_taken": "这台设备上已有同名项目，请换一个名称。",
+      "project_limit_reached": "这台设备的项目已达 100 个上限，请先移除一个再添加。",
+      "project_outside_mode": "该目录不在设备当前模式可读的范围内。沙箱模式下只有工作区内的目录可以作为项目。",
+      "project_home_unknown": "自动模式下，项目路径相对于你的主目录，但这台机器还没有报告主目录。请在机器上更新 capybara-device 并重新连接。",
+      "project_path_missing": "设备上不存在该目录，请检查路径。",
+      "project_path_too_broad": "这个目录包含主目录（或其他人的文件），范围太大。请选择项目自己的目录，或主目录及其下的目录。",
+      "project_path_unreadable": "该路径是文件或在设备上无法读取，请选择一个可读的目录。",
+      "project_not_found": "这台设备上没有该名称的项目。",
+      "projects_unsupported": "这台设备不支持项目。",
+      "projects_unavailable": "现在无法向设备确认该目录，请稍后重试。"
     },
     "device_sign_in": {
       "authorization_pending": "还未确认连接，请在网页上确认后稍候。",
@@ -360,6 +371,15 @@
       "not_found": "技能不存在或已删除。",
       "invalid_package": "技能包不合法：",
       "not_invocable": "这个智能体不能调用该技能，请从 / 菜单中选择。",
+      "project_unavailable": {
+        "gone": "项目技能不能调用：项目或它的 SKILL.md 已不在设备上。",
+        "outside_mode": "项目技能不能调用：设备当前的运行模式读不到它。",
+        "unreadable": "项目技能不能调用：读取设备上的 SKILL.md 失败，请稍后重试。",
+        "unparsable": "项目技能不能调用：它的 SKILL.md 格式不正确，请在项目里修正。",
+        "unsupported": "项目技能不能调用：这台设备不支持项目。",
+        "removed": "项目技能不能调用：这个项目已从设备的项目中移除。",
+        "default": "项目技能现在不能调用。"
+      },
       "name_exists": "本组织已有同名技能，请换一个名字。",
       "agent_cap": "这个智能体的技能数已达上限。请先删除一个，或为已有技能（同名）上传新版本。",
       "subagent_register": "子智能体不能登记技能，只有与你对话的智能体可以。",
@@ -1374,7 +1394,12 @@
     "noInvocable": "这个智能体还没有选中可调用的技能。组织启用的技能要先在智能体的技能设置里选中，才能用 / 调用。",
     "noInvocableAction": "去选择技能",
     "noInvocableReadOnly": "这个智能体还没有选中可调用的技能。组织启用的技能要先在智能体的技能设置里选中才能调用，请联系它的所有者或组织管理员。",
-    "skillsGroup": "技能",
+    "skillSource": {
+      "platform": "技能",
+      "plugin": "插件技能",
+      "agent": "智能体技能",
+      "project": "项目技能"
+    },
     "skillTag": {
       "manual": "手动",
       "fork": "子智能体"
@@ -1437,6 +1462,20 @@
     "deviceNote": "发出第一条消息后不能更换",
     "deviceOffline": "没有可用的设备：你的本地设备都已离线。请在机器上启动 capybara-device 后再发送。",
     "deviceLocked": "对话开始后设备不再更换",
+    "projectGroup": "项目",
+    "freeMode": "自由模式",
+    "project": {
+      "bound": "项目 {name} · {path}",
+      "loaded": "项目 {name} · {path} · 已读取 {file}",
+      "noAgentsMd": "项目 {name} · {path} · 没有 {file}",
+      "unavailable": {
+        "gone": "项目 {name} 不可用：它的目录已不在设备上，本对话以自由模式继续",
+        "outside_mode": "项目 {name} 不可用：设备当前的运行模式读不到它，本对话以自由模式继续",
+        "unreadable": "项目 {name} 不可用：读取它失败，本对话以自由模式继续",
+        "unsupported": "项目 {name} 不可用：这台设备不支持项目，本对话以自由模式继续",
+        "removed": "项目 {name} 不可用：它已从设备的项目中移除，本对话以自由模式继续"
+      }
+    },
     "deviceDeleted": "设备已删除",
     "pickEffort": "思考档位",
     "nextMessage": "从下一条消息起生效",
@@ -1766,6 +1805,44 @@
     },
     "danger": {
       "title": "危险区"
+    },
+    "projects": {
+      "title": "项目",
+      "description": "这台设备上可供会话绑定的目录。新会话可以选择其中一个项目，智能体随后会读取它的 {file} 和技能。",
+      "overviewEmpty": "还没有项目",
+      "empty": "还没有项目",
+      "manage": "管理项目",
+      "hidden": "另有 {count} 个项目不在当前模式可读的范围内，已隐藏。切回原来的模式即可看到。",
+      "unsupportedLocal": "这台机器上的 capybara-device 不支持项目。请在机器上更新 capybara-device 并重新连接，然后再添加。",
+      "unsupportedCloud": "这台云端设备的沙箱提供方不支持项目。它的会话照常工作，只是不绑定项目。",
+      "homeUnknown": "自动模式下，项目路径相对于你的主目录，但这台机器还没有报告主目录。请在机器上更新 capybara-device 并重新连接。",
+      "add": "添加项目",
+      "addTitle": "添加项目",
+      "pathLabel": "目录",
+      "pathHelpWorkspace": "相对于设备的工作区。留空表示工作区本身。",
+      "pathHelpHome": "相对于你的主目录。留空表示主目录本身。",
+      "pathInvalid": "请输入相对于 {prefix} 的路径，不含控制字符或反斜杠。",
+      "pathAbsolute": "请输入相对于 {prefix} 的路径，不要填绝对路径。",
+      "nameLabel": "名称",
+      "nameHelp": "留空则使用目录名。",
+      "candidates": "建议",
+      "candidatesHelp": "两层以内含有 .git 或 {file} 的目录。",
+      "candidatesLoading": "正在设备上查找目录…",
+      "candidatesEmpty": "没有找到含有 .git 或 {file} 的目录",
+      "candidatesFailed": "无法读取建议，请直接输入目录。",
+      "pick": "选用",
+      "pickLabel": "选用 {path}",
+      "addSubmit": "添加",
+      "cancel": "取消",
+      "added": "已添加项目 {name}",
+      "remove": "移除",
+      "removeLabel": "移除项目 {name}",
+      "removeTitle": "移除项目 {name}？",
+      "removeHint": "只从这台设备的项目列表中移除，目录和其中的文件都会保留。已绑定它的会话将不带项目继续。",
+      "removeSubmit": "移除",
+      "removed": "已移除项目 {name}",
+      "loadFailed": "无法读取项目。",
+      "retry": "重试"
     }
   },
   "nav": {

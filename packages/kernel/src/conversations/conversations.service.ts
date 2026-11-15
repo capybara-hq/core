@@ -12,6 +12,7 @@ import {
   ConversationDevices,
   type NewConversationDevice,
 } from "../devices/conversation-devices.js";
+import { DeviceProjectsService } from "../devices/device-projects.service.js";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
@@ -69,11 +70,50 @@ export interface ConversationView {
   /** The scheduled task that created it (a `new`-mode task's run); null otherwise (spec §4). */
   scheduledTaskId: string | null;
   /**
+   * The device project it is bound to (project root spec §4.3: chosen at creation, never
+   * changed), as resolved then: its name and absolute path on the device; null in free mode (a
+   * sub-agent's is null too: it works in its root conversation's).
+   */
+  project: { name: string; path: string } | null;
+  /**
+   * The latest `project_root` snapshot of its log (project root spec §4.7), however far back:
+   * `loaded` with whether the project's `AGENTS.md` was found, or the reason the project is
+   * `unavailable`; null when no run start has recorded one (a free conversation, a bound one before
+   * its first run). Single-conversation responses compute it; the list queries carry null.
+   */
+  projectState: ProjectState | null;
+  /**
    * What the latest run is doing: `running` (queued or running), `waiting` (an approval or a
    * question), else null. Only the list queries compute it; other responses carry null.
    */
   activity: "running" | "waiting" | null;
 }
+
+/** The state a conversation's latest `project_root` event records ({@link ConversationView}). */
+export type ProjectState =
+  | { loaded: true; agentsMd: boolean }
+  | { unavailable: "gone" | "outside_mode" | "unreadable" | "unsupported" | "removed" };
+
+/**
+ * SQL for the {@link ProjectState} of the conversation row aliased/named `ref` (a correlated
+ * subquery on the latest `project_root` event, served by `conversation_events_project_root_idx`).
+ */
+function projectStateSql(ref: string) {
+  const id = sql.ref(`${ref}.id`);
+  return sql<ProjectState | null>`(
+    SELECT CASE
+      WHEN pe.payload ? 'unavailable'
+        THEN jsonb_build_object('unavailable', pe.payload->'unavailable'->>'reason')
+      ELSE jsonb_build_object('loaded', true, 'agentsMd', pe.payload ? 'agentsMd') END
+    FROM capybara.conversation_events pe
+    WHERE pe.conversation_id = ${id} AND pe.type = 'project_root'
+    ORDER BY pe.seq DESC LIMIT 1
+  )`;
+}
+
+/** The columns of a single-conversation response: {@link COLUMNS} and its project state. */
+const viewColumns = () =>
+  [...COLUMNS, projectStateSql("conversations").as("project_state")] as const;
 
 /** Escapes `\`, `%` and `_` so user text is matched literally by `LIKE … ESCAPE '\'`. */
 export function escapeLike(s: string): string {
@@ -247,6 +287,8 @@ const COLUMNS = [
   "archived_at",
   "device_id",
   "scheduled_task_id",
+  "project_name",
+  "project_path",
 ] as const;
 
 function toView(r: {
@@ -265,7 +307,10 @@ function toView(r: {
   archived_at: Date | null;
   device_id: string | null;
   scheduled_task_id: string | null;
+  project_name: string | null;
+  project_path: string | null;
   activity?: "running" | "waiting" | null;
+  project_state?: ProjectState | null;
 }): ConversationView {
   return {
     id: r.id,
@@ -283,6 +328,11 @@ function toView(r: {
     archivedAt: r.archived_at,
     deviceId: r.device_id,
     scheduledTaskId: r.scheduled_task_id,
+    project:
+      r.project_name !== null && r.project_path !== null
+        ? { name: r.project_name, path: r.project_path }
+        : null,
+    projectState: r.project_state ?? null,
     activity: r.activity ?? null,
   };
 }
@@ -399,6 +449,9 @@ export class ConversationsService {
     /** The device a new conversation is bound to (environments spec §4.1 item 1). */
     @Inject(ConversationDevices)
     private readonly devices: Pick<ConversationDevices, "forNew">,
+    /** The project of that device a new conversation is bound to (project root design §4.3). */
+    @Inject(DeviceProjectsService)
+    private readonly projects: Pick<DeviceProjectsService, "resolveForBinding">,
     /** A starter's message skips the run's pending questions (reply-while-question spec §8.1). */
     @Inject(QuestionsService)
     private readonly questions: Pick<QuestionsService, "skipPendingIn">,
@@ -413,9 +466,11 @@ export class ConversationsService {
    * Creates an empty conversation bound to its device (`pick`, see
    * {@link ConversationDevices.forNew}); an agent the account cannot use →
    * `agent.not_found`, a device it may not use → `device.not_found` /
-   * `device.unavailable`, and nothing is created. `opts.source` records where the conversation
-   * comes from.
+   * `device.unavailable`, and nothing is created. `pick.project` binds it to one of that device's
+   * projects ({@link bindingFor}), refused as that says. `opts.source` records where the
+   * conversation comes from.
    */
+  @Transactional()
   async create(
     orgId: string,
     accountId: string,
@@ -425,6 +480,7 @@ export class ConversationsService {
   ): Promise<ConversationView> {
     await this.agents.get(orgId, agentId, accountId);
     const deviceId = await this.devices.forNew(orgId, accountId, pick);
+    const project = await this.bindingFor(orgId, accountId, deviceId, pick.project);
     const row = await this.db
       .insertInto("conversations")
       .values({
@@ -433,6 +489,8 @@ export class ConversationsService {
         agent_id: agentId,
         account_id: accountId,
         device_id: deviceId,
+        project_name: project?.name ?? null,
+        project_path: project?.path ?? null,
         source: opts.source,
       })
       .returning(COLUMNS)
@@ -449,7 +507,9 @@ export class ConversationsService {
    * `events` are every event the create wrote, in seq order from seq 1 (a `model_switched` before
    * the message when the send switched), so a client can seed the new conversation's log whole.
    * `internal`: the conversation's source and, for kernel callers only, a scheduled task's marker,
-   * which also sets `conversations.scheduled_task_id`, and its zone override.
+   * which also sets `conversations.scheduled_task_id`, and its zone override. `pick.project` binds
+   * the conversation to one of its device's projects inside the write ({@link bindingFor}); a
+   * retry answers with the conversation the first send created, its binding unchanged.
    */
   async createWithMessage(
     orgId: string,
@@ -470,16 +530,33 @@ export class ConversationsService {
     const deviceId = await this.devices.forNew(orgId, accountId, pick);
     const next = await this.planSwitch(orgId, agent.definition, NO_SELECTION, input);
     const extra = await this.resolveExtra(orgId, accountId, input);
-    const invoked = await this.prepareSkill(orgId, agentId, undefined, agent.definition, input);
-    const id = randomUUID();
-    const all = await this.createIn(
-      { id, orgId, accountId, agentId, deviceId },
+    const invoked = await this.prepareSkill(
+      orgId,
+      accountId,
+      agentId,
+      undefined,
+      agent.definition,
       input,
-      next,
-      extra,
-      invoked,
-      internal,
     );
+    const id = randomUUID();
+    let all: ConversationEvent[] | undefined;
+    try {
+      all = await this.createIn(
+        { id, orgId, accountId, agentId, deviceId, project: pick.project },
+        input,
+        next,
+        extra,
+        invoked,
+        internal,
+      );
+    } catch (e) {
+      // a concurrent first send with this id created the conversation while this one resolved its
+      // binding: a refusal here (the project just went away) answers with what the first created
+      if (!(e instanceof ApiError)) throw e;
+      const raced = await this.findCreated(orgId, accountId, agentId, input.clientMessageId);
+      if (!raced) throw e;
+      return raced;
+    }
     const written = all?.at(-1);
     if (!all || !written) {
       const raced = await this.findCreated(orgId, accountId, agentId, input.clientMessageId);
@@ -501,6 +578,8 @@ export class ConversationsService {
       accountId: string;
       agentId: string;
       deviceId: string | null;
+      /** The project name to bind ({@link bindingFor}); undefined: free mode. */
+      project: string | undefined;
     },
     input: UserMessageInput & { clientMessageId: string },
     next: Selection | null,
@@ -509,6 +588,7 @@ export class ConversationsService {
     internal: InternalMessageOptions & NewConversationOptions,
   ): Promise<ConversationEvent[] | undefined> {
     const { id, orgId, accountId } = conv;
+    const project = await this.bindingFor(orgId, accountId, conv.deviceId, conv.project);
     const row = await this.db
       .insertInto("conversations")
       .values({
@@ -517,6 +597,8 @@ export class ConversationsService {
         agent_id: conv.agentId,
         account_id: accountId,
         device_id: conv.deviceId,
+        project_name: project?.name ?? null,
+        project_path: project?.path ?? null,
         create_request_id: input.clientMessageId,
         scheduled_task_id: internal.schedule?.taskId ?? null,
         source: internal.source,
@@ -539,6 +621,30 @@ export class ConversationsService {
   }
 
   /**
+   * The project a new conversation binds to (project root design §4.3): `name` resolved against
+   * the chosen device's projects by `DeviceProjectsService.resolveForBinding`, which reads only and
+   * checks the owner and the device's current mode (refused with `device.not_found`,
+   * `device.projects_unsupported`, `device.project_not_found` or `device.project_outside_mode`).
+   * Called inside the transaction that writes the conversation. A conversation without a device
+   * (no cloud provider, an anonymous IM sender) cannot have one. Undefined name: free mode.
+   */
+  private async bindingFor(
+    orgId: string,
+    accountId: string,
+    deviceId: string | null,
+    name: string | undefined,
+  ): Promise<{ name: string; path: string } | undefined> {
+    if (name === undefined) return undefined;
+    if (deviceId === null) {
+      throw new ApiError(
+        "device.projects_unsupported",
+        "This conversation has no device, so it cannot be bound to a project; choose one of your devices, or start it without a project",
+      );
+    }
+    return this.projects.resolveForBinding(orgId, deviceId, accountId, name);
+  }
+
+  /**
    * The conversation (and its first event) an earlier first send with this id created. The id used
    * for another agent's conversation → `conflict` (the caller only checked access to `agentId`, so
    * the other conversation is never returned).
@@ -556,7 +662,7 @@ export class ConversationsService {
   } | null> {
     const row = await this.db
       .selectFrom("conversations")
-      .select(COLUMNS)
+      .select(viewColumns())
       .where("org_id", "=", orgId)
       .where("account_id", "=", accountId)
       .where("create_request_id", "=", clientMessageId)
@@ -591,7 +697,7 @@ export class ConversationsService {
     return toView(
       await this.db
         .selectFrom("conversations")
-        .select(COLUMNS)
+        .select(viewColumns())
         .where("id", "=", id)
         .executeTakeFirstOrThrow(),
     );
@@ -612,7 +718,7 @@ export class ConversationsService {
       .updateTable("conversations")
       .set({ title, title_source: "manual" })
       .where("id", "=", conversationId)
-      .returning(COLUMNS)
+      .returning(viewColumns())
       .executeTakeFirstOrThrow();
     await this.eventLog.publishChanged(conversationId, "title");
     return toView(row);
@@ -633,7 +739,7 @@ export class ConversationsService {
       .updateTable("conversations")
       .set({ archived_at: archived ? sql<Date>`now()` : null })
       .where("id", "=", conversationId)
-      .returning(COLUMNS)
+      .returning(viewColumns())
       .executeTakeFirstOrThrow();
     await this.eventLog.publishChanged(conversationId, "archived");
     return toView(row);
@@ -720,7 +826,7 @@ export class ConversationsService {
   private async readable(orgId: string, conversationId: string, viewerAccountId: string) {
     const row = await this.db
       .selectFrom("conversations")
-      .select([...COLUMNS, "kind"])
+      .select([...viewColumns(), "kind"])
       .where("id", "=", conversationId)
       .where("org_id", "=", orgId)
       .where("account_id", "=", viewerAccountId)
@@ -863,6 +969,8 @@ export class ConversationsService {
       subagent_type: string | null;
       archived_at: Date | null;
       device_id: string | null;
+      project_name: string | null;
+      project_path: string | null;
       activity: "running" | "waiting" | null;
     }>`
       WITH g AS (
@@ -881,14 +989,16 @@ export class ConversationsService {
       SELECT page.agent_id, page.latest_at, v.definition ->> 'name' AS agent_name,
         a.profile_avatar, a.profile_updated_at, cs.id, cs.org_id, cs.account_id, cs.title, cs.title_source, cs.selection, cs.last_seq,
         cs.created_at, cs.updated_at, cs.parent_conversation_id, cs.subagent_type,
-        cs.archived_at, cs.device_id, cs.scheduled_task_id, cs.activity
+        cs.archived_at, cs.device_id, cs.scheduled_task_id, cs.project_name, cs.project_path,
+        cs.activity
       FROM page
       JOIN capybara.agents a ON a.id = page.agent_id
       JOIN capybara.agent_versions v ON v.agent_id = a.id AND v.version = a.current_version
       CROSS JOIN LATERAL (
         SELECT c.id, c.org_id, c.account_id, c.title, c.title_source, c.selection, c.last_seq,
           c.created_at, c.updated_at, c.parent_conversation_id, c.subagent_type,
-          c.archived_at, c.device_id, c.scheduled_task_id, ${activitySql("c")} AS activity
+          c.archived_at, c.device_id, c.scheduled_task_id, c.project_name, c.project_path,
+          ${activitySql("c")} AS activity
         FROM capybara.conversations c
         WHERE c.org_id = ${orgId} AND c.account_id = ${accountId} AND c.kind = 'chat'
           AND c.deleted_at IS NULL AND ${archivedFilter} ${searchFilter} ${stateFilter}
@@ -1171,7 +1281,7 @@ export class ConversationsService {
     const invoked =
       agent === undefined
         ? undefined
-        : await this.prepareSkill(orgId, conv.agentId, conversationId, agent, input);
+        : await this.prepareSkill(orgId, accountId, conv.agentId, conversationId, agent, input);
     // one transaction: the sender, time zone and language are read with the message's write
     // (run context spec §3.2)
     const { event, skipped, toSeq } = await this.postIn(
@@ -1411,6 +1521,7 @@ export class ConversationsService {
    */
   private async prepareSkill(
     orgId: string,
+    accountId: string,
     agentId: string,
     conversationId: string | undefined,
     agent: AgentDefinition,
@@ -1420,6 +1531,7 @@ export class ConversationsService {
     return this.invoker.prepare({
       orgId,
       agentId,
+      accountId,
       ...(conversationId !== undefined && { conversationId }),
       agent,
       name: input.skill.name,
@@ -1440,7 +1552,7 @@ export class ConversationsService {
   ): Promise<RenderedInvocation | undefined> {
     if (input.skill === undefined) return undefined;
     const agent = await this.agents.get(orgId, conv.agentId, accountId);
-    return this.prepareSkill(orgId, conv.agentId, conv.id, agent.definition, input);
+    return this.prepareSkill(orgId, accountId, conv.agentId, conv.id, agent.definition, input);
   }
 
   /**

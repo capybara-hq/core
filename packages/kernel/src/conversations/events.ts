@@ -752,6 +752,81 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       local: z.boolean().optional(),
     }),
   ),
+  /**
+   * The project a bound conversation's run read at its start (project root spec §4.4): the
+   * project's name and root, its `AGENTS.md` text, and per skill its name, description and digest;
+   * or, for a project the run cannot use, why (`unavailable`). The payload holds everything the
+   * event renders, so the request is reconstructable from the log. A run writes it before its first
+   * model call when it differs from the conversation's latest one; within a run the snapshot is
+   * fixed, so the request stays append-only. **Model-visible**: rendered at its position as a
+   * system message, after the agent's own instructions (`project root` spec §4.5); a summary
+   * covering it is followed by the latest one again. A new event type's new content needs no
+   * `DriftReason`.
+   */
+  ev(
+    "project_root",
+    z
+      .object({
+        /** The project's name, as the conversation's binding resolved it. */
+        project: z.string().min(1).max(255),
+        /** Its root on the device, the run's working directory. */
+        root: z.string().min(1).max(4096),
+        /**
+         * The project's `AGENTS.md` as read at run start, cut at 64 KiB by the reader (the visible
+         * marker is part of that cap). Absent when the project has none (no reason, no notice:
+         * spec §4.7) or is unavailable.
+         */
+        agentsMd: z.string().optional(),
+        /** `agentsMd` ends at the reader's cap and carries the marker. Absent: not cut. */
+        agentsMdTruncated: z.literal(true).optional(),
+        /**
+         * The run cannot use the project: its root is `gone`, `outside_mode` (the device's current
+         * mode cannot read it), `unreadable`, the device offers no projects (`unsupported`), or the
+         * device no longer keeps the bound name and path (`removed`); `message` says so in English
+         * for the model. Set alone: no `agentsMd`, no skills.
+         */
+        unavailable: z
+          .object({
+            reason: z.enum(["gone", "outside_mode", "unreadable", "unsupported", "removed"]),
+            message: z.string().min(1).max(500),
+          })
+          .strict()
+          .optional(),
+        /**
+         * The project's `.agents/skills/*` SKILL.md files: name, description and a digest of the
+         * file. Bodies are never recorded (`Skill` reads one on demand, and its result is a
+         * `tool_result`). Empty for a project without skills; the reader keeps the first 100.
+         */
+        skills: z
+          .array(
+            z.object({
+              name: z.string().refine(isSkillName, "invalid skill name"),
+              description: z.string().max(4096),
+              digest: z.string().min(1).max(128),
+            }),
+          )
+          .max(SKILLS_CATALOG_MAX)
+          .default([]),
+        /** The project has more skill directories than `skills` was read from. Absent: all read. */
+        skillsTruncated: z.literal(true).optional(),
+      })
+      .strict()
+      .superRefine((p, ctx) => {
+        if (p.unavailable === undefined) return;
+        if (
+          p.agentsMd !== undefined ||
+          p.agentsMdTruncated !== undefined ||
+          p.skillsTruncated !== undefined ||
+          p.skills.length > 0
+        ) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["unavailable"],
+            message: "an unavailable project carries no AGENTS.md and no skills",
+          });
+        }
+      }),
+  ),
   /** 工具调用开始执行之前写入（续跑时「有开始无结果」的调用记为结果未知，不再执行）。 */
   ev(
     "tool_call_started",

@@ -48,6 +48,9 @@ export const machineRevoked = (): ApiError =>
     [{ reason: "machine_revoked" }],
   );
 
+/** The text a machine's `policy` refusal reaches the model with. */
+export const POLICY_REFUSAL_PREFIX = "Refused by the machine's local policy: ";
+
 /** The text a machine's `error` result reaches the model with (ruling R28). */
 export const ON_MACHINE_PREFIX = "On the connected machine: ";
 
@@ -413,7 +416,7 @@ export class LocalDeviceRelay {
       case "fs_gone":
         throw new FileSystemGoneError(message);
       case "policy":
-        throw new ToolError(`Refused by the machine's local policy: ${message}`);
+        throw new ToolError(`${POLICY_REFUSAL_PREFIX}${message}`);
       default:
         throw new ToolError(`${ON_MACHINE_PREFIX}${message}`);
     }

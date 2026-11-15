@@ -2,7 +2,7 @@
 
 Agents run commands and produce files in a **device**: a sandbox with its own files that a person's conversations share. Each member gets a default personal device ("Personal" / 个人设备) in each org, created the first time they need one once a sandbox extension is enabled, and can create more under "设备" / "Devices" in the left navigation (at most `devices.maxPersonal` per org, default 10, the default one included). Devices are personal: only their owner sees and uses them.
 
-- **A conversation works in one device.** It is bound when it is created: the device picked in the composer (before the model), else the person's default; it stays bound, and its sub-agents use the same device. Changing device means a new conversation. Conversations of one device see each other's files.
+- **A conversation works in one device.** It is bound when it is created: the device picked in the composer (before the model), else the person's default; it stays bound, and its sub-agents use the same device. Changing device means a new conversation. Conversations of one device see each other's files. A conversation may also bind one of the device's [projects](#projects).
 - **Who may use a device is decided by the conversation's owner**, never by the agent: an org agent used by two people works in each person's own device. Access is checked again on every sandbox tool call; once the device is deleted, or its owner left the org, the conversation's sandbox tools fail (`device.not_found`) instead of switching to another device.
 - **Instances are disposable, files are not.** A device's instance is suspended after `sandbox.limits.suspendAfterIdleMinutes` (10) with no command from any of its conversations (files are kept; processes end, so a long-running server does not survive), resumed by the next command, and destroyed after `sandbox.limits.destroyAfterInactiveDays` (7) of disuse; its files stay until the device is deleted, and the next use starts a new instance on them. Deleting a device destroys the instance and the files (in a background job).
 - **Lost files** (the provider lost them): the device page offers "Rebuild files" (重建文件), which empties them (`POST /api/v1/orgs/:orgId/devices/:id/files/reset`, done by a background job); the next use starts with an empty workspace.
@@ -84,6 +84,79 @@ review error, timeout or unreadable answer is a question, never an allow.
 
 The decision is recorded on the tool result (`review`) for the conversation page. It is display
 only: request building and replays read the recorded tool result and never review again.
+
+## Projects
+
+A **project** is a name and a directory on a device: a repository checkout, or any directory the
+agent should work in. A conversation may bind one project; the agent then reads the project's
+`AGENTS.md` and its `.agents/skills/` at the start of every run and works inside the project's
+directory. A conversation without a project is in **free mode** (自由模式), exactly as before.
+
+- **Where they are kept**: the kernel keeps a device's projects (table `device_projects`, at most
+  100 per device), the same for a local machine and a cloud device. Only the device's owner sees and
+  changes them.
+- **Adding one**: on the device page's 设置 view, the 项目 section (the 概览 view lists them
+  read-only). The form takes the directory **relative to the device's base**, shown as a fixed
+  prefix, and an optional name (default: the directory's name; 1-64 characters, not `.` or `..`, no
+  `/` or control characters, no leading or trailing spaces, unique on the device). The base follows
+  the device's current mode: the owner's home directory for a local device in auto mode (reported by
+  `capybara-device` when it connects; an older program that reports none cannot add projects in auto
+  mode), the device's workspace in sandbox mode and on a cloud device. The device is asked whether
+  the directory exists and can be read before it is saved, so a typo fails at the form. The
+  directory need not hold `.git` or `AGENTS.md` yet. A directory that holds the owner's home (`/`,
+  `/home`, `/Users` in any case, an ancestor of the home) is refused as too broad; the home itself is
+  allowed. Removing a project only drops it from the list: its files stay, and conversations bound to
+  it continue in free mode.
+- **Suggestions**: the add dialog lists candidates from one scan on the device: the base and the
+  directories up to two levels below it that hold `.git` or `AGENTS.md` (hidden directories,
+  `node_modules` and symbolic links skipped; at most 50, at most 500 directories read).
+- **What the mode allows**: a device offers what it can read in its current mode. In sandbox mode,
+  and on a cloud device, that is only the workspace; in auto mode on a local device, any directory
+  the owner can read. A project the current mode cannot read is hidden (the section says how many),
+  not deleted, and comes back when the mode does. The device enforces its mode on every access
+  anyway, so a saved path grants nothing by itself.
+- **Requirements**: a local device needs a `capybara-device` that supports projects (it announces
+  it when it connects; the section asks you to update an older one). A cloud device needs a sandbox
+  extension that implements the project calls; with one that does not, its conversations stay in
+  free mode.
+
+**Binding.** The project is picked in the composer when the conversation is created (see
+[the conversation page](conversation-ui.md)) and never changes: switching projects means a new
+conversation. Only the device's owner binds a project of it. Sub-agents and scheduled runs of the
+conversation use its project.
+
+**What the agent reads.** At the start of every run, before the first model call, the kernel reads
+the project's `AGENTS.md` (up to 64 KiB, cut with a marker beyond) and the name and description of
+each skill under `.agents/skills/` (at most 100), and records them in the conversation log; skill
+bodies are read only when used. A run records a new snapshot only when something changed, so an
+edited `AGENTS.md` reaches the next run. The project's instructions come after the agent's own,
+which win on a direct conflict; its skills are listed as `project:<name>` (see [Skills](skills.md)).
+A bound conversation starts its device at run start, since the files must be read before the model
+answers. A project that was removed, is outside the device's current mode, whose directory is gone
+or cannot be read, or whose device does not support projects never fails a run: the conversation
+continues in free mode and its header says why.
+
+**The working directory.** In a bound conversation the project's root is the working directory:
+`Bash` runs there (a background command too), `Glob` and `Grep` search there by default, and a
+relative `Read` / `Write` / `Edit` path resolves against it. In free mode, or when the project
+cannot be used, the working directory is the device's workspace. A root above the owner's home, or
+one outside the workspace in sandbox mode, is never used as the working directory.
+
+**How the review treats a project.** For the command review the project root takes the place of the
+workspace: a write inside the project is an ordinary write, a write outside it asks as a write outside
+the workspace would. Home-level sensitive paths are judged by where they really are, against the
+owner's home (the home the machine reported, else the one the device's workspace lies under; never
+the project root) and in any letter case: shell rc files, `~/.ssh`, `~/.gitconfig`, launch agents,
+`crontab`, systemd units, `PATH` shim directories such as `~/.local/bin`, the device's own directory
+and the secret paths ask (or deny) even when the project is the home directory itself. A path the
+review judged is resolved against the working root it was reviewed with, and the approval card shows
+it that way.
+
+The API is `/api/v1/orgs/:orgId/devices/:id/projects` (list, add `{ path, name? }`, remove by name,
+`/candidates`; owner only, with the Platform operations `devices.list-projects`,
+`devices.add-project`, `devices.remove-project`, `devices.project-candidates`), and
+`POST /api/v1/orgs/:orgId/conversations` takes `project` (a project name of the conversation's
+device).
 
 ## Cloud networks (org settings)
 

@@ -271,13 +271,22 @@ export const decideSkillChange = (
     body: JSON.stringify(body),
   });
 
+/** Where an invocable skill comes from (kernel `InvocableSource`). */
+export type InvocableSource = "platform" | "plugin" | "agent" | "project";
+
 /**
  * A skill a person can invoke from the composer's `/` menu (kernel `InvocableSkill`, phase D
  * spec §4.5): the agent's effective skills that are not `user-invocable: false`, sorted by name.
  */
 export interface InvocableSkill {
   id: string;
+  /** The bare name; a project skill's callable name `project:<name>`. */
   name: string;
+  /**
+   * Where it comes from (project root §4.6): the platform or org library, a plugin, the agent's
+   * own, or the conversation's project. The `/` menu groups by it.
+   */
+  source: InvocableSource;
   /** The plugin it came from (also invocable as `<plugin>:<name>`). */
   plugin?: string;
   description: string;
@@ -311,13 +320,22 @@ export const parseSlashCommand = (text: string): { name: string; args: string } 
   return { name: m[1] as string, args: text.slice(m[0].length).trim() };
 };
 
+/**
+ * The chip of an invocation by `name`, as the thread's bubble draws it: `/<name>` without a
+ * plugin's qualifier; a project skill keeps its `project:` prefix (it is its name).
+ */
+export const skillChipLabel = (name: string): string =>
+  `/${name.startsWith("project:") ? name : name.slice(name.indexOf(":") + 1)}`;
+
 /** The listed skill `name` names: its name, or `<plugin>:<name>` for a plugin's skill. */
 export function findInvocable(
   skills: readonly InvocableSkill[],
   name: string,
 ): InvocableSkill | undefined {
+  // exactly (a project skill's name is `project:<name>`), else `<plugin>:<name>`
+  const exact = skills.find((s) => s.name === name);
   const i = name.indexOf(":");
-  if (i < 0) return skills.find((s) => s.name === name);
+  if (exact !== undefined || i < 0) return exact;
   const plugin = name.slice(0, i);
   const bare = name.slice(i + 1);
   return skills.find((s) => s.plugin === plugin && s.name === bare);

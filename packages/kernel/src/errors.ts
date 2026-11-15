@@ -391,6 +391,37 @@ export const ERROR_CODES = {
    * only its owner in a web session changes it (hardening spec D2, K4).
    */
   "device.mode_requires_session": 403,
+  /**
+   * The device offers no projects (project root §4.1): its `capybara-device` does not announce
+   * `projects` (update it), or its cloud sandbox provider has no `list` / `scan`.
+   */
+  "device.projects_unsupported": 409,
+  /** The device could not be asked about its directories now; the message says why. */
+  "device.projects_unavailable": 503,
+  /** Not a valid project name (1-64 characters, no `/`, no control characters, not `.` / `..`). */
+  "device.project_name_invalid": 422,
+  /** The device already has a project with this name. */
+  "device.project_name_taken": 409,
+  /** The device already has the most projects allowed (100). */
+  "device.project_limit_reached": 409,
+  /** The device has no project with this name. */
+  "device.project_not_found": 404,
+  /**
+   * The project's path is outside what the device may read in its current mode (sandbox mode and
+   * cloud devices: the workspace; project root §4.2).
+   */
+  "device.project_outside_mode": 422,
+  /** Auto mode resolves a relative path against the owner's home, which the device has not reported. */
+  "device.project_home_unknown": 409,
+  /**
+   * The project's path lies above the owner's home (`/`, `/home`, `/Users`, an ancestor of the
+   * reported home): too broad to be a project.
+   */
+  "device.project_path_too_broad": 422,
+  /** The project's directory does not exist on the device. */
+  "device.project_path_missing": 422,
+  /** The project's path is a file, cannot be read, or the device refused it in its current mode. */
+  "device.project_path_unreadable": 422,
   /** Device sign-in (RFC 8628 style): the person has not approved the code yet; keep polling. */
   "device_sign_in.authorization_pending": 400,
   /** Device sign-in: the program polls faster than the interval; add 5 seconds and keep polling. */
@@ -443,6 +474,14 @@ export const ERROR_CODES = {
    * (`details: [{ reason: "not_found" }]`) or is hidden from the menu (`not_user_invocable`).
    */
   "skill.not_invocable": 400,
+  /**
+   * A person's `/project:<name>`: the conversation's project lists the skill but it cannot be used
+   * now (project root spec §4.6, §4.7). `details: [{ reason }]`: `gone` (the project or its
+   * SKILL.md is no longer on the device), `outside_mode` (the device's current mode cannot read
+   * it), `unreadable` (the read failed), `unparsable` (not a valid SKILL.md), `unsupported` (the
+   * device offers no projects). Never sent as text instead: the person is told.
+   */
+  "skill.project_unavailable": 422,
   /**
    * Uploading or sharing a skill: an org-level skill with this name already exists in the org
    * (P3-24, F18).

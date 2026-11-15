@@ -5,7 +5,7 @@ import type {
   SandboxRoots,
 } from "@capybara-hq/plugin-sdk";
 import { effectiveMode } from "../policy.js";
-import type { Policy } from "../state.js";
+import type { Policy, SandboxMode } from "../state.js";
 import { DeviceOpError, type ExecMode, type Executor } from "./types.js";
 
 export type { ExecMode } from "./types.js";
@@ -176,6 +176,31 @@ export class SwitchingExecutor implements Executor {
 
   async stat(path: string) {
     return (await this.files()).stat(path);
+  }
+
+  /**
+   * The executor that reads as a device in `mode` (the request's own effective mode), without the
+   * file-operation window: the host with the owner's rights in auto mode, else the sandboxed
+   * helper. The policy is reread and wins: a sandbox turned on on the machine reads through the
+   * sandboxed helper whatever `mode` says.
+   */
+  private async readerFor(mode: SandboxMode): Promise<{ ex: Executor; mode: SandboxMode }> {
+    const policy = this.policy();
+    await this.sync(policy);
+    const auto = mode === "auto" && policy.mode === "auto";
+    return auto ? { ex: this.host, mode: "auto" } : { ex: this.sandboxed, mode: "sandbox" };
+  }
+
+  async list(mode: SandboxMode, path: string, limit: number, signal: AbortSignal) {
+    const r = await this.readerFor(mode);
+    if (r.ex.list === undefined) throw new DeviceOpError("error", "unsupported operation");
+    return r.ex.list(r.mode, path, limit, signal);
+  }
+
+  async scan(mode: SandboxMode, base: string, signal: AbortSignal) {
+    const r = await this.readerFor(mode);
+    if (r.ex.scan === undefined) throw new DeviceOpError("error", "unsupported operation");
+    return r.ex.scan(r.mode, base, signal);
   }
 
   async killTagged(tags: string[]): Promise<void> {

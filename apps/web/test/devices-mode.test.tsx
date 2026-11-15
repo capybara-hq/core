@@ -19,6 +19,11 @@ vi.mock("next/navigation", () => ({
 }));
 
 const BASE = "/api/v1/orgs/o1/devices";
+/** The device page also reads the device's projects (project root §4.1): none here. */
+const NO_PROJECTS = {
+  [`GET ${BASE}/e1/projects`]: () =>
+    json(200, { projects: [], hidden: 0, mode: "auto", base: "/workspace", supported: true }),
+};
 const T = "2026-11-07T08:00:00.000Z";
 const E = en.devices;
 const COMMAND = MODE_COMMAND;
@@ -119,7 +124,10 @@ const list = (items: unknown[]) => ({
   cloudAvailable: true,
 });
 
-const detail = (device: unknown) => ({ [`GET ${BASE}/e1`]: () => json(200, { device }) });
+const detail = (device: unknown) => ({
+  ...NO_PROJECTS,
+  [`GET ${BASE}/e1`]: () => json(200, { device }),
+});
 const renderDetail = (opts: Parameters<typeof renderRouteWithCache>[2] = {}) =>
   renderRouteWithCache("/devices/e1", lastStubRoutes(), opts);
 const renderList = (opts: Parameters<typeof renderRouteWithCache>[2] = {}) =>
@@ -725,6 +733,7 @@ describe("the query cache", () => {
       release = r;
     });
     await renderRouteEmptyCache("/devices/e1", {
+      ...NO_PROJECTS,
       [`GET ${BASE}/e1`]: async () => {
         await held;
         return json(200, { device: cloud() });

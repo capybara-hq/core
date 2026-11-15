@@ -20,13 +20,16 @@ import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb, type SkillManifest } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { ConversationDevices } from "../../src/devices/conversation-devices.js";
 import { ApiError } from "../../src/errors.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { KERNEL_ROOT_LOGGER } from "../../src/infra/tokens.js";
 import type { KernelLogger } from "../../src/log.js";
+import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { parseSlashCommand, SkillInvoker } from "../../src/skills/invoke.js";
 import { StorageService } from "../../src/storage/storage.service.js";
+import { setFakeSandboxFault } from "../fixtures/plugins/sandbox-fake/index.js";
 import { conversationsFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
@@ -350,6 +353,7 @@ describe("GET …/agents/:agentId/invocable-skills", () => {
       {
         id: brain.id,
         name: "brainstorming",
+        source: "plugin",
         plugin: "superpowers",
         description: "Use for brainstorming work.",
         version: 1,
@@ -359,6 +363,7 @@ describe("GET …/agents/:agentId/invocable-skills", () => {
       {
         id: forked.id,
         name: "forked",
+        source: "platform",
         description: "Use for forked work.",
         version: 1,
         arguments: ["pr"],
@@ -368,6 +373,7 @@ describe("GET …/agents/:agentId/invocable-skills", () => {
       {
         id: manual.id,
         name: "manual",
+        source: "platform",
         description: "Use for manual work.",
         version: 1,
         argumentHint: "[topic]",
@@ -377,6 +383,7 @@ describe("GET …/agents/:agentId/invocable-skills", () => {
       {
         id: own.id,
         name: "own",
+        source: "agent",
         description: "Use for own work.",
         version: 1,
         manual: false,
@@ -385,6 +392,7 @@ describe("GET …/agents/:agentId/invocable-skills", () => {
       {
         id: plain.id,
         name: "plain",
+        source: "platform",
         description: "Use for plain work.",
         version: 1,
         manual: false,
@@ -438,6 +446,51 @@ describe("GET …/agents/:agentId/invocable-skills", () => {
     expect(firstText((await userMessages(conv1))[0])).toContain("D.");
   });
 
+  it("adds the skills of a bound conversation's latest usable project_root, after the agent's", async () => {
+    const plain = await seedSkill({ name: "plain", body: "P." });
+    const agentId = await createAgent([plain.id]);
+    const conv = await createConv(owner, orgId, agentId);
+    const log = k.app.get(EventLog);
+    const project = {
+      project: "core",
+      root: "/Users/o/src/core",
+      skills: [{ name: "fix-issue", description: "Fix an issue.", digest: "a".repeat(64) }],
+    };
+    await log.append(conv, [{ type: "project_root", payload: project }]);
+    const listed = async (c?: string) => {
+      const r = await list(agentId, c);
+      expect(r.statusCode, r.body).toBe(200);
+      return (r.json() as { skills: Listed[] }).skills;
+    };
+    expect(await listed(conv)).toEqual([
+      expect.objectContaining({ name: "plain", source: "platform" }),
+      {
+        id: "project:fix-issue",
+        name: "project:fix-issue",
+        source: "project",
+        description: "Fix an issue.",
+        version: 0,
+        manual: false,
+        fork: false,
+      },
+    ]);
+    // without the conversation: no project
+    expect((await listed()).map((s) => s.name)).toEqual(["plain"]);
+    // the project became unavailable: its skills stop applying
+    await log.append(conv, [
+      {
+        type: "project_root",
+        payload: {
+          project: "core",
+          root: project.root,
+          skills: [],
+          unavailable: { reason: "gone", message: "The project's root no longer exists." },
+        },
+      },
+    ]);
+    expect((await listed(conv)).map((s) => s.name)).toEqual(["plain"]);
+  });
+
   it("is 404 for a non-member and for another person's conversation", async () => {
     const agentId = await createAgent([], [], "org");
     const accounts = accountsFor(db);
@@ -457,6 +510,90 @@ describe("GET …/agents/:agentId/invocable-skills", () => {
     const other = await createAgent([]);
     const otherConv = await createConv(owner, orgId, other);
     expect((await list(agentId, otherConv)).statusCode).toBe(404);
+  });
+});
+
+describe("POST …/messages with a project skill (project root spec §4.6)", () => {
+  /** Appends a usable project_root naming `fix-issue` at `root`, and writes its SKILL.md there. */
+  async function projectWith(conv: string, root: string, body: string | null) {
+    await k.app.get(EventLog).append(conv, [
+      {
+        type: "project_root",
+        payload: {
+          project: "proj",
+          root,
+          skills: [{ name: "fix-issue", description: "Fix it.", digest: "a".repeat(64) }],
+        },
+      },
+    ]);
+    if (body === null) return;
+    const deviceId = await k.app.get(ConversationDevices).forTool(orgId, conv);
+    await k.app.get(SandboxService).withSandbox(
+      {
+        orgId,
+        deviceId,
+        holderConversationId: conv,
+        actor: { accountId: ownerId, conversationId: conv },
+      },
+      (h, p, _info, signal) =>
+        p.writeFile(
+          h,
+          `${root}/.agents/skills/fix-issue/SKILL.md`,
+          new TextEncoder().encode(skillMd("fix-issue", body)),
+          signal,
+        ),
+      new AbortController().signal,
+    );
+  }
+
+  it("is read on the conversation's device and logged with source project", async () => {
+    const agentId = await createAgent([]);
+    const conv = await createConv(owner, orgId, agentId);
+    await projectWith(conv, "/workspace/proj", "Fix issue $ARGUMENTS in ${CLAUDE_SKILL_DIR}.");
+    const sent = await send(conv, { text: "7", skill: { name: "project:fix-issue" } });
+    expect(sent.statusCode, sent.body).toBe(202);
+    const [m] = await userMessages(conv);
+    expect(m?.payload.skill).toMatchObject({
+      id: "project:fix-issue",
+      source: "project",
+      name: "project:fix-issue",
+      arguments: "7",
+      mode: "inline",
+    });
+    expect(firstText(m as UserMessage)).toContain(
+      "Fix issue 7 in /workspace/proj/.agents/skills/fix-issue.",
+    );
+  });
+
+  it("an unreachable device writes nothing and the refusal is readable", async () => {
+    const agentId = await createAgent([]);
+    const conv = await createConv(owner, orgId, agentId);
+    await projectWith(conv, "/workspace/proj", null);
+    await setFakeSandboxFault(root, { code: "ECONNREFUSED" });
+    try {
+      const sent = await send(conv, { text: "7", skill: { name: "project:fix-issue" } });
+      expect(sent.statusCode, sent.body).toBe(503);
+      expect(sent.json().error).toMatchObject({
+        code: "device.projects_unavailable",
+        message: expect.stringMatching(/sandbox provider cannot be reached/),
+      });
+    } finally {
+      await setFakeSandboxFault(root, null);
+    }
+    expect(await userMessages(conv)).toEqual([]);
+  });
+
+  it("a SKILL.md gone from the device: skill.project_unavailable (gone), nothing written", async () => {
+    const agentId = await createAgent([]);
+    const conv = await createConv(owner, orgId, agentId);
+    await projectWith(conv, "/workspace/none", null);
+    const sent = await send(conv, { text: "", skill: { name: "project:fix-issue" } });
+    expect(sent.statusCode, sent.body).toBe(422);
+    expect(sent.json().error).toMatchObject({
+      code: "skill.project_unavailable",
+      details: [{ reason: "gone" }],
+    });
+    expect(await userMessages(conv)).toEqual([]);
   });
 });
 
@@ -734,7 +871,14 @@ describe("POST …/messages with skill", () => {
     const agentId = await createAgent([s.id, missing.id]);
     const invoker = k.app.get(SkillInvoker);
     const agent = (await agentsService().get(orgId, agentId, ownerId)).definition;
-    const r = await invoker.prepare({ orgId, agentId, agent, name: "review", args: "PR 4" });
+    const r = await invoker.prepare({
+      orgId,
+      agentId,
+      accountId: ownerId,
+      agent,
+      name: "review",
+      args: "PR 4",
+    });
     expect(r.skill).toMatchObject({
       mode: "fork",
       agentType: "general-purpose",
@@ -747,7 +891,14 @@ describe("POST …/messages with skill", () => {
       '<skill_invocation name="review" version="1">\nReview PR 4.\n</skill_invocation>',
     );
     expect(r.warning).toBeUndefined();
-    const d = await invoker.prepare({ orgId, agentId, agent, name: "deep", args: "" });
+    const d = await invoker.prepare({
+      orgId,
+      agentId,
+      accountId: ownerId,
+      agent,
+      name: "deep",
+      args: "",
+    });
     expect(d.skill.agentType).toBe("general-purpose");
     expect(d.warning).toBe(
       'Skill "deep" asked for sub-agent type "nobody", which this agent does not have; it ran as general-purpose.',
@@ -846,7 +997,14 @@ describe("SkillInvoker logging", () => {
     const agent = (await agentsService().get(orgId, agentId, ownerId)).definition;
     try {
       await expect(
-        invoker.prepare({ orgId, agentId, agent, name: "fix-issue", args: "1" }),
+        invoker.prepare({
+          orgId,
+          agentId,
+          accountId: ownerId,
+          agent,
+          name: "fix-issue",
+          args: "1",
+        }),
       ).rejects.toMatchObject({ code: "storage.unavailable" });
       expect(error).toHaveBeenCalledWith("invoked skill unreadable", {
         orgId,

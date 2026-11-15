@@ -331,10 +331,105 @@ export interface SandboxProvider {
     path: string,
     signal: AbortSignal,
   ): Promise<{ size: number; isDir: boolean } | null>;
+  /**
+   * Lists one directory's entries — each entry's `name` and whether it `isDir` — sorted by code
+   * unit (locale-independent), at most `limit` of them; `truncated` is true when the directory has
+   * more. Entries only: never file contents, never a recursive walk. A `name` is never `.` or `..`;
+   * `isDir` follows symbolic links (stat semantics: a link to a directory is `true`, a dangling link
+   * `false`, and so is a link whose target the request's mode cannot reach). `limits` is the kernel's current ceiling: read in the mode it gives, never in one an
+   * earlier command saw. Returns null only when the path does not exist and that mode could reach
+   * it; a path the mode cannot reach throws (a policy refusal), as does a path that is a file or a
+   * directory that cannot be read.
+   *
+   * Optional: a provider without it (or without {@link SandboxProvider.scan}) offers no projects,
+   * and its conversations stay in free mode.
+   */
+  list?(
+    h: SandboxHandle,
+    path: string,
+    opts: { limit: number; limits: Pick<SandboxLimits, "mode">; signal: AbortSignal },
+  ): Promise<{ entries: { name: string; isDir: boolean }[]; truncated: boolean } | null>;
+  /**
+   * Looks for project-like directories, read in the mode `limits` gives (as for
+   * {@link SandboxProvider.list}). Every provider traverses the same way:
+   *
+   * - Candidates are `base` itself and the directories at most {@link MAX_DEVICE_SCAN_DEPTH}
+   *   levels below it that hold a `.git` entry (directory or file) or an `AGENTS.md` file.
+   * - The walk does not follow symbolic links and does not enter hidden directories (names
+   *   starting with `.`); a candidate does not stop the descent (a monorepo's sub-projects are
+   *   candidates too). It never enters a directory named in {@link DEVICE_SCAN_SKIPPED_DIRS}, at
+   *   any depth, nor one named in {@link DEVICE_SCAN_SKIPPED_BASE_DIRS} directly under `base`;
+   *   every provider skips exactly these. Paths under `base` the mode cannot reach are skipped,
+   *   never an error.
+   * - A directory whose basename does not satisfy {@link isDeviceProjectName} is not returned as
+   *   a candidate (never with a changed name), but it is still traversed.
+   * - Directories are visited breadth-first, each level in code-unit order of `path`, `base`
+   *   counting as the first visit (visiting a directory reads its entries; one that cannot be read
+   *   still counts as a visit); the walk stops after {@link MAX_DEVICE_SCAN_DIRS} visits, so a
+   *   huge tree answers what was found by then.
+   * - Each candidate is its absolute `path` and its basename as `suggestedName`; the candidates
+   *   found are sorted by `path` in code-unit order and cut to the first
+   *   {@link MAX_DEVICE_SCAN_RESULTS}.
+   *
+   * Directory entries only, never file contents. A `base` that does not exist answers `[]`; a
+   * `base` that is a file, cannot be read, or lies outside the mode throws. Optional, like `list`.
+   */
+  scan?(
+    h: SandboxHandle,
+    base: string,
+    opts: { limits: Pick<SandboxLimits, "mode">; signal: AbortSignal },
+  ): Promise<{ path: string; suggestedName: string }[]>;
 }
 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: 正是要拦控制字符
 const CONTROL = /[\u0000-\u001f\u007f]/;
+
+/** The longest project name, in UTF-16 code units. */
+export const MAX_DEVICE_PROJECT_NAME_LENGTH = 64;
+
+/** The most candidates a `scan` answers ({@link SandboxProvider.scan}). */
+export const MAX_DEVICE_SCAN_RESULTS = 50;
+
+/**
+ * Directory names a `scan` never enters, at any depth ({@link SandboxProvider.scan}): dependency
+ * trees, not projects. Every provider skips exactly these.
+ */
+export const DEVICE_SCAN_SKIPPED_DIRS: readonly string[] = Object.freeze(["node_modules"]);
+
+/**
+ * Directory names a `scan` does not enter directly under its `base` ({@link SandboxProvider.scan}):
+ * the owner's macOS `Library` (app data, huge, partly privacy-protected) is not where projects
+ * live. Every provider skips exactly these.
+ */
+export const DEVICE_SCAN_SKIPPED_BASE_DIRS: readonly string[] = Object.freeze(["Library"]);
+
+/** How far below its base a `scan` looks: the base's children and their children. */
+export const MAX_DEVICE_SCAN_DEPTH = 2;
+
+/**
+ * The most directories one `scan` visits (reads the entries of), its `base` included
+ * ({@link SandboxProvider.scan}): breadth-first, each level in code-unit order of path.
+ */
+export const MAX_DEVICE_SCAN_DIRS = 500;
+
+/**
+ * Whether `v` is a valid project name (a project's identity on its device, and a `scan`
+ * candidate's `suggestedName`): non-empty, at most {@link MAX_DEVICE_PROJECT_NAME_LENGTH} UTF-16
+ * code units, not `.` or `..`, no `/`, no control characters, and no leading or trailing
+ * whitespace.
+ */
+export function isDeviceProjectName(v: unknown): v is string {
+  return (
+    typeof v === "string" &&
+    v !== "" &&
+    v !== "." &&
+    v !== ".." &&
+    v.length <= MAX_DEVICE_PROJECT_NAME_LENGTH &&
+    !CONTROL.test(v) &&
+    !v.includes("/") &&
+    !/^\s|\s$/.test(v)
+  );
+}
 
 /**
  * The root-independent checks of a path inside an instance (non-empty, at most 4096 characters, no

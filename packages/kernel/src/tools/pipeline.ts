@@ -25,6 +25,7 @@ import {
 } from "../conversations/events.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ConversationDevices } from "../devices/conversation-devices.js";
+import { pathAgainstWorkingRoot } from "../devices/working-root.js";
 import { ApiError } from "../errors.js";
 import { EffectiveConfigs, NEEDS_CONFIG_REASON } from "../extensions/effective-config.js";
 import { clipText } from "../extensions/hooks.js";
@@ -531,11 +532,30 @@ const reviewKindOf = (toolKey: string): "command" | "write" =>
 /** What the review stage found for one call (auto mode spec §5.4). */
 type ReviewOutcome =
   /** Run the call; `review` is recorded on its result when the review ran. */
-  | { kind: "continue"; review?: ReviewRecord | undefined; commandAsk?: ApprovalRecord }
+  | {
+      kind: "continue";
+      review?: ReviewRecord | undefined;
+      commandAsk?: ApprovalRecord;
+      /** The working root the review judged the call against: the tool runs there. */
+      workingRoot?: string | undefined;
+    }
   /** The run waits on the call's `command` approval. */
   | { kind: "wait"; wait: WaitingFor }
   /** The call ends now with this model-visible error result and its review record. */
   | { kind: "result"; content: string; review: ReviewRecord };
+
+/**
+ * The working root a reviewed call carries to its tool: a project root only. In free mode the
+ * reviewed root is the recorded workspace, which may be stale; the tool then maps it to the held
+ * instance's own workspace as it always has.
+ */
+const carriedRoot = (facts: {
+  workspace: string | undefined;
+  workingRoot: string | undefined;
+}): string | undefined =>
+  facts.workingRoot !== undefined && facts.workingRoot !== facts.workspace
+    ? facts.workingRoot
+    : undefined;
 
 /** The review record of an allowed call. */
 const allowRecord = (v: ReviewVerdict): ReviewRecord => ({
@@ -1182,6 +1202,7 @@ export class ToolPipeline {
       return fail(reviewed.content, outKey);
     }
     review = reviewed.review;
+    const reviewedWorkingRoot = reviewed.workingRoot;
     if (reviewed.commandAsk !== undefined)
       authorization = approvalAuthorization(reviewed.commandAsk);
 
@@ -1345,7 +1366,15 @@ export class ToolPipeline {
       },
     ]);
     const t0 = Date.now();
-    let outcome = await this.execute(tool, input, ctx, call.id, resume, resolved.tools);
+    let outcome = await this.execute(
+      tool,
+      input,
+      ctx,
+      call.id,
+      resume,
+      resolved.tools,
+      reviewedWorkingRoot,
+    );
     const durationMs = Date.now() - t0;
     await this.deps.hooks?.afterExecute?.(ctx.runId, call.id);
 
@@ -1552,8 +1581,25 @@ export class ToolPipeline {
     if (review === undefined || devices === undefined) return { kind: "continue" };
     if (!REVIEWED_TOOL_KEYS.has(tool.key)) return { kind: "continue" };
     const asked = await this.deps.approvals.commandForCall(ctx.runId, call.id);
-    if (asked !== null) return this.settledCommandAsk(asked, tool.key);
     const rootConversationId = ctx.parent?.rootConversationId ?? ctx.conversationId;
+    if (asked !== null) {
+      const settled = this.settledCommandAsk(asked, tool.key);
+      // an approved call runs in the root it was reviewed against only while the device still runs
+      // in the mode recorded with the ask; otherwise the tool decides its working root afresh. A
+      // judged root that is the recorded workspace (free mode) is not carried either
+      // ({@link carriedRoot}): the tool maps it to the held instance's workspace as always
+      if (settled.kind === "continue" && settled.workingRoot !== undefined) {
+        const now = await devices.reviewFacts(ctx.orgId, rootConversationId, ctx.conversationId);
+        if (
+          now === null ||
+          now.mode !== asked.command?.mode ||
+          carriedRoot({ workspace: now.workspace, workingRoot: settled.workingRoot }) === undefined
+        ) {
+          return { ...settled, workingRoot: undefined };
+        }
+      }
+      return settled;
+    }
     const facts = await devices.reviewFacts(ctx.orgId, rootConversationId, ctx.conversationId);
     if (facts === null) return { kind: "continue" }; // no device: the tool fails on its own
     const kind = reviewKindOf(tool.key);
@@ -1578,7 +1624,12 @@ export class ToolPipeline {
       toolKey: tool.key,
       input,
       mode: facts.mode,
-      workspace: facts.workspace,
+      // the working root: a bound project's root, where commands start and writes need no ask
+      workspace: facts.workingRoot,
+      // the owner's home, never the project root: the home-level rules stay where they were
+      home: facts.home,
+      // and the device workspace's home, so a project outside every home still protects it
+      deviceHome: facts.deviceHome,
       attended,
       step: ctx.step,
       callId: call.id,
@@ -1597,7 +1648,7 @@ export class ToolPipeline {
       ...(ctx.conversationKind !== undefined && { conversationKind: ctx.conversationKind }),
     });
     if (verdict.decision === "allow") {
-      return { kind: "continue", review: allowRecord(verdict) };
+      return { kind: "continue", review: allowRecord(verdict), workingRoot: carriedRoot(facts) };
     }
     if (verdict.decision === "deny") {
       return {
@@ -1623,9 +1674,20 @@ export class ToolPipeline {
       kind,
       // the whole command the approval covers (the event keeps a clamped copy for display)
       command,
-      ...(kind === "write" && { path: clipText(textField(input, "file_path"), 4096) }),
+      // a relative path as it will be written: resolved against the working root
+      ...(kind === "write" && {
+        path: clipText(
+          facts.workingRoot === undefined
+            ? textField(input, "file_path")
+            : pathAgainstWorkingRoot(textField(input, "file_path"), facts.workingRoot),
+          4096,
+        ),
+      }),
       rule: verdict.rule,
       reason: clipText(verdict.reason, COMMAND_ASK_TEXT_MAX_CHARS),
+      // the root the review judged, always (the workspace in free mode): the approved call runs
+      // against what the person approved, not a later snapshot
+      ...(facts.workingRoot !== undefined && { workingRoot: facts.workingRoot }),
     };
     let ask: ApprovalRecord;
     try {
@@ -1663,7 +1725,12 @@ export class ToolPipeline {
     const rule = ask.command?.rule ?? null;
     if (ask.status === "pending") return { kind: "wait", wait: approvalWait(ask) };
     if (ask.status === "approved") {
-      return { kind: "continue", commandAsk: ask, review: this.personAllowRecord(ask) };
+      return {
+        kind: "continue",
+        commandAsk: ask,
+        review: this.personAllowRecord(ask),
+        workingRoot: ask.command?.workingRoot,
+      };
     }
     if (ask.status === "denied") {
       const reason = ask.denyReason;
@@ -1933,6 +2000,7 @@ export class ToolPipeline {
     callId: string,
     resume?: ToolResume,
     stepTools?: readonly ResolvedTool[],
+    reviewedWorkingRoot?: string,
   ): Promise<ExecOutcome> {
     if (tool.source.kind === "connector") {
       return this.executeConnector(tool, tool.source, input, ctx, resume);
@@ -1955,6 +2023,9 @@ export class ToolPipeline {
       ...(tool.source.kind === "builtin" && { runId: ctx.runId }),
       ...(tool.source.kind === "builtin" &&
         ctx.deadline !== undefined && { runDeadline: ctx.deadline }),
+      // a reviewed call runs in the working root its review judged (project root spec §4.3)
+      ...(tool.source.kind === "builtin" &&
+        reviewedWorkingRoot !== undefined && { reviewedWorkingRoot }),
       // a sub-agent works in its root conversation's sandbox (spec §10.1, at every depth)
       ...(tool.source.kind === "builtin" &&
         ctx.parent !== undefined && { sandboxConversationId: ctx.parent.rootConversationId }),

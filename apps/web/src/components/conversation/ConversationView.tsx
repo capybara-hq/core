@@ -19,7 +19,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "../../i18n/navigation";
 import { avatarValue } from "../../lib/agents";
-import { compactConversation, type ModelRef } from "../../lib/conversations";
+import { compactConversation, type ModelRef, type ProjectState } from "../../lib/conversations";
 import { canEditAgent } from "../../lib/org-settings";
 import { agentsQuery } from "../../lib/query/agents";
 import { retryOnMountOf } from "../../lib/query/client";
@@ -227,6 +227,7 @@ export function useConversationPage(
     conv.conversation?.deviceId ?? device.data?.id,
     device.data,
     deviceName,
+    conv.conversation?.project?.name,
   );
   const keys = useMemo(() => toolKeysOf(conv.events), [conv.events]);
   const info = useToolInfo(orgId, conversationId, keys);
@@ -463,6 +464,10 @@ export function useConversationPage(
     thread: (
       <>
         <StartedBy orgId={orgId} taskId={conv.conversation?.scheduledTaskId ?? null} />
+        <ProjectLine
+          project={conv.conversation?.project ?? null}
+          state={conv.conversation?.projectState ?? null}
+        />
         <Thread
           orgId={orgId}
           conversationId={conversationId}
@@ -590,6 +595,43 @@ export function useConversationPage(
     </>
   );
   return { page, dialogs };
+}
+
+/**
+ * The conversation's project (project root §4.6, §4.7): its name and root, and, from the view's
+ * `projectState` (its latest `project_root`, wherever that lies in the log), whether its
+ * `AGENTS.md` was loaded, or why the project is unavailable (this conversation then goes on in
+ * free mode: the web notice for a lost project). Before the first run (no snapshot yet) the name
+ * and root alone. A free conversation draws nothing.
+ */
+function ProjectLine({
+  project,
+  state,
+}: {
+  project: { name: string; path: string } | null;
+  state: ProjectState | null;
+}) {
+  const t = useTranslations("chat.project");
+  if (project === null) return null;
+  // the file's name is not translated (a placeholder: no Latin "agent" in the Chinese text)
+  const vars = { name: project.name, path: project.path, file: "AGENTS.md" };
+  if (state !== null && "unavailable" in state) {
+    const reason = state.unavailable;
+    return (
+      <Text variant="small" tone="warn" icon="circle-alert" title={project.path}>
+        {t(`unavailable.${reason}`, vars)}
+      </Text>
+    );
+  }
+  return (
+    <Text variant="small" tone="muted">
+      {state === null
+        ? t("bound", vars)
+        : state.agentsMd
+          ? t("loaded", vars)
+          : t("noAgentsMd", vars)}
+    </Text>
+  );
 }
 
 /**

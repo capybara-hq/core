@@ -386,6 +386,7 @@ describe("skills from platform components", () => {
     const inv = await k.app.get(SkillInvoker).prepare({
       orgId,
       agentId,
+      accountId: ownerId,
       conversationId: conv,
       agent: agent as never,
       name: "kit:alpha",
