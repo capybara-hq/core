@@ -13,7 +13,9 @@ import type { ConversationEvent } from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ConversationDevices } from "../../src/devices/conversation-devices.js";
+import { DeviceProjectsService } from "../../src/devices/device-projects.service.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
+import { ApiError } from "../../src/errors.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
@@ -603,6 +605,42 @@ describe("binding a conversation to a project", () => {
       project_name: "core",
       project_path: CORE.path,
     });
+    expect(await countOf(m.id)).toBe(1);
+  });
+
+  it("a concurrent first send refused its binding answers the conversation the first created", async () => {
+    const m = await member();
+    const device = await localDevice(m.id, { projects: [CORE] });
+    const convs = k.app.get(ConversationsService);
+    const projects = k.app.get(DeviceProjectsService);
+    const message = { text: "hello", clientMessageId: randomUUID() };
+    const send = () =>
+      convs.createWithMessage(
+        orgId,
+        m.id,
+        agentId,
+        message,
+        { deviceId: device, project: "core" },
+        { source: "web" },
+      );
+    const original = projects.resolveForBinding.bind(projects);
+    let first: Awaited<ReturnType<typeof send>> | undefined;
+    // The second send passes its retry check, then the first send commits while the second
+    // resolves its binding, and the second's binding is refused (the project just went away).
+    projects.resolveForBinding = async () => {
+      projects.resolveForBinding = original;
+      first = await send();
+      throw new ApiError("device.project_not_found", "gone");
+    };
+    let second: Awaited<ReturnType<typeof send>>;
+    try {
+      second = await send();
+    } finally {
+      projects.resolveForBinding = original;
+    }
+    expect(first?.created).toBe(true);
+    expect(second.created).toBe(false);
+    expect(second.conversation.id).toBe(first?.conversation.id);
     expect(await countOf(m.id)).toBe(1);
   });
 

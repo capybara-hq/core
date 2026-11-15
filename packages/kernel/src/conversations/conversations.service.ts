@@ -504,14 +504,24 @@ export class ConversationsService {
       input,
     );
     const id = randomUUID();
-    const all = await this.createIn(
-      { id, orgId, accountId, agentId, deviceId, project: pick.project },
-      input,
-      next,
-      extra,
-      invoked,
-      internal,
-    );
+    let all: ConversationEvent[] | undefined;
+    try {
+      all = await this.createIn(
+        { id, orgId, accountId, agentId, deviceId, project: pick.project },
+        input,
+        next,
+        extra,
+        invoked,
+        internal,
+      );
+    } catch (e) {
+      // a concurrent first send with this id created the conversation while this one resolved its
+      // binding: a refusal here (the project just went away) answers with what the first created
+      if (!(e instanceof ApiError)) throw e;
+      const raced = await this.findCreated(orgId, accountId, agentId, input.clientMessageId);
+      if (!raced) throw e;
+      return raced;
+    }
     const written = all?.at(-1);
     if (!all || !written) {
       const raced = await this.findCreated(orgId, accountId, agentId, input.clientMessageId);
