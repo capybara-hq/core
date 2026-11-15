@@ -158,7 +158,7 @@ execution approval gate. Implementation follows the checked-in plan.
 ## Implementation decisions and reviewed boundaries
 
 - `RunExecution` installs a scoped `TransactionHost` fence. Every writable root transaction
-  acquires org `FOR NO KEY UPDATE`, root/current conversation locks, and verifies the acquisition
+  acquires org and root/current conversation `FOR NO KEY UPDATE` locks, and verifies the acquisition
   claim before domain writes. This matches org write/offboarding admission order and prevents
   shared-lock upgrades and conversation/org inversions. It serializes short worker write
   transactions within an org; no model/tool network request is enclosed by that transaction.
@@ -180,3 +180,8 @@ execution approval gate. Implementation follows the checked-in plan.
   delivered-and-deleted retry race without Redis I/O inside the terminal transaction.
 - New integration coverage is merged into the existing SSE and dual-replica files as required by
   the test-portfolio check. `runtime/waits-dual.test.ts` is explicitly in the container list.
+
+- Conversation admission uses `NO KEY UPDATE` so a session approval can reference the root
+  through its grant FK while holding a child lock. A stronger root `UPDATE` lock could wait for
+  that child while blocking its approval's FK check. Domain event writes still take their normal
+  stronger conversation lock; deletion remains mutually exclusive with admission.

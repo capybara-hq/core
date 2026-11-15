@@ -68,7 +68,7 @@ export class RunExecution {
     }, fn);
   }
 
-  /** Org, root, current conversation; run/decision locks in the caller always follow these. */
+  /** Org, root, current conversation; allow FK references while excluding deletion and writes. */
   private async lockLiveConversation(claim: ExecutionClaim): Promise<boolean> {
     const org = await this.db
       .selectFrom("orgs")
@@ -81,7 +81,7 @@ export class RunExecution {
       .selectFrom("conversations")
       .select("deleted_at")
       .where("id", "=", claim.rootId)
-      .forUpdate()
+      .forNoKeyUpdate()
       .executeTakeFirst();
     if (!root || root.deleted_at !== null) return false;
     if (claim.rootId === claim.conversationId) return true;
@@ -90,7 +90,7 @@ export class RunExecution {
       .select("deleted_at")
       .where("id", "=", claim.conversationId)
       .where("org_id", "=", claim.orgId)
-      .forUpdate()
+      .forNoKeyUpdate()
       .executeTakeFirst();
     return conv !== undefined && conv.deleted_at === null;
   }

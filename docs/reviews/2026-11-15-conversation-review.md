@@ -36,7 +36,11 @@ Independent review found additional boundaries in the implementation; each was r
 read-only PG snapshots skip the locking fence; org admission follows the existing `NO KEY UPDATE`
 authorization order before conversation locks; a lost acquisition is checked again after claim lock
 waits; and delivery-generation changes invalidate stale scans even after the relay deleted a retry.
-No Redis call was moved into a business transaction.
+The first PR CI also exposed conversation admission's overly strong `UPDATE` lock: a session
+grant holds a root FK reference while its approval locks a child, so worker admission must permit
+that reference. A deterministic `KEY SHARE` regression failed before the lock changed to
+`NO KEY UPDATE`; ownership, sub-agent permissions and outbound files then passed 49/49. No Redis
+call was moved into a business transaction.
 
 Operational limits: dispatched third-party effects cannot be recalled. Started calls with unknown
 results retain the existing no-automatic-replay semantics. Fenced write transactions serialize
@@ -45,7 +49,8 @@ occupy their quota slot until its existing TTL. The ninth compaction absorption-
 was not changed or claimed fixed.
 
 Validation: `CAPYBARA_TEST_WORKERS=4 pnpm -s verify --json` returned `ok: true`: lint, typecheck,
-custom checks, commitlint and affected tests passed. E2E and Docker are delegated to CI by that
+custom checks, commitlint and affected tests passed, including the repeat after the FK-lock fix.
+The final repeat includes Web tests. Web build, visual, E2E and Docker are delegated to CI by that
 command. Separate Web validation passed 182 files / 3,377 tests; i18n passed. Zero-drift fixtures
 passed 62/62 before and after changes. Actual takeover and SSE files passed 24/24; the final
 ownership/deletion regression group passed 30/30; updated latency/outbox/provenance passed 20/20.

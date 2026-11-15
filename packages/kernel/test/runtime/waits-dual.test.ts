@@ -455,6 +455,33 @@ describe("execution claim ownership across replicas", () => {
     );
   });
 
+  it("claim admission does not block references to the conversation row", async () => {
+    let admitted = false;
+    let pending = Promise.resolve<Awaited<ReturnType<RunExecution["claim"]>>>(null);
+    try {
+      await k.app.get(TransactionHost).run(async () => {
+        // A session grant's FK holds KEY SHARE on the root while its approval locks a child.
+        await k.app
+          .get(KernelDb)
+          .selectFrom("conversations")
+          .select("id")
+          .where("id", "=", conversationId)
+          .forKeyShare()
+          .execute();
+        pending = replica.app
+          .get(RunExecution)
+          .claim(conversationId, runId, randomUUID())
+          .then((claim) => {
+            admitted = claim !== null;
+            return claim;
+          });
+        await waitFor(async () => admitted, 2_000, "claim compatible with conversation references");
+      });
+    } finally {
+      await pending;
+    }
+  });
+
   it("a lost acquisition cannot overwrite a replacement claim after waiting for admission", async () => {
     const execution = k.app.get(RunExecution);
     const current = await replica.app.get(RunExecution).claim(conversationId, runId, randomUUID());
