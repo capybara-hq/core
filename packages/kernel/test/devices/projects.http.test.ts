@@ -11,7 +11,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { DeviceAccess } from "../../src/devices/access.js";
@@ -427,14 +427,22 @@ describe("device projects", () => {
     expect((sandboxed.json() as { candidates: unknown[] }).candidates).toEqual([]);
   });
 
-  it("refuses a root above the owner's home, without asking the device; the home itself is fine", async () => {
+  it("refuses a root above the owner's home, without using the device; the home itself is fine", async () => {
     const d = await owned();
     const machine = await connect(d);
-    // `/home` (and `/Users`) whatever the home, `/`, and every ancestor of the reported home
-    for (const path of ["..", "../..", "../../Users"]) {
-      const res = await add(d.req, d.deviceId, { path, name: "wide" });
-      expect(res.statusCode, `${path}: ${res.body}`).toBe(422);
-      expect(errCode(res)).toBe("device.project_path_too_broad");
+    const uses = vi.spyOn(k.app.get(SandboxService), "withSandbox");
+    // `/home` (and `/Users`) whatever the home and in any case (a case-insensitive volume), `/`,
+    // and every ancestor of the reported home
+    try {
+      for (const path of ["..", "../..", "../../Users", "../../users", "../../HOME"]) {
+        const res = await add(d.req, d.deviceId, { path, name: "wide" });
+        expect(res.statusCode, `${path}: ${res.body}`).toBe(422);
+        expect(errCode(res)).toBe("device.project_path_too_broad");
+      }
+      // refused before the device is leased (a cloud device is never started for it)
+      expect(uses).not.toHaveBeenCalled();
+    } finally {
+      uses.mockRestore();
     }
     expect(reqsOf(machine, "list")).toEqual([]);
     expect(await storedOf(d.deviceId)).toEqual([]);

@@ -27,6 +27,9 @@ import { providerForDevice, SandboxProviders } from "../sandbox/providers.js";
 import { deviceNotFound, type HeldProvider, SandboxService } from "../sandbox/sandbox.service.js";
 import { SandboxProviderUnreachableError } from "../sandbox/unreachable.js";
 import { DeviceAccess } from "./access.js";
+// a path above the owner's home is never stored as a project: the working root would fall back for
+// it anyway (project root §4.3), so both use the one rule; the home itself may be one
+import { aboveHome } from "./working-root.js";
 
 /** The most projects one device keeps (project root §4.1). */
 export const MAX_DEVICE_PROJECTS = 100;
@@ -140,16 +143,6 @@ const tooBroad = (path: string): ApiError =>
     "device.project_path_too_broad",
     `${clipped(path)} holds the owner's home directory (or other people's): pick the project's own directory, the home or below it`,
   );
-
-/**
- * `path` lies above the owner's home: `/`, `/home` and `/Users` whatever the home, and every
- * ancestor of the reported `home`. Never stored as a project (the working root would fall back for
- * it anyway, project root §4.3); the home itself may be one.
- */
-function aboveHome(path: string, home: string | null): boolean {
-  if (path === "/" || path === "/home" || path === "/Users") return true;
-  return home !== null && home !== path && home.startsWith(`${path}/`);
-}
 
 const homeUnknown = (): ApiError =>
   new ApiError(
@@ -308,6 +301,16 @@ export class DeviceProjectsService {
     signal: AbortSignal = new AbortController().signal,
   ): Promise<DeviceProjectView> {
     const scope = await this.precheck(orgId, accountId, deviceId, input.name);
+    // a path too broad for any project is refused before the device is leased (a cloud device
+    // started): against the last known base; the held instance's base is checked again inside
+    const early = baseOf(scope);
+    if (early !== null) {
+      const path = trimSlash(
+        posix.normalize(posix.join(early, input.path === "" ? "." : input.path)),
+      );
+      // outside the mode stays the device-side refusal it is (the held workspace decides it)
+      if (withinMode(scope, path) && aboveHome(path, scope.home)) throw tooBroad(path);
+    }
     const resolved = await this.onDevice(
       orgId,
       accountId,
@@ -550,6 +553,10 @@ const limitReached = (): ApiError =>
     `This device already has ${MAX_DEVICE_PROJECTS} projects, the most allowed; remove one first`,
   );
 
+/** `path` without a trailing `/` (except `/` itself). */
+const trimSlash = (path: string): string =>
+  path.length > 1 && path.endsWith("/") ? path.slice(0, -1) : path;
+
 /**
  * The absolute path of `relative` against the scope's base (the instance's `workspace` in sandbox
  * mode and on a cloud device, the owner's home in auto mode), normalized; refused when the base is
@@ -558,8 +565,7 @@ const limitReached = (): ApiError =>
 function resolve(scope: Scope, workspace: string, relative: string): string {
   const base = baseOf(scope, workspace);
   if (base === null) throw homeUnknown();
-  let path = posix.normalize(posix.join(base, relative === "" ? "." : relative));
-  if (path.length > 1 && path.endsWith("/")) path = path.slice(0, -1);
+  const path = trimSlash(posix.normalize(posix.join(base, relative === "" ? "." : relative)));
   if (validateSandboxPathShape(path).length > 0 || !withinMode(scope, path, workspace)) {
     throw outsideMode(path, scope.mode);
   }

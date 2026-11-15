@@ -15,15 +15,19 @@ export interface WorkingProject {
   unavailable: boolean;
 }
 
+/** The fixed parents of home directories, lower-cased (compared case-insensitively). */
+const HOME_PARENTS: ReadonlySet<string> = new Set(["/home", "/users"]);
+
 /**
  * A root above the owner's home: `/`, every ancestor of the reported `home` (`/var/lib` for
- * `/var/lib/u`), and `/home` / `/Users` whatever the home. Too broad to be the review's workspace
+ * `/var/lib/u`), and `/home` / `/Users` whatever the home and in any case (a macOS volume is
+ * case-insensitive: `/users` is `/Users`). Too broad to be the review's workspace
  * (other users' files would be ordinary writes), so it is never the working root. The owner's home
  * itself may be: the review judges its home-level sensitive paths (shell rc files, SSH,
  * credentials) inside the workspace too.
  */
-function aboveHome(root: string, home: string | null | undefined): boolean {
-  if (root === "/" || root === "/home" || root === "/Users") return true;
+export function aboveHome(root: string, home: string | null | undefined): boolean {
+  if (root === "/" || HOME_PARENTS.has(root.toLowerCase())) return true;
   return home != null && home !== root && isInside(home, root);
 }
 

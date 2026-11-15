@@ -51,7 +51,8 @@ describe("workingRootOf", () => {
       expect(workingRootOf(usable(bad), auto), bad).toBe(ROOTS.workspace);
     }
     // `/` and the ancestors of a home directory are too broad
-    for (const broad of ["/", "/Users", "/Users/", "/home"]) {
+    // in any case: a macOS volume is case-insensitive, so /users is /Users
+    for (const broad of ["/", "/Users", "/Users/", "/home", "/users", "/HOME", "/uSeRs/"]) {
       expect(workingRootOf(usable(broad), auto), broad).toBe(ROOTS.workspace);
     }
     // the owner's home itself is a project the owner chose: the review keeps its home-level rules
