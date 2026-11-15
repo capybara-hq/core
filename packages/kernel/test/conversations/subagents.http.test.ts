@@ -230,15 +230,30 @@ async function listSubagents(
 }
 
 /**
- * Runs "SCENARIO one" to its end and returns the parent and its only child. The completed run
- * queues a title job whose call appends a `usage` event (`purpose: "title"`) to the parent after
- * `run_finished`; wait for it too, so the parent's usage no longer moves under the caller.
+ * Runs "SCENARIO one" to its end and returns the parent and its only child. The child's delivery
+ * can wake the parent again: wait for a completed run that consumed it, not just the delivery.
+ * The completed run also queues a title job whose call appends a `usage` event (`purpose: "title"`)
+ * after `run_finished`; wait for it too, so the parent's usage no longer moves under the caller.
  */
 async function oneChild(): Promise<{ conv: string; child: string }> {
   const conv = await createConv(owner, orgId, agentId);
   await postMessage(owner, orgId, conv, "SCENARIO one");
   await waitForTerminal(db, conv, 1, 30_000);
   await finishedDeliveries(db, conv);
+  await waitFor(
+    async () => {
+      const events = await eventsOf(db, conv);
+      const delivery = events.find(
+        (e) => e.type === "subagent_delivery" && e.payload.kind === "finished",
+      );
+      return (
+        delivery !== undefined &&
+        events.some((e) => e.type === "run_finished" && e.payload.consumedUpToSeq >= delivery.seq)
+      );
+    },
+    30_000,
+    "the parent completed after consuming the child's delivery",
+  );
   await waitFor(
     async () =>
       (await eventsOf(db, conv)).some((e) => e.type === "usage" && e.payload.purpose === "title"),
