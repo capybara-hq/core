@@ -1,7 +1,10 @@
 # Conversation permission profiles
 
-Status: product model approved by the maintainer on 2026-11-16. Technical design is proposed for
-review; neither a feasibility spike nor product implementation is authorized by that model approval.
+Status: product model and technical direction approved by the maintainer on 2026-11-16, including
+conversation-independent permissions, device/scope-bound Full access consent, and applying profile
+changes to subsequent operations while existing work retains its starting grant. The bounded
+feasibility plan was approved for subagent execution on the same date; product implementation
+follows the gate and a further reviewed design and plan.
 
 ## Intent and evidence
 
