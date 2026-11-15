@@ -33,6 +33,7 @@ import { PLATFORM_SOURCE, skillFileStore } from "../../skills/usable.js";
 import { AGENT_TOOL, SANDBOX_TOOL_NAMES } from "../builtin-names.js";
 import type { BuiltinCallContext, BuiltinResult, BuiltinTool } from "../registry.js";
 import {
+  checkToolPath,
   clip,
   display,
   inSandbox,
@@ -535,6 +536,9 @@ const notInProject = (asked: string, project: string, names: readonly string[]):
   return `Skill "${clip(asked, 80)}" is not one of the skills of the project "${project}"; call Skill with one of the project's skills (${shown.length === 0 ? "it lists none" : `${shown.join(", ")}${more}`}).`;
 };
 
+const projectOutsideModeText = (asked: string, path: string, mode: string): string =>
+  `Skill "${asked}" cannot be loaded: ${path} is outside what the device can read in ${mode} mode now. Ask the user to switch the device to auto mode, or do the task without the skill.`;
+
 const projectFileGoneText = (asked: string, path: string): string =>
   `Skill "${asked}" cannot be loaded: ${path} is no longer on the device. Check the project's .agents/skills directory with Glob or Read, or do the task without the skill.`;
 
@@ -578,6 +582,13 @@ async function loadProjectSkill(
   const dir = `${project.root}/${PROJECT_SKILLS_DIR}/${bare}`;
   const path = `${dir}/${SKILL_ENTRY_FILE}`;
   const r = await inSandbox(deps, ctx, async (s) => {
+    // the device's mode now, as `Read` checks it: a mode narrowed since the run start reads nothing
+    try {
+      checkToolPath(path, s);
+    } catch (e) {
+      if (!(e instanceof ToolError)) throw e;
+      throw new ToolError(projectOutsideModeText(asked, path, s.mode));
+    }
     try {
       return await s.p.readFile(s.h, path, { maxBytes: SKILL_MD_MAX_BYTES, signal: s.signal });
     } catch (e) {

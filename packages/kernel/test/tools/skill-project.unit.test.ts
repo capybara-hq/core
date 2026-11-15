@@ -41,6 +41,8 @@ interface Setup {
   catalog?: EventPayload<"skills_catalog">;
   files?: Record<string, string>;
   readError?: Error;
+  /** The device's mode now (default auto: the project's root is outside the sandbox roots). */
+  mode?: "auto" | "sandbox";
 }
 
 function setup(s: Setup) {
@@ -90,7 +92,15 @@ function setup(s: Setup) {
           sig,
         ),
     },
-    devices: { forTool: async () => "device-1" },
+    devices: {
+      forTool: async () => "device-1",
+      modeLevel: async () => ({
+        mode: s.mode ?? "auto",
+        allowedMode: "auto" as const,
+        network: { kind: "allowlist" as const, hosts: [] },
+        local: true,
+      }),
+    },
     attachments: { listForConversation: async () => [], openForConversation: async () => null },
     config: { get: () => ({ sandbox: { limits: {} } }) as never },
   });
@@ -186,5 +196,17 @@ describe("Skill: project skills", () => {
     const t = setup({ project: usable, files: { [PATH]: "no frontmatter" } });
     const e = await toolError(t.run({ skill: "project:fix-issue" }));
     expect(e.message).toContain("SKILL.md");
+  });
+  it("a mode narrowed to sandbox since the run started: the root outside the roots is refused, nothing read", async () => {
+    const t = setup({
+      project: usable,
+      mode: "sandbox",
+      files: { [PATH]: skillMd("fix-issue", "Body.") },
+    });
+    const e = await toolError(t.run({ skill: "project:fix-issue" }));
+    expect(t.reads).toEqual([]);
+    expect(e.message).toContain(PATH);
+    expect(e.message).toMatch(/sandbox mode/);
+    expect(e.message).toMatch(/ask the user|do the task without/i);
   });
 });
