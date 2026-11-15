@@ -6,7 +6,9 @@ import { describe, expect, it } from "vitest";
 /**
  * The web app shows an API error by looking up its code under `errors.*` in its messages
  * (`apps/web/src/lib/use-error-message.ts`); a code without copy shows the generic text, so a renamed
- * code whose key was not renamed would silently lose its message.
+ * code whose key was not renamed would silently lose its message. A code may instead carry an object
+ * of copy by its detail `reason`, which then needs a `default` (what the web shows for any other
+ * reason) and only non-empty strings.
  */
 const messagesDir = fileURLToPath(new URL("../../../apps/web/messages/", import.meta.url));
 
@@ -15,6 +17,16 @@ function load(locale: string): Record<string, unknown> {
     string,
     unknown
   >;
+}
+
+const filled = (v: unknown): boolean => typeof v === "string" && v.trim() !== "";
+
+/** A string, or an object of reasons with a `default`, every entry non-empty text. */
+function hasCopy(copy: unknown): boolean {
+  if (filled(copy)) return true;
+  if (typeof copy !== "object" || copy === null) return false;
+  const entries = Object.values(copy);
+  return filled((copy as Record<string, unknown>).default) && entries.every(filled);
 }
 
 function lookup(tree: unknown, path: string[]): unknown {
@@ -33,10 +45,17 @@ describe("error copy", () => {
       const messages = load(locale);
       for (const code of Object.keys(ERROR_CODES)) {
         const copy = lookup(messages, ["errors", ...code.split(".")]);
-        if (typeof copy !== "string" || copy.trim() === "")
-          missing.push(`${locale}: errors.${code}`);
+        if (!hasCopy(copy)) missing.push(`${locale}: errors.${code}`);
       }
     }
     expect(missing).toEqual([]);
+  });
+
+  it("an object of reasons needs a default and non-empty entries", () => {
+    expect(hasCopy({ gone: "Gone.", default: "Not now." })).toBe(true);
+    expect(hasCopy({ gone: "Gone." })).toBe(false);
+    expect(hasCopy({ gone: "", default: "Not now." })).toBe(false);
+    expect(hasCopy({ gone: { nested: "x" }, default: "Not now." })).toBe(false);
+    expect(hasCopy("")).toBe(false);
   });
 });
