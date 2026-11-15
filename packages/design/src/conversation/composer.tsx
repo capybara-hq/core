@@ -95,7 +95,7 @@ export type PickerProps = {
    * Locked (the agent after the first message): plain `muted` text with no chevron and this hint
    * as its tooltip.
    */
-  locked?: { hint: string };
+  locked?: { hint: string; warning?: { label: string; onInspect(): void } };
   disabled?: boolean;
   groups: { label?: string; items: PickerItem[] }[];
   /** The note that closes the menu ("从下一条消息起生效"). */
@@ -125,6 +125,26 @@ export function Picker({
   referenceOpen,
 }: PickerProps): JSX.Element {
   const [open, setOpen] = useState(false);
+  if (locked?.warning) {
+    return (
+      <Button
+        variant="ghost"
+        density="dense"
+        className="cb-picker"
+        aria-label={`${label}: ${value} · ${locked.warning.label}`}
+        title={locked.hint}
+        onClick={locked.warning.onInspect}
+      >
+        <span className="cb-picker-value" data-locked="true">
+          {value}
+        </span>
+        <span className="cb-picker-warning" data-part="picker-warning">
+          <Icon name="circle-alert" size={12} />
+          {locked.warning.label}
+        </span>
+      </Button>
+    );
+  }
   if (locked) {
     return (
       <span className="cb-picker" data-part="picker" data-locked="true" title={locked.hint}>

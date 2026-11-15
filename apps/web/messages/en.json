@@ -1473,12 +1473,20 @@
       "loaded": "Project {name} · {path} · {file} loaded",
       "noAgentsMd": "Project {name} · {path} · no {file}",
       "unavailable": {
-        "gone": "Project {name} is unavailable: its directory is no longer on the device; this conversation continues in free mode",
-        "outside_mode": "Project {name} is unavailable: the device's current mode cannot read it; this conversation continues in free mode",
-        "unreadable": "Project {name} is unavailable: reading it failed; this conversation continues in free mode",
-        "unsupported": "Project {name} is unavailable: this device does not support projects; this conversation continues in free mode",
-        "removed": "Project {name} is unavailable: it was removed from the device's projects; this conversation continues in free mode"
-      }
+        "gone": "The project directory no longer exists on the device.",
+        "outside_mode": "The device refused access to the project directory. Check its mode and access permissions.",
+        "unreadable": "The project directory could not be read.",
+        "unsupported": "This device does not support projects.",
+        "removed": "The project was removed from the device’s project list."
+      },
+      "title": "Project · {name}",
+      "unloaded": "Context not loaded",
+      "details": "Project context",
+      "summary": "The project directory could not be read. Its instructions and skills were not loaded for this run.",
+      "viewDevice": "View device",
+      "newFreeConversation": "Start a free conversation",
+      "snapshotHint": "You can continue chatting. This status reflects the last run; the next run reads the project again after access is restored.",
+      "composerUnavailable": "Project not loaded"
     },
     "deviceDeleted": "Device deleted",
     "pickEffort": "Effort",

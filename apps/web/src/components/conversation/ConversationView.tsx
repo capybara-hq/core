@@ -6,6 +6,7 @@ import {
   formatDuration,
   QuickActions,
   RenameDialog,
+  RunRow,
   Stack,
   Text,
   type TitleBarMenuItem,
@@ -216,6 +217,12 @@ export function useConversationPage(
     retryOnMount: retryOnMountOf(deviceQ.queryKey),
   });
   const deviceName = useDeviceName();
+  const [projectOpen, setProjectOpen] = useState(true);
+  const projectNotice = useRef<HTMLDivElement>(null);
+  const inspectProject = () => {
+    setProjectOpen(true);
+    projectNotice.current?.scrollIntoView?.({ block: "nearest" });
+  };
   const devicePicker = lockedDevicePicker(
     {
       label: t("pickDevice"),
@@ -229,6 +236,16 @@ export function useConversationPage(
     deviceName,
     conv.conversation?.project?.name,
   );
+  if (
+    devicePicker?.locked &&
+    conv.conversation?.projectState &&
+    "unavailable" in conv.conversation.projectState
+  ) {
+    devicePicker.locked.warning = {
+      label: t("project.composerUnavailable"),
+      onInspect: inspectProject,
+    };
+  }
   const keys = useMemo(() => toolKeysOf(conv.events), [conv.events]);
   const info = useToolInfo(orgId, conversationId, keys);
   useDeviceRefresh(orgId, conversationId, conv.events);
@@ -464,10 +481,16 @@ export function useConversationPage(
     thread: (
       <>
         <StartedBy orgId={orgId} taskId={conv.conversation?.scheduledTaskId ?? null} />
-        <ProjectLine
-          project={conv.conversation?.project ?? null}
-          state={conv.conversation?.projectState ?? null}
-        />
+        <div ref={projectNotice}>
+          <ProjectLine
+            project={conv.conversation?.project ?? null}
+            state={conv.conversation?.projectState ?? null}
+            deviceId={conv.conversation?.deviceId ?? device.data?.id}
+            agentId={conv.conversation?.agentId}
+            open={projectOpen}
+            onOpenChange={setProjectOpen}
+          />
+        </div>
         <Thread
           orgId={orgId}
           conversationId={conversationId}
@@ -607,7 +630,15 @@ export function useConversationPage(
 function ProjectLine({
   project,
   state,
+  deviceId,
+  agentId,
+  open,
+  onOpenChange,
 }: {
+  deviceId?: string | null | undefined;
+  agentId?: string | undefined;
+  open: boolean;
+  onOpenChange(open: boolean): void;
   project: { name: string; path: string } | null;
   state: ProjectState | null;
 }) {
@@ -618,9 +649,35 @@ function ProjectLine({
   if (state !== null && "unavailable" in state) {
     const reason = state.unavailable;
     return (
-      <Text variant="small" tone="warn" icon="circle-alert" title={project.path}>
-        {t(`unavailable.${reason}`, vars)}
-      </Text>
+      <RunRow
+        status="warning"
+        label={t("title", vars)}
+        parts={[]}
+        statusText={t("unloaded")}
+        detailsLabel={t("details")}
+        open={open}
+        onOpenChange={onOpenChange}
+        links={[
+          ...(deviceId
+            ? [{ label: t("viewDevice"), href: `/devices/${encodeURIComponent(deviceId)}` }]
+            : []),
+          {
+            label: t("newFreeConversation"),
+            href: agentId ? `/?agent=${encodeURIComponent(agentId)}` : "/",
+          },
+        ]}
+      >
+        <Text variant="prose">{t("summary")}</Text>
+        <Text variant="small" tone="muted">
+          {project.path}
+        </Text>
+        <Text variant="prose" tone="muted">
+          {t(`unavailable.${reason}`, vars)}
+        </Text>
+        <Text variant="prose" tone="muted">
+          {t("snapshotHint")}
+        </Text>
+      </RunRow>
     );
   }
   return (

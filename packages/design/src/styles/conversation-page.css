@@ -1336,3 +1336,11 @@ button.cb-property-row {
   line-height: var(--cb-type-small-line);
   overflow-wrap: anywhere;
 }
+
+.cb-picker-warning {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cb-space-1);
+  color: var(--cb-warn);
+  white-space: nowrap;
+}

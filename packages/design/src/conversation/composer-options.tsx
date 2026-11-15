@@ -43,7 +43,7 @@ export type ComposerOptionsProps = {
 export function ComposerOptions({ device, model, effort }: ComposerOptionsProps): JSX.Element {
   const t = useDesignT();
   const [open, setOpen] = useState(false);
-  const full = [model.value, effort?.value, device?.value].filter(
+  const full = [model.value, effort?.value, device?.value, device?.locked?.warning?.label].filter(
     (v): v is string => v !== undefined,
   );
   const name = t("composer.options");
@@ -63,7 +63,16 @@ export function ComposerOptions({ device, model, effort }: ComposerOptionsProps)
       </header>
       <div className="cb-bsheet-body" data-part="bsheet-body">
         {groups.map((g) => (
-          <OptionsGroup key={g.key} group={g.key} title={g.title} picker={g.picker} />
+          <OptionsGroup
+            key={g.key}
+            group={g.key}
+            title={g.title}
+            picker={g.picker}
+            onInspect={() => {
+              setOpen(false);
+              g.picker.locked?.warning?.onInspect();
+            }}
+          />
         ))}
       </div>
     </>
@@ -101,6 +110,11 @@ export function ComposerOptions({ device, model, effort }: ComposerOptionsProps)
               </span>
             </>
           ) : null}
+          {device?.locked?.warning ? (
+            <span className="cb-picker-warning" data-part="options-warning">
+              <Icon name="circle-alert" size={12} />
+            </span>
+          ) : null}
           <Icon name="chevron-down" size={12} />
         </Button>
       </RD.Trigger>
@@ -123,10 +137,12 @@ function OptionsGroup({
   group,
   title,
   picker,
+  onInspect,
 }: {
   group: string;
   title: string;
   picker: PickerProps;
+  onInspect(): void;
 }): JSX.Element {
   const id = useId();
   const titleId = `${id}-title`;
@@ -144,6 +160,14 @@ function OptionsGroup({
         <p className="cb-options-locked" data-part="options-locked" data-locked="true">
           <span className="cb-options-locked-value">{picker.value}</span>
           <span className="cb-options-hint">{picker.locked.hint}</span>
+          {picker.locked.warning ? (
+            <Button variant="ghost" density="dense" onClick={onInspect}>
+              <span className="cb-picker-warning">
+                <Icon name="circle-alert" size={12} />
+                {picker.locked.warning.label}
+              </span>
+            </Button>
+          ) : null}
         </p>
       ) : (
         <div className="cb-options-list" role="radiogroup" aria-labelledby={titleId}>

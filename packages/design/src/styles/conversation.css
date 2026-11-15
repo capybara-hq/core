@@ -111,6 +111,13 @@ button.cb-tool-line:focus-visible {
   white-space: nowrap;
 }
 
+/* Waiting is an actionable state: truncate the description, never wrap the status. */
+.cb-tool-line > [data-part="waiting-word"],
+.cb-tool-toggle > [data-part="waiting-word"] {
+  flex: none;
+  white-space: nowrap;
+}
+
 /* ── Prose and Markdown ── */
 
 .cb-prose {
@@ -1867,3 +1874,8 @@ button.cb-file-card:focus-visible {
 
 /* The composer control row's ghost `zap` icon button (the ＋'s style) and the conversation menu:
    nothing of their own. */
+
+.cb-run-status[data-status="warning"],
+.cb-run-status[data-status="warning"] .cb-run-mark {
+  color: var(--cb-warn);
+}
