@@ -677,7 +677,7 @@ export async function inSandbox<T>(
           mode,
           h,
           roots: info.roots,
-          workingRoot: reviewed ?? workingRootFor(working, mode, info.roots.workspace),
+          workingRoot: reviewed ?? sessionWorkingRoot(working, mode, info.roots.workspace),
           p,
           signal,
         };
@@ -723,9 +723,10 @@ async function recordDevicePaths(
 /**
  * The working root of a call: the project root exactly as the review decides it (from the same
  * {@link WorkingFacts}); when that falls back to the device's workspace, the held instance's own
- * workspace (`workspace`), where the call really runs.
+ * workspace (`workspace`), where the call really runs. Every session built outside `inSandbox` (a
+ * person's project skill invocation) takes its working root from here too.
  */
-function workingRootFor(
+export function sessionWorkingRoot(
   working: WorkingFacts | null,
   mode: SandboxMode,
   workspace: string,

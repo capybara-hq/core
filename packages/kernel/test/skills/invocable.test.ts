@@ -1,5 +1,5 @@
 import { SKILL_INVOCATION_LIMITS } from "@capybara-hq/plugin-sdk";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import { ApiError } from "../../src/errors.js";
 import { SandboxProviderUnreachableError } from "../../src/sandbox/unreachable.js";
@@ -9,6 +9,20 @@ import {
   projectSkillBlocked,
   SkillInvoker,
 } from "../../src/skills/invoke.js";
+import type { SandboxSession } from "../../src/tools/builtins/sandbox/common.js";
+
+/** The working root of each session a project skill is read in (it is built inside the invoker). */
+const sessionRoots = vi.hoisted(() => [] as string[]);
+vi.mock("../../src/tools/builtins/skill-load.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/tools/builtins/skill-load.js")>();
+  return {
+    ...actual,
+    readProjectSkill: (s: SandboxSession, ...rest: [string, string]) => {
+      sessionRoots.push(s.workingRoot);
+      return actual.readProjectSkill(s, ...rest);
+    },
+  };
+});
 
 /**
  * Project root spec §4.6: the `/` menu's entries carry their `source`, a bound conversation's
@@ -107,12 +121,20 @@ interface Setup {
   truncated?: boolean;
   /** What entering the device throws (the provider unreachable, ...). */
   useError?: Error;
+  /** The working facts the device service answers (default: the snapshot's root, usable). */
+  working?: {
+    workspace: string;
+    home: string | null;
+    project: { root: string; unavailable: boolean } | null;
+  };
 }
 
 function setup(s: Setup) {
   const reads: string[] = [];
   const asked: string[] = [];
   const uses: { holderConversationId: string; silent?: true; actor: unknown }[] = [];
+  const factsAsked: unknown[][] = [];
+  sessionRoots.length = 0;
   const p = {
     readFile: async (_h: unknown, path: string) => {
       reads.push(path);
@@ -163,6 +185,16 @@ function setup(s: Setup) {
     },
     {
       forTool: async () => "device-1",
+      workingFacts: async (...args: unknown[]) => {
+        factsAsked.push(args);
+        return (
+          s.working ?? {
+            workspace: "/Users/u/.capybara/workspace",
+            home: "/Users/u",
+            project: { root: ROOT, unavailable: false },
+          }
+        );
+      },
       modeLevel: async () => ({
         mode: s.mode ?? "auto",
         allowedMode: "auto" as const,
@@ -181,7 +213,7 @@ function setup(s: Setup) {
       name,
       args,
     });
-  return { prepare, reads, asked, uses };
+  return { prepare, reads, asked, uses, factsAsked };
 }
 
 async function refusal(p: Promise<unknown>): Promise<ApiError> {
@@ -227,6 +259,25 @@ describe("SkillInvoker.prepare: project:<name>", () => {
         actor: { accountId: "acc", conversationId: "conv" },
       },
     ]);
+  });
+
+  it("reads in the working root a tool call of the conversation would get", async () => {
+    const t = setup({ project: usable, files: { [PATH]: skillMd("fix-issue", "B.") } });
+    await t.prepare("project:fix-issue");
+    expect(t.factsAsked).toEqual([["org", "conv", "conv", "device-1"]]);
+    expect(sessionRoots).toEqual([ROOT]);
+    // a root the working-root rule refuses (above the owner's home): the held workspace
+    const above = setup({
+      project: usable,
+      files: { [PATH]: skillMd("fix-issue", "B.") },
+      working: {
+        workspace: "/Users/u/w",
+        home: "/Users/u",
+        project: { root: "/Users", unavailable: false },
+      },
+    });
+    await above.prepare("project:fix-issue");
+    expect(sessionRoots).toEqual([ROOTS.workspace]);
   });
 
   it("a conversation not created yet has no project: not_found", async () => {

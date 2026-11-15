@@ -32,6 +32,7 @@ import { SandboxService } from "../sandbox/sandbox.service.js";
 import { SandboxProviderUnreachableError } from "../sandbox/unreachable.js";
 import { StorageService } from "../storage/storage.service.js";
 import { BUILTIN } from "../tools/builtin-names.js";
+import { sessionWorkingRoot } from "../tools/builtins/sandbox/common.js";
 import {
   findSkillVersion,
   PROJECT_DIR_DIGEST,
@@ -277,7 +278,7 @@ export class SkillInvoker {
     /** A project skill's SKILL.md is read through the conversation's device. */
     @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "withSandbox">,
     @Inject(ConversationDevices)
-    private readonly devices: Pick<ConversationDevices, "forTool" | "modeLevel">,
+    private readonly devices: Pick<ConversationDevices, "forTool" | "modeLevel" | "workingFacts">,
   ) {}
 
   /**
@@ -518,8 +519,13 @@ export class SkillInvoker {
   ) {
     try {
       const deviceId = await this.devices.forTool(a.orgId, a.conversationId);
+      // a person invokes in a root conversation: it is its own sandbox conversation
+      const [level, working] = await Promise.all([
+        this.devices.modeLevel(a.orgId, deviceId),
+        this.devices.workingFacts(a.orgId, a.conversationId, a.conversationId, deviceId),
+      ]);
       // unknown mode: the strict (sandbox) path checks stay (fail closed), as in a tool call
-      const mode = (await this.devices.modeLevel(a.orgId, deviceId))?.mode ?? "sandbox";
+      const mode = level?.mode ?? "sandbox";
       return await this.sandbox.withSandbox(
         {
           orgId: a.orgId,
@@ -530,7 +536,20 @@ export class SkillInvoker {
           actor: { accountId: a.accountId, conversationId: a.conversationId },
         },
         (h, p, info, signal) =>
-          readProjectSkill({ deviceId, mode, h, roots: info.roots, p, signal }, root, bare),
+          readProjectSkill(
+            {
+              deviceId,
+              mode,
+              h,
+              roots: info.roots,
+              // the working root a tool call of this conversation would get (one rule)
+              workingRoot: sessionWorkingRoot(working, mode, info.roots.workspace),
+              p,
+              signal,
+            },
+            root,
+            bare,
+          ),
         AbortSignal.timeout(PROJECT_SKILL_READ_TIMEOUT_MS),
       );
     } catch (e) {
