@@ -97,9 +97,10 @@ const ROUTES: Routes = {
       settings: { toolSearch: "off", locale: "en", sandboxToolPolicy: "ask" },
       deployment: {
         autoMode: { mode: "allowed", source: "default" },
-        cloudNetwork: { mode: "allowlist", allowHosts: [] },
+        cloudNetwork: { allowHosts: [], orgHosts: "extend", off: true },
       },
       sandboxLimits: { cpu: 2, memoryMb: 4096, source: "deployment" },
+      effectiveNetwork: { mode: "allowlist", hosts: [] },
     }),
   [`GET ${O}/members`]: () => json(200, { members: MEMBERS }),
   [`GET ${O}/invitations`]: () => json(200, { invitations: [INVITATION] }),

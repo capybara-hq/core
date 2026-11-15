@@ -76,6 +76,28 @@ describe("运行时限与命令超时（纯函数）", () => {
     ).toEqual([]);
   });
 
+  it("warns when the platform ceiling is on but auto mode is not turned off (it limits sandbox mode only)", () => {
+    const within = {
+      ...cfg,
+      sandbox: { ...cfg.sandbox, limits: { ...cfg.sandbox.limits, orgHosts: "within" as const } },
+    };
+    const [w, ...rest] = sandboxConfigWarnings(within);
+    expect(rest).toEqual([]);
+    expect(w?.message).toMatch(
+      /^sandbox\.limits\.orgHosts is within but devices\.autoMode is not off/,
+    );
+    expect(
+      sandboxConfigWarnings({ ...within, devices: { ...cfg.devices, autoMode: "off" } }),
+    ).toEqual([]);
+    // the kill switch already cuts everything
+    expect(
+      sandboxConfigWarnings({
+        ...within,
+        sandbox: { ...within.sandbox, limits: { ...within.sandbox.limits, egress: "none" } },
+      }),
+    ).toEqual([]);
+  });
+
   it("warns when the provider refuses the open network while an org can be on it, auto mode on or off", () => {
     // an org's cloud network is open by default, and a sandbox-mode cloud device keeps it, so
     // turning auto mode off does not make the warning moot (auto mode hardening spec K3)

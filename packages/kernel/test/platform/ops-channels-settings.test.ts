@@ -8,6 +8,7 @@ import {
   type TestContainer,
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { DEFAULT_SANDBOX_ALLOW_HOSTS } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { readOrgSettings } from "../../src/orgs/settings.service.js";
@@ -29,6 +30,9 @@ import {
   startKernel,
   type TestKernel,
 } from "../helpers/runs.js";
+
+/** The default platform allowlist without pypi.org (what an exclusion of it leaves). */
+const WITHOUT_PYPI = DEFAULT_SANDBOX_ALLOW_HOSTS.filter((h) => h !== "pypi.org");
 
 /**
  * Task 10 of the Platform tool: channel connection and org settings operations against PG with
@@ -247,7 +251,7 @@ describe("org settings", () => {
     expect(a?.detail).toMatchObject({ via: "agent", operation: "org-settings.update" });
     expect(() => op("org-settings.update").input.parse({})).toThrow();
     const pre = await op("org-settings.update").precheck?.(
-      { cloudNetwork: { mode: "allowlist", allowHosts: [] } },
+      { cloudNetwork: { mode: "allowlist", base: "none" } },
       ctxOf(ownerId),
     );
     // following the deployment (open), an allowlist narrows: the shared check passes
@@ -296,20 +300,23 @@ describe("org settings", () => {
       await expect(run("org-settings.update", input)).rejects.toThrow(/needs a person/);
     };
     // following the deployment (open): an allowlist narrows
-    expect(await pre({ cloudNetwork: { mode: "allowlist", allowHosts: [] } })).toEqual({
+    expect(await pre({ cloudNetwork: { mode: "allowlist", base: "none" } })).toEqual({
       ok: true,
     });
     const r = (await run("org-settings.update", {
-      cloudNetwork: { mode: "allowlist", allowHosts: ["github.com"] },
-    })) as { settings: { cloudNetwork?: unknown } };
-    expect(r.settings.cloudNetwork).toEqual({ mode: "allowlist", allowHosts: ["github.com"] });
-    // from an allowlist: open, a new host, or clearing back to the (open) deployment widens
-    await refused({ cloudNetwork: { mode: "open" } });
-    await refused({ cloudNetwork: { mode: "allowlist", allowHosts: ["github.com", "x.com"] } });
-    await refused({ cloudNetwork: { mode: "allowlist", allowHosts: ["x.com"] } });
+      cloudNetwork: { mode: "allowlist", excludedHosts: ["pypi.org"] },
+    })) as { settings: { cloudNetwork?: unknown }; effectiveNetwork: unknown };
+    expect(r.settings.cloudNetwork).toEqual({ mode: "allowlist", excludedHosts: ["pypi.org"] });
+    expect(r.effectiveNetwork).toEqual({ mode: "allowlist", hosts: WITHOUT_PYPI });
+    // from an allowlist: open, a new extra host, dropping an exclusion or clearing widens
+    await refused({ cloudNetwork: { mode: "open", excludedHosts: ["pypi.org"] } });
+    await refused({
+      cloudNetwork: { mode: "allowlist", excludedHosts: ["pypi.org"], extraHosts: ["x.com"] },
+    });
+    await refused({ cloudNetwork: { mode: "allowlist" } });
     await refused({ cloudNetwork: null });
-    // dropping hosts stays fine
-    await run("org-settings.update", { cloudNetwork: { mode: "allowlist", allowHosts: [] } });
+    // dropping more hosts stays fine
+    await run("org-settings.update", { cloudNetwork: { mode: "allowlist", base: "none" } });
     // an org admin widens it in the web settings
     const back = await owner({
       method: "PATCH",
@@ -349,36 +356,24 @@ describe("org settings", () => {
     const on = await viaToken({ autoMode: "allowed" });
     expect(on.statusCode).toBe(400);
     expect(on.json().error.code).toBe("org.auto_mode_not_allowed");
-    // mode "open" does not lift the host check: the list is the local ceiling under either mode
-    const openOutside = await viaToken({
-      cloudNetwork: { mode: "open", allowHosts: ["example.com"] },
-    });
+    // an extra host widens under either mode (the hosts are the local ceiling whatever the mode)
+    const openOutside = await viaToken({ cloudNetwork: { mode: "open", extraHosts: ["x.com"] } });
     expect(openOutside.statusCode).toBe(400);
     expect(openOutside.json().error.code).toBe("org.sandbox_egress_not_allowed");
-    const openUnchanged = await viaToken({
-      cloudNetwork: { mode: "open", allowHosts: ["github.com"] },
-    });
-    expect(openUnchanged.statusCode, openUnchanged.body).toBe(200);
-    expect(openUnchanged.json().settings.cloudNetwork).toEqual({
-      mode: "open",
-      allowHosts: ["github.com"],
-    });
-    // the org follows the deployment (open): a token may move it to an allowlist of hosts the
-    // deployment already has (that list is the local sandbox-mode ceiling too)
-    const outside = await viaToken({
-      cloudNetwork: { mode: "allowlist", allowHosts: ["example.com"] },
-    });
-    expect(outside.statusCode).toBe(400);
-    expect(outside.json().error.code).toBe("org.sandbox_egress_not_allowed");
+    // the org follows the deployment (open): a token may exclude platform hosts and move it to
+    // the allowlist
     const narrowed = await viaToken({
-      cloudNetwork: { mode: "allowlist", allowHosts: ["github.com"] },
+      cloudNetwork: { mode: "allowlist", excludedHosts: ["pypi.org"] },
     });
     expect(narrowed.statusCode, narrowed.body).toBe(200);
+    expect(narrowed.json().effectiveNetwork).toEqual({ mode: "allowlist", hosts: WITHOUT_PYPI });
     // but never back to open, nor to a new host
-    const opened = await viaToken({ cloudNetwork: { mode: "open" } });
+    const opened = await viaToken({ cloudNetwork: { mode: "open", excludedHosts: ["pypi.org"] } });
     expect(opened.statusCode).toBe(400);
     expect(opened.json().error.code).toBe("org.sandbox_egress_not_allowed");
-    const added = await viaToken({ cloudNetwork: { mode: "allowlist", allowHosts: ["x.com"] } });
+    const added = await viaToken({
+      cloudNetwork: { mode: "allowlist", excludedHosts: ["pypi.org"], extraHosts: ["x.com"] },
+    });
     expect(added.statusCode).toBe(400);
     expect(added.json().error.code).toBe("org.sandbox_egress_not_allowed");
     // a token still changes other settings

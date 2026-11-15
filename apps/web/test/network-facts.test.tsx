@@ -15,16 +15,15 @@ const MEMBER = {
   account: { ...ME.account, isSuperAdmin: false },
   memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "member" }],
 };
-// The deployment's default cloud network is the allowlist only under the platform's kill switch
-// (`sandbox.limits.egress: none`); otherwise the org's own list is what blocks the command.
+// `off` is the platform's kill switch (`sandbox.limits.egress: none`, egress ceiling spec §D4);
+// otherwise the org's own list is what blocks the command.
 const settings = (platformOff: boolean) => ({
   settings: { toolSearch: "on" },
   deployment: {
     autoMode: { mode: "allowed", source: "default" },
-    cloudNetwork: platformOff
-      ? { mode: "allowlist", allowHosts: [] }
-      : { mode: "open", allowHosts: [] },
+    cloudNetwork: { allowHosts: [], orgHosts: "extend", off: platformOff },
   },
+  effectiveNetwork: { mode: platformOff ? "allowlist" : "open", hosts: [] },
 });
 const facts = [
   { host: "files.slack.com", layer: "org" as const },

@@ -9,6 +9,7 @@ import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "./org.guard.js";
 import {
+  type OrgEffectiveNetwork,
   type OrgSandboxLimits,
   type OrgSettings,
   type OrgSettingsDeployment,
@@ -27,6 +28,8 @@ class OrgSettingsPatchBody extends createZodDto(OrgSettingsPatchSchema, "OrgSett
 type SettingsResponse = {
   settings: OrgSettings;
   deployment: OrgSettingsDeployment;
+  /** The org's effective sandbox-mode network (org egress ceiling spec §D4). */
+  effectiveNetwork: OrgEffectiveNetwork;
   sandboxLimits: OrgSandboxLimits;
 };
 
@@ -37,9 +40,11 @@ export class OrgSettingsController {
   @Get()
   @OrgAction("org.read")
   async get(@CurrentOrg() org: OrgContext): Promise<SettingsResponse> {
+    const settings = await this.settings.get(org.orgId);
     return {
-      settings: await this.settings.get(org.orgId),
+      settings,
       deployment: await this.settings.deployment(),
+      effectiveNetwork: this.settings.effectiveNetwork(settings),
       sandboxLimits: await this.settings.sandboxLimits(org.orgId),
     };
   }
@@ -52,17 +57,19 @@ export class OrgSettingsController {
     @ZBody(OrgSettingsPatchBody) body: OrgSettingsPatch,
   ): Promise<SettingsResponse> {
     const p = requireUser(principal);
+    // an API token may narrow auto mode and the cloud network, never widen them (auto mode spec §4.3)
+    const settings = await this.settings.update(
+      org.orgId,
+      body,
+      p.account.id,
+      patTokenId(p),
+      undefined,
+      { onlyNarrows: patTokenId(p) !== undefined },
+    );
     return {
-      // an API token may narrow auto mode and the cloud network, never widen them (auto mode spec §4.3)
-      settings: await this.settings.update(
-        org.orgId,
-        body,
-        p.account.id,
-        patTokenId(p),
-        undefined,
-        { onlyNarrows: patTokenId(p) !== undefined },
-      ),
+      settings,
       deployment: await this.settings.deployment(),
+      effectiveNetwork: this.settings.effectiveNetwork(settings),
       sandboxLimits: await this.settings.sandboxLimits(org.orgId),
     };
   }

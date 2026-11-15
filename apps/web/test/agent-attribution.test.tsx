@@ -74,7 +74,7 @@ const routes = (
           settings: { toolSearch: "on", locale: "en" },
           deployment: {
             autoMode: { mode: "allowed", source: "default" },
-            cloudNetwork: { mode: "open", allowHosts: [] },
+            cloudNetwork: { allowHosts: [], orgHosts: "extend", off: false },
             attribution: {
               commit: PLATFORM_COMMIT,
               pr: PLATFORM_PR,
@@ -84,6 +84,7 @@ const routes = (
             ...deployment,
           },
           sandboxLimits: { cpu: 1, memoryMb: 1024, source: "deployment" },
+          effectiveNetwork: { mode: "open", hosts: [] },
         }),
       [`GET ${ORG}/agents/ag1`]: () => json(200, { agent: lead }),
       [`GET ${ORG}/models`]: () =>

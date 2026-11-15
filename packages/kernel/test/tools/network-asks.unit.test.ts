@@ -1,6 +1,7 @@
 import type { NetworkBlockedHost } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import type { NetworkRunState } from "../../src/local-devices/network-grants.js";
+import { networkGrantRefusal } from "../../src/schedules/grant-rules.js";
 import type { UnattendedRun } from "../../src/schedules/unattended.js";
 import {
   type ApprovalRecord,
@@ -81,6 +82,34 @@ describe("planNetworkAsk", () => {
       "[network] 10.0.0.5 is a private or local address, which commands can never reach.",
     ]);
     expect(p.missingGrants).toEqual([]);
+  });
+
+  it("an org-layer host beyond the platform ceiling names the super admin, not the org admins", () => {
+    const p = planNetworkAsk(
+      [
+        { host: "api.foo.com", port: 443, layer: "org" },
+        { host: "pypi.org", port: 443, layer: "org" },
+      ],
+      run(),
+      { ...attended, outsideCeiling: (h) => h === "api.foo.com" },
+    );
+    expect(p.ask).toEqual([]);
+    expect(p.notes).toEqual([
+      "[network] pypi.org is not in the organization's network allowlist. Only an organization admin can add it; the user can ask an admin from the conversation. Continue without it or tell the user.",
+      "[network] api.foo.com is not in the platform's network allowlist, which limits this organization. Only a super admin can add it; organization admins cannot. Continue without it or tell the user.",
+    ]);
+  });
+
+  it("a scheduled task's grant of a host beyond the ceiling names the super admin", () => {
+    const limits = { network: { kind: "allowlist" as const, hosts: [] } };
+    expect(
+      networkGrantRefusal("api.foo.com", { limits, outsideCeiling: () => true })?.message,
+    ).toBe(
+      "api.foo.com is not in the platform's network allowlist, which limits this organization; only a super admin can add it",
+    );
+    expect(networkGrantRefusal("api.foo.com", { limits })?.message).toMatch(
+      /only an organization admin can add it$/,
+    );
   });
 
   it("a host granted in the run tree but still refused is asked again", () => {

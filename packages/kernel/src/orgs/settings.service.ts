@@ -23,6 +23,12 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import {
+  coversHost,
+  orgCloudMode,
+  orgEffectiveHosts,
+  orgHostOutsideCeiling,
+} from "../sandbox/modes.js";
+import {
   type DevicesAutoMode,
   type DevicesAutoModeView,
   readDevicesAutoMode,
@@ -47,9 +53,9 @@ import { OrgLock, OrgLockModule } from "./org-lock.js";
  * - `autoMode`: whether devices of the org may run in auto mode (auto mode spec §4.3); absent
  *   follows the platform's `devices.autoMode`, and an invalid stored value reads as `off`
  *   (narrower, never wider). Setting `allowed` while the platform is `off` is refused.
- * - `cloudNetwork`: the org's network for cloud devices (auto mode spec §4.3): `open` (any public
- *   host; the default) or `allowlist` with `allowHosts` (the deployment's list when omitted). An
- *   invalid stored value reads as `{ mode: "allowlist", allowHosts: [] }` (narrower, never wider).
+ * - `cloudNetwork`: the org's sandbox-mode network as a delta over the platform's allowlist (org
+ *   egress ceiling spec §D1, {@link CloudNetworkSettingSchema}). An invalid stored value reads as
+ *   `{ mode: "allowlist", base: "none" }`, the empty allowlist (narrower, never wider).
  * - `platformTool`: the `Platform` builtin for the whole org (Platform tool spec §3): `on`,
  *   `read-only` (writes listed as unavailable) or `off` (default `on`).
  * - `timeZone`: the org's default time zone (IANA; absent = UTC) for senders without one of their
@@ -65,31 +71,44 @@ import { OrgLock, OrgLockModule } from "./org-lock.js";
 /** The org cloud-network allowlist's host limit. */
 export const ORG_SANDBOX_ALLOW_HOSTS_MAX = 200;
 
+/** One host list of the org's cloud network: at most {@link ORG_SANDBOX_ALLOW_HOSTS_MAX} valid, unique hosts. */
+const orgHostList = (name: string) =>
+  z
+    .array(z.string())
+    .max(ORG_SANDBOX_ALLOW_HOSTS_MAX)
+    .superRefine((hosts, ctx) => {
+      hosts.forEach((h, i) => {
+        for (const message of validateAllowHost(h)) {
+          ctx.addIssue({ code: "custom", path: [i], message: `${h}: ${message}` });
+        }
+      });
+      if (new Set(hosts).size !== hosts.length) {
+        ctx.addIssue({ code: "custom", message: `${name} must not contain duplicates` });
+      }
+    })
+    .optional();
+
 /**
- * The org's network for cloud devices (auto mode spec §4.3): `open` (any public host; loopback,
- * private and cloud metadata addresses are blocked outside the container) or `allowlist` with
- * `allowHosts`. `allowHosts` given **replaces** the deployment's list (the org may drop the presets
- * and add its own hosts); omitted, the deployment's `sandbox.limits.allowHosts` applies.
- * The host list is also the ceiling a local device in sandbox mode reaches (the device intersects
- * it with its own list), so narrowing it limits local sandbox devices too.
+ * The org's sandbox-mode network (org egress ceiling spec §D1), stored as a delta over the
+ * platform's `sandbox.limits.allowHosts`, never a copy of it, so platform changes keep reaching the
+ * org:
+ * - `mode`: the cloud network of a cloud device in sandbox mode, `open` (any public host; loopback,
+ *   private and cloud metadata addresses are blocked outside the container) or `allowlist`; absent
+ *   follows the platform's default (open). `sandbox.limits.orgHosts: within` makes it the allowlist.
+ * - `base`: `platform` (the default: start from the platform's list) or `none` (only the org's own
+ *   hosts).
+ * - `extraHosts`: hosts the org adds (ignored outside the platform list under `within`).
+ * - `excludedHosts`: platform entries the org drops (exact entries; any host is accepted, since the
+ *   platform may drop an entry later).
+ * The effective hosts ({@link orgEffectiveHosts} in `sandbox/modes.ts`) are also the ceiling a local
+ * device in sandbox mode reaches (the device intersects them with its own list).
  */
 export const CloudNetworkSettingSchema = z
   .object({
-    mode: z.enum(["open", "allowlist"]),
-    allowHosts: z
-      .array(z.string())
-      .max(ORG_SANDBOX_ALLOW_HOSTS_MAX)
-      .superRefine((hosts, ctx) => {
-        hosts.forEach((h, i) => {
-          for (const message of validateAllowHost(h)) {
-            ctx.addIssue({ code: "custom", path: [i], message: `${h}: ${message}` });
-          }
-        });
-        if (new Set(hosts).size !== hosts.length) {
-          ctx.addIssue({ code: "custom", message: "allowHosts must not contain duplicates" });
-        }
-      })
-      .optional(),
+    mode: z.enum(["open", "allowlist"]).optional(),
+    base: z.enum(["platform", "none"]).optional(),
+    extraHosts: orgHostList("extraHosts"),
+    excludedHosts: orgHostList("excludedHosts"),
   })
   .strict();
 
@@ -98,7 +117,7 @@ export type CloudNetworkSetting = z.infer<typeof CloudNetworkSettingSchema>;
 /** What an invalid stored `cloudNetwork` reads as: the allowlist with no host (never wider). */
 export const invalidCloudNetwork = (): CloudNetworkSetting => ({
   mode: "allowlist",
-  allowHosts: [],
+  base: "none",
 });
 
 /**
@@ -301,15 +320,22 @@ export interface OrgSandboxLimits {
   source: "deployment" | "override";
 }
 
+/** The org's effective sandbox-mode network (`effectiveNetwork` of the settings responses). */
+export interface OrgEffectiveNetwork {
+  mode: "open" | "allowlist";
+  hosts: string[];
+}
+
 /** The deployment defaults the settings page shows for "follow the platform" (`GET` returns them). */
 export interface OrgSettingsDeployment {
   /** The platform's auto-mode switch and where it comes from. */
   autoMode: DevicesAutoModeView;
   /**
-   * The deployment's default cloud network: `open` (the normal default; `allowlist` when
-   * `sandbox.limits.egress` is `none`, the kill switch) and the host list an allowlist starts from.
+   * The platform's network: its allowlist (what an org's delta applies to), whether orgs may go
+   * beyond it (`sandbox.limits.orgHosts`) and the kill switch (`off`: `sandbox.limits.egress` is
+   * `none`).
    */
-  cloudNetwork: { mode: "open" | "allowlist"; allowHosts: string[] };
+  cloudNetwork: { allowHosts: string[]; orgHosts: "extend" | "within"; off: boolean };
   /** The platform's effective attribution defaults for agent-created commits and pull requests. */
   attribution: PlatformAttribution;
   /**
@@ -359,6 +385,31 @@ export function invalidStoredCloudNetwork(raw: unknown): boolean {
   return v !== undefined && !CloudNetworkSettingSchema.safeParse(v).success;
 }
 
+/**
+ * Whether `next` (absent: follow the platform) widens `prev` (spec §D3), both normalized (mode
+ * open, base platform, empty lists): the open mode where it was the allowlist; base none to
+ * platform; with base platform, dropping one of the stored exclusions; an extra host no stored
+ * extra covers. Over-strict on purpose: moving to base none with a platform entry as an extra is a
+ * narrowing these rules refuse (a token cannot pin a platform host the platform may drop later).
+ */
+export function cloudNetworkWidens(
+  prev: CloudNetworkSetting | undefined,
+  next: CloudNetworkSetting | undefined,
+): boolean {
+  const mode = (v: CloudNetworkSetting | undefined) => v?.mode ?? "open";
+  const base = (v: CloudNetworkSetting | undefined) => v?.base ?? "platform";
+  if (mode(next) === "open" && mode(prev) !== "open") return true;
+  if (base(next) === "platform" && base(prev) === "none") return true;
+  if (base(next) === "platform") {
+    const kept = new Set(next?.excludedHosts ?? []);
+    if ((prev?.excludedHosts ?? []).some((h) => !kept.has(h))) return true;
+  }
+  const prevExtra = (prev?.extraHosts ?? []).map((h) => h.toLowerCase());
+  return (next?.extraHosts ?? []).some(
+    (h) => !prevExtra.some((p) => coversHost(p, h.toLowerCase())),
+  );
+}
+
 /** 组织设置服务：读取与修改（修改需 `org.update`，锁内实时复核角色，写审计）。 */
 @Injectable()
 export class OrgSettingsService {
@@ -402,13 +453,26 @@ export class OrgSettingsService {
     ]);
     return {
       autoMode,
-      cloudNetwork:
-        lim.egress === "none"
-          ? { mode: "allowlist", allowHosts: [] }
-          : { mode: "open", allowHosts: [...lim.allowHosts] },
+      cloudNetwork: {
+        allowHosts: [...lim.allowHosts],
+        orgHosts: lim.orgHosts,
+        off: lim.egress === "none",
+      },
       attribution,
       publicUrl: this.config.get().http.publicUrl !== undefined,
       compaction,
+    };
+  }
+
+  /**
+   * The org's effective sandbox-mode network (spec §D3): the cloud network's mode and the hosts,
+   * from the platform's `sandbox.limits` and the org's stored delta.
+   */
+  effectiveNetwork(settings: Pick<OrgSettings, "cloudNetwork">): OrgEffectiveNetwork {
+    const lim = this.config.get().sandbox.limits;
+    return {
+      mode: orgCloudMode(lim, settings.cloudNetwork),
+      hosts: orgEffectiveHosts(lim, settings.cloudNetwork),
     };
   }
 
@@ -437,7 +501,10 @@ export class OrgSettingsService {
     return this.parseStored(orgId, row.settings);
   }
 
-  /** The refusals of {@link update} that need no read of the org (the Platform tool's precheck). */
+  /**
+   * The refusals of {@link update} that need no read of the org (the Platform tool's precheck):
+   * auto mode where the platform turned it off.
+   */
   async check(patch: OrgSettingsPatch): Promise<void> {
     // turning auto mode on where the platform turned it off is wider than the platform allows
     if (patch.autoMode === "allowed") {
@@ -445,6 +512,38 @@ export class OrgSettingsService {
       if (platform.mode === "off") {
         throw autoModeNotAllowed("The platform does not allow auto mode");
       }
+    }
+  }
+
+  /**
+   * Under `sandbox.limits.orgHosts: within` (spec §D2), refuses what would widen past the platform
+   * ceiling compared with the stored value `before`: the open cloud network where the org did not
+   * store it, or an extra host outside the platform's allowlist that the org did not store. Stored
+   * values are sent back as they are (the PATCH replaces `cloudNetwork` whole) and have no effect
+   * under the ceiling (they are filtered on read), so they never block a write.
+   */
+  assertWithinCeiling(before: OrgSettings, patch: OrgSettingsPatch): void {
+    const cn = patch.cloudNetwork;
+    if (cn == null) return;
+    const lim = this.config.get().sandbox.limits;
+    if (lim.orgHosts !== "within") return;
+    if (cn.mode === "open" && before.cloudNetwork?.mode !== "open") {
+      throw new ApiError(
+        "org.sandbox_egress_not_allowed",
+        "The platform limits sandbox networks to its allowlist; the open cloud network is not available",
+        [{ reason: "open_not_allowed" }],
+      );
+    }
+    const stored = new Set(before.cloudNetwork?.extraHosts ?? []);
+    const outside = (cn.extraHosts ?? []).filter(
+      (h) => !stored.has(h) && orgHostOutsideCeiling(lim, h),
+    );
+    if (outside.length > 0) {
+      throw new ApiError(
+        "org.sandbox_egress_not_allowed",
+        `The platform limits sandbox hosts to its allowlist; ask a super admin to add ${outside.join(", ")} to sandbox.limits.allowHosts`,
+        [{ reason: "outside_ceiling", hosts: outside }],
+      );
     }
   }
 
@@ -470,15 +569,9 @@ export class OrgSettingsService {
    * never the Platform tool or an API token):
    * - `autoMode`: `allowed` where the organization runs `off` (an absent value follows the
    *   platform); clearing it follows the platform too, never wider than the platform allows;
-   * - `cloudNetwork`: `open` where the network is the allowlist, or a host the current allowlist
-   *   does not have (the deployment's `sandbox.limits.allowHosts` when the org gives none).
-   *   `cloudNetwork.allowHosts` is also the local sandbox-mode ceiling (`orgAllowedDomains` in
-   *   `sandbox/modes.ts` becomes `deviceLimits.localAllowedDomains`, which the device intersects
-   *   with its own list): an org with no `cloudNetwork` still caps its local devices at the
-   *   deployment's list, and an org whose network is `open` still caps them at its own `allowHosts`.
-   *   The host comparison therefore applies to both shapes, whatever the target mode: a patch may
-   *   only keep or lower the host set. Switching from `open` is a widening by itself, and the host
-   *   set must not grow even when the target stays `open` (spec §4.2, §4.3).
+   * - `cloudNetwork`: compared as stored deltas ({@link cloudNetworkWidens}), never as effective
+   *   values: under the kill switch or the platform ceiling the effective values hide a widening
+   *   that takes effect when the platform relaxes (org egress ceiling spec §D3).
    */
   async assertOnlyNarrows(before: OrgSettings, patch: OrgSettingsPatch): Promise<void> {
     if (patch.autoMode !== undefined) {
@@ -490,24 +583,14 @@ export class OrgSettingsService {
         );
       }
     }
-    if (patch.cloudNetwork !== undefined) {
-      const lim = this.config.get().sandbox.limits;
-      const defaultMode = lim.egress === "none" ? "allowlist" : "open";
-      const defaultHosts = lim.egress === "none" ? [] : [...lim.allowHosts];
-      const prev = before.cloudNetwork;
-      const next = patch.cloudNetwork ?? undefined;
-      const modeOf = (v: typeof prev) => v?.mode ?? defaultMode;
-      const hostsOf = (v: typeof prev): string[] => v?.allowHosts ?? defaultHosts;
-      const nextMode = next?.mode ?? defaultMode;
-      const widens =
-        (nextMode === "open" && modeOf(prev) !== "open") ||
-        !hostsOf(next).every((h) => hostsOf(prev).includes(h));
-      if (widens) {
-        throw new ApiError(
-          "org.sandbox_egress_not_allowed",
-          "Widening the cloud network needs a person in the organization settings.",
-        );
-      }
+    if (
+      patch.cloudNetwork !== undefined &&
+      cloudNetworkWidens(before.cloudNetwork, patch.cloudNetwork ?? undefined)
+    ) {
+      throw new ApiError(
+        "org.sandbox_egress_not_allowed",
+        "Widening the cloud network needs a person in the organization settings.",
+      );
     }
   }
 
@@ -531,6 +614,7 @@ export class OrgSettingsService {
     // again under the org lock: a hot config reload may have lowered the platform since
     await this.check(patch);
     // under the org lock, so the comparison is with the value the write replaces
+    this.assertWithinCeiling(before, patch);
     if (opts?.onlyNarrows) await this.assertOnlyNarrows(before, patch);
     const changes = Object.fromEntries(
       Object.entries(patch)

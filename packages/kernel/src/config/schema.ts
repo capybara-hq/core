@@ -1686,7 +1686,16 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "Default host list of the allowlist: in sandbox mode, the hosts a cloud device instance may reach on allowlist (the default of an organization's cloud network, used in sandbox mode only) and a local device's allowlist; lowercase hostnames, optional leading '*.', no IPs, ports or internal-only names; applies to instances created after the change",
+                  "Host list of the allowlist: in sandbox mode, the hosts a cloud device instance may reach on allowlist and a local device's allowlist; organizations follow it, adding or dropping hosts of their own (see orgHosts); lowercase hostnames, optional leading '*.', no IPs, ports or internal-only names; applies to instances created after the change",
+              }),
+            ),
+          orgHosts: z
+            .enum(["extend", "within"])
+            .default("extend")
+            .meta(
+              meta({
+                description:
+                  "Whether organizations may go beyond allowHosts in sandbox mode: extend (the default: an organization may use the open cloud network and add hosts, and its admins approve network requests) or within (allowHosts is the ceiling: an organization's cloud network in sandbox mode is the allowlist, and it may only keep or drop hosts the list covers; only a super admin adds others). Auto mode is not limited by it: devices.autoMode governs auto mode's open network, so set devices.autoMode off as well for a hard ceiling",
               }),
             ),
         })

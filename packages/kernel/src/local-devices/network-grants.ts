@@ -8,7 +8,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { budgetRunOf } from "../runtime/subagents/limits.js";
-import type { SandboxMode } from "../sandbox/modes.js";
+import { coversHost, type SandboxMode } from "../sandbox/modes.js";
 import { taskGrantsRunOf } from "../schedules/unattended.js";
 import { localModeOf } from "./policy-summary.js";
 
@@ -248,15 +248,11 @@ const normalize = (host: string): string => {
   return h.endsWith(".") ? h.slice(0, -1) : h;
 };
 
-/** Whether the allowlist entry `pattern` admits `host` (`*.x.com`: subdomains, never the apex). */
-const covers = (pattern: string, host: string): boolean =>
-  pattern === host || (pattern.startsWith("*.") && host.endsWith(pattern.slice(1)));
-
 /** Whether the org's sandbox-mode network lets a command reach `host`. */
 export function orgAllows(host: string, limits: Pick<SandboxLimits, "network">): boolean {
   if (limits.network.kind === "open-public") return true;
   const h = normalize(host);
-  return limits.network.hosts.some((p) => covers(p.toLowerCase(), h));
+  return limits.network.hosts.some((p) => coversHost(p.toLowerCase(), h));
 }
 
 /**

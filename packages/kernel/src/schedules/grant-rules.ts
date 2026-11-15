@@ -119,6 +119,8 @@ export interface NetworkGrantContext {
    * command may reach in sandbox mode.
    */
   limits: Pick<SandboxLimits, "network">;
+  /** Whether a host is beyond the platform's ceiling (org egress ceiling spec §D2). */
+  outsideCeiling?: (host: string) => boolean;
 }
 
 /**
@@ -140,7 +142,10 @@ export function networkGrantRefusal(
   if (!orgAllows(host, ctx.limits)) {
     return {
       code: "needs_admin",
-      message: `${host} is not in the organization's network allowlist; only an organization admin can add it`,
+      message:
+        ctx.outsideCeiling?.(host) === true
+          ? `${host} is not in the platform's network allowlist, which limits this organization; only a super admin can add it`
+          : `${host} is not in the organization's network allowlist; only an organization admin can add it`,
     };
   }
   return null;

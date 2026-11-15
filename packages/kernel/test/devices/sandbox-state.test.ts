@@ -10,7 +10,7 @@ const deployment = (
   egress: "none" | "allowlist" = "allowlist",
 ): DeploymentDevicePolicy => ({
   autoMode,
-  limits: { egress, allowHosts: ["pypi.org"] },
+  limits: { egress, allowHosts: ["pypi.org"], orgHosts: "extend" },
 });
 
 const summary = (s: Partial<DeviceLocalPolicySummary> = {}): DeviceLocalPolicySummary => ({
@@ -37,7 +37,9 @@ describe("deviceModeViewOf", () => {
   });
 
   it("cloud auto mode ignores the org's allowlist; the source is the platform", () => {
-    const org = { cloudNetwork: { mode: "allowlist" as const, allowHosts: ["a.com"] } };
+    const org = {
+      cloudNetwork: { mode: "allowlist" as const, base: "none" as const, extraHosts: ["a.com"] },
+    };
     const policy = effectiveDevicePolicy(deployment(), org, null);
     expect(deviceModeViewOf(policy, org, false, null, extra)).toMatchObject({
       mode: "auto",
@@ -46,7 +48,9 @@ describe("deviceModeViewOf", () => {
   });
 
   it("a cloud device narrowed to sandbox applies the org's allowlist", () => {
-    const org = { cloudNetwork: { mode: "allowlist" as const, allowHosts: ["a.com"] } };
+    const org = {
+      cloudNetwork: { mode: "allowlist" as const, base: "none" as const, extraHosts: ["a.com"] },
+    };
     const policy = effectiveDevicePolicy(deployment(), org, "sandbox");
     expect(deviceModeViewOf(policy, org, false, null, extra)).toMatchObject({
       mode: "sandbox",
@@ -79,7 +83,9 @@ describe("deviceModeViewOf", () => {
   });
 
   it("the platform kill switch names the platform even when the org supplied hosts", () => {
-    const org = { cloudNetwork: { mode: "allowlist" as const, allowHosts: ["a.com"] } };
+    const org = {
+      cloudNetwork: { mode: "allowlist" as const, base: "none" as const, extraHosts: ["a.com"] },
+    };
     // the deployment is at egress none: every read is an empty allowlist
     const policy = effectiveDevicePolicy(deployment("allowed", "none"), org, "sandbox");
     expect(deviceModeViewOf(policy, org, false, null, extra, true)).toMatchObject({
@@ -89,7 +95,9 @@ describe("deviceModeViewOf", () => {
   });
 
   it("a pending change is pending at the next use or at a file reset, never both", () => {
-    const org = { cloudNetwork: { mode: "allowlist" as const, allowHosts: ["a.com"] } };
+    const org = {
+      cloudNetwork: { mode: "allowlist" as const, base: "none" as const, extraHosts: ["a.com"] },
+    };
     const policy = effectiveDevicePolicy(deployment(), org, "sandbox");
     const nextUse = { ...extra, pendingNextUse: true };
     expect(deviceModeViewOf(policy, org, false, null, nextUse)).toMatchObject({

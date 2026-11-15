@@ -415,3 +415,25 @@ only a personal API token (`Authorization: Bearer cap_pat_...`). See
   `access: "embed"` (data routes of an embedded page, under `/ui/`), `"member"` or `"admin"`, and read
   the caller from the handler's second argument. A plugin whose manifest has a route without `access`
   is refused at import and by `capybara-plugin check`; the example plugins need a new release first.
+
+### Org sandbox networks follow the platform (migration 0134)
+
+An organization's sandbox network no longer replaces the platform's `sandbox.limits.allowHosts`
+with a copy. It stores what it adds and drops (spec
+`docs/superpowers/specs/2026-11-15-org-egress-ceiling-design.md`), so a change to the platform list
+reaches every organization that follows it. Approving a network request adds only the requested
+hosts.
+
+- **Migration 0134 keeps every organization's current list exactly.** An organization that had its
+  own list (including the copy an earlier approval made) keeps it, as "only these hosts"; it does
+  not pick up later platform changes until an org admin chooses 「跟随平台」 (follow the platform)
+  in the sandbox settings.
+- **Rolling upgrade.** An old replica still running after 0134 may write the old shape when it
+  approves a network request or saves the sandbox settings; the new kernel reads that value as an
+  empty allowlist (never wider). Avoid org network edits and approvals during the rollout, or re-save
+  the organization's network afterwards.
+- **A ceiling for the super admin.** `sandbox.limits.orgHosts: within`
+  (`CAPYBARA_SANDBOX__LIMITS__ORG_HOSTS`) makes `allowHosts` the ceiling: organizations cannot add
+  other hosts or use the open cloud network in sandbox mode, and their admins cannot approve network
+  requests for hosts outside it. Auto mode is not limited by it: set `devices.autoMode: off` as well
+  for a hard ceiling (startup warns otherwise). The default `extend` keeps today's behaviour.

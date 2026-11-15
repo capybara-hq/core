@@ -26,7 +26,7 @@ export function agentFormDefaults(agentId = "ag1"): Routes {
       settings: { toolSearch: "on", locale: "en" },
       deployment: {
         autoMode: { mode: "allowed", source: "default" },
-        cloudNetwork: { mode: "open", allowHosts: [] },
+        cloudNetwork: { allowHosts: [], orgHosts: "extend", off: false },
         attribution: {
           commit: "Co-Authored-By: Capybara <noreply@capybarahq.com>",
           pr: "🤖 Generated with [Capybara](https://github.com/capybara-hq/core)",
@@ -34,6 +34,7 @@ export function agentFormDefaults(agentId = "ag1"): Routes {
         },
       },
       sandboxLimits: { cpu: 1, memoryMb: 1024, source: "deployment" },
+      effectiveNetwork: { mode: "open", hosts: [] },
     }),
     [`GET ${ORG}/ui/contributions`]: ok({ items: [] }),
     [`GET ${ORG}/extension-points/available`]: ok({ points: [] }),
