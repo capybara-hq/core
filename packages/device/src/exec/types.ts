@@ -32,14 +32,15 @@ export interface Executor {
    * the executor that runs commands without a sandbox; others may ignore them.
    */
   exec(args: DeviceExecArgs, signal: AbortSignal, hooks?: ExecHooks): Promise<ExecResult>;
-  /** The file's bytes (at most `maxBytes`); null when it does not exist. */
+  /** The file's bytes (at most `maxBytes`); null when it does not exist. The switching executor uses this request's mode, defaulting to sandbox. */
   readFile(
     path: string,
     maxBytes: number,
+    mode?: SandboxMode,
   ): Promise<{ data: Uint8Array; truncated: boolean } | null>;
   writeFile(path: string, data: Uint8Array): Promise<void>;
   /** null when the path does not exist. */
-  stat(path: string): Promise<{ size: number; isDir: boolean } | null>;
+  stat(path: string, mode?: SandboxMode): Promise<{ size: number; isDir: boolean } | null>;
   /**
    * Lists one directory as a device in `mode` reads (`SandboxProvider.list`'s semantics): `mode`
    * is the request's own, `effectiveMode(policy, limits)` on the ceiling that came with it, never
@@ -66,7 +67,7 @@ export interface Executor {
   ensureRoot(): Promise<"ok" | "gone">;
   /**
    * OS mode, an executor that can run without a sandbox: records an exec's limits, also of one
-   * the policy sent to the sandbox, so file operations follow the latest decision.
+   * the policy sent to the sandbox, so file writes follow the latest decision.
    */
   noteLimits?(limits: DeviceExecArgs["limits"]): void;
   /**

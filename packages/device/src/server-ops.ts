@@ -325,7 +325,7 @@ function requestCeiling(args: unknown): Pick<SandboxLimits, "mode"> {
 /**
  * A `list` or `scan` request (a trust boundary: the device decides what a web session sees of its
  * machine). Each is read in the mode it would run in now, `effectiveMode` of the owner's policy and
- * the ceiling the request carries, never one an earlier command saw nor the file operations'
+ * the ceiling the request carries, never one an earlier command saw nor the file writes'
  * window. Answered without the device directory: it reads the owner's machine, not that
  * directory. Throws like the executor (a path its mode cannot reach is a `policy` refusal).
  */
@@ -366,6 +366,17 @@ async function serveRead(
   signal.throwIfAborted();
   const result = await (executor.scan as NonNullable<Executor["scan"]>)(mode, base, signal);
   return { result, detail: `scan ${clean(base, 300)} in ${mode} mode` };
+}
+
+/** Each file read uses this request's ceiling, intersected with the machine's current choice. */
+function readMode(args: unknown, store: PolicyStore | undefined) {
+  const mode = (args as { limits?: { mode?: unknown } } | undefined)?.limits?.mode;
+  if (mode !== "auto" && mode !== "sandbox")
+    throw new DeviceOpError(
+      "error",
+      "invalid request: file reads require limits.mode auto or sandbox",
+    );
+  return store === undefined ? "sandbox" : effectiveMode(store.current(), { mode });
 }
 
 /** The audit line of an exec whose grants applied (sandbox mode only: auto mode ignores grants). */
@@ -448,7 +459,7 @@ export async function serveOp(
         const run: ExecMode = {
           mode: effectiveMode(policy ?? DEFAULT_POLICY, args.limits),
         };
-        // These limits are the latest decision file operations follow.
+        // These limits are the latest decision file writes follow.
         executor.noteLimits?.(args.limits);
         const detail = grantsDetail(executor, args, policy);
         try {
@@ -464,7 +475,8 @@ export async function serveOp(
       }
       case "readFile": {
         const a = req.args as DeviceReadFileArgs;
-        const r = await executor.readFile(a.path, a.maxBytes);
+        const mode = readMode(req.args, ctx.policy);
+        const r = await executor.readFile(a.path, a.maxBytes, mode);
         return {
           res: ok(
             r === null
@@ -478,8 +490,10 @@ export async function serveOp(
         await executor.writeFile(a.path, Buffer.from(a.dataB64, "base64"));
         return { res: ok(null) };
       }
-      case "stat":
-        return { res: ok(await executor.stat((req.args as DeviceStatArgs).path)) };
+      case "stat": {
+        const a = req.args as DeviceStatArgs;
+        return { res: ok(await executor.stat(a.path, readMode(req.args, ctx.policy))) };
+      }
       case "killTagged":
         await executor.killTagged((req.args as DeviceKillTaggedArgs).tags);
         return { res: ok(null) };

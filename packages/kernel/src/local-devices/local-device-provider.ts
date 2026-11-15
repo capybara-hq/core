@@ -222,6 +222,7 @@ export class LocalDeviceProvider implements SandboxProvider {
     path: string,
     opts: { maxBytes: number; signal: AbortSignal },
   ): Promise<{ data: Uint8Array; truncated: boolean } | null> {
+    const { limits } = await this.currentLimits(h.id);
     // the answer must fit one frame: a larger file comes back truncated (Deliver: too large)
     const maxBytes = Math.min(
       opts.maxBytes,
@@ -230,7 +231,7 @@ export class LocalDeviceProvider implements SandboxProvider {
     const r = await this.relay.call(
       h.id,
       "readFile",
-      { path, maxBytes },
+      { path, maxBytes, limits: { mode: limits.mode } },
       { deadlineMs: OP_DEADLINE_MS, signal: opts.signal },
     );
     return r === null ? null : { data: bytesOf(r.dataB64), truncated: r.truncated };
@@ -256,7 +257,13 @@ export class LocalDeviceProvider implements SandboxProvider {
     path: string,
     signal: AbortSignal,
   ): Promise<{ size: number; isDir: boolean } | null> {
-    return this.relay.call(h.id, "stat", { path }, { deadlineMs: OP_DEADLINE_MS, signal });
+    const { limits } = await this.currentLimits(h.id);
+    return this.relay.call(
+      h.id,
+      "stat",
+      { path, limits: { mode: limits.mode } },
+      { deadlineMs: OP_DEADLINE_MS, signal },
+    );
   }
 
   /**
@@ -307,10 +314,10 @@ export class LocalDeviceProvider implements SandboxProvider {
   }
 
   /**
-   * The device's org and the limits of one exec now (ruling R27): the effective policy's
+   * The device's org and current limits for an exec or file read (ruling R27): the effective policy's
    * `allowedMode` and the sandbox-mode allowlist. A deleted device is not found. A machine whose
    * local policy is auto mode while the organization allows only sandbox mode is refused here, at
-   * every exec, so a machine switched locally is not used until it is switched back.
+   * every such operation, so a machine switched locally is not used until it is switched back.
    */
   private async currentLimits(deviceId: string): Promise<{ orgId: string; limits: SandboxLimits }> {
     const orgId = await this.targets.orgOf(deviceId);
@@ -320,7 +327,7 @@ export class LocalDeviceProvider implements SandboxProvider {
       this.grants.reportedMode(deviceId),
     ]);
     if (policy.allowedMode === "sandbox" && reported === "auto") {
-      this.log.warn("command refused on a machine that reports auto mode", { deviceId });
+      this.log.warn("device operation refused on a machine that reports auto mode", { deviceId });
       throw new ApiError("device.auto_mode_not_allowed", AUTO_MODE_NOT_ALLOWED_TEXT);
     }
     return {

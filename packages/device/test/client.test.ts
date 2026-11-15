@@ -57,9 +57,9 @@ describe("client", () => {
     start();
     const hello = await kernel.waitFor("hello", () => kernel.of("hello")[0]);
     expect(kernel.headers[0]?.authorization).toBe("Bearer cap_dev_secret");
-    expect(kernel.headers[0]?.["x-capybara-device-protocol"]).toBe("1");
+    expect(kernel.headers[0]?.["x-capybara-device-protocol"]).toBe("2");
     expect(hello).toMatchObject({
-      protocol: 1,
+      protocol: 2,
       os: process.platform === "darwin" ? "darwin" : "linux",
       mode: "os",
       roots: ROOTS,

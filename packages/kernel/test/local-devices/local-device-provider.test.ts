@@ -326,6 +326,21 @@ describe("LocalDeviceProvider", () => {
     await h.disconnect();
   });
 
+  it("read and stat carry the live ceiling instead of the handle's old limits", async () => {
+    const h = new TestHolder(redis, bus, randomUUID(), machine());
+    await h.connect();
+    try {
+      const handle = { id: h.deviceId, roots: ROOTS, limits: LIMITS };
+      await provider.stat(handle, ROOTS.workspace, signal());
+      expect((h.frames.at(-1) as KernelReq).args).toMatchObject({ limits: { mode: "auto" } });
+      orgSettings = { autoMode: "off" };
+      await provider.readFile(handle, "/nope", { maxBytes: 10, signal: signal() });
+      expect((h.frames.at(-1) as KernelReq).args).toMatchObject({ limits: { mode: "sandbox" } });
+    } finally {
+      await h.disconnect();
+    }
+  });
+
   it("list and scan relay the ops with the kernel's ceiling (project root §4.1)", async () => {
     const h = new TestHolder(redis, bus, randomUUID(), machine());
     await h.connect();
@@ -539,10 +554,18 @@ describe("LocalDeviceProvider", () => {
     maxFrameBytes = FRAME_ENVELOPE_BYTES + 400;
     expect(maxReadBytes(maxFrameBytes)).toBe(300);
     await provider.readFile(handle, "/x", { maxBytes: 10_000, signal: signal() });
-    expect((h.frames[0] as KernelReq).args).toEqual({ path: "/x", maxBytes: 300 });
+    expect((h.frames[0] as KernelReq).args).toEqual({
+      path: "/x",
+      maxBytes: 300,
+      limits: { mode: "auto" },
+    });
     maxFrameBytes = 16 * 1024 * 1024;
     await provider.readFile(handle, "/x", { maxBytes: 10_000, signal: signal() });
-    expect((h.frames[1] as KernelReq).args).toEqual({ path: "/x", maxBytes: 10_000 });
+    expect((h.frames[1] as KernelReq).args).toEqual({
+      path: "/x",
+      maxBytes: 10_000,
+      limits: { mode: "auto" },
+    });
     await h.disconnect();
   });
 

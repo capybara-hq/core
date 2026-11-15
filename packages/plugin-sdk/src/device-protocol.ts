@@ -1,5 +1,5 @@
 /**
- * Device protocol v1: the WebSocket frames between the kernel and a `capybara-device` program
+ * Device protocol v2: the WebSocket frames between the kernel and a `capybara-device` program
  * (a connected machine that serves as a device). Pure types and hand-written guards.
  */
 import {
@@ -18,7 +18,7 @@ import {
 } from "./sandbox.js";
 
 /** The protocol version carried in `X-Capybara-Device-Protocol` and the hello frame. */
-export const DEVICE_PROTOCOL_VERSION = 1;
+export const DEVICE_PROTOCOL_VERSION = 2;
 
 /** The operations the kernel asks a device to run. */
 export type DeviceOp =
@@ -92,7 +92,7 @@ export interface DeviceProjectCandidate {
 
 /**
  * The kernel's current ceiling on a request that reads the device's file system outside a command
- * (`list`, `scan`): the device answers in the mode it would run this request in, the owner's
+ * (`readFile`, `stat`, `list`, `scan`): the device answers in the mode it would run this request in, the owner's
  * choice cut to `mode`, never by a ceiling it saw on an earlier command.
  */
 export type DeviceRequestCeiling = Pick<SandboxLimits, "mode">;
@@ -220,6 +220,7 @@ export interface DeviceExecGrants {
 export type DeviceExecResult = ExecResult;
 export interface DeviceReadFileArgs {
   path: string;
+  limits: DeviceRequestCeiling;
   maxBytes: number;
 }
 export type DeviceReadFileResult = { dataB64: string; truncated: boolean } | null;
@@ -230,6 +231,7 @@ export interface DeviceWriteFileArgs {
 export type DeviceWriteFileResult = null;
 export interface DeviceStatArgs {
   path: string;
+  limits: DeviceRequestCeiling;
 }
 export type DeviceStatResult = { size: number; isDir: boolean } | null;
 export interface DeviceKillTaggedArgs {
@@ -327,7 +329,7 @@ export interface DeviceScanArgs {
  */
 export type DeviceScanResult = DeviceProjectCandidate[];
 
-/** A frame that is not valid protocol v1 (or came from the wrong side). */
+/** A frame that is not valid device protocol (or came from the wrong side). */
 export class DeviceProtocolError extends Error {
   constructor(message: string) {
     super(message);
@@ -692,6 +694,7 @@ function validateArgs(op: DeviceOp, a: Record<string, unknown>): void {
     }
     case "readFile": {
       str(a, "path");
+      parseCeiling(a.limits);
       const m = a.maxBytes;
       if (typeof m !== "number" || !Number.isInteger(m) || m < 0) {
         throw new DeviceProtocolError('field "maxBytes" must be a non-negative integer');
@@ -704,6 +707,7 @@ function validateArgs(op: DeviceOp, a: Record<string, unknown>): void {
       return;
     case "stat":
       str(a, "path");
+      parseCeiling(a.limits);
       return;
     case "killTagged":
       strArray(a, "tags");

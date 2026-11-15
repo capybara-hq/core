@@ -753,7 +753,7 @@ export const DEFAULT_SANDBOX_ROOTS: Readonly<SandboxRoots>;
 export function defineExtension(m: ExtensionManifest): ExtensionManifest;
 
 // @public
-export const DEVICE_PROTOCOL_VERSION = 1;
+export const DEVICE_PROTOCOL_VERSION = 2;
 
 // @public
 export const DEVICE_SCAN_SKIPPED_BASE_DIRS: readonly string[];
@@ -933,6 +933,7 @@ export class DeviceProtocolError extends Error {
 
 // @public
 export interface DeviceReadFileArgs {
+    limits: DeviceRequestCeiling;
     maxBytes: number;
     path: string;
 }
@@ -973,6 +974,7 @@ export type DeviceScanResult = DeviceProjectCandidate[];
 
 // @public
 export interface DeviceStatArgs {
+    limits: DeviceRequestCeiling;
     path: string;
 }
 

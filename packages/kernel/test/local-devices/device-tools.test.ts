@@ -376,7 +376,7 @@ describe("local devices through the sandbox tools", () => {
     ).toMatch(/was disconnected/);
     const again = await refusal(url, {
       Authorization: `Bearer ${credential}`,
-      "X-Capybara-Device-Protocol": "1",
+      "X-Capybara-Device-Protocol": "2",
     });
     expect(again?.status).toBe(401);
   });
@@ -398,7 +398,7 @@ describe("local devices through the sandbox tools", () => {
     expect(Date.now() - t0).toBeLessThan(HOLDER_POLL_MS + 5000);
     const again = await refusal(url, {
       Authorization: `Bearer ${credential}`,
-      "X-Capybara-Device-Protocol": "1",
+      "X-Capybara-Device-Protocol": "2",
     });
     expect(again?.status).toBe(401);
   });

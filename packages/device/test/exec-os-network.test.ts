@@ -397,7 +397,9 @@ describe("OsExecutor network explanations (mocked runtime)", () => {
       try {
         await sw.exec(execArgs("now", { limits: { ...LIMITS, mode: "auto" } }), never);
         expect(host.started).toEqual(["now"]);
-        expect(Buffer.from((await sw.readFile("/f", 100))?.data ?? []).toString()).toBe("host");
+        expect(Buffer.from((await sw.readFile("/f", 100, "auto"))?.data ?? []).toString()).toBe(
+          "host",
+        );
         await expect(sw.exec(execArgs("now"), never)).rejects.toMatchObject({
           kind: "error",
           message: expect.stringMatching(refused),

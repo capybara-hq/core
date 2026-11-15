@@ -10,7 +10,7 @@ import type { Answer } from "./test-holder.js";
 
 export const HELLO: DeviceHello = {
   type: "hello",
-  protocol: 1,
+  protocol: 2,
   programVersion: "0.1.0",
   os: "linux",
   arch: "x64",
@@ -71,7 +71,7 @@ export class FakeMachine {
     opts: { hello?: boolean; autoPong?: boolean } = {},
   ) {
     this.ws = new WebSocket(url, {
-      headers: { Authorization: `Bearer ${credential}`, "X-Capybara-Device-Protocol": "1" },
+      headers: { Authorization: `Bearer ${credential}`, "X-Capybara-Device-Protocol": "2" },
       autoPong: opts.autoPong ?? true,
     });
     this.closed = new Promise((resolve) => {

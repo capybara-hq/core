@@ -308,17 +308,17 @@ describe("GET /device/connect", () => {
   it("unknown credential is 401 before upgrade", async () => {
     const r = await refusal(url, {
       Authorization: `Bearer cap_dev_${"A".repeat(43)}`,
-      "X-Capybara-Device-Protocol": "1",
+      "X-Capybara-Device-Protocol": "2",
     });
     expect(r?.status).toBe(401);
     expect(codeOf(r?.body ?? "")).toBe("device.credential_invalid");
-    const none = await refusal(url, { "X-Capybara-Device-Protocol": "1" });
+    const none = await refusal(url, { "X-Capybara-Device-Protocol": "2" });
     expect(none?.status).toBe(401);
   });
 
-  it("protocol 2 is 426 program_outdated", async () => {
+  it("protocol 1 is 426 program_outdated", async () => {
     const m = await connected();
-    for (const protocol of ["2", ""]) {
+    for (const protocol of ["1", ""]) {
       const r = await refusal(url, {
         Authorization: `Bearer ${m.credential}`,
         ...(protocol !== "" && { "X-Capybara-Device-Protocol": protocol }),
@@ -417,7 +417,7 @@ describe("GET /device/connect", () => {
     expect((await machine.closed).code).toBe(4003);
     const again = await refusal(url, {
       Authorization: `Bearer ${m.credential}`,
-      "X-Capybara-Device-Protocol": "1",
+      "X-Capybara-Device-Protocol": "2",
     });
     expect(again?.status).toBe(401);
   });

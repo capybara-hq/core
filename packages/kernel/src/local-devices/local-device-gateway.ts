@@ -42,7 +42,7 @@ export const DEVICE_CLOSE = {
   replaced: 4002,
   /** The machine's credential was revoked: the program exits. */
   revoked: 4003,
-  /** No valid `hello` first, or a frame that is not protocol v1 from a device. */
+  /** No valid `hello` first, or a frame that is not the current protocol from a device. */
   protocol: 4400,
   /** The lease could not be claimed in time: reconnect. */
   claimTimeout: 4409,
