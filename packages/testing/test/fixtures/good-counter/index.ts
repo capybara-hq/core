@@ -8,8 +8,8 @@ export default defineExtension({
   provides: [],
   permissions: {
     http: [
-      { method: "POST", path: "/inc" },
-      { method: "GET", path: "/count" },
+      { method: "POST", path: "/inc", access: "public" },
+      { method: "GET", path: "/count", access: "public" },
     ],
   },
   setup(ctx) {

@@ -17,7 +17,7 @@ export default defineExtension({
     },
   ],
   permissions: {
-    http: [{ method: "GET", path: "/ui/board" }],
+    http: [{ method: "GET", path: "/ui/board", access: "public" }],
     ui: { views: ["tasks"], embeds: ["board"] },
   },
   setup(ctx) {

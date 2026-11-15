@@ -110,7 +110,12 @@ describe("嵌入应用（双副本）", () => {
       bearer: token,
     });
     expect(claims.status, JSON.stringify(claims.json)).toBe(200);
-    expect(claims.json).toMatchObject({ orgId, plugin: "fake-embed", contribution: "panel" });
+    expect(claims.json).toMatchObject({
+      access: "embed",
+      scope: "org",
+      orgId,
+      contribution: "panel",
+    });
     expect(claims.json).not.toHaveProperty("conversationId");
 
     // 副本 1 打开事件流

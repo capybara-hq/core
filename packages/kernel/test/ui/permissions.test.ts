@@ -65,7 +65,7 @@ describe("permissionKeys / permissionGroups 的 ui 项", () => {
   it("views → ui.view:<id>，embeds → ui.embed:<id>；旧快照缺 ui 时按空处理", async () => {
     const set = await computePermissionSet(
       manifest({
-        http: [{ method: "GET", path: "/ui/x" }],
+        http: [{ method: "GET", path: "/ui/x", access: "public" }],
         ui: { views: ["tasks", "notes"], embeds: ["board"] },
       }),
       "/tmp",
@@ -76,14 +76,14 @@ describe("permissionKeys / permissionGroups 的 ui 项", () => {
       components: [],
     });
     expect(permissionKeys(set)).toEqual([
-      "permissions.http:GET /ui/x",
+      "permissions.http.public:GET /ui/x",
       "ui.embed:board",
       "ui.view:notes",
       "ui.view:tasks",
     ]);
     const old = structuredClone(set) as PermissionSet;
     delete (old.permissions as Partial<PermissionSet["permissions"]>).ui;
-    expect(permissionKeys(old)).toEqual(["permissions.http:GET /ui/x"]);
+    expect(permissionKeys(old)).toEqual(["permissions.http.public:GET /ui/x"]);
   });
 
   it("ui 分组：只有 view 时不敏感；含 embed 时敏感", async () => {
@@ -96,7 +96,7 @@ describe("permissionKeys / permissionGroups 的 ui 项", () => {
     });
     const both = await computePermissionSet(
       manifest({
-        http: [{ method: "GET", path: "/ui/x" }],
+        http: [{ method: "GET", path: "/ui/x", access: "public" }],
         ui: { views: ["tasks"], embeds: ["board"] },
       }),
       "/tmp",
@@ -154,6 +154,7 @@ describe("isSensitivePermissionKey：与 permissionGroups 同一套敏感类别"
       "config.org.secret:apiKey",
       "config.deployment.secret:<root>",
       "permissions.http.public:POST /events",
+      "permissions.http.embed:GET /ui/data",
       "permissions.tools:write",
       "permissions.hooks:run.completed",
       "provides:channel@1",
@@ -166,7 +167,8 @@ describe("isSensitivePermissionKey：与 permissionGroups 同一套敏感类别"
       "requires:channel@1",
       "config.org:region",
       "table:todos",
-      "permissions.http:GET /a",
+      "permissions.http.member:GET /a",
+      "permissions.http.admin:GET /a",
       "permissions.network:a.example.com",
       "permissions.models:x (chat)",
       "permissions.storage",
@@ -182,8 +184,8 @@ describe("isSensitivePermissionKey：与 permissionGroups 同一套敏感类别"
         secrets: true,
         tools: ["write"],
         http: [
-          { method: "GET", path: "/ui/x" },
-          { method: "POST", path: "/hook", public: true },
+          { method: "GET", path: "/ui/x", access: "public" },
+          { method: "POST", path: "/hook", access: "public" },
         ],
         network: ["a.example.com"],
         ui: { views: ["tasks"], embeds: ["board"] },
@@ -193,6 +195,7 @@ describe("isSensitivePermissionKey：与 permissionGroups 同一套敏感类别"
     const keys = permissionKeys(set);
     const flagged = keys.filter(isSensitivePermissionKey).sort();
     expect(flagged).toEqual([
+      "permissions.http.public:GET /ui/x",
       "permissions.http.public:POST /hook",
       "permissions.secrets",
       "permissions.tools:write",
@@ -230,11 +233,14 @@ describe("planApprovals：ui.view 不卡加载，ui.embed 卡加载", () => {
     });
 
     const embed = manifest({
-      http: [{ method: "GET", path: "/ui/x" }],
+      http: [{ method: "GET", path: "/ui/x", access: "public" }],
       ui: { views: ["tasks"], embeds: ["board"] },
     });
     const withRoute = await computePermissionSet(
-      manifest({ http: [{ method: "GET", path: "/ui/x" }], ui: { views: ["tasks"] } }),
+      manifest({
+        http: [{ method: "GET", path: "/ui/x", access: "public" }],
+        ui: { views: ["tasks"] },
+      }),
       "/tmp",
     );
     const embedSet = await computePermissionSet(embed, "/tmp");

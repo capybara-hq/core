@@ -386,8 +386,8 @@ describe("createExtensionContext rules", () => {
       mf({
         permissions: {
           http: [
-            { method: "GET", path: "/a" },
-            { method: "POST", path: "/a" },
+            { method: "GET", path: "/a", access: "public" },
+            { method: "POST", path: "/a", access: "public" },
           ],
         },
       }),

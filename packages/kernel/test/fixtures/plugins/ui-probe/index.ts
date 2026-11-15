@@ -56,8 +56,8 @@ export default defineExtension({
   ],
   permissions: {
     http: [
-      { method: "GET", path: "/ui/board" },
-      { method: "POST", path: "/invalidate" },
+      { method: "GET", path: "/ui/board", access: "public" },
+      { method: "POST", path: "/invalidate", access: "public" },
     ],
     ui: {
       views: ["panel", "boom", "slow", "bad", "orgpage", "side", "card", "old-panel"],

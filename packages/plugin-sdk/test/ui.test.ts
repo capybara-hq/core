@@ -7,6 +7,7 @@ import {
   type EmbedParentMessage,
   type ExtensionContext,
   type ExtensionManifest,
+  type HttpPermission,
   parseEmbedChildMessage,
   resolveUiSlots,
   type ToolResult,
@@ -338,7 +339,7 @@ describe("清单校验：ui 贡献与 permissions 交叉核对", () => {
     setup() {},
     ...over,
   });
-  const GET_BOARD = [{ method: "GET" as const, path: "/ui/board" }];
+  const GET_BOARD = [{ method: "GET" as const, path: "/ui/board", access: "public" as const }];
   const good = base({
     ui: [
       { id: "tasks", title, place: "conversation", kind: "view" },
@@ -379,16 +380,33 @@ describe("清单校验：ui 贡献与 permissions 交叉核对", () => {
   it("embed 的 path 不在 /ui/ 下报错", () => {
     const m = base({
       ui: [{ id: "board", title, place: "page", kind: "embed", path: "/board" }],
-      permissions: { http: [{ method: "GET", path: "/board" }], ui: { embeds: ["board"] } },
+      permissions: {
+        http: [{ method: "GET", path: "/board", access: "public" }],
+        ui: { embeds: ["board"] },
+      },
     });
     expect(() => defineExtension(m)).toThrow(/\/ui\//);
   });
-  it("embed 的 path 未在 permissions.http 声明为 GET 报错", () => {
-    const m = base({
-      ui: [{ id: "board", title, place: "page", kind: "embed", path: "/ui/board" }],
-      permissions: { http: [{ method: "POST", path: "/ui/board" }], ui: { embeds: ["board"] } },
-    });
-    expect(() => defineExtension(m)).toThrow(/GET \/ui\/board/);
+  it("an embed path not declared as a public GET in permissions.http is an error", () => {
+    const m = (http: HttpPermission[]) =>
+      base({
+        ui: [{ id: "board", title, place: "page", kind: "embed", path: "/ui/board" }],
+        permissions: { http, ui: { embeds: ["board"] } },
+      });
+    const msg =
+      'embed path "/ui/board" must be declared in permissions.http as GET with access public';
+    expect(() =>
+      defineExtension(m([{ method: "POST", path: "/ui/board", access: "public" }])),
+    ).toThrow(msg);
+    expect(() =>
+      defineExtension(m([{ method: "GET", path: "/ui/board", access: "member" }])),
+    ).toThrow(msg);
+    expect(() =>
+      defineExtension(m([{ method: "GET", path: "/ui/board", access: "embed" }])),
+    ).toThrow(msg);
+    expect(() =>
+      defineExtension(m([{ method: "GET", path: "/ui/board", access: "public" }])),
+    ).not.toThrow();
   });
   it("贡献本身的形状", () => {
     const errs = (ui: unknown, perms: unknown = { ui: { views: ["a"] } }) =>
@@ -432,7 +450,7 @@ describe("类型", () => {
 describe("place file-preview (file-preview@1 embed previewers)", () => {
   const title = { zh: "预览", en: "Preview" };
   it("is allowed for embeds only", () => {
-    const http = [{ method: "GET", path: "/ui/pdf" }];
+    const http = [{ method: "GET", path: "/ui/pdf", access: "public" }];
     expect(
       validateUiContributions(
         [{ id: "pdf", title, place: "file-preview", kind: "embed", path: "/ui/pdf" }],
@@ -598,7 +616,7 @@ describe("contributions name a slot (UI slots spec §3.2, §4)", () => {
   });
 
   it("a known slot at an unsupported version skips the slot checks and is only dropped", () => {
-    const http = [{ method: "GET", path: "/ui/pdf" }];
+    const http = [{ method: "GET", path: "/ui/pdf", access: "public" }];
     const ui = [
       { id: "a", title, slot: "file.preview@2", kind: "view" as const },
       { id: "pdf", title, slot: "file.preview", kind: "embed" as const, path: "/ui/pdf" },

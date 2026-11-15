@@ -225,7 +225,7 @@ export async function lifePkg(o: LifePkgOptions): Promise<Uint8Array> {
   const { z } = await import("zod");
   const perms = {
     tools: ["wait"],
-    http: [{ method: "GET" as const, path: "/version" }],
+    http: [{ method: "GET" as const, path: "/version", access: "public" as const }],
     ...(o.policy && {
       hooks: ["tool.preExecute" as const],
       policyHooks: ["tool.preExecute" as const],

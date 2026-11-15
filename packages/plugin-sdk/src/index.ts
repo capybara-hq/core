@@ -1,4 +1,4 @@
-export const SDK_VERSION = "0.1.0-rc.22";
+export const SDK_VERSION = "0.1.0-rc.23";
 export * from "./agent-template.js";
 export * from "./bootstrap.js";
 export * from "./cards.js";
@@ -17,6 +17,7 @@ export * from "./extension-point.js";
 export * from "./file-preview.js";
 export * from "./git-hosts.js";
 export * from "./hooks.js";
+export * from "./http-access.js";
 export * from "./identity.js";
 export * from "./marketplace.js";
 export * from "./model.js";

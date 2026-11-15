@@ -45,7 +45,7 @@ export default defineExtension({
     },
   ],
   permissions: {
-    http: [{ method: "GET", path: "/ui/docx" }],
+    http: [{ method: "GET", path: "/ui/docx", access: "public" }],
     ui: { embeds: ["docx-embed"] },
   },
   setup(ctx) {

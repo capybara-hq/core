@@ -179,13 +179,14 @@ describe("capybara extensions review / approve", () => {
   }, 60_000);
 
   it("敏感项标 (sensitive)：review 与 approve 列表；只多出 view 不需要批准", async () => {
-    // 新插件（无快照）：全部为新增，工具 / embed 标敏感，view 与普通路由不标
+    // a new extension (no snapshot): everything is added; tools, embeds and public routes are
+    // flagged sensitive, views are not
     const review = await run(["extensions", "review"], "", [UI_A_EMBED]);
     expect(review.code, review.stderr).toBe(0);
     const lines = review.stdout.split("\n");
     expect(lines).toContain("  + ui.embed:board  (sensitive)");
     expect(lines).toContain("  + ui.view:tasks");
-    expect(lines).toContain("  + permissions.http:GET /ui/board");
+    expect(lines).toContain("  + permissions.http.public:GET /ui/board  (sensitive)");
     const listing = await run(["extensions", "approve", "ui-a"], "n\n", [UI_A_EMBED]);
     expect(listing.code).toBe(1);
     expect(listing.stdout.split("\n")).toContain("  + ui.embed:board  (sensitive)");

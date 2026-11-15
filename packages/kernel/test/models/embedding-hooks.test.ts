@@ -335,10 +335,14 @@ describe("model.request for ctx.models.embed", () => {
   it("escaping an extension route, a denial answers 403 model.hook_denied without the reason", async () => {
     const orgId = await freshOrg();
     await probeConfig(orgId, { denyModelPurposes: ["embedding"] });
-    const res = await owner({
+    // a member route: a personal access token, the org from the mount
+    const pat = await owner({ method: "POST", url: "/api/v1/me/tokens", payload: { name: "t" } });
+    expect(pat.statusCode, pat.body).toBe(201);
+    const res = await k.http.inject({
       method: "POST",
-      url: "/plugins/embed-consumer/embed",
-      payload: { orgId, input: texts(2) },
+      url: `/plugins/embed-consumer/orgs/${orgId}/embed`,
+      headers: { authorization: `Bearer ${(pat.json() as { token: string }).token}` },
+      payload: { input: texts(2) },
     });
     expect(res.statusCode).toBe(403);
     expect(res.json()).toEqual({

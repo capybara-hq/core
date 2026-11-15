@@ -10,6 +10,7 @@ import type { ConfigIssue, JsonSchema } from "./json-schema";
 export type SensitiveReason =
   | "secrets"
   | "public_routes"
+  | "embed_routes"
   | "tools"
   | "hooks"
   | "ui_embed"

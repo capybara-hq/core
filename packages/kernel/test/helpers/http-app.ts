@@ -2,6 +2,7 @@ import type { Logger } from "@capybara-hq/plugin-sdk";
 import { Module } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
 import type { NestFastifyApplication } from "@nestjs/platform-fastify";
+import { ApiError } from "../../src/errors.js";
 import { createKernelAdapter } from "../../src/http/adapter.js";
 import {
   type CreateHttpAppOptions,
@@ -18,7 +19,8 @@ import { KERNEL_LOGGER } from "../../src/infra/tokens.js";
 
 /**
  * The kernel's HTTP plumbing (`createHttpApp`: request ids and the access log, `/plugins/*`
- * dispatch, the replica header) on a small Nest application with only the health endpoints and the
+ * dispatch with a public-only access resolver unless `routeAccess` is given, the replica header)
+ * on a small Nest application with only the health endpoints and the
  * error filter, for tests of that plumbing without a database or Redis. Initialized; `close()`
  * closes the whole application.
  */
@@ -52,7 +54,19 @@ export async function testHttpApp(
     createKernelAdapter(false),
     { logger: new NestLogAdapter(opts.log), abortOnError: false },
   );
-  const http = await createHttpApp(httpOpts, app);
+  // without a database: public routes pass unthrottled, every other access level is refused
+  const http = await createHttpApp(
+    {
+      routeAccess: {
+        resolve: async (route) => {
+          if (route.access === "public") return { access: "public" };
+          throw new ApiError("auth.required", "Authentication required");
+        },
+      },
+      ...httpOpts,
+    },
+    app,
+  );
   await app.init();
   return {
     ...http,

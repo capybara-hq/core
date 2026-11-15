@@ -668,6 +668,26 @@ describe("JSON Schema (ajv) agrees with zod", () => {
   });
 });
 
+describe("extension route access at import", () => {
+  const BAD =
+    "permissions.http entries need method GET/POST/PUT/DELETE, a path starting with /, and access public/embed/member/admin";
+  it("refuses a route without access", () => {
+    const old = withExtension(
+      {},
+      // the pre-access format, as an old packed plugin carries it
+      { permissions: { http: [{ method: "GET", path: "/x", public: true }] } as never },
+    );
+    expect(errorsOf(old).join("\n")).toContain(BAD);
+  });
+  it("accepts a route with access", () => {
+    const ok = withExtension(
+      {},
+      { permissions: { http: [{ method: "GET", path: "/x", access: "public" }] } },
+    );
+    expect(errorsOf(ok)).toEqual([]);
+  });
+});
+
 describe("client section and suggestedAppearance", () => {
   const sri = `sha384-${"A".repeat(64)}`;
   const ENTRY = "./dist/client/client.mjs";

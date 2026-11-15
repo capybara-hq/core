@@ -398,3 +398,20 @@ npm registry downloads (plugin packages, provenance, the bootstrap download) and
 `net.noProxy` (an `http://` registry is fetched directly). An OAuth or MCP endpoint, or a marketplace
 `tarball` URL, on a private or internal host is now refused unless `marketplaces.allowPrivateHosts`
 lists it.
+
+### Extension routes declare who may call them (re-approval needed)
+
+The kernel now authenticates every extension route before the handler runs. Each entry of an
+extension's `permissions.http` declares `access` (`public`, `embed`, `member` or `admin`) instead of
+`public?: boolean`; `member` and `admin` routes mount under `/plugins/<name>/orgs/:orgId<path>` and take
+only a personal API token (`Authorization: Bearer cap_pat_...`). See
+[.agents/skills/writing-extensions](../../.agents/skills/writing-extensions/SKILL.md).
+
+- **Re-approve every extension that declares routes.** The approved permission keys changed
+  (`permissions.http.<access>:<METHOD> <path>`), so after the upgrade such an extension waits for
+  `capybara extensions approve` (or the admin console), and its routes answer 503
+  `extension.unavailable` until then.
+- **Plugin authors** replace `public: true` with `access: "public"` and every other route with
+  `access: "embed"` (data routes of an embedded page, under `/ui/`), `"member"` or `"admin"`, and read
+  the caller from the handler's second argument. A plugin whose manifest has a route without `access`
+  is refused at import and by `capybara-plugin check`; the example plugins need a new release first.

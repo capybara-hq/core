@@ -52,7 +52,7 @@ export default defineExtension({
   ui: [{ id: "panel", title: t("面板", "Panel"), slot: "conversation.panel", kind: "view" }],
   permissions: {
     tools: ["hang", "polite"],
-    http: [{ method: "GET", path: "/hello" }],
+    http: [{ method: "GET", path: "/hello", access: "public" }],
     ui: { views: ["panel"] },
   },
   config: {

@@ -64,6 +64,9 @@ const LOGIN_MSG = "Too many failed login attempts; try again later";
  * and `device-token-ip` with `@Throttled` (every request counts; neither checks a guessable
  * credential: the device code is 32 random bytes). `POST …/guides/:guideId/checks/:checkId/run`
  * opts in to `setup-check` (setup guides v2 §10.3: each run may call a third party).
+ *
+ * `plugin-public-write` is not a Nest route limit: the plugin dispatch counts it for unsafe
+ * methods on `public` extension routes (`PluginRouteAccess`).
  */
 export const NAMED_THROTTLERS: readonly NamedThrottler[] = [
   // (login, IP): 10; an attacker filling one login from one IP leaves the owner's other IPs alone (R25)
@@ -206,6 +209,19 @@ export const NAMED_THROTTLERS: readonly NamedThrottler[] = [
     message: "Too many setup check runs; try again in a minute",
     code: "rate_limited",
     getTracker: (req) => sha256(principalAccountId(req)),
+  },
+  // unsafe methods (POST / PUT / DELETE) on `public` extension routes, per extension and client
+  // address: 300 a minute (extension route access spec). Counted by the plugin dispatch before the
+  // body is read (PluginRouteAccess, fail-open like @Throttled); group and onSuccess are unused
+  {
+    name: "plugin-public-write",
+    group: "plugin-public-write",
+    onSuccess: "clear",
+    limit: 300,
+    ttl: 60_000,
+    message: "Too many requests to this extension route; try again in a minute",
+    code: "rate_limited",
+    getTracker: (req) => `${req.url.split("/")[2] ?? ""}:${ip(req)}`,
   },
 ];
 

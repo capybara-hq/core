@@ -114,7 +114,8 @@ export interface StaticExtensionManifest {
   optional: string[];
   permissions: {
     secrets?: boolean;
-    http?: { method: string; path: string; public?: boolean }[];
+    /** `access`: `public` / `embed` / `member` / `admin` (SDK `HttpAccess`). */
+    http?: { method: string; path: string; access: string }[];
     tools?: string[];
     hooks?: string[];
     policyHooks?: string[];
@@ -1654,6 +1655,12 @@ export interface PluginReviewAgentTemplate {
   skills?: string[];
 }
 
+/** Routes of the `http` group: member and admin (the kernel authenticates a person). */
+const signedIn = (access: string): boolean => access === "member" || access === "admin";
+
+const routeItem = (r: { method: string; path: string; access: string }): string =>
+  `${r.method} ${r.path} (${r.access})`;
+
 /**
  * The permissions an extension declares in its static manifest, by category (the categories of the
  * kernel's permission view; empty ones left out). Only for display: the import review shows the
@@ -1674,14 +1681,11 @@ export function declaredPermissions(
     { category: "optional", items: m.optional },
     { category: "secrets", items: p.secrets ? ["secrets"] : [] },
     { category: "storage", items: p.storage ? ["storage"] : [] },
-    {
-      category: "http",
-      items: http.filter((r) => r.public !== true).map((r) => `${r.method} ${r.path}`),
-    },
-    {
-      category: "publicRoutes",
-      items: http.filter((r) => r.public === true).map((r) => `${r.method} ${r.path}`),
-    },
+    // routes show their access; public (no sign-in) and embed (embed token) routes form their own
+    // groups, as in the kernel
+    { category: "http", items: http.filter((r) => signedIn(r.access)).map(routeItem) },
+    { category: "publicRoutes", items: http.filter((r) => r.access === "public").map(routeItem) },
+    { category: "embedRoutes", items: http.filter((r) => r.access === "embed").map(routeItem) },
     { category: "tools", items: p.tools ?? [] },
     {
       category: "hooks",

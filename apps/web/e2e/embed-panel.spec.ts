@@ -37,7 +37,12 @@ test("嵌入应用（假扩展 fake-embed）：「扩展」打开组织页面（
     headers: { authorization: `Bearer ${token}` },
   });
   expect(claims.status(), await claims.text()).toBe(200);
-  expect(await claims.json()).toMatchObject({ orgId, plugin: "fake-embed", contribution: "panel" });
+  expect(await claims.json()).toMatchObject({
+    access: "embed",
+    scope: "org",
+    orgId,
+    contribution: "panel",
+  });
   expect(claims.headers()["content-security-policy"]).toContain("frame-ancestors 'self'");
   expect(claims.headers()["set-cookie"]).toBeUndefined();
   const anonymous = await page.request.fetch("/plugin-ui/fake-embed/claims", {

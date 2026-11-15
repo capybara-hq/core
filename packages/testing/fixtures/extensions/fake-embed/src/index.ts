@@ -1,27 +1,27 @@
-import { defineExtension, EMBED_PROTOCOL, type OrgEmbedClaims } from "@capybara-hq/plugin-sdk";
+import { defineExtension, EMBED_PROTOCOL, type RouteCaller } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 
 /**
  * Test fake of an embed extension (`ui.embeds`): the kernel side of embedded apps (token issue and
  * verification, the `/plugin-ui` proxy, `ctx.bus` across replicas) without the official board.
  * - embeds `panel` (org page, `/ui/panel`) and `panel-conv` (conversation tab, `/ui/panel-conv`);
- *   both pages are static HTML loading the static script `/ui/panel.js`; none of them needs a
- *   token. The script speaks the host's message bridge (`capybara-embed/1`): on `init` it fetches
+ *   both pages are static HTML loading the static script `/ui/panel.js`; all three are `public`
+ *   GET routes (an iframe navigation carries no token). The script speaks the host's message bridge (`capybara-embed/1`): on `init` it fetches
  *   `claims` with the token it was given, shows `<contribution> <orgId>` in `#status` and posts a
  *   `toast` "fake-embed ready" to the host (a failed fetch shows `error <status>`), then reads the
  *   `/ui/events` stream with the token: `ready` sets `data-live="1"` on the body, each `event`
  *   shows its text in `#event`;
- * - every data route checks `Authorization: Bearer <embed token>` with `ctx.ui.verifyEmbedToken`
- *   (401 otherwise); identity comes only from the claims;
- * - `GET /ui/claims` returns the verified claims;
+ * - every data route is an `embed` route: the kernel checks the embed token (`Authorization: Bearer`
+ *   or `?token=`) and hands the handler the caller; identity comes only from `caller` (an org-scope
+ *   caller, 401 otherwise);
+ * - `GET /ui/claims` returns the caller;
  * - `POST /ui/events` `{ text }` publishes `{ conversationId, text }` on the bus topic
  *   `events.<orgId>` (202);
  * - `GET /ui/events` is an SSE stream: `ready` first, then an `event` for each message in the
  *   token's scope (its conversation, or org-wide messages for a page token); it ends when the
- *   client disconnects or the token expires.
+ *   client disconnects or the token expires (`caller.exp`).
  */
 
-const BEARER_RE = /^Bearer ([A-Za-z0-9._-]{1,4096})$/;
 const EventBody = z.object({ text: z.string().min(1).max(200) });
 
 const PAGE = `<!doctype html><html><head><meta charset="utf-8"><title>Fake embed</title><script src="./panel.js"></script></head><body><p>fake-embed</p><p id="status">waiting</p><p id="event"></p></body></html>`;
@@ -110,22 +110,19 @@ export default defineExtension({
   ],
   permissions: {
     http: [
-      { method: "GET", path: "/ui/panel" },
-      { method: "GET", path: "/ui/panel-conv" },
-      { method: "GET", path: "/ui/panel.js" },
-      { method: "GET", path: "/ui/claims" },
-      { method: "POST", path: "/ui/events" },
-      { method: "GET", path: "/ui/events" },
+      { method: "GET", path: "/ui/panel", access: "public" },
+      { method: "GET", path: "/ui/panel-conv", access: "public" },
+      { method: "GET", path: "/ui/panel.js", access: "public" },
+      { method: "GET", path: "/ui/claims", access: "embed" },
+      { method: "POST", path: "/ui/events", access: "embed" },
+      { method: "GET", path: "/ui/events", access: "embed" },
     ],
     ui: { embeds: ["panel", "panel-conv"] },
   },
   setup(ctx) {
-    /** An org-scope token's claims (every contribution here is in an org slot), or null. */
-    const auth = async (req: Request): Promise<OrgEmbedClaims | null> => {
-      const m = BEARER_RE.exec(req.headers.get("authorization") ?? "");
-      const claims = m?.[1] === undefined ? null : await ctx.ui.verifyEmbedToken(m[1]);
-      return claims?.scope === "org" ? claims : null;
-    };
+    /** The org-scope embed caller (every contribution here is in an org slot), or null. */
+    const auth = (caller: RouteCaller) =>
+      caller.access === "embed" && caller.scope === "org" ? caller : null;
     const page = async () =>
       new Response(PAGE, { headers: { "content-type": "text/html; charset=utf-8" } });
     ctx.http.route("GET", "/ui/panel", page);
@@ -137,13 +134,13 @@ export default defineExtension({
         new Response(SCRIPT, { headers: { "content-type": "text/javascript; charset=utf-8" } }),
     );
 
-    ctx.http.route("GET", "/ui/claims", async (req) => {
-      const claims = await auth(req);
+    ctx.http.route("GET", "/ui/claims", async (_req, caller) => {
+      const claims = auth(caller);
       return claims ? json(200, claims) : unauthorized();
     });
 
-    ctx.http.route("POST", "/ui/events", async (req) => {
-      const claims = await auth(req);
+    ctx.http.route("POST", "/ui/events", async (req, caller) => {
+      const claims = auth(caller);
       if (!claims) return unauthorized();
       const body = EventBody.safeParse(await req.json().catch(() => undefined));
       if (!body.success) {
@@ -156,9 +153,10 @@ export default defineExtension({
       return json(202, { published: true });
     });
 
-    ctx.http.route("GET", "/ui/events", async (req) => {
-      const claims = await auth(req);
+    ctx.http.route("GET", "/ui/events", async (req, caller) => {
+      const claims = auth(caller);
       if (!claims) return unauthorized();
+      // ends when the client disconnects or the token expires (`caller.exp`)
       const done = AbortSignal.any([
         req.signal,
         AbortSignal.timeout(Math.max(1, claims.exp * 1000 - Date.now())),

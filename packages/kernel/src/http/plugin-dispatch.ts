@@ -1,6 +1,6 @@
 import { Readable } from "node:stream";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
-import type { Logger } from "@capybara-hq/plugin-sdk";
+import type { Logger, RouteCaller } from "@capybara-hq/plugin-sdk";
 import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import FindMyWay from "find-my-way";
 import type { Route } from "../ctx/create-ctx.js";
@@ -8,12 +8,29 @@ import { ApiError, ERROR_CODES, errorBody } from "../errors.js";
 import { ACCESS_COOKIE, REFRESH_COOKIE } from "../identity/cookies.js";
 import { codeForStatus, redactPath } from "./error.filter.js";
 
-/** 插件路由都在此前缀下（ctx.http.route 已加 `/plugins/<name>` 前缀）。 */
+/** Every extension route lives under this prefix (`ctx.http.route` adds `/plugins/<name>`). */
 export const PLUGIN_PREFIX = "/plugins/";
 
-/** 插件路由表：按方法与路径（不含查询串）找到插件 handler；HEAD 没有专门路由时按 GET 匹配。 */
+/**
+ * The extension route table: the route record matching a method and path (no query string) with
+ * its path parameters; HEAD without a route of its own matches the GET record (its access too).
+ */
 export interface PluginRouter {
-  find(method: string, path: string): Route["handler"] | undefined;
+  find(method: string, path: string): { route: Route; params: Record<string, string> } | undefined;
+}
+
+/**
+ * Resolves the caller of an extension route from its declared access (`PluginRouteAccess`), run
+ * in the plugin scope's `onRequest` hook: throws an `ApiError` on refusal, never reads the body.
+ * `reply` only takes headers (a 429's `retry-after`).
+ */
+export interface RouteAccessResolver {
+  resolve(
+    route: Route,
+    req: FastifyRequest,
+    reply: FastifyReply,
+    params: Record<string, string>,
+  ): Promise<RouteCaller>;
 }
 
 /**
@@ -46,24 +63,28 @@ export function pluginOfPath(path: string): string | undefined {
   return name === undefined || name === "" ? undefined : name;
 }
 
-/** 用 find-my-way 建立插件路由表，路径语法与 Fastify 相同；路径不在 `/plugins/` 下时抛错。 */
+/**
+ * Builds the extension route table with find-my-way (the same path syntax as Fastify); throws for
+ * a path outside `/plugins/`.
+ */
 export function createPluginRouter(routes: Route[]): PluginRouter {
   const router = FindMyWay();
   for (const r of routes) {
     if (!r.path.startsWith(PLUGIN_PREFIX)) {
       throw new Error(`plugin route ${r.method} ${r.path} is outside ${PLUGIN_PREFIX}`);
     }
-    router.on(r.method, r.path, () => {}, { handler: r.handler });
+    router.on(r.method, r.path, () => {}, { route: r });
   }
+  const lookup = (m: string, path: string) => {
+    const found = router.find(m as FindMyWay.HTTPMethod, path);
+    const route = (found?.store as { route: Route } | undefined)?.route;
+    return found && route
+      ? { route, params: { ...found.params } as Record<string, string> }
+      : undefined;
+  };
   return {
     find(method, path) {
-      const lookup = (m: string) =>
-        (
-          router.find(m as FindMyWay.HTTPMethod, path)?.store as
-            | { handler: Route["handler"] }
-            | undefined
-        )?.handler;
-      return lookup(method) ?? (method === "HEAD" ? lookup("GET") : undefined);
+      return lookup(method, path) ?? (method === "HEAD" ? lookup("GET", path) : undefined);
     },
   };
 }
@@ -72,21 +93,34 @@ export function createPluginRouter(routes: Route[]): PluginRouter {
  * Registers `/plugins/*` in its own encapsulated scope and hands each request to the extension handler
  * as a Web `Request`: the scope removes the default parsers and takes every content type as a raw
  * Buffer, so the body the extension gets is the bytes the client sent.
- * - The extension belongs to this deployment but is not in the registry (revoked and so on) -> 503
- *   `extension.unavailable`; when an extension instance is revoked or replaced, the `req.signal` of
- *   that extension's in-progress requests is aborted (`abortPlugin`, triggered by the route source's
- *   `onChange`);
- * - not mounted or no match -> 404 `not_found`; HEAD without its own route is handled as GET, with no
- *   body in the response.
- * - A `Request` that cannot be built (e.g. a malformed Host) -> 400 `validation_failed`, not logged as
- *   an error.
+ * Before the body is read (the scope's `onRequest` hook), in this order:
+ * - the extension belongs to this deployment but is not in the registry (revoked and so on) -> 503
+ *   `extension.unavailable` (its routes are gone, so their access is unknown);
+ *   The gate reads the plugin segment decoded (the router decodes too); a malformed escape -> 400
+ *   `validation_failed`;
+ * - not mounted or no match -> 404 `not_found`; HEAD without its own route uses the GET record
+ *   (its access and params) and answers with no body; a `public` / `embed` record matching the
+ *   org mount `/plugins/<plugin>/orgs[/...]` (decoded) counts as no match;
+ * - the matched record's access is resolved by `access` (authentication, authorization, effective
+ *   config, the public write throttle, see plugin-route-access.ts): an `ApiError` answers its
+ *   status and envelope, any other failure is logged and answers 500 `internal`. A refusal never
+ *   reaches the handler. The match and the caller are kept per request (a WeakMap entry).
+ * Then the handler stage:
+ * - the handler gets `(webReq, caller)`; the Web request carries no kernel credential (`cap_at` /
+ *   `cap_rt` cookies and an `Authorization` header with a `cap_pat_` / `cap_svc_` token are
+ *   removed; an embed token stays);
+ * - when an extension instance is revoked or replaced, the `req.signal` of that extension's
+ *   in-progress requests is aborted (`abortPlugin`, triggered by the route source's `onChange`);
+ * - a `Request` that cannot be built (e.g. a malformed Host) -> 400 `validation_failed`, not
+ *   logged as an error;
  * - `req.signal` aborts only when the client disconnects before the response is written (not on
  *   normal completion); long-lived handlers use it to unsubscribe;
  * - a throwing handler is logged (path redacted with `redactPath`) and returns 500 `internal` (the
  *   error message is not echoed), except a `model.hook_denied` `ApiError` that escaped from
  *   `ctx.models.embed` (an organization policy hook denied the call, spec B §5.4): a deliberate
  *   outcome, not a failure, so it answers 403 `model.hook_denied` with a generic message (the
- *   routes are unauthenticated: the policy extension's name and reason are not echoed).
+ *   policy extension's name and reason are not echoed: the route's caller, possibly anonymous, is
+ *   not the org admin who configured the policy).
  * - Fastify's own errors (a body over 1 MiB and so on) are mapped to the error envelope by the
  *   scope's error handler: 4xx by the common error code table (413 `payload_too_large`, 415
  *   `unsupported_media_type` and so on), 5xx are logged and return `internal`.
@@ -102,11 +136,12 @@ export async function registerPluginDispatch(
   fastify: FastifyInstance,
   getTable: () => PluginRouteTable | undefined,
   log: Logger,
+  access: RouteAccessResolver,
 ): Promise<{ abortAll(): void; abortPlugin(plugin: string): void }> {
-  /** 进行中的请求 → 所属插件（停机时全部中止；插件实例变化时只中止该插件的）。 */
+  /** In-progress request -> its extension (all aborted at shutdown; one extension's when it changes). */
   const inFlight = new Map<AbortController, string>();
   let stopping = false;
-  // 按路由来源的版本缓存路由表（插件撤销 / 替换时版本变化才重建）
+  // the route table, cached per route source revision (rebuilt when an extension is revoked / replaced)
   let cached: { table: PluginRouteTable; revision: number; router: PluginRouter } | undefined;
   const routerOf = (table: PluginRouteTable): PluginRouter => {
     const revision = table.revision();
@@ -115,23 +150,53 @@ export async function registerPluginDispatch(
     }
     return cached.router;
   };
-  const handler = async (req: FastifyRequest, reply: FastifyReply) => {
+  /** What `onRequest` established for a request the handler stage may serve. */
+  const resolved = new WeakMap<FastifyRequest, { route: Route; caller: RouteCaller }>();
+
+  const authorize = async (req: FastifyRequest, reply: FastifyReply) => {
     const path = req.url.split("?")[0] as string;
+    // the router matches decoded paths (`/plugins/%70/x` is `/plugins/p/x`), so the gate and the
+    // org-mount guard read them decoded too; a malformed escape matches nothing
+    const decoded = safeDecode(path);
+    const rawPlugin = pluginOfPath(path);
+    const plugin = rawPlugin === undefined ? undefined : safeDecode(rawPlugin);
+    if (decoded === undefined || (rawPlugin !== undefined && plugin === undefined)) {
+      return reply.code(400).send(errorBody("validation_failed", "Malformed request"));
+    }
     const table = getTable();
-    const plugin = pluginOfPath(path);
     if (table && plugin !== undefined && (await table.unavailable(plugin))) {
       return reply
         .code(503)
         .send(errorBody("extension.unavailable", `Extension ${plugin} is not available right now`));
     }
-    const pluginHandler = table ? routerOf(table).find(req.method, path) : undefined;
-    if (!pluginHandler) {
+    const match = table ? routerOf(table).find(req.method, path) : undefined;
+    if (!match || catchesOrgMount(match.route, decoded)) {
       return reply.code(404).send(errorBody("not_found", `Route ${req.method} ${path} not found`));
     }
-    // 只在响应写完之前连接就关了（客户端断开）时中止 `req.signal`：长连接（SSE）的 handler 据此退订、收尾。
-    // 正常写完后的 close 不中止（writableFinished 为 true）。
+    let caller: RouteCaller;
+    try {
+      caller = await access.resolve(match.route, req, reply, match.params);
+    } catch (err) {
+      if (err instanceof ApiError) {
+        return reply.code(err.status).send(errorBody(err.code, err.message, err.details));
+      }
+      log.error("plugin route access failed", { method: req.method, path: redactPath(path), err });
+      return reply.code(500).send(errorBody("internal", "Internal error"));
+    }
+    resolved.set(req, { route: match.route, caller });
+  };
+
+  const handler = async (req: FastifyRequest, reply: FastifyReply) => {
+    const path = req.url.split("?")[0] as string;
+    const entry = resolved.get(req);
+    // onRequest answered every request it did not resolve; this is only a guard
+    if (!entry) return reply.code(500).send(errorBody("internal", "Internal error"));
+    const { route, caller } = entry;
+    // Abort `req.signal` only when the connection closes before the response is written (the
+    // client disconnected): long-lived handlers (SSE) unsubscribe on it. A close after a finished
+    // response does not abort (writableFinished is true).
     const ac = new AbortController();
-    inFlight.set(ac, plugin ?? "");
+    inFlight.set(ac, route.plugin);
     if (stopping) ac.abort();
     reply.raw.once("close", () => {
       inFlight.delete(ac);
@@ -145,7 +210,7 @@ export async function registerPluginDispatch(
     }
     let res: Response;
     try {
-      res = await pluginHandler(webReq);
+      res = await route.handler(webReq, caller);
     } catch (err) {
       if (err instanceof ApiError && err.code === "model.hook_denied") {
         log.warn("plugin handler refused: a policy hook denied its model call", {
@@ -183,6 +248,8 @@ export async function registerPluginDispatch(
       log.error("plugin request failed", { method: req.method, path: redactPath(req.url), err });
       return reply.code(status >= 500 ? status : 500).send(errorBody("internal", "Internal error"));
     });
+    // the gate, the match and the access check run before the body is read
+    scope.addHook("onRequest", authorize);
     scope.all(`${PLUGIN_PREFIX}*`, handler);
   });
   return {
@@ -196,11 +263,32 @@ export async function registerPluginDispatch(
   };
 }
 
+/** `decodeURIComponent`, or undefined for a malformed escape. */
+function safeDecode(s: string): string | undefined {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Defence in depth: `/plugins/<plugin>/orgs[/...]` belongs to the org mount of `member` / `admin`
+ * routes (the SDK keeps every declared path out of `/orgs/`), so a `public` / `embed` record
+ * that matches it anyway (a `/*` or `/:a/:b/...` pattern) is treated as no match.
+ */
+function catchesOrgMount(route: Route, decodedPath: string): boolean {
+  if (route.access === "member" || route.access === "admin") return false;
+  const mount = `${PLUGIN_PREFIX}${route.plugin}/orgs`;
+  return decodedPath === mount || decodedPath.startsWith(`${mount}/`);
+}
+
 const KERNEL_COOKIES: ReadonlySet<string> = new Set([ACCESS_COOKIE, REFRESH_COOKIE]);
 
 /**
- * 从 Cookie 头里去掉内核会话 Cookie（`cap_at` / `cap_rt`）：插件 handler 不经内核鉴权，
- * 拿到这两个 Cookie 就能冒充用户调内核 API。全部去掉后返回 undefined（不传 Cookie 头）。
+ * Removes the kernel session cookies (`cap_at` / `cap_rt`) from a Cookie header: with them an
+ * extension handler could call the kernel API as the user. Returns undefined when nothing is left
+ * (no Cookie header is passed on).
  */
 export function stripKernelCookies(cookie: string): string | undefined {
   const kept = cookie
@@ -211,8 +299,24 @@ export function stripKernelCookies(cookie: string): string | undefined {
 }
 
 /**
- * Fastify 请求 → Web `Request`：数组头用 `, ` 合并（`set-cookie` 逐条保留）；GET / HEAD 不带 body；
- * Cookie 头去掉内核会话 Cookie；`signal` 在响应写完之前客户端断开时中止。
+ * A kernel API token anywhere in an Authorization value (`Bearer cap_pat_…`, a bare token, a quoted
+ * or comma / `=` separated one, ...): matched as a substring, never by its position.
+ */
+const KERNEL_TOKEN_RE = /cap_(pat|svc)_/i;
+
+/**
+ * An `Authorization` header value as the extension handler may see it: undefined (dropped) when it
+ * carries a kernel API token (`cap_pat_` / `cap_svc_`), which would let the extension call the
+ * kernel API as its owner; anything else (an embed token, a webhook signature) is kept.
+ */
+export function stripKernelAuthorization(value: string): string | undefined {
+  return KERNEL_TOKEN_RE.test(value) ? undefined : value;
+}
+
+/**
+ * Fastify request -> Web `Request`: array headers joined with `, ` (`set-cookie` kept one by one);
+ * no body for GET / HEAD; kernel credentials removed (session cookies, an Authorization header
+ * with a kernel token); `signal` aborts when the client disconnects before the response is written.
  */
 function toWebRequest(req: FastifyRequest, signal: AbortSignal): Request {
   const headers = new Headers();
@@ -220,6 +324,11 @@ function toWebRequest(req: FastifyRequest, signal: AbortSignal): Request {
     if (value === undefined) continue;
     if (name === "cookie") {
       const kept = stripKernelCookies(Array.isArray(value) ? value.join("; ") : value);
+      if (kept !== undefined) headers.set(name, kept);
+      continue;
+    }
+    if (name === "authorization") {
+      const kept = stripKernelAuthorization(Array.isArray(value) ? value.join(", ") : value);
       if (kept !== undefined) headers.set(name, kept);
       continue;
     }

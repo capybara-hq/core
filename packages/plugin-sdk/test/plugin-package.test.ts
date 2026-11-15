@@ -234,7 +234,7 @@ describe("staticManifestOf", () => {
       real({
         permissions: {
           tools: ["write"],
-          http: [{ method: "GET", path: "/ui/a" }],
+          http: [{ method: "GET", path: "/ui/a", access: "public" }],
           ui: { embeds: ["a"] },
         },
         ui: [
@@ -245,7 +245,7 @@ describe("staticManifestOf", () => {
     );
     expect(st.permissions).toEqual({
       tools: ["write"],
-      http: [{ method: "GET", path: "/ui/a" }],
+      http: [{ method: "GET", path: "/ui/a", access: "public" }],
       ui: { embeds: ["a"] },
     });
     expect(st.ui).toHaveLength(1);

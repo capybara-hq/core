@@ -27,7 +27,7 @@ export default defineExtension({
     },
   ],
   permissions: {
-    http: [{ method: "GET", path: "/ui/old" }],
+    http: [{ method: "GET", path: "/ui/old", access: "public" }],
     ui: { embeds: ["old-embed"] },
   },
   setup(ctx) {

@@ -9,7 +9,7 @@ export default defineExtension({
   version: "0.1.0",
   sdk: "^0.1.0-rc.0",
   provides: [],
-  permissions: { http: [{ method: "GET", path: "/hold" }] },
+  permissions: { http: [{ method: "GET", path: "/hold", access: "public" }] },
   setup(ctx) {
     ctx.http.route("GET", "/hold", async (req) => {
       const body = new ReadableStream<Uint8Array>({

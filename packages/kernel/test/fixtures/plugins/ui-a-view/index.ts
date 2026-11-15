@@ -9,7 +9,10 @@ export default defineExtension({
   ui: [
     { id: "tasks", title: { zh: "任务", en: "Tasks" }, slot: "conversation.panel", kind: "view" },
   ],
-  permissions: { http: [{ method: "GET", path: "/ui/board" }], ui: { views: ["tasks"] } },
+  permissions: {
+    http: [{ method: "GET", path: "/ui/board", access: "public" }],
+    ui: { views: ["tasks"] },
+  },
   setup(ctx) {
     ctx.http.route("GET", "/ui/board", async () => new Response("board"));
     ctx.ui.view("tasks", async () => ({ blocks: [{ type: "heading", text: "Tasks" }] }));

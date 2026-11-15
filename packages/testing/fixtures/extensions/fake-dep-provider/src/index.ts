@@ -10,7 +10,7 @@ export default defineExtension({
   version: "0.1.0",
   sdk: "^0.1.0-rc.0",
   provides: ["counter@1"],
-  permissions: { http: [{ method: "GET", path: "/ping" }] },
+  permissions: { http: [{ method: "GET", path: "/ping", access: "public" }] },
   setup(ctx) {
     const pong = "pong from fake-dep-provider";
     ctx.provide("counter@1", { ping: () => pong });

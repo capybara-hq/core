@@ -383,6 +383,36 @@ describe("declaredPermissions (the org-upload confirm)", () => {
     ]);
   });
 
+  it("routes show their access; public and embed routes form their own groups", () => {
+    const groups = declaredPermissions(
+      manifest({
+        http: [
+          { method: "GET", path: "/items", access: "member" },
+          { method: "PUT", path: "/settings", access: "admin" },
+          { method: "POST", path: "/hook", access: "public" },
+          { method: "GET", path: "/ui/data", access: "embed" },
+        ],
+      }),
+    );
+    expect(groups).toEqual([
+      {
+        category: "http",
+        items: ["GET /items (member)", "PUT /settings (admin)"],
+        sensitive: false,
+      },
+      {
+        category: "publicRoutes",
+        items: ["POST /hook (public)"],
+        sensitive: false,
+      },
+      {
+        category: "embedRoutes",
+        items: ["GET /ui/data (embed)"],
+        sensitive: false,
+      },
+    ]);
+  });
+
   it("without the client section the group names the permission key", () => {
     expect(declaredPermissions(manifest({ client: true }))).toEqual([
       { category: "client", items: ["permissions.client"], sensitive: true },
