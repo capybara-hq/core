@@ -16,6 +16,7 @@ import { FormError } from "../../../../components/form-error";
 import { useRouter } from "../../../../i18n/navigation";
 import { ApiClientError } from "../../../../lib/api";
 import { loginPathFor } from "../../../../lib/auth-sources";
+import { navigateBrowser } from "../../../../lib/browser";
 import { confirmBinding, type PendingBinding, splitSource } from "../../../../lib/identities";
 import { usePreferences } from "../../../../lib/preferences";
 import { pendingBindingQuery } from "../../../../lib/query/auth";
@@ -117,7 +118,7 @@ export default function BindView({ token }: { token: string }) {
               {tc("retry")}
             </Button>
           )}
-          <Button density="prominent" onClick={() => router.replace(HOME_PATH)}>
+          <Button density="prominent" onClick={() => navigateBrowser(HOME_PATH)}>
             {t("goHome")}
           </Button>
         </Stack>
@@ -157,7 +158,7 @@ export default function BindView({ token }: { token: string }) {
       <AuthPage title={t("doneTitle")} subtitle={t("doneHint")} preferences={preferences}>
         <Stack gap={16}>
           {identity}
-          <Button variant="primary" density="prominent" onClick={() => router.replace(HOME_PATH)}>
+          <Button variant="primary" density="prominent" onClick={() => navigateBrowser(HOME_PATH)}>
             {t("goHome")}
           </Button>
         </Stack>
@@ -179,7 +180,7 @@ export default function BindView({ token }: { token: string }) {
           >
             {t("confirm")}
           </Button>
-          <Button density="prominent" disabled={pending} onClick={() => router.replace(HOME_PATH)}>
+          <Button density="prominent" disabled={pending} onClick={() => navigateBrowser(HOME_PATH)}>
             {t("cancel")}
           </Button>
         </Stack>

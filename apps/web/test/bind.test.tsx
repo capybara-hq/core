@@ -12,6 +12,8 @@ import { renderAuthRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
+const navigateBrowser = vi.hoisted(() => vi.fn());
+vi.mock("../src/lib/browser", () => ({ navigateBrowser }));
 vi.mock("next/navigation", () => ({
   redirect: (to: string) => {
     throw new Error(`REDIRECT ${to}`);
@@ -34,7 +36,10 @@ const BINDING = {
 };
 const unauthenticated = () => json(401, { error: { code: "auth.required", message: "x" } });
 
-beforeEach(() => resetNavigation("/bind/cap_bind_tok"));
+beforeEach(() => {
+  resetNavigation("/bind/cap_bind_tok");
+  navigateBrowser.mockReset();
+});
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -71,7 +76,8 @@ describe("绑定确认页（AuthPage）", () => {
     const calls = stubApi({ [`GET ${PATH}`]: () => json(200, { binding: BINDING }) });
     await renderAuthRouteWithCache(PAGE, lastStubRoutes());
     await userEvent.setup().click(await screen.findByRole("button", { name: en.bind.cancel }));
-    expect(router.replace).toHaveBeenCalledWith("/");
+    expect(navigateBrowser).toHaveBeenCalledWith("/");
+    expect(router.replace).not.toHaveBeenCalledWith("/");
     expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
   });
 
