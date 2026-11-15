@@ -24,6 +24,10 @@ import {
   DeviceSettings,
   RecentChanges,
 } from "../../../../components/DeviceModeSection";
+import {
+  DeviceProjectsOverview,
+  DeviceProjectsSettings,
+} from "../../../../components/DeviceProjectsSection";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
 import { NoAccess } from "../../../../components/NoAccess";
@@ -235,11 +239,17 @@ function Detail({
         {tab === "overview" ? (
           <Stack gap={12}>
             <DeviceOverview device={e} onOpenSettings={() => setTab("settings")} />
+            <DeviceProjectsOverview
+              orgId={orgId}
+              device={e}
+              onOpenSettings={() => setTab("settings")}
+            />
             <RecentChanges recent={e.mode.recent} />
           </Stack>
         ) : (
           <>
             <DeviceSettings orgId={orgId} device={e} onDisconnect={() => setOpen("revoke")} />
+            <DeviceProjectsSettings orgId={orgId} device={e} />
             <DangerZone title={t("danger.title")}>
               <DangerZoneItem
                 title={t("detail.delete")}

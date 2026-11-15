@@ -1,4 +1,9 @@
-import { getDevice, listDevices } from "../devices";
+import {
+  getDevice,
+  listDeviceProjectCandidates,
+  listDeviceProjects,
+  listDevices,
+} from "../devices";
 import { defineQuery } from "./define";
 import { keys } from "./keys";
 
@@ -18,5 +23,24 @@ export const deviceQuery = (orgId: string, id: string) =>
   defineQuery({
     key: keys.org(orgId).device(id),
     fn: () => getDevice(orgId, id),
+    freshness: "live",
+  });
+
+/** A device's projects in its current mode (owner only; project root §4.1). */
+export const deviceProjectsQuery = (orgId: string, id: string) =>
+  defineQuery({
+    key: keys.org(orgId).deviceProjects(id),
+    fn: () => listDeviceProjects(orgId, id),
+    freshness: "live",
+  });
+
+/**
+ * A device's project suggestions (one `scan` of its base). Never prefetched: asking the device
+ * starts or resumes it, so only the open add form reads it.
+ */
+export const deviceProjectCandidatesQuery = (orgId: string, id: string) =>
+  defineQuery({
+    key: keys.org(orgId).deviceProjectCandidates(id),
+    fn: () => listDeviceProjectCandidates(orgId, id),
     freshness: "live",
   });

@@ -81,7 +81,7 @@ import {
   queueQuery,
 } from "./conversation";
 import { pendingDeviceQuery } from "./device-sign-in";
-import { deviceQuery, devicesQuery } from "./devices";
+import { deviceProjectsQuery, deviceQuery, devicesQuery } from "./devices";
 import {
   type EvalRunState,
   evalCaseQuery,
@@ -853,7 +853,11 @@ export const ROUTES: readonly RouteEntry[] = [
   {
     pattern: "/devices/[id]",
     queries: ({ orgId, params }) =>
-      orgId === null || params.id === undefined ? [] : [q(deviceQuery(orgId, params.id))],
+      orgId === null || params.id === undefined
+        ? []
+        : // the projects are read from the database only; their suggestions ask the device and
+          // wait for the add form
+          [q(deviceQuery(orgId, params.id)), q(deviceProjectsQuery(orgId, params.id))],
   },
   {
     pattern: "/connectors/install",

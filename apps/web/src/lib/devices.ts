@@ -282,3 +282,88 @@ export const updateDevicePolicy = (orgId: string, id: string, patch: DevicePolic
     method: "POST",
     body: JSON.stringify(patch),
   });
+
+/** A project on a device (project root §4.1; kernel `DeviceProjectView`). */
+export interface DeviceProject {
+  name: string;
+  /** The absolute path on the device. */
+  path: string;
+  createdAt: string;
+}
+
+/** `GET …/devices/:id/projects` (kernel `DeviceProjectList`). */
+export interface DeviceProjectList {
+  /** The projects the device's current mode can read. */
+  projects: DeviceProject[];
+  /** How many stored projects the current mode hides (kept, not deleted). */
+  hidden: number;
+  /** The mode the device runs at now: it decides the base a relative path is read against. */
+  mode: DeviceMode;
+  /**
+   * The base a relative path is resolved against: the workspace in sandbox mode and on a cloud
+   * device, the owner's home in auto mode; null when that home is not known.
+   */
+  base: string | null;
+  /** The device offers projects (a machine announcing `projects`, a provider with list / scan). */
+  supported: boolean;
+}
+
+/** One suggestion of `GET …/devices/:id/projects/candidates`. */
+export interface DeviceProjectCandidate {
+  path: string;
+  /** `path` relative to the base (empty for the base itself): what the add form takes. */
+  relativePath: string;
+  suggestedName: string;
+}
+
+export interface DeviceProjectCandidates {
+  candidates: DeviceProjectCandidate[];
+  mode: DeviceMode;
+  base: string | null;
+  supported: boolean;
+}
+
+/**
+ * The fixed prefix the add form shows before the relative path (project root §4.2): the owner's
+ * home (`~/`) for a local device in auto mode, else the workspace (`workspace/`, also every cloud
+ * device in either mode).
+ */
+export const projectBasePrefix = (source: Device["source"], mode: DeviceMode): string =>
+  source === "local" && mode === "auto" ? "~/" : "workspace/";
+
+/** The relative path as sent: trimmed, without a leading `./` or trailing slashes. */
+export const normalizeProjectPath = (p: string): string =>
+  p
+    .trim()
+    .replace(/^(\.\/)+/, "")
+    .replace(/\/+$/, "");
+
+/** The name a project gets when none is typed: the last segment of its path (or of the base). */
+export const defaultProjectName = (relative: string, base: string | null): string => {
+  const seg = (s: string) =>
+    s
+      .split("/")
+      .filter((x) => x !== "" && x !== ".")
+      .at(-1) ?? "";
+  return seg(normalizeProjectPath(relative)) || seg(base ?? "");
+};
+
+export const listDeviceProjects = (orgId: string, id: string) =>
+  apiFetch<DeviceProjectList>(`${org(orgId)}/${enc(id)}/projects`);
+
+/** Asks the device (`scan`): it starts or resumes it, so it is read only when the add form opens. */
+export const listDeviceProjectCandidates = (orgId: string, id: string) =>
+  apiFetch<DeviceProjectCandidates>(`${org(orgId)}/${enc(id)}/projects/candidates`);
+
+export const addDeviceProject = (
+  orgId: string,
+  id: string,
+  input: { path: string; name?: string },
+) =>
+  apiFetch<{ project: DeviceProject }>(`${org(orgId)}/${enc(id)}/projects`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+
+export const removeDeviceProject = (orgId: string, id: string, name: string) =>
+  apiFetch<void>(`${org(orgId)}/${enc(id)}/projects/${enc(name)}`, { method: "DELETE" });
