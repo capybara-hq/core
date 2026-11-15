@@ -141,6 +141,21 @@ export function tickerOf(t: ScheduleTrigger): Ticker {
 const TRANSITION_LOOKBACK_MS = 6 * 3600_000;
 
 /**
+ * The cron library's search for the next date, or null when it gives up: it refuses to look more
+ * than a few years past the current date ("No execution date was found in the next 8 years"),
+ * which a yearly or Feb 29 expression reaches while the gap sample walks ahead. Any other error
+ * is thrown.
+ */
+function nextOrNull(search: () => number): number | null {
+  try {
+    return search();
+  } catch (e) {
+    if (e instanceof Error && /No execution date was found/.test(e.message)) return null;
+    throw e;
+  }
+}
+
+/**
  * {@link nextTick} for one trigger, with its `CronTime`s built once: callers that walk many ticks
  * (the gap sample, the catch-up enumeration) reuse one ticker instead of rebuilding per tick.
  */
@@ -155,7 +170,9 @@ function ticker(t: ScheduleTrigger): Ticker {
   return (after) => {
     let cursor = after;
     for (let i = 0; i < 10; i++) {
-      const tick = new Date(time.getNextDateFrom(cursor, t.timeZone).toMillis());
+      const next = nextOrNull(() => time.getNextDateFrom(cursor, t.timeZone).toMillis());
+      if (next === null) return null;
+      const tick = new Date(next);
       const ms = tick.getTime();
       // CronTime moves a tick that falls in a DST gap to the next valid instant; the spec says a
       // skipped local time does not fire, so keep only ticks whose wall clock the expression
@@ -164,7 +181,10 @@ function ticker(t: ScheduleTrigger): Ticker {
         return tick;
       }
       const wall = localWallClock(tick, t.timeZone);
-      if (wallTime.getNextDateFrom(new Date(wall - 1000), "UTC").toMillis() === wall) return tick;
+      if (
+        nextOrNull(() => wallTime.getNextDateFrom(new Date(wall - 1000), "UTC").toMillis()) === wall
+      )
+        return tick;
       cursor = tick;
     }
     return null;
