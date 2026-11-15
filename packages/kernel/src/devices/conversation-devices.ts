@@ -11,6 +11,7 @@ import { isInternalProvider, SandboxProviders } from "../sandbox/providers.js";
 import { deviceNotFound, sandboxUnavailable } from "../sandbox/sandbox.service.js";
 import { DeviceAccess } from "./access.js";
 import { DevicesService } from "./devices.service.js";
+import { type WorkingProject, workingRootOf } from "./working-root.js";
 
 /** `details[0].reason` of the error an anonymous IM conversation's sandbox call gets. */
 export const ANONYMOUS_NO_DEVICE = "anonymous";
@@ -45,8 +46,14 @@ export interface CommandReviewFacts {
   ownerAccountId: string;
   mode: SandboxMode;
   allowedMode: SandboxMode;
-  /** The workspace root commands start in; absent: no device bound (the review is skipped). */
+  /** The device's workspace root; absent: no device bound (the review is skipped). */
   workspace: string | undefined;
+  /**
+   * The conversation's working root ({@link workingRootOf}): the project's root when the root
+   * conversation's latest `project_root` is usable, else `workspace`. The review's `workspace`
+   * fact: commands start here, and a write inside it needs no ask (project root spec §4.3).
+   */
+  workingRoot: string | undefined;
 }
 
 /**
@@ -124,14 +131,46 @@ export class ConversationDevices {
         : await this.recordedWorkspace(rootConversationId)) ??
       (await this.machineWorkspace(deviceId)) ??
       DEFAULT_SANDBOX_ROOTS.workspace;
+    const mode = level?.mode ?? "sandbox";
+    const project = await this.workingProject(orgId, rootConversationId);
     return {
       deviceId,
       deviceName: device.name ?? deviceId,
       ownerAccountId: conv.account_id,
-      mode: level?.mode ?? "sandbox",
+      mode,
       allowedMode: level?.allowedMode ?? "sandbox",
       workspace,
+      workingRoot: workingRootOf(project, { mode, workspace }),
     };
+  }
+
+  /**
+   * The project snapshot that decides the working root of the conversation tree rooted at
+   * `rootConversationId` (project root spec §4.3): its latest `project_root` event, read only when
+   * the conversation is bound to a project (a free conversation reads one row by its key). Null:
+   * free, or bound with no snapshot recorded yet.
+   */
+  async workingProject(orgId: string, rootConversationId: string): Promise<WorkingProject | null> {
+    const conv = await this.db
+      .selectFrom("conversations")
+      .select("project_path")
+      .where("id", "=", rootConversationId)
+      .where("org_id", "=", orgId)
+      .executeTakeFirst();
+    if (conv?.project_path == null) return null;
+    const row = await this.db
+      .selectFrom("conversation_events")
+      .select([
+        sql<string | null>`payload->>'root'`.as("root"),
+        sql<boolean>`payload ? 'unavailable'`.as("unavailable"),
+      ])
+      .where("conversation_id", "=", rootConversationId)
+      .where("type", "=", "project_root")
+      .orderBy("seq", "desc")
+      .limit(1)
+      .executeTakeFirst();
+    if (row === undefined || typeof row.root !== "string") return null;
+    return { root: row.root, unavailable: row.unavailable !== false };
   }
 
   /** The workspace root of a conversation's latest `device_paths` event, or null. */

@@ -21,6 +21,7 @@ import {
   ANONYMOUS_NO_DEVICE,
   type ConversationDevices,
 } from "../../../devices/conversation-devices.js";
+import { workingRootOf } from "../../../devices/working-root.js";
 import { ApiError } from "../../../errors.js";
 import type { KernelConfigService } from "../../../infra/config/kernel-config.service.js";
 import { AUTO_MODE_NOT_ALLOWED_TEXT } from "../../../local-devices/local-device-provider.js";
@@ -48,10 +49,11 @@ export interface SandboxToolDeps {
   /**
    * The device a call enters: the root conversation's, checked for its owner every call.
    * `usableNow` (absent in test stubs: only the cloud provider counts) tells a listing whether a
-   * conversation's device can run without a cloud provider (ruling R8).
+   * conversation's device can run without a cloud provider (ruling R8). `workingProject` (absent
+   * in test stubs: free mode) gives the project snapshot that decides the working root.
    */
   devices: Pick<ConversationDevices, "forTool"> &
-    Partial<Pick<ConversationDevices, "usableNow" | "modeLevel">>;
+    Partial<Pick<ConversationDevices, "usableNow" | "modeLevel" | "workingProject">>;
   /** Background `Bash` tasks; absent in test stubs, where `run_in_background` is refused. */
   background?: Pick<
     BackgroundTaskStore,
@@ -108,15 +110,29 @@ export interface SandboxSession {
   h: SandboxHandle;
   /** The instance's roots: every path the call builds or checks is under one of them. */
   roots: SandboxRoots;
+  /**
+   * The conversation's working root ({@link workingRootOf}): the bound project's root, else
+   * `roots.workspace`. `Bash` runs here, `Glob` / `Grep` search here by default and a relative
+   * file-tool path resolves against it; it never changes what {@link checkToolPath} accepts.
+   */
+  workingRoot: string;
   p: HeldProvider;
   signal: AbortSignal;
 }
 
 // ---- 模型可见文案（英文） ----
 
-/** This conversation's first use of its device (in the instance's workspace). */
-export const sandboxStartedNotice = (roots: SandboxRoots): string =>
-  `Device started (first use in this conversation); the working directory is ${roots.workspace}, shared with the device's other conversations.`;
+/**
+ * This conversation's first use of its device. The working directory is the instance's workspace,
+ * or a bound project's root (`workingRoot`, project root spec §4.3).
+ */
+export const sandboxStartedNotice = (
+  roots: SandboxRoots,
+  workingRoot: string = roots.workspace,
+): string =>
+  workingRoot === roots.workspace
+    ? `Device started (first use in this conversation); the working directory is ${roots.workspace}, shared with the device's other conversations.`
+    : `Device started (first use in this conversation); the working directory is ${workingRoot}, the project's root, on a device shared with other conversations.`;
 /** {@link sandboxStartedNotice} of an instance with the default roots. */
 export const SANDBOX_STARTED_NOTICE = sandboxStartedNotice(DEFAULT_SANDBOX_ROOTS);
 /** A new instance came up on the device's kept files. */
@@ -328,9 +344,47 @@ export function checkToolPath(
   return path.length > 1 && path.endsWith("/") ? path.slice(0, -1) : path;
 }
 
+/**
+ * The shape checks of a file tool's path before the call enters its device: an absolute path gets
+ * {@link checkPathShape}; a relative one (resolved against the working root inside,
+ * {@link resolveToolPath}) must not start with `~` (never expanded) and must pass the same shape
+ * checks (no control characters, no empty or `..` segments).
+ */
+export function checkFilePathShape(path: string, field = "file_path"): void {
+  if (path.startsWith("/")) {
+    checkPathShape(path, field);
+    return;
+  }
+  const errors = path.startsWith("~")
+    ? ["~ is not expanded"]
+    : path === "" || path === "."
+      ? ["path must name a file"]
+      : validateSandboxPathShape(`/${path}`);
+  if (errors.length > 0) {
+    throw new ToolError(
+      `Invalid ${field} "${clip(path, 200)}": ${errors.join("; ")}. Pass an absolute path, or a path relative to the working directory without '..' segments.`,
+    );
+  }
+}
+
+/**
+ * A file tool's path made absolute: a relative path (shape-checked by {@link checkFilePathShape})
+ * resolves against the session's working root, `.` segments dropped; an absolute one is kept.
+ * The result still goes through {@link checkToolPath}.
+ */
+export function resolveToolPath(path: string, s: Pick<SandboxSession, "workingRoot">): string {
+  if (path.startsWith("/")) return path;
+  const segments = path.split("/").filter((seg) => seg !== "" && seg !== ".");
+  if (segments.length === 0) return s.workingRoot;
+  return `${s.workingRoot === "/" ? "" : s.workingRoot}/${segments.join("/")}`;
+}
+
 /** {@link checkToolPath} for a writing tool: the skills directory stays read-only in both modes. */
-export function checkToolWritable(path: string, s: Pick<SandboxSession, "roots" | "mode">): string {
-  const p = checkToolPath(path, s, "file_path");
+export function checkToolWritable(
+  path: string,
+  s: Pick<SandboxSession, "roots" | "mode" | "workingRoot">,
+): string {
+  const p = checkToolPath(resolveToolPath(path, s), s, "file_path");
   if (p === s.roots.skills || p.startsWith(`${s.roots.skills}/`)) {
     const where =
       s.mode === "auto"
@@ -586,8 +640,12 @@ export async function inSandbox<T>(
 ): Promise<{ value: T; notices: string[] }> {
   try {
     const deviceId = await deps.devices.forTool(ctx.orgId, sandboxConversationOf(ctx));
-    // the mode once per call: the path checks follow it and the device_paths event records it
-    const level = (await deps.devices.modeLevel?.(ctx.orgId, deviceId)) ?? null;
+    // the mode once per call: the path checks follow it and the device_paths event records it;
+    // the project snapshot of the root conversation decides the working root
+    const [level, project] = await Promise.all([
+      deps.devices.modeLevel?.(ctx.orgId, deviceId) ?? null,
+      deps.devices.workingProject?.(ctx.orgId, sandboxConversationOf(ctx)) ?? null,
+    ]);
     return await deps.sandbox.withSandbox(
       {
         orgId: ctx.orgId,
@@ -603,19 +661,21 @@ export async function inSandbox<T>(
       },
       async (h, p, info, signal) => {
         // unknown mode: the strict (sandbox) path checks stay (fail closed)
+        const mode = level?.mode ?? "sandbox";
         const s: SandboxSession = {
           deviceId,
-          mode: level?.mode ?? "sandbox",
+          mode,
           h,
           roots: info.roots,
+          workingRoot: workingRootOf(project, { mode, workspace: info.roots.workspace }),
           p,
           signal,
         };
-        await recordDevicePaths(deps, ctx, info.roots, level);
+        await recordDevicePaths(deps, ctx, info.roots, level ?? null);
         const notices: string[] = [];
         if (info.filesReset) notices.push(sandboxFilesResetNotice(info.roots));
         else if (info.restarted) notices.push(SANDBOX_RESTARTED_NOTICE);
-        else if (info.fresh) notices.push(sandboxStartedNotice(info.roots));
+        else if (info.fresh) notices.push(sandboxStartedNotice(info.roots, s.workingRoot));
         const { copied, failures } = await syncAttachments(deps, ctx, s);
         if (copied.length > 0) {
           notices.push(`Attachments copied into the sandbox: ${copied.join(", ")}.`);

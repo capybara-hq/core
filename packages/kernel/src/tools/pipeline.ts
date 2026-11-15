@@ -1578,7 +1578,8 @@ export class ToolPipeline {
       toolKey: tool.key,
       input,
       mode: facts.mode,
-      workspace: facts.workspace,
+      // the working root: a bound project's root, where commands start and writes need no ask
+      workspace: facts.workingRoot,
       attended,
       step: ctx.step,
       callId: call.id,

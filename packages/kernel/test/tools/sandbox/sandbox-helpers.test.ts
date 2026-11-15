@@ -883,7 +883,7 @@ describe("custom roots (environments phase 2, spec §13.1)", () => {
   it("a malformed path is refused before the call enters its device", async () => {
     const d = device();
     for (const [name, input] of [
-      ["Read", { file_path: "relative.txt" }],
+      ["Read", { file_path: "/a/b/../c" }],
       ["Write", { file_path: "/a/../b", content: "x" }],
       ["Edit", { file_path: "/a//b", old_string: "a", new_string: "b" }],
       ["Glob", { pattern: "*", path: "rel" }],

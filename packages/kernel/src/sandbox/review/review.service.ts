@@ -61,8 +61,9 @@ export interface ReviewInput {
   input: unknown;
   mode: "auto" | "sandbox";
   /**
-   * The device's workspace root. Absent: no device is bound, so the tool fails on its own and
-   * there is nothing to review.
+   * The conversation's working root: the device's workspace root, or the bound project's root
+   * (project root spec §4.3). Commands start here and a write inside it needs no ask. Absent: no
+   * device is bound, so the tool fails on its own and there is nothing to review.
    */
   workspace?: string | undefined;
   /** Whether a person is present to answer an `ask` (rules may read it; the pipeline decides). */

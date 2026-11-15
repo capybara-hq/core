@@ -436,14 +436,15 @@ describe("sandbox tools", () => {
     const conv = await sandboxConversation();
     let step = 1;
     for (const [tool, input] of [
-      ["Read", { file_path: "relative.txt" }],
-      ["Write", { file_path: "relative.txt", content: "x" }],
-      ["Edit", { file_path: "relative.txt", old_string: "a", new_string: "b" }],
-      ["Deliver", { file_path: "relative.txt" }],
+      // a relative path resolves against the working directory, with the same shape checks
+      ["Read", { file_path: "a//relative.txt" }],
+      ["Write", { file_path: "a//relative.txt", content: "x" }],
+      ["Edit", { file_path: "a//relative.txt", old_string: "a", new_string: "b" }],
+      ["Deliver", { file_path: "a//relative.txt" }],
     ] as const) {
       const r = await call(conv, tool, input, step++);
       expect(r.isError, tool).toBe(true);
-      expect(r.content, tool).toMatch(/^Invalid file_path "relative\.txt"/);
+      expect(r.content, tool).toMatch(/^Invalid file_path "a\/\/relative\.txt"/);
     }
     const g = await call(conv, "Glob", { pattern: "*", path: "relative" }, step);
     expect(g.content).toMatch(/^Invalid path "relative"/);

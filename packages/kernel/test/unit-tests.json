@@ -112,6 +112,7 @@
   "tools/registry-builtin-unavailable.test.ts",
   "tools/sandbox/device-errors.test.ts",
   "tools/sandbox/sandbox-helpers.test.ts",
+  "tools/sandbox/working-root.test.ts",
   "tools/skill-project.unit.test.ts",
   "tools/snapshot.test.ts",
   "tools/tool-search.test.ts",

@@ -1,12 +1,16 @@
+import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { EventLog } from "../../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
+import { ConversationDevices } from "../../../src/devices/conversation-devices.js";
+import { SandboxService } from "../../../src/sandbox/sandbox.service.js";
 import { checkToolPath, checkToolWritable } from "../../../src/tools/builtins/sandbox/common.js";
 import { onlyBuiltins } from "../../helpers/disabled-tools.js";
 import { accountsFor } from "../../helpers/identity.js";
@@ -31,6 +35,12 @@ import {
  * accept any absolute path (shape checks only); sandbox mode keeps the device roots; the skills
  * directory stays read-only; and a write outside the workspace passes the command review first,
  * after which the existing read-before-write guard still applies.
+ *
+ * Project root spec §4.3: a bound conversation works in its project's root. `Bash` runs there, a
+ * relative `Read` resolves there, and the command review takes it as its `workspace` fact: a write
+ * outside the project root asks even inside the device's workspace. The review's facts take the
+ * root conversation's latest usable `project_root`, else the device's workspace. The fake's `list`
+ * is on, so a run start of a bound conversation reads its project from the device.
  */
 
 const SANDBOX_FAKE = fileURLToPath(
@@ -44,6 +54,7 @@ let destroyDb: () => Promise<void>;
 let k: TestKernel;
 let root: string;
 let owner: Req;
+let ownerId: string;
 let orgId: string;
 let agentId: string;
 
@@ -56,14 +67,14 @@ beforeAll(async () => {
       {
         roles: ["api", "worker"],
         extensions: [MODEL_FAKE, SANDBOX_FAKE],
-        extensionConfig: { "sandbox-fake": { root } },
+        extensionConfig: { "sandbox-fake": { root, list: true } },
       },
     ),
   );
   const raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
   destroyDb = () => raw.destroy();
-  const ownerId = (
+  ownerId = (
     await accountsFor(db).createLocal({
       login: "owner",
       password: PW,
@@ -227,9 +238,167 @@ describe("file tool paths in the device's mode", () => {
     expect(checkToolPath("/workspace/./a.txt", { roots, mode: "sandbox" })).toBe(
       "/workspace/./a.txt",
     );
-    expect(() => checkToolWritable("/skills/x.md", { roots, mode: "auto" })).toThrow(/read-only/);
-    expect(() => checkToolWritable("/skills/x.md", { roots, mode: "sandbox" })).toThrow(
+    const workingRoot = roots.workspace;
+    expect(() => checkToolWritable("/skills/x.md", { roots, mode: "auto", workingRoot })).toThrow(
       /read-only/,
     );
+    expect(() =>
+      checkToolWritable("/skills/x.md", { roots, mode: "sandbox", workingRoot }),
+    ).toThrow(/read-only/);
+  });
+});
+
+/** The device a conversation is bound to. */
+async function deviceOf(convId: string): Promise<string> {
+  const r = await db
+    .selectFrom("conversations")
+    .select("device_id")
+    .where("id", "=", convId)
+    .executeTakeFirstOrThrow();
+  if (r.device_id === null) throw new Error(`conversation ${convId} has no device`);
+  return r.device_id;
+}
+
+/** Binds a new conversation to the project `app` at `path` (the binding is set at creation). */
+async function boundConversation(path: string): Promise<string> {
+  const convId = await createConv(owner, orgId, agentId);
+  await db
+    .updateTable("conversations")
+    // biome-ignore lint/suspicious/noExplicitAny: the binding columns are insert-only in the schema
+    .set({ project_name: "app", project_path: path } as any)
+    .where("id", "=", convId)
+    .execute();
+  return convId;
+}
+
+/** Writes files into the device's file system (paths relative to `/workspace`). */
+async function put(deviceId: string, files: Record<string, string>): Promise<void> {
+  await k.app.get(SandboxService).withSandbox(
+    {
+      orgId,
+      deviceId,
+      holderConversationId: "test-setup",
+      actor: { accountId: ownerId, conversationId: "test-setup" },
+    },
+    async (h, p, _info, signal) => {
+      for (const [path, text] of Object.entries(files)) {
+        await p.writeFile(h, `/workspace/${path}`, new TextEncoder().encode(text), signal);
+      }
+    },
+    new AbortController().signal,
+  );
+}
+
+/** The org follows the platform's mode again (auto): an earlier test switched auto mode off. */
+async function followPlatformMode(): Promise<void> {
+  const res = await owner({
+    method: "PATCH",
+    url: `/api/v1/orgs/${orgId}/settings`,
+    payload: { autoMode: null },
+  });
+  expect(res.statusCode, res.body).toBe(200);
+}
+
+const appendProjectRoot = (convId: string, payload: Record<string, unknown>) =>
+  k.app.get(EventLog).append(convId, [{ type: "project_root", payload } as never]);
+
+describe("a bound conversation works in its project's root", () => {
+  beforeAll(followPlatformMode);
+
+  it("Bash runs in the project root, a relative Read resolves there, a relative Write is allowed", async () => {
+    const dir = `p-${randomUUID().slice(0, 8)}`;
+    const conv = await boundConversation(`/workspace/${dir}`);
+    await put(await deviceOf(conv), { [`${dir}/notes.txt`]: "hello project\n" });
+    const pwd = await call(conv, "Bash", { command: "pwd", description: "Where" }, 1);
+    expect(pwd.payload.isError).toBe(false);
+    expect(pwd.payload.content).toContain(`/workspace/${dir}`);
+    const roots = (await eventsOf(db, conv)).filter((e) => e.type === "project_root");
+    expect(roots.map((e) => (e.payload as { root: string }).root)).toEqual([`/workspace/${dir}`]);
+    const read = await call(conv, "Read", { file_path: "notes.txt" }, 2);
+    expect(read.payload.isError).toBe(false);
+    expect(read.payload.content).toContain("hello project");
+    const wrote = await call(conv, "Write", { file_path: "out.txt", content: "x" }, 3);
+    expect(wrote.payload.isError).toBe(false);
+    expect(wrote.payload.content).toContain(`Created /workspace/${dir}/out.txt`);
+    expect(wrote.payload.review).toMatchObject({
+      decision: "allow",
+      rule: "allow.workspace-write",
+    });
+  });
+
+  it("the review judges a write against the project root: outside it asks, even in the device's workspace", async () => {
+    const dir = `p-${randomUUID().slice(0, 8)}`;
+    const conv = await boundConversation(`/workspace/${dir}`);
+    await put(await deviceOf(conv), { [`${dir}/notes.txt`]: "x\n" });
+    const touch = { command: "touch /workspace/elsewhere.txt", description: "Touch" };
+    await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(touch)}`);
+    const ask = await waitFor(
+      async () =>
+        db
+          .selectFrom("approvals")
+          .select(["id", "detail"])
+          .where("conversation_id", "=", conv)
+          .where("kind", "=", "command")
+          .where("status", "=", "pending")
+          .executeTakeFirst(),
+      30_000,
+      "the command ask",
+    );
+    expect(ask.detail as Record<string, unknown>).toMatchObject({ rule: "ask.outside-write" });
+    const declined = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/approvals/${ask.id}/decision`,
+      payload: { decision: "deny" },
+    });
+    expect(declined.statusCode, declined.body).toBe(200);
+    await waitForTerminal(db, conv, 1, 30_000);
+
+    // the same command in a free conversation writes inside its workspace: allowed
+    const free = await createConv(owner, orgId, agentId);
+    const r = await call(free, "Bash", touch, 1);
+    expect(r.payload.review).toMatchObject({ decision: "allow", rule: "allow.workspace-write" });
+  });
+});
+
+describe("the review's facts name the working root", () => {
+  beforeAll(followPlatformMode);
+
+  const facts = (convId: string) => k.app.get(ConversationDevices).reviewFacts(orgId, convId);
+
+  it("the root conversation's latest usable project root, else the device's workspace", async () => {
+    // free: the device's workspace
+    const free = await createConv(owner, orgId, agentId);
+    await deviceOf(free);
+    expect(await facts(free)).toMatchObject({
+      mode: "auto",
+      workspace: "/workspace",
+      workingRoot: "/workspace",
+    });
+
+    // bound, before its first run start: no snapshot yet
+    const conv = await boundConversation("/srv/app");
+    expect((await facts(conv))?.workingRoot).toBe("/workspace");
+
+    // a usable snapshot outside the device's workspace (auto mode): the project root
+    await appendProjectRoot(conv, { project: "app", root: "/srv/app", skills: [] });
+    expect(await facts(conv)).toMatchObject({ workspace: "/workspace", workingRoot: "/srv/app" });
+    // a sub-agent's call reads the root conversation's
+    expect(
+      (await k.app.get(ConversationDevices).reviewFacts(orgId, conv, randomUUID()))?.workingRoot,
+    ).toBe("/srv/app");
+
+    // the latest one says the project is unavailable: the device's workspace again
+    await appendProjectRoot(conv, {
+      project: "app",
+      root: "/srv/app",
+      unavailable: { reason: "gone", message: "The project's root /srv/app no longer exists." },
+      skills: [],
+    });
+    expect((await facts(conv))?.workingRoot).toBe("/workspace");
+
+    // a project covering a home directory never widens the review
+    const home = await boundConversation("/home/owner");
+    await appendProjectRoot(home, { project: "app", root: "/home/owner", skills: [] });
+    expect((await facts(home))?.workingRoot).toBe("/workspace");
   });
 });

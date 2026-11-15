@@ -2,7 +2,7 @@ import { ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
 import type { BuiltinTool } from "../../registry.js";
 import { lineDiff, viewPath } from "../../view.js";
 import {
-  checkPathShape,
+  checkFilePathShape,
   checkToolWritable,
   clip,
   display,
@@ -94,7 +94,7 @@ export function sandboxEditTool(deps: SandboxToolDeps): BuiltinTool {
     async run(input, ctx) {
       const { old_string, new_string, replace_all = false } = input as EditInput;
       if (old_string === new_string) throw new ToolError(SAME_TEXT);
-      checkPathShape((input as EditInput).file_path, "file_path");
+      checkFilePathShape((input as EditInput).file_path);
       let path = "";
       // a read-before-write refusal is the guard working: a result with the guard view
       const ran = await inSandbox(deps, ctx, (s) => {

@@ -203,7 +203,8 @@ export function sandboxGrepTool(deps: SandboxToolDeps): BuiltinTool {
       let path = "";
       const { value, notices } = await inSandbox(deps, ctx, async (s) => {
         const { h, p, signal } = s;
-        path = checkToolPath(g.path ?? s.roots.workspace, s);
+        // default: the working root (a bound project's root, else the workspace)
+        path = checkToolPath(g.path ?? s.workingRoot, s);
         const st = await p.stat(h, path, signal);
         if (st === null) throw new ToolError(notFound(path));
         // 在目标所在目录里搜相对路径，输出再拼回绝对路径（命令里不出现沙箱绝对路径）
