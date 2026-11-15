@@ -66,8 +66,10 @@ describe("permissionGroups", () => {
         secrets: true,
         storage: true,
         http: [
-          { method: "GET", path: "/a", public: false },
-          { method: "POST", path: "/events", public: true },
+          { method: "GET", path: "/a", access: "member" },
+          { method: "PUT", path: "/s", access: "admin" },
+          { method: "POST", path: "/events", access: "public" },
+          { method: "GET", path: "/ui/data", access: "embed" },
         ],
         tools: ["write"],
         hooks: ["run.completed"],
@@ -97,14 +99,24 @@ describe("permissionGroups", () => {
     expect(by.http).toEqual({
       category: "http",
       sensitive: false,
-      items: ["GET /a"],
-      entries: [{ value: "GET /a", sensitive: false }],
+      items: ["GET /a (member)", "PUT /s (admin)"],
+      entries: [
+        { value: "GET /a (member)", sensitive: false },
+        { value: "PUT /s (admin)", sensitive: false },
+      ],
     });
+    // public routes take no sign-in, embed routes need an embed token: separate sensitive groups
     expect(by.publicRoutes).toEqual({
       category: "publicRoutes",
       sensitive: true,
-      items: ["POST /events"],
-      entries: [{ value: "POST /events", sensitive: true, reason: "public_routes" }],
+      items: ["POST /events (public)"],
+      entries: [{ value: "POST /events (public)", sensitive: true, reason: "public_routes" }],
+    });
+    expect(by.embedRoutes).toEqual({
+      category: "embedRoutes",
+      sensitive: true,
+      items: ["GET /ui/data (embed)"],
+      entries: [{ value: "GET /ui/data (embed)", sensitive: true, reason: "embed_routes" }],
     });
     expect(by.tools?.sensitive).toBe(true);
     expect(by.hooks?.sensitive).toBe(true);
@@ -153,6 +165,16 @@ describe("permissionGroups", () => {
       // display only: requiring it is not sensitive
       expect(isSensitivePermissionKey(`requires:${cap}`), cap).toBe(false);
     }
+  });
+
+  it("route keys: public and embed are sensitive, member and admin are not", () => {
+    expect(isSensitivePermissionKey("permissions.http.public:POST /hook")).toBe(true);
+    expect(isSensitivePermissionKey("permissions.http.embed:GET /ui/data")).toBe(true);
+    expect(isSensitivePermissionKey("permissions.http.member:GET /items")).toBe(false);
+    expect(isSensitivePermissionKey("permissions.http.admin:PUT /settings")).toBe(false);
+    expect(permissionKeyItems(["permissions.http.embed:GET /ui/data"])).toEqual([
+      { value: "permissions.http.embed:GET /ui/data", sensitive: true, reason: "embed_routes" },
+    ]);
   });
 });
 

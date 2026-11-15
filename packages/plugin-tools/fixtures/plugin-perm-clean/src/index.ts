@@ -22,7 +22,7 @@ export default defineExtension({
   optional: ["model-provider@2"],
   permissions: {
     secrets: true,
-    http: [{ method: "GET", path: "/count" }],
+    http: [{ method: "GET", path: "/count", access: "public" }],
     tools: ["write"],
   },
   setup(ctx) {

@@ -10,6 +10,7 @@ import { USAGE_SUBSCRIBERS_CLOCK } from "./extensions/usage-subscribers.js";
 import { FILE_PREVIEW_TIMEOUT } from "./files/previewers.js";
 import { GIT_UPSTREAM_ORIGIN, type GitUpstreamOrigin } from "./git/gateway.js";
 import { GIT_IDENTITY_API_BASE, type GitIdentityApiBase } from "./git/identity.js";
+import { PLUGIN_PUBLIC_WRITE_LIMIT } from "./http/plugin-route-access.js";
 import { OUTBOX_DISPATCH_FAILS } from "./infra/outbox/outbox.dispatcher.js";
 import { OUTBOX_FAST_PATH_SETTLED } from "./infra/outbox/outbox.module.js";
 import { OUTBOX_STRICT_CONFLICTS } from "./infra/outbox/outbox.service.js";
@@ -58,6 +59,7 @@ import { EMBED_TOKEN_CLOCK } from "./ui/embed-token.js";
  *   direct call after a commit skipped by a crash);
  * - `DEVICE_POLICY_AFTER_CALL`: called after a device policy op's call, before its outcome is
  *   recorded (throwing stands for a crash between the call and the resolve transaction);
+ * - `PLUGIN_PUBLIC_WRITE_LIMIT`: a lower limit for unsafe methods on `public` extension routes;
  * - `SCOPE_BACKSTOP_DELAY`: the delay of a confirmation's scope sync backstop (ruling R24);
  * - `APP_INTERCEPTOR`: one more global interceptor (a probe of the matched routes).
  */
@@ -85,6 +87,7 @@ interface KernelSeams {
   [OUTBOX_FAST_PATH_SETTLED]: (pass: Promise<void>) => void;
   [ENSURE_RUN_FAILS]: () => boolean;
   [SCOPE_BACKSTOP_DELAY]: number;
+  [PLUGIN_PUBLIC_WRITE_LIMIT]: number;
   [DEVICE_POLICY_AFTER_CALL]: (opId: string) => void;
   [APP_INTERCEPTOR]: NestInterceptor;
 }
@@ -123,6 +126,7 @@ const SEAM_TOKENS = [
   OUTBOX_FAST_PATH_SETTLED,
   ENSURE_RUN_FAILS,
   SCOPE_BACKSTOP_DELAY,
+  PLUGIN_PUBLIC_WRITE_LIMIT,
   DEVICE_POLICY_AFTER_CALL,
   APP_INTERCEPTOR,
 ] as const satisfies readonly (keyof KernelSeams)[];

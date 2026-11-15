@@ -246,7 +246,7 @@ describe("M4 第三段验收（双副本）", () => {
     const before = await snapshot();
     expect(before.version).toBe("0.1.0");
     expect(permissionKeys(before.permissions as PermissionSet)).toEqual([
-      "permissions.http:GET /ui/board",
+      "permissions.http.public:GET /ui/board",
     ]);
 
     // 滚动升级中重启的副本：同一个库与 Redis，生产配置（autoApprove 关闭）
@@ -281,7 +281,7 @@ describe("M4 第三段验收（双副本）", () => {
       expect(afterView.version).toBe("0.2.0");
       expect(afterView.source).toBe(before.source);
       expect(permissionKeys(afterView.permissions as PermissionSet)).toEqual([
-        "permissions.http:GET /ui/board",
+        "permissions.http.public:GET /ui/board",
         "ui.view:tasks",
       ]);
       // 另外两个副本（仍是 0.1.0）不受影响，照常服务
@@ -350,7 +350,12 @@ describe("M4 第三段验收（双副本）", () => {
       bearer: page.token,
     });
     expect(claims.status).toBe(200);
-    expect(claims.json).toMatchObject({ orgId, plugin: "fake-embed", contribution: "panel" });
+    expect(claims.json).toMatchObject({
+      access: "embed",
+      scope: "org",
+      orgId,
+      contribution: "panel",
+    });
     const wrong = await at(1, "GET", "/plugins/fake-embed/ui/claims", undefined, {
       bearer: probe.token,
     });

@@ -737,7 +737,11 @@ describe("permissionSetOfPackage", () => {
       provides: [],
       optional: ["channel@1"],
       migrations: "migrations",
-      permissions: { tools: ["write"], secrets: true, http: [{ method: "POST", path: "/x" }] },
+      permissions: {
+        tools: ["write"],
+        secrets: true,
+        http: [{ method: "POST", path: "/x", access: "public" }],
+      },
       config: {
         deployment: z.object({ url: z.string(), nested: z.object({ k: secret(z.string()) }) }),
         org: z.object({ apiKey: secret(z.string()) }),

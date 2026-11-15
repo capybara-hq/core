@@ -40,6 +40,7 @@ export interface PermissionGroup {
     | "storage"
     | "http"
     | "publicRoutes"
+    | "embedRoutes"
     | "tools"
     | "hooks"
     | "models"
@@ -59,8 +60,8 @@ export interface PermissionGroup {
 }
 
 /**
- * Sensitive reason codes (the UI translates them by code): secrets, public routes, tools, hooks,
- * embedded apps, client code and client components (client extensions spec §5.4: code that runs with
+ * Sensitive reason codes (the UI translates them by code): secrets, public routes, embed routes,
+ * tools, hooks, embedded apps, client code and client components (client extensions spec §5.4: code that runs with
  * full trust in members' browsers), and sensitive extension points
  * ({@link SENSITIVE_EXTENSION_POINTS}; the code is the extension point name without `@<major>`, with
  * `-` replaced by `_`).
@@ -68,6 +69,7 @@ export interface PermissionGroup {
 export type SensitiveReason =
   | "secrets"
   | "public_routes"
+  | "embed_routes"
   | "tools"
   | "hooks"
   | "ui_embed"
@@ -117,6 +119,7 @@ const CLIENT_ITEM = "client code";
 const ALWAYS_SENSITIVE: ReadonlySet<Category> = new Set<Category>([
   "secrets",
   "publicRoutes",
+  "embedRoutes",
   "tools",
   "hooks",
   "components",
@@ -126,6 +129,7 @@ const ALWAYS_SENSITIVE: ReadonlySet<Category> = new Set<Category>([
 const CATEGORY_REASON: Partial<Record<Category, SensitiveReason>> = {
   secrets: "secrets",
   publicRoutes: "public_routes",
+  embedRoutes: "embed_routes",
   tools: "tools",
   hooks: "hooks",
   components: "ui_component",
@@ -152,6 +156,12 @@ function itemReason(category: Category, item: string): SensitiveReason | undefin
   return ALWAYS_SENSITIVE.has(category) ? CATEGORY_REASON[category] : undefined;
 }
 
+/** Routes of the `http` group: member and admin (the kernel authenticates a person). */
+const signedIn = (access: string): boolean => access === "member" || access === "admin";
+
+const routeItem = (r: { method: string; path: string; access: string }): string =>
+  `${r.method} ${r.path} (${r.access})`;
+
 const itemOf = (category: Category, value: string): PermissionItem => {
   const reason = itemReason(category, value);
   return reason === undefined ? { value, sensitive: false } : { value, sensitive: true, reason };
@@ -167,6 +177,7 @@ function keyItem(key: string): { category: Category; item: string } | null {
   const table: [string, Category, string][] = [
     ["provides:", "provides", ""],
     ["permissions.http.public:", "publicRoutes", ""],
+    ["permissions.http.embed:", "embedRoutes", ""],
     ["permissions.tools:", "tools", ""],
     ["permissions.hooks:", "hooks", ""],
     ["permissions.hooks.policy:", "hooks", "policy:"],
@@ -231,14 +242,13 @@ export function permissionGroups(set: PermissionSet): PermissionGroup[] {
     { category: "tables", items: set.tables },
     { category: "secrets", items: secretItems },
     { category: "storage", items: p.storage ? ["storage"] : [] },
-    {
-      category: "http",
-      items: p.http.filter((r) => !r.public).map((r) => `${r.method} ${r.path}`),
-    },
+    // routes show their access; public (no sign-in) and embed (embed token) are sensitive groups
+    { category: "http", items: p.http.filter((r) => signedIn(r.access)).map(routeItem) },
     {
       category: "publicRoutes",
-      items: p.http.filter((r) => r.public).map((r) => `${r.method} ${r.path}`),
+      items: p.http.filter((r) => r.access === "public").map(routeItem),
     },
+    { category: "embedRoutes", items: p.http.filter((r) => r.access === "embed").map(routeItem) },
     { category: "tools", items: p.tools },
     { category: "hooks", items: [...p.hooks, ...(p.policyHooks ?? []).map((h) => `policy:${h}`)] },
     {

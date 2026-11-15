@@ -1,4 +1,5 @@
 import { POLICY_HOOKS, type PolicyHook } from "./hooks.js";
+import { HTTP_ACCESS, type HttpPermission } from "./http-access.js";
 import { SETUP_CHECK_ID_RE, SETUP_CHECK_LIMITS } from "./setup-check.js";
 import { UI_ICONS, type UiContribution, type UiPlace } from "./ui.js";
 import { PLACE_SLOTS, parseSlotRef, uiSlot } from "./ui-slots.js";
@@ -7,8 +8,8 @@ import { PLACE_SLOTS, parseSlotRef, uiSlot } from "./ui-slots.js";
 export interface ExtensionPermissions {
   /** ctx.secrets */
   secrets?: boolean;
-  /** ctx.http.route 注册的路由（`public` 表示免登录）。 */
-  http?: { method: "GET" | "POST" | "PUT" | "DELETE"; path: string; public?: boolean }[];
+  /** Routes registered with ctx.http.route; each declares who may call it (`access`). */
+  http?: HttpPermission[];
   /** ctx.tools.register 的工具名。 */
   tools?: string[];
   /**
@@ -172,16 +173,35 @@ export function validatePermissions(plugin: string, p: unknown): string[] {
           !METHODS.has(r.method) ||
           typeof r.path !== "string" ||
           !r.path.startsWith("/") ||
-          (r.public !== undefined && typeof r.public !== "boolean")
+          typeof r.access !== "string" ||
+          !(HTTP_ACCESS as readonly string[]).includes(r.access)
         ) {
           errs.push(
-            "permissions.http entries need method GET/POST/PUT/DELETE and a path starting with /",
+            "permissions.http entries need method GET/POST/PUT/DELETE, a path starting with /, and access public/embed/member/admin",
           );
           continue;
         }
         const key = `${r.method} ${r.path}`;
         if (seen.has(key)) errs.push(`permissions.http has duplicate route "${key}"`);
         seen.add(key);
+        if (r.path === "/orgs" || r.path.startsWith("/orgs/")) {
+          errs.push(
+            `permissions.http route "${key}" must not start with /orgs/ (reserved for org routes)`,
+          );
+        }
+        if (r.access === "embed" && !r.path.startsWith(UI_EMBED_PREFIX)) {
+          errs.push(`permissions.http embed route "${key}" must be under ${UI_EMBED_PREFIX}`);
+        }
+        if (
+          (r.access === "member" || r.access === "admin") &&
+          // anywhere, not only after a slash: find-my-way lets a later duplicate param win, so
+          // `/x-:orgId` would override the mount's `:orgId`
+          /:orgId(?![A-Za-z0-9_])/.test(r.path)
+        ) {
+          errs.push(
+            `permissions.http route "${key}" must not contain :orgId (the org comes from the mount)`,
+          );
+        }
       }
     }
   }
@@ -281,7 +301,10 @@ export function validateUiContributions(ui: unknown, permissions: unknown): stri
   }
   const gets = new Set(
     (Array.isArray(perms.http) ? perms.http : [])
-      .filter((r): r is Record<string, unknown> => isObj(r) && r.method === "GET")
+      .filter(
+        (r): r is Record<string, unknown> =>
+          isObj(r) && r.method === "GET" && r.access === "public",
+      )
       .map((r) => r.path),
   );
   const errs: string[] = [];
@@ -366,7 +389,9 @@ export function validateUiContributions(ui: unknown, permissions: unknown): stri
     if (typeof c.path !== "string" || !c.path.startsWith(UI_EMBED_PREFIX)) {
       errs.push(`ui "${id}" (embed) path must start with "${UI_EMBED_PREFIX}"`);
     } else if (!gets.has(c.path)) {
-      errs.push(`ui "${id}" (embed) path must be declared in permissions.http as "GET ${c.path}"`);
+      errs.push(
+        `ui "${id}" embed path "${c.path}" must be declared in permissions.http as GET with access public`,
+      );
     }
   });
   const aliasIds = new Set(aliases.map((a) => a.id));

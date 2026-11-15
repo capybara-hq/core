@@ -11,7 +11,8 @@ export function embedConsumer(): { ctx: ExtensionContext | undefined } {
  * Declares one embedding purpose (`embed-consumer.memory`, `permissions.models`): purpose targets
  * must be of the purpose's kind (model platform spec B §5.3), and `ctx.models.embed` / `describe`
  * accept only it (§5.4). The tool `remember` (allowed by default) embeds its texts and describes the
- * purpose's model; the route `POST /embed` (`{ orgId, input }`) embeds and lets errors escape.
+ * purpose's model; the `member` route `POST /embed` (`{ input }`, mounted at `/plugins/embed-consumer/orgs/:orgId/embed`) embeds in
+ * the caller's org and lets errors escape.
  */
 export default defineExtension({
   name: "embed-consumer",
@@ -20,7 +21,7 @@ export default defineExtension({
   provides: [],
   permissions: {
     tools: ["remember"],
-    http: [{ method: "POST", path: "/embed" }],
+    http: [{ method: "POST", path: "/embed", access: "member" }],
     models: [
       {
         purpose: "embed-consumer.memory",
@@ -55,9 +56,15 @@ export default defineExtension({
         return { content: [{ type: "text", text }] };
       },
     );
-    ctx.http.route("POST", "/embed", async (req) => {
-      const { orgId, input } = (await req.json()) as { orgId: string; input: string[] };
-      const out = await ctx.models.embed({ orgId, purpose: "embed-consumer.memory", input });
+    ctx.http.route("POST", "/embed", async (req, caller) => {
+      // the org comes only from the kernel-resolved caller, never from the body
+      if (caller.access !== "member") return new Response(null, { status: 403 });
+      const { input } = (await req.json()) as { input: string[] };
+      const out = await ctx.models.embed({
+        orgId: caller.orgId,
+        purpose: "embed-consumer.memory",
+        input,
+      });
       return Response.json({ count: out.vectors.length });
     });
   },

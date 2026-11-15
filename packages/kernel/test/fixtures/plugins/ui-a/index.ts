@@ -6,7 +6,7 @@ export default defineExtension({
   version: "0.1.0",
   sdk: "^0.1.0-rc.0",
   provides: [],
-  permissions: { http: [{ method: "GET", path: "/ui/board" }] },
+  permissions: { http: [{ method: "GET", path: "/ui/board", access: "public" }] },
   setup(ctx) {
     ctx.http.route("GET", "/ui/board", async () => new Response("board"));
   },

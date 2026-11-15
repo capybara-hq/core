@@ -13,6 +13,9 @@ import { testHttpApp } from "../helpers/http-app.js";
 
 const apps: KernelHttpApp[] = [];
 
+/** The record fields every test route shares: a public route of plugin `p`. */
+const publicRoute = { plugin: "p", access: "public", verifyEmbed: async () => null } as const;
+
 async function app(pg: () => Promise<void> = async () => {}) {
   const lines: string[] = [];
   const log = createLogger("debug", { write: (l) => lines.push(l) });
@@ -20,6 +23,7 @@ async function app(pg: () => Promise<void> = async () => {}) {
   apps.push(a);
   a.mountPlugins([
     {
+      ...publicRoute,
       method: "GET",
       path: "/plugins/p/hello",
       handler: async () => {
@@ -28,6 +32,7 @@ async function app(pg: () => Promise<void> = async () => {}) {
       },
     },
     {
+      ...publicRoute,
       method: "GET",
       path: "/plugins/p/stream",
       handler: async () =>
@@ -175,7 +180,12 @@ describe("http.replicaId → x-capybara-replica 响应头", () => {
   it("设置时每个响应（健康检查、404、插件路由）都带该头", async () => {
     const a = await replicaApp("r-1");
     a.mountPlugins([
-      { method: "GET", path: "/plugins/p/x", handler: async () => Response.json({ ok: true }) },
+      {
+        ...publicRoute,
+        method: "GET",
+        path: "/plugins/p/x",
+        handler: async () => Response.json({ ok: true }),
+      },
     ]);
     for (const url of ["/healthz", "/nope", "/plugins/p/x"]) {
       const r = await a.inject({ method: "GET", url });

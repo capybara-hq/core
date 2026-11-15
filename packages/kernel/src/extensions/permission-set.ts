@@ -1,6 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
 import { resolve as resolvePath } from "node:path";
-import type { ExtensionManifest, ExtensionPermissions } from "@capybara-hq/plugin-sdk";
+import type { ExtensionManifest, ExtensionPermissions, HttpAccess } from "@capybara-hq/plugin-sdk";
 import type { core } from "zod";
 import { configFields } from "../config/fields.js";
 import { pluginSchemaName } from "../ctx/create-ctx.js";
@@ -27,7 +27,7 @@ export interface PermissionSet {
   permissions: {
     secrets: boolean;
     storage: boolean;
-    http: { method: string; path: string; public: boolean }[];
+    http: { method: string; path: string; access: HttpAccess }[];
     tools: string[];
     hooks: string[];
     /**
@@ -180,7 +180,7 @@ export function buildPermissionSet(input: {
       secrets: p.secrets === true,
       storage: p.storage === true,
       http: (p.http ?? [])
-        .map((r) => ({ method: r.method, path: r.path, public: r.public === true }))
+        .map((r) => ({ method: r.method, path: r.path, access: r.access }))
         .sort((a, b) => cmp(`${a.method} ${a.path}`, `${b.method} ${b.path}`)),
       tools: sortedUnique(p.tools),
       hooks: sortedUnique(p.hooks),
@@ -208,10 +208,11 @@ export function buildPermissionSet(input: {
 }
 
 /**
- * 权限集合的稳定字符串键（排序），如 `provides:channel@1`、`config.org.secret:apiKey`、`table:todos`、
- * `permissions.tools:write`、`permissions.http.public:POST /events`、`ui.view:tasks`、`ui.embed:board`,
- * `permissions.client`, `ui.component:hud`.
- * 容忍旧快照缺字段（按空处理），快照格式演进时不会抛错。
+ * The stable string keys of a permission set (sorted), such as `provides:channel@1`,
+ * `config.org.secret:apiKey`, `table:todos`, `permissions.tools:write`,
+ * `permissions.http.<access>:<METHOD> <path>` (`permissions.http.public:POST /events`),
+ * `ui.view:tasks`, `ui.embed:board`, `permissions.client`, `ui.component:hud`.
+ * Tolerates old snapshots missing fields (read as empty), so format changes never throw.
  */
 export function permissionKeys(set: PermissionSet): string[] {
   const s = (set ?? {}) as Partial<PermissionSet>;
@@ -229,7 +230,9 @@ export function permissionKeys(set: PermissionSet): string[] {
   if (p.secrets) keys.push("permissions.secrets");
   if (p.storage) keys.push("permissions.storage");
   for (const r of p.http ?? []) {
-    keys.push(`permissions.http${r.public ? ".public" : ""}:${r.method} ${r.path}`);
+    // a snapshot from before route access has no `access`: its key matches no current key, so the
+    // extension waits for re-approval
+    keys.push(`permissions.http${r.access ? `.${r.access}` : ""}:${r.method} ${r.path}`);
   }
   for (const t of p.tools ?? []) keys.push(`permissions.tools:${t}`);
   for (const h of p.hooks ?? []) keys.push(`permissions.hooks:${h}`);

@@ -15,7 +15,7 @@ export default defineExtension({
     { id: "board", title: { zh: "看板", en: "Board" }, place: "page", kind: "embed", path: "/ui/b" },
   ],
   permissions: {
-    http: [{ method: "GET", path: "/ui/b" }],
+    http: [{ method: "GET", path: "/ui/b", access: "public" }],
     ui: { views: [TASKS], embeds: ["board"] },
   },
   setup(ctx) {

@@ -43,8 +43,8 @@ describe("validatePermissions", () => {
       validatePermissions("slack", {
         secrets: true,
         http: [
-          { method: "POST", path: "/events", public: true },
-          { method: "GET", path: "/events" },
+          { method: "POST", path: "/events", access: "public" },
+          { method: "GET", path: "/events", access: "member" },
         ],
         tools: ["a"],
         hooks: ["session.start", "tool.preExecute"],
@@ -81,13 +81,17 @@ describe("validatePermissions", () => {
     expect(validatePermissions("slack", { models: [m, m] }).join()).toMatch(/duplicate/);
   });
   it("rejects bad and duplicate routes", () => {
-    expect(validatePermissions("p", { http: [{ method: "GET", path: "x" }] })).not.toEqual([]);
-    expect(validatePermissions("p", { http: [{ method: "PATCH", path: "/x" }] })).not.toEqual([]);
+    expect(
+      validatePermissions("p", { http: [{ method: "GET", path: "x", access: "public" }] }),
+    ).not.toEqual([]);
+    expect(
+      validatePermissions("p", { http: [{ method: "PATCH", path: "/x", access: "public" }] }),
+    ).not.toEqual([]);
     expect(
       validatePermissions("p", {
         http: [
-          { method: "GET", path: "/x" },
-          { method: "GET", path: "/x" },
+          { method: "GET", path: "/x", access: "public" },
+          { method: "GET", path: "/x", access: "member" },
         ],
       }).join(),
     ).toMatch(/duplicate/);
@@ -118,10 +122,68 @@ describe("validatePermissions", () => {
     expect(validatePermissions("p", { hooks: ["x"] }).join()).toMatch(/hook "x"/);
     expect(validatePermissions("p", { hooks: ["session.Start"] })).not.toEqual([]);
   });
-  it("rejects non-boolean http.public", () => {
-    expect(
-      validatePermissions("p", { http: [{ method: "POST", path: "/x", public: "yes" }] }),
-    ).not.toEqual([]);
+  describe("permissions.http access", () => {
+    const BAD =
+      "permissions.http entries need method GET/POST/PUT/DELETE, a path starting with /, and access public/embed/member/admin";
+    const errs = (h: unknown) => validatePermissions("p", { http: [h] });
+    it("requires a valid access", () => {
+      expect(errs({ method: "GET", path: "/x" })).toContain(BAD);
+      expect(errs({ method: "GET", path: "/x", access: "org-admin" })).toContain(BAD);
+      expect(errs({ method: "POST", path: "/x", public: true })).toContain(BAD);
+    });
+    it("puts embed routes under /ui/", () => {
+      expect(errs({ method: "GET", path: "/data", access: "embed" })).toContain(
+        'permissions.http embed route "GET /data" must be under /ui/',
+      );
+      expect(errs({ method: "GET", path: "/ui/data", access: "embed" })).toEqual([]);
+    });
+    it("keeps :orgId out of member and admin paths", () => {
+      expect(errs({ method: "GET", path: "/orgs/:orgId/x", access: "member" })).toContain(
+        'permissions.http route "GET /orgs/:orgId/x" must not contain :orgId (the org comes from the mount)',
+      );
+      expect(errs({ method: "GET", path: "/a/:orgId", access: "admin" })).toHaveLength(1);
+      // anywhere in the path: find-my-way lets a later duplicate `:orgId` (`/x-:orgId`) win
+      for (const path of [
+        "/x/:orgId.json",
+        "/:orgId-:y",
+        "/x/:orgId(\\d+)",
+        "/x-:orgId",
+        "/a.:orgId",
+      ]) {
+        expect(errs({ method: "GET", path, access: "member" })).toHaveLength(1);
+      }
+      expect(errs({ method: "GET", path: "/x/:orgIdent", access: "member" })).toEqual([]);
+    });
+    it("reserves /orgs/", () => {
+      const m =
+        'permissions.http route "POST /orgs/hook" must not start with /orgs/ (reserved for org routes)';
+      expect(errs({ method: "POST", path: "/orgs/hook", access: "public" })).toContain(m);
+      expect(
+        validatePermissions("p", { http: [{ method: "POST", path: "/orgs", access: "public" }] }),
+      ).toHaveLength(1);
+    });
+    it("keys duplicates by method and path regardless of access", () => {
+      expect(
+        validatePermissions("p", {
+          http: [
+            { method: "GET", path: "/x", access: "public" },
+            { method: "GET", path: "/x", access: "admin" },
+          ],
+        }).join(),
+      ).toMatch(/duplicate route "GET \/x"/);
+    });
+    it("accepts all four levels", () => {
+      expect(
+        validatePermissions("p", {
+          http: [
+            { method: "GET", path: "/a", access: "public" },
+            { method: "GET", path: "/ui/b", access: "embed" },
+            { method: "GET", path: "/c", access: "member" },
+            { method: "POST", path: "/c", access: "admin" },
+          ],
+        }),
+      ).toEqual([]);
+    });
   });
   it("rejects a model purpose with an empty suffix", () => {
     expect(

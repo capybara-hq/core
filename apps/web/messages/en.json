@@ -2764,6 +2764,7 @@
       "storage": "Object storage",
       "http": "HTTP routes",
       "publicRoutes": "Public routes (no sign-in)",
+      "embedRoutes": "Embed routes (embed token)",
       "tools": "Agent tools",
       "hooks": "Hooks",
       "models": "Models",
@@ -2792,6 +2793,7 @@
       "reason": {
         "secrets": "can read and write secrets",
         "public_routes": "these routes are reachable without signing in",
+        "embed_routes": "reachable by embedded pages holding an embed token (membership checked by the kernel)",
         "tools": "agents in organizations can call these tools",
         "hooks": "can hook into kernel flows",
         "ui_embed": "embeds the extension's own pages in the web app",
@@ -2873,6 +2875,7 @@
     "categoryShort": {
       "ui": "UI",
       "publicRoutes": "Public routes",
+      "embedRoutes": "Embed routes",
       "provides": "Extension points"
     },
     "missingRequired": "Missing required: {fields}",

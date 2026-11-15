@@ -47,6 +47,7 @@
   "files/previewers.grant.test.ts",
   "git/gateway-pkt-line.test.ts",
   "http/error-filter.test.ts",
+  "http/plugin-route-access-config.test.ts",
   "identity/audit-aliases.test.ts",
   "identity/insecure-public-url.test.ts",
   "identity/login.test.ts",

@@ -6,7 +6,10 @@ export default defineExtension({
   version: "0.1.0",
   sdk: "^0.1.0-rc.0",
   provides: [],
-  permissions: { hooks: ["usage.report"], http: [{ method: "GET", path: "/seen" }] },
+  permissions: {
+    hooks: ["usage.report"],
+    http: [{ method: "GET", path: "/seen", access: "public" }],
+  },
   setup(ctx: ExtensionContext) {
     ctx.hooks.on(
       "usage.report",

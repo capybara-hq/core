@@ -133,7 +133,7 @@ export default defineExtension({
   requires: [],
   optional: [],
   permissions: {                       // only write permissions that cannot be derived (see 2.5)
-    http: [{ path: "/events", public: true }],
+    http: [{ method: "POST", path: "/events", access: "public" }],
     network: ["open.feishu.cn"],
   },
   config: {

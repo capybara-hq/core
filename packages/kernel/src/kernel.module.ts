@@ -11,6 +11,7 @@ import { TitlesModule } from "./conversations/titles.js";
 import { ExtensionsModule } from "./extensions/extensions.module.js";
 import { ApiModule } from "./http/api.module.js";
 import { ErrorFilterModule } from "./http/error-filter.module.js";
+import { PluginRouteAccessModule } from "./http/plugin-route-access.js";
 import { IdentityModule } from "./identity/identity.module.js";
 import { CacheModule } from "./infra/cache/cache.module.js";
 import { ConfigModule } from "./infra/config/config.module.js";
@@ -117,6 +118,8 @@ export class KernelModule {
         TitlesModule,
         UsageReportModule,
         ChannelsModule,
+        // the access check of extension routes (the plugin dispatch, api and gateway roles)
+        PluginRouteAccessModule,
         // client extensions: the client builds stored with extension packages
         ClientModule,
         // the @local sandbox provider, registered on every role (any replica may relay to a machine)
