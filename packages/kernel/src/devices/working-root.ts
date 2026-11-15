@@ -1,3 +1,4 @@
+import { posix } from "node:path";
 import { validateSandboxPathShape } from "@capybara-hq/plugin-sdk";
 import type { SandboxMode } from "../sandbox/modes.js";
 
@@ -15,17 +16,15 @@ export interface WorkingProject {
 }
 
 /**
- * A root that would make the command review's "inside the workspace" cover the owner's whole home
- * (or every home): `/`, `/home`, `/Users`, a home directory itself (`/home/<u>`, `/Users/<u>`,
- * `/root`). The review's checks of shell rc files, SSH keys and other secrets are skipped for any
- * path inside its workspace, so such a project is never the working root: the conversation works in
- * the device's workspace and writes into the project ask, as before (fail closed).
+ * A root above every home directory: `/` (also `/root`'s parent), `/home`, `/Users`. Too broad to
+ * be the review's workspace (every user's files would be ordinary writes), so it is never the
+ * working root. The owner's home itself may be: the review judges its home-level sensitive paths
+ * (shell rc files, SSH, credentials) inside the workspace too.
  */
-function coversHome(root: string): boolean {
+function aboveHomes(root: string): boolean {
   const parts = root.split("/").filter((p) => p.length > 0);
   if (parts.length === 0) return true;
-  if (parts[0] === "home" || parts[0] === "Users") return parts.length <= 2;
-  return parts[0] === "root" && parts.length === 1;
+  return parts.length === 1 && (parts[0] === "home" || parts[0] === "Users");
 }
 
 const isInside = (path: string, dir: string): boolean =>
@@ -37,7 +36,7 @@ const isInside = (path: string, dir: string): boolean =>
  * command review's `workspace` fact. It is the project's root when the latest snapshot is usable,
  * else the device's `workspace` (free mode). It never widens anything: a root that is not a clean
  * absolute path, one the run cannot use, one outside the workspace in sandbox mode (where the
- * device reads nothing else), and one covering a home directory ({@link coversHome}) all fall back
+ * device reads nothing else), and one above every home ({@link aboveHomes}) all fall back
  * to the device's workspace.
  */
 export function workingRootOf(
@@ -51,6 +50,15 @@ export function workingRootOf(
       : project.root;
   if (validateSandboxPathShape(root).length > 0) return device.workspace;
   if (device.mode !== "auto" && !isInside(root, device.workspace)) return device.workspace;
-  if (coversHome(root)) return device.workspace;
+  if (aboveHomes(root)) return device.workspace;
   return root;
+}
+
+/**
+ * A file-tool path as the command review judged it, for the person approving it: a relative path
+ * joined to the working root and normalized; an absolute or `~` path as given.
+ */
+export function pathAgainstWorkingRoot(path: string, workingRoot: string): string {
+  if (path.startsWith("/") || path.startsWith("~") || path === "") return path;
+  return posix.normalize(posix.join(workingRoot, path));
 }

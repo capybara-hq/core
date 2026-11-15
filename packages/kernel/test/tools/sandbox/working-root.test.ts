@@ -1,7 +1,11 @@
 import type { SandboxRoots } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import { KernelConfigSchema } from "../../../src/config/schema.js";
-import { type WorkingProject, workingRootOf } from "../../../src/devices/working-root.js";
+import {
+  pathAgainstWorkingRoot,
+  type WorkingProject,
+  workingRootOf,
+} from "../../../src/devices/working-root.js";
 import type { SandboxMode } from "../../../src/sandbox/modes.js";
 import { reviewRules, reviewWrite } from "../../../src/sandbox/review/index.js";
 import { sandboxStartedNotice } from "../../../src/tools/builtins/sandbox/common.js";
@@ -39,18 +43,32 @@ describe("workingRootOf", () => {
     expect(workingRootOf({ root: PROJECT, unavailable: true }, auto)).toBe(ROOTS.workspace);
   });
 
-  it("never widens: outside the workspace in sandbox mode, malformed, or covering a home", () => {
+  it("never widens: outside the workspace in sandbox mode, malformed, or above every home", () => {
     expect(workingRootOf(usable(PROJECT), sandbox)).toBe(ROOTS.workspace);
     // a sibling whose name only starts with the workspace's
     expect(workingRootOf(usable(`${ROOTS.workspace}-x`), sandbox)).toBe(ROOTS.workspace);
     for (const bad of ["relative/app", "/a/../b", "/a//b", "/a/\u0001"]) {
       expect(workingRootOf(usable(bad), auto), bad).toBe(ROOTS.workspace);
     }
-    for (const broad of ["/", "/Users", "/Users/u", "/home", "/home/u/", "/root"]) {
+    // `/` and the ancestors of a home directory are too broad
+    for (const broad of ["/", "/Users", "/Users/", "/home"]) {
       expect(workingRootOf(usable(broad), auto), broad).toBe(ROOTS.workspace);
     }
+    // the owner's home itself is a project the owner chose: the review keeps its home-level rules
+    expect(workingRootOf(usable("/Users/u"), auto)).toBe("/Users/u");
+    expect(workingRootOf(usable("/home/u/"), auto)).toBe("/home/u");
+    expect(workingRootOf(usable("/root"), auto)).toBe("/root");
     expect(workingRootOf(usable("/home/u/app"), auto)).toBe("/home/u/app");
     expect(workingRootOf(usable("/root/app"), auto)).toBe("/root/app");
+  });
+});
+
+describe("pathAgainstWorkingRoot", () => {
+  it("joins a relative path to the working root as the review judged it; keeps / and ~ paths", () => {
+    expect(pathAgainstWorkingRoot("src/./a.ts", PROJECT)).toBe(`${PROJECT}/src/a.ts`);
+    expect(pathAgainstWorkingRoot("../x", PROJECT)).toBe("/Users/u/code/x");
+    expect(pathAgainstWorkingRoot("/etc/hosts", PROJECT)).toBe("/etc/hosts");
+    expect(pathAgainstWorkingRoot("~/.bashrc", PROJECT)).toBe("~/.bashrc");
   });
 });
 
@@ -61,6 +79,21 @@ describe("the review with the working root as its workspace fact", () => {
     expect(reviewWrite(`${PROJECT}/src/main.ts`, facts).outcome).toBe("allow");
     expect(reviewWrite("src/main.ts", facts).outcome).toBe("allow");
     expect(reviewRules("touch src/new.ts", facts).outcome).toBe("allow");
+  });
+
+  it("inside a home-directory project, rc files and SSH still ask; an ordinary file is allowed", () => {
+    const workspace = workingRootOf(usable("/Users/u"), {
+      mode: "auto",
+      workspace: ROOTS.workspace,
+    });
+    const home = { workspace, mode: "auto" as const, attended: true };
+    expect(reviewWrite("/Users/u/.bashrc", home).hits.map((h) => h.id)).toEqual([
+      "ask.shell-config",
+    ]);
+    expect(reviewWrite("~/.ssh/config", home).hits.map((h) => h.id)).toEqual(["ask.ssh"]);
+    expect(reviewRules("echo x >> ~/.bashrc", home).outcome).toBe("ask");
+    expect(reviewWrite("/Users/u/code/app/main.ts", home).outcome).toBe("allow");
+    expect(reviewWrite("notes.md", home).outcome).toBe("allow");
   });
 
   it("a write outside the project root still asks, the device workspace included", () => {

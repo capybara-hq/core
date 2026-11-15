@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { EventLog } from "../../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../../src/conversations/events.js";
@@ -358,12 +359,53 @@ describe("a bound conversation works in its project's root", () => {
     const r = await call(free, "Bash", touch, 1);
     expect(r.payload.review).toMatchObject({ decision: "allow", rule: "allow.workspace-write" });
   });
+  it("the command ask card shows a relative write's path resolved against the project root", async () => {
+    const dir = `p-${randomUUID().slice(0, 8)}`;
+    const conv = await boundConversation(`/workspace/${dir}`);
+    await put(await deviceOf(conv), { [`${dir}/notes.txt`]: "x\n" });
+    const hook = { file_path: ".git/hooks/pre-commit", content: "#!/bin/sh\n" };
+    await postMessage(owner, orgId, conv, `tool:Write:${JSON.stringify(hook)}`);
+    const ask = await waitFor(
+      async () =>
+        db
+          .selectFrom("approvals")
+          .select(["id", "detail"])
+          .where("conversation_id", "=", conv)
+          .where("kind", "=", "command")
+          .where("status", "=", "pending")
+          .executeTakeFirst(),
+      30_000,
+      "the command ask",
+    );
+    expect(ask.detail as Record<string, unknown>).toMatchObject({
+      kind: "write",
+      path: `/workspace/${dir}/.git/hooks/pre-commit`,
+      rule: "ask.persistence",
+    });
+    const declined = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/approvals/${ask.id}/decision`,
+      payload: { decision: "deny" },
+    });
+    expect(declined.statusCode, declined.body).toBe(200);
+    await waitForTerminal(db, conv, 1, 30_000);
+  });
 });
 
 describe("the review's facts name the working root", () => {
   beforeAll(followPlatformMode);
 
   const facts = (convId: string) => k.app.get(ConversationDevices).reviewFacts(orgId, convId);
+
+  it("a partial index answers the latest project_root lookup", async () => {
+    const r = await sql<{ indexdef: string }>`SELECT indexdef FROM pg_indexes
+      WHERE schemaname = 'capybara' AND indexname = 'conversation_events_project_root_idx'`.execute(
+      db,
+    );
+    expect(r.rows[0]?.indexdef).toMatch(
+      /ON capybara\.conversation_events USING btree \(conversation_id, seq\) WHERE \(type = 'project_root'::text\)/,
+    );
+  });
 
   it("the root conversation's latest usable project root, else the device's workspace", async () => {
     // free: the device's workspace
@@ -396,9 +438,13 @@ describe("the review's facts name the working root", () => {
     });
     expect((await facts(conv))?.workingRoot).toBe("/workspace");
 
-    // a project covering a home directory never widens the review
+    // the owner's home is a working root (the review keeps its home-level rules there); a root
+    // above every home is too broad
     const home = await boundConversation("/home/owner");
     await appendProjectRoot(home, { project: "app", root: "/home/owner", skills: [] });
-    expect((await facts(home))?.workingRoot).toBe("/workspace");
+    expect((await facts(home))?.workingRoot).toBe("/home/owner");
+    const broad = await boundConversation("/home");
+    await appendProjectRoot(broad, { project: "app", root: "/home", skills: [] });
+    expect((await facts(broad))?.workingRoot).toBe("/workspace");
   });
 });

@@ -25,6 +25,7 @@ import {
 } from "../conversations/events.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ConversationDevices } from "../devices/conversation-devices.js";
+import { pathAgainstWorkingRoot } from "../devices/working-root.js";
 import { ApiError } from "../errors.js";
 import { EffectiveConfigs, NEEDS_CONFIG_REASON } from "../extensions/effective-config.js";
 import { clipText } from "../extensions/hooks.js";
@@ -1624,7 +1625,15 @@ export class ToolPipeline {
       kind,
       // the whole command the approval covers (the event keeps a clamped copy for display)
       command,
-      ...(kind === "write" && { path: clipText(textField(input, "file_path"), 4096) }),
+      // a relative path as it will be written: resolved against the working root
+      ...(kind === "write" && {
+        path: clipText(
+          facts.workingRoot === undefined
+            ? textField(input, "file_path")
+            : pathAgainstWorkingRoot(textField(input, "file_path"), facts.workingRoot),
+          4096,
+        ),
+      }),
       rule: verdict.rule,
       reason: clipText(verdict.reason, COMMAND_ASK_TEXT_MAX_CHARS),
     };

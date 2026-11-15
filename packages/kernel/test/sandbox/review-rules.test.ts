@@ -1377,3 +1377,65 @@ describe("reviewWrite", () => {
     expect(result.hits[0]?.id).toBe("allow.tmp-write");
   });
 });
+
+describe("home-level sensitive paths inside the workspace fact (project root spec §4.3)", () => {
+  // a conversation bound to a project at the owner's home: the home is the review's workspace
+  const home: ReviewFacts = { workspace: "/home/dev", mode: "auto", attended: true };
+  const writeOf = (path: string, facts: ReviewFacts = home) => {
+    const r = reviewWrite(path, facts);
+    return { outcome: r.outcome, ids: r.hits.map((h) => h.id) };
+  };
+  const lineOf = (command: string, facts: ReviewFacts = home) => {
+    const r = reviewRules(command, facts);
+    return { outcome: r.outcome, ids: r.hits.map((h) => h.id) };
+  };
+
+  it("a file-tool write to shell rc files, SSH, launch agents or credentials still asks", () => {
+    expect(writeOf("~/.bashrc")).toEqual({ outcome: "ask", ids: ["ask.shell-config"] });
+    expect(writeOf("/home/dev/.zshrc")).toEqual({ outcome: "ask", ids: ["ask.shell-config"] });
+    expect(writeOf("/home/dev/.gitconfig")).toEqual({ outcome: "ask", ids: ["ask.shell-config"] });
+    expect(writeOf("/home/dev/.ssh/config")).toEqual({ outcome: "ask", ids: ["ask.ssh"] });
+    expect(writeOf(".ssh/authorized_keys")).toEqual({ outcome: "ask", ids: ["ask.ssh"] });
+    expect(writeOf("/home/dev/Library/LaunchAgents/x.plist")).toEqual({
+      outcome: "ask",
+      ids: ["ask.persistence"],
+    });
+    expect(writeOf("/home/dev/.config/systemd/user/x.service")).toEqual({
+      outcome: "ask",
+      ids: ["ask.persistence"],
+    });
+    expect(writeOf("/home/dev/.aws/credentials")).toEqual({
+      outcome: "ask",
+      ids: ["ask.secret-file"],
+    });
+    expect(writeOf("/home/dev/.netrc")).toEqual({ outcome: "ask", ids: ["ask.secret-file"] });
+  });
+
+  it("an ordinary file inside the home project is allowed", () => {
+    expect(writeOf("/home/dev/code/app/src/main.ts").outcome).toBe("allow");
+    expect(writeOf("notes.md")).toEqual({ outcome: "allow", ids: ["allow.workspace-write"] });
+    // `.env*` is a secret only outside the workspace (auto mode spec §5.2)
+    expect(writeOf("/home/dev/code/app/.env").outcome).toBe("allow");
+  });
+
+  it("a shell line writing a home-level sensitive path still asks", () => {
+    expect(lineOf("echo 'alias x=y' >> ~/.bashrc").outcome).toBe("ask");
+    expect(lineOf("cp id.pub ~/.ssh/config").outcome).toBe("ask");
+    expect(lineOf("echo secret > ~/.aws/credentials").outcome).toBe("ask");
+    expect(lineOf("touch notes.md")).toEqual({ outcome: "allow", ids: ["allow.workspace-write"] });
+  });
+
+  it("a link to a home-level sensitive path asks even when it lies inside the workspace", () => {
+    expect(lineOf("ln -s ~/.ssh/id_rsa key").ids).toContain("ask.credential-link");
+    expect(lineOf("ln -s ~/.ssh/id_rsa key").outcome).toBe("ask");
+    expect(lineOf("ln -s ~/code/app/README.md readme").outcome).toBe("allow");
+  });
+
+  it("in a free conversation the device workspace behaves as before, and home-level paths ask", () => {
+    const free: ReviewFacts = { workspace: "/home/dev/workspace", mode: "auto", attended: true };
+    expect(writeOf("/home/dev/workspace/src/app.ts", free).outcome).toBe("allow");
+    expect(writeOf("/home/dev/workspace/.env", free).outcome).toBe("allow");
+    expect(writeOf("~/.bashrc", free)).toEqual({ outcome: "ask", ids: ["ask.shell-config"] });
+    expect(writeOf("~/.ssh/config", free)).toEqual({ outcome: "ask", ids: ["ask.ssh"] });
+  });
+});

@@ -1295,14 +1295,31 @@ function isSecretPattern(path: string, facts: ResolvedFacts): boolean {
 }
 
 function isSecretPath(path: string, facts: ResolvedFacts): boolean {
+  if (isHomeSecretPath(path, facts)) return true;
+  const base = baseName(path).toLowerCase();
+  return base.startsWith(".env") && !inside(path, facts.workspace);
+}
+
+/** {@link isSecretPath} without `.env*`: the secrets judged wherever they lie. */
+function isHomeSecretPath(path: string, facts: ResolvedFacts): boolean {
   if (PROC_ENVIRON.test(path)) return true;
   // A glob or brace is what the shell expands before the command runs: the path is a secret when
   // it can expand to one, so `cat ~/.netr?` is the same read as `cat ~/.netrc`.
   if (hasPattern(path) && isSecretPattern(path, facts)) return true;
   const t = foldCase(tildeFormFolded(path, facts));
-  if (SECRET_HOME_PATHS.some((secret) => t === secret || t.startsWith(`${secret}/`))) return true;
-  const base = baseName(path).toLowerCase();
-  return base.startsWith(".env") && !inside(path, facts.workspace);
+  return SECRET_HOME_PATHS.some((secret) => t === secret || t.startsWith(`${secret}/`));
+}
+
+/**
+ * A home-level sensitive path (auto mode spec §5.2: shell rc files, `~/.ssh`, `~/.gitconfig`,
+ * launch agents, crontab and the secret paths), judged by its absolute path against the owner's
+ * home. These rules apply whether or not the path is inside the workspace fact: the workspace's
+ * exemption covers ordinary files only, so a project at the owner's home (project root spec
+ * §4.3) never makes `~/.bashrc` an ordinary write. (`.env*` stays a secret only outside the
+ * workspace: {@link isSecretPath}.)
+ */
+function isHomeLevelSensitive(path: string, facts: ResolvedFacts): boolean {
+  return isHomeSecretPath(path, facts) || isPersistencePath(path, facts);
 }
 
 function isPersistencePath(path: string, facts: ResolvedFacts): boolean {
@@ -4314,20 +4331,16 @@ function linkSources(inv: Invocation, command: SimpleCommand, ctx: RuleContext):
 }
 
 /**
- * What a link would expose (hardening spec R3): a credential, SSH, persistence or device path, or
- * the home directory or `/` itself (a link to them reaches every secret under them) is
- * `sensitive`; anything else outside the workspace and temporary files is `outside`.
+ * What a link would expose (hardening spec R3): a credential, SSH, persistence or device path is
+ * `sensitive` wherever it lies, inside the workspace too (a project at the owner's home makes the
+ * home the workspace: project root spec §4.3); the home directory or `/` itself (a link to them
+ * reaches every secret under them) is `sensitive` outside the workspace; anything else outside the
+ * workspace and temporary files is `outside`.
  */
 function linkClass(path: string, ctx: RuleContext): "sensitive" | "outside" | null {
+  if (isHomeLevelSensitive(path, ctx.facts) || isDevicePath(path, ctx.facts)) return "sensitive";
   if (inside(path, ctx.facts.workspace) || tmpRootOf(path)) return null;
-  if (
-    isSecretPath(path, ctx.facts) ||
-    isPersistencePath(path, ctx.facts) ||
-    isDevicePath(path, ctx.facts) ||
-    isDangerousDelete(path, ctx)
-  ) {
-    return "sensitive";
-  }
+  if (isDangerousDelete(path, ctx)) return "sensitive";
   return "outside";
 }
 
@@ -5358,9 +5371,10 @@ export function reviewRules(command: string, facts: ReviewFacts): ReviewResult {
 }
 
 /**
- * The same table for a file-tool write: workspace and tmp writes pass; the device's own files are
- * denied; git hooks, shell rc files and secret files ask; anything else outside asks to write
- * outside.
+ * The same table for a file-tool write: the device's own files are denied; git hooks and
+ * home-level sensitive paths (shell rc files, SSH, launch agents, credentials) ask wherever they
+ * lie, inside the workspace too; other workspace and tmp writes pass; a `.env*` file outside the
+ * workspace asks; anything else outside asks to write outside.
  */
 export function reviewWrite(path: string, facts: ReviewFacts): ReviewResult {
   const resolved = resolveFacts(facts);
@@ -5401,6 +5415,11 @@ export function reviewWrite(path: string, facts: ReviewFacts): ReviewResult {
       ],
     };
   }
+  // home-level sensitive paths ask wherever they lie, inside the workspace fact too
+  if (isHomeLevelSensitive(absolute, resolved)) {
+    const id = configClassOf(absolute, resolved);
+    return { outcome: "ask", hits: [{ id, outcome: "ask", reason: CONFIG_REASONS[id] }] };
+  }
   if (inside(absolute, resolved.workspace)) {
     return {
       outcome: "allow",
@@ -5425,7 +5444,7 @@ export function reviewWrite(path: string, facts: ReviewFacts): ReviewResult {
       ],
     };
   }
-  if (isPersistencePath(absolute, resolved) || isSecretPath(absolute, resolved)) {
+  if (isSecretPath(absolute, resolved)) {
     const id = configClassOf(absolute, resolved);
     return { outcome: "ask", hits: [{ id, outcome: "ask", reason: CONFIG_REASONS[id] }] };
   }

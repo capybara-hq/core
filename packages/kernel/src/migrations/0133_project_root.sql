@@ -20,3 +20,11 @@ ALTER TABLE device_machines ADD COLUMN IF NOT EXISTS home text;
 -- existing conversation. NULL: free mode.
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS project_name text;
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS project_path text;
+
+-- Every sandbox tool call and every command review of a bound conversation reads the root
+-- conversation's latest `project_root` event (its working root, design §4.3); the event is not
+-- rewritten while nothing changes, so without this partial index the lookup scans the conversation's
+-- events backwards. Not CONCURRENTLY, like the other index migrations (0025, 0094).
+CREATE INDEX IF NOT EXISTS conversation_events_project_root_idx
+  ON conversation_events (conversation_id, seq)
+  WHERE type = 'project_root';
