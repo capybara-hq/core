@@ -1,3 +1,4 @@
+import { describeNestedBox, findNestedBoxes } from "@capybara-hq/design/reference";
 import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -129,6 +130,7 @@ describe("the overview's projects", () => {
     // read only: no remove, no add
     expect(within(section).queryByRole("button", { name: /Remove/ })).toBeNull();
     expect(within(section).queryByRole("button", { name: P.add })).toBeNull();
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
   });
 
   it("first render from the hydrated cache makes no browser read (projects prefetched)", async () => {
@@ -160,6 +162,7 @@ describe("the settings tab's projects", () => {
     const section = await projectsSection();
     expect(within(section).getByText("api")).toBeTruthy();
     expect(within(section).getByRole("button", { name: "Remove project api" })).toBeTruthy();
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
     await settle();
     expect(gets(calls, `${PROJECTS}/candidates`)).toBe(0);
   });
@@ -232,6 +235,8 @@ describe("the settings tab's projects", () => {
     await user.click(within(await projectsSection()).getByRole("button", { name: P.add }));
     const dialog = await screen.findByRole("dialog", { name: P.addTitle });
     await user.click(await within(dialog).findByRole("button", { name: "Use workspace/repo/pkg" }));
+    // the dialog with its candidate list, over the settings section: never a box in a box
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
     expect(gets(calls, `${PROJECTS}/candidates`)).toBe(1);
     expect(
       (within(dialog).getByRole("textbox", { name: P.pathLabel }) as HTMLInputElement).value,
@@ -298,6 +303,64 @@ describe("the settings tab's projects", () => {
     expect(name.getAttribute("aria-invalid")).toBe("true");
   });
 
+  it("a validation refusal lands under the field its detail names, in the reader's language", async () => {
+    let field = "name";
+    stubApi({
+      ...routes(cloud()),
+      [`GET ${PROJECTS}/candidates`]: () =>
+        json(200, { candidates: [], mode: "sandbox", base: "/workspace", supported: true }),
+      [`POST ${PROJECTS}`]: () =>
+        json(400, {
+          error: {
+            code: "validation_failed",
+            message: "Request validation failed",
+            details: [{ path: field, message: "server text" }],
+          },
+        }),
+    });
+    await renderDetail();
+    const user = await openSettings();
+    await user.click(within(await projectsSection()).getByRole("button", { name: P.add }));
+    const dialog = await screen.findByRole("dialog", { name: P.addTitle });
+    const path = within(dialog).getByRole("textbox", { name: P.pathLabel });
+    const name = within(dialog).getByRole("textbox", { name: new RegExp(`^${P.nameLabel}`) });
+    await user.type(path, "app");
+    await user.type(name, "bad");
+    await user.click(within(dialog).getByRole("button", { name: P.addSubmit }));
+    expect(await within(dialog).findByText(en.errors.device.project_name_invalid)).toBeTruthy();
+    expect(name.getAttribute("aria-invalid")).toBe("true");
+    expect(path.getAttribute("aria-invalid")).not.toBe("true");
+    field = "path";
+    await user.click(within(dialog).getByRole("button", { name: P.addSubmit }));
+    expect(
+      await within(dialog).findByText(P.pathInvalid.replace("{prefix}", "workspace/")),
+    ).toBeTruthy();
+    expect(path.getAttribute("aria-invalid")).toBe("true");
+    expect(within(dialog).queryByText("server text")).toBeNull();
+  });
+
+  it("an absolute path is hinted before submitting, and nothing is sent", async () => {
+    const calls = stubApi({
+      ...routes(cloud()),
+      [`GET ${PROJECTS}/candidates`]: () =>
+        json(200, { candidates: [], mode: "sandbox", base: "/workspace", supported: true }),
+      [`POST ${PROJECTS}`]: () => json(201, { project: project("app", "/workspace/app") }),
+    });
+    await renderDetail();
+    const user = await openSettings();
+    await user.click(within(await projectsSection()).getByRole("button", { name: P.add }));
+    const dialog = await screen.findByRole("dialog", { name: P.addTitle });
+    const path = within(dialog).getByRole("textbox", { name: P.pathLabel });
+    await user.type(path, "/workspace/app");
+    const hint = P.pathAbsolute.replace("{prefix}", "workspace/");
+    expect(await within(dialog).findByText(hint)).toBeTruthy();
+    expect(path.getAttribute("aria-invalid")).toBe("true");
+    await user.click(within(dialog).getByRole("button", { name: P.addSubmit }));
+    await settle();
+    expect(calls.some((c) => c.method === "POST")).toBe(false);
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+  });
+
   it("a local device in auto mode shows the home as ~/", async () => {
     stubApi({
       ...routes(local(), projectList({ mode: "auto", base: "/Users/grant", projects: [] })),
@@ -353,6 +416,7 @@ describe("the settings tab's projects", () => {
       within(await projectsSection()).getByRole("button", { name: "Remove project api" }),
     );
     const dialog = await screen.findByRole("dialog", { name: "Remove project api?" });
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
     expect(calls.some((c) => c.method === "DELETE")).toBe(false);
     await user.click(within(dialog).getByRole("button", { name: P.removeSubmit }));
     await vi.waitFor(() => expect(calls.some((c) => c.method === "DELETE")).toBe(true));

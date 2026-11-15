@@ -377,6 +377,7 @@
         "unreadable": "This project skill cannot be invoked: reading its SKILL.md on the device failed; try again later.",
         "unparsable": "This project skill cannot be invoked: its SKILL.md is not valid; fix it in the project.",
         "unsupported": "This project skill cannot be invoked: this device does not support projects.",
+        "removed": "This project skill cannot be invoked: the project was removed from the device's projects.",
         "default": "This project skill cannot be invoked now."
       },
       "name_exists": "A skill with this name already exists in the organization. Choose another name.",
@@ -1471,7 +1472,8 @@
         "gone": "Project {name} is unavailable: its directory is no longer on the device; this conversation continues in free mode",
         "outside_mode": "Project {name} is unavailable: the device's current mode cannot read it; this conversation continues in free mode",
         "unreadable": "Project {name} is unavailable: reading it failed; this conversation continues in free mode",
-        "unsupported": "Project {name} is unavailable: this device does not support projects; this conversation continues in free mode"
+        "unsupported": "Project {name} is unavailable: this device does not support projects; this conversation continues in free mode",
+        "removed": "Project {name} is unavailable: it was removed from the device's projects; this conversation continues in free mode"
       }
     },
     "deviceDeleted": "Device deleted",
@@ -1831,6 +1833,8 @@
       "pathLabel": "Directory",
       "pathHelpWorkspace": "Relative to the device's workspace. Leave it empty for the workspace itself.",
       "pathHelpHome": "Relative to your home directory. Leave it empty for the home directory itself.",
+      "pathInvalid": "Enter a path relative to {prefix}, without control characters or backslashes.",
+      "pathAbsolute": "Enter a path relative to {prefix}, not an absolute path.",
       "nameLabel": "Name",
       "nameHelp": "Leave it empty to use the directory's name.",
       "candidates": "Suggestions",

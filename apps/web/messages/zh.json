@@ -377,6 +377,7 @@
         "unreadable": "项目技能不能调用：读取设备上的 SKILL.md 失败，请稍后重试。",
         "unparsable": "项目技能不能调用：它的 SKILL.md 格式不正确，请在项目里修正。",
         "unsupported": "项目技能不能调用：这台设备不支持项目。",
+        "removed": "项目技能不能调用：这个项目已从设备的项目中移除。",
         "default": "项目技能现在不能调用。"
       },
       "name_exists": "本组织已有同名技能，请换一个名字。",
@@ -1471,7 +1472,8 @@
         "gone": "项目 {name} 不可用：它的目录已不在设备上，本对话以自由模式继续",
         "outside_mode": "项目 {name} 不可用：设备当前的运行模式读不到它，本对话以自由模式继续",
         "unreadable": "项目 {name} 不可用：读取它失败，本对话以自由模式继续",
-        "unsupported": "项目 {name} 不可用：这台设备不支持项目，本对话以自由模式继续"
+        "unsupported": "项目 {name} 不可用：这台设备不支持项目，本对话以自由模式继续",
+        "removed": "项目 {name} 不可用：它已从设备的项目中移除，本对话以自由模式继续"
       }
     },
     "deviceDeleted": "设备已删除",
@@ -1819,6 +1821,8 @@
       "pathLabel": "目录",
       "pathHelpWorkspace": "相对于设备的工作区。留空表示工作区本身。",
       "pathHelpHome": "相对于你的主目录。留空表示主目录本身。",
+      "pathInvalid": "请输入相对于 {prefix} 的路径，不含控制字符或反斜杠。",
+      "pathAbsolute": "请输入相对于 {prefix} 的路径，不要填绝对路径。",
       "nameLabel": "名称",
       "nameHelp": "留空则使用目录名。",
       "candidates": "建议",

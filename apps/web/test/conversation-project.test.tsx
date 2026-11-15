@@ -1,3 +1,4 @@
+import { describeNestedBox, findNestedBoxes } from "@capybara-hq/design/reference";
 import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -102,6 +103,7 @@ describe("binding a new conversation to a project (the device picker)", () => {
     expect(free.getAttribute("aria-checked")).toBe("true");
     expect(within(menu).getByRole("menuitemradio", { name: "core" })).toBeTruthy();
     expect(within(menu).getByRole("menuitemradio", { name: "plugins" })).toBeTruthy();
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
   });
 
   it("a picked project is sent with the device and named on the picker", async () => {
@@ -268,7 +270,7 @@ describe("an existing conversation's project", () => {
     expect(screen.getByText(text)).toBeTruthy();
   });
 
-  it.each(["gone", "outside_mode", "unreadable", "unsupported"] as const)(
+  it.each(["gone", "outside_mode", "unreadable", "unsupported", "removed"] as const)(
     "an unavailable project (%s) is a notice in both languages",
     async (reason) => {
       for (const locale of ["zh", "en"] as const) {
@@ -291,6 +293,7 @@ describe("an existing conversation's project", () => {
           screen.getByText(m.chat.project.unavailable[reason].replace("{name}", "core")),
         ).toBeTruthy();
         expect(screen.queryByText("Model text.")).toBeNull();
+        expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
         cleanup();
       }
     },
@@ -432,6 +435,7 @@ describe("the / menu groups entries by source", () => {
         .getAllByRole("option")
         .map((o) => o.textContent),
     ).toEqual(["/project:fix-issueFix an issue"]);
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
     await user.click(within(dialog).getByRole("option", { name: /^\/project:fix-issue/ }));
     await user.type(input(), "42{Enter}");
     const post = calls.filter((c) => c.method === "POST" && c.url === `${BASE}/messages`);

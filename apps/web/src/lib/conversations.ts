@@ -578,7 +578,7 @@ export interface ProjectRootPayload {
   skills: { name: string; description: string; digest: string }[];
   skillsTruncated?: true;
   unavailable?: {
-    reason: "gone" | "outside_mode" | "unreadable" | "unsupported";
+    reason: "gone" | "outside_mode" | "unreadable" | "unsupported" | "removed";
     message: string;
   };
 }

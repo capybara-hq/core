@@ -227,6 +227,13 @@ export function DeviceProjectsSettings({ orgId, device }: { orgId: string; devic
   );
 }
 
+/** The first segment of a validation detail's `path` (`"name"`, `["name"]`), if any. */
+function detailPath(d: unknown): string | undefined {
+  const p = (d as { path?: unknown } | null)?.path;
+  const first = Array.isArray(p) ? p[0] : p;
+  return typeof first === "string" ? first.split(".")[0] : undefined;
+}
+
 /**
  * 添加项目: the path relative to the base (a fixed prefix, never typed) and an optional name
  * defaulting to the path's last segment. The suggestions are read only while this dialog is open
@@ -247,6 +254,8 @@ function AddProjectDialog({
   onAdded(name: string): void;
 }) {
   const t = useTranslations("devices.projects");
+  // a schema refusal of the name reads as the service's own name refusal (the same rules)
+  const te = useTranslations("errors");
   const errorMessage = useErrorMessage();
   const [path, setPath] = useState("");
   const [name, setName] = useState("");
@@ -260,8 +269,10 @@ function AddProjectDialog({
   const relative = normalizeProjectPath(path);
   const typedName = name.trim();
   const pending = add.isPending;
+  // the kernel takes a path relative to the base only: an absolute one is hinted before sending
+  const absolute = relative.startsWith("/");
   const submit = async () => {
-    if (pending) return;
+    if (pending || absolute) return;
     setFailure(undefined);
     try {
       const r = await add.mutateAsync({
@@ -271,15 +282,34 @@ function AddProjectDialog({
       onAdded(r.project.name);
     } catch (e) {
       const code = e instanceof ApiClientError ? e.code : "";
+      if (code === "validation_failed") {
+        // the route's schema names the field; its text is the kernel's English, so the reader
+        // gets the field's own copy instead
+        const field = (e as ApiClientError).rawDetails.map(detailPath)[0];
+        if (field === "name") {
+          setFailure({ field: "name", message: te("device.project_name_invalid") });
+          return;
+        }
+        if (field === "path") {
+          setFailure({ field: "path", message: t("pathInvalid", { prefix }) });
+          return;
+        }
+        setFailure({ field: "form", message: errorMessage(e) });
+        return;
+      }
       const field = code.startsWith("device.project_name_")
         ? "name"
-        : code.startsWith("device.project") || code === "validation_failed"
+        : code.startsWith("device.project")
           ? "path"
           : "form";
       setFailure({ field, message: errorMessage(e) });
     }
   };
-  const pathError = failure?.field === "path" ? { error: failure.message } : {};
+  const pathError = absolute
+    ? { error: t("pathAbsolute", { prefix }) }
+    : failure?.field === "path"
+      ? { error: failure.message }
+      : {};
   const nameError = failure?.field === "name" ? { error: failure.message } : {};
   const found = candidates.data?.candidates ?? [];
   return (
