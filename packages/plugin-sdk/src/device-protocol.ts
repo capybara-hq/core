@@ -296,7 +296,8 @@ export interface DeviceListArgs {
 }
 /**
  * One entry of a listed directory: `name` is never empty, `.` or `..` and holds no `/`. `isDir`
- * follows symbolic links (stat semantics): a link to a directory is `true`, a dangling link `false`.
+ * follows symbolic links (stat semantics): a link to a directory is `true`, a dangling link `false`,
+ * and so is a link whose target the request's mode cannot reach.
  */
 export interface DeviceListEntry {
   name: string;

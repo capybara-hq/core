@@ -756,6 +756,12 @@ export function defineExtension(m: ExtensionManifest): ExtensionManifest;
 export const DEVICE_PROTOCOL_VERSION = 1;
 
 // @public
+export const DEVICE_SCAN_SKIPPED_BASE_DIRS: readonly string[];
+
+// @public
+export const DEVICE_SCAN_SKIPPED_DIRS: readonly string[];
+
+// @public
 export interface DeviceCreateArgs {
     limits: SandboxLimits;
 }

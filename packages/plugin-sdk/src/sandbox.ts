@@ -336,7 +336,7 @@ export interface SandboxProvider {
    * unit (locale-independent), at most `limit` of them; `truncated` is true when the directory has
    * more. Entries only: never file contents, never a recursive walk. A `name` is never `.` or `..`;
    * `isDir` follows symbolic links (stat semantics: a link to a directory is `true`, a dangling link
-   * `false`). `limits` is the kernel's current ceiling: read in the mode it gives, never in one an
+   * `false`, and so is a link whose target the request's mode cannot reach). `limits` is the kernel's current ceiling: read in the mode it gives, never in one an
    * earlier command saw. Returns null only when the path does not exist and that mode could reach
    * it; a path the mode cannot reach throws (a policy refusal), as does a path that is a file or a
    * directory that cannot be read.
@@ -357,13 +357,16 @@ export interface SandboxProvider {
    *   levels below it that hold a `.git` entry (directory or file) or an `AGENTS.md` file.
    * - The walk does not follow symbolic links and does not enter hidden directories (names
    *   starting with `.`); a candidate does not stop the descent (a monorepo's sub-projects are
-   *   candidates too). A provider may also skip well-known noise directories (`node_modules`,
-   *   macOS `Library`). Paths under `base` the mode cannot reach are skipped, never an error.
-   * - A directory whose basename does not satisfy {@link isDeviceProjectName} is skipped, never
-   *   returned with a changed name.
+   *   candidates too). It never enters a directory named in {@link DEVICE_SCAN_SKIPPED_DIRS}, at
+   *   any depth, nor one named in {@link DEVICE_SCAN_SKIPPED_BASE_DIRS} directly under `base`;
+   *   every provider skips exactly these. Paths under `base` the mode cannot reach are skipped,
+   *   never an error.
+   * - A directory whose basename does not satisfy {@link isDeviceProjectName} is not returned as
+   *   a candidate (never with a changed name), but it is still traversed.
    * - Directories are visited breadth-first, each level in code-unit order of `path`, `base`
-   *   counting as the first visit (visiting a directory reads its entries); the walk stops after
-   *   {@link MAX_DEVICE_SCAN_DIRS} visits, so a huge tree answers what was found by then.
+   *   counting as the first visit (visiting a directory reads its entries; one that cannot be read
+   *   still counts as a visit); the walk stops after {@link MAX_DEVICE_SCAN_DIRS} visits, so a
+   *   huge tree answers what was found by then.
    * - Each candidate is its absolute `path` and its basename as `suggestedName`; the candidates
    *   found are sorted by `path` in code-unit order and cut to the first
    *   {@link MAX_DEVICE_SCAN_RESULTS}.
@@ -386,6 +389,19 @@ export const MAX_DEVICE_PROJECT_NAME_LENGTH = 64;
 
 /** The most candidates a `scan` answers ({@link SandboxProvider.scan}). */
 export const MAX_DEVICE_SCAN_RESULTS = 50;
+
+/**
+ * Directory names a `scan` never enters, at any depth ({@link SandboxProvider.scan}): dependency
+ * trees, not projects. Every provider skips exactly these.
+ */
+export const DEVICE_SCAN_SKIPPED_DIRS: readonly string[] = Object.freeze(["node_modules"]);
+
+/**
+ * Directory names a `scan` does not enter directly under its `base` ({@link SandboxProvider.scan}):
+ * the owner's macOS `Library` (app data, huge, partly privacy-protected) is not where projects
+ * live. Every provider skips exactly these.
+ */
+export const DEVICE_SCAN_SKIPPED_BASE_DIRS: readonly string[] = Object.freeze(["Library"]);
 
 /** How far below its base a `scan` looks: the base's children and their children. */
 export const MAX_DEVICE_SCAN_DEPTH = 2;
