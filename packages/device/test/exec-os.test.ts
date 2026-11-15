@@ -376,6 +376,27 @@ describe.skipIf(!availability.ok)(
         ac.abort();
         await expect(p).rejects.toThrow();
       });
+
+      it("kills the helper's process group when the abort lands while it is being spawned", async () => {
+        const ac = new AbortController();
+        // biome-ignore lint/suspicious/noExplicitAny: test seam on a private method
+        const target = ex as any;
+        const original = target.spawnSandboxed;
+        let spawned: import("node:child_process").ChildProcess | undefined;
+        target.spawnSandboxed = async (...args: unknown[]) => {
+          const r = await original.apply(ex, args);
+          spawned = r.child;
+          // the helper runs now, and the abort arrives before the caller has its listener
+          ac.abort();
+          return r;
+        };
+        try {
+          await expect(ex.scan("sandbox", ws, ac.signal)).rejects.toThrow();
+        } finally {
+          target.spawnSandboxed = original;
+        }
+        expect(spawned?.signalCode).toBe("SIGKILL");
+      });
     });
 
     it("runs a command in the workspace with HOME and TMPDIR set", async () => {

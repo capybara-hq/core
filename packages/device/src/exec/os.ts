@@ -537,6 +537,8 @@ export class OsExecutor implements Executor {
       if (child.pid !== undefined) killGroupId(child.pid);
     };
     signal?.addEventListener("abort", onAbort, { once: true });
+    // a listener added to an already-aborted signal never fires: an abort during the spawn lands here
+    if (signal?.aborted) onAbort();
     try {
       await new Promise<void>((res, rej) => {
         child.once("error", rej);
