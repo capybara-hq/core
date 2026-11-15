@@ -21,6 +21,7 @@ import { useDeviceName } from "../../../../components/use-device-name";
 import { useRouter } from "../../../../i18n/navigation";
 import { ApiClientError } from "../../../../lib/api";
 import { loginPathFor } from "../../../../lib/auth-sources";
+import { navigateBrowser } from "../../../../lib/browser";
 import {
   codeParam,
   confirmDevice,
@@ -148,7 +149,8 @@ function ConfirmDevice({ code }: { code: string }) {
   // A confirm or deny that found the code unusable meanwhile.
   const [gone, setGone] = useState<unknown>();
   const here = `/devices/link?code=${code}`;
-  const home = () => router.replace(HOME_PATH);
+  // Into the workspace: a full navigation, so its layout's import map runs (server-rendered)
+  const home = () => navigateBrowser(HOME_PATH);
 
   // A refused read or action that needs a new session signs in again, back here.
   const onFailure = (e: unknown): string | undefined => {
@@ -210,7 +212,7 @@ function ConfirmDevice({ code }: { code: string }) {
           <Button
             variant="primary"
             density="prominent"
-            onClick={() => router.replace(`/devices/${encodeURIComponent(outcome.deviceId)}`)}
+            onClick={() => navigateBrowser(`/devices/${encodeURIComponent(outcome.deviceId)}`)}
           >
             {t("openDevice")}
           </Button>

@@ -14,6 +14,8 @@ import { ME } from "./support/render";
 import { expectNoFirstPaintFetch, type Routes } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
+const navigateBrowser = vi.hoisted(() => vi.fn());
+vi.mock("../src/lib/browser", () => ({ navigateBrowser }));
 vi.mock("next/navigation", () => ({
   redirect: (to: string) => {
     throw new Error(`REDIRECT ${to}`);
@@ -66,7 +68,10 @@ const ROUTES: Routes = {
 const unauthenticated = () => json(401, { error: { code: "auth.required", message: "x" } });
 const settle = () => act(async () => new Promise((r) => setTimeout(r, 20)));
 
-beforeEach(() => resetNavigation("/devices/link"));
+beforeEach(() => {
+  resetNavigation("/devices/link");
+  navigateBrowser.mockReset();
+});
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -122,9 +127,11 @@ describe("/devices/link", () => {
       orgId: "o1",
       deviceId: "d1",
     });
-    // the device is in the current org: the done state opens its page
+    // the device is in the current org: the done state opens its page, a full navigation (the
+    // workspace layout's import map runs only in a server-rendered document)
     await user.click(screen.getByRole("button", { name: D.openDevice }));
-    expect(router.replace).toHaveBeenCalledWith("/devices/d1");
+    expect(navigateBrowser).toHaveBeenCalledWith("/devices/d1");
+    expect(router.replace).not.toHaveBeenCalledWith("/devices/d1");
   });
 
   it("an unnamed connected device is labelled like everywhere else (deviceName)", async () => {
