@@ -194,8 +194,9 @@ The collector's host fixture was removed; no remote resource existed to delete.
 
 Disposition: results/design synthesis and fresh 31-test scratch verification complete. Historical
 negative evidence remains recorded; all three authoritative results validate structurally. The
-gate-pass branch is inapplicable and stays unchecked. Final documentation diff review/commit is
-reserved for the controller after independent review; this worker made no commit.
+gate-pass branch is inapplicable and stays unchecked. Independent task and whole-branch reviews
+approved the investigation handoff, with no Critical or Important findings. The controller committed
+the retained documentation; product implementation and branch integration remain pending.
 
 **Files:** Complete the results document; update the design and plan status only.
 
@@ -212,7 +213,7 @@ minimal reproduction commands, exact limitations and a recommended next design d
   Do not choose one implicitly. An unverified E2B result keeps the cloud completion gate open.
 - [ ] If the gate passes, revise the design around the proven operation context and capability
   model, then request review before writing the full product implementation plan.
-- [ ] Run `git diff --check`, review the documentation diff, and commit only approved design,
+- [x] Run `git diff --check`, review the documentation diff, and commit only approved design,
   evidence and plan progress with a Conventional Commit. Keep throwaway executables outside the
   repositories; no package release or changeset is needed for this documentation-only deliverable.
 
