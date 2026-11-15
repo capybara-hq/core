@@ -182,6 +182,11 @@ export interface CommandAskDetail {
   command: string;
   /** A write's target path. */
   path?: string;
+  /**
+   * The working root the call was reviewed against (project root spec §4.3): the approved call runs
+   * there, whatever snapshot came after the ask. Absent on asks made before it was recorded.
+   */
+  workingRoot?: string;
   /** The rule that asked, or null for a classifier ask (which offers `once` only). */
   rule: string | null;
   reason: string;

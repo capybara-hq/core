@@ -532,7 +532,13 @@ const reviewKindOf = (toolKey: string): "command" | "write" =>
 /** What the review stage found for one call (auto mode spec §5.4). */
 type ReviewOutcome =
   /** Run the call; `review` is recorded on its result when the review ran. */
-  | { kind: "continue"; review?: ReviewRecord | undefined; commandAsk?: ApprovalRecord }
+  | {
+      kind: "continue";
+      review?: ReviewRecord | undefined;
+      commandAsk?: ApprovalRecord;
+      /** The working root the review judged the call against: the tool runs there. */
+      workingRoot?: string | undefined;
+    }
   /** The run waits on the call's `command` approval. */
   | { kind: "wait"; wait: WaitingFor }
   /** The call ends now with this model-visible error result and its review record. */
@@ -1183,6 +1189,7 @@ export class ToolPipeline {
       return fail(reviewed.content, outKey);
     }
     review = reviewed.review;
+    const reviewedWorkingRoot = reviewed.workingRoot;
     if (reviewed.commandAsk !== undefined)
       authorization = approvalAuthorization(reviewed.commandAsk);
 
@@ -1346,7 +1353,15 @@ export class ToolPipeline {
       },
     ]);
     const t0 = Date.now();
-    let outcome = await this.execute(tool, input, ctx, call.id, resume, resolved.tools);
+    let outcome = await this.execute(
+      tool,
+      input,
+      ctx,
+      call.id,
+      resume,
+      resolved.tools,
+      reviewedWorkingRoot,
+    );
     const durationMs = Date.now() - t0;
     await this.deps.hooks?.afterExecute?.(ctx.runId, call.id);
 
@@ -1601,7 +1616,7 @@ export class ToolPipeline {
       ...(ctx.conversationKind !== undefined && { conversationKind: ctx.conversationKind }),
     });
     if (verdict.decision === "allow") {
-      return { kind: "continue", review: allowRecord(verdict) };
+      return { kind: "continue", review: allowRecord(verdict), workingRoot: facts.workingRoot };
     }
     if (verdict.decision === "deny") {
       return {
@@ -1638,6 +1653,8 @@ export class ToolPipeline {
       }),
       rule: verdict.rule,
       reason: clipText(verdict.reason, COMMAND_ASK_TEXT_MAX_CHARS),
+      // the approved call runs against what the person approved, not a later snapshot
+      ...(facts.workingRoot !== undefined && { workingRoot: facts.workingRoot }),
     };
     let ask: ApprovalRecord;
     try {
@@ -1675,7 +1692,12 @@ export class ToolPipeline {
     const rule = ask.command?.rule ?? null;
     if (ask.status === "pending") return { kind: "wait", wait: approvalWait(ask) };
     if (ask.status === "approved") {
-      return { kind: "continue", commandAsk: ask, review: this.personAllowRecord(ask) };
+      return {
+        kind: "continue",
+        commandAsk: ask,
+        review: this.personAllowRecord(ask),
+        workingRoot: ask.command?.workingRoot,
+      };
     }
     if (ask.status === "denied") {
       const reason = ask.denyReason;
@@ -1945,6 +1967,7 @@ export class ToolPipeline {
     callId: string,
     resume?: ToolResume,
     stepTools?: readonly ResolvedTool[],
+    reviewedWorkingRoot?: string,
   ): Promise<ExecOutcome> {
     if (tool.source.kind === "connector") {
       return this.executeConnector(tool, tool.source, input, ctx, resume);
@@ -1967,6 +1990,9 @@ export class ToolPipeline {
       ...(tool.source.kind === "builtin" && { runId: ctx.runId }),
       ...(tool.source.kind === "builtin" &&
         ctx.deadline !== undefined && { runDeadline: ctx.deadline }),
+      // a reviewed call runs in the working root its review judged (project root spec §4.3)
+      ...(tool.source.kind === "builtin" &&
+        reviewedWorkingRoot !== undefined && { reviewedWorkingRoot }),
       // a sub-agent works in its root conversation's sandbox (spec §10.1, at every depth)
       ...(tool.source.kind === "builtin" &&
         ctx.parent !== undefined && { sandboxConversationId: ctx.parent.rootConversationId }),

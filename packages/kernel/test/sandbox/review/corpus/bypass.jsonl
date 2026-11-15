@@ -540,8 +540,8 @@
 {"command":"cat /*/workspace/README.md","workspace":"/root/workspace","cwd":"/root/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.read"]}
 {"command":"cat /*/.ssh/id_rsa","workspace":"/Users/me/workspace","cwd":"/Users/me/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.read"]}
 {"command":"cat /users/me/.netrc","workspace":"/Users/me/workspace","cwd":"/Users/me/workspace","mode":"auto","attended":true,"outcome":"ask","rules":["ask.secret-file"]}
-{"command":"cat /USERS/me/.ssh/id_rsa","workspace":"/Users/me/workspace","cwd":"/Users/me/workspace","mode":"auto","attended":true,"outcome":"ask","rules":["ask.secret-file"]}
-{"command":"cat /Users/me/.SSH/id_rsa","workspace":"/Users/me/workspace","cwd":"/Users/me/workspace","mode":"auto","attended":true,"outcome":"ask","rules":["ask.secret-file"]}
+{"command":"cat /USERS/me/.ssh/id_rsa","workspace":"/Users/me/workspace","cwd":"/Users/me/workspace","mode":"auto","attended":true,"outcome":"ask","rules":["ask.ssh"]}
+{"command":"cat /Users/me/.SSH/id_rsa","workspace":"/Users/me/workspace","cwd":"/Users/me/workspace","mode":"auto","attended":true,"outcome":"ask","rules":["ask.ssh"]}
 {"command":"cat ~/.NETRC","workspace":"/Users/me/workspace","cwd":"/Users/me/workspace","mode":"auto","attended":true,"outcome":"ask","rules":["ask.secret-file"]}
 {"command":"cat /Users/me/Documents","workspace":"/Users/me/workspace","cwd":"/Users/me/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.read"]}
 {"command":"cat /HOME/dev/.netrc","workspace":"/home/dev/workspace","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"ask","rules":["ask.secret-file"]}

@@ -268,6 +268,20 @@ describe("the sandbox tools in a bound conversation", () => {
     expect(free.execs.map((e) => e.cwd)).toEqual([ROOTS.workspace]);
   });
 
+  it("a reviewed call runs in the working root its review judged, without reading it again", async () => {
+    const d = device(usable(PROJECT));
+    await d.tool("Bash").run(bash, { ...ctx, reviewedWorkingRoot: "/Users/u/code/reviewed" });
+    expect(d.execs.map((e) => e.cwd)).toEqual(["/Users/u/code/reviewed"]);
+    expect(d.asked).toEqual([]);
+    await d
+      .tool("Write")
+      .run(
+        { file_path: "a.txt", content: "a" },
+        { ...ctx, reviewedWorkingRoot: "/Users/u/code/reviewed" },
+      );
+    expect(d.writes).toEqual(["/Users/u/code/reviewed/a.txt"]);
+  });
+
   it("a sub-agent's call reads its root conversation's project", async () => {
     const d = device(usable(PROJECT));
     await d.tool("Bash").run(bash, { ...ctx, sandboxConversationId: "root-conv" });

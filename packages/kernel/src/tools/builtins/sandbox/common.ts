@@ -643,14 +643,18 @@ export async function inSandbox<T>(
     const deviceId = await deps.devices.forTool(ctx.orgId, sandboxConversationOf(ctx));
     // the mode once per call: the path checks follow it and the device_paths event records it;
     // the working facts (workspace, home, project snapshot) are read as the review reads them
+    // a call the review covered runs in the working root it was reviewed against: never read again
+    const reviewed = ctx.reviewedWorkingRoot;
     const [level, working] = await Promise.all([
       deps.devices.modeLevel?.(ctx.orgId, deviceId) ?? null,
-      deps.devices.workingFacts?.(
-        ctx.orgId,
-        sandboxConversationOf(ctx),
-        ctx.conversationId,
-        deviceId,
-      ) ?? null,
+      reviewed !== undefined
+        ? null
+        : (deps.devices.workingFacts?.(
+            ctx.orgId,
+            sandboxConversationOf(ctx),
+            ctx.conversationId,
+            deviceId,
+          ) ?? null),
     ]);
     return await deps.sandbox.withSandbox(
       {
@@ -673,7 +677,7 @@ export async function inSandbox<T>(
           mode,
           h,
           roots: info.roots,
-          workingRoot: workingRootFor(working, mode, info.roots.workspace),
+          workingRoot: reviewed ?? workingRootFor(working, mode, info.roots.workspace),
           p,
           signal,
         };

@@ -360,6 +360,44 @@ describe("a bound conversation works in its project's root", () => {
     const r = await call(free, "Bash", touch, 1);
     expect(r.payload.review).toMatchObject({ decision: "allow", rule: "allow.workspace-write" });
   });
+  it("an approved command runs against the working root it was reviewed with, not a later snapshot", async () => {
+    const dir = `p-${randomUUID().slice(0, 8)}`;
+    const conv = await boundConversation(`/workspace/${dir}`);
+    await put(await deviceOf(conv), {
+      [`${dir}/notes.txt`]: "x\n",
+      [`${dir}-later/notes.txt`]: "y\n",
+    });
+    const line = { command: "pwd && touch /workspace/elsewhere2.txt", description: "Where" };
+    await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(line)}`);
+    const ask = await waitFor(
+      async () =>
+        db
+          .selectFrom("approvals")
+          .select(["id", "detail"])
+          .where("conversation_id", "=", conv)
+          .where("kind", "=", "command")
+          .where("status", "=", "pending")
+          .executeTakeFirst(),
+      30_000,
+      "the command ask",
+    );
+    expect(ask.detail as Record<string, unknown>).toMatchObject({
+      workingRoot: `/workspace/${dir}`,
+    });
+    // a newer snapshot lands between the review and the execution
+    await appendProjectRoot(conv, { project: "app", root: `/workspace/${dir}-later`, skills: [] });
+    const approved = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/approvals/${ask.id}/decision`,
+      payload: { decision: "approve", scope: "once" },
+    });
+    expect(approved.statusCode, approved.body).toBe(200);
+    await waitForTerminal(db, conv, 1, 30_000);
+    const r = (await results(conv)).at(-1) as ToolResult;
+    expect(r.payload.isError).toBe(false);
+    expect(r.payload.content).toMatch(new RegExp(`/workspace/${dir}\\n`));
+  });
+
   it("the command ask card shows a relative write's path resolved against the project root", async () => {
     const dir = `p-${randomUUID().slice(0, 8)}`;
     const conv = await boundConversation(`/workspace/${dir}`);

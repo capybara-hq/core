@@ -92,6 +92,12 @@ export interface BuiltinCallContext extends ToolCallContext {
    * default when absent).
    */
   sandboxConversationId?: string;
+  /**
+   * The working root the command review judged this call against (project root spec §4.3): a
+   * sandbox tool runs there instead of reading the working root again, so it executes exactly what
+   * was reviewed. Absent for a call the review does not cover.
+   */
+  reviewedWorkingRoot?: string;
   /** The parent run of a sub-agent's run (absent for a top-level run). */
   parentRunId?: string;
   /**
