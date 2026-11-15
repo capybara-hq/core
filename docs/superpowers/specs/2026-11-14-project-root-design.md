@@ -236,8 +236,12 @@ project adds entries to that list rather than a second menu:
 - **The project entries come from the conversation's latest `project_root` event**, not from a fresh
   read of the device, so the menu lists what the model saw in this conversation.
 
-Choosing an entry is unchanged: it fills the composer's skill chip and sends `skill: "project:<name>"`,
-which `SkillInvoker` already carries through to the log.
+Choosing an entry is unchanged: it fills the composer's skill chip and sends `skill: "project:<name>"`.
+Unlike a platform skill, the body lives on the device: the send reads `SKILL.md` through the device
+before the message is written (outside any transaction), so it can wait up to the read's 30 s limit, and a
+device that is offline refuses the send while the composer keeps the draft. The `project:` prefix is
+reserved for projects: a plugin named `project` cannot be addressed as `project:<name>`
+**(designer's call, 2026-11-15)**.
 
 ### 4.7 Failure behaviour
 
