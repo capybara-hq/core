@@ -127,6 +127,24 @@ export const DEVICES = {
   cloudAvailable: true,
 };
 
+/**
+ * The new conversation's prefetch of the starting device's projects (project root §4.3), answered
+ * empty for each of `ids`: a test about something else stubs it so.
+ */
+export const noProjects = (
+  ids: readonly string[] = ["e1", "e2", "e3", "d1", "d2"],
+): Record<string, () => Response> =>
+  Object.fromEntries(
+    ids.map((id) => [
+      `GET /api/v1/orgs/o1/devices/${id}/projects`,
+      () =>
+        new Response(
+          JSON.stringify({ projects: [], hidden: 0, mode: "auto", base: null, supported: true }),
+          { headers: { "content-type": "application/json" } },
+        ),
+    ]),
+  );
+
 /** An agent's profile as the kernel answers it for an agent created before profiles existed. */
 export const PROFILE = {
   avatar: null,

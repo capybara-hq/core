@@ -1,18 +1,22 @@
 "use client";
 
 import type { PickerProps } from "@capybara-hq/design";
+import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useCallback, useMemo, useState } from "react";
 import { type Agent, findModel, type ModelInfo, type ProviderModels } from "../../lib/agents";
 import type { ModelRef, Selection } from "../../lib/conversations";
 import {
+  chosenDeviceId,
   type Device,
   type DeviceList,
+  deviceChoiceShown,
   deviceModeMark,
-  devicePickable,
   deviceState,
 } from "../../lib/devices";
 import { extensionLabel } from "../../lib/extension-label";
+import { retryOnMountOf } from "../../lib/query/client";
+import { deviceProjectsQuery } from "../../lib/query/devices";
 import { useDeviceName } from "../use-device-name";
 
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
@@ -198,6 +202,11 @@ export type DeviceChoice = {
    */
   deviceId: string | undefined;
   /**
+   * The device's project the first message binds the conversation to (project root §4.3);
+   * undefined: 自由模式.
+   */
+  project: string | undefined;
+  /**
    * Without a cloud sandbox, when none of the local devices can be used now (their
    * machines are offline): sending must wait, and this says why. Never set while the platform has
    * a cloud sandbox (the kernel then makes or uses the personal device).
@@ -210,31 +219,50 @@ export type DeviceChoice = {
   picker: PickerProps | undefined;
 };
 
+/** A project item's id in the device picker (device ids never start with it). */
+const PROJECT_ITEM = "project:";
+
 /**
  * The new conversation's device picker (environments design §4.1 item 2, §9): the person's
  * devices; the ones whose provider is gone (hint 不可用), whose files are lost (hint 文件已丢失;
  * 重建文件 on its page first) or whose machine is offline (hint 离线) shown but not selectable; a
  * connected one that is online says 在线. It starts on the last used device, else the
- * default, else the first usable one. It shows when the platform has a cloud sandbox or the person
- * has a local device. Without a cloud sandbox and with every local device
- * offline, nothing is chosen and `unavailable` holds the reason the composer shows instead of
- * sending with no device.
+ * default, else the first usable one ({@link chosenDeviceId}). It shows when the platform has a
+ * cloud sandbox or the person has a local device. Without a cloud sandbox and with every local
+ * device offline, nothing is chosen and `unavailable` holds the reason the composer shows instead
+ * of sending with no device.
+ *
+ * The same menu binds the conversation to a project (project root §4.3: one entry point): under
+ * 项目, 自由模式 (the default) and the chosen device's projects its current mode can read. A
+ * device without projects, or one that does not support them, offers none; another device drops
+ * the pick.
  */
-export function useDeviceChoice(list: DeviceList | undefined): DeviceChoice {
+export function useDeviceChoice(orgId: string, list: DeviceList | undefined): DeviceChoice {
   const t = useTranslations("chat");
   const te = useTranslations("devices");
   const nameOf = useDeviceName();
   const [picked, setPicked] = useState<string | null>(null);
-  if (list === undefined || !(list.cloudAvailable || list.items.some((e) => e.source === "local")))
-    return { deviceId: undefined, picker: undefined };
-  const usable = (id: string | null | undefined) =>
-    list.items.find((e) => e.id === id && devicePickable(e))?.id;
-  const id =
-    usable(picked) ??
-    usable(list.lastUsedId) ??
-    usable(list.defaultId) ??
-    list.items.find(devicePickable)?.id;
+  /** The project picked, with the device it belongs to. */
+  const [pickedProject, setPickedProject] = useState<{ device: string; name: string } | null>(null);
+  const id = list === undefined ? undefined : chosenDeviceId(list, picked);
+  // prefetched with the page for the device it starts on (the route's `then`)
+  const projectsQ = deviceProjectsQuery(orgId, id ?? "");
+  const projects = useQuery({
+    ...projectsQ,
+    enabled: id !== undefined,
+    retryOnMount: retryOnMountOf(projectsQ.queryKey),
+  }).data;
+  if (list === undefined || !deviceChoiceShown(list)) {
+    return { deviceId: undefined, project: undefined, picker: undefined };
+  }
   const current = list.items.find((e) => e.id === id);
+  const offered = projects?.supported === true ? projects.projects : [];
+  const project =
+    pickedProject !== null &&
+    pickedProject.device === id &&
+    offered.some((p) => p.name === pickedProject.name)
+      ? pickedProject.name
+      : undefined;
   // 自动 (warn) / 沙箱, or a cloud device's 开放（挡内网） (warn) / 白名单, after the tag
   const markOf = (e: Device) => {
     const mark = deviceModeMark(e);
@@ -246,12 +274,14 @@ export function useDeviceChoice(list: DeviceList | undefined): DeviceChoice {
       return { disabled: true, tag: te(`state.${state}`) };
     return state === "online" ? { tag: te("state.online") } : {};
   };
+  const name = current ? nameOf(current) : "—";
   return {
     deviceId: id,
+    project,
     ...(id === undefined && !list.cloudAvailable ? { unavailable: t("deviceOffline") } : {}),
     picker: {
       label: t("pickDevice"),
-      value: current ? nameOf(current) : "—",
+      value: project === undefined ? name : `${name} · ${project}`,
       groups: [
         {
           items: list.items.map((e) => ({
@@ -262,27 +292,53 @@ export function useDeviceChoice(list: DeviceList | undefined): DeviceChoice {
             ...markOf(e),
           })),
         },
+        ...(id !== undefined && offered.length > 0
+          ? [
+              {
+                label: t("projectGroup"),
+                items: [
+                  { id: PROJECT_ITEM, label: t("freeMode"), checked: project === undefined },
+                  ...offered.map((p) => ({
+                    id: `${PROJECT_ITEM}${p.name}`,
+                    label: p.name,
+                    checked: p.name === project,
+                  })),
+                ],
+              },
+            ]
+          : []),
       ],
       note: t("deviceNote"),
-      onPick: setPicked,
+      onPick: (choice) => {
+        if (!choice.startsWith(PROJECT_ITEM)) {
+          setPicked(choice);
+          return;
+        }
+        const name = choice.slice(PROJECT_ITEM.length);
+        setPickedProject(name === "" || id === undefined ? null : { device: id, name });
+      },
     },
   };
 }
 
 /**
- * An existing conversation's device, read only (the composer's `locked` picker): its name,
- * 设备已删除 when the bound device is gone, nothing for a conversation with none bound.
+ * An existing conversation's device, read only (the composer's `locked` picker): its name and
+ * the project it is bound to, 设备已删除 when the bound device is gone, nothing for a conversation
+ * with none bound.
  */
 export function lockedDevicePicker(
   text: { label: string; hint: string; deleted: string },
   deviceId: string | null | undefined,
   device: Pick<Device, "name" | "demotedFrom"> | null | undefined,
   nameOf: (e: Pick<Device, "name" | "demotedFrom">) => string,
+  /** The project it is bound to (project root §4.3: shown, never changed here). */
+  project?: string | null,
 ): PickerProps | undefined {
   if (!deviceId || device === undefined) return undefined;
+  const name = device === null ? text.deleted : nameOf(device);
   return {
     label: text.label,
-    value: device === null ? text.deleted : nameOf(device),
+    value: project ? `${name} · ${project}` : name,
     locked: { hint: text.hint },
     groups: [],
     onPick: () => {},

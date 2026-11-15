@@ -45,7 +45,13 @@ import {
   invocableSkillsQuery,
 } from "../../lib/query/conversation";
 import { useAppMutation } from "../../lib/query/mutation";
-import { findInvocable, type InvocableSkill, parseSlashCommand } from "../../lib/skills";
+import {
+  findInvocable,
+  type InvocableSkill,
+  type InvocableSource,
+  parseSlashCommand,
+  skillChipLabel,
+} from "../../lib/skills";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { useRunStateValue } from "../client-ext/run-state";
 import { ExtensionSlot } from "../extension-ui/ExtensionSlot";
@@ -134,6 +140,9 @@ export const isUndoKey = (e: {
   shiftKey: boolean;
   altKey: boolean;
 }) => (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "z";
+
+/** The `/` menu's skill headings, in order (project root §4.6). */
+const SKILL_SOURCES: readonly InvocableSource[] = ["project", "agent", "platform", "plugin"];
 
 /** The name a picked skill is invoked by: `<plugin>:<name>` for a plugin's skill. */
 const invokeName = (s: InvocableSkill) => (s.plugin ? `${s.plugin}:${s.name}` : s.name);
@@ -426,7 +435,7 @@ export function ComposerBar({
         // the chip shows the bare name, as the thread's bubble does
         display: {
           files: shownFiles,
-          ...(name !== undefined ? { skill: `/${name.slice(name.indexOf(":") + 1)}` } : {}),
+          ...(name !== undefined ? { skill: skillChipLabel(name) } : {}),
         },
         draft: {
           text: sentText,
@@ -571,38 +580,37 @@ export function ComposerBar({
     return [...groups.values()];
   };
 
-  const skillItems = skills ?? [];
+  const skillItem = (sk: InvocableSkill) => ({
+    id: `skill:${sk.id}`,
+    label: `/${sk.name}`,
+    ...(sk.argumentHint !== undefined ? { hint: sk.argumentHint } : {}),
+    ...(sk.manual || sk.fork
+      ? {
+          tags: [
+            ...(sk.manual ? [t("skillTag.manual")] : []),
+            ...(sk.fork ? [t("skillTag.fork")] : []),
+          ],
+        }
+      : {}),
+    ...(sk.plugin !== undefined ? { search: `${sk.plugin}:${sk.name}`, source: sk.plugin } : {}),
+    ...(sk.description !== "" ? { description: sk.description } : {}),
+    onSelect: () => {
+      picked();
+      setSkill(sk);
+    },
+  });
+  // One menu, a heading per source (project root §4.6): the conversation's project first, then
+  // the agent's own, the library's and the plugins'.
+  const skillGroups: CommandGroup[] = SKILL_SOURCES.flatMap((source) => {
+    const items = (skills ?? []).filter((sk) => sk.source === source);
+    return items.length === 0
+      ? []
+      : [{ label: t(`skillSource.${source}`), items: items.map(skillItem) }];
+  });
   const contentGroups: CommandGroup[] =
     palette === "prompts"
       ? [
-          ...(skillItems.length > 0
-            ? [
-                {
-                  label: t("skillsGroup"),
-                  items: skillItems.map((sk) => ({
-                    id: `skill:${sk.id}`,
-                    label: `/${sk.name}`,
-                    ...(sk.argumentHint !== undefined ? { hint: sk.argumentHint } : {}),
-                    ...(sk.manual || sk.fork
-                      ? {
-                          tags: [
-                            ...(sk.manual ? [t("skillTag.manual")] : []),
-                            ...(sk.fork ? [t("skillTag.fork")] : []),
-                          ],
-                        }
-                      : {}),
-                    ...(sk.plugin !== undefined
-                      ? { search: `${sk.plugin}:${sk.name}`, source: sk.plugin }
-                      : {}),
-                    ...(sk.description !== "" ? { description: sk.description } : {}),
-                    onSelect: () => {
-                      picked();
-                      setSkill(sk);
-                    },
-                  })),
-                },
-              ]
-            : []),
+          ...skillGroups,
           ...byConnector(prompts?.prompts ?? []).map((g) => ({
             label: g.label,
             items: g.items.map((p) => ({

@@ -16,6 +16,7 @@ import {
   FakeEventSource,
   LIMITS,
   MODELS,
+  noProjects,
   renderChatRoute,
   runStarted,
   snapshotDefaults,
@@ -1412,6 +1413,7 @@ const NEW_CHAT = {
   "GET /api/v1/orgs/o1/agents": () => json(200, AGENTS),
   "GET /api/v1/orgs/o1/models": () => json(200, MODELS),
   "GET /api/v1/orgs/o1/devices": () => json(200, DEVICES),
+  ...noProjects(),
   "GET /api/v1/orgs/o1/conversations/groups": () => json(200, { groups: [], next: null }),
 };
 

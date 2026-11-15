@@ -199,6 +199,31 @@ export const devicePickable = (e: Device): boolean => {
   return state !== "unavailable" && state !== "filesLost" && state !== "offline";
 };
 
+/**
+ * Whether the new conversation's device picker shows at all: the platform has a cloud sandbox, or
+ * the person has a local device.
+ */
+export const deviceChoiceShown = (list: DeviceList): boolean =>
+  list.cloudAvailable || list.items.some((e) => e.source === "local");
+
+/**
+ * The device a new conversation starts on (environments design §4.1 item 2): the one `picked`,
+ * else the last used, else the default, else the first pickable one; never one that cannot be
+ * picked now. Undefined when none can (or the picker is not shown). The route's prefetch of its
+ * projects and the composer's picker share it.
+ */
+export function chosenDeviceId(list: DeviceList, picked: string | null = null): string | undefined {
+  if (!deviceChoiceShown(list)) return undefined;
+  const usable = (id: string | null | undefined) =>
+    list.items.find((e) => e.id === id && devicePickable(e))?.id;
+  return (
+    usable(picked) ??
+    usable(list.lastUsedId) ??
+    usable(list.defaultId) ??
+    list.items.find(devicePickable)?.id
+  );
+}
+
 /** A device name as the kernel limits it (trimmed, 1-64 characters). */
 export const isDeviceName = (s: string): boolean => {
   const n = s.trim().length;

@@ -1384,7 +1384,12 @@
     "noInvocable": "This agent has no skills selected to invoke. A skill the organization turned on must be selected in the agent's skills before you can invoke it with /.",
     "noInvocableAction": "Choose skills",
     "noInvocableReadOnly": "This agent has no skills selected to invoke. A skill the organization turned on must be selected in the agent's skills first; ask its owner or an org admin.",
-    "skillsGroup": "Skills",
+    "skillSource": {
+      "platform": "Skills",
+      "plugin": "Plugin skills",
+      "agent": "Agent skills",
+      "project": "Project skills"
+    },
     "skillTag": {
       "manual": "manual",
       "fork": "sub-agent"
@@ -1447,6 +1452,19 @@
     "deviceNote": "Fixed once the first message is sent",
     "deviceOffline": "No device is available: your local devices are offline. Start capybara-device on the machine, then send.",
     "deviceLocked": "A conversation keeps its device",
+    "projectGroup": "Project",
+    "freeMode": "Free mode",
+    "project": {
+      "bound": "Project {name} · {path}",
+      "loaded": "Project {name} · {path} · {file} loaded",
+      "noAgentsMd": "Project {name} · {path} · no {file}",
+      "unavailable": {
+        "gone": "Project {name} is unavailable: its directory is no longer on the device; this conversation continues in free mode",
+        "outside_mode": "Project {name} is unavailable: the device's current mode cannot read it; this conversation continues in free mode",
+        "unreadable": "Project {name} is unavailable: reading it failed; this conversation continues in free mode",
+        "unsupported": "Project {name} is unavailable: this device does not support projects; this conversation continues in free mode"
+      }
+    },
     "deviceDeleted": "Device deleted",
     "pickEffort": "Effort",
     "nextMessage": "Applies from the next message",

@@ -15,6 +15,7 @@ import { type ConversationEvent, type QueueItem, resumeQueue } from "../../lib/c
 import { retryOnMountOf } from "../../lib/query/client";
 import { queueQuery } from "../../lib/query/conversation";
 import { useAppMutation } from "../../lib/query/mutation";
+import { skillChipLabel } from "../../lib/skills";
 import { useErrorMessage } from "../../lib/use-error-message";
 import type { ComposerMessage } from "./ComposerBar";
 
@@ -95,9 +96,6 @@ export function PendingBubbles({ items }: { items: readonly PendingSend[] }) {
   );
 }
 
-/** The chip of a leftover invocation: the skill's bare name (as the thread's bubble shows it). */
-const skillLabel = (name: string) => `/${name.slice(name.indexOf(":") + 1)}`;
-
 const NO_ITEMS: readonly QueueItem[] = [];
 
 /**
@@ -150,7 +148,7 @@ export function LeftoverBubbles({
           <UserBubble
             text={it.text}
             queued
-            {...(it.skill !== undefined ? { skill: skillLabel(it.skill.name) } : {})}
+            {...(it.skill !== undefined ? { skill: skillChipLabel(it.skill.name) } : {})}
             details={
               <Text variant="small" tone="faint">
                 {t("interjectionPending")}

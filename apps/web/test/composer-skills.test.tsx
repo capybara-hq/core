@@ -12,6 +12,7 @@ import {
   FakeEventSource,
   LIMITS,
   MODELS,
+  noProjects,
   renderChatRoute,
   runStarted,
   userMsg,
@@ -49,6 +50,7 @@ const SKILLS = {
     {
       id: "s1",
       name: "brainstorming",
+      source: "plugin",
       plugin: "superpowers",
       description: "Think before building",
       version: 1,
@@ -58,6 +60,7 @@ const SKILLS = {
     {
       id: "s2",
       name: "fix-issue",
+      source: "platform",
       description: "Fix a GitHub issue",
       version: 3,
       argumentHint: "[issue-number]",
@@ -67,6 +70,7 @@ const SKILLS = {
     {
       id: "s3",
       name: "release-check",
+      source: "platform",
       description: "Run the release checks",
       version: 1,
       manual: true,
@@ -75,6 +79,7 @@ const SKILLS = {
     {
       id: "s4",
       name: "review",
+      source: "platform",
       description: "Review in a sub-agent",
       version: 1,
       argumentHint: "[path]",
@@ -190,21 +195,27 @@ describe("the / menu", () => {
     const dialog = await screen.findByRole("dialog");
     await within(dialog).findByText("/fix-issue");
     const headings = [...dialog.querySelectorAll("[cmdk-group-heading]")].map((h) => h.textContent);
-    expect(headings).toEqual([en.chat.skillsGroup, "Docs", en.chat.commandsGroup]);
+    // one heading per source (project root §4.6): the library's, then the plugins'
+    expect(headings).toEqual([
+      en.chat.skillSource.platform,
+      en.chat.skillSource.plugin,
+      "Docs",
+      en.chat.commandsGroup,
+    ]);
     const options = within(dialog)
       .getAllByRole("option")
       .map((o) => o.textContent);
     expect(options).toEqual([
-      "/brainstormingThink before buildingsuperpowers",
       "/fix-issue[issue-number]Fix a GitHub issue",
       `/release-check${en.chat.skillTag.manual}Run the release checks`,
       `/review[path]${en.chat.skillTag.fork}Review in a sub-agent`,
+      "/brainstormingThink before buildingsuperpowers",
       "/docs:summarizeSummarize a topic",
       // the built-in command closes the `/` menu, after the agent's skills and prompts
       `/compact${en.chat.compactCommandHint}`,
     ]);
     // the plugin a skill came from is its secondary label (spec §3.2)
-    const brainstorming = within(dialog).getAllByRole("option")[0] as HTMLElement;
+    const brainstorming = within(dialog).getAllByRole("option")[3] as HTMLElement;
     expect(brainstorming.querySelector('[data-part="palette-source"]')?.textContent).toBe(
       "superpowers",
     );
@@ -700,6 +711,7 @@ describe("a new conversation", () => {
       [`GET ${ORG}/agents`]: () => json(200, AGENTS),
       [`GET ${ORG}/models`]: () => json(200, MODELS),
       [`GET ${ORG}/devices`]: () => json(200, DEVICES),
+      ...noProjects(),
       [`GET ${ORG}/conversations/groups`]: () => json(200, { groups: [] }),
       [`GET ${ORG}/attachments/limits`]: () => json(200, LIMITS),
     });
@@ -731,6 +743,7 @@ describe("a new conversation", () => {
       [`GET ${ORG}/agents`]: () => json(200, AGENTS),
       [`GET ${ORG}/models`]: () => json(200, MODELS),
       [`GET ${ORG}/devices`]: () => json(200, DEVICES),
+      ...noProjects(),
       [`GET ${ORG}/conversations/groups`]: () => json(200, { groups: [] }),
       [`GET ${ORG}/attachments/limits`]: () => json(200, LIMITS),
     });

@@ -21,6 +21,7 @@ import {
   FakeEventSource,
   LIMITS,
   MODELS,
+  noProjects,
   renderChatRoute,
   userMsg,
 } from "./support/conversation";
@@ -105,6 +106,7 @@ const routes = (agents: unknown = AGENTS, groups: unknown = GROUPS) => ({
   [`GET ${ORG}/agents`]: () => json(200, agents),
   [`GET ${ORG}/models`]: () => json(200, MODELS),
   [`GET ${ORG}/devices`]: () => json(200, DEVICES),
+  ...noProjects(),
   [`GET ${ORG}/conversations/groups`]: () => json(200, groups),
 });
 

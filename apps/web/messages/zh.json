@@ -1384,7 +1384,12 @@
     "noInvocable": "这个智能体还没有选中可调用的技能。组织启用的技能要先在智能体的技能设置里选中，才能用 / 调用。",
     "noInvocableAction": "去选择技能",
     "noInvocableReadOnly": "这个智能体还没有选中可调用的技能。组织启用的技能要先在智能体的技能设置里选中才能调用，请联系它的所有者或组织管理员。",
-    "skillsGroup": "技能",
+    "skillSource": {
+      "platform": "技能",
+      "plugin": "插件技能",
+      "agent": "智能体技能",
+      "project": "项目技能"
+    },
     "skillTag": {
       "manual": "手动",
       "fork": "子智能体"
@@ -1447,6 +1452,19 @@
     "deviceNote": "发出第一条消息后不能更换",
     "deviceOffline": "没有可用的设备：你的本地设备都已离线。请在机器上启动 capybara-device 后再发送。",
     "deviceLocked": "对话开始后设备不再更换",
+    "projectGroup": "项目",
+    "freeMode": "自由模式",
+    "project": {
+      "bound": "项目 {name} · {path}",
+      "loaded": "项目 {name} · {path} · 已读取 {file}",
+      "noAgentsMd": "项目 {name} · {path} · 没有 {file}",
+      "unavailable": {
+        "gone": "项目 {name} 不可用：它的目录已不在设备上，本对话以自由模式继续",
+        "outside_mode": "项目 {name} 不可用：设备当前的运行模式读不到它，本对话以自由模式继续",
+        "unreadable": "项目 {name} 不可用：读取它失败，本对话以自由模式继续",
+        "unsupported": "项目 {name} 不可用：这台设备不支持项目，本对话以自由模式继续"
+      }
+    },
     "deviceDeleted": "设备已删除",
     "pickEffort": "思考档位",
     "nextMessage": "从下一条消息起生效",
