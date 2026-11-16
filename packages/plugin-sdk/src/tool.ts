@@ -1,7 +1,7 @@
 import { checkParamValue, type ParamSchema } from "./model-params.js";
 import { isHttpUrl } from "./url.js";
 
-/** 工具注解（与 MCP 对齐的提示，用于推导默认策略）。 */
+/** Tool annotations (hints aligned with MCP, used to derive the default policy). */
 export interface ToolAnnotations {
   readOnlyHint?: boolean;
   destructiveHint?: boolean;
@@ -21,12 +21,12 @@ export interface ToolSpec {
   description: string;
   inputSchema: Record<string, unknown>;
   annotations?: ToolAnnotations;
-  /** 仅插件 / 内置工具可声明；缺省按注解推导。 */
+  /** Only plugin / builtin tools may declare it; when omitted it is derived from the annotations. */
   defaultPolicy?: "allow" | "ask";
   /**
-   * 仅连接器工具：连接器自己的不透明数据（如 OpenAPI 的方法、路径模板、参数位置、服务器地址），可 JSON 序列化。
-   * 内核把它与定义一起存进快照并计入指纹（变了即漂移、需复核），调用时经 `callTool` 的 `ctx.spec` 原样交回；
-   * 绝不发给模型。
+   * Connector tools only: the connector's own opaque data (e.g. OpenAPI's method, path template, parameter locations, server address), JSON-serializable.
+   * The kernel stores it with the definition in the snapshot and counts it in the fingerprint (a change means drift and needs review), and hands it back unchanged via `ctx.spec` of `callTool` on a call;
+   * never sent to the model.
    */
   connectorData?: Record<string, unknown>;
   /**
@@ -110,7 +110,7 @@ export type ToolContent =
   | { type: "image"; mimeType: string; data: string }
   | { type: "resource_link"; uri: string; name?: string; mimeType?: string };
 
-/** 工具调用的一句话说明，给界面显示（中英文各 ≤ 200 字符）；不进模型上下文。 */
+/** A one-sentence description of a tool call, shown in the UI (Chinese and English each ≤ 200 characters); does not enter the model context. */
 export interface ToolDisplay {
   summary: { zh: string; en: string };
 }
@@ -118,7 +118,7 @@ export interface ToolDisplay {
 export interface ToolResult {
   content: ToolContent[];
   isError?: boolean;
-  /** 可选：对话流里显示这句说明，代替原样的输入 JSON。 */
+  /** Optional: show this description in the conversation stream in place of the raw input JSON. */
   display?: ToolDisplay;
   /**
    * Optional: an inline card under this call in the conversation: `view` is a ui contribution of
@@ -131,7 +131,7 @@ export interface ToolResult {
 
 const DISPLAY_MAX = 200;
 
-/** 校验 {@link ToolDisplay}，返回问题列表（空 = 合法）；长度按 Unicode 码点计。 */
+/** Validates a {@link ToolDisplay} and returns the list of problems (empty = valid); length is counted in Unicode code points. */
 export function validateToolDisplay(d: unknown): string[] {
   if (typeof d !== "object" || d === null || Array.isArray(d)) return ["display must be an object"];
   const s = (d as Record<string, unknown>).summary;
@@ -151,13 +151,13 @@ export function validateToolDisplay(d: unknown): string[] {
 /** Text shown to people: bilingual (`zh` / `en`) or a single string shown as is. */
 export type LocalizedText = { zh: string; en: string } | string;
 
-/** 交互表单：字段的 schema 只用 M2 的 ParamSchema 子集；枚举字段可设 multiSelect 与 allowOther。 */
+/** Interactive form: field schemas use only the ParamSchema subset of M2; enum fields may set multiSelect and allowOther. */
 export interface InputForm {
-  /** 插件可给双语；内核内置工具给英文（模型生成的问题原样展示）。 */
+  /** A plugin may give both languages; builtin kernel tools give English (model-generated questions are displayed as is). */
   title: LocalizedText;
   /**
-   * 可选：需要用户在浏览器里打开的外部页面（如 MCP URL 模式的 elicitation：去对方页面授权 / 付款 / 填敏感信息）。
-   * 界面把它显示为链接（完整地址可见）；只接受 http(s) 绝对地址、≤ 2000 字符。
+   * Optional: an external page the user must open in a browser (e.g. an MCP URL-mode elicitation: go to the other party's page to authorize / pay / enter sensitive information).
+   * The UI shows it as a link (the full address visible); only absolute http(s) addresses, ≤ 2000 characters, are accepted.
    */
   url?: string;
   fields: {
@@ -172,8 +172,8 @@ export interface InputForm {
 }
 
 /**
- * 工具需要用户输入：内核暂停运行、渲染表单；用户提交后用同一 input 再次调用该工具，
- * 并在 ctx.resume 中带回 state 与 answer。state ≤ 16 KB，可 JSON 序列化。
+ * The tool needs user input: the kernel pauses the run and renders a form; after the user submits, the tool is called again with the same input,
+ * and state and answer are brought back in ctx.resume. state ≤ 16 KB, JSON-serializable.
  */
 export interface InputRequired {
   kind: "input_required";
@@ -190,7 +190,7 @@ export interface ToolCallContext {
   conversationId: string;
   callId: string;
   signal: AbortSignal;
-  /** null = 用户取消或超时。 */
+  /** null = the user cancelled or it timed out. */
   resume?: { state: unknown; answer: FormAnswer | null };
   /**
    * The extension's effective deployment config for this org: the platform's deployment config
@@ -214,13 +214,13 @@ export type ToolHandler = (
 ) => Promise<ToolResult | InputRequired>;
 
 /**
- * 工具错误的类别：
- * - `error`（缺省）：远端可用、但这次调用失败（参数不对、业务错误、鉴权失败等），不计入连接器熔断；
- * - `unavailable`：远端不可用（连接 / 传输错误、超时、HTTP 5xx），计入连接器熔断（连接器用它告诉内核）。
+ * Tool error categories:
+ * - `error` (default): the remote is available but this call failed (bad parameters, business error, auth failure, etc.), not counted toward the connector circuit breaker;
+ * - `unavailable`: the remote is unavailable (connection / transport error, timeout, HTTP 5xx), counted toward the connector circuit breaker (connectors use it to tell the kernel).
  */
 export type ToolErrorKind = "error" | "unavailable";
 
-/** 工具执行失败：message 给模型看，须为英文且可操作。 */
+/** A tool execution failure: message is for the model and must be in English and actionable. */
 export class ToolError extends Error {
   readonly kind: ToolErrorKind;
 
@@ -231,10 +231,10 @@ export class ToolError extends Error {
   }
 }
 
-/** 插件工具名规则。 */
+/** Plugin tool name rule. */
 export const EXTENSION_TOOL_NAME = /^[a-zA-Z0-9_-]{1,40}$/;
 
-/** 校验插件注册的工具声明，返回问题列表（空 = 合法）。 */
+/** Validates the tool declarations a plugin registers and returns the list of problems (empty = valid). */
 export function validateToolSpec(spec: ToolSpec): string[] {
   const out: string[] = [];
   if (typeof spec?.name !== "string" || !EXTENSION_TOOL_NAME.test(spec.name))
@@ -269,7 +269,7 @@ const SCHEMA_KEYS: Record<string, readonly string[]> = {
   integer: ["type", "minimum", "maximum"],
 };
 
-/** 检查 schema 是否落在 ParamSchema 子集内，返回问题列表。 */
+/** Checks whether a schema falls within the ParamSchema subset and returns the list of problems. */
 function schemaProblems(schema: unknown): string[] {
   if (typeof schema !== "object" || schema === null || Array.isArray(schema))
     return ["schema must be an object"];
@@ -298,7 +298,7 @@ function schemaProblems(schema: unknown): string[] {
 const isEnum = (s: ParamSchema): s is Extract<ParamSchema, { enum: string[] }> =>
   s.type === "string" && "enum" in s;
 
-/** 校验交互表单的声明，返回问题列表（空 = 合法）。 */
+/** Validates an interactive form declaration and returns the list of problems (empty = valid). */
 export function validateInputForm(form: InputForm): string[] {
   const out: string[] = [];
   if (!form || !Array.isArray(form.fields)) return ["form.fields must be an array"];
@@ -323,7 +323,7 @@ export function validateInputForm(form: InputForm): string[] {
   return out;
 }
 
-/** 校验用户提交的答案是否符合表单，返回问题列表（空 = 合法）。 */
+/** Validates whether the answer a user submitted conforms to the form and returns the list of problems (empty = valid). */
 export function validateAnswer(form: InputForm, answer: FormAnswer): string[] {
   const out: string[] = [];
   const byKey = new Map(form.fields.map((f) => [f.key, f]));
@@ -331,7 +331,7 @@ export function validateAnswer(form: InputForm, answer: FormAnswer): string[] {
     if (!byKey.has(k)) out.push(`unknown field ${JSON.stringify(k)}`);
   for (const f of form.fields) {
     const at = `field ${JSON.stringify(f.key)}`;
-    // 只认答案自身的键：`toString` / `constructor` 等继承属性不算已回答
+    // Look only at the answer's own keys: inherited properties such as `toString` / `constructor` do not count as answered
     const v = Object.hasOwn(answer, f.key) ? answer[f.key] : undefined;
     if (v === undefined) {
       if (f.required) out.push(`${at}: is required`);
@@ -369,7 +369,7 @@ export function validateAnswer(form: InputForm, answer: FormAnswer): string[] {
   return out;
 }
 
-/** allowOther 的枚举字段接受任意非空文本，其余按 schema 校验。 */
+/** An allowOther enum field accepts any non-empty text; the rest are validated against the schema. */
 function otherOrValue(f: InputForm["fields"][number], v: unknown): string | undefined {
   if (f.allowOther && isEnum(f.schema)) {
     return typeof v === "string" && v !== "" ? undefined : "other text must be a non-empty string";

@@ -4,6 +4,7 @@ import { checkAgentDocs } from "../agent-docs.js";
 import { BOOTSTRAP_COMPOSE_FILES, checkBootstrap } from "../bootstrap.js";
 import { checkComposeHaproxy } from "../compose-haproxy.js";
 import { checkConfigDocs } from "../config-docs.js";
+import { checkSdkComments } from "../english-comments.js";
 import { checkDesignI18n, checkI18n } from "../i18n.js";
 import { checkKernelConventions } from "../kernel-conventions.js";
 import { checkOutboxRegistry } from "../outbox-registry.js";
@@ -44,6 +45,7 @@ export const RUNNERS: Record<string, NamedCheck> = {
       ...checkDesignI18n(join(root, "packages/design/src/i18n.ts")),
     ],
   },
+  "english-comments": { name: "English comments", run: () => checkSdkComments(root) },
   tokens: { name: "Design tokens", run: () => checkTokens(root) },
   "ui-slots": { name: "UI slots", run: () => checkUiSlots(root) },
   "ui-parts": { name: "UI parts", run: () => checkUiParts(root) },

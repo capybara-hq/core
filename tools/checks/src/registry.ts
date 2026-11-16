@@ -276,6 +276,17 @@ export const CHECKS: readonly CheckEntry[] = [
     inAll: false,
   },
   {
+    name: "english-comments",
+    cli: "english-comments",
+    ciMode: "full",
+    takesBase: true,
+    reason:
+      "the SDK scan is cheap and part of `pnpm check`; the added-lines scan runs on every PR against a base (`--base`) in its own PR-only CI step, skipped on main",
+    description:
+      "Comments in packages/plugin-sdk/src, and comment lines a PR adds anywhere, contain no CJK.",
+    inAll: true,
+  },
+  {
     name: "applied-migrations",
     cli: "applied-migrations",
     ciMode: "full",

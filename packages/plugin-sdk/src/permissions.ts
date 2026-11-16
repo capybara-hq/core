@@ -10,7 +10,7 @@ export interface ExtensionPermissions {
   secrets?: boolean;
   /** Routes registered with ctx.http.route; each declares who may call it (`access`). */
   http?: HttpPermission[];
-  /** ctx.tools.register 的工具名。 */
+  /** Tool names for ctx.tools.register. */
   tools?: string[];
   /**
    * Hook mount points (`ctx.hooks.on`). From M7, five mount points are registrable; see
@@ -28,9 +28,9 @@ export interface ExtensionPermissions {
    * each to a model of its `kind`. `ctx.models.embed` / `describe` accept the `embedding` ones.
    */
   models?: { purpose: string; kind: "chat" | "embedding"; label: { zh: string; en: string } }[];
-  /** ctx.storage（对象存储，键限定在 `plugins/<插件名>/<orgId>/` 下）。 */
+  /** ctx.storage (object storage, keys confined under `plugins/<plugin name>/<orgId>/`). */
   storage?: boolean;
-  /** 访问的域名，只展示不拦截。 */
+  /** Domains accessed; displayed only, not enforced. */
   network?: string[];
   /**
    * Client code: the package's `client` section (a browser bundle the web app loads for the
@@ -52,7 +52,7 @@ export interface ExtensionPermissions {
   setupChecks?: string[];
 }
 
-/** hook 挂载点（封闭列表，见总设计 2.4）。 */
+/** Hook attachment points (a closed list, see the overall design 2.4). */
 export const HOOK_MOUNT_POINTS = [
   "session.start",
   "session.end",
@@ -67,7 +67,7 @@ export const HOOK_MOUNT_POINTS = [
   "org.deleted",
 ] as const;
 
-/** hook 挂载点名。 */
+/** Hook attachment point name. */
 export type HookMountPoint = (typeof HOOK_MOUNT_POINTS)[number];
 
 const HOOKS: ReadonlySet<string> = new Set(HOOK_MOUNT_POINTS);
@@ -122,7 +122,7 @@ function strList(label: string, v: unknown, errs: string[]): string[] {
   return out;
 }
 
-/** 校验权限清单，返回错误列表（空表示合法）。 */
+/** Validates the permission manifest and returns the list of errors (empty means valid). */
 export function validatePermissions(plugin: string, p: unknown): string[] {
   if (p === undefined) return [];
   if (!isObj(p)) return ["permissions must be an object"];

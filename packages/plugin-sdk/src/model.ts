@@ -1,7 +1,7 @@
 /**
- * 与供应商无关的模型契约；原生协议留在各供应商插件内部。
- * 当前契约为 `model-provider@2`（`ModelProvider` / `ModelInfo` / `ModelRequest`，参数由插件按模型声明，
- * 见 `model-params.ts`）；旧契约 `model-provider@1`（`ModelProviderV1` 等）由内核经适配层继续支持。
+ * The vendor-neutral model contract; native protocols stay inside each vendor plugin.
+ * The current contract is `model-provider@2` (`ModelProvider` / `ModelInfo` / `ModelRequest`, parameters declared by the plugin per model,
+ * see `model-params.ts`); the old contract `model-provider@1` (`ModelProviderV1` etc.) stays supported by the kernel through an adapter layer.
  */
 import type { ModelCallPurpose } from "./hooks.js";
 import type { Effort, ModelParameter, ParamValue } from "./model-params.js";
@@ -50,38 +50,38 @@ export interface ModelInfo {
     caching: boolean;
     midConversationSystem: boolean;
     /**
-     * 是否接受 `document` 块（缺省为 false）。图片看 `vision`。模型不支持时内核把媒体块换成英文文字占位
-     * （如 `[Attached image "<name>" — this model cannot view images.]`；`text/*` 文档改为内联截断后的文本），
-     * 绝不把字节发给它。
+     * Whether `document` blocks are accepted (default false). Images are governed by `vision`. When the model does not support them the kernel replaces media blocks with English text placeholders
+     * (e.g. `[Attached image "<name>" — this model cannot view images.]`; `text/*` documents are inlined as truncated text instead),
+     * and never sends the bytes to it.
      */
     documents?: boolean;
     /**
-     * @deprecated `model-provider@1` 用：是否支持 `ModelRequestV1.effort`。`@2` 插件不填，改在
-     * `parameters` 中声明 `effort` 旋钮；内核的 `@1` 适配层据此推导 `parameters`。
+     * @deprecated For `model-provider@1`: whether `ModelRequestV1.effort` is supported. `@2` plugins leave it unset and instead declare an `effort` knob in
+     * `parameters`; the kernel's `@1` adapter derives `parameters` from it.
      */
     effort?: boolean;
   };
-  /** 流空闲看门狗阈值；推理类模型应更长。未给时内核用配置默认值。 */
+  /** Stream idle watchdog threshold; reasoning models should use a longer one. When unset the kernel uses the config default. */
   streamIdleTimeoutMs?: number;
-  /** 该模型支持的参数（`@2` 必填，可为空数组；须通过 `assertValidDeclarations`）。 */
+  /** The parameters this model supports (required for `@2`, may be an empty array; must pass `assertValidDeclarations`). */
   parameters: ModelParameter[];
 }
 
-/** `model-provider@1` 的模型信息：没有 `parameters`，effort 支持由 `capabilities.effort` 表示。 */
+/** Model info for `model-provider@1`: no `parameters`; effort support is expressed by `capabilities.effort`. */
 export type ModelInfoV1 = Omit<ModelInfo, "parameters" | "capabilities"> & {
   capabilities: Omit<ModelInfo["capabilities"], "effort"> & { effort: boolean };
 };
 
-/** 供应商私有数据：只回放给同一供应商（如 Anthropic 思考块签名、OpenAI 加密推理项）。 */
+/** Vendor-private data: replayed only to the same vendor (e.g. Anthropic thinking block signatures, OpenAI encrypted reasoning items). */
 export interface ProviderOpaque {
   provider: string;
   model: string;
   data: unknown;
 }
 
-/** 图片块接受的类型。 */
+/** Types accepted by image blocks. */
 export const IMAGE_MEDIA_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const;
-/** 文档块接受的类型。 */
+/** Types accepted by document blocks. */
 export const DOCUMENT_MEDIA_TYPES = [
   "application/pdf",
   "text/plain",
@@ -92,40 +92,40 @@ export type ImageMediaType = (typeof IMAGE_MEDIA_TYPES)[number];
 export type DocumentMediaType = (typeof DOCUMENT_MEDIA_TYPES)[number];
 
 /**
- * 媒体内容的来源：`base64` 是字节本身，`ref` 是内核附件的引用。
- * 事件日志里只存 `ref`（字节不进日志）；内核构建请求时把 `ref` 解析成 `base64`，插件只会收到 `base64`。
+ * The source of media content: `base64` is the bytes themselves, `ref` is a reference to a kernel attachment.
+ * The event log stores only `ref` (bytes never enter the log); when building a request the kernel resolves `ref` into `base64`, so plugins only ever receive `base64`.
  */
 export type MediaSource = { kind: "base64"; data: string } | { kind: "ref"; attachmentId: string };
 
-/** 单个媒体块解码后的字节上限（按主流供应商的较小值取）。 */
+/** Upper bound on the decoded bytes of a single media block (the smaller value among mainstream vendors). */
 export const MEDIA_LIMITS = { imageBytes: 5_242_880, documentBytes: 33_554_432 } as const;
 
 export type ContentBlock =
-  /** text 的 opaque：供应商需要随文本回放的私有数据（如 OpenAI message 输出项的 id）。 */
+  /** Opaque for text: vendor-private data that must be replayed with the text (e.g. the id of an OpenAI message output item). */
   | { type: "text"; text: string; opaque?: ProviderOpaque }
   | { type: "thinking"; text: string; opaque?: ProviderOpaque }
   | { type: "tool_call"; id: string; name: string; input: unknown; opaque?: ProviderOpaque }
   | { type: "tool_result"; callId: string; content: string; isError: boolean }
   /**
-   * 图片（只出现在 user 消息里）。模型不支持 `vision` 时内核换成文字占位，插件不用把关；
-   * 不认识此块的旧插件会跳过它。
+   * Image (appears only in user messages). When the model does not support `vision` the kernel substitutes a text placeholder, so the plugin need not gate it;
+   * an old plugin that does not know this block skips it.
    */
   | { type: "image"; mediaType: ImageMediaType; source: MediaSource; name?: string }
-  /** 文档（只出现在 user 消息里），由 `capabilities.documents` 把关，规则同 image。 */
+  /** Document (appears only in user messages), gated by `capabilities.documents`, same rules as image. */
   | { type: "document"; mediaType: DocumentMediaType; source: MediaSource; name?: string };
 
 const B64_RE = /^[A-Za-z0-9+/]*={0,2}$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** 媒体块 `name` 的最大长度（字符）。 */
+/** Maximum length (characters) of a media block's `name`. */
 export const MEDIA_NAME_MAX_CHARS = 255;
 
-/** 供应商请求里文件名 / 标题的建议上限（码点），{@link clipMediaName} 的默认值。 */
+/** Suggested upper bound (code points) for file names / titles in vendor requests, the default of {@link clipMediaName}. */
 export const PROVIDER_MEDIA_NAME_MAX = 200;
 
 /**
- * 把附件名截到 `max` 个码点以内（供应商映射用：有的接口对 filename / title 有长度限制，补后缀后还会更长）。
- * 尽量保留扩展名（不超过 16 个字符的 `.ext`），中间用 `…` 表示截掉的部分。纯函数。
+ * Truncates an attachment name to at most `max` code points (for vendor mapping: some APIs limit filename / title length, and adding a suffix makes it longer still).
+ * Keeps the extension where possible (a `.ext` of at most 16 characters), with `…` marking the cut part in the middle. A pure function.
  */
 export function clipMediaName(name: string, max = PROVIDER_MEDIA_NAME_MAX): string {
   const cps = [...name];
@@ -137,7 +137,7 @@ export function clipMediaName(name: string, max = PROVIDER_MEDIA_NAME_MAX): stri
   return `${head.join("")}…${keep.join("")}`;
 }
 
-/** 是否含控制字符（C0、DEL 与 C1）。 */
+/** Whether it contains control characters (C0, DEL and C1). */
 export function hasControlChars(s: string): boolean {
   for (let i = 0; i < s.length; i++) {
     const c = s.charCodeAt(i);
@@ -146,7 +146,7 @@ export function hasControlChars(s: string): boolean {
   return false;
 }
 
-/** 附件 id 是否为 UUID（任意版本，大小写不限）。 */
+/** Whether the attachment id is a UUID (any version, case-insensitive). */
 export function isAttachmentId(s: unknown): s is string {
   return typeof s === "string" && UUID_RE.test(s);
 }
@@ -156,9 +156,9 @@ const MEDIA: Record<string, { types: readonly string[]; limit: number }> = {
 };
 
 /**
- * 校验一个 image / document 块，返回错误列表（空表示合法）：类型在列表里；`base64` 是标准、带填充、
- * 不含空白的 base64，解码后不超过 {@link MEDIA_LIMITS}；`ref` 的 `attachmentId` 是 UUID；`name` 若有须是字符串、
- * 不超过 {@link MEDIA_NAME_MAX_CHARS} 个字符且不含控制字符。
+ * Validates an image / document block and returns the list of errors (empty means valid): the type is in the list; `base64` is standard, padded base64
+ * without whitespace, and does not exceed {@link MEDIA_LIMITS} once decoded; the `attachmentId` of `ref` is a UUID; `name`, if present, must be a string,
+ * at most {@link MEDIA_NAME_MAX_CHARS} characters, and contain no control characters.
  */
 export function validateMediaBlock(b: unknown): string[] {
   if (typeof b !== "object" || b === null || Array.isArray(b)) return ["block must be an object"];
@@ -194,7 +194,7 @@ export function validateMediaBlock(b: unknown): string[] {
       errs.push(`${o.type} source.data must be non-empty padded base64`);
       return errs;
     }
-    // 先按长度算解码后的大小，超限就不再逐字符校验
+    // Compute the decoded size from the length first; when over the limit, skip the per-character validation
     const pad = data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0;
     const bytes = (data.length / 4) * 3 - pad;
     if (bytes > spec.limit) {
@@ -211,7 +211,7 @@ export function validateMediaBlock(b: unknown): string[] {
 export type ModelMessage =
   | { role: "user"; content: ContentBlock[] }
   | { role: "assistant"; content: ContentBlock[] }
-  /** 对话中途的系统提醒；模型不支持时由插件转成 user 文本块（以 "[system] " 开头）。 */
+  /** A mid-conversation system reminder; when the model does not support it the plugin turns it into a user text block (starting with "[system] "). */
   | { role: "system"; content: string };
 
 export interface ToolDefinition {
@@ -222,20 +222,20 @@ export interface ToolDefinition {
 
 export interface ModelRequest {
   model: string;
-  /** 稳定内容在前；cache 为 true 的块之后打缓存断点（由插件按原生协议实现）。 */
+  /** Stable content first; after a block with cache true a cache breakpoint is placed (implemented by the plugin per the native protocol). */
   system: { text: string; cache: boolean }[];
   messages: ModelMessage[];
   tools: ToolDefinition[];
   /**
-   * `@2`：模型可否调用工具。`"none"` = 本次只能回复文本、不得调用工具（`tools` 仍照常带上：历史里有工具调用时
-   * 部分供应商要求请求声明工具，且保持缓存前缀稳定）；缺省或 `"auto"` = 由模型决定。
-   * 插件映射到原生字段（如 Anthropic `tool_choice: {type: "none"}`）；`tools` 为空时插件不发送该字段。
+   * `@2`: whether the model may call tools. `"none"` = this call may only reply with text and must not call tools (`tools` is still sent as usual: when the history has tool calls
+   * some vendors require the request to declare tools, and it keeps the cache prefix stable); omitted or `"auto"` = the model decides.
+   * The plugin maps it to the native field (e.g. Anthropic `tool_choice: {type: "none"}`); when `tools` is empty the plugin does not send the field.
    */
   toolChoice?: "auto" | "none";
   maxOutputTokens: number;
-  /** `@2`：本次调用的参数（已按该模型的 `parameters` 处理过），由插件映射到原生请求。 */
+  /** `@2`: the parameters of this call (already processed against the model's `parameters`), mapped to the native request by the plugin. */
   params: Record<string, ParamValue>;
-  /** @deprecated `model-provider@1` 用；`@2` 插件读 `params.effort`。 */
+  /** @deprecated For `model-provider@1`; `@2` plugins read `params.effort`. */
   effort?: Effort;
   /**
    * What this call is for, when the kernel says so: `"compaction"` for a conversation summary call.
@@ -245,23 +245,23 @@ export interface ModelRequest {
   purpose?: ModelCallPurpose;
 }
 
-/** `model-provider@1` 的请求：没有 `params` 与 `toolChoice`。 */
+/** The `model-provider@1` request: has no `params` or `toolChoice`. */
 export type ModelRequestV1 = Omit<ModelRequest, "params" | "toolChoice">;
 
 export type StopReason = "end_turn" | "tool_use" | "max_tokens" | "refusal" | "other";
 
 /**
- * 一次调用的 token 用量。三类输入互不重叠：本次请求的输入总量 =
- * `inputTokens + cacheReadTokens + cacheWriteTokens`（内核据此校正上下文估算、决定何时压缩）。
- * 供应商 API 的输入计数若已包含缓存命中 / 写入的 token（如 OpenAI 的 `prompt_tokens`），插件必须先减掉。
+ * Token usage of one call. The three kinds of input do not overlap: the total input of this request =
+ * `inputTokens + cacheReadTokens + cacheWriteTokens` (the kernel uses it to correct context estimates and to decide when to compact).
+ * If the vendor API's input count already includes cache-hit / cache-write tokens (e.g. OpenAI's `prompt_tokens`), the plugin must subtract them first.
  */
 export interface ModelUsage {
-  /** 未命中缓存、也未写入缓存的输入 token（只是未缓存部分，不是输入总量）。 */
+  /** Input tokens that neither hit the cache nor were written to it (only the uncached part, not the total input). */
   inputTokens: number;
   outputTokens: number;
-  /** 从提示词缓存读取的输入 token。 */
+  /** Input tokens read from the prompt cache. */
   cacheReadTokens: number;
-  /** 本次写入提示词缓存的输入 token。 */
+  /** Input tokens written to the prompt cache in this call. */
   cacheWriteTokens: number;
 }
 
@@ -306,12 +306,12 @@ const RETRYABLE: ReadonlySet<ModelErrorKind> = new Set<ModelErrorKind>([
   "network",
 ]);
 
-/** rate_limited / overloaded / server / timeout / network 为 true。 */
+/** True for rate_limited / overloaded / server / timeout / network. */
 export function isRetryableKind(kind: ModelErrorKind): boolean {
   return RETRYABLE.has(kind);
 }
 
-/** 鸭子类型判断（不用 instanceof），兼容插件自带另一份 plugin-sdk 副本的情况。 */
+/** Duck-typed check (no instanceof), compatible with a plugin bundling another copy of plugin-sdk. */
 export function isModelError(e: unknown): e is ModelError {
   if (!(e instanceof Error)) return false;
   const kind = (e as { kind?: unknown }).kind;
@@ -333,7 +333,7 @@ export class ModelError extends Error {
     if (opts?.retryAfterMs !== undefined) this.retryAfterMs = opts.retryAfterMs;
   }
 
-  /** rate_limited / overloaded / server / timeout / network 为 true。 */
+  /** True for rate_limited / overloaded / server / timeout / network. */
   get retryable(): boolean {
     return isRetryableKind(this.kind);
   }
@@ -393,11 +393,11 @@ export function validateEmbedResult(
   return null;
 }
 
-/** `model-provider@2` 的实现。 */
+/** The `model-provider@2` implementation. */
 export interface ModelProvider {
-  /** 每个模型的 `parameters` 须通过 `assertValidDeclarations`，否则内核不使用该供应商。 */
+  /** Every model's `parameters` must pass `assertValidDeclarations`, otherwise the kernel does not use this vendor. */
   listModels(opts?: ModelCallOptions): Promise<ModelInfo[]>;
-  /** 事件序列必须以且仅以一个 message_complete 结束；出错抛 ModelError。 */
+  /** The event sequence must end with exactly one message_complete; throw ModelError on error. */
   stream(
     req: ModelRequest,
     opts: { signal: AbortSignal } & ModelCallOptions,
@@ -406,10 +406,10 @@ export interface ModelProvider {
   embed?(req: EmbedRequest, opts: { signal: AbortSignal } & ModelCallOptions): Promise<EmbedResult>;
 }
 
-/** `model-provider@1` 的实现（旧契约，内核经适配层接入：effort 由 `capabilities.effort` 推导）。 */
+/** The `model-provider@1` implementation (old contract, connected by the kernel through an adapter layer: effort is derived from `capabilities.effort`). */
 export interface ModelProviderV1 {
   listModels(): Promise<ModelInfoV1[]>;
-  /** 事件序列必须以且仅以一个 message_complete 结束；出错抛 ModelError。 */
+  /** The event sequence must end with exactly one message_complete; throw ModelError on error. */
   stream(req: ModelRequestV1, opts: { signal: AbortSignal }): AsyncIterable<ModelStreamEvent>;
 }
 

@@ -1,16 +1,16 @@
 /**
- * `model-provider@2` 的参数声明与校验（纯函数；issue / 错误信息用英文，供日志与 API 返回）。
- * 每个模型在 `ModelInfo.parameters` 中声明自己支持的参数，取值约束是受限的 JSON Schema 子集。
+ * Parameter declarations and validation for `model-provider@2` (pure functions; issues / error messages are in English, for logs and API responses).
+ * Each model declares in `ModelInfo.parameters` the parameters it supports; value constraints are a restricted JSON Schema subset.
  */
 
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 
 /**
- * 标准旋钮：平台统一语义，界面专门渲染，换模型或兜底时语义可迁移；插件负责映射到原生参数。
- * - `effort`：思考深度，`{ type: "string", enum }`，取值是 `low|medium|high|xhigh|max` 的子集；
- * - `thinking`：思考模式，`{ type: "string", enum }`，取值是 `off|on|summarized` 的子集；
- * - `temperature`：`{ type: "number" }`（可带范围）；
- * - `maxOutputTokens`：最大输出 token，`{ type: "integer" }`（可带范围）。
+ * Standard knobs: uniform platform semantics, rendered specially by the UI, with semantics that carry over when switching models or falling back; the plugin maps them to native parameters.
+ * - `effort`: thinking depth, `{ type: "string", enum }`, values a subset of `low|medium|high|xhigh|max`;
+ * - `thinking`: thinking mode, `{ type: "string", enum }`, values a subset of `off|on|summarized`;
+ * - `temperature`: `{ type: "number" }` (may carry a range);
+ * - `maxOutputTokens`: maximum output tokens, `{ type: "integer" }` (may carry a range).
  */
 export type StandardKnob = "effort" | "thinking" | "temperature" | "maxOutputTokens";
 
@@ -20,12 +20,12 @@ export const STANDARD_KNOBS: readonly StandardKnob[] = [
   "temperature",
   "maxOutputTokens",
 ];
-/** `effort` 旋钮允许的取值全集。 */
+/** The full set of values the `effort` knob allows. */
 export const EFFORT_VALUES: readonly Effort[] = ["low", "medium", "high", "xhigh", "max"];
-/** `thinking` 旋钮允许的取值全集。 */
+/** The full set of values the `thinking` knob allows. */
 export const THINKING_VALUES: readonly string[] = ["off", "on", "summarized"];
 
-/** 参数取值约束：受限的 JSON Schema 子集（可序列化后交给界面；内核自行校验，不依赖 ajv）。 */
+/** Parameter value constraints: a restricted JSON Schema subset (serializable for the UI; the kernel validates it itself, without ajv). */
 export type ParamSchema =
   | { type: "string"; enum: string[] }
   | { type: "string"; maxLength?: number }
@@ -34,14 +34,14 @@ export type ParamSchema =
 
 export type ParamValue = string | number | boolean;
 
-/** 模型声明的一个参数。 */
+/** One parameter a model declares. */
 export interface ModelParameter {
-  /** 标准旋钮名（见 {@link StandardKnob}），或厂商专有参数 `"<插件名>.<名称>"`。 */
+  /** A standard knob name (see {@link StandardKnob}), or a vendor-specific parameter `"<plugin name>.<name>"`. */
   key: string;
-  /** key 为标准旋钮时必填且必须等于 key；厂商专有参数不得填写。 */
+  /** Required when key is a standard knob and must equal key; vendor-specific parameters must not set it. */
   standard?: StandardKnob;
   schema: ParamSchema;
-  /** 未设置时使用的值；必须满足 schema。 */
+  /** The value used when unset; must satisfy the schema. */
   default?: ParamValue;
   label: { zh: string; en: string };
   description?: { zh: string; en: string };
@@ -57,7 +57,7 @@ const isStandardKnob = (k: string): k is StandardKnob =>
 
 const VENDOR_NAME = /^[A-Za-z][A-Za-z0-9_-]*$/;
 
-/** 值不满足 schema 时返回英文原因，满足时返回 undefined。 */
+/** Returns an English reason when the value does not satisfy the schema, undefined when it does. */
 export function checkParamValue(schema: ParamSchema, v: unknown): string | undefined {
   switch (schema.type) {
     case "boolean":
@@ -84,13 +84,13 @@ export function checkParamValue(schema: ParamSchema, v: unknown): string | undef
   }
 }
 
-/** 按键查声明（用 Map，避免 `constructor` 等原型属性被当成已声明的键）。 */
+/** Looks up a declaration by key (uses a Map so that prototype properties such as `constructor` are not mistaken for declared keys). */
 const declMap = (decl: ModelParameter[]): Map<string, ModelParameter> =>
   new Map(decl.map((d) => [d.key, d]));
 
 /**
- * 严格校验（保存 agent 时用）：未知键、类型不符、枚举越界、超出范围都算错，逐键报告。
- * 成功时 `value` 为传入的参数，不补默认值；值为 undefined 的键视为未设置。
+ * Strict validation (used when saving an agent): unknown keys, type mismatches, enum violations and out-of-range values are all errors, reported per key.
+ * On success `value` is the input parameters, with no defaults filled in; a key whose value is undefined counts as unset.
  */
 export function validateParams(
   decl: ModelParameter[],
@@ -114,8 +114,8 @@ export function validateParams(
 }
 
 /**
- * 宽松版（运行时用）：丢弃未知或不合法的项（键记入 `dropped`），再为未设置的已声明参数补默认值。
- * 用于插件升级后已保存的参数不再合法的情况，不让整轮运行失败。
+ * The lenient variant (used at runtime): drops unknown or invalid entries (their keys go into `dropped`), then fills defaults for declared parameters that are unset.
+ * For the case where saved parameters are no longer valid after a plugin upgrade, so that the whole run does not fail.
  */
 export function sanitizeParams(
   decl: ModelParameter[],
@@ -188,7 +188,7 @@ function schemaProblems(schema: unknown): string[] {
   }
 }
 
-/** 标准旋钮的取值约定（schema 本身已合法时才检查）。 */
+/** The value conventions of standard knobs (checked only when the schema itself is already valid). */
 function knobProblems(key: StandardKnob, schema: ParamSchema): string[] {
   const values = schema.type === "string" && "enum" in schema ? schema.enum : undefined;
   switch (key) {
@@ -224,7 +224,7 @@ function textProblems(d: ModelParameter): string[] {
   return out;
 }
 
-/** 一个参数声明的全部问题；无问题返回空数组。 */
+/** All problems of one parameter declaration; an empty array when there are none. */
 function declarationProblems(plugin: string, d: ModelParameter): string[] {
   if (typeof d !== "object" || d === null) return ["declaration must be an object"];
   if (typeof d.key !== "string") return ["key must be a string"];
@@ -241,9 +241,9 @@ function declarationProblems(plugin: string, d: ModelParameter): string[] {
 }
 
 /**
- * 校验插件为一个模型声明的参数：键名是标准旋钮或 `<plugin>.<名称>`、`standard` 与键一致、
- * schema 属于受支持的子集、标准旋钮符合取值约定、默认值满足 schema、文案齐全、键不重复。
- * 有问题时抛错，信息点名插件与各个键（英文）。
+ * Validates the parameters a plugin declares for a model: the key is a standard knob or `<plugin>.<name>`, `standard` agrees with the key,
+ * the schema belongs to the supported subset, standard knobs satisfy the value conventions, defaults satisfy the schema, copy is complete, keys do not repeat.
+ * Throws when there is a problem, with a message naming the plugin and each key (in English).
  */
 export function assertValidDeclarations(plugin: string, decl: ModelParameter[]): void {
   if (!Array.isArray(decl)) {

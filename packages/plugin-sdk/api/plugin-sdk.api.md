@@ -662,7 +662,7 @@ export function connectorToolKey(slug: string, tool: string): string;
 
 // @public
 export type ContentBlock =
-/** text 的 opaque：供应商需要随文本回放的私有数据（如 OpenAI message 输出项的 id）。 */
+/** Opaque for text: vendor-private data that must be replayed with the text (e.g. the id of an OpenAI message output item). */
     {
     type: "text";
     text: string;
@@ -684,8 +684,8 @@ export type ContentBlock =
     isError: boolean;
 }
 /**
-* 图片（只出现在 user 消息里）。模型不支持 `vision` 时内核换成文字占位，插件不用把关；
-* 不认识此块的旧插件会跳过它。
+* Image (appears only in user messages). When the model does not support `vision` the kernel substitutes a text placeholder, so the plugin need not gate it;
+* an old plugin that does not know this block skips it.
 */
 | {
     type: "image";
@@ -693,7 +693,7 @@ export type ContentBlock =
     source: MediaSource_2;
     name?: string;
 }
-/** 文档（只出现在 user 消息里），由 `capabilities.documents` 把关，规则同 image。 */
+/** Document (appears only in user messages), gated by `capabilities.documents`, same rules as image. */
 | {
     type: "document";
     mediaType: DocumentMediaType;
@@ -1071,13 +1071,13 @@ export const EMBED_PROTOCOL = "capybara-embed/1";
 
 // @public
 export type EmbedChildMessage =
-/** 高度为 CSS 像素，0–10000。 */
+/** Height in CSS pixels, 0–10000. */
     {
     protocol: typeof EMBED_PROTOCOL;
     type: "resize";
     height: number;
 }
-/** 只允许站内路径：单个 `/` 开头、没有 `//`、没有 `.` / `..` 段（含 `%2e` 编码）、规范化后不变。 */
+/** Only in-site paths: a single leading `/`, no `//`, no `.` / `..` segments (including `%2e` encoding), unchanged after normalization. */
 | {
     protocol: typeof EMBED_PROTOCOL;
     type: "navigate";
@@ -1704,7 +1704,7 @@ export type InboundEvent = {
     sender: InboundSender;
     action: CardAction;
 }
-/** 平台推送人员变动的提示，内核据此触发通讯录同步。 */
+/** The platform pushes a personnel change hint; the kernel triggers a directory sync from it. */
 | {
     type: "directory_changed";
     tenantId: string;
@@ -2094,7 +2094,7 @@ export type ModelMessage = {
     role: "assistant";
     content: ContentBlock[];
 }
-/** 对话中途的系统提醒；模型不支持时由插件转成 user 文本块（以 "[system] " 开头）。 */
+/** A mid-conversation system reminder; when the model does not support it the plugin turns it into a user text block (starting with "[system] "). */
 | {
     role: "system";
     content: string;

@@ -8,23 +8,23 @@ import type { ObjectHead, PresignedUpload, PresignGetOptions } from "./storage.j
 import type { ToolHandler, ToolSpec } from "./tool.js";
 import type { EmbedClaims, UiActionArgs, UiActionResult, UiRenderArgs, UiView } from "./ui.js";
 
-/** 日志接口。 */
+/** Logger interface. */
 export interface Logger {
   info(msg: string, fields?: Record<string, unknown>): void;
   warn(msg: string, fields?: Record<string, unknown>): void;
   error(msg: string, fields?: Record<string, unknown>): void;
 }
 
-/** 分布式锁租约。 */
+/** Distributed lock lease. */
 export interface Lease {
   renew(): Promise<boolean>;
   release(): Promise<void>;
 }
 
 /**
- * 插件的对象存储（`ctx.storage`，需 `permissions.storage`）：与 `ObjectStore` 同形，但每个方法的第一个参数是
- * `orgId`，键与前缀由内核自动加上 `plugins/<插件名>/<orgId>/`——插件只能看到自己在该组织下的对象。
- * 底层是部署配置的 `object-store@1` 提供方；没有提供方时各方法抛错。
+ * The plugin's object storage (`ctx.storage`, needs `permissions.storage`): the same shape as `ObjectStore`, but the first parameter of every method is
+ * `orgId`, and the kernel adds `plugins/<plugin name>/<orgId>/` to keys and prefixes automatically: a plugin sees only its own objects under that org.
+ * The backing store is the deployment-configured `object-store@1` provider; every method throws when there is no provider.
  */
 export interface ExtensionStorage {
   put(
@@ -34,8 +34,8 @@ export interface ExtensionStorage {
     opts: { contentType: string; size?: number; signal?: AbortSignal },
   ): Promise<ObjectHead>;
   /**
-   * 不存在返回 null。`range` 为闭区间字节范围，缺省 `end` 表示读到末尾。
-   * 带 `range` 时 `head.size` 仍是整个对象的大小；存储忽略 Range 时 body 可能是整个对象。
+   * Returns null when missing. `range` is a closed byte range; an omitted `end` means read to the end.
+   * With `range`, `head.size` is still the size of the whole object; when the store ignores Range, body may be the whole object.
    */
   get(
     orgId: string,
@@ -43,7 +43,7 @@ export interface ExtensionStorage {
     opts?: { signal?: AbortSignal; range?: { start: number; end?: number } },
   ): Promise<{ head: ObjectHead; body: ReadableStream<Uint8Array> } | null>;
   head(orgId: string, key: string): Promise<ObjectHead | null>;
-  /** 不存在也算成功。 */
+  /** A missing key also counts as success. */
   delete(orgId: string, key: string): Promise<void>;
   deletePrefix(orgId: string, prefix: string): Promise<number>;
   list(
@@ -116,7 +116,7 @@ export interface ExtensionModels {
   describe(req: { orgId: string; purpose: string }): Promise<ExtensionModelTarget | null>;
 }
 
-/** 传给插件 `setup` 的上下文。不提供定时器与进程内共享状态；kv 写入必须带 TTL。 */
+/** The context passed to a plugin's `setup`. It provides no timers or in-process shared state; kv writes must carry a TTL. */
 export interface ExtensionContext {
   kv: {
     get(key: string): Promise<string | null>;
@@ -143,12 +143,12 @@ export interface ExtensionContext {
     get(orgId: string, key: string): Promise<string | null>;
     set(orgId: string, key: string, value: string): Promise<void>;
   };
-  /** 对象存储（需 `permissions.storage`，见 {@link ExtensionStorage}）。 */
+  /** Object storage (needs `permissions.storage`, see {@link ExtensionStorage}). */
   storage: ExtensionStorage;
   /** Models by purpose (requires `permissions.models`, see {@link ExtensionModels}). */
   models: ExtensionModels;
-  /** 已切到本插件 schema（withSchema）的 Kysely 实例。 */
-  // biome-ignore lint/suspicious/noExplicitAny: 插件自带表结构，内核无法静态得知
+  /** A Kysely instance already switched to this plugin's schema (withSchema). */
+  // biome-ignore lint/suspicious/noExplicitAny: the plugin brings its own table structure, which the kernel cannot know statically
   db: Kysely<any>;
   http: {
     /**
@@ -163,7 +163,7 @@ export interface ExtensionContext {
     ): void;
   };
   tools: {
-    /** 注册一个工具；只能在 `setup` 期间调用，名称不可重复。 */
+    /** Registers a tool; callable only during `setup`, names must not repeat. */
     register(spec: ToolSpec, handler: ToolHandler): void;
   };
   /**
@@ -192,14 +192,14 @@ export interface ExtensionContext {
     ): Promise<{ plugin: string; impl: T }[]>;
   };
   /**
-   * 界面贡献的运行时（清单 `ui` + `permissions.ui`）：
-   * - `view` / `action`：只能在 `setup` 期间注册，id 是清单里 kind view 的贡献 id；
-   *   `action` 收到视图里按钮或表单提交（`args.actionId` 区分是哪一个）；
-   * - `invalidate`：告诉内核「这个贡献变了」，打开着它的网页会重新取视图（经 bus，跨副本）；a
+   * Runtime of UI contributions (manifest `ui` + `permissions.ui`):
+   * - `view` / `action`: can be registered only during `setup`; the id is the contribution id of the kind-view entry in the manifest;
+   *   `action` receives a button click or form submission from the view (`args.actionId` tells which one);
+   * - `invalidate`: tells the kernel "this contribution changed", and the web pages that have it open fetch the view again (via the bus, across replicas); a
    *   `platform.page` contribution takes no `orgId` (it refreshes the admin console), every other
    *   contribution requires one;
-   * - `verifyEmbedToken`：校验 embed 页面拿到的嵌入令牌，只认签给本插件、未过期的，且此刻插件仍在该组织启用、
-   *   调用者仍是 active 成员，角色仍满足位置的 minRole，否则返回 null；返回的 `role` 是此刻的角色。A
+   * - `verifyEmbedToken`: validates the embed token an embed page received; it accepts only tokens signed for this plugin and not expired, while the plugin is still enabled in that org,
+   *   the caller is still an active member and the role still satisfies the slot's minRole, otherwise it returns null; the returned `role` is the role at this moment. A
    *   platform-scope token (`scope: "platform"`, no `orgId`) verifies only for a `platform.page`
    *   contribution while the account is still an active super admin.
    */
@@ -240,14 +240,14 @@ export interface ExtensionContext {
   };
   provide(extensionPoint: ExtensionPointRef, impl: unknown): void;
   /**
-   * 本插件实例的生命周期信号：实例被撤销（停用、卸载、升级）时、在途调用排空之后中止。
-   * 插件自己起的长任务（轮询循环、长连接等）据此收尾。
+   * The lifecycle signal of this plugin instance: aborted when the instance is revoked (disabled, uninstalled, upgraded), after in-flight calls have drained.
+   * Long-running tasks the plugin started itself (polling loops, long connections, etc.) wind down on it.
    */
   signal: AbortSignal;
   /**
-   * 部署级配置，已按插件 schema 校验（启动配置与企业管理员在后台保存的值合并后）。这是一个 getter：
-   * 标了 `hot`（`.meta({ hot: true })`）的字段改动时内核就地替换，插件**在用时读** `ctx.config` 才能拿到新值，
-   * 不要在 setup 里把 hot 字段拷进闭包；改了非 hot 字段时内核重新加载插件实例（新的 setup）。
+   * Deployment-level config, validated against the plugin schema (the startup config merged with values the enterprise admin saved in the console). This is a getter:
+   * when a field marked `hot` (`.meta({ hot: true })`) changes, the kernel replaces it in place, so the plugin must read `ctx.config` **at the time of use** to get the new value;
+   * do not copy hot fields into a closure in setup; when a non-hot field changes the kernel reloads the plugin instance (a new setup).
    */
   readonly config: unknown;
   log: Logger;

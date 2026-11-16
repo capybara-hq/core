@@ -27,7 +27,7 @@ import {
 } from "./setup-guide-parse.js";
 
 /**
- * Where a guide is shown. `channel-connection`: 新建渠道 and the channel detail page;
+ * Where a guide is shown. `channel-connection`: "New channel" and the channel detail page;
  * `connector-template`: the pages of a connector template and the connectors made from it.
  */
 export const SETUP_GUIDE_PLACES = ["channel-connection", "connector-template"] as const;

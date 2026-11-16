@@ -13,16 +13,16 @@ import {
 } from "./permissions.js";
 import type { UiContribution } from "./ui.js";
 
-/** 插件清单。 */
+/** The plugin manifest. */
 export interface ExtensionManifest {
   name: string;
   version: string;
   sdk: string;
   provides: ExtensionPointRef[];
   requires?: ExtensionPointRef[];
-  /** 可选依赖：缺失时插件照常加载，运行时经 ctx.extensionPoints 判断。 */
+  /** Optional dependencies: when missing the plugin still loads, and decides at runtime through ctx.extensionPoints. */
   optional?: ExtensionPointRef[];
-  /** 权限清单（治理而非沙箱）。 */
+  /** Permission manifest (governance, not a sandbox). */
   permissions?: ExtensionPermissions;
   /**
    * UI contributions, each in a slot of `UI_SLOTS`; every id is also listed in `permissions.ui`.
@@ -34,16 +34,16 @@ export interface ExtensionManifest {
   migrations?: string;
   setup(ctx: ExtensionContext): void | Promise<void>;
   /**
-   * 可选：插件实例被撤销（停用、卸载、升级换新实例、依赖方随提供方重新加载）时调用。
-   * 调用时内核已经：停止接新的调用、等在途调用结束（最多 `extensionHost.drainSeconds`）、中止 `ctx.signal`、
-   * 撤销本实例经 ctx 做过的全部登记（工具、路由、队列 worker、bus 订阅、锁租约、界面、provide）。
-   * 这里只收拾插件自己在 ctx 之外开的东西（如自建的连接）；不要再经 ctx 登记任何东西。
-   * setup 抛错时不调用（已登记的由内核撤销）。
+   * Optional: called when the plugin instance is revoked (disabled, uninstalled, replaced by a new instance on upgrade, a dependent reloaded together with its provider).
+   * By then the kernel has already: stopped accepting new calls, waited for in-flight calls to finish (at most `extensionHost.drainSeconds`), aborted `ctx.signal`,
+   * and revoked every registration this instance made through ctx (tools, routes, queue workers, bus subscriptions, lock leases, UI, provide).
+   * Clean up here only what the plugin opened outside ctx (e.g. its own connections); do not register anything through ctx again.
+   * Not called when setup throws (the kernel revokes what was already registered).
    */
   dispose?(ctx: ExtensionContext): void | Promise<void>;
 }
 
-/** 插件清单不合法。 */
+/** The plugin manifest is invalid. */
 export class ExtensionManifestError extends Error {
   constructor(plugin: string, message: string) {
     super(`extension ${plugin}: ${message}`);
@@ -51,11 +51,11 @@ export class ExtensionManifestError extends Error {
   }
 }
 
-/** 插件名规则（清单 `name`；连接器模板的 `plugin` 也按它校验）。 */
+/** Plugin name rule (manifest `name`; a connector template's `plugin` is validated by it too). */
 export const EXTENSION_NAME_RE = /^[a-z][a-z0-9-]{1,40}$/;
 const NAME_RE = EXTENSION_NAME_RE;
 
-/** 保留的插件名：内核用 `kernel` 作为自己的 secrets 命名空间，插件不能与之相同。 */
+/** Reserved plugin name: the kernel uses `kernel` as its own secrets namespace, so a plugin cannot take it. */
 const RESERVED_NAMES: ReadonlySet<string> = new Set(["kernel"]);
 
 function checkRefs(
@@ -82,7 +82,7 @@ function checkRefs(
   }
 }
 
-/** 校验并原样返回插件清单；不合法抛 ExtensionManifestError。 */
+/** Validates the plugin manifest and returns it unchanged; throws ExtensionManifestError when invalid. */
 export function defineExtension(m: ExtensionManifest): ExtensionManifest {
   const plugin = typeof m?.name === "string" && m.name !== "" ? m.name : "<unnamed>";
   const fail = (msg: string): never => {

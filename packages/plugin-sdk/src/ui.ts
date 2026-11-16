@@ -67,8 +67,8 @@ export interface UiContribution {
 }
 
 /**
- * 渲染 schema 的块。文本是给人看的、按原样展示（插件自行决定语言，通常取 `locale`）。
- * `text.markdown` 不支持原生 HTML，链接只允许 http(s) 绝对地址。
+ * Blocks of the render schema. Text is for humans and shown as is (the plugin decides the language itself, usually taking `locale`).
+ * `text.markdown` does not support native HTML, and links may only be absolute http(s) addresses.
  */
 export type UiBlock =
   | { type: "heading"; text: string }
@@ -91,8 +91,8 @@ export type UiBlock =
       type: "table";
       columns: { key: string; label: string }[];
       /**
-       * 每行按列 key 取单元格，可以缺列。渲染时用 `Object.hasOwn(row, key)` 判断单元格是否存在，
-       * 不要用 `row[key]` 或 `in`：列 key 可能是 `constructor` / `toString` 之类，会取到原型链上的值。
+       * Each row takes its cell by column key, and a column may be missing. When rendering, use `Object.hasOwn(row, key)` to tell whether a cell exists,
+       * do not use `row[key]` or `in`: a column key may be `constructor` / `toString` and the like, which would pick up values from the prototype chain.
        */
       rows: Record<string, string>[];
       /** Per row (same index), an open target or null; never a key inside a row. */
@@ -116,7 +116,7 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
-/** 插件视图：有上限的块列表；`badge` 显示在标签上（如「2/4」）。 */
+/** A plugin view: a block list with limits; `badge` is shown on the tab (e.g. "2/4"). */
 export interface UiView {
   badge?: string;
   /** The ⤢ of an inline card's title row and a properties section's header. */
@@ -131,12 +131,12 @@ export interface UiView {
 }
 
 /**
- * 视图上限（{@link validateUiView} 统一检查）：
- * - `blocks`：块数；
- * - `tableRows`：表格行数，也用作 keyValue 项数、表格列数、图表点数、按钮数的上限；
- * - `checklistItems`：清单项数；
- * - `textChars`：整个视图所有文本（含表单 JSON）的字符总数；
- * - `payloadBytes`：单个按钮 `payload` 的 JSON 序列化后 UTF-8 字节数。
+ * View limits (checked uniformly by {@link validateUiView}):
+ * - `blocks`: number of blocks;
+ * - `tableRows`: number of table rows, also used as the upper bound for keyValue items, table columns, chart points and buttons;
+ * - `checklistItems`: number of checklist items;
+ * - `textChars`: total characters of all text in the whole view (form JSON included);
+ * - `payloadBytes`: UTF-8 bytes of a single button `payload` after JSON serialization.
  * - `componentDataBytes`: the UTF-8 bytes of a component view's `data` as JSON.
  */
 export const UI_LIMITS = {
@@ -163,7 +163,7 @@ const MD_INLINE_LINK = /\]\(\s*<?([^\s)>]*)/g;
 const MD_REF_DEF = /^ {0,3}\[[^\]\n]+\]:[ \t]*<?([^\s>]*)/gm;
 const MD_AUTOLINK = /<([a-zA-Z][a-zA-Z0-9+.-]{1,31}:[^<>\s]*)>/g;
 
-/** Markdown 里的链接 / 图片目标（行内、引用定义、尖括号自动链接）。 */
+/** Link / image targets in Markdown (inline, reference definitions, angle-bracket autolinks). */
 function markdownLinks(md: string): string[] {
   const out: string[] = [];
   for (const re of [MD_INLINE_LINK, MD_REF_DEF, MD_AUTOLINK]) {
@@ -172,7 +172,7 @@ function markdownLinks(md: string): string[] {
   return out;
 }
 
-/** JSON 序列化后的 UTF-8 字节数；不可序列化返回 undefined。 */
+/** UTF-8 bytes after JSON serialization; undefined when not serializable. */
 function jsonBytes(v: unknown): number | undefined {
   try {
     const s = JSON.stringify(v);
@@ -221,9 +221,9 @@ function jsonProblem(v: unknown, at: string, seen: Set<object> = new Set()): str
 }
 
 /**
- * 校验插件返回的视图，返回问题列表（空 = 合法）。链接与图片只允许 http(s) 绝对地址；
- * Markdown 的检查是纵深防御，网页渲染时仍须只认 http(s) 链接、不渲染原生 HTML。
- * 按钮与表单的 `actionId` 在整个视图内唯一（动作回调靠它区分来源）。
+ * Validates the view a plugin returns and returns the list of problems (empty = valid). Links and images may only be absolute http(s) addresses;
+ * the Markdown check is defense in depth, and web rendering must still accept only http(s) links and not render native HTML.
+ * The `actionId` of buttons and forms is unique within the whole view (action callbacks tell the source by it).
  * `data` is accepted only with `opts.component` (the view of a component contribution): JSON as is
  * (nothing JSON would drop or rewrite, see `jsonProblem`), up to `UI_LIMITS.componentDataBytes`
  * bytes of UTF-8.
@@ -468,14 +468,14 @@ export interface UiRenderArgsBase {
   config?: unknown;
 }
 
-/** 内核调用插件 `render` 时传入的参数，组织内的位置（会话、智能体、组织、文件）。 */
+/** The parameters passed when the kernel calls the plugin's `render`: the position within the org (conversation, agent, org, file). */
 export interface UiOrgRenderArgs extends UiRenderArgsBase {
   /** The scope of {@link slot}: which of the context ids below are set. */
   scope: Exclude<UiSlotScope, "platform">;
   orgId: string;
-  /** 调用者此刻在 `orgId` 的角色（内核按成员关系填，插件可据此收紧按钮等，见 {@link UiRole}）。 */
+  /** The caller's role in `orgId` at this moment (filled by the kernel from membership; a plugin may use it to tighten buttons etc., see {@link UiRole}). */
   role: UiRole;
-  /** 仅对话视图。 */
+  /** Conversation views only. */
   conversationId?: string;
   /** Only an agent view (`agent.detail.section`): an agent of `orgId` the caller can read. */
   agentId?: string;
@@ -503,7 +503,7 @@ export interface UiPlatformRenderArgs extends UiRenderArgsBase {
   card?: undefined;
 }
 
-/** 内核调用插件 `render` 时传入的参数：narrow on `scope` (`"platform"` has no `orgId`). */
+/** The parameters passed when the kernel calls the plugin's `render`: narrow on `scope` (`"platform"` has no `orgId`). */
 export type UiRenderArgs = UiOrgRenderArgs | UiPlatformRenderArgs;
 
 /** What a button or form submit adds to the render args. */
@@ -517,13 +517,13 @@ export interface UiActionInput {
 export interface UiOrgActionArgs extends UiOrgRenderArgs, UiActionInput {}
 /** An action of a `platform.page` view. */
 export interface UiPlatformActionArgs extends UiPlatformRenderArgs, UiActionInput {}
-/** 视图里的按钮或表单提交：`actionId` 来自块；表单提交时带 `answer`。 */
+/** A button or form submission in a view: `actionId` comes from the block; a form submission carries `answer`. */
 export type UiActionArgs = UiOrgActionArgs | UiPlatformActionArgs;
 
-/** 动作结果：一条提示，或一份新的视图。 */
+/** An action result: a notice, or a new view. */
 export type UiActionResult = { toast?: { zh: string; en: string } } | { view: UiView };
 
-/** The embed claims both scopes share. `exp` 为 Unix 秒。 */
+/** The embed claims both scopes share. `exp` is Unix seconds. */
 export interface EmbedClaimsBase {
   plugin: string;
   accountId: string;
@@ -535,7 +535,7 @@ export interface EmbedClaimsBase {
 export interface OrgEmbedClaims extends EmbedClaimsBase {
   scope: "org";
   orgId: string;
-  /** 调用者的角色：签发时写入；`ctx.ui.verifyEmbedToken` 返回校验时刻的当前角色。 */
+  /** The caller's role: written at issuance; `ctx.ui.verifyEmbedToken` returns the current role at validation time. */
   role: UiRole;
   conversationId?: string;
   /** Only an agent embed's token (`agent.detail.section`): the agent it was issued for. */
@@ -555,12 +555,12 @@ export interface PlatformEmbedClaims extends EmbedClaimsBase {
 }
 
 /**
- * 嵌入令牌里的声明（经 `ctx.ui.verifyEmbedToken` 校验后可信）: narrow on `scope` (`"platform"` has no
+ * Claims in an embed token (trustworthy after validation by `ctx.ui.verifyEmbedToken`): narrow on `scope` (`"platform"` has no
  * `orgId` and `role` `"superAdmin"`).
  */
 export type EmbedClaims = OrgEmbedClaims | PlatformEmbedClaims;
 
-/** 外层页面与嵌入 iframe 之间 `postMessage` 协议的版本标识。 */
+/** The version marker of the `postMessage` protocol between the outer page and the embedded iframe. */
 export const EMBED_PROTOCOL = "capybara-embed/1";
 
 /**
@@ -572,7 +572,7 @@ export type EmbedInitContext =
   | { scope: "org"; orgId: string; conversationId?: string }
   | { scope: "platform"; orgId?: undefined; conversationId?: undefined };
 
-/** 外层页面发给 iframe 的消息。 */
+/** Messages the outer page sends to the iframe. */
 export type EmbedParentMessage =
   | {
       protocol: typeof EMBED_PROTOCOL;
@@ -603,29 +603,29 @@ export type EmbedParentMessage =
       data: ArrayBuffer;
     };
 
-/** iframe 发给外层页面的消息。 */
+/** Messages the iframe sends to the outer page. */
 export type EmbedChildMessage =
-  /** 高度为 CSS 像素，0–10000。 */
+  /** Height in CSS pixels, 0–10000. */
   | { protocol: typeof EMBED_PROTOCOL; type: "resize"; height: number }
-  /** 只允许站内路径：单个 `/` 开头、没有 `//`、没有 `.` / `..` 段（含 `%2e` 编码）、规范化后不变。 */
+  /** Only in-site paths: a single leading `/`, no `//`, no `.` / `..` segments (including `%2e` encoding), unchanged after normalization. */
   | { protocol: typeof EMBED_PROTOCOL; type: "navigate"; path: string }
   | { protocol: typeof EMBED_PROTOCOL; type: "toast"; text: string };
 
 const NAV_MAX = 2000;
 const RESIZE_MAX = 10000;
 const TOAST_MAX = 500;
-// capybara:embed-nav-begin（这一段在 packages/plugin-sdk/src/ui.ts 与 apps/web/src/lib/embed-bridge.ts 里逐字相同，有测试核对）
-// 控制字符与反斜杠：浏览器会把 `/\host` 当成 `//host`，也会剥掉路径里的换行 / 制表符
-// biome-ignore lint/suspicious/noControlCharactersInRegex: 正是要拒绝控制字符
+// capybara:embed-nav-begin (this section is verbatim identical in packages/plugin-sdk/src/ui.ts and apps/web/src/lib/embed-bridge.ts, checked by a test)
+// Control characters and backslash: browsers treat `/\host` as `//host`, and strip newlines / tabs inside a path
+// biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are exactly what must be rejected
 const NAV_BAD = /[\u0000-\u001f\u007f\\]/;
-/** 路径部分里编码的 `/`、`\` 与控制字符（任意大小写）：解码后会改变路径结构。 */
+/** Encoded `/`, `\` and control characters in the path part (any case): decoding them would change the path structure. */
 const NAV_BAD_ENCODED = /%(?:2f|5c|[01][0-9a-f]|7f)/i;
 
 /**
- * 站内路径：以单个 `/` 开头，任何位置都没有 `//`，没有控制字符与反斜杠；路径部分没有 `.` / `..` 段
- * （含任意大小写的 `%2e` 编码），也没有编码的 `/`（`%2f`）、`\`（`%5c`）与控制字符（`%00`–`%1f`、`%7f`）；
- * 且按 URL 规范化后与原文完全相同、不以 `//` 开头——规范化不会把它变成别的路径，
- * 交给站内路由时不会跳到站外或上层目录。
+ * In-site path: starts with a single `/`, has no `//` anywhere, no control characters or backslashes; the path part has no `.` / `..` segments
+ * (including `%2e` in any case), no encoded `/` (`%2f`), `\` (`%5c`) or control characters (`%00`–`%1f`, `%7f`);
+ * and after URL normalization it is exactly identical to the original and does not start with `//`: normalization cannot turn it into another path,
+ * so handing it to in-site routing cannot jump outside the site or to a parent directory.
  */
 function isInSitePath(p: string): boolean {
   if (!p.startsWith("/") || p.includes("//") || NAV_BAD.test(p)) return false;
@@ -646,8 +646,8 @@ function isInSitePath(p: string): boolean {
 // capybara:embed-nav-end
 
 /**
- * 解析 iframe 发来的消息：协议、类型、字段都对才返回（只留已知字段的新对象），否则返回 null。
- * 外层页面还须先核对消息来源是这个 iframe。
+ * Parses a message sent by the iframe: returns it only when protocol, type and fields are all right (a new object keeping only known fields), otherwise null.
+ * The outer page must also first check that the message source is this iframe.
  */
 export function parseEmbedChildMessage(m: unknown): EmbedChildMessage | null {
   if (!isObj(m) || m.protocol !== EMBED_PROTOCOL) return null;

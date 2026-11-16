@@ -16,10 +16,10 @@ import type { PluginManifest } from "./plugin-manifest.js";
  * come from the host.
  */
 
-/** 宿主提供的包（peerDependencies，安装时链接到宿主副本）；其余三方依赖必须打进 entry。 */
+/** Packages provided by the host (peerDependencies, linked to the host's copy on install); every other third-party dependency must be bundled into the entry. */
 export const HOST_PROVIDED_PACKAGES = ["@capybara-hq/plugin-sdk", "zod"] as const;
 
-/** npm 安装时会自动执行的脚本：插件包一律不许有（安装不跑脚本，有也是误导）。 */
+/** Scripts npm runs automatically on install: a plugin package must never have any (installs run no scripts, so having them would mislead). */
 export const FORBIDDEN_INSTALL_SCRIPTS = [
   "preinstall",
   "install",
@@ -27,7 +27,7 @@ export const FORBIDDEN_INSTALL_SCRIPTS = [
   "prepare",
 ] as const;
 
-/** 不许出现的依赖字段：三方依赖必须打进 entry。 */
+/** Dependency fields that must not appear: third-party dependencies must be bundled into the entry. */
 const FORBIDDEN_DEP_FIELDS = [
   "dependencies",
   "optionalDependencies",
@@ -35,14 +35,14 @@ const FORBIDDEN_DEP_FIELDS = [
   "bundledDependencies",
 ] as const;
 
-/** 静态清单里的一个配置字段（点路径，根即叶子时为空串）。 */
+/** A config field in the static manifest (a dotted path; an empty string when the root is itself the leaf). */
 export interface StaticConfigField {
   path: string;
   secret: boolean;
   hot: boolean;
 }
 
-/** 插件清单的静态部分（可 JSON 序列化；不含 setup、zod schema、migrations 路径）。 */
+/** The static part of the plugin manifest (JSON-serializable; excludes setup, zod schemas and migration paths). */
 export interface StaticExtensionManifest {
   name: string;
   version: string;
@@ -55,7 +55,7 @@ export interface StaticExtensionManifest {
   config: { deployment: StaticConfigField[]; org: StaticConfigField[] };
 }
 
-/** 入口模块里的一个 import：`name` 是 specifier（非字面量的动态 import 时为空串）。 */
+/** An import in the entry module: `name` is the specifier (an empty string for a dynamic import that is not a literal). */
 export interface EntryImport {
   name: string;
   dynamic: boolean;
@@ -65,16 +65,16 @@ export interface EntryImport {
 const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
-/** npm 包名规则（简化）：可带 scope，小写，≤ 214 字符（长度另行检查）。 */
+/** npm package name rule (simplified): may carry a scope, lowercase, ≤ 214 characters (the length is checked separately). */
 export const NPM_PACKAGE_NAME_RE = /^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/;
 const NPM_NAME_RE = NPM_PACKAGE_NAME_RE;
 
 /**
- * 包内相对路径是否安全：非空、不以 `/` 开头、不含 `\`、控制字符与盘符，没有空段、`.` 与 `..` 段，≤ 1024 字符。
+ * Whether a path relative to the package is safe: non-empty, not starting with `/`, no `\`, control characters or drive letters, no empty segments, `.` or `..` segments, ≤ 1024 characters.
  */
 export function isSafePackagePath(p: string): boolean {
   if (typeof p !== "string" || p === "" || p.length > 1024) return false;
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: 正是要拒绝控制字符
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are exactly what must be rejected
   if (p.startsWith("/") || p.includes("\\") || /[\u0000-\u001f\u007f]/.test(p)) return false;
   if (/^[A-Za-z]:/.test(p)) return false;
   return p.split("/").every((seg) => seg !== "" && seg !== "." && seg !== "..");
@@ -84,9 +84,9 @@ const isHostPackage = (name: string) =>
   HOST_PROVIDED_PACKAGES.some((h) => name === h || name.startsWith(`${h}/`));
 
 /**
- * 核对入口模块的 import（C11）：静态与字面量动态 import 只许 `node:*`、{@link HOST_PROVIDED_PACKAGES}（含子路径）
- * 与包内相对路径（`./`、`../`；是否越出包外由调用方按文件位置判断）；非字面量的动态 import 一律拒绝。
- * 返回问题列表（空表示合法）。
+ * Checks the entry module's imports (C11): static and literal dynamic imports may only be `node:*`, {@link HOST_PROVIDED_PACKAGES} (subpaths included)
+ * and in-package relative paths (`./`, `../`; whether they escape the package is judged by the caller from the file location); non-literal dynamic imports are always rejected.
+ * Returns the list of problems (empty means valid).
  */
 export function checkEntryImports(specifiers: EntryImport[]): string[] {
   const out: string[] = [];
@@ -123,7 +123,7 @@ const defOf = (s: AnySchema) =>
   };
 const metaOf = (s: AnySchema) => s.meta() as FieldMeta | undefined;
 
-/** 与内核 `configFields` 相同的遍历：对象递归展开，default / optional 等包装剥掉，对象上的 secret 向下继承。 */
+/** The same traversal as the kernel's `configFields`: objects are expanded recursively, wrappers such as default / optional are stripped, and a secret on an object is inherited downward. */
 function configFieldsOf(
   schema: AnySchema | undefined,
   prefix = "",
@@ -152,8 +152,8 @@ const byPath = (a: StaticConfigField, b: StaticConfigField) =>
 const jsonClone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 
 /**
- * 真实清单的静态部分：打包时写进 `capybara.manifest`，加载时与包内的比对（`manifest_mismatch`）。
- * 结果可 JSON 往返（undefined 字段去掉）；配置字段按路径排序。
+ * The static part of the real manifest: written into `capybara.manifest` when packing, and compared with the in-package one at load time (`manifest_mismatch`).
+ * The result survives a JSON round trip (undefined fields removed); config fields are sorted by path.
  */
 export function staticManifestOf(m: ExtensionManifest): StaticExtensionManifest {
   const out: StaticExtensionManifest = {
@@ -337,57 +337,57 @@ export function hostSdkProblem(sdk: string, hostSdkVersion: string): string | un
 }
 
 /**
- * 连接器模板（C30）：连接器插件引用 + `Connector.kind` + 端点预设 + 组织可改的端点路径 + 认证预设（不含凭据）+
- * 默认 ownership + 各工具默认策略 + 图标。组织安装时只能填凭据、客户端 id / secret 与 `editableEndpoint` 里的字段。
+ * Connector template (C30): connector plugin reference + `Connector.kind` + endpoint preset + endpoint paths an org may change + auth preset (no credentials) +
+ * default ownership + default policy per tool + icon. When installing, an org may only fill in credentials, the client id / secret and the fields in `editableEndpoint`.
  */
 export interface ConnectorTemplateSpec {
-  /** 连接器插件名（如 `connector-mcp`）。 */
+  /** Connector plugin name (e.g. `connector-mcp`). */
   plugin: string;
-  /** 连接器插件的 semver 范围，可选。 */
+  /** Semver range of the connector plugin, optional. */
   pluginVersion?: string;
-  /** `Connector.kind`（如 `"mcp"`）。 */
+  /** `Connector.kind` (e.g. `"mcp"`). */
   connector: string;
-  /** 端点预设；导入时内核按该连接器的 `endpointSchema` 校验。 */
+  /** Endpoint preset; on import the kernel validates it against that connector's `endpointSchema`. */
   endpoint: Record<string, unknown>;
-  /** 组织安装时允许改的点路径（如 `"url"`）；其余以模板为准。路径必须存在于连接器的端点 schema 中。 */
+  /** Dotted paths an org may change when installing (e.g. `"url"`); everything else follows the template. The paths must exist in the connector's endpoint schema. */
   editableEndpoint?: string[];
-  /** 与连接器安装接口的认证方式同形（{@link ConnectorAuthSchema}），不含任何凭据。 */
+  /** The same shape as the auth method of the connector install API ({@link ConnectorAuthSchema}), carrying no credentials. */
   auth: Record<string, unknown>;
-  /** 缺省取 `auth.ownership`；给了就必须与之一致。 */
+  /** Defaults to `auth.ownership`; if given it must agree. */
   ownership?: "org" | "personal";
-  /** 工具名 → 默认策略（安装后记 `policy_source 'template'`）。 */
+  /** Tool name -> default policy (recorded as `policy_source 'template'` after install). */
   defaultToolPolicies?: Record<string, "allow" | "ask" | "deny">;
   /** Git hosts this connector's credential serves in sandboxes ({@link GitSource}). */
   git?: GitSource;
-  /** 包内路径，svg / png，≤ {@link CONNECTOR_TEMPLATE_LIMITS}`.iconBytes`。 */
+  /** In-package path, svg / png, ≤ {@link CONNECTOR_TEMPLATE_LIMITS}`.iconBytes`. */
   icon?: string;
 }
 
-/** 双语显示名。 */
+/** Bilingual display name. */
 export interface LocalizedName {
   zh: string;
   en: string;
 }
 
-/** 连接器模板与目录段的上限。 */
+/** Limits of connector templates and catalog segments. */
 export const CONNECTOR_TEMPLATE_LIMITS = {
-  /** 图标字节数上限。 */
+  /** Upper bound on icon bytes. */
   iconBytes: 64 * 1024,
-  /** 端点预设 JSON 序列化后的字符数上限。 */
+  /** Upper bound on the characters of the endpoint preset after JSON serialization. */
   endpointChars: 16 * 1024,
-  /** `editableEndpoint` 条数上限。 */
+  /** Upper bound on the number of `editableEndpoint` entries. */
   editablePaths: 50,
-  /** `defaultToolPolicies` 条数上限。 */
+  /** Upper bound on the number of `defaultToolPolicies` entries. */
   toolPolicies: 1000,
-  /** publisher 字符数上限。 */
+  /** Upper bound on the characters of publisher. */
   publisherChars: 100,
-  /** description 字符数上限。 */
+  /** Upper bound on the characters of description. */
   descriptionChars: 1024,
-  /** displayName 每种语言的字符数上限。 */
+  /** Upper bound on the characters of displayName per language. */
   displayNameChars: 100,
 } as const;
 
-/** 目录条目名（与清单条目名同一规则）：小写字母或数字开头，之后小写字母、数字、连字符，≤ 64。 */
+/** Catalog entry name (the same rule as manifest entry names): starts with a lowercase letter or digit, then lowercase letters, digits and hyphens, ≤ 64. */
 export const CATALOG_ITEM_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 /** An exact semver version (a regex JSON Schema can use). */
@@ -401,8 +401,8 @@ const PATH_SEG_RE = /^[A-Za-z0-9_-]{1,100}$/;
 const PROTO_KEYS = new Set(["__proto__", "prototype", "constructor"]);
 
 /**
- * 凭据样式的字段名（比较时转小写、去掉 `-` 与 `_`）：模板会被所有组织看到，端点预设里出现这些键一律拒绝。
- * `authorization` / `cookie` 等头名同样在列（端点头里的凭据）。
+ * Credential-style field names (compared lowercased with `-` and `_` removed): templates are seen by every org, so endpoint presets containing these keys are always rejected.
+ * Header names such as `authorization` / `cookie` are listed too (credentials in endpoint headers).
  */
 const CREDENTIAL_KEYS = new Set([
   "token",
@@ -429,7 +429,7 @@ const CREDENTIAL_KEYS = new Set([
 
 const normKey = (k: string) => k.toLowerCase().replace(/[-_]/g, "");
 
-/** 递归找出凭据样式的键（只报路径，不回显值）。 */
+/** Recursively finds credential-style keys (reports only paths, never echoes values). */
 function credentialKeyPaths(v: unknown, at: string, out: string[], depth = 0): void {
   if (depth > 20) return;
   if (Array.isArray(v)) {
@@ -460,11 +460,11 @@ const TEMPLATE_KEYS = new Set([
 ]);
 
 /**
- * 校验连接器模板（{@link ConnectorTemplateSpec}）的静态部分，返回问题列表（空表示合法；路径相对模板根，不回显值）：
- * 字段齐全、无未知字段；`auth` 符合 {@link ConnectorAuthSchema}（strict：夹带 `token` 等多余字段即拒绝）；
- * 端点预设里任何层级都不许有凭据样式的键；`editableEndpoint` 是不重复的点路径；`ownership` 与 `auth.ownership`
- * 一致；默认策略只许 allow / ask / deny；icon 是包内 .svg / .png 路径。
- * 端点是否符合连接器的 `endpointSchema`、`editableEndpoint` 是否存在于其中，由内核在导入时按已加载的连接器校验。
+ * Validates the static part of a connector template ({@link ConnectorTemplateSpec}) and returns the list of problems (empty means valid; paths are relative to the template root, values are not echoed):
+ * fields complete, no unknown fields; `auth` conforms to {@link ConnectorAuthSchema} (strict: extra fields such as `token` are rejected);
+ * no credential-style key at any level of the endpoint preset; `editableEndpoint` is a list of distinct dotted paths; `ownership` agrees with `auth.ownership`;
+ * default policies may only be allow / ask / deny; icon is an in-package .svg / .png path.
+ * Whether the endpoint conforms to the connector's `endpointSchema` and whether `editableEndpoint` exists in it is checked by the kernel on import against the loaded connector.
  */
 export function validateConnectorTemplate(t: unknown): string[] {
   if (!isObj(t)) return ["template must be an object"];

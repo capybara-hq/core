@@ -1,13 +1,13 @@
 /**
- * 技能（Agent Skills 格式）的纯解析与校验函数：内核上传技能包、agent 提议技能改动时都用它们。
+ * Pure parsing and validation functions for skills (Agent Skills format): used when the kernel uploads a skill package and when an agent proposes a skill change.
  *
- * 格式依据（2026-10-21 核实）：
- * - Agent Skills 规范 https://agentskills.io/specification ：`name` 必填，1–64 个字符，只能是小写字母、数字与
- *   连字符，不能以连字符开头或结尾，不能有连续连字符，须与所在目录同名；`description` 必填，1–1024 个字符；
- *   可选 `license`、`compatibility`（1–500 个字符）、`metadata`、`allowed-tools`。
- * - Anthropic 文档 https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview ：
- *   `name` 与 `description` 不能含 XML 标签（另有保留词 "anthropic" / "claude"，那是 Anthropic 平台自己的规则，
- *   这里不采用）。
+ * Format sources (verified 2026-10-21):
+ * - Agent Skills specification https://agentskills.io/specification : `name` is required, 1–64 characters, only lowercase letters, digits and
+ *   hyphens, must not start or end with a hyphen, no consecutive hyphens, and must match its directory name; `description` is required, 1–1024 characters;
+ *   optional `license`, `compatibility` (1–500 characters), `metadata`, `allowed-tools`.
+ * - Anthropic docs https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview :
+ *   `name` and `description` must not contain XML tags (there are also reserved words "anthropic" / "claude", which are Anthropic's own platform rules and
+ *   are not adopted here).
  *
  * Choices: the description goes into the model's system prompt, so XML tags are refused as Anthropic
  * does (no forged prompt structure). Keys outside the specification are allowed and ignored, so
@@ -24,20 +24,20 @@ import { hasControlChars } from "./model.js";
 import { validateSandboxPath } from "./sandbox.js";
 import { argumentHintText, SKILL_ARGUMENT_NAME_RE } from "./skill-keys.js";
 
-/** 技能包的上限。 */
+/** Limits of a skill package. */
 export const SKILL_LIMITS = {
   nameMaxChars: 64,
   descriptionMaxChars: 1024,
   compatibilityMaxChars: 500,
-  /** 单个文件解压后的上限（字节）。 */
+  /** Upper bound of a single file after extraction (bytes). */
   fileBytes: 10 * 1024 * 1024,
-  /** 全部文件解压后的总量上限（字节）。 */
+  /** Upper bound of the total of all files after extraction (bytes). */
   totalBytes: 50 * 1024 * 1024,
-  /** 文件数上限。 */
+  /** Upper bound on the number of files. */
   maxFiles: 1000,
-  /** 包内相对路径的长度上限（字符）。 */
+  /** Upper bound on the length of a relative path inside the package (characters). */
   pathMaxChars: 512,
-  /** frontmatter（两条 `---` 之间）的长度上限（字符），超过不做 YAML 解析。 */
+  /** Upper bound on the length of the frontmatter (between the two `---` lines) in characters; above it no YAML parsing is done. */
   frontmatterMaxChars: 64 * 1024,
 } as const;
 
@@ -56,7 +56,7 @@ export const SKILL_INVOCATION_LIMITS = {
   renderedMaxChars: 200_000,
 } as const;
 
-/** 技能入口文件（包根目录，大小写敏感）。 */
+/** The skill entry file (package root, case-sensitive). */
 export const SKILL_ENTRY_FILE = "SKILL.md";
 
 /**
@@ -69,7 +69,7 @@ const NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const XML_TAG_RE = /<\/?[A-Za-z][^<>]*>/;
 const DRIVE_RE = /^[A-Za-z]:/;
 
-/** 是否为合法的技能名（见文件头的规范说明）。 */
+/** Whether it is a valid skill name (see the specification at the top of the file). */
 export function isSkillName(s: unknown): s is string {
   return typeof s === "string" && s.length <= SKILL_LIMITS.nameMaxChars && NAME_RE.test(s);
 }
@@ -107,12 +107,12 @@ export function skillSandboxPath(
   return `${skillSandboxDir(name, digest, root)}/${path}`;
 }
 
-/** {@link parseSkillMd} 成功时的结果。 */
+/** The result of a successful {@link parseSkillMd}. */
 export interface ParsedSkillMd {
   name: string;
-  /** 去掉首尾空白。 */
+  /** Trimmed of leading and trailing whitespace. */
   description: string;
-  /** frontmatter 之后的 Markdown 正文。 */
+  /** The Markdown body after the frontmatter. */
   body: string;
   /**
    * The parsed YAML frontmatter mapping: every key, values unchanged (e.g. Claude Code's
@@ -134,8 +134,8 @@ export interface ParseSkillMdOptions {
 const chars = (s: string) => [...s].length;
 
 /**
- * 解析 SKILL.md：开头是 `---` 行包住的 YAML frontmatter，之后是正文。容忍 BOM 与 CRLF（正文里的 CRLF 换成 LF）。
- * 返回 name / description / 正文，或全部问题（英文，可直接给模型或管理员看）。
+ * Parses SKILL.md: it starts with YAML frontmatter wrapped in `---` lines, followed by the body. Tolerates BOM and CRLF (CRLF in the body becomes LF).
+ * Returns name / description / body, or all problems (in English, directly showable to a model or an admin).
  */
 export function parseSkillMd(
   text: string,
@@ -234,10 +234,10 @@ function invocationKeyErrors(fm: Readonly<Record<string, unknown>>): string[] {
   return errors;
 }
 
-/** 给人看的路径：含控制字符时用 JSON 转义。 */
+/** A path for humans to read: JSON-escaped when it contains control characters. */
 const show = (p: string) => (hasControlChars(p) || p === "" ? JSON.stringify(p) : p);
 
-/** 单个相对路径的问题（第一个），合法时为 null。 */
+/** The problem of a single relative path (the first one), null when valid. */
 function pathProblem(p: unknown): string | null {
   if (typeof p !== "string" || p === "") return "path must be a non-empty string";
   if (chars(p) > SKILL_LIMITS.pathMaxChars) {
@@ -252,16 +252,16 @@ function pathProblem(p: unknown): string | null {
     if (seg === "") return "path must not contain empty segments";
     if (seg === "." || seg === "..") return "path must not contain '.' or '..' segments";
   }
-  // 再按沙箱路径规则核一遍（百分号编码的 `..` 等）
+  // Then check again against the sandbox path rules (percent-encoded `..` etc.)
   const errs = validateSandboxPath(skillSandboxPath("skill", "000000000000", p));
   return errs[0] ?? null;
 }
 
 /**
- * 校验技能包的文件清单（路径相对于包根目录，只含文件、不含目录项）：
- * 根目录必须有 `SKILL.md`；单文件 ≤ {@link SKILL_LIMITS.fileBytes}；总量 ≤ {@link SKILL_LIMITS.totalBytes}；
- * 文件数 ≤ {@link SKILL_LIMITS.maxFiles}；路径不能越界（绝对路径、`..`、反斜杠、盘符、控制字符），不能重复
- * （只差大小写也算重复：大小写不敏感的文件系统上会互相覆盖），文件不能与目录同名。返回问题列表，空数组表示合法。
+ * Validates a skill package's file list (paths relative to the package root, files only, no directory entries):
+ * the root must have `SKILL.md`; single file ≤ {@link SKILL_LIMITS.fileBytes}; total ≤ {@link SKILL_LIMITS.totalBytes};
+ * file count ≤ {@link SKILL_LIMITS.maxFiles}; paths must not escape (absolute paths, `..`, backslashes, drive letters, control characters), must not repeat
+ * (differing only in case also counts as repeating: they would overwrite each other on case-insensitive file systems), and a file must not share a name with a directory. Returns the list of problems; an empty array means valid.
  */
 export function validateSkillPackage(files: { path: string; size: number }[]): string[] {
   if (files.length > SKILL_LIMITS.maxFiles) {
