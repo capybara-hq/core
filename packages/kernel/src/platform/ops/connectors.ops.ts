@@ -238,11 +238,11 @@ export class ConnectorsOperations implements OnModuleInit {
         ],
         precheck: (i, ctx) =>
           precheckBy(() =>
-            this.connectors.assertGitPushOnlyNarrows(ctx.orgId, i.connectorId, i.policy),
+            this.connectors.checkGitPushPolicy(ctx.orgId, i.connectorId, i.policy, true),
           ),
         summary: async (i, ctx) => {
           const n = await this.connectorName(ctx, i.connectorId);
-          const zh = { allow: "允许", ask: "询问", deny: "禁止" }[i.policy];
+          const zh = { allow: "允许", ask: "需审批", deny: "禁止" }[i.policy];
           return {
             zh: `把连接器「${n}」的 git 推送默认策略设为「${zh}」`,
             en: `Set the default git push policy of connector "${n}" to ${i.policy}`,

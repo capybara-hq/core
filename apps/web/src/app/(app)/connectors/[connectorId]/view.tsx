@@ -830,7 +830,10 @@ function GitPushCard({
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const saved = app.gitPushPolicy ?? "ask";
-  const [policy, setPolicy] = useState<ToolPolicy>(saved);
+  // The pick not yet saved (null: none); without one the select follows the saved value, so a
+  // change saved elsewhere (another tab, a refetch) shows at once.
+  const [draft, setDraft] = useState<ToolPolicy | null>(null);
+  const policy = draft ?? saved;
   const set = useAppMutation({
     fn: (p: ToolPolicy) => setGitPushPolicy(orgId, app.id, p),
     invalidates: () => [keys.org(orgId).connectors()],
@@ -840,6 +843,7 @@ function GitPushCard({
   async function save() {
     try {
       await set.mutateAsync(policy);
+      setDraft(null);
       toast.success(t("settings.saved"));
     } catch (e) {
       toast.error(errorMessage(e));
@@ -856,7 +860,10 @@ function GitPushCard({
           <Select
             value={policy}
             disabled={!manage}
-            onChange={(e) => setPolicy(e.target.value as ToolPolicy)}
+            onChange={(e) => {
+              const next = e.target.value as ToolPolicy;
+              setDraft(next === saved ? null : next);
+            }}
             options={POLICIES.map((p) => ({ value: p, label: t(`policy.${p}`) }))}
           />
         </Field>

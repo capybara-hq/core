@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { ApiTokenService } from "../../src/identity/api-tokens.js";
 import type { OperationContext } from "../../src/platform/operation.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
 import { gitPushPolicyName } from "../../src/tools/connector-account-policies.js";
@@ -240,6 +241,29 @@ describe("git push policy (the org default and the member's standing decisions)"
     expect((await push(id, "always")).statusCode).toBe(400);
   });
 
+  it("an API token may only tighten it: loosening -> 400 connector.git_push_widen_not_allowed", async () => {
+    const id = (await create(createBody({ git: GIT }))).json().connector.id as string;
+    const { token } = await env.k.app
+      .get(ApiTokenService)
+      .createPersonal(env.bossId, { name: "ci" });
+    const viaPat = (policy: string) =>
+      env.k.http.inject({
+        method: "PUT",
+        url: `/api/v1/orgs/${env.orgId}/connectors/${id}/git-push-policy`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: { policy },
+      });
+    const wide = await viaPat("allow");
+    expect(wide.statusCode).toBe(400);
+    expect(wide.json().error.code).toBe("connector.git_push_widen_not_allowed");
+    const narrow = await viaPat("deny");
+    expect(narrow.statusCode, narrow.body).toBe(200);
+    expect(narrow.json().connector.gitPushPolicy).toBe("deny");
+    expect((await viaPat("ask")).statusCode).toBe(400);
+    // a person in a session loosens it
+    expect((await push(id, "allow")).statusCode).toBe(200);
+  });
+
   it("the Platform operation only tightens; loosening is refused before the card", async () => {
     const ops = env.k.app.get(PlatformOperations);
     const op = ops.get("connectors.set-git-push-policy");
@@ -262,8 +286,16 @@ describe("git push policy (the org default and the member's standing decisions)"
       code: "connector.git_push_widen_not_allowed",
     });
     expect(await op.precheck?.(input("deny"), ctx)).toEqual({ ok: true });
+    // a connector without git hosts fails before the card too
+    const noGit = (await create(createBody())).json().connector.id as string;
+    expect(
+      await op.precheck?.(op.input.parse({ connectorId: noGit, policy: "deny" }), ctx),
+    ).toMatchObject({ ok: false, code: "validation_failed" });
     expect(await op.summary?.(input("deny"), ctx)).toMatchObject({
       en: expect.stringContaining("to deny"),
+    });
+    expect(await op.summary?.(input("ask"), ctx)).toMatchObject({
+      zh: expect.stringContaining("「需审批」"),
     });
     const out = (await op.run(input("deny"), ctx)) as { connector: { gitPushPolicy: string } };
     expect(out.connector.gitPushPolicy).toBe("deny");

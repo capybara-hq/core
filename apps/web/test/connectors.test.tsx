@@ -1506,6 +1506,26 @@ describe("connector mutations update the cache", () => {
     expect(bodyOf(calls[0])).toEqual({ policy: "deny" });
   });
 
+  it("Git 推送: the select follows a saved value that changes while the tab is open", async () => {
+    const GIT = { hosts: [{ host: "github.com", username: "x-access-token" }] };
+    stubApi({
+      "GET /api/v1/orgs/o1/connectors/app1": () =>
+        json(200, { connector: detail({ git: GIT, gitPushPolicy: "ask" }) }),
+    });
+    const { client } = await renderDetail();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: en.connectors.detail.tabs.settings }));
+    const select = () =>
+      screen.getByRole("combobox", { name: new RegExp(`^${en.connectors.gitPush.label}`) });
+    expect(select().textContent).toContain(en.connectors.policy.ask);
+    act(() => {
+      client.setQueryData(["org", "o1", "connector", "app1"], {
+        ...detail({ git: GIT, gitPushPolicy: "deny" }),
+      });
+    });
+    await vi.waitFor(() => expect(select().textContent).toContain(en.connectors.policy.deny));
+  });
+
   it("Git 推送: members read the default; a connector without git hosts has no such card", async () => {
     const GIT = { hosts: [{ host: "github.com", username: "x-access-token" }] };
     stubApi({
