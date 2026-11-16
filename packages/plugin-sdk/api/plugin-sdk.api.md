@@ -684,21 +684,37 @@ export type ContentBlock =
     isError: boolean;
 }
 /**
-* 图片（只出现在 user 消息里）。模型不支持 `vision` 时内核换成文字占位，插件不用把关；
-* 不认识此块的旧插件会跳过它。
+* An image (only in user messages). When the model has no `vision` the kernel sends an English
+* placeholder instead; a plugin need not check. An older plugin that does not know this block
+* skips it. `size` is display metadata (the UI chip, the reference line) and is never sent.
 */
 | {
     type: "image";
     mediaType: ImageMediaType;
     source: MediaSource_2;
     name?: string;
+    size?: number;
 }
-/** 文档（只出现在 user 消息里），由 `capabilities.documents` 把关，规则同 image。 */
+/** A document (only in user messages), gated by `capabilities.documents`; same rules as image. */
 | {
     type: "document";
     mediaType: DocumentMediaType;
     source: MediaSource_2;
     name?: string;
+    size?: number;
+}
+/**
+* An attachment whose content the model cannot read (an xlsx, say): the kernel replaces it with
+* text carrying an unsigned object reference before the request, so a plugin **never** receives
+* this block. `mediaType` is any non-empty `type/subtype`; `size` is display metadata (the UI
+* chip, the reference line) and is never sent.
+*/
+| {
+    type: "file";
+    mediaType: string;
+    source: MediaSource_2;
+    name?: string;
+    size?: number;
 };
 
 // @public
@@ -2267,6 +2283,7 @@ export interface ObjectStore {
         size?: number;
         signal?: AbortSignal;
     }): Promise<ObjectHead>;
+    uri?(key: string): string;
 }
 
 // @public
