@@ -26,6 +26,8 @@ export async function rewrapMasterKeys(
     );
     return { ...result, currentMasterKeyId: keyring.currentId };
   } finally {
-    await app.close().catch(() => {});
+    await app.close().catch((err: unknown) => {
+      opts.logger.debug("secrets rewrap: closing the CLI context failed", { err });
+    });
   }
 }

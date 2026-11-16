@@ -255,6 +255,19 @@ describe("rewrapToCurrentMasterKey", () => {
       DROP CONSTRAINT IF EXISTS account_initial_passwords_recipient_account_id_fkey,
       DROP CONSTRAINT IF EXISTS account_initial_passwords_conversation_id_fkey`.execute(db);
   });
+  afterAll(async () => {
+    // Restore the foreign keys exactly as migration 0090 creates them (the seeded rows go first)
+    await db.withSchema("capybara").deleteFrom("account_initial_passwords").execute();
+    await sql`ALTER TABLE capybara.account_initial_passwords
+      ADD CONSTRAINT account_initial_passwords_account_id_fkey
+        FOREIGN KEY (account_id) REFERENCES capybara.accounts(id) ON DELETE CASCADE,
+      ADD CONSTRAINT account_initial_passwords_recipient_account_id_fkey
+        FOREIGN KEY (recipient_account_id) REFERENCES capybara.accounts(id) ON DELETE CASCADE,
+      ADD CONSTRAINT account_initial_passwords_conversation_id_fkey
+        FOREIGN KEY (conversation_id) REFERENCES capybara.conversations(id) ON DELETE CASCADE`.execute(
+      db,
+    );
+  });
   beforeEach(async () => {
     await db.withSchema("capybara").deleteFrom("secrets").execute();
     await db.withSchema("capybara").deleteFrom("org_data_keys").execute();
@@ -343,6 +356,41 @@ describe("rewrapToCurrentMasterKey", () => {
       expect(err?.message).not.toContain(k.toString("base64"));
     }
     expect(await dataKeyIds()).toEqual(before);
+  });
+
+  it("a master key that appears after the check fails that batch, naming ids only", async () => {
+    await createSecrets(db, createKeyring(k1, []), "ns-late").set("late-known", "k", "v");
+    const handles = handlesOf(db);
+    let injected = false;
+    const txHost = {
+      // the first batch transaction: a replica with an unknown key writes a data key meanwhile
+      run: async <T>(fn: () => Promise<T>) => {
+        if (!injected) {
+          injected = true;
+          await createSecrets(db, createKeyring(k3, []), "ns-late").set("a-late-unknown", "k", "v");
+        }
+        return handles.txHost.run(fn);
+      },
+    };
+    const before = createKeyring(k1, []).currentId;
+    const err = await rewrapToCurrentMasterKey(
+      { db: handles.db, txHost },
+      createKeyring(k2, [k1]),
+      { batchSize: 10 },
+    ).then(
+      () => null,
+      (e: Error) => e,
+    );
+    expect(injected).toBe(true);
+    expect(err?.message).toContain("master key not in keyring");
+    expect(err?.message).toContain("a-late-unknown");
+    expect(err?.message).toContain(createKeyring(k3, []).currentId);
+    for (const k of [k1, k2, k3]) {
+      expect(err?.message).not.toContain(k.toString("hex"));
+      expect(err?.message).not.toContain(k.toString("base64"));
+    }
+    // the failed batch rolled back: the known key was not rewrapped either
+    expect((await dataKeyIds()).get("late-known")).toBe(before);
   });
 
   it("rejects a batch size that is not a positive integer", async () => {

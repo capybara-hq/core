@@ -209,8 +209,11 @@ interface MasterKeyedTable {
   idColumn: "org_id" | "account_id";
   dataColumn: "wrapped_key" | "ciphertext";
   aad(id: string): string;
-  /** Rows that are never read again (expired initial passwords) are left to their cleanup. */
-  live: boolean;
+  /**
+   * The table has `expires_at`: expired rows are never read again, so they are left to their
+   * cleanup job instead of being rewrapped.
+   */
+  hasExpiresAt: boolean;
 }
 
 const MASTER_KEYED: MasterKeyedTable[] = [
@@ -219,14 +222,14 @@ const MASTER_KEYED: MasterKeyedTable[] = [
     idColumn: "org_id",
     dataColumn: "wrapped_key",
     aad: dekAad,
-    live: false,
+    hasExpiresAt: false,
   },
   {
     table: "account_initial_passwords",
     idColumn: "account_id",
     dataColumn: "ciphertext",
     aad: initialPasswordAad,
-    live: true,
+    hasExpiresAt: true,
   },
 ];
 
@@ -235,7 +238,7 @@ function staleRows(db: AnyDb, t: MasterKeyedTable, keyring: Keyring) {
     .withSchema("capybara")
     .selectFrom(t.table)
     .where("master_key_id", "!=", keyring.currentId);
-  if (t.live) q = q.where("expires_at", ">", sql<Date>`now()`);
+  if (t.hasExpiresAt) q = q.where("expires_at", ">", sql<Date>`now()`);
   return q;
 }
 

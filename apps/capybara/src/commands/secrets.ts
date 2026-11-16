@@ -37,8 +37,10 @@ export async function runSecretsRewrap(
     );
     if (config.masterKeyPrevious.length > 0) {
       io.stdout.write(
-        "nothing is sealed with a previous master key any more; masterKeyPrevious can be " +
-          "removed once every replica runs the new masterKey\n",
+        "every org data key and unexpired initial password now uses the current master key " +
+          "(expired initial passwords are left to their cleanup); once every replica runs this " +
+          "config, wait auth.accessTokenTtlSeconds, then remove masterKeyPrevious " +
+          "(docs/deploy/README.md, Rotating the master key)\n",
       );
     }
     return 0;

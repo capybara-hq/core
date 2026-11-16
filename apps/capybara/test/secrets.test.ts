@@ -82,6 +82,7 @@ describe("capybara secrets rewrap", () => {
     expect(r.stdout).toContain(
       `rewrapped 3 org data key(s) and 0 initial password(s) to master key ${newId}`,
     );
+    expect(r.stdout).toContain("wait auth.accessTokenTtlSeconds, then remove masterKeyPrevious");
     expectNoKey(r.stdout + r.stderr);
     expect(await masterKeyIds()).toEqual([newId, newId, newId]);
     // the new key alone reads every value

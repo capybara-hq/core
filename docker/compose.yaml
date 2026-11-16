@@ -40,9 +40,6 @@ x-kernel-env: &kernel-env
   CAPYBARA_DB__URL: postgres://capybara:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/capybara
   CAPYBARA_REDIS__URL: redis://valkey:6379
   CAPYBARA_MASTER_KEY: ${CAPYBARA_MASTER_KEY:?set CAPYBARA_MASTER_KEY in .env (openssl rand -base64 32)}
-  # Earlier master keys kept during a rotation (a JSON array of base64 keys); see "Rotating the
-  # master key" in docs/deploy/README.md
-  CAPYBARA_MASTER_KEY_PREVIOUS: ${CAPYBARA_MASTER_KEY_PREVIOUS:-[]}
   # api is reachable only from web (the "frontend" network holds just web and api), so the client
   # address is exactly one proxy hop away. worker serves only health checks. gateway overrides
   # this below: a service reachable any other way must never trust a hop count.
