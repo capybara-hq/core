@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { defineExtension, secret, staticManifestOf } from "@capybara-hq/plugin-sdk";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { ExtensionAdminOps } from "../../src/extensions/admin-ops.js";
 import { enabledExtensionsQuery } from "../../src/extensions/enabled.js";
@@ -1295,6 +1295,43 @@ describe("the org switch (plugin scope)", () => {
       expect(await env.k.app.get(OrgExtensionConfigs).get(env.orgId, name)).toEqual({
         enabled: true,
         config: { apiKey: "k-1" },
+      });
+    });
+
+    it("a config write that fails after the switch rolls the switch back too (one transaction)", async () => {
+      const name = "needs-key4";
+      const { url } = await deploy(name);
+      const on = await env.boss({
+        method: "PUT",
+        url,
+        payload: { enabled: true, config: { apiKey: "k-3" } },
+      });
+      expect(on.statusCode, on.body).toBe(200);
+      const preview = await env.boss({ method: "PUT", url, payload: { enabled: false } });
+      expect(preview.statusCode, preview.body).toBe(200);
+      const confirm = preview.json().confirm as string;
+      const configs = env.k.app.get(OrgExtensionConfigs);
+      const realPut = configs.put.bind(configs);
+      const spy = vi.spyOn(configs, "put").mockImplementation(async (...args) => {
+        if (args[5]?.validateOnly) return realPut(...args);
+        throw new Error("config write failed");
+      });
+      try {
+        const r = await env.boss({
+          method: "PUT",
+          url,
+          payload: { enabled: false, confirm, config: { apiKey: "k-4" } },
+        });
+        expect(r.statusCode).toBe(500);
+      } finally {
+        spy.mockRestore();
+      }
+      // the uninstall and the switch row were rolled back with the failed config write
+      const installs = await env.db.selectFrom("plugin_installs").select("status").execute();
+      expect(installs.map((i) => i.status)).toEqual(["installed"]);
+      expect(await env.k.app.get(OrgExtensionConfigs).get(env.orgId, name)).toEqual({
+        enabled: true,
+        config: { apiKey: "k-3" },
       });
     });
 

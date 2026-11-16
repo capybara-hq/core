@@ -5,6 +5,8 @@ import {
   type OrgExtensionInput,
   type OrgExtensionView,
 } from "../extensions/org-config.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OrgCatalogService } from "./org-catalog.service.js";
 import type { UninstallPreview } from "./plugin-install.js";
 
@@ -24,11 +26,13 @@ export type OrgExtensionPutResult =
  * the effective config (the stored one with its secrets, or the given `config` merged with them),
  * and the install receives the given `config` as its `extensionConfig`, so the extension is enabled
  * with it. A config write that fails for another reason after the switch succeeded returns that
- * error with the switch done (the two writes are separate transactions).
+ * error in the same transaction as the switch, so the switch stays as it was (a fresh install is the
+ * exception: it commits on its own and carries the config itself).
  */
 @Injectable()
 export class OrgExtensionSwitch {
   constructor(
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(OrgExtensionConfigs) private readonly configs: OrgExtensionConfigs,
     @Inject(OrgCatalogService) private readonly catalog: OrgCatalogService,
   ) {}
@@ -79,11 +83,49 @@ export class OrgExtensionSwitch {
         { validateOnly: true },
       );
     }
+    // A fresh install is a multi-step saga that commits on its own and already enables the
+    // extension with the given config (`extensionConfig`): no transaction spans it, and no second
+    // config write follows. Everything else (the switch row, an uninstall, the config write) is one
+    // transaction: a failing config write leaves the switch as it was.
+    const installing = enabled === true && !(await this.catalog.hasLiveInstall(orgId, plan.itemId));
+    const args = {
+      orgId,
+      actor,
+      extension,
+      itemId: plan.itemId,
+      enabled,
+      input,
+      confirm,
+      actorTokenId,
+    };
+    const r = await (installing ? this.apply(args, true) : this.applyAtomic(args));
+    if (r !== "readBack") return r;
+    // Read after the commit: the list reads its own snapshot, which sees only committed rows
+    const view = (await this.configs.list(orgId)).find((v) => v.plugin === extension);
+    if (view) return { kind: "done", view };
+    return {
+      kind: "done",
+      view: await this.configs.put(orgId, extension, { enabled: true }, actor, actorTokenId, {
+        ifDisabled: { skipped: false },
+      }),
+    };
+  }
+
+  @Transactional()
+  private applyAtomic(a: ApplyArgs): Promise<OrgExtensionPutResult | "readBack"> {
+    return this.apply(a, false);
+  }
+
+  private async apply(
+    a: ApplyArgs,
+    installing: boolean,
+  ): Promise<OrgExtensionPutResult | "readBack"> {
+    const { orgId, actor, extension, itemId, enabled, input, confirm, actorTokenId } = a;
     const r = await this.catalog
       .setSwitch(
         orgId,
         actor,
-        plan.itemId,
+        itemId,
         enabled
           ? {
               enabled: true,
@@ -98,8 +140,7 @@ export class OrgExtensionSwitch {
     if (r.kind === "preview") return r;
     if (input.config === undefined) {
       if (!enabled) {
-        const view = (await this.configs.list(orgId)).find((v) => v.plugin === extension);
-        if (view) return { kind: "done", view };
+        return "readBack";
       }
       // Switching on: the install enabled it already (no second write)
       return {
@@ -117,9 +158,21 @@ export class OrgExtensionSwitch {
         { config: input.config, ...(enabled && { enabled: true }) },
         actor,
         actorTokenId,
+        installing ? { ifDisabled: { skipped: false } } : undefined,
       ),
     };
   }
+}
+
+interface ApplyArgs {
+  orgId: string;
+  actor: string;
+  extension: string;
+  itemId: string;
+  enabled: boolean | undefined;
+  input: OrgExtensionInput;
+  confirm: string | undefined;
+  actorTokenId: string | undefined;
 }
 
 /**

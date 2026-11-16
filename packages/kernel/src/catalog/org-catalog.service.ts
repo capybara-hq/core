@@ -507,6 +507,11 @@ export class OrgCatalogService {
     return item;
   }
 
+  /** Whether the org has a live install of the item (switching it on then installs nothing). */
+  async hasLiveInstall(orgId: string, itemId: string): Promise<boolean> {
+    return (await this.liveInstall(orgId, itemId)) !== undefined;
+  }
+
   /** The org's live plugin install of the item, if any. */
   private liveInstall(orgId: string, itemId: string) {
     return this.db
