@@ -157,6 +157,8 @@ describe("tool kinds", () => {
       Glob: "search",
       Grep: "search",
       Deliver: "tool",
+      // copies one attachment into the device: a plain tool row
+      FetchAttachment: "tool",
       TaskOutput: "read",
       TaskStop: "command",
       TaskList: "read",

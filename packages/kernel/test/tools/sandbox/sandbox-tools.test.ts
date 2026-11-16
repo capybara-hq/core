@@ -65,7 +65,16 @@ const SANDBOX_FAKE = fileURLToPath(
   new URL("../../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
 );
 
-const SANDBOX_TOOLS = ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "Deliver"];
+const SANDBOX_TOOLS = [
+  "Bash",
+  "Read",
+  "Write",
+  "Edit",
+  "Glob",
+  "Grep",
+  "Deliver",
+  "FetchAttachment",
+];
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -973,7 +982,7 @@ describe("sandbox tools", () => {
   const attDir = (conv: string) =>
     `/workspace/attachments/${conv.replaceAll("-", "").slice(0, 12)}`;
 
-  it("conversation attachments appear under /workspace/attachments/<conversation>", async () => {
+  it("a sandbox call does not copy attachments and does not mention them", async () => {
     const conv = await sandboxConversation();
     const dir = attDir(conv);
     await sendWithAttachment(
@@ -987,36 +996,56 @@ describe("sandbox tools", () => {
     const r = await call(
       conv,
       "Bash",
-      { description: "Test step", command: `cat ${dir}/fruit.csv` },
+      { description: "Test step", command: `test -e ${dir} && echo there || echo absent` },
       2,
     );
-    expect(r.content).toContain("apple,3");
-    expect(r.content).toContain(`${dir}/fruit.csv`);
-    // 已同步过的不再提示
-    const r2 = await call(conv, "Bash", { description: "Test step", command: `ls ${dir}` }, 3);
-    expect(r2.content).toContain("fruit.csv");
-    expect(r2.content).not.toContain("Attachments copied");
-    // 标记文件不出现在 glob / grep 结果里（它的内容含 fruit.csv）
-    const g = await call(conv, "Glob", { pattern: "**" }, 4);
-    expect(g.content).toContain(`${dir}/fruit.csv`);
-    expect(g.content).not.toContain(".capybara-sync.json");
-    const gr = await call(conv, "Grep", { pattern: "fruit|apple", output_mode: "content" }, 5);
-    expect(gr.content).toContain(`${dir}/fruit.csv:2:apple,3`);
-    expect(gr.content).not.toContain(".capybara-sync.json");
+    expect(r.isError).toBe(false);
+    // nothing copied it: the attachment directory does not exist
+    expect(r.content).toContain("absent");
+    expect(r.content).not.toContain("Attachments copied");
+  });
 
-    // the instance is gone at the provider: rebuilt on the kept files, the model is told the
-    // instance restarted, and the attachments (still there) are not copied again
-    const row = await instanceOf(conv);
-    await removeFakeSandbox(root, (row?.handle as { id: string } | undefined)?.id as string);
-    const r3 = await call(
+  it("FetchAttachment copies the attachment under /workspace/attachments/<conversation>", async () => {
+    const conv = await sandboxConversation();
+    const dir = attDir(conv);
+    await sendWithAttachment(
+      conv,
+      "fruit.csv",
+      "echo:got it",
+      Buffer.from("name,qty\napple,3\n"),
+      1,
+    );
+
+    const fetched = await call(conv, "FetchAttachment", { file: "fruit.csv" }, 2);
+    expect(fetched.isError, fetched.content).toBe(false);
+    expect(fetched.content).toContain(`${dir}/fruit.csv`);
+
+    const cat = await call(
       conv,
       "Bash",
       { description: "Test step", command: `cat ${dir}/fruit.csv` },
-      6,
+      3,
     );
-    expect(r3.content).not.toContain("Attachments copied");
-    expect(r3.content).toContain("apple,3");
-    expect(r3.content).toContain(SANDBOX_RESTARTED_NOTICE);
+    expect(cat.content).toContain("apple,3");
+
+    // a second call returns the same path, copies the same bytes and adds no copy notice
+    const again = await call(conv, "FetchAttachment", { file: "fruit.csv" }, 4);
+    expect(again.content).toContain(`${dir}/fruit.csv`);
+    expect(again.content).not.toContain("Attachments copied");
+
+    // the instance is gone at the provider: rebuilt on the kept files, the model is told the
+    // instance restarted, and the copied file is still there
+    const row = await instanceOf(conv);
+    await removeFakeSandbox(root, (row?.handle as { id: string } | undefined)?.id as string);
+    const r = await call(
+      conv,
+      "Bash",
+      { description: "Test step", command: `cat ${dir}/fruit.csv` },
+      5,
+    );
+    expect(r.content).not.toContain("Attachments copied");
+    expect(r.content).toContain("apple,3");
+    expect(r.content).toContain(SANDBOX_RESTARTED_NOTICE);
   });
 
   it("attachments of two conversations do not collide", async () => {
@@ -1025,19 +1054,24 @@ describe("sandbox tools", () => {
     expect(await envOf(a)).toBe(await envOf(b));
     await sendWithAttachment(a, "a.txt", "echo:one", Buffer.from("from A\n"), 1);
     await sendWithAttachment(b, "a.txt", "echo:two", Buffer.from("from B\n"), 1);
+    expect((await call(a, "FetchAttachment", { file: "a.txt" }, 2)).content).toContain(
+      `${attDir(a)}/a.txt`,
+    );
+    expect((await call(b, "FetchAttachment", { file: "a.txt" }, 2)).content).toContain(
+      `${attDir(b)}/a.txt`,
+    );
     const ra = await call(
       a,
       "Bash",
       { description: "Test step", command: `cat ${attDir(a)}/a.txt` },
-      2,
+      3,
     );
     expect(ra.content).toContain("from A");
-    expect(ra.content).toContain(`${attDir(a)}/a.txt`);
     const rb = await call(
       b,
       "Bash",
       { description: "Test step", command: `cat ${attDir(b)}/a.txt` },
-      2,
+      3,
     );
     expect(rb.content).toContain("from B");
     expect(attDir(a)).not.toBe(attDir(b));
@@ -1046,7 +1080,7 @@ describe("sandbox tools", () => {
       b,
       "Bash",
       { description: "Test step", command: "ls /workspace/attachments" },
-      3,
+      4,
     );
     expect(ls.content).toContain(attDir(a).split("/").at(-1) as string);
     expect(ls.content).toContain(attDir(b).split("/").at(-1) as string);

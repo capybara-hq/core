@@ -18,7 +18,6 @@ import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { SandboxLockLostError } from "../../src/sandbox/leases.js";
 import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
-import { syncMarkerPath } from "../../src/tools/builtins/sandbox/common.js";
 import { fileStateOf } from "../../src/tools/builtins/sandbox/file-state.js";
 import { sandboxTools } from "../../src/tools/builtins/sandbox/index.js";
 import type { BuiltinCallContext, BuiltinTool } from "../../src/tools/registry.js";
@@ -601,40 +600,6 @@ describe("path leases in the sandbox tools", () => {
       signal(),
     );
     expect(new TextDecoder().decode(got?.data)).toBe("A\nB\n");
-  });
-
-  it("attachments already synced: a call reads the marker and takes no path lease", async () => {
-    const s = service();
-    const leased: string[] = [];
-    const pathLease = s.pathLease.bind(s);
-    s.pathLease = (env, path, sig) => {
-      leased.push(path);
-      return pathLease(env, path, sig);
-    };
-    const t = sandboxTools({
-      sandbox: s,
-      devices,
-      attachments: {
-        listForConversation: async () => [{ id: "a1", name: "data.csv" }],
-        openForConversation: async () => ({
-          name: "data.csv",
-          contentType: "text/csv",
-          size: 2,
-          body: new Response("ok").body,
-        }),
-        // biome-ignore lint/suspicious/noExplicitAny: test double
-      } as any,
-      // biome-ignore lint/suspicious/noExplicitAny: not called
-      storage: {} as any,
-      // biome-ignore lint/suspicious/noExplicitAny: not called
-      eventLog: {} as any,
-      config: { get: () => config },
-    }).find((x) => x.spec.name === "Bash") as BuiltinTool;
-    await t.run({ command: "true" }, callCtx());
-    expect(leased).toEqual([syncMarkerPath(DEFAULT_SANDBOX_ROOTS, conversationId)]);
-    await t.run({ command: "true" }, callCtx());
-    await t.run({ command: "true" }, callCtx());
-    expect(leased).toHaveLength(1);
   });
 
   it("a lost path lease aborts the write it guards", async () => {

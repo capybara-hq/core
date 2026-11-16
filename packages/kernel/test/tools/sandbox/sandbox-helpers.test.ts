@@ -4,7 +4,6 @@ import { startedText, taskOutputFile } from "../../../src/background/launch.js";
 import { KernelConfigSchema } from "../../../src/config/schema.js";
 import type { ExtensionHost } from "../../../src/extensions/host.js";
 import type { KernelDb } from "../../../src/infra/database/kernel-db.js";
-import { syncMarkerMatcher } from "../../../src/tools/builtins/sandbox/common.js";
 import { parseGrepNull } from "../../../src/tools/builtins/sandbox/grep.js";
 import {
   assignAttachmentNames,
@@ -256,16 +255,6 @@ describe("glob / grep command timeout (fix wave S2 minor 2)", () => {
   });
 });
 
-describe("syncMarkerMatcher", () => {
-  it("matches the marker file only, dots literal", () => {
-    const isSyncMarkerEntry = syncMarkerMatcher();
-    expect(isSyncMarkerEntry("/workspace/attachments/c/.capybara-sync.json")).toBe(true);
-    expect(isSyncMarkerEntry("/workspace/attachments/c/.capybara-sync.json:1:x")).toBe(true);
-    expect(isSyncMarkerEntry("/workspace/attachments/c/.capybara-syncXjson")).toBe(false);
-    expect(isSyncMarkerEntry("/workspace/attachments/c/Xcapybara-sync.json")).toBe(false);
-  });
-});
-
 describe("shellQuote", () => {
   it("single-quotes and escapes embedded quotes", () => {
     expect(shellQuote("it's")).toBe(`'it'\\''s'`);
@@ -329,8 +318,8 @@ describe("registry without a sandbox provider", () => {
   });
 });
 
-describe("attachment sync", () => {
-  /** 内存里的沙箱：只实现同步与 read 用到的原语。 */
+describe("no automatic attachment copy", () => {
+  /** 内存里的沙箱：只实现 read 用到的原语。 */
   function memSandbox() {
     const files = new Map<string, Uint8Array>();
     const writes: string[] = [];
@@ -365,17 +354,14 @@ describe("attachment sync", () => {
     return { files, writes, sandbox };
   }
 
-  it("one failing attachment is skipped with a notice; progress is saved after each file", async () => {
+  it("a sandbox call copies nothing and mentions no attachment", async () => {
     const mem = memSandbox();
-    const body = (t: string) => new Response(t).body as ReadableStream<Uint8Array>;
+    let opened = 0;
     const attachments = {
-      listForConversation: async () => [
-        { id: "a1", name: "broken.csv" },
-        { id: "a2", name: "ok.csv" },
-      ],
-      openForConversation: async (_o: string, _c: string, id: string) => {
-        if (id === "a1") throw new Error("connect ECONNREFUSED 10.0.0.5:8333");
-        return { name: "ok.csv", contentType: "text/csv", size: 2, body: body("ok") };
+      listForConversation: async () => [{ id: "a1", name: "data.csv" }],
+      openForConversation: async () => {
+        opened++;
+        throw new Error("an attachment must not be opened by a sandbox call");
       },
     };
     const read = sandboxTools({
@@ -409,24 +395,15 @@ describe("attachment sync", () => {
         signal: new AbortController().signal,
       },
     )) as { content: { text: string }[] };
-    const text = r.content[0]?.text ?? "";
-    expect(text).toContain("Attachment broken.csv could not be copied");
-    expect(text).not.toContain("ECONNREFUSED");
-    expect(text).toContain("/workspace/attachments/c/ok.csv");
-    expect(text).toContain("hello");
-    // 复制完 ok.csv 后立即写了标记文件
-    expect(mem.writes).toEqual([
-      "/workspace/attachments/c/ok.csv",
-      "/workspace/attachments/c/.capybara-sync.json",
-    ]);
-    const marker = JSON.parse(
-      new TextDecoder().decode(mem.files.get("/workspace/attachments/c/.capybara-sync.json")),
-    );
-    expect(marker).toEqual({ a2: "ok.csv" });
+    expect(r.content[0]?.text).toBe("     1\thello");
+    // nothing lands under attachments/, and no notice speaks of an attachment
+    expect(mem.writes).toEqual([]);
+    expect(mem.files.has("/workspace/attachments/c/data.csv")).toBe(false);
+    expect(opened).toBe(0);
   });
 });
 
-describe("fix round 2: sync marker, deliver failures, grep exit 2", () => {
+describe("fix round 2: deliver failures, grep exit 2", () => {
   const cfg = KernelConfigSchema.parse({
     db: { url: "postgres://x/y" },
     redis: { url: "redis://x" },
@@ -442,11 +419,9 @@ describe("fix round 2: sync marker, deliver failures, grep exit 2", () => {
     signal: new AbortController().signal,
   });
 
-  /** 可定制的内存沙箱：`failWrite` 让指定路径的写入失败，`exec` 返回固定结果。 */
+  /** 可定制的内存沙箱：`exec` 返回固定结果。 */
   function rig(
     opts: {
-      attachments?: { id: string; name: string }[];
-      failWrite?: string;
       exec?: { exitCode: number; stdout: string; stderr: string };
       append?: () => Promise<unknown>;
       /** 有没有对象存储（默认有）。 */
@@ -464,7 +439,6 @@ describe("fix round 2: sync marker, deliver failures, grep exit 2", () => {
         return d === undefined ? null : { data: d, truncated: false };
       },
       writeFile: async (_h: unknown, path: string, data: Uint8Array) => {
-        if (path === opts.failWrite) throw new Error("disk full");
         files.set(path, data);
       },
       stat: async (_h: unknown, path: string) => {
@@ -491,15 +465,8 @@ describe("fix round 2: sync marker, deliver failures, grep exit 2", () => {
             new AbortController().signal,
           ),
       } as unknown as SandboxToolDeps["sandbox"],
-      attachments: {
-        listForConversation: async () => opts.attachments ?? [],
-        openForConversation: async () => ({
-          name: "f",
-          contentType: "text/plain",
-          size: 2,
-          body: new Response("ok").body,
-        }),
-      } as unknown as SandboxToolDeps["attachments"],
+      // biome-ignore lint/suspicious/noExplicitAny: 测试替身
+      attachments: { listForConversation: async () => [] } as any,
       storage: {
         available: opts.storage ?? true,
         kernel: () => ({
@@ -521,18 +488,6 @@ describe("fix round 2: sync marker, deliver failures, grep exit 2", () => {
     const text = (r: unknown) => (r as { content: { text: string }[] }).content[0]?.text ?? "";
     return { files, puts, deletes, tool, text, reads: () => reads };
   }
-
-  it("a failed marker write still counts the file as copied; the marker keeps only saved entries", async () => {
-    const r = rig({
-      attachments: [{ id: "a1", name: "ok.csv" }],
-      failWrite: "/workspace/attachments/c/.capybara-sync.json",
-    });
-    r.files.set("/workspace/f.txt", new TextEncoder().encode("hi\n"));
-    const out = r.text(await r.tool("Read").run({ file_path: "/workspace/f.txt" }, callCtx()));
-    expect(out).toContain("Attachments copied into the sandbox: /workspace/attachments/c/ok.csv");
-    expect(out).not.toContain("could not be copied");
-    expect(r.files.has("/workspace/attachments/c/.capybara-sync.json")).toBe(false);
-  });
 
   it("deliver rejects a bad name before reading or uploading anything", async () => {
     const r = rig();
@@ -596,22 +551,6 @@ describe("fix round 2: sync marker, deliver failures, grep exit 2", () => {
     );
     expect(out).toContain("/workspace/a.txt:1:hit");
     expect(out).toContain("[grep also reported errors: grep: ./secret: Permission denied]");
-  });
-
-  it("grep exit 2 whose only output is the hidden marker returns no matches plus the note", async () => {
-    const r = rig({
-      exec: {
-        exitCode: 2,
-        stdout: './attachments/c/.capybara-sync.json\u00001:{"a":"hit"}\n',
-        stderr: "grep: ./secret: Permission denied",
-      },
-    });
-    const out = r.text(
-      await r.tool("Grep").run({ pattern: "hit", output_mode: "content" }, callCtx()),
-    );
-    expect(out).toContain("No matches for hit in /workspace.");
-    expect(out).toContain("[grep also reported errors:");
-    expect(out).not.toContain(".capybara-sync.json");
   });
 
   it("glob shows newlines in file names as \\n", async () => {
@@ -721,8 +660,8 @@ describe("custom roots (environments phase 2, spec §13.1)", () => {
     signal: new AbortController().signal,
   };
 
-  /** An instance whose handle carries `ROOTS`, with `attachments` waiting to be copied. */
-  function device(attachments: { id: string; name: string }[] = []) {
+  /** An instance whose handle carries `ROOTS`. */
+  function device() {
     const files = new Map<string, Uint8Array>();
     const writes: string[] = [];
     const execs: { command: string; cwd: string }[] = [];
@@ -754,7 +693,6 @@ describe("custom roots (environments phase 2, spec §13.1)", () => {
         return { exitCode, stdout, stderr: "", truncated: false, timedOut: false };
       },
     };
-    const body = (t: string) => new Response(t).body as ReadableStream<Uint8Array>;
     const tools = sandboxTools({
       devices,
       background: {
@@ -784,16 +722,8 @@ describe("custom roots (environments phase 2, spec §13.1)", () => {
           );
         },
       },
-      attachments: {
-        listForConversation: async () => attachments,
-        openForConversation: async (_o: string, _c: string, id: string) => ({
-          name: id,
-          contentType: "text/plain",
-          size: 2,
-          body: body("ok"),
-        }),
-        // biome-ignore lint/suspicious/noExplicitAny: test stub
-      } as any,
+      // biome-ignore lint/suspicious/noExplicitAny: test stub
+      attachments: { listForConversation: async () => [] } as any,
       // biome-ignore lint/suspicious/noExplicitAny: never called
       storage: {} as any,
       eventLog: {
@@ -860,25 +790,13 @@ describe("custom roots (environments phase 2, spec §13.1)", () => {
     );
   });
 
-  it("attachments copy to <workspace>/attachments/<conv12>", async () => {
-    const d = device([{ id: "a1", name: "data.csv" }]);
-    d.files.set(`${ROOTS.workspace}/f.txt`, new TextEncoder().encode("hello\n"));
-    const r = await d.tool("Read").run({ file_path: `${ROOTS.workspace}/f.txt` }, ctx);
-    const dir = `${ROOTS.workspace}/attachments/0123abcd4567`;
-    expect(d.writes).toEqual([`${dir}/data.csv`, `${dir}/.capybara-sync.json`]);
-    expect(text(r)).toContain(`Attachments copied into the sandbox: ${dir}/data.csv.`);
-  });
-
-  it("Glob and Grep default to the instance's workspace and hide its sync markers", async () => {
+  it("Glob and Grep default to the instance's workspace", async () => {
     const d = device();
     const g = await d.tool("Glob").run({ pattern: "*.txt" }, ctx);
     expect(text(g)).toBe(`${ROOTS.workspace}/a.txt`);
     const r = await d.tool("Grep").run({ pattern: "x" }, ctx);
     expect(text(r)).toBe(`No matches for x in ${ROOTS.workspace}.`);
     expect(d.execs.map((e) => e.cwd)).toEqual([ROOTS.workspace, ROOTS.workspace]);
-    const isSyncMarkerEntry = syncMarkerMatcher(ROOTS);
-    expect(isSyncMarkerEntry(`${ROOTS.workspace}/attachments/c/.capybara-sync.json`)).toBe(true);
-    expect(isSyncMarkerEntry("/workspace/attachments/c/.capybara-sync.json")).toBe(false);
   });
 
   it("a malformed path is refused before the call enters its device", async () => {

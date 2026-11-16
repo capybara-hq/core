@@ -10,7 +10,6 @@ import {
   sandboxBaseTimeoutMs,
   searchTimeoutMs,
   shellQuote,
-  syncMarkerMatcher,
   unavailableWhenNoSandbox,
   withNotices,
 } from "./common.js";
@@ -252,12 +251,10 @@ export function sandboxGrepTool(deps: SandboxToolDeps): BuiltinTool {
             : mode === "count"
               ? parseCounts(r.stdout, base)
               : parseGrepNull(r.stdout, base, numbered);
-        const isMarker = syncMarkerMatcher(s.roots);
-        const entries = all.filter((l) => !isMarker(l));
-        // 退出码 2 = 有错误（如个别文件不可读）；有输出时照常返回（可能为空：只匹配到隐藏的标记文件）并附上说明
+        // 退出码 2 = 有错误（如个别文件不可读）；有输出时照常返回并附上说明
         if (r.exitCode !== 0 && all.length === 0) throw new ToolError(failed(r.stderr));
         const warning = r.exitCode !== 0 ? clip(r.stderr, 300) : null;
-        return { entries, warning };
+        return { entries: all, warning };
       });
       const { entries, warning } = value;
       const total = entries.length;
