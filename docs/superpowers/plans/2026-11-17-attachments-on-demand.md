@@ -71,10 +71,11 @@ the skills it names ([writing-tools](../../../.agents/skills/writing-tools/SKILL
 
 - [ ] **Step 1: Write the failing SDK test**
 
-In `packages/plugin-sdk/test/model.test.ts`, add:
+In `packages/plugin-sdk/test/model.test.ts`, add (the validator is `validateMediaBlock(b)`,
+`packages/plugin-sdk/src/model.ts:161`):
 
 ```ts
-it("a file block carries any content type and a display size, and validates", () => {
+it("accepts a file block with any content type and a display size", () => {
   const b = {
     type: "file" as const,
     mediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -82,29 +83,36 @@ it("a file block carries any content type and a display size, and validates", ()
     name: "电商工行.xlsx",
     size: 1_258_291,
   };
-  expect(validateContentBlock(b, "user")).toEqual([]);
-  // an image / document block carries the same display size
+  expect(validateMediaBlock(b)).toEqual([]);
+  // a media block carries the same display size
   expect(
-    validateContentBlock(
-      { type: "image", mediaType: "image/png", source: { kind: "base64", data: "AA" }, size: 2 },
-      "user",
-    ),
+    validateMediaBlock({
+      type: "image",
+      mediaType: "image/png",
+      source: { kind: "base64", data: "AA" },
+      size: 2,
+    }),
   ).toEqual([]);
+  // a file block still validates its name and source
+  expect(validateMediaBlock({ ...b, name: "\u0001" })).toContain(
+    'file name must not contain control characters',
+  );
 });
 ```
 
 - [ ] **Step 2: Run it and watch it fail**
 
-Run: `pnpm exec vitest run packages/plugin-sdk/test/model.test.ts -t "a file block carries any content type"`
-Expected: FAIL (type error or a validation error naming an unknown type).
+Run: `pnpm exec vitest run packages/plugin-sdk/test/model.test.ts -t "accepts a file block"`
+Expected: FAIL (`block type must be "image" or "document"`).
 
 - [ ] **Step 3: Implement the SDK change**
 
-Add the union member and `size?: number` to the three media kinds in `model.ts`; teach
-`validateContentBlock` that `file` takes any non-empty `mediaType` string and that `size` is a
-non-negative integer when present; add `uri?(key: string): string` to `ObjectStore` with the doc
-comment above; document `file` in the object-store agent doc's block section only where it names
-the kernel's usage (do not describe kernel behaviour a provider must implement).
+Add the union member and `size?: number` to the three attachment kinds in `model.ts`; in the
+`MEDIA` table give `file` a `types` entry that accepts any non-empty `type/subtype` string (keep the
+function's name `validateMediaBlock` — no public rename), and validate `size` as a non-negative
+integer when present on any of the three; add `uri?(key: string): string` to `ObjectStore` with the
+doc comment above; document the `file` block in the model-provider agent doc (a provider never
+receives it) and `uri` in the object-store agent doc.
 
 - [ ] **Step 4: Regenerate and verify**
 
