@@ -16,6 +16,11 @@ export const REFRESH_COOKIE = "cap_rt";
  * session while rendering on the server.
  */
 export const REFRESH_COOKIE_PATH = "/";
+/**
+ * The Path earlier builds set `cap_rt` on. Cleared (never read) with every session write, so a
+ * browser that still holds it stops sending a stale token. Remove after 2026-12-01.
+ */
+export const OLD_REFRESH_COOKIE_PATH = "/api/v1/auth";
 /** Writes the session cookies. Both are HttpOnly, host-only (no Domain), SameSite=Lax and Path=/. */
 export function setSessionCookies(reply: FastifyReply, s: IssuedSession, cfg: KernelConfig): void {
   const secure = cfg.auth.cookieSecure;
@@ -33,12 +38,16 @@ export function setSessionCookies(reply: FastifyReply, s: IssuedSession, cfg: Ke
     secure,
     maxAge: cfg.auth.refreshTokenTtlDays * 86400,
   });
+  // clears stale client state from earlier builds; remove after 2026-12-01
+  reply.clearCookie(REFRESH_COOKIE, { path: OLD_REFRESH_COOKIE_PATH });
 }
 
 /** 清除会话 Cookie（Path 必须与设置时一致才能覆盖）。 */
 export function clearSessionCookies(reply: FastifyReply): void {
   reply.clearCookie(ACCESS_COOKIE, { path: "/" });
   reply.clearCookie(REFRESH_COOKIE, { path: REFRESH_COOKIE_PATH });
+  // clears stale client state from earlier builds; remove after 2026-12-01
+  reply.clearCookie(REFRESH_COOKIE, { path: OLD_REFRESH_COOKIE_PATH });
 }
 
 /**

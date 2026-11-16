@@ -567,6 +567,48 @@ describe("release-candidate tool keys in stored data", () => {
           instructions: "i",
           tools: ["sandbox_read", "docs__search"],
           toolPolicies: { ask_user: "ask" },
+          subagents: {
+            inline: [
+              {
+                name: "helper",
+                description: "d",
+                instructions: "i",
+                tools: ["sandbox_grep"],
+                disallowedTools: ["docs__search"],
+                toolPolicies: { sandbox_bash: "deny" },
+              },
+            ],
+          },
+        }),
+      } as never)
+      .execute();
+    // a platform template (no org: only extension names resolve) with an inline sub-agent
+    const ptpl = { id: randomUUID() };
+    await db
+      .insertInto("platform_agent_templates")
+      .values({ id: ptpl.id, name: "rc-platform-template", current_version: 1 } as never)
+      .execute();
+    await db
+      .insertInto("platform_agent_template_versions")
+      .values({
+        template_id: ptpl.id,
+        version: 1,
+        definition: JSON.stringify({
+          name: "rc-platform-template",
+          description: "d",
+          instructions: "i",
+          tools: ["sandbox_read", "docs__search"],
+          subagents: {
+            inline: [
+              {
+                name: "helper",
+                description: "d",
+                instructions: "i",
+                tools: ["sandbox_glob", "todo__write"],
+                toolPolicies: { ask_user: "deny", todo__write: "ask" },
+              },
+            ],
+          },
         }),
       } as never)
       .execute();
@@ -598,6 +640,34 @@ describe("release-candidate tool keys in stored data", () => {
     expect(tplAfter.definition).toMatchObject({
       tools: ["Read", "mcp__docs__search"],
       toolPolicies: { AskUserQuestion: "ask" },
+      subagents: {
+        inline: [
+          {
+            name: "helper",
+            tools: ["Grep"],
+            disallowedTools: ["mcp__docs__search"],
+            toolPolicies: { Bash: "deny" },
+          },
+        ],
+      },
+    });
+    const ptplAfter = await db
+      .selectFrom("platform_agent_template_versions")
+      .select("definition")
+      .where("template_id", "=", ptpl.id)
+      .executeTakeFirstOrThrow();
+    // no org connectors: `docs` stays as it is (inert), `todo` is an extension of the deployment
+    expect(ptplAfter.definition).toMatchObject({
+      tools: ["Read", "docs__search"],
+      subagents: {
+        inline: [
+          {
+            name: "helper",
+            tools: ["Glob", "plugin__todo__write"],
+            toolPolicies: { AskUserQuestion: "deny", plugin__todo__write: "ask" },
+          },
+        ],
+      },
     });
     // idempotent: a second run leaves the rows as they are
     await db

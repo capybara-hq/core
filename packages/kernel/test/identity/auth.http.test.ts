@@ -101,6 +101,9 @@ describe("POST /api/v1/auth/login", () => {
     expect(String(at?.attrs.samesite).toLowerCase()).toBe("lax");
     expect(at?.attrs["max-age"]).toBe("900");
     expect(rt?.attrs.path).toBe("/");
+    // the cap_rt of earlier builds (Path=/api/v1/auth) is cleared, never read
+    const old = cs.find((c) => c.name === "cap_rt" && c.attrs.path === "/api/v1/auth");
+    expect(old?.value).toBe("");
     expect(rt?.value).not.toBe("");
     expect(String(rt?.attrs.samesite).toLowerCase()).toBe("lax");
     expect(rt?.attrs["max-age"]).toBe(String(30 * 86400));
@@ -309,12 +312,13 @@ describe("refresh / logout / 改密码 / 停用", () => {
       setCookies(res)
         .map((c) => c.name)
         .sort(),
-    ).toEqual(["cap_at", "cap_rt"]);
+    ).toEqual(["cap_at", "cap_rt", "cap_rt"]);
     expect(
       setCookies(res)
         .filter((c) => c.name === "cap_rt")
-        .map((c) => c.attrs.path),
-    ).toEqual(["/"]);
+        .map((c) => c.attrs.path)
+        .sort(),
+    ).toEqual(["/", "/api/v1/auth"]);
     const replay = await asUser(k.http, old)({ method: "POST", url: "/api/v1/auth/refresh" });
     expect(replay.statusCode).toBe(401);
     expect(errCode(replay)).toBe("auth.refresh_race");
@@ -774,7 +778,7 @@ describe("M2 收尾：登录限流按登录名 + IP、改密码吊销 PAT、守�
     expect(row.created_by).toBe(alice.id);
   });
 
-  it("clearing cookies uses the right Path (cap_at and cap_rt on /)", async () => {
+  it("clearing cookies uses the right Paths (cap_at on /, cap_rt on / and the old /api/v1/auth)", async () => {
     const jar = cookieJar();
     await login(jar);
     const res = await asUser(k.http, jar)({ method: "POST", url: "/api/v1/auth/logout" });
@@ -783,7 +787,7 @@ describe("M2 收尾：登录限流按登录名 + IP、改密码吊销 PAT、守�
     const rts = cs.filter((c) => c.name === "cap_rt");
     expect(at?.value).toBe("");
     expect(at?.attrs.path).toBe("/");
-    expect(rts.map((c) => c.attrs.path)).toEqual(["/"]);
+    expect(rts.map((c) => c.attrs.path).sort()).toEqual(["/", "/api/v1/auth"]);
     expect(rts.every((c) => c.value === "")).toBe(true);
   });
 

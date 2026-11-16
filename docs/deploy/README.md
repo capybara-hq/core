@@ -568,7 +568,7 @@ other plugins) go through the catalog:
   The CLI loads no connector extensions, so a connector template is checked only statically there
   unless its connector comes with the plugin; orgs' installs check it against the loaded connector.
 - **Packages in the pre-0.1.0 format** are refused with a message asking to repack them with
-  `capybara-plugin pack` (`pnpm pack-plugin <dir>` in a core checkout; see [upgrade.md](upgrade.md)).
+  `capybara-plugin pack` (`pnpm pack-plugin <dir>` in a core checkout).
 
 ## IM channels: inbound modes
 

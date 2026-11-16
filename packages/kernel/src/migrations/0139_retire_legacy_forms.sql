@@ -9,7 +9,11 @@
 --    of the deployment (extension_installs, extension_name_owners), and both when it is both (a
 --    deny / ask policy and a deny list keep the restriction on both; an allowlist keeps the old key,
 --    which names no tool). A key of the removed builtin (`skill_write`, `SkillWrite`) is dropped.
---    Keys in the current format are never touched.
+--    Keys in the current format are never touched. Unresolvable keys resolve in the narrowing
+--    direction: an ambiguous key keeps a deny / ask on both candidates and stays inert in an
+--    allowlist, and a platform template has no org, so a `<x>__<tool>` key there maps only to an
+--    extension tool; a connector-only one stays as it is and names no tool (inert in an allowlist,
+--    and a policy or deny on it is lost: the run never offered such a key).
 -- 2. Grants that still hold an rc key migration 0063 could not map name no tool: deleted, with the
 --    partial indexes that only the startup notice about them read.
 -- 3. Connector audit actions written before the D17 rename (`app.created` …) take their current
@@ -105,7 +109,8 @@ LANGUAGE sql STABLE AS $fn$
   END
 $fn$;
 
--- An agent definition in current keys: its own policies and its inline sub-agent templates.
+-- An agent definition or an agent template in current keys: its own keys and those of its inline
+-- sub-agent templates.
 CREATE OR REPLACE FUNCTION pg_temp.rc_definition(d jsonb, org text) RETURNS jsonb
 LANGUAGE sql STABLE AS $fn$
   SELECT pg_temp.rc_template(d, org) || CASE
@@ -127,15 +132,15 @@ WHERE a.id = v.agent_id
 
 -- capybara:allow-destructive rewrites rc tool keys in place; no kernel version reads them any more
 UPDATE agent_template_versions v
-SET definition = pg_temp.rc_template(v.definition, t.org_id)
+SET definition = pg_temp.rc_definition(v.definition, t.org_id)
 FROM agent_templates t
 WHERE t.id = v.template_id
-  AND pg_temp.rc_template(v.definition, t.org_id) <> v.definition;
+  AND pg_temp.rc_definition(v.definition, t.org_id) <> v.definition;
 
 -- capybara:allow-destructive rewrites rc tool keys in place; no kernel version reads them any more
 UPDATE platform_agent_template_versions v
-SET definition = pg_temp.rc_template(v.definition, NULL)
-WHERE pg_temp.rc_template(v.definition, NULL) <> v.definition;
+SET definition = pg_temp.rc_definition(v.definition, NULL)
+WHERE pg_temp.rc_definition(v.definition, NULL) <> v.definition;
 
 DROP FUNCTION IF EXISTS pg_temp.rc_definition(jsonb, text);
 DROP FUNCTION IF EXISTS pg_temp.rc_template(jsonb, text);

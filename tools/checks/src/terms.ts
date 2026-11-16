@@ -322,11 +322,6 @@ export const REFERENCE_EXEMPT_LINES: { path: string; line: RegExp; reason: strin
     line: /^\s*- `terms-super-admin`/,
     reason: "the bullet describing the pattern lists the old super admin names it guards",
   },
-  {
-    path: "docs/deploy/upgrade.md",
-    line: /->/,
-    reason: "the upgrade notes map each old name to its new one",
-  },
 ];
 
 function read(root: string, rel: string): string | undefined {
