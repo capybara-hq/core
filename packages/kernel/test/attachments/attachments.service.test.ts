@@ -195,12 +195,15 @@ describe("类型核对", () => {
     expect(sniffMatches("application/pdf", s("<html>"))).toBe(false);
     expect(sniffMatches("text/plain", s("hello"))).toBe(true);
     expect(sniffMatches("text/csv", b(0x61, 0x00, 0x62))).toBe(false);
-    // OOXML 文件是 zip：压缩后的字节通常含 NUL，但签名仍须相符
+    // an OOXML file is a zip: compressed bytes usually contain NUL, the signature still has to match
     expect(sniffMatches(XLSX, b(0x50, 0x4b, 0x03, 0x04, 0x00, 0x01))).toBe(true);
     expect(sniffMatches(XLSX, s("not a zip"))).toBe(false);
+    // a mismatch is still refused in both directions
+    expect(sniffMatches(XLSX, b(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a))).toBe(false);
+    expect(sniffMatches("image/png", b(0x50, 0x4b, 0x03, 0x04))).toBe(false);
     expect(sniffMatches("application/json", s('{"a":1}'))).toBe(true);
     expect(sniffMatches("application/json", b(0x7b, 0x00, 0x7d))).toBe(false);
-    // 其他可配置的类型没有可核对的签名
+    // a deployment-added type has no signature to check
     expect(sniffMatches("application/x-custom", b(0x00, 0x01))).toBe(true);
   });
 });

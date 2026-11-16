@@ -147,7 +147,7 @@ export function sniffMatches(contentType: string, head: Uint8Array): boolean {
     case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
     case "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
     case "application/vnd.openxmlformats-officedocument.presentationml.presentation":
-      // 本地文件头，或空 zip 的中央目录结尾（OOXML 文件本身就是 zip）
+      // the local file header, or an empty zip's end of central directory (OOXML files are zips)
       return (
         startsWith(head, [0x50, 0x4b, 0x03, 0x04]) || startsWith(head, [0x50, 0x4b, 0x05, 0x06])
       );

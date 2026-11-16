@@ -60,7 +60,7 @@ const PDF = Buffer.from(
 );
 const TEXT = Buffer.from("name,qty\napple,3\n");
 const XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-/** 一个最小化的 xlsx：签名列表之外的类型只要求开头没有 NUL 字节。 */
+/** A minimal xlsx: OOXML files are zip archives, so the sniffer checks the zip signature. */
 const XLSX_BYTES = Buffer.from("PK\u0003\u0004spreadsheet,1,2\n");
 
 let pgc: TestContainer;
@@ -269,8 +269,9 @@ describe("上传 → finalize → 发消息 → 模型请求", () => {
       name: "电商工行.xlsx",
       size: XLSX_BYTES.length,
     });
-    // the log and the request carry no bytes of it
+    // neither the log nor what the provider received carries the bytes
     expect(JSON.stringify(await eventsOf(db, convId))).not.toContain(XLSX_BYTES.toString("base64"));
+    expect(JSON.stringify(agentRequests())).not.toContain(XLSX_BYTES.toString("base64"));
   });
 
   it("不支持图片 / 文档的模型只收到文字占位，请求里没有字节；文本文件内联", async () => {
