@@ -187,9 +187,10 @@ the kernel's degradation ladder reports the model error as it does for any other
 - Input: `{ file: string }` — the file name as the user's message shows it, the unsigned reference,
   or the attachment id (designer's call: the name is what the model always has; the other two are
   accepted for exactness). `keyArgs: ["file"]` for the tool row.
-- Output: `{ path, size }` in the result's structured value, and the prose "Copied <name> to
-  <path>." The path is the one the auto-copy used: `<workspace>/attachments/<conversation12>/<name>`
-  (`sandbox/common.ts:216`).
+- Output: the prose "Copied <name> to <path>." — the tool result contract carries no structured
+  value (`ToolResult` is `content` / `isError` / `display` / `card`), so the path the model needs is
+  in that sentence and the size feeds the tool row's display only. The path is the one the auto-copy
+  used: `<workspace>/attachments/<conversation12>/<name>` (`sandbox/common.ts:216`).
 - Behaviour: resolve the attachment among this conversation's ready attachments → read the bytes
   with the kernel's store (`AttachmentsService.openForConversation`) → write them with the held
   provider's `writeFile` (the call the removed sync made, `sandbox/common.ts:543`) → return. The
@@ -200,8 +201,9 @@ the kernel's degradation ladder reports the model error as it does for any other
   whole attachment list, so a given attachment always lands on the same name (`-2`, `-3` on a
   clash). Copying the same file twice rewrites identical bytes and returns the same path.
 - Errors (English, actionable, no internals): no attachment by that name ("this conversation has:
-  a.xlsx, b.csv"), not finalized yet, deleted since, file storage unavailable, no device in this
-  conversation. Failures are ordinary tool errors; the run continues.
+  a.xlsx, b.csv" — an upload still finalizing is not in that list, because the conversation's ready
+  attachments are the only ones a lookup sees), deleted since, file storage unavailable, no device
+  in this conversation. Failures are ordinary tool errors; the run continues.
 - Policy: `defaultPolicy: "allow"`, and **not** in `SANDBOX_ASK_TOOL_NAMES`
   (`tools/builtin-names.ts:78`) (maintainer, 2026-11-17) — it copies the user's own attachment into
   the workspace and executes nothing; `Bash` and the write tools keep the org's
