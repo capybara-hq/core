@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { processFault, resetProcessFault } from "../../src/infra/health/process-fault.js";
 import {
   GUARD_CIRCUIT_LIMIT,
   GUARD_CIRCUIT_WINDOW_MS,
@@ -33,6 +34,8 @@ function setup() {
     },
   };
 }
+
+afterEach(() => resetProcessFault());
 
 describe("process guards", () => {
   it("logs an unhandled rejection and an uncaught exception through the logger and keeps running", () => {
@@ -132,5 +135,14 @@ describe("process guards", () => {
     uninstall();
     expect(proc.listenerCount("unhandledRejection")).toBe(0);
     expect(proc.listenerCount("uncaughtException")).toBe(0);
+  });
+
+  it("a swallowed fatal event is logged at fatal severity and marks the process faulted", () => {
+    const { proc, records } = setup();
+    expect(processFault()).toBeUndefined();
+    proc.emit("uncaughtException", new Error("boom"));
+    proc.emit("unhandledRejection", new Error("later"));
+    expect(records[0]?.fields).toMatchObject({ severity: "fatal", kind: "uncaughtException" });
+    expect(processFault()).toEqual({ kind: "uncaughtException" });
   });
 });

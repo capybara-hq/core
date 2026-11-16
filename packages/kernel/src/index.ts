@@ -230,6 +230,7 @@ export {
   openKernelCliOverPool,
 } from "./infra/cli/kernel-cli.module.js";
 export { rewrapMasterKeys } from "./infra/cli/master-key-rewrap.js";
+export { processFault } from "./infra/health/process-fault.js";
 export {
   GUARD_CIRCUIT_LIMIT,
   GUARD_CIRCUIT_WINDOW_MS,

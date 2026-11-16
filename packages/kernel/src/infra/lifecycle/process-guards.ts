@@ -1,5 +1,6 @@
 // Ported from octok-platform libs/common/src/tracing/process-guards.ts (owner-approved, 2026-10-28).
 import type { KernelLogger } from "../../log.js";
+import { markProcessFaulted } from "../health/process-fault.js";
 
 /**
  * Process-level guards for `capybara start`: an unhandled rejection or an uncaught exception is
@@ -18,7 +19,10 @@ import type { KernelLogger } from "../../log.js";
  *
  * What this cannot save: a V8 heap exhaustion is a hard abort no listener sees; and a resource that
  * first fails through an uncaught event and afterwards only through caught errors (500s) keeps the
- * process alive but broken, which used to self-heal through a crash and a restart. Known trade-off.
+ * process alive but broken, which used to self-heal through a crash and a restart. To keep that
+ * self-healing, every swallowed fatal event marks the process faulted (`markProcessFaulted`):
+ * `/readyz` answers 503 from then on so the orchestrator replaces the replica, while `/healthz`
+ * (liveness) is unchanged. The record carries `severity: "fatal"` (the logger has no fatal level).
  *
  * Every line of the recorder is wrapped: a handler that throws while the process handles a fatal
  * event would defeat the guard. Records go through the kernel logger (pino, redacted) with
@@ -69,12 +73,13 @@ export function createFatalRecorder(
       const t = now();
       recent = recent.filter((x) => t - x < GUARD_CIRCUIT_WINDOW_MS);
       recent.push(t);
+      safely(() => markProcessFaulted(kind));
       safely(() =>
         deps
           .log()
           .error(
             kind === "unhandledRejection" ? "unhandled promise rejection" : "uncaught exception",
-            { marker: GUARD_LOG_MARKER, kind, err },
+            { marker: GUARD_LOG_MARKER, severity: "fatal", kind, err },
           ),
       );
       if (recent.length > GUARD_CIRCUIT_LIMIT && !open) {
@@ -82,6 +87,7 @@ export function createFatalRecorder(
         safely(() =>
           deps.log().error("too many fatal events; exiting so the process is restarted clean", {
             marker: GUARD_LOG_MARKER,
+            severity: "fatal",
             kind: "circuit-open" satisfies GuardKind,
             events: recent.length,
             windowMs: GUARD_CIRCUIT_WINDOW_MS,
