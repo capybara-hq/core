@@ -1407,6 +1407,20 @@ describe("reconstructRequest：基线零漂移", () => {
     });
     expect(out.drift).toEqual(["text_inline_threshold"]);
     expect(JSON.stringify(out.request)).toContain("bytes of text; not sent inline");
+    // a documents-capable model recorded the same text as a text document (`bytes`) under the old
+    // rule: the reason fires for that shape too, not only for `inline`
+    const asDoc = structuredClone(snap);
+    const docEvent = asDoc.events.find((e) => e.seq === call.seq) as { payload: unknown };
+    const docRequest = (docEvent.payload as { request: { media: { outcome: string }[] } }).request;
+    docRequest.media[0] = {
+      ...docRequest.media[0],
+      outcome: "bytes",
+    } as (typeof docRequest.media)[0];
+    const docOut = reconstructRequest(asDoc, call.seq, {
+      model: info,
+      ...(await mediaFor(conv, snap, call.seq, info)),
+    });
+    expect(docOut.drift).toEqual(["text_inline_threshold"]);
   });
 
   it("不支持视觉的模型：图片换成占位，不取字节", async () => {

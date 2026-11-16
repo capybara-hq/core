@@ -443,8 +443,9 @@ export function reconstructRequest(
   const recordedMedia = new Map((rec.media ?? []).map((m) => [m.attachmentId, m]));
   for (const m of meta.media ?? []) {
     const was = recordedMedia.get(m.attachmentId);
-    if (m.outcome === "reference" && was?.outcome === "inline") {
-      // the text inline rule changed (§5.2): the record inlined it under the old threshold
+    if (m.outcome === "reference" && (was?.outcome === "inline" || was?.outcome === "bytes")) {
+      // the text inline rule changed (§5.2): the record inlined it under the old threshold — as
+      // `inline` for a model without documents, as a text document (`bytes`) for one with them
       drift.add("text_inline_threshold");
     } else if (m.outcome === "unavailable" && was?.outcome !== "unavailable") {
       drift.add("media_missing");
