@@ -24,8 +24,8 @@ async function liveOrgIds(db: KernelSchemaDb): Promise<string[]> {
 
 /**
  * Narrows an org-owned plugin (row locked by the caller) whose scope is `optional` / `all` to
- * `named` = owner + the live orgs with a live install or a switch on. Bumps `scope_version` and
- * audits `catalog.scope_changed`; returns whether the scope changed (the caller enqueues the item's
+ * `named` = owner + the live orgs with a live install or a switch on. Audits
+ * `catalog.scope_changed`; returns whether the scope changed (the caller enqueues the item's
  * scope sync after the commit).
  */
 export async function narrowItemOnUnshare(
@@ -57,7 +57,6 @@ export async function narrowItemOnUnshare(
     .updateTable("catalog_items")
     .set({
       scope: "named",
-      scope_version: sql<number>`scope_version + 1`,
       updated_at: sql<Date>`now()` as unknown as Date,
     })
     .where("id", "=", item.id)
@@ -84,8 +83,7 @@ export async function narrowItemOnUnshare(
 /**
  * Narrows an org-owned component with its own `optional` / `all` scope (row locked by the caller)
  * to `named` = owner + the live orgs where it is on now ({@link componentOn}). A component that
- * follows its plugin is narrowed with the plugin. Bumps `scope_version`, audits
- * `component.scope_changed`.
+ * follows its plugin is narrowed with the plugin. Audits `component.scope_changed`.
  */
 export async function narrowComponentOnUnshare(
   db: KernelSchemaDb,
@@ -102,7 +100,6 @@ export async function narrowComponentOnUnshare(
     .updateTable(TABLE[c.kind] as "platform_skills")
     .set({
       scope: "named",
-      scope_version: sql<number>`scope_version + 1`,
       updated_at: sql<Date>`now()` as unknown as Date,
     })
     .where("id", "=", c.id)

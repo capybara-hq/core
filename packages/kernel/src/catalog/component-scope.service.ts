@@ -1058,7 +1058,6 @@ export class ComponentScopeService {
       .set({
         scope_mode: t.scopeMode,
         scope: t.scope,
-        scope_version: sql<number>`scope_version + 1`,
         updated_at: sql<Date>`now()` as unknown as Date,
       })
       .where("id", "=", id)
@@ -1120,7 +1119,6 @@ export class ComponentScopeService {
       .updateTable(TABLE[kind] as "platform_skills")
       .set({
         disabled,
-        scope_version: sql<number>`scope_version + 1`,
         updated_at: sql<Date>`now()` as unknown as Date,
       })
       .where("id", "=", id)

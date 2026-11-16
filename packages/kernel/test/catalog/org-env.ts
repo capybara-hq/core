@@ -16,7 +16,6 @@ import {
 } from "@capybara-hq/testing";
 import { getQueueToken } from "@nestjs/bullmq";
 import type { Queue } from "bullmq";
-import { sql } from "kysely";
 import { expect } from "vitest";
 import { putTemplateVersionIn } from "../../src/agents/templates.js";
 import {
@@ -327,12 +326,7 @@ export async function setScope(
   scope: "all" | "optional" | "named",
   orgs: string[] = [],
 ): Promise<void> {
-  // a scope change bumps scope_version, as the service's does
-  await env.db
-    .updateTable("catalog_items")
-    .set({ scope, scope_version: sql<number>`scope_version + 1` })
-    .where("id", "=", itemId)
-    .execute();
+  await env.db.updateTable("catalog_items").set({ scope }).where("id", "=", itemId).execute();
   await env.db.deleteFrom("catalog_item_scope_orgs").where("item_id", "=", itemId).execute();
   if (orgs.length > 0) {
     await env.db

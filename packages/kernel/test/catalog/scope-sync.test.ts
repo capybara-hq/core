@@ -71,20 +71,6 @@ async function auditRows(action: string) {
     .execute();
 }
 
-/** Bumps the item's scope version (what the admin API does with every scope change). */
-async function bump(itemId: string): Promise<void> {
-  const row = await env.db
-    .selectFrom("catalog_items")
-    .select("scope_version")
-    .where("id", "=", itemId)
-    .executeTakeFirstOrThrow();
-  await env.db
-    .updateTable("catalog_items")
-    .set({ scope_version: row.scope_version + 1 })
-    .where("id", "=", itemId)
-    .execute();
-}
-
 const skillsOnly = (name: string, deps?: { name: string; version: string }[]) =>
   seedPlugin(env, {
     name,
@@ -116,7 +102,6 @@ describe("plugin scope sync", () => {
     const itemId = await skillsOnly("everywhere");
     const orgB = await createOrg(env.root, "Scope B");
     await setScope(env, itemId, "all");
-    await bump(itemId);
     await enqueueItem(itemId);
     await idle();
     const orgs = await env.db
@@ -152,7 +137,6 @@ describe("plugin scope sync", () => {
       templates: false,
     });
     await setScope(env, itemId, "all");
-    await bump(itemId);
     await enqueueItem(itemId);
     await idle();
     // a provider is on only in the orgs that enabled it: here the scope job does, nobody else
@@ -227,7 +211,6 @@ describe("plugin scope sync", () => {
     const itemId = await skillsOnly("listed");
     await setScope(env, itemId, "named", [a, b]);
     await switchRow(itemId, b, false);
-    await bump(itemId);
     await enqueueItem(itemId);
     await idle();
     expect(await liveOrgs(itemId)).toEqual([a]);
@@ -238,7 +221,6 @@ describe("plugin scope sync", () => {
   it("a plugin with connector templates set to all is needs_config: no install, no failure", async () => {
     const itemId = await seedPlugin(env, { name: "tpl", skills: ["tpl-skill"] });
     await setScope(env, itemId, "all");
-    await bump(itemId);
     await enqueueItem(itemId);
     await idle();
     expect(await liveOrgs(itemId)).toEqual([]);
@@ -250,12 +232,10 @@ describe("plugin scope sync", () => {
   it("all -> optional without switch rows removes the installs", async () => {
     const itemId = await skillsOnly("shrinking");
     await setScope(env, itemId, "all");
-    await bump(itemId);
     await enqueueItem(itemId);
     await idle();
     expect((await liveOrgs(itemId)).length).toBeGreaterThan(0);
     await setScope(env, itemId, "optional");
-    await bump(itemId);
     await enqueueItem(itemId);
     await idle();
     expect(await auditRows("plugin.scope_sync_failed")).toEqual([]);
@@ -277,8 +257,6 @@ describe("plugin scope sync", () => {
     await setScope(env, appId, "optional");
     await switchRow(appId, x, true);
     await setScope(env, depId, "named", [y]);
-    await bump(appId);
-    await bump(depId);
     await enqueueItem(appId);
     await enqueueItem(depId);
     await idle();
@@ -412,7 +390,6 @@ describe("plugin scope sync", () => {
       templates: false,
     });
     await setScope(env, itemId, "named", [env.orgId]);
-    await bump(itemId);
     await enqueueItem(itemId);
     await idle();
     expect(await liveOrgs(itemId)).toEqual([]);
@@ -432,7 +409,6 @@ describe("plugin scope sync", () => {
       .set({ deleted_at: new Date() })
       .where("id", "=", own.skill.id)
       .execute();
-    await bump(itemId);
     await enqueueItem(itemId);
     await waitFor(
       async () => (await liveOrgs(itemId)).includes(env.orgId),

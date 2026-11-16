@@ -201,8 +201,7 @@ export function conflictsError(conflicts: ScopePreview["conflicts"]): ApiError {
  * The super admin's plugin scope and deployment-level disable (plugin and component management
  * spec §4.1, §5 rules 2-4 and 8), and the import confirm that owes the scope sync of the item it
  * wrote. A change is previewed, then confirmed with the preview's `scopeHash`, recomputed under the
- * item row lock (a difference -> 409 `plugin.scope_stale`); it bumps `scope_version`, audits
- * `catalog.scope_changed` and owes the item's scope sync in the same transaction, which installs or
+ * item row lock (a difference -> 409 `plugin.scope_stale`); it audits `catalog.scope_changed` and owes the item's scope sync in the same transaction, which installs or
  * uninstalls in every org. Disabling keeps the scope, its org list and the org switches, so
  * re-enabling (no hash needed) reinstalls where it was on. Builtin items -> 409 `plugin.builtin`.
  * Stateless, shared by every replica.
@@ -975,7 +974,6 @@ export class CatalogScopeService {
       .updateTable("catalog_items")
       .set({
         scope: t.scope,
-        scope_version: sql<number>`scope_version + 1`,
         updated_at: sql<Date>`now()` as unknown as Date,
       })
       .where("id", "=", itemId)
@@ -1036,7 +1034,6 @@ export class CatalogScopeService {
       .updateTable("catalog_items")
       .set({
         disabled,
-        scope_version: sql<number>`scope_version + 1`,
         updated_at: sql<Date>`now()` as unknown as Date,
       })
       .where("id", "=", itemId)
@@ -1104,8 +1101,7 @@ export class CatalogScopeService {
   /**
    * Adds one org to a `named` item's list in the caller's transaction (an approved `access`
    * request, spec §5.1 rule 2): nobody loses access, so no preview. The item row is locked; it
-   * must be live and not builtin (404 / `plugin.builtin`). Bumps `scope_version`, audits
-   * `catalog.scope_changed` and owes the item's scope sync in that transaction. Returns whether
+   * must be live and not builtin (404 / `plugin.builtin`). Audits `catalog.scope_changed` and owes the item's scope sync in that transaction. Returns whether
    * the list changed (false: not `named`, or listed already).
    */
   @Transactional({ propagation: "mandatory" })
@@ -1399,8 +1395,8 @@ export class CatalogScopeService {
 
   /**
    * Sends the components of the item with their own scope back to following it (a plugin scope
-   * change, spec §5 rule 2): `scope_mode = follow`, their own lists dropped, `scope_version`
-   * bumped, one `component.scope_changed` audit each. In the caller's transaction.
+   * change, spec §5 rule 2): `scope_mode = follow`, their own lists dropped, one
+   * `component.scope_changed` audit each. In the caller's transaction.
    */
   private async followAgain(
     actor: string,
@@ -1421,7 +1417,6 @@ export class CatalogScopeService {
         .updateTable(table as "platform_skills")
         .set({
           scope_mode: "follow",
-          scope_version: sql<number>`scope_version + 1`,
           updated_at: sql<Date>`now()` as unknown as Date,
         })
         .where("id", "=", r.id)

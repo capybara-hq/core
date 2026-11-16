@@ -1709,7 +1709,7 @@ export interface CatalogItemsTable {
   builtin: ColumnType<boolean, boolean | undefined, boolean>;
   /** 0075: switched off for every org by the super admin. */
   disabled: ColumnType<boolean, boolean | undefined, boolean>;
-  /** 0075: bumped on every scope change. */
+  /** 0075: unused since design review 2026-11-16; dropped by a later contract migration. */
   scope_version: ColumnType<number, number | undefined, number>;
   /** 0077: orgs outside a `named` item's list see it as requestable (never usable). */
   shown_to_others: ColumnType<boolean, boolean | undefined, boolean>;
@@ -1754,6 +1754,7 @@ interface PlatformScopeColumns {
   scope: Dflt<ComponentScope>;
   disabled: Dflt<boolean>;
   shown_to_others: Dflt<boolean>;
+  /** Unused since design review 2026-11-16; dropped by a later contract migration. */
   scope_version: Dflt<number>;
 }
 

@@ -693,7 +693,6 @@ export class BootstrapService {
           builtin: true,
           scope: "all",
           disabled: false,
-          scope_version: sql<number>`scope_version + 1`,
           ...touch,
         })
         .where("name", "=", name)
