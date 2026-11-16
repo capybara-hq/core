@@ -142,7 +142,7 @@ describe("0144_retire_frozen_definition_keys", () => {
     const agent = childRunDefinition(frozen, narrowFollowUp(frozen, AGENT));
     const policy = decide({
       connectorDefault: "allow",
-      agentOverride: agent.toolPolicies.Bash as "ask" | "deny" | undefined,
+      agentOverride: agent.toolPolicies.Bash as "ask" | "deny",
       fixedAsk: false,
       grant: "always",
     });
