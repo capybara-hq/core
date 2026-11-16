@@ -14,3 +14,6 @@ dropped silently.
 Migration 0141 deletes the plugin install ledger rows of org skills and agent templates the org
 has since shared as its own items (recorded before ruling P3-46); the uninstall no longer checks
 for them.
+Log events no longer accept the shapes of older logs: `compaction_summary` requires `savedTokens`
+and `step`, `compaction_failed` requires `step`, and `approval_requested` requires `requestedFor`
+and `approverRole` (each nullable); the web reads `savedTokens` as always present.

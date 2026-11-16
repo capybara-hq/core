@@ -103,7 +103,7 @@ describe("case plans", () => {
       },
       {
         type: "compaction_summary",
-        payload: { coversUpToSeq: 1, text: "summary", savedTokens: 900 },
+        payload: { coversUpToSeq: 1, text: "summary", savedTokens: 900, step: 0 },
       },
       { type: "run_finished", payload: { reason: "completed", consumedUpToSeq: 1 } },
     ]);

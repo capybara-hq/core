@@ -26,8 +26,7 @@ type Delivery = EventPayload<"subagent_delivery">;
  *
  * A run that handed back and then `completed` no longer gets a finished delivery (acceptance
  * 2026-11-07, `SubagentDeliveries.finishIn`); the "already delivered" line stays for the other
- * statuses after a handback and for the completed ones older logs recorded, which rebuild byte for
- * byte. The switch is the delivery's absence in the log, so it needs no `DriftReason`.
+ * statuses after a handback.
  */
 export function renderSubagentDelivery(p: Delivery): string {
   const head = `Sub-agent ${p.subagentId} (${JSON.stringify(p.description)})`;

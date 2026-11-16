@@ -1314,7 +1314,7 @@ describe("runModelStep", () => {
         {
           type: "compaction_failed",
           runId: "old-run",
-          payload: { attempt: 1, reason: "too short" },
+          payload: { attempt: 1, reason: "too short", step: 0 },
         },
       ]);
       await say("go");
@@ -1746,7 +1746,12 @@ describe("runModelStep", () => {
           {
             type: "compaction_summary",
             runId: "old-run",
-            payload: { coversUpToSeq: covered.seq, text: `Summary: ${"o".repeat(12_000)}` },
+            payload: {
+              coversUpToSeq: covered.seq,
+              text: `Summary: ${"o".repeat(12_000)}`,
+              savedTokens: 0,
+              step: 0,
+            },
           },
         ]);
         for (let i = 0; i < 6; i++) {

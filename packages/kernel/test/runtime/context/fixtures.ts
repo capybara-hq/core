@@ -103,12 +103,21 @@ export class Log {
   summary(coversUpToSeq: number, text: string, openingSeqs?: number[]): ConversationEvent {
     return this.add({
       type: "compaction_summary",
-      payload: { coversUpToSeq, text, ...(openingSeqs !== undefined && { openingSeqs }) },
+      payload: {
+        coversUpToSeq,
+        text,
+        ...(openingSeqs !== undefined && { openingSeqs }),
+        savedTokens: 0,
+        step: 0,
+      },
     });
   }
 
   compactionFailed(attempt: number): ConversationEvent {
-    return this.add({ type: "compaction_failed", payload: { attempt, reason: "too short" } });
+    return this.add({
+      type: "compaction_failed",
+      payload: { attempt, reason: "too short", step: 0 },
+    });
   }
 
   runStarted(): ConversationEvent {

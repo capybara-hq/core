@@ -222,7 +222,7 @@ async function seedCompactRun(
     {
       type: "compaction_summary",
       runId,
-      payload: { coversUpToSeq: msg?.seq ?? 0, text: "summary", savedTokens: 900 },
+      payload: { coversUpToSeq: msg?.seq ?? 0, text: "summary", savedTokens: 900, step: 0 },
     },
     {
       type: "usage",

@@ -46,13 +46,13 @@ const RefMediaSourceSchema = z.object({
 });
 
 /**
- * Who may decide an approval, as the approval row says (display only, absent in older logs): the
- * assigned account (`requestedFor`), else the escalation role (`approverRole`). Pages word the
- * waiting state with it ("等待 张三 批准") for viewers who cannot decide.
+ * Who may decide an approval, as the approval row says (display only): the assigned account
+ * (`requestedFor`), else the escalation role (`approverRole`). Pages word the waiting state with it
+ * ("等待 张三 批准") for viewers who cannot decide.
  */
 const ApproverFields = {
-  requestedFor: z.string().nullable().optional(),
-  approverRole: z.enum(ORG_ROLES).nullable().optional(),
+  requestedFor: z.string().nullable(),
+  approverRole: z.enum(ORG_ROLES).nullable(),
 };
 
 /** The most hosts one network ask (and one `network_blocked` event) lists. */
@@ -359,8 +359,8 @@ export const RunContextSchema = z.object({
   /**
    * The attribution a run's requests carry for git commits and pull requests it creates (spec
    * 2026-11-14-agent-attribution): the effective values fixed at run start (platform defaults or
-   * the agent's override), so request building never reads config or the database. Absent in older
-   * logs. An empty `commit` / `pr` turns that line off; `sessionUrl` is the resolved conversation
+   * the agent's override), so request building never reads config or the database. Absent when it
+   * did not change (as every field here). An empty `commit` / `pr` turns that line off; `sessionUrl` is the resolved conversation
    * link, or null.
    */
   attribution: z
@@ -415,8 +415,7 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       authorAccountId: z.string(),
       /**
        * Who wrote the message, at send time (run context spec §3.2): display name and org role
-       * only (never email or ids). Absent in older logs, on a sub-agent's task or `SendMessage`
-       * message. Model-visible only through the sender line, written when the sender changes
+       * only (never email or ids). Absent on a sub-agent's task or `SendMessage` message. Model-visible only through the sender line, written when the sender changes
        * (`senderLines`, runtime/context/run-context.ts).
        */
       sender: MessageSenderSchema.optional(),
@@ -661,7 +660,7 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       /**
        * The chunk a chunked compaction call summarised (1-based), with the number of calls the
        * compaction attempted (the full chunk count on a completed one; on a failed or hook-denied
-       * run only the calls that were made). Absent on a single-call compaction: older logs have none.
+       * run only the calls that were made). Absent on a single-call compaction.
        */
       chunk: count.optional(),
       chunks: count.optional(),
@@ -877,7 +876,7 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       approvalId: z.string(),
       toolKey: z.string(),
       expiresAt: z.string(),
-      /** Which rule asked (UI refresh B; display only, absent in older logs). */
+      /** Which rule asked a tool approval (UI refresh B; display only; absent on the other asks). */
       policy: z.enum(["agent", "connector", "default", "role", "org", "fixed"]).optional(),
       /**
        * A network ask (network ask-to-allow spec §6.1): the hosts the device owner is asked to
@@ -1135,7 +1134,7 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
         /**
          * Plugin scope phase 2: the platform template whose content a `plugin` child ran (a
          * platform template, or an org copy linked to one, recorded under the copy's `id`). Absent
-         * = the org's own template (and in every older event). Eval metadata, not model-visible.
+         * = the org's own template. Eval metadata, not model-visible.
          */
         platformTemplateId: z.string().optional(),
         /**
@@ -1200,8 +1199,9 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       questionId: z.string().optional(),
       toolKey: z.string(),
       expiresAt: z.string().optional(),
-      /** An approval's approver (`kind: "approval"`), as in `approval_requested`. */
-      ...ApproverFields,
+      /** An approval's approver (`kind: "approval"` only), as in `approval_requested`. */
+      requestedFor: ApproverFields.requestedFor.optional(),
+      approverRole: ApproverFields.approverRole.optional(),
     }),
   ),
   /** Parent log: a sub-agent's run ended. Not model-visible (its reply is the call's tool_result). */
@@ -1224,8 +1224,7 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
    * `childRunId` finished. **Model-visible**: absorbed like an interjection and rendered as a system
    * message (`renderSubagentDelivery`). A finish after a handback carries `text: ""` and
    * `handedBack: true` and renders as one status line, except that a run that handed back and
-   * `completed` writes no finished delivery at all (acceptance 2026-11-07; older logs have one and
-   * keep rendering it); a finish without a handback carries the child's
+   * `completed` writes no finished delivery at all (acceptance 2026-11-07); a finish without a handback carries the child's
    * final reply, a failed finish its error message (`errorCode` the code), an aborted one no text
    * (`abortedBy` who stopped it), with `subagent_finished`'s vocabulary. `status` is present exactly
    * on `kind: "finished"`. `triggerAccountId`: the child run's trigger account, the one a wake runs
@@ -1311,23 +1310,22 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       text: z.string(),
       /**
        * The estimated transcript input minus the stored summary output (context compaction spec
-       * §4.9), so the UI needs no chunked usage to show what compaction saved. Optional: older
-       * logs have none.
+       * §4.9), so the UI needs no chunked usage to show what compaction saved.
        */
-      savedTokens: count.optional(),
+      savedTokens: count,
       /**
        * The user messages that started the run being compacted, when the summary covers them
        * (context compaction spec §4.2, revision 2026-11-15), in seq order: request building
        * re-renders exactly these after the summary text. Decided when the summary is written, so a
-       * request never depends on later events. Optional: older logs (and summaries that cover no
-       * opening message) have none and re-render nothing.
+       * request never depends on later events. Absent when the summary covers no opening message
+       * (nothing re-rendered).
        */
       openingSeqs: z.array(seqNo).optional(),
       /**
        * The step the compaction ran in (0 for a manual compact run), so a later compaction in the
-       * same step takes the next idempotency key. Optional: older logs have none.
+       * same step takes the next idempotency key.
        */
-      step: count.optional(),
+      step: count,
     }),
   ),
   ev(
@@ -1335,8 +1333,8 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
     z.object({
       attempt: count,
       reason: z.string(),
-      /** The step the compaction ran in, as on `compaction_summary`. Optional: older logs. */
-      step: count.optional(),
+      /** The step the compaction ran in, as on `compaction_summary`. */
+      step: count,
     }),
   ),
   ev(

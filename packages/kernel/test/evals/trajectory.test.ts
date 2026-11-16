@@ -119,7 +119,15 @@ function scenario() {
   e(1300, "r1", { type: "usage", payload: { step: 0, provider: "p", model: "m2", ...U0 } });
   e(1400, "r1", {
     type: "approval_requested",
-    payload: { step: 0, callId: "c1", approvalId: "ap1", toolKey: "lookup", expiresAt: iso(9e6) },
+    payload: {
+      step: 0,
+      callId: "c1",
+      approvalId: "ap1",
+      toolKey: "lookup",
+      expiresAt: iso(9e6),
+      requestedFor: "acc-1",
+      approverRole: null,
+    },
   });
   e(2400, "r1", {
     type: "approval_decided",
@@ -351,7 +359,15 @@ describe("buildTrajectory", () => {
     e(20, "r1", { type: "usage", payload: { step: 0, provider: "p", model: "m1", ...U1 } });
     e(30, "r1", {
       type: "approval_requested",
-      payload: { step: 0, callId: "x", approvalId: "apx", toolKey: "danger", expiresAt: iso(1) },
+      payload: {
+        step: 0,
+        callId: "x",
+        approvalId: "apx",
+        toolKey: "danger",
+        expiresAt: iso(1),
+        requestedFor: null,
+        approverRole: "admin",
+      },
     });
     e(40, "r1", {
       type: "approval_decided",
@@ -689,7 +705,10 @@ describe("buildTrajectory: hook denials", () => {
       },
     });
     // the compaction call before step 1's model_call, then a step 2 that was denied (no model_call)
-    e(15, "r1", { type: "compaction_summary", payload: { coversUpToSeq: 1, text: "summary" } });
+    e(15, "r1", {
+      type: "compaction_summary",
+      payload: { coversUpToSeq: 1, text: "summary", savedTokens: 0, step: 1 },
+    });
     e(15, "r1", {
       type: "usage",
       payload: { step: 1, provider: "p", model: "m1", ...U0, purpose: "compaction" },
@@ -710,7 +729,7 @@ describe("buildTrajectory: hook denials", () => {
       payload: { step: 1, content: [{ type: "text", text: "done" }], stopReason: "end_turn" },
     });
     e(31, "r1", { type: "usage", payload: { step: 1, provider: "p", model: "m1", ...U1 } });
-    e(40, "r1", { type: "compaction_failed", payload: { attempt: 1, reason: "x" } });
+    e(40, "r1", { type: "compaction_failed", payload: { attempt: 1, reason: "x", step: 2 } });
     e(40, "r1", {
       type: "usage",
       payload: { step: 2, provider: "p", model: "m1", ...U1, purpose: "compaction" },
@@ -767,7 +786,7 @@ describe("buildTrajectory: hook denials", () => {
     // the summary's own estimate is not usage: it never enters the totals
     e(300, "r9", {
       type: "compaction_summary",
-      payload: { coversUpToSeq: 0, text: "summary", savedTokens: 5000 },
+      payload: { coversUpToSeq: 0, text: "summary", savedTokens: 5000, step: 0 },
     });
     e(400, "r9", { type: "run_finished", payload: { reason: "completed", consumedUpToSeq: 0 } });
     const [run] = buildTrajectory(events, table(PRICE_M1));

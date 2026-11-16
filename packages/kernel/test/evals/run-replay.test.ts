@@ -1494,7 +1494,7 @@ describe("整轮回放", () => {
       {
         type: "compaction_summary",
         runId: "compact-run-1",
-        payload: { coversUpToSeq: 1, text: "summary", savedTokens: 900 },
+        payload: { coversUpToSeq: 1, text: "summary", savedTokens: 900, step: 0 },
       },
       chunkUsage(1),
       chunkUsage(2),

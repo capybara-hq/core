@@ -1075,12 +1075,6 @@ function consecutiveCompactionFailures(events: ConversationEvent[]): number {
   return n;
 }
 
-/** The step an event of a run belongs to, when its payload names one. */
-function stepOf(e: ConversationEvent): number | undefined {
-  const step = (e.payload as { step?: unknown }).step;
-  return typeof step === "number" ? step : undefined;
-}
-
 /**
  * The ordinal of the next compaction of this run's `step`: 1 + the `compaction_summary` /
  * `compaction_failed` events the step already wrote (context compaction spec §4.4, revision
@@ -1098,7 +1092,7 @@ function compactionOrdinal(
   for (const e of events) {
     if (e.runId !== runId) continue;
     if (e.type !== "compaction_summary" && e.type !== "compaction_failed") continue;
-    if (stepOf(e) === step) recorded++;
+    if (e.payload.step === step) recorded++;
   }
   return recorded + 1;
 }

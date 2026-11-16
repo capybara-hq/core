@@ -397,25 +397,6 @@ describe("buildTimeline", () => {
     ]);
   });
 
-  it("a compaction divider without the summary's savedTokens shows none (older logs), never a usage-derived one", () => {
-    const events = [
-      ev(1, "usage", {
-        step: 0,
-        provider: "p",
-        model: "m",
-        inputTokens: 900,
-        outputTokens: 100,
-        cacheReadTokens: 100,
-        cacheWriteTokens: 0,
-        purpose: "compaction",
-      }),
-      ev(2, "compaction_summary", { coversUpToSeq: 1, text: "summary" }),
-    ];
-    expect(buildTimeline(events, [], new Map(), "en")).toEqual([
-      { kind: "divider", key: "e2", divider: "compacted", summary: "summary", savedTokens: null },
-    ]);
-  });
-
   it("a template sub-agent's skills the kernel wrote after the task join the task block, never a person's bubble", () => {
     const skill = (name: string) => ({
       id: `s-${name}`,

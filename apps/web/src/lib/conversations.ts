@@ -274,7 +274,7 @@ type EventBody =
         approvalId: string;
         toolKey: string;
         expiresAt: string;
-        /** Which rule asked (display only; absent in older logs). */
+        /** Which rule asked a tool approval (display only; absent on the other asks). */
         policy?: ApprovalPolicy;
         /** A network ask: the device-layer hosts asked for (display only). */
         network?: { hosts: string[] };
@@ -401,8 +401,8 @@ type EventBody =
       payload: {
         coversUpToSeq: number;
         text: string;
-        /** What compaction saved (estimated transcript minus summary); absent in older logs. */
-        savedTokens?: number;
+        /** What compaction saved (estimated transcript minus summary). */
+        savedTokens: number;
       };
     }
   | { type: "compaction_failed"; payload: { attempt: number; reason: string } }
@@ -563,8 +563,8 @@ export interface ConversationUsage {
 }
 
 /**
- * Who may decide an approval (display only, absent in older logs): the assigned member, else the
- * escalation role (`approval_requested`, and a sub-agent's in `subagent_waiting`).
+ * Who may decide an approval (display only): the assigned member, else the escalation role
+ * (`approval_requested`, and a sub-agent's in `subagent_waiting`, where only an approval has it).
  */
 export interface Approver {
   requestedFor?: string | null;

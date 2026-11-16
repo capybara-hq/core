@@ -316,7 +316,7 @@ function transcriptLine(e: ConversationEvent): string | null {
       // scheduled tasks spec §12: the header the request shows, so the summary keeps the origin
       const schedule = e.payload.schedule;
       const text = schedule === undefined ? body : `${scheduleHeader(schedule)} ${body}`;
-      // run context spec §5: the sender as logged (older logs have none: unchanged)
+      // run context spec §5: the sender as logged (a sub-agent task has none: unchanged)
       const sender = e.payload.sender;
       return sender !== undefined
         ? `User (${senderTranscriptLabel(sender)}): ${text}`

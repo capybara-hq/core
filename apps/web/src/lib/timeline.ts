@@ -437,11 +437,10 @@ const callKey = (runId: string | null, callId: string) => `${runId ?? ""}\u0000$
 export const isCallKey = (id: string) => id.includes("\u0000");
 
 /**
- * What a compaction divider shows as saved: the summary event's estimate, or null when the log has
- * none (older logs) or nothing was saved (0): "saved 0 tokens" is no news, the divider stays plain.
+ * What a compaction divider shows as saved: the summary event's estimate, or null when nothing was
+ * saved (0): "saved 0 tokens" is no news, the divider stays plain.
  */
-const savedTokensOf = (saved: number | undefined): number | null =>
-  saved === undefined || saved === 0 ? null : saved;
+const savedTokensOf = (saved: number): number | null => (saved === 0 ? null : saved);
 
 const joinText = (blocks: { type: string; text?: string }[], type: "text" | "thinking") =>
   blocks

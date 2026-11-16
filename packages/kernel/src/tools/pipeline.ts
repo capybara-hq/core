@@ -129,8 +129,7 @@ export const APPROVAL_DENIED_TEXT = "The user denied this tool call.";
 
 /**
  * The denied call's result when the approver gave a reason (model-visible, in the log). "An
- * approver": under role escalation an admin, not the requester, decides. Older logs keep the text
- * they recorded ("The user denied this tool call. Reason: …"); only new denials use this one.
+ * approver": under role escalation an admin, not the requester, decides.
  */
 export const approvalDeniedText = (reason: string | null): string =>
   reason === null ? APPROVAL_DENIED_TEXT : `An approver denied this tool call. Reason: ${reason}`;
@@ -264,7 +263,7 @@ export interface AskRequest {
 /**
  * Which rule made a call need approval: role escalation, the agent's tool policy, the connector's
  * policy, a fixed ask (R3, `requiresUserInteraction`), the org's `sandboxToolPolicy`, or the tool's
- * own default. `org` and `fixed` were added after the first B events (older logs say `default`).
+ * own default.
  */
 export type ApprovalPolicySource =
   | "agent"
@@ -1175,7 +1174,7 @@ export class ToolPipeline {
     const hooks = this.deps.pluginHooks;
     const scope = hookScope(hooks, ctx);
     if (scope && hooks?.has("tool.preExecute")) {
-      // sticky: a denial already logged for this call (e.g. an older log, or a crash right after it)
+      // sticky: a denial already logged for this call (e.g. a crash right after it)
       // is final: fail with the recorded reason, never re-run the hooks or execute the tool. Only
       // looked up when a tool.preExecute hook could run (M-2: no query without hooks); a denial is
       // written with the call's tool_result, so a call with a logged denial never runs again anyway.
