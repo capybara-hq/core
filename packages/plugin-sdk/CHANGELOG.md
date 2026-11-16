@@ -1,5 +1,13 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.26
+
+### Minor Changes
+
+- 325fe78: ContentBlock: a `file` block for attachments the model only references (never sent to a
+  provider), `size` on the media blocks, and the optional `ObjectStore.uri` for an unsigned object
+  identifier.
+
 ## 0.1.0-rc.25
 
 ### Minor Changes
