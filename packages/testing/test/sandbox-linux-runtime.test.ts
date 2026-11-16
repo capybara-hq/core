@@ -10,6 +10,7 @@ import {
   dockerPermissionFixture,
   dockerUnavailable,
   execResult,
+  IMAGE,
   RUNTIME_DIR,
   stageMutant,
   startDevice,
@@ -22,6 +23,15 @@ import {
 // network). Nothing here relaxes the container; the outer filters used for the fail-closed
 // cases are stricter than the default. Skipped where Docker or the image is missing.
 const unavailable = dockerUnavailable();
+// CI evidence mode: everything that would otherwise skip (no Docker or image, restricted
+// unavailable, skipped mechanisms) fails with its reason instead.
+const required = process.env.CAPYBARA_TEST_REQUIRE_LINUX_RESTRICTED === "1";
+
+describe.runIf(required && unavailable !== null)("Linux restricted runtime is required", () => {
+  it("has Docker and the sandbox image", () => {
+    throw new Error(`CAPYBARA_TEST_REQUIRE_LINUX_RESTRICTED=1 but: ${unavailable}`);
+  });
+});
 
 const SECRET = "linux-sibling-secret";
 const decode = (value?: string) => Buffer.from(value ?? "", "base64").toString();
@@ -32,6 +42,13 @@ describe.skipIf(unavailable !== null)(
     let device: DeviceContainer;
     let agent: Agent;
     let supported = false;
+    let unsupportedReason = "";
+    /** Skips a mechanism test where restricted mode is unavailable, or fails in evidence mode. */
+    const requireSupport = (context: { skip: () => void }) => {
+      if (supported) return;
+      if (required) throw new Error(`restricted runtime unavailable: ${unsupportedReason}`);
+      context.skip();
+    };
     const root = "/workspace/project";
     const readOnly = "/workspace/readonly";
     const sibling = "/workspace/sibling";
@@ -74,7 +91,30 @@ describe.skipIf(unavailable !== null)(
       await agent.ready;
       const report = await support(agent);
       supported = report.restricted !== null;
-      console.info(`[linux-runtime] candidate probe: ${JSON.stringify(report)}`);
+      unsupportedReason = report.unavailableReason ?? "";
+      const host = (command: string, args: string[]) =>
+        spawnSync(command, args, { encoding: "utf8" }).stdout?.trim() ?? "";
+      console.info(
+        `[linux-runtime] ${JSON.stringify({
+          candidateProbe: report,
+          kernel: device.run("uname -srm").trim(),
+          lsm:
+            host("cat", ["/sys/kernel/security/lsm"]) ||
+            device.run("cat /sys/kernel/security/lsm 2>/dev/null || echo unreadable").trim(),
+          deviceSeccomp: device.run("grep -E 'Seccomp|NoNewPrivs' /proc/self/status").trim(),
+          dockerSecurity: host("docker", ["info", "--format", "{{json .SecurityOptions}}"]),
+          image: host("docker", [
+            "image",
+            "inspect",
+            IMAGE,
+            "--format",
+            "{{.Id}} {{json .RepoDigests}} {{.Architecture}}",
+          ]),
+        })}`,
+      );
+      if (required && !supported) {
+        throw new Error(`CAPYBARA_TEST_REQUIRE_LINUX_RESTRICTED=1 but: ${unsupportedReason}`);
+      }
     });
     afterAll(() => {
       agent?.close();
@@ -122,7 +162,7 @@ describe.skipIf(unavailable !== null)(
 
     describe("mechanism", () => {
       it("uses the same pinned root descriptors for Landlock, the broker and the native helper", async (context) => {
-        if (!supported) context.skip();
+        requireSupport(context);
         const exec = await run(
           restricted({ kind: "none" }, [readOnly]),
           "pwd -P; printf x > pinned.txt",
@@ -165,7 +205,7 @@ describe.skipIf(unavailable !== null)(
       });
 
       it("refuses a root swapped between pinning and launch, and a wrong recorded identity", async (context) => {
-        if (!supported) context.skip();
+        requireSupport(context);
         const moved = `${root}.moved`;
         const swapped = await run(restricted(), `printf pwn > ${root}/escaped; printf ran > ran`, {
           attack: { kind: "swap-after-pin", root, moved, target: sibling },
@@ -185,7 +225,7 @@ describe.skipIf(unavailable !== null)(
       });
 
       it("closes every inherited descriptor above stdio, however high", async (context) => {
-        if (!supported) context.skip();
+        requireSupport(context);
         const result = await run(
           restricted(),
           "python3 -c 'import os; print(os.read(1500, 100), \"LEAKED\")'; ls /proc/self/fd",
@@ -197,7 +237,7 @@ describe.skipIf(unavailable !== null)(
       });
 
       it("keeps the supervisor and other processes outside the restricted domain", async (context) => {
-        if (!supported) context.skip();
+        requireSupport(context);
         const result = await run(
           restricted(),
           "kill -0 $PPID && echo SIGNAL-OK; cat /proc/$PPID/environ > /dev/null && echo ENVIRON-OK; " +
@@ -209,7 +249,7 @@ describe.skipIf(unavailable !== null)(
       });
 
       it("mediates the metadata, socket and syscall inventory", async (context) => {
-        if (!supported) context.skip();
+        requireSupport(context);
         const probe = String.raw`
 import ctypes, errno, os, socket, sys
 libc = ctypes.CDLL(None, use_errno=True)
@@ -255,6 +295,10 @@ attempt("setsid", os.setsid)
 attempt("unix-listen", lambda: (lambda s: (s.bind("u.sock"), s.listen(1)))(socket.socket(socket.AF_UNIX)))
 attempt("tcp-listen", lambda: (lambda s: (s.bind(("127.0.0.1", 0)), s.listen(1)))(socket.socket()))
 attempt("socketpair", socket.socketpair)
+attempt("pair-seqpacket", lambda: socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET))
+attempt("pair-dgram", lambda: socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM))
+attempt("pair-raw", lambda: socket.socketpair(socket.AF_UNIX, socket.SOCK_RAW))
+attempt("pair-dgram-cloexec", lambda: socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM | socket.SOCK_CLOEXEC))
 attempt("unix-raw", lambda: socket.socket(socket.AF_UNIX, socket.SOCK_RAW))
 attempt("unix-dgram-cloexec", lambda: socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM | socket.SOCK_CLOEXEC))
 attempt("unix-seqpacket", lambda: socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET))
@@ -308,6 +352,10 @@ attempt("clone3", lambda: raw(435, 0, 0))
           "unix-listen": "ALLOWED",
           "tcp-listen": "ALLOWED",
           socketpair: "ALLOWED",
+          "pair-seqpacket": "ALLOWED",
+          "pair-dgram": "EACCES",
+          "pair-raw": "EACCES",
+          "pair-dgram-cloexec": "EACCES",
           "unix-raw": "EACCES",
           "unix-dgram-cloexec": "EACCES",
           "unix-seqpacket": "ALLOWED",
@@ -324,7 +372,7 @@ attempt("clone3", lambda: raw(435, 0, 0))
       });
 
       it("kills every restricted survivor when the main command exits", async (context) => {
-        if (!supported) context.skip();
+        requireSupport(context);
         const result = await run(restricted(), "(sleep 1000 & echo $! > survivor); true");
         expect(execResult(result, true).exitCode).toBe(0);
         const pid = Number(device.run(`cat ${root}/survivor`));
@@ -333,7 +381,7 @@ attempt("clone3", lambda: raw(435, 0, 0))
       });
 
       it("a C thread rewriting the connect and chmod pointers never escapes", async (context) => {
-        if (!supported) context.skip();
+        requireSupport(context);
         device.run(`gcc -O1 -pthread -o ${root}/flip ${RUNTIME_DIR}/flip.c`);
         const before = receipts("ungranted4");
         const control = await run(full, "./flip connect 3000");
@@ -353,8 +401,59 @@ attempt("clone3", lambda: raw(435, 0, 0))
         expect(device.run(`stat -c %a ${sibling}/secret`).trim()).toBe("644");
       });
 
+      it("a refused or dissolved connect never turns listen() into a bind to every address", async (context) => {
+        requireSupport(context);
+        const program = [
+          "import ctypes, socket",
+          "libc = ctypes.CDLL(None, use_errno=True)",
+          "def listen_after(prepare):",
+          "    s = socket.socket()",
+          "    prepare(s)",
+          "    try:",
+          "        s.listen(1)",
+          "        return s.getsockname()[0]",
+          "    except OSError as error:",
+          "        return 'denied'",
+          "def refused(s):",
+          "    try:",
+          "        s.connect(('127.0.0.1', 18099))",
+          "    except ConnectionRefusedError:",
+          "        pass",
+          "def unspec(s):",
+          "    libc.connect(s.fileno(), ctypes.create_string_buffer(16), 16)",
+          "print('refused=' + listen_after(refused), 'unspec=' + listen_after(unspec))",
+        ].join("\n");
+        const result = await run(
+          restricted({ kind: "allowlist", hosts: ["refused.test"] }),
+          `python3 - <<'EOF'\n${program}\nEOF`,
+        );
+        expect(decode(result.stdout).trim(), decode(result.stderr)).toBe(
+          "refused=denied unspec=denied",
+        );
+      });
+
+      it("records the session before any restricted code runs (supervisor killed at once)", async (context) => {
+        requireSupport(context);
+        device.run(`rm -f ${root}/early-*`);
+        const started = agent.start({
+          op: "exec",
+          mode: "exec",
+          grant: restricted(),
+          command: "(sleep 2101 & echo $! > early-pid); printf ran > early-ran; sleep 2102",
+          cwd: root,
+          timeoutMs: 120_000,
+          killSupervisorOnSession: true,
+        });
+        const done = await started.done;
+        const kinds = done.events?.map((event) => event.event) ?? [];
+        // The supervisor was killed as soon as the session existed; whatever ran was reaped.
+        expect(kinds[0]).toBe("session");
+        expect(execResult(done, true).exitCode).toBeNull();
+        expect(device.run("pgrep -f 'sleep 210[12]' || true").trim()).toBe("");
+      });
+
       it("losing the supervisor (SIGKILL) ends every owned restricted descendant", async (context) => {
-        if (!supported) context.skip();
+        requireSupport(context);
         device.run(`rm -f ${root}/lost-*`);
         const started = agent.start({
           op: "exec",
@@ -377,7 +476,7 @@ attempt("clone3", lambda: raw(435, 0, 0))
       });
 
       it("passes the full permission conformance", async (context) => {
-        if (!supported) context.skip();
+        requireSupport(context);
         const fixture = await dockerPermissionFixture(device, agent, async () => {});
         await runSandboxPermissionConformance(fixture);
       });
@@ -386,7 +485,7 @@ attempt("clone3", lambda: raw(435, 0, 0))
     describe("fails closed", () => {
       for (const outer of ["landlock", "listener"] as const) {
         it(`reports restricted unavailable and refuses launch without the ${outer} primitive`, async (context) => {
-          if (!supported) context.skip();
+          requireSupport(context);
           const limited = new Agent(device, { outer, candidateArch: true });
           await limited.ready;
           try {
@@ -413,7 +512,7 @@ attempt("clone3", lambda: raw(435, 0, 0))
 
     describe("detects deliberately broken launchers", () => {
       it("without Landlock the sibling write lands", async (context) => {
-        if (!supported) context.skip();
+        requireSupport(context);
         const runtime = stageMutant(
           device,
           "no-landlock",
@@ -432,7 +531,7 @@ attempt("clone3", lambda: raw(435, 0, 0))
       });
 
       it("reopening the root pathname follows a swap into the sibling", async (context) => {
-        if (!supported) context.skip();
+        requireSupport(context);
         const runtime = stageMutant(
           device,
           "reopen-root",
@@ -459,7 +558,7 @@ attempt("clone3", lambda: raw(435, 0, 0))
       });
 
       it("closing only descriptors below 1024 leaks a high inherited descriptor", async (context) => {
-        if (!supported) context.skip();
+        requireSupport(context);
         const runtime = stageMutant(
           device,
           "low-close",
@@ -484,7 +583,7 @@ attempt("clone3", lambda: raw(435, 0, 0))
       });
 
       it("a broker that re-reads the pointer lets the race escape", async (context) => {
-        if (!supported) context.skip();
+        requireSupport(context);
         const runtime = stageMutant(
           device,
           "double-fetch",

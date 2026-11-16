@@ -206,18 +206,22 @@ export class Agent {
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly pending = new Map<string, (response: AgentResponse) => void>();
   readonly ready: Promise<void>;
+  readonly candidateArch: boolean;
 
   constructor(
     device: DeviceContainer,
     options: { outer?: "landlock" | "listener"; runtime?: string; candidateArch?: boolean } = {},
   ) {
+    this.candidateArch = options.candidateArch === true;
     const program = ["/usr/bin/python3", "-I", `${options.runtime ?? RUNTIME_DIR}/agent.py`];
     const command = options.outer
       ? ["/usr/bin/python3", "-I", `${RUNTIME_DIR}/outer-deny.py`, options.outer, ...program]
       : program;
-    const endpoints = Object.fromEntries(
-      [ENDPOINTS.granted].map(([address, port]) => [address, { address, port }]),
-    );
+    // Allowlist host -> endpoint the consumer grants. "refused.test" is a closed loopback port.
+    const endpoints = {
+      [ENDPOINTS.granted[0]]: { address: ENDPOINTS.granted[0], port: ENDPOINTS.granted[1] },
+      "refused.test": { address: "127.0.0.1", port: 18099 },
+    };
     this.child = spawn("docker", [
       "exec",
       "-i",
@@ -399,17 +403,28 @@ export function operation(agent: Agent, grant: SandboxPermissionGrant): SandboxO
 }
 
 /** A runtime report mapped from the launcher's own probe; never a fixture flag. */
+type Claims = { filesystem: true; network: true; native: true; concurrentScopes: true };
+
+/**
+ * The launcher's own probe as provider support. Only for an agent created with candidateArch
+ * (evidence collection on a reviewed but unvalidated architecture) does a separate candidate
+ * result stand in; production consumers read "restricted" alone.
+ */
 export async function support(agent: Agent): Promise<SandboxPermissionSupport> {
   const probe = (await agent.request({ op: "probe" })).result as {
-    restricted: { filesystem: true; network: true; native: true; concurrentScopes: true } | null;
+    restricted: Claims | null;
     reason?: string;
+    candidate?: { restricted: Claims | null; reason?: string };
   };
+  const evidence = agent.candidateArch && probe.restricted === null ? probe.candidate : undefined;
+  const restricted = evidence ? evidence.restricted : probe.restricted;
+  const reason = evidence ? evidence.reason : probe.reason;
   return {
     version: 1,
-    restricted: probe.restricted,
+    restricted,
     fullAccess: true,
     background: false,
-    ...(probe.reason ? { unavailableReason: probe.reason } : {}),
+    ...(reason ? { unavailableReason: reason } : {}),
   };
 }
 

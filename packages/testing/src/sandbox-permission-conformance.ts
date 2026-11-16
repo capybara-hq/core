@@ -121,6 +121,16 @@ for family, host in ((socket.AF_INET, "127.0.0.1"), (socket.AF_INET6, "::1"),
     except OSError:
         out.append(host + "=denied")
     s.close()
+# Dissolving an association (connect AF_UNSPEC) must not turn listen() into a bind to any address.
+import ctypes
+libc = ctypes.CDLL(None, use_errno=True)
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+libc.connect(s.fileno(), ctypes.create_string_buffer(16), 16)
+try:
+    s.listen(1)
+    out.append("unspec=" + s.getsockname()[0])
+except OSError:
+    out.append("unspec=denied")
 print(" ".join(out))
 `;
 
@@ -173,12 +183,18 @@ def connect(kind, target):
     socket.socket(socket.AF_UNIX, kind).connect(target)
 def send(kind):
     socket.socket(socket.AF_UNIX, kind).sendto(b"x", path + ".dgram")
+def pair(kind):
+    # An explicit address on a socketpair datagram socket is honoured by the kernel.
+    first, _ = socket.socketpair(socket.AF_UNIX, kind)
+    first.sendto(b"x", path + ".dgram")
 print(" ".join([
     attempt("stream", lambda: connect(socket.SOCK_STREAM, path)),
     attempt("seqpacket", lambda: connect(socket.SOCK_SEQPACKET, path + ".seq")),
     attempt("dgram", lambda: send(socket.SOCK_DGRAM)),
     attempt("raw", lambda: send(socket.SOCK_RAW)),
     attempt("link", lambda: connect(socket.SOCK_STREAM, link)),
+    attempt("pair-dgram", lambda: pair(socket.SOCK_DGRAM)),
+    attempt("pair-raw", lambda: pair(socket.SOCK_RAW)),
 ]))
 `;
 
@@ -422,7 +438,7 @@ export async function runSandboxPermissionConformance(
       const binds = await exec(restricted(network), `python3 -c ${quote(BIND_PROGRAM)}`);
       assert.equal(
         binds.stdout.trim(),
-        "127.0.0.1=ok ::1=ok 0.0.0.0=denied ::=denied",
+        "127.0.0.1=ok ::1=ok 0.0.0.0=denied ::=denied unspec=denied",
         `restricted ${network.kind} binds loopback only: ${binds.stderr}`,
       );
     }
@@ -451,7 +467,7 @@ export async function runSandboxPermissionConformance(
         );
         assert.equal(
           probe.stdout.trim(),
-          "stream=denied seqpacket=denied dgram=denied raw=denied link=denied",
+          "stream=denied seqpacket=denied dgram=denied raw=denied link=denied pair-dgram=denied pair-raw=denied",
           `restricted ${network.kind} must not reach a UNIX service outside the roots: ${probe.stderr}`,
         );
         const inside = await exec(
@@ -465,17 +481,17 @@ export async function runSandboxPermissionConformance(
         "0",
         "the outside UNIX service must see no client",
       );
-      // The same client under Full access reaches the service five times: the probe is real.
+      // The same client under Full access reaches the service seven times: the probe is real.
       const control = await exec(
         full,
         `python3 -c ${quote(UNIX_CLIENT)} ${quote(at(sibling, "srv.sock"))} srv-link.sock`,
       );
       assert.equal(
         control.stdout.trim(),
-        "stream=ok seqpacket=ok dgram=ok raw=ok link=ok",
+        "stream=ok seqpacket=ok dgram=ok raw=ok link=ok pair-dgram=ok pair-raw=ok",
         `Full UNIX control: ${control.stderr}`,
       );
-      while (text(await fixture.inspect.readFile(at(sibling, "srv.count"))) !== "5") {
+      while (text(await fixture.inspect.readFile(at(sibling, "srv.count"))) !== "7") {
         await new Promise((resolve) => setImmediate(resolve));
       }
       server.abort();

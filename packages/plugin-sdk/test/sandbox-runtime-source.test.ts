@@ -101,6 +101,12 @@ def broken(candidate):
     raise RuntimeError("primitive exploded")
 module.probe_primitives = broken
 cases["crash"] = module.probe()
+supported = {"restricted": {"filesystem": True}, "arch": "stub"}
+module.probe_primitives = lambda candidate: dict(supported)
+platform("Linux", "x86_64")
+cases["x86-candidate-probe"] = module.probe(True)
+platform("Linux", "aarch64")
+cases["aarch64-candidate-probe"] = module.probe(True)
 print(json.dumps(cases))
 `);
     expect(decisions).toEqual({
@@ -117,6 +123,15 @@ print(json.dumps(cases))
         arch: "aarch64",
         reason: "The probe failed: RuntimeError",
       },
+      // A candidate probe on an unvalidated architecture never reports restricted support.
+      "x86-candidate-probe": {
+        restricted: null,
+        arch: "x86_64",
+        validated: false,
+        reason: "The syscall inventory is not validated on x86_64",
+        candidate: { restricted: { filesystem: true }, arch: "stub" },
+      },
+      "aarch64-candidate-probe": { restricted: { filesystem: true }, arch: "stub" },
     });
   });
 
@@ -156,6 +171,11 @@ for machine in ("aarch64", "x86_64"):
             "unix-seqpacket": call("socket", m.AF_UNIX, m.SOCK_SEQPACKET | m.SOCK_CLOEXEC),
             "unix-dgram": call("socket", m.AF_UNIX, m.SOCK_DGRAM | m.SOCK_CLOEXEC),
             "unix-raw": call("socket", m.AF_UNIX, 3),
+            "pair-stream": call("socketpair", m.AF_UNIX, m.SOCK_STREAM | m.SOCK_CLOEXEC),
+            "pair-seqpacket": call("socketpair", m.AF_UNIX, m.SOCK_SEQPACKET),
+            "pair-dgram": call("socketpair", m.AF_UNIX, m.SOCK_DGRAM | m.SOCK_NONBLOCK),
+            "pair-raw": call("socketpair", m.AF_UNIX, 3),
+            "pair-inet": call("socketpair", m.AF_INET, m.SOCK_STREAM),
             "inet": call("socket", m.AF_INET, m.SOCK_STREAM),
             "packet": call("socket", 17, 3),
             "connect": call("connect"),
@@ -186,6 +206,11 @@ print(json.dumps(out))
       "unix-seqpacket": "notify",
       "unix-dgram": "EACCES",
       "unix-raw": "EACCES",
+      "pair-stream": "allow",
+      "pair-seqpacket": "allow",
+      "pair-dgram": "EACCES",
+      "pair-raw": "EACCES",
+      "pair-inet": "EACCES",
       inet: "notify",
       packet: "EAFNOSUPPORT",
       connect: "notify",
