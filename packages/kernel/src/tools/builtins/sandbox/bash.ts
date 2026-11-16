@@ -531,7 +531,9 @@ export async function runInBackgroundManaged(
     } catch (e) {
       const why = e instanceof Error ? e.message : String(e);
       // a reservation that never dispatched is settled; a dispatched one never is here
-      if (await failManagedPreEffect(task.id, `launch refused: ${clip(why, 500)}`)) {
+      if (
+        await failManagedPreEffect(task.id, `launch refused: ${clip(why, 500)}`, claim.executionId)
+      ) {
         return {
           kind: "refused",
           task: (await background.get(task.id)) ?? task,

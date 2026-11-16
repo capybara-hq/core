@@ -231,7 +231,8 @@ export function assertManagedArtifactAdmitted(
     deny("the output path is not the task's placement under its working root");
   if (!Number.isSafeInteger(args.retainUntilMs) || args.retainUntilMs <= 0)
     deny("the retention deadline is invalid");
-  if (args.outputPath.split("/").includes(".git"))
+  // case-insensitive: a case-insensitive file system resolves `.GIT` to `.git`
+  if (args.outputPath.split("/").some((c) => c.toLowerCase() === ".git"))
     deny("the working root is inside protected Git metadata");
   const fs = scope.filesystem;
   if (fs.kind === "scoped" && !fs.writeRoots.some((root) => within(args.outputPath, root)))

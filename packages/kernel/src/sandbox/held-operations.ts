@@ -41,7 +41,56 @@ export type OperationDispatch = <T>(
   method: OperationMethod,
   input: unknown,
   invoke: (scope: SandboxOperationScope, signal: AbortSignal) => Promise<T>,
+  /**
+   * Kernel checks on the admitted scope that run before any dispatch state is written; a typed
+   * refusal here is recorded as a pre-effect failure and nothing is dispatched.
+   */
+  preflight?: (scope: SandboxOperationScope, signal: AbortSignal) => Promise<void>,
 ) => Promise<T>;
+
+/** The provider's runtime must enforce the scope's profile (and own background executions). */
+export async function assertPermissionSupport(
+  provider: SandboxProvider,
+  handle: SandboxHandle,
+  scope: SandboxOperationScope,
+  method: OperationMethod,
+  signal: AbortSignal,
+): Promise<void> {
+  if (!provider.operation || !provider.permissionSupport || !provider.revokeOperation)
+    throw new SandboxPermissionUnsupportedError(
+      "This provider does not support permission operations",
+    );
+  const support = await provider.permissionSupport(handle, signal);
+  if (
+    support.version !== 1 ||
+    (method === "backgroundStart" && (!support.background || !provider.background)) ||
+    (scope.profile === "full-access"
+      ? !support.fullAccess
+      : !support.restricted?.filesystem ||
+        !support.restricted.network ||
+        !support.restricted.native ||
+        !support.restricted.concurrentScopes)
+  )
+    throw new SandboxPermissionUnsupportedError(
+      support.unavailableReason ?? "This runtime cannot enforce the selected permissions",
+    );
+}
+
+/**
+ * Every check a managed start needs before it may reach the provider, for the first dispatch and
+ * for a same-identity recovery alike: the artifact is covered by the admitted starting authority,
+ * then the runtime supports the profile and owns background executions.
+ */
+export async function checkManagedStart(
+  provider: SandboxProvider,
+  handle: SandboxHandle,
+  scope: SandboxOperationScope,
+  input: Omit<ManagedStartArgs, "signal">,
+  signal: AbortSignal,
+): Promise<void> {
+  assertManagedArtifactAdmitted(scope, input);
+  await assertPermissionSupport(provider, handle, scope, "backgroundStart", signal);
+}
 
 export function createHeldOperations(
   provider: SandboxProvider,
@@ -59,38 +108,31 @@ export function createHeldOperations(
       signal: AbortSignal,
       scope: SandboxOperationScope,
     ) => Promise<T>,
+    preflight?: (scope: SandboxOperationScope, signal: AbortSignal) => Promise<void>,
   ): Promise<T> => {
     if (h.id !== handle.id) throw new SandboxScopeDeniedError("Use the currently held instance");
     const combined = signal === heldSignal ? signal : AbortSignal.any([signal, heldSignal]);
     combined.throwIfAborted();
-    return dispatch(method, input, async (scope, admittedSignal) => {
-      const sig =
-        admittedSignal === combined ? combined : AbortSignal.any([combined, admittedSignal]);
-      sig.throwIfAborted();
-      if (!provider.operation || !provider.permissionSupport || !provider.revokeOperation)
-        throw new SandboxPermissionUnsupportedError(
-          "This provider does not support permission operations",
+    return dispatch(
+      method,
+      input,
+      async (scope, admittedSignal) => {
+        const sig =
+          admittedSignal === combined ? combined : AbortSignal.any([combined, admittedSignal]);
+        sig.throwIfAborted();
+        await assertPermissionSupport(provider, handle, scope, method, sig);
+        sig.throwIfAborted();
+        // A background start has no operation object: the provider owns it by exact identity.
+        if (method === "backgroundStart") return invoke(null, sig, scope);
+        const op = await (provider.operation as NonNullable<SandboxProvider["operation"]>)(
+          handle,
+          scope,
+          sig,
         );
-      const support = await provider.permissionSupport(handle, sig);
-      if (
-        support.version !== 1 ||
-        (method === "backgroundStart" && (!support.background || !provider.background)) ||
-        (scope.profile === "full-access"
-          ? !support.fullAccess
-          : !support.restricted?.filesystem ||
-            !support.restricted.network ||
-            !support.restricted.native ||
-            !support.restricted.concurrentScopes)
-      )
-        throw new SandboxPermissionUnsupportedError(
-          support.unavailableReason ?? "This runtime cannot enforce the selected permissions",
-        );
-      sig.throwIfAborted();
-      // A background start has no operation object: the provider owns it by exact identity.
-      if (method === "backgroundStart") return invoke(null, sig, scope);
-      const op = await provider.operation(handle, scope, sig);
-      return invoke(op, sig, scope);
-    });
+        return invoke(op, sig, scope);
+      },
+      preflight && ((scope, sig) => preflight(scope, AbortSignal.any([combined, sig]))),
+    );
   };
   const native = (
     op: Awaited<ReturnType<NonNullable<SandboxProvider["operation"]>>> | null,
@@ -147,16 +189,23 @@ export function createHeldOperations(
           backgroundStart: (h, args) => {
             const { signal, ...given } = args;
             const input = structuredClone(given);
-            return call(h, "backgroundStart", input, signal, (_op, sig, scope) => {
-              // Pre-effect: the artifact must already be covered by the admitted starting authority.
-              assertManagedArtifactAdmitted(scope, input);
-              const background = provider.background;
-              if (!background)
-                throw new SandboxPermissionUnsupportedError(
-                  "Managed background tasks are unavailable",
-                );
-              return background.start(handle, scope, { ...input, signal: sig });
-            });
+            return call(
+              h,
+              "backgroundStart",
+              input,
+              signal,
+              (_op, sig, scope) => {
+                const background = provider.background;
+                if (!background)
+                  throw new SandboxPermissionUnsupportedError(
+                    "Managed background tasks are unavailable",
+                  );
+                return background.start(handle, scope, { ...input, signal: sig });
+              },
+              // Before any dispatch state: the artifact must already be covered by the admitted
+              // starting authority, and the runtime must own background executions.
+              (scope, sig) => checkManagedStart(provider, handle, scope, input, sig),
+            );
           },
         } satisfies Pick<HeldProvider, "backgroundStart">)
       : {}),

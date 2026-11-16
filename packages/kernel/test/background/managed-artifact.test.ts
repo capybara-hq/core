@@ -77,6 +77,10 @@ describe("assertManagedArtifactAdmitted", () => {
     expect(
       denied(() => assertManagedArtifactAdmitted(scoped("/work"), args("/work/.git/hooks"))),
     ).toMatch(/Git/);
+    // case-insensitive file systems treat .GIT as .git
+    expect(
+      denied(() => assertManagedArtifactAdmitted(scoped("/work"), args("/work/.GIT/hooks"))),
+    ).toMatch(/Git/);
     expect(
       denied(() => assertManagedArtifactAdmitted(scoped("/work"), { ...a, retainUntilMs: 0 })),
     ).toMatch(/retention/);

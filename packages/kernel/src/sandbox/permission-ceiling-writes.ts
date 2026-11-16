@@ -103,18 +103,17 @@ export class PermissionCeilingWrites {
         await this.resetRoot(root, subject, level);
     }
     if (!revoke) return;
-    // Acknowledged background starts stay revocable by actual ceilings; a profile-only (root)
-    // change leaves a started task's starting authority unchanged.
+    // Acknowledged background starts stay revocable by every actual revoking writer (deletion is
+    // the root-level one). Profile changes never reach here: they only bump the root epoch.
     let candidates = this.db
       .selectFrom("sandbox_operation_intents")
       .selectAll()
-      .where(
-        "state",
-        "in",
-        level === "root"
-          ? ["admitted", "dispatching", "started-or-unknown"]
-          : ["admitted", "dispatching", "started-or-unknown", "background-running"],
-      );
+      .where("state", "in", [
+        "admitted",
+        "dispatching",
+        "started-or-unknown",
+        "background-running",
+      ]);
     if (level !== "platform") candidates = candidates.where("org_id", "=", required(subject.orgId));
     if (level === "device")
       candidates = candidates.where("device_id", "=", required(subject.deviceId));

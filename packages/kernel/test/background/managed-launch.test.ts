@@ -15,7 +15,9 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { backgroundMaxSeconds } from "../../src/background/launch.js";
 import { BackgroundTaskStore } from "../../src/background/store.js";
 import { KernelConfigSchema } from "../../src/config/schema.js";
+import { ConversationsService } from "../../src/conversations/conversations.service.js";
 import { EventLog } from "../../src/conversations/event-log.js";
+import { PermissionProfilesService } from "../../src/conversations/permission-profiles.service.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ConversationDevices } from "../../src/devices/conversation-devices.js";
@@ -115,25 +117,39 @@ interface StartCall {
 function managedProvider() {
   const calls: StartCall[] = [];
   const launched = new Map<string, SandboxExecutionRef>();
+  const inflight = new Map<string, Promise<SandboxExecutionRef>>();
   const revoked: string[] = [];
   const hooks: {
     beforeEffect?: ((c: StartCall) => Promise<void>) | undefined;
+    onCall?: ((c: StartCall) => void) | undefined;
     afterEffect?: ((c: StartCall) => Promise<void>) | undefined;
   } = {};
   const background: SandboxBackground = {
     async start(h, scope, args) {
       const call = { scope, args };
       calls.push(call);
-      const known = launched.get(scope.operationId);
-      if (known) return known;
-      await hooks.beforeEffect?.(call);
-      const ref: SandboxExecutionRef = {
-        executionId: `x-${scope.operationId.slice(0, 12)}`,
-        operationId: scope.operationId,
-        instanceId: h.id,
-        instanceGeneration: String(GENERATION),
-      };
-      launched.set(scope.operationId, ref);
+      hooks.onCall?.(call);
+      // Concurrency-safe ownership by exact operation id: a concurrent or later start of the same
+      // operation joins the first and never launches twice.
+      const owned = inflight.get(scope.operationId);
+      if (owned) return owned;
+      const launch = (async () => {
+        await hooks.beforeEffect?.(call);
+        const ref: SandboxExecutionRef = {
+          executionId: `x-${scope.operationId.slice(0, 12)}`,
+          operationId: scope.operationId,
+          instanceId: h.id,
+          instanceGeneration: String(GENERATION),
+        };
+        launched.set(scope.operationId, ref);
+        return ref;
+      })();
+      inflight.set(scope.operationId, launch);
+      // a start refused or failed before its effect owns nothing yet
+      launch.catch(() => {
+        if (!launched.has(scope.operationId)) inflight.delete(scope.operationId);
+      });
+      const ref = await launch;
       await hooks.afterEffect?.(call);
       return ref;
     },
@@ -621,15 +637,18 @@ describe("managed background launch identity", () => {
     expect(f.provider.calls).toHaveLength(1);
   });
 
-  it("a stale invocation launches nothing and settles its reservation before any effect", async () => {
+  it("a stale invocation launches nothing and cannot settle the current claim's reservation", async () => {
     const f = await fixture();
     const stale = await f.claimFor();
     await f.reclaim();
     await expect(f.run({ command: "npm run dev" }, stale)).rejects.toThrow();
     expect(f.provider.calls).toHaveLength(0);
-    const row = await f.task();
-    expect(row).toMatchObject({ status: "failed", launch_state: "terminal", execution_ref: null });
+    expect(await f.task()).toMatchObject({ status: "running", launch_state: "pending" });
     expect(["pending", "admitted", undefined]).toContain((await f.intent())?.state);
+    // the current claim's retry of the same call launches once from the same reservation
+    const id = (await f.task())?.id;
+    expect(textOf(await f.run({ command: "npm run dev" }))).toContain(`${id}`);
+    expect(f.provider.launched.size).toBe(1);
   });
 
   it("a stop claimed before dispatch launches nothing and ends the reservation stopped", async () => {
@@ -707,14 +726,15 @@ describe("managed background launch identity", () => {
     expect(f.provider.revoked).toEqual([f.operationId]);
   });
 
-  it("acknowledged authority survives a profile-only change and launch-run completion, not owner narrowing", async () => {
+  it("acknowledged authority survives a real profile change and launch-run completion, not owner narrowing", async () => {
     const f = await fixture();
     await f.run({ command: "npm run dev" });
     await f.db.updateTable("runs").set({ status: "completed" }).where("id", "=", f.runId).execute();
-    await narrow(
-      { orgId: f.orgId, deviceId: f.deviceId, rootConversationId: f.conversationId },
-      "root",
-    );
+    // the real profile writer only bumps the root epoch; started work keeps its starting envelope
+    await k.app.get(PermissionProfilesService).set(f.orgId, f.conversationId, owner.id, {
+      profile: "request-approval",
+      expectedRevision: 0,
+    });
     expect((await f.intent())?.state).toBe("background-running");
     expect((await f.task())?.launch_state).toBe("acknowledged");
     await narrow({ orgId: f.orgId, deviceId: f.deviceId }, "device");
@@ -873,5 +893,246 @@ describe("managed background launch identity", () => {
       .failAbandonedLaunches(new Date(Date.now() + 60_000));
     expect(failed).toEqual([]);
     expect((await f.task())?.launch_state).toBe("dispatched");
+  });
+
+  it("deleting the conversation through the real writer revokes acknowledged authority and owes the exact cancellation", async () => {
+    const f = await fixture();
+    await f.run({ command: "npm run dev" });
+    expect((await f.intent())?.state).toBe("background-running");
+    await k.app.get(ConversationsService).remove(f.orgId, f.conversationId, owner.id);
+    expect(await f.intent()).toMatchObject({ state: "revoked" });
+    expect(await f.task()).toMatchObject({ launch_state: "cancel-pending", status: "running" });
+    expect((await f.revokeJobs()).length).toBeGreaterThanOrEqual(1);
+    await reconcileJob().revoke(f.operationId);
+    expect(f.provider.revoked).toEqual([f.operationId]);
+  });
+
+  it("the facade refuses an artifact outside the admitted write roots before dispatch, with zero launches", async () => {
+    const project = "/home/owner/app";
+    const f = await fixture({ project });
+    const store = k.app.get(BackgroundTaskStore);
+    // neither the device workspace nor tmp is writable: only the project is
+    for (const root of ["/work", "/tmp"]) {
+      await f.reclaim();
+      const claim = await f.claimFor();
+      const id = root === "/work" ? "bt_wwwwww" : "bt_tttttt";
+      const startedAt = new Date();
+      await f.db.deleteFrom("background_tasks").where("run_id", "=", f.runId).execute();
+      await f.db
+        .deleteFrom("sandbox_operation_intents")
+        .where("operation_id", "=", f.operationId)
+        .execute();
+      const reserved = await store.reserveManaged(
+        {
+          id,
+          orgId: f.orgId,
+          conversationId: f.conversationId,
+          sandboxConversationId: f.conversationId,
+          deviceId: f.deviceId,
+          runId: f.runId,
+          callId: f.callId,
+          triggerAccountId: owner.id,
+          description: "d",
+          command: "npm run dev",
+          operationId: f.operationId,
+          workingRoot: root,
+          outputPath: `${root}/.capybara/tasks/${id}.out`,
+          startedAt,
+          deadlineAt: new Date(startedAt.getTime() + 60_000),
+          retainUntil: new Date(startedAt.getTime() + 120_000),
+        },
+        MAX_TASKS,
+      );
+      expect(reserved.kind).toBe("reserved");
+      const attempt = k.app.get(SandboxService).withOperations(
+        {
+          orgId: f.orgId,
+          deviceId: f.deviceId,
+          holderConversationId: f.conversationId,
+          actor: { accountId: owner.id, conversationId: f.conversationId, runId: f.runId },
+        },
+        { claim, callId: f.callId, deadlineMs: Date.now() + 30_000 },
+        async (h, p, _i, signal) =>
+          p.backgroundStart?.(h, {
+            command: "npm run dev",
+            cwd: root,
+            timeoutMs: 60_000,
+            maxOutputBytes: 1024,
+            taskId: id,
+            outputPath: `${root}/.capybara/tasks/${id}.out`,
+            retainUntilMs: startedAt.getTime() + 120_000,
+            signal,
+          }),
+        new AbortController().signal,
+      );
+      await expect(attempt).rejects.toThrow(/outside the admitted write roots/);
+      expect(f.provider.calls).toHaveLength(0);
+      // never bound or dispatched: the refusal is recorded before any dispatch state
+      expect(await f.task()).toMatchObject({
+        status: "failed",
+        launch_state: "terminal",
+        run_execution_id: null,
+      });
+      expect((await f.intent())?.state).toBe("completed");
+    }
+    expect(await f.db.selectFrom("permission_call_grants").select("id").execute()).toHaveLength(0);
+  });
+
+  it("recovery never starts an artifact outside its recorded write roots", async () => {
+    const f = await fixture();
+    f.provider.hooks.beforeEffect = async () => {
+      throw new Error("transport dropped before the device received the start");
+    };
+    expect((await f.outcome(f.run({ command: "sleep 100" }))).ok).toBe(false);
+    f.provider.hooks.beforeEffect = undefined;
+    expect((await f.intent())?.state).toBe("started-or-unknown");
+    // an anomalous recorded scope whose write roots no longer cover the artifact
+    await sql`UPDATE capybara.sandbox_operation_intents
+      SET scope = jsonb_set(scope, '{filesystem,writeRoots}', '["/elsewhere"]'::jsonb)
+      WHERE operation_id = ${f.operationId}`.execute(raw);
+    await reconcileJob().reconcile(f.operationId);
+    expect(f.provider.calls).toHaveLength(1);
+    expect(f.provider.launched.size).toBe(0);
+    // the uncertainty obligation stays owed while the slot is freed
+    expect(await f.task()).toMatchObject({ launch_state: "terminal", status: "lost" });
+    expect(await f.intent()).toMatchObject({ state: "revoked", outcome_unknown: true });
+    expect((await f.revokeJobs()).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("recovery does not race an in-flight dispatch: one launch and no false unconfirmed report", async () => {
+    const f = await fixture();
+    const entered = barrier();
+    const release = barrier();
+    f.provider.hooks.beforeEffect = async () => {
+      entered.resolve();
+      await release.promise;
+    };
+    const second = barrier();
+    f.provider.hooks.onCall = () => {
+      if (f.provider.calls.length === 2) second.resolve();
+    };
+    const work = f.outcome(f.run({ command: "npm run dev" }));
+    await entered.promise;
+    expect((await f.intent())?.state).toBe("dispatching");
+    // the admission-deadline reconcile fires while the first start is still in the provider
+    const recovery = reconcileJob().reconcile(f.operationId);
+    await Promise.race([recovery, second.promise]);
+    release.resolve();
+    await recovery;
+    const r = await work;
+    expect(r.ok).toBe(true);
+    expect(f.provider.launched.size).toBe(1);
+    expect(f.provider.calls).toHaveLength(1);
+    expect((await f.task())?.launch_state).toBe("acknowledged");
+    expect((await f.intent())?.state).toBe("background-running");
+  });
+
+  it("a stop claimed before the ref makes recovery owe the exact revoke instead of starting", async () => {
+    const f = await fixture();
+    f.provider.hooks.beforeEffect = async () => {
+      throw new Error("transport dropped before the device received the start");
+    };
+    expect((await f.outcome(f.run({ command: "sleep 100" }))).ok).toBe(false);
+    f.provider.hooks.beforeEffect = undefined;
+    const row = await f.task();
+    if (!row) throw new Error("no task");
+    expect(row.launch_state).toBe("dispatched");
+    expect(await k.app.get(BackgroundTaskStore).claimStop(row.id)).toBe(true);
+    await reconcileJob().reconcile(f.operationId);
+    expect(f.provider.calls).toHaveLength(1);
+    expect(f.provider.launched.size).toBe(0);
+    expect(await f.intent()).toMatchObject({ state: "revoked", outcome_unknown: true });
+    expect(await f.task()).toMatchObject({ launch_state: "cancel-pending", execution_ref: null });
+    expect((await f.revokeJobs()).length).toBeGreaterThanOrEqual(1);
+    await reconcileJob().revoke(f.operationId);
+    expect(f.provider.revoked).toEqual([f.operationId]);
+  });
+
+  it("a typed provider refusal during recovery settles as a pre-effect failure", async () => {
+    const f = await fixture();
+    f.provider.hooks.beforeEffect = async () => {
+      throw new Error("transport dropped before the device received the start");
+    };
+    expect((await f.outcome(f.run({ command: "sleep 100" }))).ok).toBe(false);
+    f.provider.hooks.beforeEffect = async () => {
+      throw new SandboxScopeDeniedError("The task directory parent is a symbolic link");
+    };
+    await reconcileJob().reconcile(f.operationId);
+    expect(f.provider.launched.size).toBe(0);
+    expect(await f.task()).toMatchObject({ status: "failed", launch_state: "terminal" });
+    expect((await f.intent())?.state).toBe("completed");
+    expect(f.jobs().filter((j) => j.jobId.includes("-recover-"))).toHaveLength(0);
+  });
+
+  it("recovery backs off exponentially and skips a changed provider version", async () => {
+    const f = await fixture();
+    f.provider.hooks.afterEffect = async () => {
+      throw new Error("acknowledgement lost");
+    };
+    expect((await f.outcome(f.run({ command: "sleep 100" }))).ok).toBe(false);
+    f.provider.hooks.afterEffect = undefined;
+    // the same plugin now runs another version: the recorded identity cannot be reconciled there
+    k.app
+      .get(SandboxProviders)
+      .register({ plugin: PROVIDER, version: "test-2", impl: f.provider.impl });
+    const delays: number[] = [];
+    for (let i = 0; i < 2; i++) {
+      const before = Date.now();
+      await reconcileJob().reconcile(f.operationId);
+      const job = await f.db
+        .selectFrom("outbox")
+        .select("run_at")
+        .where("job_id", "like", `%${f.operationId}-recover-${i + 1}`)
+        .executeTakeFirst();
+      delays.push((job?.run_at?.getTime() ?? 0) - before);
+    }
+    expect(f.provider.calls).toHaveLength(1);
+    expect(delays[0]).toBeGreaterThanOrEqual(29_000);
+    expect(delays[1]).toBeGreaterThanOrEqual(59_000);
+    expect((await f.task())?.launch_state).toBe("dispatched");
+  });
+
+  it("at retention expiry an unknown launch becomes terminal, frees its slot and keeps the revoke owed", async () => {
+    const f = await fixture();
+    f.provider.hooks.afterEffect = async () => {
+      throw new Error("acknowledgement lost");
+    };
+    expect((await f.outcome(f.run({ command: "sleep 100" }))).ok).toBe(false);
+    await f.db
+      .updateTable("sandbox_operation_intents")
+      .set({ retain_until: new Date(Date.now() - 1000) })
+      .where("operation_id", "=", f.operationId)
+      .execute();
+    await reconcileJob().reconcile(f.operationId);
+    expect(await f.task()).toMatchObject({
+      status: "lost",
+      launch_state: "terminal",
+      lost_reason: "launch_unknown",
+    });
+    expect(await k.app.get(BackgroundTaskStore).countRunning(f.conversationId)).toBe(0);
+    expect(await f.intent()).toMatchObject({ state: "revoked", outcome_unknown: true });
+    expect((await f.revokeJobs()).length).toBeGreaterThanOrEqual(1);
+    await reconcileJob().revoke(f.operationId);
+    expect(f.provider.revoked).toEqual([f.operationId]);
+  });
+
+  it("a ref attached after an acknowledged revocation makes the exact revoke run again", async () => {
+    const f = await fixture();
+    const entered = barrier();
+    const release = barrier();
+    f.provider.hooks.afterEffect = async () => {
+      entered.resolve();
+      await release.promise;
+    };
+    const work = f.outcome(f.run({ command: "npm run dev" }));
+    await entered.promise;
+    await narrow({ orgId: f.orgId, deviceId: f.deviceId }, "device");
+    await reconcileJob().revoke(f.operationId);
+    expect((await f.intent())?.revoke_acknowledged).toBe(true);
+    release.resolve();
+    await work;
+    expect(await f.intent()).toMatchObject({ state: "revoked", revoke_acknowledged: false });
+    await reconcileJob().revoke(f.operationId);
+    expect(f.provider.revoked).toEqual([f.operationId, f.operationId]);
   });
 });

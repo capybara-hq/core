@@ -242,10 +242,11 @@ export class BackgroundTaskStore {
   }
 
   /**
-   * Fails a managed reservation that provably never dispatched (`pending`): `failed`, `terminal`.
+   * Fails a managed reservation that provably never dispatched (`pending`): `failed`, `terminal`,
+   * when `executionId` is still the run's current execution claim.
    * A dispatched row is never failed here: a null reference is no proof that nothing launched.
    */
-  async failManagedPreEffect(id: string, reason: string): Promise<boolean> {
+  async failManagedPreEffect(id: string, reason: string, executionId: string): Promise<boolean> {
     const r = await this.db
       .updateTable("background_tasks")
       .set({
@@ -258,6 +259,15 @@ export class BackgroundTaskStore {
       .where("id", "=", id)
       .where("status", "=", "running")
       .where("launch_state", "=", "pending")
+      // only the run's current execution claim settles it: a stale one never fails the retry
+      .where(({ exists, selectFrom }) =>
+        exists(
+          selectFrom("runs")
+            .select("runs.id")
+            .whereRef("runs.id", "=", "background_tasks.run_id")
+            .where("runs.execution_id", "=", executionId),
+        ),
+      )
       .executeTakeFirst();
     return Number(r.numUpdatedRows) > 0;
   }

@@ -1,12 +1,16 @@
 import {
+  isSandboxPermissionUnsupportedError,
+  isSandboxScopeDeniedError,
   parseSandboxOperationScope,
   type SandboxExecutionRef,
   SandboxOperationOutcomeUnknownError,
+  SandboxPermissionUnsupportedError,
+  type SandboxProvider,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import type { ManagedStartArgs } from "./held-operations.js";
-import { SandboxOperationIntents } from "./operation-intents.js";
+import { checkManagedStart, type ManagedStartArgs } from "./held-operations.js";
+import { type OperationIntent, SandboxOperationIntents } from "./operation-intents.js";
 import { SandboxProviders } from "./providers.js";
 import { SandboxService } from "./sandbox.service.js";
 /** Called only by the maintenance consumer. It has no native dispatch or lease token API. */
@@ -21,50 +25,83 @@ export class SandboxOperationReconcileJob {
   async reconcile(operationId: string): Promise<void> {
     await this.intents.expirePayload(operationId);
     const row = await this.intents.read(operationId);
-    if (row.state === "revoked") {
-      await this.revoke(operationId);
+    if (row.method === "backgroundStart") {
+      await this.reconcileBackground(row);
       return;
     }
-    if (
-      row.method === "backgroundStart" &&
-      (row.state === "dispatching" || row.state === "started-or-unknown")
-    ) {
-      await this.recoverBackground(operationId);
+    if (row.state === "revoked") {
+      await this.revoke(operationId);
       return;
     }
     // Existing run/tool claim recovery owns continuation. A failed orphan never gets new authority.
     if (row.state === "dispatching") await this.intents.unknown(operationId);
   }
   /**
+   * A managed start: past its retention an unresolved launch is given up (terminal task, owed
+   * exact revoke); a revoked one owes its revoke; a `dispatching` one still has its dispatcher
+   * (or a holder cleanup that revokes it) and is only checked again later; a `started-or-unknown`
+   * one is recovered under the same identity.
+   */
+  private async reconcileBackground(row: OperationIntent): Promise<void> {
+    if (row.retain_until.getTime() <= Date.now()) {
+      await this.intents.abandonBackgroundLaunch(row.operation_id, "expired");
+      const now = await this.intents.read(row.operation_id);
+      if (now.state === "revoked" && !now.revoke_acknowledged) await this.revoke(row.operation_id);
+      return;
+    }
+    if (row.state === "revoked") {
+      await this.revoke(row.operation_id);
+      return;
+    }
+    if (row.state === "dispatching") {
+      await this.intents.deferBackgroundRecovery(row.operation_id);
+      return;
+    }
+    if (row.state === "started-or-unknown") await this.recoverBackground(row.operation_id);
+  }
+  /**
    * Recovers a managed start whose acknowledgement was lost, under a task-specific recovery claim:
    * asks the provider about the same operation, recorded scope and recorded input on the exact
-   * recorded instance only (never resumed, never another generation), so a launch that happened
-   * returns its original ref and one that did not happens once. Never a new operation ID, never
-   * refreshed authority. Anything short of an acknowledgement keeps the uncertainty and retries.
+   * recorded provider, version and instance generation only (never resumed), after the same
+   * artifact and runtime checks as the first dispatch. A launch that happened returns its original
+   * ref; one that did not happens once. Never a new operation ID, never refreshed authority.
    */
   async recoverBackground(operationId: string): Promise<void> {
     const claimed = await this.intents.claimBackgroundRecovery(operationId);
     if (!claimed) return;
+    // set by the callback: a refusal from the checks and one from the provider settle differently
+    const at: { phase: "check" | "start" } = { phase: "check" };
     try {
       const input = (await this.intents.input(claimed)) as Omit<ManagedStartArgs, "signal"> | null;
       if (!input || typeof input !== "object")
         throw new SandboxOperationOutcomeUnknownError("The recorded start input has expired");
       const scope = parseSandboxOperationScope(claimed.scope);
       const generation = Number(claimed.instance_generation);
-      if (!Number.isSafeInteger(generation))
-        throw new SandboxOperationOutcomeUnknownError("The recorded instance is not addressable");
+      const instance = await this.db
+        .selectFrom("device_instances")
+        .select("provider")
+        .where("device_id", "=", claimed.device_id)
+        .executeTakeFirst();
+      const entry = this.providers.forName(claimed.provider);
+      if (
+        !Number.isSafeInteger(generation) ||
+        instance?.provider !== claimed.provider ||
+        !entry ||
+        (entry.version ?? "internal-v2") !== claimed.provider_version
+      )
+        throw new SandboxOperationOutcomeUnknownError(
+          "The recorded provider or instance is not current; the start outcome remains unknown",
+        );
       const r = await this.sandbox.ifRunning(
         claimed.device_id,
         { createdAt: new Date(generation) },
         async (p, h, signal): Promise<{ ref: SandboxExecutionRef; instanceId: string }> => {
-          if (!p.background)
-            throw new SandboxOperationOutcomeUnknownError(
-              "Managed background tasks are unavailable",
-            );
-          return {
-            ref: await p.background.start(h, scope, { ...input, signal }),
-            instanceId: h.id,
-          };
+          await checkManagedStart(p as unknown as SandboxProvider, h, scope, input, signal);
+          const background = p.background;
+          if (!background)
+            throw new SandboxPermissionUnsupportedError("Managed background tasks are unavailable");
+          at.phase = "start";
+          return { ref: await background.start(h, scope, { ...input, signal }), instanceId: h.id };
         },
         AbortSignal.timeout(60_000),
       );
@@ -78,7 +115,22 @@ export class SandboxOperationReconcileJob {
         r.value.ref,
         r.value.instanceId,
       );
-    } catch {
+    } catch (error) {
+      if (at.phase === "check" && isSandboxScopeDeniedError(error)) {
+        // The kernel will not send it again, but cannot prove the first dispatch had no effect.
+        await this.intents.abandonBackgroundLaunch(operationId, "refused");
+        return;
+      }
+      if (
+        at.phase === "start" &&
+        (isSandboxScopeDeniedError(error) || isSandboxPermissionUnsupportedError(error))
+      ) {
+        await this.intents.settleBackgroundRefusal(operationId, claimed.execution_id, {
+          kind: isSandboxScopeDeniedError(error) ? "denied" : "unsupported",
+          message: error.message,
+        });
+        return;
+      }
       await this.intents.deferBackgroundRecovery(operationId);
     }
   }

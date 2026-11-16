@@ -1297,7 +1297,7 @@ export class SandboxService {
     const env = ctx.deviceId;
     let ordinal = 0;
     const impl = invocation
-      ? createHeldOperations(p.impl, e.handle, sig, async (method, input, invoke) => {
+      ? createHeldOperations(p.impl, e.handle, sig, async (method, input, invoke, preflight) => {
           const identity = { ...invocation, ordinal: ordinal++ };
           sig.throwIfAborted();
           await this.register(env, e.lease.token);
@@ -1327,12 +1327,35 @@ export class SandboxService {
             return (await this.operationIntents.result(pending)) as Awaited<
               ReturnType<typeof invoke>
             >;
+          let current: typeof pending;
           try {
-            await runOutsideTransaction(() => this.operationIntents.admit(ctx, identity));
+            current = await runOutsideTransaction(() => this.operationIntents.admit(ctx, identity));
           } catch (error) {
             if (!(error instanceof PermissionAdmissionStale)) throw error;
             await refreshPending();
-            await runOutsideTransaction(() => this.operationIntents.admit(ctx, identity));
+            current = await runOutsideTransaction(() => this.operationIntents.admit(ctx, identity));
+          }
+          // Kernel checks on the admitted scope come before any dispatch state is written.
+          if (
+            preflight &&
+            current.state !== "completed" &&
+            current.state !== "background-running"
+          ) {
+            try {
+              await preflight(parseSandboxOperationScope(current.scope), sig);
+            } catch (error) {
+              if (
+                current.state === "admitted" &&
+                (isSandboxScopeDeniedError(error) || isSandboxPermissionUnsupportedError(error))
+              )
+                await runOutsideTransaction(() =>
+                  this.operationIntents.refusePreDispatch(ctx, identity, {
+                    kind: isSandboxScopeDeniedError(error) ? "denied" : "unsupported",
+                    message: error.message,
+                  }),
+                );
+              throw error;
+            }
           }
           const admitted = ["dispatching", "started-or-unknown"].includes(pending.state)
             ? await runOutsideTransaction(() =>
