@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import createNextIntlPlugin from "next-intl/plugin";
 
 const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");
@@ -30,6 +31,21 @@ const nextConfig = {
         "@capybara-hq/source",
         ...(config.resolve.conditionNames ?? ["..."]),
       ];
+      // Expand layered imports before Next's legacy CSS loader reads them as media queries.
+      const designStyles = fileURLToPath(
+        new URL("../../packages/design/src/styles/index.css", import.meta.url),
+      );
+      config.module.rules.push({
+        enforce: "pre",
+        test: (resource) => resource === designStyles,
+        use: [
+          {
+            loader: fileURLToPath(
+              new URL("./scripts/design-css-imports-loader.cjs", import.meta.url),
+            ),
+          },
+        ],
+      });
     }
     return config;
   },
