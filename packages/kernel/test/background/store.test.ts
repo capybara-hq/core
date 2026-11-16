@@ -96,6 +96,10 @@ describe("BackgroundTaskStore", () => {
       workingRoot: null,
       retainUntil: null,
       executionRef: null,
+      instanceId: null,
+      instanceGeneration: null,
+      cancelRequestedAt: null,
+      cancelRequestedBy: null,
     });
     expect(await store.get("bt_missing")).toBeUndefined();
   });

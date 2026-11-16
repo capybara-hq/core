@@ -96,7 +96,7 @@ export interface SandboxToolDeps {
    * conversation's latest `device_paths` (absent in test stubs, which record none).
    */
   eventLog: Pick<EventLog, "append" | "latestFileState"> &
-    Partial<Pick<EventLog, "publishChanged" | "latestOfType">>;
+    Partial<Pick<EventLog, "publishChanged" | "latestOfType" | "findByIdem">>;
   config: Pick<KernelConfigService, "get">;
   /** Where a mapped provider failure keeps its raw error (warn); absent in test stubs. */
   log?: Pick<Logger, "warn">;

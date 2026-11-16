@@ -1,6 +1,6 @@
 import type { ToolSpec } from "@capybara-hq/plugin-sdk";
 import { formatElapsed, lostReasonText } from "../../../background/render.js";
-import type { BackgroundTaskRow } from "../../../background/store.js";
+import { type BackgroundTaskRow, isManagedTask } from "../../../background/store.js";
 import type { ChildAgent } from "../../../conversations/agent-tree.js";
 import type { BuiltinResult, BuiltinTool } from "../../registry.js";
 import {
@@ -60,10 +60,15 @@ function taskState(task: BackgroundTaskRow, now: Date): string {
 }
 
 function taskEntry(task: BackgroundTaskRow, now: Date): string {
-  const output =
+  let output =
     task.sandboxCreatedAt === null && task.status !== "running"
       ? "none (the command never started)"
       : outputFile(task);
+  // a managed task's artifact is told only once its start was acknowledged
+  if (isManagedTask(task) && task.executionRef === null) {
+    output =
+      task.status === "running" ? "none yet (the task is still starting)" : "none (not started)";
+  }
   return `- ${task.id} ${taskState(task, now)}: ${JSON.stringify(task.description)}\n  Output: ${output}`;
 }
 

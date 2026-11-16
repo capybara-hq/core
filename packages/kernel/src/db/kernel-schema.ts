@@ -1095,6 +1095,12 @@ export interface BackgroundTasksTable {
     Date | string | null | undefined,
     Date | string | null
   >;
+  /** 0144: who asked for a managed task's cancellation (its finish keeps their wake rule). */
+  cancel_requested_by: ColumnType<
+    "tool" | "person" | "conversation_deleted" | "subagent_end" | null,
+    "tool" | "person" | "conversation_deleted" | "subagent_end" | null | undefined,
+    "tool" | "person" | "conversation_deleted" | "subagent_end" | null
+  >;
 }
 
 /** 0143: see the migration for the meaning of each state. */

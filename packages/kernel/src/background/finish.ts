@@ -1,6 +1,7 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { EventLog } from "../conversations/event-log.js";
 import { afterCommit } from "../infra/database/after-commit.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KernelEvents } from "../infra/events/kernel-events.js";
@@ -8,7 +9,7 @@ import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { oweEnsureRun } from "../runtime/run-jobs.js";
 import { taskOutputFile } from "./launch.js";
 import { LAST_LINES_MAX_CHARS } from "./session.js";
-import { type BackgroundTaskRow, BackgroundTaskStore } from "./store.js";
+import { type BackgroundTaskRow, BackgroundTaskStore, isManagedTask } from "./store.js";
 
 /** Where a task ends (as {@link BackgroundTaskStore.finish} takes it). */
 export type BackgroundFinish = Parameters<BackgroundTaskStore["finish"]>[1];
@@ -43,6 +44,7 @@ export class BackgroundTaskFinisher {
     @Inject(KernelEvents) private readonly events: KernelEvents,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
+    @Inject(KernelDb) private readonly db: KernelDb,
   ) {}
 
   /**
@@ -52,6 +54,12 @@ export class BackgroundTaskFinisher {
    * the stop's finish is then the only one. `opts.stoppedBy` marks a stop that must never wake the
    * conversation: `"person"` (a person stopped it) or `"deletion"` (its conversation is being
    * deleted).
+   *
+   * A managed task (permission runtime cutover phase 8.3) settles its durable launch state in the
+   * same transaction: a verified end (an exit, a stop) is `terminal` and retires its start intent's
+   * running authority (`background-running` to `completed`, so no revocation selects it again); a
+   * lost one keeps `cancel-pending` and its intent, an obligation that outlives the finish. The
+   * intent row is locked before the task row, the order every authority writer takes.
    */
   @Transactional()
   async finish(
@@ -61,7 +69,32 @@ export class BackgroundTaskFinisher {
     reported: boolean,
     opts: { unclaimed?: boolean; stoppedBy?: BackgroundStoppedBy } = {},
   ): Promise<boolean> {
-    if (!(await this.store.finish(task.id, to, opts))) return false;
+    const managed = isManagedTask(task)
+      ? to.status === "lost"
+        ? ("cancel-pending" as const)
+        : ("terminal" as const)
+      : undefined;
+    if (managed !== undefined && task.operationId !== null)
+      await this.db
+        .selectFrom("sandbox_operation_intents")
+        .select("operation_id")
+        .where("operation_id", "=", task.operationId)
+        .forUpdate()
+        .executeTakeFirst();
+    if (
+      !(await this.store.finish(task.id, to, {
+        ...(opts.unclaimed !== undefined && { unclaimed: opts.unclaimed }),
+        ...(managed !== undefined && { managed }),
+      }))
+    )
+      return false;
+    if (managed === "terminal" && task.operationId !== null)
+      await this.db
+        .updateTable("sandbox_operation_intents")
+        .set({ state: "completed", updated_at: new Date() })
+        .where("operation_id", "=", task.operationId)
+        .where("state", "=", "background-running")
+        .execute();
     const [event] = await this.eventLog.appendIn(task.conversationId, [
       {
         type: "background_task_finished",

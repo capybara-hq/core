@@ -1383,9 +1383,13 @@ export class SandboxService {
                 ),
               );
           if (admitted.state === "revoked")
-            throw new SandboxScopeDeniedError(
-              "The background task was stopped or settled before it launched; nothing was started",
-            );
+            throw admitted.outcome_unknown
+              ? new SandboxOperationOutcomeUnknownError(
+                  "The background task was stopped before its start was confirmed; it is not started again and its cancellation is owed",
+                )
+              : new SandboxScopeDeniedError(
+                  "The background task was stopped or settled before it launched; nothing was started",
+                );
           if (admitted.state === "background-running" && admitted.execution_ref)
             return parseSandboxExecutionRef(admitted.execution_ref) as Awaited<
               ReturnType<typeof invoke>

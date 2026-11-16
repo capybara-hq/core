@@ -1,6 +1,7 @@
 import { rootsOf, ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
+import { lastLinesByRef, onManagedInstance } from "../../../background/managed.js";
 import { decodeTail, tailCommand } from "../../../background/session.js";
-import type { BackgroundTaskRow } from "../../../background/store.js";
+import { type BackgroundTaskRow, isManagedTask } from "../../../background/store.js";
 import type { BuiltinResult, BuiltinTool } from "../../registry.js";
 import {
   clip,
@@ -56,6 +57,21 @@ async function lastLinesOf(
   signal: AbortSignal,
 ): Promise<string | null> {
   if (task.sandboxCreatedAt === null) return null;
+  if (isManagedTask(task)) {
+    // by the exact ref only: never an exec or a file read after a stop
+    if (task.executionRef === null) return null;
+    try {
+      const r = await onManagedInstance(
+        env.ifRunning,
+        task,
+        (bg, h, ref, sig) => lastLinesByRef(bg, h, ref, sig),
+        signal,
+      );
+      return r.kind === "ran" ? r.value : null;
+    } catch {
+      return null;
+    }
+  }
   try {
     const r = await onTaskInstance(
       env,
@@ -140,6 +156,12 @@ export function taskStopTool(deps: SandboxToolDeps): BuiltinTool {
         const why = e instanceof Error ? e.message : String(e);
         throw new ToolError(
           `Background task ${task.id} could not be stopped (${clip(why, 300)}); it keeps running. Retry TaskStop, or check the sandbox with Bash.`,
+        );
+      }
+      if (after.status === "running" && after.launchState === "cancel-pending") {
+        return text(
+          after,
+          `Background task ${after.id} ("${after.description}") stop requested: the device recorded the cancellation but has not applied it yet; it is applied when the device can. Call TaskOutput to see when it has ended.`,
         );
       }
       if (after.status === "running") {

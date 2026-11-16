@@ -35,6 +35,7 @@ describe("background poll per device provider", () => {
       {
         failAbandonedLaunches: async () => [],
         pruneFinished: async () => 0,
+        runningManaged: async () => [],
         runningStarted: async () => [
           task("t1", "env-device"),
           task("t2", "env-cloud"),
@@ -54,6 +55,7 @@ describe("background poll per device provider", () => {
       { get: () => config } as unknown as KernelConfigService,
       {} as LockService,
       { info() {}, warn() {}, debug() {}, error() {} } as unknown as KernelLogger,
+      { stop: async () => Promise.reject(new Error("no managed task here")) } as never,
     );
     expect(await job.pollOnce()).toBe(0);
     expect(polled).toEqual(["env-device"]);

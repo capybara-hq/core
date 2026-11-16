@@ -12,9 +12,20 @@ import { SandboxService } from "../sandbox/sandbox.service.js";
 import { UUID_RE } from "../ui/registry.js";
 import { finishedEventKey } from "./finish.js";
 import { TASK_ID_RE, TASKS_DIR } from "./launch.js";
+import { ManagedRefError, onManagedInstance, readerOf } from "./managed.js";
+import {
+  assembleOutputSuffix,
+  ManagedOutputCapacityError,
+  ManagedOutputUnavailableError,
+} from "./managed-output.js";
 import { actingAs } from "./session.js";
 import { BackgroundTaskStopper } from "./stop.js";
-import { type BackgroundTaskRow, type BackgroundTaskStatus, BackgroundTaskStore } from "./store.js";
+import {
+  type BackgroundTaskRow,
+  type BackgroundTaskStatus,
+  BackgroundTaskStore,
+  isManagedTask,
+} from "./store.js";
 
 /** The most bytes of output one read returns. */
 export const OUTPUT_TAIL_MAX_BYTES = 65_536;
@@ -133,7 +144,10 @@ export class BackgroundTasks {
       lostReason: task.lostReason,
       startedAt: task.startedAt.toISOString(),
       finishedAt: task.finishedAt === null ? null : task.finishedAt.toISOString(),
-      stopping: task.status === "running" && task.stoppingAt !== null,
+      // a managed task's owed cancellation is a stop in progress too
+      stopping:
+        task.status === "running" &&
+        (task.stoppingAt !== null || task.launchState === "cancel-pending"),
     };
   }
 
@@ -256,6 +270,7 @@ export class BackgroundTasks {
     task: BackgroundTaskRow,
     tail: number,
   ): Promise<LiveRead> {
+    if (isManagedTask(task)) return this.readManaged(orgId, task, tail);
     if (task.sid === null || task.sandboxCreatedAt === null || task.deviceId === null) {
       // a reservation the launch has not finished, or a launch that failed
       return {
@@ -304,6 +319,64 @@ export class BackgroundTasks {
           kind: "unavailable",
           reason: e.code === "device.offline" ? "device_offline" : "no_access",
         };
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * A managed task's live suffix (permission runtime cutover phase 8.3): by its exact ref on its
+   * exact instance only (never resumed, no exec, no path), the metadata total N first, then every
+   * byte of the last `tail` bytes before N through bounded reads; N stays the end however the
+   * output grows meanwhile. The task's ref is loaded from its authorized row, never supplied.
+   */
+  private async readManaged(
+    orgId: string,
+    task: BackgroundTaskRow,
+    tail: number,
+  ): Promise<LiveRead> {
+    if (task.executionRef === null || task.deviceId === null) {
+      return {
+        kind: "unavailable",
+        reason: task.status === "running" ? "starting" : "not_started",
+      };
+    }
+    if (!(await this.sandbox.availableFor(task.deviceId))) {
+      return { kind: "unavailable", reason: "unavailable" };
+    }
+    if (!(await this.deviceUsable(orgId, task.conversationId))) {
+      return { kind: "unavailable", reason: "no_access" };
+    }
+    try {
+      const r = await onManagedInstance(
+        this.sandbox.ifRunning.bind(this.sandbox),
+        task,
+        async (bg, h, ref, signal) => {
+          try {
+            return await assembleOutputSuffix(readerOf(bg, h, ref, signal), tail, signal);
+          } catch (e) {
+            if (e instanceof ManagedOutputUnavailableError) return null;
+            throw e;
+          }
+        },
+        AbortSignal.timeout(OUTPUT_READ_TIMEOUT_MS),
+      );
+      if (r.kind === "other_instance") return { kind: "unavailable", reason: "rebuilt" };
+      if (r.kind === "not_running") {
+        return { kind: "unavailable", reason: r.status === "suspended" ? "suspended" : "rebuilt" };
+      }
+      if (r.value === null) return { kind: "unavailable", reason: "output_missing" };
+      return { kind: "ok", value: { text: r.value.text, truncated: r.value.truncated } };
+    } catch (e) {
+      if (isSandboxGoneError(e)) return { kind: "unavailable", reason: "rebuilt" };
+      if (e instanceof ApiError && e.code.startsWith("device.")) {
+        return {
+          kind: "unavailable",
+          reason: e.code === "device.offline" ? "device_offline" : "no_access",
+        };
+      }
+      if (e instanceof ManagedRefError || e instanceof ManagedOutputCapacityError) {
+        return { kind: "unavailable", reason: "read_failed" };
       }
       throw e;
     }
