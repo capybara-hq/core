@@ -686,7 +686,7 @@ describe("managed background launch identity", () => {
     release.resolve();
     const r = await work;
     expect(r.ok).toBe(false);
-    expect(String((r as { error: unknown }).error)).toMatch(/stopped while it was starting/);
+    expect(String((r as { error: unknown }).error)).toMatch(/is being stopped/);
     expect(await f.task()).toMatchObject({
       launch_state: "cancel-pending",
       status: "running",
@@ -901,7 +901,17 @@ describe("managed background launch identity", () => {
     expect((await f.intent())?.state).toBe("background-running");
     await k.app.get(ConversationsService).remove(f.orgId, f.conversationId, owner.id);
     expect(await f.intent()).toMatchObject({ state: "revoked" });
-    expect(await f.task()).toMatchObject({ launch_state: "cancel-pending", status: "running" });
+    // the deletion's own stop applies the exact cancellation (phase 8.3), with no wake
+    expect(await f.task()).toMatchObject({ launch_state: "terminal", status: "stopped" });
+    const finished = await f.db
+      .selectFrom("conversation_events")
+      .select("payload")
+      .where("conversation_id", "=", f.conversationId)
+      .where("type", "=", "background_task_finished")
+      .execute();
+    expect(finished.map((e) => (e.payload as { stoppedBy?: string }).stoppedBy)).toEqual([
+      "deletion",
+    ]);
     expect((await f.revokeJobs()).length).toBeGreaterThanOrEqual(1);
     await reconcileJob().revoke(f.operationId);
     expect(f.provider.revoked).toEqual([f.operationId]);
@@ -1134,5 +1144,80 @@ describe("managed background launch identity", () => {
     expect(await f.intent()).toMatchObject({ state: "revoked", revoke_acknowledged: false });
     await reconcileJob().revoke(f.operationId);
     expect(f.provider.revoked).toEqual([f.operationId, f.operationId]);
+  });
+
+  it("a same-call retry in flight is left to its dispatcher by scheduled recovery (8.2 R1)", async () => {
+    const f = await fixture();
+    const entered = barrier();
+    const release = barrier();
+    // the first start never reaches the device; the retry's start is held in the provider
+    f.provider.hooks.beforeEffect = async () => {
+      if (f.provider.calls.length === 1)
+        throw new Error("transport dropped before the device received the start");
+      entered.resolve();
+      await release.promise;
+    };
+    expect((await f.outcome(f.run({ command: "npm run dev" }))).ok).toBe(false);
+    expect((await f.intent())?.state).toBe("started-or-unknown");
+    await f.reclaim();
+    const retry = f.outcome(f.run({ command: "npm run dev" }));
+    await entered.promise;
+    // the retry's dispatch is in flight under its own holder: recovery must not take it over
+    expect((await f.intent())?.state).toBe("dispatching");
+    const third = barrier();
+    f.provider.hooks.onCall = () => {
+      if (f.provider.calls.length === 3) third.resolve();
+    };
+    const recovery = reconcileJob().reconcile(f.operationId);
+    await Promise.race([recovery, third.promise]);
+    expect(f.provider.calls).toHaveLength(2);
+    release.resolve();
+    await recovery;
+    const r = await retry;
+    expect(r.ok).toBe(true);
+    expect(f.provider.launched.size).toBe(1);
+    expect((await f.task())?.launch_state).toBe("acknowledged");
+    expect((await f.intent())?.state).toBe("background-running");
+  });
+
+  it("a same-call retry never starts a task whose stop was claimed, and owes the revoke (8.2 R2)", async () => {
+    const f = await fixture();
+    f.provider.hooks.beforeEffect = async () => {
+      throw new Error("transport dropped before the device received the start");
+    };
+    expect((await f.outcome(f.run({ command: "sleep 100" }))).ok).toBe(false);
+    f.provider.hooks.beforeEffect = undefined;
+    const row = await f.task();
+    if (!row) throw new Error("no task");
+    expect(row.launch_state).toBe("dispatched");
+    expect(await k.app.get(BackgroundTaskStore).claimStop(row.id)).toBe(true);
+    await f.reclaim();
+    const r = await f.outcome(f.run({ command: "sleep 100" }));
+    expect(r.ok).toBe(false);
+    expect(String((r as { error: unknown }).error)).toMatch(/stopped while it was starting/);
+    expect(f.provider.calls).toHaveLength(1);
+    expect(f.provider.launched.size).toBe(0);
+    expect(await f.intent()).toMatchObject({ state: "revoked", outcome_unknown: true });
+    expect(await f.task()).toMatchObject({ launch_state: "cancel-pending", execution_ref: null });
+    expect((await f.revokeJobs()).some((j) => j.jobId.endsWith("-retry"))).toBe(true);
+    await reconcileJob().revoke(f.operationId);
+    expect(f.provider.revoked).toEqual([f.operationId]);
+  });
+
+  it("a stale dispatcher's unknown cannot clear the current dispatch marker (8.3 review M1)", async () => {
+    const f = await fixture();
+    const entered = barrier();
+    const release = barrier();
+    f.provider.hooks.beforeEffect = async () => {
+      entered.resolve();
+      await release.promise;
+    };
+    const work = f.outcome(f.run({ command: "npm run dev" }));
+    await entered.promise;
+    const intents = k.app.get(SandboxOperationIntents);
+    await intents.unknown(f.operationId, "a-superseded-execution");
+    expect((await f.intent())?.state).toBe("dispatching");
+    release.resolve();
+    expect((await work).ok).toBe(true);
   });
 });

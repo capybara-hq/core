@@ -61,6 +61,15 @@ export interface BackgroundDispatchBinding {
 /** What acknowledging a start did: live running authority, or an owed exact cancellation. */
 export type BackgroundAcknowledgement = "acknowledged" | "cancel-pending";
 const stopClaimed = sql<boolean>`(stopping_at IS NOT NULL AND stopping_at >= now() - ${STOP_CLAIM_TTL_MS}::integer * interval '1 millisecond')`;
+/** A live stop claim, or a recorded cancellation request (it outlives the claim's TTL). */
+const stopRequested = sql<boolean>`(${stopClaimed} OR cancel_requested_at IS NOT NULL)`;
+/** {@link stopRequested} for a task row already read. */
+const stopRequestedOf = (task: {
+  stopping_at: Date | null;
+  cancel_requested_at: Date | null;
+}): boolean =>
+  task.cancel_requested_at !== null ||
+  (task.stopping_at !== null && task.stopping_at.getTime() >= Date.now() - STOP_CLAIM_TTL_MS);
 export function operationIdFor(
   i: Pick<OperationInvocation, "callId" | "ordinal"> & { claim: Pick<ExecutionClaim, "runId"> },
 ): string {
@@ -567,7 +576,7 @@ export class SandboxOperationIntents {
       .where("working_root", "=", b.workingRoot)
       .where("output_path", "=", b.outputPath)
       .where("retain_until", "=", new Date(b.retainUntilMs))
-      .where(sql<boolean>`NOT ${stopClaimed}`)
+      .where(sql<boolean>`NOT ${stopRequested}`)
       .executeTakeFirst();
     if (Number(bound.numUpdatedRows) > 0) return true;
     await this.db
@@ -582,7 +591,7 @@ export class SandboxOperationIntents {
       .where("operation_id", "=", r.operation_id)
       .where("launch_state", "=", "pending")
       .where("status", "=", "running")
-      .where(stopClaimed)
+      .where(stopRequested)
       .execute();
     return false;
   }
@@ -646,9 +655,7 @@ export class SandboxOperationIntents {
         "The start is not held by this dispatch; reconcile the same identity",
       );
     const stopped =
-      task.status !== "running" ||
-      task.launch_state !== "dispatched" ||
-      (task.stopping_at !== null && task.stopping_at.getTime() >= Date.now() - STOP_CLAIM_TTL_MS);
+      task.status !== "running" || task.launch_state !== "dispatched" || stopRequestedOf(task);
     if (live && !stopped) {
       await this.db
         .updateTable("sandbox_operation_intents")
@@ -689,7 +696,9 @@ export class SandboxOperationIntents {
         launch_state: "cancel-pending",
         execution_ref: refJson,
         sandbox_created_at: new Date(Number(r.instance_generation)),
-        cancel_requested_at: new Date(),
+        cancel_requested_at: sql<Date>`COALESCE(cancel_requested_at, now())`,
+        // the stop's claim has done its work: the poller owes the exact stop of this ref now
+        stopping_at: null,
       })
       .where("id", "=", task.id)
       .where("launch_state", "in", ["dispatched", "cancel-pending"])
@@ -733,20 +742,11 @@ export class SandboxOperationIntents {
       .where("operation_id", "=", id)
       .forUpdate()
       .executeTakeFirst();
-    const claimedAt = task?.stopping_at?.getTime();
-    const live = task?.status === "running" && task.launch_state === "dispatched";
-    const stopped =
-      !live || (claimedAt !== undefined && claimedAt >= Date.now() - STOP_CLAIM_TTL_MS);
-    if (stopped) {
+    if (!task) {
       await this.revokeUnknownLocked(r, "recover");
-      if (task && task.status === "running" && task.launch_state === "dispatched")
-        await this.db
-          .updateTable("background_tasks")
-          .set({ launch_state: "cancel-pending", cancel_requested_at: new Date() })
-          .where("id", "=", task.id)
-          .execute();
       return null;
     }
+    if (!(await this.dispatchStillWanted(r, task, "recover"))) return null;
     const executionId = `recovery-${randomUUID()}`;
     await this.db
       .updateTable("sandbox_operation_intents")
@@ -754,6 +754,33 @@ export class SandboxOperationIntents {
       .where("operation_id", "=", id)
       .execute();
     return { ...r, execution_id: executionId, outcome_unknown: true };
+  }
+  /**
+   * Whether a possibly dispatched start (its task row locked by the caller) may still be sent to
+   * the provider: its task still runs `dispatched` and no stop asked for it. Otherwise nothing is
+   * started: the intent is revoked with an unknown outcome, the exact revoke (the operation
+   * tombstone) owed, and a running dispatched task becomes `cancel-pending`.
+   */
+  private async dispatchStillWanted(
+    r: OperationIntent,
+    task: { id: string; status: string; launch_state: string } & Parameters<
+      typeof stopRequestedOf
+    >[0],
+    why: string,
+  ): Promise<boolean> {
+    const live = task.status === "running" && task.launch_state === "dispatched";
+    if (live && !stopRequestedOf(task)) return true;
+    await this.revokeUnknownLocked(r, why);
+    if (live)
+      await this.db
+        .updateTable("background_tasks")
+        .set({
+          launch_state: "cancel-pending",
+          cancel_requested_at: sql<Date>`COALESCE(cancel_requested_at, now())`,
+        })
+        .where("id", "=", task.id)
+        .execute();
+    return false;
   }
   /** Revokes a possibly dispatched start; its outcome stays unknown and the exact revoke owed. */
   private async revokeUnknownLocked(r: OperationIntent, why: string): Promise<void> {
@@ -1008,14 +1035,20 @@ export class SandboxOperationIntents {
   async result(row: OperationIntent): Promise<unknown> {
     return operationResult(await this.payloads.load(row.operation_id, "result", row.result));
   }
+  /**
+   * The dispatcher with `executionId` gave up on its dispatch: its outcome is unknown. Fenced by
+   * the execution, so a superseded dispatcher never clears a newer retry's `dispatching` marker
+   * (without `executionId`: the orphan cleanup of the reconcile job).
+   */
   @Transactional({ propagation: "requires_new" })
-  async unknown(id: string): Promise<void> {
-    await this.db
+  async unknown(id: string, executionId?: string): Promise<void> {
+    let q = this.db
       .updateTable("sandbox_operation_intents")
       .set({ state: "started-or-unknown", outcome_unknown: true, updated_at: new Date() })
       .where("operation_id", "=", id)
-      .where("state", "=", "dispatching")
-      .execute();
+      .where("state", "=", "dispatching");
+    if (executionId !== undefined) q = q.where("execution_id", "=", executionId);
+    await q.execute();
   }
   /** Recovery never borrows a holder token. Only a new live run claim can reconcile by ID. */
   @Transactional({ propagation: "requires_new" })
@@ -1059,12 +1092,28 @@ export class SandboxOperationIntents {
       throw new SandboxOperationOutcomeUnknownError(
         "Reconciliation requires a newly claimed run execution",
       );
+    if (r.method === "backgroundStart") {
+      // A stop asked for since the first dispatch: never send the start again, owe its revoke.
+      const task = await this.db
+        .selectFrom("background_tasks")
+        .selectAll()
+        .where("operation_id", "=", id)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!task) await this.revokeUnknownLocked(r, "retry");
+      if (!task || !(await this.dispatchStillWanted(r, task, "retry")))
+        return { ...r, state: "revoked", outcome_unknown: true };
+    }
+    // A background start in flight again is `dispatching` under this holder (as at first
+    // dispatch), so scheduled recovery leaves it to this dispatcher until it gives up (`unknown`)
+    // or its holder is found dead (`revokeHolders`).
+    const state = r.method === "backgroundStart" ? "dispatching" : "started-or-unknown";
     await this.db
       .updateTable("sandbox_operation_intents")
       .set({
         execution_id: invocation.claim.executionId,
         holder_token: holderTag,
-        state: "started-or-unknown",
+        state,
         updated_at: new Date(),
       })
       .where("operation_id", "=", id)
@@ -1072,7 +1121,7 @@ export class SandboxOperationIntents {
     return {
       ...r,
       execution_id: invocation.claim.executionId,
-      state: "started-or-unknown",
+      state,
       holder_token: holderTag,
     };
   }

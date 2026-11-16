@@ -72,7 +72,22 @@ export interface BackgroundTaskRow {
   retainUntil: Date | null;
   /** The exact typed start result; never inferred from a SID, PID or path. */
   executionRef: SandboxExecutionRef | null;
+  /** A managed task's held instance (its handle id), bound at dispatch. */
+  instanceId: string | null;
+  /** A managed task's exact instance generation (its `created_at` in ms), bound at dispatch. */
+  instanceGeneration: string | null;
+  /** When a managed task's cancellation was asked for (a stop or a revocation). */
+  cancelRequestedAt: Date | null;
+  /** Who asked for it by a stop (0144); null for a revocation's cancellation or none. */
+  cancelRequestedBy: CancelRequester | null;
 }
+
+/** Who asked for a managed task's stop: their wake rule holds for its later finish. */
+export type CancelRequester = "tool" | "person" | "conversation_deleted" | "subagent_end";
+
+/** Whether `task` is a managed (exact-ref) task rather than a legacy SID one. */
+export const isManagedTask = (task: Pick<BackgroundTaskRow, "launchState">): boolean =>
+  task.launchState !== "legacy";
 
 /** A managed launch's reservation: everything known before the start is dispatched. */
 export interface ManagedTaskReservation {
@@ -116,6 +131,10 @@ export type BackgroundTaskInsert = Omit<
   | "workingRoot"
   | "retainUntil"
   | "executionRef"
+  | "instanceId"
+  | "instanceGeneration"
+  | "cancelRequestedAt"
+  | "cancelRequestedBy"
 >;
 
 /** A launch's reservation: the row before the command started (no `sid`, no instance yet). */
@@ -149,6 +168,10 @@ const toRow = (r: Selectable<BackgroundTasksTable>): BackgroundTaskRow => ({
   workingRoot: r.working_root,
   retainUntil: r.retain_until === null ? null : new Date(r.retain_until),
   executionRef: r.execution_ref,
+  instanceId: r.instance_id,
+  instanceGeneration: r.instance_generation,
+  cancelRequestedAt: r.cancel_requested_at === null ? null : new Date(r.cancel_requested_at),
+  cancelRequestedBy: r.cancel_requested_by,
 });
 
 /**
@@ -462,6 +485,83 @@ export class BackgroundTaskStore {
     return rows.map(toRow);
   }
 
+  /**
+   * Every running acknowledged managed task with no live stop claim, oldest first: what the
+   * poller checks by exact status.
+   */
+  async runningManaged(): Promise<BackgroundTaskRow[]> {
+    const rows = await this.db
+      .selectFrom("background_tasks")
+      .selectAll()
+      .where("status", "=", "running")
+      .where("launch_state", "=", "acknowledged")
+      .where("execution_ref", "is not", null)
+      .where(unclaimed)
+      .orderBy("started_at", "asc")
+      .orderBy("id", "asc")
+      .execute();
+    return rows.map(toRow);
+  }
+
+  /**
+   * The running managed tasks that owe an exact stop (`cancel-pending` with a ref, no live stop
+   * claim), least recently attempted first. A task whose recorded instance is suspended is left
+   * out: a stop never resumes it, so it cannot progress there.
+   */
+  async owedCancels(): Promise<BackgroundTaskRow[]> {
+    const rows = await this.db
+      .selectFrom("background_tasks")
+      .selectAll("background_tasks")
+      .leftJoin("device_instances", "device_instances.device_id", "background_tasks.device_id")
+      .where("background_tasks.status", "=", "running")
+      .where("background_tasks.launch_state", "=", "cancel-pending")
+      .where("background_tasks.execution_ref", "is not", null)
+      .where(
+        sql<boolean>`(background_tasks.stopping_at IS NULL OR background_tasks.stopping_at < now() - ${STOP_CLAIM_TTL_MS}::integer * interval '1 millisecond')`,
+      )
+      .where(
+        sql<boolean>`NOT (device_instances.status IS NOT DISTINCT FROM 'suspended' AND floor(extract(epoch from device_instances.created_at) * 1000)::bigint::text = background_tasks.instance_generation)`,
+      )
+      .orderBy(sql`background_tasks.cancel_attempted_at ASC NULLS FIRST`)
+      .orderBy("background_tasks.started_at", "asc")
+      .orderBy("background_tasks.id", "asc")
+      .execute();
+    return rows.map(toRow);
+  }
+
+  /** Records that an exact stop of the task is being attempted now (its owed-stop turn moves back). */
+  async noteCancelAttempt(id: string): Promise<void> {
+    await this.db
+      .updateTable("background_tasks")
+      .set({ cancel_attempted_at: sql<Date>`now()` })
+      .where("id", "=", id)
+      .execute();
+  }
+
+  /**
+   * Records who asked for a running managed task's stop (the first asker is kept) and when. With
+   * `release` (the stop could not settle now: the provider recorded a pending cancellation, or the
+   * instance is not reachable) an acknowledged task becomes `cancel-pending` and the stop's claim
+   * is given up, so the poller owes the exact stop; without, the claim stays (a task without its
+   * ref yet: the dispatch binding or the acknowledgement turns the claim into the owed cancel).
+   */
+  async requestCancel(id: string, by: CancelRequester | null, release: boolean): Promise<void> {
+    await this.db
+      .updateTable("background_tasks")
+      .set({
+        cancel_requested_by: sql<CancelRequester | null>`COALESCE(cancel_requested_by, ${by}::text)`,
+        cancel_requested_at: sql<Date>`COALESCE(cancel_requested_at, now())`,
+        ...(release && {
+          stopping_at: null,
+          launch_state: sql<BackgroundLaunchState>`CASE WHEN launch_state = 'acknowledged' THEN 'cancel-pending' ELSE launch_state END`,
+        }),
+      })
+      .where("id", "=", id)
+      .where("status", "=", "running")
+      .where("launch_state", "<>", "legacy")
+      .execute();
+  }
+
   /** The running tasks one conversation owns (not those of its sub-agents), oldest first. */
   async runningOwnedBy(conversationId: string): Promise<BackgroundTaskRow[]> {
     const rows = await this.db
@@ -541,7 +641,7 @@ export class BackgroundTaskStore {
       lostReason?: string;
       killPending?: boolean;
     },
-    opts: { unclaimed?: boolean } = {},
+    opts: { unclaimed?: boolean; managed?: "terminal" | "cancel-pending" } = {},
   ): Promise<boolean> {
     let q = this.db
       .updateTable("background_tasks")
@@ -552,6 +652,11 @@ export class BackgroundTaskStore {
         lost_reason: to.lostReason ?? null,
         stopping_at: null,
         ...(to.killPending !== undefined && { kill_pending: to.killPending }),
+        // a managed task's settlement: `terminal` only on verified evidence; an uncertain end
+        // (lost) keeps its owed cancellation record
+        ...(opts.managed !== undefined && {
+          launch_state: sql<BackgroundLaunchState>`CASE WHEN launch_state = 'legacy' THEN 'legacy' ELSE ${opts.managed} END`,
+        }),
       })
       .where("id", "=", id)
       .where("status", "=", "running");
@@ -594,11 +699,16 @@ export class BackgroundTaskStore {
       .execute();
   }
 
-  /** Deletes finished tasks that ended before `before`; a running one is never deleted. */
+  /**
+   * Deletes finished tasks that ended before `before`; a running one is never deleted, nor a
+   * managed record whose launch or cancellation is still uncertain (only `legacy` and settled
+   * `terminal` rows go).
+   */
   async pruneFinished(before: Date): Promise<number> {
     const r = await this.db
       .deleteFrom("background_tasks")
       .where("status", "<>", "running")
+      .where("launch_state", "in", ["legacy", "terminal"])
       .where("finished_at", "<", before)
       .executeTakeFirst();
     return Number(r.numDeletedRows);

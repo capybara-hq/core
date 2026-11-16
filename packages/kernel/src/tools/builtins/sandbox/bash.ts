@@ -568,18 +568,28 @@ export async function runInBackgroundManaged(
       { kind: "unavailable" },
     );
   }
-  if (launch.kind === "refused" || task.launchState === "terminal") {
+  // a retry of a call whose acknowledged task has since ended reports the start it made
+  const started =
+    task.executionRef !== null &&
+    (task.launchState === "acknowledged" || task.status !== "running");
+  if (!started && (launch.kind === "refused" || task.launchState === "terminal")) {
     const why = launch.kind === "refused" ? launch.why : (task.lostReason ?? "it was stopped");
     throw new ToolError(
       `The background task was not started: ${clip(why, 500).replace(/\.$/, "")}. Nothing runs; fix the cause, or call Bash without run_in_background.`,
     );
   }
-  if (task.launchState === "cancel-pending") {
+  if (!started && task.launchState === "cancel-pending" && task.executionRef !== null) {
+    // the device acknowledged the start; a stop, while or after it started, is being applied
+    throw new ToolError(
+      `Background task ${task.id} ("${description}") is being stopped: a stop was asked for while or after it started, and its cancellation is in progress. Call TaskOutput to see when it has ended, or call Bash again as a new call if it is still needed.`,
+    );
+  }
+  if (!started && task.launchState === "cancel-pending") {
     throw new ToolError(
       `Background task ${task.id} ("${description}") was stopped while it was starting; its cancellation is in progress. Call Bash again if it is still needed.`,
     );
   }
-  if (task.launchState !== "acknowledged") {
+  if (!started) {
     throw new ToolError(
       `Background task ${task.id} ("${description}") may have started, but its start was not confirmed; it will not be started again. Check TaskList before starting it again.`,
       { kind: "unavailable" },

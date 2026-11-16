@@ -16,15 +16,25 @@ import {
 import { sandboxBaseTimeoutMs } from "../tools/builtins/sandbox/common.js";
 import { type BackgroundFinish, BackgroundTaskFinisher } from "./finish.js";
 import { LAUNCH_EXEC_TIMEOUT_MS } from "./launch.js";
+import {
+  exactRefOf,
+  lastLinesByRef,
+  onManagedInstance,
+  statusEnd,
+  summaryLines,
+} from "./managed.js";
 import { actingAs, taskActor } from "./session.js";
 import { parsePollOutput, polledAs, pollScript, type TaskReport } from "./status.js";
-import { notRunningAs, RECREATED } from "./stop.js";
+import { BackgroundTaskStopper, notRunningAs, RECREATED } from "./stop.js";
 import { type BackgroundTaskRow, BackgroundTaskStore } from "./store.js";
 
 /** The poll of the running background tasks (`@LockedInterval`, every `pollSeconds`). */
 export const BACKGROUND_POLL_JOB = "background-task-poll";
 /** The daily prune of finished background tasks older than `tools.outputRetentionDays`. */
 export const BACKGROUND_PRUNE_JOB = "background-task-prune";
+
+/** The most owed managed cancellations one poll applies (each a lease and up to a 5 s grace). */
+export const MANAGED_STOPS_PER_TICK = 8;
 
 /** The least age at which a reservation counts as abandoned, whatever the config. */
 const LAUNCH_ABANDONED_FLOOR_MS = 120_000;
@@ -61,7 +71,11 @@ export class BackgroundTaskPollJob {
     @Inject(BackgroundTaskStore)
     private readonly store: Pick<
       BackgroundTaskStore,
-      "runningStarted" | "pruneFinished" | "failAbandonedLaunches"
+      | "runningStarted"
+      | "runningManaged"
+      | "owedCancels"
+      | "pruneFinished"
+      | "failAbandonedLaunches"
     >,
     @Inject(BackgroundTaskFinisher) private readonly finisher: BackgroundTaskFinisher,
     @Inject(EventLog) private readonly eventLog: Pick<EventLog, "publishChanged">,
@@ -70,6 +84,8 @@ export class BackgroundTaskPollJob {
     @Inject(KernelConfigService) readonly config: KernelConfigService,
     @Inject(LockService) readonly lockService: LockService,
     @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
+    @Inject(BackgroundTaskStopper)
+    private readonly stopper: Pick<BackgroundTaskStopper, "stop">,
   ) {}
 
   @LockedInterval(BACKGROUND_POLL_JOB, (cfg) => cfg.sandbox.background.pollSeconds * 1000)
@@ -123,8 +139,121 @@ export class BackgroundTaskPollJob {
         });
       }
     }
+    finished += await this.pollManaged(signal);
     if (finished > 0) this.log.info("background tasks finished", { count: finished });
     return finished;
+  }
+
+  /**
+   * The managed tasks (permission runtime cutover phase 8.3), by exact ref only: an acknowledged
+   * task's status on its exact instance (one lease per instance, never resumed; an exit or a lost
+   * supervision finishes it with the exact tail's last lines), and a `cancel-pending` task's owed
+   * exact stop (through the stopper, so its claim, outcome and requester's wake rule hold). A
+   * malformed ref is never used; an unavailable provider leaves its tasks as they are.
+   */
+  private async pollManaged(signal: AbortSignal): Promise<number> {
+    const groups = new Map<string, BackgroundTaskRow[]>();
+    const cancels: BackgroundTaskRow[] = [];
+    for (const t of [...(await this.store.runningManaged()), ...(await this.store.owedCancels())]) {
+      try {
+        exactRefOf(t);
+      } catch (err) {
+        this.log.warn("a managed background task has a malformed reference; skipped", {
+          taskId: t.id,
+          err,
+        });
+        continue;
+      }
+      if (t.launchState === "cancel-pending") {
+        cancels.push(t);
+        continue;
+      }
+      const key = `${t.deviceId} ${t.instanceGeneration}`;
+      groups.set(key, [...(groups.get(key) ?? []), t]);
+    }
+    let n = 0;
+    for (const tasks of groups.values()) {
+      if (signal.aborted) break;
+      const [first] = tasks as [BackgroundTaskRow];
+      try {
+        if (!(await this.sandbox.availableFor(first.deviceId as string))) continue;
+        n += await this.pollManagedInstance(tasks, signal);
+      } catch (err) {
+        if (signal.aborted) break;
+        this.log.warn("cannot poll managed background tasks; retrying next tick", {
+          deviceId: first.deviceId,
+          err,
+        });
+      }
+    }
+    // Bounded per tick: at most this many stops that reach a provider, least recently attempted
+    // first (an attempt moves a task to the back, so one that keeps failing never holds the head);
+    // a task whose provider is not loaded takes no turn. The rest stay owed for the next ticks.
+    let attempts = 0;
+    for (const t of cancels) {
+      if (signal.aborted || attempts >= MANAGED_STOPS_PER_TICK) break;
+      try {
+        if (!(await this.sandbox.availableFor(t.deviceId as string))) continue;
+        attempts++;
+        const after = await this.stopper.stop(t, "revoked", signal);
+        if (after.status !== "running") n++;
+      } catch (err) {
+        this.log.warn("cannot apply an owed background task cancellation; retrying next tick", {
+          taskId: t.id,
+          err,
+        });
+      }
+    }
+    return n;
+  }
+
+  /** The exact statuses of one instance's acknowledged managed tasks; returns how many finished. */
+  private async pollManagedInstance(
+    tasks: BackgroundTaskRow[],
+    signal: AbortSignal,
+  ): Promise<number> {
+    const [first] = tasks as [BackgroundTaskRow];
+    const r = await onManagedInstance(
+      this.sandbox.ifRunning.bind(this.sandbox),
+      first,
+      async (bg, h, _ref, sig) => {
+        const ends = new Map<string, { to: BackgroundFinish; lastLines: string }>();
+        for (const t of tasks) {
+          // one task's failing status never holds back the others of its instance
+          try {
+            const { ref } = exactRefOf(t);
+            const to = statusEnd(await bg.status(h, ref, sig));
+            if (to) {
+              ends.set(t.id, {
+                to,
+                lastLines: summaryLines(await lastLinesByRef(bg, h, ref, sig)),
+              });
+            }
+          } catch (err) {
+            sig.throwIfAborted();
+            this.log.warn("cannot read a managed background task's status; retrying next tick", {
+              taskId: t.id,
+              err,
+            });
+          }
+        }
+        return ends;
+      },
+      signal,
+    );
+    let n = 0;
+    for (const t of tasks) {
+      const end: { to: BackgroundFinish; lastLines: string } | undefined =
+        r.kind === "ran"
+          ? r.value.get(t.id)
+          : r.kind === "not_running"
+            ? { to: notRunningAs(r.status, false), lastLines: "" }
+            : { to: RECREATED, lastLines: "" };
+      // a stop that claimed the task after the read above finishes it itself
+      if (end && (await this.finisher.finish(t, end.to, end.lastLines, false, { unclaimed: true })))
+        n++;
+    }
+    return n;
   }
 
   /** Polls the tasks of one device instance; returns how many finished. */
