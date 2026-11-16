@@ -1909,7 +1909,7 @@ describe("run rows (spec §6.16.23)", () => {
     ).toBe("/trajectories/c1");
     expect(
       within(region).getByRole("link", { name: en.chat.run.configureModels }).getAttribute("href"),
-    ).toBe("/admin/models");
+    ).toBe("/settings/models");
     // no duplicate: the failure is the row, never a divider too
     expect(document.querySelector("[data-entry='divider']")).toBeNull();
   });
@@ -1923,9 +1923,8 @@ describe("run rows (spec §6.16.23)", () => {
     ],
     ["a member who does not own it: no links", as("member"), false, false],
     ["a guest: no links", as("guest", { id: "a1" }), false, false],
-    // the platform's credentials are fixed on /admin/models: an org admin who is not a super admin
-    // gets no fix entry (the setup checklist's rule)
-    ["an org admin: the trajectory, no fix entry", as("admin"), true, false],
+    // failed credentials: the org's admins fix the org's copy on /settings/models
+    ["an org admin: the trajectory and the fix entry", as("admin"), true, "/settings/models"],
     [
       "a super admin who is a plain member: the fix entry only",
       as("member", { superAdmin: true }),

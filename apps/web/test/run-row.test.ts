@@ -36,6 +36,11 @@ describe("run row role gating (the kernel's rules)", () => {
     expect(modelConfigHref("platform", v(true, true))).toBe("/admin/models");
     expect(modelConfigHref("platform", v(false, true))).toBeNull();
     expect(modelConfigHref("platform", v(false, false))).toBeNull();
+    // failed credentials: the org's admins first (their own copy), else a super admin
+    expect(modelConfigHref("credentials", v(false, true))).toBe("/settings/models");
+    expect(modelConfigHref("credentials", v(true, true))).toBe("/settings/models");
+    expect(modelConfigHref("credentials", v(true, false))).toBe("/admin/models");
+    expect(modelConfigHref("credentials", v(false, false))).toBeNull();
     expect(modelConfigViewer(me("owner", { superAdmin: true }))).toEqual(v(true, true));
     expect(modelConfigViewer(me("member"))).toEqual(v(false, false));
   });
@@ -47,10 +52,14 @@ describe("run row role gating (the kernel's rules)", () => {
     expect(fix("admin", "run.model_unavailable")).toBe("/settings/models");
     expect(fix("owner", "run.model_unavailable", true)).toBe("/settings/models");
     expect(fix("member", "run.model_unavailable", true)).toBeNull();
-    // the platform's credentials or a purpose without a model: super admins
+    // failed credentials: an org admin fixes the org's copy on /settings/models; a super admin who
+    // is not one goes to the platform's
+    expect(fix("admin", "model.auth")).toBe("/settings/models");
+    expect(fix("owner", "model.auth", true)).toBe("/settings/models");
     expect(fix("member", "model.auth", true)).toBe("/admin/models");
+    expect(fix("member", "model.auth")).toBeNull();
+    // a purpose without a model: super admins
     expect(fix("owner", "model.unconfigured", true)).toBe("/admin/models");
-    expect(fix("admin", "model.auth")).toBeNull();
     expect(fix("member", "model.unconfigured")).toBeNull();
     // not a model setup error
     expect(fix("owner", "model.timeout", true)).toBeNull();
