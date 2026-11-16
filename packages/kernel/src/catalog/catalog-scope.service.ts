@@ -5,7 +5,6 @@ import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { ExtensionAdminOps } from "../extensions/admin-ops.js";
 import { ExtensionAdmin } from "../extensions/admin-view.js";
-import { ExtensionLifecycle } from "../extensions/lifecycle.js";
 import { PluginInstallLock } from "../extensions/locks.js";
 import { audit } from "../identity/audit.js";
 import { SuperAdminLock } from "../identity/super-admin.js";
@@ -64,7 +63,7 @@ import { PlatformPluginUpdater } from "./plugin-upgrade.js";
 import { cancelPendingRequests } from "./request-rules.js";
 import { type PluginScope, wantedOn } from "./scope.js";
 import { addScopeOrg } from "./scope-orgs.js";
-import { PluginScopeSync, reconcileWithin } from "./scope-sync.js";
+import { PluginScopeSync } from "./scope-sync.js";
 import { narrowComponentOnUnshare, narrowItemOnUnshare } from "./unshare.js";
 
 /**
@@ -138,8 +137,6 @@ interface ItemRow {
   shareable: boolean;
 }
 
-/** How long the super admin's confirmation waits for this replica to load the extension. */
-const CONFIRM_RECONCILE_WAIT_MS = 5_000;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const notFound = () => new ApiError("catalog.item_not_found", "Catalog item not found");
 const notPending = (name: string) =>
@@ -230,8 +227,6 @@ export class CatalogScopeService {
     @Inject(OrgLock) private readonly orgLock: OrgLock,
     /** The per-name install lock a reject / withdraw releases the name claim under (M1). */
     @Inject(PluginInstallLock) private readonly installLock: PluginInstallLock,
-    /** This replica's reconcile once a confirmed extension is enabled (before the scope sync). */
-    @Inject(ExtensionLifecycle) private readonly lifecycle: ExtensionLifecycle,
     /** Owes the scope syncs and the removed org plugin's cleanup (P3-21, pre-flight F9). */
     @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
@@ -244,8 +239,8 @@ export class CatalogScopeService {
 
   /**
    * Confirms a staged import ({@link PluginImport.confirm}: installs and enables the extension,
-   * writes the new item's scope), then owes the item's scope sync when its scope turns it on
-   * by itself (`all` or `named`; an `optional` item is on only where an org admin switches it on).
+   * writes the new item's scope). The item's scope sync is owed by the import's commit, or by its
+   * extension's deploy when it has one to deploy.
    */
   async confirmImport(
     actor: string,
@@ -253,9 +248,7 @@ export class CatalogScopeService {
     input: Parameters<PluginImport["confirm"]>[2],
     opts: ActorOpts = {},
   ): Promise<PluginConfirmResult> {
-    const r = await this.pluginImport.confirm(actor, stagingId, input, opts);
-    if (r.item.scope !== "optional") await this.oweSync(r.item.id);
-    return r;
+    return this.pluginImport.confirm(actor, stagingId, input, opts);
   }
 
   /**
@@ -264,7 +257,8 @@ export class CatalogScopeService {
    * review digest; a changed set -> 409 `extension.approval_stale`); an extension that was never
    * deployed (no install record) is installed and enabled first (the package is in the package
    * store from the import). Nothing waiting (a covered snapshot a person approved already, an item
-   * without an extension) -> 409 `extension.not_pending`. Enqueues the item's scope sync after.
+   * without an extension) -> 409 `extension.not_pending`. The item's scope sync is owed by the
+   * approval of an enabled extension, or by the enable.
    *
    * An org-owned item is confirmed only while an upload of it waits (ruling P3-10, see
    * {@link confirmOrgUpload}); otherwise -> 409 `extension.not_pending`.
@@ -340,13 +334,8 @@ export class CatalogScopeService {
       // Already approved but not enabled yet: carry on to the enable; else nothing to confirm
       if (!disabled || !(e instanceof ApiError && e.code === "extension.not_pending")) throw e;
     }
-    // The permissions are confirmed (a stale hash refused above): the backstop before the enable
-    // (ruling R24), so a crash before the post-deploy add below still converges the orgs; only
-    // when the item's scope turns it on by itself, as the import's commit
-    if (item.scope !== "optional") await this.oweBackstop(itemId);
     // An occupied single-provider point leaves it installed disabled (the admin view says why)
     if (disabled) await this.ops.enableUnlessOccupied(item.name, actor, opts.actorTokenId);
-    await this.oweSync(itemId);
     return (await this.catalog.get(itemId)).item;
   }
 
@@ -360,7 +349,7 @@ export class CatalogScopeService {
    * A first version: its platform components planned and their files copied (keyed by content),
    * its extension installed, its permissions approved, enabled, then (one transaction) the item
    * stops waiting, its platform component rows are written and the owner is told
-   * (`upload_confirmed`); after the commit the scope sync is owed. Each step re-reads
+   * (`upload_confirmed`) and the scope sync is owed in that commit. Each step re-reads
    * the item under its row lock: removed meanwhile -> 409 `catalog.item_removed`, the pending
    * version replaced -> `extension.approval_stale`; the extension this confirmation installed is
    * then taken out again. A new version: the platform update to it
@@ -376,27 +365,14 @@ export class CatalogScopeService {
   ): Promise<CatalogItemView> {
     // Every step under the item's update lock (ruling P3-35): a second confirmation waits its
     // turn out as 409 plugin.install_in_progress and never undoes the first one's install
-    const first = await this.updater.withItemLock(item.id, () =>
+    await this.updater.withItemLock(item.id, () =>
       this.confirmLocked(actor, item.id, item.name, permissionsHash, opts),
     );
-    if (first !== null) {
-      // Loaded here before the scope sync plans its install, waited for at most a few seconds
-      // (the enable does not wait for the reconcile); a sync on a replica that has not loaded it
-      // yet defers and retries (ruling P3-38)
-      await reconcileWithin(
-        this.lifecycle,
-        `confirmed:${item.name}`,
-        CONFIRM_RECONCILE_WAIT_MS,
-        this.log,
-      );
-      await this.oweSync(item.id);
-    }
     return (await this.catalog.get(item.id)).item;
   }
 
   /**
-   * {@link confirmOrgUpload} under the item lock; returns the confirmed first version (its scope
-   * sync follows after), null for a new version.
+   * {@link confirmOrgUpload} under the item lock.
    */
   private async confirmLocked(
     actor: string,
@@ -404,7 +380,7 @@ export class CatalogScopeService {
     name: string,
     permissionsHash: string,
     opts: ActorOpts,
-  ): Promise<string | null> {
+  ): Promise<void> {
     // Read again under the lock (the caller's read was outside it)
     const item = await this.db
       .selectFrom("catalog_items")
@@ -494,7 +470,7 @@ export class CatalogScopeService {
       } catch (e) {
         throw await this.removalOr(e, itemId, name);
       }
-      return null;
+      return;
     }
     await this.stillPending(itemId, name, version);
     let installedHere = false;
@@ -521,7 +497,6 @@ export class CatalogScopeService {
       }
       throw await this.removalOr(e, itemId, name);
     }
-    return version;
   }
 
   /** The item is live and its first version confirmed (no longer awaiting). */
@@ -763,9 +738,9 @@ export class CatalogScopeService {
       target: itemId,
       detail: { name: named.name, version, ownerOrgId: owner },
     });
-    // The confirmation's commit owes the sync's backstop (ruling R24); the immediate sync follows
-    // the commit
-    await this.sync.enqueueBackstop(itemId);
+    // The item became usable: its commit owes the scope sync (the extension was enabled before,
+    // so a replica that has not loaded it yet retries the chunk job)
+    await this.sync.enqueueItem(itemId);
   }
 
   /**
@@ -1160,25 +1135,6 @@ export class CatalogScopeService {
   @Transactional({ propagation: "mandatory" })
   private async enqueue(itemId: string): Promise<void> {
     await this.sync.enqueueItem(itemId);
-  }
-
-  /**
-   * Owes the item's scope sync in a transaction of its own, after a confirmation whose last write
-   * (the extension's deploy, or the platform components) committed outside the scope service: the
-   * sync must not run before the extension it installs is enabled.
-   */
-  @Transactional()
-  private async oweSync(itemId: string): Promise<void> {
-    await this.enqueue(itemId);
-  }
-
-  /**
-   * Owes the delayed backstop of the item's sync in a transaction of its own (ruling R24): a
-   * permissions confirm writes nothing of the scope service's before its enable.
-   */
-  @Transactional()
-  private async oweBackstop(itemId: string): Promise<void> {
-    await this.sync.enqueueBackstop(itemId);
   }
 
   /**

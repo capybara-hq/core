@@ -9,8 +9,8 @@ import { PlatformComponents } from "../../src/catalog/platform-components.js";
 import {
   PLUGIN_SCOPE_QUEUE,
   PluginScopeSync,
-  SCOPE_LOAD_RETRIES,
-  scopeRetryJobId,
+  SCOPE_CHUNK_JOB,
+  ScopeSyncDeferred,
 } from "../../src/catalog/scope-sync.js";
 import { ExtensionAdmin } from "../../src/extensions/admin-view.js";
 import { ExtensionInstalls } from "../../src/extensions/installs.js";
@@ -21,7 +21,15 @@ import { usableSkills } from "../../src/skills/usable.js";
 import { lifePkg, pluginTgz } from "../helpers/plugin-packages.js";
 import { createOrg, type Req, waitFor } from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
-import { importPlugin, type OrgEnv, resetOrgCatalog, setScope, startOrgEnv } from "./org-env.js";
+import {
+  importPlugin,
+  type OrgEnv,
+  resetOrgCatalog,
+  scopeQueueIdle,
+  setScope,
+  startOrgEnv,
+  syncItemNow,
+} from "./org-env.js";
 import { bundlePlugin } from "./packages.js";
 
 /**
@@ -275,8 +283,10 @@ describe("org uploads with an extension", () => {
         .where("catalog_item_id", "=", itemId)
         .execute();
     expect(await comps()).toEqual([]);
-    await env.k.app.get(PluginScopeSync).process({ kind: "item", itemId });
-    await env.k.app.get(PluginScopeSync).process({ kind: "org", orgId: orgA });
+    await syncItemNow(env, itemId);
+    await env.k.app
+      .get(PluginScopeSync)
+      .process({ kind: "org", orgId: orgA }, { jobId: "test-org", finalAttempt: true });
     expect(await comps()).toEqual([]);
     expect(await usable(orgA)).not.toContain("ext-a-notes");
     expect(
@@ -665,7 +675,7 @@ describe("fix round 1: applied versions only, the confirm lock (P3-34 to P3-37)"
       latest_version: "1.0.0",
       pending_version: "2.0.0",
     });
-    await env.k.app.get(PluginScopeSync).process({ kind: "item", itemId });
+    await syncItemNow(env, itemId);
     expect((await itemRow("ext-ns"))?.platform_synced_version).toBe("1.0.0");
     const installs = await env.db
       .selectFrom("plugin_installs")
@@ -805,7 +815,7 @@ describe("fix round 1: applied versions only, the confirm lock (P3-34 to P3-37)"
 });
 
 describe("fix round 2: the scope sync waits for its replica to load the extension (P3-38)", () => {
-  it("a replica that has not loaded the confirmed extension yet retries, then converges", async () => {
+  it("a replica that has not loaded the confirmed extension yet fails the chunk for a BullMQ retry, then converges", async () => {
     const registry = env.k.app.get(ExtensionRegistry);
     const real = registry.manifests.bind(registry);
     // this replica's host has not loaded ext-late yet (another replica confirmed it)
@@ -821,22 +831,19 @@ describe("fix round 2: the scope sync waits for its replica to load the extensio
     );
     const c = await superConfirm(itemId, await digestOf(itemId));
     expect(c.statusCode, c.body).toBe(200);
-    // the sync defers (no install, no failure) and owes a delayed retry of the item (an outbox
-    // row due in a few seconds, then the queued job)
-    const row = await itemRow("ext-late");
-    const retryId = scopeRetryJobId(itemId, row?.scope_version ?? 0, 1);
+    // the chunk with org A defers (no install, no failure) and fails: BullMQ retries it later
+    const queue = env.k.app.get<Queue>(getQueueToken(PLUGIN_SCOPE_QUEUE));
     await waitFor(
       async () =>
-        (await env.db
-          .selectFrom("outbox")
-          .select("id")
-          .where("queue", "=", PLUGIN_SCOPE_QUEUE)
-          .where("job_id", "=", retryId)
-          .executeTakeFirst()) !== undefined ||
-        (await env.k.app.get<Queue>(getQueueToken(PLUGIN_SCOPE_QUEUE)).getJob(retryId)) !==
-          undefined,
+        (await queue.getDelayed()).some(
+          (j) =>
+            j.name === SCOPE_CHUNK_JOB &&
+            (j.data as { itemId: string; orgIds: string[] }).itemId === itemId &&
+            (j.data as { orgIds: string[] }).orgIds.includes(orgA) &&
+            j.attemptsMade >= 1,
+        ),
       15_000,
-      "retry job owed",
+      "the chunk job of A retrying",
     );
     expect(
       await env.db
@@ -855,8 +862,10 @@ describe("fix round 2: the scope sync waits for its replica to load the extensio
     );
   });
 
-  it("once the retries are used up the failure is recorded as before", async () => {
+  it("a chunk defers only the pairs not loaded here, and its last attempt records the failure as before", async () => {
     const itemId = await confirmedV1("ext-gone");
+    // the confirmation's syncs are done (the enable's and the confirming commit's)
+    await waitFor(() => scopeQueueIdle(env), 30_000, "scope queue idle");
     // uninstalled in org A by the test, then the replica never loads the extension again
     await env.db.deleteFrom("plugin_install_components").execute();
     await env.db.deleteFrom("plugin_installs").where("item_id", "=", itemId).execute();
@@ -865,15 +874,20 @@ describe("fix round 2: the scope sync waits for its replica to load the extensio
     vi.spyOn(registry, "manifests").mockImplementation(() =>
       real().filter((m) => m.name !== "ext-gone"),
     );
-    await env.k.app
-      .get(PluginScopeSync)
-      .process({ kind: "item", itemId, retry: SCOPE_LOAD_RETRIES });
-    const failures = await env.db
-      .selectFrom("plugin_scope_sync_failures")
-      .select(["org_id", "code"])
-      .where("item_id", "=", itemId)
-      .execute();
-    expect(failures).toEqual([{ org_id: orgA, code: "catalog.not_deployed" }]);
+    const sync = env.k.app.get(PluginScopeSync);
+    const chunk = { kind: "chunk" as const, itemId, orgIds: [orgA] };
+    await expect(
+      sync.process(chunk, { jobId: "test-chunk", finalAttempt: false }),
+    ).rejects.toBeInstanceOf(ScopeSyncDeferred);
+    const failures = () =>
+      env.db
+        .selectFrom("plugin_scope_sync_failures")
+        .select(["org_id", "code"])
+        .where("item_id", "=", itemId)
+        .execute();
+    expect(await failures()).toEqual([]);
+    await sync.process(chunk, { jobId: "test-chunk", finalAttempt: true });
+    expect(await failures()).toEqual([{ org_id: orgA, code: "catalog.not_deployed" }]);
   });
 });
 

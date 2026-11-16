@@ -10,16 +10,18 @@ import {
   PLUGIN_SCOPE_CONCURRENCY,
   PLUGIN_SCOPE_QUEUE,
   PluginScopeSync,
-  SCOPE_BACKSTOP_JOB,
+  SCOPE_CHUNK_JOB,
   SCOPE_ITEM_JOB,
   SCOPE_ORG_JOB,
   type ScopeJob,
+  ScopeSyncDeferred,
 } from "./scope-sync.js";
 
 /**
  * The consumer of {@link PLUGIN_SCOPE_QUEUE}: {@link PluginScopeSync} runs the `scope-item`,
- * `scope-item-backstop` and `scope-org` jobs the outbox delivers (any other name fails the job; a
- * backstop whose extension is not deployed yet throws, so BullMQ retries it).
+ * `scope-item-chunk` and `scope-org` jobs the outbox delivers (any other name fails the job). A
+ * chunk or org job with a pair whose extension this replica has not loaded yet throws, so BullMQ
+ * retries it with the registry's backoff; its last attempt installs anyway.
  */
 @Injectable()
 export class PluginScopeSyncProcessor extends WorkerHost<Worker<ScopeJob>> {
@@ -27,17 +29,22 @@ export class PluginScopeSyncProcessor extends WorkerHost<Worker<ScopeJob>> {
 
   constructor(
     @Inject(PluginScopeSync) private readonly sync: PluginScopeSync,
-    @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "error">,
+    @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "error" | "warn">,
   ) {
     super();
   }
 
   process(job: Job<ScopeJob>): Promise<void> {
     return runJob(PLUGIN_SCOPE_QUEUE, job, () => {
-      if (!([SCOPE_ITEM_JOB, SCOPE_BACKSTOP_JOB, SCOPE_ORG_JOB] as string[]).includes(job.name)) {
+      if (!([SCOPE_ITEM_JOB, SCOPE_CHUNK_JOB, SCOPE_ORG_JOB] as string[]).includes(job.name)) {
         throw new Error(`unknown plugin scope job ${job.name}`);
       }
-      return this.sync.process(job.data, this.stopping.signal);
+      if (job.id === undefined) throw new Error("a plugin scope job has an id");
+      return this.sync.process(job.data, {
+        jobId: job.id,
+        finalAttempt: job.attemptsMade + 1 >= (job.opts.attempts ?? 1),
+        signal: this.stopping.signal,
+      });
     });
   }
 
@@ -54,7 +61,10 @@ export class PluginScopeSyncProcessor extends WorkerHost<Worker<ScopeJob>> {
 
   @OnWorkerEvent("failed")
   failed(job: Job<ScopeJob> | undefined, err: Error): void {
-    this.log.error("plugin scope job failed", { name: job?.name, jobId: job?.id, err });
+    const meta = { name: job?.name, jobId: job?.id, attempt: job?.attemptsMade, err };
+    // waiting for a replica to load an extension is expected: retried with the backoff
+    if (err instanceof ScopeSyncDeferred) this.log.warn("plugin scope job deferred", meta);
+    else this.log.error("plugin scope job failed", meta);
   }
 
   @OnWorkerEvent("error")

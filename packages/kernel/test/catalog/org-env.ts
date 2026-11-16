@@ -26,8 +26,8 @@ import {
 } from "../../src/catalog/catalog-content.js";
 import {
   PLUGIN_SCOPE_QUEUE,
-  SCOPE_BACKSTOP_DELAY,
-  SCOPE_BACKSTOP_JOB,
+  PluginScopeSync,
+  SCOPE_ORG_CHUNK_SIZE,
 } from "../../src/catalog/scope-sync.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
@@ -70,8 +70,8 @@ const DEP_PROVIDER = fakeExtensionEntry("fake-dep-provider");
 const fixture = (name: string) =>
   fileURLToPath(new URL(`../fixtures/plugins/${name}/index.ts`, import.meta.url));
 
-/** The scope sync backstop's delay in these tests: an hour, longer than any test file. */
-export const TEST_SCOPE_BACKSTOP_DELAY_MS = 60 * 60_000;
+/** Orgs per scope sync chunk job in these tests: a few orgs already fan out to several chunks. */
+export const TEST_SCOPE_ORG_CHUNK = 2;
 
 /** The bearer the fake MCP server requires. */
 export const MCP_TOKEN = "tok-123";
@@ -173,8 +173,8 @@ export async function startOrgEnv(
     env: {},
     ...(overrides.logger !== undefined && { logger: overrides.logger }),
     overrides: [
-      // a confirmation's scope sync backstop never fires within a test file (ruling R24)
-      { provide: SCOPE_BACKSTOP_DELAY, useValue: TEST_SCOPE_BACKSTOP_DELAY_MS },
+      // an item's scope sync fans out to several chunk jobs
+      { provide: SCOPE_ORG_CHUNK_SIZE, useValue: TEST_SCOPE_ORG_CHUNK },
       ...(overrides.kernelOverrides ?? []),
     ],
   });
@@ -225,24 +225,38 @@ export async function startOrgEnv(
 
 /**
  * Whether the scope queue has nothing to do: no owed outbox row (one the fast path or the relay
- * has not delivered yet) and no waiting, running or delayed job. A confirmation's backstop
- * (`scope-item-backstop`, due five minutes later, ruling R24) is left out: it only repeats the
- * immediate sync.
+ * has not delivered yet) and no waiting, running or delayed (retrying) job.
  */
 export async function scopeQueueIdle(env: OrgEnv): Promise<boolean> {
   const owed = await env.db
     .selectFrom("outbox")
     .select("id")
     .where("queue", "=", PLUGIN_SCOPE_QUEUE)
-    .where("job_name", "!=", SCOPE_BACKSTOP_JOB)
     .where("dead_at", "is", null)
     .execute();
   if (owed.length > 0) return false;
   const queue = env.k.app.get<Queue>(getQueueToken(PLUGIN_SCOPE_QUEUE));
-  const c = await queue.getJobCounts("waiting", "active", "prioritized");
-  if (Object.values(c).some((n) => n > 0)) return false;
-  const delayed = await queue.getDelayed();
-  return delayed.every((j) => j.name === SCOPE_BACKSTOP_JOB);
+  const c = await queue.getJobCounts("waiting", "active", "prioritized", "delayed");
+  return Object.values(c).every((n) => n === 0);
+}
+
+/**
+ * Converges an item in every live org in this call (a chunk job with every org, its last attempt:
+ * a pair whose extension is not loaded is attempted anyway), not through the queue.
+ */
+export async function syncItemNow(env: OrgEnv, itemId: string): Promise<void> {
+  const orgs = await env.db
+    .selectFrom("orgs")
+    .select("id")
+    .where("deleted_at", "is", null)
+    .orderBy("id")
+    .execute();
+  await env.k.app
+    .get(PluginScopeSync)
+    .process(
+      { kind: "chunk", itemId, orgIds: orgs.map((o) => o.id) },
+      { jobId: `test-${itemId}`, finalAttempt: true },
+    );
 }
 
 /** Clears the catalog, installs, requests, org skills / connectors / extension enabling and audits (accounts and orgs stay). */
@@ -313,8 +327,7 @@ export async function setScope(
   scope: "all" | "optional" | "named",
   orgs: string[] = [],
 ): Promise<void> {
-  // a scope change bumps scope_version, as the service's does: the sync job id is per version, so an
-  // enqueue after this never folds into a job of the old scope still running (BullMQ dedupes by id)
+  // a scope change bumps scope_version, as the service's does
   await env.db
     .updateTable("catalog_items")
     .set({ scope, scope_version: sql<number>`scope_version + 1` })

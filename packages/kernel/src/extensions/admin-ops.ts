@@ -2,6 +2,7 @@ import { type PluginExtensionSection, SDK_VERSION } from "@capybara-hq/plugin-sd
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import semver from "semver";
+import { oweDeployedExtensionSync } from "../catalog/scope-jobs.js";
 import { pluginSchemaName } from "../ctx/create-ctx.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
@@ -12,6 +13,7 @@ import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { KERNEL_BUS, KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { OrgLock } from "../orgs/org-lock.js";
@@ -97,6 +99,8 @@ export class ExtensionAdminOps {
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     /** One enabled provider per single-provider extension point (checked in the enable). */
     @Inject(SingleProviderGuard) private readonly singleProvider: SingleProviderGuard,
+    /** The plugin scope sync a deploy owes (`oweDeployedExtensionSync`). */
+    @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
   ) {}
 
   private get db(): KernelSchemaDb {
@@ -356,6 +360,8 @@ export class ExtensionAdminOps {
     });
     afterCommit(() => this.notify(name));
     if (leftDisabled !== undefined) return { changed: true, state: "disabled", leftDisabled };
+    // A new version of an enabled extension is a deploy: it owes its plugin's scope sync
+    if (row?.desired_state === "enabled") await oweDeployedExtensionSync(this.outbox, db, name);
     return { changed: true, state: row?.desired_state ?? "disabled" };
   }
 
@@ -526,6 +532,9 @@ export class ExtensionAdminOps {
       { ...ownerDetail(owner), ...auditDetail },
     );
     afterCommit(() => this.notify(name));
+    // The enable is the deploy: it owes its plugin's scope sync, which installs it where its scope
+    // wants it on (a replica that has not loaded it yet retries)
+    if (state === "enabled") await oweDeployedExtensionSync(this.outbox, db, name);
     return { row, changed: true };
   }
 

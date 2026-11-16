@@ -1,7 +1,7 @@
 import type { NestInterceptor } from "@nestjs/common";
 import { APP_INTERCEPTOR } from "@nestjs/core";
 import { ADMIN_USAGE_TIMINGS, type AdminUsageTimings } from "./admin/usage.service.js";
-import { SCOPE_BACKSTOP_DELAY } from "./catalog/scope-jobs.js";
+import { SCOPE_ORG_CHUNK_SIZE } from "./catalog/scope-jobs.js";
 import { CHANNEL_WEBHOOK_TIMINGS, type ChannelWebhookTimings } from "./channels/webhook.js";
 import type { EvalReplayHooks } from "./evals/run-replay.js";
 import { EVAL_REPLAY_HOOKS } from "./evals/worker.js";
@@ -60,7 +60,7 @@ import { EMBED_TOKEN_CLOCK } from "./ui/embed-token.js";
  * - `PROJECT_KNOWLEDGE_TIMEOUT`: the run-start read of a bound project's time limit, read at every
  *   read (a test shortens it for one run);
  * - `PLUGIN_PUBLIC_WRITE_LIMIT`: a lower limit for unsafe methods on `public` extension routes;
- * - `SCOPE_BACKSTOP_DELAY`: the delay of a confirmation's scope sync backstop (ruling R24);
+ * - `SCOPE_ORG_CHUNK_SIZE`: fewer orgs per plugin scope sync chunk job (several chunks in a test);
  * - `APP_INTERCEPTOR`: one more global interceptor (a probe of the matched routes).
  */
 interface KernelSeams {
@@ -85,7 +85,7 @@ interface KernelSeams {
   [USAGE_SUBSCRIBERS_CLOCK]: () => number;
   [OUTBOX_FAST_PATH_SETTLED]: (pass: Promise<void>) => void;
   [ENSURE_RUN_FAILS]: () => boolean;
-  [SCOPE_BACKSTOP_DELAY]: number;
+  [SCOPE_ORG_CHUNK_SIZE]: number;
   [PROJECT_KNOWLEDGE_TIMEOUT]: () => number;
   [PLUGIN_PUBLIC_WRITE_LIMIT]: number;
   [DEVICE_POLICY_AFTER_CALL]: (opId: string) => void;
@@ -124,7 +124,7 @@ const SEAM_TOKENS = [
   OUTBOX_DISPATCH_FAILS,
   OUTBOX_FAST_PATH_SETTLED,
   ENSURE_RUN_FAILS,
-  SCOPE_BACKSTOP_DELAY,
+  SCOPE_ORG_CHUNK_SIZE,
   PROJECT_KNOWLEDGE_TIMEOUT,
   PLUGIN_PUBLIC_WRITE_LIMIT,
   DEVICE_POLICY_AFTER_CALL,

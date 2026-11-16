@@ -1,6 +1,7 @@
 import { SDK_VERSION } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
+import { oweDeployedExtensionSync } from "../catalog/scope-jobs.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { SuperAdminLock } from "../identity/super-admin.js";
@@ -8,6 +9,7 @@ import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { KERNEL_BUS, KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import {
@@ -135,6 +137,8 @@ export class ExtensionAdmin {
     @Inject(SingleProviderGuard) private readonly singleProvider: SingleProviderGuard,
     /** The plugins' icons (admin catalog routes). */
     @Inject(PluginIcons) private readonly icons: PluginIcons,
+    /** The plugin scope sync an approval of an enabled extension owes. */
+    @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
   ) {}
 
   private get db(): KernelSchemaDb {
@@ -257,15 +261,18 @@ export class ExtensionAdmin {
     const db = this.db;
     await this.adminLock.lockAndAuthorize(actor);
     await this.approveLock.lock(name);
+    // The install may have moved to another package since the review (an upgrade): re-checked
+    // under its row lock
+    let enabled = s.install === null;
     if (s.install !== null) {
-      // 审阅之后安装记录可能已换包（T14 升级）：锁行复核
       const row = await db
         .selectFrom("extension_installs")
-        .select("sha256")
+        .select(["sha256", "desired_state"])
         .where("name", "=", name)
         .forUpdate()
         .executeTakeFirst();
       if (row?.sha256 !== s.install.sha256) throw stale();
+      enabled = row.desired_state === "enabled";
     }
     const snapRow = await db
       .selectFrom("extension_permission_snapshots")
@@ -292,6 +299,9 @@ export class ExtensionAdmin {
       ...(actorTokenId !== undefined && { actorTokenId }),
       audit: { added, removed, sha256: s.install?.sha256 ?? null },
     });
+    // Approving an enabled (or config-declared) extension lets replicas load it: a deploy, which
+    // owes its plugin's scope sync
+    if (enabled) await oweDeployedExtensionSync(this.outbox, db, name);
   }
 
   /** 配置声明 → 安装记录（与配置声明重名的安装记录不生效，不单列）。`only` 给出时只取这一个。 */

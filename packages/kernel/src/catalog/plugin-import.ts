@@ -13,7 +13,7 @@ import {
   SKILL_ENTRY_FILE,
   type ThemeScheme,
 } from "@capybara-hq/plugin-sdk";
-import { Inject, Injectable, Optional } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
 import { type ExpressionBuilder, sql } from "kysely";
 import semver from "semver";
 import { ClientBuilds } from "../client/client-builds.service.js";
@@ -125,7 +125,7 @@ import {
 import { hasImportRequests, importRequestOf, resolveImportRequests } from "./request-rules.js";
 import { assertNameNotReserved } from "./reserved-names.js";
 import type { PluginScope } from "./scope.js";
-import { oweScopeItem, SCOPE_BACKSTOP_DELAY, SCOPE_BACKSTOP_DELAY_MS } from "./scope-jobs.js";
+import { oweScopeItem } from "./scope-jobs.js";
 import { addScopeOrg } from "./scope-orgs.js";
 import { maxSatisfying, satisfiesRange } from "./versions.js";
 
@@ -628,12 +628,8 @@ export class PluginImport {
     @Inject(PlatformComponents) private readonly platform: PlatformComponents,
     /** The client build of a dropped org upload's package is deleted with it. */
     @Inject(ClientBuilds) private readonly clientBuilds: ClientBuilds,
-    /** The scope sync's backstop, owed by the confirm's commit (ruling R24). */
+    /** The item's scope sync, owed by the confirm's commit when it deploys no extension. */
     @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
-    /** The backstop's delay (a test seam; default `SCOPE_BACKSTOP_DELAY_MS`). */
-    @Optional()
-    @Inject(SCOPE_BACKSTOP_DELAY)
-    private readonly backstopDelayMs: number = SCOPE_BACKSTOP_DELAY_MS,
   ) {
     this.files = storage;
   }
@@ -1246,7 +1242,7 @@ export class PluginImport {
    * extension's deploy result (a failed deploy is returned, not thrown). `scope` (default
    * `optional`) and `orgs` (only with `named`; each an existing org, else `validation_failed`) are
    * written when this confirm creates the item; a new version of an existing item keeps its scope.
-   * The caller enqueues the scope sync of the item after this returns.
+   * The commit owes the item's scope sync, or the extension's deploy does (see {@link commit}).
    *
    * An org upload (`opts.owner`, spec §14): only that org's staging; the actor re-checked as its
    * admin; `scope` / `orgs` are not taken: a new item is owned by the org, scope `named: [owner]`,
@@ -1724,19 +1720,18 @@ export class PluginImport {
         throw e;
       }
     }
-    // The commit owes the scope sync's backstop (ruling R24) when the item's scope turns it on by
-    // itself: the caller owes the immediate sync after the deploy, which a crash may lose
-    if (!pending) {
+    // The commit owes the item's scope sync when its scope turns it on by itself (`all` or
+    // `named`; an org's own item always), unless an extension is to be installed or upgraded: then
+    // its deploy owes it (`oweDeployedExtensionSync`), so no sync runs before it is enabled
+    const deploys = now !== undefined && now.action !== "keep";
+    if (!pending && !deploys) {
       const item = await t
         .selectFrom("catalog_items")
         .select("scope")
         .where("id", "=", itemId)
         .executeTakeFirstOrThrow();
-      if (item.scope !== "optional") {
-        await oweScopeItem(this.outbox, t, itemId, {
-          backstop: true,
-          backstopDelayMs: this.backstopDelayMs,
-        });
+      if (item.scope !== "optional" || owner !== undefined) {
+        await oweScopeItem(this.outbox, t, itemId);
       }
     }
     return {

@@ -739,9 +739,11 @@ Rulings made during implementation (2026-11-06)
   (409 `extension.name_conflict`): org code never inherits another package's config or secrets.
 - **P3-37** Approve before applying (pending restored on failure); a super admin delete of an awaiting
   item and the take-out release its name claim; the generic update refuses a never-applied org version.
-- **P3-38** A scope sync job whose extension is enabled but not loaded on its replica waits for a
-  bounded reconcile, then re-enqueues itself (`scope-item-<id>-<v>-r<n>`, bounded attempts); the HTTP
-  confirmation's reconcile wait is capped.
+- **P3-38** A scope sync job whose extension is enabled but not loaded on its replica converges its
+  other pairs, then fails, and BullMQ retries it with the scope queue's one backoff (its last attempt
+  installs anyway and records what fails); the item sync is owed by the extension's deploy, so no
+  in-process reconcile wait and no delayed backstop (design review 2026-11-14,
+  `scope-sync-backstop-ladder`).
 - **P3-39** Transfer narrows a component's own `all` scope to `named` = the orgs using it.
 - **P3-40** An `optional` item stays `optional` after transfer; the former owner is then an ordinary
   org.
