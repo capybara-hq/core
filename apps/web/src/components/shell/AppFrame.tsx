@@ -145,7 +145,11 @@ function useTimeZoneLabel(): string {
 /** The setup frame re-reads readiness this often (and on focus), so a member sees the shell appear. */
 const SETUP_REFRESH_MS = 30_000;
 /** Stands in for readiness when there is no org (the setup steps are then not drawn). */
-const NO_ORG_READINESS: OrgReadiness = { modelProvider: "ready", agents: 1 };
+const NO_ORG_READINESS: OrgReadiness = {
+  modelProvider: "ready",
+  notEnabledProviders: [],
+  agents: 1,
+};
 
 const under = (pathname: string, prefix: string) =>
   pathname === prefix || pathname.startsWith(`${prefix}/`);

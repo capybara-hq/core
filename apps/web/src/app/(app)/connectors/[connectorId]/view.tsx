@@ -771,8 +771,8 @@ function SettingsTab({
           )}
         </Stack>
       </Card>
-      {(app.git ?? null) !== null && (
-        <GitPushCard orgId={orgId} app={app} manage={manage} onSaved={onSaved} />
+      {app.git !== null && (
+        <GitPushCard orgId={orgId} app={app} git={app.git} manage={manage} onSaved={onSaved} />
       )}
       {manage && (
         <Card tone="danger" title={t("settings.dangerTitle")}>
@@ -818,18 +818,21 @@ function SettingsTab({
 function GitPushCard({
   orgId,
   app,
+  git,
   manage,
   onSaved,
 }: {
   orgId: string;
   app: ConnectorDetail;
+  /** The hosts its credential serves (the card shows only for a connector that has them). */
+  git: NonNullable<ConnectorDetail["git"]>;
   manage: boolean;
   onSaved(next: ConnectorDetail): void;
 }) {
   const t = useTranslations("connectors");
   const toast = useToast();
   const errorMessage = useErrorMessage();
-  const saved = app.gitPushPolicy ?? "ask";
+  const saved = app.gitPushPolicy;
   // The pick not yet saved (null: none); without one the select follows the saved value, so a
   // change saved elsewhere (another tab, a refetch) shows at once.
   const [draft, setDraft] = useState<ToolPolicy | null>(null);
@@ -854,7 +857,7 @@ function GitPushCard({
     <Card title={t("gitPush.title")}>
       <Stack gap={12}>
         <Text variant="prose" tone="muted">
-          {t("gitPush.hint", { hosts: (app.git?.hosts ?? []).map((h) => h.host).join(", ") })}
+          {t("gitPush.hint", { hosts: git.hosts.map((h) => h.host).join(", ") })}
         </Text>
         <Field label={t("gitPush.label")}>
           <Select

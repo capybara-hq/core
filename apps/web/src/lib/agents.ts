@@ -469,8 +469,8 @@ const base = (orgId: string) => `/api/v1/orgs/${encodeURIComponent(orgId)}`;
  */
 export interface OrgReadiness {
   modelProvider: "ready" | "not_enabled" | "none";
-  /** The deployed providers the org has not enabled (the kernel always sends it). */
-  notEnabledProviders?: string[];
+  /** The deployed providers the org has not enabled. */
+  notEnabledProviders: string[];
   agents: number;
 }
 

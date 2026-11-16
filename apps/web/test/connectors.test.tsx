@@ -55,6 +55,8 @@ const summary = (over: Record<string, unknown> = {}) => ({
   endpoint: { url: "http://127.0.0.1:9/mcp" },
   auth: { type: "none" },
   status: "active",
+  git: null,
+  gitPushPolicy: "ask",
   createdAt: T,
   updatedAt: T,
   ...over,

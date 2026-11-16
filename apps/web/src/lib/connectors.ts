@@ -119,9 +119,9 @@ export interface ConnectorSummary {
    */
   guideDrift?: { from: string; to: string } | null;
   /** The git hosts its credential serves in sandboxes; null when it declares none. */
-  git?: { hosts: { host: string; username: string }[] } | null;
+  git: { hosts: { host: string; username: string }[] } | null;
   /** The org's default for git pushes through its credential (the virtual tool `git_push`). */
-  gitPushPolicy?: ToolPolicy;
+  gitPushPolicy: ToolPolicy;
   createdAt: string;
   updatedAt: string;
 }

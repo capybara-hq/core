@@ -261,12 +261,18 @@ describe("setup steps for the model by role", () => {
   });
 
   it("none: the super admin deploys one on /admin/models; an org admin waits for a super admin", () => {
-    renderFrame(shellOf(ME, { readiness: { modelProvider: "none", agents: 0 } }));
+    renderFrame(
+      shellOf(ME, { readiness: { modelProvider: "none", notEnabledProviders: [], agents: 0 } }),
+    );
     const link = within(modelStep()).getByRole("link", { name: zh.chat.setup.model.action });
     expect(link.getAttribute("href")).toBe("/admin/models");
     expect(within(modelStep()).getByText(zh.chat.setup.model.description)).toBeTruthy();
     cleanup();
-    renderFrame(shellOf(orgAdmin, { readiness: { modelProvider: "none", agents: 0 } }));
+    renderFrame(
+      shellOf(orgAdmin, {
+        readiness: { modelProvider: "none", notEnabledProviders: [], agents: 0 },
+      }),
+    );
     expect(within(modelStep()).queryByRole("link")).toBeNull();
     expect(within(modelStep()).getByText(zh.setupLayout.model.needsDeploymentAdmin)).toBeTruthy();
     expect(within(modelStep()).getByText(zh.chat.setup.model.askAdmin)).toBeTruthy();
@@ -316,11 +322,12 @@ describe("/settings/models: 模型服务", () => {
   it("a service the platform cannot run: its state, no action for an org admin", async () => {
     orgKernel([anthropic({ available: false, reason: "needs_deployment_config" })], {
       modelProvider: "none",
+      notEnabledProviders: [],
       agents: 0,
     });
     await renderRouteWithCache("/settings/models", lastStubRoutes(), {
       me: orgAdmin,
-      readiness: { modelProvider: "none", agents: 0 },
+      readiness: { modelProvider: "none", notEnabledProviders: [], agents: 0 },
     });
     const services = await screen.findByRole("list", { name: en.models.org.providers.title });
     const row = within(services).getByText("Anthropic models").closest("li") as HTMLElement;
@@ -343,10 +350,10 @@ describe("/settings/models: 模型服务", () => {
   ] as const)(
     "no model service on the platform: %s gets the deploy link: %s",
     async (_who, me, link) => {
-      orgKernel([SEARCH], { modelProvider: "none", agents: 0 });
+      orgKernel([SEARCH], { modelProvider: "none", notEnabledProviders: [], agents: 0 });
       await renderRouteWithCache("/settings/models", lastStubRoutes(), {
         me,
-        readiness: { modelProvider: "none", agents: 0 },
+        readiness: { modelProvider: "none", notEnabledProviders: [], agents: 0 },
       });
       expect(await screen.findByText(en.models.org.noProviders)).toBeTruthy();
       const to = screen.queryByRole("link", { name: en.models.org.toAdminModels });
