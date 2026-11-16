@@ -564,13 +564,25 @@ export class MacOperationSupervisor {
       await spool.expire(
         () =>
           this.serial(() => {
-            if (entry.output) entry.output.expired = true;
-            this.persist();
+            const previous = entry.output;
+            if (previous) entry.output = { ...previous, expired: true };
+            try {
+              this.persist();
+            } catch (error) {
+              if (previous) entry.output = previous;
+              throw error;
+            }
           }),
         () =>
           this.serial(() => {
-            if (entry.output) entry.output.cleaned = true;
-            this.persist();
+            const previous = entry.output;
+            if (previous) entry.output = { ...previous, cleaned: true };
+            try {
+              this.persist();
+            } catch (error) {
+              if (previous) entry.output = previous;
+              throw error;
+            }
           }),
       );
     } finally {

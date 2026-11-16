@@ -679,3 +679,35 @@ it.runIf(process.platform === "darwin")(
     await expect(narrowed.readFile(path, { maxBytes: 65536, signal })).rejects.toThrow();
   },
 );
+
+it.each(["expiry-tombstone", "expiry-complete"])(
+  "expiry retries a failed durable %s publication",
+  async (boundary) => {
+    let armed = false,
+      failed = false,
+      writes = 0;
+    const f = await fixture({
+      outputBarrier: async (name) => {
+        if (name === boundary && !failed) armed = true;
+      },
+      beforePersist: () => {
+        writes++;
+        if (armed) {
+          armed = false;
+          failed = true;
+          throw Error("ENOSPC");
+        }
+      },
+    });
+    const ref = await f.start();
+    await f.emit(Buffer.from("retain artifact"));
+    f.finish();
+    await f.supervisor.settled("op");
+    f.expire();
+    await expect(f.supervisor.expireOutput(ref)).rejects.toThrow("ENOSPC");
+    const before = writes;
+    await f.supervisor.expireOutput(ref);
+    expect(writes).toBeGreaterThan(before);
+    expect(await readFile(join(f.root, "task.out"), "utf8")).toBe("retain artifact");
+  },
+);
