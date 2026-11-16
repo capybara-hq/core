@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { CatalogItemView } from "../../src/catalog/catalog.service.js";
+import { LIVE_INSTALL_STATUSES } from "../../src/catalog/install-status.js";
 import { PluginScopeSync } from "../../src/catalog/scope-sync.js";
 import { ExtensionAdminOps } from "../../src/extensions/admin-ops.js";
 import {
@@ -71,7 +72,7 @@ const liveIn = async (itemId: string): Promise<boolean> =>
     .select("id")
     .where("org_id", "=", env.orgId)
     .where("item_id", "=", itemId)
-    .where("status", "in", ["installing", "installed", "upgrading"])
+    .where("status", "in", [...LIVE_INSTALL_STATUSES])
     .executeTakeFirst()) !== undefined;
 
 async function inbox(): Promise<{

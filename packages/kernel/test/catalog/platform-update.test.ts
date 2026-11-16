@@ -614,7 +614,7 @@ describe("platform plugin update (spec §7)", () => {
     expect(await read()).toMatchObject({ platformVersion: "1.1.0" });
   });
 
-  it("installs still installing (or a legacy upgrading row) move with the update; an install finishing after an update records the platform version", async () => {
+  it("installs still installing move with the update; an install finishing after an update records the platform version", async () => {
     const item = await seedPlugin(env, { name: "memo", skills: ["memo"], templates: false });
     for (const v of ["1.1.0", "1.2.0"]) {
       await seedPlugin(env, {
@@ -649,12 +649,12 @@ describe("platform plugin update (spec §7)", () => {
           org_id: org2,
           item_id: item,
           version: "1.0.0",
-          status: "upgrading",
+          status: "installed",
         },
       ])
       .execute();
     await updateTo(item, "1.1.0");
-    expect(await versions()).toEqual(["org1:1.1.0:installing", "org2:1.1.0:upgrading"]);
+    expect(await versions()).toEqual(["org2:1.1.0:installed", "org1:1.1.0:installing"]);
 
     // an install planned at 1.1.0 while the platform moves to 1.2.0 before it is marked installed
     await env.db.deleteFrom("plugin_installs").where("item_id", "=", item).execute();

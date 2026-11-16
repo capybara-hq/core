@@ -3,6 +3,7 @@ import type { AgentTemplate, AgentTemplateTier, Logger } from "@capybara-hq/plug
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { componentOn } from "../catalog/component-state.js";
+import { LIVE_INSTALL_STATUSES } from "../catalog/install-status.js";
 import { type Owner, ownerOf, ownersOf } from "../catalog/ownership.js";
 import type { KernelSchemaDb, SourceFormat } from "../db/kernel-schema.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -74,9 +75,6 @@ export interface TemplateRow {
 /** The roster type of a template: `<plugin>:<name>`, the bare `<name>` without a plugin. */
 export const templateTypeOf = (plugin: string | null, name: string): string =>
   plugin ? `${plugin}:${name}` : name;
-
-/** Plugin install statuses that make a plugin on in the org (phase 1, org catalog state). */
-const LIVE_INSTALL = ["installing", "installed", "upgrading"] as const;
 
 const baseQuery = (db: KernelSchemaDb, orgId: string) =>
   db
@@ -216,7 +214,7 @@ async function platformRowsOn(
             .select("a.id")
             .whereRef("a.item_id", "=", "p.catalog_item_id")
             .where("a.org_id", "=", orgId)
-            .where("a.status", "in", [...LIVE_INSTALL]),
+            .where("a.status", "in", [...LIVE_INSTALL_STATUSES]),
         )
         .as("installed"),
       eb

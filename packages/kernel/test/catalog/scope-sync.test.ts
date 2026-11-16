@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { LIVE_INSTALL_STATUSES } from "../../src/catalog/install-status.js";
 import { PluginInstaller } from "../../src/catalog/plugin-install.js";
 import { ScopeNoLongerWanted, ScopeStillWanted } from "../../src/catalog/scope-state.js";
 import { PluginScopeSync } from "../../src/catalog/scope-sync.js";
@@ -56,7 +57,7 @@ async function liveOrgs(itemId: string): Promise<string[]> {
     .selectFrom("plugin_installs")
     .select("org_id")
     .where("item_id", "=", itemId)
-    .where("status", "in", ["installing", "installed", "upgrading"])
+    .where("status", "in", [...LIVE_INSTALL_STATUSES])
     .execute();
   return rows.map((r) => r.org_id).sort();
 }

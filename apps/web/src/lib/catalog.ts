@@ -1009,7 +1009,7 @@ export interface PluginInstall {
   itemId: string;
   name: string;
   version: string;
-  status: "installing" | "installed" | "failed" | "uninstalling" | "upgrading";
+  status: "installing" | "installed" | "failed" | "uninstalling";
   installedBy: string | null;
   installedAt: string;
   /** The failed install's step and code, or the last failed upgrade's (the install stays installed). */

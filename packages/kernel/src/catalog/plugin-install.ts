@@ -17,7 +17,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import semver from "semver";
 import { revertTemplateVersionIn, softDeleteTemplateIn } from "../agents/templates.js";
-import type { KernelSchemaDb, SourceFormat } from "../db/kernel-schema.js";
+import type { KernelSchemaDb, PluginInstallStatus, SourceFormat } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { isExtensionEnabled } from "../extensions/enabled.js";
 import {
@@ -83,6 +83,7 @@ import {
   switchOf,
   themeIdClashes,
 } from "./component-state.js";
+import { LIVE_INSTALL_STATUSES } from "./install-status.js";
 import {
   assertItemInstallable,
   disabledPluginItems,
@@ -225,7 +226,7 @@ export interface PluginInstallView {
   itemId: string;
   name: string;
   version: string;
-  status: "installing" | "installed" | "failed" | "uninstalling" | "upgrading";
+  status: PluginInstallStatus;
   installedBy: string | null;
   installedAt: string;
   /** The failed install's step and code, or the last failed upgrade's (the install stays installed). */
@@ -584,8 +585,7 @@ export function under(e: unknown, at: string): unknown {
  * `plugin.install_failed` is thrown. Uninstall removes only components with created=true that
  * nothing else uses, and reports what it kept and why. No in-process state; the org row lock
  * serializes writes within one org. There is no per-org upgrade: a platform plugin is updated
- * once for the deployment (`PlatformPluginUpdater`, plugin-upgrade.ts, ruling F2); an install left
- * `upgrading` by an earlier per-org upgrade is undone from its journal by the next uninstall. The
+ * once for the deployment (`PlatformPluginUpdater`, plugin-upgrade.ts, ruling F2). The
  * methods without `private` are internal to the catalog, not an API.
  */
 @Injectable()
@@ -1762,7 +1762,7 @@ export class PluginInstaller {
       .innerJoin("plugin_installs as a", "a.id", "c.install_id")
       .select("a.id")
       .where("a.org_id", "=", orgId)
-      .where("a.status", "in", ["installing", "installed", "upgrading"])
+      .where("a.status", "in", [...LIVE_INSTALL_STATUSES])
       .where("c.kind", "=", kind)
       .where("c.ref", "=", ref);
     if (removing.size > 0) q = q.where("a.id", "not in", [...removing]);
@@ -1836,10 +1836,6 @@ export class PluginInstaller {
         "a.status",
         "i.name",
         sql<boolean>`a.installed_at < now() - make_interval(mins => ${staleMinutes})`.as("stale"),
-        sql<boolean>`coalesce((a.upgrade->>'startedAt')::timestamptz < now() - make_interval(mins => ${staleMinutes}), false)`.as(
-          "upgradeStale",
-        ),
-        "a.upgrade",
       ])
       .where("a.id", "=", installId)
       .where("a.org_id", "=", orgId)
@@ -1858,37 +1854,19 @@ export class PluginInstaller {
       if (ctx.from !== undefined) await this.handOver(user, "plugin", installId);
       return "kept";
     }
-    if (
-      row.status === "uninstalling" ||
-      (row.status === "installing" && !row.stale) ||
-      (row.status === "upgrading" && !row.upgradeStale)
-    ) {
+    if (row.status === "uninstalling" || (row.status === "installing" && !row.stale)) {
       throw new ApiError(
         "plugin.install_in_progress",
         `This plugin install is still in progress; it can be cleaned up after ${staleMinutes} minutes`,
       );
     }
-    if (row.status === "upgrading") {
-      // An upgrade interrupted midway (a replica crashed): undone first, back at the old version
-      const undone = await this.undoUpgradeIn(
-        orgId,
-        actor,
-        installId,
-        journalEntries(row.upgrade),
-        "plugin_upgrade_cleanup",
-      );
-      for (const x of undone) addRemoved(x);
-    }
     removing.add(installId);
     // failed (already rolled back) and a stale installing (a replica crashed midway) are cleaned up
     // as a rollback
-    const rollbackMode = row.status !== "installed" && row.status !== "upgrading";
-    // A dependency install removed by a failed install's (or a crashed upgrade's) rollback removes
-    // what it created, like the rolled-back install itself: it is a rollback, not a switch-off
-    const connectorRollback =
-      rollbackMode ||
-      ctx.reason === "plugin_install_rollback" ||
-      ctx.reason === "plugin_upgrade_cleanup";
+    const rollbackMode = row.status !== "installed";
+    // A dependency install removed by a failed install's rollback removes what it created, like
+    // the rolled-back install itself: it is a rollback, not a switch-off
+    const connectorRollback = rollbackMode || ctx.reason === "plugin_install_rollback";
     const comps = await t
       .selectFrom("plugin_install_components")
       .select(["kind", "ref", "created", "skill_version"])
@@ -2101,75 +2079,6 @@ export class PluginInstaller {
       upgradeAvailable: null,
       deploymentPending: false,
     }));
-  }
-
-  /**
-   * Undoes the steps of an upgrade in the caller's transaction (the caller holds the org row lock),
-   * in reverse order: components it created are removed (a dependency install by the uninstall
-   * rules, an extension another enabled extension depends on is kept), the ledger rows it added
-   * are deleted, and versions it added to skills are reverted (`revertVersionIn` reverts exactly
-   * one version, and an upgrade adds at most one per skill). Returns the components removed (an
-   * extension among them needs `afterDisable` once committed). Used when an upgrade fails and when
-   * an interrupted one is cleaned up.
-   */
-  @Transactional({ propagation: "mandatory" })
-  async undoUpgradeIn(
-    orgId: string,
-    actor: string | null,
-    installId: string,
-    steps: readonly UpgradeStep[],
-    reason: string,
-  ): Promise<{ kind: ComponentKind; ref: string }[]> {
-    const removed: { kind: ComponentKind; ref: string }[] = [];
-    const dropRow = (kind: ComponentKind, ref: string) =>
-      this.db
-        .deleteFrom("plugin_install_components")
-        .where("install_id", "=", installId)
-        .where("kind", "=", kind)
-        .where("ref", "=", ref)
-        .execute();
-    for (const s of [...steps].reverse()) {
-      if (s.op === "skill_version") {
-        await this.skills.revertVersionIn(orgId, s.ref, s.version, actor, reason);
-        continue;
-      }
-      if (s.op === "template_version") {
-        await revertTemplateVersionIn(this.db, orgId, s.ref, s.version);
-        continue;
-      }
-      if (s.op === "recorded") {
-        await dropRow(s.kind, s.ref);
-        continue;
-      }
-      if (s.kind === "plugin") {
-        const sub: UninstallReport = { removed: [], kept: [] };
-        await dropRow(s.kind, s.ref);
-        const outcome = await this.uninstallIn(orgId, actor, s.ref, {
-          report: sub,
-          removing: new Set([installId]),
-          from: installId,
-          authorize: false,
-          reason,
-          opts: {},
-        });
-        removed.push(...sub.removed.filter((r) => r.kind === "extension"));
-        if (outcome === "removed") removed.push({ kind: "plugin", ref: s.ref });
-        continue;
-      }
-      if (
-        s.kind === "extension" &&
-        (await this.orgConfigs.enabledDependents(orgId, s.ref)).length > 0
-      ) {
-        // Another enabled extension needs it: kept, and stays this install's component
-        continue;
-      }
-      const c: Component = { kind: s.kind, ref: s.ref, created: true, skillVersion: null };
-      if (await this.removeComponent(orgId, actor, c, reason)) {
-        removed.push({ kind: s.kind, ref: s.ref });
-      }
-      await dropRow(s.kind, s.ref);
-    }
-    return removed;
   }
 
   /**
@@ -2803,50 +2712,6 @@ export async function planSkillConflicts(
     }
   };
   await visit(plan);
-  return out;
-}
-
-/**
- * One step a running upgrade took, journaled in `plugin_installs.upgrade.done` (migration 0049) so
- * a failed or interrupted upgrade can be undone: `created` a component the upgrade created (its
- * ledger row created=true), `recorded` an existing component it added to the ledger
- * (created=false), `skill_version` / `template_version` a version it added to a skill / an agent
- * template.
- */
-export type UpgradeStep =
-  | { op: "created"; kind: ComponentKind; ref: string }
-  | { op: "recorded"; kind: ComponentKind; ref: string }
-  | { op: "skill_version"; ref: string; version: number }
-  | { op: "template_version"; ref: string; version: number };
-
-const COMPONENT_KINDS = new Set<string>([
-  "extension",
-  "connector",
-  "skill",
-  "plugin",
-  "agent_template",
-]);
-
-/** The journaled steps of `plugin_installs.upgrade` (malformed entries are skipped). */
-export function journalEntries(upgrade: unknown): UpgradeStep[] {
-  const done = (upgrade as { done?: unknown } | null)?.done;
-  if (!Array.isArray(done)) return [];
-  const out: UpgradeStep[] = [];
-  for (const e of done as Record<string, unknown>[]) {
-    if (typeof e !== "object" || e === null || typeof e.ref !== "string") continue;
-    if (
-      (e.op === "skill_version" || e.op === "template_version") &&
-      typeof e.version === "number"
-    ) {
-      out.push({ op: e.op, ref: e.ref, version: e.version });
-    } else if (
-      (e.op === "created" || e.op === "recorded") &&
-      typeof e.kind === "string" &&
-      COMPONENT_KINDS.has(e.kind)
-    ) {
-      out.push({ op: e.op, kind: e.kind as ComponentKind, ref: e.ref });
-    }
-  }
   return out;
 }
 

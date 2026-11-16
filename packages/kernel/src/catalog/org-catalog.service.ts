@@ -32,6 +32,7 @@ import {
 } from "./catalog-content.js";
 import { itemView, ownerOnlyFacts, versionUsable } from "./catalog-items.js";
 import { connectorTemplatesOn, templateIdOfPath } from "./component-state.js";
+import { LIVE_INSTALL_STATUSES } from "./install-status.js";
 import { itemPendingError, ownerOf, ownersOf } from "./ownership.js";
 import {
   PluginInstaller,
@@ -158,7 +159,7 @@ export class OrgCatalogService {
         .selectFrom("plugin_installs")
         .select(["id", "item_id", "version"])
         .where("org_id", "=", orgId)
-        .where("status", "in", ["installing", "installed", "upgrading"])
+        .where("status", "in", [...LIVE_INSTALL_STATUSES])
         .execute(),
       this.db
         .selectFrom("extension_org_configs")
@@ -513,7 +514,7 @@ export class OrgCatalogService {
       .select("id")
       .where("org_id", "=", orgId)
       .where("item_id", "=", itemId)
-      .where("status", "in", ["installing", "installed", "upgrading"])
+      .where("status", "in", [...LIVE_INSTALL_STATUSES])
       .executeTakeFirst();
   }
 
@@ -595,7 +596,7 @@ export class OrgCatalogService {
       .where("a.org_id", "=", orgId)
       .executeTakeFirst();
     // A failed or stuck install is cleaned up whatever the scope (it is not on anyway)
-    const live = row?.status === "installed" || row?.status === "upgrading";
+    const live = row?.status === "installed";
     if (row !== undefined && live && !switchable(row)) {
       throw new ApiError(
         "plugin.scope_locked",

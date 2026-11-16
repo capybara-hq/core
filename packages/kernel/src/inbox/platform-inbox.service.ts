@@ -2,6 +2,7 @@ import type { LocalizedName } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { type CatalogItemView, CatalogService } from "../catalog/catalog.service.js";
+import { LIVE_INSTALL_STATUSES } from "../catalog/install-status.js";
 import { CatalogRequestsService, type CatalogRequestView } from "../catalog/requests.service.js";
 import type { ScopeSyncOp } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
@@ -12,9 +13,6 @@ import type { PlatformNoticeDetails } from "./platform-notices.js";
 export const PLATFORM_INBOX_MAX_ITEMS = 100;
 /** The most open scope sync failures one read takes. */
 export const SCOPE_SYNC_FAILURES_LIST_MAX = 200;
-
-/** Plugin install statuses of a plugin that is on in the org. */
-const LIVE_INSTALL = ["installing", "installed", "upgrading"] as const;
 
 /**
  * An open failure of the plugin scope sync: its last attempt to install the plugin in the org, to
@@ -258,7 +256,7 @@ export class PlatformInboxService {
             .select("p.id")
             .whereRef("p.org_id", "=", "f.org_id")
             .whereRef("p.item_id", "=", "f.item_id")
-            .where("p.status", "in", [...LIVE_INSTALL]),
+            .where("p.status", "in", [...LIVE_INSTALL_STATUSES]),
         );
         return eb.or([
           eb.and([eb("f.op", "=", "install"), eb.not(live)]),

@@ -14,9 +14,8 @@ import {
   pluginFactsOf,
   switchOf,
 } from "./component-state.js";
+import { LIVE_INSTALL_STATUSES } from "./install-status.js";
 import type { PluginScope } from "./scope.js";
-
-const LIVE_INSTALL = ["installing", "installed", "upgrading"] as const;
 
 async function liveOrgIds(db: KernelSchemaDb): Promise<string[]> {
   const rows = await db.selectFrom("orgs").select("id").where("deleted_at", "is", null).execute();
@@ -40,7 +39,7 @@ export async function narrowItemOnUnshare(
     .selectFrom("plugin_installs")
     .select("org_id")
     .where("item_id", "=", item.id)
-    .where("status", "in", [...LIVE_INSTALL])
+    .where("status", "in", [...LIVE_INSTALL_STATUSES])
     .execute();
   const switches = await db
     .selectFrom("catalog_item_org_switches")

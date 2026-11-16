@@ -77,6 +77,8 @@ export {
   scopeRetryJobId,
 } from "./scope-jobs.js";
 
+import { LIVE_INSTALL_STATUSES } from "./install-status.js";
+
 /** How many delayed retries an item job gets while its extension is not loaded here (P3-38). */
 export const SCOPE_LOAD_RETRIES = 6;
 /** The delay of each such retry. */
@@ -120,8 +122,6 @@ const ORG_LOCK_TTL_MS = 60_000;
 const ORG_LOCK_WAIT_MS = 10 * 60_000;
 /** The worker's concurrency. */
 export const PLUGIN_SCOPE_CONCURRENCY = 2;
-
-const LIVE = ["installing", "installed", "upgrading"] as const;
 
 @Injectable()
 export class PluginScopeSync {
@@ -413,7 +413,7 @@ export class PluginScopeSync {
         .select(["id", "status"])
         .where("org_id", "=", orgId)
         .where("item_id", "=", itemId)
-        .where("status", "in", [...LIVE])
+        .where("status", "in", [...LIVE_INSTALL_STATUSES])
         .executeTakeFirst(),
     ]);
     const wanted =
@@ -456,8 +456,8 @@ export class PluginScopeSync {
         return "unchanged";
       }
     }
-    // Wanted off: only a settled install is removed (one still installing or upgrading waits for
-    // the next enqueue)
+    // Wanted off: only a settled install is removed (one still installing waits for the next
+    // enqueue)
     if (live?.status !== "installed") return "unchanged";
     const deps = await this.createdDependencies(live.id);
     try {
@@ -483,7 +483,7 @@ export class PluginScopeSync {
       .innerJoin("plugin_installs as a", "a.id", "c.install_id")
       .select("a.id")
       .where("a.org_id", "=", orgId)
-      .where("a.status", "in", [...LIVE])
+      .where("a.status", "in", [...LIVE_INSTALL_STATUSES])
       .where("c.kind", "=", "plugin")
       .where("c.ref", "=", installId)
       .executeTakeFirst();

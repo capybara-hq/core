@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { CatalogScopeService } from "../../src/catalog/catalog-scope.service.js";
+import { LIVE_INSTALL_STATUSES } from "../../src/catalog/install-status.js";
 import { PlatformComponents } from "../../src/catalog/platform-components.js";
 import type { PlatformUpdatePreview } from "../../src/catalog/plugin-upgrade.js";
 import {
@@ -228,7 +229,7 @@ async function liveOrgs(itemId: string): Promise<string[]> {
     .selectFrom("plugin_installs")
     .select("org_id")
     .where("item_id", "=", itemId)
-    .where("status", "in", ["installing", "installed", "upgrading"])
+    .where("status", "in", [...LIVE_INSTALL_STATUSES])
     .execute();
   return rows.map((r) => r.org_id).sort();
 }

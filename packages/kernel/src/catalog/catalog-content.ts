@@ -85,7 +85,7 @@ export interface OrgCatalogItem
   /** The plugin's extension (or a template's connector extension) is not on the deployment. */
   notDeployed: boolean;
   /**
-   * This org's live plugin install of the item (installing, installed or upgrading);
+   * This org's live plugin install of the item (installing or installed);
    * `upgradeAvailable` is always null since plugin scope phase 2 (no per-org upgrade, ruling F2;
    * kept for the web until its upgrade dialog goes).
    */

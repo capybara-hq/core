@@ -5255,8 +5255,7 @@
         "installing": "安装中",
         "installed": "已安装",
         "failed": "安装失败（已回滚）",
-        "uninstalling": "卸载中",
-        "upgrading": "升级中"
+        "uninstalling": "卸载中"
       },
       "failedAt": "失败于「{step}」：{code}",
       "components": "组件",

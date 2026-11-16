@@ -5267,8 +5267,7 @@
         "installing": "Installing",
         "installed": "Installed",
         "failed": "Install failed (rolled back)",
-        "uninstalling": "Uninstalling",
-        "upgrading": "Upgrading"
+        "uninstalling": "Uninstalling"
       },
       "failedAt": "Failed at “{step}”: {code}",
       "components": "Components",

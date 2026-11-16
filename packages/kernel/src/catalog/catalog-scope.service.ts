@@ -40,6 +40,7 @@ import {
   switchOf,
   themeIdClashes,
 } from "./component-state.js";
+import { LIVE_INSTALL_STATUSES } from "./install-status.js";
 import { oweOwnedPluginCleanup } from "./job-ids.js";
 import { CatalogItemLock } from "./locks.js";
 import {
@@ -140,7 +141,6 @@ interface ItemRow {
 /** How long the super admin's confirmation waits for this replica to load the extension. */
 const CONFIRM_RECONCILE_WAIT_MS = 5_000;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const LIVE = ["installing", "installed", "upgrading"] as const;
 const notFound = () => new ApiError("catalog.item_not_found", "Catalog item not found");
 const notPending = (name: string) =>
   new ApiError("extension.not_pending", `Plugin ${name} has no upload waiting for confirmation`);
@@ -1274,7 +1274,7 @@ export class CatalogScopeService {
       .selectFrom("plugin_installs")
       .select(["id", "org_id"])
       .where("item_id", "=", item.id)
-      .where("status", "in", [...LIVE])
+      .where("status", "in", [...LIVE_INSTALL_STATUSES])
       .execute();
     const sw = new Map(switches.map((s) => [s.org_id, s.enabled]));
     const live = new Map(installs.map((a) => [a.org_id, a.id]));
