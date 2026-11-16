@@ -1,8 +1,9 @@
 "use client";
 
-import { Button, DataTable, ListPage, Stack } from "@capybara-hq/design";
+import { DataTable, ListPage, Stack } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { useAuditColumns, useAuditPages } from "../../../../components/audit-log";
+import { auditSlice, useAuditColumns } from "../../../../components/audit-log";
+import { LoadMore, useCursorPages } from "../../../../components/cursor-pages";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
 import { usePagePath } from "../../../../components/shell/path";
@@ -52,7 +53,8 @@ function AuditLog({
 }) {
   const t = useTranslations("admin.audit");
   const columns = useAuditColumns();
-  const { rows, next, loadingMore, loadMore } = useAuditPages(first, platformAuditQuery);
+  const pages = useCursorPages(first, platformAuditQuery, auditSlice);
+  const { rows, next } = pages;
   return (
     <ListPage
       header={{
@@ -72,13 +74,7 @@ function AuditLog({
           state="ready"
           empty={{ title: t("empty") }}
         />
-        {next !== null && (
-          <Stack direction="row">
-            <Button loading={loadingMore} onClick={loadMore}>
-              {t("loadMore")}
-            </Button>
-          </Stack>
-        )}
+        <LoadMore pages={pages} label={t("loadMore")} />
       </Stack>
     </ListPage>
   );

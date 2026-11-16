@@ -8,15 +8,15 @@ import {
   type ItemListRow,
   LinkButton,
   OverviewSection,
-  Stack,
   Subsection,
   Text,
   useToast,
   versionLabel,
 } from "@capybara-hq/design";
-import { type UseQueryResult, useQuery, useQueryClient } from "@tanstack/react-query";
+import { type UseQueryResult, useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
+import { type CursorSlice, LoadMore, useCursorPages } from "../../../../components/cursor-pages";
 import {
   type AdminAttention,
   type AttentionExtension,
@@ -283,6 +283,12 @@ function AttentionGroups({
   });
 }
 
+/** A dead-row page's rows and cursor, for {@link useCursorPages}. */
+const outboxSlice = (p: OutboxDeadPage): CursorSlice<OutboxDeadRow> => ({
+  rows: p.items,
+  next: p.next,
+});
+
 /**
  * The dead outbox rows (transactional outbox spec §3.4): each with its job, queue and last error,
  * 重试 (queued again; dropped instead when the same job is owed already) and 丢弃 (after a
@@ -303,30 +309,9 @@ function OutboxDeadList({
   const errorMessage = useErrorMessage();
   const toast = useToast();
   const [discarding, setDiscarding] = useState<OutboxDeadRow | null>(null);
-  const qc = useQueryClient();
-  // Later pages belong to the first page they continue: a newer answer for the first page (every
-  // retry and discard refetches it) starts over, so a row handled on a later page never stays
-  const firstAt = dead.dataUpdatedAt;
-  const [more, setMore] = useState<{ source: number; pages: OutboxDeadPage[] }>({
-    source: firstAt,
-    pages: [],
-  });
-  const pages = more.source === firstAt ? more.pages : [];
-  const next = pages.length > 0 ? (pages.at(-1) as OutboxDeadPage).next : (dead.data?.next ?? null);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [moreError, setMoreError] = useState<string | null>(null);
-  const loadMore = async (after: string) => {
-    setLoadingMore(true);
-    setMoreError(null);
-    try {
-      const page = await qc.fetchQuery(adminOutboxDeadQuery(after));
-      setMore({ source: firstAt, pages: [...pages, page] });
-    } catch (e) {
-      setMoreError(errorMessage(e));
-    } finally {
-      setLoadingMore(false);
-    }
-  };
+  // Later pages belong to the first page they continue: a changed first page (retry and discard
+  // refetch it) starts over
+  const pages = useCursorPages(dead.data, adminOutboxDeadQuery, outboxSlice);
   const d = keys.deployment();
   const invalidates = () => [d.adminOverview(), d.platformAuditAll()];
   const retry = useAppMutation({
@@ -346,7 +331,7 @@ function OutboxDeadList({
   const rows: ItemListRow[] =
     dead.data === undefined
       ? summary.map((o) => ({ id: o.kind, title: t("outbox.count", { n: o.count }) }))
-      : [...dead.data.items, ...pages.flatMap((p) => p.items)].map((r) => ({
+      : pages.rows.map((r) => ({
           id: r.id,
           title: r.jobName,
           meta: [r.queue, r.lastError].filter((x) => x !== null && x !== "").join(" · "),
@@ -364,14 +349,7 @@ function OutboxDeadList({
   return (
     <>
       <ItemList label={label} rows={rows} />
-      {next !== null && (
-        <Stack direction="row" gap={8} align="center">
-          <Button loading={loadingMore} onClick={() => void loadMore(next)}>
-            {t("outbox.loadMore")}
-          </Button>
-          {moreError !== null && <Text tone="fail">{moreError}</Text>}
-        </Stack>
-      )}
+      <LoadMore pages={pages} label={t("outbox.loadMore")} />
       <Dialog
         open={discarding !== null}
         onOpenChange={(open) => {

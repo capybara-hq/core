@@ -1,8 +1,9 @@
 "use client";
 
-import { Button, DataTable, SettingsPage, Stack } from "@capybara-hq/design";
+import { DataTable, SettingsPage, Stack } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { useAuditColumns, useAuditPages } from "../../../../components/audit-log";
+import { auditSlice, useAuditColumns } from "../../../../components/audit-log";
+import { LoadMore, useCursorPages } from "../../../../components/cursor-pages";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
@@ -62,26 +63,18 @@ function OrgAudit({ orgId }: { orgId: string }) {
 function AuditTable({ orgId, first }: { orgId: string; first: AuditPage }) {
   const t = useTranslations("orgAudit");
   const columns = useAuditColumns();
-  const { rows, next, loadingMore, loadMore } = useAuditPages(first, (after) =>
-    orgAuditQuery(orgId, after),
-  );
+  const pages = useCursorPages(first, (after) => orgAuditQuery(orgId, after), auditSlice);
   return (
     <Stack gap={12}>
       <DataTable<AuditEvent>
         label={t("title")}
         columns={columns}
-        rows={rows}
+        rows={pages.rows}
         rowKey={(e) => e.id}
         state="ready"
         empty={{ title: t("empty"), hint: t("emptyHint") }}
       />
-      {next !== null && (
-        <Stack direction="row">
-          <Button loading={loadingMore} onClick={loadMore}>
-            {t("loadMore")}
-          </Button>
-        </Stack>
-      )}
+      <LoadMore pages={pages} label={t("loadMore")} />
     </Stack>
   );
 }
