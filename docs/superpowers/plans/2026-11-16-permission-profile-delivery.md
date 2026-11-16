@@ -56,17 +56,19 @@ existing Python/GCC tooling, TanStack Query and the existing design system.
 | Wave | Tasks | Dependencies and file ownership |
 |---|---|---|
 | A | 1; 5 complete | Additive SDK only; generic design commit `09272da87` is reviewed |
-| B | 2 and 3 | Runtime source/testing and authority-lock foundation/root API are disjoint; separate reviews |
-| C | 4 and 11 | Device runtime uses 1–2; first additive SDK release uses 1–2 only, wire remains v2 |
+| B | 2a and 3 | Portable native API/source and authority-lock foundation/root API are disjoint |
+| B-held | 2b | Linux restricted source/proof remainder stays held; no retry or alternate execution route |
+| C | independent parts of 4 and 11 | macOS implementation uses 1+2a and accepted local mechanism; additive publication may use 1+2a, wire remains v2 |
 | D | 6 | Kernel facade/admission and staged v3 codecs/adapters after 3–4; no v3 announcement |
 | E | 7 and 8 | Policy/cards and background cutover after 6; v3 activation only after Task 8 retirement tests |
 | F | 9; then 10 | Replay after 7–8; web after 3, 5, 9; no concurrent shared event edits |
-| G | 12 and 13 | Plugins after published SDK/testing from 11; disjoint providers, individual reviews |
+| G | independent preparation of 12 and 13 | Published SDK/testing prerequisite remains; Linux enforcement/full proof cannot pass held 2b |
 | H | 14; then 15 | Actual-provider acceptance, final checks and staged rollout |
 
 Do not wait for Wave F to start G when the npm prerequisite is available. Task 1 owns additive SDK
-types/exports/API snapshot; Task 2 later owns source implementation, SDK source export/API regeneration
-and testing exports. Task 6 prepares wire replacement/adapters; Task 8 closes the background/upgrade
+types/exports/API snapshot (accepted commit `7a8e0d51d`); Task 2a owns portable source, SDK source
+export/API regeneration and native-testing exports. Task 2b may extend those exports only later,
+serially, after its gate is cleared; it cannot run concurrently against 2a's files. Task 6 prepares wire replacement/adapters; Task 8 closes the background/upgrade
 gate before the coordinated pair may announce/publish v3. Task 3 owns authority-epoch SQL/store/locks
 and profile/first-send SQL/schema/events; Task 6 owns operation-intent SQL/schema/outbox; Task 7 adds
 approval-state migration/event changes after 3; Task 8 adds background migration/schema after 7
@@ -80,7 +82,8 @@ Controller batches routine integration fixes per wave; trust-boundary findings r
 **Files:** Create `packages/plugin-sdk/src/sandbox-operation.ts`; modify
 `packages/plugin-sdk/src/sandbox.ts`, `index.ts`, `packages/plugin-sdk/test/sandbox.test.ts`,
 `packages/plugin-sdk/api/plugin-sdk.api.md`; create `test/sandbox-operation.test.ts` and SDK changeset.
-Task 2 adds `SANDBOX_RUNTIME_SOURCE` only when its verified production bytes exist.
+Task 2a adds `SANDBOX_RUNTIME_SOURCE` only for its implemented portable helper bytes; 2b cannot add
+Linux payloads or support claims while held.
 
 **Interfaces:** Export exact operation/browse/preparation scopes, capability report, factories,
 background tail/stop/status/reference and revoke-before-start types in the corrected contract.
@@ -98,35 +101,89 @@ the new optional operation contract describes device-ceiling semantics without a
   `pnpm check:sdk-api`; `pnpm check:sdk-api-changeset`. Assert protocol constant/parsers remain v2.
 - [ ] Commit `feat(sdk): define immutable sandbox operation scopes` with SDK changeset.
 
-### Task 2: Shared native runtime source and conformance harness
+### Task 2a: Portable native-file source and ordinary API conformance (independent)
 
-**Files:** Create `packages/plugin-sdk/src/sandbox-runtime-source.ts`,
-`packages/plugin-sdk/test/sandbox-runtime-source.test.ts`; update SDK `src/index.ts` and its generated
-API snapshot after Task 1. Create
-`packages/testing/src/sandbox-permission-conformance.ts`; modify `packages/testing/src/index.ts`;
-create `packages/testing/test/sandbox-permission-conformance.test.ts` and SDK/testing changesets.
-The SDK source file owns the common Python native helper and C/Linux broker source strings.
+**Scope:** Implement ordinary native-file semantics and their transport-independent tests. This is
+not Linux sandbox work: no Landlock, seccomp notifications, network broker, namespace launcher,
+launch-root correction, enforcement experiment or renamed/rephrased version of the blocked task.
+No kernel/OS security setting, service or live provider instance is needed. Existing accepted SDK
+operation/browse/preparation/background contracts remain unchanged.
 
-**Interfaces:** `SANDBOX_RUNTIME_SOURCE: {readonly version: number; readonly files:
-readonly {readonly name: string; readonly source: string; readonly sha256: string}[]}`.
-`runSandboxPermissionConformance(fixture: SandboxPermissionFixture): Promise<void>` exported by
-testing. `SandboxPermissionFixture` supplies provider/handle, restricted/full/preparation scopes,
-controlled endpoint receipt probes, barrier hooks, exact cleanup and a symlink/race fixture root;
-it never loads an official plugin inside core. The harness asserts contract outcomes, not mechanism.
+**Files:** Create `packages/plugin-sdk/src/sandbox-native-runtime-source.ts` (private source data),
+`packages/plugin-sdk/src/sandbox-runtime-source.ts` (bundle metadata),
+`packages/plugin-sdk/test/sandbox-runtime-source.test.ts`,
+`packages/testing/src/sandbox-native-conformance.ts`,
+`packages/testing/test/sandbox-native-conformance.test.ts` and
+`packages/testing/test/sandbox-native-helper.test.ts`. Modify only SDK/testing `src/index.ts`, SDK
+generated API snapshot and their changesets. No device/kernel/provider implementation belongs to 2a.
 
-- [ ] Add red cases for scope mutation, root/component swaps, symlink read/write/stat/list/scan,
-  safe parents, truncation, list flags and BFS depth/order/500-visit/50-result bounds.
-- [ ] Add actual Linux syscall inventory cases for stat/chmod plus chown, time, xattr, access,
-  readlink, statfs, ioctl and watch families; dangerous unsupported variants deny explicitly.
-  Test native ABI/header layouts on supported architectures, notification invalidation, concurrent
-  pointer mutation, descriptor alias/reuse, O_NONBLOCK, TCP_NODELAY and resource exhaustion.
-- [ ] Run the new tests and confirm failing controls; implement descriptor-pinned operations,
-  shared pinned-root identity validation for OS rules and native/metadata access, trusted staging
-  metadata and bounded broker lifecycle. Never reopen checked roots by pathname at launch. Do not use
-  seccomp CONTINUE on mutable validated pathname/sockaddr requests.
-- [ ] Run tests, `pnpm gen:sdk-api`, API/changeset checks, plus positive real curl/Node/filesystem controls and synthetic negative controls
-  under unchanged Docker hardening. Missing ABI/runtime coverage stays unavailable in capability tests.
-- [ ] Independently review the source inventory and commit `feat(sdk): ship verified sandbox helper sources`.
+**Interfaces:** Keep the planned `SANDBOX_RUNTIME_SOURCE: {readonly version: number; readonly files:
+readonly {readonly name: string; readonly source: string; readonly sha256: string}[]}`. Its first
+bundle contains only implemented `native-files.py`; no empty Linux file, support flag or broker stub.
+The SDK contains static source/hash data only, with no Node imports, process launch or filesystem I/O.
+The helper serves the existing native method inputs/results; private JSON transport may encode
+Uint8Array as base64. It neither determines a profile nor manufactures authority. Consumers supply
+the already-resolved scope and preserve the accepted descriptor-relative native access mechanism;
+this helper alone is not an OS execution boundary.
+
+Testing exports `runSandboxNativeConformance(fixture: SandboxNativeFixture): Promise<void>` with
+`SandboxNativeFixture = { root: string; operation(): Promise<Pick<SandboxOperation,
+"readFile"|"writeFile"|"stat"|"list"|"scan">>; seed(entries: readonly NativeFixtureEntry[]):
+Promise<void>; dispose(): Promise<void> }`. `NativeFixtureEntry` is a discriminated union of
+`{path,kind:"directory"}`, `{path,kind:"file",data:Uint8Array}` and
+`{path,kind:"symlink",target}`; paths/targets stay inside the fixture's owned temporary root.
+Each `operation()` supplies a fresh operation ID through the existing SDK interface. Required
+list/scan availability is asserted by the harness before using them. Seed/dispose are fixture-owned
+test setup/cleanup, never production methods or permission grants. The harness creates no official
+plugin dependency in core. The broader permission-conformance export remains Task 2b's separate gate.
+
+- [ ] Add failing ordinary API cases for file/directory/missing results, byte limits including zero,
+  binary round-trip, parent creation, stat sizes, in-fixture symlink behavior, sorted/bounded list,
+  truncation and exact BFS depth 2 / 500 visits / 50 results / skipped directories / invalid names.
+  Use ordinary owned temporary files with normal process permissions; no root swaps, mutable syscall
+  pointers, peer-proxy probes, attack payloads or controlled enforcement-break experiments.
+- [ ] Implement the portable helper source and test adapter using the accepted native API semantics;
+  preserve no-follow descriptor traversal without adding or testing Linux launch-rule installation.
+  Source packaging tests verify immutable data, exact SHA-256/name/version, no Node runtime dependency
+  in SDK source, and absence of unimplemented Linux payloads. Do not copy the proof's simplified BFS.
+- [ ] Run `pnpm exec vitest run packages/plugin-sdk/test/sandbox-runtime-source.test.ts packages/testing/test/sandbox-native-conformance.test.ts packages/testing/test/sandbox-native-helper.test.ts`,
+  `pnpm gen:sdk-api`, API/changeset/dependency checks and existing SDK tests. Prove the harness detects
+  an intentionally wrong ordinary return value; it must not infer runtime support from a fixture.
+- [ ] Independently review and commit the portable subset with accurately scoped release notes.
+  A passing result means native API compatibility only, never restricted runtime support.
+
+**MacOS dependency boundary:** Task 4 may consume 1+2a when implementing the already-reviewed
+immutable SRT worker/proxy and owned-background mechanism from `task-1-report.md`. Keep those device
+files in Task 4. Its real macOS integration and lifecycle acceptance remain required; normal helper
+tests do not replace them. Do not translate that mechanism into Linux or use this work as an
+alternate path to the blocked Linux correction. Linux restricted capabilities remain unavailable.
+
+### Task 2b: Restricted-runtime source and full permission evidence (gated remainder)
+
+**State:** Held. The Linux launch-root correction is platform-blocked and unverified. Do not retry,
+reroute, delegate to a different model/tool/agent, or execute a rephrased version. This is a recorded
+dependency, not a dispatch instruction. Only a legitimate change to the blocking platform condition
+can let the controller reassess the held work; urgency or a passing 2a fixture cannot clear it.
+
+**Reserved ownership after that gate:** `packages/plugin-sdk/src/sandbox-linux-runtime-source.ts`,
+later serial additions to `sandbox-runtime-source.ts` and its tests/API snapshot;
+`packages/testing/src/sandbox-permission-conformance.ts`,
+`packages/testing/test/sandbox-permission-conformance.test.ts`, testing exports and SDK/testing
+changesets. Preserve `runSandboxPermissionConformance(fixture: SandboxPermissionFixture): Promise<void>`
+for full provider evidence; the fixture supplies provider/handle, scopes, controlled endpoints,
+readiness and exact cleanup. Do not implement a fixture success flag as a runtime capability.
+
+**Remaining acceptance inventory, not work authorized to run now:** same pinned launch roots across
+OS rules/native/metadata; Linux broker and complete syscall/ABI/resource inventory; mutable-input
+and root/component race proof; real positive native/shell/network controls; cross-scope isolation,
+revocation and cancellation under unchanged hardening. Source hashes are not substitutes for these
+proofs. Production Linux source/support is withheld until independently reviewed evidence exists.
+
+2a does not satisfy 2b, Task 12 Linux/Docker enforcement, or the all-provider completion gate in
+Tasks 14–15. Independent macOS, root/API, policy, replay and UI development can continue, retaining
+their own actual-provider tests. Do not claim the complete feature or either cloud provider supported
+from a portable helper/fake fixture. Published extensions still consume actual npm SDK/testing
+versions; there is no local-link workaround for either stage.
 
 ### Task 3: Persist root profiles, consent and owner-only API
 
@@ -388,11 +445,15 @@ same atomic endpoint with omitted deviceId; later binding follows the existing c
 
 ### Task 11: First core SDK/testing release boundary
 
-**Files:** Only changesets/package release metadata for additive Tasks 1–2 and the small contract PR;
+**Files:** Only changesets/package release metadata for additive Tasks 1+2a and the small contract PR;
 no plugin dependency mutation before the package exists in npm.
 
-**Interfaces:** Publish the exact SDK API/source and testing conformance export used by Tasks 12–13.
-This is an external dependency, not permission to use a file/link workaround.
+**Interfaces:** First publication may contain accepted Task 1 types, 2a's portable helper source and
+`runSandboxNativeConformance` only. Do not describe it as the complete restricted-runtime source or
+export an unimplemented `runSandboxPermissionConformance`. Tasks 12–13 may consume the available
+published subset for independent preparation; full permission conformance waits for its real export
+and applicable evidence gates. A later additive publication carries reviewed 2b bytes/exports if its
+gate clears. This changes no accepted operation contract and permits no file/link workaround.
 Leave `DEVICE_PROTOCOL_VERSION`, v2 declarations and current consumers unchanged. Protocol3 publishes
 with the coordinated kernel/device release only after Task 8's background/retirement gate, consuming
 Task 6's staged adapters. Pending Linux validation blocks shipping/claims of
