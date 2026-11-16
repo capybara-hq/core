@@ -10,11 +10,13 @@ export interface CheckEntry {
   /** The CLI file under `src/cli/` (without `.ts`) the script runs. */
   cli: string;
   /**
-   * How CI runs it on pull requests: "full" = the whole check on every PR (inside `pnpm check` or
-   * as its own step); "diff" = it inspects only the diff against a base (`--base`) and has its own
-   * PR-only CI step. On `main` everything runs.
+   * Whether CI runs the check on every PR ("full") or only when the diff touches its area
+   * ("diff"). A "full" check may still inspect just the diff (`takesBase`). On `main` everything
+   * runs. The README entry names the same word first in its parentheses.
    */
   ciMode: "full" | "diff";
+  /** The check takes `--base <sha>` and inspects the diff against it (its own PR-only CI step). */
+  takesBase?: boolean;
   /** Why that mode (one sentence). */
   reason: string;
   /** What the check enforces (one sentence; the README entry has the rules). */
@@ -266,16 +268,20 @@ export const CHECKS: readonly CheckEntry[] = [
   {
     name: "sdk-api-changeset",
     cli: "sdk-api-changeset",
-    ciMode: "diff",
-    reason: "inspects the diff against a base (`--base`); own PR-only CI step, skipped on main",
+    ciMode: "full",
+    takesBase: true,
+    reason:
+      "runs on every PR as a cheap diff inspection against a base (`--base`); own PR-only CI step, skipped on main",
     description: "A change to the SDK API report carries a changeset bumping plugin-sdk.",
     inAll: false,
   },
   {
     name: "applied-migrations",
     cli: "applied-migrations",
-    ciMode: "diff",
-    reason: "inspects the diff against a base (`--base`); own PR-only CI step, skipped on main",
+    ciMode: "full",
+    takesBase: true,
+    reason:
+      "runs on every PR as a cheap diff inspection against a base (`--base`); own PR-only CI step, skipped on main",
     description: "Applied migrations are immutable and new ones are numbered above the base.",
     inAll: false,
   },

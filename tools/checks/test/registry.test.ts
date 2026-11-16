@@ -27,7 +27,12 @@ function registryProblems(entries: readonly CheckEntry[], w: World): string[] {
     else if (!script.includes(`tools/checks/src/cli/${e.cli}.ts`))
       out.push(`${e.name}: script does not run src/cli/${e.cli}.ts`);
     if (!w.cliExists(e.cli)) out.push(`${e.name}: src/cli/${e.cli}.ts is missing`);
-    if (!w.readme.includes(`\`check:${e.name}\``)) out.push(`${e.name}: no README entry`);
+    const line = w.readme
+      .split("\n")
+      .find((l) => l.startsWith(`- \`check:${e.name}\``) && /^[^(]*\((full|diff)/.test(l));
+    if (line === undefined) out.push(`${e.name}: no README entry line`);
+    else if (/^[^(]*\((full|diff)/.exec(line)?.[1] !== e.ciMode)
+      out.push(`${e.name}: README mode differs from ciMode ${e.ciMode}`);
     if (e.reason.trim() === "" || e.description.trim() === "") out.push(`${e.name}: empty text`);
     if (e.plugin !== undefined && !w.pluginNames.includes(e.plugin))
       out.push(`${e.name}: plugin-tools has no check named ${e.plugin}`);
@@ -77,21 +82,26 @@ describe("check registry", () => {
     expect(registryProblems([...CHECKS, extra], real())).toEqual([
       "ghost: no check:ghost script in package.json",
       "ghost: src/cli/ghost.ts is missing",
-      "ghost: no README entry",
+      "ghost: no README entry line",
       "ghost: no runner",
     ]);
   });
 
-  it("a README without the entry is reported", () => {
+  it("a README without the entry line, or with another mode word, is reported", () => {
     const w = real();
-    w.readme = w.readme.replaceAll("`check:config-docs`", "`x`");
-    expect(registryProblems(CHECKS, w)).toEqual(["config-docs: no README entry"]);
+    w.readme = w.readme.replaceAll("- `check:config-docs`", "see `check:config-docs`");
+    expect(registryProblems(CHECKS, w)).toEqual(["config-docs: no README entry line"]);
+    const v = real();
+    v.readme = v.readme.replace("- `check:tokens` (full", "- `check:tokens` (diff");
+    expect(registryProblems(CHECKS, v)).toEqual(["tokens: README mode differs from ciMode full"]);
   });
 
-  it("every ciMode is full or diff, and diff checks take a base", () => {
+  it("every ciMode is full or diff; checks taking a base are the ones CI calls with --base", () => {
+    const ci = readFileSync(join(root, ".github/workflows/ci.yml"), "utf8");
     for (const e of CHECKS) {
       expect(["full", "diff"]).toContain(e.ciMode);
-      if (e.ciMode === "diff") expect(e.inAll).toBe(false);
+      const withBase = ci.includes(`pnpm check:${e.name} --base`);
+      expect(e.takesBase === true, e.name).toBe(withBase);
     }
   });
 });
