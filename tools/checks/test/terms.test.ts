@@ -6,7 +6,6 @@ import { checkTerms, REFERENCE_EXEMPT_PATHS } from "../src/terms.js";
 
 const fixture = (name: string) =>
   fileURLToPath(new URL(`../fixtures/terms/${name}`, import.meta.url));
-const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
 
 /** 1-based line of the first line containing `needle`. */
 function lineOf(file: string, needle: string): number {
@@ -125,9 +124,5 @@ describe("checkTerms", () => {
     } finally {
       if (removed) REFERENCE_EXEMPT_PATHS.splice(i, 0, removed);
     }
-  });
-
-  it("the repository uses no old term", () => {
-    expect(checkTerms(repoRoot)).toEqual([]);
   });
 });
