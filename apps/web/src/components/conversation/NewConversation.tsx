@@ -44,6 +44,7 @@ import {
 } from "./ComposerBar";
 import { useStatusSignature } from "./ConversationView";
 import { PendingBubbles, usePendingSends } from "./PendingBubbles";
+import { DEFAULT_PERMISSION_PROFILE, useLockedPermissionPicker } from "./PermissionPicker";
 import type { SendResult } from "./useConversation";
 import { useDeviceChoice, useSelection } from "./useSelection";
 
@@ -166,6 +167,9 @@ export function useNewConversationPage(
   const device = useDeviceChoice(orgId, devices);
   const selection = useSelection(providers, agent, undefined, { newConversation: true });
   const pending = usePendingSends(undefined);
+  // The permission profile a new conversation starts with, shown read-only: the first send does
+  // not carry a choice yet, so the kernel's default is the truthful value.
+  const permissionPicker = useLockedPermissionPicker(DEFAULT_PERMISSION_PROFILE);
   /** A failed create's draft, for the composer the new layout mounts again. */
   const [restore, setRestore] = useState<{ n: number; draft?: ComposerDraft }>(() =>
     draft === null
@@ -305,6 +309,7 @@ export function useNewConversationPage(
           control={composer}
           pickers={{
             ...(device.picker ? { device: device.picker } : {}),
+            ...(permissionPicker ? { permission: permissionPicker } : {}),
             model: selection.modelPicker,
             ...(selection.effortPicker ? { effort: selection.effortPicker } : {}),
           }}

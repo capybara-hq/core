@@ -499,6 +499,11 @@ describe("the conversation's device (environments design §4.1 item 2)", () => {
     bound(null, null);
     const props = await open();
     expect(within(props).getByText(en.chatPanel.deviceNone, { exact: false })).toBeTruthy();
-    expect(document.querySelector('[data-part="picker"][data-locked="true"]')).toBeNull();
+    // no locked device picker: the one read-only picker is the owner's permission profile
+    expect(
+      [...document.querySelectorAll('[data-part="picker"][data-locked="true"]')].map(
+        (e) => e.textContent,
+      ),
+    ).toEqual([en.chat.permission.profile.approveForMe]);
   });
 });

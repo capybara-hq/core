@@ -67,6 +67,7 @@ import {
   LONG_MODELS_FIXTURE,
   NEW_CONVERSATION_FIXTURE,
   PANEL_FIXTURE,
+  PERMISSION_FIXTURE,
   PROSE_FIXTURE,
   SKILL_FIXTURE,
   SUBAGENT_FIXTURE,
@@ -423,7 +424,10 @@ function modelLabel(provider: string, id: string): string {
   );
 }
 
-function pickers(state: ComposerState, open?: "agent" | "model" | "effort" | "long") {
+function pickers(
+  state: ComposerState,
+  open?: "agent" | "model" | "effort" | "long" | "permission",
+) {
   const model = state === "no-effort" ? C.noEffortModel : C.selected;
   const agent: PickerProps = {
     label: K.agent,
@@ -509,14 +513,30 @@ function pickers(state: ComposerState, open?: "agent" | "model" | "effort" | "lo
           } satisfies PickerProps,
         }
       : {};
+  // the permission picker (§6.16.3 state permission) after the device: described rows
+  const PM = PERMISSION_FIXTURE;
+  const permissionPart =
+    open === "permission"
+      ? {
+          permission: {
+            label: PM.label,
+            value: PM.items.find((i) => i.id === PM.selected)?.label as string,
+            groups: [{ items: PM.items.map((i) => ({ ...i, checked: i.id === PM.selected })) }],
+            note: PM.note,
+            action: { ...PM.action, onSelect: noop },
+            onPick: noop,
+            referenceOpen: true,
+          } satisfies PickerProps,
+        }
+      : {};
   return state === "no-effort"
-    ? { ...agentPart, ...devicePart, model: modelPicker }
-    : { ...agentPart, ...devicePart, model: modelPicker, effort };
+    ? { ...agentPart, ...devicePart, ...permissionPart, model: modelPicker }
+    : { ...agentPart, ...devicePart, ...permissionPart, model: modelPicker, effort };
 }
 
 function composerProps(
   state: ComposerState,
-  open?: "agent" | "model" | "effort" | "long",
+  open?: "agent" | "model" | "effort" | "long" | "permission",
 ): ComposerBoxProps {
   const value =
     state === "attachments"
@@ -724,6 +744,10 @@ function pickerMenuBlocks(): ReactNode {
           <ComposerBox {...composerProps(m === "agent" ? "new" : "idle", m)} />
         </Block>
       ))}
+      {/* the permission profiles: described rows, one neutral look, the action and the note */}
+      <Block id="picker-menu-permission" offsetTop={380}>
+        <ComposerBox {...composerProps("idle", "permission")} />
+      </Block>
       {/* 100 models: the filter, the capped list scrolled to the checked one, the note kept */}
       <Block id="picker-menu-long" offsetTop={380}>
         <ComposerBox {...composerProps("idle", "long")} />

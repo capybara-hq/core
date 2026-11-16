@@ -32,6 +32,7 @@ import {
 } from "../../lib/query/conversation";
 import { keys as queryKeys } from "../../lib/query/keys";
 import { useAppMutation } from "../../lib/query/mutation";
+import { permissionsQuery } from "../../lib/query/permissions";
 import { scheduleQuery } from "../../lib/query/schedules";
 import { useWhoWaits } from "../../lib/query/who-waits";
 import { runParts } from "../../lib/run-row";
@@ -76,6 +77,7 @@ import {
   newClientMessageId,
 } from "./ComposerBar";
 import { LeftoverBubbles, PendingBubbles, usePendingSends } from "./PendingBubbles";
+import { useLockedPermissionPicker } from "./PermissionPicker";
 import { useDeviceRefresh } from "./PropertiesSections";
 import { useRightAreaSlot } from "./RightArea";
 import { Thread, type ThreadProps } from "./Thread";
@@ -260,6 +262,24 @@ export function useConversationPage(
       onInspect: inspectProject,
     };
   }
+  // The permission profile: an owner-only read (an unknown owner never authorizes it, as in the
+  // route's prefetch), shown read-only; a shared viewer reads and sees nothing.
+  const row = conv.conversation;
+  const owner = row !== undefined && row.accountId === session.me.account.id;
+  const permissionsQ = permissionsQuery(orgId, conversationId);
+  const permissions = useQuery({
+    ...permissionsQ,
+    enabled: owner,
+    retryOnMount: retryOnMountOf(permissionsQ.queryKey),
+  });
+  const permissionPicker = useLockedPermissionPicker(
+    owner ? permissions.data?.profile : undefined,
+    permissions.data !== undefined && permissions.data.rootConversationId !== conversationId
+      ? "inherited"
+      : row?.scheduledTaskId
+        ? "scheduled"
+        : "profile",
+  );
   const keys = useMemo(() => toolKeysOf(conv.events), [conv.events]);
   const info = useToolInfo(orgId, conversationId, keys);
   useDeviceRefresh(orgId, conversationId, conv.events);
@@ -556,6 +576,7 @@ export function useConversationPage(
           // no agent here: the title bar's path names it (issue U)
           pickers={{
             ...(devicePicker ? { device: devicePicker } : {}),
+            ...(permissionPicker ? { permission: permissionPicker } : {}),
             model: selection.modelPicker,
             ...(selection.effortPicker ? { effort: selection.effortPicker } : {}),
           }}

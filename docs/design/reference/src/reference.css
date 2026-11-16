@@ -2737,6 +2737,44 @@ textarea {
 .r-menu-item[data-tone="fail"] .cb-icon {
   color: var(--cb-fail);
 }
+/* §6.16.3 state permission: a described item, label and tag over a muted sentence */
+.r-menu-item[data-described] {
+  align-items: flex-start;
+  height: auto;
+  min-height: var(--cb-row-default);
+  padding-top: var(--cb-space-2);
+  padding-bottom: var(--cb-space-2);
+  white-space: normal;
+}
+.r-menu-item[data-described] > .cb-icon {
+  flex: none;
+  margin-top: calc((var(--cb-type-body-line) - 14px) / 2);
+}
+.r-menu-item[data-disabled] {
+  color: var(--cb-disabled);
+}
+.r-menu-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+  min-width: 0;
+}
+.r-menu-head {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  white-space: nowrap;
+}
+.r-menu-desc {
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.r-menu-item[data-disabled] .r-menu-desc {
+  color: var(--cb-disabled);
+}
 .r-menu-label {
   padding: var(--cb-space-2) var(--cb-pad-default-x) var(--cb-space-1);
   color: var(--cb-muted);
