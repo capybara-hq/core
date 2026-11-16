@@ -705,7 +705,7 @@ export type ContentBlock =
 }
 /**
 * An attachment whose content the model cannot read (an xlsx, say): the kernel replaces it with
-* text carrying an unsigned object reference before the request, so a plugin **never** receives
+* text carrying an unsigned object reference before the request, so a provider **never** receives
 * this block. `mediaType` is any non-empty `type/subtype`; `size` is display metadata (the UI
 * chip, the reference line) and is never sent.
 */
@@ -1576,6 +1576,8 @@ export type HookContentBlock = Exclude<ContentBlock, {
     type: "image";
 } | {
     type: "document";
+} | {
+    type: "file";
 }> | HookMediaPlaceholder;
 
 // @public
@@ -1583,7 +1585,7 @@ export type HookHandler<K extends AvailableHook> = (payload: HookPayloads[K], si
 
 // @public
 export interface HookMediaPlaceholder {
-    kind: "image" | "document";
+    kind: "image" | "document" | "file";
     mediaType: string;
     size: number;
     type: "media_omitted";

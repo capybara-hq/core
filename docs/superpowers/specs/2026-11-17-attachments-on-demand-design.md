@@ -128,8 +128,11 @@ A text attachment above the threshold uses the same line with a clause on why it
 - `mediaMode` (`build.ts:200`) must stop treating an unknown `document` media type as "bytes":
   a document block whose type is not media is always a reference, whatever the model's
   capabilities say.
-- Replay: the log block keeps its shape (`{ type: "document", mediaType, source: { ref }, name }`,
-  `conversations/attachments.service.ts:528-540`); the placeholder and the inline threshold are
+- The log shape: a file attachment is logged as a **`file` content block**
+  (`{ type: "file", mediaType, source: { ref }, name, size }`, the SDK member added with this
+  design) — a fourth kind beside `image` and `document`, which is why a raw `file` block can never
+  reach a provider or a hook payload (`HookContentBlock` replaces it like the other media).
+  Replay: the block is stored as written; the placeholder and the inline threshold are
   derived from the block, its recorded size and the config, so a rebuild of the same log produces
   the same text. Logs written before this change hold no file attachment (uploads were refused), and
   a text attachment they hold was inlined under the old rule — that inline is part of the *request*,

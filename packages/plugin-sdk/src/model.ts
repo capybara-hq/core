@@ -121,7 +121,7 @@ export type ContentBlock =
     }
   /**
    * An attachment whose content the model cannot read (an xlsx, say): the kernel replaces it with
-   * text carrying an unsigned object reference before the request, so a plugin **never** receives
+   * text carrying an unsigned object reference before the request, so a provider **never** receives
    * this block. `mediaType` is any non-empty `type/subtype`; `size` is display metadata (the UI
    * chip, the reference line) and is never sent.
    */
