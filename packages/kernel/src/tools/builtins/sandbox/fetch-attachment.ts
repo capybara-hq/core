@@ -117,8 +117,12 @@ export function sandboxFetchAttachmentTool(deps: SandboxToolDeps): BuiltinTool {
         if (list.length === 0) throw new ToolError(noAttachmentsText(file));
         throw new ToolError(unknownFileText(file, list));
       }
-      // the whole list names the file, so its name never changes between calls
-      const name = assigned.get(attachment.id) ?? attachment.name;
+      // the whole list names the file, so its name never changes between calls; the path's last
+      // segment is only ever the sanitized, de-duplicated name the assignment gave it (never the
+      // raw name, which may hold `/` or `..`). Every row of the list gets one, so a miss means the
+      // list changed under this call: write nothing and answer as for an unknown file.
+      const name = assigned.get(attachment.id);
+      if (name === undefined) throw new ToolError(unknownFileText(file, list));
       const { value, notices } = await inSandbox(deps, ctx, async ({ h, roots, p, signal }) => {
         const path = `${attachmentsDir(roots, conv)}/${name}`;
         let bytes: Uint8Array;

@@ -182,6 +182,25 @@ describe("FetchAttachment", () => {
     expect(other).toContain(`Copied report-2.csv to ${DIR}/report-2.csv.`);
   });
 
+  it("only ever writes the sanitized name the list assigns, never the raw one", async () => {
+    // the path's last segment is `assignAttachmentNames`' output: a raw name with `/`, `..` or a
+    // dot-only name never reaches it, so the write stays inside the conversation's directory
+    const r = rig({
+      attachments: [
+        { id: ATT, name: "../../etc/passwd" },
+        { id: "1e2f3a4b-1111-4222-8333-444455556666", name: ".." },
+      ],
+    });
+    const traversal = r.text(await r.tool.run({ file: "../../etc/passwd" }, callCtx()));
+    expect(traversal).toContain(`Copied .._.._etc_passwd to ${DIR}/.._.._etc_passwd.`);
+    const dots = r.text(
+      await r.tool.run({ file: "1e2f3a4b-1111-4222-8333-444455556666" }, callCtx()),
+    );
+    expect(dots).toContain(`Copied attachment to ${DIR}/attachment.`);
+    // one segment below the conversation's directory, whatever the names: nothing escapes it
+    for (const w of r.writes) expect(w, w).toMatch(new RegExp(`^${DIR}/[^/]+$`));
+  });
+
   it("answers that the file is gone when its row or object is", async () => {
     const r = rig({ attachments: [{ id: ATT, name: "gone.xlsx" }], open: () => null });
     await expect(r.tool.run({ file: "gone.xlsx" }, callCtx())).rejects.toThrow(
