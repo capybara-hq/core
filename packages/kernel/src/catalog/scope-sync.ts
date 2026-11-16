@@ -191,7 +191,9 @@ export class PluginScopeSync {
           ).map((i) => [i.id, data.orgId]);
     const deferred = new Set<string>();
     for (const [itemId, orgId] of pairs) {
-      // stopped between pairs: failed, so BullMQ retries the job (on this or another replica)
+      // Stopped between pairs: failed, so BullMQ retries the job (on this or another replica).
+      // On the job's last attempt nothing retries it: the pairs not reached yet are dropped
+      // until the next sync of the item or org (a scope change, a deploy, a new org) owes them
       if (run.signal?.aborted)
         throw new Error("the plugin scope worker stopped; the job is retried");
       try {

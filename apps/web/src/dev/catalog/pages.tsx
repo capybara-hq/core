@@ -51,6 +51,7 @@ const INBOX: PlatformInboxView = {
     catalog_request: 3,
     permission_confirmation: 1,
     scope_sync_failed: 2,
+    extension_disabled: 0,
     ownership_transferred: 0,
     org_upload_pending: 0,
   },

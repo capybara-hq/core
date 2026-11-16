@@ -30,6 +30,21 @@ export interface ScopeSyncFailureView {
 }
 
 /**
+ * A live platform plugin (or an org's own) whose scope turns it on (`all` or `named`) while its
+ * extension is installed and approved but disabled on the deployment (a super admin disabled it, or
+ * its enable was refused because another enabled extension holds one of its single-provider
+ * extension points): the scope sync installs it nowhere until the extension is enabled, whose
+ * enable owes the sync. Derived from the current state at every read.
+ */
+export interface ExtensionDisabledView {
+  item: { id: string; name: string; displayName: LocalizedName | null };
+  /** The extension's name (the plugin's) and its installed version. */
+  extension: { name: string; version: string };
+  /** When the extension's install record last changed (its disable, or its install). */
+  since: string;
+}
+
+/**
  * One item of the super admin's inbox (by `type`). Nothing is decided in the inbox: each item is
  * acted on where it lives (the web links to it).
  * - `catalog_request`: an org's pending request to the platform (`access`: use a plugin shown to
@@ -39,6 +54,9 @@ export interface ScopeSyncFailureView {
  * - `org_upload_pending`: an org-owned plugin whose uploaded version (with an extension) waits for
  *   the super admin in 待确认 (ruling P3-22; confirmed or rejected there), `id` = the item's;
  * - `scope_sync_failed`: an open scope sync failure, `id` = `<itemId>/<orgId>`;
+ * - `extension_disabled`: a plugin its scope turns on whose extension is disabled on the deployment
+ *   ({@link ExtensionDisabledView}), `id` = the item's; gone once the extension is enabled (or the
+ *   scope no longer turns it on);
  * - `ownership_transferred`: a deleted org's shared item now belongs to the platform, until a
  *   super admin dismisses it (`POST admin/inbox/notices/:id/dismiss`).
  */
@@ -47,6 +65,12 @@ export type PlatformInboxItem =
   | { type: "permission_confirmation"; id: string; createdAt: string; item: CatalogItemView }
   | { type: "org_upload_pending"; id: string; createdAt: string; item: CatalogItemView }
   | { type: "scope_sync_failed"; id: string; createdAt: string; failure: ScopeSyncFailureView }
+  | {
+      type: "extension_disabled";
+      id: string;
+      createdAt: string;
+      disabled: ExtensionDisabledView;
+    }
   | {
       type: "ownership_transferred";
       id: string;
@@ -60,6 +84,7 @@ export const PLATFORM_INBOX_TYPES = [
   "permission_confirmation",
   "org_upload_pending",
   "scope_sync_failed",
+  "extension_disabled",
   "ownership_transferred",
 ] as const satisfies readonly PlatformInboxItem["type"][];
 
@@ -105,16 +130,27 @@ export class PlatformInboxService {
   ) {}
 
   async list(): Promise<PlatformInboxView> {
-    const [requests, requestCount, pending, failures, failureCount, notices, noticeCount] =
-      await Promise.all([
-        this.requests.listDeployment(),
-        this.requests.countPendingDeployment(),
-        this.catalog.list({ pending: true }),
-        this.scopeSyncFailures(),
-        this.countScopeSyncFailures(),
-        this.notices(),
-        this.countNotices(),
-      ]);
+    const [
+      requests,
+      requestCount,
+      pending,
+      failures,
+      failureCount,
+      disabled,
+      disabledCount,
+      notices,
+      noticeCount,
+    ] = await Promise.all([
+      this.requests.listDeployment(),
+      this.requests.countPendingDeployment(),
+      this.catalog.list({ pending: true }),
+      this.scopeSyncFailures(),
+      this.countScopeSyncFailures(),
+      this.disabledExtensions(),
+      this.countDisabledExtensions(),
+      this.notices(),
+      this.countNotices(),
+    ]);
     const all: PlatformInboxItem[] = [
       ...requests.map(
         (r): PlatformInboxItem => ({
@@ -138,6 +174,14 @@ export class PlatformInboxService {
           id: `${f.item.id}/${f.org.id}`,
           createdAt: f.failedAt,
           failure: f,
+        }),
+      ),
+      ...disabled.map(
+        (d): PlatformInboxItem => ({
+          type: "extension_disabled",
+          id: d.item.id,
+          createdAt: d.since,
+          disabled: d,
         }),
       ),
       ...notices.map(
@@ -167,6 +211,7 @@ export class PlatformInboxService {
       permission_confirmation: pending.length - orgUploads,
       org_upload_pending: orgUploads,
       scope_sync_failed: failureCount,
+      extension_disabled: disabledCount,
       ownership_transferred: noticeCount,
     };
     const total = Object.values(byType).reduce((a, b) => a + b, 0);
@@ -179,13 +224,14 @@ export class PlatformInboxService {
    * requests and the failures; the permission confirmations are the catalog's pending list).
    */
   async count(): Promise<number> {
-    const [requests, pending, failures, notices] = await Promise.all([
+    const [requests, pending, failures, disabled, notices] = await Promise.all([
       this.requests.countPendingDeployment(),
       this.catalog.list({ pending: true }),
       this.countScopeSyncFailures(),
+      this.countDisabledExtensions(),
       this.countNotices(),
     ]);
-    return requests + pending.length + failures + notices;
+    return requests + pending.length + failures + disabled + notices;
   }
 
   private async countNotices(): Promise<number> {
@@ -234,6 +280,28 @@ export class PlatformInboxService {
       .where("id", "=", id)
       .executeTakeFirst();
     if (!exists) throw new ApiError("inbox.notice_not_found", "Notice not found");
+  }
+
+  private async countDisabledExtensions(): Promise<number> {
+    const r = await disabledExtensionRows(this.kdb)
+      .select(sql<string>`count(*)`.as("n"))
+      .executeTakeFirstOrThrow();
+    return Number(r.n);
+  }
+
+  /** The plugins on by scope whose extension is disabled, newest change first. */
+  private async disabledExtensions(): Promise<ExtensionDisabledView[]> {
+    const rows = await disabledExtensionRows(this.kdb)
+      .select(["i.id", "i.name", "i.display_name", "e.version", "e.updated_at"])
+      .orderBy("e.updated_at", "desc")
+      .orderBy("i.id")
+      .limit(PLATFORM_INBOX_MAX_ITEMS)
+      .execute();
+    return rows.map((r) => ({
+      item: { id: r.id, name: r.name, displayName: r.display_name },
+      extension: { name: r.name, version: r.version },
+      since: r.updated_at.toISOString(),
+    }));
   }
 
   /**
@@ -300,6 +368,31 @@ export class PlatformInboxService {
       failedAt: r.failed_at.toISOString(),
     }));
   }
+}
+
+/**
+ * The rows of {@link ExtensionDisabledView}: a live, usable, not builtin, not disabled item whose
+ * scope is not `optional`, joined to its extension's install record (same name) that is disabled
+ * and approved (a permission snapshot exists; an unapproved one is a permission confirmation).
+ */
+function disabledExtensionRows(kdb: KernelDb) {
+  return kdb.db
+    .selectFrom("catalog_items as i")
+    .innerJoin("extension_installs as e", "e.name", "i.name")
+    .where("i.deleted_at", "is", null)
+    .where("i.builtin", "=", false)
+    .where("i.disabled", "=", false)
+    .where("i.awaiting_confirmation", "=", false)
+    .where("i.scope", "<>", "optional")
+    .where("e.desired_state", "=", "disabled")
+    .where((eb) =>
+      eb.exists(
+        eb
+          .selectFrom("extension_permission_snapshots as s")
+          .select("s.plugin")
+          .whereRef("s.plugin", "=", "e.name"),
+      ),
+    );
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

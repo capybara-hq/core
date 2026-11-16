@@ -21,8 +21,15 @@ export interface OutboxJobSpec {
 
 /**
  * The plugin scope queue's one retry policy (`scope-item`, `scope-item-chunk`, `scope-org`): 7
- * attempts, 5 s doubling (about five minutes in all, the time a replica takes to load an extension
- * its deploy enabled); removed once done, so the next add of the same id is not swallowed.
+ * attempts, 5 s doubling, so the retries wait 5 + 10 + 20 + 40 + 80 + 160 = 315 s (about five
+ * minutes) before the last attempt. That is the window a replica has to load an extension its
+ * deploy enabled: the enable's `kernel.plugins.changed` message reconciles every replica at once,
+ * and if a replica misses it, its periodic reconcile does within
+ * `extensionHost.reconcileIntervalSeconds` (default 60 s). An interval longer than the window (it
+ * is not capped: tests set an hour to keep the periodic reconcile out of the way) leaves such a
+ * replica's chunk to its last attempt, which records `catalog.not_deployed` for the pair until the
+ * next sync of the item.
+ * Removed once done, so the next add of the same id is not swallowed.
  */
 const SCOPE_JOB_OPTS = {
   attempts: 7,
@@ -218,7 +225,9 @@ export const OUTBOX_JOBS = {
     processedIn: "packages/kernel/src/catalog/scope-sync-workers.ts",
     // retried while the item's extension is enabled but not loaded on the replica (the job throws
     // after its other pairs, P3-38): 5 s doubling, about five minutes in all; the last attempt
-    // installs anyway and records what fails. A pair's own failure is recorded, not retried
+    // installs anyway and records what fails. A pair's own failure is recorded and does not fail
+    // the job; a retry of a deferred chunk attempts every pair again, a failed one included
+    // (idempotent: it converges from what it reads)
     opts: SCOPE_JOB_OPTS,
   },
   // `catalog/scope-jobs.ts` SCOPE_ORG_JOB: owed by an org's creation, under `scopeOrgJobId`

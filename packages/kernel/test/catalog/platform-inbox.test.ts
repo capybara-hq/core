@@ -47,6 +47,7 @@ const NO_ITEMS = {
   permission_confirmation: 0,
   org_upload_pending: 0,
   scope_sync_failed: 0,
+  extension_disabled: 0,
   ownership_transferred: 0,
 };
 
@@ -364,10 +365,48 @@ describe("platform inbox", () => {
       permission_confirmation: 1,
       org_upload_pending: 1,
       scope_sync_failed: 1,
+      extension_disabled: 0,
       ownership_transferred: 1,
     });
     expect(Object.keys(view.byType).sort()).toEqual([...PLATFORM_INBOX_TYPES].sort());
     expect(view.total).toBe(6);
     expect(await service.count()).toBe(6);
+  });
+
+  it("a plugin its scope turns on whose extension is disabled waits until the extension is enabled", async () => {
+    const { itemId } = await importDeployedPlugin(env, "switched-off");
+    const ops = env.k.app.get(ExtensionAdminOps);
+    // optional: nobody's install is owed, so a disabled extension is not an inbox item
+    await ops.disable("switched-off", null);
+    expect(await ofType("extension_disabled")).toEqual([]);
+    // the scope turns it on: shown, with its extension and version
+    await setScope(env, itemId, "all");
+    const [shown] = await ofType("extension_disabled");
+    expect(shown).toMatchObject({
+      type: "extension_disabled",
+      id: itemId,
+      disabled: {
+        item: { id: itemId, name: "switched-off" },
+        extension: { name: "switched-off", version: "1.0.0" },
+      },
+    });
+    expect((await inbox()).byType).toEqual({ ...NO_ITEMS, extension_disabled: 1 });
+    expect(await count()).toBe(1);
+    // the item disabled on the platform (a master switch): not shown
+    await env.db
+      .updateTable("catalog_items")
+      .set({ disabled: true })
+      .where("id", "=", itemId)
+      .execute();
+    expect(await ofType("extension_disabled")).toEqual([]);
+    await env.db
+      .updateTable("catalog_items")
+      .set({ disabled: false })
+      .where("id", "=", itemId)
+      .execute();
+    // enabled again: gone
+    await ops.enable("switched-off", null);
+    expect(await ofType("extension_disabled")).toEqual([]);
+    expect(await count()).toBe(0);
   });
 });

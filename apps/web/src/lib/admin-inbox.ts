@@ -16,6 +16,16 @@ export interface ScopeSyncFailure {
 }
 
 /**
+ * A plugin its scope turns on (`all` or `named`) whose extension is installed and approved but
+ * disabled on the platform: the scope sync installs it nowhere until the extension is enabled.
+ */
+export interface ExtensionDisabled {
+  item: { id: string; name: string; displayName: LocalizedName | null };
+  extension: { name: string; version: string };
+  since: string;
+}
+
+/**
  * The super admin's inbox (kernel `GET /api/v1/admin/inbox`, `inbox/platform-inbox.service.ts`):
  * what waits on the platform, newest first, at most 100 (`truncated`: more; `total`: how many in
  * all). Nothing is decided here: each item links to the page where it is acted on.
@@ -24,6 +34,7 @@ export type PlatformInboxItem =
   | { type: "catalog_request"; id: string; createdAt: string; request: CatalogRequest }
   | { type: "permission_confirmation"; id: string; createdAt: string; item: CatalogItem }
   | { type: "scope_sync_failed"; id: string; createdAt: string; failure: ScopeSyncFailure }
+  | { type: "extension_disabled"; id: string; createdAt: string; disabled: ExtensionDisabled }
   | { type: "org_upload_pending"; id: string; createdAt: string; item: CatalogItem }
   | { type: "ownership_transferred"; id: string; createdAt: string; notice: PlatformNotice };
 
@@ -49,6 +60,7 @@ export const PLATFORM_INBOX_TYPES = [
   "catalog_request",
   "permission_confirmation",
   "scope_sync_failed",
+  "extension_disabled",
   "ownership_transferred",
   "org_upload_pending",
 ] as const satisfies readonly PlatformInboxItem["type"][];
@@ -80,7 +92,8 @@ export const getPlatformInboxCount = () => apiFetch<{ total: number }>("/api/v1/
 /**
  * Where an item is acted on: requests, permission confirmations and org uploads in the admin 插件
  * page's 待确认 tab, a failed scope sync on its plugin's page (a scope change there syncs it
- * again), a transferred item on its own page.
+ * again), a disabled extension on its plugin's page (enabled there), a transferred item on its own
+ * page.
  */
 export function platformInboxHref(item: PlatformInboxItem): string {
   switch (item.type) {
@@ -90,6 +103,8 @@ export function platformInboxHref(item: PlatformInboxItem): string {
       return "/admin/plugins/pending";
     case "scope_sync_failed":
       return `/admin/plugins/${encodeURIComponent(item.failure.item.id)}`;
+    case "extension_disabled":
+      return `/admin/plugins/${encodeURIComponent(item.disabled.item.id)}`;
     case "ownership_transferred": {
       const ref = item.notice.detail.ref;
       const base =
@@ -115,6 +130,7 @@ export function platformInboxTypeHref(type: PlatformInboxType): string {
     case "org_upload_pending":
       return "/admin/plugins/pending";
     case "scope_sync_failed":
+    case "extension_disabled":
     case "ownership_transferred":
       return `/admin/inbox?type=${type}`;
   }

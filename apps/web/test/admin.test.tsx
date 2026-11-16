@@ -52,6 +52,7 @@ const BY_TYPE = {
   catalog_request: 3,
   permission_confirmation: 0,
   scope_sync_failed: 2,
+  extension_disabled: 0,
   ownership_transferred: 1,
   org_upload_pending: 0,
 };

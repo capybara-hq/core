@@ -3743,6 +3743,7 @@
           "catalog_request": "Catalog requests",
           "permission_confirmation": "Permission confirmations",
           "scope_sync_failed": "Scope sync failures",
+          "extension_disabled": "Extensions disabled",
           "ownership_transferred": "Ownership transfers",
           "org_upload_pending": "Org uploads to confirm"
         },
@@ -3937,6 +3938,12 @@
           "uninstall": "The plugin's scope turns it off in {org}, but the sync failed. It is tried again the next time this plugin and organization sync: once the cause is fixed, changing the plugin's scope on its page or a worker restart syncs it again (saving an unchanged scope does not).",
           "dependencies": "The plugin is on in {org}, but a dependency a platform update added could not be installed. It is tried again the next time this plugin and organization sync: once the cause is fixed (install a version the dependency range accepts, for example), changing the plugin's scope on its page or a worker restart syncs it again (saving an unchanged scope does not)."
         }
+      },
+      "extensionDisabled": {
+        "label": "Extension disabled",
+        "version": "Extension version",
+        "since": "Since",
+        "hint": "This plugin's scope turns it on, but its extension is disabled on the platform, so the scope sync installs it in no organization that lacks it. Enable the extension on the plugin's page (if another enabled extension provides the same single-provider extension point, disable that one first); the enable syncs the plugin's scope again."
       },
       "orgUpload": {
         "label": "Upload to confirm",

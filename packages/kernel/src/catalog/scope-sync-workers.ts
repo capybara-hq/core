@@ -39,7 +39,7 @@ export class PluginScopeSyncProcessor extends WorkerHost<Worker<ScopeJob>> {
       if (!([SCOPE_ITEM_JOB, SCOPE_CHUNK_JOB, SCOPE_ORG_JOB] as string[]).includes(job.name)) {
         throw new Error(`unknown plugin scope job ${job.name}`);
       }
-      if (job.id === undefined) throw new Error("a plugin scope job has an id");
+      if (job.id === undefined) throw new Error("a plugin scope job has no id");
       return this.sync.process(job.data, {
         jobId: job.id,
         finalAttempt: job.attemptsMade + 1 >= (job.opts.attempts ?? 1),
