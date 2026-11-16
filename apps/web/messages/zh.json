@@ -4017,7 +4017,7 @@
         "accountInitialPasswordShown": "查看了初始密码",
         "agentCreated": "创建了智能体",
         "agentDeleted": "删除了智能体",
-        "agentOwnerChanged": "更换了智能体的负责人",
+        "agentOwnerChanged": "更换了智能体的所有者",
         "agentPendingConnectorBound": "为智能体接上了待配置的连接器",
         "agentProfileUpdated": "修改了智能体资料",
         "agentUpdated": "修改了智能体",
