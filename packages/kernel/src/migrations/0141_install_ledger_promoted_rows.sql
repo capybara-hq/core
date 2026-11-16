@@ -7,9 +7,12 @@
 -- Precondition the kernel now relies on: every remaining ledger row of kind `skill` /
 -- `agent_template` names an org row with plugin provenance (a skill with `catalog_item_id`; an
 -- agent template with `plugin_name` or `catalog_item_id`), which P3-46 refuses to promote
--- (`catalog.not_owned`), so no ledger row can ever name a promoted row. It is established here, not
--- assumed: the ledger rows of org rows without plugin provenance (promoted already, or the org's
--- own content an old install only added a version to) are deleted. The only behaviour lost is a
+-- (`catalog.not_owned`), so no ledger row names a promoted row at the time this runs. It is
+-- established here, not assumed: the ledger rows of org rows without plugin provenance (promoted
+-- already, or rows the org has since uploaded its own version of) are deleted. A residue remains:
+-- an install still `installing` from before plugin scope phase 2 whose skill the org later
+-- re-uploads and promotes; its rollback would soft-delete the org row (the platform row stays).
+-- Accepted as negligible: no such install can still be live on a deployment of this release. The only behaviour lost is a
 -- rollback of such an old failed install reverting a version on the org's own row, which the org
 -- may since have shared. Idempotent: a second run matches nothing.
 

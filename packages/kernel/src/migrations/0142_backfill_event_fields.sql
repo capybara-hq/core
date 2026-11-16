@@ -3,9 +3,10 @@
 -- log and the events in eval case snapshots). Idempotent: a second run matches nothing.
 --
 -- - `compaction_summary.savedTokens`: 0 (the web shows the plain divider, as for "nothing saved").
--- - `compaction_summary.step` / `compaction_failed.step`: the step of the compaction usage the same
---   run logged with it (the first `usage` with `purpose: "compaction"` after it), else 0. Only a
---   later compaction of the same run and step reads it (its idempotency ordinal); those runs ended.
+-- - `compaction_summary.step` / `compaction_failed.step`: the step of the first `usage` with
+--   `purpose: "compaction"` after it in the same run, else 0 (for a failure whose usage was logged
+--   before it, that may be a later compaction's step). Only a later compaction of the same run and
+--   step reads it (its idempotency ordinal); those runs ended, so an approximate value is harmless.
 -- - `approval_requested.requestedFor` / `.approverRole`: from the approval row, else null.
 --
 -- Cost: one pass over `conversation_events` filtered by type (and over `eval_cases`), done once;
