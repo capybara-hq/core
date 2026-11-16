@@ -6579,6 +6579,7 @@
     "forbiddenTools": "Tool keys",
     "forbiddenHelp": "One tool key per line, for example Bash or mcp__github__create_issue.",
     "forbiddenUnreadable": "This organization's forbidden tool list could not be read: unattended scheduled runs fail and no tool can be approved for a task. Check the list below and save it to fix this.",
+    "saveRepair": "Save the list",
     "invalid": "Enter a whole number of at least 1.",
     "save": "Save",
     "saved": "Settings saved",

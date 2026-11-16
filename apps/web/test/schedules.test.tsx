@@ -815,7 +815,7 @@ describe("/settings/schedules (org admins)", () => {
   );
 
   it.each(["zh", "en"] as const)(
-    "an unreadable forbidden list shows a notice and Save sends the list unchanged (%s)",
+    "an unreadable forbidden list shows a notice whose save sends the list unchanged, not a pending change (%s)",
     async (locale) => {
       const s = (locale === "zh" ? zh : en).scheduleSettings;
       const calls = stubApi({
@@ -831,11 +831,11 @@ describe("/settings/schedules (org admins)", () => {
       await renderRouteWithCache("/settings/schedules", lastStubRoutes(), { locale });
       expect(screen.getByText(s.forbiddenUnreadable)).toBeTruthy();
       const user = userEvent.setup();
-      // nothing edited: the list itself is the pending change
-      const row = screen.getByRole("region", {
-        name: locale === "zh" ? "待提交改动" : "Pending changes",
-      });
-      await user.click(within(row).getByRole("button", { name: s.save }));
+      // nothing edited: no pending change, the notice carries the repair
+      expect(
+        screen.queryByRole("region", { name: locale === "zh" ? "待提交改动" : "Pending changes" }),
+      ).toBeNull();
+      await user.click(screen.getByRole("button", { name: s.saveRepair }));
       expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({
         scheduledTasks: { forbiddenTools: [] },
       });
