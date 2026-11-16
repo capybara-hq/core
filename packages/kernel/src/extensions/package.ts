@@ -55,9 +55,9 @@ export { HOST_ZOD_VERSION };
 export type ExtensionPackageLimits = PackageTgzLimits;
 
 /**
- * Codes of {@link ExtensionPackageError}: an invalid package, a
- * plugin without an extension (nothing to install on the deployment), or client code the
- * extension manifest does not declare.
+ * Codes of {@link ExtensionPackageError}: an invalid package, a plugin without an
+ * extension (nothing to install on the deployment), or client code the extension manifest does not
+ * declare.
  */
 export type ExtensionPackageErrorCode =
   | "extension.package_invalid"
@@ -187,8 +187,8 @@ const fromPluginPackageError = (e: PluginPackageError): ExtensionPackageError =>
  * (`readPluginPackage`) with an `extension` section, whose entry's module graph passes the import
  * rules (file header) and whose `extension.migrations` SQL is collected. Invalid ->
  * {@link ExtensionPackageError} (listing every problem it can find; problems while unpacking stop
- * at the first): `extension.no_extension` for a
- * plugin without an extension, otherwise `extension.package_invalid`.
+ * at the first): `extension.no_extension` for a plugin without an extension, otherwise
+ * `extension.package_invalid`.
  */
 export async function readExtensionPackage(
   bytes: Uint8Array,

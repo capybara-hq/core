@@ -135,8 +135,7 @@ import { maxSatisfying, satisfiesRange } from "./versions.js";
  *
  * prepare: the tgz is always hostile input, and **nothing is written until every check passes**
  * (F-AD): `readPluginPackage` (plugin.json, package.json, listed / scanned skills and templates,
- * icons), the extension's module graph and migrations
- * (`readExtensionPackage`), the extension's deployment state (config-declared names are
+ * icons), the extension's module graph and migrations (`readExtensionPackage`), the extension's deployment state (config-declared names are
  * refused; name ownership; a downgrade to a version with unrun migrations is refused), each skill by
  * the skill package rules, each connector template against the connector loaded on this replica (or
  * statically when the connector is provided by the plugin's own extension or by a dependency), the
@@ -557,8 +556,8 @@ const mismatch = (what: string) =>
   );
 
 /**
- * The API error of a plugin package that cannot be read in a catalog path: undeclared client code -> `client.undeclared`; a failing theme (themes
- * spec §5) -> `theme.invalid` (details `[{ theme, errors }]`) or `theme.unreadable` (details
+ * The API error of a plugin package that cannot be read in a catalog path: undeclared client code
+ * -> `client.undeclared`; a failing theme (themes spec §5) -> `theme.invalid` (details `[{ theme, errors }]`) or `theme.unreadable` (details
  * `[{ theme, issues }]`, the failing pairs); anything else -> `catalog.invalid_manifest` (issues as
  * details).
  */

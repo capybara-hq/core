@@ -110,16 +110,6 @@ describe("checkTerms", () => {
     expect(exempt).toEqual([]);
   });
 
-  it("the legacy-format detector may name the old formats, and nothing else old", () => {
-    const root = fixture("violations");
-    const tgz = join(root, "packages/kernel/src/packages/tgz.ts");
-    expect(
-      checkTerms(root)
-        .filter((x) => x.file === tgz)
-        .map((x) => x.line),
-    ).toEqual([lineOf(tgz, "definePlugin")]);
-  });
-
   it("an exempt path is not searched, and is reported once its exemption is gone", () => {
     const root = fixture("violations");
     const migration = join(root, "packages/kernel/src/migrations/0040_applied.sql");

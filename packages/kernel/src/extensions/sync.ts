@@ -191,7 +191,9 @@ async function extensionEntryOf(root: string, name: string): Promise<string> {
     | { extension?: { entry?: unknown } }
     | undefined;
   if (manifest === undefined) {
-    throw new Error(`package ${name}: ${PLUGIN_MANIFEST_FILE} is missing`);
+    throw new Error(
+      `package ${name}: ${PLUGIN_MANIFEST_FILE} is missing; a plugin package carries its manifest at that path (build it with \`capybara-plugin pack\`)`,
+    );
   }
   const entry = manifest.extension?.entry;
   if (typeof entry !== "string" || !isSafePackagePath(packagePath(entry))) {

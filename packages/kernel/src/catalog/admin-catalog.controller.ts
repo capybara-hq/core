@@ -139,8 +139,7 @@ export class AdminCatalogController {
    * `application/octet-stream`, at most `packages.maxBytes`): reads and checks the whole plugin
    * (extension, skills, connector templates; dependencies resolved for the review), stages it for 24
    * hours and returns one review `{ stagingId, review }`, confirmed with `imports/:stagingId/confirm`.
-   * An invalid plugin -> 422
-   * `catalog.invalid_manifest` (details list each problem); version already imported -> 409
+   * An invalid plugin -> 422 `catalog.invalid_manifest` (details list each problem); version already imported -> 409
    * `catalog.version_exists`; an item with the same name from another npm package -> 409
    * `catalog.name_conflict`; an extension named like a config-declared one -> 409.
    */

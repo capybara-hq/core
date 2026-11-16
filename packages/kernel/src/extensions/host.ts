@@ -1253,8 +1253,7 @@ export class ExtensionHost {
    * `permissionSetOfPackage` at review; the migrations directory comes only from
    * `extension.migrations`). Does not import the module: that happens after the permission gate
    * ({@link importInstalled}). A failure is recorded as failed (`sync_failed` / `sha_mismatch`, the
-   * detail is the error message only) and
-   * returns undefined. The result for a package never changes, so successes are cached by sha (a
+   * detail is the error message only) and returns undefined. The result for a package never changes, so successes are cached by sha (a
    * reconcile cycle does not unpack again).
    */
   private async prepare(

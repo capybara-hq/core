@@ -147,7 +147,7 @@ export class AdminOperations implements OnModuleInit {
       defineOperation({
         id: "admin.attention",
         description:
-          "What needs the super admin besides the platform inbox (super admin), one compact row each (kind, id, name, state, reason, next step): extensions (reason config, load_failed, approval, dependency, conflict, converging or legacy_format), platform plugins with a newer marketplace version (reason names both versions) model providers (reason list_failed or no_chat_model) background work the kernel could not queue (kind outbox: how many outbox rows are dead and since when) and run jobs the queue lost (kind queue: Redis lost data; the runs were queued again). Each kind lists at most 20 rows; more counts the rest per kind. unavailable names a kind that could not be read right now (try again later). The platform inbox itself is inbox.platform-list.",
+          "What needs the super admin besides the platform inbox (super admin), one compact row each (kind, id, name, state, reason, next step): extensions (reason config, load_failed, approval, dependency, conflict, or converging), platform plugins with a newer marketplace version (reason names both versions) model providers (reason list_failed or no_chat_model) background work the kernel could not queue (kind outbox: how many outbox rows are dead and since when) and run jobs the queue lost (kind queue: Redis lost data; the runs were queued again). Each kind lists at most 20 rows; more counts the rest per kind. unavailable names a kind that could not be read right now (try again later). The platform inbox itself is inbox.platform-list.",
         input: z.object({}).strict(),
         example: {},
         authz: { superAdmin: true },

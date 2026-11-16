@@ -254,12 +254,8 @@ export const OLD_REFERENCES: { re: RegExp; what: string; allowedIn?: RuleExempti
     what: "an old package format name (now .capybara-plugin/plugin.json / marketplace.json)",
     allowedIn: [
       {
-        path: /^packages\/kernel\/src\/(?:catalog\/plugin-package|extensions\/sync|packages\/tgz)\.ts$/,
-        reason: "the legacy-format detector recognises the old formats to refuse them",
-      },
-      {
-        path: /^packages\/kernel\/test\/(?:catalog\/plugin-import|extensions\/(?:admin-approve\.http|installs|package))\.test\.ts$|^packages\/kernel\/test\/helpers\/plugin-packages\.ts$/,
-        reason: "the legacy-format tests build old-format packages and pin the repack message",
+        path: /^packages\/kernel\/test\/(?:catalog\/plugin-import|extensions\/(?:installs|package))\.test\.ts$|^packages\/kernel\/test\/helpers\/plugin-packages\.ts$/,
+        reason: "the tests build old-format packages and pin the missing-manifest message",
       },
       {
         path: /^packages\/kernel\/src\/migrations\/0044_catalog_one_kind\.sql$/,

@@ -263,15 +263,6 @@ function clientUndeclared(text: string): string | undefined {
   return `${PLUGIN_MANIFEST_FILE}: extension.client ships client code, but the extension manifest does not declare permissions.client: true; client code must be declared so it is reviewed (capybara-plugin pack writes both)`;
 }
 
-const _parsedOrUndefined = (data: Uint8Array): unknown => {
-  try {
-    return parsePackageJsonFile({ data });
-  } catch (e) {
-    if (e instanceof PackageTgzError) return undefined;
-    throw e;
-  }
-};
-
 const invalid = (issues: string[]): never => {
   throw new PluginPackageError("catalog.invalid_manifest", issues);
 };
@@ -308,9 +299,8 @@ function hostSdkIssues(manifest: PluginManifest, hostSdkVersion: string): string
 
 /**
  * Reads and validates a plugin tgz (see the file header). Invalid -> {@link PluginPackageError}:
- * `catalog.invalid_manifest` listing
- * every problem it can find, each naming the path it is about (unpacking and manifest parse
- * problems stop at the first stage that fails).
+ * `catalog.invalid_manifest` listing every problem it can find, each naming the path it is about
+ * (unpacking and manifest parse problems stop at the first stage that fails).
  */
 export async function readPluginPackage(
   bytes: Uint8Array,
