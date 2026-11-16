@@ -12,6 +12,7 @@ import en from "../messages/en.json";
 import { useConversationGroups } from "../src/components/shell/conversations";
 import type { AgentProfile } from "../src/lib/agents";
 import { agentsQuery } from "../src/lib/query/agents";
+import { keys } from "../src/lib/query/keys";
 import { conversationGroupsQuery } from "../src/lib/query/shell";
 import { bodyOf, json, stubApi } from "./support/api";
 import {
@@ -399,7 +400,9 @@ describe("?draft= (a setup guide's 让智能体协助)", () => {
     const draft = "Help me finish setting up “Create the Slack app” for Acme Bot.\n\nSetup guide";
     await renderRouteWithCache(`/?draft=${encodeURIComponent(draft)}`, routes());
     await vi.waitFor(() => expect(input()).toHaveProperty("value", draft));
-    await act(() => new Promise((r) => setTimeout(r, 20)));
+    // the page settled (its greeting is picked after mount); nothing but the person sends
+    await screen.findByRole("heading", { name: /Grant/ });
+    await act(async () => {});
     expect(calls.some((c) => c.method === "POST")).toBe(false);
     expect(router.replace).not.toHaveBeenCalled();
     // the agent the home picks (the most recent one)
@@ -874,7 +877,8 @@ describe("the first send carries the permission choice (atomic first message, Ta
     // Retry original sends the original bytes and id again; another conflict sends nothing more
     await user.click(retryOriginal()[0] as HTMLElement);
     await vi.waitFor(() => expect(n).toBe(2));
-    await act(() => new Promise((r) => setTimeout(r, 20)));
+    // settled: its recovery line is back (hidden while it is on its way), and nothing more went
+    await vi.waitFor(() => expect(retryOriginal()).toHaveLength(1));
     expect(n).toBe(2);
     const [first, retried] = firstBodies(calls);
     expect(retried).toBe(first);
@@ -915,8 +919,8 @@ describe("the first send carries the permission choice (atomic first message, Ta
       ),
     );
     expect(permissionButton().getAttribute("aria-label")).toBe("Permissions: Approve for me");
-    // nothing resent on its own
-    await act(() => new Promise((r) => setTimeout(r, 20)));
+    // settled into its recovery line; nothing resent on its own
+    await vi.waitFor(() => expect(retryOriginal()).toHaveLength(1));
     expect(writes(calls)).toEqual([FIRST]);
   });
 
@@ -943,8 +947,14 @@ describe("the first send carries the permission choice (atomic first message, Ta
     const [original, updated] = firstBodies(calls);
     expect(idOf(updated)).not.toBe(idOf(original));
     expect(JSON.parse(updated as string).permission).toEqual({ profile: "request-approval" });
-    // both stay recoverable; the original's retry sends exactly what it sent first
+    // both stay recoverable, each line naming its text, profile and device; only the original's
+    // choices differ from the composer's now
     expect(retryOriginal()).toHaveLength(2);
+    const lines = retryOriginal().map((b) => b.parentElement?.textContent ?? "");
+    expect(lines[0]).toContain("“go” with Approve for me on Personal.");
+    expect(lines[0]).toContain(en.chat.firstSend.changed);
+    expect(lines[1]).toContain("“go” with Request approval on Personal.");
+    expect(lines[1]).toContain(en.chat.firstSend.newRequest);
     await user.click(retryOriginal()[0] as HTMLElement);
     await vi.waitFor(() => expect(n).toBe(3));
     expect(firstBodies(calls)[2]).toBe(original);
@@ -956,6 +966,35 @@ describe("the first send carries the permission choice (atomic first message, Ta
     expect(permissionButton().getAttribute("aria-label")).toBe("Permissions: Request approval");
   });
 
+  it("a 409 on the original for another device refreshes that device's preview too", async () => {
+    let n = 0;
+    stubApi({
+      [FIRST]: () => {
+        n += 1;
+        if (n === 1) throw new TypeError("Failed to fetch");
+        return conflict();
+      },
+      [`GET ${ORG}/conversation-permission-preview?deviceId=e2`]: () =>
+        json(200, permissionPreview({ deviceId: "e2" })),
+      [PREVIEW_E1]: () => json(200, permissionPreview({ deviceId: "e1" })),
+    });
+    const { client } = await renderRouteWithCache("/", routes());
+    const user = userEvent.setup();
+    await chooseFull(user);
+    await user.type(input(), "go{Enter}");
+    await vi.waitFor(() => expect(retryOriginal()).toHaveLength(1));
+    // another device on display, then the original (Full on e1) is retried and refused
+    await user.click(screen.getByRole("button", { name: new RegExp(`^${en.chat.pickDevice}: `) }));
+    await user.click(await screen.findByRole("menuitemradio", { name: /Build box/ }));
+    await user.click(retryOriginal()[0] as HTMLElement);
+    await vi.waitFor(() => expect(n).toBe(2));
+    await vi.waitFor(() => expect(retryOriginal()).toHaveLength(1));
+    expect(retryOriginal()[0]?.parentElement?.textContent).toContain(
+      "“go” with Full access on Personal.",
+    );
+    expect(client.getQueryState(keys.org("o1").permissionPreview("e1"))?.isInvalidated).toBe(true);
+  });
+
   it("a late answer after the page is gone neither navigates nor resends", async () => {
     let answer: (r: Response) => void = () => {};
     const calls = stubApi({
@@ -964,12 +1003,19 @@ describe("the first send carries the permission choice (atomic first message, Ta
           answer = r;
         }),
     });
-    await renderRouteWithCache("/", routes());
+    const { client } = await renderRouteWithCache("/", routes());
     await userEvent.setup().type(input(), "go{Enter}");
     await vi.waitFor(() => expect(document.querySelector("[data-pending]")).not.toBeNull());
     cleanup();
     await act(async () => answer(created()()));
-    await act(() => new Promise((r) => setTimeout(r, 20)));
+    // the answer was handled: the cache is seeded and the sidebar's groups marked stale, which
+    // happens right before the page's own (skipped) navigation
+    await vi.waitFor(() =>
+      expect(client.getQueryState(conversationGroupsQuery("o1").queryKey)?.isInvalidated).toBe(
+        true,
+      ),
+    );
+    expect(client.getQueryData(keys.org("o1").conversation("c9").row())).toBeDefined();
     expect(router.replace).not.toHaveBeenCalled();
     expect(writes(calls)).toEqual([FIRST]);
   });

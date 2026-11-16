@@ -49,6 +49,7 @@ import {
 import { useStatusSignature } from "./ConversationView";
 import {
   type FirstMessageAttempt,
+  firstMessageControls,
   firstMessageIntent,
   isRecoverable,
   recoverableFor,
@@ -57,9 +58,12 @@ import {
   startFirstMessage,
 } from "./first-message-attempt";
 import { PendingBubbles, usePendingSends } from "./PendingBubbles";
-import { usePermissionChoice } from "./PermissionPicker";
+import { PROFILE_KEY, usePermissionChoice } from "./PermissionPicker";
 import type { SendResult } from "./useConversation";
 import { useDeviceChoice, useSelection } from "./useSelection";
+
+/** How much of an attempt's text its recovery line quotes. */
+const SUMMARY_CHARS = 40;
 
 /**
  * The agents in the row's order: by this person's most recent conversation with each (the sidebar's
@@ -248,12 +252,14 @@ export function useNewConversationPage(
       put(settled);
       setError(errorMessage(e));
       if (settled.conflict) {
-        // the displayed scope may be stale: read it again and ask for consent again
+        // the displayed scope may be stale: read it again (the refused request's own device and
+        // the one on display) and ask for consent again
         permission.clearFullAccess();
-        if (device.deviceId !== undefined)
-          void qc.invalidateQueries({
-            queryKey: keys.org(orgId).permissionPreviewAll(device.deviceId),
-          });
+        for (const id of new Set([attempt.deviceId, device.deviceId]))
+          if (id != null)
+            void qc.invalidateQueries({
+              queryKey: keys.org(attempt.orgId).permissionPreviewAll(id),
+            });
       }
       if (m) {
         pending.drop(attempt.clientMessageId);
@@ -291,6 +297,27 @@ export function useNewConversationPage(
       startFirstMessage(orgId, request, m, taken ? newClientMessageId() : m.clientMessageId),
       m,
     );
+  };
+
+  /** The composer's current choices, to tell an attempt whose choices have since changed. */
+  const currentControls = agent
+    ? firstMessageControls(orgId, {
+        agentId: agent.id,
+        message: { text: "", ...selection.pending },
+        permission: permission.selection,
+        ...(device.deviceId !== undefined ? { deviceId: device.deviceId } : {}),
+        ...(device.project !== undefined ? { project: device.project } : {}),
+      })
+    : undefined;
+  /** A recovery line names its attempt: the start of its text, its profile and its device. */
+  const summaryOf = (a: FirstMessageAttempt) => {
+    const text = a.message.text.trim();
+    const excerpt = text.length > SUMMARY_CHARS ? `${text.slice(0, SUMMARY_CHARS)}…` : text;
+    const on = a.deviceId === null ? undefined : devices?.items.find((e) => e.id === a.deviceId);
+    const profile = t(`permission.profile.${PROFILE_KEY[a.profile]}`);
+    return a.deviceId === null
+      ? t("firstSend.summaryNoDevice", { text: excerpt, profile })
+      : t("firstSend.summary", { text: excerpt, profile, device: on ? nameOf(on) : "—" });
   };
 
   /** Retry original from the recovery line: the stored bytes, whatever the composer holds now. */
@@ -382,8 +409,12 @@ export function useNewConversationPage(
               isRecoverable(a) ? (
                 <Stack key={a.clientMessageId} direction="row" gap={8} align="center" wrap>
                   <Text variant="small" tone="muted">
-                    {t(a.conflict ? "firstSend.conflict" : "firstSend.unconfirmed")}{" "}
-                    {t("firstSend.newRequest")}
+                    {t(a.conflict ? "firstSend.conflict" : "firstSend.unconfirmed")} {summaryOf(a)}{" "}
+                    {t(
+                      currentControls !== undefined && currentControls !== a.controlsKey
+                        ? "firstSend.changed"
+                        : "firstSend.newRequest",
+                    )}
                   </Text>
                   <Button variant="ghost" onClick={() => retryOriginal(a)}>
                     {t("firstSend.retryOriginal")}

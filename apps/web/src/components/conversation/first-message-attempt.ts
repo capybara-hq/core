@@ -1,5 +1,6 @@
 import { ApiClientError } from "../../lib/api";
 import { type FirstMessageRequest, serializeFirstMessage } from "../../lib/conversations";
+import type { PermissionProfile } from "../../lib/permissions";
 import type { ComposerMessage } from "./ComposerBar";
 
 /**
@@ -32,7 +33,31 @@ export interface FirstMessageAttempt {
   conflict: boolean;
   /** The message as the composer sent it (its pending bubble and the draft to give back). */
   message: ComposerMessage;
+  /** The device the request names (null: none), for its recovery line and its preview refresh. */
+  deviceId: string | null;
+  /** The profile the request carries, for its recovery line. */
+  profile: PermissionProfile;
+  /** The choices apart from the message itself (see {@link firstMessageControls}). */
+  controlsKey: string;
   result?: { conversationId: string };
+}
+
+/**
+ * The composer's choices apart from the message contents: agent, device, project, profile with its
+ * consent revision, model and effort. The page knows these without the draft, so it can tell that
+ * an unchanged-looking send would still be a new request.
+ */
+export function firstMessageControls(orgId: string, r: FirstMessageRequest): string {
+  return JSON.stringify([
+    orgId,
+    r.agentId,
+    r.message.model ?? null,
+    r.message.effort ?? null,
+    r.deviceId ?? null,
+    r.project ?? null,
+    r.permission.profile,
+    r.permission.consentScopeRevision ?? null,
+  ]);
 }
 
 /**
@@ -76,6 +101,9 @@ export function startFirstMessage(
     hadUnknownOutcome: false,
     conflict: false,
     message: { ...message, clientMessageId },
+    deviceId: r.deviceId ?? null,
+    profile: r.permission.profile,
+    controlsKey: firstMessageControls(orgId, r),
   };
 }
 

@@ -33,7 +33,11 @@ const ICON: Record<PermissionProfile, IconName> = {
   "approve-for-me": "shield-check",
   "full-access": "lock-open",
 };
-const KEY: Record<PermissionProfile, "requestApproval" | "approveForMe" | "fullAccess"> = {
+/** A profile's message key under `chat.permission.profile` / `.description`. */
+export const PROFILE_KEY: Record<
+  PermissionProfile,
+  "requestApproval" | "approveForMe" | "fullAccess"
+> = {
   "request-approval": "requestApproval",
   "approve-for-me": "approveForMe",
   "full-access": "fullAccess",
@@ -200,16 +204,16 @@ export function usePermissionChoice(input: PermissionChoiceInput): {
   ].join(" ");
   const picker: PickerProps = {
     label: t("label"),
-    value: t(`profile.${KEY[choice.profile]}`),
+    value: t(`profile.${PROFILE_KEY[choice.profile]}`),
     groups: [
       {
         items: PERMISSION_PROFILES.map((p) => {
           const reason = reasons[p];
           return {
             id: p,
-            label: t(`profile.${KEY[p]}`),
+            label: t(`profile.${PROFILE_KEY[p]}`),
             icon: ICON[p],
-            description: t(`description.${KEY[p]}`),
+            description: t(`description.${PROFILE_KEY[p]}`),
             checked: choice.profile === p,
             ...(reason !== undefined ? { disabled: true, tag: t(`reason.${reason}`) } : {}),
           };
@@ -281,14 +285,14 @@ export function useLockedPermissionPicker(
   if (profile === undefined) return undefined;
   return {
     label: t("label"),
-    value: t(`profile.${KEY[profile]}`),
+    value: t(`profile.${PROFILE_KEY[profile]}`),
     locked: {
       hint:
         why === "inherited"
           ? t("locked.inherited")
           : why === "scheduled"
             ? t("locked.scheduled")
-            : t(`description.${KEY[profile]}`),
+            : t(`description.${PROFILE_KEY[profile]}`),
     },
     groups: [],
     onPick: () => {},

@@ -1624,7 +1624,10 @@
       "conflict": "Your earlier message was not accepted as it was: the device's permissions may have changed. Check the permission choice.",
       "newRequest": "Retry original sends it exactly as it was; sending a changed message starts a new request.",
       "retryOriginal": "Retry original",
-      "open": "Open its conversation"
+      "open": "Open its conversation",
+      "summary": "“{text}” with {profile} on {device}.",
+      "summaryNoDevice": "“{text}” with {profile}, without a device.",
+      "changed": "Your choices changed since: sending now starts a new request, and Retry original sends it as it was."
     }
   },
   "ui": {

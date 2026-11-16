@@ -1612,7 +1612,10 @@
       "conflict": "之前的消息未按原样被接受：设备的权限可能已变化，请检查权限选择。",
       "newRequest": "“重试原消息”会按原样再次发送；发送改动后的消息则是一个新的请求。",
       "retryOriginal": "重试原消息",
-      "open": "打开它的对话"
+      "open": "打开它的对话",
+      "summary": "“{text}”，{profile}，设备 {device}。",
+      "summaryNoDevice": "“{text}”，{profile}，无设备。",
+      "changed": "之后你改了选择：现在发送会是一个新的请求，“重试原消息”则按原样再次发送。"
     }
   },
   "ui": {
