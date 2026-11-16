@@ -12,7 +12,10 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { BackgroundTaskFinisher } from "../../src/background/finish.js";
 import { backgroundMaxSeconds } from "../../src/background/launch.js";
+import { BackgroundTaskPollJob } from "../../src/background/poll.job.js";
+import { BackgroundTaskStopper } from "../../src/background/stop.js";
 import { BackgroundTaskStore } from "../../src/background/store.js";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { ConversationsService } from "../../src/conversations/conversations.service.js";
@@ -25,11 +28,14 @@ import type { Account, AccountsService } from "../../src/identity/accounts.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
+import type { LockService } from "../../src/infra/lock/lock.service.js";
 import { OutboxService } from "../../src/infra/outbox/outbox.service.js";
+import { ownerPolicyRevokes } from "../../src/local-devices/policy-summary.js";
 import { createLogger } from "../../src/log.js";
 import type { ExecutionClaim } from "../../src/runtime/run-execution.js";
 import { operationIdFor, SandboxOperationIntents } from "../../src/sandbox/operation-intents.js";
 import { SandboxOperationReconcileJob } from "../../src/sandbox/operation-reconcile.job.js";
+import { PermissionCallGrants } from "../../src/sandbox/permission-call-grants.js";
 import { PermissionCeilingWrites } from "../../src/sandbox/permission-ceiling-writes.js";
 import { SandboxProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
@@ -119,6 +125,9 @@ function managedProvider() {
   const launched = new Map<string, SandboxExecutionRef>();
   const inflight = new Map<string, Promise<SandboxExecutionRef>>();
   const revoked: string[] = [];
+  const stops: SandboxExecutionRef[] = [];
+  let stopOutcome: Awaited<ReturnType<SandboxBackground["stop"]>> = { outcome: "stopped" };
+  let statusOf: Awaited<ReturnType<SandboxBackground["status"]>> = { state: "running" };
   const hooks: {
     beforeEffect?: ((c: StartCall) => Promise<void>) | undefined;
     onCall?: ((c: StartCall) => void) | undefined;
@@ -154,7 +163,7 @@ function managedProvider() {
       return ref;
     },
     async status() {
-      return { state: "running" };
+      return statusOf;
     },
     async tail() {
       return { data: new Uint8Array(), truncated: false };
@@ -167,8 +176,9 @@ function managedProvider() {
         totalBytes: 0,
       };
     },
-    async stop() {
-      return { outcome: "stopped" };
+    async stop(_h, ref) {
+      stops.push(ref);
+      return stopOutcome;
     },
   };
   const impl = {
@@ -200,7 +210,22 @@ function managedProvider() {
     },
     background,
   } as unknown as SandboxProvider;
-  return { impl, calls, launched, revoked, hooks };
+  return {
+    impl,
+    calls,
+    launched,
+    revoked,
+    stops,
+    hooks,
+    /** What the next exact stops answer. */
+    stopWith(r: Awaited<ReturnType<SandboxBackground["stop"]>>) {
+      stopOutcome = r;
+    },
+    /** What the exact status answers. */
+    statusWith(r: Awaited<ReturnType<SandboxBackground["status"]>>) {
+      statusOf = r;
+    },
+  };
 }
 
 async function createOrg(): Promise<{ orgId: string; agentId: string; conversationId: string }> {
@@ -324,9 +349,14 @@ async function fixture(opts: { project?: string } = {}) {
       trigger_seq: 0,
     })
     .execute();
-  let seq = 0;
   const event = async (type: string, payload: object) => {
-    seq++;
+    // the launch appends its own events: continue after the conversation's last one
+    const { last_seq } = await db
+      .selectFrom("conversations")
+      .select("last_seq")
+      .where("id", "=", conversationId)
+      .executeTakeFirstOrThrow();
+    const seq = Number(last_seq) + 1;
     await db
       .insertInto("conversation_events")
       .values({
@@ -392,6 +422,16 @@ async function fixture(opts: { project?: string } = {}) {
       description: "Serve",
       run_in_background: true,
     });
+  /** A second Bash call of the same run (a sibling task in the same tree). */
+  const runCall = async (call: string, input: { command: string }) => {
+    await event("tool_call_started", { callId: call, toolKey: "Bash" });
+    return runInBackgroundManaged(
+      deps,
+      { ...(await ctxFor()), callId: call },
+      { ...input, description: "Serve", run_in_background: true },
+    );
+  };
+  const opFor = (call: string) => operationIdFor({ claim: { runId }, callId: call, ordinal: 0 });
   const outcome = (p: Promise<unknown>) =>
     p.then(
       (value) => ({ ok: true as const, value }),
@@ -433,6 +473,8 @@ async function fixture(opts: { project?: string } = {}) {
     claimFor,
     reclaim,
     run,
+    runCall,
+    opFor,
     outcome,
     operationId,
     task,
@@ -449,6 +491,8 @@ const reconcileJob = () =>
     k.app.get(KernelDb),
     k.app.get(SandboxProviders),
     k.app.get(SandboxService),
+    k.app.get(BackgroundTaskStore),
+    k.app.get(BackgroundTaskStopper),
   );
 
 /** Publishes an actual ceiling write at `level`, revoking what it selects. */
@@ -723,7 +767,10 @@ describe("managed background launch identity", () => {
     });
     expect((await f.revokeJobs()).length).toBeGreaterThanOrEqual(1);
     await reconcileJob().revoke(f.operationId);
-    expect(f.provider.revoked).toEqual([f.operationId]);
+    // the ref is known: the exact stop of the task, not the operation revoke (8.4 B3)
+    expect(f.provider.stops).toEqual([f.provider.launched.get(f.operationId)]);
+    expect(f.provider.revoked).toEqual([]);
+    expect(await f.intent()).toMatchObject({ revoke_acknowledged: true });
   });
 
   it("acknowledged authority survives a real profile change and launch-run completion, not owner narrowing", async () => {
@@ -913,8 +960,11 @@ describe("managed background launch identity", () => {
       "deletion",
     ]);
     expect((await f.revokeJobs()).length).toBeGreaterThanOrEqual(1);
+    // the deletion's verified stop already settled it: the owed revoke is acknowledged as is
     await reconcileJob().revoke(f.operationId);
-    expect(f.provider.revoked).toEqual([f.operationId]);
+    expect(f.provider.stops).toHaveLength(1);
+    expect(f.provider.revoked).toEqual([]);
+    expect(await f.intent()).toMatchObject({ revoke_acknowledged: true });
   });
 
   it("the facade refuses an artifact outside the admitted write roots before dispatch, with zero launches", async () => {
@@ -1143,7 +1193,9 @@ describe("managed background launch identity", () => {
     await work;
     expect(await f.intent()).toMatchObject({ state: "revoked", revoke_acknowledged: false });
     await reconcileJob().revoke(f.operationId);
-    expect(f.provider.revoked).toEqual([f.operationId, f.operationId]);
+    // before the ref: the exact operation revoke; after it: the exact stop by that ref
+    expect(f.provider.revoked).toEqual([f.operationId]);
+    expect(f.provider.stops).toEqual([f.provider.launched.get(f.operationId)]);
   });
 
   it("a same-call retry in flight is left to its dispatcher by scheduled recovery (8.2 R1)", async () => {
@@ -1219,5 +1271,171 @@ describe("managed background launch identity", () => {
     expect((await f.intent())?.state).toBe("dispatching");
     release.resolve();
     expect((await work).ok).toBe(true);
+  });
+});
+
+/** The poller as the worker builds it (this kernel is API-only). */
+const poller = () =>
+  new BackgroundTaskPollJob(
+    k.app.get(BackgroundTaskStore),
+    k.app.get(BackgroundTaskFinisher),
+    k.app.get(EventLog),
+    k.app.get(SandboxService),
+    k.app.get(KernelConfigService),
+    {} as LockService,
+    createLogger("error", { write: () => {} }),
+    k.app.get(BackgroundTaskStopper),
+  );
+
+/** Makes both intents' starting scope restricted with `api.example.com` in its network. */
+async function restrictTo(db: ReturnType<typeof kernelDb>, operationIds: string[]) {
+  for (const id of operationIds) {
+    const row = await db
+      .selectFrom("sandbox_operation_intents")
+      .select("scope")
+      .where("operation_id", "=", id)
+      .executeTakeFirstOrThrow();
+    const scope = row.scope as unknown as Record<string, unknown>;
+    await db
+      .updateTable("sandbox_operation_intents")
+      .set({
+        scope: JSON.stringify({
+          ...scope,
+          profile: scope.profile === "full-access" ? "approve-for-me" : scope.profile,
+          network: { kind: "allowlist", hosts: ["api.example.com"] },
+        }),
+      })
+      .where("operation_id", "=", id)
+      .execute();
+  }
+}
+
+describe("exact revocation of running background authority (8.4 B3)", () => {
+  it("the owner selector revokes only the task whose host came from the removed baseline; the worker stops it by its exact ref", async () => {
+    const f = await fixture();
+    const first = randomUUID();
+    const second = randomUUID();
+    await f.runCall(first, { command: "npm run dev" });
+    await f.runCall(second, { command: "npm run worker" });
+    const [op1, op2] = [f.opFor(first), f.opFor(second)];
+    await restrictTo(f.db, [op1, op2]);
+    // the sibling's host is an independent explicit addition, not the owner's baseline
+    await f.db
+      .updateTable("sandbox_operation_intents")
+      .set({ granted_hosts: JSON.stringify(["api.example.com"]) })
+      .where("operation_id", "=", op2)
+      .execute();
+    // the launching run has completed: neither task's authority depends on it
+    await f.db.updateTable("runs").set({ status: "completed" }).where("id", "=", f.runId).execute();
+    await k.app.get(TransactionHost).run(async () => {
+      const ceiling = k.app.get(PermissionCeilingWrites);
+      const subject = { orgId: f.orgId, deviceId: f.deviceId };
+      await ceiling.lock(subject, "device");
+      await ceiling.publishLocked(subject, "device", (scope, row) =>
+        ownerPolicyRevokes(
+          { mode: "auto", allowedDomains: [] } as never,
+          scope,
+          row.method,
+          row.granted_hosts,
+        ),
+      );
+    });
+    const intentOf = (id: string) =>
+      f.db
+        .selectFrom("sandbox_operation_intents")
+        .selectAll()
+        .where("operation_id", "=", id)
+        .executeTakeFirstOrThrow();
+    const taskOf = (id: string) =>
+      f.db
+        .selectFrom("background_tasks")
+        .selectAll()
+        .where("operation_id", "=", id)
+        .executeTakeFirstOrThrow();
+    expect((await intentOf(op1)).state).toBe("revoked");
+    expect((await intentOf(op2)).state).toBe("background-running");
+    await reconcileJob().revoke(op1);
+    // an exact stop of the affected task only; never the operation revoke of an acknowledged start
+    expect(f.provider.stops).toEqual([f.provider.launched.get(op1)]);
+    expect(f.provider.revoked).toEqual([]);
+    expect(await taskOf(op1)).toMatchObject({ status: "stopped", launch_state: "terminal" });
+    expect(await intentOf(op1)).toMatchObject({ state: "revoked", revoke_acknowledged: true });
+    expect(await taskOf(op2)).toMatchObject({ status: "running", launch_state: "acknowledged" });
+    expect((await intentOf(op2)).state).toBe("background-running");
+    // a repeated delivery of the same revoke changes nothing and stops nothing again
+    await reconcileJob().revoke(op1);
+    await reconcileJob().revoke(op2);
+    expect(f.provider.stops).toHaveLength(1);
+  });
+
+  it("a pending exact cancellation stays owed and settles on a later delivery", async () => {
+    const f = await fixture();
+    await f.run({ command: "npm run dev" });
+    f.provider.stopWith({ outcome: "cancel-pending" });
+    await narrow({ orgId: f.orgId, deviceId: f.deviceId }, "device");
+    await reconcileJob().revoke(f.operationId);
+    expect(f.provider.stops).toHaveLength(1);
+    expect(await f.task()).toMatchObject({ status: "running", launch_state: "cancel-pending" });
+    expect(await f.intent()).toMatchObject({ state: "revoked", revoke_acknowledged: false });
+    expect(f.jobs().map((j) => j.jobId)).toContain(`sandbox-operation-revoke-${f.operationId}-1`);
+    f.provider.stopWith({ outcome: "stopped" });
+    await reconcileJob().revoke(f.operationId);
+    expect(await f.task()).toMatchObject({ status: "stopped", launch_state: "terminal" });
+    expect(await f.intent()).toMatchObject({ revoke_acknowledged: true });
+    expect(f.provider.revoked).toEqual([]);
+  });
+
+  it("a hard-deleted conversation keeps the exact cancellation owed by the start intent (8.3 M6)", async () => {
+    const f = await fixture();
+    await f.run({ command: "npm run dev" });
+    const ref = f.provider.launched.get(f.operationId);
+    await narrow({ orgId: f.orgId, deviceId: f.deviceId }, "device");
+    // a hard delete cascades the task row; the intent has no conversation foreign key
+    await sql`DELETE FROM capybara.conversations WHERE id = ${f.conversationId}`.execute(raw);
+    expect(await f.task()).toBeUndefined();
+    await reconcileJob().revoke(f.operationId);
+    expect(f.provider.stops).toEqual([ref]);
+    expect(f.provider.revoked).toEqual([]);
+    expect(await f.intent()).toMatchObject({ state: "revoked", revoke_acknowledged: true });
+  });
+
+  it("a lost task's retained obligation becomes an owed exact cancellation, settled only by a verified stop (8.3 M6)", async () => {
+    const f = await fixture();
+    await f.run({ command: "npm run dev" });
+    f.provider.statusWith({ state: "lost" });
+    await poller().pollOnce();
+    expect(await f.task()).toMatchObject({ status: "lost", launch_state: "cancel-pending" });
+    // supervision loss is not proof the process is gone: the authority is retired, the stop owed
+    expect(await f.intent()).toMatchObject({ state: "revoked", revoke_acknowledged: false });
+    expect((await f.revokeJobs()).length).toBeGreaterThanOrEqual(1);
+    f.provider.stopWith({ outcome: "lost" });
+    await reconcileJob().revoke(f.operationId);
+    expect(await f.intent()).toMatchObject({ revoke_acknowledged: false });
+    expect((await f.task())?.launch_state).toBe("cancel-pending");
+    f.provider.stopWith({ outcome: "stopped" });
+    await reconcileJob().revoke(f.operationId);
+    expect(await f.intent()).toMatchObject({ revoke_acknowledged: true });
+    // the finish stays as it was; only the record is settled
+    expect(await f.task()).toMatchObject({ status: "lost", launch_state: "terminal" });
+    expect(f.provider.revoked).toEqual([]);
+  });
+
+  it("a retried start of an acknowledged operation gets its recorded starting authority back", async () => {
+    const f = await fixture();
+    await f.run({ command: "npm run dev" });
+    const intents = k.app.get(SandboxOperationIntents);
+    const row = await intents.read(f.operationId);
+    expect(row.state).toBe("background-running");
+    const input = await intents.input(row);
+    // the same exact admission check as the first dispatch; it throws when the state is refused
+    await k.app
+      .get(PermissionCallGrants)
+      .forExecution(
+        f.operationId,
+        f.deviceId,
+        "backgroundStart",
+        row.scope as SandboxOperationScope,
+        input,
+      );
   });
 });

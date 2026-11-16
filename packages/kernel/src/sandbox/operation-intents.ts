@@ -1173,7 +1173,11 @@ export class SandboxOperationIntents {
         data: { operationId: row.operation_id },
       });
   }
-  /** A disconnected revoke remains owed; every retry is a new deterministic persisted attempt. */
+  /**
+   * A disconnected or still-pending revoke remains owed; every retry is a new deterministic
+   * persisted attempt, backing off (30 s doubling, at most an hour) so an obligation that only
+   * retirement can resolve (a lost or replaced instance) never spins.
+   */
   @Transactional({ propagation: "requires_new" })
   async deferRevocation(id: string): Promise<void> {
     const row = await this.db
@@ -1190,7 +1194,9 @@ export class SandboxOperationIntents {
         name: OPERATION_REVOKE,
         jobId: `${OPERATION_REVOKE}-${id}-${row.reconcile_attempt}`,
         data: { operationId: id },
-        runAt: new Date(Date.now() + 30000),
+        runAt: new Date(
+          Date.now() + Math.min(30_000 * 2 ** Math.min(row.reconcile_attempt - 1, 20), 3_600_000),
+        ),
       });
   }
   @Transactional({ propagation: "requires_new" })

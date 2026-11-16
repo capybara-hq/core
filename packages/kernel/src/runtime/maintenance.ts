@@ -1,6 +1,7 @@
 import { getQueueToken, OnWorkerEvent, WorkerHost } from "@nestjs/bullmq";
 import { Inject, Injectable, Module } from "@nestjs/common";
 import type { Job, Queue, Worker } from "bullmq";
+import { BackgroundModule } from "../background/background.module.js";
 import { BG_WAKE_JOB, type BgWakeJobData } from "../background/wake-rules.js";
 import { OWNED_PLUGIN_CLEANUP_JOB, type OwnedPluginCleanupData } from "../catalog/job-ids.js";
 import { OwnedPluginCleanup, OwnedPluginCleanupModule } from "../catalog/owned-plugin-cleanup.js";
@@ -241,6 +242,8 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
   imports: [
     // the periodic jobs' bodies (a periodic job's name enqueued here runs it once)
     KernelScheduleModule,
+    // the exact stop a revoked background start owes (SandboxOperationReconcileJob)
+    BackgroundModule,
     RuntimeModule,
     SandboxModule,
     ToolsModule,

@@ -445,6 +445,30 @@ export class BackgroundTaskStore {
       .execute();
   }
 
+  /** The managed task launched by start operation `operationId`, if its row still exists. */
+  async byOperation(operationId: string): Promise<BackgroundTaskRow | undefined> {
+    const r = await this.db
+      .selectFrom("background_tasks")
+      .selectAll()
+      .where("operation_id", "=", operationId)
+      .executeTakeFirst();
+    return r === undefined ? undefined : toRow(r);
+  }
+
+  /**
+   * A finished managed task whose owed cancellation was later established by its exact ref (the
+   * revoke worker): its record becomes `terminal`. Its finish and event stay as they were.
+   */
+  async settleOwedCancel(id: string): Promise<void> {
+    await this.db
+      .updateTable("background_tasks")
+      .set({ launch_state: "terminal" })
+      .where("id", "=", id)
+      .where("status", "<>", "running")
+      .where("launch_state", "=", "cancel-pending")
+      .execute();
+  }
+
   async get(id: string): Promise<BackgroundTaskRow | undefined> {
     const r = await this.db
       .selectFrom("background_tasks")

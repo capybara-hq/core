@@ -307,7 +307,8 @@ describe("TaskOutput on managed output", () => {
     expect(row).toMatchObject({ status: "lost", lost_reason: "sandbox_suspended" });
     // the process may still exist: the record stays an uncertain one
     expect(row.launch_state).toBe("cancel-pending");
-    expect((await f.intent()).state).toBe("background-running");
+    // its running authority is retired and the exact cancellation owed (8.4: never lost silently)
+    expect(await f.intent()).toMatchObject({ state: "revoked", revoke_acknowledged: false });
     // ordinary pruning keeps it
     await f.db
       .updateTable("background_tasks")
@@ -396,7 +397,7 @@ describe("TaskStop and the stopper on managed tasks", () => {
     expect(ensureRuns(f.conversationId)).toHaveLength(0);
   });
 
-  it("lost supervision is a lost finish that keeps the uncertain record and running authority", async () => {
+  it("lost supervision is a lost finish that keeps the uncertain record and owes the exact cancellation", async () => {
     const f = await fixture();
     f.provider.only().stopAs = "lost";
     const r = textOf(await f.taskStop());
@@ -406,7 +407,7 @@ describe("TaskStop and the stopper on managed tasks", () => {
       lost_reason: "supervision_lost",
       launch_state: "cancel-pending",
     });
-    expect((await f.intent()).state).toBe("background-running");
+    expect(await f.intent()).toMatchObject({ state: "revoked", revoke_acknowledged: false });
   });
 
   it("a revocation's cancel-pending task with a ref reaches a terminal state through the exact stop", async () => {
@@ -734,7 +735,7 @@ describe("fix round 1", () => {
       launch_state: "cancel-pending",
     });
     expect(await k.app.get(BackgroundTaskStore).countRunning(f.conversationId)).toBe(0);
-    expect((await f.intent()).state).toBe("background-running");
+    expect(await f.intent()).toMatchObject({ state: "revoked", revoke_acknowledged: false });
   });
 
   it("M2: an owed cancellation on a suspended instance stays owed", async () => {
