@@ -701,6 +701,9 @@ recorded start authority; it does not manufacture a fresh operation or rewrite t
 
 ### Task 9: Logged permission context and replay
 
+Expanded accepted plan: [recorded permission context and replay](2026-11-16-permission-context-replay.md).
+
+
 **Files:** Create `packages/kernel/src/runtime/context/permission-profile.ts`; modify
 `runtime/context/build.ts`, `runtime/context/device-paths.ts`, `conversations/events.ts`,
 `evals/reconstruct.ts`; extend `test/evals/reconstruct.test.ts`, `test/evals/run-replay.test.ts` and
