@@ -4,9 +4,11 @@ import {
   isSandboxPermissionUnsupportedError,
   isSandboxScopeDeniedError,
   parseSandboxBrowseScope,
+  parseSandboxExecutionRef,
   parseSandboxOperationScope,
   parseSandboxPreparationScope,
   type SandboxBrowse,
+  type SandboxExecutionRef,
   SandboxOperationOutcomeUnknownError,
   SandboxPermissionUnsupportedError,
   type SandboxPreparation,
@@ -18,9 +20,11 @@ import {
   createHeldOperations,
   createLegacyHeldProvider,
   type HeldProvider,
+  type ManagedStartArgs,
 } from "./held-operations.js";
 import { SandboxOperationAuthority } from "./operation-authority.js";
 import {
+  type BackgroundDispatchBinding,
   type OperationInvocation,
   PermissionAdmissionStale,
   SandboxOperationIntents,
@@ -28,6 +32,18 @@ import {
 import { PermissionInstanceWrites } from "./permission-instance-writes.js";
 
 export type { HeldProvider } from "./held-operations.js";
+
+/** The reservation fields a managed start's dispatch must match (its stable input). */
+const backgroundBinding = (
+  args: ManagedStartArgs,
+  instanceId: string,
+): BackgroundDispatchBinding => ({
+  taskId: args.taskId,
+  workingRoot: args.cwd,
+  outputPath: args.outputPath,
+  retainUntilMs: args.retainUntilMs,
+  instanceId,
+});
 
 import { randomUUID } from "node:crypto";
 import {
@@ -1281,7 +1297,7 @@ export class SandboxService {
     const env = ctx.deviceId;
     let ordinal = 0;
     const impl = invocation
-      ? createHeldOperations(p.impl, e.handle, sig, async (method, input, invoke) => {
+      ? createHeldOperations(p.impl, e.handle, sig, async (method, input, invoke, preflight) => {
           const identity = { ...invocation, ordinal: ordinal++ };
           sig.throwIfAborted();
           await this.register(env, e.lease.token);
@@ -1302,16 +1318,44 @@ export class SandboxService {
               ),
             );
           const pending = await refreshPending();
+          // An acknowledged start returns its recorded exact ref; it never dispatches again.
+          if (pending.state === "background-running" && pending.execution_ref)
+            return parseSandboxExecutionRef(pending.execution_ref) as Awaited<
+              ReturnType<typeof invoke>
+            >;
           if (pending.state === "completed")
             return (await this.operationIntents.result(pending)) as Awaited<
               ReturnType<typeof invoke>
             >;
+          let current: typeof pending;
           try {
-            await runOutsideTransaction(() => this.operationIntents.admit(ctx, identity));
+            current = await runOutsideTransaction(() => this.operationIntents.admit(ctx, identity));
           } catch (error) {
             if (!(error instanceof PermissionAdmissionStale)) throw error;
             await refreshPending();
-            await runOutsideTransaction(() => this.operationIntents.admit(ctx, identity));
+            current = await runOutsideTransaction(() => this.operationIntents.admit(ctx, identity));
+          }
+          // Kernel checks on the admitted scope come before any dispatch state is written.
+          if (
+            preflight &&
+            current.state !== "completed" &&
+            current.state !== "background-running"
+          ) {
+            try {
+              await preflight(parseSandboxOperationScope(current.scope), sig);
+            } catch (error) {
+              if (
+                current.state === "admitted" &&
+                (isSandboxScopeDeniedError(error) || isSandboxPermissionUnsupportedError(error))
+              )
+                await runOutsideTransaction(() =>
+                  this.operationIntents.refusePreDispatch(ctx, identity, {
+                    kind: isSandboxScopeDeniedError(error) ? "denied" : "unsupported",
+                    message: error.message,
+                  }),
+                );
+              throw error;
+            }
           }
           const admitted = ["dispatching", "started-or-unknown"].includes(pending.state)
             ? await runOutsideTransaction(() =>
@@ -1329,8 +1373,23 @@ export class SandboxService {
                 ),
               )
             : await runOutsideTransaction(() =>
-                this.operationIntents.claimDispatch(ctx, identity, e.lease.token),
+                this.operationIntents.claimDispatch(
+                  ctx,
+                  identity,
+                  e.lease.token,
+                  method === "backgroundStart"
+                    ? backgroundBinding(input as ManagedStartArgs, e.handle.id)
+                    : undefined,
+                ),
               );
+          if (admitted.state === "revoked")
+            throw new SandboxScopeDeniedError(
+              "The background task was stopped or settled before it launched; nothing was started",
+            );
+          if (admitted.state === "background-running" && admitted.execution_ref)
+            return parseSandboxExecutionRef(admitted.execution_ref) as Awaited<
+              ReturnType<typeof invoke>
+            >;
           if (admitted.state === "completed")
             return (await this.operationIntents.result(admitted)) as Awaited<
               ReturnType<typeof invoke>
@@ -1368,6 +1427,27 @@ export class SandboxService {
             );
           }
           // The provider has returned: storage/serialization errors cannot establish denial.
+          if (method === "backgroundStart") {
+            try {
+              await runOutsideTransaction(() =>
+                this.operationIntents.acknowledgeBackground(
+                  admitted.operation_id,
+                  admitted.execution_id,
+                  result as SandboxExecutionRef,
+                  e.handle.id,
+                ),
+              );
+            } catch (error) {
+              await runOutsideTransaction(() =>
+                this.operationIntents.unknown(admitted.operation_id),
+              );
+              throw new SandboxOperationOutcomeUnknownError(
+                "The start returned but could not be acknowledged; reconcile the same identity",
+                { cause: error },
+              );
+            }
+            return result;
+          }
           try {
             await runOutsideTransaction(() =>
               this.operationIntents.complete(

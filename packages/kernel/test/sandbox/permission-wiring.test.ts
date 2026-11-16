@@ -686,6 +686,7 @@ it("revocation before launch acknowledgement keeps the effect cancelled and the 
     k.app.get(SandboxOperationIntents),
     k.app.get(KernelDb),
     k.app.get(SandboxProviders),
+    k.app.get(SandboxService),
   );
   await job.revoke(row.operation_id);
   expect(await verdict).toBeInstanceOf(SandboxScopeDeniedError);
@@ -847,6 +848,7 @@ it("a stale execution claim cannot dispatch and disconnected revocation remains 
     intents,
     k.app.get(KernelDb),
     k.app.get(SandboxProviders),
+    k.app.get(SandboxService),
   ).revoke(row.operation_id);
   const updated = await intents.read(row.operation_id);
   expect(updated.revoke_acknowledged).toBe(false);
@@ -1060,6 +1062,7 @@ it("expired payloads keep their consumed identity and cannot repeat an effect", 
     intents,
     k.app.get(KernelDb),
     k.app.get(SandboxProviders),
+    k.app.get(SandboxService),
   );
   await job.reconcile(row.operation_id);
   expect((await intents.read(row.operation_id)).result).toEqual(row.result);
@@ -1388,6 +1391,7 @@ it("native binary write/read above the old inline cap survives duplicate lookup"
     k.app.get(SandboxOperationIntents),
     k.app.get(KernelDb),
     k.app.get(SandboxProviders),
+    k.app.get(SandboxService),
   );
   for (const record of records) await job.reconcile(record.operation_id);
   expect(

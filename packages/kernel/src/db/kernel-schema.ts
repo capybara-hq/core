@@ -87,7 +87,19 @@ export interface SandboxOperationIntentsTable {
   deadline: Date;
   retain_until: Date;
   state: Generated<
-    "pending" | "admitted" | "dispatching" | "started-or-unknown" | "completed" | "revoked"
+    | "pending"
+    | "admitted"
+    | "dispatching"
+    | "started-or-unknown"
+    | "background-running"
+    | "completed"
+    | "revoked"
+  >;
+  /** 0143: the exact typed start result of an acknowledged backgroundStart. */
+  execution_ref: ColumnType<
+    import("@capybara-hq/plugin-sdk").SandboxExecutionRef | null,
+    string | null | undefined,
+    string | null
   >;
   execution_id: string;
   holder_token: Generated<string>;
@@ -1049,7 +1061,50 @@ export interface BackgroundTasksTable {
   stopping_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
   /** 0088, renamed in 0105: the device the task runs in. */
   device_id: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0143: the durable launch state of a managed task; `legacy` for SID rows. */
+  launch_state: ColumnType<
+    BackgroundLaunchState,
+    BackgroundLaunchState | undefined,
+    BackgroundLaunchState
+  >;
+  operation_id: NullableText;
+  input_digest: NullableText;
+  run_execution_id: NullableText;
+  task_tag: NullableText;
+  instance_id: NullableText;
+  instance_provider: NullableText;
+  instance_provider_version: NullableText;
+  instance_generation: NullableText;
+  profile_revision: ColumnType<number | null, number | null | undefined, number | null>;
+  ceiling_revision: NullableText;
+  permission_grant_id: NullableText;
+  network_authority: ColumnType<
+    import("../sandbox/operation-authority-types.js").StartingExecutionGrants | null,
+    string | null | undefined,
+    string | null
+  >;
+  working_root: NullableText;
+  retain_until: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  execution_ref: ColumnType<
+    import("@capybara-hq/plugin-sdk").SandboxExecutionRef | null,
+    string | null | undefined,
+    string | null
+  >;
+  cancel_requested_at: ColumnType<
+    Date | null,
+    Date | string | null | undefined,
+    Date | string | null
+  >;
 }
+
+/** 0143: see the migration for the meaning of each state. */
+export type BackgroundLaunchState =
+  | "legacy"
+  | "pending"
+  | "dispatched"
+  | "acknowledged"
+  | "cancel-pending"
+  | "terminal";
 
 /** 0023_sandboxes.sql: the legacy per-conversation sandbox; kept only for the cleanup job (0088). */
 export interface LegacySandboxesTable {

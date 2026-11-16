@@ -1,6 +1,8 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
+  parseSandboxExecutionRef,
   parseSandboxOperationScope,
+  type SandboxExecutionRef,
   SandboxOperationOutcomeUnknownError,
   SandboxPermissionUnsupportedError,
   SandboxScopeDeniedError,
@@ -8,6 +10,7 @@ import {
 import { Inject, Injectable } from "@nestjs/common";
 import type { Selectable } from "kysely";
 import { sql } from "kysely";
+import { STOP_CLAIM_TTL_MS } from "../background/store.js";
 import type { SandboxOperationIntentsTable } from "../db/kernel-schema.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
@@ -43,7 +46,24 @@ export interface OperationInstance {
   providerVersion: string;
   generation: string;
 }
-export function operationIdFor(i: OperationInvocation): string {
+/**
+ * The task fields a backgroundStart's dispatch binds: the reservation persisted before dispatch
+ * must match the exact start input, so the stable input hash covers the artifact and deadlines.
+ */
+export interface BackgroundDispatchBinding {
+  taskId: string;
+  workingRoot: string;
+  outputPath: string;
+  retainUntilMs: number;
+  /** The held instance's handle id; the typed start result must name it. */
+  instanceId: string;
+}
+/** What acknowledging a start did: live running authority, or an owed exact cancellation. */
+export type BackgroundAcknowledgement = "acknowledged" | "cancel-pending";
+const stopClaimed = sql<boolean>`(stopping_at IS NOT NULL AND stopping_at >= now() - ${STOP_CLAIM_TTL_MS}::integer * interval '1 millisecond')`;
+export function operationIdFor(
+  i: Pick<OperationInvocation, "callId" | "ordinal"> & { claim: Pick<ExecutionClaim, "runId"> },
+): string {
   return createHash("sha256")
     .update(JSON.stringify([i.claim.runId, i.callId, i.ordinal]))
     .digest("hex");
@@ -450,6 +470,7 @@ export class SandboxOperationIntents {
     ctx: SandboxUseContext,
     invocation: OperationInvocation,
     holderTag: string,
+    background?: BackgroundDispatchBinding,
   ): Promise<OperationIntent> {
     const id = operationIdFor(invocation),
       initial = await this.read(id);
@@ -461,7 +482,7 @@ export class SandboxOperationIntents {
       .where("operation_id", "=", id)
       .forUpdate()
       .executeTakeFirstOrThrow();
-    if (r.state === "completed") return r;
+    if (r.state === "completed" || r.state === "background-running") return r;
     if (r.state === "revoked") {
       if (r.outcome_unknown)
         throw new SandboxOperationOutcomeUnknownError(
@@ -475,6 +496,19 @@ export class SandboxOperationIntents {
         "Operation already dispatched; reconcile its recorded identity before continuing",
       );
     if (r.deadline.getTime() <= Date.now()) denied("Operation admission deadline elapsed");
+    if (r.method === "backgroundStart" || background) {
+      if (r.method !== "backgroundStart" || !background)
+        return denied("A background start needs its exact task reservation");
+      if (!(await this.bindBackgroundDispatch(r, invocation, background))) {
+        // Pre-effect: the reservation was stopped or settled first. Nothing was dispatched.
+        await this.db
+          .updateTable("sandbox_operation_intents")
+          .set({ state: "revoked", outcome_unknown: false, updated_at: new Date() })
+          .where("operation_id", "=", id)
+          .execute();
+        return { ...r, state: "revoked", outcome_unknown: false };
+      }
+    }
     await this.db
       .updateTable("sandbox_operation_intents")
       .set({
@@ -491,6 +525,431 @@ export class SandboxOperationIntents {
       execution_id: invocation.claim.executionId,
       holder_token: holderTag,
     };
+  }
+  /**
+   * Binds a managed task's reservation to its admitted start in the dispatch transaction: the
+   * operation, per-method input hash, run claim, task-owned tag, exact instance and generation,
+   * starting profile/ceiling revisions, grant locator and network authority. Conditional on the
+   * reservation still being `pending`, running and not claimed by a stop, and on the persisted
+   * working root, artifact and retention matching the start input. False: nothing dispatches; a
+   * stop's claim settles the reservation as `stopped`.
+   */
+  private async bindBackgroundDispatch(
+    r: OperationIntent,
+    invocation: OperationInvocation,
+    b: BackgroundDispatchBinding,
+  ): Promise<boolean> {
+    const scope = parseSandboxOperationScope(r.scope);
+    const bound = await this.db
+      .updateTable("background_tasks")
+      .set({
+        launch_state: "dispatched",
+        input_digest: r.input_hash,
+        run_execution_id: invocation.claim.executionId,
+        task_tag: scope.tag,
+        instance_id: b.instanceId,
+        instance_provider: r.provider,
+        instance_provider_version: r.provider_version,
+        instance_generation: r.instance_generation,
+        profile_revision: scope.profileRevision,
+        ceiling_revision: scope.ceilingRevision,
+        permission_grant_id: r.permission_grant_id,
+        network_authority: r.execution_grants === null ? null : JSON.stringify(r.execution_grants),
+      })
+      .where("id", "=", b.taskId)
+      .where("operation_id", "=", r.operation_id)
+      .where("org_id", "=", r.org_id)
+      .where("device_id", "=", r.device_id)
+      .where("run_id", "=", invocation.claim.runId)
+      .where("call_id", "=", invocation.callId)
+      .where("launch_state", "=", "pending")
+      .where("status", "=", "running")
+      .where("working_root", "=", b.workingRoot)
+      .where("output_path", "=", b.outputPath)
+      .where("retain_until", "=", new Date(b.retainUntilMs))
+      .where(sql<boolean>`NOT ${stopClaimed}`)
+      .executeTakeFirst();
+    if (Number(bound.numUpdatedRows) > 0) return true;
+    await this.db
+      .updateTable("background_tasks")
+      .set({
+        status: "stopped",
+        launch_state: "terminal",
+        finished_at: new Date(),
+        stopping_at: null,
+      })
+      .where("id", "=", b.taskId)
+      .where("operation_id", "=", r.operation_id)
+      .where("launch_state", "=", "pending")
+      .where("status", "=", "running")
+      .where(stopClaimed)
+      .execute();
+    return false;
+  }
+  /**
+   * Records a typed start result. A current dispatch (the same execution claim, or a recovery
+   * claim) moves the intent to `background-running` and the task to `acknowledged` together; the
+   * intent stays live revocable authority and is never completed like a foreground call. When a
+   * writer revoked the intent first, or a stop claimed the task, the ref is attached to the
+   * already owed cancellation (`cancel-pending`) and the exact revoke is enqueued; the revoked
+   * intent is never resurrected. The launching run need not still be running.
+   */
+  @Transactional({ propagation: "requires_new" })
+  async acknowledgeBackground(
+    id: string,
+    executionId: string,
+    result: SandboxExecutionRef,
+    instanceId: string,
+  ): Promise<BackgroundAcknowledgement> {
+    const initial = await this.read(id);
+    await this.locks.acquire(subjectOf(initial), { kind: "admit" });
+    const r = await this.db
+      .selectFrom("sandbox_operation_intents")
+      .selectAll()
+      .where("operation_id", "=", id)
+      .forUpdate()
+      .executeTakeFirstOrThrow();
+    const ref = parseSandboxExecutionRef(result);
+    if (
+      r.method !== "backgroundStart" ||
+      ref.operationId !== r.operation_id ||
+      ref.instanceGeneration !== r.instance_generation ||
+      ref.instanceId !== instanceId
+    )
+      throw new SandboxOperationOutcomeUnknownError(
+        "The start result does not name this operation's exact instance; reconcile the same identity",
+      );
+    if (r.execution_ref && permissionScopeHash(r.execution_ref) !== permissionScopeHash(ref))
+      throw new SandboxOperationOutcomeUnknownError(
+        "The start result conflicts with the recorded execution; reconcile the same identity",
+      );
+    const task = await this.db
+      .selectFrom("background_tasks")
+      .selectAll()
+      .where("operation_id", "=", id)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!task || task.instance_id !== instanceId)
+      throw new SandboxOperationOutcomeUnknownError(
+        "The start result has no matching task reservation; reconcile the same identity",
+      );
+    const refJson = JSON.stringify(ref);
+    if (r.state === "background-running") {
+      if (task.launch_state !== "acknowledged")
+        throw new SandboxOperationOutcomeUnknownError("The task record diverged from its start");
+      return "acknowledged";
+    }
+    const live =
+      ["dispatching", "started-or-unknown"].includes(r.state) && r.execution_id === executionId;
+    if (!live && r.state !== "revoked")
+      throw new SandboxOperationOutcomeUnknownError(
+        "The start is not held by this dispatch; reconcile the same identity",
+      );
+    const stopped =
+      task.status !== "running" ||
+      task.launch_state !== "dispatched" ||
+      (task.stopping_at !== null && task.stopping_at.getTime() >= Date.now() - STOP_CLAIM_TTL_MS);
+    if (live && !stopped) {
+      await this.db
+        .updateTable("sandbox_operation_intents")
+        .set({
+          state: "background-running",
+          execution_ref: refJson,
+          outcome_unknown: false,
+          updated_at: new Date(),
+        })
+        .where("operation_id", "=", id)
+        .execute();
+      await this.db
+        .updateTable("background_tasks")
+        .set({
+          launch_state: "acknowledged",
+          execution_ref: refJson,
+          sandbox_created_at: new Date(Number(r.instance_generation)),
+        })
+        .where("id", "=", task.id)
+        .execute();
+      return "acknowledged";
+    }
+    // Revoked by a writer, or stopped by a person or tool: the cancellation is owed for this ref.
+    // A newly attached ref owes its own exact revoke, even if an earlier one was acknowledged.
+    await this.db
+      .updateTable("sandbox_operation_intents")
+      .set({
+        state: "revoked",
+        execution_ref: refJson,
+        revoke_acknowledged: false,
+        updated_at: new Date(),
+      })
+      .where("operation_id", "=", id)
+      .execute();
+    await this.db
+      .updateTable("background_tasks")
+      .set({
+        launch_state: "cancel-pending",
+        execution_ref: refJson,
+        sandbox_created_at: new Date(Number(r.instance_generation)),
+        cancel_requested_at: new Date(),
+      })
+      .where("id", "=", task.id)
+      .where("launch_state", "in", ["dispatched", "cancel-pending"])
+      .execute();
+    await this.outbox.add({
+      queue: "cap-kernel-maintenance",
+      name: OPERATION_REVOKE,
+      jobId: `${OPERATION_REVOKE}-${id}-ack`,
+      data: { operationId: id },
+      orgId: r.org_id,
+    });
+    return "cancel-pending";
+  }
+  /**
+   * A task-specific recovery claim for a start whose acknowledgement was lost: a new durable
+   * execution identity (never a borrowed run or holder token) that may only ask the provider about
+   * the same operation and input. Only a start its dispatcher itself left `started-or-unknown` is
+   * taken over; a `dispatching` one still has a live (or not yet proven dead) holder. A task a stop
+   * claimed, or that is no longer a running dispatched task, is never started: the intent is
+   * revoked and the exact revoke (the operation tombstone) owed instead. Null: nothing to start.
+   */
+  @Transactional({ propagation: "requires_new" })
+  async claimBackgroundRecovery(id: string): Promise<OperationIntent | null> {
+    const initial = await this.read(id);
+    await this.locks.acquire(subjectOf(initial), { kind: "admit" });
+    const r = await this.db
+      .selectFrom("sandbox_operation_intents")
+      .selectAll()
+      .where("operation_id", "=", id)
+      .forUpdate()
+      .executeTakeFirstOrThrow();
+    if (
+      r.method !== "backgroundStart" ||
+      r.state !== "started-or-unknown" ||
+      r.retain_until.getTime() <= Date.now()
+    )
+      return null;
+    const task = await this.db
+      .selectFrom("background_tasks")
+      .selectAll()
+      .where("operation_id", "=", id)
+      .forUpdate()
+      .executeTakeFirst();
+    const claimedAt = task?.stopping_at?.getTime();
+    const live = task?.status === "running" && task.launch_state === "dispatched";
+    const stopped =
+      !live || (claimedAt !== undefined && claimedAt >= Date.now() - STOP_CLAIM_TTL_MS);
+    if (stopped) {
+      await this.revokeUnknownLocked(r, "recover");
+      if (task && task.status === "running" && task.launch_state === "dispatched")
+        await this.db
+          .updateTable("background_tasks")
+          .set({ launch_state: "cancel-pending", cancel_requested_at: new Date() })
+          .where("id", "=", task.id)
+          .execute();
+      return null;
+    }
+    const executionId = `recovery-${randomUUID()}`;
+    await this.db
+      .updateTable("sandbox_operation_intents")
+      .set({ execution_id: executionId, outcome_unknown: true, updated_at: new Date() })
+      .where("operation_id", "=", id)
+      .execute();
+    return { ...r, execution_id: executionId, outcome_unknown: true };
+  }
+  /** Revokes a possibly dispatched start; its outcome stays unknown and the exact revoke owed. */
+  private async revokeUnknownLocked(r: OperationIntent, why: string): Promise<void> {
+    await this.db
+      .updateTable("sandbox_operation_intents")
+      .set({
+        state: "revoked",
+        outcome_unknown: true,
+        revoke_acknowledged: false,
+        updated_at: new Date(),
+      })
+      .where("operation_id", "=", r.operation_id)
+      .execute();
+    await this.outbox.add({
+      queue: "cap-kernel-maintenance",
+      name: OPERATION_REVOKE,
+      jobId: `${OPERATION_REVOKE}-${r.operation_id}-${why}`,
+      data: { operationId: r.operation_id },
+      orgId: r.org_id,
+    });
+  }
+  /**
+   * The kernel refused a start before dispatching it (the artifact or runtime checks on the
+   * admitted scope): recorded as a pre-effect failure, the reservation settled `failed`. Only an
+   * `admitted` intent of the current claim; anything else is left as it is.
+   */
+  @Transactional({ propagation: "requires_new" })
+  async refusePreDispatch(
+    ctx: SandboxUseContext,
+    invocation: OperationInvocation,
+    failure: { kind: "denied" | "unsupported"; message: string },
+  ): Promise<void> {
+    const id = operationIdFor(invocation),
+      initial = await this.read(id);
+    await this.locks.acquire(subjectOf(initial), { kind: "admit" });
+    await this.assertClaim(ctx, invocation);
+    const r = await this.db
+      .selectFrom("sandbox_operation_intents")
+      .selectAll()
+      .where("operation_id", "=", id)
+      .forUpdate()
+      .executeTakeFirstOrThrow();
+    if (r.state !== "admitted") return;
+    await this.settleFailureLocked(r, failure, "pending");
+  }
+  /**
+   * The provider refused a recovered start with a typed pre-effect error for this exact operation
+   * (it owns the identity, so a launched operation would have returned its ref): a failure.
+   */
+  @Transactional({ propagation: "requires_new" })
+  async settleBackgroundRefusal(
+    id: string,
+    executionId: string,
+    failure: { kind: "denied" | "unsupported"; message: string },
+  ): Promise<void> {
+    const initial = await this.read(id);
+    await this.locks.acquire(subjectOf(initial), { kind: "admit" });
+    const r = await this.db
+      .selectFrom("sandbox_operation_intents")
+      .selectAll()
+      .where("operation_id", "=", id)
+      .where("execution_id", "=", executionId)
+      .where("state", "=", "started-or-unknown")
+      .forUpdate()
+      .executeTakeFirst();
+    if (r) await this.settleFailureLocked(r, failure, "dispatched");
+  }
+  private async settleFailureLocked(
+    r: OperationIntent,
+    failure: { kind: "denied" | "unsupported"; message: string },
+    from: "pending" | "dispatched",
+  ): Promise<void> {
+    const payload = await this.payloads.save(r.operation_id, "result", { $failure: failure });
+    await this.db
+      .updateTable("sandbox_operation_intents")
+      .set({ state: "completed", result: payload, outcome_unknown: false, updated_at: new Date() })
+      .where("operation_id", "=", r.operation_id)
+      .execute();
+    await this.db
+      .updateTable("background_tasks")
+      .set({
+        status: "failed",
+        launch_state: "terminal",
+        finished_at: new Date(),
+        lost_reason: `launch refused: ${failure.message}`.slice(0, 1000),
+        stopping_at: null,
+      })
+      .where("operation_id", "=", r.operation_id)
+      .where("launch_state", "=", from)
+      .where("status", "=", "running")
+      .execute();
+  }
+  /**
+   * Gives up on an unknown start (its retention ended, or the kernel would not send it again): the
+   * task becomes terminal `lost` (`launch_unknown`), freeing its slot of `maxTasks`, while the
+   * intent is revoked with an unknown outcome so the exact revoke (the operation tombstone) stays
+   * owed. A reservation that never dispatched settles as a pre-effect failure instead.
+   */
+  @Transactional({ propagation: "requires_new" })
+  async abandonBackgroundLaunch(id: string, why: string): Promise<void> {
+    const initial = await this.read(id);
+    await this.locks.acquire(subjectOf(initial), { kind: "admit" });
+    const r = await this.db
+      .selectFrom("sandbox_operation_intents")
+      .selectAll()
+      .where("operation_id", "=", id)
+      .forUpdate()
+      .executeTakeFirstOrThrow();
+    if (r.method !== "backgroundStart") return;
+    const task = await this.db
+      .selectFrom("background_tasks")
+      .selectAll()
+      .where("operation_id", "=", id)
+      .forUpdate()
+      .executeTakeFirst();
+    if (r.state === "pending" || r.state === "admitted") {
+      await this.db
+        .updateTable("sandbox_operation_intents")
+        .set({ state: "revoked", outcome_unknown: false, updated_at: new Date() })
+        .where("operation_id", "=", id)
+        .execute();
+      if (task?.launch_state === "pending")
+        await this.db
+          .updateTable("background_tasks")
+          .set({
+            status: "failed",
+            launch_state: "terminal",
+            finished_at: new Date(),
+            lost_reason: "launch_abandoned",
+            stopping_at: null,
+          })
+          .where("id", "=", task.id)
+          .where("status", "=", "running")
+          .execute();
+      return;
+    }
+    if (r.state === "dispatching" || r.state === "started-or-unknown")
+      await this.revokeUnknownLocked(r, why);
+    else if (r.state === "revoked" && !r.revoke_acknowledged)
+      await this.outbox.add({
+        queue: "cap-kernel-maintenance",
+        name: OPERATION_REVOKE,
+        jobId: `${OPERATION_REVOKE}-${id}-${why}`,
+        data: { operationId: id },
+        orgId: r.org_id,
+      });
+    // only a task without an exact ref: an acknowledged one is settled by its consumers
+    if (
+      task &&
+      task.status === "running" &&
+      task.execution_ref === null &&
+      (task.launch_state === "dispatched" || task.launch_state === "cancel-pending")
+    )
+      await this.db
+        .updateTable("background_tasks")
+        .set({
+          status: "lost",
+          launch_state: "terminal",
+          finished_at: new Date(),
+          lost_reason: "launch_unknown",
+          stopping_at: null,
+        })
+        .where("id", "=", task.id)
+        .execute();
+  }
+  /** The recorded input of an operation (for a same-identity retry only). */
+  async input(row: OperationIntent): Promise<unknown> {
+    return hydrateOperationBytes(await this.payloads.load(row.operation_id, "input", row.input));
+  }
+  /**
+   * A deferred recovery check: a new deterministic persisted attempt with exponential backoff
+   * (30 s doubling, at most an hour), while the start is still unresolved and retained. The
+   * retention expiry job settles what is never resolved.
+   */
+  @Transactional({ propagation: "requires_new" })
+  async deferBackgroundRecovery(id: string): Promise<void> {
+    const row = await this.db
+      .updateTable("sandbox_operation_intents")
+      .set((eb) => ({ reconcile_attempt: eb("reconcile_attempt", "+", 1), updated_at: new Date() }))
+      .where("operation_id", "=", id)
+      .where("method", "=", "backgroundStart")
+      .where("state", "in", ["dispatching", "started-or-unknown"])
+      .where("retain_until", ">", new Date())
+      .returning(["org_id", "reconcile_attempt", "retain_until"])
+      .executeTakeFirst();
+    if (!row) return;
+    const delay = Math.min(30_000 * 2 ** Math.min(row.reconcile_attempt - 1, 20), 3_600_000);
+    const runAt = new Date(Math.min(Date.now() + delay, row.retain_until.getTime()));
+    await this.outbox.add({
+      queue: "cap-kernel-maintenance",
+      name: OPERATION_RECONCILE,
+      jobId: `${OPERATION_RECONCILE}-${id}-recover-${row.reconcile_attempt}`,
+      data: { operationId: id },
+      orgId: row.org_id,
+      runAt,
+    });
   }
   @Transactional({ propagation: "requires_new" })
   async complete(id: string, executionId: string, result: unknown): Promise<void> {
@@ -515,6 +974,27 @@ export class SandboxOperationIntents {
       .forUpdate()
       .executeTakeFirst();
     if (!row) return;
+    const failure =
+      result && typeof result === "object" && "$failure" in result
+        ? (result as { $failure: { message: string } }).$failure
+        : null;
+    if (row.method === "backgroundStart") {
+      // A start's success is acknowledged as live authority, never completed like foreground.
+      if (!failure) throw new Error("A background start result must be acknowledged");
+      await this.db
+        .updateTable("background_tasks")
+        .set({
+          status: "failed",
+          launch_state: "terminal",
+          finished_at: new Date(),
+          lost_reason: `launch refused: ${failure.message}`.slice(0, 1000),
+          stopping_at: null,
+        })
+        .where("operation_id", "=", id)
+        .where("launch_state", "=", "dispatched")
+        .where("status", "=", "running")
+        .execute();
+    }
     const payload =
       row.retain_until.getTime() <= Date.now()
         ? JSON.stringify({ $expired: true })
@@ -564,7 +1044,7 @@ export class SandboxOperationIntents {
       method,
       permissionScopeHash({ method, inputDigest: describeOperationPayload(input).digest }),
     );
-    if (r.state === "completed") return r;
+    if (r.state === "completed" || r.state === "background-running") return r;
     if (r.state === "revoked") {
       if (r.outcome_unknown)
         throw new SandboxOperationOutcomeUnknownError(
