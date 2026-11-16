@@ -57,7 +57,7 @@ Kernel / extensions / external apps; dependencies only point downward.
 - Package names are always `@capybara-hq/<name>`.
 
 Every edge and the reason for it: [docs/architecture.md](docs/architecture.md). Only the plugin/SDK
-boundary is checked automatically (`pnpm check:deps`); the rest relies on review.
+boundary and the `device` edge are checked automatically (`pnpm check:deps`); the rest relies on review.
 
 ## Multi-replica discipline (production runs multiple replicas)
 

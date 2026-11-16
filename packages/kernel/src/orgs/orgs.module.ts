@@ -19,7 +19,7 @@ import { OrgsService } from "./orgs.service.js";
 import { OrgSettingsModule } from "./settings.service.js";
 
 /**
- * Organizations: orgs, org settings, members, invitations, offboarding (with its sweep cron) and
+ * Organizations: orgs, org settings, members, invitations, offboarding (its owed work goes through the outbox) and
  * directory sync (the hourly scan cron, one-off syncs on the maintenance queue).
  */
 @Module({

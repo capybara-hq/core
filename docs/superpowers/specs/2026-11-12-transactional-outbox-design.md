@@ -1,7 +1,7 @@
 # Transactional outbox: work that must follow a commit
 
 - Date: 2026-11-12, written against `origin/main` at `7cb12115f`.
-- Status: draft for maintainer review.
+- Status: merged (implemented).
 - Source: design review `docs/reviews/2026-11-12-2-design-review.md`, findings
   `post-commit-followups-no-outbox` (high, second time) and `device-op-before-record` (high, new);
   it also removes the cause of `catalog-import-heal-job` and part of
