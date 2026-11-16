@@ -195,7 +195,6 @@ export async function uploadAttachment(
   return finalizeAttachment(orgId, created.id, opts.signal);
 }
 
-/** The words after a truncated label list, per locale (the catalog holds one key per language). */
 /** How many labels the refusal line shows before the count. */
 const TYPE_LIST_LABELS = 6;
 
