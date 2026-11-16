@@ -42,6 +42,7 @@ import {
 import {
   assertRecordedPermissionEvents,
   permissionContextHistory,
+  RecordedPermissionContextError,
 } from "../runtime/context/permission-profile.js";
 import { estimateTokens } from "../runtime/context/tokens.js";
 import { assembleModelRequest, type MediaSourceDeps } from "../runtime/model-call.js";
@@ -227,15 +228,30 @@ function inputEvents(events: readonly ConversationEvent[], call: ModelCallEvent)
 }
 
 /**
+ * A corrupt recorded permission context is the snapshot's failure: a 4xx `eval.snapshot_invalid`
+ * (an `ApiError`, so the eval worker records it as a non-retryable replay error, never as
+ * `run.provider_error`), checked over the whole snapshot before anything renders.
+ */
+export function assertSnapshotPermissionEvents(events: readonly ConversationEvent[]): void {
+  try {
+    assertRecordedPermissionEvents(events);
+  } catch (err) {
+    if (err instanceof RecordedPermissionContextError)
+      throw new ApiError("eval.snapshot_invalid", err.message);
+    throw err;
+  }
+}
+
+/**
  * Compare only the original request range, never live state or candidate-generated history.
- * Throws `RecordedPermissionContextError` first when any recorded v1 event in the snapshot
+ * Throws `eval.snapshot_invalid` first when any recorded v1 event in the snapshot
  * (inside or outside the range, covered by a summary or not) fails its strict schema.
  */
 export function recordedPermissionContextDrift(
   events: readonly ConversationEvent[],
   call: ModelCallEvent,
 ): DriftReason[] {
-  assertRecordedPermissionEvents(events);
+  assertSnapshotPermissionEvents(events);
   const bounded = inputEvents(events, call);
   const rebuilt = permissionContextHistory(
     bounded,

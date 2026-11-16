@@ -18,6 +18,7 @@ import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { ModelPurposesService, PurposeAttemptError } from "../models/purposes.js";
 import { KyselyCheckpointSaver } from "../runtime/checkpointer.js";
+import type { LoopDeps } from "../runtime/langgraph-loop.js";
 import { MediaUnavailableError, RunError } from "../runtime/model-call.js";
 import { ProviderListError, ProviderRegistry } from "../runtime/providers.js";
 import { EVAL_QUOTA, ORG_QUOTA_LEASE_MS, type OrgQuota } from "../runtime/quota.js";
@@ -119,6 +120,37 @@ interface Failure {
 const isPluginUnloaded = (err: unknown): boolean =>
   err instanceof ExtensionUnloadedError ||
   (err instanceof Error && err.cause instanceof ExtensionUnloadedError);
+
+/**
+ * The loop deps of a full-run replay: the run's own step deps without anything live that a replay
+ * must never trigger, then the replay's overrides. Removed: plugin hooks (P-18), sub-agent and
+ * compaction progress on a live stream, fork dispatch (run-replay passes the recorded reports) and
+ * the live permission context recorder (permission context replay spec B4): a replay gets only the
+ * recorded feeder `overrides.permissionContext`, and none at all for a recording without markers.
+ */
+export function replayLoopDeps(
+  stepDeps: LoopDeps,
+  overrides: Parameters<RunReplayDeps["loop"]>[0],
+): LoopDeps {
+  const {
+    db: _snapshot,
+    hooks: _noHooks,
+    subagentProgress: _noProgress,
+    compactionProgress: _noCompactionProgress,
+    skillForks: _noForks,
+    permissionContext: _noLivePermissionContext,
+    ...replayDeps
+  } = stepDeps;
+  // the object rest above copied `db` as a value: read it through the step deps' getter
+  // instead, so the loop always resolves the context-aware handle
+  return {
+    ...replayDeps,
+    get db() {
+      return stepDeps.db;
+    },
+    ...overrides,
+  };
+}
 
 /** 回放出错的分类（与运行时的降级梯子同一套码）。 */
 function classify(err: unknown): Failure {
@@ -292,26 +324,7 @@ export class EvalWorker {
         checkpoints,
         // explicitly without plugin hooks: eval replays never fire them (P-18); nor do they
         // publish sub-agent progress on a live conversation's stream
-        loop: (d) => {
-          // nor dispatch fork invocations: run-replay passes the recorded reports instead
-          const {
-            db: _snapshot,
-            hooks: _noHooks,
-            subagentProgress: _noProgress,
-            compactionProgress: _noCompactionProgress,
-            skillForks: _noForks,
-            ...replayDeps
-          } = stepDeps;
-          // the object rest above copied `db` as a value: read it through the step deps' getter
-          // instead, so the loop always resolves the context-aware handle
-          return loops.create({
-            ...replayDeps,
-            get db() {
-              return stepDeps.db;
-            },
-            ...d,
-          });
-        },
+        loop: (d) => loops.create(replayLoopDeps(stepDeps, d)),
         ...(hooks !== undefined && { hooks }),
       },
     };
@@ -838,10 +851,12 @@ export class EvalWorker {
     // 回放已完整做完：即使最后一次请求的用量刚好越限（运行已 capped），结果照常记 done（只要仍持有认领）
     if (!(await held())) return;
     const baseline = runBaseline(s);
-    // in DRIFT_ORDER: subagent_changed, then model_switched (the candidate replaced the person's
+    // in DRIFT_ORDER: subagent_changed, permission_profile_changed (a recorded permission
+    // context the snapshot cannot reproduce), model_switched (the candidate replaced the person's
     // switch), then tool_unmatched
     const drift: DriftReason[] = [
       ...(subagentCaseChanged(s, resolved) ? (["subagent_changed"] as const) : []),
+      ...(out.permissionContextDrift ? (["permission_profile_changed"] as const) : []),
       ...(resolved.overridesSwitch ? (["model_switched"] as const) : []),
       ...(out.unmatched > 0 ? (["tool_unmatched"] as const) : []),
     ];

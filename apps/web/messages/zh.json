@@ -407,6 +407,7 @@
       "too_many_cases": "评测集已满，无法再加入用例。",
       "agent_mismatch": "这次运行不属于该评测集的智能体。",
       "compact_not_replayable": "手动压缩运行没有可回放的模型步骤，不能作为评测用例。请选择该对话的普通运行。",
+      "snapshot_invalid": "用例快照中的记录数据无法被当前版本读取，因此该用例无法回放。",
       "run_not_finished": "运行还没结束，结束后才能加入评测集。",
       "case_too_large": "这次运行太大，不能加入评测集。",
       "call_not_found": "快照里找不到这次模型调用。",
@@ -3580,6 +3581,7 @@
       "context_fit": "候选模型的上下文窗口使请求的裁剪方式不同",
       "tool_unmatched": "有工具调用没有对应的记录",
       "subagent_changed": "子智能体的定义与记录时不同",
+      "permission_profile_changed": "记录的权限上下文无法从快照还原",
       "model_switched": "候选模型替换了会话中切换的模型"
     },
     "tabs": {

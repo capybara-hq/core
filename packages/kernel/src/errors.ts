@@ -499,6 +499,13 @@ export const ERROR_CODES = {
   "eval.too_many_cases": 409,
   "eval.agent_mismatch": 409,
   "eval.compact_not_replayable": 422,
+  /**
+   * The case snapshot holds a recorded record replay cannot read (a permission context with an
+   * unsupported version or invalid payload, an invalid tool-result review, model calls out of
+   * step / attempt order): the case cannot be replayed, and the failure is the snapshot's, never
+   * the provider's.
+   */
+  "eval.snapshot_invalid": 422,
   "eval.run_not_found": 404,
   "eval.token_cap_invalid": 400,
   "eval.run_finished": 409,

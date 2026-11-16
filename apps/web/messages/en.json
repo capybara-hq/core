@@ -407,6 +407,7 @@
       "too_many_cases": "The eval set is full.",
       "agent_mismatch": "This run belongs to a different agent than the eval set.",
       "compact_not_replayable": "A manual compaction run has no model step to replay, so it cannot be an eval case. Pick an ordinary run of the conversation.",
+      "snapshot_invalid": "The case snapshot holds recorded data that this version cannot read, so the case cannot be replayed.",
       "run_not_finished": "The run has not finished yet. Add it after it ends.",
       "case_too_large": "This run is too large to add to an eval set.",
       "call_not_found": "This model call is not in the snapshot.",
@@ -3592,6 +3593,7 @@
       "context_fit": "The candidate model's context window trims the request differently",
       "tool_unmatched": "A tool call had no recorded result",
       "subagent_changed": "A sub-agent's definition changed since the recording",
+      "permission_profile_changed": "The recorded permission context cannot be reproduced from the snapshot",
       "model_switched": "The candidate model replaces a model switch made in the conversation"
     },
     "tabs": {

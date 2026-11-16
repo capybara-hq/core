@@ -24,6 +24,7 @@ import {
   ModelRef,
 } from "../agents/definition.js";
 import { ORG_ROLES } from "../orgs/roles.js";
+import { coversHost } from "../sandbox/modes.js";
 import type { ScheduleMarker } from "../schedules/types.js";
 import {
   TOOL_VIEW_DIFF_MAX_LINES,
@@ -217,15 +218,7 @@ export const PermissionContextV1Schema = z
         reject("Network hosts exceed the disabled outer boundary");
       if (s.outerNetwork.kind === "allowlist") {
         const outer = s.outerNetwork.hosts;
-        if (
-          s.network.hosts.some(
-            (host) =>
-              !outer.some(
-                (pattern) =>
-                  pattern === host || (pattern.startsWith("*.") && host.endsWith(pattern.slice(1))),
-              ),
-          )
-        )
+        if (s.network.hosts.some((host) => !outer.some((pattern) => coversHost(pattern, host))))
           reject("Network hosts exceed the applied outer allowlist");
       }
     }
@@ -336,7 +329,7 @@ export const PermissionCallBindingSchema = z
     authorityRevision: z.string(),
   })
   .strict();
-const ReviewRecordSchema = z
+export const ReviewRecordSchema = z
   .object({
     profile: z.enum(["request-approval", "approve-for-me", "full-access"]).optional(),
     profileRevision: z.number().int().nonnegative().optional(),
