@@ -680,6 +680,39 @@ describe("runModelStep", () => {
     }
   });
 
+  it("no run deadline: a 30 s retry-after is waited out on the same model", async () => {
+    let n = 0;
+    stubImpl = stub([stubInfo("flaky")], () => {
+      if (++n === 1) throw new ModelError("rate_limited", "slow", { retryAfterMs: 30_000 });
+      return "after the wait";
+    });
+    await say("hi");
+    const timers = captureRetryWait();
+    try {
+      const pending = step({ agent: agentWith({ model: { provider: "stub", model: "flaky" } }) });
+      const wait = await timers.arrived();
+      expect(n).toBe(1);
+      wait.fire();
+      const r = await pending;
+      expect(n).toBe(2);
+      expect(r.content).toEqual([{ type: "text", text: "after the wait" }]);
+    } finally {
+      timers.restore();
+    }
+  });
+
+  it("no run deadline: a retry-after above 5 minutes is not waited out", async () => {
+    stubImpl = stub([stubInfo("limited")], () => {
+      throw new ModelError("rate_limited", "slow", { retryAfterMs: 5 * 60_000 + 1 });
+    });
+    await say("hi");
+    const code = await runErrorCode(
+      step({ agent: agentWith({ model: { provider: "stub", model: "limited" } }) }),
+    );
+    expect(code).toBe("model.rate_limited");
+    expect(await ofType("model_call")).toHaveLength(1);
+  });
+
   it("retry-after longer than the time left to the deadline → fails without waiting", async () => {
     stubImpl = stub([stubInfo("limited")], () => {
       throw new ModelError("rate_limited", "slow", { retryAfterMs: 30_000 });

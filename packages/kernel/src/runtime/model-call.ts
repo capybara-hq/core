@@ -139,17 +139,27 @@ export const contextTooLargeText = (model: ModelInfo, target: number, estimate: 
 const DEFAULT_RETRY_DELAY_MS = 1000;
 
 /**
- * Longest provider-suggested wait (retryAfterMs) honoured on the same model when the run has no
- * deadline. With a deadline the wait is honoured when it fits the time the run has left.
+ * Longest provider-suggested wait (retryAfterMs) honoured on the same model. With a run deadline
+ * the wait must also fit the time the run has left.
  */
-const MAX_RETRY_AFTER_MS = 10_000;
+const MAX_RETRY_AFTER_MS = 5 * 60_000;
 
-/** Whether waiting `retryAfterMs` on the same model fits the run's remaining deadline. */
-function retryAfterFits(retryAfterMs: number | undefined, deadline: number | undefined): boolean {
+/**
+ * Whether waiting `retryAfterMs` on the same model is allowed, and which limit decided it:
+ * the ceiling, or the run's remaining deadline (absent: no deadline, only the ceiling applies).
+ */
+function retryAfterDecision(
+  retryAfterMs: number | undefined,
+  deadline: number | undefined,
+): { fits: boolean; limit: "ceiling" | "deadline"; remainingMs: number | undefined } {
   const wait = retryAfterMs ?? 0;
-  if (deadline === undefined) return wait <= MAX_RETRY_AFTER_MS;
+  const remainingMs = deadline === undefined ? undefined : deadline - Date.now();
+  if (wait > MAX_RETRY_AFTER_MS) return { fits: false, limit: "ceiling", remainingMs };
   // the wait must leave time for the retry itself: a wait that ends at the deadline is no wait
-  return wait < deadline - Date.now();
+  if (remainingMs !== undefined && wait >= remainingMs) {
+    return { fits: false, limit: "deadline", remainingMs };
+  }
+  return { fits: true, limit: remainingMs === undefined ? "ceiling" : "deadline", remainingMs };
 }
 
 /** 读事件日志的分页大小。 */
@@ -1602,7 +1612,7 @@ async function mergeWritten(
 
 /**
  * 降级梯子：主模型 → 主模型重试一次（等 `retryAfterMs ?? 1000`，可被中止）→ `agent.fallback`（若有）。
- * 建议等待放不进运行剩余时间（无 deadline 时超过 `MAX_RETRY_AFTER_MS`）时跳过同模型重试。
+ * 建议等待放不进运行剩余时间或超过 `MAX_RETRY_AFTER_MS`时跳过同模型重试。
  * 每次尝试解析出模型后、写 `model_call` 之前写本步的尾部提醒（均按本步幂等，只写一次）：所用模型不支持工具而本步有工具
  * → {@link TOOLS_UNSUPPORTED_REMINDER}；然后是轮次提醒或收尾提醒（收尾提醒因此位于请求末尾）。
  * 每次实际尝试写自己的 `model_call`（attempt 从 1 连续递增，跳过的不计）；重试前经 sink 发 `step_reset`。
@@ -1650,14 +1660,19 @@ async function ladder(
   let sentMedia: string[] = [];
   for (const rung of rungs) {
     if ((mainUnavailable || skipToFallback) && !rung.fallback) continue;
-    if (last && !rung.fallback && !retryAfterFits(last.retryAfterMs, input.deadline)) {
-      deps.log.warn("model retry skipped: suggested wait exceeds the run deadline or cap", {
-        conversationId,
-        runId,
-        step,
-        retryAfterMs: last.retryAfterMs,
-      });
-      continue;
+    if (last && !rung.fallback) {
+      const d = retryAfterDecision(last.retryAfterMs, input.deadline);
+      if (!d.fits) {
+        deps.log.warn("model retry skipped: suggested wait exceeds the limit", {
+          conversationId,
+          runId,
+          step,
+          retryAfterMs: last.retryAfterMs,
+          limit: d.limit,
+          ...(d.remainingMs !== undefined && { remainingMs: d.remainingMs }),
+        });
+        continue;
+      }
     }
     // reactive `model.context_overflow` fix-ups, at most one of each per rung (context compaction
     // spec §4.4): media exclusion, forced compaction, then a progressive trim
