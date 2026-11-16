@@ -11,7 +11,7 @@
 -- 2. A follow-up's narrowing (`user_message.dispatch.narrowed`) from before then carried no
 --    `disabledTools` / `disabledSkills` (or `skills` instead) and narrowed nothing of that kind:
 --    each missing list becomes the frozen definition's (the child's `subagent_started`), and
---    `skills` goes.
+--    `skills` and the old enabled `tools` list go.
 -- 3. Agent template versions lose `selectedSkills` (the reader dropped it; 0116 cleaned only the
 --    org-made ones, plugin packages no longer write it).
 --
@@ -38,7 +38,7 @@ $fn$;
 -- A follow-up narrowing `n` with both lists, filled from the frozen definition `frozen`.
 CREATE OR REPLACE FUNCTION pg_temp.current_narrowing(n jsonb, frozen jsonb) RETURNS jsonb
 LANGUAGE sql IMMUTABLE AS $fn$
-  SELECT (n - 'skills') || jsonb_build_object(
+  SELECT (n - 'skills' - 'tools') || jsonb_build_object(
     'disabledTools', CASE
       WHEN jsonb_typeof(n -> 'disabledTools') = 'array' THEN n -> 'disabledTools'
       WHEN jsonb_typeof(frozen -> 'disabledTools') = 'array' THEN frozen -> 'disabledTools'
@@ -54,6 +54,7 @@ CREATE OR REPLACE FUNCTION pg_temp.old_narrowing(n jsonb) RETURNS boolean
 LANGUAGE sql IMMUTABLE AS $fn$
   SELECT jsonb_typeof(n) = 'object' AND (
     n ? 'skills'
+    OR n ? 'tools'
     OR jsonb_typeof(n -> 'disabledTools') IS DISTINCT FROM 'array'
     OR jsonb_typeof(n -> 'disabledSkills') IS DISTINCT FROM 'array')
 $fn$;

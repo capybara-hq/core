@@ -45,7 +45,8 @@ const currentFrozen = {
   disabledTools: [offTool],
   skills: { writePolicy: "ask" },
 };
-const oldNarrowing = { skills: { orgSkills: ["s1"] } };
+// an old narrowing: the enabled `tools` list and `skills` of the time, no lists of its own
+const oldNarrowing = { tools: ["Read"], skills: { orgSkills: ["s1"] } };
 const doneNarrowing = { disabledTools: [offTool], disabledSkills: [] };
 const fullNarrowing = { disabledTools: [], disabledSkills: [offSkill] };
 const task = (narrowed: unknown) => ({
