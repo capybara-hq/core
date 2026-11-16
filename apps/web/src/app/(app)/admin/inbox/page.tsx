@@ -10,7 +10,7 @@ export default async function AdminInboxPage({
   searchParams,
 }: {
   searchParams?: Promise<{ type?: string | string[] }>;
-} = {}) {
+}) {
   const raw = (await searchParams)?.type;
   const type = Array.isArray(raw) ? raw[0] : raw;
   return <AdminInboxView type={isPlatformInboxType(type) ? type : null} />;
