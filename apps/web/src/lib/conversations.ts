@@ -612,8 +612,8 @@ export interface Conversation {
   orgId: string;
   agentId: string;
   title: string | null;
-  /** Who wrote `title` (absent on older kernels). */
-  titleSource?: "generated" | "manual" | null;
+  /** Who wrote `title`. */
+  titleSource: "generated" | "manual" | null;
   selection?: Selection;
   lastSeq: number;
   createdAt: string;
@@ -624,8 +624,8 @@ export interface Conversation {
   subagentType?: string | null;
   /** The conversation's owner. */
   accountId?: string;
-  /** The device it runs in, bound at the first message (null: none, or an older kernel). */
-  deviceId?: string | null;
+  /** The device it runs in, bound at the first message (null: none). */
+  deviceId: string | null;
   /** The scheduled task that started it (a `new`-mode task); null otherwise. */
   scheduledTaskId?: string | null;
   /**
@@ -639,8 +639,8 @@ export interface Conversation {
    * start recorded one (and in a list row).
    */
   projectState?: ProjectState | null;
-  /** What it is doing now: a run in progress, or waiting for me (absent on older kernels). */
-  activity?: "running" | "waiting" | null;
+  /** What it is doing now: a run in progress, or waiting for me . */
+  activity: "running" | "waiting" | null;
 }
 
 /** A parent conversation's sub-agent (`GET .../conversations/:id/subagents`). */
@@ -788,8 +788,8 @@ export const createConversationWithMessage = (
   apiFetch<{
     conversation: Conversation;
     event: ConversationEvent;
-    /** Every event the create wrote, from seq 1 (a `model_switched` first); older kernels omit it. */
-    events?: ConversationEvent[];
+    /** Every event the create wrote, from seq 1 (a `model_switched` first). */
+    events: ConversationEvent[];
   }>(base(orgId), {
     method: "POST",
     body: JSON.stringify({
@@ -934,8 +934,7 @@ export const HISTORY_PAGE = 200;
 
 /**
  * The turn-aligned page of events before `before` (`"end"`: the log's last page), with how many
- * runs started before its first event (history paging spec §2; an older kernel's answer has no
- * `turnsBefore`).
+ * runs started before its first event (history paging spec §2).
  */
 export const listEventsBefore = (
   orgId: string,

@@ -18,7 +18,6 @@ import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { ApplyAppearanceAction } from "../../../components/ApplyAppearance";
 import { hasConfigFields } from "../../../components/config-form/model";
-import { savedConfigComplete } from "../../../components/config-form/org";
 import { ErrorFrame } from "../../../components/ErrorFrame";
 import {
   useCapabilityLabel,
@@ -297,13 +296,8 @@ function ExtensionList({
       canEdit && !unavailable && ext.configurable && hasConfigFields(ext.orgConfigSchema);
     const overrides =
       canEdit && !unavailable && ext.overrideState !== undefined && ext.overrideState !== "none";
-    // The kernel decides (spec A §6); an older kernel leaves it out: derived from the saved org config
-    const needsConfig =
-      !unavailable &&
-      (ext.needsConfig ??
-        (!ext.enabled &&
-          configForm &&
-          !savedConfigComplete(ext.orgConfigSchema, ext.config, ext.secrets, lang)));
+    // The kernel decides (spec A §6)
+    const needsConfig = !unavailable && ext.needsConfig;
     const problem = problems[ext.plugin];
     const state: Row["state"] = unavailable
       ? {

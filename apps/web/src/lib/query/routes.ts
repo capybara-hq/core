@@ -201,9 +201,7 @@ async function prefetchFirstTemplateGuide(
   const detail = qc.getQueryData<OrgCatalogDetail>(orgCatalogItemQuery(orgId, itemId).queryKey);
   if (detail === undefined || (from === "templates" && detail.item.state === "on")) return;
   const first =
-    from === "templates"
-      ? installTemplates(detail.templates)[0]
-      : (detail.missingTemplates ?? [])[0];
+    from === "templates" ? installTemplates(detail.templates)[0] : detail.missingTemplates[0];
   const guide = first?.guide;
   if (!guide) return;
   await qc.prefetchQuery({

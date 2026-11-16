@@ -65,6 +65,8 @@ const ADMIN_DEFAULTS: Routes = {
       templates: [],
       dependencies: [],
       skills: [],
+      agents: [],
+      missingTemplates: [],
     }),
 };
 const stubApi = (routes: Routes) =>
@@ -870,6 +872,7 @@ describe("/extensions: the switch follows the plugin", () => {
     config: null,
     secrets: [],
     permissions: [],
+    provides: [],
     orgConfigSchema: null,
     catalogItem: { itemId: ID, scope: "optional" },
     switchable: true,
@@ -1706,6 +1709,8 @@ describe("descriptions in the UI language (descriptionZh)", () => {
             templates: [],
             dependencies: [],
             skills: [],
+            agents: [],
+            missingTemplates: [],
           }),
         [`GET ${ORG}/plugin-installs`]: () => json(200, { installs: [] }),
         [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
@@ -1815,6 +1820,8 @@ describe("/plugins/[itemId]/enable (WizardPage)", () => {
             ],
             dependencies: [],
             skills: [],
+            agents: [],
+            missingTemplates: [],
           }),
         [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
         [`PUT ${ORG}/catalog/${ID}/switch`]: () =>
@@ -1867,6 +1874,8 @@ describe("/plugins/[itemId]/enable (WizardPage)", () => {
           ],
           dependencies: [],
           skills: [],
+          agents: [],
+          missingTemplates: [],
         }),
       [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
       [`PUT ${ORG}/catalog/${ID}/switch`]: () =>
@@ -1922,6 +1931,8 @@ describe("/plugins/[itemId]/enable (WizardPage)", () => {
           ],
           dependencies: [],
           skills: [],
+          agents: [],
+          missingTemplates: [],
         }),
       [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
       [`PUT ${ORG}/catalog/${ID}/switch`]: () =>
@@ -1989,6 +2000,8 @@ describe("/plugins/[itemId]/enable (WizardPage)", () => {
           templates: [],
           dependencies: [],
           skills: [],
+          agents: [],
+          missingTemplates: [],
         }),
       [`GET ${ORG}/extensions`]: () =>
         json(200, {
@@ -2002,6 +2015,7 @@ describe("/plugins/[itemId]/enable (WizardPage)", () => {
               config: null,
               secrets: [],
               permissions: [],
+              provides: [],
               orgConfigSchema: {
                 type: "object",
                 properties: { region: { type: "string", title: "Region" } },
@@ -3149,6 +3163,7 @@ describe("/extensions: switching on refused by the plugin", () => {
                 config: null,
                 secrets: [],
                 permissions: [],
+                provides: [],
                 orgConfigSchema: null,
               },
             ],
@@ -3183,7 +3198,7 @@ describe("安装向导会问哪些连接器模板", () => {
       installTemplates([tpl("gh", false), tpl("pat", true), tpl("slack", true)]).map((t) => t.id),
     ).toEqual(["gh"]);
     expect(installTemplates([tpl("slack", true, true)]).map((t) => t.id)).toEqual(["slack"]);
-    // an older kernel without `on`: a default-off template is not asked for
+    // a default-off template that is not on is not asked for
     expect(installTemplates([tpl("pat", true)]).map((t) => t.id)).toEqual([]);
   });
 
@@ -3228,6 +3243,8 @@ describe("安装向导的默认 slug", () => {
           ],
           dependencies: [],
           skills: [],
+          agents: [],
+          missingTemplates: [],
         }),
       [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
     });
@@ -3776,6 +3793,8 @@ describe("phase A1: the org plugin page and skill conflicts", () => {
     templates: [],
     dependencies: [],
     skills: ["skills/notes", "skills/extra"],
+    agents: [],
+    missingTemplates: [],
   };
 
   it("plugin page: members read no installs", async () => {
@@ -4387,6 +4406,8 @@ describe("/plugins/[itemId]/enable renders on the server (web-SSR spec §6)", ()
     templates: [],
     dependencies: [],
     skills: ["skills/notes"],
+    agents: [],
+    missingTemplates: [],
   };
   const routes = {
     [`GET ${ORG}/catalog/${ID}`]: () => json(200, detail),
@@ -4460,6 +4481,8 @@ describe("/plugins and /plugins/[itemId] render on the server (web-SSR spec §6)
     templates: [],
     dependencies: [],
     skills: [],
+    agents: [],
+    missingTemplates: [],
   };
   const routes = {
     [`GET ${ORG}/catalog`]: () => json(200, { items: [orgItem()] }),

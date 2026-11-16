@@ -189,7 +189,7 @@ export const MODEL_KINDS: readonly ModelKind[] = [
   "other",
 ];
 
-/** A model's kind: an older kernel leaves it out, which means chat. */
+/** A model's kind (absent: chat). */
 export const kindOf = (m: { kind?: ModelKind }): ModelKind => m.kind ?? "chat";
 
 /**

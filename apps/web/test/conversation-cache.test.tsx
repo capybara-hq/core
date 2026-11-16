@@ -247,6 +247,7 @@ describe("useConversation and the cache", () => {
     const qc = testQueryClient();
     seedNewConversation(qc, "o1", CONV("c1", { title: null }).conversation as never, {
       event: userMsg(1, "start"),
+      events: [userMsg(1, "start")],
     });
     const invalidated = sideKeys(qc);
     const view = mount(qc);
@@ -272,6 +273,7 @@ describe("useConversation and the cache", () => {
     const qc = testQueryClient();
     seedNewConversation(qc, "o1", CONV("c1", { title: null }).conversation as never, {
       event: userMsg(1, "start"),
+      events: [userMsg(1, "start")],
     });
     const invalidated = sideKeys(qc);
     mount(qc);

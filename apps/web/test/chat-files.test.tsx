@@ -379,6 +379,8 @@ describe("输入框：上传文件（修正轮 1）", () => {
           maxBytes: 1000,
           imageMaxBytes: 100,
           maxPerMessage: 2,
+          requestMediaBytes: 10_000,
+          available: true,
         }),
     });
     const { container, calls: server } = await renderChat("zh");

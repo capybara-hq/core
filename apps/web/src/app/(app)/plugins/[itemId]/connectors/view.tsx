@@ -118,7 +118,7 @@ function Wizard({
   const catalogLines = useCatalogErrorLines();
   const item = detail.item;
   const name = displayNameOf(item, locale);
-  const templates = detail.missingTemplates ?? [];
+  const templates = detail.missingTemplates;
   const steps = [
     ...templates.map((c) =>
       ti("connectorStep", {

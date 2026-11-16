@@ -1426,7 +1426,11 @@ describe("a new conversation (/)", () => {
     resetNavigation("/");
     const calls = stubApi({
       "POST /api/v1/orgs/o1/conversations": () =>
-        json(201, { ...CONV("c9", { agentId: "ag2" }), event: userMsg(1, "start") }),
+        json(201, {
+          ...CONV("c9", { agentId: "ag2" }),
+          event: userMsg(1, "start"),
+          events: [userMsg(1, "start")],
+        }),
     });
     const { calls: server } = await renderRouteWithCache("/?agent=ag2", NEW_CHAT);
     // the first paint is the server's: agents, the most recent agent and the models
@@ -1527,7 +1531,7 @@ describe("the first message from / (conversation send spec §2.1)", () => {
     await vi.waitFor(() => expect(d.calls.some((c) => c.method === "POST")).toBe(true));
     const event = userMsg(1, "start", { clientMessageId: d.cmid() });
     const conversation = CONV("c9").conversation;
-    await act(async () => d.answer(json(201, { conversation, event })));
+    await act(async () => d.answer(json(201, { conversation, event, events: [event] })));
     // the groups' read never answers: the navigation does not wait for it
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
     const c = keys.org("o1").conversation("c9");
@@ -1610,7 +1614,9 @@ describe("the first message from / (conversation send spec §2.1)", () => {
     expect(en.chat.sendAfterCreate).toBe("You can send again once the conversation is created");
     expect(d.calls.filter((c) => c.method === "POST")).toHaveLength(1);
     const event = userMsg(1, "start", { clientMessageId: d.cmid() });
-    await act(async () => d.answer(json(201, { conversation: CONV("c9").conversation, event })));
+    await act(async () =>
+      d.answer(json(201, { conversation: CONV("c9").conversation, event, events: [event] })),
+    );
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
     expect(screen.queryByText(en.chat.sendAfterCreate)).toBeNull();
   });

@@ -83,6 +83,7 @@ const detail = (over: Record<string, unknown> = {}) => ({
     owned: true,
     shareable: false,
     promoted: false,
+    usable: true,
     ...over,
   },
 });

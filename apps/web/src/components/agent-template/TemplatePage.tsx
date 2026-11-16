@@ -127,7 +127,7 @@ export function TemplatePage({
   const editable = admin && template.owned;
   const component = offeredComponentOf(offered, template, orgId);
   // not usable here (only its owner reads it, switched off in its own org): the kernel says so
-  const off = template.usable === false;
+  const off = !template.usable;
   const { actionsOf, dialog, error: switchError } = useComponentSwitch({ orgId, admin });
   const switchActions = component !== undefined ? actionsOf(component) : [];
   const enable = switchActions.find((a) => a.id === "enable");

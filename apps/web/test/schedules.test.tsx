@@ -149,7 +149,9 @@ const common = {
   }),
   [`GET ${BASE}/grantable-tools?agentId=ag1`]: ok({ items: TOOLS }),
   [`GET ${BASE}/grantable-tools?agentId=ag2`]: ok({ items: TOOLS }),
-  [`GET ${ORG}/settings`]: ok({ settings: { toolSearch: "on" } }),
+  [`GET ${ORG}/settings`]: ok({
+    settings: { toolSearch: "on", scheduledTasks: { enabled: true, minIntervalMinutes: 60 } },
+  }),
   // my preferences: no zone of my own (the browser's applies)
   "GET /api/v1/me/preferences": ok({ timeZone: null }),
 };

@@ -67,7 +67,7 @@ browser ──► server.mjs (peer address, object-store proxy)
 Runs for every page request (matcher: everything except `/api`, `/plugin-ui`, `/_next`, `/dev`, and
 paths with a file extension). In order:
 
-1. **Legacy locale prefix** (unchanged): `/zh/...`, `/en/...` → 308 to the path without it.
+1. ~~Legacy locale prefix~~ (removed before 0.1.0, no compatibility): `/zh/...` and `/en/...` are no longer redirected.
 2. **Session renewal.** When the request has `cap_rt` and no `cap_at`, or a `cap_at` whose JWT
    `exp` (read without verifying) is less than 30 s away (the cookie can outlive its token by the
    response latency; an undecodable token counts as valid), the proxy calls

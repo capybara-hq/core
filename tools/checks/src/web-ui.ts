@@ -1315,6 +1315,30 @@ function charIconMessageFindings(messagesDir: string): Finding[] {
   return out;
 }
 
+const OLDER_KERNEL_RULE = "web-ui-older-kernel";
+
+/**
+ * The web is released with the kernel (no compatibility before 0.1.0): a branch, type or comment that
+ * handles "an older kernel" is dead code. A text scan, comments included.
+ */
+function olderKernelFindings(file: string): Finding[] {
+  const out: Finding[] = [];
+  readFileSync(file, "utf8")
+    .split("\n")
+    .forEach((text, i) => {
+      if (/older kernel/i.test(text)) {
+        out.push({
+          file,
+          line: i + 1,
+          rule: OLDER_KERNEL_RULE,
+          message:
+            "the web ships with its kernel: delete the older-kernel branch and make the field required (no compatibility before 0.1.0)",
+        });
+      }
+    });
+  return out;
+}
+
 function checkDesign(designSrcDir: string): Finding[] {
   const out: Finding[] = [];
   const tokens = join(designSrcDir, "styles", "tokens.css");
@@ -1356,6 +1380,7 @@ export function checkWebUi(
   const readers = kernelReaders(webSrcDir);
   for (const { file, isTest } of listSourceFiles(webSrcDir)) {
     findings.push(...checkWebFile(file, isTest, webSrcDir, readers));
+    findings.push(...olderKernelFindings(file));
   }
   findings.push(...routeTableFindings(webSrcDir));
   for (const css of listCssFiles(webSrcDir)) {

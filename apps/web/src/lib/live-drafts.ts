@@ -137,7 +137,7 @@ export class LiveDrafts {
       return;
     }
     if (d.delta === "draft") return;
-    // a delta without an offset (an older kernel): handed on as it is
+    // a delta without an offset: handed on as it is
     if (d.offset === undefined) {
       this.emit(d);
       return;

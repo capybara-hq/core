@@ -215,7 +215,7 @@ export interface ScheduledTasksSettings {
   forbiddenToolsUnreadable?: true;
 }
 
-/** The defaults of spec §9 (an older kernel leaves the group out). */
+/** The defaults of spec §9. */
 export const SCHEDULE_SETTINGS_DEFAULTS: ScheduledTasksSettings = {
   enabled: true,
   minIntervalMinutes: 60,

@@ -1,5 +1,4 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { isAppLocale, LOCALE_COOKIE } from "./i18n/routing";
 import { loginPathFor } from "./lib/auth-sources";
 import { clientScopeOf, safeUiCookieFor } from "./lib/client-extensions";
 import { credentialQueryRedirect, handleFormPost, isNativeFormPost } from "./lib/form-post";
@@ -65,20 +64,6 @@ function withSession(pairs: [string, string][], extra: [string, string][]): stri
     .join("; ");
 }
 
-/** Old links with a language prefix (`/zh/agents`, `/en`): 308 to the path without it. */
-function localeRedirect(req: NextRequest): NextResponse | undefined {
-  const { pathname, search } = req.nextUrl;
-  const m = /^\/([^/]+)(\/.*)?$/.exec(pathname);
-  const prefix = m?.[1];
-  if (!isAppLocale(prefix)) return undefined;
-  const url = req.nextUrl.clone();
-  url.pathname = m?.[2] ?? "/";
-  url.search = search;
-  const res = NextResponse.redirect(url, 308);
-  res.cookies.set(LOCALE_COOKIE, prefix, { path: "/", maxAge: 31536000, sameSite: "lax" });
-  return res;
-}
-
 /**
  * A bodiless 303 of `lib/form-post.ts` as the proxy's NextResponse; its relative Location is
  * resolved against the request (Next's proxy adapter only takes an absolute one).
@@ -97,32 +82,27 @@ function withCookies(res: NextResponse, setCookies: readonly string[]): NextResp
 
 /**
  * Next's Proxy (formerly Middleware), for every page request (spec 2026-11-01-web-ssr §2.1):
- * 1. an old link with a language prefix redirects to the same path without it, keeping the language
- *    in the `NEXT_LOCALE` cookie;
- * 2. a request with `cap_rt` and without `cap_at` (or with one whose token expires within 30 s)
+ * 1. a request with `cap_rt` and without `cap_at` (or with one whose token expires within 30 s)
  *    renews the session at the kernel, and the new cookies go both ways (the forwarded request and
  *    the response);
- * 3. a protected page still without `cap_at` redirects to `/setup` (fresh deployment) or sign-in;
- * 4. the forwarded request carries `x-cap-path` (path + query), and `x-cap-session: unavailable`
+ * 2. a protected page still without `cap_at` redirects to `/setup` (fresh deployment) or sign-in;
+ * 3. the forwarded request carries `x-cap-path` (path + query), and `x-cap-session: unavailable`
  *    when the kernel could not be reached;
- * 5. the document CSP (client extensions spec §9.5, {@link documentPolicy}) with a fresh nonce goes
+ * 4. the document CSP (client extensions spec §9.5, {@link documentPolicy}) with a fresh nonce goes
  *    on the forwarded request (Next takes the nonce from it and puts it on its own scripts; the
  *    layouts read `x-nonce`) and on the response. A client-sent nonce or policy never survives.
- * 6. `?safe-ui=1` sets the safe-mode session cookie, `?safe-ui=0` clears it (client extensions spec
+ * 5. `?safe-ui=1` sets the safe-mode session cookie, `?safe-ui=0` clears it (client extensions spec
  *    §10.1), so safe mode holds through client navigations and refreshes.
- * 7. the first workspace document of a sign-in carries `x-cap-sign-in: new` (the shell's
+ * 6. the first workspace document of a sign-in carries `x-cap-sign-in: new` (the shell's
  *    `sign-in=new` token, client extensions spec §7.3), and the response records the session in
  *    `cap_seen` (`lib/sign-in-state.ts`).
- * The client host shims (`/_capybara/client-host/<build>/<name>.mjs`) get step 5 only.
+ * The client host shims (`/_capybara/client-host/<build>/<name>.mjs`) get step 4 only.
  * Before all that, a native form POST (the client JS did not load) is answered by
  * `lib/form-post.ts` (sign-in and setup run server side, other pages get a 303 back), and a GET of
  * a credential page with form fields in its query is redirected to the page without them.
  * `/api/*`, `/plugin-ui/*`, `/_next/*`, `/dev/ui/*` and `/icon.svg` never come here (`config`).
  */
 export default async function proxy(req: NextRequest): Promise<NextResponse> {
-  const legacy = localeRedirect(req);
-  if (legacy !== undefined) return legacy;
-
   const { pathname, search } = req.nextUrl;
   if (isNativeFormPost(req)) return asNext(req, await handleFormPost(req, pathname, search));
   if (req.method === "GET") {

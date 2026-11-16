@@ -177,8 +177,8 @@ export interface AgentTemplateView {
   description: string;
   model: AgentTier;
   version: number;
-  /** `platform`: a platform template on in the org; `org`: the org's own (older kernels: absent). */
-  origin?: "org" | "platform";
+  /** `platform`: a platform template on in the org; `org`: the org's own */
+  origin: "org" | "platform";
   /** A platform template: the ids of the org's copies linked to it (they select this template). */
   linkedIds?: string[];
   /** The catalog item (plugin) it came from, when any. */
@@ -206,9 +206,9 @@ export interface AgentTemplateDetail extends AgentTemplateView {
   promoted: boolean;
   /**
    * In the org's usable set (agents can be created from it here); false when only its owner reads
-   * it (switched off in its own org). Absent from older kernels: usable.
+   * it (switched off in its own org).
    */
-  usable?: boolean;
+  usable: boolean;
 }
 
 const templatePath = (orgId: string, id: string) =>
@@ -289,8 +289,8 @@ export interface Agent {
   orgId: string;
   ownerAccountId: string;
   visibility: AgentVisibility;
-  /** The member list when visibility is `members` (else null; older kernels leave it out). */
-  memberIds?: string[] | null;
+  /** The member list when visibility is `members` (else null). */
+  memberIds: string[] | null;
   currentVersion: number;
   /**
    * Avatar and quick actions: not part of the definition, never model-visible. `description` is
@@ -304,8 +304,8 @@ export interface Agent {
     /** Connectors the template needed and the org lacked (ruling P4-6); model-invisible. */
     pendingConnectors?: PendingConnector[];
   } & Record<string, unknown>;
-  /** The template it was created from (ruling P4-8); null (older kernels: absent) otherwise. */
-  createdFrom?: AgentProvenance | null;
+  /** The template it was created from (ruling P4-8); null otherwise. */
+  createdFrom: AgentProvenance | null;
   updatedAt: string;
 }
 
@@ -383,7 +383,7 @@ export type ModelKind =
 export interface ModelInfo {
   id: string;
   displayName: string;
-  /** Normalised by the kernel; an older kernel leaves it out (a chat model). */
+  /** Normalised by the kernel; absent reads as chat (kept optional: the model pages are another task's). */
   kind?: ModelKind;
   /** Who made the model (display only). */
   publisher?: string;
