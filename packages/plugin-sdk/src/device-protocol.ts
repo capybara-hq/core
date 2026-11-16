@@ -206,7 +206,8 @@ export interface DeviceExecArgs {
   actor: SandboxActor;
   limits: SandboxLimits;
   /**
-   * Hosts the kernel allows for this command beyond the local policy (a run's "Allow this time" or a
+   * Hosts the kernel allows for this command beyond the local policy (a run's "Allow this time" or
+   * a
    * scheduled task's grants). A device applies them only in sandbox mode, within `limits`; a
    * device without the feature ignores the field.
    */

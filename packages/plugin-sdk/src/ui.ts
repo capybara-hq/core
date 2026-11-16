@@ -67,7 +67,8 @@ export interface UiContribution {
 }
 
 /**
- * Blocks of the render schema. Text is for humans and shown as is (the plugin decides the language itself, usually taking `locale`).
+ * Blocks of the render schema. Text is for humans and shown as is (the plugin decides the language
+ * itself, usually taking `locale`).
  * `text.markdown` does not support native HTML, and links may only be absolute http(s) addresses.
  */
 export type UiBlock =
@@ -91,8 +92,10 @@ export type UiBlock =
       type: "table";
       columns: { key: string; label: string }[];
       /**
-       * Each row takes its cell by column key, and a column may be missing. When rendering, use `Object.hasOwn(row, key)` to tell whether a cell exists,
-       * do not use `row[key]` or `in`: a column key may be `constructor` / `toString` and the like, which would pick up values from the prototype chain.
+       * Each row takes its cell by column key, and a column may be missing. When rendering, use
+       * `Object.hasOwn(row, key)` to tell whether a cell exists,
+       * do not use `row[key]` or `in`: a column key may be `constructor` / `toString` and the like,
+       * which would pick up values from the prototype chain.
        */
       rows: Record<string, string>[];
       /** Per row (same index), an open target or null; never a key inside a row. */
@@ -133,7 +136,8 @@ export interface UiView {
 /**
  * View limits (checked uniformly by {@link validateUiView}):
  * - `blocks`: number of blocks;
- * - `tableRows`: number of table rows, also used as the upper bound for keyValue items, table columns, chart points and buttons;
+ * - `tableRows`: number of table rows, also used as the upper bound for keyValue items, table
+ *   columns, chart points and buttons;
  * - `checklistItems`: number of checklist items;
  * - `textChars`: total characters of all text in the whole view (form JSON included);
  * - `payloadBytes`: UTF-8 bytes of a single button `payload` after JSON serialization.
@@ -221,9 +225,12 @@ function jsonProblem(v: unknown, at: string, seen: Set<object> = new Set()): str
 }
 
 /**
- * Validates the view a plugin returns and returns the list of problems (empty = valid). Links and images may only be absolute http(s) addresses;
- * the Markdown check is defense in depth, and web rendering must still accept only http(s) links and not render native HTML.
- * The `actionId` of buttons and forms is unique within the whole view (action callbacks tell the source by it).
+ * Validates the view a plugin returns and returns the list of problems (empty = valid). Links and
+ * images may only be absolute http(s) addresses;
+ * the Markdown check is defense in depth, and web rendering must still accept only http(s) links
+ * and not render native HTML.
+ * The `actionId` of buttons and forms is unique within the whole view (action callbacks tell the
+ * source by it).
  * `data` is accepted only with `opts.component` (the view of a component contribution): JSON as is
  * (nothing JSON would drop or rewrite, see `jsonProblem`), up to `UI_LIMITS.componentDataBytes`
  * bytes of UTF-8.
@@ -468,12 +475,18 @@ export interface UiRenderArgsBase {
   config?: unknown;
 }
 
-/** The parameters passed when the kernel calls the plugin's `render`: the position within the org (conversation, agent, org, file). */
+/**
+ * The parameters passed when the kernel calls the plugin's `render`: the position within the org
+ * (conversation, agent, org, file).
+ */
 export interface UiOrgRenderArgs extends UiRenderArgsBase {
   /** The scope of {@link slot}: which of the context ids below are set. */
   scope: Exclude<UiSlotScope, "platform">;
   orgId: string;
-  /** The caller's role in `orgId` at this moment (filled by the kernel from membership; a plugin may use it to tighten buttons etc., see {@link UiRole}). */
+  /**
+   * The caller's role in `orgId` at this moment (filled by the kernel from membership; a plugin may
+   * use it to tighten buttons etc., see {@link UiRole}).
+   */
   role: UiRole;
   /** Conversation views only. */
   conversationId?: string;
@@ -503,7 +516,10 @@ export interface UiPlatformRenderArgs extends UiRenderArgsBase {
   card?: undefined;
 }
 
-/** The parameters passed when the kernel calls the plugin's `render`: narrow on `scope` (`"platform"` has no `orgId`). */
+/**
+ * The parameters passed when the kernel calls the plugin's `render`: narrow on `scope`
+ * (`"platform"` has no `orgId`).
+ */
 export type UiRenderArgs = UiOrgRenderArgs | UiPlatformRenderArgs;
 
 /** What a button or form submit adds to the render args. */
@@ -517,7 +533,10 @@ export interface UiActionInput {
 export interface UiOrgActionArgs extends UiOrgRenderArgs, UiActionInput {}
 /** An action of a `platform.page` view. */
 export interface UiPlatformActionArgs extends UiPlatformRenderArgs, UiActionInput {}
-/** A button or form submission in a view: `actionId` comes from the block; a form submission carries `answer`. */
+/**
+ * A button or form submission in a view: `actionId` comes from the block; a form submission carries
+ * `answer`.
+ */
 export type UiActionArgs = UiOrgActionArgs | UiPlatformActionArgs;
 
 /** An action result: a notice, or a new view. */
@@ -535,7 +554,10 @@ export interface EmbedClaimsBase {
 export interface OrgEmbedClaims extends EmbedClaimsBase {
   scope: "org";
   orgId: string;
-  /** The caller's role: written at issuance; `ctx.ui.verifyEmbedToken` returns the current role at validation time. */
+  /**
+   * The caller's role: written at issuance; `ctx.ui.verifyEmbedToken` returns the current role at
+   * validation time.
+   */
   role: UiRole;
   conversationId?: string;
   /** Only an agent embed's token (`agent.detail.section`): the agent it was issued for. */
@@ -555,12 +577,15 @@ export interface PlatformEmbedClaims extends EmbedClaimsBase {
 }
 
 /**
- * Claims in an embed token (trustworthy after validation by `ctx.ui.verifyEmbedToken`): narrow on `scope` (`"platform"` has no
+ * Claims in an embed token (trustworthy after validation by `ctx.ui.verifyEmbedToken`): narrow on
+ * `scope` (`"platform"` has no
  * `orgId` and `role` `"superAdmin"`).
  */
 export type EmbedClaims = OrgEmbedClaims | PlatformEmbedClaims;
 
-/** The version marker of the `postMessage` protocol between the outer page and the embedded iframe. */
+/**
+ * The version marker of the `postMessage` protocol between the outer page and the embedded iframe.
+ */
 export const EMBED_PROTOCOL = "capybara-embed/1";
 
 /**
@@ -607,7 +632,10 @@ export type EmbedParentMessage =
 export type EmbedChildMessage =
   /** Height in CSS pixels, 0–10000. */
   | { protocol: typeof EMBED_PROTOCOL; type: "resize"; height: number }
-  /** Only in-site paths: a single leading `/`, no `//`, no `.` / `..` segments (including `%2e` encoding), unchanged after normalization. */
+  /**
+   * Only in-site paths: a single leading `/`, no `//`, no `.` / `..` segments (including `%2e`
+   * encoding), unchanged after normalization.
+   */
   | { protocol: typeof EMBED_PROTOCOL; type: "navigate"; path: string }
   | { protocol: typeof EMBED_PROTOCOL; type: "toast"; text: string };
 
@@ -615,16 +643,23 @@ const NAV_MAX = 2000;
 const RESIZE_MAX = 10000;
 const TOAST_MAX = 500;
 // capybara:embed-nav-begin (this section is verbatim identical in packages/plugin-sdk/src/ui.ts and apps/web/src/lib/embed-bridge.ts, checked by a test)
-// Control characters and backslash: browsers treat `/\host` as `//host`, and strip newlines / tabs inside a path
+// Control characters and backslash: browsers treat `/\host` as `//host`, and strip newlines / tabs
+// inside a path
 // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are exactly what must be rejected
 const NAV_BAD = /[\u0000-\u001f\u007f\\]/;
-/** Encoded `/`, `\` and control characters in the path part (any case): decoding them would change the path structure. */
+/**
+ * Encoded `/`, `\` and control characters in the path part (any case): decoding them would change
+ * the path structure.
+ */
 const NAV_BAD_ENCODED = /%(?:2f|5c|[01][0-9a-f]|7f)/i;
 
 /**
- * In-site path: starts with a single `/`, has no `//` anywhere, no control characters or backslashes; the path part has no `.` / `..` segments
- * (including `%2e` in any case), no encoded `/` (`%2f`), `\` (`%5c`) or control characters (`%00`–`%1f`, `%7f`);
- * and after URL normalization it is exactly identical to the original and does not start with `//`: normalization cannot turn it into another path,
+ * In-site path: starts with a single `/`, has no `//` anywhere, no control characters or
+ * backslashes; the path part has no `.` / `..` segments
+ * (including `%2e` in any case), no encoded `/` (`%2f`), `\` (`%5c`) or control characters
+ * (`%00`–`%1f`, `%7f`);
+ * and after URL normalization it is exactly identical to the original and does not start with `//`:
+ * normalization cannot turn it into another path,
  * so handing it to in-site routing cannot jump outside the site or to a parent directory.
  */
 function isInSitePath(p: string): boolean {
@@ -646,7 +681,8 @@ function isInSitePath(p: string): boolean {
 // capybara:embed-nav-end
 
 /**
- * Parses a message sent by the iframe: returns it only when protocol, type and fields are all right (a new object keeping only known fields), otherwise null.
+ * Parses a message sent by the iframe: returns it only when protocol, type and fields are all right
+ * (a new object keeping only known fields), otherwise null.
  * The outer page must also first check that the message source is this iframe.
  */
 export function parseEmbedChildMessage(m: unknown): EmbedChildMessage | null {

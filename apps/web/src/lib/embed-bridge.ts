@@ -76,16 +76,23 @@ const NAV_MAX = 2000;
 const RESIZE_MAX = 10000;
 const TOAST_MAX = 500;
 // capybara:embed-nav-begin (this section is verbatim identical in packages/plugin-sdk/src/ui.ts and apps/web/src/lib/embed-bridge.ts, checked by a test)
-// Control characters and backslash: browsers treat `/\host` as `//host`, and strip newlines / tabs inside a path
+// Control characters and backslash: browsers treat `/\host` as `//host`, and strip newlines / tabs
+// inside a path
 // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are exactly what must be rejected
 const NAV_BAD = /[\u0000-\u001f\u007f\\]/;
-/** Encoded `/`, `\` and control characters in the path part (any case): decoding them would change the path structure. */
+/**
+ * Encoded `/`, `\` and control characters in the path part (any case): decoding them would change
+ * the path structure.
+ */
 const NAV_BAD_ENCODED = /%(?:2f|5c|[01][0-9a-f]|7f)/i;
 
 /**
- * In-site path: starts with a single `/`, has no `//` anywhere, no control characters or backslashes; the path part has no `.` / `..` segments
- * (including `%2e` in any case), no encoded `/` (`%2f`), `\` (`%5c`) or control characters (`%00`–`%1f`, `%7f`);
- * and after URL normalization it is exactly identical to the original and does not start with `//`: normalization cannot turn it into another path,
+ * In-site path: starts with a single `/`, has no `//` anywhere, no control characters or
+ * backslashes; the path part has no `.` / `..` segments
+ * (including `%2e` in any case), no encoded `/` (`%2f`), `\` (`%5c`) or control characters
+ * (`%00`–`%1f`, `%7f`);
+ * and after URL normalization it is exactly identical to the original and does not start with `//`:
+ * normalization cannot turn it into another path,
  * so handing it to in-site routing cannot jump outside the site or to a parent directory.
  */
 function isInSitePath(p: string): boolean {

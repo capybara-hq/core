@@ -21,11 +21,16 @@ export interface ToolSpec {
   description: string;
   inputSchema: Record<string, unknown>;
   annotations?: ToolAnnotations;
-  /** Only plugin / builtin tools may declare it; when omitted it is derived from the annotations. */
+  /**
+   * Only plugin / builtin tools may declare it; when omitted it is derived from the annotations.
+   */
   defaultPolicy?: "allow" | "ask";
   /**
-   * Connector tools only: the connector's own opaque data (e.g. OpenAPI's method, path template, parameter locations, server address), JSON-serializable.
-   * The kernel stores it with the definition in the snapshot and counts it in the fingerprint (a change means drift and needs review), and hands it back unchanged via `ctx.spec` of `callTool` on a call;
+   * Connector tools only: the connector's own opaque data (e.g. OpenAPI's method, path template,
+   * parameter locations, server address), JSON-serializable.
+   * The kernel stores it with the definition in the snapshot and counts it in the fingerprint (a
+   * change means drift and needs review), and hands it back unchanged via `ctx.spec` of `callTool`
+   * on a call;
    * never sent to the model.
    */
   connectorData?: Record<string, unknown>;
@@ -110,7 +115,10 @@ export type ToolContent =
   | { type: "image"; mimeType: string; data: string }
   | { type: "resource_link"; uri: string; name?: string; mimeType?: string };
 
-/** A one-sentence description of a tool call, shown in the UI (Chinese and English each ≤ 200 characters); does not enter the model context. */
+/**
+ * A one-sentence description of a tool call, shown in the UI (Chinese and English each ≤ 200
+ * characters); does not enter the model context.
+ */
 export interface ToolDisplay {
   summary: { zh: string; en: string };
 }
@@ -131,7 +139,10 @@ export interface ToolResult {
 
 const DISPLAY_MAX = 200;
 
-/** Validates a {@link ToolDisplay} and returns the list of problems (empty = valid); length is counted in Unicode code points. */
+/**
+ * Validates a {@link ToolDisplay} and returns the list of problems (empty = valid); length is
+ * counted in Unicode code points.
+ */
 export function validateToolDisplay(d: unknown): string[] {
   if (typeof d !== "object" || d === null || Array.isArray(d)) return ["display must be an object"];
   const s = (d as Record<string, unknown>).summary;
@@ -151,13 +162,21 @@ export function validateToolDisplay(d: unknown): string[] {
 /** Text shown to people: bilingual (`zh` / `en`) or a single string shown as is. */
 export type LocalizedText = { zh: string; en: string } | string;
 
-/** Interactive form: field schemas use only the ParamSchema subset of M2; enum fields may set multiSelect and allowOther. */
+/**
+ * Interactive form: field schemas use only the ParamSchema subset of M2; enum fields may set
+ * multiSelect and allowOther.
+ */
 export interface InputForm {
-  /** A plugin may give both languages; builtin kernel tools give English (model-generated questions are displayed as is). */
+  /**
+   * A plugin may give both languages; builtin kernel tools give English (model-generated questions
+   * are displayed as is).
+   */
   title: LocalizedText;
   /**
-   * Optional: an external page the user must open in a browser (e.g. an MCP URL-mode elicitation: go to the other party's page to authorize / pay / enter sensitive information).
-   * The UI shows it as a link (the full address visible); only absolute http(s) addresses, ≤ 2000 characters, are accepted.
+   * Optional: an external page the user must open in a browser (e.g. an MCP URL-mode elicitation:
+   * go to the other party's page to authorize / pay / enter sensitive information).
+   * The UI shows it as a link (the full address visible); only absolute http(s) addresses, ≤ 2000
+   * characters, are accepted.
    */
   url?: string;
   fields: {
@@ -172,7 +191,8 @@ export interface InputForm {
 }
 
 /**
- * The tool needs user input: the kernel pauses the run and renders a form; after the user submits, the tool is called again with the same input,
+ * The tool needs user input: the kernel pauses the run and renders a form; after the user submits,
+ * the tool is called again with the same input,
  * and state and answer are brought back in ctx.resume. state ≤ 16 KB, JSON-serializable.
  */
 export interface InputRequired {
@@ -215,8 +235,10 @@ export type ToolHandler = (
 
 /**
  * Tool error categories:
- * - `error` (default): the remote is available but this call failed (bad parameters, business error, auth failure, etc.), not counted toward the connector circuit breaker;
- * - `unavailable`: the remote is unavailable (connection / transport error, timeout, HTTP 5xx), counted toward the connector circuit breaker (connectors use it to tell the kernel).
+ * - `error` (default): the remote is available but this call failed (bad parameters, business
+ *   error, auth failure, etc.), not counted toward the connector circuit breaker;
+ * - `unavailable`: the remote is unavailable (connection / transport error, timeout, HTTP 5xx),
+ *   counted toward the connector circuit breaker (connectors use it to tell the kernel).
  */
 export type ToolErrorKind = "error" | "unavailable";
 
@@ -234,7 +256,10 @@ export class ToolError extends Error {
 /** Plugin tool name rule. */
 export const EXTENSION_TOOL_NAME = /^[a-zA-Z0-9_-]{1,40}$/;
 
-/** Validates the tool declarations a plugin registers and returns the list of problems (empty = valid). */
+/**
+ * Validates the tool declarations a plugin registers and returns the list of problems (empty =
+ * valid).
+ */
 export function validateToolSpec(spec: ToolSpec): string[] {
   const out: string[] = [];
   if (typeof spec?.name !== "string" || !EXTENSION_TOOL_NAME.test(spec.name))
@@ -323,7 +348,10 @@ export function validateInputForm(form: InputForm): string[] {
   return out;
 }
 
-/** Validates whether the answer a user submitted conforms to the form and returns the list of problems (empty = valid). */
+/**
+ * Validates whether the answer a user submitted conforms to the form and returns the list of
+ * problems (empty = valid).
+ */
 export function validateAnswer(form: InputForm, answer: FormAnswer): string[] {
   const out: string[] = [];
   const byKey = new Map(form.fields.map((f) => [f.key, f]));
@@ -331,7 +359,8 @@ export function validateAnswer(form: InputForm, answer: FormAnswer): string[] {
     if (!byKey.has(k)) out.push(`unknown field ${JSON.stringify(k)}`);
   for (const f of form.fields) {
     const at = `field ${JSON.stringify(f.key)}`;
-    // Look only at the answer's own keys: inherited properties such as `toString` / `constructor` do not count as answered
+    // Look only at the answer's own keys: inherited properties such as `toString` / `constructor`
+    // do not count as answered
     const v = Object.hasOwn(answer, f.key) ? answer[f.key] : undefined;
     if (v === undefined) {
       if (f.required) out.push(`${at}: is required`);
@@ -369,7 +398,9 @@ export function validateAnswer(form: InputForm, answer: FormAnswer): string[] {
   return out;
 }
 
-/** An allowOther enum field accepts any non-empty text; the rest are validated against the schema. */
+/**
+ * An allowOther enum field accepts any non-empty text; the rest are validated against the schema.
+ */
 function otherOrValue(f: InputForm["fields"][number], v: unknown): string | undefined {
   if (f.allowOther && isEnum(f.schema)) {
     return typeof v === "string" && v !== "" ? undefined : "other text must be a non-empty string";

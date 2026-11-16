@@ -528,7 +528,10 @@ export function validateSandboxPath(p: string, roots?: SandboxRoots): string[] {
 
 const LABEL = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 
-/** Validates an outbound allowlist host name: lowercase, no protocol or port, optional leading `*.`, IDN accepted only as punycode. */
+/**
+ * Validates an outbound allowlist host name: lowercase, no protocol or port, optional leading `*.`,
+ * IDN accepted only as punycode.
+ */
 export function validateAllowHost(h: string): string[] {
   if (typeof h !== "string" || h.length === 0) return ["host must be a non-empty string"];
   if (h.length > 253) return ["host must be at most 253 characters"];
@@ -538,7 +541,8 @@ export function validateAllowHost(h: string): string[] {
   if (labels.every((l) => LABEL.test(l))) {
     const tld = labels[labels.length - 1] as string;
     if (labels.length < 2) return ["host must have at least two labels (no single-label names)"];
-    // The last label must start with a letter: this blocks the decimal / octal / hexadecimal spellings of IPv4
+    // The last label must start with a letter: this blocks the decimal / octal / hexadecimal
+    // spellings of IPv4
     if (!/^[a-z]/.test(tld)) return ["host must not be an IP address literal"];
     if (["local", "internal", "localhost"].includes(tld)) {
       return ["host must not be in an internal-only domain (.local, .internal, .localhost)"];

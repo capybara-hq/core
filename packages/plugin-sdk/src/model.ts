@@ -1,7 +1,9 @@
 /**
  * The vendor-neutral model contract; native protocols stay inside each vendor plugin.
- * The current contract is `model-provider@2` (`ModelProvider` / `ModelInfo` / `ModelRequest`, parameters declared by the plugin per model,
- * see `model-params.ts`); the old contract `model-provider@1` (`ModelProviderV1` etc.) stays supported by the kernel through an adapter layer.
+ * The current contract is `model-provider@2` (`ModelProvider` / `ModelInfo` / `ModelRequest`,
+ * parameters declared by the plugin per model,
+ * see `model-params.ts`); the old contract `model-provider@1` (`ModelProviderV1` etc.) stays
+ * supported by the kernel through an adapter layer.
  */
 import type { ModelCallPurpose } from "./hooks.js";
 import type { Effort, ModelParameter, ParamValue } from "./model-params.js";
@@ -50,29 +52,45 @@ export interface ModelInfo {
     caching: boolean;
     midConversationSystem: boolean;
     /**
-     * Whether `document` blocks are accepted (default false). Images are governed by `vision`. When the model does not support them the kernel replaces media blocks with English text placeholders
-     * (e.g. `[Attached image "<name>" — this model cannot view images.]`; `text/*` documents are inlined as truncated text instead),
+     * Whether `document` blocks are accepted (default false). Images are governed by `vision`. When
+     * the model does not support them the kernel replaces media blocks with English text
+     * placeholders
+     * (e.g. `[Attached image "<name>" — this model cannot view images.]`; `text/*` documents are
+     * inlined as truncated text instead),
      * and never sends the bytes to it.
      */
     documents?: boolean;
     /**
-     * @deprecated For `model-provider@1`: whether `ModelRequestV1.effort` is supported. `@2` plugins leave it unset and instead declare an `effort` knob in
+     * @deprecated For `model-provider@1`: whether `ModelRequestV1.effort` is supported. `@2`
+     * plugins leave it unset and instead declare an `effort` knob in
      * `parameters`; the kernel's `@1` adapter derives `parameters` from it.
      */
     effort?: boolean;
   };
-  /** Stream idle watchdog threshold; reasoning models should use a longer one. When unset the kernel uses the config default. */
+  /**
+   * Stream idle watchdog threshold; reasoning models should use a longer one. When unset the kernel
+   * uses the config default.
+   */
   streamIdleTimeoutMs?: number;
-  /** The parameters this model supports (required for `@2`, may be an empty array; must pass `assertValidDeclarations`). */
+  /**
+   * The parameters this model supports (required for `@2`, may be an empty array; must pass
+   * `assertValidDeclarations`).
+   */
   parameters: ModelParameter[];
 }
 
-/** Model info for `model-provider@1`: no `parameters`; effort support is expressed by `capabilities.effort`. */
+/**
+ * Model info for `model-provider@1`: no `parameters`; effort support is expressed by
+ * `capabilities.effort`.
+ */
 export type ModelInfoV1 = Omit<ModelInfo, "parameters" | "capabilities"> & {
   capabilities: Omit<ModelInfo["capabilities"], "effort"> & { effort: boolean };
 };
 
-/** Vendor-private data: replayed only to the same vendor (e.g. Anthropic thinking block signatures, OpenAI encrypted reasoning items). */
+/**
+ * Vendor-private data: replayed only to the same vendor (e.g. Anthropic thinking block signatures,
+ * OpenAI encrypted reasoning items).
+ */
 export interface ProviderOpaque {
   provider: string;
   model: string;
@@ -92,26 +110,38 @@ export type ImageMediaType = (typeof IMAGE_MEDIA_TYPES)[number];
 export type DocumentMediaType = (typeof DOCUMENT_MEDIA_TYPES)[number];
 
 /**
- * The source of media content: `base64` is the bytes themselves, `ref` is a reference to a kernel attachment.
- * The event log stores only `ref` (bytes never enter the log); when building a request the kernel resolves `ref` into `base64`, so plugins only ever receive `base64`.
+ * The source of media content: `base64` is the bytes themselves, `ref` is a reference to a kernel
+ * attachment.
+ * The event log stores only `ref` (bytes never enter the log); when building a request the kernel
+ * resolves `ref` into `base64`, so plugins only ever receive `base64`.
  */
 export type MediaSource = { kind: "base64"; data: string } | { kind: "ref"; attachmentId: string };
 
-/** Upper bound on the decoded bytes of a single media block (the smaller value among mainstream vendors). */
+/**
+ * Upper bound on the decoded bytes of a single media block (the smaller value among mainstream
+ * vendors).
+ */
 export const MEDIA_LIMITS = { imageBytes: 5_242_880, documentBytes: 33_554_432 } as const;
 
 export type ContentBlock =
-  /** Opaque for text: vendor-private data that must be replayed with the text (e.g. the id of an OpenAI message output item). */
+  /**
+   * Opaque for text: vendor-private data that must be replayed with the text (e.g. the id of an
+   * OpenAI message output item).
+   */
   | { type: "text"; text: string; opaque?: ProviderOpaque }
   | { type: "thinking"; text: string; opaque?: ProviderOpaque }
   | { type: "tool_call"; id: string; name: string; input: unknown; opaque?: ProviderOpaque }
   | { type: "tool_result"; callId: string; content: string; isError: boolean }
   /**
-   * Image (appears only in user messages). When the model does not support `vision` the kernel substitutes a text placeholder, so the plugin need not gate it;
+   * Image (appears only in user messages). When the model does not support `vision` the kernel
+   * substitutes a text placeholder, so the plugin need not gate it;
    * an old plugin that does not know this block skips it.
    */
   | { type: "image"; mediaType: ImageMediaType; source: MediaSource; name?: string }
-  /** Document (appears only in user messages), gated by `capabilities.documents`, same rules as image. */
+  /**
+   * Document (appears only in user messages), gated by `capabilities.documents`, same rules as
+   * image.
+   */
   | { type: "document"; mediaType: DocumentMediaType; source: MediaSource; name?: string };
 
 const B64_RE = /^[A-Za-z0-9+/]*={0,2}$/;
@@ -120,12 +150,17 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 /** Maximum length (characters) of a media block's `name`. */
 export const MEDIA_NAME_MAX_CHARS = 255;
 
-/** Suggested upper bound (code points) for file names / titles in vendor requests, the default of {@link clipMediaName}. */
+/**
+ * Suggested upper bound (code points) for file names / titles in vendor requests, the default of
+ * {@link clipMediaName}.
+ */
 export const PROVIDER_MEDIA_NAME_MAX = 200;
 
 /**
- * Truncates an attachment name to at most `max` code points (for vendor mapping: some APIs limit filename / title length, and adding a suffix makes it longer still).
- * Keeps the extension where possible (a `.ext` of at most 16 characters), with `…` marking the cut part in the middle. A pure function.
+ * Truncates an attachment name to at most `max` code points (for vendor mapping: some APIs limit
+ * filename / title length, and adding a suffix makes it longer still).
+ * Keeps the extension where possible (a `.ext` of at most 16 characters), with `…` marking the cut
+ * part in the middle. A pure function.
  */
 export function clipMediaName(name: string, max = PROVIDER_MEDIA_NAME_MAX): string {
   const cps = [...name];
@@ -156,8 +191,10 @@ const MEDIA: Record<string, { types: readonly string[]; limit: number }> = {
 };
 
 /**
- * Validates an image / document block and returns the list of errors (empty means valid): the type is in the list; `base64` is standard, padded base64
- * without whitespace, and does not exceed {@link MEDIA_LIMITS} once decoded; the `attachmentId` of `ref` is a UUID; `name`, if present, must be a string,
+ * Validates an image / document block and returns the list of errors (empty means valid): the type
+ * is in the list; `base64` is standard, padded base64
+ * without whitespace, and does not exceed {@link MEDIA_LIMITS} once decoded; the `attachmentId` of
+ * `ref` is a UUID; `name`, if present, must be a string,
  * at most {@link MEDIA_NAME_MAX_CHARS} characters, and contain no control characters.
  */
 export function validateMediaBlock(b: unknown): string[] {
@@ -194,7 +231,8 @@ export function validateMediaBlock(b: unknown): string[] {
       errs.push(`${o.type} source.data must be non-empty padded base64`);
       return errs;
     }
-    // Compute the decoded size from the length first; when over the limit, skip the per-character validation
+    // Compute the decoded size from the length first; when over the limit, skip the per-character
+    // validation
     const pad = data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0;
     const bytes = (data.length / 4) * 3 - pad;
     if (bytes > spec.limit) {
@@ -211,7 +249,10 @@ export function validateMediaBlock(b: unknown): string[] {
 export type ModelMessage =
   | { role: "user"; content: ContentBlock[] }
   | { role: "assistant"; content: ContentBlock[] }
-  /** A mid-conversation system reminder; when the model does not support it the plugin turns it into a user text block (starting with "[system] "). */
+  /**
+   * A mid-conversation system reminder; when the model does not support it the plugin turns it into
+   * a user text block (starting with "[system] ").
+   */
   | { role: "system"; content: string };
 
 export interface ToolDefinition {
@@ -222,18 +263,27 @@ export interface ToolDefinition {
 
 export interface ModelRequest {
   model: string;
-  /** Stable content first; after a block with cache true a cache breakpoint is placed (implemented by the plugin per the native protocol). */
+  /**
+   * Stable content first; after a block with cache true a cache breakpoint is placed (implemented
+   * by the plugin per the native protocol).
+   */
   system: { text: string; cache: boolean }[];
   messages: ModelMessage[];
   tools: ToolDefinition[];
   /**
-   * `@2`: whether the model may call tools. `"none"` = this call may only reply with text and must not call tools (`tools` is still sent as usual: when the history has tool calls
-   * some vendors require the request to declare tools, and it keeps the cache prefix stable); omitted or `"auto"` = the model decides.
-   * The plugin maps it to the native field (e.g. Anthropic `tool_choice: {type: "none"}`); when `tools` is empty the plugin does not send the field.
+   * `@2`: whether the model may call tools. `"none"` = this call may only reply with text and must
+   * not call tools (`tools` is still sent as usual: when the history has tool calls
+   * some vendors require the request to declare tools, and it keeps the cache prefix stable);
+   * omitted or `"auto"` = the model decides.
+   * The plugin maps it to the native field (e.g. Anthropic `tool_choice: {type: "none"}`); when
+   * `tools` is empty the plugin does not send the field.
    */
   toolChoice?: "auto" | "none";
   maxOutputTokens: number;
-  /** `@2`: the parameters of this call (already processed against the model's `parameters`), mapped to the native request by the plugin. */
+  /**
+   * `@2`: the parameters of this call (already processed against the model's `parameters`), mapped
+   * to the native request by the plugin.
+   */
   params: Record<string, ParamValue>;
   /** @deprecated For `model-provider@1`; `@2` plugins read `params.effort`. */
   effort?: Effort;
@@ -251,12 +301,18 @@ export type ModelRequestV1 = Omit<ModelRequest, "params" | "toolChoice">;
 export type StopReason = "end_turn" | "tool_use" | "max_tokens" | "refusal" | "other";
 
 /**
- * Token usage of one call. The three kinds of input do not overlap: the total input of this request =
- * `inputTokens + cacheReadTokens + cacheWriteTokens` (the kernel uses it to correct context estimates and to decide when to compact).
- * If the vendor API's input count already includes cache-hit / cache-write tokens (e.g. OpenAI's `prompt_tokens`), the plugin must subtract them first.
+ * Token usage of one call. The three kinds of input do not overlap: the total input of this request
+ * =
+ * `inputTokens + cacheReadTokens + cacheWriteTokens` (the kernel uses it to correct context
+ * estimates and to decide when to compact).
+ * If the vendor API's input count already includes cache-hit / cache-write tokens (e.g. OpenAI's
+ * `prompt_tokens`), the plugin must subtract them first.
  */
 export interface ModelUsage {
-  /** Input tokens that neither hit the cache nor were written to it (only the uncached part, not the total input). */
+  /**
+   * Input tokens that neither hit the cache nor were written to it (only the uncached part, not the
+   * total input).
+   */
   inputTokens: number;
   outputTokens: number;
   /** Input tokens read from the prompt cache. */
@@ -311,7 +367,9 @@ export function isRetryableKind(kind: ModelErrorKind): boolean {
   return RETRYABLE.has(kind);
 }
 
-/** Duck-typed check (no instanceof), compatible with a plugin bundling another copy of plugin-sdk. */
+/**
+ * Duck-typed check (no instanceof), compatible with a plugin bundling another copy of plugin-sdk.
+ */
 export function isModelError(e: unknown): e is ModelError {
   if (!(e instanceof Error)) return false;
   const kind = (e as { kind?: unknown }).kind;
@@ -395,7 +453,10 @@ export function validateEmbedResult(
 
 /** The `model-provider@2` implementation. */
 export interface ModelProvider {
-  /** Every model's `parameters` must pass `assertValidDeclarations`, otherwise the kernel does not use this vendor. */
+  /**
+   * Every model's `parameters` must pass `assertValidDeclarations`, otherwise the kernel does not
+   * use this vendor.
+   */
   listModels(opts?: ModelCallOptions): Promise<ModelInfo[]>;
   /** The event sequence must end with exactly one message_complete; throw ModelError on error. */
   stream(
@@ -406,7 +467,10 @@ export interface ModelProvider {
   embed?(req: EmbedRequest, opts: { signal: AbortSignal } & ModelCallOptions): Promise<EmbedResult>;
 }
 
-/** The `model-provider@1` implementation (old contract, connected by the kernel through an adapter layer: effort is derived from `capabilities.effort`). */
+/**
+ * The `model-provider@1` implementation (old contract, connected by the kernel through an adapter
+ * layer: effort is derived from `capabilities.effort`).
+ */
 export interface ModelProviderV1 {
   listModels(): Promise<ModelInfoV1[]>;
   /** The event sequence must end with exactly one message_complete; throw ModelError on error. */

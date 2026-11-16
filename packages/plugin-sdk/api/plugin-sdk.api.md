@@ -662,7 +662,10 @@ export function connectorToolKey(slug: string, tool: string): string;
 
 // @public
 export type ContentBlock =
-/** Opaque for text: vendor-private data that must be replayed with the text (e.g. the id of an OpenAI message output item). */
+/**
+* Opaque for text: vendor-private data that must be replayed with the text (e.g. the id of an
+* OpenAI message output item).
+*/
     {
     type: "text";
     text: string;
@@ -684,7 +687,8 @@ export type ContentBlock =
     isError: boolean;
 }
 /**
-* Image (appears only in user messages). When the model does not support `vision` the kernel substitutes a text placeholder, so the plugin need not gate it;
+* Image (appears only in user messages). When the model does not support `vision` the kernel
+* substitutes a text placeholder, so the plugin need not gate it;
 * an old plugin that does not know this block skips it.
 */
 | {
@@ -693,7 +697,10 @@ export type ContentBlock =
     source: MediaSource_2;
     name?: string;
 }
-/** Document (appears only in user messages), gated by `capabilities.documents`, same rules as image. */
+/**
+* Document (appears only in user messages), gated by `capabilities.documents`, same rules as
+* image.
+*/
 | {
     type: "document";
     mediaType: DocumentMediaType;
@@ -1077,7 +1084,10 @@ export type EmbedChildMessage =
     type: "resize";
     height: number;
 }
-/** Only in-site paths: a single leading `/`, no `//`, no `.` / `..` segments (including `%2e` encoding), unchanged after normalization. */
+/**
+* Only in-site paths: a single leading `/`, no `//`, no `.` / `..` segments (including `%2e`
+* encoding), unchanged after normalization.
+*/
 | {
     protocol: typeof EMBED_PROTOCOL;
     type: "navigate";
@@ -2094,7 +2104,10 @@ export type ModelMessage = {
     role: "assistant";
     content: ContentBlock[];
 }
-/** A mid-conversation system reminder; when the model does not support it the plugin turns it into a user text block (starting with "[system] "). */
+/**
+* A mid-conversation system reminder; when the model does not support it the plugin turns it into
+* a user text block (starting with "[system] ").
+*/
 | {
     role: "system";
     content: string;

@@ -1,9 +1,12 @@
 import { z } from "zod";
 
 /*
- * A connector's authentication method (only the type and non-secret fields; credential values are not here): the kernel's connector install API and the connector templates in the enterprise catalog
- * (`ConnectorTemplateSpec.auth`) share this one schema. Every branch is strict: extra fields (such as `token`) are always rejected,
- * so a valid auth preset cannot smuggle in a credential. Whether OAuth endpoints must be https is checked again by the kernel per deployment config.
+ * A connector's authentication method (only the type and non-secret fields; credential values are
+ * not here): the kernel's connector install API and the connector templates in the catalog
+ * (`ConnectorTemplateSpec.auth`) share this one schema. Every branch is strict: extra fields (such
+ * as `token`) are always rejected,
+ * so a valid auth preset cannot smuggle in a credential. Whether OAuth endpoints must be https is
+ * checked again by the kernel per deployment config.
  */
 
 /** HTTP header name (RFC 9110 token). */
@@ -43,7 +46,10 @@ const TokenTypes = z
   )
   .max(5);
 
-/** Authentication method: only the type and non-secret fields; credential values go through the kernel's `credential` / credentials API. */
+/**
+ * Authentication method: only the type and non-secret fields; credential values go through the
+ * kernel's `credential` / credentials API.
+ */
 export const ConnectorAuthSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("none") }).strict(),
   z.object({ type: z.literal("bearer"), ownership: Ownership }).strict(),

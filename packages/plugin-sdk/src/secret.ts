@@ -8,7 +8,10 @@ export function secret<T extends z.ZodTypeAny>(schema: T): T {
   return schema.meta({ ...(schema.meta() ?? {}), secret: true }) as T;
 }
 
-/** Reads the schema's meta to tell whether it is sensitive; the kernel's `meta({secret:true})` is recognized the same way. */
+/**
+ * Reads the schema's meta to tell whether it is sensitive; the kernel's `meta({secret:true})` is
+ * recognized the same way.
+ */
 export function isSecret(schema: z.ZodTypeAny): boolean {
   return (schema.meta() as { secret?: unknown } | undefined)?.secret === true;
 }

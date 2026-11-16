@@ -1,12 +1,16 @@
 /**
- * Pure parsing and validation functions for skills (Agent Skills format): used when the kernel uploads a skill package and when an agent proposes a skill change.
+ * Pure parsing and validation functions for skills (Agent Skills format): used when the kernel
+ * uploads a skill package and when an agent proposes a skill change.
  *
  * Format sources (verified 2026-10-21):
- * - Agent Skills specification https://agentskills.io/specification : `name` is required, 1–64 characters, only lowercase letters, digits and
- *   hyphens, must not start or end with a hyphen, no consecutive hyphens, and must match its directory name; `description` is required, 1–1024 characters;
+ * - Agent Skills specification https://agentskills.io/specification : `name` is required, 1–64
+ *   characters, only lowercase letters, digits and
+ *   hyphens, must not start or end with a hyphen, no consecutive hyphens, and must match its
+ * directory name; `description` is required, 1–1024 characters;
  *   optional `license`, `compatibility` (1–500 characters), `metadata`, `allowed-tools`.
  * - Anthropic docs https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview :
- *   `name` and `description` must not contain XML tags (there are also reserved words "anthropic" / "claude", which are Anthropic's own platform rules and
+ *   `name` and `description` must not contain XML tags (there are also reserved words "anthropic" /
+ * "claude", which are Anthropic's own platform rules and
  *   are not adopted here).
  *
  * Choices: the description goes into the model's system prompt, so XML tags are refused as Anthropic
@@ -37,7 +41,10 @@ export const SKILL_LIMITS = {
   maxFiles: 1000,
   /** Upper bound on the length of a relative path inside the package (characters). */
   pathMaxChars: 512,
-  /** Upper bound on the length of the frontmatter (between the two `---` lines) in characters; above it no YAML parsing is done. */
+  /**
+   * Upper bound on the length of the frontmatter (between the two `---` lines) in characters; above
+   * it no YAML parsing is done.
+   */
   frontmatterMaxChars: 64 * 1024,
 } as const;
 
@@ -134,8 +141,10 @@ export interface ParseSkillMdOptions {
 const chars = (s: string) => [...s].length;
 
 /**
- * Parses SKILL.md: it starts with YAML frontmatter wrapped in `---` lines, followed by the body. Tolerates BOM and CRLF (CRLF in the body becomes LF).
- * Returns name / description / body, or all problems (in English, directly showable to a model or an admin).
+ * Parses SKILL.md: it starts with YAML frontmatter wrapped in `---` lines, followed by the body.
+ * Tolerates BOM and CRLF (CRLF in the body becomes LF).
+ * Returns name / description / body, or all problems (in English, directly showable to a model or
+ * an admin).
  */
 export function parseSkillMd(
   text: string,
@@ -258,10 +267,15 @@ function pathProblem(p: unknown): string | null {
 }
 
 /**
- * Validates a skill package's file list (paths relative to the package root, files only, no directory entries):
- * the root must have `SKILL.md`; single file ≤ {@link SKILL_LIMITS.fileBytes}; total ≤ {@link SKILL_LIMITS.totalBytes};
- * file count ≤ {@link SKILL_LIMITS.maxFiles}; paths must not escape (absolute paths, `..`, backslashes, drive letters, control characters), must not repeat
- * (differing only in case also counts as repeating: they would overwrite each other on case-insensitive file systems), and a file must not share a name with a directory. Returns the list of problems; an empty array means valid.
+ * Validates a skill package's file list (paths relative to the package root, files only, no
+ * directory entries):
+ * the root must have `SKILL.md`; single file ≤ {@link SKILL_LIMITS.fileBytes}; total ≤ {@link
+ * SKILL_LIMITS.totalBytes};
+ * file count ≤ {@link SKILL_LIMITS.maxFiles}; paths must not escape (absolute paths, `..`,
+ * backslashes, drive letters, control characters), must not repeat
+ * (differing only in case also counts as repeating: they would overwrite each other on
+ * case-insensitive file systems), and a file must not share a name with a directory. Returns the
+ * list of problems; an empty array means valid.
  */
 export function validateSkillPackage(files: { path: string; size: number }[]): string[] {
   if (files.length > SKILL_LIMITS.maxFiles) {

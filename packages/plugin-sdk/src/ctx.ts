@@ -22,9 +22,12 @@ export interface Lease {
 }
 
 /**
- * The plugin's object storage (`ctx.storage`, needs `permissions.storage`): the same shape as `ObjectStore`, but the first parameter of every method is
- * `orgId`, and the kernel adds `plugins/<plugin name>/<orgId>/` to keys and prefixes automatically: a plugin sees only its own objects under that org.
- * The backing store is the deployment-configured `object-store@1` provider; every method throws when there is no provider.
+ * The plugin's object storage (`ctx.storage`, needs `permissions.storage`): the same shape as
+ * `ObjectStore`, but the first parameter of every method is
+ * `orgId`, and the kernel adds `plugins/<plugin name>/<orgId>/` to keys and prefixes automatically:
+ * a plugin sees only its own objects under that org.
+ * The backing store is the deployment-configured `object-store@1` provider; every method throws
+ * when there is no provider.
  */
 export interface ExtensionStorage {
   put(
@@ -34,8 +37,10 @@ export interface ExtensionStorage {
     opts: { contentType: string; size?: number; signal?: AbortSignal },
   ): Promise<ObjectHead>;
   /**
-   * Returns null when missing. `range` is a closed byte range; an omitted `end` means read to the end.
-   * With `range`, `head.size` is still the size of the whole object; when the store ignores Range, body may be the whole object.
+   * Returns null when missing. `range` is a closed byte range; an omitted `end` means read to the
+   * end.
+   * With `range`, `head.size` is still the size of the whole object; when the store ignores Range,
+   * body may be the whole object.
    */
   get(
     orgId: string,
@@ -116,7 +121,10 @@ export interface ExtensionModels {
   describe(req: { orgId: string; purpose: string }): Promise<ExtensionModelTarget | null>;
 }
 
-/** The context passed to a plugin's `setup`. It provides no timers or in-process shared state; kv writes must carry a TTL. */
+/**
+ * The context passed to a plugin's `setup`. It provides no timers or in-process shared state; kv
+ * writes must carry a TTL.
+ */
 export interface ExtensionContext {
   kv: {
     get(key: string): Promise<string | null>;
@@ -193,13 +201,18 @@ export interface ExtensionContext {
   };
   /**
    * Runtime of UI contributions (manifest `ui` + `permissions.ui`):
-   * - `view` / `action`: can be registered only during `setup`; the id is the contribution id of the kind-view entry in the manifest;
-   *   `action` receives a button click or form submission from the view (`args.actionId` tells which one);
-   * - `invalidate`: tells the kernel "this contribution changed", and the web pages that have it open fetch the view again (via the bus, across replicas); a
+   * - `view` / `action`: can be registered only during `setup`; the id is the contribution id of
+   *   the kind-view entry in the manifest;
+   *   `action` receives a button click or form submission from the view (`args.actionId` tells
+   * which one);
+   * - `invalidate`: tells the kernel "this contribution changed", and the web pages that have it
+   *   open fetch the view again (via the bus, across replicas); a
    *   `platform.page` contribution takes no `orgId` (it refreshes the admin console), every other
    *   contribution requires one;
-   * - `verifyEmbedToken`: validates the embed token an embed page received; it accepts only tokens signed for this plugin and not expired, while the plugin is still enabled in that org,
-   *   the caller is still an active member and the role still satisfies the slot's minRole, otherwise it returns null; the returned `role` is the role at this moment. A
+   * - `verifyEmbedToken`: validates the embed token an embed page received; it accepts only
+   *   tokens signed for this plugin and not expired, while the plugin is still enabled in that org,
+   *   the caller is still an active member and the role still satisfies the slot's minRole,
+   * otherwise it returns null; the returned `role` is the role at this moment. A
    *   platform-scope token (`scope: "platform"`, no `orgId`) verifies only for a `platform.page`
    *   contribution while the account is still an active super admin.
    */
@@ -240,14 +253,19 @@ export interface ExtensionContext {
   };
   provide(extensionPoint: ExtensionPointRef, impl: unknown): void;
   /**
-   * The lifecycle signal of this plugin instance: aborted when the instance is revoked (disabled, uninstalled, upgraded), after in-flight calls have drained.
-   * Long-running tasks the plugin started itself (polling loops, long connections, etc.) wind down on it.
+   * The lifecycle signal of this plugin instance: aborted when the instance is revoked (disabled,
+   * uninstalled, upgraded), after in-flight calls have drained.
+   * Long-running tasks the plugin started itself (polling loops, long connections, etc.) wind down
+   * on it.
    */
   signal: AbortSignal;
   /**
-   * Deployment-level config, validated against the plugin schema (the startup config merged with values the enterprise admin saved in the console). This is a getter:
-   * when a field marked `hot` (`.meta({ hot: true })`) changes, the kernel replaces it in place, so the plugin must read `ctx.config` **at the time of use** to get the new value;
-   * do not copy hot fields into a closure in setup; when a non-hot field changes the kernel reloads the plugin instance (a new setup).
+   * Deployment-level config, validated against the plugin schema (the startup config merged with
+   * values the super admin saved in the console). This is a getter:
+   * when a field marked `hot` (`.meta({ hot: true })`) changes, the kernel replaces it in place, so
+   * the plugin must read `ctx.config` **at the time of use** to get the new value;
+   * do not copy hot fields into a closure in setup; when a non-hot field changes the kernel reloads
+   * the plugin instance (a new setup).
    */
   readonly config: unknown;
   log: Logger;

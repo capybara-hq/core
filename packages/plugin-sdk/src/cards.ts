@@ -2,7 +2,8 @@ import { type FormAnswer, type InputForm, validateInputForm } from "./tool.js";
 import { isHttpUrl } from "./url.js";
 
 /**
- * Channel-neutral IM cards: defined and produced by the kernel, rendered by channel plugins in each IM's native format;
+ * Channel-neutral IM cards: defined and produced by the kernel, rendered by channel plugins in each
+ * IM's native format;
  * channels without card support fall back to text with {@link renderCardAsText}.
  */
 export type ChannelCard =
@@ -57,7 +58,10 @@ export type ChannelCard =
   | { kind: "connect"; appName: string; url: string }
   | { kind: "bind"; url: string; text: string };
 
-/** A user action on an IM card, parsed by the channel plugin and handed to the kernel through an inbound event. */
+/**
+ * A user action on an IM card, parsed by the channel plugin and handed to the kernel through an
+ * inbound event.
+ */
 export interface CardAction {
   cardKind: "approval" | "question";
   cardId: string;
@@ -66,7 +70,10 @@ export interface CardAction {
   answer?: FormAnswer;
 }
 
-/** One message sent to an IM: `text` is Markdown (the channel plugin converts it to native rich text); a card may be attached. */
+/**
+ * One message sent to an IM: `text` is Markdown (the channel plugin converts it to native rich
+ * text); a card may be attached.
+ */
 export interface OutboundMessage {
   text: string;
   cards?: ChannelCard[];
@@ -177,7 +184,8 @@ export function validateChannelCard(card: unknown): string[] {
       if (c.answerSummary !== undefined && typeof c.answerSummary !== "string")
         out.push("answerSummary must be a string");
       if (c.textReply !== undefined) oneOf("textReply", TEXT_REPLY);
-      // A form that cannot be answered inside the IM (see questionRenderableInline) is equally valid: the channel renders only the web link.
+      // A form that cannot be answered inside the IM (see questionRenderableInline) is equally
+      // valid: the channel renders only the web link.
       for (const p of validateInputForm(c.form as InputForm)) out.push(`form: ${p}`);
       return out;
     }
@@ -198,9 +206,13 @@ export function validateChannelCard(card: unknown): string[] {
 export type Locale = "zh" | "en";
 
 /**
- * Puts model-controllable values (approval title, call summary, question title, answer summary) into code, so that in the fallback text they do not turn into links, emphasis or HTML:
- * single-line values use inline code, multi-line values a fenced code block (starting with a newline); the delimiters are always longer than the longest backtick run in the value (CommonMark 6.1 / 4.5).
- * Code is chosen over backslash-escaping punctuation because code is the only form CommonMark / GFM guarantee to display content verbatim (a backslash does not stop GFM bare-URL
+ * Puts model-controllable values (approval title, call summary, question title, answer summary)
+ * into code, so that in the fallback text they do not turn into links, emphasis or HTML:
+ * single-line values use inline code, multi-line values a fenced code block (starting with a
+ * newline); the delimiters are always longer than the longest backtick run in the value (CommonMark
+ * 6.1 / 4.5).
+ * Code is chosen over backslash-escaping punctuation because code is the only form CommonMark / GFM
+ * guarantee to display content verbatim (a backslash does not stop GFM bare-URL
  * autolinks, and channel converters treat backslashes inconsistently).
  */
 function asCode(s: string): string {
@@ -211,12 +223,16 @@ function asCode(s: string): string {
     return `\n${fence}\n${v}\n${fence}`;
   }
   const d = "`".repeat(longest + 1);
-  // When the value starts / ends with a backtick, or has spaces at both ends, add one space (stripped when rendered); otherwise it would stick to the delimiter or lose its spaces
+  // When the value starts / ends with a backtick, or has spaces at both ends, add one space
+  // (stripped when rendered); otherwise it would stick to the delimiter or lose its spaces
   const pad = /^`|`$/.test(v) || (v.startsWith(" ") && v.endsWith(" ")) ? " " : "";
   return `${d}${pad}${v}${pad}${d}`;
 }
 
-/** Prefix + code: when the code is a fenced block (starting with a newline), drop the trailing space of the prefix. */
+/**
+ * Prefix + code: when the code is a fenced block (starting with a newline), drop the trailing space
+ * of the prefix.
+ */
 const withCode = (prefix: string, code: string) =>
   code.startsWith("\n") ? `${prefix.trimEnd()}${code}` : `${prefix}${code}`;
 
@@ -314,8 +330,10 @@ export function questionStateLabel(state: string, locale: Locale): string {
 }
 
 /**
- * The uniform fallback text for channels without card support (links included); the fixed phrases are taken by locale, zh / en. The result is Markdown (put into
- * `OutboundMessage.text`, converted by the channel plugin): model-controllable fields go into code (see `asCode`), so they never produce links.
+ * The uniform fallback text for channels without card support (links included); the fixed phrases
+ * are taken by locale, zh / en. The result is Markdown (put into
+ * `OutboundMessage.text`, converted by the channel plugin): model-controllable fields go into code
+ * (see `asCode`), so they never produce links.
  */
 export function renderCardAsText(card: ChannelCard, locale: Locale): string {
   const t = TEXT[locale] ?? TEXT.en;

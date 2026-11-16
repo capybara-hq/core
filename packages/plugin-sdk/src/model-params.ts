@@ -1,13 +1,17 @@
 /**
- * Parameter declarations and validation for `model-provider@2` (pure functions; issues / error messages are in English, for logs and API responses).
- * Each model declares in `ModelInfo.parameters` the parameters it supports; value constraints are a restricted JSON Schema subset.
+ * Parameter declarations and validation for `model-provider@2` (pure functions; issues / error
+ * messages are in English, for logs and API responses).
+ * Each model declares in `ModelInfo.parameters` the parameters it supports; value constraints are a
+ * restricted JSON Schema subset.
  */
 
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 
 /**
- * Standard knobs: uniform platform semantics, rendered specially by the UI, with semantics that carry over when switching models or falling back; the plugin maps them to native parameters.
- * - `effort`: thinking depth, `{ type: "string", enum }`, values a subset of `low|medium|high|xhigh|max`;
+ * Standard knobs: uniform platform semantics, rendered specially by the UI, with semantics that
+ * carry over when switching models or falling back; the plugin maps them to native parameters.
+ * - `effort`: thinking depth, `{ type: "string", enum }`, values a subset of
+ *   `low|medium|high|xhigh|max`;
  * - `thinking`: thinking mode, `{ type: "string", enum }`, values a subset of `off|on|summarized`;
  * - `temperature`: `{ type: "number" }` (may carry a range);
  * - `maxOutputTokens`: maximum output tokens, `{ type: "integer" }` (may carry a range).
@@ -25,7 +29,10 @@ export const EFFORT_VALUES: readonly Effort[] = ["low", "medium", "high", "xhigh
 /** The full set of values the `thinking` knob allows. */
 export const THINKING_VALUES: readonly string[] = ["off", "on", "summarized"];
 
-/** Parameter value constraints: a restricted JSON Schema subset (serializable for the UI; the kernel validates it itself, without ajv). */
+/**
+ * Parameter value constraints: a restricted JSON Schema subset (serializable for the UI; the kernel
+ * validates it itself, without ajv).
+ */
 export type ParamSchema =
   | { type: "string"; enum: string[] }
   | { type: "string"; maxLength?: number }
@@ -36,9 +43,15 @@ export type ParamValue = string | number | boolean;
 
 /** One parameter a model declares. */
 export interface ModelParameter {
-  /** A standard knob name (see {@link StandardKnob}), or a vendor-specific parameter `"<plugin name>.<name>"`. */
+  /**
+   * A standard knob name (see {@link StandardKnob}), or a vendor-specific parameter `"<plugin
+   * name>.<name>"`.
+   */
   key: string;
-  /** Required when key is a standard knob and must equal key; vendor-specific parameters must not set it. */
+  /**
+   * Required when key is a standard knob and must equal key; vendor-specific parameters must not
+   * set it.
+   */
   standard?: StandardKnob;
   schema: ParamSchema;
   /** The value used when unset; must satisfy the schema. */
@@ -84,13 +97,18 @@ export function checkParamValue(schema: ParamSchema, v: unknown): string | undef
   }
 }
 
-/** Looks up a declaration by key (uses a Map so that prototype properties such as `constructor` are not mistaken for declared keys). */
+/**
+ * Looks up a declaration by key (uses a Map so that prototype properties such as `constructor` are
+ * not mistaken for declared keys).
+ */
 const declMap = (decl: ModelParameter[]): Map<string, ModelParameter> =>
   new Map(decl.map((d) => [d.key, d]));
 
 /**
- * Strict validation (used when saving an agent): unknown keys, type mismatches, enum violations and out-of-range values are all errors, reported per key.
- * On success `value` is the input parameters, with no defaults filled in; a key whose value is undefined counts as unset.
+ * Strict validation (used when saving an agent): unknown keys, type mismatches, enum violations and
+ * out-of-range values are all errors, reported per key.
+ * On success `value` is the input parameters, with no defaults filled in; a key whose value is
+ * undefined counts as unset.
  */
 export function validateParams(
   decl: ModelParameter[],
@@ -114,8 +132,10 @@ export function validateParams(
 }
 
 /**
- * The lenient variant (used at runtime): drops unknown or invalid entries (their keys go into `dropped`), then fills defaults for declared parameters that are unset.
- * For the case where saved parameters are no longer valid after a plugin upgrade, so that the whole run does not fail.
+ * The lenient variant (used at runtime): drops unknown or invalid entries (their keys go into
+ * `dropped`), then fills defaults for declared parameters that are unset.
+ * For the case where saved parameters are no longer valid after a plugin upgrade, so that the whole
+ * run does not fail.
  */
 export function sanitizeParams(
   decl: ModelParameter[],
@@ -188,7 +208,9 @@ function schemaProblems(schema: unknown): string[] {
   }
 }
 
-/** The value conventions of standard knobs (checked only when the schema itself is already valid). */
+/**
+ * The value conventions of standard knobs (checked only when the schema itself is already valid).
+ */
 function knobProblems(key: StandardKnob, schema: ParamSchema): string[] {
   const values = schema.type === "string" && "enum" in schema ? schema.enum : undefined;
   switch (key) {
@@ -241,8 +263,10 @@ function declarationProblems(plugin: string, d: ModelParameter): string[] {
 }
 
 /**
- * Validates the parameters a plugin declares for a model: the key is a standard knob or `<plugin>.<name>`, `standard` agrees with the key,
- * the schema belongs to the supported subset, standard knobs satisfy the value conventions, defaults satisfy the schema, copy is complete, keys do not repeat.
+ * Validates the parameters a plugin declares for a model: the key is a standard knob or
+ * `<plugin>.<name>`, `standard` agrees with the key,
+ * the schema belongs to the supported subset, standard knobs satisfy the value conventions,
+ * defaults satisfy the schema, copy is complete, keys do not repeat.
  * Throws when there is a problem, with a message naming the plugin and each key (in English).
  */
 export function assertValidDeclarations(plugin: string, decl: ModelParameter[]): void {

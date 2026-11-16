@@ -16,10 +16,16 @@ import type { PluginManifest } from "./plugin-manifest.js";
  * come from the host.
  */
 
-/** Packages provided by the host (peerDependencies, linked to the host's copy on install); every other third-party dependency must be bundled into the entry. */
+/**
+ * Packages provided by the host (peerDependencies, linked to the host's copy on install); every
+ * other third-party dependency must be bundled into the entry.
+ */
 export const HOST_PROVIDED_PACKAGES = ["@capybara-hq/plugin-sdk", "zod"] as const;
 
-/** Scripts npm runs automatically on install: a plugin package must never have any (installs run no scripts, so having them would mislead). */
+/**
+ * Scripts npm runs automatically on install: a plugin package must never have any (installs run no
+ * scripts, so having them would mislead).
+ */
 export const FORBIDDEN_INSTALL_SCRIPTS = [
   "preinstall",
   "install",
@@ -27,7 +33,9 @@ export const FORBIDDEN_INSTALL_SCRIPTS = [
   "prepare",
 ] as const;
 
-/** Dependency fields that must not appear: third-party dependencies must be bundled into the entry. */
+/**
+ * Dependency fields that must not appear: third-party dependencies must be bundled into the entry.
+ */
 const FORBIDDEN_DEP_FIELDS = [
   "dependencies",
   "optionalDependencies",
@@ -35,14 +43,20 @@ const FORBIDDEN_DEP_FIELDS = [
   "bundledDependencies",
 ] as const;
 
-/** A config field in the static manifest (a dotted path; an empty string when the root is itself the leaf). */
+/**
+ * A config field in the static manifest (a dotted path; an empty string when the root is itself the
+ * leaf).
+ */
 export interface StaticConfigField {
   path: string;
   secret: boolean;
   hot: boolean;
 }
 
-/** The static part of the plugin manifest (JSON-serializable; excludes setup, zod schemas and migration paths). */
+/**
+ * The static part of the plugin manifest (JSON-serializable; excludes setup, zod schemas and
+ * migration paths).
+ */
 export interface StaticExtensionManifest {
   name: string;
   version: string;
@@ -55,7 +69,10 @@ export interface StaticExtensionManifest {
   config: { deployment: StaticConfigField[]; org: StaticConfigField[] };
 }
 
-/** An import in the entry module: `name` is the specifier (an empty string for a dynamic import that is not a literal). */
+/**
+ * An import in the entry module: `name` is the specifier (an empty string for a dynamic import that
+ * is not a literal).
+ */
 export interface EntryImport {
   name: string;
   dynamic: boolean;
@@ -65,12 +82,16 @@ export interface EntryImport {
 const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
-/** npm package name rule (simplified): may carry a scope, lowercase, ≤ 214 characters (the length is checked separately). */
+/**
+ * npm package name rule (simplified): may carry a scope, lowercase, ≤ 214 characters (the length is
+ * checked separately).
+ */
 export const NPM_PACKAGE_NAME_RE = /^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/;
 const NPM_NAME_RE = NPM_PACKAGE_NAME_RE;
 
 /**
- * Whether a path relative to the package is safe: non-empty, not starting with `/`, no `\`, control characters or drive letters, no empty segments, `.` or `..` segments, ≤ 1024 characters.
+ * Whether a path relative to the package is safe: non-empty, not starting with `/`, no `\`, control
+ * characters or drive letters, no empty segments, `.` or `..` segments, ≤ 1024 characters.
  */
 export function isSafePackagePath(p: string): boolean {
   if (typeof p !== "string" || p === "" || p.length > 1024) return false;
@@ -84,8 +105,10 @@ const isHostPackage = (name: string) =>
   HOST_PROVIDED_PACKAGES.some((h) => name === h || name.startsWith(`${h}/`));
 
 /**
- * Checks the entry module's imports (C11): static and literal dynamic imports may only be `node:*`, {@link HOST_PROVIDED_PACKAGES} (subpaths included)
- * and in-package relative paths (`./`, `../`; whether they escape the package is judged by the caller from the file location); non-literal dynamic imports are always rejected.
+ * Checks the entry module's imports (C11): static and literal dynamic imports may only be `node:*`,
+ * {@link HOST_PROVIDED_PACKAGES} (subpaths included)
+ * and in-package relative paths (`./`, `../`; whether they escape the package is judged by the
+ * caller from the file location); non-literal dynamic imports are always rejected.
  * Returns the list of problems (empty means valid).
  */
 export function checkEntryImports(specifiers: EntryImport[]): string[] {
@@ -123,7 +146,10 @@ const defOf = (s: AnySchema) =>
   };
 const metaOf = (s: AnySchema) => s.meta() as FieldMeta | undefined;
 
-/** The same traversal as the kernel's `configFields`: objects are expanded recursively, wrappers such as default / optional are stripped, and a secret on an object is inherited downward. */
+/**
+ * The same traversal as the kernel's `configFields`: objects are expanded recursively, wrappers
+ * such as default / optional are stripped, and a secret on an object is inherited downward.
+ */
 function configFieldsOf(
   schema: AnySchema | undefined,
   prefix = "",
@@ -152,8 +178,10 @@ const byPath = (a: StaticConfigField, b: StaticConfigField) =>
 const jsonClone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 
 /**
- * The static part of the real manifest: written into `capybara.manifest` when packing, and compared with the in-package one at load time (`manifest_mismatch`).
- * The result survives a JSON round trip (undefined fields removed); config fields are sorted by path.
+ * The static part of the real manifest: written into `capybara.manifest` when packing, and compared
+ * with the in-package one at load time (`manifest_mismatch`).
+ * The result survives a JSON round trip (undefined fields removed); config fields are sorted by
+ * path.
  */
 export function staticManifestOf(m: ExtensionManifest): StaticExtensionManifest {
   const out: StaticExtensionManifest = {
@@ -337,8 +365,10 @@ export function hostSdkProblem(sdk: string, hostSdkVersion: string): string | un
 }
 
 /**
- * Connector template (C30): connector plugin reference + `Connector.kind` + endpoint preset + endpoint paths an org may change + auth preset (no credentials) +
- * default ownership + default policy per tool + icon. When installing, an org may only fill in credentials, the client id / secret and the fields in `editableEndpoint`.
+ * Connector template (C30): connector plugin reference + `Connector.kind` + endpoint preset +
+ * endpoint paths an org may change + auth preset (no credentials) +
+ * default ownership + default policy per tool + icon. When installing, an org may only fill in
+ * credentials, the client id / secret and the fields in `editableEndpoint`.
  */
 export interface ConnectorTemplateSpec {
   /** Connector plugin name (e.g. `connector-mcp`). */
@@ -347,11 +377,19 @@ export interface ConnectorTemplateSpec {
   pluginVersion?: string;
   /** `Connector.kind` (e.g. `"mcp"`). */
   connector: string;
-  /** Endpoint preset; on import the kernel validates it against that connector's `endpointSchema`. */
+  /**
+   * Endpoint preset; on import the kernel validates it against that connector's `endpointSchema`.
+   */
   endpoint: Record<string, unknown>;
-  /** Dotted paths an org may change when installing (e.g. `"url"`); everything else follows the template. The paths must exist in the connector's endpoint schema. */
+  /**
+   * Dotted paths an org may change when installing (e.g. `"url"`); everything else follows the
+   * template. The paths must exist in the connector's endpoint schema.
+   */
   editableEndpoint?: string[];
-  /** The same shape as the auth method of the connector install API ({@link ConnectorAuthSchema}), carrying no credentials. */
+  /**
+   * The same shape as the auth method of the connector install API ({@link ConnectorAuthSchema}),
+   * carrying no credentials.
+   */
   auth: Record<string, unknown>;
   /** Defaults to `auth.ownership`; if given it must agree. */
   ownership?: "org" | "personal";
@@ -387,7 +425,10 @@ export const CONNECTOR_TEMPLATE_LIMITS = {
   displayNameChars: 100,
 } as const;
 
-/** Catalog entry name (the same rule as manifest entry names): starts with a lowercase letter or digit, then lowercase letters, digits and hyphens, ≤ 64. */
+/**
+ * Catalog entry name (the same rule as manifest entry names): starts with a lowercase letter or
+ * digit, then lowercase letters, digits and hyphens, ≤ 64.
+ */
 export const CATALOG_ITEM_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 /** An exact semver version (a regex JSON Schema can use). */
@@ -401,7 +442,8 @@ const PATH_SEG_RE = /^[A-Za-z0-9_-]{1,100}$/;
 const PROTO_KEYS = new Set(["__proto__", "prototype", "constructor"]);
 
 /**
- * Credential-style field names (compared lowercased with `-` and `_` removed): templates are seen by every org, so endpoint presets containing these keys are always rejected.
+ * Credential-style field names (compared lowercased with `-` and `_` removed): templates are seen
+ * by every org, so endpoint presets containing these keys are always rejected.
  * Header names such as `authorization` / `cookie` are listed too (credentials in endpoint headers).
  */
 const CREDENTIAL_KEYS = new Set([
@@ -460,11 +502,16 @@ const TEMPLATE_KEYS = new Set([
 ]);
 
 /**
- * Validates the static part of a connector template ({@link ConnectorTemplateSpec}) and returns the list of problems (empty means valid; paths are relative to the template root, values are not echoed):
- * fields complete, no unknown fields; `auth` conforms to {@link ConnectorAuthSchema} (strict: extra fields such as `token` are rejected);
- * no credential-style key at any level of the endpoint preset; `editableEndpoint` is a list of distinct dotted paths; `ownership` agrees with `auth.ownership`;
+ * Validates the static part of a connector template ({@link ConnectorTemplateSpec}) and returns the
+ * list of problems (empty means valid; paths are relative to the template root, values are not
+ * echoed):
+ * fields complete, no unknown fields; `auth` conforms to {@link ConnectorAuthSchema} (strict: extra
+ * fields such as `token` are rejected);
+ * no credential-style key at any level of the endpoint preset; `editableEndpoint` is a list of
+ * distinct dotted paths; `ownership` agrees with `auth.ownership`;
  * default policies may only be allow / ask / deny; icon is an in-package .svg / .png path.
- * Whether the endpoint conforms to the connector's `endpointSchema` and whether `editableEndpoint` exists in it is checked by the kernel on import against the loaded connector.
+ * Whether the endpoint conforms to the connector's `endpointSchema` and whether `editableEndpoint`
+ * exists in it is checked by the kernel on import against the loaded connector.
  */
 export function validateConnectorTemplate(t: unknown): string[] {
   if (!isObj(t)) return ["template must be an object"];

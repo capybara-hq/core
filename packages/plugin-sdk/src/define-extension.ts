@@ -20,7 +20,10 @@ export interface ExtensionManifest {
   sdk: string;
   provides: ExtensionPointRef[];
   requires?: ExtensionPointRef[];
-  /** Optional dependencies: when missing the plugin still loads, and decides at runtime through ctx.extensionPoints. */
+  /**
+   * Optional dependencies: when missing the plugin still loads, and decides at runtime through
+   * ctx.extensionPoints.
+   */
   optional?: ExtensionPointRef[];
   /** Permission manifest (governance, not a sandbox). */
   permissions?: ExtensionPermissions;
@@ -34,10 +37,14 @@ export interface ExtensionManifest {
   migrations?: string;
   setup(ctx: ExtensionContext): void | Promise<void>;
   /**
-   * Optional: called when the plugin instance is revoked (disabled, uninstalled, replaced by a new instance on upgrade, a dependent reloaded together with its provider).
-   * By then the kernel has already: stopped accepting new calls, waited for in-flight calls to finish (at most `extensionHost.drainSeconds`), aborted `ctx.signal`,
-   * and revoked every registration this instance made through ctx (tools, routes, queue workers, bus subscriptions, lock leases, UI, provide).
-   * Clean up here only what the plugin opened outside ctx (e.g. its own connections); do not register anything through ctx again.
+   * Optional: called when the plugin instance is revoked (disabled, uninstalled, replaced by a new
+   * instance on upgrade, a dependent reloaded together with its provider).
+   * By then the kernel has already: stopped accepting new calls, waited for in-flight calls to
+   * finish (at most `extensionHost.drainSeconds`), aborted `ctx.signal`,
+   * and revoked every registration this instance made through ctx (tools, routes, queue workers,
+   * bus subscriptions, lock leases, UI, provide).
+   * Clean up here only what the plugin opened outside ctx (e.g. its own connections); do not
+   * register anything through ctx again.
    * Not called when setup throws (the kernel revokes what was already registered).
    */
   dispose?(ctx: ExtensionContext): void | Promise<void>;
@@ -55,7 +62,10 @@ export class ExtensionManifestError extends Error {
 export const EXTENSION_NAME_RE = /^[a-z][a-z0-9-]{1,40}$/;
 const NAME_RE = EXTENSION_NAME_RE;
 
-/** Reserved plugin name: the kernel uses `kernel` as its own secrets namespace, so a plugin cannot take it. */
+/**
+ * Reserved plugin name: the kernel uses `kernel` as its own secrets namespace, so a plugin cannot
+ * take it.
+ */
 const RESERVED_NAMES: ReadonlySet<string> = new Set(["kernel"]);
 
 function checkRefs(
@@ -82,7 +92,10 @@ function checkRefs(
   }
 }
 
-/** Validates the plugin manifest and returns it unchanged; throws ExtensionManifestError when invalid. */
+/**
+ * Validates the plugin manifest and returns it unchanged; throws ExtensionManifestError when
+ * invalid.
+ */
 export function defineExtension(m: ExtensionManifest): ExtensionManifest {
   const plugin = typeof m?.name === "string" && m.name !== "" ? m.name : "<unnamed>";
   const fail = (msg: string): never => {

@@ -98,8 +98,6 @@ jobs:
       - name: SDK API changeset
         if: github.event_name == 'pull_request'
         run: pnpm check:sdk-api-changeset --base "$(git rev-parse HEAD^1)"
-      # Comments are English: the plugin SDK source in full (also in pnpm check) plus the comment
-      # lines the PR adds anywhere else. Same base as above.
       - name: English comments
         if: github.event_name == 'pull_request'
         run: pnpm check:english-comments --base "$(git rev-parse HEAD^1)"
