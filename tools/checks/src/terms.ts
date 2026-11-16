@@ -153,8 +153,12 @@ export const OLD_REFERENCES: { re: RegExp; what: string; allowedIn?: RuleExempti
     what: "an old builtin tool key (now Bash / Read / Write / Edit / Glob / Grep / Deliver / Skill / AskUserQuestion / ReadToolOutput / ToolSearch)",
     allowedIn: [
       {
-        path: /^packages\/kernel\/src\/migrations\/(?:0063_tool_keys_claude_code|0139_retire_legacy_forms)\.sql$/,
-        reason: "migrations 0063 and 0139 map the stored old keys to the new ones",
+        path: /^packages\/kernel\/src\/migrations\/(?:0063_tool_keys_claude_code|0139_retire_legacy_forms|0144_retire_frozen_definition_keys)\.sql$/,
+        reason: "migrations 0063, 0139 and 0144 map the stored old keys to the new ones",
+      },
+      {
+        path: /^packages\/kernel\/test\/migrations\/0144\.test\.ts$/,
+        reason: "the test of migration 0144 seeds old keys in frozen definitions",
       },
       {
         path: /^docs\/superpowers\/(?:specs|plans)\//,
