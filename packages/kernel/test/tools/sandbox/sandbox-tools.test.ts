@@ -100,8 +100,7 @@ beforeAll(async () => {
           },
           "sandbox-fake": { root },
         },
-        // the platform allows open; an org without settings follows the default (dev)
-        sandbox: { deliverMaxBytes: 1024, tiers: { max: "open" } },
+        sandbox: { deliverMaxBytes: 1024 },
       },
     ),
     { logger: createLogger("warn", { write: (l) => logLines.push(l) }) },
