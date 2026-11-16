@@ -79,4 +79,15 @@ describe("KernelConfigService", () => {
     expect(svc.get()).toBe(before);
     expect(lines.some((l) => l.msg.includes("rejected"))).toBe(true);
   });
+
+  it("a reload with an unknown key is rejected whole: no hot field is applied, the error names the key", () => {
+    const { svc, lines } = make();
+    const before = svc.get();
+    svc.apply(raw({ log: { level: "debug" }, http: { prot: 1 } }));
+    expect(svc.get()).toBe(before);
+    expect(svc.get().log.level).not.toBe("debug");
+    const rejected = lines.find((l) => l.msg.includes("rejected"));
+    expect(rejected?.level).toBe("error");
+    expect(JSON.stringify(rejected)).toContain("unknown config key http.prot");
+  });
 });

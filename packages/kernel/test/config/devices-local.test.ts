@@ -96,6 +96,12 @@ describe("unknown config keys fail loudly", () => {
     ).toThrow(/unknown config key sandbox\.limits\.devHosts/);
   });
 
+  it("a typo inside a real section from the environment fails with its path", () => {
+    expect(() => resolveConfig(base, { CAPYBARA_HTTP__PROT: "8080" })).toThrow(
+      /unknown config key http\.prot/,
+    );
+  });
+
   it("an unknown top-level key fails, and every unknown key is listed at once", () => {
     const run = () => resolveConfig({ ...base, nope: 1, http: { prot: 1 } }, {});
     expect(run).toThrow(/unknown config key nope/);
