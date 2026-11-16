@@ -1376,7 +1376,7 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
     z.object({
       byAccountId: z.string().nullable(),
       /** `eval_stopped`：评测整轮回放被评测运行停下（只出现在 `kind = 'eval'` 的对话里），原因见 `detail`。 */
-      reason: z.enum(["user", "shutdown_exhausted", "eval_stopped"]),
+      reason: z.enum(["user", "shutdown_exhausted", "eval_stopped", "org_deleted"]),
       /**
        * Why an eval replay stopped (`eval_stopped`), or `wait_timeout`: a sub-agent run stopped
        * (`user`, no account) because its parent's sub-agents wait timed out (phase C).

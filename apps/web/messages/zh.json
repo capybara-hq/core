@@ -3238,6 +3238,7 @@
       "user": "被用户停止",
       "shutdown_exhausted": "服务停机",
       "eval_stopped": "评测停止",
+      "org_deleted": "组织已删除",
       "cancelled": "评测运行已取消",
       "capped": "达到 token 上限",
       "too_many_errors": "连续出错过多",

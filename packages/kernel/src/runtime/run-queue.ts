@@ -21,6 +21,7 @@ import { KyselyCheckpointSaver } from "./checkpointer.js";
 import { ConversationLock } from "./conversation-lock.js";
 import { notifyFinished, RunFinish } from "./run-finish.js";
 import { ACTIVE_RUN_STATUSES, RunJobs, runJobId, runQueueNameFor } from "./run-jobs.js";
+import { isLive, orgIsLive } from "./run-liveness.js";
 import { rootConversationOf } from "./subagents/child.js";
 import { budgetWindowOf } from "./subagents/limits.js";
 
@@ -170,16 +171,12 @@ export class RunQueue {
       .forUpdate()
       .executeTakeFirst();
     // a deleted conversation, or a sub-agent's / eval one, has no manual compaction
-    if (!conv || conv.deleted_at !== null || conv.kind !== "chat") {
+    if (!conv || !isLive(conv.deleted_at) || conv.kind !== "chat") {
       throw new ApiError("conversation.not_found", "Conversation not found");
     }
-    const org = await t
-      .selectFrom("orgs")
-      .select("deleted_at")
-      .where("id", "=", conv.org_id)
-      .executeTakeFirst();
-    if (!org || org.deleted_at !== null)
+    if (!(await orgIsLive(t, conv.org_id))) {
       throw new ApiError("conversation.not_found", "Conversation not found");
+    }
     const active = await t
       .selectFrom("runs")
       .select(["id", "compact"])
@@ -246,13 +243,8 @@ export class RunQueue {
     // 评测回放的隐藏对话：运行由评测 worker 在里面直接驱动（工具只回放记录），绝不为它起真实运行
     if (conv?.kind !== "chat" && conv?.kind !== "subagent") return null;
     // A deleted conversation starts no run, whatever is still unconsumed or queued
-    if (conv.deleted_at !== null) return null;
-    const org = await t
-      .selectFrom("orgs")
-      .select("deleted_at")
-      .where("id", "=", conv.org_id)
-      .executeTakeFirst();
-    if (!org || org.deleted_at !== null) return null;
+    if (!isLive(conv.deleted_at)) return null;
+    if (!(await orgIsLive(t, conv.org_id))) return null;
     if (conv.kind === "subagent") return this.childWakeIn(conversationId, conv, st);
     const newest = await t
       .selectFrom("conversation_events")

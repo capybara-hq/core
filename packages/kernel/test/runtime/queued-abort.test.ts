@@ -5,6 +5,7 @@ import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { BackgroundTaskStopper } from "../../src/background/stop.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ExtensionPointDefaults } from "../../src/extensions/point-defaults.js";
@@ -513,4 +514,40 @@ it("deleting an org settles a queued job already read by a worker before deletio
       .where("dead_at", "is", null)
       .execute(),
   ).toEqual([]);
+});
+
+it("deleting an org stops only the conversations that still have live work", async () => {
+  const deletingOrg = await createOrg(req, "Mostly idle org");
+  const agent = await createAgent(req, deletingOrg);
+  const idle = await Promise.all([1, 2, 3].map(() => createConv(req, deletingOrg, agent)));
+  const live = await createConv(req, deletingOrg, agent);
+  const pause = pauseAt("afterRunRead", live);
+  await postMessage(req, deletingOrg, live, "stall");
+  const id = await pause.reached;
+  const stopper = k.app.get(BackgroundTaskStopper);
+  const stopped = vi.spyOn(stopper, "stopForDeletedConversation");
+  try {
+    failingStops = true;
+    const response = await req({ method: "DELETE", url: `/api/v1/orgs/${deletingOrg}` });
+    expect(response.statusCode, response.body).toBe(204);
+  } finally {
+    pause.release();
+    failingStops = false;
+  }
+  try {
+    await drainOutbox(k.app, { jobName: STOP_DELETED_ORG_JOB });
+    await waitForRunJobDone(db, runQueue, id, 15_000);
+    await waitFor(
+      async () => (await runsOf(db, live)).find((r) => r.id === id)?.status === "aborted",
+      15_000,
+      "live run aborted",
+    );
+    const calls = stopped.mock.calls.map((c) => c[0]);
+    expect(calls).toContain(live);
+    for (const conv of idle) expect(calls).not.toContain(conv);
+    const aborted = (await eventsOf(db, live)).find((e) => e.type === "run_aborted");
+    expect(aborted?.payload).toMatchObject({ reason: "org_deleted" });
+  } finally {
+    stopped.mockRestore();
+  }
 });

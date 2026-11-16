@@ -3250,6 +3250,7 @@
       "user": "stopped by a user",
       "shutdown_exhausted": "server shutdown",
       "eval_stopped": "eval stopped",
+      "org_deleted": "organization deleted",
       "cancelled": "eval run cancelled",
       "capped": "token cap reached",
       "too_many_errors": "too many consecutive errors",
