@@ -73,7 +73,7 @@ export interface SandboxOperationScope extends SandboxOperationRef {
   readonly filesystem: SandboxFileScope;
   readonly network: SandboxNetworkScope;
 }
-export interface SandboxPermissionCapabilities {
+export interface SandboxPermissionSupport {
   readonly version: 1;
   readonly restricted: {
     readonly filesystem: true; readonly network: true;
@@ -124,8 +124,8 @@ export function parseSandboxExecutionRef(value: unknown): SandboxExecutionRef;
 Add these optional methods to `SandboxProvider`:
 
 ```ts
-permissionCapabilities?(h: SandboxHandle, signal: AbortSignal):
-  Promise<SandboxPermissionCapabilities>;
+permissionSupport?(h: SandboxHandle, signal: AbortSignal):
+  Promise<SandboxPermissionSupport>;
 operation?(h: SandboxHandle, scope: SandboxOperationScope, signal: AbortSignal):
   Promise<SandboxOperation>;
 prepare?(h: SandboxHandle, scope: SandboxPreparationScope, signal: AbortSignal):
@@ -153,7 +153,7 @@ not user consent. The kernel intersects it with live ceilings. Both list and sca
 together; absence means projects unavailable. A recreated instance re-probes capabilities.
 
 Permissions GET and selected-device/project preview never create, resume or update an instance.
-Their availability value is `{state:"supported", report:SandboxPermissionCapabilities}`,
+Their availability value is `{state:"supported", report:SandboxPermissionSupport}`,
 `{state:"unsupported", reason:string}` or `{state:"unprobed", reason:string}`. Persist reports with
 provider version, runtime/helper hash, image/template fingerprint and instance generation; a changed
 fingerprint invalidates the report. Use a valid persisted report or provider's documented static
@@ -328,7 +328,14 @@ additive SDK/helper/testing release leaves v2 declarations, parsers and constant
 On activation v2 connections are refused with an upgrade instruction, with no
 compatibility fallback. Keep request/response transport and cancellation IDs. Every exec/readFile/
 writeFile/stat/list/scan request gains required `scope: SandboxOperationScope`; obsolete per-call
-mode and grants fields disappear. Exec data excludes actor/tag because scope carries them. All
+mode selection disappears. Exec data excludes actor/tag because scope carries them. Local exec and
+background-start transport retain a device-private, request-bound `LocalExecAuthority` envelope
+with the current org network ceiling and approved `DeviceExecGrants` provenance. The local provider
+reads those existing server-owned grant records for each actual call, binds the envelope to the
+admitted input hash and sends it over the authenticated device connection. It is not a model input
+or a new public SDK method argument. The device intersects its fresh owner baseline plus validated
+approved additions with the immutable scope; flattened scope hosts alone cannot identify additions
+or revive a removed baseline. Native, browsing and preparation calls grant no network access. All
 arguments are bounded/validated before side effects, including canonical path shapes, host syntax,
 revision integers and known enum values. TypeScript readonly is not wire validation.
 
