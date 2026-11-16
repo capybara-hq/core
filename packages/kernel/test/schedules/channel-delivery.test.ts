@@ -26,6 +26,7 @@ import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
+  enableModelProviders,
   eventsOf,
   PW,
   type Req,
@@ -118,6 +119,7 @@ beforeAll(async () => {
   owner = await session(k, "owner");
   const org = await owner({ method: "POST", url: "/api/v1/orgs", payload: { name: "Acme" } });
   orgId = (org.json() as { org: { id: string } }).org.id;
+  await enableModelProviders(k, orgId);
   await testMembers(db).add(orgId, bobId, "member", ownerId);
   const res = await owner({
     method: "POST",

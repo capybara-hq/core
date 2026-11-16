@@ -38,7 +38,7 @@ import {
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
+import { enableExtensions, eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
 import { sandboxServiceFor } from "../helpers/sandbox.js";
 
 /**
@@ -173,6 +173,7 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
     const org = await at(1, "POST", "/api/v1/orgs", { name: "Acme" });
     expect(org.status, JSON.stringify(org.json)).toBe(201);
     base = `/api/v1/orgs/${(org.json.org as { id: string }).id}`;
+    await enableExtensions(raw, (org.json.org as { id: string }).id, "model-fake");
   });
 
   afterAll(async () => {

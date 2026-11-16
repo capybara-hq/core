@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 import { designZh } from "./support/chat";
 import { HOME_URL, hydrated, NEW_CHAT_URL } from "./support/nav";
 import { selectOption } from "./support/select";
-import { LOGIN, ORG_NAME, PASSWORD } from "./support/sign-in";
+import { enableModelFake, LOGIN, ORG_NAME, PASSWORD } from "./support/sign-in";
 
 /** 界面文案取自 zh 文案文件，避免与实现重复硬编码。 */
 const zh = JSON.parse(
@@ -36,9 +36,15 @@ test("setup wizard: a fresh deployment opens / → the setup page (language swit
   await expect(setup).toBeVisible();
   await expect(page.locator('[data-part="sidebar"][data-context="work"]')).toHaveCount(0);
   await expect(page.getByRole("heading", { level: 1, name: zh.chat.setup.title })).toBeVisible();
-  // the e2e stack loads model-fake: the model step is done, creating an agent is next. The step's
-  // action is a button: a click lands only once the page is hydrated (a cold `next dev` compile can
-  // keep the first document's script from running for a while)
+  // the e2e stack loads model-fake, but a provider is on only in the orgs that enabled it: switch it
+  // on, then the model step is done and creating an agent is next. The step's action is a button:
+  // a click lands only once the page is hydrated (a cold `next dev` compile can keep the first
+  // document's script from running for a while)
+  const me = await page.request.get("/api/v1/me");
+  expect(me.ok(), await me.text()).toBe(true);
+  await enableModelFake(page.request, ((await me.json()) as { currentOrgId: string }).currentOrgId);
+  await page.reload();
+  await expect(setup).toBeVisible();
   await hydrated(page);
   const agentStep = page.getByRole("listitem").filter({ hasText: zh.setupLayout.steps.agent });
   await agentStep.getByRole("link", { name: zh.chat.setup.agent.action }).click();

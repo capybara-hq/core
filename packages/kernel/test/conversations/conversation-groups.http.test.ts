@@ -15,7 +15,7 @@ import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor, apiTokensFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
-import { startKernel, type TestKernel } from "../helpers/runs.js";
+import { enableModelProviders, startKernel, type TestKernel } from "../helpers/runs.js";
 
 // The sidebar's list API (UI refresh spec §5.9): GET /conversations/groups and the agentId filter
 // on GET /conversations.
@@ -85,7 +85,9 @@ async function session(login: string): Promise<Req> {
 async function createOrg(req: Req, name = "Acme"): Promise<string> {
   const res = await req({ method: "POST", url: "/api/v1/orgs", payload: { name } });
   expect(res.statusCode).toBe(201);
-  return (res.json() as { org: { id: string } }).org.id;
+  const orgId = (res.json() as { org: { id: string } }).org.id;
+  await enableModelProviders(k, orgId);
+  return orgId;
 }
 
 async function memberSession(orgId: string, login: string, role: "admin" | "member" | "guest") {

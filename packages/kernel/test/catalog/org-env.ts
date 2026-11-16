@@ -46,6 +46,7 @@ import { type ExtensionTgzOpts, pluginTgz } from "../helpers/plugin-packages.js"
 import {
   createOrg,
   enableConnectorExtensions,
+  enableModelProviders,
   PW,
   type Req,
   runConfig,
@@ -267,6 +268,8 @@ export async function resetOrgCatalog(env: OrgEnv): Promise<void> {
   await env.k.app.get(StorageService).deployment().deletePrefix("platform/");
   // The test plugins' templates name the deployed connector extension; the org has it on
   await enableConnectorExtensions(env.k, env.orgId);
+  // and its model providers (a model provider is on only in the orgs that enabled it)
+  await enableModelProviders(env.k, env.orgId);
 }
 
 /** Imports a plugin tgz as the super admin (prepare -> confirm); returns the item id. */

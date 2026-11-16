@@ -6,7 +6,7 @@ import type { KernelConfig } from "../../src/config/schema.js";
 import { PluginGuides } from "../../src/extensions/plugin-guides.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { pluginTgz } from "../helpers/plugin-packages.js";
-import { createAgent, createOrg } from "../helpers/runs.js";
+import { createAgent, createOrg, enableModelProviders } from "../helpers/runs.js";
 import {
   importPlugin,
   type OrgEnv,
@@ -41,6 +41,8 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await resetOrgCatalog(env);
+  // the reset clears every org's extension switches: the second org's model providers go back on
+  await enableModelProviders(env.k, otherOrgId);
   await env.db.deleteFrom("channel_connections").execute();
 });
 

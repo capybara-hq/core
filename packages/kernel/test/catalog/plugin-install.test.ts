@@ -47,7 +47,10 @@ const pluginBody = (token = MCP_TOKEN) => ({
   connectors: { gh: { endpoint: { url: env.mcp.url }, credential: { token } } },
 });
 
-/** The org's enabled extensions, `fake-connector` aside unless asked (every test org has it on). */
+/**
+ * The org's enabled extensions, `fake-connector` aside unless asked and `model-fake` always aside
+ * (every test org has them on).
+ */
 async function enabledPlugins(withConnector = false): Promise<string[]> {
   const rows = await env.db
     .selectFrom("extension_org_configs")
@@ -55,6 +58,7 @@ async function enabledPlugins(withConnector = false): Promise<string[]> {
     .where("org_id", "=", env.orgId)
     .where("enabled", "=", true)
     .$if(!withConnector, (q) => q.where("plugin", "!=", "fake-connector"))
+    .where("plugin", "!=", "model-fake")
     .orderBy("plugin")
     .execute();
   return rows.map((r) => r.plugin);

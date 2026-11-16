@@ -39,7 +39,7 @@ export interface AdminProvider {
   icon?: string | null;
   plugin: string;
   /** `org_configured`: the platform config leaves a required field empty, each org configures it. */
-  status: "ok" | "error" | "org_configured" | "switched_off";
+  status: "ok" | "error" | "org_configured";
   /** 内核给的英文说明（不含上游错误原文）。 */
   error?: string;
   models: AdminModelInfo[];

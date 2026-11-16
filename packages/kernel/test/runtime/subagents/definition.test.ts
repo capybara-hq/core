@@ -30,7 +30,7 @@ import { truncateTables } from "../../helpers/db.js";
 import { builtinsOff } from "../../helpers/disabled-tools.js";
 import { accountsFor, orgsFor } from "../../helpers/identity.js";
 import { MODEL_PLUGINS_CONFIG } from "../../helpers/model-plugins.js";
-import { startKernel, type TestKernel } from "../../helpers/runs.js";
+import { enableModelProviders, startKernel, type TestKernel } from "../../helpers/runs.js";
 
 /** Sub-agent roster and effective definitions (phase C, spec §4.3, §5.3–§5.5). */
 
@@ -76,6 +76,7 @@ beforeEach(async () => {
     displayName: "O",
   });
   orgId = (await orgsFor(db).create({ name: "Acme", slug: `acme-${n}` }, owner)).id;
+  await enableModelProviders(k, orgId);
   parentAgentId = await orgAgent(def());
 });
 

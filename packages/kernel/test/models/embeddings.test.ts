@@ -83,7 +83,14 @@ beforeEach(async () => {
   );
   const cached = await redis.keys("cache:capk:model-disabled:*");
   if (cached.length > 0) await redis.del(...cached);
-  await enableExtensions(raw, orgId, "embed-consumer", "usage-b");
+  await enableExtensions(
+    raw,
+    orgId,
+    "embed-consumer",
+    "usage-b",
+    "model-fake",
+    "model-embed-probe",
+  );
   const s = embedProbe();
   s.calls = [];
   s.signals = [];

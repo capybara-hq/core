@@ -13,7 +13,7 @@ import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { startKernel, type TestKernel } from "../helpers/runs.js";
+import { enableExtensions, startKernel, type TestKernel } from "../helpers/runs.js";
 
 // `GET /api/v1/orgs/:orgId/readiness` (acceptance round 2, finding 2): whether the org can run,
 // from extension state only (never a vendor call), and the agents visible to the caller.
@@ -108,7 +108,7 @@ describe("org readiness", () => {
     }
   });
 
-  it("a loaded provider is ready without calling the vendor; agents count what each role sees", async () => {
+  it("a loaded provider the org enabled is ready without calling the vendor; agents count what each role sees", async () => {
     // model-needs-config is configured here, so it loads; its listModels throws (vendor down)
     const k = await boot([MODEL_FAKE, NEEDS_CONFIG], {
       "model-fake": { models: [{ id: "fake-1" }] },
@@ -116,6 +116,11 @@ describe("org readiness", () => {
     });
     try {
       const { owner, req, orgId } = await ownerOrg(k);
+      // loaded but not enabled in the org: a model provider is on only where an org enabled it
+      expect(await readiness(req, orgId)).toEqual({ modelProvider: "none", agents: 0 });
+      await enableExtensions(raw, orgId, "model-needs-config");
+      expect(await readiness(req, orgId)).toEqual({ modelProvider: "ready", agents: 0 });
+      await enableExtensions(raw, orgId, "model-fake");
       const definition = {
         name: "Helper",
         instructions: "Be helpful.",

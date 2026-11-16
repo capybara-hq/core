@@ -573,6 +573,7 @@ describe("M6 第三段双副本验收（平台目录）", () => {
     // 组织：root 是所有者，boss 组织管理员，mem 成员；fake-dep-provider 在本组织启用（之后应用会引用它）
     const org = await ok("root", 0, "POST", "/api/v1/orgs", { name: "Acme" });
     orgId = (org.org as { id: string }).id;
+    await enableExtensions(raw, orgId, "model-fake");
     base = `/api/v1/orgs/${orgId}`;
     await testMembers(db).add(orgId, ids.boss, "admin", ids.root);
     await testMembers(db).add(orgId, ids.mem, "member", ids.root);
@@ -659,6 +660,7 @@ describe("M6 第三段双副本验收（平台目录）", () => {
       .select("plugin")
       .where("org_id", "=", orgId)
       .where("enabled", "=", true)
+      .where("plugin", "!=", "model-fake")
       .orderBy("plugin")
       .execute();
     expect(enabled.map((r) => r.plugin)).toEqual([
@@ -745,6 +747,7 @@ describe("M6 第三段双副本验收（平台目录）", () => {
       .select("plugin")
       .where("org_id", "=", orgId)
       .where("enabled", "=", true)
+      .where("plugin", "!=", "model-fake")
       .execute();
     expect(enabled.map((r) => r.plugin).sort()).toEqual(["fake-connector", "fake-dep-provider"]);
     const listed = (await ok("boss", 1, "GET", `${base}/skills`)).skills as { id: string }[];
@@ -857,8 +860,10 @@ describe("M6 第三段双副本验收（平台目录）", () => {
       name: "Rename regression",
     });
     const setId = (set.set as { id: string }).id;
-    const snapshot = readSnapshot(structuredClone(fixture.snapshot));
-    const json = JSON.stringify(fixture.snapshot);
+    // the replay runs in the snapshot's org: this org, where the candidate's provider is on
+    const own = { ...structuredClone(fixture.snapshot), orgId };
+    const snapshot = readSnapshot(structuredClone(own));
+    const json = JSON.stringify(own);
     const plans = casePlans(snapshot);
     const cb = await caseBase(db, snapshot);
     await db

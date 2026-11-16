@@ -20,7 +20,12 @@ import { builtinsOff } from "../helpers/disabled-tools.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
-import { enableConnectorExtensions, startKernel, type TestKernel } from "../helpers/runs.js";
+import {
+  enableConnectorExtensions,
+  enableModelProviders,
+  startKernel,
+  type TestKernel,
+} from "../helpers/runs.js";
 
 const MEM_CONNECTOR = fileURLToPath(
   new URL("../fixtures/plugins/mem-connector/index.ts", import.meta.url),
@@ -100,6 +105,7 @@ async function createOrg(name: string): Promise<string> {
   expect(org.statusCode, org.body).toBe(201);
   const id = (org.json() as { org: { id: string } }).org.id;
   await enableConnectorExtensions(k, id);
+  await enableModelProviders(k, id);
   return id;
 }
 

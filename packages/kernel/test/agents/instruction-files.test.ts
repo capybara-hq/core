@@ -16,7 +16,7 @@ import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
-import { startKernel, type TestKernel } from "../helpers/runs.js";
+import { enableModelProviders, startKernel, type TestKernel } from "../helpers/runs.js";
 import { Log, MODEL } from "../runtime/context/fixtures.js";
 
 const MODEL_REF = { provider: "model-fake", model: "fake-1" };
@@ -113,7 +113,9 @@ describe("prompt files over HTTP", () => {
     expect(login.statusCode).toBe(200);
     const org = await req({ method: "POST", url: "/api/v1/orgs", payload: { name: "Acme" } });
     expect(org.statusCode).toBe(201);
-    return { req, orgId: (org.json() as { org: { id: string } }).org.id };
+    const orgId = (org.json() as { org: { id: string } }).org.id;
+    await enableModelProviders(k, orgId);
+    return { req, orgId };
   }
 
   const create = (req: Req, orgId: string, definition: Record<string, unknown>) =>

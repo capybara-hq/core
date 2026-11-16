@@ -25,6 +25,7 @@ import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
+  enableModelProviders,
   PW,
   postMessage,
   type Req,
@@ -88,6 +89,7 @@ beforeAll(async () => {
   owner = await session(k, "owner");
   const org = await owner({ method: "POST", url: "/api/v1/orgs", payload: { name: "Acme" } });
   orgId = (org.json() as { org: { id: string } }).org.id;
+  await enableModelProviders(k, orgId);
   const agent = await owner({
     method: "POST",
     url: `/api/v1/orgs/${orgId}/agents`,

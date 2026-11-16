@@ -560,7 +560,7 @@ describe("runs and the switch plan", () => {
   });
 });
 
-describe("a provider the org turned off (spec A §8)", () => {
+describe("a provider is on only in orgs that enabled it", () => {
   const B1 = { provider: "model-fake-b", model: "b-1" };
   const switchB = (orgId: string, enabled: boolean) =>
     ok(owner, "PUT", `/api/v1/orgs/${orgId}/extensions/model-fake-b`, { enabled });
@@ -577,12 +577,26 @@ describe("a provider the org turned off (spec A §8)", () => {
     return eventsOf(db, conv);
   };
 
-  it("a provider never switched in an org stays usable", async () => {
+  it("a provider never enabled in an org is absent and refused there; enabling it makes it usable", async () => {
+    // createOrg switched every loaded provider on: back to never enabled
+    await db.deleteFrom("extension_org_configs").where("plugin", "=", "model-fake-b").execute();
+    expect(await bIds(org1)).toBeUndefined();
+    expect((await catalog(admin, org1)).map((p) => p.provider)).not.toContain("model-fake-b");
+    const registry = k.app.get(ProviderRegistry);
+    expect(await codeOf(registry.resolve(org1, B1))).toBe("agent.model_unavailable");
+    expect((await agent(owner, org1, "New", B1)).code).toBe("agent.model_unavailable");
+
+    await switchB(org1, true);
     expect(await bIds(org1)).toEqual(["b-1", "b-2"]);
-    expect(await bIds(org2)).toEqual(["b-1", "b-2"]);
+    expect((await registry.resolve(org1, B1)).info.id).toBe("b-1");
+    // org 2 still never enabled it
+    expect(await bIds(org2)).toBeUndefined();
+    expect(await codeOf(registry.resolve(org2, B1))).toBe("agent.model_unavailable");
   });
 
   it("switched off in org 1: absent from its list, catalog and purposes; runs fall back or fail; org 2 keeps it", async () => {
+    await switchB(org1, true);
+    await switchB(org2, true);
     const withFallback = await agentId(owner, org1, "B fb", B1, FAKE_1);
     const without = await agentId(owner, org1, "B only", B1);
     await ok(admin, "PUT", `/api/v1/orgs/${org1}/model-purposes/title`, { target: { model: B1 } });
@@ -590,9 +604,7 @@ describe("a provider the org turned off (spec A §8)", () => {
 
     expect(await bIds(org1)).toBeUndefined();
     expect(await bIds(org2)).toEqual(["b-1", "b-2"]);
-    const cat = (await catalog(admin, org1)).find((p) => p.provider === "model-fake-b");
-    expect(cat?.status).toBe("error");
-    expect(cat?.models).toEqual([]);
+    expect((await catalog(admin, org1)).map((p) => p.provider)).not.toContain("model-fake-b");
     const registry = k.app.get(ProviderRegistry);
     expect(await codeOf(registry.resolve(org1, B1))).toBe("agent.model_unavailable");
     expect((await registry.resolve(org2, B1)).info.id).toBe("b-1");

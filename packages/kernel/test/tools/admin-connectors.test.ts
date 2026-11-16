@@ -17,7 +17,12 @@ import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { enableConnectorExtensions, startKernel, type TestKernel } from "../helpers/runs.js";
+import {
+  enableConnectorExtensions,
+  enableModelProviders,
+  startKernel,
+  type TestKernel,
+} from "../helpers/runs.js";
 
 /**
  * The connector extension's HTTP and admin surfaces, on one kernel:
@@ -94,6 +99,7 @@ async function createOrg(req: Req, name: string): Promise<string> {
   expect(res.statusCode).toBe(201);
   const id = (res.json() as { org: { id: string } }).org.id;
   await enableConnectorExtensions(k, id);
+  await enableModelProviders(k, id);
   return id;
 }
 

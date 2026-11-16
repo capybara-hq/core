@@ -222,7 +222,7 @@ export class ProviderListError extends ApiError {
 /** Where a provider's calls for one org (or the platform) go: the call options and list digest. */
 type Target =
   | { ok: true; call: ModelCallOptions; hash: string | undefined }
-  | { ok: false; reason: "org_configured" | "needs_config" | "switched_off" };
+  | { ok: false; reason: "org_configured" | "needs_config" | "not_enabled" };
 
 /**
  * `@1` 适配层为 `capabilities.effort` 为真的模型补的 effort 旋钮：五档，不给默认值
@@ -273,10 +273,11 @@ export function adaptModelProviderV1(impl: ModelProviderV1): ModelProvider {
  * 同一插件两者都提供时用 `@2`。
  *
  * Org-bound (spec B §5.5, A §6): every list and call is made for an org with the provider's
- * effective config there (`EffectiveConfigs.get`), passed as `{ orgId, config }`; a provider whose
- * effective config is not valid in the org offers no models there, and neither does one the org
- * explicitly turned off (its own extension switch row off, spec A §8; a provider with no switch row
- * stays usable). The admin view (no org) lists with the platform config.
+ * effective config there (`EffectiveConfigs.get`), passed as `{ orgId, config }`. A provider is on
+ * in an org only when the org enabled it, like every other extension (`enabledExtensionsQuery`: the
+ * org's switch on, or a required bootstrap plugin); one not enabled there, or whose effective
+ * config is not valid there, offers no models there. The admin view (no org) lists with the
+ * platform config.
  *
  * Each list is validated per model (spec B §5.1): kinds are normalised (absent = `chat`, unknown =
  * `other`); a chat model failing `assertValidDeclarations`, or an `embedding` model without
@@ -297,7 +298,7 @@ export class ProviderRegistry {
     @Inject(REDIS) private readonly kv: Redis,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     @Inject(ModelEnablement)
-    private readonly enablement: Pick<ModelEnablement, "disabled" | "switchedOff">,
+    private readonly enablement: Pick<ModelEnablement, "disabled" | "enabledIn">,
     @Inject(KERNEL_LOGGER) private readonly log?: Pick<Logger, "warn">,
     /** Overrides `models.listTimeoutMs` (tests). */
     @Optional()
@@ -328,14 +329,14 @@ export class ProviderRegistry {
 
   /**
    * Whether at least one model-provider extension is loaded on this replica (enabled, configured,
-   * set up) with a valid effective config in `orgId`. Read from extension state and the org's
-   * config only: never calls a vendor, so a provider whose vendor is down still counts (org
-   * readiness, web-order spec §3.8).
+   * set up), enabled in `orgId` and with a valid effective config there. Read from extension state,
+   * the org's switches and its config only: never calls a vendor, so a provider whose vendor is
+   * down still counts (org readiness, web-order spec §3.8).
    */
   async hasProvider(orgId: string): Promise<boolean> {
-    const off = await this.enablement.switchedOff(orgId);
+    const on = await this.enablement.enabledIn(orgId);
     for (const p of this.providers()) {
-      if ((await this.target(p, orgId, off)).ok) return true;
+      if ((await this.target(p, orgId, on)).ok) return true;
     }
     return false;
   }
@@ -378,13 +379,14 @@ export class ProviderRegistry {
    * The call options and list digest of `p` for `orgId`, or for the platform when `orgId` is
    * undefined (the admin view). An org: its effective config (not valid -> `needs_config`); the
    * platform's digest while it follows the platform, a per-org one for its copy. The platform: its
-   * own config (a required overridable field left empty -> `org_configured`). `off`: the
-   * extensions the org explicitly turned off (`ModelEnablement.switchedOff`) -> `switched_off`.
+   * own config (a required overridable field left empty -> `org_configured`). `on`: the
+   * extensions enabled in the org (`ModelEnablement.enabledIn`); a provider not in it ->
+   * `not_enabled`. Unused for the platform.
    */
   private async target(
     p: ProviderEntry,
     orgId: string | undefined,
-    off: ReadonlySet<string> = new Set(),
+    on: ReadonlySet<string> = new Set(),
   ): Promise<Target> {
     const inst = this.host.current?.(p.plugin);
     const schema = inst?.manifest.config?.deployment as z.ZodTypeAny | undefined;
@@ -394,7 +396,7 @@ export class ProviderRegistry {
       }
       return { ok: true, call: { config: inst?.config }, hash: p.configHash };
     }
-    if (off.has(p.plugin)) return { ok: false, reason: "switched_off" };
+    if (!on.has(p.plugin)) return { ok: false, reason: "not_enabled" };
     const eff = await this.effective.get(orgId, p.plugin);
     if (!eff.ok) return { ok: false, reason: "needs_config" };
     // an `@1` provider ignores the per-call options (it reads `ctx.config`): the org's own copy
@@ -516,8 +518,9 @@ export class ProviderRegistry {
   }
 
   /**
-   * 每个已安装供应商及其状态（按插件加载顺序），for `orgId` (enabled models only), or the platform
-   * view when undefined (`/admin/models`: every model, `disabled` from the platform's list only).
+   * 每个已安装供应商及其状态（按插件加载顺序），for `orgId` (the providers it enabled, their enabled
+   * models only), or the platform view when undefined (`/admin/models`: every model, `disabled`
+   * from the platform's list only).
    * See {@link statuses} for the statuses.
    */
   async listWithStatus(orgId?: string): Promise<ProviderStatus[]> {
@@ -541,18 +544,19 @@ export class ProviderRegistry {
   /**
    * 每个已安装供应商的完整列表与状态，for `orgId` or the platform: 列模型失败（含超过
    * `models.listTimeoutMs`）的标 `error`、`models` 为空，不影响其他供应商；列模型失败的在
-   * {@link LIST_FAILURE_TTL_SECONDS} 秒内不再请求。An org where the provider needs configuration gets
-   * `error`; the platform view of a provider whose platform config leaves a required overridable
-   * field empty gets `org_configured`. `error` 只是内核自己的英文说明（不透出上游错误原文，原文记 warn
+   * {@link LIST_FAILURE_TTL_SECONDS} 秒内不再请求。For an org only the providers it enabled are
+   * listed (one it did not enable is absent); one that needs configuration there gets `error`. The
+   * platform view of a provider whose platform config leaves a required overridable field empty
+   * gets `org_configured`. `error` 只是内核自己的英文说明（不透出上游错误原文，原文记 warn
    * 日志）。No disabled list applied.
    */
   private async statuses(orgId: string | undefined): Promise<ProviderStatus[]> {
-    const providers = this.providers();
-    const off = orgId === undefined ? new Set<string>() : await this.enablement.switchedOff(orgId);
+    const on = orgId === undefined ? new Set<string>() : await this.enablement.enabledIn(orgId);
+    const providers = this.providers().filter((p) => orgId === undefined || on.has(p.plugin));
     const settled = await Promise.allSettled(
       providers.map(
         async (p): Promise<KernelModelInfo[] | Exclude<Target, { ok: true }>["reason"]> => {
-          const t = await this.target(p, orgId, off);
+          const t = await this.target(p, orgId, on);
           if (!t.ok) return t.reason;
           const failed = listFailedKey(p, t.hash);
           // 刚失败过的供应商：短时间内直接标 error，不再等它（每个供应商另有时限）
@@ -576,12 +580,10 @@ export class ProviderRegistry {
         if (r.value === "org_configured") {
           return { provider, plugin: provider, status: "org_configured", models: [] };
         }
-        if (r.value === "needs_config") {
-          const error = `Model provider ${provider} needs configuration in this organization`;
-          return { provider, plugin: provider, status: "error", error, models: [] };
-        }
-        if (r.value === "switched_off") {
-          const error = `Model provider ${provider} is turned off in this organization`;
+        if (r.value === "needs_config" || r.value === "not_enabled") {
+          // (`not_enabled` does not occur: an org's providers are filtered above)
+          const why = r.value === "not_enabled" ? "is not enabled" : "needs configuration";
+          const error = `Model provider ${provider} ${why} in this organization`;
           return { provider, plugin: provider, status: "error", error, models: [] };
         }
         return { provider, plugin: provider, status: "ok", models: r.value };
@@ -635,15 +637,15 @@ export class ProviderRegistry {
       );
     const p = this.providers().find((x) => x.plugin === ref.provider);
     if (!p) throw unavailable();
-    const off = orgId === undefined ? new Set<string>() : await this.enablement.switchedOff(orgId);
-    const t = await this.target(p, orgId, off);
+    const on = orgId === undefined ? new Set<string>() : await this.enablement.enabledIn(orgId);
+    const t = await this.target(p, orgId, on);
     if (!t.ok) {
       throw new ApiError(
         "agent.model_unavailable",
         t.reason === "org_configured"
           ? `Model provider ${ref.provider} is configured by each organization`
-          : t.reason === "switched_off"
-            ? `Model provider ${ref.provider} is turned off in this organization`
+          : t.reason === "not_enabled"
+            ? `Model provider ${ref.provider} is not enabled in this organization`
             : `Model provider ${ref.provider} needs configuration in this organization`,
       );
     }

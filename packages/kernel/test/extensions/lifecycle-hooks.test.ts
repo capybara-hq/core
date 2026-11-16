@@ -115,6 +115,8 @@ async function invalidCopy(orgId: string): Promise<void> {
       updated_by: ownerId,
     })
     .execute();
+  // written past the service: drop a cached read of the org's copy, as the service's write does
+  await k.app.get(EffectiveConfigs).invalidate(orgId, PLUGIN);
   const effective = await k.app.get(EffectiveConfigs).get(orgId, PLUGIN);
   expect(effective.ok).toBe(false);
 }

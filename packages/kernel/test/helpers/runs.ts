@@ -219,6 +219,9 @@ export async function startKernel(
 
 export type Req = ReturnType<typeof asUser>;
 
+/** The kernel each {@link session} request function talks to (when it was given one with `app`). */
+const kernelOfReq = new WeakMap<Req, Pick<TestKernel, "app">>();
+
 export async function session(k: Pick<TestKernel, "http">, login: string): Promise<Req> {
   const req = asUser(k.http, cookieJar());
   const res = await req({
@@ -227,13 +230,49 @@ export async function session(k: Pick<TestKernel, "http">, login: string): Promi
     payload: { login, password: PW },
   });
   expect(res.statusCode).toBe(200);
+  if ("app" in k) kernelOfReq.set(req, k as Pick<TestKernel, "app">);
   return req;
 }
 
+/**
+ * Creates an org as `req`'s user (its owner) and switches on there every model provider the kernel
+ * loaded: a model provider is on only in the orgs that enabled it, and run tests need theirs. A
+ * {@link session} request writes the switch rows directly ({@link enableModelProviders}: no audit
+ * row, no cached read); another request goes through the org's extension switch
+ * ({@link enableLoadedModelProviders}). A test about provider enablement switches one off itself.
+ */
 export async function createOrg(req: Req, name = "Acme"): Promise<string> {
   const res = await req({ method: "POST", url: "/api/v1/orgs", payload: { name } });
   expect(res.statusCode).toBe(201);
-  return (res.json() as { org: { id: string } }).org.id;
+  const orgId = (res.json() as { org: { id: string } }).org.id;
+  const k = kernelOfReq.get(req);
+  if (k) await enableModelProviders(k, orgId);
+  else await enableLoadedModelProviders(req, orgId);
+  return orgId;
+}
+
+/**
+ * Switches on in `orgId`, through the org's extension switch (`req` is an org admin), every loaded
+ * extension providing `model-provider` that is not on there yet.
+ */
+export async function enableLoadedModelProviders(req: Req, orgId: string): Promise<void> {
+  const list = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` });
+  expect(list.statusCode, list.body).toBe(200);
+  const extensions = (
+    list.json() as {
+      extensions: { plugin: string; enabled: boolean; available: boolean; provides: string[] }[];
+    }
+  ).extensions;
+  for (const e of extensions) {
+    if (e.enabled || !e.available) continue;
+    if (!e.provides.some((p) => p.startsWith("model-provider@"))) continue;
+    const on = await req({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgId}/extensions/${e.plugin}`,
+      payload: { enabled: true },
+    });
+    expect(on.statusCode, on.body).toBe(200);
+  }
 }
 
 /** Switches the named extensions on in `orgId` (a row of the org's own switch). */
@@ -248,6 +287,26 @@ export async function enableExtensions(
       VALUES (${plugin}, ${orgId}, true)
       ON CONFLICT (plugin, org_id) DO UPDATE SET enabled = true`.execute(db);
   }
+}
+
+/**
+ * Switches on in `orgId` every `model-provider` extension this kernel has loaded (a model provider
+ * is on only in the orgs that enabled it): for orgs a test creates without {@link createOrg}.
+ */
+export async function enableModelProviders(
+  k: Pick<TestKernel, "app">,
+  orgId: string,
+): Promise<void> {
+  await enableExtensions(
+    k.app.get(KernelDb).pool,
+    orgId,
+    ...new Set(
+      k.app
+        .get(ExtensionHost)
+        .list("model-provider")
+        .map((e) => e.plugin),
+    ),
+  );
 }
 
 /**

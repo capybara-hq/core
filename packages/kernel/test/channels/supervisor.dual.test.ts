@@ -17,7 +17,7 @@ import { createDb } from "../../src/db/pool.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { eventsOf, PW, sleep, waitFor } from "../helpers/runs.js";
+import { enableExtensions, eventsOf, PW, sleep, waitFor } from "../helpers/runs.js";
 
 /**
  * Review Focus 1（双副本 + 杀副本）：两个独立进程的内核副本（都含 worker 角色）都想接管同一个渠道连接——
@@ -104,6 +104,7 @@ describe("渠道长连接选主（双副本）", () => {
     const org = await call("POST", "/api/v1/orgs", { name: "Acme" });
     expect(org.status).toBe(201);
     const orgId = (org.json.org as { id: string }).id;
+    await enableExtensions(raw, orgId, "model-fake");
     const base = `/api/v1/orgs/${orgId}`;
     const ag = await call("POST", `${base}/agents`, {
       definition: {

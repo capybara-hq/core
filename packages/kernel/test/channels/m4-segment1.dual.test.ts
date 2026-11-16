@@ -20,7 +20,7 @@ import { createDb } from "../../src/db/pool.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { eventsOf, PW, sleep, waitFor } from "../helpers/runs.js";
+import { enableExtensions, eventsOf, PW, sleep, waitFor } from "../helpers/runs.js";
 
 /**
  * M4 第一段验收（双副本）：两个独立进程的内核副本（都含 api / worker / gateway 角色）加载 fake-im 测试插件
@@ -155,6 +155,7 @@ describe("M4 第一段验收（双副本）", () => {
     const org = await call(ownerJar, "POST", "/api/v1/orgs", { name: "Acme" });
     expect(org.status).toBe(201);
     const orgId = (org.json.org as { id: string }).id;
+    await enableExtensions(raw, orgId, "model-fake");
     const base = `/api/v1/orgs/${orgId}`;
 
     // alice 凭邀请注册（本地账号、组织成员，尚未绑定 IM 身份）

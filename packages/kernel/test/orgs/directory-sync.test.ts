@@ -794,7 +794,8 @@ describe("通讯录同步", () => {
     await sql`UPDATE capybara.orgs SET deleted_at = now() WHERE id = ${deleted.orgId}`.execute(raw);
     // 启用了不提供 directory@1 的插件
     await sql`INSERT INTO capybara.extension_org_configs (plugin, org_id, enabled)
-      VALUES ('model-fake', ${unconfigured}, true)`.execute(raw);
+      VALUES ('model-fake', ${unconfigured}, true)
+      ON CONFLICT (plugin, org_id) DO UPDATE SET enabled = true`.execute(raw);
 
     const first = await k.app.get(DirectorySync).scan();
     const mine = (orgId: string) => first.filter((t) => t.orgId === orgId);

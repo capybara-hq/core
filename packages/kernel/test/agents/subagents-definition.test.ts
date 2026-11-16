@@ -16,7 +16,7 @@ import { truncateTables } from "../helpers/db.js";
 import { accountsFor, orgsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
-import { startKernel, type TestKernel } from "../helpers/runs.js";
+import { enableModelProviders, startKernel, type TestKernel } from "../helpers/runs.js";
 
 /** Saving an agent definition's `subagents` block (phase C, spec §5.2). */
 
@@ -78,6 +78,7 @@ beforeEach(async () => {
   await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
   owner = await account();
   orgId = (await orgs.create({ name: "Acme", slug: `acme-${n}` }, owner)).id;
+  await enableModelProviders(k, orgId);
   member = await account();
   await members.add(orgId, member.id, "member", owner.id);
 });

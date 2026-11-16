@@ -283,7 +283,7 @@ describe("a subscriber is enabled", () => {
       seams(),
     );
     owner = await session(sub, "owner");
-    await enableExtensions(raw, orgId, "usage-b", "embed-consumer");
+    await enableExtensions(raw, orgId, "usage-b", "embed-consumer", "model-embed-probe");
   });
 
   afterAll(async () => {

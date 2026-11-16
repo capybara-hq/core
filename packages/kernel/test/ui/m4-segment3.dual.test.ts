@@ -26,7 +26,7 @@ import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { testHost } from "../helpers/extensions.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { PW, waitForTerminal } from "../helpers/runs.js";
+import { enableExtensions, PW, waitForTerminal } from "../helpers/runs.js";
 import { openSse, type SseClient, uiFrames } from "../helpers/sse.js";
 
 /**
@@ -122,6 +122,7 @@ beforeAll(async () => {
 
   const org = await at(0, "POST", "/api/v1/orgs", { name: "Acme" });
   orgId = (org.json.org as { id: string }).id;
+  await enableExtensions(raw, orgId, "model-fake");
   base = `/api/v1/orgs/${orgId}`;
   for (const [i, plugin] of [
     [1, "fake-tools-ui"],

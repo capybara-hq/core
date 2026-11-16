@@ -14,7 +14,7 @@ import { createDb } from "../../src/db/pool.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { PW, waitForTerminal } from "../helpers/runs.js";
+import { enableExtensions, PW, waitForTerminal } from "../helpers/runs.js";
 import { openSse, type SseClient, uiFrames } from "../helpers/sse.js";
 
 /**
@@ -94,6 +94,7 @@ describe("界面刷新（双副本）", () => {
     cookie = await loginAs("owner");
     const org = await at(0, "POST", "/api/v1/orgs", { name: "Acme" });
     const orgId = (org.json.org as { id: string }).id;
+    await enableExtensions(raw, orgId, "model-fake");
     const base = `/api/v1/orgs/${orgId}`;
     for (const plugin of ["ui-probe", "fake-tools-ui"]) {
       const en = await at(1, "PUT", `${base}/extensions/${plugin}`, { enabled: true });
