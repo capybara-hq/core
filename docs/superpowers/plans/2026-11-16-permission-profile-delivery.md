@@ -660,6 +660,9 @@ not publish restart-only changes as active, and ordinary matching startup needs 
 
 ### Task 8: Background lifetime, exact identity and revocation
 
+Expanded accepted phase plan: [permission runtime cutover](2026-11-16-permission-runtime-cutover.md).
+
+
 **Prerequisites:** Accepted Tasks 6b, 6c, 7 and 8a. Current protocol remains v2 until the full
 retirement, output, authority and caller cutover gates below pass.
 
