@@ -545,19 +545,15 @@ export class EvalSetsService {
   }
 
   /**
-   * 把某次运行加为用例。对话不在本组织（或是 eval 对话）→ `conversation.not_found`；对话的 agent 不是集合的 agent →
-   * `eval.agent_mismatch`；手动压缩运行（无模型步骤）→ `eval.compact_not_replayable`；已在集合里 →
-   * `eval.case_exists`；集合满了 → `eval.too_many_cases`；运行未终态 / 快照超大 →
-   * `eval.run_not_finished` / `eval.case_too_large`（`takeSnapshot`）。
+   * The admission checks of a case, in one place (the route and the Platform operation's precheck
+   * both call it); throws the `ApiError` the route gives. Writes nothing. Capacity is checked before
+   * the snapshot is taken (it can be large) and again under the lock when the case is written.
    */
-  async addCase(
+  async checkAddCase(
     orgId: string,
-    actor: string,
     setId: string,
     input: { conversationId: string; runId: string },
-    actorTokenId?: string,
-    auditDetail?: Record<string, unknown>,
-  ): Promise<EvalCaseView> {
+  ): Promise<void> {
     const set = await this.liveSet(orgId, setId);
     const conv = await this.db
       .selectFrom("conversations")
@@ -573,15 +569,18 @@ export class EvalSetsService {
     if (conv.agent_id !== set.agent_id) {
       throw new ApiError("eval.agent_mismatch", "The run belongs to a different agent");
     }
-    // a manual compaction run has no model step to replay (context compaction spec §4.7): it would
-    // take a set slot and never produce a result, so it is refused with a clear code
     const run = await this.db
       .selectFrom("runs")
-      .select("compact")
+      .select(["status", "compact"])
       .where("id", "=", input.runId)
       .where("conversation_id", "=", input.conversationId)
       .executeTakeFirst();
-    if (run?.compact === true) {
+    if (run === undefined) {
+      throw new ApiError("conversation.not_found", "Conversation or run not found");
+    }
+    // a manual compaction run has no model step to replay (context compaction spec §4.7): it would
+    // take a set slot and never produce a result, so it is refused with a clear code
+    if (run.compact) {
       throw new ApiError(
         "eval.compact_not_replayable",
         "A manual compaction run has no model step to replay, so it cannot be an eval case",
@@ -594,9 +593,29 @@ export class EvalSetsService {
       .where("source_run_id", "=", input.runId)
       .executeTakeFirst();
     if (exists) throw caseExists();
-    const { maxCasesPerSet, maxCaseBytes } = this.config.get().evals;
-    // 先判容量再取快照（快照可能很大）；写入时在锁内再判一次
+    if (run.status === "running" || run.status === "queued") {
+      throw new ApiError("eval.run_not_finished", "The run has not finished yet");
+    }
+    const { maxCasesPerSet } = this.config.get().evals;
     if ((await this.caseCount(this.db, setId)) >= maxCasesPerSet) throw tooMany(maxCasesPerSet);
+  }
+
+  /**
+   * 把某次运行加为用例。对话不在本组织（或是 eval 对话）→ `conversation.not_found`；对话的 agent 不是集合的 agent →
+   * `eval.agent_mismatch`；手动压缩运行（无模型步骤）→ `eval.compact_not_replayable`；已在集合里 →
+   * `eval.case_exists`；集合满了 → `eval.too_many_cases`；运行未终态 / 快照超大 →
+   * `eval.run_not_finished` / `eval.case_too_large`（`takeSnapshot`）。
+   */
+  async addCase(
+    orgId: string,
+    actor: string,
+    setId: string,
+    input: { conversationId: string; runId: string },
+    actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
+  ): Promise<EvalCaseView> {
+    await this.checkAddCase(orgId, setId, input);
+    const { maxCasesPerSet, maxCaseBytes } = this.config.get().evals;
     const snapshot = await takeSnapshot(
       this.db,
       orgId,
