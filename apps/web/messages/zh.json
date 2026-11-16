@@ -1466,7 +1466,7 @@
     "pickModel": "切换模型",
     "pickDevice": "设备",
     "deviceNote": "发出第一条消息后不能更换",
-    "deviceOffline": "没有可用的设备：你的本地设备都已离线。请在机器上启动 capybara-device 后再发送。",
+    "deviceOffline": "你的本地设备都已离线，本对话将在没有设备的情况下开始。在机器上启动 capybara-device 后即可使用设备。",
     "deviceLocked": "对话开始后设备不再更换",
     "projectGroup": "项目",
     "freeMode": "自由模式",
@@ -1606,6 +1606,16 @@
         "confirm": "使用完全访问",
         "cancel": "取消"
       }
+    },
+    "firstSend": {
+      "unconfirmed": "之前的消息没有收到回应，可能已经创建了对话。",
+      "conflict": "之前的消息未按原样被接受：设备的权限可能已变化，请检查权限选择。",
+      "newRequest": "“重试原消息”会按原样再次发送；发送改动后的消息则是一个新的请求。",
+      "retryOriginal": "重试原消息",
+      "open": "打开它的对话",
+      "summary": "“{text}”，{profile}，设备 {device}。",
+      "summaryNoDevice": "“{text}”，{profile}，无设备。",
+      "changed": "之后你改了选择：现在发送会是一个新的请求，“重试原消息”则按原样再次发送。"
     }
   },
   "ui": {

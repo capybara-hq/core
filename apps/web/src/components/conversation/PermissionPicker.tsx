@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { type ReactNode, useState } from "react";
 import { useRouter } from "../../i18n/navigation";
+import type { ConversationEvent } from "../../lib/conversations";
 import { canUpdateOrg } from "../../lib/org-settings";
 import type {
   PermissionPreview,
@@ -32,11 +33,28 @@ const ICON: Record<PermissionProfile, IconName> = {
   "approve-for-me": "shield-check",
   "full-access": "lock-open",
 };
-const KEY: Record<PermissionProfile, "requestApproval" | "approveForMe" | "fullAccess"> = {
+/** A profile's message key under `chat.permission.profile` / `.description`. */
+export const PROFILE_KEY: Record<
+  PermissionProfile,
+  "requestApproval" | "approveForMe" | "fullAccess"
+> = {
   "request-approval": "requestApproval",
   "approve-for-me": "approveForMe",
   "full-access": "fullAccess",
 };
+
+/**
+ * The profile the log last recorded (`permission_profile_changed`; revision 0 is the first
+ * message's choice), for the owner while the authoritative read loads. Undefined: none in the log.
+ */
+export function recordedProfile(
+  events: readonly ConversationEvent[] | undefined,
+): PermissionProfile | undefined {
+  let found: PermissionProfile | undefined;
+  for (const e of events ?? [])
+    if (e.type === "permission_profile_changed") found = e.payload.newProfile;
+  return found;
+}
 
 /** The model-purposes settings where an org admin sets the review model. */
 export const REVIEW_MODEL_SETTINGS = "/settings/models?tab=purposes";
@@ -112,6 +130,11 @@ export function usePermissionChoice(input: PermissionChoiceInput): {
   picker: PickerProps;
   dialog: ReactNode;
   selection: PermissionSelection;
+  /**
+   * Drops a Full access consent back to Approve for me (the kernel refused the displayed scope);
+   * any other choice stays. Consent is only ever given again through the dialog.
+   */
+  clearFullAccess(): void;
 } {
   const t = useTranslations("chat.permission");
   const router = useRouter();
@@ -127,6 +150,13 @@ export function usePermissionChoice(input: PermissionChoiceInput): {
   const [choice, setChoice] = useState<Choice>({
     profile: input.initial ?? DEFAULT_PERMISSION_PROFILE,
   });
+  // A starting choice that arrives or changes after mount (a recorded profile read later) is
+  // taken over, adjusted during render as the consent reset below.
+  const [initial, setInitial] = useState(input.initial);
+  if (input.initial !== initial) {
+    setInitial(input.initial);
+    setChoice({ profile: input.initial ?? DEFAULT_PERMISSION_PROFILE });
+  }
   // Full access consent belongs to one device and scope revision: another device, project or
   // revision clears it (adjusted during render, so no frame shows a stale Full access).
   const c = choice.consent;
@@ -174,16 +204,16 @@ export function usePermissionChoice(input: PermissionChoiceInput): {
   ].join(" ");
   const picker: PickerProps = {
     label: t("label"),
-    value: t(`profile.${KEY[choice.profile]}`),
+    value: t(`profile.${PROFILE_KEY[choice.profile]}`),
     groups: [
       {
         items: PERMISSION_PROFILES.map((p) => {
           const reason = reasons[p];
           return {
             id: p,
-            label: t(`profile.${KEY[p]}`),
+            label: t(`profile.${PROFILE_KEY[p]}`),
             icon: ICON[p],
-            description: t(`description.${KEY[p]}`),
+            description: t(`description.${PROFILE_KEY[p]}`),
             checked: choice.profile === p,
             ...(reason !== undefined ? { disabled: true, tag: t(`reason.${reason}`) } : {}),
           };
@@ -237,12 +267,15 @@ export function usePermissionChoice(input: PermissionChoiceInput): {
     choice.profile === "full-access" && choice.consent !== undefined
       ? { profile: "full-access", consentScopeRevision: choice.consent.scopeRevision }
       : { profile: choice.profile };
-  return { picker, dialog, selection };
+  const clearFullAccess = () =>
+    setChoice((cur) =>
+      cur.profile === "full-access" ? { profile: DEFAULT_PERMISSION_PROFILE } : cur,
+    );
+  return { picker, dialog, selection, clearFullAccess };
 }
 
 /**
- * A profile shown read-only (a recorded or inherited one, or the new conversation's default
- * until the first send carries a choice): the locked picker, its hint saying why.
+ * A profile shown read-only (a recorded or inherited one): the locked picker, its hint saying why.
  */
 export function useLockedPermissionPicker(
   profile: PermissionProfile | undefined,
@@ -252,14 +285,14 @@ export function useLockedPermissionPicker(
   if (profile === undefined) return undefined;
   return {
     label: t("label"),
-    value: t(`profile.${KEY[profile]}`),
+    value: t(`profile.${PROFILE_KEY[profile]}`),
     locked: {
       hint:
         why === "inherited"
           ? t("locked.inherited")
           : why === "scheduled"
             ? t("locked.scheduled")
-            : t(`description.${KEY[profile]}`),
+            : t(`description.${PROFILE_KEY[profile]}`),
     },
     groups: [],
     onPick: () => {},

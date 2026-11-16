@@ -1466,7 +1466,7 @@
     "pickModel": "Switch model",
     "pickDevice": "Device",
     "deviceNote": "Fixed once the first message is sent",
-    "deviceOffline": "No device is available: your local devices are offline. Start capybara-device on the machine, then send.",
+    "deviceOffline": "Your local devices are offline, so this conversation starts without a device. Start capybara-device on the machine to use it.",
     "deviceLocked": "A conversation keeps its device",
     "projectGroup": "Project",
     "freeMode": "Free mode",
@@ -1618,6 +1618,16 @@
         "confirm": "Use Full access",
         "cancel": "Cancel"
       }
+    },
+    "firstSend": {
+      "unconfirmed": "Your earlier message got no answer, so it may already have started a conversation.",
+      "conflict": "Your earlier message was not accepted as it was: the device's permissions may have changed. Check the permission choice.",
+      "newRequest": "Retry original sends it exactly as it was; sending a changed message starts a new request.",
+      "retryOriginal": "Retry original",
+      "open": "Open its conversation",
+      "summary": "“{text}” with {profile} on {device}.",
+      "summaryNoDevice": "“{text}” with {profile}, without a device.",
+      "changed": "Your choices changed since: sending now starts a new request, and Retry original sends it as it was."
     }
   },
   "ui": {

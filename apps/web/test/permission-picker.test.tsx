@@ -4,7 +4,7 @@ import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { usePermissionChoice } from "../src/components/conversation/PermissionPicker";
-import type { PermissionPreview } from "../src/lib/permissions";
+import type { PermissionPreview, PermissionProfile } from "../src/lib/permissions";
 import { json, stubApi } from "./support/api";
 import {
   AGENTS,
@@ -42,16 +42,22 @@ const previewUrl = (deviceId: string, project?: string) =>
     project === undefined ? "" : `&project=${project}`
   }`;
 
-type Where = { deviceId?: string; project?: string; deviceLabel?: string };
+type Where = {
+  deviceId?: string;
+  project?: string;
+  deviceLabel?: string;
+  initial?: PermissionProfile;
+};
 
 /** The real composer box with the permission choice in its slot, as a page passes it. */
-function Harness({ deviceId, project, deviceLabel = "Laptop" }: Where) {
+function Harness({ deviceId, project, deviceLabel = "Laptop", initial }: Where) {
   const choice = usePermissionChoice({
     orgId: "o1",
     deviceId,
     project,
     deviceLabel,
     context: "new",
+    ...(initial !== undefined ? { initial } : {}),
   });
   return (
     <>
@@ -385,6 +391,22 @@ describe("Full access consent", () => {
   });
 });
 
+describe("a starting choice that arrives after mount (review M2)", () => {
+  it("takes over a recorded profile read later, and a changed one again", async () => {
+    const { rerender } = mount({});
+    expect(selection()).toEqual({ profile: "approve-for-me" });
+    rerender({ initial: "request-approval" });
+    await waitFor(() => expect(selection()).toEqual({ profile: "request-approval" }));
+    expect(permissionButton().getAttribute("aria-label")).toBe("Permissions: Request approval");
+    // the same starting value again leaves the person's own pick alone
+    const user = userEvent.setup();
+    const menu = await openMenu(user);
+    await user.click(within(menu).getByRole("menuitemradio", { name: "Approve for me" }));
+    rerender({ initial: "request-approval" });
+    expect(selection()).toEqual({ profile: "approve-for-me" });
+  });
+});
+
 describe("the review model note and its settings link", () => {
   it("an org admin gets the model purposes link", async () => {
     const user = userEvent.setup();
@@ -460,15 +482,17 @@ const composerPermission = () =>
     '[data-part="composer-pickers"] [data-locked="true"][title], [data-part="composer-pickers"] .cb-picker[data-locked="true"]',
   );
 
-describe("where the choice shows today (read-only until the send and live changes land)", () => {
-  it("a new conversation shows the default Approve for me, read-only, on desktop and phone", async () => {
+describe("where the choice shows (editable in a new conversation, read-only until live changes land)", () => {
+  it("a new conversation offers the choice, Approve for me by default, on desktop and phone", async () => {
     const browser = expectNoFirstPaintFetch();
     await renderRouteWithCache("/", homeRoutes(), { locale: "en" });
     const pickers = document.querySelector('[data-part="composer-pickers"]') as HTMLElement;
-    expect(within(pickers).getByText("Approve for me").getAttribute("data-locked")).toBe("true");
-    expect(within(pickers).queryByRole("button", { name: /^Permissions/ })).toBeNull();
+    const button = within(pickers).getByRole("button", { name: /^Permissions/ });
+    expect(button.getAttribute("aria-label")).toBe("Permissions: Approve for me");
+    expect(pickers.querySelector('[data-locked="true"]')).toBeNull();
     const options = document.querySelector('[data-part="composer-options"]') as HTMLElement;
     expect(options.getAttribute("aria-label")).toContain("Approve for me");
+    // the selected device's preview was prefetched: no browser read
     expect(browser).toEqual([]);
   });
 
