@@ -2800,6 +2800,18 @@ export interface SandboxActor {
 
 // @public
 export interface SandboxBackground {
+    readOutput(h: SandboxHandle, ref: SandboxExecutionRef, opts: {
+        offset: number;
+        maxBytes: number;
+        signal: AbortSignal;
+    }): Promise<{
+        data: Uint8Array;
+        offset: number;
+        nextOffset: number;
+        totalBytes: number;
+    } | {
+        unavailable: "lost" | "expired";
+    }>;
     start(h: SandboxHandle, scope: SandboxOperationScope, args: SandboxExecOptions & {
         taskId: string;
         outputPath: string;
