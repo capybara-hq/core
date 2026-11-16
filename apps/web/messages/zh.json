@@ -3581,6 +3581,7 @@
       "context_fit": "候选模型的上下文窗口使请求的裁剪方式不同",
       "tool_unmatched": "有工具调用没有对应的记录",
       "subagent_changed": "子智能体的定义与记录时不同",
+      "permission_profile_changed": "记录的权限上下文无法从快照还原",
       "model_switched": "候选模型替换了会话中切换的模型"
     },
     "tabs": {

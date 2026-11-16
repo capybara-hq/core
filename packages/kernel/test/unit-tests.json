@@ -31,6 +31,7 @@
   "devices/sandbox-state.test.ts",
   "evals/diff.test.ts",
   "evals/pre-skills-default-on.test.ts",
+  "evals/recorded-permission-context.test.ts",
   "evals/recorded-tools.test.ts",
   "evals/sets.unit.test.ts",
   "evals/trajectory.test.ts",

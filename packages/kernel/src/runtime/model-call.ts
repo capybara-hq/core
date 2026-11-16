@@ -195,6 +195,25 @@ export interface ModelStepDeps {
    * `conversationKind: "chat"` on the step input.
    */
   hooks?: HookRunner;
+  /**
+   * The request boundary of the recorded permission context (permission context replay spec B2):
+   * before each agent-history request construction, record (live) or feed (full-run replay) the
+   * permission context, then rebuild from the complete log. Dormant: nothing in the runtime calls it
+   * until Gate 9.4 wires the request boundary and its producer. Full-run replays strip any live one
+   * and install only the recorded feeder (`evals/recorded-permission-context.ts`).
+   */
+  permissionContext?: PermissionContextPort;
+}
+
+/** What the request boundary passes to {@link PermissionContextPort.beforeRequest}. */
+export type PermissionContextRequestInput = Pick<
+  ModelStepInput,
+  "orgId" | "conversationId" | "runId" | "accountId" | "step" | "signal"
+> & { attempt: number };
+
+/** {@link ModelStepDeps.permissionContext}: one call per request construction (spec B2). */
+export interface PermissionContextPort {
+  beforeRequest(input: PermissionContextRequestInput): Promise<void>;
 }
 
 /** 构建请求用到的附件来源。 */

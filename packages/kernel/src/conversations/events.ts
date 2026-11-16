@@ -329,7 +329,7 @@ export const PermissionCallBindingSchema = z
     authorityRevision: z.string(),
   })
   .strict();
-const ReviewRecordSchema = z
+export const ReviewRecordSchema = z
   .object({
     profile: z.enum(["request-approval", "approve-for-me", "full-access"]).optional(),
     profileRevision: z.number().int().nonnegative().optional(),

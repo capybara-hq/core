@@ -76,6 +76,7 @@ describe("eval drift labels (final review m5)", () => {
     "definition_missing",
     "pinned_changed",
     "subagent_changed",
+    "permission_profile_changed",
     "legacy_event",
     "params_changed",
     "model_switched",
