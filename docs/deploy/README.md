@@ -313,7 +313,8 @@ otherwise.
   When Redis is unreachable the stop takes the whole budget: queue connections that cannot close are
   abandoned rather than holding the exit.
 - **Unhandled errors.** `capybara start` logs an unhandled promise rejection or uncaught exception
-  and keeps running; it exits 1 only after more than 5 of them within 60 s, so the orchestrator
+  and keeps running, but a swallowed fatal event makes `/readyz` answer 503 until the process is
+  replaced (`/healthz` stays 200); it exits 1 only after more than 5 of them within 60 s, so the orchestrator
   restarts a process that keeps failing. Before, it exited on the first one. Every other `capybara`
   command still exits 1 on the first.
 - **Redis outages and leases.** Conversation runs, IM long connections, sandbox commands and org
@@ -869,7 +870,8 @@ this:
 - **Probes:** `/readyz` and `/healthz` on port 8080 (`CAPYBARA_HTTP__PORT`) for every kernel role, and
   `/login` on port 3000 for `web`. Give the kernel pods a `startupProbe` on `/healthz` with a
   generous failure threshold (minutes, not seconds): a pod that finds pending migrations doesn't listen
-  until they finish, and a liveness probe must not kill it halfway.
+  until they finish, and a liveness probe must not kill it halfway. A swallowed fatal event (an
+  unhandled rejection) makes `/readyz` answer 503 until the process is replaced; `/healthz` stays 200.
 - **Secrets:** pass `CAPYBARA_MASTER_KEY`, the database URL and extension credentials from Kubernetes
   Secrets as environment variables
   (`CAPYBARA_EXTENSION_CONFIG__<PLUGIN_UPPER_SNAKE>__<FIELD>` for extension deployment config).
