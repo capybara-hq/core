@@ -894,3 +894,32 @@ describe("a member's own tool policies (the card's 权限, decision 2026-11-09)"
     expect(cross.statusCode).toBe(404);
   });
 });
+
+describe("the connector routes after the rename (T22)", () => {
+  it("/connectors works; the old /apps paths are all 404 (no alias)", async () => {
+    const req = await session("owner");
+    const orgId = await createOrg(req);
+    const { connector } = await createConnector(req, orgId);
+    const id = connector.id;
+    const list = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/connectors` });
+    expect(list.statusCode, list.body).toBe(200);
+    expect((list.json() as { connectors: { id: string }[] }).connectors.map((c) => c.id)).toEqual([
+      id,
+    ]);
+    const one = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/connectors/${id}` });
+    expect(one.statusCode, one.body).toBe(200);
+
+    for (const [method, url] of [
+      ["GET", `/api/v1/orgs/${orgId}/apps`],
+      ["POST", `/api/v1/orgs/${orgId}/apps`],
+      ["POST", `/api/v1/orgs/${orgId}/apps/preview`],
+      ["GET", `/api/v1/orgs/${orgId}/apps/${id}`],
+      ["POST", `/api/v1/orgs/${orgId}/apps/${id}/refresh`],
+      ["GET", `/api/v1/orgs/${orgId}/apps/prompts`],
+      ["POST", `/api/v1/orgs/${orgId}/apps/${id}/connect`],
+    ] as const) {
+      const r = await req({ method, url, ...(method === "POST" && { payload: {} }) });
+      expect(r.statusCode, `${method} ${url}`).toBe(404);
+    }
+  });
+});
