@@ -90,6 +90,12 @@ describe("BackgroundTaskStore", () => {
       killPending: false,
       readOffset: 0,
       stoppingAt: null,
+      // a legacy insert carries no managed launch identity
+      launchState: "legacy",
+      operationId: null,
+      workingRoot: null,
+      retainUntil: null,
+      executionRef: null,
     });
     expect(await store.get("bt_missing")).toBeUndefined();
   });

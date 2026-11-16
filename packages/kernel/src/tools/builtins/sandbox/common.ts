@@ -70,7 +70,8 @@ export interface SandboxToolDeps {
     | "advanceOffset"
     | "runningOwnedBy"
     | "finishedOwnedBy"
-  >;
+  > &
+    Partial<Pick<BackgroundTaskStore, "reserveManaged" | "failManagedPreEffect">>;
   /**
    * Whether `id` is a sub-agent conversation in the tree under `rootConversationId` (TaskOutput /
    * TaskStop tell a sub-agent's agentId apart from an unknown task id), and the sub-agents a

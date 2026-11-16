@@ -2,6 +2,7 @@
   "agents/template-limits.test.ts",
   "attachments/attachments.service.test.ts",
   "attachments/media-request.test.ts",
+  "background/managed-artifact.test.ts",
   "background/poll-providers.test.ts",
   "catalog/claude-marketplace.test.ts",
   "catalog/claude-translate.test.ts",

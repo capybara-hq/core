@@ -103,10 +103,18 @@ export class PermissionCeilingWrites {
         await this.resetRoot(root, subject, level);
     }
     if (!revoke) return;
+    // Acknowledged background starts stay revocable by actual ceilings; a profile-only (root)
+    // change leaves a started task's starting authority unchanged.
     let candidates = this.db
       .selectFrom("sandbox_operation_intents")
       .selectAll()
-      .where("state", "in", ["admitted", "dispatching", "started-or-unknown"]);
+      .where(
+        "state",
+        "in",
+        level === "root"
+          ? ["admitted", "dispatching", "started-or-unknown"]
+          : ["admitted", "dispatching", "started-or-unknown", "background-running"],
+      );
     if (level !== "platform") candidates = candidates.where("org_id", "=", required(subject.orgId));
     if (level === "device")
       candidates = candidates.where("device_id", "=", required(subject.deviceId));
@@ -127,6 +135,13 @@ export class PermissionCeilingWrites {
         })
         .where("operation_id", "=", row.operation_id)
         .execute();
+      if (row.state === "background-running")
+        await this.db
+          .updateTable("background_tasks")
+          .set({ launch_state: "cancel-pending", cancel_requested_at: new Date() })
+          .where("operation_id", "=", row.operation_id)
+          .where("launch_state", "=", "acknowledged")
+          .execute();
       await this.outbox.add({
         queue: "cap-kernel-maintenance",
         name: "sandbox-operation-revoke",

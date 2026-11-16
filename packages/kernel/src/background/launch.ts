@@ -1,5 +1,10 @@
 import { randomBytes } from "node:crypto";
-import { BACKGROUND_LAUNCH_LINE, DEFAULT_SANDBOX_ROOTS } from "@capybara-hq/plugin-sdk";
+import {
+  BACKGROUND_LAUNCH_LINE,
+  DEFAULT_SANDBOX_ROOTS,
+  type SandboxOperationScope,
+  SandboxScopeDeniedError,
+} from "@capybara-hq/plugin-sdk";
 import type { KernelConfig } from "../config/schema.js";
 
 /**
@@ -176,6 +181,68 @@ export function startedText(
   return [
     `Started background task ${id} ("${description}").`,
     `Output: ${workspace}/${taskOutputPath(id)}`,
+    "Read it with TaskOutput (or Read), stop it with TaskStop. You will be told when it finishes.",
+  ].join("\n");
+}
+
+/**
+ * The artifact of a managed task (permission runtime cutover §"Artifact location decision"):
+ * `${workingRoot}/.capybara/tasks/${taskId}.out`, where the working root is the trusted root the
+ * command executes in (the selected project's root, else the device workspace). Never a
+ * caller-selected path, never roots.tmp or the default workspace as a fallback.
+ */
+export function managedTaskArtifactPath(workingRoot: string, taskId: string): string {
+  if (!TASK_ID_RE.test(taskId)) throw new Error(`invalid background task id: ${taskId}`);
+  return `${workingRoot === "/" ? "" : workingRoot}/${taskOutputPath(taskId)}`;
+}
+
+/** An absolute path without empty, `.` or `..` components or a trailing slash. */
+const isNormalAbsolute = (p: string): boolean =>
+  p === "/" ||
+  (p.startsWith("/") &&
+    p
+      .split("/")
+      .slice(1)
+      .every((c) => c !== "" && c !== "." && c !== ".."));
+
+/** Whether `path` is `root` or inside it (both normalized absolute paths). */
+const within = (path: string, root: string): boolean =>
+  root === "/" || path === root || path.startsWith(`${root}/`);
+
+/**
+ * Checks, before any effect, that a managed start's artifact is the deterministic placement under
+ * its working root and is covered by the admitted starting write roots and the implicit write
+ * protections (no `.git` component: devices deny Git configuration and hooks). Full access
+ * (`device` filesystem scope) uses the same placement. Throws {@link SandboxScopeDeniedError}:
+ * no fallback location, no added root or grant.
+ */
+export function assertManagedArtifactAdmitted(
+  scope: Pick<SandboxOperationScope, "filesystem">,
+  args: { cwd: string; taskId: string; outputPath: string; retainUntilMs: number },
+): void {
+  const deny = (why: string): never => {
+    throw new SandboxScopeDeniedError(
+      `The background task output cannot be created: ${why}. Choose a working directory this conversation may write to, then retry.`,
+    );
+  };
+  if (!TASK_ID_RE.test(args.taskId)) deny("the task id is invalid");
+  if (!isNormalAbsolute(args.cwd)) deny("the working root is not a normalized absolute path");
+  if (args.outputPath !== managedTaskArtifactPath(args.cwd, args.taskId))
+    deny("the output path is not the task's placement under its working root");
+  if (!Number.isSafeInteger(args.retainUntilMs) || args.retainUntilMs <= 0)
+    deny("the retention deadline is invalid");
+  if (args.outputPath.split("/").includes(".git"))
+    deny("the working root is inside protected Git metadata");
+  const fs = scope.filesystem;
+  if (fs.kind === "scoped" && !fs.writeRoots.some((root) => within(args.outputPath, root)))
+    deny(`${args.outputPath} is outside the admitted write roots`);
+}
+
+/** The model-visible result of an acknowledged managed launch; `outputPath` is its artifact. */
+export function managedStartedText(id: string, description: string, outputPath: string): string {
+  return [
+    `Started background task ${id} ("${description}").`,
+    `Output: ${outputPath}`,
     "Read it with TaskOutput (or Read), stop it with TaskStop. You will be told when it finishes.",
   ].join("\n");
 }

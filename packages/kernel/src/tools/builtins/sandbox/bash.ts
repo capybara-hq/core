@@ -1,6 +1,9 @@
 import {
   DEFAULT_SANDBOX_ROOTS,
   type ExecResult,
+  isSandboxOperationOutcomeUnknownError,
+  isSandboxPermissionUnsupportedError,
+  isSandboxScopeDeniedError,
   ToolError,
   type ToolSpec,
 } from "@capybara-hq/plugin-sdk";
@@ -8,17 +11,22 @@ import {
   backgroundMaxSeconds,
   LAUNCH_EXEC_TIMEOUT_MS,
   launchScript,
+  managedStartedText,
+  managedTaskArtifactPath,
   newTaskId,
   startedText,
   taskOutputPath,
   taskSidPath,
 } from "../../../background/launch.js";
 import { KILL_SESSION_TIMEOUT_MS, killSession, SID_RE } from "../../../background/session.js";
+import type { BackgroundTaskRow } from "../../../background/store.js";
+import { operationIdFor } from "../../../sandbox/operation-intents.js";
 import type { BuiltinCallContext, BuiltinResult, BuiltinTool } from "../../registry.js";
 import {
   clip,
   display,
   inSandbox,
+  inSandboxOperations,
   mapSandboxError,
   noSandboxError,
   runBudgetNote,
@@ -413,6 +421,193 @@ async function runInBackground(
     display: display(`后台运行命令：${shown}`, `Started in the background: ${shown}`),
   };
 }
+
+/** How a managed launch ended (permission runtime cutover phase 8.2). */
+type ManagedLaunch =
+  | { kind: "full" }
+  /** The same call reserved before with another command or working root. */
+  | { kind: "changed" }
+  /** Acknowledged, cancel-pending, or settled: the row as persisted after the start. */
+  | { kind: "launched"; task: BackgroundTaskRow }
+  /** Dispatched, outcome unknown: reconciled later under the same identity, never relaunched. */
+  | { kind: "unknown"; task: BackgroundTaskRow }
+  /** Refused before any effect (the reservation is settled as failed). */
+  | { kind: "refused"; task: BackgroundTaskRow; why: string };
+
+/**
+ * Dormant managed `Bash` background launch (permission runtime cutover phase 8.2): not wired to
+ * the tool until the paired activation (8.6); the protocol-2 launch above stays the active path.
+ *
+ * Inside the held operation session it reserves the task (or, for a retry of the same run call,
+ * reuses the reservation it persisted before: the same task id, artifact, deadline and
+ * retention, so the start input and its hash are unchanged), with its artifact at
+ * `${workingRoot}/.capybara/tasks/${taskId}.out` under the trusted working root. The start then
+ * goes through the operation facade: admitted, bound to the reservation and dispatched under the
+ * stable operation id, and acknowledged with its exact typed ref. The output path is told to the
+ * model only after the acknowledgement. A refusal before dispatch settles the reservation; an
+ * unknown outcome leaves it dispatched for reconciliation under the same identity.
+ */
+export async function runInBackgroundManaged(
+  deps: SandboxToolDeps,
+  ctx: BuiltinCallContext,
+  input: BashInput,
+): Promise<BuiltinResult> {
+  const { background } = deps;
+  const claim = ctx.executionClaim;
+  if (!background?.reserveManaged || !background.failManagedPreEffect || !claim || !ctx.runId) {
+    throw new ToolError(
+      "Background tasks are not available here; call Bash without run_in_background.",
+    );
+  }
+  const reserveManaged = background.reserveManaged.bind(background);
+  const failManagedPreEffect = background.failManagedPreEffect.bind(background);
+  const cfg = deps.config.get();
+  const maxMs = backgroundMaxSeconds(cfg) * 1000;
+  const requested = input.timeout;
+  const seconds = Math.max(1, Math.ceil(Math.min(requested ?? maxMs, maxMs) / 1000));
+  const root = sandboxConversationOf(ctx);
+  const maxTasks = cfg.sandbox.background.maxTasks;
+  const description = input.description ?? clip(input.command, 120);
+  // The facade derives the same id from this call's first dispatched method.
+  const operationId = operationIdFor({ claim, callId: ctx.callId, ordinal: 0 });
+  const announce = async (): Promise<void> => {
+    if (!deps.eventLog.publishChanged) return;
+    for (const c of new Set([ctx.conversationId, root])) {
+      await deps.eventLog.publishChanged(c, "background");
+    }
+  };
+  const { value: launch, notices } = await inSandboxOperations(deps, ctx, async (s) => {
+    const start = s.p.backgroundStart?.bind(s.p);
+    if (!start) {
+      throw new ToolError(
+        "Background tasks are not available on this device; call Bash without run_in_background.",
+      );
+    }
+    const id = newTaskId();
+    const startedAt = new Date();
+    const deadlineAt = new Date(startedAt.getTime() + seconds * 1000);
+    const reserved = await reserveManaged(
+      {
+        id,
+        orgId: ctx.orgId,
+        conversationId: ctx.conversationId,
+        sandboxConversationId: root,
+        deviceId: s.deviceId,
+        runId: ctx.runId as string,
+        callId: ctx.callId,
+        triggerAccountId: ctx.accountId,
+        description,
+        command: input.command,
+        operationId,
+        workingRoot: s.workingRoot,
+        outputPath: managedTaskArtifactPath(s.workingRoot, id),
+        startedAt,
+        deadlineAt,
+        retainUntil: new Date(deadlineAt.getTime() + cfg.tools.outputRetentionDays * 86_400_000),
+      },
+      maxTasks,
+    );
+    if (reserved.kind === "full") return { kind: "full" } satisfies ManagedLaunch;
+    const task = reserved.row;
+    if (
+      task.command !== input.command ||
+      task.workingRoot !== s.workingRoot ||
+      task.operationId !== operationId
+    )
+      return { kind: "changed" } satisfies ManagedLaunch;
+    if (task.launchState === "terminal" || task.retainUntil === null || task.workingRoot === null)
+      return { kind: "launched", task } satisfies ManagedLaunch;
+    try {
+      await start(s.h, {
+        command: input.command,
+        cwd: task.workingRoot,
+        timeoutMs: task.deadlineAt.getTime() - task.startedAt.getTime(),
+        maxOutputBytes: LAUNCH_MAX_OUTPUT_BYTES,
+        taskId: task.id,
+        outputPath: task.outputPath,
+        retainUntilMs: task.retainUntil.getTime(),
+        signal: s.signal,
+      });
+    } catch (e) {
+      const why = e instanceof Error ? e.message : String(e);
+      // a reservation that never dispatched is settled; a dispatched one never is here
+      if (await failManagedPreEffect(task.id, `launch refused: ${clip(why, 500)}`)) {
+        return {
+          kind: "refused",
+          task: (await background.get(task.id)) ?? task,
+          why,
+        } satisfies ManagedLaunch;
+      }
+      const now = (await background.get(task.id)) ?? task;
+      if (now.launchState === "dispatched" && !isRefusal(e))
+        return { kind: "unknown", task: now } satisfies ManagedLaunch;
+      return { kind: "launched", task: now } satisfies ManagedLaunch;
+    }
+    return {
+      kind: "launched",
+      task: (await background.get(task.id)) ?? task,
+    } satisfies ManagedLaunch;
+  });
+  if (launch.kind === "full") {
+    throw new ToolError(
+      `${maxTasks} background tasks are already running; stop one with TaskStop or wait for one to finish, then retry`,
+    );
+  }
+  if (launch.kind === "changed") {
+    throw new ToolError(
+      "This call already reserved a background task with a different command or working directory; it cannot be reused with changed input. Call Bash again as a new call.",
+    );
+  }
+  await announce();
+  const { task } = launch;
+  if (launch.kind === "unknown") {
+    throw new ToolError(
+      `Background task ${task.id} ("${description}") may have started, but its start was not confirmed; it is being reconciled under its original identity and will not be started again. Check TaskList before starting it again.`,
+      { kind: "unavailable" },
+    );
+  }
+  if (launch.kind === "refused" || task.launchState === "terminal") {
+    const why = launch.kind === "refused" ? launch.why : (task.lostReason ?? "it was stopped");
+    throw new ToolError(
+      `The background task was not started: ${clip(why, 500).replace(/\.$/, "")}. Nothing runs; fix the cause, or call Bash without run_in_background.`,
+    );
+  }
+  if (task.launchState === "cancel-pending") {
+    throw new ToolError(
+      `Background task ${task.id} ("${description}") was stopped while it was starting; its cancellation is in progress. Call Bash again if it is still needed.`,
+    );
+  }
+  if (task.launchState !== "acknowledged") {
+    throw new ToolError(
+      `Background task ${task.id} ("${description}") may have started, but its start was not confirmed; it will not be started again. Check TaskList before starting it again.`,
+      { kind: "unavailable" },
+    );
+  }
+  const lowered =
+    requested !== undefined && requested > maxMs
+      ? `\n[timeout ${requested} ms is over the background task maximum; it was lowered to ${maxMs} ms.]`
+      : "";
+  const shown = clip(input.command, 120);
+  return {
+    content: [
+      {
+        type: "text",
+        text: withNotices(
+          notices,
+          managedStartedText(task.id, description, task.outputPath) + lowered,
+        ),
+      },
+    ],
+    isError: false,
+    view: { kind: "command", description, exitCode: null, timedOut: false },
+    display: display(`后台运行命令：${shown}`, `Started in the background: ${shown}`),
+  };
+}
+
+/** A typed refusal: the provider or admission proved the start had no effect. */
+const isRefusal = (e: unknown): boolean =>
+  !isSandboxOperationOutcomeUnknownError(e) &&
+  (isSandboxScopeDeniedError(e) || isSandboxPermissionUnsupportedError(e));
 
 /**
  * A background command's script, started in the conversation's working root: the launch itself
