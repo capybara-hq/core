@@ -100,7 +100,8 @@ function samePlan(a: FitPlan | null | undefined, b: FitPlan | undefined): boolea
  * - `media_changed`（只在基线判定）：其余任何媒体结果与记录不同（按附件 id 比 outcome 与 etag：预算省略、
  *   图片数 / 页数上限、对象被替换后 etag 变了等）；
  * - `text_inline_threshold` (attachments-on-demand spec §5.2): a text attachment the record has as
- *   `inline` under the old 50 000-character rule; the 8 000-character rule renders it as a reference;
+ *   `inline` under the old 50 000-character rule — or as `bytes`, its text-document shape for a model
+ *   with `documents`; the 8 000-character rule renders it as a reference;
  * - `context_fit` (context compaction spec §4.9, never for a baseline): the candidate model's window
  *   makes the hard fit guard plan a different trim than the recorded `model_call.request.fit` (the
  *   recorded plan is replayed for a baseline; a candidate applies its recomputed plan).
@@ -130,8 +131,9 @@ export type DriftReason =
   | "media_changed"
   /**
    * Attachments-on-demand spec §5.2: a text attachment the log recorded as inlined under the old
-   * 50 000-character threshold is a reference now that the threshold is 8 000 (the log holds the
-   * `ref`, the inline was the request's). The rebuilt request is right; it differs from the record.
+   * 50 000-character threshold — inline, or a text document (`bytes`) for a model with `documents` —
+   * is a reference now that the threshold is 8 000 (the log holds the `ref`, the inline was the
+   * request's). The rebuilt request is right; it differs from the record.
    */
   | "text_inline_threshold"
   /**
