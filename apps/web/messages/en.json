@@ -4859,7 +4859,7 @@
         "gitRefHelp": "Optional; empty uses the remote HEAD.",
         "gitPath": "Directory",
         "gitPathHelp": "Optional; the plugin's directory in the repository (default the root).",
-        "provenance": "Built from {repository}@{commit} by {workflow}",
+        "provenance": "Attestation (not verified): built from {repository}@{commit} by {workflow}",
         "provenanceMismatch": "The repository in the provenance differs from this git marketplace's repository. Check that this is the package you expect.",
         "buildVersion": "Recorded as {version}: {pluginVersion} is already in the catalog with other content.",
         "translation": {

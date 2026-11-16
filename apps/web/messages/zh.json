@@ -4847,7 +4847,7 @@
         "gitRefHelp": "可选；留空用远端 HEAD。",
         "gitPath": "目录",
         "gitPathHelp": "可选；插件在仓库里的目录（默认根目录）。",
-        "provenance": "由 {workflow} 从 {repository}@{commit} 构建",
+        "provenance": "声明（未验证）：由 {workflow} 从 {repository}@{commit} 构建",
         "provenanceMismatch": "来源证明里的仓库与这个 git 市场的仓库不一致。请确认这是你预期的包。",
         "buildVersion": "记为 {version}：{pluginVersion} 已在平台目录中，但内容不同。",
         "translation": {
