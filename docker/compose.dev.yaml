@@ -73,14 +73,14 @@ services:
   # capybara-hq/plugins at bootstrap.json's marketplace.commit (pnpm check: bootstrap-compose-ref).
   sandbox-image:
     profiles: ["sandbox-build"]
-    build: https://github.com/capybara-hq/plugins.git#85aaf6598bee6f27ed9da9836084e2295eb29e03:plugins/sandbox-docker/image
+    build: https://github.com/capybara-hq/plugins.git#1926bf4315262a5e91f5e33bbee6192d8aa0ee5d:plugins/sandbox-docker/image
     image: capybara-sandbox:latest
     command: ["true"]
     restart: "no"
 
   sandbox-egress-image:
     profiles: ["sandbox-build"]
-    build: https://github.com/capybara-hq/plugins.git#85aaf6598bee6f27ed9da9836084e2295eb29e03:plugins/sandbox-docker/egress-proxy
+    build: https://github.com/capybara-hq/plugins.git#1926bf4315262a5e91f5e33bbee6192d8aa0ee5d:plugins/sandbox-docker/egress-proxy
     image: capybara-sandbox-egress:latest
     command: ["node", "-e", "0"]
     restart: "no"
