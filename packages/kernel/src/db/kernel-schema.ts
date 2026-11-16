@@ -1440,8 +1440,17 @@ export interface ScheduledTaskGrantsTable {
   created_at: Ts;
 }
 
+/** 0001: the per-org data key, wrapped by the master key (ctx/secrets.ts reads it untyped). */
+export interface OrgDataKeysTable {
+  org_id: string;
+  wrapped_key: Buffer;
+  master_key_id: string;
+  created_at: Ts;
+}
+
 export interface KernelDatabase {
   accounts: AccountsTable;
+  org_data_keys: OrgDataKeysTable;
   account_initial_passwords: AccountInitialPasswordsTable;
   identities: IdentitiesTable;
   local_passwords: LocalPasswordsTable;
