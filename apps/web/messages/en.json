@@ -4076,6 +4076,7 @@
         "connectorCredentialSet": "Set a connector credential",
         "connectorDeleted": "Deleted a connector",
         "connectorGuideConfirmed": "Confirmed a connector setup step",
+        "connectorGitPushPolicyChanged": "Changed a connector's git push policy",
         "connectorMemberPoliciesChanged": "Changed a connector's member policies",
         "connectorTemplateApplied": "Created a connector from a template",
         "connectorToolReviewed": "Reviewed a connector tool",

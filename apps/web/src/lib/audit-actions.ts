@@ -2,8 +2,8 @@
  * The audit actions the audit logs label (spec 2026-11-11-admin-overview-design.md §8.4): every
  * action the kernel's `audit()` call sites write, with no org (the admin console's log) or in an
  * org (the org's Audit log), mapped to its key under `admin.audit.actions` (message keys cannot hold
- * the action's dots). An unknown action is shown as written, in mono. Legacy names are mapped by
- * the kernel before they get here.
+ * the action's dots). An unknown action is shown as written, in mono. `audit-actions.test.ts`
+ * requires every action literal the kernel's sources pass to an audit writer here.
  */
 export const AUDIT_ACTION_KEYS: Readonly<Record<string, string>> = {
   "account.created": "accountCreated",
@@ -78,6 +78,7 @@ export const AUDIT_ACTION_KEYS: Readonly<Record<string, string>> = {
   "connector.credential.cleared": "connectorCredentialCleared",
   "connector.credential.set": "connectorCredentialSet",
   "connector.deleted": "connectorDeleted",
+  "connector.git_push_policy_changed": "connectorGitPushPolicyChanged",
   "connector.guide_confirmed": "connectorGuideConfirmed",
   "connector.member_policies_changed": "connectorMemberPoliciesChanged",
   "connector.template_applied": "connectorTemplateApplied",

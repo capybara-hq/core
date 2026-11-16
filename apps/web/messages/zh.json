@@ -4064,6 +4064,7 @@
         "connectorCredentialSet": "设置了连接器凭据",
         "connectorDeleted": "删除了连接器",
         "connectorGuideConfirmed": "确认了连接器配置步骤",
+        "connectorGitPushPolicyChanged": "修改了连接器的 Git 推送策略",
         "connectorMemberPoliciesChanged": "修改了连接器的成员策略",
         "connectorTemplateApplied": "从模板创建了连接器",
         "connectorToolReviewed": "审阅了连接器工具",
