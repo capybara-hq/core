@@ -107,6 +107,94 @@ thread.join()
 print("ok=%d" % ok)
 `;
 
+/** Binds and listens on each address; restricted none/allowlist must allow loopback only. */
+const BIND_PROGRAM = `
+import socket
+out = []
+for family, host in ((socket.AF_INET, "127.0.0.1"), (socket.AF_INET6, "::1"),
+                     (socket.AF_INET, "0.0.0.0"), (socket.AF_INET6, "::")):
+    s = socket.socket(family, socket.SOCK_STREAM)
+    try:
+        s.bind((host, 0))
+        s.listen(1)
+        out.append(host + "=ok")
+    except OSError:
+        out.append(host + "=denied")
+    s.close()
+print(" ".join(out))
+`;
+
+/** A Full-access UNIX service (stream, seqpacket, datagram) counting every client it sees. */
+const UNIX_SERVER = `
+import os, socket, sys, threading
+path, counter = sys.argv[1], sys.argv[2]
+lock = threading.Lock()
+count = [0]
+def seen():
+    with lock:
+        count[0] += 1
+        with open(counter + ".tmp", "w") as handle:
+            handle.write(str(count[0]))
+        os.replace(counter + ".tmp", counter)
+def serve(kind, suffix):
+    s = socket.socket(socket.AF_UNIX, kind)
+    s.bind(path + suffix)
+    if kind == socket.SOCK_DGRAM:
+        while True:
+            s.recv(100)
+            seen()
+    s.listen(16)
+    while True:
+        s.accept()[0].close()
+        seen()
+threads = [threading.Thread(target=serve, args=a, daemon=True)
+           for a in ((socket.SOCK_STREAM, ""), (socket.SOCK_SEQPACKET, ".seq"), (socket.SOCK_DGRAM, ".dgram"))]
+for thread in threads:
+    thread.start()
+with open(counter + ".tmp", "w") as handle:
+    handle.write("0")
+while not all(os.path.exists(path + suffix) for suffix in ("", ".seq", ".dgram")):
+    pass
+os.replace(counter + ".tmp", counter)
+threading.Event().wait()
+`;
+
+/** Tries every way to reach the outside UNIX service; prints ok/denied per attempt. */
+const UNIX_CLIENT = `
+import socket, sys
+path, link = sys.argv[1], sys.argv[2]
+def attempt(name, action):
+    try:
+        action()
+        return name + "=ok"
+    except OSError:
+        return name + "=denied"
+def connect(kind, target):
+    socket.socket(socket.AF_UNIX, kind).connect(target)
+def send(kind):
+    socket.socket(socket.AF_UNIX, kind).sendto(b"x", path + ".dgram")
+print(" ".join([
+    attempt("stream", lambda: connect(socket.SOCK_STREAM, path)),
+    attempt("seqpacket", lambda: connect(socket.SOCK_SEQPACKET, path + ".seq")),
+    attempt("dgram", lambda: send(socket.SOCK_DGRAM)),
+    attempt("raw", lambda: send(socket.SOCK_RAW)),
+    attempt("link", lambda: connect(socket.SOCK_STREAM, link)),
+]))
+`;
+
+/** A UNIX stream server and client inside the root talk to each other. */
+const UNIX_ROUNDTRIP = `
+import socket, sys
+server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+server.bind(sys.argv[1])
+server.listen(1)
+client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+client.connect(sys.argv[1])
+peer = server.accept()[0]
+client.sendall(b"ping")
+print("roundtrip=ok" if peer.recv(4) == b"ping" else "roundtrip=bad")
+`;
+
 /** Atomically exchanges a directory with a symlink to an outside path until a stop file exists. */
 const SWAP_PROGRAM = `
 import ctypes, os, sys
@@ -126,7 +214,9 @@ print("swaps=%d" % swaps)
  * Proves an actual provider's permission boundary on one shared device: positive controls, sibling,
  * symlink, protected-path and network denials, Full controls without restricted filters, both
  * overlap orders, component/root swaps and mutable syscall pointers during access, exact
- * cancellation and fresh narrowed scopes. A provider that reports restricted unsupported must
+ * cancellation and fresh narrowed scopes. Restricted network none/allowlist may bind and listen on
+ * loopback (127.0.0.1, ::1) only. Pathname UNIX services outside the roots stay unreachable under
+ * every network kind, environment included; metadata reads outside the roots are not covered. A provider that reports restricted unsupported must
  * refuse restricted operations (fail closed); nothing here substitutes a fixture flag for support.
  */
 export async function runSandboxPermissionConformance(
@@ -326,6 +416,71 @@ export async function runSandboxPermissionConformance(
     const after = await receipts();
     assert.equal(after[0], (base[0] ?? 0) + 3, "granted endpoint receipts");
     assert.deepEqual(after.slice(1), base.slice(1), "ungranted endpoints must see no connection");
+
+    // Restricted network none/allowlist may listen on loopback only.
+    for (const network of [{ kind: "none" } as const, allowlisted]) {
+      const binds = await exec(restricted(network), `python3 -c ${quote(BIND_PROGRAM)}`);
+      assert.equal(
+        binds.stdout.trim(),
+        "127.0.0.1=ok ::1=ok 0.0.0.0=denied ::=denied",
+        `restricted ${network.kind} binds loopback only: ${binds.stderr}`,
+      );
+    }
+
+    // Pathname UNIX sockets: a service outside the roots is unreachable under every network kind
+    // (including environment, which lifts only the network filter); one inside the root works.
+    if (support.fullAccess) {
+      const server = new AbortController();
+      const outside = exec(
+        full,
+        `python3 -c ${quote(UNIX_SERVER)} ${quote(at(sibling, "srv.sock"))} ${quote(at(sibling, "srv.count"))}`,
+        server.signal,
+      );
+      await waitFor(at(sibling, "srv.count"));
+      await fixture.seed([
+        { path: at(root, "srv-link.sock"), kind: "symlink", target: at(sibling, "srv.sock") },
+      ]);
+      for (const network of [
+        { kind: "none" } as const,
+        allowlisted,
+        { kind: "environment" } as const,
+      ]) {
+        const probe = await exec(
+          restricted(network),
+          `python3 -c ${quote(UNIX_CLIENT)} ${quote(at(sibling, "srv.sock"))} srv-link.sock`,
+        );
+        assert.equal(
+          probe.stdout.trim(),
+          "stream=denied seqpacket=denied dgram=denied raw=denied link=denied",
+          `restricted ${network.kind} must not reach a UNIX service outside the roots: ${probe.stderr}`,
+        );
+        const inside = await exec(
+          restricted(network),
+          `python3 -c ${quote(UNIX_ROUNDTRIP)} ${quote(at(root, `own-${network.kind}.sock`))}`,
+        );
+        assert.equal(inside.stdout.trim(), "roundtrip=ok", `in-root UNIX socket: ${inside.stderr}`);
+      }
+      assert.equal(
+        text(await fixture.inspect.readFile(at(sibling, "srv.count"))),
+        "0",
+        "the outside UNIX service must see no client",
+      );
+      // The same client under Full access reaches the service five times: the probe is real.
+      const control = await exec(
+        full,
+        `python3 -c ${quote(UNIX_CLIENT)} ${quote(at(sibling, "srv.sock"))} srv-link.sock`,
+      );
+      assert.equal(
+        control.stdout.trim(),
+        "stream=ok seqpacket=ok dgram=ok raw=ok link=ok",
+        `Full UNIX control: ${control.stderr}`,
+      );
+      while (text(await fixture.inspect.readFile(at(sibling, "srv.count"))) !== "5") {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      server.abort();
+      await outside;
+    }
 
     // Full access controls on the same device: no restricted filters apply.
     if (support.fullAccess) {

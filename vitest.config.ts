@@ -31,8 +31,12 @@ const containerTests = JSON.parse(
   readFileSync(new URL("./packages/kernel/test/container-tests.json", import.meta.url), "utf8"),
 ) as string[];
 // Testing-package container tests: real hardened Docker containers (each file skips cleanly
-// without Docker). Checked-in list, like the kernel's; the project bounds their timeouts.
-const testingContainerTests = ["packages/testing/test/sandbox-linux-runtime.test.ts"];
+// without Docker). Checked-in list, like the kernel's (check:test-portfolio enforces it).
+const testingContainerTests = (
+  JSON.parse(
+    readFileSync(new URL("./packages/testing/test/container-tests.json", import.meta.url), "utf8"),
+  ) as string[]
+).map((p) => `packages/testing/test/${p}`);
 
 export default defineConfig({
   resolve: { conditions },

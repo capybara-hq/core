@@ -68,9 +68,13 @@ describe.skipIf(unavailable !== null)(
         `mkdir -p ${root} ${readOnly} ${sibling} && printf ${SECRET} > ${sibling}/secret && ` +
           `printf ro > ${readOnly}/file && printf in > ${root}/inroot.txt`,
       );
-      agent = new Agent(device);
+      // The candidate flag lets a reviewed but not yet validated architecture table run here so the
+      // evidence can be collected; the default probe keeps reporting it unavailable.
+      agent = new Agent(device, { candidateArch: true });
       await agent.ready;
-      supported = (await support(agent)).restricted !== null;
+      const report = await support(agent);
+      supported = report.restricted !== null;
+      console.info(`[linux-runtime] candidate probe: ${JSON.stringify(report)}`);
     });
     afterAll(() => {
       agent?.close();
@@ -92,17 +96,27 @@ describe.skipIf(unavailable !== null)(
     });
 
     it("reports restricted support only on a validated architecture with Landlock ABI 6+", async () => {
-      const report = (await agent.request({ op: "probe" })).result as {
-        restricted: object | null;
-        arch: string;
-        landlockAbi?: number;
-        reason?: string;
-      };
-      if (report.arch === "aarch64" && supported) {
-        expect(report.landlockAbi).toBeGreaterThanOrEqual(6);
-      } else {
-        expect(report.restricted).toBeNull();
-        expect(report.reason).toBeTruthy();
+      const plain = new Agent(device);
+      await plain.ready;
+      try {
+        const report = (await plain.request({ op: "probe" })).result as {
+          restricted: object | null;
+          arch: string;
+          validated?: boolean;
+          landlockAbi?: number;
+          reason?: string;
+        };
+        console.info(`[linux-runtime] default probe: ${JSON.stringify(report)}`);
+        if (report.arch === "aarch64" && supported) {
+          expect(report.landlockAbi).toBeGreaterThanOrEqual(6);
+          expect(report.validated).toBe(true);
+        } else {
+          expect(report.restricted).toBeNull();
+          expect(report.reason).toBeTruthy();
+          if (report.arch === "x86_64" && supported) expect(report.reason).toMatch(/not validated/);
+        }
+      } finally {
+        plain.close();
       }
     });
 
@@ -170,6 +184,18 @@ describe.skipIf(unavailable !== null)(
         expect(device.run(`ls ${root}`)).not.toMatch(/\bran\b/);
       });
 
+      it("closes every inherited descriptor above stdio, however high", async (context) => {
+        if (!supported) context.skip();
+        const result = await run(
+          restricted(),
+          "python3 -c 'import os; print(os.read(1500, 100), \"LEAKED\")'; ls /proc/self/fd",
+          {
+            attack: { kind: "leak-fd", target: `${sibling}/secret` },
+          },
+        );
+        expect(decode(result.stdout)).not.toMatch(/LEAKED|linux-sibling-secret|1500/);
+      });
+
       it("keeps the supervisor and other processes outside the restricted domain", async (context) => {
         if (!supported) context.skip();
         const result = await run(
@@ -229,6 +255,17 @@ attempt("setsid", os.setsid)
 attempt("unix-listen", lambda: (lambda s: (s.bind("u.sock"), s.listen(1)))(socket.socket(socket.AF_UNIX)))
 attempt("tcp-listen", lambda: (lambda s: (s.bind(("127.0.0.1", 0)), s.listen(1)))(socket.socket()))
 attempt("socketpair", socket.socketpair)
+attempt("unix-raw", lambda: socket.socket(socket.AF_UNIX, socket.SOCK_RAW))
+attempt("unix-dgram-cloexec", lambda: socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM | socket.SOCK_CLOEXEC))
+attempt("unix-seqpacket", lambda: socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET))
+attempt("bind-any", lambda: socket.socket().bind(("0.0.0.0", 0)))
+attempt("bind6-any", lambda: socket.socket(socket.AF_INET6).bind(("::", 0)))
+attempt("abstract-bind", lambda: socket.socket(socket.AF_UNIX).bind("\0capybara-abstract-bind"))
+keyctl = 219 if os.uname().machine == "aarch64" else 250
+attempt("keyctl", lambda: raw(keyctl, 0, -3, 0))
+attempt("unshare-user", lambda: os.unshare(0x10000000))
+attempt("unshare-net", lambda: os.unshare(0x40000000))
+attempt("clone3", lambda: raw(435, 0, 0))
 `;
         const result = await run(
           restricted({ kind: "none" }, [readOnly]),
@@ -271,6 +308,16 @@ attempt("socketpair", socket.socketpair)
           "unix-listen": "ALLOWED",
           "tcp-listen": "ALLOWED",
           socketpair: "ALLOWED",
+          "unix-raw": "EACCES",
+          "unix-dgram-cloexec": "EACCES",
+          "unix-seqpacket": "ALLOWED",
+          "bind-any": "EACCES",
+          "bind6-any": "EACCES",
+          "abstract-bind": "EACCES",
+          keyctl: "EPERM",
+          "unshare-user": "EPERM",
+          "unshare-net": "EPERM",
+          clone3: "ENOSYS",
         });
         expect(device.run(`stat -c %a ${readOnly}/file ${sibling}/secret`)).toBe("644\n644\n");
         expect(device.run(`cat ${readOnly}/file ${sibling}/secret`)).toBe(`ro${SECRET}`);
@@ -306,6 +353,29 @@ attempt("socketpair", socket.socketpair)
         expect(device.run(`stat -c %a ${sibling}/secret`).trim()).toBe("644");
       });
 
+      it("losing the supervisor (SIGKILL) ends every owned restricted descendant", async (context) => {
+        if (!supported) context.skip();
+        device.run(`rm -f ${root}/lost-*`);
+        const started = agent.start({
+          op: "exec",
+          mode: "exec",
+          grant: restricted(),
+          command:
+            "(sleep 2001 & echo $! > lost-a); (sleep 2002 & echo $! > lost-b); printf r > lost-ready; sleep 2003",
+          cwd: root,
+          timeoutMs: 120_000,
+        });
+        await agent.waitFor(`${root}/lost-ready`);
+        const pids = ["lost-a", "lost-b"].map((name) => Number(device.run(`cat ${root}/${name}`)));
+        expect((await agent.request({ op: "inspect", what: "alive", pids })).result).toEqual(pids);
+        await agent.request({ op: "kill-supervisor", target: started.id });
+        // The request completes (no orphan holds its pipes) and nothing owned survives.
+        const done = await started.done;
+        expect(execResult(done, true).exitCode).toBeNull();
+        expect((await agent.request({ op: "inspect", what: "alive", pids })).result).toEqual([]);
+        expect(device.run("pgrep -f 'sleep 200[123]' || true").trim()).toBe("");
+      });
+
       it("passes the full permission conformance", async (context) => {
         if (!supported) context.skip();
         const fixture = await dockerPermissionFixture(device, agent, async () => {});
@@ -315,17 +385,22 @@ attempt("socketpair", socket.socketpair)
 
     describe("fails closed", () => {
       for (const outer of ["landlock", "listener"] as const) {
-        it(`reports restricted unavailable and refuses launch without the ${outer} primitive`, async () => {
-          const limited = new Agent(device, { outer });
+        it(`reports restricted unavailable and refuses launch without the ${outer} primitive`, async (context) => {
+          if (!supported) context.skip();
+          const limited = new Agent(device, { outer, candidateArch: true });
           await limited.ready;
           try {
             const report = await support(limited);
             expect(report.restricted).toBeNull();
-            expect(report.unavailableReason).toBeTruthy();
+            expect(report.unavailableReason).toMatch(
+              outer === "landlock" ? /Landlock ABI 0 / : /required primitive failed/,
+            );
             const refused = await run(restricted(), "printf ran > fail-closed", {}, limited);
-            expect(refused.events).toEqual([
+            // Refused before any launch: no launch or exit event, only (possibly) the session.
+            expect(refused.events?.at(-1)).toEqual(
               expect.objectContaining({ event: "refused", code: "UNAVAILABLE" }),
-            ]);
+            );
+            expect(refused.events?.map((event) => event.event)).not.toContain("launch");
             expect(device.run(`ls ${root}`)).not.toMatch(/fail-closed/);
             const fixture = await dockerPermissionFixture(device, limited, async () => {});
             await runSandboxPermissionConformance(fixture);
@@ -345,7 +420,7 @@ attempt("socketpair", socket.socketpair)
           "    syscall(NR_LANDLOCK_RESTRICT, ruleset, 0)\n",
           "",
         );
-        const mutant = new Agent(device, { runtime });
+        const mutant = new Agent(device, { runtime, candidateArch: true });
         await mutant.ready;
         try {
           await run(restricted(), `printf pwn > ${sibling}/mutant-landlock`, {}, mutant);
@@ -364,7 +439,7 @@ attempt("socketpair", socket.socketpair)
           `                info = os.fstat(fd)\n                where = os.readlink("/proc/self/fd/%d" % fd)\n`,
           `                fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)\n                info = os.fstat(fd)\n                where = path\n                entry = dict(entry, dev=info.st_dev, ino=info.st_ino)\n`,
         );
-        const mutant = new Agent(device, { runtime });
+        const mutant = new Agent(device, { runtime, candidateArch: true });
         await mutant.ready;
         const moved = `${root}.moved`;
         try {
@@ -383,15 +458,40 @@ attempt("socketpair", socket.socketpair)
         }
       });
 
+      it("closing only descriptors below 1024 leaks a high inherited descriptor", async (context) => {
+        if (!supported) context.skip();
+        const runtime = stageMutant(
+          device,
+          "low-close",
+          "            close_except(keep)\n",
+          "            for fd in range(3, 1024):\n                if fd not in keep:\n                    try:\n                        os.close(fd)\n                    except OSError:\n                        pass\n",
+        );
+        const mutant = new Agent(device, { runtime, candidateArch: true });
+        await mutant.ready;
+        try {
+          const result = await run(
+            restricted(),
+            "python3 -c 'import os; print(os.read(1500, 100), \"LEAKED\")'",
+            {
+              attack: { kind: "leak-fd", target: `${sibling}/secret` },
+            },
+            mutant,
+          );
+          expect(decode(result.stdout)).toContain("LEAKED");
+        } finally {
+          mutant.close();
+        }
+      });
+
       it("a broker that re-reads the pointer lets the race escape", async (context) => {
         if (!supported) context.skip();
         const runtime = stageMutant(
           device,
           "double-fetch",
-          "        copied = ctypes.create_string_buffer(raw, size)\n",
-          "        copied = ctypes.create_string_buffer(self.read(mem, args[1], size), size)\n",
+          "object.\n        copied = ctypes.create_string_buffer(raw, size)\n",
+          "object.\n        copied = ctypes.create_string_buffer(self.read(mem, args[1], size), size)\n",
         );
-        const mutant = new Agent(device, { runtime });
+        const mutant = new Agent(device, { runtime, candidateArch: true });
         await mutant.ready;
         try {
           device.run(

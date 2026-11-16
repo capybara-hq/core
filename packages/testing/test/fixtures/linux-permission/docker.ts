@@ -209,7 +209,7 @@ export class Agent {
 
   constructor(
     device: DeviceContainer,
-    options: { outer?: "landlock" | "listener"; runtime?: string } = {},
+    options: { outer?: "landlock" | "listener"; runtime?: string; candidateArch?: boolean } = {},
   ) {
     const program = ["/usr/bin/python3", "-I", `${options.runtime ?? RUNTIME_DIR}/agent.py`];
     const command = options.outer
@@ -226,6 +226,7 @@ export class Agent {
       device.name,
       ...command,
       JSON.stringify(endpoints),
+      JSON.stringify({ candidateArch: options.candidateArch === true }),
     ]);
     let markReady: () => void = () => {};
     this.ready = new Promise((resolve) => {
@@ -260,6 +261,13 @@ export class Agent {
     });
     this.child.stdin.write(`${JSON.stringify({ ...body, id })}\n`);
     return { id, done };
+  }
+
+  /** Waits until a trusted inspection sees the file (a readiness barrier, no fixed sleep). */
+  async waitFor(path: string): Promise<void> {
+    while ((await this.request({ op: "inspect", what: "read", path })).result === null) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
   }
 
   close(): void {

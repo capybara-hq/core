@@ -15,6 +15,7 @@ NATIVE = os.path.join(RUNTIME, "native-files.py")
 ENV = {"PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8"}
 lock = threading.Lock()
 running = {}
+OPTIONS = {}
 
 
 def send(message):
@@ -134,9 +135,17 @@ def launch(request, endpoints):
         os.symlink(attack["target"], attack["root"])
     elif attack and attack["kind"] == "wrong-identity":
         write[0] = dict(write[0], ino=write[0]["ino"] + 1)
+    leaked = []
+    if attack and attack["kind"] == "leak-fd":
+        # Evidence only: a careless consumer leaves a high inheritable descriptor open.
+        opened = os.open(attack["target"], os.O_RDONLY)
+        os.dup2(opened, 1500, inheritable=True)
+        os.close(opened)
+        leaked.append(1500)
     report_r, report_w = os.pipe()
     env.setdefault("HOME", files["writeRoots"][0])
     body = {"mode": request["mode"], "roots": {"read": read, "write": write},
+            "candidateArch": OPTIONS.get("candidateArch", False),
             "network": network(grant["network"], endpoints), "reportFd": report_w,
             "env": env, "cwd": request.get("cwd")}
     if request["mode"] == "exec":
@@ -147,10 +156,12 @@ def launch(request, endpoints):
     try:
         process = subprocess.Popen([sys.executable, "-I", LAUNCHER], stdin=subprocess.PIPE,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                   pass_fds=[report_w] + [e["fd"] for e in read + write],
+                                   pass_fds=[report_w] + leaked + [e["fd"] for e in read + write],
                                    env=ENV)
     finally:
         os.close(report_w)
+        for fd in leaked:
+            os.close(fd)
         for entry in read + write:
             os.close(entry["fd"])
     process.stdin.write(json.dumps(body).encode())
@@ -170,8 +181,16 @@ def handle(request, endpoints):
             send({"id": ident, "result": inspect(request)})
             return
         if request["op"] == "probe":
-            done = subprocess.run([sys.executable, "-I", LAUNCHER, "probe"], capture_output=True)
+            args = ["probe", "--candidate-arch"] if OPTIONS.get("candidateArch") else ["probe"]
+            done = subprocess.run([sys.executable, "-I", LAUNCHER, *args], capture_output=True)
             send({"id": ident, "result": json.loads(done.stdout)})
+            return
+        if request["op"] == "kill-supervisor":
+            # Evidence only: the supervisor is lost (as by the OOM killer), not asked to stop.
+            target = running.get(request["target"])
+            if target is not None and target[1]:
+                target[0].kill()
+            send({"id": ident, "result": True})
             return
         if request["op"] == "cancel":
             target = running.get(request["target"])
@@ -195,8 +214,6 @@ def handle(request, endpoints):
         running[ident] = (process, restricted)
         threads, out = collect(process, request.get("maxOutputBytes", 65536))
         code = process.wait()
-        for thread in threads:
-            thread.join()
         running.pop(ident, None)
         events = []
         if report_r is not None:
@@ -208,6 +225,15 @@ def handle(request, endpoints):
                 data += chunk
             os.close(report_r)
             events = [json.loads(line) for line in data.decode().splitlines() if line]
+            session = next((e for e in events if e.get("event") == "session"), None)
+            if session is not None:
+                # Consumer-side cleanup: whatever happened to the supervisor, end its closed
+                # session (exact SID plus leader start time) so nothing owned outlives it and no
+                # orphan keeps the output pipes open.
+                subprocess.run([sys.executable, "-I", LAUNCHER, "reap"],
+                               input=json.dumps(session).encode(), capture_output=True)
+        for thread in threads:
+            thread.join()
         message = {"id": ident, "code": code, "events": events, "extra": extra,
                    "stdout": base64.b64encode(out["stdout"]).decode(),
                    "stderr": base64.b64encode(out["stderr"]).decode()}
@@ -223,6 +249,7 @@ def handle(request, endpoints):
 
 def main():
     endpoints = json.loads(sys.argv[1]) if len(sys.argv) > 1 else {}
+    OPTIONS.update(json.loads(sys.argv[2]) if len(sys.argv) > 2 else {})
     send({"ready": True})
     for line in sys.stdin:
         request = json.loads(line)
