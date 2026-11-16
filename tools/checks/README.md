@@ -7,6 +7,23 @@ or by diff on pull requests ([tools/ci/README.md](../ci/README.md)); on `main` e
 The plugin-scoped checks are `packages/plugin-tools`' (`capybara-plugin check`), run here on core's
 scope (`src/cli/dirs.ts`).
 
+## Registry: adding a check
+
+Every `check:*` script has one entry in [`src/registry.ts`](src/registry.ts) (`name`, `cli`, `ciMode`
+`"full"` or `"diff"`, `reason`, `description`, `inAll`, and `plugin` for a plugin-tools check).
+`pnpm check` (`src/cli/all.ts`) iterates it: an entry with `inAll` and no `plugin` also needs a runner
+in `src/cli/runners.ts`, keyed by its name. To add a check: write `src/<name>.ts` and its red fixture
+test, `src/cli/<cli>.ts` (`report(...)`), the `check:<name>` script in the root `package.json`, one
+registry entry, one runner (if it runs in `pnpm check`) and one README entry below that contains
+`` `check:<name>` ``. `test/registry.test.ts` fails when the registry, the scripts, the CLI files, the
+README and the runners disagree. `ciMode` `"full"` runs on every PR, `"diff"` only inspects the diff
+against `--base` in its own PR-only CI step; both run in full on `main`. State the mode and the
+reason in the PR description of a new check (this README entry too).
+
+- `check:config-docs` (full: cheap, part of `pnpm check`): `docs/config.md` must equal what `pnpm gen:config-docs` renders from the kernel config schema (`config-docs-stale`).
+- `check:package-schemas` (full: cheap, part of `pnpm check`): the published JSON Schemas must equal what `pnpm gen:package-schemas` renders from the package schemas.
+- `check:plugin-pack` (full: cheap, part of `pnpm check`; the `Plugin pack` check of `packages/plugin-tools`, `capybara-plugin check`, on core's scope): every plugin and fake extension packs into a valid tgz with its manifest and client files.
+- `check:tool-design` (full: cheap, part of `pnpm check`; the `Tool design` check of `packages/plugin-tools`, on the builtin tools and every extension): tool keys, English descriptions and actionable errors follow the tool design rules.
 - `check:synced-skills` (full: cheap, part of `pnpm check`): the synced skills under `.agents/skills/` must match the versions and hashes recorded from `capybara-hq/.github`.
 - `check:skills-frontmatter` (full: cheap, part of `pnpm check`; reads the small `SKILL.md` files): the frontmatter (`name`, `description`) of every skill under `.agents/skills/` decides when a skill loads, so it must contain no CJK characters, must be valid YAML (quote a value that contains `: `; strict loaders skip the skill otherwise) and its `description` must be at most 1024 characters (the Agent Skills limit; rule `skills-frontmatter-length`); a `SKILL.md` without frontmatter is also reported. Frontmatter also passes the SDK runtime parser (`skills-frontmatter-invalid`), catching XML-shaped description placeholders and any other metadata that would make a project skill disappear at runtime. The body is not checked for language or markup.
 - `check:tokens` (full: cheap, part of `pnpm check`; reads one JSON and three generated files): `packages/design/src/styles/tokens.css`, `packages/design/src/tokens.ts` and the SDK file `packages/plugin-sdk/src/theme-tokens.generated.ts` must equal what `pnpm gen:tokens` renders from `docs/design/tokens.json` (`tokens-stale`); the JSON must be well-formed (`tokens-invalid`); every pair in `contrast` must meet its floor in both themes (`tokens-contrast`; an rgba value is composited over `bg`, or over the surface a pair names as its fourth element); and every `separation` entry `[ground, surface, minDeltaL]` must, composited over its surface, differ from it by at least `minDeltaL` in OKLab lightness ×100 in both themes (`tokens-separation`), with `selected` further from a surface than `hover` on the same surface (`tokens-separation-order`).
