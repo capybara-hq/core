@@ -168,9 +168,9 @@ export interface SeededQueued {
 }
 
 /**
- * Puts a leftover item into the conversation queue through the service. `POST …/queue` no longer
- * queues (it is an interjection), so tests of the leftover routes and of the dispatcher seed rows
- * this way. Answers as the old route did: 201 / 200, or the error's status and envelope.
+ * Puts a leftover item into the conversation queue through the service: no route queues any more,
+ * so tests of the leftover routes and of the dispatcher seed rows this way. Answers 201 / 200, or
+ * the error's status and envelope.
  */
 export async function seedQueued(
   app: { get<T>(token: abstract new (...args: never[]) => T): T },

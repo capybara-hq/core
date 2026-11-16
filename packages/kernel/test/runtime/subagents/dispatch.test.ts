@@ -620,15 +620,10 @@ describe("dispatch", () => {
     expect(post.statusCode, post.body).toBe(409);
     expect((post.json() as { error: { code: string } }).error.code).toBe("conversation.read_only");
     expect(ofType(await eventsOf(db, child), "user_message")).toHaveLength(1);
-    // UI refresh B's writes refuse a child too: rename, queue, a model switch with a message
+    // UI refresh B's writes refuse a child too: rename, a model switch with a message
     const base = `/api/v1/orgs/${orgId}/conversations/${child}`;
     const writes = [
       await owner({ method: "PATCH", url: base, payload: { title: "Renamed" } }),
-      await owner({
-        method: "POST",
-        url: `${base}/queue`,
-        payload: { text: "later", clientMessageId: randomUUID() },
-      }),
       await owner({
         method: "POST",
         url: `${base}/messages`,

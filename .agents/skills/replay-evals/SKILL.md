@@ -92,8 +92,7 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
 
 - There is no message queue for new input: a message sent during a run is logged at once as an
   ordinary `user_message` and absorbed by the run's next step (or starts the next run).
-  `POST …/queue` is a deprecated alias of `…/messages` answering `{ event }`: it logs an ordinary
-  `user_message` at once and stores nothing. `capybara.conversation_queue` only holds leftover rows
+  `capybara.conversation_queue` only holds leftover rows
   queued by older versions, not in the log (the model has not seen them); each enters the log only
   when sent, as an ordinary `user_message` (author, text, the `@` resource blocks read at queue time,
   file refs), written by `RunQueue.ensureRun` (the dispatcher drains them one per run after each run,
@@ -102,8 +101,8 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   `…/resume`) stay until the contract step drops the table. Replay therefore needs nothing: the log
   holds exactly what the model saw, and an edit to a leftover's text never touches it.
 
-- Run input and live drafts (run input spec 2026-11-07): `POST …/queue` is now an alias of `…/messages`
-  and queues nothing new. A message sent during a run is an ordinary logged `user_message` that a
+- Run input and live drafts (run input spec 2026-11-07): nothing new is queued (`POST …/queue` is
+  gone; send with `…/messages`). A message sent during a run is an ordinary logged `user_message` that a
   `model_call` absorbs (`absorbedUpToSeq`), so replay needs nothing. Live drafts (partial text and
   thinking of the step in progress, Redis keys `capk:run-draft:*` plus the bus) are display only:
   never in the log, never in a replay, no `DriftReason`; a resumed step resets its draft (`step_reset`).
