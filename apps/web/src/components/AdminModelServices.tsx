@@ -42,7 +42,7 @@ import { ExtensionStatusMark } from "./AdminExtensionParts";
 import { useDeploymentConfig } from "./ExtensionDeploymentConfig";
 import { FormError } from "./form-error";
 
-/** The deployment's extensions that provide models (the 模型 tab of `/admin/extensions`). */
+/** The deployment's extensions that provide models (the Models tab of `/admin/extensions`). */
 export const modelServicesOf = (extensions: readonly AdminExtension[]): AdminExtension[] =>
   inTab(extensions, "model", (p) => p.permissions);
 
@@ -52,12 +52,12 @@ const providesModels = (e: MarketplaceEntry): boolean =>
 
 /**
  * The super admin's one place to set up a model service (`/admin/models`, the setup checklist's
- * model step while the platform has none): 模型服务, one row per model service on the deployment
- * (its icon, name linking to its extension page, state) with 配置, which opens a Sheet holding the
+ * model step while the platform has none): Model services, one row per model service on the
+ * deployment (its icon, name linking to its extension page, state) with Configure, which opens a Sheet holding the
  * extension's deployment config (the one config form, `useDeploymentConfig`); then the
  * marketplaces' model service plugins not installed yet (those whose entry declares
- * `provides:model-provider`) with 安装, which stages the plugin and opens the import review, as
- * the 市场 tab does. The marketplace is read in the background: while it loads, or when it
+ * `provides:model-provider`) with Install, which stages the plugin and opens the import review,
+ * as the Marketplace tab does. The marketplace is read in the background: while it loads, or when it
  * failed, only the deployed rows show. Empty, the list says to install one from the marketplace.
  * A pointer to the whole marketplace follows the section.
  */

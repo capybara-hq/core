@@ -19,7 +19,7 @@ import {
  * create body's `git` (validated by the SDK schema, never echoing a value), a template's `git`
  * copied into `connectors.git_hosts` at install, and `useForGit` settable only on an
  * org-credential connector that declares git hosts; the org's default git push policy (the
- * route and the Platform operation) and the member's standing push decisions on their 权限 sheet.
+ * route and the Platform operation) and the member's standing push decisions on their Permissions sheet.
  */
 
 let env: OrgEnv;

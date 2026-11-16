@@ -50,17 +50,17 @@ import { useUrlParam, useUrlTab } from "../../../../lib/url-tab";
 import NotFound from "../../not-found";
 
 /**
- * `/settings/models`：模型（组织管理员，SettingsPage），two tabs in the head, kept in the address:
- * - 模型 (the bare page): the org admin's one place to set up a model service (the setup
- *   checklist's model step leads here): 模型服务, every model service the platform offers the org
- *   with 启用 and 配置 inline (`OrgModelProviders`; a warn line while the org has turned none on);
+ * `/settings/models`: Models (org admins, SettingsPage), two tabs in the head, kept in the address:
+ * - Models (the bare page): the org admin's one place to set up a model service (the setup
+ *   checklist's model step leads here): Model services, every model service the platform offers
+ *   the org with "Turn on" and Configure inline (`OrgModelProviders`; a warn line while the org has turned none on);
  *   then the org's catalog, the providers beside the open one's models (`?provider=<plugin>`, the
  *   first by default), one table per kind with the org's switches (an org admin turns off models
  *   among the ones the platform left on); under the provider's name how it is configured here
- *   with 配置, which opens the same Sheet; a provider that cannot list its models here shows its
+ *   with Configure, which opens the same Sheet; a provider that cannot list its models here shows its
  *   error in the detail. With no model service on the platform at all, the page empty state says a
  *   super admin deploys one (with the link for a super admin only);
- * - 用途默认 (`?tab=purposes`): each purpose shows the deployment default the super admins set and
+ * - Purpose defaults (`?tab=purposes`): each purpose shows the deployment default the super admins set and
  *   the org may override it (a model and its params) or restore the default; `eval` without an
  *   effective mapping says the evals cannot use a judge (the eval wizard links here).
  * From the query cache (the layout prefetched it on a first load, for either tab): the org's
@@ -107,7 +107,7 @@ type Header = {
   activeTab: ModelsTab;
 };
 
-/** The 模型服务 rows while they load: a name over its id and version. */
+/** The Model services rows while they load: a name over its id and version. */
 const LOADING_PROVIDERS = [{ lines: 2 }, { lines: 2 }];
 
 function OrgModels({
@@ -150,7 +150,7 @@ function OrgModels({
     extensions.kind !== "ready"
   ) {
     return tab === "models" ? (
-      // 模型服务's rows, then the picker's slot over the loading chat table (the provider names
+      // the Model services rows, then the picker's slot over the loading chat table (the provider names
       // come with the data)
       <SettingsPage header={header} nav={nav} activeNav="models">
         <FormSection
@@ -223,7 +223,7 @@ function ModelsBody({
   const locale = useLocale();
   const nav = useOrgSettingsNav();
   const qc = useQueryClient();
-  // The model service whose Sheet is open (from its row or from 配置 under the open provider)
+  // The model service whose Sheet is open (from its row or from Configure under the open provider)
   const [sheet, setSheet] = useState<string | null>(null);
   const disabling = useModelDisabling({
     scope: { orgId },
@@ -340,8 +340,8 @@ function ModelsBody({
 
 /**
  * The open provider of the org's catalog: its models with the org's switches, and under its name
- * how it is configured here (跟随平台 / 本组织配置, from the extension's `overrideState`) with
- * 配置, which opens the model service's Sheet on this page. A provider that cannot list its models
+ * how it is configured here ("Following the platform" / "This org's configuration", from the
+ * extension's `overrideState`) with Configure, which opens the model service's Sheet on this page. A provider that cannot list its models
  * here shows its error instead.
  */
 function OrgProvider({

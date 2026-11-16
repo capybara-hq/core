@@ -102,14 +102,18 @@ export interface BuildModelRequestInput {
   model: ModelInfo;
   step: number;
   /**
-   * loop 已吸收到的位置（R31）：the largest seq of the absorbable events (`user_message`,
-   * `background_task_finished` and `subagent_delivery`, {@link isAbsorbable}) the loop took. 提供时：
-   * - seq 大于它的可吸收事件不进请求（运行中途到达、尚未被吸收的插话或后台任务结束，由后续步骤吸收或触发下一轮）；
-   * - 每个可吸收事件放在**吸收它的那次模型调用**的位置：日志里第一个 `request.absorbedUpToSeq`
-   *   不小于它的 `model_call` 之前，
-   *   本次请求吸收的放在末尾。于是模型看到的历史只追加（插话不会插到已发送的回复之前），
-   *   且请求可由日志 + `model_call` 精确还原。
-   * 不提供时按 seq 原样回放全部可吸收事件。
+   * How far the loop has absorbed (R31): the largest seq of the absorbable events (`user_message`,
+   * `background_task_finished` and `subagent_delivery`, {@link isAbsorbable}) the loop took. When
+   * given:
+   * - absorbable events with a larger seq stay out of the request (an interjection or a finished
+   *   background task that arrived mid-run and is not absorbed yet; a later step absorbs it or it
+   *   starts the next run);
+   * - each absorbable event sits where **the model call that absorbed it** is: before the first
+   *   `model_call` in the log whose `request.absorbedUpToSeq` is not smaller than its seq, and
+   *   the ones this request absorbs go at the end. So the history the model sees is append-only
+   *   (an interjection never lands before a reply already sent) and the request can be rebuilt
+   *   exactly from the log + `model_call`.
+   * When absent, every absorbable event is replayed in seq order.
    */
   absorbedUpToSeq?: number;
   /**
@@ -827,7 +831,8 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     // its instructions and skills (or the line that it is unavailable) outlive the summary
     const project = latestProjectRoot(events, after);
     if (project) messages.push({ role: "system", content: projectRootText(project) });
-    // 被摘要覆盖的变更提醒不再发送：摘要时生效的目录与 system 里的不同 → 紧随摘要补上完整的当前目录
+    // change notices the summary covers are not sent again: when the catalog in effect at the summary
+    // differs from the one in the system, the full current catalog follows the summary
     const covered = skillSnaps.filter((e) => e.seq <= after).at(-1);
     // (phase B: plus the tool-name map when it differs from system's)
     if (covered && covered !== systemSkills) {

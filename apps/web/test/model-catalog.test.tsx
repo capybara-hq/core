@@ -317,7 +317,7 @@ describe("/settings/models: the org's catalog", () => {
       await renderRouteWithCache("/settings/models", lastStubRoutes(), { locale });
       expect(await screen.findByText(text)).toBeTruthy();
       const m = locale === "zh" ? zh : en;
-      // no way out to the 扩展 page: the config is on this page
+      // no way out to the Extensions page: the config is on this page
       expect(screen.queryByRole("link", { name: m.models.catalog.configure })).toBeNull();
       await userEvent
         .setup()

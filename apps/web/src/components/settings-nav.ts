@@ -11,7 +11,7 @@ type NavGroup = { group: string; items: { id: string; label: string; href: strin
 /**
  * The organization settings' second-level navigation (`/settings/*`): Organization [General,
  * Appearance, Members, Models, Service tokens, Audit log] and Capabilities [Sandbox, Scheduled
- * tasks] (plugins and extensions are the workspace's 插件 and 扩展 pages). Members see General,
+ * tasks] (plugins and extensions are the workspace's Plugins and Extensions pages). Members see General,
  * Appearance, Members and Sandbox (read-only); the rest is for admins; guests never open these
  * pages. This only hides items, the kernel decides. Groups without items are dropped.
  */

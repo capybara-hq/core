@@ -134,7 +134,7 @@ export interface ReconstructOptions {
   /** 附件行信息与字节（调用方按 {@link snapshotMediaRefs} 取）；缺省表示都取不到。 */
   mediaInfo?: ReadonlyMap<string, MediaInfo>;
   media?: ReadonlyMap<string, MediaBytes | null>;
-  /** 单次请求的媒体字节预算；缺省用记录的 `mediaBudgetBytes`（请求里有媒体时才有记录）。 */
+  /** The request's media byte budget; defaults to the recorded `mediaBudgetBytes` (recorded only when the request had media). */
   mediaBudgetBytes?: number;
   /** The candidate's model (a non-baseline reconstruction): checked against the run's switch. */
   modelRef?: ModelRef;

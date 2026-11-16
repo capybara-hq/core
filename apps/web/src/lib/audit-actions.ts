@@ -1,7 +1,7 @@
 /**
  * The audit actions the audit logs label (spec 2026-11-11-admin-overview-design.md §8.4): every
  * action the kernel's `audit()` call sites write, with no org (the admin console's log) or in an
- * org (the org's 审计日志), mapped to its key under `admin.audit.actions` (message keys cannot hold
+ * org (the org's Audit log), mapped to its key under `admin.audit.actions` (message keys cannot hold
  * the action's dots). An unknown action is shown as written, in mono. Legacy names are mapped by
  * the kernel before they get here.
  */

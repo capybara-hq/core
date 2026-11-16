@@ -337,7 +337,7 @@ export interface MemberGitPushGrant {
   policy: ToolPolicy;
 }
 
-/** The viewer's 权限 sheet (kernel `MemberPolicySheet`). */
+/** The viewer's Permissions sheet (kernel `MemberPolicySheet`). */
 export interface MemberPolicySheet {
   tools: MemberToolPolicy[];
   /** The org's push default and the viewer's push decisions; null without git hosts. */

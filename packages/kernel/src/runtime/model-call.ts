@@ -1599,12 +1599,15 @@ async function mergeWritten(
 }
 
 /**
- * 降级梯子：主模型 → 主模型重试一次（等 `retryAfterMs ?? 1000`，可被中止）→ `agent.fallback`（若有）。
- * 建议等待放不进运行剩余时间或超过 `MAX_RETRY_AFTER_MS`时跳过同模型重试。
- * 每次尝试解析出模型后、写 `model_call` 之前写本步的尾部提醒（均按本步幂等，只写一次）：所用模型不支持工具而本步有工具
- * → {@link TOOLS_UNSUPPORTED_REMINDER}；然后是轮次提醒或收尾提醒（收尾提醒因此位于请求末尾）。
- * 每次实际尝试写自己的 `model_call`（attempt 从 1 连续递增，跳过的不计）；重试前经 sink 发 `step_reset`。
- * 不可重试的失败或梯子用尽 → `RunError`; except that the agent's own model failing to resolve as
+ * The degradation ladder: the main model -> one retry of the main model (waiting
+ * `retryAfterMs ?? 1000`, abortable) -> `agent.fallback` (when set). The same-model retry is
+ * skipped when the suggested wait does not fit the run's remaining time or exceeds
+ * `MAX_RETRY_AFTER_MS`. After each attempt resolves its model and before it writes `model_call`,
+ * the step's trailing reminders are written (each idempotent per step, written once): the model has
+ * no tool support while the step has tools -> {@link TOOLS_UNSUPPORTED_REMINDER}; then the turn
+ * reminder or the wrap-up reminder (which therefore ends the request). Every real attempt writes
+ * its own `model_call` (attempt counts up from 1, skipped ones not counted); a retry first sends
+ * `step_reset` through the sink. A non-retryable failure or an exhausted ladder -> `RunError`; except that the agent's own model failing to resolve as
  * `agent.model_unavailable` (gone from the list, disabled since the agent was saved, its provider
  * not configured in the org: spec B §5.3) goes straight to `agent.fallback` when there is one,
  * without the same-model retry.

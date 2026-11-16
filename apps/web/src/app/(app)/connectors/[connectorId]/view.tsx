@@ -811,9 +811,9 @@ function SettingsTab({
 }
 
 /**
- * Git 推送 (sandbox git credentials spec §7): the org's default for pushes through the connector's
- * credential in sandboxes (允许 / 询问 / 禁止), read on every push. Org admins change it; others
- * read it. A member's 「一直允许」 for a repository on a personal connector applies over 询问.
+ * Git push (sandbox git credentials spec §7): the org's default for pushes through the connector's
+ * credential in sandboxes (Allow / Ask / Deny), read on every push. Org admins change it; others
+ * read it. A member's "Always allow" for a repository on a personal connector applies over Ask.
  */
 function GitPushCard({
   orgId,

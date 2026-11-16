@@ -223,7 +223,8 @@ type Target =
   | { ok: false; reason: "org_configured" | "needs_config" | "not_enabled" };
 
 /**
- * 模型供应商注册表：供应商即提供 `model-provider@2` 的插件（以插件名为供应商名）。
+ * The model provider registry: a provider is an extension that provides `model-provider@2` (the
+ * provider's name is the plugin's name).
  *
  * Org-bound (spec B §5.5, A §6): every list and call is made for an org with the provider's
  * effective config there (`EffectiveConfigs.get`), passed as `{ orgId, config }`. A provider is on
@@ -462,7 +463,7 @@ export class ProviderRegistry {
   }
 
   /**
-   * 每个已安装供应商及其状态（按插件加载顺序），for `orgId` (the providers it enabled, their enabled
+   * Every installed provider with its status (in plugin load order), for `orgId` (the providers it enabled, their enabled
    * models only), or the platform view when undefined (`/admin/models`: every model, `disabled`
    * from the platform's list only).
    * See {@link statuses} for the statuses.
@@ -486,13 +487,14 @@ export class ProviderRegistry {
   }
 
   /**
-   * 每个已安装供应商的完整列表与状态，for `orgId` or the platform: 列模型失败（含超过
-   * `models.listTimeoutMs`）的标 `error`、`models` 为空，不影响其他供应商；列模型失败的在
-   * {@link LIST_FAILURE_TTL_SECONDS} 秒内不再请求。For an org only the providers it enabled are
+   * Every installed provider's full list and status, for `orgId` or the platform: a provider whose
+   * model listing fails (including passing `models.listTimeoutMs`) gets `error` with empty
+   * `models` without affecting the others, and is not asked again for
+   * {@link LIST_FAILURE_TTL_SECONDS} seconds. For an org only the providers it enabled are
    * listed (one it did not enable is absent); one that needs configuration there gets `error`. The
    * platform view of a provider whose platform config leaves a required overridable field empty
-   * gets `org_configured`. `error` 只是内核自己的英文说明（不透出上游错误原文，原文记 warn
-   * 日志）。No disabled list applied.
+   * gets `org_configured`. `error` is only the kernel's own English message (the upstream error
+   * text is never exposed; it goes to a warn log). No disabled list applied.
    */
   private async statuses(orgId: string | undefined): Promise<ProviderStatus[]> {
     const on = orgId === undefined ? new Set<string>() : await this.enablement.enabledIn(orgId);
@@ -506,7 +508,8 @@ export class ProviderRegistry {
           return t.reason;
         }
         const failed = listFailedKey(p, t.hash);
-        // 刚失败过的供应商：短时间内直接标 error，不再等它（每个供应商另有时限）
+        // a provider that failed just now: mark it error for a while without waiting on it (each
+        // provider has its own time limit too)
         if ((await this.kv.get(failed)) !== null) {
           throw new ProviderListError(p.plugin, new Error("listModels failed recently"));
         }

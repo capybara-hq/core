@@ -48,7 +48,7 @@ const RefMediaSourceSchema = z.object({
 /**
  * Who may decide an approval, as the approval row says (display only): the assigned account
  * (`requestedFor`), else the escalation role (`approverRole`). Pages word the waiting state with it
- * ("等待 张三 批准") for viewers who cannot decide.
+ * ("Waiting for Alice to approve") for viewers who cannot decide.
  */
 const ApproverFields = {
   requestedFor: z.string().nullable(),
@@ -559,11 +559,11 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
            * the agent's model and `fallbackParams` for a fallback attempt.
            */
           params: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])),
-          /** sanitize 时丢弃的参数键（未声明或值不再合法，如插件升级后）；没有丢弃时不写。 */
+          /** Parameter keys sanitizing dropped (undeclared or no longer valid, e.g. after a plugin upgrade); absent when none were dropped. */
           droppedParams: z.array(z.string()).optional(),
           /**
-           * 发出请求时的输入 token 估算（未校正）。与随后 `usage.inputTokens` 一起供下一次
-           * `calibrate` 使用。较早的事件可能没有。
+           * The input token estimate (uncalibrated) when the request went out. With the later
+           * `usage.inputTokens` it feeds the next `calibrate`.
            */
           estimatedInputTokens: count.optional(),
           /**
@@ -573,9 +573,10 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
            */
           absorbedUpToSeq: seqNo,
           /**
-           * 本次请求带给模型的工具（按发送顺序：未启用 ToolSearch 时按 key 排序；启用时为内置工具按 key 排序，
-           * 其后是已加载工具按首次加载顺序）及其定义指纹（`ResolvedTool.specHash`）。
-           * 模型不支持工具时为空数组（见 `toolsOmitted`）。
+           * The tools the request carried, in sending order (sorted by key without ToolSearch; with
+           * it, the builtin tools sorted by key, then the loaded tools in first-load order), with
+           * their definition fingerprints (`ResolvedTool.specHash`). Empty when the model has no
+           * tool support (see `toolsOmitted`).
            */
           tools: z.array(z.object({ key: z.string(), specHash: z.string() })),
           /**
@@ -585,20 +586,24 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
            */
           toolsOmitted: z.literal(true).optional(),
           /**
-           * 启用 ToolSearch 时 system 第二块目录里的工具（按 key 排序）及定义指纹；定义同样存在
-           * `capybara.tool_specs`，目录文本可由它们还原。未启用时不写。
+           * With ToolSearch on, the tools of the catalog in the system's second block (sorted by
+           * key) with their definition fingerprints; the definitions are in `capybara.tool_specs`
+           * too, so the catalog text can be rebuilt from them. Absent without ToolSearch.
            */
           catalog: z.array(z.object({ key: z.string(), specHash: z.string() })).optional(),
           /**
-           * 本次请求的 `toolChoice`：收尾调用为 `"none"`（照常带工具，但不得调用）；普通步骤不写（由模型决定）。
-           * 定义本身按 specHash 存在 `capybara.tool_specs`。
+           * The request's `toolChoice`: `"none"` on the wrap-up call (tools carried as usual, but
+           * none may be called); absent on ordinary steps (the model decides). The definitions
+           * themselves are in `capybara.tool_specs` by specHash.
            */
           toolChoice: z.enum(["auto", "none"]).optional(),
           /**
-           * 请求里每个附件的处理结果（Ruling M8，按首次出现，同一附件一条）：发了字节（`bytes`，带 finalize 时的
-           * etag）、内联文本、模型不支持的占位、因请求媒体预算省略（`omitted`）、图片太多（`too_many_images`）、
-           * 单个超过供应商上限（`too_large`）、不再可用、PDF 页数太多、
-           * 被 `media_excluded` 排除。没有媒体时不写；有媒体时与 `mediaBudgetBytes` 一起写。
+           * What became of each attachment in the request (Ruling M8, in first-seen order, one
+           * entry per attachment): bytes sent (`bytes`, with the etag at finalize), inline text, a
+           * placeholder for an unsupported kind, left out for the request's media budget
+           * (`omitted`), too many images (`too_many_images`), one over the provider's limit
+           * (`too_large`), no longer available, too many PDF pages, or excluded by
+           * `media_excluded`. Absent without media; written together with `mediaBudgetBytes`.
            */
           media: z
             .array(
@@ -620,8 +625,9 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
             )
             .optional(),
           /**
-           * 本次请求的媒体字节预算（`attachments.requestMediaBytes`，见 planMedia）：请求里有媒体时才写（与
-           * `media` 同在），还原时用它重现同样的省略结果。
+           * The request's media byte budget (`attachments.requestMediaBytes`, see planMedia):
+           * written only when the request has media (together with `media`); reconstruction uses
+           * it to repeat the same omissions.
            */
           mediaBudgetBytes: count.optional(),
           /**

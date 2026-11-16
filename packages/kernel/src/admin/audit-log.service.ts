@@ -41,8 +41,8 @@ export interface AuditListQuery {
 const likePrefix = (prefix: string): string => `${prefix.replace(/[\\%_]/g, "\\$&")}%`;
 
 /**
- * Reads the audit log of one scope: the platform's (the admin console's 审计日志) or one org's (the
- * org settings' 审计日志, and the super admin's view of an org), newest first by id, keyset paged
+ * Reads the audit log of one scope: the platform's (the admin console's Audit log) or one org's (the
+ * org settings' Audit log, and the super admin's view of an org), newest first by id, keyset paged
  * (`audit_events_platform_idx` / `audit_events_org_id_idx`). Read-only and not audited (D5).
  */
 @Injectable()

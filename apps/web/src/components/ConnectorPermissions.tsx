@@ -32,15 +32,15 @@ import { FormError } from "./form-error";
 const POLICIES: readonly ToolPolicy[] = ["allow", "ask", "deny"];
 
 /**
- * The connector card's 权限 (maintainer decisions 2026-11-09): the viewer's own policy per tool
- * for their own connection, 允许 / 询问 / 禁止, the default marked. It applies in every agent the
- * viewer uses; an agent's tools page can override it except a 禁止; a tool the org turned off or
- * denied is locked. Picking the default clears the setting, so it follows the org's default.
- * Saved together with 保存. One row per tool (the title and its select, `ToolPolicyList` without
- * checkboxes), grouped by what the tool declares: read-only tools (default 允许) apart from the
- * ones that may write (default 询问, an undeclared tool included). On a connector that serves git
- * hosts, Git 推送 shows the org's default for pushes and the viewer's standing push decisions per
- * repository (「一直允许」 on a push ask writes one); the viewer may only clear one here.
+ * The connector card's Permissions (maintainer decisions 2026-11-09): the viewer's own policy per
+ * tool for their own connection, Allow / Ask / Deny, the default marked. It applies in every agent
+ * the viewer uses; an agent's tools page can override it except a Deny; a tool the org turned off
+ * or denied is locked. Picking the default clears the setting, so it follows the org's default.
+ * Saved together with Save. One row per tool (the title and its select, `ToolPolicyList` without
+ * checkboxes), grouped by what the tool declares: read-only tools (default Allow) apart from the
+ * ones that may write (default Ask, an undeclared tool included). On a connector that serves git
+ * hosts, Git push shows the org's default for pushes and the viewer's standing push decisions per
+ * repository ("Always allow" on a push ask writes one); the viewer may only clear one here.
  */
 export function ConnectorPermissionsSheet({
   orgId,
@@ -65,7 +65,7 @@ export function ConnectorPermissionsSheet({
   });
   const tools = read.data?.tools ?? null;
   const gitPush = read.data?.gitPush ?? null;
-  /** A push decision row: the repository, its decision, 清除 (or 撤销清除 once marked). */
+  /** A push decision row: the repository, its decision, Clear (or Keep once marked). */
   const grantRow = (g: MemberGitPushGrant) => {
     const clearing = g.name in edits;
     return {

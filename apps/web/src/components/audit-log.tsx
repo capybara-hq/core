@@ -11,9 +11,9 @@ import { useErrorMessage } from "../lib/use-error-message";
 
 /**
  * An audit table's columns, shared by the admin overview, `/admin/audit` and the org's
- * `/settings/audit` (admin overview spec §6.4): 时间, 操作者 (the name, 系统 for the kernel, with
- * 经由智能体 / 个人令牌 under it), 操作 (its label, or the raw action in mono when it has none) and
- * 对象 (mono).
+ * `/settings/audit` (admin overview spec §6.4): Time, Actor (the name, System for the kernel, with
+ * "Through an agent" / "Personal token" under it), Action (its label, or the raw action in mono
+ * when it has none) and Target (mono).
  */
 export function useAuditColumns(): Column<AuditEvent>[] {
   const t = useTranslations("admin.audit");
@@ -60,7 +60,7 @@ export function useAuditColumns(): Column<AuditEvent>[] {
 }
 
 /**
- * The rows of an audit log shown by 加载更多: the first page (from the query cache) and the later
+ * The rows of an audit log shown by Load more: the first page (from the query cache) and the later
  * pages read through the cache by cursor (`pageQuery(after)`) and appended. Later pages belong to
  * the first page they continue: a newer first page starts over.
  */

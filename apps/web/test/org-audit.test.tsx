@@ -1,4 +1,4 @@
-// `/settings/audit`: the org's audit log (org admins, SettingsPage), newest first, 加载更多 by
+// `/settings/audit`: the org's audit log (org admins, SettingsPage), newest first, Load more by
 // cursor; members get no access and read nothing; the org settings nav lists it for admins.
 import { cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -61,7 +61,7 @@ describe("/settings/audit (org admins)", () => {
     expect(within(table).getByText(A.viaAgent)).toBeTruthy();
     expect(within(table).getByText(A.system)).toBeTruthy();
     expect(browser).toEqual([]);
-    // the nav marks 审计日志
+    // the nav marks Audit log
     expect(screen.getByRole("link", { name: zh.connections.nav.audit })).toBeTruthy();
     const calls = stubApi(routes);
     await userEvent.setup().click(screen.getByRole("button", { name: zh.orgAudit.loadMore }));

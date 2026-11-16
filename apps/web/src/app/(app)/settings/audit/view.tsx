@@ -14,8 +14,8 @@ import { useWorkspace } from "../../../../lib/query/workspace";
 import NotFound from "../../not-found";
 
 /**
- * `/settings/audit`: the org's audit log (SettingsPage, group 组织; `org.update`, org admins): the
- * org's own events, newest first, in the admin console's audit table, 加载更多 by cursor. The first
+ * `/settings/audit`: the org's audit log (SettingsPage, group Organization; `org.update`, org admins): the
+ * org's own events, newest first, in the admin console's audit table, Load more by cursor. The first
  * page comes from the query cache (the layout prefetched it on a first load); later pages are read
  * through the cache and appended.
  */

@@ -101,21 +101,22 @@ const CHAT_COLUMNS = [
   "cacheWrite",
 ] as const;
 
-/** The 模型服务 rows while they load: a name over its id and version. */
+/** The Model services rows while they load: a name over its id and version. */
 const LOADING_SERVICES = [{ lines: 2 }, { lines: 2 }];
 
 /**
- * `/admin/models`：模型（超级管理员，ListPage，no inner nav：the sidebar's admin context navigates），
+ * `/admin/models`: Models (super admins, ListPage, no inner nav: the sidebar's admin context
+ * navigates),
  * two tabs in the head, kept in the address:
- * - 模型 (the bare page): the super admin's one place to set up a model service (the setup
- *   checklist's model step leads here while the platform has none): 模型服务 first
+ * - Models (the bare page): the super admin's one place to set up a model service (the setup
+ *   checklist's model step leads here while the platform has none): Model services first
  *   (`AdminModelServices`: the deployed model services with their deployment config in a Sheet,
- *   and the marketplaces' model services not installed yet with 安装); then the providers beside
+ *   and the marketplaces' model services not installed yet with Install); then the providers beside
  *   the open one's models (`?provider=<plugin>`, the first by default), one table per kind with
  *   the kind's columns (a chat model's capabilities, context and per-million-token prices, edited
  *   or cleared from the row menu; an embedding model's dimensions and input price); a provider
  *   that failed to list its models shows its error in the detail, never affecting the others;
- * - 用途默认 (`?tab=purposes`): one row per purpose (the deployment default, which each org may
+ * - Purpose defaults (`?tab=purposes`): one row per purpose (the deployment default, which each org may
  *   override in `/settings/models`), saved by the page's ActionRow.
  * From the query cache (the layout prefetched the reads on a first load, for either tab); a saved
  * price or purpose is written into the cache.
@@ -164,7 +165,7 @@ function AdminModelsRead({
   if (reads.some((r) => r.kind === "notFound")) return <NotFound />;
   for (const r of reads) if (r.kind === "error") return <ErrorFrame reset={r.retry} />;
   if (models.kind !== "ready" || purposes.kind !== "ready" || extensions.kind !== "ready") {
-    // The open tab's frame: 模型服务's rows and the providers grid (its names come with the data),
+    // The open tab's frame: the Model services rows and the providers grid (its names come with the data),
     // or the kernel's purposes as rows.
     return (
       <ListPage header={header} loading={{ keep: true }}>

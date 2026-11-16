@@ -46,9 +46,9 @@ const GIT_PUSH_PREFIX = "git_push:";
  * The tool name of a member's own policy for pushes to one repository on one host through the
  * connector (sandbox git credentials spec §7: the virtual tool `git_push`,
  * `git_push:<host>/<owner>/<repo>`, so an allow never covers another host). No
- * `connector_tools` row backs it: the 权限 sheet lists these apart from the tools
+ * `connector_tools` row backs it: the Permissions sheet lists these apart from the tools
  * ({@link ConnectorAccountPolicies.gitPush}), and the member may only clear one there;
- * 「一直允许」 on a git push ask writes it.
+ * "Always allow" on a git push ask writes it.
  */
 export const gitPushPolicyName = (host: string, repo: string) =>
   `${GIT_PUSH_PREFIX}${host.toLowerCase()}/${repo}`;
@@ -64,7 +64,7 @@ export interface MemberGitPushGrant {
 }
 
 /**
- * The git push part of the member's 权限 sheet (sandbox git credentials spec §7): the org's
+ * The git push part of the member's Permissions sheet (sandbox git credentials spec §7): the org's
  * default for pushes through the connector and the member's standing decisions per repository.
  * Null on a connector that declares no git hosts and holds no such decision.
  */
@@ -183,7 +183,7 @@ export class ConnectorAccountPolicies {
    * Sets (a policy) or clears (null) the account's policies for some of the connector's tools;
    * an unknown tool -> 404 `connector.tool_not_found`. Locked tools may hold a setting: it does not
    * apply while the lock lasts. A `git_push:*` name may only be cleared (a standing push decision
-   * is written by 「一直允许」 on a push ask; setting one here -> 400 `validation_failed`).
+   * is written by "Always allow" on a push ask; setting one here -> 400 `validation_failed`).
    * Audits `connector.member_policies_changed`.
    */
   @Transactional()

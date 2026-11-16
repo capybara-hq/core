@@ -114,7 +114,7 @@ class MemberToolPoliciesDto extends createZodDto(
 
 class GitPushPolicyDto extends createZodDto(GitPushPolicyBody, "ConnectorGitPushPolicyBody") {}
 
-/** The member's 权限 sheet: their tool policies and the git push part (null without git). */
+/** The member's Permissions sheet: their tool policies and the git push part (null without git). */
 interface MemberPolicySheet {
   tools: MemberToolPolicyView[];
   gitPush: MemberGitPushView | null;

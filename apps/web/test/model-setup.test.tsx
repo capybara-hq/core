@@ -66,7 +66,7 @@ const anthropic = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-/** An extension that provides no models: never a row of 模型服务. */
+/** An extension that provides no models: never a row of Model services. */
 const SEARCH = {
   ...anthropic(),
   plugin: "web-search-x",
@@ -155,7 +155,7 @@ describe("the opt-in provider case, end to end in the web app", () => {
     expect(screen.queryByText(zh.setupLayout.waitingDeployment)).toBeNull();
     home.unmount();
 
-    // the step page in the setup frame: the warn line and the service with 启用
+    // the step page in the setup frame: the warn line and the service with "Turn on"
     resetNavigation("/settings/models");
     renderFrame(shellOf(orgAdmin, { readiness: NOT_ENABLED }), <OrgModelsView />);
     expect(await screen.findByText(zh.models.org.providers.notEnabled)).toBeTruthy();
@@ -290,7 +290,7 @@ describe("/settings/models: 模型服务", () => {
     const services = await screen.findByRole("list", { name: en.models.org.providers.title });
     const row = within(services).getByText("Anthropic models").closest("li") as HTMLElement;
     expect(within(row).getByText(en.extensions.needsConfig)).toBeTruthy();
-    // no 启用 while it waits for config: configuring comes first
+    // no "Turn on" while it waits for config: configuring comes first
     expect(within(row).queryByRole("button", { name: /Turn on/ })).toBeNull();
     const user = userEvent.setup();
     await user.click(

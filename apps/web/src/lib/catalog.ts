@@ -915,7 +915,7 @@ export interface OrgCatalogDetail {
   agents: string[];
   /**
    * An installed `needs_config` plugin: the connector templates on in the org that miss a
-   * connector there (补充配置 creates them); empty otherwise.
+   * connector there (Complete setup creates them); empty otherwise.
    */
   missingTemplates: OrgCatalogTemplate[];
 }

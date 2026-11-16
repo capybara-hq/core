@@ -43,14 +43,18 @@ import {
 import { OrgLock, OrgLockModule } from "./org-lock.js";
 
 /**
- * 组织设置（`capybara.orgs.settings` jsonb）。读取宽松：缺失或非法的字段按默认值，未知键保留不动
- * （更新时与存量合并），新版本加字段不需要迁移。
- * - `toolSearch`：工具超过阈值时是否改用目录 + `ToolSearch`（D11，默认 on）。
- * - `locale`：组织默认语言（`zh` / `en`，默认 en），机器人在 IM 里说的固定话术按它选择。
- * - `sandboxToolPolicy`：沙箱工具的默认策略（M5 T8，默认 allow）。为 `ask` 时除只读的
- *   `Read` / `Glob` / `Grep` 外都需要审批（执行时实时读取）。An invalid stored value reads as
- *   `ask` (narrower, never wider) and is logged.
- * - `wakeOnBackgroundTask`：组织对 `runtime.wakeOnBackgroundTask` 的覆盖（缺省跟随部署），见 {@link effectiveWakeOnBackgroundTask}。
+ * Org settings (`capybara.orgs.settings` jsonb). Read leniently: a missing or invalid field reads
+ * as its default and unknown keys are kept (merged with the stored value on update), so a new
+ * field needs no migration.
+ * - `toolSearch`: whether to switch to a catalog + `ToolSearch` once the tools pass the threshold
+ *   (D11, default on).
+ * - `locale`: the org's default language (`zh` / `en`, default en); the bot's fixed phrases in IM
+ *   follow it.
+ * - `sandboxToolPolicy`: the default policy of the sandbox tools (M5 T8, default allow). With
+ *   `ask`, every tool but the read-only `Read` / `Glob` / `Grep` needs approval (read live at
+ *   execution). An invalid stored value reads as `ask` (narrower, never wider) and is logged.
+ * - `wakeOnBackgroundTask`: the org's override of `runtime.wakeOnBackgroundTask` (absent follows
+ *   the deployment), see {@link effectiveWakeOnBackgroundTask}.
  * - `autoMode`: whether devices of the org may run in auto mode (auto mode spec §4.3); absent
  *   follows the platform's `devices.autoMode`, and an invalid stored value reads as `off`
  *   (narrower, never wider). Setting `allowed` while the platform is `off` is refused.
@@ -394,7 +398,8 @@ export async function readStoredOrgSettings(db: KernelSchemaDb, orgId: string): 
 }
 
 /**
- * 读组织设置（每次实时读 PG，多副本下改动立即生效）；组织不存在或已删除按默认值。With `log`, an
+ * Reads the org settings (live from PG every time, so a change applies at once across replicas);
+ * a missing or deleted org reads as the defaults. With `log`, an
  * unreadable security setting ({@link logUnreadableSecuritySettings}) is logged.
  */
 export async function readOrgSettings(

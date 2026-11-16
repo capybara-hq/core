@@ -17,20 +17,20 @@ import { useCapabilityLabel } from "./ExtensionTabs";
 import { OrgExtensionSheet } from "./OrgExtensionSheet";
 import { useOrgExtensionActions } from "./useOrgExtensionActions";
 
-/** The org's extensions that provide models (the 模型 tab of the 扩展 page). */
+/** The org's extensions that provide models (the Models tab of the Extensions page). */
 export const modelProvidersOf = (extensions: readonly OrgExtension[]): OrgExtension[] =>
   extensions.filter((e) => capabilitiesIn(capabilityGroups(e), "model").length > 0);
 
 /**
  * The org admin's one place to set up a model service (`/settings/models`, the setup checklist's
  * model step while the org has none on): every model service the platform offers this org as a
- * row (its icon, name, state as the 扩展 page derives it) with 启用 while it is off and the org may
- * switch it on, and 配置 where it has org config or overridable platform fields, which opens the
- * extension's Sheet (the one org config form, 保存并启用 while it is off). The actions are the 扩展
- * page's ({@link useOrgExtensionActions}). While the platform has providers but none is on here
+ * row (its icon, name, state as the Extensions page derives it) with "Turn on" while it is off and
+ * the org may switch it on, and Configure where it has org config or overridable platform fields,
+ * which opens the extension's Sheet (the one org config form, "Save and enable" while it is off).
+ * The actions are the Extensions page's ({@link useOrgExtensionActions}). While the platform has providers but none is on here
  * (readiness `not_enabled`) a warn line above the section says to turn one on. Turning a service on
  * invalidates the org's readiness, models and purposes, so the setup frame, the checklist and the
- * catalog below follow. Switching a service off stays on the 扩展 page.
+ * catalog below follow. Switching a service off stays on the Extensions page.
  */
 export function OrgModelProviders({
   orgId,

@@ -450,7 +450,7 @@ describe("one box is enough (acceptance item AB)", () => {
     const list = await screen.findByRole("table", { name: en.models.providers.label });
     const grid = list.closest('[data-columns="list-detail"]') as HTMLElement;
     expect(grid.getAttribute("data-divided")).toBe("true");
-    // no form card around the grid: it sits on the page ground (模型服务 above is its own section)
+    // no form card around the grid: it sits on the page ground (Model services above is its own section)
     expect(grid.closest('[data-part="form-card"]')).toBeNull();
     // one row per provider, the first open
     const rows = within(list).getAllByRole("row").slice(1);

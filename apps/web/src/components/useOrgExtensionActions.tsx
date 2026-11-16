@@ -37,7 +37,7 @@ export interface OrgExtensionRow {
   configForm: boolean;
   /** The two-level deployment form is shown (an admin, an available extension with overridable fields). */
   overrides: boolean;
-  /** 待配置: the kernel's `needsConfig` (effective config invalid or a required field missing). */
+  /** Needs config: the kernel's `needsConfig` (effective config invalid or a required field missing). */
   needsConfig: boolean;
   problem: ToggleProblem | undefined;
   state: { label: string; tone: "ok" | "warn" | "fail" | "muted" };
@@ -57,10 +57,10 @@ const strings = (raw: unknown[], key: string): string[] => [
 
 /**
  * What an org admin does with the org's extensions, shared by every page that lists them (the
- * 扩展 page, 模型服务 on `/settings/models`): each extension's row state (unavailable with the
- * kernel's reason, a refused switch, 待配置, on / platform / off), the switch (switching a plugin
+ * Extensions page, Model services on `/settings/models`): each extension's row state (unavailable
+ * with the kernel's reason, a refused switch, Needs config, on / platform / off), the switch (switching a plugin
  * off answers its switch-off preview first, shown in {@link OrgExtensionActions.switchOffDialog} and
- * confirmed with its hash; a stale preview is read again), saving the org config, 保存并启用 (one
+ * confirmed with its hash; a stale preview is read again), saving the org config, Save and enable (one
  * PUT), the directory sync, and why a switch or a config was refused (the Sheet opens for it via
  * `onOpen`). A change also invalidates what an extension brings to the org (its readiness, UI,
  * models, purposes, the catalog's view); the cached list takes the answered extension.
@@ -236,7 +236,7 @@ export function useOrgExtensionActions({
   }
 
   /**
-   * Why a switch (or 保存并启用) was refused, shown in the extension's Sheet (opened for it): a
+   * Why a switch (or Save and enable) was refused, shown in the extension's Sheet (opened for it): a
    * refused config marks the form's fields (as when saving), the rest shows under the state.
    */
   function refused(row: OrgExtensionRow, e: unknown) {
@@ -260,7 +260,7 @@ export function useOrgExtensionActions({
         message: errorMessage(e),
         extra: issueLines(e),
         // Refused by its plugin (stopped by the platform, not offered to this org): link to
-        // the 插件 page to request it
+        // the Plugins page to request it
         catalog:
           e instanceof ApiClientError &&
           (e.code === "plugin.disabled" || e.code === "catalog.approval_required"),
@@ -292,7 +292,7 @@ export function useOrgExtensionActions({
     }
   }
 
-  /** 保存并启用: the config and the switch in one PUT (the kernel validates before installing). */
+  /** Save and enable: the config and the switch in one PUT (the kernel validates before installing). */
   async function saveAndEnable(row: OrgExtensionRow, config: Record<string, unknown>) {
     const plugin = row.ext.plugin;
     setOne<Busy>(setBusy, plugin, "saveEnable");
@@ -332,7 +332,7 @@ export function useOrgExtensionActions({
     configForm: row.configForm,
     overrides: row.overrides,
     needsConfig: row.needsConfig,
-    // The Sheet's 保存并启用 waits for no config: only the switch's owner and availability lock it
+    // The Sheet's Save and enable waits for no config: only the switch's owner and availability lock it
     locked: row.platform || row.ext.switchable === false || row.unavailable,
     problem: row.problem,
     saveError: saveErrors[row.ext.plugin],

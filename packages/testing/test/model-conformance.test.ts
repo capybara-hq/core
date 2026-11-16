@@ -157,8 +157,9 @@ describeModelProviderConformance("in-memory with parameters", async () => ({
 }));
 
 /**
- * 声明 vision / documents 的供应商：只有收到合法的样本媒体块时才答出期望的词，
- * 证明媒体用例会跑、并把样本按契约形状发给插件。
+ * A provider declaring vision / documents: it answers the expected word only when it receives
+ * valid sample media blocks, proving the media cases run and send the samples to the plugin in the
+ * contract's shape.
  */
 function makeMediaProvider(): ModelProvider {
   const base = makeProvider();
