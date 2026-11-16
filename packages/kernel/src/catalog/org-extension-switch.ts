@@ -121,6 +121,15 @@ export class OrgExtensionSwitch {
     installing: boolean,
   ): Promise<OrgExtensionPutResult | "readBack"> {
     const { orgId, actor, extension, itemId, enabled, input, confirm, actorTokenId } = a;
+    // Switching on inside the transaction relies on the live install seen before it: one removed
+    // meanwhile would run the install saga here, which commits on its own. Refuse instead; the
+    // retry takes the install path.
+    if (!installing && enabled === true && !(await this.catalog.hasLiveInstall(orgId, itemId))) {
+      throw new ApiError(
+        "conflict",
+        "The plugin's install in this organization changed while it was being switched on; try again",
+      );
+    }
     const r = await this.catalog
       .setSwitch(
         orgId,

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { connectorToolKey } from "@capybara-hq/plugin-sdk";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { OrgCatalogService } from "../../src/catalog/org-catalog.service.js";
 import { InstallFailure, PluginInstaller, planActions } from "../../src/catalog/plugin-install.js";
 import { ApiError } from "../../src/errors.js";
 import { runOutsideTransaction } from "../../src/infra/database/transaction-host.js";
@@ -223,6 +224,37 @@ describe("org plugin install", () => {
     expect(await auditActions(env)).toContain("plugin.org_install_failed");
     const ok = await install(env.boss, env, appId, pluginBody());
     expect(ok.statusCode, ok.body).toBe(201);
+  });
+
+  it("switching on finds the live install gone inside its transaction: a retryable conflict, no install saga there", async () => {
+    const { itemId } = await installConnectorPlugin();
+    // the extension comes from this one plugin: switching it is the plugin's switch
+    await env.db
+      .insertInto("extension_catalog_sources")
+      .values({ plugin: "fake-connector", item_id: itemId })
+      .onConflict((oc) => oc.doNothing())
+      .execute();
+    const catalog = env.k.app.get(OrgCatalogService);
+    const installer = env.k.app.get(PluginInstaller);
+    // the install was live when the switch planned, gone once its transaction looks again
+    const live = vi
+      .spyOn(catalog, "hasLiveInstall")
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
+    const saga = vi.spyOn(installer, "install");
+    try {
+      const r = await env.boss({
+        method: "PUT",
+        url: `/api/v1/orgs/${env.orgId}/extensions/fake-connector`,
+        payload: { enabled: true },
+      });
+      expect(r.statusCode, r.body).toBe(409);
+      expect(r.json().error.code).toBe("conflict");
+      expect(saga).not.toHaveBeenCalled();
+    } finally {
+      live.mockRestore();
+      saga.mockRestore();
+    }
   });
 
   it("members cannot install a plugin; uninstalling a missing install is 404", async () => {
