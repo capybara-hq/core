@@ -98,7 +98,6 @@
     "packages/kernel/test/runtime/usage-report-outbox.test.ts": "double boot: three kernels with different extension sets (no subscriber, subscriber, bare) are the subject",
     "packages/kernel/test/runtime/usage-report.dual.test.ts": "small app file with a double boot: two replicas with the hooks-probe fixture's per-replica delivery accounting",
     "packages/kernel/test/runtime/usage-report.test.ts": "fixed sleeps: nothing-happened windows (no hook_denied event, exactly N delivery calls, a disabled plugin receives nothing)",
-    "packages/kernel/test/runtime/waits-dual.test.ts": "small app file: booting and stopping two replicas inside each test is the subject; there is no single boot to share",
     "packages/kernel/test/runtime/waits.test.ts": "fixed sleeps: 3.5 s must exceed maxRunSeconds 3 (time assertion) and five windows assert no new run, one run only, or no effect of a late decision",
     "packages/kernel/test/sandbox/concurrent.dual.test.ts": "setTimeout wait: a 2 s wait after a replica crash is a real-time lease-expiry assertion (the crashed holder's TTL is 1.5 s)",
     "packages/kernel/test/sandbox/concurrent.test.ts": "setTimeout wait: a 200 ms slow read widens the read-modify-write window that the path lease must cover",
