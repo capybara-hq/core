@@ -115,8 +115,22 @@ export type PermissionChoiceInput = {
   deviceLabel: string;
   /** A new conversation's choice governs its first operation; an existing one's new operations. */
   context: "new" | "existing";
-  /** The starting choice (an existing conversation's recorded profile). */
+  /**
+   * The starting choice (an existing conversation's recorded profile). A recorded Full access is
+   * the current state only: it carries no consent, so it yields no selection until the person
+   * chooses again (Full only through the dialog).
+   */
   initial?: PermissionProfile;
+  /**
+   * The scope facts the choice is about, when the caller already holds them (an existing
+   * conversation's authoritative view): no preview is read then.
+   */
+  preview?: { data: PermissionPreview | undefined; failed: boolean };
+  /**
+   * An existing conversation's edit: each new choice (Full only after its confirmation) goes here
+   * instead of into local state; the shown value stays `initial` until the authoritative read.
+   */
+  onChange?(selection: PermissionSelection): void;
 };
 
 /**
@@ -129,7 +143,11 @@ export type PermissionChoiceInput = {
 export function usePermissionChoice(input: PermissionChoiceInput): {
   picker: PickerProps;
   dialog: ReactNode;
-  selection: PermissionSelection;
+  /**
+   * What a send carries; null for a recorded Full access nobody consented to here (the current
+   * state, unchanged): a Full selection is never synthesized without consent.
+   */
+  selection: PermissionSelection | null;
   /**
    * Drops a Full access consent back to Approve for me (the kernel refused the displayed scope);
    * any other choice stays. Consent is only ever given again through the dialog.
@@ -141,11 +159,12 @@ export function usePermissionChoice(input: PermissionChoiceInput): {
   const session = useSession();
   const { orgId, deviceId, project } = input;
   const previewQ = permissionPreviewQuery(orgId, deviceId ?? "", project);
-  const preview = useQuery({
+  const read = useQuery({
     ...previewQ,
-    enabled: deviceId !== undefined,
+    enabled: deviceId !== undefined && input.preview === undefined,
     retryOnMount: retryOnMountOf(previewQ.queryKey),
   });
+  const preview = input.preview ?? { data: read.data, failed: read.isError };
   const shown = deviceId !== undefined ? preview.data : undefined;
   const [choice, setChoice] = useState<Choice>({
     profile: input.initial ?? DEFAULT_PERMISSION_PROFILE,
@@ -172,13 +191,22 @@ export function usePermissionChoice(input: PermissionChoiceInput): {
   const [asking, setAsking] = useState<PermissionPreview | null>(null);
   const reasons = unavailableReasons(deviceId, {
     data: shown,
-    failed: deviceId !== undefined && preview.isError,
+    failed: deviceId !== undefined && preview.failed,
   });
+  const choose = (next: Choice) => {
+    if (input.onChange === undefined) return setChoice(next);
+    input.onChange(
+      next.consent !== undefined
+        ? { profile: next.profile, consentScopeRevision: next.consent.scopeRevision }
+        : { profile: next.profile },
+    );
+  };
   const pick = (id: string) => {
     const profile = PERMISSION_PROFILES.find((p) => p === id);
-    if (profile === undefined || reasons[profile] !== undefined) return;
-    if (profile !== "full-access") setChoice({ profile });
-    else if (shown !== undefined && choice.profile !== "full-access") setAsking(shown);
+    if (profile === undefined || reasons[profile] !== undefined || profile === choice.profile)
+      return;
+    if (profile !== "full-access") choose({ profile });
+    else if (shown !== undefined) setAsking(shown);
   };
   const confirm = () => {
     const p = asking;
@@ -191,7 +219,7 @@ export function usePermissionChoice(input: PermissionChoiceInput): {
       shown?.scopeRevision !== p.scopeRevision
     )
       return;
-    setChoice({
+    choose({
       profile: "full-access",
       consent: { deviceId: p.deviceId, project: p.project, scopeRevision: p.scopeRevision },
     });
@@ -263,10 +291,12 @@ export function usePermissionChoice(input: PermissionChoiceInput): {
         </Stack>
       </Dialog>
     );
-  const selection: PermissionSelection =
-    choice.profile === "full-access" && choice.consent !== undefined
-      ? { profile: "full-access", consentScopeRevision: choice.consent.scopeRevision }
-      : { profile: choice.profile };
+  const selection: PermissionSelection | null =
+    choice.profile !== "full-access"
+      ? { profile: choice.profile }
+      : choice.consent !== undefined
+        ? { profile: "full-access", consentScopeRevision: choice.consent.scopeRevision }
+        : null;
   const clearFullAccess = () =>
     setChoice((cur) =>
       cur.profile === "full-access" ? { profile: DEFAULT_PERMISSION_PROFILE } : cur,

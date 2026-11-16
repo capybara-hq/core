@@ -275,6 +275,9 @@ export function useNewConversationPage(
   const send = async (m: ComposerMessage): Promise<SendResult> => {
     if (!agent) return { ok: false, error: new Error("no agent") };
     if (inFlight.current) return { ok: false, error: new Error("a first message is on its way") };
+    // never reached here (no recorded profile is passed): a Full choice without consent never sends
+    if (permission.selection === null)
+      return { ok: false, error: new Error("Full access needs its confirmation") };
     const request: FirstMessageRequest = {
       agentId: agent.id,
       message: {
@@ -300,15 +303,16 @@ export function useNewConversationPage(
   };
 
   /** The composer's current choices, to tell an attempt whose choices have since changed. */
-  const currentControls = agent
-    ? firstMessageControls(orgId, {
-        agentId: agent.id,
-        message: { text: "", ...selection.pending },
-        permission: permission.selection,
-        ...(device.deviceId !== undefined ? { deviceId: device.deviceId } : {}),
-        ...(device.project !== undefined ? { project: device.project } : {}),
-      })
-    : undefined;
+  const currentControls =
+    agent && permission.selection !== null
+      ? firstMessageControls(orgId, {
+          agentId: agent.id,
+          message: { text: "", ...selection.pending },
+          permission: permission.selection,
+          ...(device.deviceId !== undefined ? { deviceId: device.deviceId } : {}),
+          ...(device.project !== undefined ? { project: device.project } : {}),
+        })
+      : undefined;
   /** A recovery line names its attempt: the start of its text, its profile and its device. */
   const summaryOf = (a: FirstMessageAttempt) => {
     const text = a.message.text.trim();

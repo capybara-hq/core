@@ -74,7 +74,7 @@ function Harness({ deviceId, project, deviceLabel = "Laptop", initial }: Where) 
         }}
         send={{ mode: "send", onClick: () => {} }}
       />
-      <output data-testid="selection">{JSON.stringify(choice.selection)}</output>
+      <output data-testid="selection">{JSON.stringify(choice.selection ?? null)}</output>
       {choice.dialog}
     </>
   );
@@ -404,6 +404,27 @@ describe("a starting choice that arrives after mount (review M2)", () => {
     await user.click(within(menu).getByRole("menuitemradio", { name: "Approve for me" }));
     rerender({ initial: "request-approval" });
     expect(selection()).toEqual({ profile: "approve-for-me" });
+  });
+});
+
+describe("a recorded Full access is the current state, never a new consent (10C review Minor 1)", () => {
+  it("shows Full checked but yields no selection; choosing Full again needs the dialog", async () => {
+    const user = userEvent.setup();
+    mount({ deviceId: "d1", initial: "full-access" });
+    expect(permissionButton().getAttribute("aria-label")).toBe("Permissions: Full access");
+    // no consent was given here: nothing could send or PATCH Full access
+    expect(screen.getByTestId("selection").textContent).toBe("null");
+    let menu = await openMenu(user);
+    await user.click(within(menu).getByRole("menuitemradio", { name: "Approve for me" }));
+    expect(selection()).toEqual({ profile: "approve-for-me" });
+    await waitFor(async () => {
+      menu = await openMenu(user);
+      expect(full(menu).getAttribute("aria-disabled")).toBeNull();
+      await user.click(full(menu));
+    });
+    const dialog = screen.getByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Use Full access" }));
+    expect(selection()).toEqual({ profile: "full-access", consentScopeRevision: "scope-1" });
   });
 });
 
