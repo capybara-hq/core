@@ -112,7 +112,7 @@ print(json.dumps(cases))
     expect(decisions).toEqual({
       darwin: "Restricted Linux execution requires Linux",
       riscv: "No syscall inventory exists for riscv64",
-      "x86-default": "The syscall inventory is not validated on x86_64",
+      "x86-default": null,
       "x86-candidate": null,
       "riscv-candidate": "No syscall inventory exists for riscv64",
       abi5: "Landlock ABI 5 is below the required 6",
@@ -123,14 +123,8 @@ print(json.dumps(cases))
         arch: "aarch64",
         reason: "The probe failed: RuntimeError",
       },
-      // A candidate probe on an unvalidated architecture never reports restricted support.
-      "x86-candidate-probe": {
-        restricted: null,
-        arch: "x86_64",
-        validated: false,
-        reason: "The syscall inventory is not validated on x86_64",
-        candidate: { restricted: { filesystem: true }, arch: "stub" },
-      },
+      // x86_64 is validated, so a candidate probe there returns the plain result.
+      "x86-candidate-probe": { restricted: { filesystem: true }, arch: "stub" },
       "aarch64-candidate-probe": { restricted: { filesystem: true }, arch: "stub" },
     });
   });

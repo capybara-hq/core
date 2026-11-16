@@ -147,13 +147,12 @@ describe.skipIf(unavailable !== null)(
           reason?: string;
         };
         console.info(`[linux-runtime] default probe: ${JSON.stringify(report)}`);
-        if (report.arch === "aarch64" && supported) {
+        if ((report.arch === "aarch64" || report.arch === "x86_64") && supported) {
           expect(report.landlockAbi).toBeGreaterThanOrEqual(6);
           expect(report.validated).toBe(true);
         } else {
           expect(report.restricted).toBeNull();
           expect(report.reason).toBeTruthy();
-          if (report.arch === "x86_64" && supported) expect(report.reason).toMatch(/not validated/);
         }
       } finally {
         plain.close();

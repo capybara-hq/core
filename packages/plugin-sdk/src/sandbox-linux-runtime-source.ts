@@ -53,7 +53,11 @@ import time
 # only; production consumers never set it.
 
 LANDLOCK_ABI_REQUIRED = 6
-VALIDATED_ARCHES = ("aarch64",)
+# aarch64: Docker 29.9.3 on Linux 7.0.14-linuxkit (Landlock ABI 8), reviewed conformance runs.
+# x86_64: GitHub Actions run 43906202355 on Linux 7.0.0-1019-azure, LSM list with landlock,
+#   Docker builtin seccomp, image capybara-sandbox@sha256:0473fbbc... amd64: 19 passed, 1 guard
+#   skipped, with CAPYBARA_TEST_REQUIRE_LINUX_RESTRICTED=1 (no mechanism test skipped).
+VALIDATED_ARCHES = ("aarch64", "x86_64")
 # Every syscall above this number (newer than the reviewed inventory) fails with ENOSYS.
 MAX_KNOWN_SYSCALL = 469
 
