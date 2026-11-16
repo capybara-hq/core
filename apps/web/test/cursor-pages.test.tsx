@@ -38,7 +38,7 @@ describe("useCursorPages", () => {
     const first: Page = { items: ["a"], next: "c1" };
     const { result, rerender } = renderHook(
       ({ page }: { page: Page | undefined }) => useCursorPages(page, pageQuery, select),
-      { wrapper, initialProps: { page: first } },
+      { wrapper, initialProps: { page: first as Page | undefined } },
     );
     expect(result.current.rows).toEqual(["a"]);
     act(() => result.current.loadMore());
