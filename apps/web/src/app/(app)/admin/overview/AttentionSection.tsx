@@ -309,22 +309,27 @@ function OutboxDeadList({
   const errorMessage = useErrorMessage();
   const toast = useToast();
   const [discarding, setDiscarding] = useState<OutboxDeadRow | null>(null);
-  // Later pages belong to the first page they continue: a changed first page (retry and discard
-  // refetch it) starts over
+  // Later pages belong to the first page they continue: a changed first page starts over, and a
+  // retry or discard drops them (the handled row may sit on one; the first page is read again)
   const pages = useCursorPages(dead.data, adminOutboxDeadQuery, outboxSlice);
   const d = keys.deployment();
   const invalidates = () => [d.adminOverview(), d.platformAuditAll()];
   const retry = useAppMutation({
     fn: (id: string) => retryOutboxDead(id),
     invalidates,
-    onSuccess: (r) =>
-      toast.success(t(r.outcome === "retried" ? "outbox.retried" : "outbox.alreadyOwed")),
+    onSuccess: (r) => {
+      pages.reset();
+      toast.success(t(r.outcome === "retried" ? "outbox.retried" : "outbox.alreadyOwed"));
+    },
     onError: (e) => toast.error(errorMessage(e)),
   });
   const discard = useAppMutation({
     fn: (id: string) => discardOutboxDead(id),
     invalidates,
-    onSuccess: () => toast.success(t("outbox.discarded")),
+    onSuccess: () => {
+      pages.reset();
+      toast.success(t("outbox.discarded"));
+    },
     onError: (e) => toast.error(errorMessage(e)),
   });
   const busy = retry.isPending || discard.isPending;

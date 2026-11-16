@@ -19,7 +19,8 @@ export interface CursorSlice<R> {
  * belong to the first page they continue: a first page with another identity (a refetch that
  * changed it; the query cache keeps the identity of an unchanged answer) starts over. A failed
  * Load more leaves the rows as they are and gives `error` (the localized message), shown by
- * {@link LoadMore} until the next try.
+ * {@link LoadMore} until the next try. `reset()` drops the later pages (a list whose rows a
+ * mutation changed: an unchanged first page keeps its identity, so it would not start over).
  */
 export function useCursorPages<P, R>(
   first: P | undefined,
@@ -31,6 +32,7 @@ export function useCursorPages<P, R>(
   loadingMore: boolean;
   error: string | null;
   loadMore: () => void;
+  reset: () => void;
 } {
   const qc = useQueryClient();
   const errorMessage = useErrorMessage();
@@ -40,10 +42,12 @@ export function useCursorPages<P, R>(
     error: null,
   });
   const [loadingMore, setLoadingMore] = useState(false);
+  const reset = () => setMore({ source: first, pages: [], error: null });
   const current = more.source === first;
   const pages = current ? more.pages : [];
   const error = current ? more.error : null;
-  if (first === undefined) return { rows: [], next: null, loadingMore, error, loadMore: () => {} };
+  if (first === undefined)
+    return { rows: [], next: null, loadingMore, error, loadMore: () => {}, reset };
   const slices = [first, ...pages].map(select);
   const rows = slices.flatMap((s) => [...s.rows]);
   const next = (slices.at(-1) as CursorSlice<R>).next;
@@ -56,7 +60,7 @@ export function useCursorPages<P, R>(
       .catch((e: unknown) => setMore({ source: first, pages, error: errorMessage(e) }))
       .finally(() => setLoadingMore(false));
   };
-  return { rows, next, loadingMore, error, loadMore };
+  return { rows, next, loadingMore, error, loadMore, reset };
 }
 
 /** The Load more row of a {@link useCursorPages} list: nothing on the last page. */
