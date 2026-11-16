@@ -20,7 +20,8 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   compatibility of any kind before the first release, including replay of release-candidate logs). There are no recorded
   fixtures and no frozen copies of old model-visible texts: a text change simply renders the new text for every log. The
   event schema requires what the runtime always records on a `model_call` (`tools`, `params`, `absorbedUpToSeq`,
-  `maxOutputTokens`, and `media` with `mediaBudgetBytes` when the request has media), so readers never guess a missing one.
+  `maxOutputTokens`, and `media` with `mediaBudgetBytes` when the request has media), so readers never guess a missing one;
+  migration 0143 filled rows logged before a field existed with the values the old readers assumed.
 - **Run the zero-drift tests before and after changing request building**: `packages/kernel/test/evals/reconstruct.test.ts`
   ("baseline zero drift": multi-step tools, `ToolSearch` loading, approval resume, skill catalog snapshot, reminders, mid-run
   messages, compaction, images / placeholders, and so on; it reconstructs from logs produced by real runs on the current code and
