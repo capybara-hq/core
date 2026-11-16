@@ -1,4 +1,9 @@
+import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import type { OperationContext } from "../../src/platform/operation.js";
+import { PlatformOperations } from "../../src/platform/registry.js";
+import { gitPushPolicyName } from "../../src/tools/connector-account-policies.js";
+import { decideGitPush } from "../../src/tools/git-push-policy.js";
 import {
   install,
   MCP_TOKEN,
@@ -12,7 +17,8 @@ import {
  * The kernel side of a connector's git source (sandbox git credentials spec §6.1, §6.2): the
  * create body's `git` (validated by the SDK schema, never echoing a value), a template's `git`
  * copied into `connectors.git_hosts` at install, and `useForGit` settable only on an
- * org-credential connector that declares git hosts.
+ * org-credential connector that declares git hosts; the org's default git push policy (the
+ * route and the Platform operation) and the member's standing push decisions on their 权限 sheet.
  */
 
 let env: OrgEnv;
@@ -173,5 +179,166 @@ describe("template install", () => {
       .where("catalog_item_id", "=", plain)
       .execute();
     expect(p?.git_hosts).toBeNull();
+  });
+});
+
+describe("git push policy (the org default and the member's standing decisions)", () => {
+  const push = (connectorId: string, policy: string, req = env.boss) =>
+    req({
+      method: "PUT",
+      url: `/api/v1/orgs/${env.orgId}/connectors/${connectorId}/git-push-policy`,
+      payload: { policy },
+    });
+  const decide = (connectorId: string, accountId: string) =>
+    decideGitPush(
+      env.db,
+      { get: () => ({}) as never },
+      {
+        orgId: env.orgId,
+        accountId,
+        runId: randomUUID(),
+        connectorId,
+        host: "github.com",
+        repo: "acme/app",
+        unattended: null,
+      },
+    );
+
+  it("an org admin sets the default; decideGitPush reads it; audited; members and no-git refused", async () => {
+    const id = (await create(createBody({ git: GIT }))).json().connector.id as string;
+    expect((await decide(id, env.bossId)).decision).toBe("ask");
+    const r = await push(id, "allow");
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json().connector.gitPushPolicy).toBe("allow");
+    expect(await decide(id, env.bossId)).toMatchObject({ decision: "allow", reason: "org_allow" });
+    const r2 = await push(id, "deny");
+    expect(r2.statusCode, r2.body).toBe(200);
+    expect(await decide(id, env.bossId)).toMatchObject({ decision: "deny", reason: "org_deny" });
+    const audits = await env.db
+      .selectFrom("audit_events")
+      .select("detail")
+      .where("action", "=", "connector.git_push_policy_changed")
+      .where("target", "=", id)
+      .orderBy("at")
+      .execute();
+    expect(audits.map((a) => a.detail)).toEqual([
+      { from: "ask", to: "allow" },
+      { from: "allow", to: "deny" },
+    ]);
+    // every reader sees it on the connector
+    const got = await env.mem({
+      method: "GET",
+      url: `/api/v1/orgs/${env.orgId}/connectors/${id}`,
+    });
+    expect(got.json().connector.gitPushPolicy).toBe("deny");
+    // members cannot change it; a connector without git hosts has none
+    expect((await push(id, "allow", env.mem)).statusCode).toBe(403);
+    const noGit = (await create(createBody())).json().connector.id as string;
+    const r3 = await push(noGit, "allow");
+    expect(r3.statusCode).toBe(400);
+    expect(r3.json().error.details[0].path).toBe("policy");
+    expect((await push(id, "always")).statusCode).toBe(400);
+  });
+
+  it("the Platform operation only tightens; loosening is refused before the card", async () => {
+    const ops = env.k.app.get(PlatformOperations);
+    const op = ops.get("connectors.set-git-push-policy");
+    if (op === null) throw new Error("no operation");
+    const id = (await create(createBody({ git: GIT }))).json().connector.id as string;
+    const ctx: OperationContext = {
+      orgId: env.orgId,
+      actorAccountId: env.bossId,
+      agentId: randomUUID(),
+      conversationId: randomUUID(),
+      runId: randomUUID(),
+      signal: new AbortController().signal,
+    };
+    const input = (policy: string) => op.input.parse({ connectorId: id, policy });
+    expect(await op.precheck?.(input("allow"), ctx)).toMatchObject({
+      ok: false,
+      code: "connector.git_push_widen_not_allowed",
+    });
+    await expect(op.run(input("allow"), ctx)).rejects.toMatchObject({
+      code: "connector.git_push_widen_not_allowed",
+    });
+    expect(await op.precheck?.(input("deny"), ctx)).toEqual({ ok: true });
+    expect(await op.summary?.(input("deny"), ctx)).toMatchObject({
+      en: expect.stringContaining("to deny"),
+    });
+    const out = (await op.run(input("deny"), ctx)) as { connector: { gitPushPolicy: string } };
+    expect(out.connector.gitPushPolicy).toBe("deny");
+    const [row] = await env.db
+      .selectFrom("audit_events")
+      .select("detail")
+      .where("action", "=", "connector.git_push_policy_changed")
+      .where("target", "=", id)
+      .execute();
+    expect(row?.detail).toMatchObject({
+      from: "ask",
+      to: "deny",
+      via: "agent",
+      operation: "connectors.set-git-push-policy",
+    });
+  });
+
+  it("a member's 权限 sheet lists their standing push decisions; they may clear, never set one", async () => {
+    const id = (
+      await create(createBody({ auth: { type: "bearer", ownership: "personal" }, git: GIT }))
+    ).json().connector.id as string;
+    const name = gitPushPolicyName("github.com", "acme/app");
+    await env.db
+      .insertInto("connector_tool_account_policies")
+      .values([
+        {
+          org_id: env.orgId,
+          connector_id: id,
+          account_id: env.memId,
+          tool_name: name,
+          policy: "allow",
+        },
+        // another member's decision never shows
+        {
+          org_id: env.orgId,
+          connector_id: id,
+          account_id: env.bossId,
+          tool_name: name,
+          policy: "allow",
+        },
+      ])
+      .execute();
+    expect(await decide(id, env.memId)).toMatchObject({
+      decision: "allow",
+      reason: "member_allow",
+    });
+    const url = `/api/v1/orgs/${env.orgId}/connectors/${id}/tool-policies/me`;
+    const sheet = await env.mem({ method: "GET", url });
+    expect(sheet.statusCode, sheet.body).toBe(200);
+    expect(sheet.json().gitPush).toEqual({
+      orgDefault: "ask",
+      grants: [{ name, host: "github.com", repo: "acme/app", policy: "allow" }],
+    });
+    // the tools list stays the connector's tools
+    expect(
+      (sheet.json().tools as { name: string }[]).some((t) => t.name.startsWith("git_push:")),
+    ).toBe(false);
+    const set = await env.mem({ method: "PUT", url, payload: { tools: { [name]: "deny" } } });
+    expect(set.statusCode).toBe(400);
+    expect(set.json().error.details[0].path).toBe(`tools.${name}`);
+    const cleared = await env.mem({ method: "PUT", url, payload: { tools: { [name]: null } } });
+    expect(cleared.statusCode, cleared.body).toBe(200);
+    expect(cleared.json().gitPush).toEqual({ orgDefault: "ask", grants: [] });
+    expect(await decide(id, env.memId)).toMatchObject({ decision: "ask" });
+    // the boss's own decision is untouched
+    expect(await decide(id, env.bossId)).toMatchObject({ decision: "allow" });
+
+    // a personal connector without git hosts has no push part
+    const plain = (
+      await create(createBody({ auth: { type: "bearer", ownership: "personal" } }))
+    ).json().connector.id as string;
+    const none = await env.mem({
+      method: "GET",
+      url: `/api/v1/orgs/${env.orgId}/connectors/${plain}/tool-policies/me`,
+    });
+    expect(none.json().gitPush).toBeNull();
   });
 });

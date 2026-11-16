@@ -118,6 +118,10 @@ export interface ConnectorSummary {
    * ack): the version acked and the current one (the notice and 「我已更新应用」); null otherwise.
    */
   guideDrift?: { from: string; to: string } | null;
+  /** The git hosts its credential serves in sandboxes; null when it declares none. */
+  git?: { hosts: { host: string; username: string }[] } | null;
+  /** The org's default for git pushes through its credential (the virtual tool `git_push`). */
+  gitPushPolicy?: ToolPolicy;
   createdAt: string;
   updatedAt: string;
 }
@@ -324,9 +328,25 @@ export interface MemberToolPolicy {
   locked: "disabled" | "org_deny" | null;
 }
 
+/** One standing push decision of the viewer for one repository (kernel `MemberGitPushGrant`). */
+export interface MemberGitPushGrant {
+  /** `git_push:<host>/<owner>/<repo>`: the key that clears it. */
+  name: string;
+  host: string;
+  repo: string;
+  policy: ToolPolicy;
+}
+
+/** The viewer's 权限 sheet (kernel `MemberPolicySheet`). */
+export interface MemberPolicySheet {
+  tools: MemberToolPolicy[];
+  /** The org's push default and the viewer's push decisions; null without git hosts. */
+  gitPush: { orgDefault: ToolPolicy; grants: MemberGitPushGrant[] } | null;
+}
+
 /** The viewer's own tool policies for their connection of a personal connector. */
 export const getMyToolPolicies = (orgId: string, connectorId: string) =>
-  apiFetch<{ tools: MemberToolPolicy[] }>(`${one(orgId, connectorId)}/tool-policies/me`);
+  apiFetch<MemberPolicySheet>(`${one(orgId, connectorId)}/tool-policies/me`);
 
 /** Sets (or, with null, clears) the viewer's own policies for some tools; answers the sheet. */
 export const setMyToolPolicies = (
@@ -334,9 +354,16 @@ export const setMyToolPolicies = (
   connectorId: string,
   tools: Record<string, ToolPolicy | null>,
 ) =>
-  apiFetch<{ tools: MemberToolPolicy[] }>(`${one(orgId, connectorId)}/tool-policies/me`, {
+  apiFetch<MemberPolicySheet>(`${one(orgId, connectorId)}/tool-policies/me`, {
     method: "PUT",
     body: JSON.stringify({ tools }),
+  });
+
+/** Sets the org's default git push policy of a connector that declares git hosts (org admins). */
+export const setGitPushPolicy = (orgId: string, connectorId: string, policy: ToolPolicy) =>
+  apiFetch<{ connector: ConnectorDetail }>(`${one(orgId, connectorId)}/git-push-policy`, {
+    method: "PUT",
+    body: JSON.stringify({ policy }),
   });
 
 /** 发起 OAuth 连接：返回授权服务器的授权地址（随后整页跳转过去）；`returnTo` 为授权结束后回到的站内路径。 */

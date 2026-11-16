@@ -17,6 +17,13 @@ export const ConnectorGuideAckSchema = z
 /** `:connectorId` as the routes take it (`@Param`). */
 export const ConnectorPathParams = z.object({ connectorId: z.string().min(1) });
 
+/**
+ * `PUT …/connectors/:connectorId/git-push-policy`: the org's default for pushes through the
+ * connector's credential in sandboxes (the virtual tool `git_push`, sandbox git credentials
+ * spec §7).
+ */
+export const GitPushPolicyBody = z.object({ policy: z.enum(["allow", "ask", "deny"]) }).strict();
+
 export const CONNECTOR_ROUTES: readonly RouteSchemas[] = [
   { route: "GET /api/v1/orgs/:orgId/connectors" },
   { route: "GET /api/v1/orgs/:orgId/connectors/:connectorId", params: ConnectorPathParams },
@@ -25,16 +32,22 @@ export const CONNECTOR_ROUTES: readonly RouteSchemas[] = [
     route: "POST /api/v1/orgs/:orgId/connectors/:connectorId/refresh",
     params: ConnectorPathParams,
   },
+  {
+    route: "PUT /api/v1/orgs/:orgId/connectors/:connectorId/git-push-policy",
+    params: ConnectorPathParams,
+    body: GitPushPolicyBody,
+  },
 ];
 
 /**
  * `PUT …/connectors/:connectorId/tool-policies/me`: the caller's own policy per tool name (null
- * clears it; decision 2026-11-09).
+ * clears it; decision 2026-11-09). A key may also be a standing push decision
+ * `git_push:<host>/<owner>/<repo>` (only cleared), hence the longer bound.
  */
 export const MemberToolPoliciesBody = z
   .object({
     tools: z
-      .record(z.string().min(1).max(200), z.enum(["allow", "ask", "deny"]).nullable())
+      .record(z.string().min(1).max(500), z.enum(["allow", "ask", "deny"]).nullable())
       .refine((v) => Object.keys(v).length <= 1000, { message: "Too many tools" }),
   })
   .strict();

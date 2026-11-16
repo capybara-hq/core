@@ -301,6 +301,11 @@ export const ERROR_CODES = {
   "connector.resources_disabled": 409,
   /** Per-member tool policies on a connector with one org credential (decision 2026-11-09). */
   "connector.not_personal": 409,
+  /**
+   * Loosening a connector's default git push policy through the Platform tool or an API token:
+   * only a person in a session widens it.
+   */
+  "connector.git_push_widen_not_allowed": 400,
   "approval.not_found": 404,
   "approval.already_decided": 409,
   "approval.scope_not_allowed": 409,

@@ -39,15 +39,40 @@ export const personalAuth = (auth: unknown): boolean => {
   return a !== null && a.type !== "none" && (a as { ownership?: unknown }).ownership === "personal";
 };
 
+/** The prefix of {@link gitPushPolicyName}. */
+const GIT_PUSH_PREFIX = "git_push:";
+
 /**
  * The tool name of a member's own policy for pushes to one repository on one host through the
  * connector (sandbox git credentials spec §7: the virtual tool `git_push`,
  * `git_push:<host>/<owner>/<repo>`, so an allow never covers another host). No
- * `connector_tools` row backs it, so the 权限 sheet ({@link ConnectorAccountPolicies.read}) does
- * not list it; 「一直允许」 on a git push ask writes it.
+ * `connector_tools` row backs it: the 权限 sheet lists these apart from the tools
+ * ({@link ConnectorAccountPolicies.gitPush}), and the member may only clear one there;
+ * 「一直允许」 on a git push ask writes it.
  */
 export const gitPushPolicyName = (host: string, repo: string) =>
-  `git_push:${host.toLowerCase()}/${repo}`;
+  `${GIT_PUSH_PREFIX}${host.toLowerCase()}/${repo}`;
+
+/** One standing push decision of the member for one repository (a `git_push:*` row). */
+export interface MemberGitPushGrant {
+  /** The row's tool name, `git_push:<host>/<owner>/<repo>`: the key that clears it. */
+  name: string;
+  host: string;
+  /** `<owner>/<repo>`. */
+  repo: string;
+  policy: ToolPolicy;
+}
+
+/**
+ * The git push part of the member's 权限 sheet (sandbox git credentials spec §7): the org's
+ * default for pushes through the connector and the member's standing decisions per repository.
+ * Null on a connector that declares no git hosts and holds no such decision.
+ */
+export interface MemberGitPushView {
+  /** `connectors.git_push_policy`: what applies to a repository without a decision. */
+  orgDefault: ToolPolicy;
+  grants: MemberGitPushGrant[];
+}
 
 const notPersonal = () =>
   new ApiError(
@@ -121,9 +146,45 @@ export class ConnectorAccountPolicies {
   }
 
   /**
+   * The account's standing git push decisions on the connector and the org's default; not
+   * personal -> 409 `connector.not_personal`.
+   */
+  async gitPush(
+    orgId: string,
+    connectorId: string,
+    accountId: string,
+  ): Promise<MemberGitPushView | null> {
+    const c = await this.connector(orgId, connectorId);
+    const rows = await this.db
+      .selectFrom("connector_tool_account_policies")
+      .select(["tool_name", "policy"])
+      .where("connector_id", "=", connectorId)
+      .where("account_id", "=", accountId)
+      .where(sql<boolean>`starts_with(tool_name, ${GIT_PUSH_PREFIX})`)
+      .orderBy("tool_name")
+      .execute();
+    if (!c.git && rows.length === 0) return null;
+    return {
+      orgDefault: c.gitPushPolicy,
+      grants: rows.map((r) => {
+        const target = r.tool_name.slice(GIT_PUSH_PREFIX.length);
+        const slash = target.indexOf("/");
+        return {
+          name: r.tool_name,
+          host: target.slice(0, slash),
+          repo: target.slice(slash + 1),
+          policy: r.policy,
+        };
+      }),
+    };
+  }
+
+  /**
    * Sets (a policy) or clears (null) the account's policies for some of the connector's tools;
    * an unknown tool -> 404 `connector.tool_not_found`. Locked tools may hold a setting: it does not
-   * apply while the lock lasts. Audits `connector.member_policies_changed`.
+   * apply while the lock lasts. A `git_push:*` name may only be cleared (a standing push decision
+   * is written by 「一直允许」 on a push ask; setting one here -> 400 `validation_failed`).
+   * Audits `connector.member_policies_changed`.
    */
   @Transactional()
   async set(
@@ -135,8 +196,23 @@ export class ConnectorAccountPolicies {
   ): Promise<void> {
     await this.orgLock.lockAndAuthorize(orgId, accountId, "connectors.use");
     await this.connector(orgId, connectorId);
+    const pushSet = Object.keys(changes).filter(
+      (n) => n.startsWith(GIT_PUSH_PREFIX) && changes[n] !== null,
+    );
+    if (pushSet.length > 0) {
+      throw new ApiError(
+        "validation_failed",
+        "Request validation failed",
+        pushSet.map((n) => ({
+          path: `tools.${n}`,
+          message:
+            "A standing push decision can only be cleared here; 「一直允许」 on a push ask sets one",
+        })),
+      );
+    }
     const names = Object.keys(changes);
     if (names.length === 0) return;
+    // a push decision has no connector_tools row: clearing one (or none) is always known
     const known = new Set(
       (
         await this.db
@@ -147,7 +223,7 @@ export class ConnectorAccountPolicies {
           .execute()
       ).map((r) => r.name),
     );
-    const unknown = names.find((n) => !known.has(n));
+    const unknown = names.find((n) => !known.has(n) && !n.startsWith(GIT_PUSH_PREFIX));
     if (unknown !== undefined) {
       throw new ApiError("connector.tool_not_found", `No tool ${unknown} in this connector`);
     }
@@ -195,16 +271,23 @@ export class ConnectorAccountPolicies {
   }
 
   /** The org's live personal-credential connector, else 404 / 409. */
-  private async connector(orgId: string, connectorId: string): Promise<{ slug: string }> {
+  private async connector(
+    orgId: string,
+    connectorId: string,
+  ): Promise<{ slug: string; git: boolean; gitPushPolicy: ToolPolicy }> {
     const c = await this.db
       .selectFrom("connectors")
-      .select(["slug", "auth"])
+      .select(["slug", "auth", "git_hosts", "git_push_policy"])
       .where("id", "=", connectorId)
       .where("org_id", "=", orgId)
       .where("deleted_at", "is", null)
       .executeTakeFirst();
     if (!c) throw notFound();
     if (!personalAuth(c.auth)) throw notPersonal();
-    return { slug: c.slug };
+    return {
+      slug: c.slug,
+      git: c.git_hosts !== null && c.git_hosts.length > 0,
+      gitPushPolicy: c.git_push_policy,
+    };
   }
 }

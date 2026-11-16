@@ -202,7 +202,8 @@
       "tool_not_found": "该连接器没有这个工具。",
       "tool_not_pending": "该工具不在待复核状态。",
       "resources_disabled": "该连接器已关闭读取资源。",
-      "not_personal": "该连接器整个组织共用一个凭据，没有按成员设置的工具权限。"
+      "not_personal": "该连接器整个组织共用一个凭据，没有按成员设置的工具权限。",
+      "git_push_widen_not_allowed": "放宽连接器的 git 推送策略需要由人在连接器的设置页操作。"
     },
     "approval": {
       "not_found": "审批不存在，或你无权处理。",
@@ -2421,11 +2422,24 @@
         "readHint": "工具声明只读取数据，默认允许。",
         "write": "可能写入",
         "writeHint": "可能修改数据，或没有声明是否只读，默认询问。"
+      },
+      "gitPush": {
+        "title": "Git 推送",
+        "hint": "组织对推送的默认策略：{label}。你选择一直允许的仓库推送时不再询问；清除后会重新询问。",
+        "empty": "你还没有一直允许任何仓库。",
+        "clear": "清除",
+        "undo": "保留",
+        "clearing": "保存后清除"
       }
     },
     "templates": {
       "needsConfig": "需要配置",
       "configure": "配置"
+    },
+    "gitPush": {
+      "title": "Git 推送",
+      "hint": "智能体在沙箱里用这个连接器的凭据推送代码时（主机：{hosts}）。需审批时每个仓库都会问发起人；成员可以为自己一直允许某个仓库。",
+      "label": "推送默认策略"
     }
   },
   "connections": {

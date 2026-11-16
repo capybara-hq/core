@@ -202,7 +202,8 @@
       "tool_not_found": "The tool does not exist in this connector.",
       "tool_not_pending": "The tool is not waiting for review.",
       "resources_disabled": "Reading resources is turned off for this connector.",
-      "not_personal": "This connector uses one credential for the whole organization, so it has no per-member tool permissions."
+      "not_personal": "This connector uses one credential for the whole organization, so it has no per-member tool permissions.",
+      "git_push_widen_not_allowed": "Loosening the connector's git push policy needs a person on the connector's settings page."
     },
     "approval": {
       "not_found": "The approval does not exist or you cannot handle it.",
@@ -2433,11 +2434,24 @@
         "readHint": "These tools declare that they only read data; allowed by default.",
         "write": "May write",
         "writeHint": "These may change data, or do not declare that they only read; ask by default."
+      },
+      "gitPush": {
+        "title": "Git push",
+        "hint": "The organization's default for pushes: {label}. Repositories you chose to always allow push without asking; clear one to be asked again.",
+        "empty": "You have not allowed any repository.",
+        "clear": "Clear",
+        "undo": "Keep",
+        "clearing": "Cleared on save"
       }
     },
     "templates": {
       "needsConfig": "Needs setup",
       "configure": "Set up"
+    },
+    "gitPush": {
+      "title": "Git push",
+      "hint": "When an agent pushes through this connector's credential in a sandbox (hosts: {hosts}). Ask asks the person for each repository; members can allow a repository for themselves.",
+      "label": "Default for pushes"
     }
   },
   "connections": {

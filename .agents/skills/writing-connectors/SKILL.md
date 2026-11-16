@@ -176,6 +176,17 @@ sender's). Fixed asks, role escalation and grants apply after this. Tests:
 `test/tools/member-policies.test.ts` (levels, locks, defaults, isolation, acting accounts) and the
 `tool-policies/me` cases of `test/tools/connectors.http.test.ts`.
 
+**Git push policy** (sandbox git credentials spec §7, `tools/git-push-policy.ts` `decideGitPush`,
+read from PG on every push). The org's default is `connectors.git_push_policy` (`allow` / `ask` /
+`deny`, default `ask`), set by an org admin with `PUT …/connectors/:connectorId/git-push-policy`
+(`GitPushPolicyBody`, only a connector with git hosts) or the Platform operation
+`connectors.set-git-push-policy`; the operation and an API token may only tighten it
+(`connector.git_push_widen_not_allowed`), only a person in a session loosens it. A member's standing
+push decision is their `connector_tool_account_policies` row `git_push:<host>/<owner>/<repo>`
+(written by 「一直允许」 on a push ask): `GET …/tool-policies/me` returns them as `gitPush` (with the
+org default; null without git hosts), and the `PUT` may only clear one (null). Tests:
+`test/git/connector-git.test.ts`, `test/tools/git-push.test.ts`.
+
 ## OAuth and credentials: all in the kernel
 
 A connector only needs to follow "call `auth()` before every request, call `onUnauthorized()` once on 401" above; OAuth itself (`packages/kernel/src/tools/oauth/`) is not in the connector:

@@ -51,6 +51,7 @@ import {
   deleteConnector,
   refreshConnector,
   reviewTool,
+  setGitPushPolicy,
   setOrgCredential,
   type ToolDefinition,
   type ToolPolicy,
@@ -243,7 +244,7 @@ function Connector({
       ) : tab === "credentials" ? (
         <CredentialsTab orgId={orgId} app={app} manage={manage} />
       ) : (
-        <SettingsTab orgId={orgId} app={app} manage={manage} update={update} />
+        <SettingsTab orgId={orgId} app={app} manage={manage} update={update} onSaved={saved} />
       )}
     </DetailPage>
   );
@@ -697,11 +698,13 @@ function SettingsTab({
   app,
   manage,
   update,
+  onSaved,
 }: {
   orgId: string;
   app: ConnectorDetail;
   manage: boolean;
   update: Update;
+  onSaved(next: ConnectorDetail): void;
 }) {
   const t = useTranslations("connectors");
   const router = useRouter();
@@ -768,6 +771,9 @@ function SettingsTab({
           )}
         </Stack>
       </Card>
+      {(app.git ?? null) !== null && (
+        <GitPushCard orgId={orgId} app={app} manage={manage} onSaved={onSaved} />
+      )}
       {manage && (
         <Card tone="danger" title={t("settings.dangerTitle")}>
           <Stack gap={12}>
@@ -801,6 +807,73 @@ function SettingsTab({
         }}
       />
     </Stack>
+  );
+}
+
+/**
+ * Git 推送 (sandbox git credentials spec §7): the org's default for pushes through the connector's
+ * credential in sandboxes (允许 / 询问 / 禁止), read on every push. Org admins change it; others
+ * read it. A member's 「一直允许」 for a repository on a personal connector applies over 询问.
+ */
+function GitPushCard({
+  orgId,
+  app,
+  manage,
+  onSaved,
+}: {
+  orgId: string;
+  app: ConnectorDetail;
+  manage: boolean;
+  onSaved(next: ConnectorDetail): void;
+}) {
+  const t = useTranslations("connectors");
+  const toast = useToast();
+  const errorMessage = useErrorMessage();
+  const saved = app.gitPushPolicy ?? "ask";
+  const [policy, setPolicy] = useState<ToolPolicy>(saved);
+  const set = useAppMutation({
+    fn: (p: ToolPolicy) => setGitPushPolicy(orgId, app.id, p),
+    invalidates: () => [keys.org(orgId).connectors()],
+    onSuccess: (r) => onSaved(r.connector),
+  });
+
+  async function save() {
+    try {
+      await set.mutateAsync(policy);
+      toast.success(t("settings.saved"));
+    } catch (e) {
+      toast.error(errorMessage(e));
+    }
+  }
+
+  return (
+    <Card title={t("gitPush.title")}>
+      <Stack gap={12}>
+        <Text variant="prose" tone="muted">
+          {t("gitPush.hint", { hosts: (app.git?.hosts ?? []).map((h) => h.host).join(", ") })}
+        </Text>
+        <Field label={t("gitPush.label")}>
+          <Select
+            value={policy}
+            disabled={!manage}
+            onChange={(e) => setPolicy(e.target.value as ToolPolicy)}
+            options={POLICIES.map((p) => ({ value: p, label: t(`policy.${p}`) }))}
+          />
+        </Field>
+        {manage && (
+          <Stack direction="row">
+            <Button
+              variant="primary"
+              loading={set.isPending}
+              disabled={policy === saved}
+              onClick={() => void save()}
+            >
+              {t("settings.save")}
+            </Button>
+          </Stack>
+        )}
+      </Stack>
+    </Card>
   );
 }
 
