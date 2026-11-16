@@ -1,6 +1,7 @@
 # Retained background output contract amendment
 
 Status: accepted technical correction after independent builder review and scoped fix review.
+Final journal-commit uncertainty amendment accepted after independent consistency review (2026-11-16).
 Implementation and runtime verification remain separate gates.
 Baseline: `f6bb72a90`, accepted Task 4 plus SDK contract. Evidence:
 `task-8-output-contract-gap.md`. No current Task 6b files were inspected. This corrects delivery of
@@ -194,7 +195,7 @@ public status/stop unions unchanged:
    when ENOSPC/EIO later prevents writing the fault itself. Failed initial durability means no launch.
 2. `collecting` can become `complete` only after observed process completion, the final ordered
    frame boundary, complete drain, both final file syncs and successful durable completion checkpoint.
-   A spool/mirror/overflow/checkpoint fault instead latches `fault` immediately. Fault is sticky:
+   A spool/mirror/overflow or definitely pre-decision checkpoint fault instead latches `fault` immediately. Fault is sticky:
    a raced exit-zero result or stop completion cannot change it back to collecting/complete.
    Process-exit and cancellation evidence are tracked separately from output lifecycle.
 3. On fault, stop accepting batches and publishing byte positions beyond the last acknowledged
@@ -221,6 +222,51 @@ public status/stop unions unchanged:
    or its cancellation obligation. If storage is untrustworthy, return `lost`; do not claim a
    durable prefix or durable fault record whose write never succeeded.
 
+### Final journal-commit uncertainty
+
+Journal publication distinguishes a failure known to precede any commit decision from an
+indeterminate outcome of final commit-decision publication. A commit decision may be published
+only after all candidate prerequisites succeeded. A successful acknowledgment requires all
+required decision-file and namespace durability barriers to return success, including the final
+containing-directory sync. An unsynced decision is never acknowledged.
+
+Spool/mirror I/O, ordering/frame, position-overflow, final-flush and definitely pre-decision
+publication failures retain the sticky-fault behavior above. Failure of a later fault write
+cannot reclassify one of those failures as an indeterminate commit.
+
+Only when final decision publication may have taken effect is its outcome indeterminate. The
+live owner stops accepting output, returns no success/credit, exposes at most its last verified
+prefix, retains lost/unknown status and cancellation uncertainty, and dispatches exact owned
+cancellation independently of subsequent journal writes. It claims neither definite commit nor
+definite rollback from the error alone.
+
+Recovery resolves this uncertainty from independent commit-decision evidence bound to the exact
+execution generation, candidate identity/digest and predecessor/version, including pinned spool
+identity, committed length and lifecycle. Candidate contents or a `complete` field alone are
+never decision evidence. Readable bytes are not assumed durable: before newly adopting a
+successor, recovery must validate the evidence and complete the required file and namespace
+durability barriers. Missing, invalid, conflicting or unverifiable evidence cannot promote the
+candidate; retain the verified predecessor or lost/unknown as appropriate.
+
+A recovered append successor may contain additional verified bytes whose original owner returned
+no acknowledgment, but remains interrupted collecting/lost with cancellation uncertainty. Only
+a separately evidenced completion candidate prepared after process exit, final ordered boundary,
+all accepted batches and both final file syncs may recover complete. A durable collector-fault
+decision stays sticky and takes precedence over incompatible success evidence. Durable stop
+ownership/outcomes and at-most-once tombstones remain independent of output commit resolution.
+
+Previously acknowledged state is a lower bound: recovery never regresses its prefix/complete
+decision, changes committed bytes or rolls back unrelated executions' acknowledged admissions,
+revocations or cancellation tombstones in the shared journal. Selection is deterministic from
+evidence and remains stable after durable finalization, without effect/append replay, PID adoption,
+path discovery or silent truncation. If durability cannot be established, return lost/unknown
+rather than a successful regressed snapshot.
+
+Task 8 must preserve exact refs/cursors and access/retirement obligations through this uncertainty.
+A transient lost/unknown observation caused by an indeterminate final commit is not permanent
+proof that an independently evidenced completion can never be recovered. Public SDK unions and
+signatures remain unchanged; this amendment does not accept or activate the cross-layer adapters.
+
 Mirror failure is reported even if child exit was already observed; artifact completion is part
 of the final success barrier. Diagnostic details stay in operator logs, not paths or secrets
 exposed in SDK errors. No public error/status expansion is needed for this conservative behavior.
@@ -231,7 +277,8 @@ remaining `collecting` marker means interrupted/unknown collection and retained 
 uncertainty, never successful completion. A persisted `fault` remains faulted; failure to persist
 that fault still leaves the durable collecting obligation. Verified prefix reads are allowed in
 both cases; loss of exact live ownership does not authorize process discovery. Bytes past the
-committed checkpoint are not claimed complete; recovery may trim only the private
+committed checkpoint are not claimed complete unless the separately evidenced indeterminate
+final-commit procedure above selects a prepared successor. Recovery may trim only the private
 owned spool's uncommitted suffix once no writer owns it. This is an explicitly interrupted output
 stream, not successful silent data loss. Completed durable output survives such restart through
 retention. A changed instance generation still fails exact-generation validation; do not relax
