@@ -32,10 +32,27 @@ import time
 # (an inherited directory descriptor plus its device/inode identity) and passes it here. Landlock
 # rules, the broker's metadata checks and the native-file helper all use exactly those
 # descriptors; root pathnames are never reopened. Anything unsupported reports unavailable.
+#
+# Documented behaviour of restricted execution:
+# - Metadata reads outside the roots are not mediated: stat/statx, access, readlink, getxattr,
+#   listxattr, statfs, inotify marks and other processes' /proc cmdline can reveal names, sizes,
+#   times, link targets and xattr values. File contents, writes and metadata changes are confined.
+# - Network none/allowlist: TCP sockets may bind and listen on loopback (127.0.0.1, ::1) only;
+#   connections go only to the endpoints the consumer granted. Environment lifts that filter.
+# - UNIX sockets in every network kind: stream/seqpacket only (datagram and raw are refused);
+#   pathname connect/bind only to sockets inside the write roots, resolved through the pinned
+#   descriptors; abstract and unnamed addresses are refused. socketpair() is unaffected.
+# - The launcher creates one closed session (setsid is denied inside it) and reports it in a
+#   "session" event; if the supervisor is lost, the consumer runs "reap" with that event to end
+#   every owned process. Brokered calls fail (ENOSYS) once the broker is gone.
+#
+# Architecture validation: an architecture reports restricted support only when it is listed in
+# VALIDATED_ARCHES, which an evidence commit changes after the real-kernel conformance suite
+# passed on that architecture (the commit cites the run). Until then a consumer may pass
+# "candidateArch" (probe --candidate-arch) to run the reviewed table for evidence collection
+# only; production consumers never set it.
 
 LANDLOCK_ABI_REQUIRED = 6
-# Syscall tables whose complete inventory has been validated on a real kernel. Other
-# architectures report restricted unavailable instead of guessing at numbers or layouts.
 VALIDATED_ARCHES = ("aarch64",)
 # Every syscall above this number (newer than the reviewed inventory) fails with ENOSYS.
 MAX_KNOWN_SYSCALL = 469
@@ -47,9 +64,10 @@ ARCHES = {
         "nr": {
             "setxattr": 5, "lsetxattr": 6, "fsetxattr": 7, "removexattr": 14,
             "lremovexattr": 15, "fremovexattr": 16, "ioctl": 29, "fchmod": 52, "fchmodat": 53,
-            "fchownat": 54, "fchown": 55, "utimensat": 88, "setsid": 157, "socket": 198,
-            "listen": 201, "connect": 203, "sendto": 206, "sendmsg": 211, "sendmmsg": 269,
-            "userfaultfd": 282,
+            "fchownat": 54, "fchown": 55, "utimensat": 88, "unshare": 97, "setsid": 157,
+            "socket": 198, "bind": 200, "listen": 201, "connect": 203, "sendto": 206,
+            "sendmsg": 211, "add_key": 217, "request_key": 218, "keyctl": 219, "clone": 220,
+            "setns": 268, "sendmmsg": 269, "userfaultfd": 282,
         },
     },
     "x86_64": {
@@ -57,17 +75,22 @@ ARCHES = {
         "seccomp": 317,
         "x32": True,
         "nr": {
-            "ioctl": 16, "socket": 41, "connect": 42, "sendto": 44, "sendmsg": 46, "listen": 50,
-            "chmod": 90, "fchmod": 91, "chown": 92, "fchown": 93, "lchown": 94, "setsid": 112,
-            "utime": 132, "setxattr": 188, "lsetxattr": 189, "fsetxattr": 190,
-            "removexattr": 197, "lremovexattr": 198, "fremovexattr": 199, "utimes": 235,
-            "fchownat": 260, "futimesat": 261, "fchmodat": 268, "utimensat": 280,
-            "sendmmsg": 307, "userfaultfd": 323,
+            "ioctl": 16, "socket": 41, "connect": 42, "sendto": 44, "sendmsg": 46, "bind": 49,
+            "listen": 50, "clone": 56, "chmod": 90, "fchmod": 91, "chown": 92, "fchown": 93,
+            "lchown": 94, "setsid": 112, "utime": 132, "uselib": 134, "setxattr": 188,
+            "lsetxattr": 189, "fsetxattr": 190, "removexattr": 197, "lremovexattr": 198,
+            "fremovexattr": 199, "utimes": 235, "add_key": 248, "request_key": 249,
+            "keyctl": 250, "fchownat": 260, "futimesat": 261, "fchmodat": 268, "unshare": 272,
+            "utimensat": 280, "sendmmsg": 307, "setns": 308, "userfaultfd": 323,
         },
     },
 }
 COMMON = {"io_uring_setup": 425, "io_uring_enter": 426, "io_uring_register": 427,
-          "fchmodat2": 452, "setxattrat": 463, "removexattrat": 466, "file_setattr": 469}
+          "clone3": 435, "fchmodat2": 452, "setxattrat": 463, "removexattrat": 466,
+          "file_setattr": 469}
+NR_CLOSE_RANGE = 436
+# CLONE_NEWNS | NEWCGROUP | NEWUTS | NEWIPC | NEWUSER | NEWPID | NEWNET | NEWTIME
+NAMESPACE_FLAGS = 0x7E020080
 NR_PIDFD_OPEN = 434
 NR_PIDFD_SEND_SIGNAL = 424
 NR_LANDLOCK_CREATE = 444
@@ -80,6 +103,8 @@ FS_ALL = (1 << 16) - 1
 FS_READ = FS_EXECUTE | FS_READ_FILE | FS_READ_DIR
 FS_DEVICE = FS_READ_FILE | FS_WRITE_FILE | FS_TRUNCATE | FS_IOCTL_DEV
 NET_CONNECT_TCP = 2
+# LANDLOCK_ACCESS_NET_BIND_TCP | CONNECT_TCP: only the broker binds or connects TCP sockets.
+NET_MEDIATED = 1 | 2
 SCOPE_ALL = 1 | 2  # abstract UNIX sockets and signals stay inside the domain
 DEFAULT_SYSTEM_ROOTS = ("/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc", "/proc")
 DEVICE_FILES = ("/dev/null", "/dev/zero", "/dev/full", "/dev/random", "/dev/urandom", "/dev/tty")
@@ -93,6 +118,11 @@ def RET_ERRNO(code):
 DENIED_IOCTLS = (0x5412, 0x541C, 0x40086602, 0x40046602, 0x401C5820, 0x40087602, 0x40047602,
                  0x800C6613, 0xC0406618, 0xC0186619, 0xC040661A)
 MSG_FASTOPEN = 0x20000000
+# Linux socket ABI values (identical on every architecture this launcher knows).
+AF_UNSPEC, AF_UNIX, AF_INET, AF_INET6, AF_NETLINK = 0, 1, 2, 10, 16
+SOCK_STREAM, SOCK_DGRAM, SOCK_SEQPACKET = 1, 2, 5
+SOCK_NONBLOCK, SOCK_CLOEXEC = 0o4000, 0o2000000
+SOL_SOCKET, SO_DOMAIN, IPPROTO_TCP = 1, 39, 6
 AT_FDCWD = -100
 AT_SYMLINK_NOFOLLOW = 0x100
 AT_EMPTY_PATH = 0x1000
@@ -203,6 +233,7 @@ class Program:
 
 
 def build_filter(table, network_mediated, brokered):
+    """The restricted child's filter. Brokered calls go to the supervisor (EACCES without one)."""
     nr = dict(table["nr"], **COMMON)
     notify = RET_NOTIFY if brokered else RET_ERRNO(errno.EACCES)
     p = Program()
@@ -216,22 +247,26 @@ def build_filter(table, network_mediated, brokered):
     p.jgt(MAX_KNOWN_SYSCALL, "enosys")
     simple = {}
     for name in ("io_uring_setup", "io_uring_enter", "io_uring_register", "userfaultfd",
-                 "setxattrat", "removexattrat", "file_setattr", "utime", "utimes", "futimesat"):
+                 "setxattrat", "removexattrat", "file_setattr", "utime", "utimes", "futimesat",
+                 "uselib", "clone3"):
         if name in nr:
             simple[nr[name]] = RET_ERRNO(errno.ENOSYS)
-    simple[nr["setsid"]] = RET_ERRNO(errno.EPERM)
+    # Sessions, keyrings and namespaces stay the launcher's; Landlock does not cover keyrings.
+    for name in ("setsid", "keyctl", "add_key", "request_key", "setns"):
+        simple[nr[name]] = RET_ERRNO(errno.EPERM)
     for name in ("chmod", "fchmod", "fchmodat", "fchmodat2", "chown", "fchown", "lchown",
                  "fchownat", "utimensat", "setxattr", "lsetxattr", "fsetxattr", "removexattr",
-                 "lremovexattr", "fremovexattr"):
+                 "lremovexattr", "fremovexattr", "connect", "listen"):
         if name in nr:
             simple[nr[name]] = notify
     if network_mediated:
-        simple[nr["connect"]] = notify
-        simple[nr["listen"]] = notify
-    for number, action in simple.items():
+        simple[nr["bind"]] = notify
+    for number in simple:
         p.jeq(number, "r%d" % number)
     p.jeq(nr["ioctl"], "ioctl")
     p.jeq(nr["socket"], "socket")
+    p.jeq(nr["unshare"], "namespaces")
+    p.jeq(nr["clone"], "namespaces")
     if network_mediated:
         p.jeq(nr["sendto"], "fastopen3")
         p.jeq(nr["sendmmsg"], "fastopen3")
@@ -247,27 +282,33 @@ def build_filter(table, network_mediated, brokered):
     for request in DENIED_IOCTLS:
         p.jeq(request, "eperm")
     p.ret(RET_ALLOW)
+    p.label("namespaces")
+    p.ld_arg(0)
+    p.jset(NAMESPACE_FLAGS, "eperm")
+    p.ret(RET_ALLOW)
     p.label("eperm")
     p.ret(RET_ERRNO(errno.EPERM))
     p.label("socket")
     p.ld_arg(0)
-    p.jeq(socket.AF_UNIX, "unix")
-    p.jeq(socket.AF_NETLINK, "netlink")
-    p.jeq(socket.AF_INET, "inet")
-    p.jeq(socket.AF_INET6, "inet")
+    p.jeq(AF_UNIX, "unix")
+    p.jeq(AF_NETLINK, "netlink")
+    p.jeq(AF_INET, "inet")
+    p.jeq(AF_INET6, "inet")
     p.ret(RET_ERRNO(errno.EAFNOSUPPORT))
     p.label("netlink")
     p.ld_arg(2)
     p.jeq(0, "allow")  # NETLINK_ROUTE only: interface queries, no egress
     p.ret(RET_ERRNO(errno.EACCES))
     p.label("unix")
-    if network_mediated:
-        p.ld_arg(1)
-        p.alu_and(0xF)
-        p.jeq(socket.SOCK_DGRAM, "eacces")
-    p.ret(RET_ALLOW)
+    # Connection-oriented UNIX sockets only, created by the broker so it can mediate their
+    # pathname connect/bind; datagram and raw (which the kernel maps to datagram) are refused.
+    p.ld_arg(1)
+    p.alu_and(0xF)
+    p.jeq(SOCK_STREAM, "inet")
+    p.jeq(SOCK_SEQPACKET, "inet")
+    p.ret(RET_ERRNO(errno.EACCES))
     p.label("inet")
-    p.ret(notify if network_mediated else RET_ALLOW)
+    p.ret(notify)
     if network_mediated:
         p.label("fastopen3")
         p.ld_arg(3)
@@ -277,8 +318,8 @@ def build_filter(table, network_mediated, brokered):
         p.ld_arg(2)
         p.jset(MSG_FASTOPEN, "eacces")
         p.ret(RET_ALLOW)
-    p.label("eacces")
-    p.ret(RET_ERRNO(errno.EACCES))
+        p.label("eacces")
+        p.ret(RET_ERRNO(errno.EACCES))
     p.label("allow")
     p.ret(RET_ALLOW)
     return p.assemble()
@@ -323,7 +364,7 @@ def verify_roots(native, request):
 
 
 def landlock_ruleset(roots, system_roots, network_mediated):
-    attr = struct.pack("QQQ", FS_ALL, NET_CONNECT_TCP if network_mediated else 0, SCOPE_ALL)
+    attr = struct.pack("QQQ", FS_ALL, NET_MEDIATED if network_mediated else 0, SCOPE_ALL)
     attr_buffer = ctypes.create_string_buffer(attr, len(attr))
     ruleset = syscall(NR_LANDLOCK_CREATE, attr_buffer, len(attr), 0)
     os.set_inheritable(ruleset, False)
@@ -364,6 +405,35 @@ def landlock_ruleset(roots, system_roots, network_mediated):
 
 class Denied(Exception):
     pass
+
+
+def socket_option(fd, level, name, size=4):
+    value = ctypes.create_string_buffer(size)
+    length = ctypes.c_uint32(size)
+    if libc.getsockopt(fd, level, name, value, ctypes.byref(length)) < 0:
+        code = ctypes.get_errno()
+        raise OSError(code, os.strerror(code))
+    return value.raw[:length.value]
+
+
+def socket_domain(fd):
+    return struct.unpack("i", socket_option(fd, SOL_SOCKET, SO_DOMAIN))[0]
+
+
+def socket_name(fd):
+    """The bound IP address of a broker-owned socket (0.0.0.0 / :: when unbound)."""
+    buffer = ctypes.create_string_buffer(128)
+    length = ctypes.c_uint32(128)
+    if libc.getsockname(fd, buffer, ctypes.byref(length)) < 0:
+        code = ctypes.get_errno()
+        raise OSError(code, os.strerror(code))
+    raw = buffer.raw[:length.value]
+    family = struct.unpack("H", raw[:2])[0]
+    if family == AF_INET:
+        return str(ipaddress.ip_address(raw[4:8]))
+    if family == AF_INET6:
+        return str(ipaddress.ip_address(raw[8:24]))
+    return None
 
 
 class Broker:
@@ -521,6 +591,8 @@ class Broker:
             mem = self.memory(pid, ident)
             if name == "connect":
                 return self.connect(ident, pid, mem, args)
+            if name == "bind":
+                return self.bind(ident, pid, mem, args)
             return self.metadata(ident, pid, mem, name, args)
         except Denied:
             return None, errno.EACCES
@@ -613,21 +685,30 @@ class Broker:
         domain = args[0] & 0xFFFFFFFF
         kind = args[1] & 0xFFFFFFFF
         protocol = args[2] & 0xFFFFFFFF
-        if domain not in (socket.AF_INET, socket.AF_INET6) or kind & 0xF != socket.SOCK_STREAM \
-                or protocol not in (0, socket.IPPROTO_TCP) \
-                or kind & ~(0xF | socket.SOCK_NONBLOCK | socket.SOCK_CLOEXEC):
-            return None, errno.EACCES
-        # The broker creates and keeps the original socket so a later connect is performed on
-        # an object it owns, with an address it copied; the target receives an alias.
-        own = socket.socket(domain, socket.SOCK_STREAM | (kind & socket.SOCK_NONBLOCK), protocol)
-        fd = own.detach()
+        base = kind & 0xF
+        if kind & ~(0xF | SOCK_NONBLOCK | SOCK_CLOEXEC):
+            return None, errno.EINVAL
+        if domain == AF_UNIX:
+            if base not in (SOCK_STREAM, SOCK_SEQPACKET) or protocol != 0:
+                return None, errno.EACCES
+        elif domain in (AF_INET, AF_INET6):
+            if self.endpoints is not None and (
+                    base != SOCK_STREAM or protocol not in (0, IPPROTO_TCP)):
+                return None, errno.EACCES
+        else:
+            return None, errno.EAFNOSUPPORT
+        # The broker creates and keeps the original socket so a later connect/bind is performed
+        # on an object it owns, with an address it copied; the target receives an alias.
+        fd = libc.socket(domain, base | (kind & SOCK_NONBLOCK), protocol)
+        if fd < 0:
+            return None, ctypes.get_errno()
         inode = os.fstat(fd).st_ino
         # Record ownership before the alias exists: the target may connect the moment ADDFD
         # completes its socket() call, possibly from another thread.
         with self.lock:
             self.sockets[inode] = fd
         data = struct.pack("QIIII", ident, ADDFD_SEND, fd, 0,
-                           os.O_CLOEXEC if kind & socket.SOCK_CLOEXEC else 0)
+                           os.O_CLOEXEC if kind & SOCK_CLOEXEC else 0)
         buffer = ctypes.create_string_buffer(data, len(data))
         if libc.ioctl(self.listener, NOTIF_ADDFD, buffer) < 0:
             code = ctypes.get_errno()
@@ -638,9 +719,10 @@ class Broker:
     def owned(self, pid, ident, target_fd):
         link = self.target_link(pid, ident, "fd/%d" % (target_fd & 0xFFFFFFFF))
         if not link.startswith("socket:[") or not link.endswith("]"):
-            return None, link
+            return None, None
+        inode = int(link[8:-1])
         with self.lock:
-            return self.sockets.get(int(link[8:-1])), link
+            return self.sockets.get(inode), inode
 
     def release(self, inode):
         with self.lock:
@@ -648,17 +730,92 @@ class Broker:
         if fd is not None:
             os.close(fd)
 
+    def unix_target(self, pid, ident, raw, create):
+        """A pathname UNIX address resolved from the pinned write roots, as a /proc path."""
+        name = raw[2:].split(b"\0", 1)[0]
+        if len(raw) <= 2 or raw[2:3] == b"\0" or not name:
+            raise Denied()  # abstract and unnamed addresses stay inside nobody's grant
+        path = os.fsdecode(name)
+        if not path.startswith("/"):
+            base = self.target_link(pid, ident, "cwd")
+            if not base.startswith("/") or base.endswith(" (deleted)"):
+                raise Denied()
+            path = base.rstrip("/") + "/" + path
+        path = os.path.normpath(path)
+        if not create:
+            obj = self.resolve(path, True)
+            if not stat.S_ISSOCK(os.fstat(obj).st_mode):
+                os.close(obj)
+                raise OSError(errno.ECONNREFUSED, "Not a socket")
+            return obj, "/proc/self/fd/%d" % obj
+        try:
+            parent, final, _, _ = self.files.resolve(path, True, False, 0, False)
+        except (self.native.ScopeDenied, ValueError):
+            raise Denied()
+        return parent, "/proc/self/fd/%d/%s" % (parent, final)
+
+    @staticmethod
+    def unix_address(path):
+        encoded = os.fsencode(path)
+        if len(encoded) >= 108:
+            raise OSError(errno.ENAMETOOLONG, "Socket path too long")
+        address = struct.pack("H", AF_UNIX) + encoded + b"\0"
+        return ctypes.create_string_buffer(address, len(address)), len(address)
+
+    def inet_address(self, raw, size):
+        family = struct.unpack("H", raw[:2])[0]
+        if family == AF_INET and size >= 16:
+            return family, ipaddress.ip_address(raw[4:8]), struct.unpack(">H", raw[2:4])[0], 0
+        if family == AF_INET6 and size >= 28:
+            address = ipaddress.ip_address(raw[8:24])
+            scope = struct.unpack("I", raw[24:28])[0]
+            if address.ipv4_mapped:
+                return family, address.ipv4_mapped, struct.unpack(">H", raw[2:4])[0], 0
+            return family, address, struct.unpack(">H", raw[2:4])[0], scope
+        return family, None, None, None
+
+    def bind(self, ident, pid, mem, args):
+        size = args[2] & 0xFFFFFFFF
+        if size < 2 or size > 128:
+            return None, errno.EINVAL
+        raw = self.read(mem, args[1], size)
+        own, inode = self.owned(pid, ident, args[0])
+        if own is None:
+            return None, errno.EACCES if inode is not None else errno.ENOTSOCK
+        if socket_domain(own) == AF_UNIX:
+            handle, target = self.unix_target(pid, ident, raw, True)
+            try:
+                buffer, length = self.unix_address(target)
+                if libc.bind(own, buffer, ctypes.c_uint32(length)) < 0:
+                    return None, ctypes.get_errno()
+                return 0, 0
+            finally:
+                os.close(handle)
+        _, address, _, _ = self.inet_address(raw, size)
+        # Restricted none/allowlist listens on loopback only (product decision).
+        if address is None or str(address) not in ("127.0.0.1", "::1"):
+            return None, errno.EACCES
+        copied = ctypes.create_string_buffer(raw, size)
+        if libc.bind(own, copied, ctypes.c_uint32(size)) < 0:
+            return None, ctypes.get_errno()
+        return 0, 0
+
     def listen(self, ident, pid, args):
-        own, link = self.owned(pid, ident, args[0])
+        own, inode = self.owned(pid, ident, args[0])
         if own is None:
             # listen() carries no pointer, so letting the kernel run it cannot change what was
-            # checked; UNIX and accepted sockets the broker does not own listen normally.
+            # checked; accepted and socketpair sockets the broker does not own listen normally.
             return "continue", 0
+        if self.endpoints is not None and socket_domain(own) != AF_UNIX:
+            # An unbound TCP socket would autobind to every interface on listen().
+            host = socket_name(own)
+            if host not in ("127.0.0.1", "::1"):
+                return None, errno.EACCES
         result = libc.listen(own, ctypes.c_int(args[1] & 0xFFFFFFFF))
         code = ctypes.get_errno() if result < 0 else 0
         # A listening socket never connects; drop the broker's reference so close semantics
         # remain the target's own.
-        self.release(int(link[8:-1]))
+        self.release(inode)
         return (None, code) if code else (0, 0)
 
     def connect(self, ident, pid, mem, args):
@@ -666,33 +823,36 @@ class Broker:
         if size < 2 or size > 128:
             return None, errno.EINVAL
         raw = self.read(mem, args[1], size)
-        own, link = self.owned(pid, ident, args[0])
+        own, inode = self.owned(pid, ident, args[0])
         if own is None:
-            return None, errno.EACCES if link.startswith("socket:[") else errno.ENOTSOCK
-        family = struct.unpack("H", raw[:2])[0]
-        if family == socket.AF_INET and size >= 16:
-            port = struct.unpack(">H", raw[2:4])[0]
-            address = ipaddress.ip_address(raw[4:8])
-        elif family == socket.AF_INET6 and size >= 28:
-            port = struct.unpack(">H", raw[2:4])[0]
-            address = ipaddress.ip_address(raw[8:24])
-            if address.ipv4_mapped:
-                address = address.ipv4_mapped
-        else:
-            return None, errno.EACCES
-        if (str(address), port) not in self.endpoints:
-            return None, errno.EACCES
+            return None, errno.EACCES if inode is not None else errno.ENOTSOCK
+        if socket_domain(own) == AF_UNIX:
+            handle, target = self.unix_target(pid, ident, raw, False)
+            try:
+                buffer, length = self.unix_address(target)
+                result = libc.connect(own, buffer, ctypes.c_uint32(length))
+                code = ctypes.get_errno() if result < 0 else 0
+            finally:
+                os.close(handle)
+            if code != errno.EINPROGRESS:
+                self.release(inode)
+            return (None, code) if code else (0, 0)
+        family, address, port, scope = self.inet_address(raw, size)
+        if family != AF_UNSPEC:  # AF_UNSPEC only dissolves an existing association
+            if address is None:
+                return None, errno.EACCES
+            if self.endpoints is not None and (str(address), port, scope) not in self.endpoints:
+                return None, errno.EACCES
         # Connect with the broker's own copy of the checked address on the broker-owned object.
         copied = ctypes.create_string_buffer(raw, size)
         if libc.connect(own, copied, ctypes.c_uint32(size)) < 0:
             code = ctypes.get_errno()
             if code == errno.EINPROGRESS:
-                threading.Thread(target=self.settle, args=(own, int(link[8:-1])),
-                                 daemon=True).start()
+                threading.Thread(target=self.settle, args=(own, inode), daemon=True).start()
             elif code not in (errno.EALREADY, errno.EINTR):
-                self.release(int(link[8:-1]))
+                self.release(inode)
             return None, code
-        self.release(int(link[8:-1]))
+        self.release(inode)
         return 0, 0
 
     def settle(self, fd, inode):
@@ -824,9 +984,13 @@ def endpoints_of(network):
         for endpoint in network.get("endpoints", []):
             address = ipaddress.ip_address(endpoint["address"])
             port = endpoint["port"]
-            if type(port) is not int or not 0 < port < 65536:
-                raise Refused("INVALID_REQUEST", "Supply numeric endpoint ports")
-            allowed.add((str(address), port))
+            scope = endpoint.get("scopeId", 0)
+            if type(port) is not int or not 0 < port < 65536 or type(scope) is not int:
+                raise Refused("INVALID_REQUEST", "Supply numeric endpoint ports and scope IDs")
+            if address.version == 6 and address.ipv4_mapped:
+                address, scope = address.ipv4_mapped, 0
+            # A link-local IPv6 grant names one interface: the scope ID is part of the endpoint.
+            allowed.add((str(address), port, scope if address.version == 6 else 0))
         return allowed
     raise Refused("INVALID_REQUEST", "Unknown network kind")
 
@@ -842,10 +1006,106 @@ def restrict_child(table, ruleset, network_mediated, brokered, channel):
         os.close(listener)
 
 
+def close_except(keep):
+    """close_range() over every descriptor from 3 up except the kept ones."""
+    low = 3
+    for fd in sorted(set(fd for fd in keep if fd >= 3)):
+        if fd > low:
+            syscall(NR_CLOSE_RANGE, low, fd - 1, 0)
+        low = fd + 1
+    syscall(NR_CLOSE_RANGE, low, 0xFFFFFFFF, 0)
+
+
+class Cancellation:
+    """SIGTERM/SIGINT handling installed (and the signals blocked) before any fork."""
+
+    def __init__(self):
+        self.signals = []
+        self.wake_r, self.wake_w = os.pipe()
+        os.set_blocking(self.wake_w, False)
+        signal.signal(signal.SIGTERM, self.cancel)
+        signal.signal(signal.SIGINT, self.cancel)
+
+    def cancel(self, signum, _frame):
+        self.signals.append(signum)
+        try:
+            os.write(self.wake_w, b"x")
+        except OSError:
+            pass
+
+
+CANCEL_SIGNALS = {signal.SIGTERM, signal.SIGINT}
+
+
+def start_time(pid):
+    with open("/proc/%d/stat" % pid) as handle:
+        data = handle.read()
+    return int(data[data.rindex(")") + 2:].split()[19])
+
+
+def reap(session):
+    """Consumer-side cleanup after a lost supervisor: SIGKILL the launcher's closed session.
+
+    The session ID is the restricted child's PID and setsid() is denied inside it, so membership
+    is kernel-maintained and closed. A PID number stays reserved while its session has members,
+    so a process now holding the leader's PID with another start time means the session is gone.
+    """
+    sid, started = int(session["sid"]), int(session["start"])
+    killed = set()
+    while True:
+        try:
+            if start_time(sid) != started:
+                return len(killed)
+        except OSError:
+            pass
+        members = []
+        for entry in os.listdir("/proc"):
+            if not entry.isdigit():
+                continue
+            try:
+                with open("/proc/%s/stat" % entry) as handle:
+                    data = handle.read()
+            except OSError:
+                continue
+            fields = data[data.rindex(")") + 2:].split()
+            # Zombies hold no grant and cannot be killed again; they only await their reaper.
+            if int(fields[3]) == sid and fields[0] not in ("Z", "X"):
+                members.append(int(entry))
+        if not members:
+            return len(killed)
+        for pid in members:
+            try:
+                handle = syscall(NR_PIDFD_OPEN, pid, 0)
+            except OSError:
+                continue
+            try:
+                # The pidfd pins the process; confirm its session before signalling it.
+                with open("/proc/%d/stat" % pid) as stat_file:
+                    data = stat_file.read()
+                if int(data[data.rindex(")") + 2:].split()[3]) == sid:
+                    syscall(NR_PIDFD_SEND_SIGNAL, handle, signal.SIGKILL, None, 0)
+                    killed.add(pid)
+            except OSError:
+                pass
+            finally:
+                os.close(handle)
+            # Wait for the signalled process to be gone (or a zombie) before rescanning.
+            poller = select.poll()
+            try:
+                waiter = syscall(NR_PIDFD_OPEN, pid, 0)
+            except OSError:
+                continue
+            try:
+                poller.register(waiter, select.POLLIN)
+                poller.poll()
+            finally:
+                os.close(waiter)
+
+
 def run(request, report):
     machine, table = arch()
     native, native_path = load_native()
-    status = probe_static(table)
+    status = probe_static(table, request.get("candidateArch") is True)
     if status:
         raise Refused("UNAVAILABLE", status)
     roots, seen = verify_roots(native, request)
@@ -865,7 +1125,8 @@ def run(request, report):
     system_roots.append(os.path.dirname(native_path))
     ruleset = landlock_ruleset(roots, system_roots, network_mediated or mode == "native")
     pinned_fds = [r["fd"] for r in roots["read"] + roots["write"]]
-    launch = {"event": "launch", "arch": machine, "landlockAbi": landlock_abi(), "roots": seen,
+    launch = {"event": "launch", "arch": machine, "validated": machine in VALIDATED_ARCHES,
+              "landlockAbi": landlock_abi(), "roots": seen,
               "ruleFds": [entry["fd"] for entry in seen], "brokerFds": pinned_fds,
               "nativeFds": pinned_fds if mode == "native" else [],
               "cwd": [os.fstat(cwd).st_dev, os.fstat(cwd).st_ino]}
@@ -878,13 +1139,19 @@ def run(request, report):
     elif mode != "exec":
         raise Refused("INVALID_REQUEST", "Unknown mode")
     parent = os.getpid()
+    # Cancellation is armed before the fork: a SIGTERM during setup cancels instead of killing
+    # the supervisor by default action and orphaning the child.
+    cancellation = Cancellation()
+    signal.pthread_sigmask(signal.SIG_BLOCK, CANCEL_SIGNALS)
     pid = os.fork()
     if pid == 0:
         try:
-            os.setsid()
             libc.prctl(1, signal.SIGKILL, 0, 0, 0)  # PR_SET_PDEATHSIG
             if os.getppid() != parent:
                 os._exit(125)
+            os.setsid()
+            signal.signal(signal.SIGTERM, signal.SIG_DFL)
+            signal.signal(signal.SIGINT, signal.SIG_DFL)
             os.fchdir(cwd)
             parent_sock.close()
             if mode == "native":
@@ -898,12 +1165,7 @@ def run(request, report):
                            child_sock)
             child_sock.close()
             # Only stdio (and, for the native helper, the same pinned roots) survive exec.
-            for fd in range(3, 1024):
-                if fd not in keep:
-                    try:
-                        os.close(fd)
-                    except OSError:
-                        pass
+            close_except(keep)
             for fd in keep:
                 os.set_inheritable(fd, True)
             env = request.get("env") or {"PATH": "/usr/local/bin:/usr/bin:/bin"}
@@ -911,12 +1173,18 @@ def run(request, report):
                 argv = [sys.executable, "-I", native_path]
             else:
                 argv = request["argv"]
+            signal.pthread_sigmask(signal.SIG_UNBLOCK, CANCEL_SIGNALS)
             os.execve(argv[0], argv, env)
         except BaseException as error:
             try:
                 os.write(2, ("restricted launch failed: %s\n" % error).encode())
             finally:
                 os._exit(126)
+    # The consumer needs the closed session's identity before anything else can go wrong.
+    try:
+        report.write({"event": "session", "sid": pid, "start": start_time(pid)})
+    finally:
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, CANCEL_SIGNALS)
     child_sock.close()
     os.close(ruleset)
     os.close(cwd)
@@ -936,28 +1204,18 @@ def run(request, report):
         if not fds:
             kill_tree()
             raise Refused("UNAVAILABLE", "The restricted child did not hand over its listener")
-        broker = Broker(native, roots, table, endpoints or set(), fds[0])
+        broker = Broker(native, roots, table, endpoints, fds[0])
         thread = threading.Thread(target=broker.loop, args=(stop_r,), daemon=True)
         thread.start()
     # Reported only once every restriction is installed and the broker holds the listener.
     report.write(launch)
     parent_sock.close()
-    return supervise(pid, request, report, broker, thread, stop_w)
+    return supervise(pid, request, report, broker, thread, stop_w, cancellation)
 
 
-def supervise(pid, request, report, broker, thread, stop_w):
-    wake_r, wake_w = os.pipe()
-    os.set_blocking(wake_w, False)
-    cancelled = []
-
-    def cancel(signum, _frame):
-        cancelled.append(signum)
-        try:
-            os.write(wake_w, b"x")
-        except OSError:
-            pass
-    signal.signal(signal.SIGTERM, cancel)
-    signal.signal(signal.SIGINT, cancel)
+def supervise(pid, request, report, broker, thread, stop_w, cancellation):
+    wake_r = cancellation.wake_r
+    cancelled = cancellation.signals
     handle = syscall(NR_PIDFD_OPEN, pid, 0)
     deadline = None
     if request.get("timeoutMs"):
@@ -997,11 +1255,13 @@ def supervise(pid, request, report, broker, thread, stop_w):
 
 # ---- capability probe ---------------------------------------------------------------------
 
-def probe_static(table):
+def probe_static(table, candidate=False):
     machine = platform.machine()
     if platform.system() != "Linux":
         return "Restricted Linux execution requires Linux"
-    if table is None or machine not in VALIDATED_ARCHES:
+    if table is None:
+        return "No syscall inventory exists for %s" % machine
+    if machine not in VALIDATED_ARCHES and not candidate:
         return "The syscall inventory is not validated on %s" % machine
     abi = landlock_abi()
     if abi < LANDLOCK_ABI_REQUIRED:
@@ -1011,10 +1271,20 @@ def probe_static(table):
     return None
 
 
-def probe():
+def probe(candidate=False):
+    """Never raises: any failure is restricted unavailable with its reason."""
+    machine = platform.machine()
+    try:
+        return probe_primitives(candidate)
+    except BaseException as error:
+        return {"restricted": None, "arch": machine,
+                "reason": "The probe failed: %s" % type(error).__name__}
+
+
+def probe_primitives(candidate):
     """Exercises the real primitives: Landlock, a seccomp listener, ADDFD and target memory."""
     machine, table = arch()
-    reason = probe_static(table)
+    reason = probe_static(table, candidate)
     if reason:
         return {"restricted": None, "reason": reason, "arch": machine}
     parent_sock, child_sock = socket.socketpair()
@@ -1030,7 +1300,7 @@ def probe():
             listener = install_filter(table, build_filter(table, True, True), True)
             socket.send_fds(child_sock, [b"L"], [listener])
             os.close(listener)
-            probe_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            probe_socket = socket.socket(AF_INET, SOCK_STREAM)
             child_sock.send(b"ok" if probe_socket.fileno() >= 0 else b"no")
             os._exit(0)
         except BaseException:
@@ -1045,7 +1315,7 @@ def probe():
         ident, target, _, nr, _, _ = struct.unpack_from("QIIiIQ", buffer.raw)
         mem = os.open("/proc/%d/mem" % target, os.O_RDONLY)
         os.close(mem)
-        own = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        own = socket.socket(AF_INET, SOCK_STREAM)
         data = struct.pack("QIIII", ident, ADDFD_SEND, own.fileno(), 0, 0)
         ioctl(fds[0], NOTIF_ADDFD, ctypes.create_string_buffer(data, len(data)))
         own.close()
@@ -1065,14 +1335,18 @@ def probe():
                 "reason": "A required primitive failed: %s" % error.strerror}
     return {"restricted": {"filesystem": True, "network": True, "native": True,
                            "concurrentScopes": True},
-            "arch": machine, "landlockAbi": landlock_abi()}
+            "arch": machine, "validated": machine in VALIDATED_ARCHES,
+            "landlockAbi": landlock_abi()}
 
 
 def main():
     report = Report(None)
     try:
         if len(sys.argv) > 1 and sys.argv[1] == "probe":
-            print(json.dumps(probe()), flush=True)
+            print(json.dumps(probe("--candidate-arch" in sys.argv[2:])), flush=True)
+            return 0
+        if len(sys.argv) > 1 and sys.argv[1] == "reap":
+            print(json.dumps({"killed": reap(json.load(sys.stdin))}), flush=True)
             return 0
         request = json.load(sys.stdin)
         report = Report(request.get("reportFd"))

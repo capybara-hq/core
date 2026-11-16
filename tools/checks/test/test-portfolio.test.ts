@@ -114,6 +114,19 @@ describe("checkTestPortfolio", () => {
     expect(got[0]?.message).toContain("gone.test.ts");
   });
 
+  it("enforces the testing package's checked-in container list", () => {
+    const root = fixture("testing-container");
+    const list = `${root}/packages/testing/test/container-tests.json`;
+    const got = checkTestPortfolio({ root });
+    expect(got.map((f) => [f.rule, relative(root, f.file).split(sep).join("/"), f.line])).toEqual([
+      ["test-portfolio-missing-file", "packages/testing/test/container-tests.json", 3],
+      ["test-portfolio-list-overlap", "packages/testing/test/container-tests.json", 4],
+      ["test-portfolio-container-unlisted", "packages/testing/test/unlisted.test.ts", 4],
+    ]);
+    expect(got[0]?.file).toBe(list);
+    expect(got[2]?.message).toContain("container-tests.json");
+  });
+
   it("treats a base that does not resolve as skipped and a resolvable one as an empty diff", () => {
     expect(changedTestFiles(repoRoot, "no-such-ref-for-the-portfolio-check")).toBeUndefined();
     expect(changedTestFiles(repoRoot, "HEAD")).toEqual(new Set());
