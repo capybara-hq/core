@@ -55,7 +55,7 @@ export function expectNoFirstPaintFetch(): Call[] {
  */
 export function sessionRoutes(
   me: Me = ME,
-  readiness: OrgReadiness = { modelProvider: "ready", agents: 1 },
+  readiness: OrgReadiness = { modelProvider: "ready", orgCanAddModel: false, agents: 1 },
 ): Routes {
   return {
     "GET /api/v1/me": () => json(200, me),

@@ -8,7 +8,14 @@ import type { Me } from "../src/lib/session";
 import { bodyOf, noContent, stubApi } from "./support/api";
 import { pathname, resetNavigation, router } from "./support/navigation";
 import { ME } from "./support/render";
-import { NOT_READY, PROVIDER_ONLY, READY, renderFrame as render, shellOf } from "./support/shell";
+import {
+  NOT_READY,
+  ORG_FIXABLE,
+  PROVIDER_ONLY,
+  READY,
+  renderFrame as render,
+  shellOf,
+} from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("../src/lib/browser", () => ({ navigateBrowser: vi.fn() }));
@@ -174,6 +181,7 @@ describe("one step list: the setup home's card and the sidebar agree", () => {
   for (const [who, me, readiness] of [
     ["super admin", ME, NOT_READY],
     ["org admin", memberMe("admin"), PROVIDER_ONLY],
+    ["org admin, a provider to switch on", memberMe("admin"), ORG_FIXABLE],
     ["member", memberMe("member"), PROVIDER_ONLY],
     ["guest", memberMe("guest"), NOT_READY],
   ] as const) {
@@ -234,6 +242,36 @@ describe("the checklist by role", () => {
       "/channels/new",
     );
     expect(screen.queryByText(sl.waiting)).toBeNull();
+  });
+
+  it("a provider the org can switch on or configure: org admins and super admins go to the org's model extensions", () => {
+    for (const me of [memberMe("admin"), memberMe("owner"), ME]) {
+      renderFrame({ me, readiness: ORG_FIXABLE });
+      const model = step(sl.steps.model);
+      expect(within(model).getByRole("link", { name: s.model.action }).getAttribute("href")).toBe(
+        "/extensions?tab=model",
+      );
+      expect(within(model).getByText(s.model.description)).toBeTruthy();
+      expect(screen.queryByText(sl.waitingDeployment)).toBeNull();
+      expect(setupSidebar()?.querySelector('a[href="/extensions?tab=model"]')).not.toBeNull();
+      cleanup();
+    }
+  });
+
+  it("a member waits for an org admin when the org can switch a provider on", () => {
+    renderFrame({ me: memberMe("member"), readiness: ORG_FIXABLE });
+    const model = step(sl.steps.model);
+    expect(within(model).queryByRole("link")).toBeNull();
+    expect(within(model).getByText(sl.model.waitingForAdmin)).toBeTruthy();
+    expect(within(model).getByText(s.model.askOrgAdmin)).toBeTruthy();
+    expect(screen.getByText(sl.waiting)).toBeTruthy();
+  });
+
+  it("the org's model extensions page is the model step in the setup sidebar", () => {
+    resetNavigation("/extensions");
+    renderFrame({ me: memberMe("admin"), readiness: ORG_FIXABLE });
+    const current = setupSidebar()?.querySelector('[aria-current="page"]');
+    expect(current?.textContent).toContain(sl.steps.model);
   });
 
   it("an org admin cannot fix a missing model provider: a deployment admin is needed", () => {

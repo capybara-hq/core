@@ -88,15 +88,19 @@ async function ownerOrg(k: TestKernel) {
 const readiness = async (req: Req, orgId: string) => {
   const res = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/readiness` });
   expect(res.statusCode).toBe(200);
-  return res.json() as { modelProvider: string; agents: number };
+  return res.json() as { modelProvider: string; orgCanAddModel: boolean; agents: number };
 };
 
 describe("org readiness", () => {
-  it("no provider, or one pending configuration: modelProvider none; unauthenticated is 401", async () => {
+  it("no provider, or one pending deployment configuration: none, and only the super admin can help; unauthenticated is 401", async () => {
     const k = await boot([NEEDS_CONFIG]);
     try {
       const { req, orgId } = await ownerOrg(k);
-      expect(await readiness(req, orgId)).toEqual({ modelProvider: "none", agents: 0 });
+      expect(await readiness(req, orgId)).toEqual({
+        modelProvider: "none",
+        orgCanAddModel: false,
+        agents: 0,
+      });
       const anon = await k.http.inject({
         method: "GET",
         url: `/api/v1/orgs/${orgId}/readiness`,
@@ -129,7 +133,11 @@ describe("org readiness", () => {
         });
         expect(res.statusCode).toBe(201);
       }
-      expect(await readiness(req, orgId)).toEqual({ modelProvider: "ready", agents: 2 });
+      expect(await readiness(req, orgId)).toEqual({
+        modelProvider: "ready",
+        orgCanAddModel: false,
+        agents: 2,
+      });
       for (const [login, role] of [
         ["mia", "member"],
         ["gus", "guest"],
@@ -139,9 +147,37 @@ describe("org readiness", () => {
         const r = await session(k, login);
         const list = await r({ method: "GET", url: `/api/v1/orgs/${orgId}/agents` });
         const visible = (list.json() as { agents: unknown[] }).agents.length;
-        expect(await readiness(r, orgId)).toEqual({ modelProvider: "ready", agents: visible });
+        expect(await readiness(r, orgId)).toEqual({
+          modelProvider: "ready",
+          orgCanAddModel: false,
+          agents: visible,
+        });
         expect(visible).toBe(1);
       }
+    } finally {
+      await k.close();
+    }
+  });
+
+  it("a loaded provider the org switched off: none, and the org admin can switch it back on", async () => {
+    const k = await boot([MODEL_FAKE], { "model-fake": { models: [{ id: "fake-1" }] } });
+    try {
+      const { req, orgId } = await ownerOrg(k);
+      const url = `/api/v1/orgs/${orgId}/extensions/model-fake`;
+      let off = await req({ method: "PUT", url, payload: { enabled: false } });
+      if (off.statusCode === 200 && "confirm" in off.json()) {
+        const { confirm } = off.json() as { confirm: string };
+        off = await req({ method: "PUT", url, payload: { enabled: false, confirm } });
+      }
+      expect(off.statusCode, off.body).toBe(200);
+      expect(await readiness(req, orgId)).toEqual({
+        modelProvider: "none",
+        orgCanAddModel: true,
+        agents: 0,
+      });
+      const on = await req({ method: "PUT", url, payload: { enabled: true } });
+      expect(on.statusCode, on.body).toBe(200);
+      expect(await readiness(req, orgId)).toMatchObject({ modelProvider: "ready" });
     } finally {
       await k.close();
     }

@@ -467,6 +467,11 @@ const base = (orgId: string) => `/api/v1/orgs/${encodeURIComponent(orgId)}`;
  */
 export interface OrgReadiness {
   modelProvider: "ready" | "none";
+  /**
+   * An org admin can make a model provider usable from the org's 扩展 page (switch on a provider
+   * the platform offers, or fill its org config); false when only the super admin can help.
+   */
+  orgCanAddModel: boolean;
   agents: number;
 }
 

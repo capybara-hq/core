@@ -222,12 +222,15 @@ around an empty table.
 A third layout beside the auth layout (sign-in, initialization, the org chooser) and the shell: the
 **setup layout** (`SetupPage`, design spec §5.5), drawn while the current org is not ready.
 Readiness comes from one cheap kernel read, `GET /api/v1/orgs/:orgId/readiness` (`org.read`) →
-`{ modelProvider: "ready" | "none", agents }`: `modelProvider` is `ready` when a model-provider
-extension is loaded (enabled and configured), read from extension state and never from a vendor
-(a provider whose vendor is down still counts); it is **deployment-wide** (model providers are
-not org-scoped, so every org reads the same value) and read per replica, from that replica's
-provider registry (a replica that has not reconciled a just-enabled provider answers `none` for
-a moment); `agents` counts the agents the caller can see.
+`{ modelProvider: "ready" | "none", orgCanAddModel, agents }`: `modelProvider` is `ready` when a
+model-provider extension is usable in the org (loaded, on in the org, its effective config valid),
+read from extension state and never from a vendor (a provider whose vendor is down still counts),
+per replica, from that replica's provider registry (a replica that has not reconciled a
+just-enabled provider answers `none` for a moment); `orgCanAddModel` is true when an org admin can
+make one usable from the org's 扩展 page: a provider loaded on the deployment that is off in the
+org and switchable (the preinstalled providers are `optional`, off in every org until switched
+on), or on but waiting for the org's config; false when only the super admin can help (no
+provider is loaded on the deployment); `agents` counts the agents the caller can see.
 Ready = `modelProvider === "ready" && agents > 0`. The app frame reads it once and shares it with
 pages through `SetupContext`; pages never read it themselves.
 
@@ -265,12 +268,13 @@ pages through `SetupContext`; pages never read it themselves.
 
   | Step | Enterprise admin | Org admin | Member | Guest |
   |---|---|---|---|---|
-  | Model | 去配置 → `/admin/extensions` | "需要部署管理员配置模型服务" (no action: models are deployment-wide; org model purposes cannot add a provider) | "等待管理员配置模型" | same as member |
+  | Model, `orgCanAddModel` | 去配置 → `/extensions?tab=model` (when also an org admin) | 去配置 → `/extensions?tab=model` | "等待管理员配置模型", described as "组织管理员可以在「扩展」里启用一个模型服务" | same as member |
+  | Model, platform only | 去配置 → `/admin/extensions` | "需要超级管理员配置模型服务" (no action) | "等待管理员配置模型" | same as member |
   | Agent | 新建 → `/agents/new` once a model exists; before that disabled with "先配置模型" | same | same | "等待管理员创建 agent" |
   | 可以稍后再做 | invite members, channels, plugins (when also an org admin) | invite members, channels, plugins | 我的连接 | — |
 
   A viewer with nothing to do right now also sees why, with a 刷新 button that re-reads readiness:
-  an org admin blocked on the model "需要部署管理员配置模型服务后才能继续", anyone else
+  an org admin blocked on the model (platform only) "配置好后点刷新继续", anyone else
   "组织还在配置中，管理员完成后你就能开始对话".
 
 ## 4. Where every page goes

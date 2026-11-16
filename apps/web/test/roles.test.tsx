@@ -121,7 +121,7 @@ async function runRoutePage(page: RoutePage, me: Me): Promise<{ reads: string[] 
     async (path) => {
       if (path === "/api/v1/me") return reply(200, me);
       if (path === "/api/v1/orgs/o1/readiness")
-        return reply(200, { modelProvider: "ready", agents: 1 });
+        return reply(200, { modelProvider: "ready", orgCanAddModel: false, agents: 1 });
       reads.push(path);
       return reply(404, { error: { code: "not_found", message: "x" } });
     },

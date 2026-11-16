@@ -16,6 +16,7 @@ import { AgentsFromTemplate } from "./from-template.service.js";
 import { OrgAgentTemplates } from "./org-templates.js";
 import { PendingConnectorRequests } from "./pending-connector-requests.js";
 import { PendingConnectorsService } from "./pending-connectors.service.js";
+import { ReadinessService } from "./readiness.service.js";
 import { AgentTemplatesService } from "./templates.js";
 
 /**
@@ -53,6 +54,7 @@ import { AgentTemplatesService } from "./templates.js";
     AgentsFromTemplate,
     PendingConnectorRequests,
     PendingConnectorsService,
+    ReadinessService,
   ],
   exports: [
     AgentLookupModule,
@@ -64,6 +66,7 @@ import { AgentTemplatesService } from "./templates.js";
     AgentsFromTemplate,
     PendingConnectorRequests,
     PendingConnectorsService,
+    ReadinessService,
   ],
 })
 export class AgentsModule {}

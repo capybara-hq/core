@@ -1530,6 +1530,7 @@
       "model": {
         "description": "Enable at least one extension that provides models so agents can answer.",
         "askAdmin": "No model is available yet. Super admins configure models under Admin → Extensions.",
+        "askOrgAdmin": "No model is available yet. An org admin can enable a model service under Extensions.",
         "action": "Set up",
         "waiting": "Waiting for a super admin"
       },
