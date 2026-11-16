@@ -267,7 +267,7 @@ Task 6/8 cutover. Add a device changeset and accurately scoped README notes; no 
 **Internal interfaces (device-private, no SDK contract change):**
 
 - `createMacOperationBackend(options: MacOperationBackendOptions): Promise<MacOperationBackend>`
-  returns `Required<Pick<SandboxProvider, "permissionCapabilities"|"operation"|"browse"|"prepare"|
+  returns `Required<Pick<SandboxProvider, "permissionSupport"|"operation"|"browse"|"prepare"|
   "revokeOperation"|"background">>` plus the two private methods below. Options contain `deviceId`, `instanceGeneration`, `stateDir`,
   `roots: SandboxRoots`, `pythonPath`, and `readOwnerCeiling(): Promise<DeviceOwnerCeiling>`.
   Validate the supplied handle/device/generation on every entry. Unsupported OS/backend selection

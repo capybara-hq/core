@@ -73,7 +73,7 @@ export interface SandboxOperationScope extends SandboxOperationRef {
   readonly filesystem: SandboxFileScope;
   readonly network: SandboxNetworkScope;
 }
-export interface SandboxPermissionCapabilities {
+export interface SandboxPermissionSupport {
   readonly version: 1;
   readonly restricted: {
     readonly filesystem: true; readonly network: true;
@@ -124,8 +124,8 @@ export function parseSandboxExecutionRef(value: unknown): SandboxExecutionRef;
 Add these optional methods to `SandboxProvider`:
 
 ```ts
-permissionCapabilities?(h: SandboxHandle, signal: AbortSignal):
-  Promise<SandboxPermissionCapabilities>;
+permissionSupport?(h: SandboxHandle, signal: AbortSignal):
+  Promise<SandboxPermissionSupport>;
 operation?(h: SandboxHandle, scope: SandboxOperationScope, signal: AbortSignal):
   Promise<SandboxOperation>;
 prepare?(h: SandboxHandle, scope: SandboxPreparationScope, signal: AbortSignal):
@@ -153,7 +153,7 @@ not user consent. The kernel intersects it with live ceilings. Both list and sca
 together; absence means projects unavailable. A recreated instance re-probes capabilities.
 
 Permissions GET and selected-device/project preview never create, resume or update an instance.
-Their availability value is `{state:"supported", report:SandboxPermissionCapabilities}`,
+Their availability value is `{state:"supported", report:SandboxPermissionSupport}`,
 `{state:"unsupported", reason:string}` or `{state:"unprobed", reason:string}`. Persist reports with
 provider version, runtime/helper hash, image/template fingerprint and instance generation; a changed
 fingerprint invalidates the report. Use a valid persisted report or provider's documented static
