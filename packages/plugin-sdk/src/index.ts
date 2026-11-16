@@ -28,6 +28,7 @@ export * from "./plugin-manifest.js";
 export * from "./plugin-package.js";
 export * from "./sandbox.js";
 export * from "./sandbox-operation.js";
+export { SANDBOX_RUNTIME_SOURCE } from "./sandbox-runtime-source.js";
 export * from "./secret.js";
 export * from "./setup-check.js";
 export * from "./setup-guide.js";

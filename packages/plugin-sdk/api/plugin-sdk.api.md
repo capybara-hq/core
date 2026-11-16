@@ -2779,6 +2779,16 @@ export const SANDBOX_EXTENSION_POINT = "sandbox@2";
 export const SANDBOX_ROOTS: readonly ["/workspace", "/skills", "/tmp"];
 
 // @public
+export const SANDBOX_RUNTIME_SOURCE: {
+    readonly version: number;
+    readonly files: readonly {
+        readonly name: string;
+        readonly source: string;
+        readonly sha256: string;
+    }[];
+};
+
+// @public
 export const SANDBOX_TAG_RE: RegExp;
 
 // @public
