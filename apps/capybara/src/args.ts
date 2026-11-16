@@ -6,7 +6,7 @@ export type Role = (typeof ROLES)[number];
 
 /** 解析后的命令行。 */
 export type Command =
-  | { command: "start"; roles?: Role[] }
+  | { command: "start"; roles?: Role[]; activatePermissionConfig?: string }
   | { command: "migrate" }
   | { command: "bootstrap"; dir?: string; manifest?: string }
   | {
@@ -32,6 +32,8 @@ export type Command =
 export const USAGE = `Usage:
   capybara start [--role api,worker,gateway]   Start the kernel (roles override config "roles");
                                                runs the bootstrap step first unless it is done
+                         [--activate-permission-config <expected-active-hash>]
+                                               Intentionally activate resolved permission config
   capybara migrate                             Run kernel and plugin migrations, then exit
   capybara bootstrap [--dir <path>] [--manifest <path>]
                                                Install the plugins bootstrap.json pins: a .tgz in
@@ -115,6 +117,20 @@ export function parseCli(argv: string[]): Command {
   }
   const [command, ...rest] = parsed.positionals;
   const v = parsed.values;
+  const activatePermissionConfig = v["activate-permission-config"];
+  if (activatePermissionConfig !== undefined) {
+    if (command !== "start")
+      throw new UsageError("--activate-permission-config is only valid for start");
+    if (
+      parsed.tokens.filter(
+        (token) => token.kind === "option" && token.name === "activate-permission-config",
+      ).length !== 1
+    )
+      throw new UsageError("--activate-permission-config may not be repeated");
+    if (!/^[a-f0-9]{64}$/.test(activatePermissionConfig))
+      throw new UsageError("--activate-permission-config requires a lowercase 64-hex active hash");
+  }
+  const activation = activatePermissionConfig === undefined ? {} : { activatePermissionConfig };
   if (command === undefined || command === "help" || v.help) {
     return { command: "help" };
   }
@@ -245,7 +261,7 @@ export function parseCli(argv: string[]): Command {
   }
   if (command === "start") {
     const raw = parsed.values.role;
-    if (raw === undefined) return { command: "start" };
+    if (raw === undefined) return { command: "start", ...activation };
     const roles = raw
       .split(",")
       .map((r) => r.trim())
@@ -256,7 +272,7 @@ export function parseCli(argv: string[]): Command {
         throw new UsageError(`unknown role "${r}" (expected ${ROLES.join(", ")})`);
       }
     }
-    return { command: "start", roles: [...new Set(roles)] as Role[] };
+    return { command: "start", roles: [...new Set(roles)] as Role[], ...activation };
   }
   throw new UsageError(`unknown command "${command}"`);
 }
@@ -266,10 +282,12 @@ function parse(argv: string[]) {
     args: argv,
     allowPositionals: true,
     strict: true,
+    tokens: true,
     // Deliberately no --password: the password comes from stdin or --password-file, never argv
     // (it would land in shell history and the process list).
     options: {
       role: { type: "string" },
+      "activate-permission-config": { type: "string" },
       login: { type: "string" },
       "display-name": { type: "string" },
       email: { type: "string" },

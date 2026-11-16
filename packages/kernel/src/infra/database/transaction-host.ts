@@ -6,6 +6,12 @@ import type { AccessMode, IsolationLevel, Kysely, Transaction } from "kysely";
 import type { KernelLogger } from "../../log.js";
 import { KERNEL_LOGGER, KERNEL_POOL } from "../tokens.js";
 
+import {
+  runOwnedStartupActivation,
+  type StartupActivationOptions,
+  startupActivationGuard,
+} from "./startup-activation-transaction.js";
+
 type AfterCommitHook = () => void | Promise<void>;
 
 interface TransactionStore {
@@ -79,6 +85,7 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** Queues `fn` on the current live root transaction; with none open, runs it at once. */
 export function queueAfterCommit(fn: AfterCommitHook): void {
+  startupActivationGuard()?.check();
   const store = liveStore();
   if (store) {
     store.hooks.push(fn);
@@ -127,8 +134,46 @@ export class TransactionHost {
   /** The transaction of the current async context on this pool, if any. */
   // biome-ignore lint/suspicious/noExplicitAny: the pool carries no schema types
   current(): Transaction<any> | undefined {
+    const guard = startupActivationGuard();
+    guard?.check();
     const store = liveStore();
+    if (guard && store?.pool !== this.pool)
+      throw new Error("Startup activation cannot fall back to the shared pool");
     return store?.pool === this.pool ? store.trx : undefined;
+  }
+
+  /** Startup-only bounded owned session; all ordinary transaction/fence semantics are retained. */
+  async runStartupActivation<T>(
+    fn: () => Promise<T>,
+    options: StartupActivationOptions,
+  ): Promise<T> {
+    startupActivationGuard()?.check();
+    if (liveStore() || startupActivationGuard())
+      throw new Error("Startup activation refuses an existing transaction");
+    const hooks: AfterCommitHook[] = [];
+    let store: TransactionStore | undefined;
+    let result: T;
+    try {
+      result = await runOwnedStartupActivation(async (trx) => {
+        store = { pool: this.pool, trx, hooks, done: false };
+        return storage.run(store, async () => {
+          await fences.getStore()?.();
+          return fn();
+        });
+      }, options);
+    } finally {
+      if (store) store.done = true;
+    }
+    for (const hook of hooks) {
+      try {
+        // This continuation belongs to the original caller, outside the helper's ALS guard.
+        // Late transaction descendants retain that guard permanently.
+        await runOutsideTransaction(hook);
+      } catch (e) {
+        this.log.error("afterCommit hook failed", { error: errMsg(e) });
+      }
+    }
+    return result;
   }
 
   /**
@@ -138,7 +183,11 @@ export class TransactionHost {
    * root's COMMIT, outside any transaction, and are dropped on rollback.
    */
   async run<T>(fn: () => Promise<T>, opts: TransactionOptions = {}): Promise<T> {
+    const guard = startupActivationGuard();
+    guard?.check();
     const propagation = opts.propagation ?? "required";
+    if (guard && propagation === "requires_new")
+      throw new Error("Nested requires_new is refused during startup activation");
     if (propagation === "mandatory") {
       if (!this.current()) {
         throw new Error(

@@ -28,7 +28,7 @@ import { bootstrapDirOf } from "./bootstrap.js";
  * the exit code to use at once.
  */
 export async function runStart(
-  opts: { roles?: Role[] },
+  opts: { roles?: Role[]; activatePermissionConfig?: string },
   cliLog: KernelLogger,
   baseEnv: NodeJS.ProcessEnv,
   exit: (code: number) => void = exitAfterShutdown,
@@ -49,6 +49,9 @@ export async function runStart(
     onLogger(log);
     options = {
       source,
+      ...(opts.activatePermissionConfig !== undefined && {
+        permissionConfigActivation: { expectedActiveHash: opts.activatePermissionConfig },
+      }),
       logger: log,
       env,
       bootstrap: { dir: bootstrapDirOf(config) },

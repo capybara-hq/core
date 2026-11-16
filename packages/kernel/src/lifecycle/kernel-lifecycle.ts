@@ -209,7 +209,26 @@ export class KernelLifecycle
       ),
     );
     this.checkpoint();
-    await this.permissionConfig.initialize();
+    const publication = await this.shutdown.trackInFlight(
+      this.permissionConfig.initialize({
+        ...(opts.permissionConfigActivation !== undefined && {
+          activation: opts.permissionConfigActivation,
+        }),
+        startup: { signal: this.shutdown.signal, remainingMs: () => this.shutdown.remainingMs() },
+      }),
+    );
+    if (publication.outcome === "activated" || publication.outcome === "already-active")
+      this.log.info("permission configuration activation committed", {
+        outcome: publication.outcome,
+        activeHash: publication.activeHash,
+      });
+    else if (publication.outcome === "mismatch")
+      this.log.warn("Permission configuration differs from the active deployment configuration", {
+        activeHash: publication.activeHash,
+        candidateHash: publication.candidateHash,
+        command: `capybara start --activate-permission-config ${publication.activeHash}`,
+      });
+    this.checkpoint();
     // Rows still holding a release-candidate tool key that migration 0063 could not map: one
     // read-only count, a WARN when there are any (tool naming spec §8.2); never blocks the start
     await warnLegacyToolKeys(this.kdb.db, this.log).catch((e: unknown) =>

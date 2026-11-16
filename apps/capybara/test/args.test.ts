@@ -232,3 +232,45 @@ describe("parseCli", () => {
     expect(() => parseCli(["start", "extra"])).toThrow(/unexpected argument/);
   });
 });
+
+describe("startup permission activation", () => {
+  const hash = "a".repeat(64);
+  it.each([false, true])("preserves the expected hash with roles=%s", (roles) => {
+    for (const flag of [
+      ["--activate-permission-config", hash],
+      [`--activate-permission-config=${hash}`],
+    ]) {
+      expect(parseCli(["start", ...flag, ...(roles ? ["--role", "api"] : [])])).toEqual({
+        command: "start",
+        activatePermissionConfig: hash,
+        ...(roles ? { roles: ["api"] } : {}),
+      });
+    }
+  });
+  it.each([
+    [],
+    [""],
+    [" "],
+    ["A".repeat(64)],
+    [`${"a".repeat(64)}\n`],
+    ["a".repeat(63)],
+    ["force"],
+    [hash, `--activate-permission-config=${hash}`],
+  ])("refuses invalid or repeated activation %j", (...values) => {
+    expect(() => parseCli(["start", "--activate-permission-config", ...values])).toThrow(
+      UsageError,
+    );
+  });
+  it.each([
+    [],
+    ["help"],
+    ["migrate"],
+    ["bootstrap"],
+    ["admin", "create"],
+    ["admin", "grant", "a"],
+    ["extensions", "list"],
+    ["plugins", "list"],
+  ])("refuses activation outside start %j", (...command) => {
+    expect(() => parseCli([...command, "--activate-permission-config", hash])).toThrow(UsageError);
+  });
+});

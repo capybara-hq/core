@@ -301,6 +301,14 @@ otherwise.
     `gateway`. They are built from one Dockerfile with the build argument `ROLES` (comma-separated or
     a JSON array, default `api,worker,gateway`):
     `docker build -f docker/kernel.Dockerfile --build-arg ROLES=worker .`.
+- **Permission configuration activation.** Normal startup initializes an absent permission
+  configuration or joins a matching deployment. A mismatch gates only that replica's permission
+  operations; it cannot replace the active configuration. To intentionally activate the resolved
+  source plus environment configuration, run
+  `capybara start --activate-permission-config <expected-active-hash>` using the lowercase 64-hex
+  active hash from the mismatch diagnostic. This start-only option works with every role and
+  publishes after migrations, before extensions and role startup. It is an operator CAS precondition,
+  not a secret or a config/environment setting. See [rollout and rollback](upgrade.md#permission-configuration-rollout).
 - **Periodic jobs run on `worker` only.** Each runs once per period across all worker replicas
   (another replica's attempt logs at info, not error). A deployment without a `worker` process runs
   none of them and consumes no queue. A starting worker runs no periodic job before its start

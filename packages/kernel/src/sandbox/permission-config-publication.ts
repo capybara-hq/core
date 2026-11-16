@@ -65,6 +65,34 @@ export function permissionProjectionFingerprint(projection: PermissionConfigProj
 export function permissionConfigFingerprint(config: KernelConfig): string {
   return permissionProjectionFingerprint(permissionConfigProjection(config));
 }
+export type PermissionConfigInitialization =
+  | { outcome: "initialized" | "matching" | "already-active" | "activated"; activeHash: string }
+  | { outcome: "mismatch"; activeHash: string; candidateHash: string };
+export interface PermissionConfigInitializeOptions {
+  activation?: Readonly<{ expectedActiveHash: string }>;
+  startup?: { signal: AbortSignal; remainingMs: () => number };
+}
+export function validatePermissionConfigActivation(activation: unknown): void {
+  if (activation === undefined) return;
+  if (
+    activation === null ||
+    typeof activation !== "object" ||
+    !("expectedActiveHash" in activation) ||
+    typeof activation.expectedActiveHash !== "string" ||
+    !/^[a-f0-9]{64}$/.test(activation.expectedActiveHash)
+  )
+    throw new Error("Permission configuration activation requires a lowercase 64-hex active hash");
+}
+export class PermissionConfigActivationConflict extends Error {
+  constructor(activeHash: string | undefined, candidateHash: string) {
+    super(
+      activeHash === undefined
+        ? "Permission configuration is not initialized; run the first startup normally without --activate-permission-config"
+        : `Permission configuration differs from the active deployment configuration. active=${activeHash}; candidate=${candidateHash}. To intentionally activate this resolved startup configuration, run: capybara start --activate-permission-config ${activeHash}`,
+    );
+    this.name = "PermissionConfigActivationConflict";
+  }
+}
 @Injectable()
 export class PermissionConfigPublication {
   constructor(
@@ -73,59 +101,128 @@ export class PermissionConfigPublication {
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
     @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
   ) {}
-  /** Startup only initializes an absent publication; a stale replica cannot overwrite another. */
-  @Transactional({ propagation: "requires_new" })
-  async initialize(): Promise<void> {
-    await this.ceilings.lock({}, "platform");
-    await this.db
-      .insertInto("permission_config_publication")
-      .values({
-        id: "platform",
-        fingerprint: permissionConfigFingerprint(this.config.get()),
-        projection: JSON.stringify(permissionConfigProjection(this.config.get())),
-      })
-      .onConflict((oc) => oc.column("id").doNothing())
-      .execute();
+  /** Capture the actual validated startup projection once, before waiting for authority. */
+  async initialize(
+    options: PermissionConfigInitializeOptions = {},
+  ): Promise<PermissionConfigInitialization> {
+    validatePermissionConfigActivation(options.activation);
+    const projection = permissionConfigProjection(this.config.get());
+    const initialize = () => this.initializeLocked(projection, options.activation);
+    if (options.startup) {
+      const { url, connectTimeoutMs } = this.config.get().db;
+      return this.txHost.runStartupActivation(initialize, {
+        connectionString: url,
+        connectTimeoutMs,
+        ...options.startup,
+      });
+    }
+    return this.txHost.run(initialize, { propagation: "requires_new" });
   }
-  /** CAS publication precedes exposing the new local config. Same-next replicas converge idempotently. */
-  @Transactional({ propagation: "requires_new" })
-  async publish(before: KernelConfig, next: KernelConfig): Promise<void> {
+  @Transactional({ propagation: "mandatory" })
+  private async initializeLocked(
+    projection: PermissionConfigProjection,
+    activation?: Readonly<{ expectedActiveHash: string }>,
+  ): Promise<PermissionConfigInitialization> {
     await this.ceilings.lock({}, "platform");
-    const previous = permissionConfigFingerprint(before),
-      fingerprint = permissionConfigFingerprint(next);
+    const candidateHash = permissionProjectionFingerprint(projection);
     const row = await this.db
       .selectFrom("permission_config_publication")
       .select(["fingerprint", "projection"])
       .where("id", "=", "platform")
       .executeTakeFirst();
-    if (
-      row &&
-      permissionProjectionFingerprint(parsePermissionConfigProjection(row.projection)) !==
-        row.fingerprint
-    )
+    if (activation) {
+      if (!row) throw new PermissionConfigActivationConflict(undefined, candidateHash);
+      const outcome = await this.publishLocked(activation.expectedActiveHash, projection);
+      return {
+        outcome: outcome === "matching" ? "already-active" : "activated",
+        activeHash: candidateHash,
+      };
+    }
+    if (row) {
+      this.validateStored(row);
+      return row.fingerprint === candidateHash
+        ? { outcome: "matching", activeHash: row.fingerprint }
+        : { outcome: "mismatch", activeHash: row.fingerprint, candidateHash };
+    }
+    await this.db
+      .insertInto("permission_config_publication")
+      .values({
+        id: "platform",
+        fingerprint: candidateHash,
+        projection: JSON.stringify(projection),
+      })
+      .onConflict((oc) => oc.column("id").doNothing())
+      .execute();
+    const inserted = await this.db
+      .selectFrom("permission_config_publication")
+      .select("fingerprint")
+      .where("id", "=", "platform")
+      .executeTakeFirstOrThrow();
+    return inserted.fingerprint === candidateHash
+      ? { outcome: "initialized", activeHash: candidateHash }
+      : { outcome: "mismatch", activeHash: inserted.fingerprint, candidateHash };
+  }
+  /** CAS publication precedes exposing the new local config. Same-next replicas converge idempotently. */
+  @Transactional({ propagation: "requires_new" })
+  async publish(before: KernelConfig, next: KernelConfig): Promise<void> {
+    await this.ceilings.lock({}, "platform");
+    try {
+      await this.publishLocked(
+        permissionConfigFingerprint(before),
+        permissionConfigProjection(next),
+      );
+    } catch (error) {
+      if (error instanceof PermissionConfigActivationConflict)
+        throw new SandboxScopeDeniedError(
+          "Permission configuration changed on another replica; wait for its current source revision",
+        );
+      throw error;
+    }
+  }
+  private validateStored(row: {
+    projection: unknown;
+    fingerprint: string;
+  }): PermissionConfigProjection {
+    const parsed = parsePermissionConfigProjection(row.projection);
+    if (permissionProjectionFingerprint(parsed) !== row.fingerprint)
       throw new SandboxScopeDeniedError(
         "Published permission projection does not match its fingerprint",
       );
-    if (row?.fingerprint === fingerprint) return;
-    if (!row || row.fingerprint !== previous)
-      throw new SandboxScopeDeniedError(
-        "Permission configuration changed on another replica; wait for its current source revision",
-      );
-    await this.db
+    return parsed;
+  }
+  @Transactional({ propagation: "mandatory" })
+  private async publishLocked(
+    previous: string,
+    next: PermissionConfigProjection,
+  ): Promise<"matching" | "activated"> {
+    const fingerprint = permissionProjectionFingerprint(next);
+    const row = await this.db
+      .selectFrom("permission_config_publication")
+      .select(["fingerprint", "projection"])
+      .where("id", "=", "platform")
+      .executeTakeFirst();
+    if (!row) throw new PermissionConfigActivationConflict(undefined, fingerprint);
+    const before = this.validateStored(row);
+    if (row.fingerprint === fingerprint) return "matching";
+    if (row.fingerprint !== previous)
+      throw new PermissionConfigActivationConflict(row.fingerprint, fingerprint);
+    const changed = await this.db
       .updateTable("permission_config_publication")
       .set({
         fingerprint,
-        projection: JSON.stringify(permissionConfigProjection(next)),
+        projection: JSON.stringify(next),
         updated_at: new Date(),
       })
       .where("id", "=", "platform")
       .where("fingerprint", "=", previous)
-      .execute();
+      .executeTakeFirstOrThrow();
+    if (changed.numUpdatedRows !== 1n)
+      throw new PermissionConfigActivationConflict(row.fingerprint, fingerprint);
     const stored = await readStoredDevicesAutoMode(this.db.db);
-    const effective = (config: KernelConfig) =>
+    const effective = (projection: PermissionConfigProjection) =>
       resolveDevicesAutoMode(
-        config.devices.autoMode,
-        config.devices.autoMode === undefined ? undefined : "file",
+        projection.autoMode.kind === "configured" ? projection.autoMode.value : undefined,
+        projection.autoMode.kind === "configured" ? "file" : undefined,
         stored,
       ).mode;
     const beforeMode = effective(before),
@@ -143,7 +240,7 @@ export class PermissionConfigPublication {
     );
     const devices = await this.db.selectFrom("devices").select(["id", "source"]).execute();
     const sources = new Map(devices.map((device) => [device.id, device.source]));
-    if (before.sandbox.limits.egress !== next.sandbox.limits.egress)
+    if (before.egress !== next.egress)
       await this.ceilings.invalidateDeviceConsentUnderPlatform(
         devices.filter((device) => device.source === "cloud").map((device) => device.id),
       );
@@ -155,24 +252,25 @@ export class PermissionConfigPublication {
           return (
             nextMode === "off" ||
             (sources.get(row.device_id) === "cloud" &&
-              before.sandbox.limits.egress !== "none" &&
-              next.sandbox.limits.egress === "none")
+              before.egress !== "none" &&
+              next.egress === "none")
           );
         if (row.method !== "exec" || !("network" in scope) || scope.network.kind !== "allowlist")
           return false;
-        const hosts = orgEffectiveHosts(next.sandbox.limits, settings.get(row.org_id));
+        const hosts = orgEffectiveHosts(next, settings.get(row.org_id));
         return scope.network.hosts.some(
           (host) =>
             !hosts.some((pattern) => coversHost(pattern, host)) &&
             !(
-              next.sandbox.limits.egress !== "none" &&
-              next.sandbox.limits.orgHosts !== "within" &&
+              next.egress !== "none" &&
+              next.orgHosts !== "within" &&
               row.granted_hosts.includes(host)
             ),
         );
       },
       beforeMode !== nextMode,
     );
+    return "activated";
   }
   async assertCurrent(): Promise<void> {
     const row = await this.db

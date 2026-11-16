@@ -3,13 +3,15 @@ import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import type { NestFastifyApplication } from "@nestjs/platform-fastify";
 import { Redis } from "ioredis";
-import { Kysely, PostgresDialect } from "kysely";
+import { Kysely, PostgresDialect, sql } from "kysely";
 import pg from "pg";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { closeKernelApp, createKernelApp, startKernelApp } from "../../src/app.js";
+import { buildKernelApp, closeKernelApp, createKernelApp, startKernelApp } from "../../src/app.js";
 import { ChannelConnections } from "../../src/channels/connections.service.js";
 import { ChannelJobs } from "../../src/channels/jobs.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
+import { ExtensionHost } from "../../src/extensions/host.js";
+import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { KernelEvents } from "../../src/infra/events/kernel-events.js";
 import { GracefulShutdown } from "../../src/infra/lifecycle/graceful-shutdown.service.js";
 import { KernelLifecycle } from "../../src/lifecycle/kernel-lifecycle.js";
@@ -17,6 +19,10 @@ import { createLogger } from "../../src/log.js";
 import { GatewayRole } from "../../src/roles/gateway-role.js";
 import { WorkerRole } from "../../src/roles/worker-role.js";
 import { Waits } from "../../src/runtime/waits.js";
+import {
+  PermissionConfigPublication,
+  permissionConfigFingerprint,
+} from "../../src/sandbox/permission-config-publication.js";
 import { SLOW_GATES_KEY, type SlowGates } from "../fixtures/plugins/slow/index.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -339,3 +345,159 @@ describe("startKernelApp signal handling", () => {
     expect(events.map((e) => process.listenerCount(e))).toEqual(before);
   });
 });
+
+it("shutdown-while-authority-blocked drains activation before closing infra", async () => {
+  const initial = runConfig({ pg: pgc.url, redis: rd.url }, { extensions: [], roles: ["api"] });
+  const seed = await createKernelApp(initial, { env: {}, logger: silent() });
+  await closeKernelApp(seed);
+  const next = structuredClone(initial);
+  next.devices.autoMode = "off";
+  const app = await buildKernelApp(next, {
+    env: {},
+    logger: silent(),
+    permissionConfigActivation: { expectedActiveHash: permissionConfigFingerprint(initial) },
+  });
+  apps.push(app);
+  const shutdown = app.get(GracefulShutdown);
+  const publisher = app.get(PermissionConfigPublication);
+  const entered = deferred();
+  const original = publisher.initialize.bind(publisher);
+  let settled = false;
+  let infraSawSettlement = false;
+  const initialize = vi.spyOn(publisher, "initialize").mockImplementation(async (options) => {
+    entered.resolve();
+    try {
+      return await original(options);
+    } finally {
+      settled = true;
+    }
+  });
+  shutdown.closeLast(async () => {
+    infraSawSettlement = settled;
+  });
+  const load = vi.spyOn(app.get(ExtensionHost), "load");
+  const blocker = new pg.Client({ connectionString: pgc.url });
+  blocker.on("error", () => {});
+  await blocker.connect();
+  await blocker.query("begin");
+  await blocker.query(
+    "select pg_advisory_xact_lock(hashtext('permission-authority-platform-platform'))",
+  );
+  const state = async () => ({
+    active: await kernelDb(raw).selectFrom("permission_config_publication").selectAll().execute(),
+    epochs: await kernelDb(raw).selectFrom("permission_authority_epochs").selectAll().execute(),
+    outbox: await kernelDb(raw).selectFrom("outbox").selectAll().execute(),
+  });
+  const before = await state();
+  const starting = app.init().catch((e: unknown) => e);
+  try {
+    await entered.promise;
+    await vi.waitFor(async () => {
+      expect(
+        (
+          await sql<{
+            waiting: boolean;
+          }>`select exists(select 1 from pg_stat_activity where datname=current_database() and wait_event='advisory' and application_name='capybara-kernel') as waiting`.execute(
+            raw,
+          )
+        ).rows[0]?.waiting,
+      ).toBe(true);
+    });
+    expect(shutdown.inFlightCount).toBeGreaterThan(0);
+    const at = performance.now();
+    const closing = closeKernelApp(app);
+    expect(await starting).toBeInstanceOf(Error);
+    expect(performance.now() - at).toBeLessThan(2_000);
+    await closing;
+    expect(settled).toBe(true);
+    expect(infraSawSettlement).toBe(true);
+    expect(load).not.toHaveBeenCalled();
+    expect(app.get(KernelLifecycle).port).toBeUndefined();
+    await blocker.query("rollback");
+    expect(await state()).toEqual(before);
+  } finally {
+    initialize.mockRestore();
+    await blocker.end();
+  }
+});
+
+it.each(["staged", "commit-ack"])(
+  "shutdown at activation %s prevents provider and role startup",
+  async (phase) => {
+    const { PermissionCeilingWrites } = await import(
+      "../../src/sandbox/permission-ceiling-writes.js"
+    );
+    const initial = runConfig(
+      { pg: pgc.url, redis: rd.url },
+      { extensions: [], roles: ["api"], devices: { autoMode: "allowed" } },
+    );
+    const seed = await createKernelApp(initial, { env: {}, logger: silent() });
+    await seed.get(KernelDb).deleteFrom("permission_config_publication").execute();
+    await seed.get(PermissionConfigPublication).initialize();
+    await closeKernelApp(seed);
+    const next = structuredClone(initial);
+    next.devices.autoMode = "off";
+    const app = await buildKernelApp(next, {
+      env: {},
+      logger: silent(),
+      permissionConfigActivation: { expectedActiveHash: permissionConfigFingerprint(initial) },
+    });
+    apps.push(app);
+    const entered = deferred(),
+      resume = deferred();
+    const shutdown = app.get(GracefulShutdown);
+    const load = vi.spyOn(app.get(ExtensionHost), "load");
+    const ceilings = app.get(PermissionCeilingWrites),
+      originalWrite = ceilings.publishLocked.bind(ceilings);
+    const write = vi.spyOn(ceilings, "publishLocked").mockImplementation(async (...args) => {
+      await originalWrite(...args);
+      if (phase === "staged") {
+        entered.resolve();
+        await resume.promise;
+      }
+    });
+    const originalQuery = pg.Client.prototype.query;
+    const query = vi.spyOn(pg.Client.prototype, "query").mockImplementation(function (
+      this: pg.Client,
+      ...args: unknown[]
+    ) {
+      const result = Reflect.apply(originalQuery, this, args);
+      if (phase === "commit-ack" && args[0] === "commit")
+        return (result as Promise<unknown>).then(async (value) => {
+          entered.resolve();
+          await resume.promise;
+          return value;
+        });
+      return result;
+    } as typeof originalQuery);
+    const read = async () => ({
+      active: await kernelDb(raw).selectFrom("permission_config_publication").selectAll().execute(),
+      epochs: await kernelDb(raw).selectFrom("permission_authority_epochs").selectAll().execute(),
+      outbox: await kernelDb(raw).selectFrom("outbox").selectAll().execute(),
+    });
+    const before = await read();
+    const starting = app.init().catch((e: unknown) => e);
+    try {
+      await entered.promise;
+      const at = performance.now();
+      const closing = closeKernelApp(app);
+      const result = await starting;
+      expect(result).toBeInstanceOf(Error);
+      expect(performance.now() - at).toBeLessThan(2_000);
+      await closing;
+      expect(shutdown.inFlightCount).toBe(0);
+      expect(load).not.toHaveBeenCalled();
+      expect(app.get(KernelLifecycle).port).toBeUndefined();
+      const after = await read();
+      if (phase === "staged") expect(after).toEqual(before);
+      else {
+        expect(result).toMatchObject({ outcome: "uncertain" });
+        expect(after.active[0]?.fingerprint).toBe(permissionConfigFingerprint(next));
+      }
+    } finally {
+      resume.resolve();
+      query.mockRestore();
+      write.mockRestore();
+    }
+  },
+);

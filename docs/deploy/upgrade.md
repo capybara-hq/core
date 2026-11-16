@@ -26,6 +26,34 @@ Extension upgrades need no restart and are separate from kernel upgrades. Instal
 the admin console or with `capybara extensions install`. See
 [.agents/skills/writing-extensions](../../.agents/skills/writing-extensions/SKILL.md).
 
+### Permission configuration rollout
+
+`sandbox.limits.egress`, `orgHosts` and `allowHosts` require restart. `devices.autoMode` remains hot;
+watching a mixed hot/restart payload publishes only the locally effective network plus the new hot
+value. Watching a restart-only change never activates it.
+
+1. Prepare the intended source and environment. On a mismatch, inspect the nonsecret `activeHash`
+   and `candidateHash` diagnostic. A normal stale restart changes no authority.
+2. Start one replica with `capybara start --activate-permission-config <expected-active-hash>`.
+   The candidate is that process's validated startup configuration. If another writer won first,
+   the command fails before extensions or roles start; review the new active hash before retrying.
+   An empty deployment must first start normally, without the activation flag.
+3. Roll the remaining replicas onto the same configuration. Old replicas immediately fail future
+   permission admission after activation; matching replicas continue. Revocation obligations and
+   semantic permission revisions commit together, without waiting for provider calls.
+
+A committed activation survives a subsequent bootstrap/start failure. Retry the same candidate and
+expected hash: an already-active candidate is a no-op, including after a lost commit acknowledgment.
+An uncertain transaction diagnostic is not proof of rollback. To intentionally restore an earlier
+configuration, start it with the **current** active hash. Applicable semantic revisions advance again;
+old Full consent is not restored, and users must renew consent when its scope changed.
+
+Startup activation uses a private PostgreSQL session: a 30-second absolute work limit, session
+statement/lock/idle-transaction timeouts of 500 ms, and at most 1,500 ms cleanup within startup shutdown
+drain. Contention or slow scans may require a deliberate retry. Protocol cancellation needs no SQL
+backend-signaling privilege; server or network failure may leave the remote commit outcome uncertain.
+These bounds do not change ordinary hot publication or migration timeouts.
+
 ### Docker Compose
 
 Each release tags its commit `v<version>` (GitHub release), and the `compose.yaml` at that tag

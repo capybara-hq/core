@@ -149,7 +149,12 @@ export async function main(
     case "start":
       if (envFile !== undefined) log.info("loaded env file", { path: envFile });
       return runStart(
-        { ...(cmd.roles !== undefined && { roles: cmd.roles }) },
+        {
+          ...(cmd.roles !== undefined && { roles: cmd.roles }),
+          ...(cmd.activatePermissionConfig !== undefined && {
+            activatePermissionConfig: cmd.activatePermissionConfig,
+          }),
+        },
         log,
         env,
         exitAfterShutdown,
