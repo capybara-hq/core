@@ -1,5 +1,6 @@
 ---
 "@capybara-hq/capybara": patch
+"@capybara-hq/kernel": patch
 ---
 
 Replay guarantees zero drift only for logs written by the current format: the frozen

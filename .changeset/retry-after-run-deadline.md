@@ -1,4 +1,5 @@
 ---
+"@capybara-hq/capybara": patch
 "@capybara-hq/kernel": patch
 ---
 

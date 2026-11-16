@@ -1,5 +1,6 @@
 ---
 "@capybara-hq/capybara": patch
+"@capybara-hq/kernel": patch
 ---
 
 Org security settings fail narrow: an unreadable stored `sandboxToolPolicy` reads as `ask` and an

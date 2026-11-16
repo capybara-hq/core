@@ -1,5 +1,6 @@
 ---
 "@capybara-hq/capybara": patch
+"@capybara-hq/kernel": patch
 ---
 
 Owe a plugin's scope sync from its extension's deploy (enable, upgrade, approval) and the import

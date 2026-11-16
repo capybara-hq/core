@@ -1,5 +1,6 @@
 ---
 "@capybara-hq/capybara": patch
+"@capybara-hq/kernel": patch
 ---
 
 Plugin installs drop the unused `upgrading` status: migration 0138 turns any such row into

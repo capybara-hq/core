@@ -1,5 +1,6 @@
 ---
 "@capybara-hq/capybara": patch
+"@capybara-hq/kernel": patch
 ---
 
 Org admins set a connector's default git push policy (allow / ask / deny) on its settings page, the
