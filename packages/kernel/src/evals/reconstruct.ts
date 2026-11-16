@@ -13,11 +13,16 @@ import {
   type ModelRef,
   normalizeStoredDefinition,
 } from "../agents/definition.js";
-import type { ConversationEvent, EventPayload } from "../conversations/events.js";
+import {
+  type ConversationEvent,
+  type EventPayload,
+  PermissionContextMetaV1Schema,
+} from "../conversations/events.js";
 import { sameModel, selectionAt } from "../conversations/selection.js";
 import { ApiError } from "../errors.js";
 import { COMPACTION_SETTINGS } from "../identity/settings.js";
 import {
+  latestSummary,
   type MediaBytes,
   type MediaInfo,
   type ModelCallMeta,
@@ -34,6 +39,7 @@ import {
   planSqueezedFit,
   sentOutputCap,
 } from "../runtime/context/fit.js";
+import { permissionContextHistory } from "../runtime/context/permission-profile.js";
 import { estimateTokens } from "../runtime/context/tokens.js";
 import { assembleModelRequest, type MediaSourceDeps } from "../runtime/model-call.js";
 import { CHILD_REMOVED_TOOLS } from "../runtime/subagents/definition.js";
@@ -117,6 +123,8 @@ export type DriftReason =
   | "pinned_changed"
   /** A child case's candidate has another effective definition than the logged one (phase C). */
   | "subagent_changed"
+  /** Original bounded permission contributions or their recorded locator/hash differ. */
+  | "permission_profile_changed"
   | "legacy_event"
   | "params_changed"
   /**
@@ -142,6 +150,7 @@ const DRIFT_ORDER: readonly DriftReason[] = [
   "definition_missing",
   "pinned_changed",
   "subagent_changed",
+  "permission_profile_changed",
   "legacy_event",
   "params_changed",
   "model_switched",
@@ -214,6 +223,29 @@ function inputEvents(events: readonly ConversationEvent[], call: ModelCallEvent)
   return events.filter((e) => e.seq <= upTo);
 }
 
+/** Compare only the original request range, never live state or candidate-generated history. */
+export function recordedPermissionContextDrift(
+  events: readonly ConversationEvent[],
+  call: ModelCallEvent,
+): DriftReason[] {
+  const bounded = inputEvents(events, call);
+  const rebuilt = permissionContextHistory(
+    bounded,
+    latestSummary(bounded)?.payload.coversUpToSeq,
+  ).meta;
+  const recorded = call.payload.request.permissionContext;
+  if (recorded === undefined && rebuilt === undefined) return [];
+  const parsed = PermissionContextMetaV1Schema.safeParse(recorded);
+  if (
+    !parsed.success ||
+    rebuilt === undefined ||
+    parsed.data.contextSeq !== rebuilt.contextSeq ||
+    parsed.data.hash !== rebuilt.hash
+  )
+    return ["permission_profile_changed"];
+  return [];
+}
+
 /** 该请求的 agent 版本：所属运行的 `run_started`；没有（不应出现）时用快照运行的版本。 */
 function recordedVersion(
   s: CaseSnapshot,
@@ -247,7 +279,7 @@ export function reconstructRequest(
   const all = toEvents(s);
   const call = findCall(all, modelCallSeq);
   const rec: Recorded = call.payload.request;
-  const drift = new Set<DriftReason>();
+  const drift = new Set<DriftReason>(recordedPermissionContextDrift(all, call));
 
   if (
     rec.tools === undefined ||
