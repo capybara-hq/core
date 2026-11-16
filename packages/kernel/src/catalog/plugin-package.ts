@@ -243,7 +243,6 @@ export function iconProblem(path: string, data: Uint8Array): string | undefined 
   return /<svg[\s>/]/i.test(text) ? undefined : `${path} is not an SVG document`;
 }
 
-/** package.json parsed, or undefined when it is not valid (only used to name a legacy package). */
 /**
  * Client code the extension manifest does not declare (an `extension.client` section without
  * `permissions.client: true`), read from the raw plugin.json before it is parsed, so the refusal

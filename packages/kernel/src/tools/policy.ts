@@ -1,4 +1,5 @@
 import { sql } from "kysely";
+import { normalizeStoredDefinition } from "../agents/definition.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import type { KernelLogger } from "../log.js";
 import { type OrgRole, roleAtLeast } from "../orgs/roles.js";
@@ -15,7 +16,6 @@ import {
 import { BUILTIN, SANDBOX_ASK_TOOL_NAMES } from "./builtin-names.js";
 import { personalAuth } from "./connector-account-policies.js";
 import { isFixedAsk } from "./fixed-ask.js";
-import { normalizeStoredDefinitionIn } from "./legacy-data.js";
 import type { AskRequest, DecidePolicy } from "./pipeline.js";
 import type { ResolvedTool, ToolPolicy } from "./registry.js";
 
@@ -244,11 +244,8 @@ export function createDecidePolicy(
       .select(["agent_versions.definition"])
       .where("agents.id", "=", ctx.agentId)
       .executeTakeFirst();
-    // stored raw: an rc version's keys read as current keys, so its deny keeps applying (§8.3)
     const currentDef =
-      current === undefined
-        ? undefined
-        : await normalizeStoredDefinitionIn(db, ctx.orgId, current.definition);
+      current === undefined ? undefined : normalizeStoredDefinition(current.definition);
     const currentPolicies = currentDef?.toolPolicies as Record<string, unknown> | undefined;
     const currentSetting = settingOf(currentPolicies, tool.key, policyKey);
     // the run's version, the agent's current version and (a sub-agent) its parent agent's
@@ -399,9 +396,9 @@ async function parentAgentSetting(
     .where("c.id", "=", ctx.parentConversationId ?? "")
     .executeTakeFirst();
   if (!row || row.id === ctx.agentId) return undefined;
-  // stored raw: an rc version's keys read as current keys, so its deny keeps applying (§8.3)
-  const policies = (await normalizeStoredDefinitionIn(db, ctx.orgId, row.definition))
-    .toolPolicies as Record<string, unknown> | undefined;
+  const policies = normalizeStoredDefinition(row.definition).toolPolicies as
+    | Record<string, unknown>
+    | undefined;
   return settingOf(policies, toolKey, policyKey);
 }
 

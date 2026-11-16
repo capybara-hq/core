@@ -1,6 +1,5 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
-import { LEGACY_AUDIT_ACTIONS } from "../identity/audit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 
 /**
@@ -17,7 +16,7 @@ export interface AuditEvent {
   viaToken: boolean;
   /** Done through the Platform tool by the actor's own agent (`detail.via === "agent"`). */
   viaAgent: boolean;
-  /** The action; a legacy name is mapped through {@link LEGACY_AUDIT_ACTIONS}. */
+  /** The action. */
   action: string;
   target: string | null;
 }
@@ -34,7 +33,7 @@ export type AuditScope = { platform: true } | { orgId: string };
 export interface AuditListQuery {
   after?: string | undefined;
   limit: number;
-  /** Only actions starting with this prefix, matched on the name as listed (legacy names mapped). */
+  /** Only actions starting with this prefix. */
   action?: string | undefined;
 }
 
@@ -73,18 +72,7 @@ export class AuditLogService {
         : query.where("a.org_id", "is", null);
     if (q.after !== undefined) query = query.where("a.id", "<", q.after);
     if (q.action !== undefined) {
-      const prefix = q.action;
-      const legacy = Object.keys(LEGACY_AUDIT_ACTIONS);
-      // a legacy row matches by the name it is listed under, never by its stored one
-      const legacyMatches = Object.entries(LEGACY_AUDIT_ACTIONS)
-        .filter(([, to]) => to.startsWith(prefix))
-        .map(([from]) => from);
-      query = query.where((eb) =>
-        eb.or([
-          eb.and([eb("a.action", "like", likePrefix(prefix)), eb("a.action", "not in", legacy)]),
-          ...(legacyMatches.length > 0 ? [eb("a.action", "in", legacyMatches)] : []),
-        ]),
-      );
+      query = query.where("a.action", "like", likePrefix(q.action));
     }
     const rows = await query
       .orderBy("a.id", "desc")
@@ -104,7 +92,7 @@ export class AuditLogService {
               },
         viaToken: r.actor_token_id !== null,
         viaAgent: r.via === "agent",
-        action: LEGACY_AUDIT_ACTIONS[r.action] ?? r.action,
+        action: r.action,
         target: r.target,
       }),
     );

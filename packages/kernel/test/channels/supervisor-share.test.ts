@@ -14,7 +14,7 @@ import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 import type { ChannelConnections } from "../../src/channels/connections.service.js";
-import { GATEWAY_CHECK_JOB, GATEWAY_CHECK_SCHEDULER_ID } from "../../src/channels/job-ids.js";
+import { GATEWAY_CHECK_JOB } from "../../src/channels/job-ids.js";
 import {
   CHANNEL_HANDOFF_TOPIC,
   type ChannelSupervisor,
@@ -30,7 +30,6 @@ import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
 import { createLogger } from "../../src/log.js";
-import { RETIRED_SCHEDULER_IDS } from "../../src/runtime/retired-schedulers.js";
 import { channelSupervisorFor } from "../helpers/channels.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -517,9 +516,8 @@ describe("channel long connections: fair share across gateway replicas", () => {
     refused = undefined;
   });
 
-  it("the gateway check runs every minute as a @LockedCron; its old maintenance scheduler is retired", () => {
+  it("the gateway check runs every minute as a @LockedCron", () => {
     expect(GATEWAY_CHECK_JOB).not.toContain(":");
-    expect(RETIRED_SCHEDULER_IDS).toContain(GATEWAY_CHECK_SCHEDULER_ID);
     const cron = k.app.get(SchedulerRegistry).getCronJob(GATEWAY_CHECK_JOB);
     expect(String(cron.cronTime.source)).toBe("* * * * *");
   });

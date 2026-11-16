@@ -8,9 +8,6 @@ import { type Owner, ownerOf, ownersOf } from "../catalog/ownership.js";
 import type { KernelSchemaDb, SourceFormat } from "../db/kernel-schema.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { canonicalJson } from "../tools/canonical-json.js";
-import { loadLegacyScope } from "../tools/legacy-data.js";
-import type { LegacyScope } from "../tools/legacy-keys.js";
-import { needsLegacyScope, normalizeToolKeys } from "./definition.js";
 
 /**
  * Agent templates of an org (sub-agents spec §16): its own `agent_templates` (one live row per org,
@@ -146,22 +143,9 @@ export function storedTemplate(definition: unknown): AgentTemplate {
   return rest as unknown as AgentTemplate;
 }
 
-/**
- * Stored rows as {@link TemplateRow}s; tool keys read as current keys (tool naming spec §8.3): old
- * builtin names always, rc `<x>__<tool>` keys with the org's legacy scope, read once when needed.
- */
-async function normalized(
-  db: KernelSchemaDb,
-  orgId: string,
-  rows: readonly RawRow[],
-): Promise<TemplateRow[]> {
-  const scope: LegacyScope | undefined = rows.some((r) => needsLegacyScope(r.definition))
-    ? await loadLegacyScope(db, orgId)
-    : undefined;
-  return rows.map(({ definition, ...r }) => ({
-    ...r,
-    template: storedTemplate(normalizeToolKeys(definition, scope)),
-  }));
+/** Stored rows as {@link TemplateRow}s. */
+function normalized(rows: readonly RawRow[]): TemplateRow[] {
+  return rows.map(({ definition, ...r }) => ({ ...r, template: storedTemplate(definition) }));
 }
 
 const orgRaw = (r: Awaited<ReturnType<ReturnType<typeof baseQuery>["execute"]>>[number]) =>
@@ -530,11 +514,7 @@ export async function loadTemplates(
     const o = shadowRows.get(on.shadowed.get(id) ?? "");
     if (o) raw.push({ key: id, row: o });
   }
-  const done = await normalized(
-    db,
-    orgId,
-    raw.map((x) => x.row),
-  );
+  const done = normalized(raw.map((x) => x.row));
   return new Map(raw.map((x, i) => [x.key, done[i] as TemplateRow]));
 }
 
@@ -588,12 +568,12 @@ export async function usableTemplates(
           ).values(),
         ];
   const rows = [
-    ...(await normalized(db, orgId, [
+    ...normalized([
       ...own
         .filter((r) => r.platform_template_id === null || pinnedOn.has(r.platform_template_id))
         .map(orgRaw),
       ...(await platformOn(db, orgId, undefined, log)).rows.filter((p) => !promotedTo.has(p.id)),
-    ])),
+    ]),
     ...served,
   ];
   const key = (t: TemplateRow) => [t.plugin ?? "", t.name, t.id] as const;

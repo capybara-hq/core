@@ -282,9 +282,9 @@ the same transaction as the business rows.
 - Read before write: `Write` on an existing file and `Edit` fail unless the conversation has `Read` the file (or wrote it itself) and it is unchanged since. The
   decision comes from the display-only `view.file` `{path, size, sha256}` each `Read` / `Write` / `Edit` result records, so every replica decides the same; `Write` reads up
   to 10 MB of the old file for the digest and fails when the old content cannot be read for a reason other than the file being gone.
-- Legacy keys: release-candidate builtin keys and the unprefixed connector and extension keys live only in the frozen map `tools/legacy-keys.ts`. In flight, an old key a model or a
-  paused approval still carries is resolved from the run's own tools (and answered with a hint naming the new key); stored definitions are refused with a message
-  naming the new key; migration 0063 rewrote stored grants, pending approvals and questions. `terms-tool-key` keeps old keys out of everything else.
+- Old keys: the kernel reads only the current tool keys (no compatibility before 0.1.0). Migration 0063 rewrote the release-candidate keys in stored grants, pending
+  approvals and questions, and 0139 those in agent versions and templates (and deleted the grants 0063 could not map); a call or a saved definition with an old key is
+  an unknown tool. `terms-tool-key` keeps old keys out of the code (the frozen replay texts of `runtime/context/legacy-text.ts` and the migrations aside).
 - Spilling: `Bash`'s `spillChars` is 30000, and large output is read as usual through `ReadToolOutput` / `{"$output": id}`.
 - Result prefix notices (English): on first use `Device started (first use in this conversation)…`, on a new instance
   `The device's instance was restarted; files are kept, running processes and /tmp are gone.`, and newly copied attachments list their paths. Before every call, attachments in the conversation that are ready are synced to

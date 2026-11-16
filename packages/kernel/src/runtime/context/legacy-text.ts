@@ -1,4 +1,3 @@
-import { isLegacyBuiltinKey } from "../../tools/legacy-keys.js";
 import type { SkillTexts } from "./skills.js";
 
 /**
@@ -42,5 +41,27 @@ export const LEGACY_CATALOG_HEADER =
  * skills catalog or an invocation, `tool_search` with a tool catalog), so the tools decide it.
  */
 export function usesLegacyToolNames(tools: readonly { key: string }[]): boolean {
-  return tools.some((t) => isLegacyBuiltinKey(t.key));
+  return tools.some((t) => isRcBuiltinKey(t.key));
 }
+
+/**
+ * Is `key` a release-candidate builtin name? A request recorded before the rename is rebuilt with
+ * its old keys, and its builtins were always loaded (`isAlwaysLoaded`). Goes with the texts above.
+ */
+export const isRcBuiltinKey = (key: string): boolean => RC_BUILTIN_KEYS.has(key);
+
+/** The release-candidate builtin names (FROZEN, like the texts above). */
+const RC_BUILTIN_KEYS: ReadonlySet<string> = new Set([
+  "sandbox_bash",
+  "sandbox_read",
+  "sandbox_write",
+  "sandbox_edit",
+  "sandbox_glob",
+  "sandbox_grep",
+  "sandbox_deliver",
+  "skill_load",
+  "ask_user",
+  "read_tool_output",
+  "tool_search",
+  "agent",
+]);

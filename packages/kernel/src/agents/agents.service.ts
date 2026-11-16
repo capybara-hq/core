@@ -19,7 +19,6 @@ import { ProviderRegistry } from "../runtime/providers.js";
 import { SkillChangesService } from "../skills/changes.service.js";
 import { assertDisabledSkills } from "../skills/skills.service.js";
 import { agentSkills } from "../skills/usable.js";
-import { legacyKeySaveText } from "../tools/legacy-keys.js";
 import { ToolRegistry } from "../tools/registry.js";
 import {
   AgentLookup,
@@ -299,10 +298,7 @@ export async function assertSubagents(
     const base = `subagents.inline.${i}`;
     name(x.name, `${base}.name`);
     const tool = (key: string, path: string) => {
-      if (a.toolKeys.has(key)) return;
-      // an rc key names its current key(s) (tool naming spec §8.3)
-      const renamed = legacyKeySaveText(key, a.toolKeys);
-      add("tool_not_selected", path, key, renamed ?? undefined);
+      if (!a.toolKeys.has(key)) add("tool_not_selected", path, key);
     };
     for (const [j, key] of (x.tools ?? []).entries()) tool(key, `${base}.tools.${j}`);
     for (const [j, key] of (x.disallowedTools ?? []).entries()) {
@@ -423,11 +419,9 @@ export class AgentsService {
         continue;
       }
       if (!isToolPolicyKey(key, keys)) {
-        // an rc key (tool naming spec §8.3): saving writes current keys only, so name them
-        const renamed = legacyKeySaveText(key, keys);
         details.push({
           path: `toolPolicies.${key}`,
-          message: renamed ?? `"${key}" is not a tool of this agent`,
+          message: `"${key}" is not a tool of this agent`,
         });
       }
     }

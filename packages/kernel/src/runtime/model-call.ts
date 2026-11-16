@@ -1086,9 +1086,7 @@ function stepOf(e: ConversationEvent): number | undefined {
  * `compaction_failed` events the step already wrote (context compaction spec §4.4, revision
  * 2026-11-15). It keys the compaction's events (summary, failure, usage, hook denial), so every
  * compaction of a step writes its own, while a crash-retried compaction (nothing written yet) gets
- * the same keys again. Outcome events record their step, so they are counted by it. Older ones
- * have none: a run's step N compacts after every event of its earlier steps, so those are counted
- * from the run's last event of an earlier step on. The backoff keeps counting consecutive failures
+ * the same keys again. The backoff keeps counting consecutive failures
  * ({@link consecutiveCompactionFailures}).
  */
 function compactionOrdinal(
@@ -1097,18 +1095,12 @@ function compactionOrdinal(
   step: number,
 ): number {
   let recorded = 0;
-  let legacy = 0;
   for (const e of events) {
     if (e.runId !== runId) continue;
-    const of = stepOf(e);
-    if (e.type === "compaction_summary" || e.type === "compaction_failed") {
-      if (of === undefined) legacy++;
-      else if (of === step) recorded++;
-      continue;
-    }
-    if (of !== undefined && of < step) legacy = 0;
+    if (e.type !== "compaction_summary" && e.type !== "compaction_failed") continue;
+    if (stepOf(e) === step) recorded++;
   }
-  return recorded + legacy + 1;
+  return recorded + 1;
 }
 
 /** Estimated input tokens of a plain text (a user message's only content). */

@@ -70,11 +70,11 @@ async function seed(): Promise<void> {
     target: "acc-new",
     detail: { via: "agent", operation: "accounts.create", agentId: "a-1" },
   });
-  // 5: a legacy connector action by the kernel itself
-  await audit(db(), { action: "app.created", target: "conn-1" });
+  // 5: a connector action by the kernel itself
+  await audit(db(), { action: "connector.created", target: "conn-1" });
 }
 
-/** Org rows: org-1 has four (one legacy, one whose name a LIKE wildcard would match), org-2 one. */
+/** Org rows: org-1 has four (one whose name a LIKE wildcard would match), org-2 one. */
 async function seedOrgs(): Promise<void> {
   await db()
     .insertInto("accounts")
@@ -88,7 +88,7 @@ async function seedOrgs(): Promise<void> {
     detail: { role: "member", secretish: "s3cr3t" },
   });
   await audit(db(), { orgId: "org-2", action: "org.member.added", target: "acc-y" });
-  await audit(db(), { actorAccountId: "acc-admin", orgId: "org-1", action: "app.updated" });
+  await audit(db(), { actorAccountId: "acc-admin", orgId: "org-1", action: "connector.updated" });
   await audit(db(), {
     actorAccountId: "acc-admin",
     orgId: "org-1",
@@ -168,7 +168,6 @@ describe("AuditLogService.list (org scope)", () => {
     const first = await service.list(org, { limit: 2 });
     expect(first.events.map((e) => e.action)).toEqual(["orgxsettings", "org.settings_updated"]);
     const second = await service.list(org, { limit: 2, ...(first.next && { after: first.next }) });
-    // the legacy name is mapped
     expect(second.events.map((e) => e.action)).toEqual(["connector.updated", "org.member.added"]);
     expect(second.next).toBeNull();
     expect((await service.list({ orgId: "org-2" }, { limit: 20 })).events).toEqual([
@@ -199,7 +198,7 @@ describe("AuditLogService.list (org scope)", () => {
     expect(JSON.stringify(events)).not.toMatch(/s3cr3t|secretish|"role"/);
   });
 
-  it("filters by an action prefix: literal characters, legacy names by their listed name", async () => {
+  it("filters by an action prefix of literal characters", async () => {
     await seedOrgs();
     const actions = async (action: string) =>
       (await service.list({ orgId: "org-1" }, { limit: 20, action })).events.map((e) => e.action);
@@ -208,8 +207,6 @@ describe("AuditLogService.list (org scope)", () => {
     // "_" is no wildcard: it matches neither org.… nor orgxsettings
     expect(await actions("org_")).toEqual([]);
     expect(await actions("connector.")).toEqual(["connector.updated"]);
-    // a stored legacy name is not matched by its old prefix
-    expect(await actions("app.")).toEqual([]);
     expect(await actions("org.member.added")).toEqual(["org.member.added"]);
   });
 

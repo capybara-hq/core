@@ -6,8 +6,6 @@ import {
   normalizeContentType,
   sniffMatches,
 } from "../../src/conversations/attachments.service.js";
-import { ATTACHMENT_CLEANUP_SCHEDULER_ID } from "../../src/conversations/job-ids.js";
-import { RETIRED_SCHEDULER_IDS } from "../../src/runtime/retired-schedulers.js";
 import { PrefixedStorage } from "../../src/storage/storage.service.js";
 import { attachmentsFor } from "../helpers/conversations.js";
 
@@ -167,11 +165,5 @@ describe("类型核对", () => {
     expect(sniffMatches("application/pdf", s("<html>"))).toBe(false);
     expect(sniffMatches("text/plain", s("hello"))).toBe(true);
     expect(sniffMatches("text/csv", b(0x61, 0x00, 0x62))).toBe(false);
-  });
-});
-
-describe("attachment-cleanup", () => {
-  it("its old maintenance scheduler is retired (the job is an hourly @LockedCron)", () => {
-    expect(RETIRED_SCHEDULER_IDS).toContain(ATTACHMENT_CLEANUP_SCHEDULER_ID);
   });
 });

@@ -1,6 +1,6 @@
 import { parseToolKey, type ToolSpec } from "@capybara-hq/plugin-sdk";
+import { isRcBuiltinKey } from "../../runtime/context/legacy-text.js";
 import { BUILTIN_TOOL_NAMES, TOOL_SEARCH } from "../builtin-names.js";
-import { isLegacyBuiltinKey } from "../legacy-keys.js";
 import type { BuiltinTool, ResolvedTool } from "../registry.js";
 
 export { TOOL_SEARCH } from "../builtin-names.js";
@@ -58,11 +58,12 @@ export const notLoadedText = (key: string): string =>
   `Tool "${key}" is not loaded. Call ToolSearch first with keywords for this tool, then call it in a later step.`;
 
 /**
- * 始终完整加载、不进目录的工具（内置工具）。A release-candidate builtin key counts too: a request
- * recorded before the tool rename is rebuilt with its old keys, and its builtins were loaded.
+ * Tools always loaded in full and never in the catalog (the builtins). A release-candidate builtin
+ * name counts too, for a recording made before the tool rename (replay only, with the frozen texts
+ * of `runtime/context/legacy-text.ts`).
  */
 export const isAlwaysLoaded = (key: string): boolean =>
-  (BUILTIN_TOOL_NAMES as readonly string[]).includes(key) || isLegacyBuiltinKey(key);
+  (BUILTIN_TOOL_NAMES as readonly string[]).includes(key) || isRcBuiltinKey(key);
 
 type CatalogTool = Pick<ResolvedTool, "key" | "spec">;
 

@@ -37,7 +37,6 @@ import { runContextIdemKey } from "../runtime/run-context.service.js";
 import type { RunFinish } from "../runtime/run-finish.js";
 import { recordedSkillForks } from "../runtime/subagents/skill-fork.js";
 import { skillsCatalogIdemKey } from "../skills/catalog.js";
-import type { LegacyScope } from "../tools/legacy-keys.js";
 import {
   ACTIVE_EVAL_STATUSES,
   addUsage,
@@ -45,12 +44,7 @@ import {
   TOO_MANY_ERRORS,
   usageTokens,
 } from "./budget.js";
-import {
-  currentCall,
-  legacyScopeOf,
-  RecordedToolPipeline,
-  recordedCalls,
-} from "./recorded-tools.js";
+import { RecordedToolPipeline, recordedCalls } from "./recorded-tools.js";
 import type { CaseSnapshot, SnapshotEvent } from "./snapshot.js";
 import type { ResolvedCandidate } from "./step-replay.js";
 
@@ -81,11 +75,6 @@ export interface RunReplayResult {
   usage: ModelUsage;
   steps: number;
   unmatched: number;
-  /**
-   * Set when a call was matched with a recording made under the release-candidate tool names
-   * (`sandbox_edit` for `Edit`, `docs__search` for `mcp__docs__search`, old parameter names).
-   */
-  legacyKeyMatch?: true;
 }
 
 /** 原运行（基线）的同形摘要。 */
@@ -354,7 +343,7 @@ const ZERO: ModelUsage = {
 type Ev = { seq: number; type: string; runId: string | null; payload: unknown };
 
 /** 一次运行的工具调用序列、最后的回复、停止原因、用量与步数（基线与候选同一算法）。 */
-function summarize(events: readonly Ev[], runId: string, scope?: LegacyScope): RunBaseline {
+function summarize(events: readonly Ev[], runId: string): RunBaseline {
   const toolCalls: { name: string; input: unknown }[] = [];
   let usage = ZERO;
   let last: { content: ContentBlock[]; stopReason: string } | null = null;
@@ -366,11 +355,7 @@ function summarize(events: readonly Ev[], runId: string, scope?: LegacyScope): R
       steps.add(p.step);
       for (const b of p.content) {
         if (b.type !== "tool_call") continue;
-        if (scope === undefined) toolCalls.push({ name: b.name, input: b.input });
-        else {
-          const { name, input } = currentCall(b.name, b.input, scope);
-          toolCalls.push({ name, input });
-        }
+        toolCalls.push({ name: b.name, input: b.input });
       }
       last = { content: p.content, stopReason: p.stopReason };
     } else if (e.type === "usage") {
@@ -395,9 +380,7 @@ function summarize(events: readonly Ev[], runId: string, scope?: LegacyScope): R
 
 /** 原运行（快照）的摘要，作为整轮回放的基线。 */
 export function runBaseline(s: CaseSnapshot): RunBaseline {
-  // an rc recording is read in the current tool names, so the diff against a candidate only
-  // shows real differences
-  return summarize(s.events, s.runId, legacyScopeOf(s));
+  return summarize(s.events, s.runId);
 }
 
 /**
@@ -845,6 +828,5 @@ export async function replayRun(
     outcome: outcome.kind,
     ...summary,
     unmatched: pipeline.unmatched(),
-    ...(pipeline.legacyMatches() > 0 && { legacyKeyMatch: true as const }),
   };
 }

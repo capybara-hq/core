@@ -5,8 +5,7 @@ import type { ToolKind } from "./info.js";
  * The names (model-visible keys) of the kernel's builtin tools, following Claude Code (tool naming
  * spec §4.1). Plain constants: `BuiltinTools`, the tool factories, the registry, policy and the
  * runtime import them from here. The web keeps its own copy (`apps/web/src/lib/agents.ts`,
- * `lib/timeline.ts`), checked equal by `test/tools/builtin-names.test.ts`. The release-candidate
- * names are in `legacy-keys.ts`, never here.
+ * `lib/timeline.ts`), checked equal by `test/tools/builtin-names.test.ts`.
  */
 export const BUILTIN = {
   Bash: "Bash",

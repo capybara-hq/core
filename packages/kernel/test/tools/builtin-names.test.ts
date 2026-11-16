@@ -37,7 +37,6 @@ import {
 import { agentToolSpec } from "../../src/tools/builtins/agent.js";
 import { BuiltinTools } from "../../src/tools/builtins/builtin-tools.js";
 import { CATALOG_HEADER, catalogText } from "../../src/tools/builtins/tool-search.js";
-import { LEGACY_BUILTINS } from "../../src/tools/legacy-keys.js";
 import { AGENT, Log, MODEL } from "../runtime/context/fixtures.js";
 
 /** Tool naming spec §4.1: the builtins take Claude Code's names, in one module. */
@@ -217,31 +216,6 @@ describe("builtin names", () => {
     expect(byName.get("ScheduleDelete")?.defaultPolicy).toBe("allow");
     expect(byName.get("ScheduleCreate")?.callPolicy).toBeTypeOf("function");
     expect(byName.get("ScheduleUpdate")?.callPolicy).toBeTypeOf("function");
-  });
-
-  it("the legacy map covers the 12 old names, one per new name (the task, web, message, Platform, CurrentTime and schedule tools never had one)", () => {
-    expect(Object.keys(LEGACY_BUILTINS)).toHaveLength(12);
-    const never: readonly string[] = [
-      BUILTIN.TaskOutput,
-      BUILTIN.TaskStop,
-      BUILTIN.TaskList,
-      BUILTIN.SendMessage,
-      BUILTIN.SubagentHandback,
-      ...WEB_TOOL_NAMES,
-      BUILTIN.Platform,
-      BUILTIN.CurrentTime,
-      ...SCHEDULE_TOOL_NAMES,
-    ];
-    expect(new Set(Object.values(LEGACY_BUILTINS).map((l) => l.name))).toEqual(
-      new Set(BUILTIN_TOOL_NAMES.filter((n) => !never.includes(n))),
-    );
-    expect(LEGACY_BUILTINS.sandbox_bash).toEqual({
-      name: "Bash",
-      params: { timeoutSeconds: "timeout" },
-      msParams: ["timeout"],
-    });
-    expect(LEGACY_BUILTINS.skill_load?.params).toEqual({ name: "skill" });
-    expect(LEGACY_BUILTINS.tool_search?.params).toEqual({ limit: "max_results" });
   });
 });
 

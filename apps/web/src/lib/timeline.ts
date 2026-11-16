@@ -1043,8 +1043,7 @@ export function buildEventTimeline(
         for (const b of e.payload.content) {
           if (b.type !== "tool_call") continue;
           const ti = info.get(b.name);
-          // an older key of a current tool (history logged before a rename): the kernel says which
-          if ((ti?.aliasOf ?? b.name) === AGENT_TOOL) {
+          if (b.name === AGENT_TOOL) {
             const rec = asRecord(b.input);
             const sub: TimelineSubagent = {
               row: {
@@ -1068,7 +1067,7 @@ export function buildEventTimeline(
           const input = b.input;
           const rec = asRecord(input);
           const group = openGroup();
-          const question = (ti?.aliasOf ?? b.name) === QUESTION_TOOL;
+          const question = b.name === QUESTION_TOOL;
           const keyArg = question ? questionPreview(input, ti) : keyArgOf(input, ti);
           const kind: ToolRowData["kind"] = question ? "question" : (ti?.kind ?? "tool");
           const command = kind === "command" && typeof rec.command === "string";
@@ -1093,10 +1092,9 @@ export function buildEventTimeline(
             },
           };
           const tool: TimelineTool = { row, callId: b.id, toolKey: b.name, input, outputId: null };
-          const base = ti?.aliasOf ?? b.name;
-          if (base === BASH_TOOL && rec.run_in_background === true)
+          if (b.name === BASH_TOOL && rec.run_in_background === true)
             tool.background = { taskId: null };
-          if (TASK_TOOLS.has(base) && typeof rec.task_id === "string") {
+          if (TASK_TOOLS.has(b.name) && typeof rec.task_id === "string") {
             const description = taskDescriptions.get(rec.task_id);
             if (description) row.keyArg = description;
           }

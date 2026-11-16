@@ -14,10 +14,7 @@ import {
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  MARKETPLACES_REFRESH_JOB,
-  MARKETPLACES_REFRESH_SCHEDULER_ID,
-} from "../../src/catalog/job-ids.js";
+import { MARKETPLACES_REFRESH_JOB } from "../../src/catalog/job-ids.js";
 import {
   MARKETPLACE_ENTRIES_MAX,
   MarketplacesService,
@@ -32,7 +29,6 @@ import { KernelConfigService } from "../../src/infra/config/kernel-config.servic
 import { LockedIntervalScheduler } from "../../src/infra/schedule/locked-interval.js";
 import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
-import { RETIRED_SCHEDULER_IDS } from "../../src/runtime/retired-schedulers.js";
 import { KERNEL_VERSION } from "../../src/version.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -1057,8 +1053,6 @@ describe("定期刷新（@LockedInterval catalogs-refresh）", () => {
     );
     try {
       expect(MARKETPLACES_REFRESH_JOB).toBe("catalogs-refresh");
-      expect(MARKETPLACES_REFRESH_SCHEDULER_ID).not.toContain(":");
-      expect(RETIRED_SCHEDULER_IDS).toContain(MARKETPLACES_REFRESH_SCHEDULER_ID);
       const intervals = worker.app.get(LockedIntervalScheduler);
       expect(intervals.names()).toContain(MARKETPLACES_REFRESH_JOB);
       expect(intervals.periodOf(MARKETPLACES_REFRESH_JOB)).toBe(30 * 60_000);

@@ -108,7 +108,7 @@ export { deploymentConfigHash };
 export interface LoadedUiContribution {
   plugin: string;
   contribution: UiContribution;
-  /** The catalog slot the contribution resolved to (from `slot`, or the deprecated `place`). */
+  /** The catalog slot the contribution resolved to (from `slot`). */
   slot: UiSlotSpec;
   /** For a slot with anchors: the anchor it goes after (see `resolveUiSlots`). */
   after?: string;

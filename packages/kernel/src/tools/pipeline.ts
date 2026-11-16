@@ -7,7 +7,6 @@ import {
   type InputRequired,
   type Logger,
   type NetworkBlockedHost,
-  parseToolKey,
   type ToolDisplay,
   ToolError,
   validateInputForm,
@@ -99,7 +98,6 @@ import { canonicalJson } from "./canonical-json.js";
 import { type ConnectorAuth, CredentialMissing, Credentials } from "./credentials.js";
 import { ToolDrift } from "./drift.js";
 import { ElicitationSession } from "./elicitation.js";
-import { type LegacyScope, legacyHint, legacyToolInput, legacyToolKey } from "./legacy-keys.js";
 import {
   blockedEventHosts,
   clipKept,
@@ -219,26 +217,9 @@ const timeoutText = (key: string, ms: number) =>
   `Tool ${key} timed out after ${ms / 1000}s. The operation may or may not have completed; verify before retrying.`;
 const failedText = (key: string, errName: string) =>
   `Tool ${key} failed (${errName}). The operation may not have completed; check before retrying or try another approach.`;
-/** The connector slugs and extension names among the run's tools (to read old `<x>__<tool>` keys). */
-const legacyScopeOf = (tools: readonly ResolvedTool[]): LegacyScope => {
-  const connectorSlugs = new Set<string>();
-  const extensionNames = new Set<string>();
-  for (const t of tools) {
-    const p = parseToolKey(t.key);
-    if (p?.kind === "connector") connectorSlugs.add(p.slug);
-    else if (p?.kind === "extension") extensionNames.add(p.plugin);
-  }
-  return { connectorSlugs, extensionNames };
-};
-const unknownToolText = (
-  name: string,
-  keys: string[],
-  toolSearch: boolean,
-  hint: string | null = null,
-) =>
+const unknownToolText = (name: string, keys: string[], toolSearch: boolean) =>
   `Unknown tool "${name}". Available tools: ${keys.length === 0 ? "(none)" : keys.join(", ")}.` +
-  (toolSearch ? " Use ToolSearch to load other tools." : "") +
-  (hint === null ? "" : ` ${hint}`);
+  (toolSearch ? " Use ToolSearch to load other tools." : "");
 const unavailableText = (name: string, reason: string) =>
   `Tool "${name}" is unavailable: ${reason}.`;
 /** With a per-call policy key (`Platform:<operation>`), the text names it. */
@@ -1050,18 +1031,7 @@ export class ToolPipeline {
       return undefined;
     };
 
-    let tool = resolved.tools.find((t) => t.key === call.name);
-    // A call logged before the tool keys were renamed (spec 8.1): the request that issued it offered
-    // the old key. It runs as the current tool with translated input; the result keeps the logged key.
-    let legacy = false;
-    if (!tool) {
-      const next = legacyToolKey(call.name, legacyScopeOf(resolved.tools));
-      const current = next === null ? undefined : resolved.tools.find((t) => t.key === next);
-      if (current && (await this.requestToolKeys(ctx))?.has(call.name) === true) {
-        tool = current;
-        legacy = true;
-      }
-    }
+    const tool = resolved.tools.find((t) => t.key === call.name);
     if (!tool) {
       const why =
         resolved.unavailable.find((u) => u.ref === call.name) ??
@@ -1074,24 +1044,21 @@ export class ToolPipeline {
         if (sent !== null) keys = keys.filter((k) => isAlwaysLoaded(k) || sent.has(k));
       }
       keys.sort();
-      return fail(
-        unknownToolText(call.name, keys, keys.includes(TOOL_SEARCH), legacyHint(call.name)),
-      );
+      return fail(unknownToolText(call.name, keys, keys.includes(TOOL_SEARCH)));
     }
-    const outKey = legacy ? call.name : tool.key;
+    const outKey = tool.key;
     // ToolSearch 模式下，模型只能调用请求里带了完整定义的工具：目录里有、但发出本次调用的请求没加载 →
     // 明确错误，不自动加载（spec 5.5 / 6.3）。同一步里先 ToolSearch 再调用刚加载的工具同样报错。
     // This is the protocol working, not a failure: the `not_loaded` view lets the row read neutral.
-    if (!legacy && resolved.toolSearch === true && !isAlwaysLoaded(tool.key)) {
+    if (resolved.toolSearch === true && !isAlwaysLoaded(tool.key)) {
       const sent = await this.sentTools(ctx);
       if (sent !== null && !sent.has(tool.key))
         return fail(notLoadedText(tool.key), outKey, { kind: "not_loaded" });
     }
 
-    const rawInput = legacy ? legacyToolInput(call.name, call.input) : call.input;
     let input: unknown;
     try {
-      input = await resolveOutputRefs(rawInput, (id) =>
+      input = await resolveOutputRefs(call.input, (id) =>
         this.deps.outputs.load({ orgId: ctx.orgId, conversationId: ctx.conversationId }, id),
       );
     } catch (e) {
@@ -1114,7 +1081,7 @@ export class ToolPipeline {
         agentId: ctx.agentId,
         conversationId: ctx.conversationId,
         runId: ctx.runId,
-        rawInput,
+        rawInput: call.input,
         signal: ctx.signal,
       })) ?? null;
     // a deny with a reason (e.g. an unavailable operation): the reason is the tool error
@@ -1151,14 +1118,11 @@ export class ToolPipeline {
     // （不写 tool_call_started：此时尚未开始执行）。
     let approval = await this.deps.approvals.forCall(ctx.runId, call.id);
     // 批准的是旧定义（等待期间工具定义变了）：原批准不适用于当前定义，策略仍需审批时按新定义重新审批。
-    // An in-flight rc call (spec §9) is the exception: its approval was asked under the rc definition
-    // of the same call, and the rename changed every builtin's definition; the person approved this
-    // very call, so the approval stands.
     // An approval binds the exact input it showed (Platform tool spec §6.3): an approved record
     // whose stored input differs from the call's is not used.
     const approvedHere =
       approval?.status === "approved" &&
-      (legacy || approval.specHash === tool.specHash) &&
+      approval.specHash === tool.specHash &&
       canonicalJson(approval.input) === canonicalJson(call.input ?? {});
     const stale = approval?.status === "approved" && !approvedHere;
     if ((!approval || stale) && typeof decision === "object" && "ask" in decision) {
@@ -1900,25 +1864,6 @@ export class ToolPipeline {
         },
       },
     ]);
-  }
-
-  /**
-   * Every tool key the request that issued this step's calls offered (`request.tools` plus the
-   * `catalog` keys), in any mode; null when its model_call is not found. Used to tell a call to an
-   * old key that was offered (in flight across the rename) from one that never was.
-   */
-  private async requestToolKeys(ctx: ToolStepContext): Promise<Set<string> | null> {
-    // attempts can reach MAX_STEP_MODEL_CALLS after reactive overflow fix-ups; scan from the top
-    for (let attempt = MAX_STEP_MODEL_CALLS; attempt >= 1; attempt--) {
-      const e = await this.deps.eventLog.findByIdem(
-        ctx.conversationId,
-        modelCallIdemKey(ctx.runId, ctx.step, attempt),
-      );
-      if (e?.type !== "model_call") continue;
-      const { tools, catalog } = e.payload.request;
-      return new Set([...(tools ?? []), ...(catalog ?? [])].map((t) => t.key));
-    }
-    return null;
   }
 
   /**

@@ -1223,12 +1223,6 @@ describe("calls that wait for a person (design §6.16.9)", () => {
       kind: "question",
       keyArg: "数据库",
     });
-    // an older key of the question tool (history logged before the rename)
-    const legacy = new Map<string, ToolInfo>([
-      ["legacy_ask", { ...ASK, key: "legacy_ask", aliasOf: "AskUserQuestion" }],
-    ]);
-    const old = calls(1, [{ id: "q", name: "legacy_ask", input: { questions: QUESTIONS } }]);
-    expect(row([old], legacy)?.kind).toBe("question");
   });
 });
 

@@ -15,10 +15,7 @@ import {
 } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  PLUGIN_STAGING_CLEANUP_JOB,
-  PLUGIN_STAGING_CLEANUP_SCHEDULER_ID,
-} from "../../src/catalog/job-ids.js";
+import { PLUGIN_STAGING_CLEANUP_JOB } from "../../src/catalog/job-ids.js";
 import { PluginImport } from "../../src/catalog/plugin-import.js";
 import type { KernelConfig } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
@@ -1248,7 +1245,6 @@ describe("staging cleanup (maintenance job app-staging-cleanup)", () => {
 
   it("the job name and scheduler id contain no colon", () => {
     expect(PLUGIN_STAGING_CLEANUP_JOB).toBe("app-staging-cleanup");
-    expect(PLUGIN_STAGING_CLEANUP_SCHEDULER_ID).not.toContain(":");
   });
 });
 

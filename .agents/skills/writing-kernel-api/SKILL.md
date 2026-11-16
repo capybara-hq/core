@@ -154,7 +154,7 @@ Agent templates and pending connectors (phase 4, spec §15; all human-only, no n
 
 All of the above are in `HUMAN_ONLY` (403 for service tokens). Register new actions in `roles.ts` the same way and add a one-line comment stating the purpose.
 
-Old audit records `app.*` are not rewritten; when querying audit by action use the explicit mapping in `auditActionAliases` (`identity/audit.ts`) to treat the old and new names as synonyms (do not guess by prefix). The 2026-10-24 terminology rename (`plugin.*` -> `extension.*`, `directory.*` -> `catalog.*`, `catalog.*` -> `marketplace.*`, bundle `app.*` -> `plugin.*`) has no aliases: rows written before it keep their old names.
+Connector audit records written as `app.*` before D17 were renamed by migration 0139; audit queries match actions by their stored name only (no aliases). The 2026-10-24 terminology rename (`plugin.*` -> `extension.*`, `directory.*` -> `catalog.*`, `catalog.*` -> `marketplace.*`, bundle `app.*` -> `plugin.*`) has no aliases: rows written before it keep their old names.
 
 ### Org settings
 

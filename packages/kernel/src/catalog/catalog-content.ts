@@ -17,7 +17,6 @@ import {
   themeIdOf,
   validateThemeAssets,
 } from "@capybara-hq/plugin-sdk";
-import { normalizeToolKeys } from "../agents/definition.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { ExtensionRegistry } from "../extensions/registry.js";
@@ -609,9 +608,7 @@ export async function readCatalogAgentTemplates(
     if (!parsed || "errors" in parsed) {
       throw new ApiError("internal", `Stored agent template ${path} is missing or invalid`);
     }
-    // an rc package's template may name old builtins: read as the current names (tool naming
-    // spec §8.3); rc `<x>__<tool>` keys are read with the org's scope by `loadTemplates`
-    return { path, template: normalizeToolKeys(parsed.template) as AgentTemplate };
+    return { path, template: parsed.template };
   });
 }
 

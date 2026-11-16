@@ -19,9 +19,7 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { reconstructRequest } from "../../src/evals/reconstruct.js";
-import { legacyScopeOf, recordedCalls } from "../../src/evals/recorded-tools.js";
-import { runBaseline } from "../../src/evals/run-replay.js";
-import { caseBase, versionDefinition } from "../../src/evals/runs.service.js";
+import { caseBase } from "../../src/evals/runs.service.js";
 import {
   type CaseSnapshot,
   readSnapshot,
@@ -29,8 +27,6 @@ import {
   toEvents,
 } from "../../src/evals/snapshot.js";
 import { KERNEL_MIGRATIONS_DIR, KERNEL_SCHEMA } from "../../src/kernel.js";
-import { createLogger } from "../../src/log.js";
-import { countLegacyToolKeys, warnLegacyToolKeys } from "../../src/tools/legacy-data.js";
 import { ToolRegistry } from "../../src/tools/registry.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -91,69 +87,6 @@ describe("改名前录制的会话：还原零漂移", () => {
       expect(out.drift, `model_call seq ${c.seq}`).toEqual([]);
       expect(out.request, `model_call seq ${c.seq}`).toEqual(fixture.requests[i]);
     }
-  });
-});
-
-describe("a recording made before the tool rename (full-run replay input)", () => {
-  const rc = JSON.parse(
-    readFileSync(
-      fileURLToPath(
-        new URL("../evals/fixtures/pre-tool-rename/conversation.json", import.meta.url),
-      ),
-      "utf8",
-    ),
-  ) as Fixture;
-
-  /** The snapshot seen as each of its runs (replay reads one run's calls). */
-  const perRun = [...new Set(rc.snapshot.events.flatMap((e) => (e.runId ? [e.runId] : [])))].map(
-    (runId) => ({ ...rc.snapshot, runId }),
-  );
-
-  it("reads the connectors and extensions from the snapshot alone", () => {
-    const scope = legacyScopeOf(rc.snapshot);
-    expect([...scope.extensionNames]).toEqual(["tools-probe"]);
-    expect([...scope.connectorSlugs]).toEqual(["docs"]);
-  });
-
-  it("recorded calls are keyed by the current names and parameters; nothing is left in rc form", () => {
-    const calls = perRun.flatMap((snap) => recordedCalls(snap));
-    const keys = calls.map((c) => c.toolKey);
-    expect(keys).toEqual(
-      expect.arrayContaining([
-        "Bash",
-        "Read",
-        "Write",
-        "Edit",
-        "Glob",
-        "Grep",
-        "Skill",
-        "ToolSearch",
-        "ReadToolOutput",
-        "mcp__docs__search",
-        "plugin__tools-probe__echo",
-      ]),
-    );
-    expect(keys.filter((k) => /^(sandbox_|skill_|tool_search|read_tool_output)/.test(k))).toEqual(
-      [],
-    );
-    expect(calls.every((c) => c.legacy === true)).toBe(true);
-    const edit = calls.find((c) => c.toolKey === "Edit");
-    expect(edit?.inputKey).toBe(
-      '{"file_path":"/workspace/src/b.md","new_string":"gamma","old_string":"alpha","replace_all":true}',
-    );
-    // the timeout is milliseconds now; the display-only description is ignored when matching
-    const bash = calls.find((c) => c.toolKey === "Bash" && c.inputKey.includes("timeout"));
-    expect(bash?.inputKey).toBe(
-      '{"command":"mkdir -p /workspace/src && echo hello > /workspace/src/a.txt","timeout":20000}',
-    );
-  });
-
-  it("the baseline summary names the same current tools", () => {
-    const names = perRun.flatMap((snap) => runBaseline(snap).toolCalls.map((c) => c.name));
-    expect(names.length).toBeGreaterThan(0);
-    expect(
-      names.filter((n) => /^(sandbox_|skill_load|tool_search|read_tool_output)/.test(n)),
-    ).toEqual([]);
   });
 });
 
@@ -329,74 +262,16 @@ describe("改名后的路由与旧 agent 版本", () => {
     expect(JSON.stringify(resolved.unavailable)).not.toContain("undefined");
     expect(resolved.unavailable).toEqual([]);
   });
-
-  it("a pre-rename (rc) agent version and eval case: old builtin names read as the new ones and resolve", async () => {
-    const created = await req({
-      method: "POST",
-      url: `/api/v1/orgs/${orgId}/agents`,
-      payload: {
-        definition: {
-          name: "Rc",
-          instructions: "Be helpful.",
-          model: { provider: "model-fake", model: "fake-1" },
-        },
-        visibility: "org",
-      },
-    });
-    expect(created.statusCode, created.body).toBe(201);
-    const agentId = (created.json() as { agent: { id: string } }).agent.id;
-    const stored = await db
-      .selectFrom("agent_versions")
-      .select("definition")
-      .where("agent_id", "=", agentId)
-      .executeTakeFirstOrThrow();
-    const rc = {
-      ...(stored.definition as Record<string, unknown>),
-      tools: [
-        { kind: "builtin", name: "tool_search" },
-        { kind: "builtin", name: "ask_user" },
-      ],
-      toolPolicies: { ask_user: "ask" },
-    };
-    await db
-      .updateTable("agent_versions")
-      .set({ definition: JSON.stringify(rc) })
-      .where("agent_id", "=", agentId)
-      .execute();
-
-    // the candidate agent version of an eval run
-    const candidate = await versionDefinition(db, agentId, 1);
-    expect(candidate?.disabledTools).toEqual([]);
-    expect(candidate?.toolPolicies).toEqual({ AskUserQuestion: "ask" });
-    // an eval case whose snapshot recorded the rc definition
-    const snap = readSnapshot({
-      ...structuredClone(fixture.snapshot),
-      agentId,
-      agentVersion: 1,
-      definitions: { "1": rc },
-    });
-    const base = await caseBase(db, snap);
-    expect(base?.definition.disabledTools).toEqual(candidate?.disabledTools);
-    const resolved = await k.app
-      .get(ToolRegistry)
-      .forAgent(orgId, { ...(base?.definition ?? { disabledTools: [] }), source: "web" });
-    expect(resolved.tools.map((t) => t.key)).toContain("AskUserQuestion");
-    expect(resolved.unavailable).toEqual([]);
-
-    // and it runs: a plain message completes on the rc version
-    const convId = await createConv(req, orgId, agentId);
-    await postMessage(req, orgId, convId, "echo:hello");
-    const [end] = await waitForTerminal(db, convId, 1, 20_000);
-    expect(end?.type).toBe("run_finished");
-  });
 });
 
 /**
  * Tool naming spec §8: release-candidate data after the upgrade. Mutable state (grants, pending
- * approvals and questions) is rewritten once by migration 0063; immutable configuration (agent
- * versions, templates) is normalized on read; saving an old key is refused naming the new one.
+ * approvals and questions) is rewritten by migration 0063; agent versions and templates by
+ * migration 0139 (no compatibility before 0.1.0: the kernel reads only current keys), which also
+ * deletes the grants 0063 could not map. Saving an old key is refused.
  */
 const MIGRATION = "0063_tool_keys_claude_code.sql";
+const RETIRE = "0139_retire_legacy_forms.sql";
 
 describe("release-candidate tool keys in stored data", () => {
   let req: Req;
@@ -440,21 +315,21 @@ describe("release-candidate tool keys in stored data", () => {
   }
 
   /**
-   * Runs migration 0063 again, as on a database that has the rc rows and not the migration. The
+   * Runs migration `name` again, as on a database that has the rc rows and not the migration. The
    * migrator refuses a migration numbered below an applied one, so the later migrations' records
-   * are set aside while it runs (from a directory that ends at 0063) and put back afterwards.
+   * are set aside while it runs (from a directory that ends at `name`) and put back afterwards.
    */
-  async function rerunMigration(): Promise<string[]> {
-    await sql`delete from capybara._migrations where name = ${MIGRATION}`.execute(raw);
+  async function rerunMigration(name = MIGRATION): Promise<string[]> {
+    await sql`delete from capybara._migrations where name = ${name}`.execute(raw);
     const later = await sql<{ name: string; checksum: string; applied_at: Date }>`
-      select name, checksum, applied_at from capybara._migrations where name > ${MIGRATION}`.execute(
+      select name, checksum, applied_at from capybara._migrations where name > ${name}`.execute(
       raw,
     );
-    await sql`delete from capybara._migrations where name > ${MIGRATION}`.execute(raw);
-    const upTo = mkdtempSync(join(tmpdir(), "cap-mig-0063-"));
+    await sql`delete from capybara._migrations where name > ${name}`.execute(raw);
+    const upTo = mkdtempSync(join(tmpdir(), "cap-mig-rerun-"));
     try {
       for (const f of readdirSync(KERNEL_MIGRATIONS_DIR)) {
-        if (f.endsWith(".sql") && f <= MIGRATION) {
+        if (f.endsWith(".sql") && f <= name) {
           copyFileSync(join(KERNEL_MIGRATIONS_DIR, f), join(upTo, f));
         }
       }
@@ -468,7 +343,7 @@ describe("release-candidate tool keys in stored data", () => {
     }
   }
 
-  it("migration 0063 rewrites grants, pending approvals and questions; ambiguous keys stay and are reported", async () => {
+  it("migration 0063 rewrites grants, pending approvals and questions; 0139 deletes the grants it could not map", async () => {
     const agentA = await createAgent(req, orgA);
     const agentB = await createAgent(req, orgB);
     const conv = await createConv(req, orgA, agentA);
@@ -616,31 +491,15 @@ describe("release-candidate tool keys in stored data", () => {
     expect((await grants()).sort()).toEqual(expected);
     expect(await convGrants()).toEqual(["Read", "mcp__docs__search"]);
 
-    // the startup notice: the unmapped rows (nope__thing, the ambiguous todo__x), once, as WARN
-    expect(await countLegacyToolKeys(db)).toBe(2);
-    const warned: { msg: string; fields: unknown }[] = [];
-    await warnLegacyToolKeys(db, { warn: (msg, fields) => warned.push({ msg, fields }) });
-    expect(warned).toEqual([{ msg: "tools.legacy_key_unmapped", fields: { count: 2 } }]);
-    // a starting kernel logs it once (KernelLifecycle, right after the kernel migrations)
-    const lines: string[] = [];
-    const second = await startKernel(
-      runConfig({ pg: pgc.url, redis: rd.url }, { extensions: [MODEL_FAKE], roles: ["api"] }),
-      { logger: createLogger("warn", { write: (l) => lines.push(l) }) },
+    // 0139: the rows 0063 could not map (nope__thing, the ambiguous todo__x) name no tool and go
+    expect(await rerunMigration(RETIRE)).toEqual([RETIRE]);
+    expect((await grants()).sort()).toEqual(
+      expected.filter((g) => g !== "A:nope__thing" && g !== "B:todo__x"),
     );
-    await second.close();
-    expect(lines.filter((l) => l.includes("tools.legacy_key_unmapped"))).toEqual([
-      expect.stringContaining('"count":2'),
-    ]);
-    await db
-      .deleteFrom("tool_grants")
-      .where("tool_key", "in", ["nope__thing", "todo__x"])
-      .execute();
-    warned.length = 0;
-    await warnLegacyToolKeys(db, { warn: (msg, fields) => warned.push({ msg, fields }) });
-    expect(warned).toEqual([]);
+    expect(await convGrants()).toEqual(["Read", "mcp__docs__search"]);
   });
 
-  it("an agent version stored with rc keys reads with the new keys and runs with them", async () => {
+  it("migration 0139 rewrites rc keys in agent versions and templates; the agent runs with them", async () => {
     const created = await req({
       method: "POST",
       url: `/api/v1/orgs/${orgA}/agents`,
@@ -660,25 +519,29 @@ describe("release-candidate tool keys in stored data", () => {
       .select("definition")
       .where("agent_id", "=", agentId)
       .executeTakeFirstOrThrow();
-    // an rc version: an enabled tool list with old builtin names (from before tools were on by
-    // default), old connector and builtin policy keys, an inline template
+    // an rc version: old builtin and connector policy keys, an ambiguous key (`todo` is both an
+    // extension of the deployment and, in org B only, a connector: here only an extension), the
+    // removed skill_write, and an inline template
+    const current = stored.definition as Record<string, unknown>;
     await db
       .updateTable("agent_versions")
       .set({
         definition: JSON.stringify({
-          ...(stored.definition as Record<string, unknown>),
-          tools: [
-            { kind: "connector", connectorId: docsId, tools: "all" },
-            { kind: "builtin", name: "agent" },
-          ],
-          toolPolicies: { sandbox_bash: "deny", docs__search: "ask" },
+          ...current,
+          toolPolicies: {
+            sandbox_bash: "deny",
+            docs__search: "ask",
+            todo__write: "ask",
+            skill_write: "deny",
+            Read: "ask",
+          },
           subagents: {
             inline: [
               {
                 name: "reader",
                 description: "Reads files",
                 instructions: "Read what you are asked to.",
-                tools: ["sandbox_read"],
+                tools: ["sandbox_read", "Read", "nope__x"],
                 disallowedTools: ["docs__search"],
               },
             ],
@@ -687,19 +550,92 @@ describe("release-candidate tool keys in stored data", () => {
       })
       .where("agent_id", "=", agentId)
       .execute();
+    // an org template with rc keys
+    const tpl = { id: randomUUID() };
+    await db
+      .insertInto("agent_templates")
+      .values({ id: tpl.id, org_id: orgA, name: "rc-template", current_version: 1 } as never)
+      .execute();
+    await db
+      .insertInto("agent_template_versions")
+      .values({
+        template_id: tpl.id,
+        version: 1,
+        definition: JSON.stringify({
+          name: "rc-template",
+          description: "d",
+          instructions: "i",
+          tools: ["sandbox_read", "docs__search"],
+          toolPolicies: { ask_user: "ask" },
+        }),
+      } as never)
+      .execute();
+
+    expect(await rerunMigration(RETIRE)).toEqual([RETIRE]);
+    const after = await db
+      .selectFrom("agent_versions")
+      .select("definition")
+      .where("agent_id", "=", agentId)
+      .executeTakeFirstOrThrow();
+    const def = after.definition as Record<string, unknown>;
+    expect(def.toolPolicies).toEqual({
+      Bash: "deny",
+      mcp__docs__search: "ask",
+      plugin__todo__write: "ask",
+      Read: "ask",
+    });
+    expect(def.subagents).toMatchObject({
+      inline: [
+        { name: "reader", tools: ["Read", "nope__x"], disallowedTools: ["mcp__docs__search"] },
+      ],
+    });
+    expect(def.instructions).toBe(current.instructions);
+    const tplAfter = await db
+      .selectFrom("agent_template_versions")
+      .select("definition")
+      .where("template_id", "=", tpl.id)
+      .executeTakeFirstOrThrow();
+    expect(tplAfter.definition).toMatchObject({
+      tools: ["Read", "mcp__docs__search"],
+      toolPolicies: { AskUserQuestion: "ask" },
+    });
+    // idempotent: a second run leaves the rows as they are
+    await db
+      .insertInto("audit_events")
+      .values([
+        { org_id: orgA, action: "app.created", target: "c-1", detail: "{}" },
+        { org_id: orgA, action: "app.credential.cleared", target: "c-1", detail: "{}" },
+        { org_id: orgA, action: "app.installed", target: "x", detail: "{}" },
+      ] as never)
+      .execute();
+    expect(await rerunMigration(RETIRE)).toEqual([RETIRE]);
+    // connector actions written before the D17 rename take their current names; an `app.` action
+    // that was never a connector's stays
+    const actions = await db
+      .selectFrom("audit_events")
+      .select("action")
+      .where("org_id", "=", orgA)
+      .where("target", "in", ["c-1", "x"])
+      .orderBy("id")
+      .execute();
+    expect(actions.map((r) => r.action)).toEqual([
+      "connector.created",
+      "connector.credential.cleared",
+      "app.installed",
+    ]);
+    expect(
+      (
+        await db
+          .selectFrom("agent_versions")
+          .select("definition")
+          .where("agent_id", "=", agentId)
+          .executeTakeFirstOrThrow()
+      ).definition,
+    ).toEqual(after.definition);
 
     const got = await req({ method: "GET", url: `/api/v1/orgs/${orgA}/agents/${agentId}` });
     expect(got.statusCode, got.body).toBe(200);
-    const def = (got.json() as { agent: { definition: Record<string, unknown> } }).agent.definition;
-    // the enabled list reads as nothing turned off (tools default-on spec §2)
-    expect(def.tools).toBeUndefined();
-    expect(def.disabledTools).toEqual([]);
-    expect(def.toolPolicies).toEqual({ Bash: "deny", mcp__docs__search: "ask" });
-    expect(def.subagents).toMatchObject({
-      inline: [{ name: "reader", tools: ["Read"], disallowedTools: ["mcp__docs__search"] }],
-    });
-
-    // runs: the normalized `ask` policy applies to the connector tool (its default is allow)
+    // runs: the rewritten `ask` policy applies to the connector tool (its default is allow)
     const conv = await createConv(req, orgA, agentId);
     await postMessage(req, orgA, conv, 'tool:mcp__docs__search:{"q":"x"}');
     const asked = await waitFor(
@@ -710,7 +646,7 @@ describe("release-candidate tool keys in stored data", () => {
     expect(asked.payload).toMatchObject({ toolKey: "mcp__docs__search" });
   });
 
-  it("saving a definition with an rc key is 400 validation_failed naming the new key", async () => {
+  it("saving a definition with an rc key is 400 validation_failed", async () => {
     const save = (definition: Record<string, unknown>) =>
       req({
         method: "POST",
@@ -728,15 +664,12 @@ describe("release-candidate tool keys in stored data", () => {
     const builtin = await save({ disabledTools: [{ kind: "builtin", name: "sandbox_bash" }] });
     expect(builtin.statusCode, builtin.body).toBe(400);
     expect(builtin.json()).toMatchObject({ error: { code: "validation_failed" } });
-    expect(builtin.body).toContain('\\"Bash\\"');
 
     const policy = await save({
       toolPolicies: { sandbox_read: "ask", docs__search: "deny" },
     });
     expect(policy.statusCode, policy.body).toBe(400);
     expect(policy.json()).toMatchObject({ error: { code: "validation_failed" } });
-    expect(policy.body).toContain('\\"Read\\"');
-    expect(policy.body).toContain('\\"mcp__docs__search\\"');
 
     const inline = await save({
       subagents: {
@@ -744,6 +677,5 @@ describe("release-candidate tool keys in stored data", () => {
       },
     });
     expect(inline.statusCode, inline.body).toBe(400);
-    expect(inline.body).toContain('\\"Read\\"');
   });
 });
