@@ -170,9 +170,9 @@ export const OLD_REFERENCES: { re: RegExp; what: string; allowedIn?: RuleExempti
         reason: "changelogs are release history, generated from the reviewed changesets",
       },
       {
-        path: /^packages\/kernel\/test\/(?:kernel|tools\/builtin-names)\.test\.ts$/,
+        path: /^packages\/kernel\/test\/tools\/(?:builtin-names|connectors\.http)\.test\.ts$/,
         reason:
-          "tests of the migrations that rewrote the old keys (kernel.test.ts) and that no builtin text names one",
+          "tests of the migrations that rewrote the old keys (connectors.http.test.ts) and that no builtin text names one",
       },
       {
         path: /^packages\/kernel\/test\/evals\/reconstruct\.test\.ts$/,
