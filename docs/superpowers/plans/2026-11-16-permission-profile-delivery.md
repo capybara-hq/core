@@ -59,9 +59,10 @@ existing Python/GCC tooling, TanStack Query and the existing design system.
 | B | 2a and 3 | Portable native API/source and authority-lock foundation/root API are disjoint |
 | B-held | 2b | Linux restricted source/proof remainder stays held; no retry or alternate execution route |
 | C | macOS-only 4, independent 11 and dormant 6b implementation after 6a | 6b consumes the frozen Task 4 interfaces in disjoint files; both high-risk reviews must pass before acceptance or activation; Linux/local-Docker work held; wire stays v2 |
+| C-output | 8a | After accepted 4 and SDK; isolated SDK/device output correction, disjoint from 6b/7; no activation |
 | D0 | 6a | After accepted 3 only; may run alongside 2a/4; read-only facts/module extraction and M1 fix |
 | D | 4 + 6b acceptance gate | Both independent reviews must pass; facade/admission and staged v3 stay dormant; no announcement |
-| E | 7 and 8 | Policy/cards and background cutover after 6; v3 activation only after Task 8 retirement tests |
+| E | 7 and independent 6c; then 8 | Policy/cards plus explicit startup config activation after 6b; background cutover requires 6c and 8a acceptance; v3 only after Task 8 retirement tests |
 | F | 9; then 10 | Replay after 7–8; web after 3, 5, 9; no concurrent shared event edits |
 | G | independent preparation of 12 and 13 | Published SDK/testing prerequisite remains; Linux enforcement/full proof cannot pass held 2b |
 | H | 14; then 15 | Actual-provider acceptance, final checks and staged rollout |
@@ -617,7 +618,34 @@ resume a held tool only once. Use current grant on resumed execution.
   `test/runtime/subagents/permissions.test.ts`, review classifier acceptance; register dual test.
 - [ ] Commit `feat(kernel): apply permission profiles to review and approval resume`.
 
+### Task 8a: Retained output correction (independent preparation)
+
+**Prerequisites:** Accepted Task 4 and SDK scopes. Implement in an isolated checkout from the
+reviewed foundation; no Task 6b/7 source ownership overlap. Both SDK and device corrections require
+independent acceptance before Task 8 activates the coordinated consumers.
+
+**Contract and exact plan:** [retained output design](../specs/2026-11-16-retained-background-output-design.md)
+and [implementation plan](2026-11-16-retained-background-output.md).
+
+Add the required reference-bound positional `readOutput` method and a durable provider-owned full
+spool with a separate pinned ordinary output artifact. Preserve incremental TaskOutput, exact byte
+counts, split-login-code overlap, HTTP byte tails and terminal summary limits. Storage faults stay
+sticky, cancellation survives failure of a new journal write, credits cannot deadlock shutdown,
+and file/directory creation is synced before durable locator publication. No tail-only substitute,
+new execution grant, arbitrary output path read or change to active protocol is permitted.
+
+Root integrates only the SDK contract/doc/test/changeset/API delta into SDK-only PR 317; device
+implementation stays separate. The Task 6b/8 owners coordinate staged codecs and provider adapters.
+Task 6c is the separately reviewed explicit operator startup-CAS producer for non-hot permission
+config changes; complete it after 6b and before Task 8 activation. Ordinary source observation does
+not publish restart-only changes as active, and ordinary matching startup needs no extra action.
+
+---
+
 ### Task 8: Background lifetime, exact identity and revocation
+
+**Prerequisites:** Accepted Tasks 6b, 6c, 7 and 8a. Current protocol remains v2 until the full
+retirement, output, authority and caller cutover gates below pass.
 
 **Files:** Modify `packages/kernel/src/background/launch.ts`, `session.ts`, `store.ts`, `stop.ts`,
 `tasks.service.ts`, `poll.job.ts`, `status.ts`, `finish.ts`, `background.schemas.ts`,
