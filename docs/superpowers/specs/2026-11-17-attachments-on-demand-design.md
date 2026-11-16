@@ -7,7 +7,13 @@
   Calls marked **(designer's call)** wait for the maintainer; the two already decided are noted.
 - Decisions taken with the maintainer, 2026-11-17: on-demand replaces the automatic copy for **every**
   attachment type, not only for the new ones; clicking an image zooms **in the page** instead of
-  opening a new tab; the user bubble keeps image thumbnails and file chips with no extra mark.
+  opening a new tab; the user bubble keeps image thumbnails and file chips with no extra mark;
+  `application/zip` stays in the default accept list; `FetchAttachment` does **not** follow the
+  org's `sandboxToolPolicy: ask`; the object store's `uri?` is added to the SDK.
+- Revised 2026-11-17 after the maintainer's review: a text attachment is inlined only while it is
+  small and is otherwise a reference like any other file (the truncated inline of a large text file
+  is gone); the model-capability rows are spelled out, because the deployment runs many model
+  providers and a conversation may switch models mid-run (§5.2.1).
 - Relates to: the environments design `2026-11-07-environments-design.md` §7.4 (per-conversation
   attachment paths), the conversation send design (attachments as message content), the
   [writing-tools](../../../.agents/skills/writing-tools/SKILL.md) skill (the tool contract), the
@@ -55,10 +61,14 @@ exists, and the agent asks for it when it needs it.**
 
 ## 4. Terms
 
-- **Media attachment**: a type the model input contract carries — the four images, `application/pdf`
-  and the text documents (`text/plain`, `text/markdown`, `text/csv`). The model gets the content.
-- **File attachment**: any other accepted type (`xlsx`, `docx`, `pptx`, `zip`, `json` …). The model
-  gets a one-line placeholder naming it; the bytes stay in the object store until a tool copies them.
+- **Media attachment**: a file whose *content* the model consumes — the four images and
+  `application/pdf`. Whether a given model can take it is decided per step (§5.2.1).
+- **Text attachment**: `text/plain`, `text/markdown`, `text/csv`. Small ones are inlined
+  (§5.2); large ones are references.
+- **File attachment**: every other accepted type (`xlsx`, `docx`, `pptx`, `zip`, `json` …): the
+  model only ever gets a reference, the bytes stay in the object store until a tool copies them.
+- **Reference**: the placeholder line naming the file and its unsigned object URI (§5.3), and the
+  argument the `FetchAttachment` tool accepts (§5.4).
 
 ## 5. Design
 
@@ -67,7 +77,7 @@ exists, and the agent asks for it when it needs it.**
 `attachments.allowedTypes` becomes the accept list for **both** kinds. The `z.enum` is replaced by a
 content type string (`type/subtype`, lower case), still deployment config:
 
-- defaults (designer's call): today's media list, plus
+- defaults (kept with `zip` by the maintainer, 2026-11-17): today's media list, plus
   `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`,
   `application/vnd.openxmlformats-officedocument.wordprocessingml.document`,
   `application/vnd.openxmlformats-officedocument.presentationml.presentation`,
@@ -82,16 +92,27 @@ content type string (`type/subtype`, lower case), still deployment config:
 
 ### 5.2 What the model sees
 
-`resolveMedia` (`runtime/context/build.ts:437`) decides by type instead of by capability:
+`resolveMedia` (`runtime/context/build.ts:437`) decides by type **and by the model of the step**:
 
-| Accepted type | Model gets |
+| Attachment | The model gets |
 |---|---|
-| image, and the model has vision | image block (bytes), as today |
-| `application/pdf`, and the model reads documents | document block (bytes), as today |
-| `text/plain`, `text/markdown`, `text/csv` | inline text, or a capped text document block for a model that reads documents — as today |
-| **any other accepted type** | **one placeholder line** |
+| image, and this model has `vision` | image block (bytes) — unchanged |
+| image, and this model has no `vision` | placeholder, "this model cannot view images" — unchanged |
+| `application/pdf`, and this model has `documents` | document block (bytes) — unchanged |
+| `application/pdf`, without `documents` | placeholder, "this model cannot read PDF documents" — unchanged |
+| `text/plain` / `text/markdown` / `text/csv`, **at most `TEXT_INLINE_MAX_CHARS`** | inline text, or a text document block for a model with `documents` — the small-file convenience, unchanged |
+| a text attachment **above** `TEXT_INLINE_MAX_CHARS` | **the reference** — no truncated inline |
+| any other accepted type | **the reference** |
 
-The placeholder (model-facing English, one text block):
+The text threshold (`runtime/context/build.ts:166` `TEXT_INLINE_MAX_CHARS`) drops from 50 000 to
+**8 000 characters** (designer's call): at 50 000 a single attachment costs 12 000–20 000 tokens,
+and what a person gets is half a file marked "[Truncated]". Below the threshold the inline is
+worth more than a tool round trip; above it the agent reads the file in the device (`Read` by line
+range, `Grep`, or a script) — exactly what it would do with a spreadsheet. A text file above the
+threshold is therefore **never** truncated into the request: either it fits and the model has all
+of it, or the model has a reference and the device has the bytes.
+
+The reference, one text block (model-facing English; the medium is the file's own):
 
 ```
 [Attached file "电商工行.xlsx"
@@ -101,16 +122,43 @@ The placeholder (model-facing English, one text block):
 
 ```
 
-- The existing capability placeholders (`build.ts:358`, "this model cannot view images / read
-  documents") stay for media a model cannot take.
+A text attachment above the threshold uses the same line with a clause on why it was not inlined
+("1.4 MB of text; not sent inline") so the model does not wonder whether it was truncated.
+
 - `mediaMode` (`build.ts:200`) must stop treating an unknown `document` media type as "bytes":
-  a document block whose type is not media is always a placeholder, whatever the model's
+  a document block whose type is not media is always a reference, whatever the model's
   capabilities say.
 - Replay: the log block keeps its shape (`{ type: "document", mediaType, source: { ref }, name }`,
-  `conversations/attachments.service.ts:528-540`); the placeholder is derived from the block and the
-  config, so a rebuild of the same log produces the same text. Logs written before this change never
-  held a file attachment (uploads were refused), so no `DriftReason` is needed; the zero-drift
-  fixtures run before and after the change.
+  `conversations/attachments.service.ts:528-540`); the placeholder and the inline threshold are
+  derived from the block, its recorded size and the config, so a rebuild of the same log produces
+  the same text. Logs written before this change hold no file attachment (uploads were refused), and
+  a text attachment they hold was inlined under the old rule — that inline is part of the *request*,
+  not the log, so the zero-drift fixtures are run and any difference is a `DriftReason` (replay-evals
+  skill). **This is the one model-visible behaviour change of the design** and the plan runs the
+  fixtures before and after, as that skill requires.
+
+#### 5.2.1 Model providers and switching models
+
+The deployment accepts model providers as extensions (`model-provider@2`), each declaring
+`capabilities.vision` / `capabilities.documents` in its `ModelInfo`; the conformance suite sends a
+real image, a real PDF and a real text document to a provider that declares them
+(`packages/testing/src/model-conformance.ts:299-345`) and skips the case otherwise. The kernel
+never infers a capability from a model's name or vendor; it reads the declaration of the model in
+force for that step.
+
+A conversation may **switch models mid-run** (a member picks another model between steps). Nothing
+breaks, because the request is rebuilt from the log for every step with the current model:
+
+- the log holds refs, never bytes (`{ source: { kind: "ref", attachmentId } }`), so switching models
+  re-resolves the same attachment under the new model's capabilities;
+- an image or PDF the new model cannot take becomes its capability placeholder, and the file is
+  still in the conversation (the user's chip does not change);
+- the reference and `FetchAttachment` are model-independent: any model can copy the file and read
+  it with code, whatever it can or cannot "see".
+
+The only failure this design cannot prevent is a provider that declares a capability it cannot
+serve; that is the provider's contract bug, caught by the conformance suite and the live tests, and
+the kernel's degradation ladder reports the model error as it does for any other call.
 
 ### 5.3 The unsigned reference
 
@@ -118,9 +166,9 @@ The placeholder (model-facing English, one text block):
   (`attachments/<id>`, `attachments.service.ts:119`, with the kernel's `kernel/<orgId>/` prefix).
 - Composed by the store, not the kernel: the `ObjectStore` contract gains an **optional**
   `uri?(key: string): string` — "the canonical URI of a key in this store: unsigned, stable, no
-  credentials (`s3://bucket/key`)". The kernel falls back to `capybara://attachments/<id>` when the
-  store has none (the test fakes, a store with no notion of URIs). Optional so every existing
-  implementation compiles unchanged.
+  credentials (`s3://bucket/key`)" (maintainer, 2026-11-17: add it). The kernel falls back to
+  `capybara://attachments/<id>` when the store has none (the test fakes, a store with no notion of
+  URIs). Optional so every existing implementation compiles unchanged.
 - **Never a presigned URL.** A presigned GET lives 300 s (`attachments.service.ts:28`) and is a
   credential: it must not enter the log, a model request or a replay. Signing happens inside the
   kernel when the tool reads the bytes, and the URL never leaves it — the sandbox could not reach
@@ -152,9 +200,9 @@ The placeholder (model-facing English, one text block):
   a.xlsx, b.csv"), not finalized yet, deleted since, file storage unavailable, no device in this
   conversation. Failures are ordinary tool errors; the run continues.
 - Policy: `defaultPolicy: "allow"`, and **not** in `SANDBOX_ASK_TOOL_NAMES`
-  (`tools/builtin-names.ts:78`) — it copies the user's own attachment into the workspace and
-  executes nothing; `Bash` and the write tools keep the org's `sandboxToolPolicy` gate. (designer's
-  call to revisit if the maintainer wants it behind `ask`.)
+  (`tools/builtin-names.ts:78`) (maintainer, 2026-11-17) — it copies the user's own attachment into
+  the workspace and executes nothing; `Bash` and the write tools keep the org's
+  `sandboxToolPolicy` gate.
 - Multi-replica: no new state. Two calls for different files write different paths; the same file
   twice is the same bytes. The copy runs under the device lease like any sandbox call, and a lost
   lease aborts it like any other.
@@ -190,13 +238,18 @@ The placeholder (model-facing English, one text block):
 - `attachments.allowedTypes`: the extended list (§5.1); `docs/config.md` regenerated
   (`adding-config` skill).
 - `attachments.maxBytes`, `imageMaxBytes`, `maxPerMessage`, `requestMediaBytes` keep their meaning.
-  A file attachment does not consume `requestMediaBytes` (it is never sent as bytes).
+  A file attachment does not consume `requestMediaBytes` (it is never sent as bytes); a text
+  attachment above `TEXT_INLINE_MAX_CHARS` does not either.
+- `TEXT_INLINE_MAX_CHARS` (a kernel constant, `build.ts:166`) drops to 8 000 characters; the
+  per-request text budget follows it (`TEXT_FETCH_MAX_BYTES`).
 
 ## 7. Failure modes
 
 | Case | What happens |
 |---|---|
 | A type not in the list | refused before the upload (web precheck) and at `POST /attachments` (kernel), as today |
+| A text file above the threshold | the model gets the reference; nothing is truncated into the request |
+| The run switches to a model without `vision` / `documents` | that model gets the capability placeholder, the file stays in the conversation, and `FetchAttachment` still works |
 | Sent with no device in the conversation | allowed; `FetchAttachment` answers with the no-sandbox text and the model tells the person |
 | The attachment is deleted before the tool runs | the tool answers that it is gone; the chip already shows the removed state |
 | Storage unavailable | the tool answers "file storage is unavailable"; the run continues |
@@ -205,10 +258,13 @@ The placeholder (model-facing English, one text block):
 
 ## 8. Tests
 
-- **kernel unit**: `resolveMedia` renders the placeholder for a file type with and without document
-  capability, and never touches the bytes cache; `mediaMode` no longer sends an unknown document
-  type as bytes; `FetchAttachment` resolves a name, a reference and an id, produces the stable name
-  and the clash suffix, and maps each error.
+- **kernel unit**: `resolveMedia` renders the reference for a file type with and without document
+  capability, and never touches the bytes cache; a text attachment at and one char above the
+  threshold (inline vs reference, no truncated inline anywhere); `mediaMode` no longer sends an
+  unknown document type as bytes; the same log resolved for a vision model and for one without it
+  yields bytes and the capability placeholder respectively (the switching case); `FetchAttachment`
+  resolves a name, a reference and an id, produces the stable name and the clash suffix, and maps
+  each error.
 - **kernel integration / dual replica**: upload an `xlsx` through the fake object store, send it,
   call `FetchAttachment`, and read the bytes back from the device — identical content; two calls
   return the same path; the file survives a suspend/resume.
@@ -231,15 +287,10 @@ The placeholder (model-facing English, one text block):
 
 ## 11. Open questions
 
-1. **The default file-type set** (§5.1): the list above is the designer's; the maintainer trims it
-   (e.g. whether `zip` is acceptable by default in a corporate deployment).
-2. **`FetchAttachment` behind the org's `ask` policy?** Proposed: no (§5.4); the alternative is one
-   more approval for a copy of the user's own file.
-3. **The SDK's optional `uri?`** (§5.3) — an SDK change (`pnpm gen:sdk-api` plus a
-   `@capybara-hq/plugin-sdk` changeset, and the S3 store's implementation in the plugins
-   repository) versus keeping only the `capybara://attachments/<id>` fallback. Proposed: add it,
-   because the reference then names the object's real home and stays readable to a person debugging
-   a log.
+1. **The text inline threshold** (§5.2): the designer's 8 000 characters; the maintainer may pick
+   another number, or ask for every text attachment to be a reference.
+2. **The default file-type set** (§5.1): kept as proposed (with `application/zip`), settled with the
+   maintainer on 2026-11-17; a deployment trims or extends it in configuration.
 
 ## 12. Consequences for other documents
 
@@ -248,4 +299,9 @@ The placeholder (model-facing English, one text block):
 - Tool descriptions: `Bash` (`sandbox/bash.ts:55`), `Read` (`sandbox/read.ts:32`).
 - `plugin-sdk` agent docs: the object-store page gains `uri`.
 - The plugins repository: `object-store-s3` implements `uri`; the fake stores keep compiling
-  (optional method).
+  (optional method). The model-provider plugins are untouched: the conformance suite already covers
+  the capability rows this design keeps (`packages/testing/src/model-conformance.ts:299-345`).
+- `runtime/context/build.ts`: `TEXT_INLINE_MAX_CHARS` 50 000 → 8 000, and the text path stops
+  fetching bytes for a text attachment above it (no partial read, no truncation note); the
+  zero-drift fixtures and any affected case snapshots are updated with their `DriftReason`.
+- `docs/config.md` and the web's refusal copy (`fileTypeNotAllowed`) follow the longer accept list.
