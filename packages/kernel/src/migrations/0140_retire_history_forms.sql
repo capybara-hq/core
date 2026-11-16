@@ -14,6 +14,11 @@
 --    `skills` goes.
 -- 3. Agent template versions lose `selectedSkills` (the reader dropped it; 0116 cleaned only the
 --    org-made ones, plugin packages no longer write it).
+--
+-- Cost: the WHERE clauses are JSON predicates no index serves, so each UPDATE scans its whole table
+-- once (`conversation_events` filtered by type, every `eval_cases` snapshot unpacked); the
+-- narrowing step adds one primary-key lookup per old follow-up. Fine at release-candidate size, as
+-- earlier event rewrites (0105) assumed; a deployment with a large log runs it in a quiet window.
 
 -- `d` without the history-only fields of an agent definition.
 CREATE OR REPLACE FUNCTION pg_temp.current_definition(d jsonb) RETURNS jsonb

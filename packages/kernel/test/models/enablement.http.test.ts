@@ -31,8 +31,9 @@ import {
  * admin). A disabled model leaves the org's model list, agent save and the switch plan refuse it,
  * a run whose model was disabled after the agent was saved falls back (or ends
  * `run.model_unavailable`), and the write lists the agents and purposes still pointing at it.
- * Chat callers never resolve an embedding model. A copy's list failure does not mark the platform's
- * list as failed.
+ * Chat callers never resolve an embedding model. A run whose provider needs configuration in the
+ * org ends `run.model_unavailable`, and a copy's list failure does not mark the platform's list as
+ * failed.
  */
 
 const fixture = (name: string) =>
@@ -41,7 +42,7 @@ const fixture = (name: string) =>
 const FAKE_1 = { provider: "model-fake", model: "fake-1" };
 const FAKE_2 = { provider: "model-fake", model: "fake-2" };
 const FAKE_EMBED = { provider: "model-fake", model: "fake-embed" };
-const PLUGINS = ["model-fake", "model-copy-fail"];
+const PLUGINS = ["model-fake", "model-copy-fail", "model-org-key"];
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -66,7 +67,12 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "worker"],
-        extensions: [MODEL_FAKE, MODEL_FAKE_B, fixture("model-copy-fail")],
+        extensions: [
+          MODEL_FAKE,
+          MODEL_FAKE_B,
+          fixture("model-copy-fail"),
+          fixture("model-org-key"),
+        ],
         extensionConfig: {
           "model-fake": {
             models: [
@@ -507,6 +513,30 @@ describe("runs and the switch plan", () => {
   it("without a fallback the run ends run.model_unavailable", async () => {
     const id = await agentId(owner, org1, "Saved", FAKE_2);
     expect((await platformDisable("model-fake", { disable: ["fake-2"] })).statusCode).toBe(200);
+    const conv = await createConv(owner, org1, id);
+    await ok(owner, "POST", `/api/v1/orgs/${org1}/conversations/${conv}/messages`, {
+      text: "echo:hello",
+    });
+    await waitForTerminal(db, conv, 1, 20_000);
+    const failed = ofType(await eventsOf(db, conv), "run_failed")[0] as Extract<
+      Ev,
+      { type: "run_failed" }
+    >;
+    expect(failed.payload.error.code).toBe("run.model_unavailable");
+  });
+
+  it("a run whose model's provider needs configuration in the org ends run.model_unavailable", async () => {
+    // the org's own key makes model-org-key usable there (the platform has none)
+    await ok(owner, "PUT", `/api/v1/orgs/${org1}/extensions/model-org-key/overrides`, {
+      values: { apiKey: "k" },
+    });
+    const id = await agentId(owner, org1, "Keyed", { provider: "model-org-key", model: "key-1" });
+    // dropping the copy: the org follows the platform again, which has no key
+    const dropped = await owner({
+      method: "DELETE",
+      url: `/api/v1/orgs/${org1}/extensions/model-org-key/overrides`,
+    });
+    expect(dropped.statusCode, dropped.body).toBeLessThan(300);
     const conv = await createConv(owner, org1, id);
     await ok(owner, "POST", `/api/v1/orgs/${org1}/conversations/${conv}/messages`, {
       text: "echo:hello",
