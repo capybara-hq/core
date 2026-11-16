@@ -130,7 +130,7 @@ Always throw `ModelError(kind, message, { retryAfterMs?, cause })`. Decide only 
 | `context_overflow` | no | 413 / anthropic `request_too_large`; openai `context_length_exceeded` |
 | `aborted` | no | aborted by the caller |
 
-Retryable errors are handled by the kernel's degradation ladder (primary model -> retry the primary model once, waiting `retryAfterMs`, default 1 second, skipping the same-model retry if it exceeds 10 seconds -> the agent's `fallback` model); non-retryable errors fail the run directly (error code `model.<kind>`). The cost of misclassifying: labeling a problem with the request itself as retryable wastes retries and switches to the fallback model; labeling a transient failure as non-retryable fails a run that could have succeeded.
+Retryable errors are handled by the kernel's degradation ladder (primary model -> retry the primary model once, waiting `retryAfterMs`, default 1 second, honoured up to 5 minutes or the run's remaining deadline, whichever is shorter, skipping the same-model retry when the wait does not fit -> the agent's `fallback` model); non-retryable errors fail the run directly (error code `model.<kind>`). The cost of misclassifying: labeling a problem with the request itself as retryable wastes retries and switches to the fallback model; labeling a transient failure as non-retryable fails a run that could have succeeded.
 
 **Malformed tool arguments -> `invalid_request`**: throw `invalid_request` when the tool input JSON fails to parse or isn't an object. It is not retryable, so the kernel does not resend the same request or switch to the fallback model for it.
 
