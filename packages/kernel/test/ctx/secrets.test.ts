@@ -2,8 +2,13 @@ import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { startTestPostgres } from "@capybara-hq/testing";
 import { type Kysely, sql } from "kysely";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createKeyring, createSecrets, rewrapDataKeys } from "../../src/ctx/secrets.js";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import {
+  createKeyring,
+  createSecrets,
+  initialPasswordAad,
+  rewrapToCurrentMasterKey,
+} from "../../src/ctx/secrets.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { createLogger } from "../../src/log.js";
@@ -192,8 +197,11 @@ describe("ctx.secrets", () => {
     await old.set("rotorg", "k", "persist-me");
     const ring2 = createKeyring(k2, [k1]);
     expect(await createSecrets(db, ring2, "ns-rot").get("rotorg", "k")).toBe("persist-me");
-    expect(await rewrapDataKeys(handlesOf(db), ring2)).toBeGreaterThan(0);
-    expect(await rewrapDataKeys(handlesOf(db), ring2)).toBe(0);
+    expect((await rewrapToCurrentMasterKey(handlesOf(db), ring2)).dataKeys).toBeGreaterThan(0);
+    expect(await rewrapToCurrentMasterKey(handlesOf(db), ring2)).toEqual({
+      dataKeys: 0,
+      initialPasswords: 0,
+    });
     expect(await createSecrets(db, createKeyring(k2, []), "ns-rot").get("rotorg", "k")).toBe(
       "persist-me",
     );
@@ -221,7 +229,126 @@ describe("ctx.secrets", () => {
 
   it("rewrap 遇到 keyring 不认识的 master_key_id → 抛错点名 org_id", async () => {
     await createSecrets(db, createKeyring(k1, []), "ns-rw").set("rwunknown", "k", "v");
-    await expect(rewrapDataKeys(handlesOf(db), createKeyring(k3, []))).rejects.toThrow(/rwunknown/);
+    await expect(rewrapToCurrentMasterKey(handlesOf(db), createKeyring(k3, []))).rejects.toThrow(
+      /rwunknown/,
+    );
+  });
+});
+
+describe("rewrapToCurrentMasterKey", () => {
+  const dataKeyIds = async () =>
+    new Map(
+      (
+        await db
+          .withSchema("capybara")
+          .selectFrom("org_data_keys")
+          .select(["org_id", "master_key_id"])
+          .execute()
+      ).map((r) => [r.org_id as string, r.master_key_id as string]),
+    );
+
+  beforeAll(async () => {
+    // Initial-password rows reference accounts and conversations; this file seeds the sealed rows
+    // alone, so the test database drops those foreign keys
+    await sql`ALTER TABLE capybara.account_initial_passwords
+      DROP CONSTRAINT IF EXISTS account_initial_passwords_account_id_fkey,
+      DROP CONSTRAINT IF EXISTS account_initial_passwords_recipient_account_id_fkey,
+      DROP CONSTRAINT IF EXISTS account_initial_passwords_conversation_id_fkey`.execute(db);
+  });
+  beforeEach(async () => {
+    await db.withSchema("capybara").deleteFrom("secrets").execute();
+    await db.withSchema("capybara").deleteFrom("org_data_keys").execute();
+    await db.withSchema("capybara").deleteFrom("account_initial_passwords").execute();
+  });
+
+  const sealPassword = async (
+    ring: ReturnType<typeof createKeyring>,
+    id: string,
+    expired = false,
+  ) => {
+    const w = ring.wrap(Buffer.from(`pw-${id}`), initialPasswordAad(id));
+    await db
+      .withSchema("capybara")
+      .insertInto("account_initial_passwords")
+      .values({
+        account_id: id,
+        recipient_account_id: "recipient",
+        conversation_id: "conv",
+        run_id: "run",
+        call_id: id,
+        master_key_id: w.masterKeyId,
+        ciphertext: w.data,
+        expires_at: new Date(Date.now() + (expired ? -1 : 1) * 3_600_000),
+      })
+      .execute();
+  };
+
+  it("rewraps in batches until nothing is left; values stay readable with the new key alone", async () => {
+    const old = createSecrets(db, createKeyring(k1, []), "ns-batch");
+    for (let i = 0; i < 5; i++) await old.set(`batch${i}`, "k", `v${i}`);
+    const ring2 = createKeyring(k2, [k1]);
+    // one org already on the new key is left alone
+    await createSecrets(db, ring2, "ns-batch").set("fresh", "k", "vf");
+    expect(await rewrapToCurrentMasterKey(handlesOf(db), ring2, { batchSize: 2 })).toEqual({
+      dataKeys: 5,
+      initialPasswords: 0,
+    });
+    expect(new Set((await dataKeyIds()).values())).toEqual(new Set([ring2.currentId]));
+    const onlyNew = createSecrets(db, createKeyring(k2, []), "ns-batch");
+    for (let i = 0; i < 5; i++) expect(await onlyNew.get(`batch${i}`, "k")).toBe(`v${i}`);
+    expect(await onlyNew.get("fresh", "k")).toBe("vf");
+  });
+
+  it("rewraps unexpired initial passwords and leaves expired ones to their cleanup", async () => {
+    const ring1 = createKeyring(k1, []);
+    await sealPassword(ring1, "acc-live");
+    await sealPassword(ring1, "acc-expired", true);
+    const ring2 = createKeyring(k2, [k1]);
+    expect(await rewrapToCurrentMasterKey(handlesOf(db), ring2)).toEqual({
+      dataKeys: 0,
+      initialPasswords: 1,
+    });
+    const rows = await db
+      .withSchema("capybara")
+      .selectFrom("account_initial_passwords")
+      .select(["account_id", "master_key_id", "ciphertext"])
+      .orderBy("account_id")
+      .execute();
+    expect(rows.map((r) => [r.account_id, r.master_key_id])).toEqual([
+      ["acc-expired", ring1.currentId],
+      ["acc-live", ring2.currentId],
+    ]);
+    const live = rows[1] as { master_key_id: string; ciphertext: Uint8Array };
+    expect(
+      createKeyring(k2, [])
+        .unwrap(live.master_key_id, Buffer.from(live.ciphertext), initialPasswordAad("acc-live"))
+        .toString(),
+    ).toBe("pw-acc-live");
+  });
+
+  it("a master key missing from the keyring fails before anything is written, naming ids only", async () => {
+    await createSecrets(db, createKeyring(k1, []), "ns-pre").set("pre-known", "k", "v");
+    await createSecrets(db, createKeyring(k3, []), "ns-pre").set("pre-unknown", "k", "v");
+    const before = await dataKeyIds();
+    const err = await rewrapToCurrentMasterKey(handlesOf(db), createKeyring(k2, [k1]), {
+      batchSize: 1,
+    }).then(
+      () => null,
+      (e: Error) => e,
+    );
+    expect(err?.message).toContain("pre-unknown");
+    expect(err?.message).not.toContain("pre-known");
+    for (const k of [k1, k2, k3]) {
+      expect(err?.message).not.toContain(k.toString("hex"));
+      expect(err?.message).not.toContain(k.toString("base64"));
+    }
+    expect(await dataKeyIds()).toEqual(before);
+  });
+
+  it("rejects a batch size that is not a positive integer", async () => {
+    await expect(
+      rewrapToCurrentMasterKey(handlesOf(db), createKeyring(k2, []), { batchSize: 0 }),
+    ).rejects.toThrow(RangeError);
   });
 });
 

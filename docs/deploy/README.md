@@ -65,8 +65,8 @@ To fill `.env` by hand instead, run each `openssl` command above and paste its *
 `=` of the matching line.
 
 Without `CAPYBARA_MASTER_KEY`, encrypted secrets (extension, connector and channel credentials) can't be
-read. Keep a copy somewhere safe. To rotate it, see `masterKeyPrevious` in
-[docs/config.md](../config.md).
+read. Keep a copy somewhere safe. To rotate it, see
+[Rotating the master key](#rotating-the-master-key).
 
 Then start:
 
@@ -719,6 +719,48 @@ Offline route (no access to ghcr.io): build the images locally with
 GitHub), or `docker build -t capybara-sandbox:latest https://github.com/capybara-hq/plugins.git#<commit>:plugins/sandbox-docker/image`
 and `.../egress-proxy` for `capybara-sandbox-egress:latest`; then set `CAPYBARA_SANDBOX__IMAGE` and the
 extension's `egressProxyImage` to those tags.
+
+## Rotating the master key
+
+`masterKey` (`CAPYBARA_MASTER_KEY`) wraps one data key per org, which in turn encrypts that org's
+stored secrets (extension, connector and channel credentials, overridden config secrets); it also
+seals the one-time initial passwords waiting to be shown, and the kernel derives its signing keys
+(web access tokens, embed tokens) from it. `masterKeyPrevious` (`CAPYBARA_MASTER_KEY_PREVIOUS`, a
+JSON array of base64 keys) holds earlier keys that are still read but never used for new writes.
+Rotating replaces the key without re-encrypting any secret: only the data keys are rewrapped.
+
+1. **Back up** the current key and the database.
+2. **Add the new key, keep the old one.** Generate a key (`openssl rand -base64 32`), make it
+   `CAPYBARA_MASTER_KEY` and move the old one to `CAPYBARA_MASTER_KEY_PREVIOUS`, on every replica:
+
+   ```bash
+   # .env (Docker Compose); single quotes keep the JSON intact
+   CAPYBARA_MASTER_KEY=<new key>
+   CAPYBARA_MASTER_KEY_PREVIOUS='["<old key>"]'
+   ```
+
+   With Nacos or a config file, set `masterKey` and `masterKeyPrevious` there instead. The master
+   key is read at start, so restart every replica (`docker compose up -d`) and wait until none runs
+   the old config: a replica that still has the old key as current keeps wrapping new data keys
+   with it.
+3. **Rewrap.** Run once, from any one place that has the new config:
+
+   ```bash
+   docker compose exec api node /app/bin/capybara.mjs secrets rewrap
+   ```
+
+   It rewraps every org data key and every unexpired initial password still sealed with a key in
+   `masterKeyPrevious` with the new key, in batches of 500 per transaction, and prints the counts
+   (`rewrapped N org data key(s) and M initial password(s) to master key <id>`; the id is a hash
+   prefix, never the key). It only needs PostgreSQL. It is idempotent: a re-run, or a run after a
+   failure part way through, rewraps only what is left, and `0` means nothing still uses an old key.
+   When the database holds a key id that neither key matches, it fails before writing anything and
+   names the org ids and key ids; add the missing key to `masterKeyPrevious` and run it again.
+4. **Remove the old key.** Once a run prints `rewrapped 0 ...`, wait at least
+   `auth.accessTokenTtlSeconds` (15 minutes by default; web sessions signed with the old key then
+   renew themselves), clear `CAPYBARA_MASTER_KEY_PREVIOUS` and restart the replicas. Keep the old
+   key in the backup until the database backups taken before the rotation have expired: restoring
+   one needs it.
 
 ## Logs
 

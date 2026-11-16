@@ -64,7 +64,9 @@ export {
   createSecrets,
   type DerivedKeys,
   type Keyring,
-  rewrapDataKeys,
+  REWRAP_BATCH_SIZE,
+  type RewrapResult,
+  rewrapToCurrentMasterKey,
 } from "./ctx/secrets.js";
 export { type KernelDatabase, type KernelSchemaDb, kernelDb } from "./db/kernel-schema.js";
 export { type MigrationOwner, migrate } from "./db/migrator.js";
@@ -227,6 +229,7 @@ export {
   openKernelCli,
   openKernelCliOverPool,
 } from "./infra/cli/kernel-cli.module.js";
+export { rewrapMasterKeys } from "./infra/cli/master-key-rewrap.js";
 export {
   GUARD_CIRCUIT_LIMIT,
   GUARD_CIRCUIT_WINDOW_MS,
