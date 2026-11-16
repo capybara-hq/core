@@ -19,6 +19,11 @@ export class XactLock {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
 
+  @Transactional({ propagation: "mandatory" })
+  async shared(key: string): Promise<void> {
+    await sql`SELECT pg_advisory_xact_lock_shared(hashtext(${key}))`.execute(this.db.db);
+  }
+
   /** Takes the lock named `key` until the caller's transaction ends (waits while another holds it). */
   @Transactional({ propagation: "mandatory" })
   async lock(key: string): Promise<void> {

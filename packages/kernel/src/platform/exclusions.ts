@@ -11,6 +11,26 @@ export const PLATFORM_EXCLUSIONS: readonly {
   category: ExclusionCategory;
   reason: string;
 }[] = [
+  {
+    route: "GET /api/v1/orgs/:orgId/conversations/:id/permissions",
+    category: "human-only",
+    reason: "Interactive owner session permission selection and device-bound consent",
+  },
+  {
+    route: "PATCH /api/v1/orgs/:orgId/conversations/:id/permissions",
+    category: "human-only",
+    reason: "Interactive owner session permission selection and device-bound consent",
+  },
+  {
+    route: "GET /api/v1/orgs/:orgId/conversation-permission-preview",
+    category: "human-only",
+    reason: "Interactive owner session permission selection and device-bound consent",
+  },
+  {
+    route: "POST /api/v1/orgs/:orgId/conversations/first-message",
+    category: "human-only",
+    reason: "Interactive owner session permission selection and device-bound consent",
+  },
   // platform-admin: every route is an operation (Task 7)
   // extensions-admin
   {

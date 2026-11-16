@@ -17,6 +17,8 @@ interface TransactionStore {
   hooks: AfterCommitHook[];
   /** Set once the transaction settled: continuations that outlive it must not use it. */
   done: boolean;
+  /** Transaction-local advisory lock claims; never authority cached across requests. */
+  permissionLocks?: Map<string, "shared" | "exclusive">;
 }
 
 /** One store for the process: `afterCommit` (a free function) reads it without a host instance. */

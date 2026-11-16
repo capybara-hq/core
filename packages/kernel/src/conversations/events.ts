@@ -415,6 +415,17 @@ const LoggedAgentDefinition = AgentDefinitionSchema.extend({
  */
 export const ConversationEventSchema = z.discriminatedUnion("type", [
   ev(
+    "permission_profile_changed",
+    z.object({
+      oldProfile: z.enum(["request-approval", "approve-for-me", "full-access"]),
+      newProfile: z.enum(["request-approval", "approve-for-me", "full-access"]),
+      actorAccountId: z.string(),
+      deviceId: z.string().nullable(),
+      scopeRevision: z.string().nullable(),
+      revision: z.number().int().nonnegative(),
+    }),
+  ),
+  ev(
     "user_message",
     z.object({
       content: z.array(ContentBlockSchema),

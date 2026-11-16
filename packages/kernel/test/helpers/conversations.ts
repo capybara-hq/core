@@ -130,6 +130,10 @@ export function conversationsFor(
   };
   const invoker = d.invoker;
   return new ConversationsService(
+    {
+      initialize: refuse("permission initialization"),
+      lockInitial: refuse("permission initialization"),
+    },
     h.db,
     d.eventLog,
     d.agents,

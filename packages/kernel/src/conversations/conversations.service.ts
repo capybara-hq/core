@@ -37,6 +37,8 @@ import {
   type MessageContext,
   readMessageContext,
 } from "./message-context.js";
+import type { PermissionSelection } from "./permission-profiles.schemas.js";
+import { PermissionProfilesService, permissionScopeHash } from "./permission-profiles.service.js";
 import {
   NO_SELECTION,
   planSelection,
@@ -388,6 +390,8 @@ export interface UserMessageInput {
  * source of the message's `timeZone` (`readMessageContext`).
  */
 export interface InternalMessageOptions {
+  initialPermission?: PermissionSelection;
+  createRequestHash?: string;
   schedule?: ScheduleMarker;
   timeZoneOverride?: string;
 }
@@ -433,6 +437,8 @@ const toUsage = (r: UsageRow): UsageTotals => ({
 @Injectable()
 export class ConversationsService {
   constructor(
+    @Inject(PermissionProfilesService)
+    private readonly permissions: Pick<PermissionProfilesService, "initialize" | "lockInitial">,
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(EventLog) private readonly eventLog: EventLog,
     @Inject(AgentLookup) private readonly agents: Pick<AgentLookup, "get">,
@@ -530,8 +536,20 @@ export class ConversationsService {
     events: ConversationEvent[];
     created: boolean;
   }> {
+    if (internal.initialPermission?.profile === "full-access" && !pick.deviceId)
+      throw new ApiError("conflict", "Full access requires an explicit device selection");
+    const requestHash = internal.initialPermission
+      ? permissionScopeHash({ agentId, input, pick, permission: internal.initialPermission })
+      : undefined;
+    if (requestHash) internal = { ...internal, createRequestHash: requestHash };
     const agent = await this.agents.get(orgId, agentId, accountId);
-    const prior = await this.findCreated(orgId, accountId, agentId, input.clientMessageId);
+    const prior = await this.findCreated(
+      orgId,
+      accountId,
+      agentId,
+      input.clientMessageId,
+      requestHash,
+    );
     if (prior) return prior;
     const deviceId = await this.devices.forNew(orgId, accountId, pick);
     const next = await this.planSwitch(orgId, agent.definition, NO_SELECTION, input);
@@ -559,13 +577,25 @@ export class ConversationsService {
       // a concurrent first send with this id created the conversation while this one resolved its
       // binding: a refusal here (the project just went away) answers with what the first created
       if (!(e instanceof ApiError)) throw e;
-      const raced = await this.findCreated(orgId, accountId, agentId, input.clientMessageId);
+      const raced = await this.findCreated(
+        orgId,
+        accountId,
+        agentId,
+        input.clientMessageId,
+        requestHash,
+      );
       if (!raced) throw e;
       return raced;
     }
     const written = all?.at(-1);
     if (!all || !written) {
-      const raced = await this.findCreated(orgId, accountId, agentId, input.clientMessageId);
+      const raced = await this.findCreated(
+        orgId,
+        accountId,
+        agentId,
+        input.clientMessageId,
+        requestHash,
+      );
       if (!raced) throw new ApiError("conflict", "The conversation is being created; retry");
       return raced;
     }
@@ -594,6 +624,7 @@ export class ConversationsService {
     internal: InternalMessageOptions & NewConversationOptions,
   ): Promise<ConversationEvent[] | undefined> {
     const { id, orgId, accountId } = conv;
+    if (internal.initialPermission) await this.permissions.lockInitial(orgId, id, conv.deviceId);
     const project = await this.bindingFor(orgId, accountId, conv.deviceId, conv.project);
     const row = await this.db
       .insertInto("conversations")
@@ -606,6 +637,7 @@ export class ConversationsService {
         project_name: project?.name ?? null,
         project_path: project?.path ?? null,
         create_request_id: input.clientMessageId,
+        create_request_hash: internal.createRequestHash ?? null,
         scheduled_task_id: internal.schedule?.taskId ?? null,
         source: internal.source,
       })
@@ -619,11 +651,31 @@ export class ConversationsService {
       .executeTakeFirst();
     // a concurrent retry committed first: answer with its conversation below
     if (!row) return undefined;
+    const initialEvents = internal.initialPermission
+      ? await this.permissions.initialize(
+          orgId,
+          id,
+          accountId,
+          conv.deviceId,
+          project?.path ?? null,
+          project?.name ?? null,
+          internal.initialPermission,
+        )
+      : [];
     const blocks = await this.bindIn(orgId, id, accountId, input.files ?? []);
     // a new conversation has no run yet, so nothing to skip
-    return (
-      await this.writeMessage(orgId, id, accountId, input, next, extra, blocks, invoked, internal)
-    ).events;
+    const written = await this.writeMessage(
+      orgId,
+      id,
+      accountId,
+      input,
+      next,
+      extra,
+      blocks,
+      invoked,
+      internal,
+    );
+    return [...initialEvents, ...written.events];
   }
 
   /**
@@ -660,6 +712,7 @@ export class ConversationsService {
     accountId: string,
     agentId: string,
     clientMessageId: string,
+    requestHash?: string,
   ): Promise<{
     conversation: ConversationView;
     event: ConversationEvent;
@@ -671,11 +724,15 @@ export class ConversationsService {
       .select(viewColumns())
       .where("org_id", "=", orgId)
       .where("account_id", "=", accountId)
+      .select("create_request_hash")
       .where("create_request_id", "=", clientMessageId)
       .where("kind", "=", "chat")
       .executeTakeFirst();
     if (!row) return null;
-    if (row.agent_id !== agentId) {
+    if (
+      row.agent_id !== agentId ||
+      (requestHash !== undefined && row.create_request_hash !== requestHash)
+    ) {
       throw new ApiError(
         "conflict",
         "This clientMessageId was already used for another conversation",

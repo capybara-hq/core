@@ -2,8 +2,11 @@ import { Module } from "@nestjs/common";
 import { AgentLookupModule } from "../agents/agent-lookup.js";
 import { BackgroundModule } from "../background/background.module.js";
 import { DevicesModule } from "../devices/devices.module.js";
+import { LocalDevicesModule } from "../local-devices/local-devices.module.js";
 import { ProvidersModule } from "../runtime/providers.js";
 import { RuntimeModule } from "../runtime/runtime.module.js";
+import { SandboxOperationAuthority } from "../sandbox/operation-authority.js";
+import { SandboxModule } from "../sandbox/sandbox.module.js";
 import { SkillsModule } from "../skills/skills.module.js";
 import { StorageModule } from "../storage/storage.module.js";
 import { ToolsModule } from "../tools/tools.module.js";
@@ -15,6 +18,7 @@ import { ConversationDeviceStatus } from "./device-status.js";
 import { EventLogModule } from "./event-log.js";
 import { ConversationFiles } from "./files.js";
 import { ConversationOutputs } from "./outputs-read.js";
+import { PermissionProfilesService } from "./permission-profiles.service.js";
 import { ConversationQueue } from "./queue.service.js";
 
 /**
@@ -25,6 +29,8 @@ import { ConversationQueue } from "./queue.service.js";
  */
 @Module({
   imports: [
+    SandboxModule,
+    LocalDevicesModule,
     EventLogModule,
     ConversationAccessModule,
     AttachmentsModule,
@@ -41,6 +47,8 @@ import { ConversationQueue } from "./queue.service.js";
     BackgroundModule,
   ],
   providers: [
+    PermissionProfilesService,
+    SandboxOperationAuthority,
     ConversationsService,
     ConversationQueue,
     ConversationOutputs,
@@ -49,6 +57,8 @@ import { ConversationQueue } from "./queue.service.js";
     ConversationDeviceStatus,
   ],
   exports: [
+    PermissionProfilesService,
+    SandboxOperationAuthority,
     EventLogModule,
     ConversationAccessModule,
     AttachmentsModule,

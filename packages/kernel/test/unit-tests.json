@@ -89,6 +89,7 @@
   "runtime/stream.test.ts",
   "sandbox/instance.test.ts",
   "sandbox/lifecycle.test.ts",
+  "sandbox/operation-authority.test.ts",
   "sandbox/sandbox-config.test.ts",
   "sandbox/sandbox-fake.test.ts",
   "sandbox/unreachable.test.ts",

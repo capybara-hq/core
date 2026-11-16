@@ -9,6 +9,8 @@ import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { StepLogModule } from "../runtime/step-log.js";
 import { SandboxJobs } from "./jobs.js";
 import { SandboxLeases } from "./leases.js";
+import { PermissionAuthorityEpochStore } from "./permission-authority-epochs.js";
+import { PermissionAuthorityLock } from "./permission-authority-lock.js";
 import { SandboxProviders } from "./providers.js";
 import { CommandReviewService } from "./review/review.service.js";
 import { SandboxService } from "./sandbox.service.js";
@@ -31,7 +33,22 @@ import { SandboxService } from "./sandbox.service.js";
     StepLogModule,
     QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
   ],
-  providers: [SandboxProviders, SandboxLeases, SandboxService, SandboxJobs, CommandReviewService],
-  exports: [SandboxService, SandboxJobs, SandboxProviders, CommandReviewService],
+  providers: [
+    PermissionAuthorityLock,
+    PermissionAuthorityEpochStore,
+    SandboxProviders,
+    SandboxLeases,
+    SandboxService,
+    SandboxJobs,
+    CommandReviewService,
+  ],
+  exports: [
+    PermissionAuthorityLock,
+    PermissionAuthorityEpochStore,
+    SandboxService,
+    SandboxJobs,
+    SandboxProviders,
+    CommandReviewService,
+  ],
 })
 export class SandboxModule {}

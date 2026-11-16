@@ -266,6 +266,14 @@ type Int8 = ColumnType<string, number | string | undefined, number | string>;
 
 /** 0006_conversations.sql：会话；`last_seq` 为已分配的最大事件序号。 */
 export interface ConversationsTable {
+  permission_profile: ColumnType<
+    "request-approval" | "approve-for-me" | "full-access",
+    "request-approval" | "approve-for-me" | "full-access" | undefined,
+    "request-approval" | "approve-for-me" | "full-access"
+  >;
+  permission_revision: ColumnType<number, number | undefined, number>;
+  permission_consent: ColumnType<unknown | null, string | null | undefined, string | null>;
+  create_request_hash: ColumnType<string | null, string | null | undefined, string | null>;
   id: string;
   org_id: string;
   agent_id: string;
@@ -1441,6 +1449,11 @@ export interface ScheduledTaskGrantsTable {
 }
 
 export interface KernelDatabase {
+  permission_authority_epochs: {
+    kind: string;
+    id: string;
+    revision: ColumnType<number, number | undefined, number>;
+  };
   accounts: AccountsTable;
   account_initial_passwords: AccountInitialPasswordsTable;
   identities: IdentitiesTable;
