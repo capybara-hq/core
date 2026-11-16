@@ -120,9 +120,13 @@ it.runIf(process.platform === "darwin")(
   },
 );
 
-it.runIf(process.platform === "darwin")(
-  "fresh macOS native workers enforce each method and preserve Full controls",
-  async () => {
+// One test per method: each case launches five fresh native workers, and running all methods in a
+// single test brushed against the default timeout under parallel load.
+it
+  .runIf(process.platform === "darwin")
+  .each(["readFile", "writeFile", "stat", "list", "scan"] as const)(
+  "fresh macOS native workers enforce %s and preserve Full controls",
+  async (method) => {
     const { startMacOperationWorker } = await import("../src/exec/operation-worker.js");
     const { mkdir, symlink } = await import("node:fs/promises");
     const root = await realpath(await mkdtemp(join(tmpdir(), "cap-mac-methods-")));
@@ -188,14 +192,12 @@ it.runIf(process.platform === "darwin")(
       return worker.completion;
     };
     try {
-      for (const method of ["readFile", "writeFile", "stat", "list", "scan"] as const) {
-        const suffix = method === "list" || method === "scan" ? "" : "/file";
-        expect(await run(method, project + suffix)).toBeDefined();
-        await expect(run(method, sibling + suffix)).rejects.toThrow();
-        await expect(run(method, join(project, "escape") + suffix)).rejects.toThrow();
-        expect(await run(method, sibling + suffix, true)).toBeDefined();
-        await expect(run(method, sibling + suffix)).rejects.toThrow();
-      }
+      const suffix = method === "list" || method === "scan" ? "" : "/file";
+      expect(await run(method, project + suffix)).toBeDefined();
+      await expect(run(method, sibling + suffix)).rejects.toThrow();
+      await expect(run(method, join(project, "escape") + suffix)).rejects.toThrow();
+      expect(await run(method, sibling + suffix, true)).toBeDefined();
+      await expect(run(method, sibling + suffix)).rejects.toThrow();
     } finally {
       await Promise.all(workers.map((w) => w.cancel("owned fixture cleanup")));
       await rm(root, { recursive: true, force: true });
