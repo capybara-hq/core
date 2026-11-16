@@ -3,5 +3,5 @@
   "name": "fixture-ui-place",
   "version": "0.1.0",
   "publisher": "Capybara",
-  "description": "Fixture: Warning: the deprecated place."
+  "description": "Fixture: Error: the retired place key."
 }

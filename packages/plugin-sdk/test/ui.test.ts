@@ -342,8 +342,8 @@ describe("清单校验：ui 贡献与 permissions 交叉核对", () => {
   const GET_BOARD = [{ method: "GET" as const, path: "/ui/board", access: "public" as const }];
   const good = base({
     ui: [
-      { id: "tasks", title, place: "conversation", kind: "view" },
-      { id: "board", title, place: "page", kind: "embed", path: "/ui/board" },
+      { id: "tasks", title, slot: "conversation.panel", kind: "view" },
+      { id: "board", title, slot: "org.page", kind: "embed", path: "/ui/board" },
     ],
     permissions: {
       http: GET_BOARD,
@@ -379,7 +379,7 @@ describe("清单校验：ui 贡献与 permissions 交叉核对", () => {
   });
   it("embed 的 path 不在 /ui/ 下报错", () => {
     const m = base({
-      ui: [{ id: "board", title, place: "page", kind: "embed", path: "/board" }],
+      ui: [{ id: "board", title, slot: "org.page", kind: "embed", path: "/board" }],
       permissions: {
         http: [{ method: "GET", path: "/board", access: "public" }],
         ui: { embeds: ["board"] },
@@ -390,7 +390,7 @@ describe("清单校验：ui 贡献与 permissions 交叉核对", () => {
   it("an embed path not declared as a public GET in permissions.http is an error", () => {
     const m = (http: HttpPermission[]) =>
       base({
-        ui: [{ id: "board", title, place: "page", kind: "embed", path: "/ui/board" }],
+        ui: [{ id: "board", title, slot: "org.page", kind: "embed", path: "/ui/board" }],
         permissions: { http, ui: { embeds: ["board"] } },
       });
     const msg =
@@ -411,15 +411,19 @@ describe("清单校验：ui 贡献与 permissions 交叉核对", () => {
   it("贡献本身的形状", () => {
     const errs = (ui: unknown, perms: unknown = { ui: { views: ["a"] } }) =>
       validateUiContributions(ui, perms).join("\n");
-    expect(errs([{ id: "a", title, place: "sidebar", kind: "view" }])).toMatch(/place/);
-    expect(errs([{ id: "a", title, place: "page", kind: "widget" }])).toMatch(/kind/);
-    expect(errs([{ id: "a", title: { zh: "x" }, place: "page", kind: "view" }])).toMatch(/title/);
-    expect(errs([{ id: "a", title, place: "page", kind: "view", path: "/ui/a" }])).toMatch(/path/);
-    expect(errs([{ id: "Bad Id", title, place: "page", kind: "view" }])).toMatch(/id/);
+    expect(errs([{ id: "a", title, slot: "Sidebar", kind: "view" }])).toMatch(/slot/);
+    expect(errs([{ id: "a", title, slot: "org.page", kind: "widget" }])).toMatch(/kind/);
+    expect(errs([{ id: "a", title: { zh: "x" }, slot: "org.page", kind: "view" }])).toMatch(
+      /title/,
+    );
+    expect(errs([{ id: "a", title, slot: "org.page", kind: "view", path: "/ui/a" }])).toMatch(
+      /path/,
+    );
+    expect(errs([{ id: "Bad Id", title, slot: "org.page", kind: "view" }])).toMatch(/id/);
     expect(
       errs([
-        { id: "a", title, place: "page", kind: "view" },
-        { id: "a", title, place: "conversation", kind: "view" },
+        { id: "a", title, slot: "org.page", kind: "view" },
+        { id: "a", title, slot: "conversation.panel", kind: "view" },
       ]),
     ).toMatch(/duplicate/);
     expect(errs("nope")).toMatch(/array/);
@@ -447,18 +451,18 @@ describe("类型", () => {
   });
 });
 
-describe("place file-preview (file-preview@1 embed previewers)", () => {
+describe("slot file.preview (file-preview@1 embed previewers)", () => {
   const title = { zh: "预览", en: "Preview" };
   it("is allowed for embeds only", () => {
     const http = [{ method: "GET", path: "/ui/pdf", access: "public" }];
     expect(
       validateUiContributions(
-        [{ id: "pdf", title, place: "file-preview", kind: "embed", path: "/ui/pdf" }],
+        [{ id: "pdf", title, slot: "file.preview", kind: "embed", path: "/ui/pdf" }],
         { http, ui: { embeds: ["pdf"] } },
       ),
     ).toEqual([]);
     expect(
-      validateUiContributions([{ id: "pdf", title, place: "file-preview", kind: "view" }], {
+      validateUiContributions([{ id: "pdf", title, slot: "file.preview", kind: "view" }], {
         ui: { views: ["pdf"] },
       }),
     ).toEqual(['ui "pdf" slot file.preview does not accept kind view']);
@@ -477,7 +481,7 @@ describe("place file-preview (file-preview@1 embed previewers)", () => {
   });
 });
 
-describe("conversation page places, icons and open targets (UI refresh B Task 12)", () => {
+describe("conversation page slots, icons and open targets (UI refresh B Task 12)", () => {
   const title = { zh: "任务", en: "Tasks" };
   const views = (...ids: string[]) => ({ ui: { views: ids } });
 
@@ -487,43 +491,20 @@ describe("conversation page places, icons and open targets (UI refresh B Task 12
     expect(
       validateUiContributions(
         [
-          { id: "p", title, place: "panel", kind: "view", icon: "list-checks" },
-          { id: "s", title, place: "section", kind: "view" },
-          { id: "c", title, place: "inline", kind: "view" },
-          { id: "old", title, place: "conversation", kind: "view" },
+          { id: "p", title, slot: "conversation.panel", kind: "view", icon: "list-checks" },
+          { id: "s", title, slot: "conversation.properties.section", kind: "view" },
+          { id: "c", title, slot: "conversation.tool-result.card", kind: "view" },
+          { id: "old", title, slot: "conversation.panel", kind: "view" },
         ],
         views("p", "s", "c", "old"),
       ),
     ).toEqual([]);
     expect(
       validateUiContributions(
-        [{ id: "p", title, place: "panel", kind: "view", icon: "rocket" as never }],
+        [{ id: "p", title, slot: "conversation.panel", kind: "view", icon: "rocket" as never }],
         views("p"),
       ).join(),
     ).toMatch(/icon/);
-  });
-
-  it("aliasOf names another non-alias contribution of the same kind", () => {
-    const ui = [
-      { id: "tasks-panel", title, place: "panel" as const, kind: "view" as const },
-      {
-        id: "tasks",
-        title,
-        place: "conversation" as const,
-        kind: "view" as const,
-        aliasOf: "tasks-panel",
-      },
-    ];
-    expect(validateUiContributions(ui, views("tasks-panel", "tasks"))).toEqual([]);
-    expect(
-      validateUiContributions(
-        [{ ...ui[1], aliasOf: "nope" }, ui[0]],
-        views("tasks-panel", "tasks"),
-      ).join(),
-    ).toMatch(/aliasOf/);
-    expect(
-      validateUiContributions([{ ...ui[1], aliasOf: "tasks" }], views("tasks")).join(),
-    ).toMatch(/aliasOf/);
   });
 
   it("validateUiView accepts open targets and ids on checklist and keyValue items, the view and tables", () => {
@@ -580,18 +561,17 @@ describe("contributions name a slot (UI slots spec §3.2, §4)", () => {
   const title = { zh: "任务", en: "Tasks" };
   const views = (...ids: string[]) => ({ ui: { views: ids } });
 
-  it("validateUiContributions refuses both slot and place", () => {
-    const errs = validateUiContributions(
-      [{ id: "a", title, kind: "view", slot: "org.page", place: "page" }],
-      views("a"),
-    );
-    expect(errs).toHaveLength(1);
-    expect(errs[0]).toContain("exactly one of slot and place");
+  it("validateUiContributions refuses a contribution without a slot", () => {
+    const errs = validateUiContributions([{ id: "a", title, kind: "view" }], views("a"));
+    expect(errs).toEqual(['ui "a" slot must be a slot reference like "org.page" or "org.page@1"']);
   });
 
-  it("validateUiContributions refuses neither slot nor place", () => {
-    const errs = validateUiContributions([{ id: "a", title, kind: "view" }], views("a"));
-    expect(errs).toEqual(['ui "a" needs exactly one of slot and place']);
+  it("the retired place key does not name a slot", () => {
+    const errs = validateUiContributions(
+      [{ id: "a", title, kind: "view", place: "page" }],
+      views("a"),
+    );
+    expect(errs).toEqual(['ui "a" slot must be a slot reference like "org.page" or "org.page@1"']);
   });
 
   it("a known slot refuses a kind it does not accept", () => {
@@ -650,15 +630,6 @@ describe("contributions name a slot (UI slots spec §3.2, §4)", () => {
         views("a"),
       ),
     ).toEqual(['ui "a" after must be a string']);
-  });
-
-  it("an unknown place value is still structural", () => {
-    expect(
-      validateUiContributions(
-        [{ id: "a", title, place: "sidebar", kind: "view" }],
-        views("a"),
-      ).join(),
-    ).toMatch(/place must be one of/);
   });
 });
 

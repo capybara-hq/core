@@ -270,9 +270,7 @@ export function dropForeignOpens(view: UiView, panels: ReadonlySet<string>): UiV
 function listed(entries: LoadedUiContribution[]): UiContributionItem[] {
   return entries
     .filter(
-      (c) =>
-        c.contribution.aliasOf === undefined &&
-        (c.contribution.kind === "embed" || c.contribution.kind === "component" || c.render),
+      (c) => c.contribution.kind === "embed" || c.contribution.kind === "component" || c.render,
     )
     .map((c, i) => ({ c, i }))
     .sort((x, y) => (x.c.plugin === y.c.plugin ? x.i - y.i : x.c.plugin < y.c.plugin ? -1 : 1))
@@ -608,15 +606,10 @@ export class UiViews {
     need: "render" | "action" | "embed",
   ): Promise<{ entry: LoadedUiContribution; args: ResolvedArgs }> {
     const loaded = this.d.host.uiContributions();
-    const named = loaded.find((c) => c.plugin === t.plugin && c.contribution.id === t.id);
-    // a retired alias answers with the contribution it names (same extension and kind)
-    const aliasOf = named?.contribution.aliasOf;
-    const id = aliasOf ?? t.id;
     const entry = loaded.find(
       (c) =>
         c.plugin === t.plugin &&
-        c.contribution.id === id &&
-        c.contribution.aliasOf === undefined &&
+        c.contribution.id === t.id &&
         (need === "embed"
           ? c.contribution.kind === "embed"
           : // a view, or a component's server view (served like a view of its slot)
@@ -696,7 +689,7 @@ export class UiViews {
     if (need === "action") await this.d.checkWritable?.(t.orgId, conversationId, t.accountId);
     if (t.card !== undefined) {
       // args.card is attested: an inline view, and a tool_result of this conversation recorded this
-      // very card (plugin, the requested id or its alias target, key); else it is not found
+      // very card (plugin, the requested id, key); else it is not found
       const recorded =
         entry.slot.id === "conversation.tool-result.card" && this.d.recordedCard !== undefined
           ? await this.d.recordedCard(conversationId, t.card.callId)
@@ -704,7 +697,7 @@ export class UiViews {
       if (
         recorded === null ||
         recorded.plugin !== t.plugin ||
-        (recorded.view !== t.id && recorded.view !== id) ||
+        recorded.view !== t.id ||
         recorded.key !== t.card.key
       ) {
         throw notFound();

@@ -4,14 +4,6 @@ import type { UiSlotId, UiSlotScope } from "./ui-slots.js";
 import { isHttpUrl } from "./url.js";
 
 /**
- * The places of the first UI design, kept as a deprecated input (UI slots spec §4, step A): each maps
- * to a slot through `PLACE_SLOTS` (`panel` and `conversation` → `conversation.panel`, `section` →
- * `conversation.properties.section`, `inline` → `conversation.tool-result.card`, `page` →
- * `org.page`, `file-preview` → `file.preview`).
- */
-export type UiPlace = "conversation" | "panel" | "section" | "inline" | "page" | "file-preview";
-
-/**
  * Icons a contribution may use (design system icon names; `puzzle` is the default and is drawn as
  * the design `extension` icon). The title-bar button of a panel shows it.
  */
@@ -57,13 +49,11 @@ export interface UiContribution {
   id: string;
   title: { zh: string; en: string };
   /**
-   * The slot it goes in: `"<id>"` (version 1) or `"<id>@<n>"`, an id of `UI_SLOTS`. Exactly one of
-   * `slot` and `place`. An unknown slot or version does not fail the extension: the contribution is
-   * dropped (see `resolveUiSlots`).
+   * The slot it goes in: `"<id>"` (version 1) or `"<id>@<n>"`, an id of `UI_SLOTS`. Required. An
+   * unknown slot or version does not fail the extension: the contribution is dropped (see
+   * `resolveUiSlots`).
    */
-  slot?: string;
-  /** @deprecated use slot (UI slots spec §4, step A) */
-  place?: UiPlace;
+  slot: string;
   /**
    * One of the slot's `anchors` to be placed after; omitted (or not an anchor of the slot) = the
    * slot's first anchor.
@@ -74,12 +64,6 @@ export interface UiContribution {
   path?: string;
   /** Icon from {@link UI_ICONS}; default `puzzle`. */
   icon?: UiIcon;
-  /**
-   * A retired id kept answering for a release: it is not listed, and fetching it renders (or
-   * embeds) the named contribution of the same extension and kind. It still needs its entry in
-   * `permissions.ui`, and no `ctx.ui.view` of its own.
-   */
-  aliasOf?: string;
 }
 
 /**

@@ -44,7 +44,7 @@ const fixture = (n: string) =>
   fileURLToPath(new URL(`../fixtures/plugins/${n}/index.ts`, import.meta.url));
 const UI_SLOTS = fixture("ui-slots");
 const UI_PREVIEW_DROPPED = fixture("ui-preview-dropped");
-const LEGACY_SRC = fixture("ui-legacy-place");
+const TODO_SRC = fixture("ui-todo-shape");
 const MAX_BYTES = 4 * 1024 * 1024;
 
 let pgc: TestContainer;
@@ -61,13 +61,13 @@ type LogLine = { level: string; msg: string; [k: string]: unknown };
 const logs = (msg: string): LogLine[] =>
   lines.map((l) => JSON.parse(l) as LogLine).filter((l) => l.msg === msg);
 
-/** The fixture `ui-legacy-place` as a plugin tgz (entry = the same source, types stripped). */
-async function legacyPkg(): Promise<Uint8Array> {
-  const source = await readFile(LEGACY_SRC, "utf8");
-  const mod = (await import(LEGACY_SRC)) as { default: ExtensionManifest };
+/** The fixture `ui-todo-shape` as a plugin tgz (entry = the same source, types stripped). */
+async function todoPkg(): Promise<Uint8Array> {
+  const source = await readFile(TODO_SRC, "utf8");
+  const mod = (await import(TODO_SRC)) as { default: ExtensionManifest };
   return pluginTgz({
     manifest: { name: mod.default.name, version: mod.default.version },
-    packageName: "@test/plugin-ui-legacy-place",
+    packageName: "@test/plugin-ui-todo-shape",
     extension: {
       manifest: staticManifestOf(mod.default) as unknown as Record<string, unknown>,
       entry: stripTypeScriptTypes(source, { mode: "strip" }),
@@ -81,8 +81,8 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
   pluginsDir = await mkdtemp(join(tmpdir(), "kernel-ui-slots-"));
-  // ui-legacy-place is an install record (a packed tgz): its static manifest is checked at load
-  const bytes = await legacyPkg();
+  // ui-todo-shape is an install record (a packed tgz): its static manifest is checked at load
+  const bytes = await todoPkg();
   const pkg = await readExtensionPackage(bytes, {
     maxBytes: MAX_BYTES,
     hostSdkVersion: SDK_VERSION,
@@ -96,7 +96,7 @@ beforeAll(async () => {
   await db
     .insertInto("extension_installs")
     .values({
-      name: "ui-legacy-place",
+      name: "ui-todo-shape",
       sha256: createHash("sha256").update(bytes).digest("hex"),
       version: "0.1.0",
       source: "file",
@@ -134,7 +134,7 @@ async function conversation(): Promise<{ orgId: string; convId: string }> {
     admin,
     `Acme ${Math.random().toString(36).slice(2, 8)}`,
   );
-  for (const plugin of ["ui-slots", "ui-legacy-place", "ui-preview-dropped"]) {
+  for (const plugin of ["ui-slots", "ui-todo-shape", "ui-preview-dropped"]) {
     const r = await admin({
       method: "PUT",
       url: `/api/v1/orgs/${orgId}/extensions/${plugin}`,
@@ -152,7 +152,7 @@ async function conversation(): Promise<{ orgId: string; convId: string }> {
         model: { provider: "model-fake", model: "fake-1" },
         disabledTools: onlyBuiltins([
           { kind: "plugin", plugin: "ui-slots", name: "ping" },
-          { kind: "plugin", plugin: "ui-legacy-place", name: "write" },
+          { kind: "plugin", plugin: "ui-todo-shape", name: "write" },
         ]),
       },
       visibility: "org",
@@ -230,33 +230,25 @@ describe("UI slots at load", () => {
       { id: "lost", ref: "nowhere.at-all", reason: "unknown-slot" },
       { id: "old-page", ref: "org.page@2", reason: "unsupported-version" },
     ]);
-    const legacy = await admin({ method: "GET", url: "/api/v1/admin/extensions/ui-legacy-place" });
+    const legacy = await admin({ method: "GET", url: "/api/v1/admin/extensions/ui-todo-shape" });
     expect(legacy.statusCode, legacy.body).toBe(200);
     expect((legacy.json() as { uiDropped: unknown }).uiDropped).toEqual([]);
   });
 
-  it("the todo rc.2 manifest shape loads with all its UI", () => {
-    const inst = host.current("ui-legacy-place");
+  it("the todo manifest shape loads with all its UI", () => {
+    const inst = host.current("ui-todo-shape");
     expect(inst?.source).toBe("install");
     expect(
       host
         .uiContributions()
-        .filter((c) => c.plugin === "ui-legacy-place")
+        .filter((c) => c.plugin === "ui-todo-shape")
         .map((c) => [c.contribution.id, c.slot.id, c.after]),
     ).toEqual([
       ["tasks-panel", "conversation.panel", undefined],
       ["tasks-section", "conversation.properties.section", "context"],
       ["tasks-card", "conversation.tool-result.card", undefined],
-      ["tasks", "conversation.panel", undefined],
     ]);
-    expect(host.uiDropped("ui-legacy-place")).toEqual([]);
-    const info = logs("plugin ui uses the deprecated place");
-    expect(info).toHaveLength(1);
-    expect(info[0]).toMatchObject({
-      level: "info",
-      plugin: "ui-legacy-place",
-      ids: ["tasks-panel", "tasks-section", "tasks-card", "tasks"],
-    });
+    expect(host.uiDropped("ui-todo-shape")).toEqual([]);
   });
 
   it("dropped contributions are neither listed nor served; platform.page not through an org", async () => {
@@ -312,11 +304,11 @@ describe("UI slots at load", () => {
     });
   });
 
-  it("the pipeline keeps a card naming an inline contribution declared with place", async () => {
+  it("the pipeline keeps a card naming an inline contribution", async () => {
     const { orgId, convId } = await conversation();
-    const r = await toolResult(orgId, convId, "tool:plugin__ui-legacy-place__write:{}", 1);
+    const r = await toolResult(orgId, convId, "tool:plugin__ui-todo-shape__write:{}", 1);
     expect(r.payload.card).toEqual({
-      plugin: "ui-legacy-place",
+      plugin: "ui-todo-shape",
       view: "tasks-card",
       key: "snap-1",
     });

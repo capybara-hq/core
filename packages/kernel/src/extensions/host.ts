@@ -2126,9 +2126,6 @@ export class ExtensionHost {
     if (inst.uiUnknownAnchors.length > 0) {
       this.log.warn("plugin ui anchors unknown", { ...at, anchors: inst.uiUnknownAnchors });
     }
-    if (inst.uiDeprecatedPlace.length > 0) {
-      this.log.info("plugin ui uses the deprecated place", { ...at, ids: inst.uiDeprecatedPlace });
-    }
     return inst;
   }
 

@@ -4,24 +4,34 @@ const title = { zh: "任务", en: "Tasks" };
 const view = (text: string): UiView => ({ blocks: [{ type: "heading", text }] });
 
 /**
- * The UI manifest shape of `todo@0.1.0-rc.2`, still on the deprecated `place` (UI slots spec,
- * step A): a panel, a properties section, an inline card and the retired `tasks` alias of the panel
- * (old place `conversation`). The tool `write` returns a card naming `tasks-card`. Installed from a
- * packed tgz in tests, so the reviewed static manifest (with `place`) is compared at load.
+ * The UI manifest shape of the todo plugin: a panel, a properties section and an inline card. The
+ * tool `write` returns a card naming `tasks-card`. Installed from a packed tgz in tests, so the
+ * reviewed static manifest is compared at load.
  */
 export default defineExtension({
-  name: "ui-legacy-place",
+  name: "ui-todo-shape",
   version: "0.1.0",
   sdk: "^0.1.0-rc.0",
   provides: [],
   ui: [
-    { id: "tasks-panel", title, place: "panel", kind: "view", icon: "list-checks" },
-    { id: "tasks-section", title, place: "section", kind: "view", icon: "list-checks" },
-    { id: "tasks-card", title, place: "inline", kind: "view", icon: "list-checks" },
-    { id: "tasks", title, place: "conversation", kind: "view", aliasOf: "tasks-panel" },
+    { id: "tasks-panel", title, slot: "conversation.panel", kind: "view", icon: "list-checks" },
+    {
+      id: "tasks-section",
+      title,
+      slot: "conversation.properties.section",
+      kind: "view",
+      icon: "list-checks",
+    },
+    {
+      id: "tasks-card",
+      title,
+      slot: "conversation.tool-result.card",
+      kind: "view",
+      icon: "list-checks",
+    },
   ],
   permissions: {
-    ui: { views: ["tasks-panel", "tasks-section", "tasks-card", "tasks"] },
+    ui: { views: ["tasks-panel", "tasks-section", "tasks-card"] },
     tools: ["write"],
   },
   setup(ctx) {

@@ -819,11 +819,7 @@ export class ToolPipeline {
       inlineViews: (plugin) =>
         new Set(
           (host?.current(plugin)?.ui ?? [])
-            .filter(
-              (r) =>
-                r.slot.id === "conversation.tool-result.card" &&
-                r.contribution.aliasOf === undefined,
-            )
+            .filter((r) => r.slot.id === "conversation.tool-result.card")
             .map((r) => r.contribution.id),
         ),
       onToolsChanged: (orgId, connectorId) => {

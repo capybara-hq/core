@@ -1,8 +1,8 @@
 import { POLICY_HOOKS, type PolicyHook } from "./hooks.js";
 import { HTTP_ACCESS, type HttpPermission } from "./http-access.js";
 import { SETUP_CHECK_ID_RE, SETUP_CHECK_LIMITS } from "./setup-check.js";
-import { UI_ICONS, type UiContribution, type UiPlace } from "./ui.js";
-import { PLACE_SLOTS, parseSlotRef, uiSlot } from "./ui-slots.js";
+import { UI_ICONS, type UiContribution } from "./ui.js";
+import { parseSlotRef, uiSlot } from "./ui-slots.js";
 
 /** Extension permission manifest: governance, not a sandbox; using an undeclared platform API throws ExtensionPermissionError. */
 export interface ExtensionPermissions {
@@ -267,7 +267,6 @@ export function validatePermissions(plugin: string, p: unknown): string[] {
 
 const UI_ID_RE = /^[a-z][a-z0-9-]{0,39}$/;
 const UI_TITLE_MAX = 100;
-const UI_PLACES: readonly unknown[] = Object.keys(PLACE_SLOTS);
 const UI_EMBED_PREFIX = "/ui/";
 
 /**
@@ -320,7 +319,6 @@ export function validateUiContributions(ui: unknown, permissions: unknown): stri
     else contributions.push(...ui);
   }
   const seen = new Map<string, UiContribution["kind"]>();
-  const aliases: { id: string; kind: UiContribution["kind"]; target: unknown }[] = [];
   contributions.forEach((c, i) => {
     const at = `ui[${i}]`;
     if (!isObj(c)) {
@@ -338,19 +336,10 @@ export function validateUiContributions(ui: unknown, permissions: unknown): stri
       [title.zh, title.en].some((t) => typeof t !== "string" || t === "" || t.length > UI_TITLE_MAX)
     )
       errs.push(`ui "${id}" title needs non-empty zh and en of at most ${UI_TITLE_MAX} characters`);
-    // the slot it names, when the slot / place is well formed (known to the catalog or not)
-    let slotRef: { id: string; version: number } | null = null;
-    if ((c.slot === undefined) === (c.place === undefined)) {
-      errs.push(`ui "${id}" needs exactly one of slot and place`);
-    } else if (c.slot !== undefined) {
-      slotRef = typeof c.slot === "string" ? parseSlotRef(c.slot) : null;
-      if (slotRef === null)
-        errs.push(`ui "${id}" slot must be a slot reference like "org.page" or "org.page@1"`);
-    } else if (!UI_PLACES.includes(c.place)) {
-      errs.push(`ui "${id}" place must be one of ${UI_PLACES.join(", ")}`);
-    } else {
-      slotRef = { id: PLACE_SLOTS[c.place as UiPlace], version: 1 };
-    }
+    // the slot it names, when it is well formed (known to the catalog or not)
+    const slotRef = typeof c.slot === "string" ? parseSlotRef(c.slot) : null;
+    if (slotRef === null)
+      errs.push(`ui "${id}" slot must be a slot reference like "org.page" or "org.page@1"`);
     if (c.after !== undefined && typeof c.after !== "string")
       errs.push(`ui "${id}" after must be a string`);
     if (c.kind !== "view" && c.kind !== "embed" && c.kind !== "component") {
@@ -366,10 +355,9 @@ export function validateUiContributions(ui: unknown, permissions: unknown): stri
     if (spec !== undefined) {
       if (!spec.accepts.includes(c.kind))
         errs.push(`ui "${id}" slot ${spec.id} does not accept kind ${c.kind}`);
-      if (spec.icon === "required" && c.icon === undefined && c.aliasOf === undefined)
+      if (spec.icon === "required" && c.icon === undefined)
         errs.push(`ui "${id}" slot ${spec.id} needs an icon`);
     }
-    if (c.aliasOf !== undefined) aliases.push({ id, kind: c.kind, target: c.aliasOf });
     if (seen.has(id)) errs.push(`ui has duplicate id "${id}"`);
     seen.set(id, c.kind);
     if (c.kind === "view") {
@@ -394,16 +382,6 @@ export function validateUiContributions(ui: unknown, permissions: unknown): stri
       );
     }
   });
-  const aliasIds = new Set(aliases.map((a) => a.id));
-  for (const a of aliases) {
-    if (
-      typeof a.target !== "string" ||
-      a.target === a.id ||
-      aliasIds.has(a.target) ||
-      seen.get(a.target) !== a.kind
-    )
-      errs.push(`ui "${a.id}" aliasOf must name another, non-alias ${a.kind} contribution`);
-  }
   for (const [k, kind, ids] of [
     ["views", "view", views],
     ["embeds", "embed", embeds],

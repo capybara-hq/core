@@ -238,7 +238,7 @@ describe("staticManifestOf", () => {
           ui: { embeds: ["a"] },
         },
         ui: [
-          { id: "a", title: { zh: "甲", en: "A" }, place: "page", kind: "embed", path: "/ui/a" },
+          { id: "a", title: { zh: "甲", en: "A" }, slot: "org.page", kind: "embed", path: "/ui/a" },
         ],
         migrations: "../migrations",
       }),
