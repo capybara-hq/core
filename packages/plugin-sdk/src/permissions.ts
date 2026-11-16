@@ -52,7 +52,7 @@ export interface ExtensionPermissions {
   setupChecks?: string[];
 }
 
-/** Hook attachment points (a closed list, see the overall design 2.4). */
+/** Hook mount points (a closed list, see the overall design 2.4). */
 export const HOOK_MOUNT_POINTS = [
   "session.start",
   "session.end",
@@ -67,7 +67,7 @@ export const HOOK_MOUNT_POINTS = [
   "org.deleted",
 ] as const;
 
-/** Hook attachment point name. */
+/** A hook mount point name. */
 export type HookMountPoint = (typeof HOOK_MOUNT_POINTS)[number];
 
 const HOOKS: ReadonlySet<string> = new Set(HOOK_MOUNT_POINTS);
