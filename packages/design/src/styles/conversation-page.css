@@ -263,6 +263,42 @@ span.cb-title-btn {
   flex: 1;
   min-width: 0;
 }
+/* A described item (a permission profile, §6.16.3): label and tag over a muted sentence, every
+   such row the same neutral colors; the icon sits on the label's line. */
+.cb-cmenu-item[data-described="true"] {
+  align-items: flex-start;
+  height: auto;
+  min-height: var(--cb-row-default);
+  padding-top: var(--cb-space-2);
+  padding-bottom: var(--cb-space-2);
+  white-space: normal;
+}
+.cb-cmenu-item[data-described="true"] > .cb-icon {
+  margin-top: calc((var(--cb-type-body-line) - 14px) / 2);
+}
+.cb-cmenu-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+  min-width: 0;
+}
+.cb-cmenu-head {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-width: 0;
+  white-space: nowrap;
+}
+.cb-cmenu-desc {
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-cmenu-item[data-disabled] .cb-cmenu-desc {
+  color: var(--cb-disabled);
+}
 .cb-cmenu-tag {
   flex: none;
   padding: 0 var(--cb-space-1);
@@ -562,6 +598,43 @@ span.cb-title-btn {
 .cb-options-item:has(:focus-visible) {
   outline: 1px solid var(--cb-accent);
   outline-offset: -1px;
+}
+.cb-options-item[data-described="true"] {
+  align-items: flex-start;
+  padding-top: var(--cb-space-2);
+  padding-bottom: var(--cb-space-2);
+}
+.cb-options-item > .cb-icon {
+  flex: none;
+  color: var(--cb-muted);
+}
+.cb-options-item[data-described="true"] > .cb-icon {
+  margin-top: calc((var(--cb-type-body-line) - 14px) / 2);
+}
+.cb-options-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+  min-width: 0;
+}
+.cb-options-head {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-width: 0;
+}
+.cb-options-desc {
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-options-item[data-disabled="true"] .cb-options-desc {
+  color: var(--cb-disabled);
+}
+.cb-options-action {
+  margin: var(--cb-space-1) var(--cb-space-2) 0;
 }
 .cb-options-check {
   display: inline-flex;

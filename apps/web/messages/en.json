@@ -1577,6 +1577,46 @@
       "aborted": "{name} was stopped",
       "show": "Show",
       "hide": "Hide"
+    },
+    "permission": {
+      "label": "Permissions",
+      "profile": {
+        "requestApproval": "Request approval",
+        "approveForMe": "Approve for me",
+        "fullAccess": "Full access"
+      },
+      "description": {
+        "requestApproval": "Works directly in the project and asks you before going beyond it.",
+        "approveForMe": "Works directly in the project and hands extra access to automatic review.",
+        "fullAccess": "Uses the full access already authorized on this device, without asking each time."
+      },
+      "reason": {
+        "noDevice": "Choose a device first",
+        "checking": "Checking this device…",
+        "checkFailed": "Couldn't check this device",
+        "ceiling": "Not allowed on this device",
+        "unsupported": "Not supported on this device",
+        "restrictedUnsupported": "Can't keep work inside the project"
+      },
+      "note": {
+        "unprobed": "Checked when this device starts.",
+        "review": "If a review model is unavailable or uncertain, you will be asked.",
+        "new": "The choice applies from this conversation's first operation.",
+        "existing": "Changes apply to new operations. Work already started keeps its starting permissions."
+      },
+      "configureReview": "Set up the review model",
+      "locked": {
+        "inherited": "Follows the main conversation's permissions",
+        "scheduled": "Scheduled tasks keep their own unattended approval rules"
+      },
+      "full": {
+        "title": "Use Full access on {device}?",
+        "body": "Operations use the access already authorized on this device, and nothing asks you before each step.",
+        "bodyProject": "Operations use the access already authorized on this device, not only the project {project}, and nothing asks you before each step.",
+        "limits": "This is not root access: sudo may still ask for a password, and platform and organization denials still apply.",
+        "confirm": "Use Full access",
+        "cancel": "Cancel"
+      }
     }
   },
   "ui": {

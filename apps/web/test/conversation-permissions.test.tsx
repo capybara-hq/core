@@ -219,7 +219,7 @@ describe("permission query foundation", () => {
   });
 });
 
-/** Query-only observer: this slice intentionally mounts no permission controls in the product. */
+/** Query-only observer beside the page's read-only owner picker (no editing control is mounted). */
 function PermissionRead({ id = "c1" }: { id?: string }) {
   const q = useQuery(permissionsQuery("o1", id));
   return (
@@ -300,7 +300,8 @@ describe("permission query lifecycle without activating product UI", () => {
       await route.client.invalidateQueries({ queryKey: q.queryKey });
     });
     await waitFor(() => expect(screen.getByTestId("permission-read").textContent).toBe("error:4"));
-    expect(route.calls.filter((c) => c.url.endsWith("/permissions"))).toHaveLength(1);
+    // the page's own read-only owner picker read once on mount (empty cache), the refresh once
+    expect(route.calls.filter((c) => c.url.endsWith("/permissions"))).toHaveLength(2);
     expect(route.client.getQueryData(q.queryKey)).toEqual(permissionsView({ revision: 4 }));
   });
 

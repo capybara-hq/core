@@ -133,7 +133,10 @@ describe("the conversation page (ConversationPage)", () => {
     await screen.findByRole("button", { name: `${en.chat.pickModel}: Fake 1` });
     const bar = container.querySelector('[data-part="composer"]') as HTMLElement;
     expect(bar).not.toBeNull();
-    expect(bar.querySelector('[data-locked="true"]')).toBeNull();
+    // the only read-only value is the owner's permission profile, never an agent picker
+    expect([...bar.querySelectorAll('[data-locked="true"]')].map((e) => e.textContent)).toEqual([
+      en.chat.permission.profile.approveForMe,
+    ]);
     expect(bar.textContent).not.toContain("Echo agent");
   });
 

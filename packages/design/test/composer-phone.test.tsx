@@ -214,6 +214,82 @@ describe("the composer's options button (phones, §6.16.2)", () => {
     ).toBe(true);
   });
 
+  it("mobile option groups retain order and checked state with icons and descriptions", async () => {
+    const user = userEvent.setup();
+    function Described() {
+      const [picked, setPicked] = useState("approve");
+      const rows = [
+        {
+          id: "request",
+          label: "Request approval",
+          icon: "hand" as const,
+          description: "Asks you.",
+        },
+        {
+          id: "approve",
+          label: "Approve for me",
+          icon: "shield-check" as const,
+          description: "Review.",
+        },
+        {
+          id: "full",
+          label: "Full access",
+          icon: "lock-open" as const,
+          description: "Device access.",
+        },
+      ];
+      return box({
+        pickers: {
+          device: devicePicker(),
+          permission: {
+            label: "Permissions",
+            value: rows.find((r) => r.id === picked)?.label ?? "",
+            groups: [
+              {
+                items: rows.map((r) => ({
+                  ...r,
+                  checked: r.id === picked,
+                  ...(r.id === "full" ? { disabled: true, tag: "Choose a device first" } : {}),
+                })),
+              },
+            ],
+            action: { label: "Set up the review model", onSelect: onAction },
+            onPick: setPicked,
+          },
+          model: modelPicker(),
+        },
+      });
+    }
+    const onAction = vi.fn();
+    wrap(<Described />, "en");
+    await user.click(document.querySelector('[data-part="composer-options"]') as HTMLElement);
+    const group = screen.getByRole("radiogroup", { name: "Permissions" });
+    const radios = within(group).getAllByRole("radio") as HTMLInputElement[];
+    expect(radios.map((r) => r.value)).toEqual(["request", "approve", "full"]);
+    expect(within(group).getByRole("radio", { name: "Request approval" })).toBe(radios[0]);
+    expect(within(group).getByRole("radio", { name: "Full access Choose a device first" })).toBe(
+      radios[2],
+    );
+    expect(
+      radios.map(
+        (r) => document.getElementById(r.getAttribute("aria-describedby") ?? "")?.textContent,
+      ),
+    ).toEqual(["Asks you.", "Review.", "Device access."]);
+    expect(radios[2]?.disabled).toBe(true);
+    for (const [i, icon] of ["hand", "shield-check", "lock-open"].entries())
+      expect(radios[i]?.closest("label")?.querySelector(`[data-icon="${icon}"]`)).not.toBeNull();
+    await user.click(radios[0] as HTMLInputElement);
+    expect(
+      (within(group).getByRole("radio", { name: "Request approval" }) as HTMLInputElement).checked,
+    ).toBe(true);
+    expect(group.querySelectorAll('[data-icon="check"]')).toHaveLength(1);
+    const sheet = screen.getByRole("dialog");
+    await user.click(within(sheet).getByRole("button", { name: "Set up the review model" }));
+    expect(onAction).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+  });
+
   it("shows the current values, shortened, and the whole values in its name", () => {
     wrap(box());
     const button = document.querySelector('[data-part="composer-options"]') as HTMLElement;

@@ -101,6 +101,40 @@ export const DEVICE_FIXTURE = {
   ],
 } as const;
 
+/**
+ * The composer's permission picker (spec §6.16.3 state `permission`): three described rows with an
+ * icon each, in the same neutral colors; no device chosen yet, so Full access says why it waits;
+ * the review note and an org admin's settings action.
+ */
+export const PERMISSION_FIXTURE = {
+  label: "权限",
+  selected: "approve-for-me",
+  items: [
+    {
+      id: "request-approval",
+      label: "请求批准",
+      icon: "hand",
+      description: "在项目内直接工作，超出范围时询问你。",
+    },
+    {
+      id: "approve-for-me",
+      label: "帮我批准",
+      icon: "shield-check",
+      description: "在项目内直接工作，额外授权交给自动审查。",
+    },
+    {
+      id: "full-access",
+      label: "完全访问",
+      icon: "lock-open",
+      description: "使用此设备已授权的完整访问范围，不再逐次确认。",
+      tag: "请先选择设备",
+      disabled: true,
+    },
+  ],
+  note: "审查模型不可用或无法确定时，仍会询问你。所选权限从本对话的第一次操作起生效。",
+  action: { label: "设置审查模型", icon: "settings" },
+} as const;
+
 /** Composer, title bar and panel copy of the reference pages (zh; product copy goes through i18n). */
 export const CONV_COPY = {
   placeholder: "输入消息，/ 使用命令",

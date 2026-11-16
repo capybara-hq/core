@@ -1565,6 +1565,46 @@
       "aborted": "{name} 已停止",
       "show": "查看",
       "hide": "收起"
+    },
+    "permission": {
+      "label": "权限",
+      "profile": {
+        "requestApproval": "请求批准",
+        "approveForMe": "帮我批准",
+        "fullAccess": "完全访问"
+      },
+      "description": {
+        "requestApproval": "在项目内直接工作，超出范围时询问你。",
+        "approveForMe": "在项目内直接工作，额外授权交给自动审查。",
+        "fullAccess": "使用此设备已授权的完整访问范围，不再逐次确认。"
+      },
+      "reason": {
+        "noDevice": "请先选择设备",
+        "checking": "正在检查此设备…",
+        "checkFailed": "无法检查此设备",
+        "ceiling": "此设备未允许",
+        "unsupported": "此设备不支持",
+        "restrictedUnsupported": "无法限制在项目内"
+      },
+      "note": {
+        "unprobed": "设备启动时检查。",
+        "review": "审查模型不可用或无法确定时，仍会询问你。",
+        "new": "所选权限从本对话的第一次操作起生效。",
+        "existing": "更改只对新的操作生效，已开始的工作保留开始时的权限。"
+      },
+      "configureReview": "设置审查模型",
+      "locked": {
+        "inherited": "跟随主对话的权限",
+        "scheduled": "定时任务沿用自身的无人值守审批规则"
+      },
+      "full": {
+        "title": "在 {device} 上使用完全访问？",
+        "body": "操作将使用此设备已授权的访问范围，每一步都不再先询问你。",
+        "bodyProject": "操作将使用此设备已授权的访问范围，而不只是项目 {project}，每一步都不再先询问你。",
+        "limits": "这不是 root 权限：sudo 仍可能要求密码，平台和组织的禁止规则仍然有效。",
+        "confirm": "使用完全访问",
+        "cancel": "取消"
+      }
     }
   },
   "ui": {
