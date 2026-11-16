@@ -934,6 +934,8 @@ export function assembleModelRequest(input: AssembleModelRequestInput): {
     tools: input.model.capabilities.tools ? [...tools] : [],
   });
   const { request } = built;
+  // the omission is recorded, so readers never infer it from the reminder text
+  if (tools.length > 0 && !input.model.capabilities.tools) built.meta.toolsOmitted = true;
   request.messages = guardToolPairs(request.messages);
   const knob = request.params.maxOutputTokens;
   request.maxOutputTokens = Math.min(

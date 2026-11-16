@@ -2398,9 +2398,10 @@ describe("runModelStep", () => {
       expect(req.toolChoice).toBeUndefined();
       const [call] = await ofType("model_call");
       expect(call?.payload.request).not.toHaveProperty("toolChoice");
+      expect(call?.payload.request).not.toHaveProperty("toolsOmitted");
     });
 
-    it("模型不支持工具（capabilities.tools = false）→ 不发工具与 toolChoice，并写提醒说明本次没有工具", async () => {
+    it("a model without tool support (capabilities.tools = false): no tools or toolChoice sent, the omission recorded on model_call, and a reminder says the step has no tools", async () => {
       const s = stub([stubInfo("plain")], () => "ok");
       stubImpl = s;
       await say("hi");
@@ -2410,6 +2411,7 @@ describe("runModelStep", () => {
       expect(req.toolChoice).toBeUndefined();
       const [call] = await ofType("model_call");
       expect(call?.payload.request.tools).toEqual([]);
+      expect(call?.payload.request.toolsOmitted).toBe(true);
       expect(call?.payload.request).not.toHaveProperty("toolChoice");
       const texts = (await ofType("reminder")).map((r) => r.payload.text);
       expect(texts).toContain(TOOLS_UNSUPPORTED_REMINDER);

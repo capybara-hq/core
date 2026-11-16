@@ -1,5 +1,4 @@
 import type { ConversationEvent, EventPayload } from "../../conversations/events.js";
-import { TOOLS_UNSUPPORTED_REMINDER } from "./reminders.js";
 
 /**
  * Tool set changes mid-conversation (tool naming spec §9.1). The kernel resolves the tools on every
@@ -17,25 +16,17 @@ export type ToolsChange = Pick<EventPayload<"tools_changed">, "added" | "removed
  * `model_call`'s `tools` and `catalog` keys (with `ToolSearch` the catalog holds the deferred
  * tools, so the union is the whole resolved set), then any `tools_changed` logged after it (a
  * step that logged its change and crashed before its request: the change is not logged twice).
- * Skipped: a `model_call` without recorded tools (older logs) and a call whose tools were left out
- * because its model has no tool support (empty, with that step's unsupported reminder): those say
- * nothing about the resolved set. Null when no request offered a known set yet.
+ * Skipped: a call whose tools the kernel left out because its model has no tool support
+ * (`toolsOmitted`): it says nothing about the resolved set. Null when no request offered a known
+ * set yet.
  */
 export function previousToolSet(events: readonly ConversationEvent[]): Set<string> | null {
-  const unsupported = new Set<string>();
-  for (const e of events) {
-    if (e.type === "reminder" && e.payload.text === TOOLS_UNSUPPORTED_REMINDER) {
-      unsupported.add(`${e.runId ?? ""}\u0000${e.payload.step}`);
-    }
-  }
   let known: Set<string> | null = null;
   for (const e of events) {
     if (e.type === "model_call") {
-      const { tools, catalog } = e.payload.request;
-      if (tools === undefined) continue;
-      const keys = [...tools, ...(catalog ?? [])].map((t) => t.key);
-      if (keys.length === 0 && unsupported.has(`${e.runId ?? ""}\u0000${e.payload.step}`)) continue;
-      known = new Set(keys);
+      const { tools, catalog, toolsOmitted } = e.payload.request;
+      if (tools === undefined || toolsOmitted === true) continue;
+      known = new Set([...tools, ...(catalog ?? [])].map((t) => t.key));
     } else if (e.type === "tools_changed" && known !== null) {
       for (const k of e.payload.removed) known.delete(k);
       for (const k of e.payload.added) known.add(k);

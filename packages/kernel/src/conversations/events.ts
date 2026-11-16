@@ -575,6 +575,12 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
          */
         tools: z.array(z.object({ key: z.string(), specHash: z.string() })).optional(),
         /**
+         * The kernel left this step's tools out because the model has no tool support
+         * (`capabilities.tools` false while the step had tools): `tools` is empty and says nothing
+         * about the step's resolved set. Absent when the request carried the step's tools.
+         */
+        toolsOmitted: z.literal(true).optional(),
+        /**
          * 启用 ToolSearch 时 system 第二块目录里的工具（按 key 排序）及定义指纹；定义同样存在
          * `capybara.tool_specs`，目录文本可由它们还原。未启用时不写。
          */

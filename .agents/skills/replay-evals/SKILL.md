@@ -47,8 +47,9 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   classifier call fires `model.request` / `model.response` with purpose `review` and writes a `usage` event with
   the same purpose — neither is model-visible, so neither needs a `DriftReason`.
 - **`tools_changed`** (tool naming spec §9.1): written before a step's request when its resolved tool set differs from the
-  previous request's (last `model_call` `tools` + `catalog`, plus later `tools_changed`); never before a conversation's first
-  request. Rendered as a system message at its position, dropped once a summary covers it. In the log, so no `DriftReason`
+  previous request's (last `model_call` `tools` + `catalog`, plus later `tools_changed`; a call with `toolsOmitted`, whose
+  model has no tool support, is skipped); never before a conversation's first request. `model_call.request.toolsOmitted` is
+  recorded by `assembleModelRequest`, never inferred from the reminder text, and is not model-visible. Rendered as a system message at its position, dropped once a summary covers it. In the log, so no `DriftReason`
   (the `tools_changed` DriftReason is a different thing: a baseline whose rebuilt tool sequence differs from the record).
 - **`device_paths`** (devices spec §13.1, ruling R22): the first sandbox tool call of every conversation
   (cloud included, default roots included) appends `device_paths { roots }` to the calling conversation, and a later

@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../../src/conversations/events.js";
 import { buildModelRequest } from "../../../src/runtime/context/build.js";
 import { compactionPlan } from "../../../src/runtime/context/compaction.js";
-import { TOOLS_UNSUPPORTED_REMINDER } from "../../../src/runtime/context/reminders.js";
 import {
   previousToolSet,
   toolSetChange,
@@ -14,7 +13,7 @@ import { AGENT, compactionSettings, Log, MODEL, NO_TAIL_LIMIT } from "./fixtures
 function call(
   log: Log,
   tools: string[] | undefined,
-  opts: { step?: number; catalog?: string[]; runId?: string } = {},
+  opts: { step?: number; catalog?: string[]; runId?: string; omitted?: boolean } = {},
 ): ConversationEvent {
   const ref = (key: string) => ({ key, specHash: `h-${key}` });
   return log.add(
@@ -34,6 +33,7 @@ function call(
           reminderSeqs: [],
           ...(tools !== undefined && { tools: tools.map(ref) }),
           ...(opts.catalog !== undefined && { catalog: opts.catalog.map(ref) }),
+          ...(opts.omitted === true && { toolsOmitted: true as const }),
         },
       },
     },
@@ -78,14 +78,13 @@ describe("toolSetChange", () => {
     expect(toolSetChange(log.events, ["B"])).toEqual({ added: [], removed: ["A"] });
   });
 
-  it("skips calls without recorded tools and a call stripped for a model without tools", () => {
+  it("skips calls without recorded tools and a call whose tools were omitted for a model without tools", () => {
     const log = new Log();
     expect(previousToolSet(log.events)).toBeNull();
     call(log, undefined);
     expect(previousToolSet(log.events)).toBeNull();
     call(log, ["A"], { step: 2 });
-    log.reminder(TOOLS_UNSUPPORTED_REMINDER, 3);
-    call(log, [], { step: 3 });
+    call(log, [], { step: 3, omitted: true });
     expect(toolSetChange(log.events, ["A"])).toBeNull();
     // an agent with no tools at all records an empty list: that is a real baseline
     call(log, [], { step: 4 });

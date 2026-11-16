@@ -77,6 +77,11 @@ export interface ModelCallMeta {
   tools: { key: string; specHash: string }[];
   /** 启用 ToolSearch 时 system 第二块目录里的工具（按 key 排序）及定义指纹；未启用没有该字段。 */
   catalog?: { key: string; specHash: string }[];
+  /**
+   * The step's tools were left out because the model has no tool support (set by
+   * `assembleModelRequest`); absent when the request carried them.
+   */
+  toolsOmitted?: true;
   /** 请求的 `toolChoice`（收尾调用为 `"none"`）；未设置则没有该字段。 */
   toolChoice?: "auto" | "none";
   /**
