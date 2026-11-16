@@ -8,3 +8,6 @@ ALTER TABLE background_tasks DROP CONSTRAINT IF EXISTS background_tasks_cancel_r
 ALTER TABLE background_tasks ADD CONSTRAINT background_tasks_cancel_requested_by_check
   CHECK (cancel_requested_by IS NULL
     OR cancel_requested_by IN ('tool','person','conversation_deleted','subagent_end'));
+-- When an exact stop of the task was last attempted: owed cancellations are applied least
+-- recently attempted first, so one that keeps failing never holds the head of the queue.
+ALTER TABLE background_tasks ADD COLUMN IF NOT EXISTS cancel_attempted_at timestamptz;

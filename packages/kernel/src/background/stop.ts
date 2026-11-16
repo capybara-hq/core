@@ -83,7 +83,13 @@ export class BackgroundTaskStopper {
     @Inject(BackgroundTaskStore)
     private readonly store: Pick<
       BackgroundTaskStore,
-      "get" | "runningOwnedBy" | "runningIn" | "claimStop" | "releaseStop" | "requestCancel"
+      | "get"
+      | "runningOwnedBy"
+      | "runningIn"
+      | "claimStop"
+      | "releaseStop"
+      | "requestCancel"
+      | "noteCancelAttempt"
     >,
     @Inject(BackgroundTaskFinisher) private readonly finisher: BackgroundTaskFinisher,
     @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "ifRunning">,
@@ -194,6 +200,7 @@ export class BackgroundTaskStopper {
     let r: IfRunningResult<{ to: BackgroundFinish | null; lastLines: string }>;
     try {
       exactRefOf(cur);
+      await this.store.noteCancelAttempt(cur.id);
       r = await onManagedInstance(
         this.sandbox.ifRunning.bind(this.sandbox),
         cur,

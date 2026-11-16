@@ -486,21 +486,56 @@ export class BackgroundTaskStore {
   }
 
   /**
-   * Every running managed task with an exact ref and no live stop claim, oldest first: what the
-   * poller checks (`acknowledged`: status by ref; `cancel-pending`: the exact stop owed).
+   * Every running acknowledged managed task with no live stop claim, oldest first: what the
+   * poller checks by exact status.
    */
   async runningManaged(): Promise<BackgroundTaskRow[]> {
     const rows = await this.db
       .selectFrom("background_tasks")
       .selectAll()
       .where("status", "=", "running")
-      .where("launch_state", "in", ["acknowledged", "cancel-pending"])
+      .where("launch_state", "=", "acknowledged")
       .where("execution_ref", "is not", null)
       .where(unclaimed)
       .orderBy("started_at", "asc")
       .orderBy("id", "asc")
       .execute();
     return rows.map(toRow);
+  }
+
+  /**
+   * The running managed tasks that owe an exact stop (`cancel-pending` with a ref, no live stop
+   * claim), least recently attempted first. A task whose recorded instance is suspended is left
+   * out: a stop never resumes it, so it cannot progress there.
+   */
+  async owedCancels(): Promise<BackgroundTaskRow[]> {
+    const rows = await this.db
+      .selectFrom("background_tasks")
+      .selectAll("background_tasks")
+      .leftJoin("device_instances", "device_instances.device_id", "background_tasks.device_id")
+      .where("background_tasks.status", "=", "running")
+      .where("background_tasks.launch_state", "=", "cancel-pending")
+      .where("background_tasks.execution_ref", "is not", null)
+      .where(
+        sql<boolean>`(background_tasks.stopping_at IS NULL OR background_tasks.stopping_at < now() - ${STOP_CLAIM_TTL_MS}::integer * interval '1 millisecond')`,
+      )
+      .where(
+        sql<boolean>`NOT (device_instances.status IS NOT DISTINCT FROM 'suspended' AND (extract(epoch from device_instances.created_at) * 1000)::bigint::text = background_tasks.instance_generation)`,
+      )
+      .orderBy(sql`background_tasks.cancel_attempted_at ASC NULLS FIRST`)
+      .orderBy("background_tasks.started_at", "asc")
+      .orderBy("background_tasks.id", "asc")
+      .execute();
+    return rows.map(toRow);
+  }
+
+  /** Records that an exact stop of the task is being attempted now (its owed-stop turn moves back). */
+  async noteCancelAttempt(id: string): Promise<void> {
+    await this.db
+      .updateTable("background_tasks")
+      .set({ cancel_attempted_at: sql<Date>`now()` })
+      .where("id", "=", id)
+      .execute();
   }
 
   /**

@@ -5,7 +5,6 @@ import {
   type SandboxExecutionStatus,
   type SandboxHandle,
   SandboxPermissionUnsupportedError,
-  SandboxScopeDeniedError,
   type SandboxStopResult,
 } from "@capybara-hq/plugin-sdk";
 import type { IfRunningResult, SandboxService } from "../sandbox/sandbox.service.js";
@@ -27,6 +26,14 @@ export class ManagedRefError extends Error {
       `Background task ${taskId}'s recorded execution reference is malformed or inconsistent; it cannot be read or stopped`,
     );
     this.name = "ManagedRefError";
+  }
+}
+
+/** The device's held instance is not the one the task's ref names (a failed read, not a denial). */
+export class ManagedInstanceMismatchError extends Error {
+  constructor() {
+    super("The device's instance does not match the task's recorded execution");
+    this.name = "ManagedInstanceMismatchError";
   }
 }
 
@@ -90,10 +97,7 @@ export async function onManagedInstance<T>(
     deviceId,
     { createdAt: new Date(generation) },
     async (p, h, sig) => {
-      if (h.id !== ref.instanceId)
-        throw new SandboxScopeDeniedError(
-          "The device's instance does not match the task's recorded execution",
-        );
+      if (h.id !== ref.instanceId) throw new ManagedInstanceMismatchError();
       const bg = p.background;
       if (!bg)
         throw new SandboxPermissionUnsupportedError(

@@ -71,7 +71,11 @@ export class BackgroundTaskPollJob {
     @Inject(BackgroundTaskStore)
     private readonly store: Pick<
       BackgroundTaskStore,
-      "runningStarted" | "runningManaged" | "pruneFinished" | "failAbandonedLaunches"
+      | "runningStarted"
+      | "runningManaged"
+      | "owedCancels"
+      | "pruneFinished"
+      | "failAbandonedLaunches"
     >,
     @Inject(BackgroundTaskFinisher) private readonly finisher: BackgroundTaskFinisher,
     @Inject(EventLog) private readonly eventLog: Pick<EventLog, "publishChanged">,
@@ -150,7 +154,7 @@ export class BackgroundTaskPollJob {
   private async pollManaged(signal: AbortSignal): Promise<number> {
     const groups = new Map<string, BackgroundTaskRow[]>();
     const cancels: BackgroundTaskRow[] = [];
-    for (const t of await this.store.runningManaged()) {
+    for (const t of [...(await this.store.runningManaged()), ...(await this.store.owedCancels())]) {
       try {
         exactRefOf(t);
       } catch (err) {
@@ -182,11 +186,15 @@ export class BackgroundTaskPollJob {
         });
       }
     }
-    // bounded per tick: the rest stay owed (oldest first) for the next ticks
-    for (const t of cancels.slice(0, MANAGED_STOPS_PER_TICK)) {
-      if (signal.aborted) break;
+    // Bounded per tick: at most this many stops that reach a provider, least recently attempted
+    // first (an attempt moves a task to the back, so one that keeps failing never holds the head);
+    // a task whose provider is not loaded takes no turn. The rest stay owed for the next ticks.
+    let attempts = 0;
+    for (const t of cancels) {
+      if (signal.aborted || attempts >= MANAGED_STOPS_PER_TICK) break;
       try {
         if (!(await this.sandbox.availableFor(t.deviceId as string))) continue;
+        attempts++;
         const after = await this.stopper.stop(t, "revoked", signal);
         if (after.status !== "running") n++;
       } catch (err) {

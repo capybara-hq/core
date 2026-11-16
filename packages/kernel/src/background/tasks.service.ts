@@ -19,7 +19,12 @@ import { SandboxService } from "../sandbox/sandbox.service.js";
 import { UUID_RE } from "../ui/registry.js";
 import { finishedEventKey } from "./finish.js";
 import { TASK_ID_RE, TASKS_DIR } from "./launch.js";
-import { ManagedRefError, onManagedInstance, readerOf } from "./managed.js";
+import {
+  ManagedInstanceMismatchError,
+  ManagedRefError,
+  onManagedInstance,
+  readerOf,
+} from "./managed.js";
 import {
   assembleOutputSuffix,
   ManagedOutputCapacityError,
@@ -382,12 +387,13 @@ export class BackgroundTasks {
           reason: e.code === "device.offline" ? "device_offline" : "no_access",
         };
       }
-      // a typed refusal (including the kernel's own instance check) is no access; a missing
+      // a provider's typed refusal is no access; the kernel's own instance check, a missing
       // background capability, a protocol or transport failure, a bad ref, capacity or a timeout
       // is a failed read: never a 500, and a finished task still gets its finish summary
       if (isSandboxScopeDeniedError(e)) return { kind: "unavailable", reason: "no_access" };
       if (
         e instanceof ManagedRefError ||
+        e instanceof ManagedInstanceMismatchError ||
         e instanceof ManagedOutputCapacityError ||
         isSandboxPermissionUnsupportedError(e) ||
         e instanceof DeviceProtocolError ||

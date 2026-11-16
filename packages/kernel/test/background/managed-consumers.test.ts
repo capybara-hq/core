@@ -775,6 +775,8 @@ describe("fix round 1", () => {
       .execute();
     const denied = await f.req({ method: "GET", url });
     expect(denied.statusCode).toBe(409);
+    // the kernel's own instance check is a failed read, not a lost right to the device
+    expect(JSON.stringify(denied.json())).toContain('"reason":"read_failed"');
     await f.db
       .updateTable("device_instances")
       .set({ handle: JSON.stringify({ id: f.deviceId, roots: { workspace: "/work" } }) })
@@ -836,5 +838,97 @@ describe("fix round 1", () => {
     expect(r).toMatch(/is being stopped/);
     expect(r).not.toMatch(/while it was starting;/);
     expect(f.provider.calls.start).toBe(1);
+  });
+});
+
+/**
+ * Inserts `n` owed cancellations (running, `cancel-pending`, with a well-formed exact ref of their
+ * own) on `deviceId`, started before the fixture's task, so they sort ahead of it.
+ */
+async function owedClones(
+  f: Awaited<ReturnType<typeof fixture>>,
+  n: number,
+  deviceId: string,
+): Promise<string[]> {
+  const base = await f.taskRow();
+  const ids: string[] = [];
+  for (let i = 0; i < n; i++) {
+    const id = `bt_cl${"abcdefghijklmnop"[i]}aaa`;
+    const operationId = `${"c".repeat(60)}${String(i).padStart(4, "0")}`;
+    const ref = {
+      executionId: `x-clone-${i}`,
+      operationId,
+      instanceId: base.instance_id,
+      instanceGeneration: base.instance_generation,
+    };
+    const { id: _id, operation_id: _op, call_id: _call, execution_ref: _ref, ...rest } = base;
+    await f.db
+      .insertInto("background_tasks")
+      .values({
+        ...(rest as never as Record<string, never>),
+        id,
+        operation_id: operationId,
+        call_id: `clone-call-${i}`,
+        device_id: deviceId,
+        launch_state: "cancel-pending",
+        execution_ref: JSON.stringify(ref),
+        network_authority:
+          base.network_authority === null ? null : JSON.stringify(base.network_authority),
+        started_at: new Date(base.started_at.getTime() - 60_000 - i),
+        stopping_at: null,
+      } as never)
+      .execute();
+    ids.push(id);
+  }
+  return ids;
+}
+
+describe("fix round 2: owed stops are applied fairly", () => {
+  it("owed stops on a suspended instance never hold back one on a running instance", async () => {
+    const f = await fixture();
+    const parked = randomUUID();
+    await f.db
+      .insertInto("devices")
+      .values({
+        id: parked,
+        org_id: f.orgId,
+        owner_kind: "personal",
+        owner_account_id: owner.id,
+        source: "local",
+        provider: "@managed-consumer-test",
+        name: "Parked",
+      })
+      .execute();
+    await f.db
+      .insertInto("device_instances")
+      .values({
+        device_id: parked,
+        org_id: f.orgId,
+        provider: "@managed-consumer-test",
+        status: "suspended",
+        handle: JSON.stringify({ id: f.deviceId, roots: { workspace: "/work" } }),
+        created_at: new Date(MANAGED_GENERATION),
+        fs_status: "ready",
+        had_instance: true,
+      })
+      .execute();
+    await owedClones(f, 9, parked);
+    f.provider.only().stopAs = "cancel-pending";
+    await f.taskStop();
+    f.provider.only().stopAs = "stopped";
+    await poller().pollOnce();
+    expect(await f.taskRow()).toMatchObject({ status: "stopped", launch_state: "terminal" });
+  });
+
+  it("a stop that keeps failing rotates behind the others instead of holding the head", async () => {
+    const f = await fixture();
+    // their refs name executions the provider does not own: every stop of them throws
+    await owedClones(f, 9, f.deviceId);
+    f.provider.only().stopAs = "cancel-pending";
+    await f.taskStop();
+    f.provider.only().stopAs = "stopped";
+    await poller().pollOnce();
+    await poller().pollOnce();
+    expect(await f.taskRow()).toMatchObject({ status: "stopped", launch_state: "terminal" });
   });
 });

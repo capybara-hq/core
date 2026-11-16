@@ -1095,6 +1095,12 @@ export interface BackgroundTasksTable {
     Date | string | null | undefined,
     Date | string | null
   >;
+  /** 0144: when an exact stop of a managed task was last attempted (fair owed-stop order). */
+  cancel_attempted_at: ColumnType<
+    Date | null,
+    Date | string | null | undefined,
+    Date | string | null
+  >;
   /** 0144: who asked for a managed task's cancellation (its finish keeps their wake rule). */
   cancel_requested_by: ColumnType<
     "tool" | "person" | "conversation_deleted" | "subagent_end" | null,
