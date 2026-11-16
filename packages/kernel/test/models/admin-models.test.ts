@@ -9,7 +9,7 @@ import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE_B } from "../helpers/model-plugins.js";
 import {
-  createOrg,
+  createOrgWithProviders,
   PW,
   type Req,
   runConfig,
@@ -78,7 +78,7 @@ beforeEach(async () => {
   await accounts.createLocal({ login: "owner", password: PW, displayName: "O" });
   ent = await session(k, "ent");
   owner = await session(k, "owner");
-  await createOrg(owner);
+  await createOrgWithProviders(k, owner);
 });
 
 interface ProviderView {

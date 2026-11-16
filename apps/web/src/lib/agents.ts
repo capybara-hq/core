@@ -462,11 +462,15 @@ export function findModel(providers: ProviderModels[], ref: ModelRef): ModelInfo
 const base = (orgId: string) => `/api/v1/orgs/${encodeURIComponent(orgId)}`;
 
 /**
- * Whether the org can run (`GET /orgs/:id/readiness`): a loaded model-provider extension (never a
- * vendor call) and the number of agents the caller can see.
+ * Whether the org can run (`GET /orgs/:id/readiness`): a loaded model-provider extension enabled
+ * in the org (never a vendor call) and the number of agents the caller can see. `not_enabled`:
+ * deployed providers (`notEnabledProviders`) wait for an org admin to enable one; until the setup
+ * page has its own state for it, it renders like `none` (the model step stays to do).
  */
 export interface OrgReadiness {
-  modelProvider: "ready" | "none";
+  modelProvider: "ready" | "not_enabled" | "none";
+  /** The deployed providers the org has not enabled (the kernel always sends it). */
+  notEnabledProviders?: string[];
   agents: number;
 }
 

@@ -11,7 +11,7 @@ import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -82,7 +82,7 @@ beforeAll(async () => {
   kernels.push(a, b);
   reqA = await login(a);
   reqB = await login(b);
-  orgId = await createOrg(reqA);
+  orgId = await createOrgWithProviders(a, reqA);
   const en = await reqA({
     method: "PUT",
     url: `/api/v1/orgs/${orgId}/extensions/hooks-probe`,

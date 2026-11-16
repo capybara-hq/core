@@ -22,7 +22,7 @@ import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createAgent,
   createConv,
-  createOrg,
+  createOrgWithProviders,
   PW,
   postMessage,
   type Req,
@@ -62,7 +62,7 @@ beforeAll(async () => {
   );
   await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "o" });
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   const agentId = await createAgent(owner, orgId);
   const convId = await createConv(owner, orgId, agentId);
   await postMessage(owner, orgId, convId, "echo:the answer is 42");

@@ -25,7 +25,7 @@ import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import {
-  createOrg,
+  createOrgWithProviders,
   PW,
   runConfig,
   session,
@@ -88,7 +88,7 @@ beforeAll(async () => {
   txHost = k.app.get(TransactionHost);
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
-  orgId = await createOrg(await session(k, "owner"));
+  orgId = await createOrgWithProviders(k, await session(k, "owner"));
   url = `ws://127.0.0.1:${k.port}/device/connect`;
 });
 

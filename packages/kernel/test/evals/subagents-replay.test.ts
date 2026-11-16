@@ -39,7 +39,7 @@ import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -186,7 +186,7 @@ beforeAll(async () => {
     .id;
   owner = await session(k, "owner");
   other = await session(k, "other");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   await testMembers(db).add(orgId, otherId, "member", ownerId);
   const res = await owner({
     method: "POST",

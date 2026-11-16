@@ -35,7 +35,7 @@ import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createAgent,
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   MODEL_LOOPER,
   PW,
@@ -100,7 +100,7 @@ beforeEach(async () => {
   });
   expect(res.statusCode).toBe(200);
   owner = { req, cookie: () => jar.header() as string };
-  orgId = await createOrg(owner.req);
+  orgId = await createOrgWithProviders(k, owner.req);
   agentId = await createAgent(owner.req, orgId);
 });
 

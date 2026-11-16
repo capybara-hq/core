@@ -27,7 +27,7 @@ import { drainOutbox } from "../helpers/outbox.js";
 import {
   createAgent,
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   gate,
   PW,
@@ -103,7 +103,7 @@ beforeAll(async () => {
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
   req = await session(k, "owner");
-  orgId = await createOrg(req);
+  orgId = await createOrgWithProviders(k, req);
   agentId = await createAgent(req, orgId);
   const en = await req({
     method: "PUT",
@@ -476,7 +476,7 @@ describe("a run resumed from waiting back to queued is stopped in PG too", () =>
 });
 
 it("deleting an org settles a queued job already read by a worker before deletion", async () => {
-  const deletingOrg = await createOrg(req, "Deleting org");
+  const deletingOrg = await createOrgWithProviders(k, req, "Deleting org");
   const agent = await createAgent(req, deletingOrg);
   const conv = await createConv(req, deletingOrg, agent);
   const pause = pauseAt("afterRunRead", conv);

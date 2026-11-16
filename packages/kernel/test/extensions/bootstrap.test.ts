@@ -39,7 +39,7 @@ import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { bootstrapFixture, lifePkg, packFake, pluginTgz } from "../helpers/plugin-packages.js";
 import {
   buildKernel,
-  createOrg,
+  createOrgWithProviders,
   PW,
   type Req,
   runConfig,
@@ -320,7 +320,7 @@ describe("a fresh deployment", () => {
   });
 
   it("an org created after bootstrap has the required plugins enabled without config rows", async () => {
-    const orgId = await createOrg(admin, "Later");
+    const orgId = await createOrgWithProviders(k, admin, "Later");
     expect(
       await db
         .selectFrom("extension_org_configs")
@@ -355,7 +355,7 @@ describe("a fresh deployment", () => {
   });
 
   it("a required plugin cannot be disabled in an org or on the deployment, nor uninstalled (409 extension.required)", async () => {
-    const orgId = await createOrg(admin, "Strict");
+    const orgId = await createOrgWithProviders(k, admin, "Strict");
     const put = await admin({
       method: "PUT",
       url: `/api/v1/orgs/${orgId}/extensions/alpha`,
@@ -1060,7 +1060,7 @@ describe("a builtin entry", () => {
       scope: "all",
       disabled: false,
     });
-    const orgId = await createOrg(admin, "Builtin");
+    const orgId = await createOrgWithProviders(k, admin, "Builtin");
     const item = (await itemNamed("delta")) as Item;
     const off = await admin({
       method: "PUT",
@@ -1243,7 +1243,7 @@ describe("bootstrap plugins with an icon and setup guides, no object store", () 
     expect(icon.statusCode, icon.body).toBe(200);
     expect(icon.headers["content-type"]).toContain("image/svg+xml");
     expect(icon.body).toBe(ICON);
-    const orgId = await createOrg(admin, `Org ${version}`);
+    const orgId = await createOrgWithProviders(k, admin, `Org ${version}`);
     const orgIcon = await admin({ method: "GET", url: `/api/v1/orgs/${orgId}/catalog/${id}/icon` });
     expect(orgIcon.statusCode, orgIcon.body).toBe(200);
     const guide = await admin({

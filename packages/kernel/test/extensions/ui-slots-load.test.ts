@@ -21,7 +21,7 @@ import { accountsFor } from "../helpers/identity.js";
 import { pluginTgz } from "../helpers/plugin-packages.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   type Req,
@@ -129,7 +129,11 @@ afterAll(async () => {
 
 /** An org with both fixtures on and a conversation whose agent may call their tools. */
 async function conversation(): Promise<{ orgId: string; convId: string }> {
-  const orgId = await createOrg(admin, `Acme ${Math.random().toString(36).slice(2, 8)}`);
+  const orgId = await createOrgWithProviders(
+    k,
+    admin,
+    `Acme ${Math.random().toString(36).slice(2, 8)}`,
+  );
   for (const plugin of ["ui-slots", "ui-legacy-place", "ui-preview-dropped"]) {
     const r = await admin({
       method: "PUT",

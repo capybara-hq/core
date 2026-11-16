@@ -8,7 +8,7 @@ import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
-  createOrg,
+  createOrgWithProviders,
   PW,
   type Req,
   runConfig,
@@ -56,7 +56,7 @@ beforeEach(async () => {
   adminId = (await accountsFor(db).createLocal({ login: "admin", password: PW, displayName: "A" }))
     .id;
   admin = await session(k, "admin");
-  orgId = await createOrg(admin);
+  orgId = await createOrgWithProviders(k, admin);
 });
 
 /** A skill row (scope org, or the agent's own); `plugin` sets its provenance (catalog item). */

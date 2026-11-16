@@ -22,7 +22,7 @@ import { drainOutbox } from "../helpers/outbox.js";
 import {
   createAgent,
   createConv,
-  createOrg,
+  createOrgWithProviders,
   PW,
   postMessage,
   type Req,
@@ -212,7 +212,7 @@ beforeEach(async () => {
   adminId = await mk("admin");
   aliceId = await mk("alice");
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   const members = testMembers(db);
   await members.add(orgId, adminId, "admin", ownerId);
   await members.add(orgId, aliceId, "member", ownerId);
@@ -1094,7 +1094,7 @@ describe("校验与权限", () => {
     ).id;
     expect(bobId).toBeTruthy();
     const bob = await session(k, "bob");
-    const orgB = await createOrg(bob, "Other");
+    const orgB = await createOrgWithProviders(k, bob, "Other");
     const runsB = `/api/v1/orgs/${orgB}/eval-runs`;
     const setsB = `/api/v1/orgs/${orgB}/eval-sets`;
     const cases: [string, string, unknown, string][] = [

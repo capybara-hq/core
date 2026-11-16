@@ -24,7 +24,7 @@ import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
-  createOrg,
+  createOrgWithProviders,
   PW,
   type Req,
   runConfig,
@@ -77,7 +77,7 @@ beforeAll(async () => {
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
 });
 
 afterAll(async () => {
@@ -138,7 +138,7 @@ describe("setImDefault", () => {
   });
 
   it("rejects a device of another org", async () => {
-    const otherOrg = await createOrg(owner, "Other");
+    const otherOrg = await createOrgWithProviders(k, owner, "Other");
     const elsewhere = await newDevice(owner, otherOrg, "Elsewhere");
     await expect(service().setImDefault(orgId, ownerId, elsewhere)).rejects.toMatchObject({
       code: "device.not_found",

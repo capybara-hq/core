@@ -38,7 +38,7 @@ import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { bootstrapFixture, legacyTgz, packFake, pluginTgz } from "../helpers/plugin-packages.js";
 import {
   buildKernel,
-  createOrg,
+  createOrgWithProviders,
   PW,
   type Req,
   runConfig,
@@ -515,7 +515,7 @@ describe("启动时加载安装记录", () => {
     expect(k.app.get(ReplicaStatusStore).replicaId).toMatch(/^.+-\d+-[0-9a-f]{6}$/);
 
     await loginUsers(k);
-    const orgId = await createOrg(admin);
+    const orgId = await createOrgWithProviders(k, admin);
     const quiet = { disabledTools: builtinsOff() };
     expect(
       (await k.app.get(ToolRegistry).forAgent(orgId, { ...quiet, source: "web" })).tools,
@@ -883,7 +883,7 @@ describe("引导插件（取代内置插件）", () => {
     expect(k.app.get(StorageService).available).toBe(false);
 
     await loginUsers(k);
-    const orgId = await createOrg(admin);
+    const orgId = await createOrgWithProviders(k, admin);
     const list = await admin({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` });
     expect(list.statusCode).toBe(200);
     expect(

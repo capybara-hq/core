@@ -219,6 +219,13 @@ export class ProviderListError extends ApiError {
   }
 }
 
+/** {@link ProviderRegistry.readiness}: the org's model-provider state and the providers it left off. */
+export interface ModelProviderReadiness {
+  state: "ready" | "not_enabled" | "none";
+  /** With `not_enabled`: the loaded providers usable in the org once it enables them. */
+  notEnabled: string[];
+}
+
 /** Where a provider's calls for one org (or the platform) go: the call options and list digest. */
 type Target =
   | { ok: true; call: ModelCallOptions; hash: string | undefined }
@@ -328,17 +335,23 @@ export class ProviderRegistry {
   }
 
   /**
-   * Whether at least one model-provider extension is loaded on this replica (enabled, configured,
-   * set up), enabled in `orgId` and with a valid effective config there. Read from extension state,
+   * The org's model-provider readiness (org readiness, web-order spec §3.8), from extension state,
    * the org's switches and its config only: never calls a vendor, so a provider whose vendor is
-   * down still counts (org readiness, web-order spec §3.8).
+   * down still counts. `ready`: a provider loaded on this replica is enabled in `orgId` with a
+   * valid effective config there. Otherwise `not_enabled` when loaded providers would be usable
+   * there once the org enables them (`notEnabled` names them), else `none`.
    */
-  async hasProvider(orgId: string): Promise<boolean> {
+  async readiness(orgId: string): Promise<ModelProviderReadiness> {
     const on = await this.enablement.enabledIn(orgId);
+    const notEnabled: string[] = [];
     for (const p of this.providers()) {
-      if ((await this.target(p, orgId, on)).ok) return true;
+      if (on.has(p.plugin)) {
+        if ((await this.target(p, orgId, on)).ok) return { state: "ready", notEnabled: [] };
+      } else if ((await this.target(p, orgId, new Set([p.plugin]))).ok) {
+        notEnabled.push(p.plugin);
+      }
     }
-    return false;
+    return { state: notEnabled.length > 0 ? "not_enabled" : "none", notEnabled };
   }
 
   /** 每个插件取一个实现（`@2` 优先），按插件首次出现的顺序；不支持的主版本记 warn 后忽略。 */
@@ -554,25 +567,27 @@ export class ProviderRegistry {
     const on = orgId === undefined ? new Set<string>() : await this.enablement.enabledIn(orgId);
     const providers = this.providers().filter((p) => orgId === undefined || on.has(p.plugin));
     const settled = await Promise.allSettled(
-      providers.map(
-        async (p): Promise<KernelModelInfo[] | Exclude<Target, { ok: true }>["reason"]> => {
-          const t = await this.target(p, orgId, on);
-          if (!t.ok) return t.reason;
-          const failed = listFailedKey(p, t.hash);
-          // 刚失败过的供应商：短时间内直接标 error，不再等它（每个供应商另有时限）
-          if ((await this.kv.get(failed)) !== null) {
-            throw new ProviderListError(p.plugin, new Error("listModels failed recently"));
+      providers.map(async (p): Promise<KernelModelInfo[] | "org_configured" | "needs_config"> => {
+        const t = await this.target(p, orgId, on);
+        if (!t.ok) {
+          // an org's providers are filtered to the enabled ones above
+          if (t.reason === "not_enabled") throw new Error(`${p.plugin} is not enabled here`);
+          return t.reason;
+        }
+        const failed = listFailedKey(p, t.hash);
+        // 刚失败过的供应商：短时间内直接标 error，不再等它（每个供应商另有时限）
+        if ((await this.kv.get(failed)) !== null) {
+          throw new ProviderListError(p.plugin, new Error("listModels failed recently"));
+        }
+        try {
+          return await this.models(p, t);
+        } catch (err) {
+          if (err instanceof ProviderListError) {
+            await this.kv.set(failed, "1", "EX", LIST_FAILURE_TTL_SECONDS);
           }
-          try {
-            return await this.models(p, t);
-          } catch (err) {
-            if (err instanceof ProviderListError) {
-              await this.kv.set(failed, "1", "EX", LIST_FAILURE_TTL_SECONDS);
-            }
-            throw err;
-          }
-        },
-      ),
+          throw err;
+        }
+      }),
     );
     return settled.map((r, i): ProviderStatus => {
       const provider = (providers[i] as { plugin: string }).plugin;
@@ -580,10 +595,8 @@ export class ProviderRegistry {
         if (r.value === "org_configured") {
           return { provider, plugin: provider, status: "org_configured", models: [] };
         }
-        if (r.value === "needs_config" || r.value === "not_enabled") {
-          // (`not_enabled` does not occur: an org's providers are filtered above)
-          const why = r.value === "not_enabled" ? "is not enabled" : "needs configuration";
-          const error = `Model provider ${provider} ${why} in this organization`;
+        if (r.value === "needs_config") {
+          const error = `Model provider ${provider} needs configuration in this organization`;
           return { provider, plugin: provider, status: "error", error, models: [] };
         }
         return { provider, plugin: provider, status: "ok", models: r.value };

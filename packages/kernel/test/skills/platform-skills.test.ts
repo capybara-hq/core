@@ -29,7 +29,7 @@ import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -110,7 +110,7 @@ beforeEach(async () => {
   const accounts = accountsFor(db);
   ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "O" })).id;
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
 });
 
 const skillMd = (name: string, body: string) =>
@@ -480,8 +480,8 @@ describe("skills from platform components", () => {
   });
 
   it("another org's skill stays on for an org associated with it after its owner stops sharing (P3-16)", async () => {
-    const owner2 = await createOrg(owner, "owner2");
-    const other = await createOrg(owner, "other");
+    const owner2 = await createOrgWithProviders(k, owner, "owner2");
+    const other = await createOrgWithProviders(k, owner, "other");
     const alpha = await seedPlatformSkill({ name: "alpha", plugin: "kit", body: "A." });
     // owned by another org and no longer shared; this org installed its plugin before
     await db
@@ -507,7 +507,7 @@ describe("skills from platform components", () => {
   it("a skill entry naming an org copy linked to a platform skill without a plugin turns it off", async () => {
     // a platform skill without a plugin (another org's, shared), linked by an org copy
     const pid = randomUUID();
-    const owner2 = await createOrg(owner, "owner2");
+    const owner2 = await createOrgWithProviders(k, owner, "owner2");
     await db
       .insertInto("platform_skills")
       .values({
@@ -595,7 +595,7 @@ describe("skills from platform components", () => {
   });
 
   it("usableSkills: follow, own scope, switches, disabled and name clashes", async () => {
-    const other = await createOrg(owner, "other");
+    const other = await createOrgWithProviders(k, owner, "other");
     const follow = await seedPlatformSkill({ name: "follow", plugin: "kit", body: "F." });
     const ownAll = await seedPlatformSkill({
       name: "own-all",
@@ -1009,7 +1009,7 @@ describe("skills of builtin plugins", () => {
   });
 
   it("a builtin item or skill owned by another org never reaches this org's agents", async () => {
-    const other = await createOrg(owner, "other");
+    const other = await createOrgWithProviders(k, owner, "other");
     // an org-owned item marked builtin (never so in practice): its skill is not auto-included
     const otherItem = randomUUID();
     await db

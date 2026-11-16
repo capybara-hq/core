@@ -6,7 +6,7 @@ import type { KernelConfig } from "../../src/config/schema.js";
 import { PluginGuides } from "../../src/extensions/plugin-guides.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { pluginTgz } from "../helpers/plugin-packages.js";
-import { createAgent, createOrg, enableModelProviders } from "../helpers/runs.js";
+import { createAgent, createOrgWithProviders, enableModelProviders } from "../helpers/runs.js";
 import {
   importPlugin,
   type OrgEnv,
@@ -32,7 +32,7 @@ let otherOrgId: string;
 
 beforeAll(async () => {
   env = await startOrgEnv();
-  otherOrgId = await createOrg(env.root, "Globex");
+  otherOrgId = await createOrgWithProviders(env.k, env.root, "Globex");
 });
 
 afterAll(async () => {

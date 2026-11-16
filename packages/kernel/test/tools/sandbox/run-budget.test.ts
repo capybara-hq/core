@@ -19,7 +19,7 @@ import { accountsFor } from "../../helpers/identity.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -185,7 +185,7 @@ describe("Bash 按运行剩下的时间收紧超时", () => {
   it("请求的 timeout 超过运行剩余：命令在截止前超时，结果说明运行时限（不是结果未知）", async () => {
     await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
     const owner = await session(k, "owner");
-    const orgId = await createOrg(owner);
+    const orgId = await createOrgWithProviders(k, owner);
     const res = await owner({
       method: "POST",
       url: `/api/v1/orgs/${orgId}/agents`,

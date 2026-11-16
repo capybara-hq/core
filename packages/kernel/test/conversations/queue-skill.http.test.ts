@@ -28,7 +28,7 @@ import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   type Req,
@@ -159,7 +159,7 @@ beforeEach(async () => {
   });
   expect(login.statusCode, login.body).toBe(200);
   ownerCookie = () => jar.header() as string;
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
 });
 
 const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");

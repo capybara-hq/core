@@ -27,7 +27,7 @@ import { testMembers } from "../helpers/members.js";
 import {
   createAgent,
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -78,7 +78,7 @@ beforeAll(async () => {
   );
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
-  orgId = await createOrg(await session(k, "owner"));
+  orgId = await createOrgWithProviders(k, await session(k, "owner"));
   wsUrl = `ws://127.0.0.1:${k.port}/device/connect`;
 });
 

@@ -77,6 +77,14 @@ describe("setup layout scope", () => {
     expect(screen.getByText("grant@acme:~/setup")).toBeTruthy();
   });
 
+  it("providers deployed but not enabled in the org (not_enabled): the model step stays to do", () => {
+    renderFrame({
+      readiness: { modelProvider: "not_enabled", notEnabledProviders: ["anthropic"], agents: 0 },
+    });
+    expect(setupPage()).not.toBeNull();
+    expect(step(sl.steps.model).getAttribute("data-state")).toBe("todo");
+  });
+
   it("not ready on /: the same setup home, never a composer", () => {
     resetNavigation("/");
     renderFrame();

@@ -13,7 +13,7 @@ import { testMembers } from "../helpers/members.js";
 import {
   createAgent,
   createConv,
-  createOrg,
+  createOrgWithProviders,
   PW,
   type Req,
   runConfig,
@@ -255,7 +255,7 @@ beforeEach(async () => {
   adminId = await mk("admin");
   aliceId = await mk("alice");
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   const members = testMembers(db);
   await members.add(orgId, adminId, "admin", ownerId);
   await members.add(orgId, aliceId, "member", ownerId);

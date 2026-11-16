@@ -36,7 +36,7 @@ import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createAgent,
-  createOrg,
+  createOrgWithProviders,
   PW,
   runConfig,
   session,
@@ -101,7 +101,7 @@ beforeAll(async () => {
     displayName: "O",
   });
   const owner = await session(k, "owner");
-  const orgId = await createOrg(owner);
+  const orgId = await createOrgWithProviders(k, owner);
   const agentId = await createAgent(owner, orgId);
   const en = await owner({
     method: "PUT",

@@ -20,6 +20,7 @@ import { AgentsFromTemplate } from "../../agents/from-template.service.js";
 import { OrgAgentTemplates } from "../../agents/org-templates.js";
 import { PendingConnectorsService } from "../../agents/pending-connectors.service.js";
 import { PresetAvatarSchema } from "../../agents/profile.js";
+import { orgReadiness } from "../../agents/readiness.js";
 import { CatalogRequestsService } from "../../catalog/requests.service.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import { roleAtLeast } from "../../orgs/roles.js";
@@ -804,16 +805,17 @@ export class AgentsOperations implements OnModuleInit {
       defineOperation({
         id: "agents.readiness",
         description:
-          "Whether the org can run agents: modelProvider is ready when a model provider is available in the org (none otherwise), and how many agents you can see.",
+          "Whether the org can run agents: modelProvider is ready when a model provider is available in the org, not_enabled when deployed providers (notEnabledProviders) wait for an org admin to enable one, none otherwise; and how many agents you can see.",
         input: z.object({}).strict(),
         example: {},
         authz: { orgAction: "org.read" },
         mirrors: ["GET /api/v1/orgs/:orgId/readiness"],
         confirm: "read",
-        run: async (_input, ctx) => ({
-          modelProvider: (await this.providers.hasProvider(ctx.orgId)) ? "ready" : "none",
-          agents: (await this.agents.listVisible(ctx.orgId, ctx.actorAccountId)).length,
-        }),
+        run: async (_input, ctx) =>
+          orgReadiness(
+            await this.providers.readiness(ctx.orgId),
+            (await this.agents.listVisible(ctx.orgId, ctx.actorAccountId)).length,
+          ),
       }),
     ]);
   }

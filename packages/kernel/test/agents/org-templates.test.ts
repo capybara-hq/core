@@ -7,7 +7,7 @@ import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
-  createOrg,
+  createOrgWithProviders,
   PW,
   type Req,
   runConfig,
@@ -59,8 +59,8 @@ beforeAll(async () => {
   root = await session(k, "root");
   boss = await session(k, "boss");
   mem = await session(k, "mem");
-  orgA = await createOrg(root, "A");
-  orgB = await createOrg(root, "B");
+  orgA = await createOrgWithProviders(k, root, "A");
+  orgB = await createOrgWithProviders(k, root, "B");
   await db
     .insertInto("memberships")
     .values([
@@ -1251,7 +1251,7 @@ describe("org agent templates", () => {
   });
 
   it("deleting the owner org transfers its used promoted template and removes the unused one", async () => {
-    const orgC = await createOrg(root, "C");
+    const orgC = await createOrgWithProviders(k, root, "C");
     const used = await sharedLead(root, orgC, [orgC, orgB], "c-used");
     const unused = await sharedLead(root, orgC, [orgC, orgB], "c-unused");
     expect((await putScope(unused.pid, { scope: "named", orgs: [orgC] })).statusCode).toBe(200);

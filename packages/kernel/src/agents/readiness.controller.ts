@@ -3,15 +3,17 @@ import { CurrentPrincipal, type Principal } from "../identity/principal.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import { ProviderRegistry } from "../runtime/providers.js";
 import { AgentsService } from "./agents.service.js";
+import { type OrgReadiness, orgReadiness } from "./readiness.js";
 
 /** Service tokens have no account: they see `visibility='org'` agents only (as the agent list). */
 const viewerOf = (p: Principal): string | null => (p.kind === "user" ? p.account.id : null);
 
 /**
  * Whether the org can run (`/api/v1/orgs/:orgId/readiness`, web-order spec §3.8): the web app
- * decides between the shell and the setup layout with it. `modelProvider` is `ready` when a
- * model-provider extension is loaded (enabled and configured), from extension state only, never
- * a vendor call; `agents` is the number of agents the caller can see (the agent list's
+ * decides between the shell and the setup layout with it. `modelProvider` ({@link OrgReadiness})
+ * is `ready` when a model-provider extension is loaded (enabled and configured) and enabled in
+ * the org, `not_enabled` when loaded providers are only waiting for the org to enable one, from
+ * extension state only, never a vendor call; `agents` is the number of agents the caller can see (the agent list's
  * visibility). Humans and service tokens (`org.read`).
  *
  * `modelProvider` counts the deployment's providers whose effective config is valid in this org
@@ -32,11 +34,8 @@ export class ReadinessController {
   async get(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-  ): Promise<{ modelProvider: "ready" | "none"; agents: number }> {
+  ): Promise<OrgReadiness> {
     const visible = await this.agents.listVisible(org.orgId, viewerOf(principal));
-    return {
-      modelProvider: (await this.registry.hasProvider(org.orgId)) ? "ready" : "none",
-      agents: visible.length,
-    };
+    return orgReadiness(await this.registry.readiness(org.orgId), visible.length);
   }
 }

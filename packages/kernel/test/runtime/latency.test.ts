@@ -13,7 +13,7 @@ import { accountsFor } from "../helpers/identity.js";
 import {
   createAgent,
   createConv,
-  createOrg,
+  createOrgWithProviders,
   PW,
   postMessage,
   type Req,
@@ -125,7 +125,7 @@ async function measure(orgId: string, agentId: string): Promise<Counts> {
 
 describe("message → run job added", () => {
   it("issues a fixed number of PG statements and Redis commands", async () => {
-    const orgId = await createOrg(req);
+    const orgId = await createOrgWithProviders(api, req);
     const agentId = await createAgent(req, orgId);
     // the first message warms the caches (agents, config, extensions) on this kernel
     await measure(orgId, agentId);

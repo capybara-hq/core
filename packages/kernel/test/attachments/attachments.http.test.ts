@@ -25,7 +25,7 @@ import { testMembers } from "../helpers/members.js";
 import {
   createAgent,
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   type Req,
@@ -127,7 +127,7 @@ beforeEach(async () => {
   ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "Owner" })).id;
   otherId = (await accounts.createLocal({ login: "other", password: PW, displayName: "Other" })).id;
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   await testMembers(db).add(orgId, otherId, "member", ownerId);
   other = await session(k, "other");
 });
@@ -357,7 +357,7 @@ describe("校验", () => {
     });
     const other2 = await other({ method: "GET", url: `/api/v1/orgs/${orgId}/attachments/limits` });
     expect(other2.statusCode).toBe(200);
-    const stranger = await createOrg(other, "Elsewhere");
+    const stranger = await createOrgWithProviders(k, other, "Elsewhere");
     const denied = await owner({
       method: "GET",
       url: `/api/v1/orgs/${stranger}/attachments/limits`,
@@ -626,7 +626,7 @@ describe("openForConversation（沙箱同步用）", () => {
     // 别的会话、别的组织、不存在的 id → null
     const conv2 = await conversationWith("see-1");
     expect(await k.app.get(AttachmentsService).openForConversation(orgId, conv2, id)).toBeNull();
-    const org2 = await createOrg(owner, "Other org");
+    const org2 = await createOrgWithProviders(k, owner, "Other org");
     expect(await k.app.get(AttachmentsService).openForConversation(org2, convId, id)).toBeNull();
     expect(
       await k.app

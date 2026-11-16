@@ -23,7 +23,7 @@ import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -86,7 +86,7 @@ beforeEach(async () => {
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
 });
 
 const enable = (org: string, plugin: string, token = "tok") =>
@@ -420,7 +420,7 @@ describe("WebSearch: availability", () => {
 
   it("specHash is the same in two orgs using different providers", async () => {
     await enable(orgId, "fake-web");
-    const orgB = await createOrg(owner, "Beta");
+    const orgB = await createOrgWithProviders(k, owner, "Beta");
     await enable(orgB, "fake-web-2");
     const def = { disabledTools: builtinsOff("WebSearch") };
     const reg = k.app.get(ToolRegistry);

@@ -18,7 +18,7 @@ import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -88,10 +88,10 @@ beforeAll(async () => {
     .id;
   owner = await session(k, "owner");
   [orgA, orgB, orgC, orgD] = [
-    await createOrg(owner, "Alpha"),
-    await createOrg(owner, "Beta"),
-    await createOrg(owner, "Gamma"),
-    await createOrg(owner, "Delta"),
+    await createOrgWithProviders(k, owner, "Alpha"),
+    await createOrgWithProviders(k, owner, "Beta"),
+    await createOrgWithProviders(k, owner, "Gamma"),
+    await createOrgWithProviders(k, owner, "Delta"),
   ];
   for (const org of [orgA, orgB, orgC, orgD]) {
     const res = await owner({

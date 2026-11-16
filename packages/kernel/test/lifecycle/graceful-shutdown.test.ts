@@ -23,7 +23,7 @@ import { accountsFor } from "../helpers/identity.js";
 import {
   createAgent,
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -186,7 +186,7 @@ describe("startKernelApp signal handling", () => {
         })
       ).statusCode,
     ).toBe(200);
-    const orgId = await createOrg(req);
+    const orgId = await createOrgWithProviders({ app }, req);
     const agentId = await createAgent(req, orgId, { provider: "model-looper", model: "loop-1" });
     const convId = await createConv(req, orgId, agentId);
     await postMessage(req, orgId, convId, "loop:200");
@@ -228,7 +228,7 @@ describe("startKernelApp signal handling", () => {
         })
       ).statusCode,
     ).toBe(200);
-    const orgId = await createOrg(req, "Streams");
+    const orgId = await createOrgWithProviders({ app }, req, "Streams");
     const agentId = await createAgent(req, orgId);
     const convId = await createConv(req, orgId, agentId);
     const base = `http://127.0.0.1:${lifecycle.port}`;

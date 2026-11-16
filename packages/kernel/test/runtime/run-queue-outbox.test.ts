@@ -35,7 +35,7 @@ import {
   consumedSeq,
   createAgent,
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -130,7 +130,7 @@ afterEach(async () => {
 });
 
 async function setup() {
-  const orgId = await createOrg(req);
+  const orgId = await createOrgWithProviders(api, req);
   const agentId = await createAgent(req, orgId);
   const convId = await createConv(req, orgId, agentId);
   return { orgId, agentId, convId };
@@ -538,7 +538,7 @@ describe("the ensure-run backstop", () => {
   });
 
   it("with Redis unreachable the send returns 201 and the run starts after Redis returns", async () => {
-    const orgId = await createOrg(req);
+    const orgId = await createOrgWithProviders(api, req);
     const agentId = await createAgent(req, orgId);
     // Redis is down: the direct ensureRun throws and the fast path delivers nothing
     ensureFails = true;

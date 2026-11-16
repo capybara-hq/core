@@ -8,7 +8,7 @@ import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   enableExtensions,
   PW,
   type Req,
@@ -98,8 +98,8 @@ beforeAll(async () => {
   root = await session(k, "root");
   await accounts.createLocal({ login: "loner", password: PW, displayName: "loner" });
   loner = await session(k, "loner");
-  orgId = await createOrg(owner);
-  otherOrgId = await createOrg(owner, "Other");
+  orgId = await createOrgWithProviders(k, owner);
+  otherOrgId = await createOrgWithProviders(k, owner, "Other");
   const members = testMembers(db);
   await members.add(orgId, ids.admin as string, "admin", ids.owner as string);
   await members.add(orgId, ids.member as string, "member", ids.owner as string);

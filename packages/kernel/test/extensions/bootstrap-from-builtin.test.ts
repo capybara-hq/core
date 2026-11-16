@@ -12,6 +12,7 @@ import { BootstrapService, bootstrapManifestSha256 } from "../../src/extensions/
 import { ExtensionHost } from "../../src/extensions/host.js";
 import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
+import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { accountsFor } from "../helpers/identity.js";
 import { bootstrapFixture, packFake } from "../helpers/plugin-packages.js";
@@ -22,6 +23,7 @@ import {
   session,
   startKernel,
   type TestKernel,
+  waitFor,
 } from "../helpers/runs.js";
 
 /**
@@ -239,6 +241,31 @@ describe("a deployment from before bootstrap (built-in extensions, no install re
     });
     expect(off.statusCode, off.body).toBe(409);
     expect(off.json().error.code).toBe("extension.required");
+
+    // A required model provider is on in every org without a switch row: once the platform
+    // configures it, the org can use it with no admin action in the org
+    const cfg = await admin({
+      method: "PUT",
+      url: "/api/v1/admin/extensions/fake-bootstrap-a/config",
+      payload: { values: { apiKey: "k" } },
+    });
+    expect(cfg.statusCode, cfg.body).toBe(200);
+    await waitFor(
+      async () => k?.app.get(ExtensionHost).current("fake-bootstrap-a"),
+      10_000,
+      "the required provider loaded",
+    );
+    expect(
+      await db
+        .selectFrom("extension_org_configs")
+        .select("plugin")
+        .where("plugin", "=", "fake-bootstrap-a")
+        .execute(),
+    ).toEqual([]);
+    const ref = { provider: "fake-bootstrap-a", model: "fake-a-1" };
+    expect((await k.app.get(ProviderRegistry).resolve(orgId, ref)).info.id).toBe("fake-a-1");
+    const ready = await admin({ method: "GET", url: `/api/v1/orgs/${orgId}/readiness` });
+    expect(ready.json()).toMatchObject({ modelProvider: "ready" });
     // The test migrates 0050 onward and boots a kernel itself, the work other files do in a
     // beforeAll; the integration project's 60 s bound covers it under a loaded full run
   });

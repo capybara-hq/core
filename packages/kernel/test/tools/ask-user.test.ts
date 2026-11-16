@@ -22,7 +22,7 @@ import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -226,7 +226,7 @@ beforeEach(async () => {
   memState().askCalls = [];
   reqA = await session(ka, "owner");
   reqB = await session(kb, "owner");
-  orgId = await createOrg(reqA);
+  orgId = await createOrgWithProviders(ka, reqA);
 });
 
 /** 不带 tools 字段新建 agent：得到默认的内置工具（AskUserQuestion、ReadToolOutput）。 */
@@ -372,7 +372,7 @@ describe("AskUserQuestion 端到端", () => {
     });
     expect(got.statusCode).toBe(403);
     // 另一个组织（other 是 owner）的路径下看不到
-    const org2 = await createOrg(reqOther, "Other Org");
+    const org2 = await createOrgWithProviders(kb, reqOther, "Other Org");
     const cross = await reqOther({
       method: "POST",
       url: `/api/v1/orgs/${org2}/questions/${questionId}/answer`,

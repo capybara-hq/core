@@ -59,7 +59,7 @@ import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   MODEL_LOOPER,
   PW,
@@ -177,7 +177,7 @@ beforeAll(async () => {
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   await enableProbe(true);
 });
 

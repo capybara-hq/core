@@ -44,7 +44,7 @@ import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { type ExtensionTgzOpts, pluginTgz } from "../helpers/plugin-packages.js";
 import {
-  createOrg,
+  createOrgWithProviders,
   enableConnectorExtensions,
   enableModelProviders,
   PW,
@@ -192,7 +192,7 @@ export async function startOrgEnv(
   const root = await session(k, "root");
   const boss = await session(k, "boss");
   const mem = await session(k, "mem");
-  const orgId = await createOrg(root);
+  const orgId = await createOrgWithProviders(k, root);
   await db
     .insertInto("memberships")
     .values([

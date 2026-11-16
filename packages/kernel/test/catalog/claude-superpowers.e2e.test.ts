@@ -31,7 +31,7 @@ import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -119,7 +119,7 @@ beforeAll(async () => {
     superAdmin: true,
   });
   admin = await session(k, "root");
-  orgId = await createOrg(admin);
+  orgId = await createOrgWithProviders(k, admin);
 });
 
 afterAll(async () => {

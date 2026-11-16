@@ -9,7 +9,7 @@ import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   enableExtensions,
   eventsOf,
   PW,
@@ -61,7 +61,7 @@ beforeAll(async () => {
   }
   owner = await session(k, "owner");
   guest = await session(k, "guest");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   await testMembers(db).add(orgId, ids.guest as string, "guest", ids.owner as string);
   await enableExtensions(raw, orgId, "ui-components");
   const agent = await owner({

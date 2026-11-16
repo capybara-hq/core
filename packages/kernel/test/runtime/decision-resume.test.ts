@@ -28,7 +28,7 @@ import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { drainOutbox } from "../helpers/outbox.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -112,7 +112,7 @@ beforeEach(async () => {
   st.echoCalls = 0;
   st.askCalls = [];
   req = await session(k, "owner");
-  orgId = await createOrg(req);
+  orgId = await createOrgWithProviders(k, req);
   const en = await req({
     method: "PUT",
     url: `/api/v1/orgs/${orgId}/extensions/mem-connector`,

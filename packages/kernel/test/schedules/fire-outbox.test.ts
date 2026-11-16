@@ -26,7 +26,7 @@ import { accountsFor } from "../helpers/identity.js";
 import { drainOutbox } from "../helpers/outbox.js";
 import {
   createAgent,
-  createOrg,
+  createOrgWithProviders,
   PW,
   runConfig,
   session,
@@ -75,7 +75,7 @@ beforeAll(async () => {
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
   const req = await session(k, "owner");
-  orgId = await createOrg(req);
+  orgId = await createOrgWithProviders(k, req);
   agentId = await createAgent(req, orgId);
   redis = new Redis(rd.url, { maxRetriesPerRequest: null });
   maintenance = new Queue(MAINTENANCE_QUEUE_NAME, { connection: redis });

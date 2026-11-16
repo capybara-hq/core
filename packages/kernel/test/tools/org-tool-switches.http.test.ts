@@ -14,7 +14,7 @@ import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import {
-  createOrg,
+  createOrgWithProviders,
   PW,
   type Req,
   runConfig,
@@ -76,8 +76,8 @@ describe("org tool switches over HTTP", () => {
     const memberId = (await accounts.createLocal({ login: "mem", password: PW, displayName: "M" }))
       .id;
     owner = await session(k, "owner");
-    orgId = await createOrg(owner);
-    otherOrg = await createOrg(owner, "Other");
+    orgId = await createOrgWithProviders(k, owner);
+    otherOrg = await createOrgWithProviders(k, owner, "Other");
     await testMembers(db).add(orgId, memberId, "member", ownerId);
     member = await session(k, "mem");
     for (const org of [orgId, otherOrg]) {
@@ -250,7 +250,7 @@ describe("extension tools over HTTP", () => {
     const memberId = (await accounts.createLocal({ login: "mem", password: PW, displayName: "M" }))
       .id;
     owner = await session(k, "owner");
-    orgId = await createOrg(owner);
+    orgId = await createOrgWithProviders(k, owner);
     await testMembers(db).add(orgId, memberId, "member", ownerId);
     member = await session(k, "mem");
   });

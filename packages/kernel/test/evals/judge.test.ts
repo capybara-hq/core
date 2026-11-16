@@ -29,7 +29,7 @@ import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createAgent,
   createConv,
-  createOrg,
+  createOrgWithProviders,
   PW,
   postMessage,
   type Req,
@@ -318,7 +318,7 @@ beforeEach(async () => {
   const aliceId = await mk("alice");
   ent = await session(k, "ent");
   const owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   await testMembers(db).add(orgId, adminId, "admin", ownerId);
   await testMembers(db).add(orgId, aliceId, "member", ownerId);
   admin = await session(k, "admin");

@@ -24,7 +24,7 @@ import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createAgent,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   type Req,
@@ -92,7 +92,7 @@ beforeAll(async () => {
   ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "Owner" })).id;
   const outsider = await accounts.createLocal({ login: "out", password: PW, displayName: "Out" });
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   agentId = await createAgent(owner, orgId);
   // 外部身份：owner ↔ u-owner（成员），outsider ↔ u-out（不是该组织成员）
   for (const [ext, acct] of [

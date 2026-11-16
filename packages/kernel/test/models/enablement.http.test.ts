@@ -15,7 +15,7 @@ import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE, MODEL_FAKE_B } from "../helpers/model-plugins.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   type Req,
@@ -116,8 +116,8 @@ beforeEach(async () => {
   const aliceId = await mk("alice");
   ent = await session(k, "ent");
   owner = await session(k, "owner");
-  org1 = await createOrg(owner, "One");
-  org2 = await createOrg(owner, "Two");
+  org1 = await createOrgWithProviders(k, owner, "One");
+  org2 = await createOrgWithProviders(k, owner, "Two");
   for (const org of [org1, org2]) {
     for (const plugin of PLUGINS) {
       await ok(owner, "PUT", `/api/v1/orgs/${org}/extensions/${plugin}`, { enabled: true });

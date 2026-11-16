@@ -10,7 +10,14 @@ import { createLogger } from "../../src/log.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { createOrg, PW, type Req, session, startKernel, type TestKernel } from "../helpers/runs.js";
+import {
+  createOrgWithProviders,
+  PW,
+  type Req,
+  session,
+  startKernel,
+  type TestKernel,
+} from "../helpers/runs.js";
 
 const BADHINTS = fileURLToPath(new URL("../fixtures/plugins/badhints/index.ts", import.meta.url));
 const THROWHINTS = fileURLToPath(
@@ -140,7 +147,7 @@ describe("config UI hints: load-time validation, static schemas, issue message k
 
   it("a hint conversion that throws: the org list, the org config refusal and the channel schema still answer", async () => {
     const before = logs.length;
-    const orgId = await createOrg(admin, "Throw");
+    const orgId = await createOrgWithProviders(k as TestKernel, admin, "Throw");
     for (let i = 0; i < 2; i++) {
       const list = await admin({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` });
       expect(list.statusCode, list.body).toBe(200);
@@ -200,7 +207,7 @@ describe("config UI hints: load-time validation, static schemas, issue message k
   });
 
   it("valid org hints pass through (x-ui, x-hot); a custom issue names its message key", async () => {
-    const orgId = await createOrg(admin);
+    const orgId = await createOrgWithProviders(k as TestKernel, admin);
     const list = await admin({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` });
     expect(list.statusCode, list.body).toBe(200);
     const ext = (

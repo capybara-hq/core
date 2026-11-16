@@ -26,7 +26,7 @@ import { OrgsService } from "../../src/orgs/orgs.service.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
-  createOrg,
+  createOrgWithProviders,
   PW,
   type Req,
   runConfig,
@@ -182,7 +182,7 @@ describe("lifecycle hooks", () => {
   });
 
   it("removing a member owes one job per subscribing plugin and delivers it once", async () => {
-    const orgId = await createOrg(req, "Members");
+    const orgId = await createOrgWithProviders(k, req, "Members");
     const accountId = await newMember(orgId, "leaver");
     const res = await req({ method: "DELETE", url: `/api/v1/orgs/${orgId}/members/${accountId}` });
     expect(res.statusCode, res.body).toBe(204);
@@ -199,7 +199,7 @@ describe("lifecycle hooks", () => {
   });
 
   it("deleting an agent delivers agent.deleted, also with the plugin switched off in the org", async () => {
-    const orgId = await createOrg(req, "Agents");
+    const orgId = await createOrgWithProviders(k, req, "Agents");
     const agentId = await newAgent(orgId);
     await switchOff(orgId);
     await k.app.get(AgentsService).softDelete(orgId, agentId, ownerId);
@@ -210,7 +210,7 @@ describe("lifecycle hooks", () => {
   });
 
   it("deleting an org delivers org.deleted, also with the plugin switched off in the org", async () => {
-    const orgId = await createOrg(req, "Gone");
+    const orgId = await createOrgWithProviders(k, req, "Gone");
     await switchOff(orgId);
     const owner = await k.app.get(AccountsService).get(ownerId);
     await k.app.get(OrgsService).softDelete(orgId, owner as never);
@@ -219,7 +219,7 @@ describe("lifecycle hooks", () => {
   });
 
   it("removing a member delivers with the plugin switched off and an invalid org config", async () => {
-    const orgId = await createOrg(req, "Invalid");
+    const orgId = await createOrgWithProviders(k, req, "Invalid");
     const accountId = await newMember(orgId, "offcfg");
     await switchOff(orgId);
     await invalidCopy(orgId);
@@ -265,7 +265,7 @@ describe("lifecycle hooks", () => {
   });
 
   it("the offboard transaction owes the job (no org id); a rollback owes nothing", async () => {
-    const orgId = await createOrg(req, "Rollback");
+    const orgId = await createOrgWithProviders(k, req, "Rollback");
     const accountId = await newMember(orgId, "stayer");
     const payload = { orgId, accountId };
     const jobId = lifecycleJobId("org.member_removed", PLUGIN, payload);
@@ -307,7 +307,7 @@ describe("lifecycle hooks", () => {
     const config = k.app.get(ExtensionDeploymentConfigService);
     await config.put(PLUGIN, { failTimes: 2 }, ownerId);
     try {
-      const orgId = await createOrg(req, "Retry");
+      const orgId = await createOrgWithProviders(k, req, "Retry");
       const accountId = await newMember(orgId, "flaky");
       await k.app.get(MembersService).remove(orgId, accountId, ownerId);
       const payload = { orgId, accountId };

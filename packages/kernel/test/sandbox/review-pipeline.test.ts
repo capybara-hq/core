@@ -33,7 +33,7 @@ import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -109,7 +109,7 @@ beforeAll(async () => {
   ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "O" })).id;
   otherId = (await accounts.createLocal({ login: "other", password: PW, displayName: "X" })).id;
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   await testMembers(db).add(orgId, otherId, "member", ownerId);
   const created = await owner({
     method: "POST",

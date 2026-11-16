@@ -23,7 +23,7 @@ import {
 } from "../catalog/org-env.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
 import { pluginTgz } from "../helpers/plugin-packages.js";
-import { createOrg, enableExtensions, waitFor } from "../helpers/runs.js";
+import { createOrgWithProviders, enableExtensions, waitFor } from "../helpers/runs.js";
 
 /**
  * Task 6 of the Platform tool: the plugins, marketplaces, requests, connectors and extensions
@@ -40,7 +40,7 @@ const ORG2_NAME = "Beta Corp";
 beforeAll(async () => {
   env = await startOrgEnv();
   ops = env.k.app.get(PlatformOperations);
-  org2 = await createOrg(env.root, ORG2_NAME);
+  org2 = await createOrgWithProviders(env.k, env.root, ORG2_NAME);
 });
 afterAll(async () => {
   await env?.stop();

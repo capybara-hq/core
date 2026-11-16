@@ -22,7 +22,7 @@ import { QueueLostJobs } from "../../src/runtime/queue-lost-jobs.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
-  createOrg,
+  createOrgWithProviders,
   PW,
   type Req,
   runConfig,
@@ -88,8 +88,8 @@ beforeAll(async () => {
   memberId = (await accountsFor(db).createLocal({ login: "mem", password: PW, displayName: "Mem" }))
     .id;
   root = await session(k, "root");
-  orgId = await createOrg(root, "Acme");
-  org2 = await createOrg(root, "Beta Corp");
+  orgId = await createOrgWithProviders(k, root, "Acme");
+  org2 = await createOrgWithProviders(k, root, "Beta Corp");
   await sql`INSERT INTO capybara.memberships (org_id, account_id, role)
     VALUES (${orgId}, ${memberId}, 'member')`.execute(db);
 });

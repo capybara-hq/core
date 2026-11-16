@@ -19,7 +19,7 @@ import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -172,9 +172,9 @@ beforeAll(async () => {
     .id;
   owner = await session(k, "owner");
 
-  orgAuto = await createOrg(owner, "Auto");
+  orgAuto = await createOrgWithProviders(k, owner, "Auto");
   agentAuto = await createAgent(orgAuto);
-  orgSandbox = await createOrg(owner, "Sandbox");
+  orgSandbox = await createOrgWithProviders(k, owner, "Sandbox");
   const off = await owner({
     method: "PATCH",
     url: `/api/v1/orgs/${orgSandbox}/settings`,

@@ -25,7 +25,7 @@ import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -227,7 +227,7 @@ beforeEach(async () => {
   ana = await session(k, "ana");
   member = await session(k, "member");
   outsider = await session(k, "outsider");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   for (const login of ["ana", "member", "outsider"] as const) {
     await testMembers(db).add(orgId, ids[login], "member", ids.owner);
   }

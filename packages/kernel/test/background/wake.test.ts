@@ -42,7 +42,7 @@ import { isRunContextText } from "../helpers/run-context.js";
 import {
   consumedSeq,
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -180,7 +180,7 @@ beforeAll(async () => {
   ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "O" })).id;
   bobId = (await accounts.createLocal({ login: "bob", password: PW, displayName: "B" })).id;
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   await testMembers(db).add(orgId, bobId, "member", ownerId);
   const en = await owner({
     method: "PUT",

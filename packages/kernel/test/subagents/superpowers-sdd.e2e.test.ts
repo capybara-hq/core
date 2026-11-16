@@ -41,7 +41,7 @@ import { captureProviderRequests } from "../helpers/provider-capture.js";
 import { withoutRunContext } from "../helpers/run-context.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -164,7 +164,7 @@ beforeAll(async () => {
     superAdmin: true,
   });
   admin = await session(k, "root");
-  orgId = await createOrg(admin);
+  orgId = await createOrgWithProviders(k, admin);
 });
 
 afterAll(async () => {

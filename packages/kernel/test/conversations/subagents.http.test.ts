@@ -18,7 +18,7 @@ import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -148,7 +148,7 @@ beforeEach(async () => {
   owner = o.req;
   ownerCookie = o.cookie;
   member = (await login("member")).req;
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   await testMembers(db).add(orgId, memberId, "member", ownerId);
   const res = await owner({
     method: "POST",

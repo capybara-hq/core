@@ -14,7 +14,7 @@ import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { type ProviderCall, recordingProviderHost } from "../helpers/provider-capture.js";
 import {
-  createOrg,
+  createOrgWithProviders,
   PW,
   type Req,
   runConfig,
@@ -71,9 +71,9 @@ beforeAll(async () => {
   await accountsFor(kernelDb(raw)).createLocal({ login: "owner", password: PW, displayName: "O" });
   owner = await session(k, "owner");
   [orgA, orgB, orgC] = [
-    await createOrg(owner, "Alpha"),
-    await createOrg(owner, "Beta"),
-    await createOrg(owner, "Gamma"),
+    await createOrgWithProviders(k, owner, "Alpha"),
+    await createOrgWithProviders(k, owner, "Beta"),
+    await createOrgWithProviders(k, owner, "Gamma"),
   ];
   for (const org of [orgA, orgB, orgC]) {
     for (const plugin of ["model-fake", "model-odd", "model-org-key"]) {
@@ -243,7 +243,7 @@ describe("org-bound model provider calls", () => {
     const own = k.app.get(ProviderRegistry);
     expect(await idsOf(own, orgB, "model-fake")).toEqual(["b-only"]);
     expect(await idsOf(own, orgA, "model-fake")).toEqual(["fake-1", "fake-2"]);
-    expect(await own.hasProvider(orgA)).toBe(true);
+    expect((await own.readiness(orgA)).state).toBe("ready");
   });
 });
 

@@ -88,7 +88,7 @@ async function ownerOrg(k: TestKernel) {
 const readiness = async (req: Req, orgId: string) => {
   const res = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/readiness` });
   expect(res.statusCode).toBe(200);
-  return res.json() as { modelProvider: string; agents: number };
+  return res.json() as { modelProvider: string; notEnabledProviders: string[]; agents: number };
 };
 
 describe("org readiness", () => {
@@ -96,7 +96,11 @@ describe("org readiness", () => {
     const k = await boot([NEEDS_CONFIG]);
     try {
       const { req, orgId } = await ownerOrg(k);
-      expect(await readiness(req, orgId)).toEqual({ modelProvider: "none", agents: 0 });
+      expect(await readiness(req, orgId)).toEqual({
+        modelProvider: "none",
+        notEnabledProviders: [],
+        agents: 0,
+      });
       const anon = await k.http.inject({
         method: "GET",
         url: `/api/v1/orgs/${orgId}/readiness`,
@@ -116,10 +120,19 @@ describe("org readiness", () => {
     });
     try {
       const { owner, req, orgId } = await ownerOrg(k);
-      // loaded but not enabled in the org: a model provider is on only where an org enabled it
-      expect(await readiness(req, orgId)).toEqual({ modelProvider: "none", agents: 0 });
+      // loaded and configured but not enabled in the org: a model provider is on only where an
+      // org enabled it; the answer names the providers an org admin can switch on
+      expect(await readiness(req, orgId)).toEqual({
+        modelProvider: "not_enabled",
+        notEnabledProviders: ["model-fake", "model-needs-config"],
+        agents: 0,
+      });
       await enableExtensions(raw, orgId, "model-needs-config");
-      expect(await readiness(req, orgId)).toEqual({ modelProvider: "ready", agents: 0 });
+      expect(await readiness(req, orgId)).toEqual({
+        modelProvider: "ready",
+        notEnabledProviders: [],
+        agents: 0,
+      });
       await enableExtensions(raw, orgId, "model-fake");
       const definition = {
         name: "Helper",
@@ -134,7 +147,7 @@ describe("org readiness", () => {
         });
         expect(res.statusCode).toBe(201);
       }
-      expect(await readiness(req, orgId)).toEqual({ modelProvider: "ready", agents: 2 });
+      expect(await readiness(req, orgId)).toMatchObject({ modelProvider: "ready", agents: 2 });
       for (const [login, role] of [
         ["mia", "member"],
         ["gus", "guest"],
@@ -144,7 +157,10 @@ describe("org readiness", () => {
         const r = await session(k, login);
         const list = await r({ method: "GET", url: `/api/v1/orgs/${orgId}/agents` });
         const visible = (list.json() as { agents: unknown[] }).agents.length;
-        expect(await readiness(r, orgId)).toEqual({ modelProvider: "ready", agents: visible });
+        expect(await readiness(r, orgId)).toMatchObject({
+          modelProvider: "ready",
+          agents: visible,
+        });
         expect(visible).toBe(1);
       }
     } finally {

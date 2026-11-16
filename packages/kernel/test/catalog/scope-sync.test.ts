@@ -4,6 +4,7 @@ import { PluginInstaller } from "../../src/catalog/plugin-install.js";
 import { ScopeNoLongerWanted, ScopeStillWanted } from "../../src/catalog/scope-state.js";
 import { PluginScopeSync } from "../../src/catalog/scope-sync.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
+import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { SkillsService } from "../../src/skills/skills.service.js";
 import { usableSkills } from "../../src/skills/usable.js";
 import { createOrg, waitFor } from "../helpers/runs.js";
@@ -140,6 +141,34 @@ describe("plugin scope sync", () => {
       30_000,
       "install in the new org",
     );
+  });
+
+  it("all on a model provider: a new org can use it once the scope job ran, with no admin action", async () => {
+    const itemId = await seedPlugin(env, {
+      name: "model-fake",
+      extension: true,
+      skills: [],
+      templates: false,
+    });
+    await setScope(env, itemId, "all");
+    await bump(itemId);
+    await enqueueItem(itemId);
+    await idle();
+    // a provider is on only in the orgs that enabled it: here the scope job does, nobody else
+    const orgN = await createOrg(env.root, "Provider N");
+    const registry = env.k.app.get(ProviderRegistry);
+    const fakeIn = async (orgId: string) =>
+      (await registry.list(orgId)).some((p) => p.provider === "model-fake");
+    await waitFor(() => fakeIn(orgN), 30_000, "model-fake usable in the new org");
+    const ref = { provider: "model-fake", model: "fake-1" };
+    expect((await registry.resolve(orgN, ref)).info.id).toBe("fake-1");
+    expect(
+      await env.db
+        .selectFrom("catalog_item_org_switches")
+        .select("org_id")
+        .where("org_id", "=", orgN)
+        .execute(),
+    ).toEqual([]);
   });
 
   it("all: an org that switched it off stays off across a scope change and back; others and new orgs are on", async () => {

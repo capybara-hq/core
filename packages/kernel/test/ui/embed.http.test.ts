@@ -16,7 +16,7 @@ import { testMembers } from "../helpers/members.js";
 import {
   createAgent,
   createConv,
-  createOrg,
+  createOrgWithProviders,
   PW,
   type Req,
   runConfig,
@@ -118,7 +118,7 @@ describe("嵌入令牌", () => {
     const otherId = await account("other");
     owner = await session(k, "owner");
     other = await session(k, "other");
-    orgId = await createOrg(owner);
+    orgId = await createOrgWithProviders(k, owner);
     await testMembers(db).add(orgId, otherId, "member", ownerId);
     const agentId = await createAgent(owner, orgId);
     convId = await createConv(owner, orgId, agentId);
@@ -259,7 +259,7 @@ describe("嵌入令牌", () => {
     expect(sent.statusCode, sent.body).toBe(202);
 
     // 另一个组织签的令牌：claims 是那个组织的
-    const org2 = await createOrg(owner, "Other");
+    const org2 = await createOrgWithProviders(k, owner, "Other");
     await enable(owner, org2, "fake-embed");
     const { token: t2 } = (
       await owner({

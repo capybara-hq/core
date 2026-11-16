@@ -27,7 +27,7 @@ import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -106,8 +106,8 @@ beforeAll(async () => {
     })
   ).id;
   root = await session(k, "root");
-  orgA = await createOrg(root, "A");
-  orgB = await createOrg(root, "B");
+  orgA = await createOrgWithProviders(k, root, "A");
+  orgB = await createOrgWithProviders(k, root, "B");
 });
 
 afterAll(async () => {

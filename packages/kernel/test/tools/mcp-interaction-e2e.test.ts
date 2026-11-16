@@ -20,7 +20,7 @@ import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   enableConnectorExtensions,
   eventsOf,
   PW,
@@ -203,7 +203,7 @@ beforeEach(async () => {
   await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
   await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
   req = await session(k, "owner");
-  orgId = await createOrg(req);
+  orgId = await createOrgWithProviders(k, req);
   await enableConnectorExtensions(k, orgId);
   payCalls = 0;
   mcp.elicitations.length = 0;

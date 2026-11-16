@@ -31,7 +31,7 @@ import { drainOutbox } from "../helpers/outbox.js";
 import {
   createAgent,
   createConv,
-  createOrg,
+  createOrgWithProviders,
   enableExtensions,
   eventsOf,
   PW,
@@ -216,7 +216,7 @@ describe("no subscriber, then one", () => {
     // the first kernel migrated the database; the account serves every kernel of the file
     await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
     owner = await session(plain, "owner");
-    orgId = await createOrg(owner);
+    orgId = await createOrgWithProviders(plain, owner);
     agentId = await createAgent(owner, orgId);
   });
 

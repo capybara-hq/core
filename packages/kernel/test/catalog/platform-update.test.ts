@@ -14,7 +14,7 @@ import { skillVersionsById, usableSkills } from "../../src/skills/usable.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { ConnectorsService } from "../../src/tools/connectors.service.js";
 import { lifePkg, pluginTgz } from "../helpers/plugin-packages.js";
-import { createOrg, enableExtensions, waitFor } from "../helpers/runs.js";
+import { createOrgWithProviders, enableExtensions, waitFor } from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
 import {
   auditActions,
@@ -43,7 +43,7 @@ let org2: string;
 
 beforeAll(async () => {
   env = await startOrgEnv();
-  org2 = await createOrg(env.root, "Beta");
+  org2 = await createOrgWithProviders(env.k, env.root, "Beta");
 });
 
 afterAll(async () => {

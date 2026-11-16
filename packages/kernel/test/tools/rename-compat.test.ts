@@ -37,7 +37,7 @@ import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createAgent,
   createConv,
-  createOrg,
+  createOrgWithProviders,
   enableConnectorExtensions,
   eventsOf,
   PW,
@@ -211,7 +211,7 @@ describe("改名后的路由与旧 agent 版本", () => {
   beforeAll(async () => {
     await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
     req = await session(k, "owner");
-    orgId = await createOrg(req);
+    orgId = await createOrgWithProviders(k, req);
     await enableConnectorExtensions(k, orgId);
   });
 
@@ -410,8 +410,8 @@ describe("release-candidate tool keys in stored data", () => {
       await accountsFor(db).createLocal({ login: "legacy", password: PW, displayName: "O" })
     ).id;
     req = await session(k, "legacy");
-    orgA = await createOrg(req, "A");
-    orgB = await createOrg(req, "B");
+    orgA = await createOrgWithProviders(k, req, "A");
+    orgB = await createOrgWithProviders(k, req, "B");
     await enableConnectorExtensions(k, orgA);
     await enableConnectorExtensions(k, orgB);
     docsId = await install(orgA, "docs");

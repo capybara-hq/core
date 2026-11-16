@@ -29,7 +29,7 @@ import {
   cardRecorded,
   createAgent,
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -209,7 +209,7 @@ describe("IM delivery is owed (transactional outbox §8.1)", () => {
 
   beforeAll(async () => {
     owedMode = true;
-    orgId = await createOrg(owner, "Owed");
+    orgId = await createOrgWithProviders(k, owner, "Owed");
     for (const plugin of ["chan-mini", "mem-connector"]) {
       const en = await owner({
         method: "PUT",
@@ -463,7 +463,7 @@ describe("sub-agent cards in an IM thread", () => {
 
   beforeAll(async () => {
     owedMode = false;
-    orgId = await createOrg(owner, "Subagent");
+    orgId = await createOrgWithProviders(k, owner, "Subagent");
     for (const plugin of ["chan-mini", "mem-connector"]) {
       const en = await owner({
         method: "PUT",

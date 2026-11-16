@@ -28,7 +28,7 @@ import { seedForkedSkill } from "../helpers/forked-skills.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   type Req,
@@ -157,7 +157,7 @@ beforeAll(async () => {
   const accounts = accountsFor(db);
   ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "Owner" })).id;
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   await sql`INSERT INTO capybara.identities (source, external_id, account_id)
     VALUES (${SOURCE}, ${"u-owner"}, ${ownerId})`.execute(raw);
   skillIds["fix-issue"] = await seedSkill("fix-issue", "Fix GitHub issue $ARGUMENTS.");

@@ -22,7 +22,7 @@ import { accountsFor, apiTokensFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   type Req,
@@ -132,7 +132,7 @@ describe("插件视图接口", () => {
     const otherId = await account("other");
     owner = await session(k, "owner");
     other = await session(k, "other");
-    orgId = await createOrg(owner);
+    orgId = await createOrgWithProviders(k, owner);
     await testMembers(db).add(orgId, otherId, "member", ownerId);
     agentId = await createToolAgent(owner, orgId);
     convId = await createConv(owner, orgId, agentId);
@@ -271,7 +271,7 @@ describe("插件视图接口", () => {
       expect(errCode(a)).toBe("ui.not_found");
     }
     // 别的组织里自己的对话：在本组织路径下取 → 404
-    const org2 = await createOrg(owner, "Other");
+    const org2 = await createOrgWithProviders(k, owner, "Other");
     await enable(owner, org2, "ui-probe");
     const agent2 = await createToolAgent(owner, org2);
     const conv2 = await createConv(owner, org2, agent2);
@@ -720,7 +720,7 @@ describe("工具显示摘要", () => {
     lines.length = 0;
     await account("owner");
     owner = await session(k, "owner");
-    orgId = await createOrg(owner);
+    orgId = await createOrgWithProviders(k, owner);
     await enable(owner, orgId, "fake-tools-ui");
     await enable(owner, orgId, "ui-probe");
     const agentId = await createToolAgent(owner, orgId);

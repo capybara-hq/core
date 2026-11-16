@@ -41,7 +41,7 @@ import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -110,7 +110,7 @@ beforeAll(async () => {
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   agentId = await newAgent(owner);
   coderId = await newAgent(owner, SANDBOX_TOOLS);
   ownerDevice = await deviceOf(await createConv(owner, orgId, agentId));

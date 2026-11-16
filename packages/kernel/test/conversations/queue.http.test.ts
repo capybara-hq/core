@@ -20,7 +20,7 @@ import { testMembers } from "../helpers/members.js";
 import {
   createAgent,
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -81,7 +81,7 @@ beforeEach(async () => {
   });
   expect(login.statusCode).toBe(200);
   ownerCookie = () => jar.header() as string;
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   await testMembers(db).add(orgId, otherId, "member", ownerId);
   other = await session(k, "other");
   agentId = await createAgent(owner, orgId);

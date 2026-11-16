@@ -43,7 +43,7 @@ import { accountsFor } from "../helpers/identity.js";
 import {
   createAgent,
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -137,7 +137,7 @@ beforeEach(async () => {
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   const enabled = await owner({
     method: "PUT",
     url: `/api/v1/orgs/${orgId}/extensions/hooks-probe`,
