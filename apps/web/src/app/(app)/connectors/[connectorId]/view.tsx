@@ -49,6 +49,7 @@ import {
   type ConnectorTool,
   canManageConnectors,
   deleteConnector,
+  ownershipOf,
   refreshConnector,
   reviewTool,
   setGitPushPolicy,
@@ -857,7 +858,9 @@ function GitPushCard({
     <Card title={t("gitPush.title")}>
       <Stack gap={12}>
         <Text variant="prose" tone="muted">
-          {t("gitPush.hint", { hosts: git.hosts.map((h) => h.host).join(", ") })}
+          {t(ownershipOf(app.auth) === "personal" ? "gitPush.hint" : "gitPush.hintShared", {
+            hosts: git.hosts.map((h) => h.host).join(", "),
+          })}
         </Text>
         <Field label={t("gitPush.label")}>
           <Select

@@ -2441,7 +2441,7 @@
       },
       "gitPush": {
         "title": "Git push",
-        "hint": "The organization's default for pushes: {label}. Repositories you chose to always allow push without asking; clear one to be asked again.",
+        "hint": "The organization's default for pushes: {label}. Repositories you chose to always allow push without asking, unless the default is Deny; clear one to be asked again.",
         "empty": "You have not allowed any repository.",
         "clear": "Clear",
         "undo": "Keep",
@@ -2454,7 +2454,8 @@
     },
     "gitPush": {
       "title": "Git push",
-      "hint": "When an agent pushes through this connector's credential in a sandbox (hosts: {hosts}). Ask asks the person for each repository; members can allow a repository for themselves.",
+      "hint": "When an agent pushes through this connector's credential in a sandbox (hosts: {hosts}). Ask asks the person for each repository, and each member can always allow a repository for themselves; Deny refuses every push.",
+      "hintShared": "When an agent pushes through this connector's shared credential in a sandbox (hosts: {hosts}). Ask asks the person for every push (a repository can be always allowed only on a connector with personal credentials); Deny refuses every push.",
       "label": "Default for pushes"
     }
   },

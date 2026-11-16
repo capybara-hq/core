@@ -1487,8 +1487,10 @@ describe("connector mutations update the cache", () => {
     const { client } = await renderDetail();
     const user = userEvent.setup();
     await user.click(screen.getByRole("tab", { name: en.connectors.detail.tabs.settings }));
+    // a shared credential: Ask asks every time (only a personal credential's member may always
+    // allow a repository)
     expect(
-      screen.getByText(en.connectors.gitPush.hint.replace("{hosts}", "github.com")),
+      screen.getByText(en.connectors.gitPush.hintShared.replace("{hosts}", "github.com")),
     ).toBeTruthy();
     const select = screen.getByRole("combobox", {
       name: new RegExp(`^${en.connectors.gitPush.label}`),
@@ -1532,11 +1534,21 @@ describe("connector mutations update the cache", () => {
     const GIT = { hosts: [{ host: "github.com", username: "x-access-token" }] };
     stubApi({
       "GET /api/v1/orgs/o1/connectors/app1": () =>
-        json(200, { connector: detail({ git: GIT, gitPushPolicy: "allow" }) }),
+        json(200, {
+          connector: detail({
+            git: GIT,
+            gitPushPolicy: "allow",
+            auth: { type: "bearer", ownership: "personal" },
+          }),
+        }),
     });
     await renderDetail({ me: MEMBER });
     const user = userEvent.setup();
     await user.click(screen.getByRole("tab", { name: en.connectors.detail.tabs.settings }));
+    // personal credentials: each member may always allow a repository
+    expect(
+      screen.getByText(en.connectors.gitPush.hint.replace("{hosts}", "github.com")),
+    ).toBeTruthy();
     const select = screen.getByRole("combobox", {
       name: new RegExp(`^${en.connectors.gitPush.label}`),
     });
