@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -14,6 +16,18 @@ afterEach(cleanup);
 
 const wrap = (ui: React.ReactElement, locale: "zh" | "en" = "zh") =>
   render(<DesignProvider locale={locale}>{ui}</DesignProvider>);
+
+const css = readFileSync(resolve(import.meta.dirname, "../src/styles/conversation.css"), "utf8");
+
+/** The declarations of the rule whose selector list starts with `selector`. */
+function rule(cssText: string, selector: string): string {
+  const direct = cssText.indexOf(`\n${selector} {`);
+  const listed = cssText.indexOf(`\n${selector},`);
+  const start = direct >= 0 && (listed < 0 || direct < listed) ? direct : listed;
+  if (start < 0) throw new Error(`no rule ${selector}`);
+  const open = cssText.indexOf("{", start);
+  return cssText.slice(open + 1, cssText.indexOf("}", open));
+}
 
 let seq = 0;
 const row = (over: Partial<ToolRowData> = {}): ToolRowData => ({
@@ -206,6 +220,30 @@ describe("ToolRow (§6.16.9)", () => {
       s.textContent?.includes("12 秒"),
     );
     expect(t2?.closest('[aria-hidden="true"]')).not.toBeNull();
+  });
+
+  it("the live timer of a single-call group is a status: it never shrinks or wraps (§6.16.9)", () => {
+    const { container } = wrap(
+      <ToolGroup
+        rows={[
+          row({
+            kind: "command",
+            description: "Check for xlsx reading libraries",
+            extra: "Runs code written inline for an interpreter; the review cannot read it.",
+            status: "running",
+            startedAt: 0,
+          }),
+        ]}
+        now={6_000}
+      />,
+    );
+    const timer = container.querySelector('[data-part="tool-time"]') as HTMLElement;
+    expect(timer.textContent).toBe(" · 6 秒");
+    expect(timer.closest('[data-part="tool-line"]')).not.toBeNull();
+    // the description yields with the label's ellipsis; the timer keeps its one line
+    const declarations = rule(css, '.cb-tool-line > [data-part="tool-time"]');
+    expect(declarations).toContain("flex: none");
+    expect(declarations).toContain("white-space: nowrap");
   });
 
   it("an expanded command shows $ command, output, duration and Copy output", async () => {

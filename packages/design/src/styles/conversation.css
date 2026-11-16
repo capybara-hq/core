@@ -118,6 +118,15 @@ button.cb-tool-line:focus-visible {
   white-space: nowrap;
 }
 
+/* The live timer is a status too (§6.16.9: one tool line reserves its status without shrinking or
+   wrapping it): beside a long description it stays on one line and the description yields with the
+   ellipsis. A plain flex item would shrink with the label and draw "6" and "秒" on two lines. */
+.cb-tool-line > [data-part="tool-time"],
+.cb-tool-toggle > [data-part="tool-time"] {
+  flex: none;
+  white-space: nowrap;
+}
+
 /* ── Prose and Markdown ── */
 
 .cb-prose {
