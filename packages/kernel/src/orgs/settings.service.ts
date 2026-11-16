@@ -248,6 +248,25 @@ export const OrgSettingsSchema = z.object({
 
 export type OrgSettings = z.infer<typeof OrgSettingsSchema>;
 
+/**
+ * The settings as the responses carry them: {@link OrgSettings} plus
+ * `scheduledTasks.forbiddenToolsUnreadable: true` when the stored list cannot be read
+ * ({@link invalidStoredForbiddenTools}; `forbiddenTools` then reads `[]`), so the settings page
+ * says so and saves the list. Never stored.
+ */
+export type OrgSettingsView = OrgSettings & {
+  scheduledTasks: OrgSettings["scheduledTasks"] & { forbiddenToolsUnreadable?: true };
+};
+
+/** {@link OrgSettingsView} of `settings`, flagged from the stored value `raw`. */
+const viewOf = (settings: OrgSettings, raw: unknown): OrgSettingsView =>
+  invalidStoredForbiddenTools(raw)
+    ? {
+        ...settings,
+        scheduledTasks: { ...settings.scheduledTasks, forbiddenToolsUnreadable: true },
+      }
+    : settings;
+
 /** PATCH 体：只改给出的字段；未知字段 → 400。 */
 export const OrgSettingsPatchSchema = z
   .object({
@@ -376,15 +395,18 @@ export async function readStoredOrgSettings(db: KernelSchemaDb, orgId: string): 
 
 /**
  * 读组织设置（每次实时读 PG，多副本下改动立即生效）；组织不存在或已删除按默认值。With `log`, an
- * unreadable security setting ({@link warnUnreadableSecuritySettings}) is logged.
+ * unreadable security setting ({@link logUnreadableSecuritySettings}) is logged.
  */
 export async function readOrgSettings(
   db: KernelSchemaDb,
   orgId: string,
-  log?: Pick<KernelLogger, "warn">,
+  /** Per-call paths (the tool policy) log at debug; the settings reads and the fire warn. */
+  log?: Pick<KernelLogger, "debug">,
 ): Promise<OrgSettings> {
   const raw = await readStoredOrgSettings(db, orgId);
-  if (log !== undefined) warnUnreadableSecuritySettings(log, orgId, raw);
+  if (log !== undefined) {
+    logUnreadableSecuritySettings((msg, f) => log.debug(msg, f), orgId, raw);
+  }
   return parseOrgSettings(raw);
 }
 
@@ -412,17 +434,24 @@ export function invalidStoredForbiddenTools(raw: unknown): boolean {
 export const FORBIDDEN_TOOLS_UNREADABLE_ERROR =
   "The organization's forbidden tool list for scheduled tasks is unreadable, so this scheduled run cannot continue; an org admin must save the list again in the organization's scheduled task settings.";
 
-/** Logs the security settings a stored value reads narrower than written (with the org id). */
-export function warnUnreadableSecuritySettings(
-  log: Pick<KernelLogger, "warn">,
+/** The refusal of a new task grant while the org's `forbiddenTools` cannot be read. */
+export const FORBIDDEN_TOOLS_UNREADABLE_GRANT_ERROR =
+  "The organization's forbidden tool list for scheduled tasks is unreadable, so no tool can be approved for a task now; an org admin must save the list again in the organization's scheduled task settings.";
+
+/**
+ * Logs (through `log`, at the caller's level) the security settings a stored value reads narrower
+ * than written, with the org id.
+ */
+export function logUnreadableSecuritySettings(
+  log: (msg: string, fields: Record<string, unknown>) => void,
   orgId: string,
   raw: unknown,
 ): void {
   if (invalidStoredSandboxToolPolicy(raw)) {
-    log.warn("org settings: stored sandboxToolPolicy is invalid; it reads as ask", { orgId });
+    log("org settings: stored sandboxToolPolicy is invalid; it reads as ask", { orgId });
   }
   if (invalidStoredForbiddenTools(raw)) {
-    log.warn(
+    log(
       "org settings: stored scheduledTasks.forbiddenTools is unreadable; unattended runs fail until an org admin saves it again",
       { orgId },
     );
@@ -487,7 +516,7 @@ export class OrgSettingsService {
 
   /** Parses stored settings, warning when an invalid `autoMode` narrows to `off`, an invalid
    * `cloudNetwork` to an empty allowlist, or a security setting reads narrower
-   * ({@link warnUnreadableSecuritySettings}). */
+   * ({@link logUnreadableSecuritySettings}, warn). */
   private parseStored(orgId: string, raw: unknown): OrgSettings {
     if (invalidStoredAutoMode(raw)) {
       this.log?.warn("org settings: stored autoMode is invalid; it reads as off", { orgId });
@@ -500,7 +529,8 @@ export class OrgSettingsService {
         },
       );
     }
-    if (this.log !== undefined) warnUnreadableSecuritySettings(this.log, orgId, raw);
+    const log = this.log;
+    if (log !== undefined) logUnreadableSecuritySettings((m, f) => log.warn(m, f), orgId, raw);
     return parseOrgSettings(raw);
   }
 
@@ -551,7 +581,7 @@ export class OrgSettingsService {
     };
   }
 
-  async get(orgId: string): Promise<OrgSettings> {
+  async get(orgId: string): Promise<OrgSettingsView> {
     const row = await this.db
       .selectFrom("orgs")
       .select("settings")
@@ -559,7 +589,7 @@ export class OrgSettingsService {
       .where("deleted_at", "is", null)
       .executeTakeFirst();
     if (!row) throw new ApiError("org.not_found", "Organization not found");
-    return this.parseStored(orgId, row.settings);
+    return viewOf(this.parseStored(orgId, row.settings), row.settings);
   }
 
   /**
@@ -620,7 +650,7 @@ export class OrgSettingsService {
      * change that widens (see {@link assertOnlyNarrows}); only a person in a session widens.
      */
     opts?: { onlyNarrows?: boolean },
-  ): Promise<OrgSettings> {
+  ): Promise<OrgSettingsView> {
     await this.check(patch);
     return this.updateIn(orgId, patch, actorAccountId, actorTokenId, auditDetail, opts);
   }
@@ -663,7 +693,7 @@ export class OrgSettingsService {
     actorTokenId: string | undefined,
     auditDetail: Record<string, unknown> | undefined,
     opts: { onlyNarrows?: boolean } | undefined,
-  ): Promise<OrgSettings> {
+  ): Promise<OrgSettingsView> {
     await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "org.update");
     const row = await this.db
       .selectFrom("orgs")
@@ -722,7 +752,7 @@ export class OrgSettingsService {
     const repairs =
       (invalidStoredForbiddenTools(stored) && patch.scheduledTasks?.forbiddenTools !== undefined) ||
       (invalidStoredSandboxToolPolicy(stored) && patch.sandboxToolPolicy !== undefined);
-    if (!repairs && sameSettings(before, after)) return before;
+    if (!repairs && sameSettings(before, after)) return viewOf(before, stored);
     // Lock order: the org row (orgLock above), then the theme's catalog item and its row FOR
     // SHARE (assertThemeOnIn), then the check, so no scope writer changes what it read first
     if (patch.theme?.id != null && patch.theme.id !== before.theme?.id) {
@@ -762,9 +792,9 @@ export class OrgSettingsService {
       orgId,
       action: "org.settings_updated",
       target: orgId,
-      detail: { before, after, ...auditDetail },
+      detail: { before, after, ...(repairs && { repaired: true }), ...auditDetail },
     });
-    return after;
+    return viewOf(after, written);
   }
 }
 

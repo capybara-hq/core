@@ -20,6 +20,7 @@ import { orgAllows } from "../local-devices/network-grants.js";
 import type { KernelLogger } from "../log.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { can, type OrgRole, roleAtLeast } from "../orgs/roles.js";
+import { FORBIDDEN_TOOLS_UNREADABLE_GRANT_ERROR } from "../orgs/settings.service.js";
 import { ProviderRegistry } from "../runtime/providers.js";
 import { orgHostOutsideCeiling } from "../sandbox/modes.js";
 import { SandboxService } from "../sandbox/sandbox.service.js";
@@ -1400,6 +1401,10 @@ export class ScheduledTasksService {
     source: GrantWriteSource = {},
   ): Promise<ScheduledTaskGrant[]> {
     if (grants.length === 0) return [];
+    // fail closed: no grant can be checked against a list that cannot be read
+    if (settings.forbiddenToolsUnreadable) {
+      throw grantNotAllowed(FORBIDDEN_TOOLS_UNREADABLE_GRANT_ERROR);
+    }
     const out = new Map<string, ScheduledTaskGrant>();
     const network = grants.filter((g) => isNetworkGrantKey(g.toolKey));
     if (network.length > 0) {

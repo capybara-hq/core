@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   invalidStoredForbiddenTools,
   invalidStoredSandboxToolPolicy,
+  logUnreadableSecuritySettings,
   parseOrgSettings,
-  warnUnreadableSecuritySettings,
 } from "../../src/orgs/settings.service.js";
 import { effectiveScheduleSettings } from "../../src/schedules/effective-settings.js";
 
@@ -15,7 +15,7 @@ import { effectiveScheduleSettings } from "../../src/schedules/effective-setting
 
 const warnings = () => {
   const out: Array<[string, unknown]> = [];
-  return { out, log: { warn: (msg: string, ctx?: unknown) => out.push([msg, ctx]) } };
+  return { out, log: (msg: string, ctx: unknown) => void out.push([msg, ctx]) };
 };
 
 describe("sandboxToolPolicy", () => {
@@ -76,10 +76,10 @@ describe("forbiddenTools", () => {
   });
 });
 
-describe("warnUnreadableSecuritySettings", () => {
+describe("logUnreadableSecuritySettings", () => {
   it("logs each unreadable value with the org id", () => {
     const { out, log } = warnings();
-    warnUnreadableSecuritySettings(log, "org-1", {
+    logUnreadableSecuritySettings(log, "org-1", {
       sandboxToolPolicy: "deny",
       scheduledTasks: { forbiddenTools: "Bash" },
     });
@@ -91,7 +91,7 @@ describe("warnUnreadableSecuritySettings", () => {
 
   it("logs nothing for readable values", () => {
     const { out, log } = warnings();
-    warnUnreadableSecuritySettings(log, "org-1", {
+    logUnreadableSecuritySettings(log, "org-1", {
       sandboxToolPolicy: "allow",
       scheduledTasks: { forbiddenTools: ["Bash"] },
     });

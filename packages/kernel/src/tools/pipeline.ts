@@ -40,6 +40,7 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import { DevicePolicyService } from "../local-devices/device-policy.service.js";
 import { NetworkGrants, type NetworkRunState } from "../local-devices/network-grants.js";
+import type { KernelLogger } from "../log.js";
 import type { OrgRole } from "../orgs/roles.js";
 import { UNKNOWN_RESULT_TEXT } from "../runtime/context/pairing.js";
 import {
@@ -779,7 +780,7 @@ export class ToolPipeline {
     >,
     @Inject(QuestionsService) questions: Pick<QuestionsService, "ask" | "forCall">,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
-    @Inject(KERNEL_LOGGER) log: Logger,
+    @Inject(KERNEL_LOGGER) log: Logger & Partial<Pick<KernelLogger, "debug">>,
     /** Plugin hooks and inline ui contributions; absent (tests): no hooks, cards dropped. */
     @Inject(ExtensionHost) host: Pick<ExtensionHost, "hooks" | "current"> | undefined,
     @Inject(ToolDrift) drift: Pick<ToolDrift, "onToolsChanged"> | undefined,
@@ -838,7 +839,10 @@ export class ToolPipeline {
     };
     const decide = hooks?.decidePolicy;
     // the default policy reads live, on the context's handle
-    this.decide = decide ?? ((tool, def, c) => createDecidePolicy(kdb.db, log)(tool, def, c));
+    this.decide =
+      decide ??
+      ((tool, def, c) =>
+        createDecidePolicy(kdb.db, log.debug && { debug: log.debug.bind(log) })(tool, def, c));
   }
 
   /**

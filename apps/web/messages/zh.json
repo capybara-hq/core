@@ -6533,6 +6533,7 @@
     "forbiddenHint": "定时运行中永远不允许使用的工具，也不能被预先批准。",
     "forbiddenTools": "工具键",
     "forbiddenHelp": "每行一个工具键，例如 Bash 或 mcp__github__create_issue。",
+    "forbiddenUnreadable": "组织的禁用工具列表无法读取：定时任务的无人值守运行会失败，也不能为任务批准工具。请检查下方的列表并保存来修复。",
     "invalid": "请输入不小于 1 的整数。",
     "save": "保存",
     "saved": "设置已保存",

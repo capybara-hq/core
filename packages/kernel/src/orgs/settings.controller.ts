@@ -11,11 +11,11 @@ import { CurrentOrg, OrgAction, type OrgContext } from "./org.guard.js";
 import {
   type OrgEffectiveNetwork,
   type OrgSandboxLimits,
-  type OrgSettings,
   type OrgSettingsDeployment,
   type OrgSettingsPatch,
   OrgSettingsPatchSchema,
   OrgSettingsService,
+  type OrgSettingsView,
 } from "./settings.service.js";
 
 class OrgSettingsPatchBody extends createZodDto(OrgSettingsPatchSchema, "OrgSettingsPatch") {}
@@ -26,7 +26,8 @@ class OrgSettingsPatchBody extends createZodDto(OrgSettingsPatchSchema, "OrgSett
  * 以及只读的 `sandboxLimits`（组织实际生效的沙箱 cpu / 内存与来源，超级管理员在部署设置里覆盖，C19）。
  */
 type SettingsResponse = {
-  settings: OrgSettings;
+  /** `scheduledTasks.forbiddenToolsUnreadable: true` when the stored list cannot be read. */
+  settings: OrgSettingsView;
   deployment: OrgSettingsDeployment;
   /** The org's effective sandbox-mode network (org egress ceiling spec §D4). */
   effectiveNetwork: OrgEffectiveNetwork;

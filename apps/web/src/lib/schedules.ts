@@ -208,6 +208,11 @@ export interface ScheduledTasksSettings {
   unattendedAsk: "fail" | "wait";
   pauseAfterFailures: number;
   forbiddenTools: string[];
+  /**
+   * In responses only: the stored list cannot be read (`forbiddenTools` reads `[]`); unattended
+   * runs fail until an org admin saves the list again.
+   */
+  forbiddenToolsUnreadable?: true;
 }
 
 /** The defaults of spec §9 (an older kernel leaves the group out). */

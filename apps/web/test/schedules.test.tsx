@@ -812,6 +812,36 @@ describe("/settings/schedules (org admins)", () => {
     },
   );
 
+  it.each(["zh", "en"] as const)(
+    "an unreadable forbidden list shows a notice and Save sends the list unchanged (%s)",
+    async (locale) => {
+      const s = (locale === "zh" ? zh : en).scheduleSettings;
+      const calls = stubApi({
+        ...routes,
+        [`GET ${SETTINGS}`]: ok({
+          settings: {
+            ...settings,
+            scheduledTasks: { ...settings.scheduledTasks, forbiddenToolsUnreadable: true },
+          },
+        }),
+        [`PATCH ${SETTINGS}`]: () => json(200, { settings }),
+      });
+      await renderRouteWithCache("/settings/schedules", lastStubRoutes(), { locale });
+      expect(screen.getByText(s.forbiddenUnreadable)).toBeTruthy();
+      const user = userEvent.setup();
+      // nothing edited: the list itself is the pending change
+      const row = screen.getByRole("region", {
+        name: locale === "zh" ? "待提交改动" : "Pending changes",
+      });
+      await user.click(within(row).getByRole("button", { name: s.save }));
+      expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({
+        scheduledTasks: { forbiddenTools: [] },
+      });
+      expect(await screen.findByText(s.saved)).toBeTruthy();
+      expect(screen.queryByText(s.forbiddenUnreadable)).toBeNull();
+    },
+  );
+
   it("an invalid number blocks the save", async () => {
     stubApi(routes);
     await renderRouteWithCache("/settings/schedules", lastStubRoutes());

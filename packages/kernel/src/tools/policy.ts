@@ -147,8 +147,8 @@ export function connectorPolicy(input: {
  */
 export function createDecidePolicy(
   db: KernelSchemaDb,
-  /** Warns when an org's stored security setting is unreadable (read narrower). */
-  log?: Pick<KernelLogger, "warn">,
+  /** Logs (debug: once per call) when an org's stored security setting is unreadable. */
+  log?: Pick<KernelLogger, "debug">,
 ): DecidePolicy {
   return async (tool, agentDef, ctx) => {
     // a per-call policy (Platform tool spec §6.2): its key replaces the tool key for policies,
