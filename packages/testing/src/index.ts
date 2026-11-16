@@ -223,4 +223,9 @@ export {
   MEDIA_SAMPLES,
   thinkingReplayParams,
 } from "./model-conformance.js";
+export {
+  type NativeFixtureEntry,
+  runSandboxNativeConformance,
+  type SandboxNativeFixture,
+} from "./sandbox-native-conformance.js";
 export { openSse, type SseClient, type SseMessage } from "./sse.js";
