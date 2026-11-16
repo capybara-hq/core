@@ -2,8 +2,10 @@ import type { KernelDb } from "../infra/database/kernel-db.js";
 
 /**
  * The one definition of "live" for runs: an org or conversation is live while it is not
- * soft-deleted. Every path that decides whether a run may start, keep executing or be stopped
- * (queueing, the execution fence, the orphan check, deletion) goes through here.
+ * soft-deleted. Every path that decides from an org's or a conversation's deletion whether a run
+ * may start, keep executing or be stopped (queueing, wakes, the post-run ensure, the execution
+ * fence, the orphan check, deletion) goes through here; other rows' deletion (agents, accounts,
+ * devices) is not run liveness.
  */
 export function isLive(...deletedAt: ReadonlyArray<unknown>): boolean {
   return deletedAt.every((d) => d === null);

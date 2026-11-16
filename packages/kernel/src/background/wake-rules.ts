@@ -1,6 +1,7 @@
 import { sql } from "kysely";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { effectiveWakeOnBackgroundTask, readOrgSettings } from "../orgs/settings.service.js";
+import { isLive } from "../runtime/run-liveness.js";
 
 /**
  * The wake rules of an idle conversation (spec 2026-11-05-background-bash-design §3, generalized
@@ -119,7 +120,7 @@ export async function wakeDecisionIn(
     .select(["queue_paused", "deleted_at", "tree_stopped_at"])
     .where("id", "=", conv.rootId)
     .executeTakeFirst();
-  if (!root || root.queue_paused || root.deleted_at !== null) return null;
+  if (!root || root.queue_paused || !isLive(root.deleted_at)) return null;
   const treeStopped = root.tree_stopped_at !== null;
   const candidates = [...finishes, ...(treeStopped ? [] : deliveries)]
     .sort((a, b) => Number(b.seq) - Number(a.seq))

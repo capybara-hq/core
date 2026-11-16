@@ -550,7 +550,7 @@ export class RunQueue {
       .select(["queue_paused", "deleted_at"])
       .where("id", "=", rootId)
       .executeTakeFirst();
-    if (!root || root.queue_paused || root.deleted_at !== null) return null;
+    if (!root || root.queue_paused || !isLive(root.deleted_at)) return null;
     const accountId = (message.payload as { authorAccountId: string }).authorAccountId;
     if (!(await authorCanSend(t, rootId, accountId))) return null;
     return { kind: "wake", seq: Number(message.seq), triggerAccountId: accountId };
@@ -587,7 +587,7 @@ export class RunQueue {
       .select(["queue_paused", "deleted_at"])
       .where("id", "=", rootId)
       .executeTakeFirst();
-    if (!root || root.queue_paused || root.deleted_at !== null) return;
+    if (!root || root.queue_paused || !isLive(root.deleted_at)) return;
     for (const c of await this.heldTree(rootId)) {
       await this.jobs.oweEnsureRun(c.id, c.seq, c.org_id);
     }
