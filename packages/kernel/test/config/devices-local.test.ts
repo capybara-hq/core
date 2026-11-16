@@ -66,37 +66,49 @@ describe("devices.local config", () => {
   });
 });
 
-describe("removed sandbox keys fail loudly", () => {
-  // a silently ignored security key reads as a widening (auto mode hardening spec K3)
+describe("unknown config keys fail loudly", () => {
+  // a silently ignored security key reads as a widening
   const env = {
     CAPYBARA_DB__URL: base.db.url,
     CAPYBARA_REDIS__URL: base.redis.url,
     CAPYBARA_MASTER_KEY: base.masterKey,
   };
 
-  it("sandbox.tiers in the loaded config fails, naming devices.autoMode and cloudNetwork", () => {
+  it("a removed nested key from the file fails, naming its full path", () => {
     const run = () =>
       resolveConfig({ ...base, sandbox: { tiers: { max: "open", allowUnsandboxed: false } } }, {});
     expect(run).toThrow(ConfigError);
-    expect(run).toThrow(/sandbox\.tiers.*removed/);
-    expect(run).toThrow(/devices\.autoMode/);
-    expect(run).toThrow(/cloudNetwork/);
+    expect(run).toThrow(/unknown config key sandbox\.tiers/);
   });
 
-  it("sandbox.limits.devHosts fails, naming the allowlist that replaces it", () => {
-    const run = () =>
-      resolveConfig({ ...base, sandbox: { limits: { devHosts: ["dev.example.com"] } } }, {});
-    expect(run).toThrow(/sandbox\.limits\.devHosts.*removed/);
-    expect(run).toThrow(/sandbox\.limits\.allowHosts/);
+  it("a removed deeper key from the file fails", () => {
+    expect(() =>
+      resolveConfig({ ...base, sandbox: { limits: { devHosts: ["dev.example.com"] } } }, {}),
+    ).toThrow(/unknown config key sandbox\.limits\.devHosts/);
   });
 
   it("the same keys from the environment fail too", () => {
     expect(() => resolveConfig({}, { ...env, CAPYBARA_SANDBOX__TIERS__MAX: "open" })).toThrow(
-      /sandbox\.tiers.*devices\.autoMode/s,
+      /unknown config key sandbox\.tiers/,
     );
     expect(() =>
       resolveConfig({}, { ...env, CAPYBARA_SANDBOX__LIMITS__DEV_HOSTS: '["dev.example.com"]' }),
-    ).toThrow(/sandbox\.limits\.devHosts/);
+    ).toThrow(/unknown config key sandbox\.limits\.devHosts/);
+  });
+
+  it("an unknown top-level key fails, and every unknown key is listed at once", () => {
+    const run = () => resolveConfig({ ...base, nope: 1, http: { prot: 1 } }, {});
+    expect(run).toThrow(/unknown config key nope/);
+    expect(run).toThrow(/unknown config key http\.prot/);
+  });
+
+  it("variables that are not config paths are ignored", () => {
+    expect(() => resolveConfig(base, { CAPYBARA_INIT_ADMIN_LOGIN: "admin" })).not.toThrow();
+  });
+
+  it("extensionConfig sections stay free-form", () => {
+    const c = resolveConfig({ ...base, extensionConfig: { x: { anything: { goes: 1 } } } }, {});
+    expect(c.extensionConfig).toEqual({ x: { anything: { goes: 1 } } });
   });
 
   it("sandbox.limits.egress: open fails, naming devices.autoMode and cloudNetwork", () => {
@@ -104,17 +116,6 @@ describe("removed sandbox keys fail loudly", () => {
     expect(run).toThrow(/sandbox\.limits\.egress/);
     expect(run).toThrow(/devices\.autoMode/);
     expect(run).toThrow(/cloudNetwork/);
-  });
-
-  it("every removed key is listed at once", () => {
-    const run = () =>
-      resolveConfig(
-        { ...base, sandbox: { tiers: {}, limits: { devHosts: [], egress: "open" } } },
-        {},
-      );
-    expect(run).toThrow(
-      /sandbox\.tiers[\s\S]*sandbox\.limits\.devHosts[\s\S]*sandbox\.limits\.egress/,
-    );
   });
 });
 

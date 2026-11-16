@@ -73,12 +73,10 @@ describe("loadConfig", () => {
     expect(config.extensionConfig["object-store-s3"]).toEqual({ bucket: "b" });
   });
 
-  it("the old CAPYBARA_PLUGIN_CONFIG__ env var is ignored like any unknown key", async () => {
-    const config = await loadConfig(
-      baseEnv({ CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__BUCKET: "b" }),
-    );
-    expect(config.extensionConfig).toEqual({});
-    expect("pluginConfig" in config).toBe(false);
+  it("the old CAPYBARA_PLUGIN_CONFIG__ env var is an unknown key", async () => {
+    await expect(
+      loadConfig(baseEnv({ CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__BUCKET: "b" })),
+    ).rejects.toThrow(/unknown config key pluginConfig/);
   });
 
   it("the official marketplace is on by default (spec §5.5)", async () => {

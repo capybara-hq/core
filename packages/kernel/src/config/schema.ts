@@ -178,9 +178,9 @@ export function trustProxyEntryProblem(entry: string): string | undefined {
   return undefined;
 }
 
-export const KernelConfigSchema = z.object({
+export const KernelConfigSchema = z.strictObject({
   db: z
-    .object({
+    .strictObject({
       url: z
         .string()
         .min(1)
@@ -211,7 +211,7 @@ export const KernelConfigSchema = z.object({
     })
     .prefault({} as never),
   redis: z
-    .object({
+    .strictObject({
       url: z
         .string()
         .min(1)
@@ -234,7 +234,7 @@ export const KernelConfigSchema = z.object({
     .default({})
     .meta(meta({ description: "Deployment-level config keyed by extension name" })),
   extensionHost: z
-    .object({
+    .strictObject({
       dir: z
         .string()
         .min(1)
@@ -303,7 +303,7 @@ export const KernelConfigSchema = z.object({
     })
     .prefault({} as never),
   packages: z
-    .object({
+    .strictObject({
       npmRegistry: z
         .url()
         .default("https://registry.npmjs.org")
@@ -333,7 +333,7 @@ export const KernelConfigSchema = z.object({
     })
     .prefault({} as never),
   bootstrap: z
-    .object({
+    .strictObject({
       dir: z
         .string()
         .min(1)
@@ -347,7 +347,7 @@ export const KernelConfigSchema = z.object({
     })
     .prefault({} as never),
   catalog: z
-    .object({
+    .strictObject({
       staleInstallMinutes: z
         .number()
         .int()
@@ -362,9 +362,9 @@ export const KernelConfigSchema = z.object({
     })
     .prefault({} as never),
   marketplaces: z
-    .object({
+    .strictObject({
       official: z
-        .object({
+        .strictObject({
           enabled: z
             .boolean()
             .default(true)
@@ -470,7 +470,7 @@ export const KernelConfigSchema = z.object({
     })
     .prefault({} as never),
   net: z
-    .object({
+    .strictObject({
       httpsProxy: z
         .string()
         .superRefine((value, ctx) => {
@@ -507,7 +507,7 @@ export const KernelConfigSchema = z.object({
     })
     .prefault({} as never),
   extensionPermissions: z
-    .object({
+    .strictObject({
       autoApprove: z
         .boolean()
         .default(false)
@@ -520,7 +520,7 @@ export const KernelConfigSchema = z.object({
     })
     .default({ autoApprove: false }),
   http: z
-    .object({
+    .strictObject({
       port: z
         .number()
         .int()
@@ -620,7 +620,7 @@ export const KernelConfigSchema = z.object({
       }),
     ),
   auth: z
-    .object({
+    .strictObject({
       accessTokenTtlSeconds: z
         .number()
         .int()
@@ -699,7 +699,7 @@ export const KernelConfigSchema = z.object({
       trustedIdentitySources: [],
     }),
   runtime: z
-    .object({
+    .strictObject({
       maxSteps: z
         .number()
         .int()
@@ -832,7 +832,7 @@ export const KernelConfigSchema = z.object({
       sseRecheckMs: 60000,
     }),
   tools: z
-    .object({
+    .strictObject({
       timeoutMs: z
         .number()
         .int()
@@ -946,7 +946,7 @@ export const KernelConfigSchema = z.object({
           }),
         ),
       git: z
-        .object({
+        .strictObject({
           enabled: z
             .boolean()
             .default(true)
@@ -1053,7 +1053,7 @@ export const KernelConfigSchema = z.object({
       },
     }),
   channels: z
-    .object({
+    .strictObject({
       leaseTtlMs: z
         .number()
         .int()
@@ -1156,7 +1156,7 @@ export const KernelConfigSchema = z.object({
       webhookMaxBodyBytes: 1_048_576,
     }),
   storage: z
-    .object({
+    .strictObject({
       purgeDeletedOrgsAfterDays: z
         .number()
         .int()
@@ -1171,7 +1171,7 @@ export const KernelConfigSchema = z.object({
     })
     .default({ purgeDeletedOrgsAfterDays: 30 }),
   attachments: z
-    .object({
+    .strictObject({
       maxBytes: z
         .number()
         .int()
@@ -1229,7 +1229,7 @@ export const KernelConfigSchema = z.object({
     })
     .prefault({} as never),
   subagents: z
-    .object({
+    .strictObject({
       maxDepth: z
         .number()
         .int()
@@ -1285,7 +1285,7 @@ export const KernelConfigSchema = z.object({
     })
     .prefault({} as never),
   skills: z
-    .object({
+    .strictObject({
       catalogBudgetChars: z
         .number()
         .int()
@@ -1302,7 +1302,7 @@ export const KernelConfigSchema = z.object({
     })
     .prefault({} as never),
   attribution: z
-    .object({
+    .strictObject({
       commit: z
         .string()
         .max(500)
@@ -1340,9 +1340,9 @@ export const KernelConfigSchema = z.object({
     })
     .prefault({} as never),
   web: z
-    .object({
+    .strictObject({
       search: z
-        .object({
+        .strictObject({
           maxResults: z
             .number()
             .int()
@@ -1359,7 +1359,7 @@ export const KernelConfigSchema = z.object({
         })
         .prefault({} as never),
       fetch: z
-        .object({
+        .strictObject({
           maxPageChars: z
             .number()
             .int()
@@ -1413,7 +1413,7 @@ export const KernelConfigSchema = z.object({
     })
     .prefault({} as never),
   schedules: z
-    .object({
+    .strictObject({
       minIntervalFloorMinutes: z
         .number()
         .int()
@@ -1465,7 +1465,7 @@ export const KernelConfigSchema = z.object({
     })
     .prefault({} as never),
   sandbox: z
-    .object({
+    .strictObject({
       image: z
         .string()
         .min(1)
@@ -1511,7 +1511,7 @@ export const KernelConfigSchema = z.object({
           }),
         ),
       background: z
-        .object({
+        .strictObject({
           maxTasks: z
             .number()
             .int()
@@ -1554,7 +1554,7 @@ export const KernelConfigSchema = z.object({
        * purpose `review` no classifier runs and an unsure command is asked about.
        */
       review: z
-        .object({
+        .strictObject({
           timeoutMs: z
             .number()
             .int()
@@ -1582,7 +1582,7 @@ export const KernelConfigSchema = z.object({
         })
         .prefault({} as never),
       limits: z
-        .object({
+        .strictObject({
           cpu: z
             .number()
             .positive()
@@ -1703,7 +1703,7 @@ export const KernelConfigSchema = z.object({
     })
     .prefault({} as never),
   devices: z
-    .object({
+    .strictObject({
       /**
        * The platform's auto-mode switch (auto mode spec §4.3): whether a device may run in auto
        * mode; when off, a cloud device keeps its org's cloudNetwork (open by default). Also a deployment setting the super admin changes
@@ -1735,7 +1735,7 @@ export const KernelConfigSchema = z.object({
           }),
         ),
       local: z
-        .object({
+        .strictObject({
           reconnectGraceSeconds: z
             .number()
             .int()
@@ -1797,7 +1797,7 @@ export const KernelConfigSchema = z.object({
     })
     .prefault({} as never),
   evals: z
-    .object({
+    .strictObject({
       orgConcurrency: z
         .number()
         .int()
@@ -1875,7 +1875,7 @@ export const KernelConfigSchema = z.object({
     })
     .prefault({} as never),
   models: z
-    .object({
+    .strictObject({
       listTimeoutMs: z
         .number()
         .int()
@@ -1905,7 +1905,7 @@ export const KernelConfigSchema = z.object({
     })
     .prefault({} as never),
   hooks: z
-    .object({
+    .strictObject({
       timeoutMs: z
         .number()
         .int()
@@ -1932,7 +1932,7 @@ export const KernelConfigSchema = z.object({
     })
     .prefault({} as never),
   log: z
-    .object({
+    .strictObject({
       level: z
         .enum(LOG_LEVELS)
         .default("info")
@@ -1947,7 +1947,7 @@ export const KernelConfigSchema = z.object({
           }),
         ),
       loki: z
-        .object({
+        .strictObject({
           url: z
             .url({ protocol: /^https?$/ })
             .optional()
