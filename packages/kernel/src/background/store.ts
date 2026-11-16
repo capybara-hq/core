@@ -520,7 +520,7 @@ export class BackgroundTaskStore {
         sql<boolean>`(background_tasks.stopping_at IS NULL OR background_tasks.stopping_at < now() - ${STOP_CLAIM_TTL_MS}::integer * interval '1 millisecond')`,
       )
       .where(
-        sql<boolean>`NOT (device_instances.status IS NOT DISTINCT FROM 'suspended' AND (extract(epoch from device_instances.created_at) * 1000)::bigint::text = background_tasks.instance_generation)`,
+        sql<boolean>`NOT (device_instances.status IS NOT DISTINCT FROM 'suspended' AND floor(extract(epoch from device_instances.created_at) * 1000)::bigint::text = background_tasks.instance_generation)`,
       )
       .orderBy(sql`background_tasks.cancel_attempted_at ASC NULLS FIRST`)
       .orderBy("background_tasks.started_at", "asc")

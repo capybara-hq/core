@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
+import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { BackgroundTaskFinisher } from "../../src/background/finish.js";
 import { BackgroundTaskPollJob } from "../../src/background/poll.job.js";
@@ -911,6 +912,13 @@ describe("fix round 2: owed stops are applied fairly", () => {
         fs_status: "ready",
         had_instance: true,
       })
+      .execute();
+    // now() keeps microseconds while the recorded generation is whole milliseconds: 0.7 ms past
+    // the generation must still count as the same instance (a rounding cast would miss it).
+    await f.db
+      .updateTable("device_instances")
+      .set({ created_at: sql<Date>`created_at + interval '700 microseconds'` })
+      .where("device_id", "=", parked)
       .execute();
     await owedClones(f, 9, parked);
     f.provider.only().stopAs = "cancel-pending";
