@@ -129,6 +129,91 @@ it("shows a project warning in phone options and closes the sheet before inspect
 });
 
 describe("the composer's options button (phones, §6.16.2)", () => {
+  function PermissionHarness({ readOnlyDisabled = false }: { readOnlyDisabled?: boolean }) {
+    const [selected, setSelected] = useState("Approve for me");
+    return box({
+      pickers: {
+        device: devicePicker(),
+        permission: {
+          label: "Permissions",
+          value: selected,
+          groups: [
+            {
+              items: ["Read only", "Approve for me", "Full access"].map((label) => ({
+                id: label,
+                label,
+                checked: selected === label,
+                ...(readOnlyDisabled && label === "Read only"
+                  ? { disabled: true, tag: "This device cannot enforce read-only access" }
+                  : {}),
+              })),
+            },
+          ],
+          onPick: setSelected,
+        },
+        model: modelPicker(),
+        effort: effortPicker(),
+      },
+    });
+  }
+
+  it.each([
+    ["zh", "权限"],
+    ["en", "Permissions"],
+  ] as const)(
+    "offers a localized permission group in %s and updates the selected profile without closing",
+    async (locale, title) => {
+      const user = userEvent.setup();
+      wrap(<PermissionHarness />, locale);
+      const trigger = document.querySelector('[data-part="composer-options"]') as HTMLElement;
+      expect(trigger.getAttribute("aria-label")).toContain("Approve for me");
+      await user.click(trigger);
+      const sheet = screen.getByRole("dialog");
+      expect(
+        [...sheet.querySelectorAll('[data-part="options-group"]')].map((group) =>
+          group.getAttribute("data-group"),
+        ),
+      ).toEqual(["device", "permission", "model", "effort"]);
+      const permissions = within(sheet).getByRole("radiogroup", { name: title });
+      for (const label of ["Read only", "Full access", "Approve for me"]) {
+        const radios = within(permissions).getAllByRole("radio");
+        expect(radios.map((radio) => radio.closest("label")?.className)).toEqual([
+          "cb-options-item",
+          "cb-options-item",
+          "cb-options-item",
+        ]);
+        expect(permissions.querySelector('[data-tone], [style], [data-part="badge"]')).toBeNull();
+        await user.click(within(permissions).getByRole("radio", { name: label }));
+        const chosen = within(permissions).getByRole("radio", { name: label }) as HTMLInputElement;
+        expect(chosen.checked).toBe(true);
+        expect(chosen.closest("label")?.querySelector('[data-icon="check"]')).not.toBeNull();
+        expect(permissions.querySelectorAll('[data-icon="check"]')).toHaveLength(1);
+        expect(screen.getByRole("dialog")).toBe(sheet);
+        expect(trigger.getAttribute("aria-label")).toContain(label);
+      }
+      expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+    },
+  );
+
+  it("keeps unsupported permissions disabled with the capability reason visible", async () => {
+    const user = userEvent.setup();
+    wrap(<PermissionHarness readOnlyDisabled />);
+    await user.click(screen.getByRole("button", { name: /^会话选项/ }));
+    const permissions = screen.getByRole("radiogroup", { name: "权限" });
+    const readOnly = within(permissions).getByRole("radio", {
+      name: /^Read only/,
+    }) as HTMLInputElement;
+    expect(
+      within(permissions).getByText("This device cannot enforce read-only access"),
+    ).toBeTruthy();
+    expect(readOnly.disabled).toBe(true);
+    await user.click(readOnly);
+    expect(
+      (within(permissions).getByRole("radio", { name: "Approve for me" }) as HTMLInputElement)
+        .checked,
+    ).toBe(true);
+  });
+
   it("shows the current values, shortened, and the whole values in its name", () => {
     wrap(box());
     const button = document.querySelector('[data-part="composer-options"]') as HTMLElement;

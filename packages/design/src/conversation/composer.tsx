@@ -217,12 +217,13 @@ export type ComposerBoxProps = {
   /**
    * The pickers. `agent` is absent on the new conversation page, whose agents row chooses the
    * agent (agent profile design §4.2); the model and effort pickers stay. `device` sits
-   * between the agent and the model (a conversation picks its device before the model) and is
-   * `locked` after the first message.
+   * after the agent and is `locked` after the first message. Optional `permission` follows
+   * the device, before the model and effort.
    */
   pickers: {
     agent?: PickerProps;
     device?: PickerProps;
+    permission?: PickerProps;
     model: PickerProps;
     effort?: PickerProps;
   };
@@ -484,14 +485,16 @@ export function ComposerBox({
           onClick={onAttach}
         />
         {pickers.agent ? <Picker {...pickers.agent} /> : null}
-        {/* 640 and up: the three pickers; a phone: one options button and its bottom sheet (CSS) */}
+        {/* 640 and up: individual pickers; phones: one options button and its bottom sheet (CSS). */}
         <span className="cb-composer-pickers" data-part="composer-pickers">
           {pickers.device ? <Picker {...pickers.device} /> : null}
+          {pickers.permission ? <Picker {...pickers.permission} /> : null}
           <Picker {...pickers.model} />
           {pickers.effort ? <Picker {...pickers.effort} /> : null}
         </span>
         <ComposerOptions
           {...(pickers.device ? { device: pickers.device } : {})}
+          {...(pickers.permission ? { permission: pickers.permission } : {})}
           model={pickers.model}
           {...(pickers.effort ? { effort: pickers.effort } : {})}
         />

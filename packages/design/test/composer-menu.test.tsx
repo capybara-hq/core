@@ -2,9 +2,10 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ReactElement } from "react";
+import { type ReactElement, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  ComposerBox,
   type ConvMenuEntry,
   DesignProvider,
   filterMenuEntries,
@@ -220,6 +221,97 @@ const menu = () => screen.getByRole("menu", { name: "切换模型: model-80" });
 /** The room Radix measured on the menu's side (what the CSS cap reads, live). */
 const room = (m: HTMLElement) =>
   (m.parentElement as HTMLElement).style.getPropertyValue("--radix-popper-available-height");
+
+describe("the composer's permission picker", () => {
+  function Harness({ readOnlyDisabled = false }: { readOnlyDisabled?: boolean }) {
+    const [profile, setProfile] = useState("approveForMe");
+    const choices = [
+      { id: "readOnly", label: "Read only" },
+      { id: "approveForMe", label: "Approve for me" },
+      { id: "fullAccess", label: "Full access" },
+    ];
+    return (
+      <ComposerBox
+        value=""
+        onChange={() => {}}
+        placeholder="Message"
+        onAttach={() => {}}
+        pickers={{
+          device: { label: "Device", value: "Laptop", groups: [], onPick: () => {} },
+          permission: {
+            label: "Permissions",
+            value: choices.find((choice) => choice.id === profile)?.label ?? "",
+            groups: [
+              {
+                items: choices.map((choice) => ({
+                  ...choice,
+                  checked: profile === choice.id,
+                  ...(readOnlyDisabled && choice.id === "readOnly"
+                    ? { disabled: true, tag: "This device cannot enforce read-only access" }
+                    : {}),
+                })),
+              },
+            ],
+            onPick: setProfile,
+          },
+          model: { label: "Model", value: "gpt-6", groups: [], onPick: () => {} },
+          effort: { label: "Effort", value: "High", groups: [], onPick: () => {} },
+        }}
+        send={{ mode: "send", onClick: () => {} }}
+      />
+    );
+  }
+
+  it("places permissions after the device and selects every profile with the same neutral presentation", async () => {
+    const user = userEvent.setup();
+    wrap(<Harness />);
+    const pickers = document.querySelector('[data-part="composer-pickers"]') as HTMLElement;
+    expect(
+      within(pickers)
+        .getAllByRole("button")
+        .map((button) => button.getAttribute("aria-label")),
+    ).toEqual(["Device: Laptop", "Permissions: Approve for me", "Model: gpt-6", "Effort: High"]);
+    for (const label of ["Read only", "Full access", "Approve for me"]) {
+      await user.click(within(pickers).getByRole("button", { name: /^Permissions:/ }));
+      const menu = screen.getByRole("menu");
+      const items = within(menu).getAllByRole("menuitemradio");
+      expect(items.map((item) => item.className)).toEqual([
+        "cb-cmenu-item",
+        "cb-cmenu-item",
+        "cb-cmenu-item",
+      ]);
+      for (const item of items) {
+        expect(item.getAttribute("data-tone")).toBeNull();
+        expect(item.getAttribute("style")).toBeNull();
+        expect(item.querySelector('[data-part="badge"]')).toBeNull();
+      }
+      await user.click(within(menu).getByRole("menuitemradio", { name: label }));
+      expect(screen.queryByRole("menu")).toBeNull();
+      await user.click(within(pickers).getByRole("button", { name: `Permissions: ${label}` }));
+      const selected = within(screen.getByRole("menu")).getByRole("menuitemradio", { name: label });
+      expect(selected.getAttribute("aria-checked")).toBe("true");
+      expect(selected.querySelector('[data-icon="check"]')).not.toBeNull();
+      expect(screen.getByRole("menu").querySelectorAll('[data-icon="check"]')).toHaveLength(1);
+      await user.keyboard("{Escape}");
+    }
+  });
+
+  it("shows an unsupported capability reason and keeps its profile unselectable", async () => {
+    const user = userEvent.setup();
+    wrap(<Harness readOnlyDisabled />);
+    await user.click(screen.getByRole("button", { name: "Permissions: Approve for me" }));
+    const item = screen.getByRole("menuitemradio", {
+      name: /^Read only/,
+    });
+    expect(within(item).getByText("This device cannot enforce read-only access")).toBeTruthy();
+    expect(item.getAttribute("aria-disabled")).toBe("true");
+    await user.click(item);
+    expect(screen.getByRole("menu")).toBeTruthy();
+    expect(
+      screen.getByRole("menuitemradio", { name: "Approve for me" }).getAttribute("aria-checked"),
+    ).toBe("true");
+  });
+});
 
 describe("an anchored picker menu with 100 models", () => {
   it("opens below, its height capped in CSS by the token and Radix's live room, the checked model scrolled into view, the note kept", async () => {

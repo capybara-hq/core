@@ -6,8 +6,8 @@ import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
 import type { PickerProps } from "./composer";
 
-// The composer's options button (spec §6.16.2, phones): below 640 the device, model and
-// effort pickers collapse into one compact button that opens a bottom sheet with the three groups.
+// The composer's options button (spec §6.16.2, phones): below 640 the device, permission, model
+// and effort pickers collapse into one compact button with a bottom sheet group per picker.
 
 /**
  * A model's name for the options button: without a vendor path ("deepseek/…") and a date or
@@ -29,26 +29,40 @@ export function shortDeviceLabel(label: string): string {
 
 export type ComposerOptionsProps = {
   device?: PickerProps;
+  permission?: PickerProps;
   model: PickerProps;
   effort?: PickerProps;
 };
 
 /**
- * One compact button (`DeepSeek · 高 · 个人`) for the device, model and effort pickers,
+ * One compact button (`DeepSeek · 高 · 个人`) for the device, permission, model and effort pickers,
  * opening a bottom sheet with one group each. The groups reuse the pickers' props: their items
  * (disabled ones with their reason), their notes, and a locked picker (a conversation's
  * device) shown read-only with its hint. Choosing an item calls the picker's `onPick` and
- * keeps the sheet open, so all three can be set in one go.
+ * keeps the sheet open, so all choices can be set in one go. The accessible summary also
+ * includes the full permission value when supplied.
  */
-export function ComposerOptions({ device, model, effort }: ComposerOptionsProps): JSX.Element {
+export function ComposerOptions({
+  device,
+  permission,
+  model,
+  effort,
+}: ComposerOptionsProps): JSX.Element {
   const t = useDesignT();
   const [open, setOpen] = useState(false);
-  const full = [model.value, effort?.value, device?.value, device?.locked?.warning?.label].filter(
-    (v): v is string => v !== undefined,
-  );
+  const full = [
+    model.value,
+    effort?.value,
+    device?.value,
+    permission?.value,
+    device?.locked?.warning?.label,
+  ].filter((v): v is string => v !== undefined);
   const name = t("composer.options");
   const groups: { key: string; title: string; picker: PickerProps }[] = [
     ...(device ? [{ key: "device", title: t("composer.options.device"), picker: device }] : []),
+    ...(permission
+      ? [{ key: "permission", title: t("composer.options.permission"), picker: permission }]
+      : []),
     { key: "model", title: t("composer.options.model"), picker: model },
     ...(effort ? [{ key: "effort", title: t("composer.options.effort"), picker: effort }] : []),
   ];
