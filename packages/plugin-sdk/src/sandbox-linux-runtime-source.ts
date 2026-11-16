@@ -65,7 +65,7 @@ ARCHES = {
             "setxattr": 5, "lsetxattr": 6, "fsetxattr": 7, "removexattr": 14,
             "lremovexattr": 15, "fremovexattr": 16, "ioctl": 29, "fchmod": 52, "fchmodat": 53,
             "fchownat": 54, "fchown": 55, "utimensat": 88, "unshare": 97, "setsid": 157,
-            "socket": 198, "bind": 200, "listen": 201, "connect": 203, "sendto": 206,
+            "socket": 198, "socketpair": 199, "bind": 200, "listen": 201, "connect": 203, "sendto": 206,
             "sendmsg": 211, "add_key": 217, "request_key": 218, "keyctl": 219, "clone": 220,
             "setns": 268, "sendmmsg": 269, "userfaultfd": 282,
         },
@@ -76,7 +76,7 @@ ARCHES = {
         "x32": True,
         "nr": {
             "ioctl": 16, "socket": 41, "connect": 42, "sendto": 44, "sendmsg": 46, "bind": 49,
-            "listen": 50, "clone": 56, "chmod": 90, "fchmod": 91, "chown": 92, "fchown": 93,
+            "listen": 50, "socketpair": 53, "clone": 56, "chmod": 90, "fchmod": 91, "chown": 92, "fchown": 93,
             "lchown": 94, "setsid": 112, "utime": 132, "uselib": 134, "setxattr": 188,
             "lsetxattr": 189, "fsetxattr": 190, "removexattr": 197, "lremovexattr": 198,
             "fremovexattr": 199, "utimes": 235, "add_key": 248, "request_key": 249,
@@ -265,6 +265,7 @@ def build_filter(table, network_mediated, brokered):
         p.jeq(number, "r%d" % number)
     p.jeq(nr["ioctl"], "ioctl")
     p.jeq(nr["socket"], "socket")
+    p.jeq(nr["socketpair"], "socketpair")
     p.jeq(nr["unshare"], "namespaces")
     p.jeq(nr["clone"], "namespaces")
     if network_mediated:
@@ -298,6 +299,17 @@ def build_filter(table, network_mediated, brokered):
     p.label("netlink")
     p.ld_arg(2)
     p.jeq(0, "allow")  # NETLINK_ROUTE only: interface queries, no egress
+    p.ret(RET_ERRNO(errno.EACCES))
+    p.label("socketpair")
+    # A datagram socketpair honours an explicit sendto() address: connection-oriented only.
+    p.ld_arg(0)
+    p.jeq(AF_UNIX, "pair_unix")
+    p.ret(RET_ERRNO(errno.EACCES))
+    p.label("pair_unix")
+    p.ld_arg(1)
+    p.alu_and(0xF)
+    p.jeq(SOCK_STREAM, "allow")
+    p.jeq(SOCK_SEQPACKET, "allow")
     p.ret(RET_ERRNO(errno.EACCES))
     p.label("unix")
     # Connection-oriented UNIX sockets only, created by the broker so it can mediate their
@@ -803,8 +815,12 @@ class Broker:
     def listen(self, ident, pid, args):
         own, inode = self.owned(pid, ident, args[0])
         if own is None:
-            # listen() carries no pointer, so letting the kernel run it cannot change what was
-            # checked; accepted and socketpair sockets the broker does not own listen normally.
+            # Broker ownership ends only with a successful connect, so an unowned socket is
+            # connected (or accepted, or a socketpair end): it cannot legitimately listen. Under
+            # none/allowlist refuse it; never let listen() autobind an unowned TCP socket to every
+            # interface. listen() carries no pointer, so CONTINUE is safe for environment.
+            if self.endpoints is not None:
+                return None, errno.EACCES
             return "continue", 0
         if self.endpoints is not None and socket_domain(own) != AF_UNIX:
             # An unbound TCP socket would autobind to every interface on listen().
@@ -834,7 +850,7 @@ class Broker:
                 code = ctypes.get_errno() if result < 0 else 0
             finally:
                 os.close(handle)
-            if code != errno.EINPROGRESS:
+            if code == 0:
                 self.release(inode)
             return (None, code) if code else (0, 0)
         family, address, port, scope = self.inet_address(raw, size)
@@ -849,17 +865,19 @@ class Broker:
             code = ctypes.get_errno()
             if code == errno.EINPROGRESS:
                 threading.Thread(target=self.settle, args=(own, inode), daemon=True).start()
-            elif code not in (errno.EALREADY, errno.EINTR):
-                self.release(inode)
+            # A refused or dissolved association keeps the broker's ownership: an unconnected
+            # unowned socket could otherwise listen() on every interface.
             return None, code
-        self.release(inode)
+        if family != AF_UNSPEC:
+            self.release(inode)
         return 0, 0
 
     def settle(self, fd, inode):
         poller = select.poll()
         poller.register(fd, select.POLLOUT)
         poller.poll()
-        self.release(inode)
+        if struct.unpack("i", socket_option(fd, SOL_SOCKET, 4))[0] == 0:  # SO_ERROR
+            self.release(inode)
 
     def respond(self, ident, value, code, flags=0):
         data = struct.pack("QqiI", ident, value or 0, -code if code else 0, flags)
@@ -1047,17 +1065,24 @@ def reap(session):
     """Consumer-side cleanup after a lost supervisor: SIGKILL the launcher's closed session.
 
     The session ID is the restricted child's PID and setsid() is denied inside it, so membership
-    is kernel-maintained and closed. A PID number stays reserved while its session has members,
-    so a process now holding the leader's PID with another start time means the session is gone.
+    is kernel-maintained and closed. Linux keeps a PID number reserved while it names a live
+    session, so the session is ours while a process holding that PID still has the recorded start
+    time, or no process holds it. Each member is pinned with a pidfd, then re-checked: still in the
+    session, started no earlier than the leader, and the leader's PID not taken by another process
+    since. A PID reuse within one scan can therefore only skip a process, never signal a stranger.
     """
     sid, started = int(session["sid"]), int(session["start"])
     killed = set()
-    while True:
+
+    def leader_reused():
         try:
-            if start_time(sid) != started:
-                return len(killed)
+            return start_time(sid) != started
         except OSError:
-            pass
+            return False  # The leader exited; its PID stays reserved while members remain.
+
+    while True:
+        if leader_reused():
+            return len(killed)
         members = []
         for entry in os.listdir("/proc"):
             if not entry.isdigit():
@@ -1079,10 +1104,11 @@ def reap(session):
             except OSError:
                 continue
             try:
-                # The pidfd pins the process; confirm its session before signalling it.
+                # The pidfd pins the process; confirm it still belongs to our session.
                 with open("/proc/%d/stat" % pid) as stat_file:
                     data = stat_file.read()
-                if int(data[data.rindex(")") + 2:].split()[3]) == sid:
+                fields = data[data.rindex(")") + 2:].split()
+                if int(fields[3]) == sid and int(fields[19]) >= started and not leader_reused():
                     syscall(NR_PIDFD_SEND_SIGNAL, handle, signal.SIGKILL, None, 0)
                     killed.add(pid)
             except OSError:
@@ -1163,6 +1189,10 @@ def run(request, report):
                 keep = []
             restrict_child(table, ruleset, network_mediated or mode == "native", brokered,
                            child_sock)
+            # No restricted code runs before the supervisor has recorded the session and holds
+            # the listener: wait for its acknowledgement (EOF if it was lost).
+            if child_sock.recv(1) != b"A":
+                os._exit(125)
             child_sock.close()
             # Only stdio (and, for the native helper, the same pinned roots) survive exec.
             close_except(keep)
@@ -1209,6 +1239,7 @@ def run(request, report):
         thread.start()
     # Reported only once every restriction is installed and the broker holds the listener.
     report.write(launch)
+    parent_sock.send(b"A")
     parent_sock.close()
     return supervise(pid, request, report, broker, thread, stop_w, cancellation)
 
@@ -1272,13 +1303,23 @@ def probe_static(table, candidate=False):
 
 
 def probe(candidate=False):
-    """Never raises: any failure is restricted unavailable with its reason."""
+    """Never raises: any failure is restricted unavailable with its reason.
+
+    "restricted" is non-null only on a validated architecture. With candidate set on an
+    unvalidated one, the primitives' result is reported separately under "candidate" (evidence
+    collection only) and "restricted" stays null, so no consumer can read it as support.
+    """
     machine = platform.machine()
     try:
-        return probe_primitives(candidate)
+        result = probe_primitives(candidate)
     except BaseException as error:
         return {"restricted": None, "arch": machine,
                 "reason": "The probe failed: %s" % type(error).__name__}
+    if candidate and machine not in VALIDATED_ARCHES:
+        return {"restricted": None, "arch": machine, "validated": False,
+                "reason": "The syscall inventory is not validated on %s" % machine,
+                "candidate": result}
+    return result
 
 
 def probe_primitives(candidate):

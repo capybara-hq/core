@@ -213,18 +213,23 @@ def handle(request, endpoints):
         restricted = report_r is not None
         running[ident] = (process, restricted)
         threads, out = collect(process, request.get("maxOutputBytes", 65536))
+        events = []
+        reader = None
+        if report_r is not None:
+            def read_events():
+                with os.fdopen(report_r, "rb") as stream:
+                    for line in stream:
+                        event = json.loads(line)
+                        events.append(event)
+                        if event.get("event") == "session" and request.get("killSupervisorOnSession"):
+                            # Evidence only: lose the supervisor the moment its session exists.
+                            process.kill()
+            reader = threading.Thread(target=read_events)
+            reader.start()
         code = process.wait()
         running.pop(ident, None)
-        events = []
-        if report_r is not None:
-            data = b""
-            while True:
-                chunk = os.read(report_r, 65536)
-                if not chunk:
-                    break
-                data += chunk
-            os.close(report_r)
-            events = [json.loads(line) for line in data.decode().splitlines() if line]
+        if reader is not None:
+            reader.join()
             session = next((e for e in events if e.get("event") == "session"), None)
             if session is not None:
                 # Consumer-side cleanup: whatever happened to the supervisor, end its closed
