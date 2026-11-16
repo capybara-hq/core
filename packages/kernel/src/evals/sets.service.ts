@@ -601,10 +601,11 @@ export class EvalSetsService {
   }
 
   /**
-   * 把某次运行加为用例。对话不在本组织（或是 eval 对话）→ `conversation.not_found`；对话的 agent 不是集合的 agent →
-   * `eval.agent_mismatch`；手动压缩运行（无模型步骤）→ `eval.compact_not_replayable`；已在集合里 →
-   * `eval.case_exists`；集合满了 → `eval.too_many_cases`；运行未终态 / 快照超大 →
-   * `eval.run_not_finished` / `eval.case_too_large`（`takeSnapshot`）。
+   * Adds a run as a case. Admission is `checkAddCase` (conversation not in the org or an eval
+   * conversation -> `conversation.not_found`; the conversation's agent is not the set's ->
+   * `eval.agent_mismatch`; manual compaction run -> `eval.compact_not_replayable`; already in the
+   * set -> `eval.case_exists`; set full -> `eval.too_many_cases`; run not finished / snapshot too
+   * large -> `eval.run_not_finished` / `eval.case_too_large` (`takeSnapshot`)).
    */
   async addCase(
     orgId: string,
