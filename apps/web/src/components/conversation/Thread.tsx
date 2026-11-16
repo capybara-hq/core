@@ -32,8 +32,8 @@ import { retryOnMountOf } from "../../lib/query/client";
 import { toolOutputSizeQuery } from "../../lib/query/conversation";
 import { membersQuery } from "../../lib/query/members";
 import {
-  canConfigureModels,
   canViewTrajectory,
+  configureModelsHref,
   isModelSetupError,
   runParts,
 } from "../../lib/run-row";
@@ -190,7 +190,7 @@ type EntryContext = {
   /** Member display names (another member who stopped a run). */
   names: ReadonlyMap<string, string>;
   /** The run rows' links this reader may follow. */
-  links: { trajectory: boolean; configureModels: boolean };
+  links: { trajectory: boolean; configureModels: string | null };
   /** Which callbacks are given (an absent one hides its control). */
   has: {
     retry: boolean;
@@ -302,7 +302,7 @@ export function Thread({
     runLinks !== undefined &&
     runLinks.trajectory !== false &&
     canViewTrajectory(me, runLinks.agentOwnerId);
-  const configureModels = runLinks !== undefined && canConfigureModels(me);
+  const configureModels = runLinks !== undefined ? configureModelsHref(me) : null;
   const hasRetry = onRetry !== undefined;
   const hasOpenFile = onOpenFile !== undefined;
   const hasMoreFiles = onMoreFiles !== undefined;
@@ -587,8 +587,8 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
     const canRetry =
       !e.retried && e.retry !== null && e.hook === null && e.key === lastFailed && onRetry;
     const fix =
-      c.links.configureModels && isModelSetupError(e.code)
-        ? [{ label: t("run.configureModels"), href: "/admin/extensions" }]
+      c.links.configureModels !== null && isModelSetupError(e.code)
+        ? [{ label: t("run.configureModels"), href: c.links.configureModels }]
         : [];
     return (
       <RunRow

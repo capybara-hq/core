@@ -220,11 +220,11 @@ describe("one step list: the setup home's card and the sidebar agree", () => {
 });
 
 describe("the checklist by role", () => {
-  it("a super admin configures the model in the admin console", async () => {
+  it("a super admin deploys the model service on the admin console's models page", async () => {
     renderFrame();
     const model = step(sl.steps.model);
     expect(within(model).getByRole("link", { name: s.model.action }).getAttribute("href")).toBe(
-      "/admin/extensions",
+      "/admin/models",
     );
     // creating an agent waits for the model: only the reason, no disabled button, no 待办 label
     const agent = step(sl.steps.agent);

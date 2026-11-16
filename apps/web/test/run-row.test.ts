@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  canConfigureModels,
   canViewTrajectory,
+  configureModelsHref,
   isModelSetupError,
   runParts,
 } from "../src/lib/run-row";
@@ -26,9 +26,13 @@ describe("run row role gating (the kernel's rules)", () => {
     expect(canViewTrajectory(me("admin"), undefined)).toBe(true);
   });
 
-  it("the model-service fix entry: super admins only, for a model setup error", () => {
-    expect(canConfigureModels(me("member", { superAdmin: true }))).toBe(true);
-    expect(canConfigureModels(me("owner"))).toBe(false);
+  it("the model-service fix entry: the models page the reader can act on, for a model setup error", () => {
+    expect(configureModelsHref(me("member", { superAdmin: true }))).toBe("/admin/models");
+    expect(configureModelsHref(me("owner", { superAdmin: true }))).toBe("/admin/models");
+    expect(configureModelsHref(me("owner"))).toBe("/settings/models");
+    expect(configureModelsHref(me("admin"))).toBe("/settings/models");
+    expect(configureModelsHref(me("member"))).toBeNull();
+    expect(configureModelsHref(me("guest"))).toBeNull();
     for (const code of ["model.auth", "model.unconfigured", "run.model_unavailable"])
       expect(isModelSetupError(code)).toBe(true);
     for (const code of ["model.timeout", "model.rate_limited", "run.hook_denied", "conflict"])

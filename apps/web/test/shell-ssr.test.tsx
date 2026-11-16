@@ -243,7 +243,7 @@ describe("the setup sidebar's steps per role (web-SSR spec §4)", () => {
   it("a super admin who is also an org admin", () => {
     renderFrame(shellOf(ME, { readiness: NOT_READY }));
     expect(rows()).toEqual([
-      { id: "model", state: "todo", href: "/admin/extensions", optional: false, text: s.model },
+      { id: "model", state: "todo", href: "/admin/models", optional: false, text: s.model },
       {
         id: "agent",
         state: "waiting",
@@ -268,6 +268,27 @@ describe("the setup sidebar's steps per role (web-SSR spec §4)", () => {
       ["catalog", "todo", "/plugins"],
     ]);
     expect(r[0]?.text).toBe(`${s.model}${sl.model.needsDeploymentAdmin}`);
+  });
+
+  it("providers deployed but none on in the org: org admins turn one on, members wait for them", () => {
+    const notEnabled = {
+      modelProvider: "not_enabled" as const,
+      notEnabledProviders: ["anthropic"],
+      agents: 0,
+    };
+    renderFrame(shellOf(as("admin"), { readiness: notEnabled }));
+    expect(rows()[0]).toEqual({
+      id: "model",
+      state: "todo",
+      href: "/settings/models",
+      optional: false,
+      text: s.model,
+    });
+    cleanup();
+    renderFrame(shellOf(as("member"), { readiness: notEnabled }));
+    const r = rows()[0];
+    expect([r?.state, r?.href]).toEqual(["waiting", null]);
+    expect(r?.text).toBe(`${s.model}${sl.model.waitingForOrgAdmin}`);
   });
 
   it("a member waits for the model; later, only their connections", () => {

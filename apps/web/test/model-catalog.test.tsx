@@ -284,7 +284,21 @@ function orgRoutes(state: "following" | "copy", extra: Record<string, (c: Call) 
       }),
     "GET /api/v1/orgs/o1/models/catalog": () => json(200, { providers: [CATALOG_ALPHA] }),
     "GET /api/v1/orgs/o1/extensions": () =>
-      json(200, { extensions: [{ plugin: "alpha", overrideState: state }] }),
+      json(200, {
+        extensions: [
+          {
+            plugin: "alpha",
+            version: "1.0.0",
+            enabled: true,
+            configurable: false,
+            provides: ["model-provider@2"],
+            overrideState: state,
+          },
+        ],
+      }),
+    "GET /api/v1/orgs/o1/extensions/alpha/overrides": () =>
+      json(200, { state, fields: [], valid: true, issues: [] }),
+    "GET /api/v1/orgs/o1/extensions/alpha/tools": () => json(200, { tools: [] }),
     ...extra,
   });
 }
@@ -296,15 +310,18 @@ describe("/settings/models: the org's catalog", () => {
     ["following", "en", en.models.catalog.following],
     ["copy", "en", en.models.catalog.orgConfigured],
   ] as const)(
-    "a provider %s shows its state with a link to its config (%s)",
+    "a provider %s shows its state; 配置 opens its Sheet on this page (%s)",
     async (state, locale, text) => {
       orgRoutes(state);
       await renderRouteWithCache("/settings/models", lastStubRoutes(), { locale });
       expect(await screen.findByText(text)).toBeTruthy();
-      const link = screen.getByRole("link", {
-        name: (locale === "zh" ? zh : en).models.catalog.configure,
-      });
-      expect(link.getAttribute("href")).toBe("/extensions?tab=model");
+      const m = locale === "zh" ? zh : en;
+      // no way out to the 扩展 page: the config is on this page
+      expect(screen.queryByRole("link", { name: m.models.catalog.configure })).toBeNull();
+      await userEvent
+        .setup()
+        .click(screen.getByRole("button", { name: m.models.catalog.configure }));
+      expect(await screen.findByRole("dialog", { name: "alpha" })).toBeTruthy();
     },
   );
 
@@ -372,6 +389,8 @@ describe("/admin/models: the platform's switches", () => {
           currency: "EUR",
         }),
       "GET /api/v1/admin/model-purposes": () => json(200, { purposes: [] }),
+      "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
+      "GET /api/v1/admin/marketplaces/entries": () => json(200, { items: [] }),
       "PATCH /api/v1/admin/models/alpha/disabled": () =>
         json(200, { affected: { agents: [], purposes: [] } }),
     });
@@ -439,6 +458,8 @@ function adminMixed(extra: Record<string, (c: Call) => Response> = {}) {
         currency: "EUR",
       }),
     "GET /api/v1/admin/model-purposes": () => json(200, { purposes: [] }),
+    "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
+    "GET /api/v1/admin/marketplaces/entries": () => json(200, { items: [] }),
     ...extra,
   });
 }
@@ -600,7 +621,7 @@ describe("the models pages' tabs and provider selection", () => {
   });
 
   it.each(["/admin/models", "/settings/models"] as const)(
-    "%s with no providers: the page empty state links to the plugins page",
+    "%s with no providers: the empty state names the next step (the marketplace, or a super admin's models page)",
     async (path) => {
       resetNavigation(path);
       if (path === "/admin/models") {
@@ -608,6 +629,8 @@ describe("the models pages' tabs and provider selection", () => {
           "GET /api/v1/admin/models": () =>
             json(200, { providers: [], prices: [], currency: "EUR" }),
           "GET /api/v1/admin/model-purposes": () => json(200, { purposes: [] }),
+          "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
+          "GET /api/v1/admin/marketplaces/entries": () => json(200, { items: [] }),
         });
       } else {
         stubApi({
@@ -622,10 +645,11 @@ describe("the models pages' tabs and provider selection", () => {
       expect(
         await screen.findByText(admin ? en.models.admin.noProviders : en.models.org.noProviders),
       ).toBeTruthy();
+      // the default viewer is a super admin who owns the org: on the org page the link to deploy one
       const link = screen.getByRole("link", {
-        name: admin ? en.models.admin.toPlugins : en.models.org.toPlugins,
+        name: admin ? en.models.admin.toMarket : en.models.org.toAdminModels,
       });
-      expect(link.getAttribute("href")).toBe(admin ? "/admin/plugins" : "/plugins");
+      expect(link.getAttribute("href")).toBe(admin ? "/admin/plugins/market" : "/admin/models");
     },
   );
 });

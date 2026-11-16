@@ -336,7 +336,17 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     pattern: "/admin/models",
-    queries: ({ me }) => (superAdmin(me) ? [q(adminModelsQuery()), q(adminPurposesQuery())] : []),
+    // The providers and their models, the purposes, and 模型服务: the deployment's extensions and
+    // the marketplaces' entries (the model services not installed yet)
+    queries: ({ me }) =>
+      superAdmin(me)
+        ? [
+            q(adminModelsQuery()),
+            q(adminPurposesQuery()),
+            q(adminExtensionsQuery()),
+            q(marketplaceEntriesQuery("", "")),
+          ]
+        : [],
   },
   {
     pattern: "/admin/orgs",

@@ -1527,10 +1527,13 @@
       "title": "Before you start",
       "description": "A few steps are left before you can start a conversation.",
       "model": {
-        "description": "Enable at least one extension that provides models so agents can answer.",
-        "askAdmin": "No model is available yet. Super admins configure models under Admin → Extensions.",
+        "description": "Deploy and configure at least one model service so agents can answer.",
+        "askAdmin": "No model is available yet. Super admins deploy and configure model services under Admin → Models.",
         "action": "Set up",
-        "waiting": "Waiting for a super admin"
+        "waiting": "Waiting for a super admin",
+        "enableDescription": "The platform has model services, but this organization has not turned one on. Turn one on under Settings → Models so agents can answer.",
+        "askOrgAdmin": "The platform has model services. You can use them once an org admin turns one on for this organization.",
+        "enableAction": "Turn on"
       },
       "agent": {
         "description": "An agent sets the model it uses and the tools and skills it can use.",
@@ -3594,8 +3597,7 @@
         "description": "Installed model providers and their models. Prices are per million tokens in {currency} (change it in Deployment settings); costs in trajectories and evals are estimated from these prices."
       },
       "providerError": "Provider {provider} failed to list its models. Other providers are not affected.",
-      "noProviders": "No model providers yet. Install a model provider plugin and it will show up here.",
-      "toPlugins": "Go to plugins",
+      "noProviders": "No model services yet. Install a model service plugin from the marketplace, then configure it here.",
       "noModels": "This provider has no models.",
       "columns": {
         "model": "Model",
@@ -3629,14 +3631,36 @@
       "purposes": {
         "title": "Default model per purpose",
         "description": "The kernel and extensions pick models by purpose. Set the deployment default here; org admins can override it in their org settings. There is no model allowlist."
+      },
+      "toMarket": "Browse the marketplace",
+      "setup": {
+        "title": "Model services",
+        "description": "The platform's model service plugins: configure their connection here; each organization can use one once it turns it on. Model services in the marketplace that are not installed yet are listed here too.",
+        "configure": "Configure",
+        "configureLabel": "Configure {plugin}",
+        "install": "Install",
+        "installLabel": "Install {plugin}",
+        "notInstalled": "Not installed",
+        "marketPointer": "Other plugins are in the marketplace."
       }
     },
     "org": {
       "pageTitle": "Models",
       "title": "Model purposes",
       "description": "The kernel and extensions pick models by purpose. Each purpose uses the deployment default set by the super admins; you can override it for this org or restore the default.",
-      "noProviders": "This org has no model providers yet. Turn on a model provider plugin on the Plugins page, or ask a super admin to install one.",
-      "toPlugins": "Go to plugins"
+      "noProviders": "The platform has no model services yet. Super admins deploy them under Admin → Models.",
+      "toAdminModels": "Set up model services",
+      "providers": {
+        "title": "Model services",
+        "description": "This organization's models come from the model services turned on here. A service the platform deploys works here once this organization turns it on.",
+        "notEnabled": "This organization has not turned on a model service yet. Turn one on below so agents can answer.",
+        "enable": "Turn on",
+        "enableLabel": "Turn on {plugin} for this organization",
+        "configure": "Configure",
+        "configureLabel": "Configure {plugin}",
+        "enabledToast": "\"{plugin}\" is on for this organization.",
+        "notOffered": "Not offered to this organization"
+      }
     },
     "evalUnmapped": "No model is set for the eval judge, so evals cannot use a judge.",
     "capability": {
@@ -5538,7 +5562,8 @@
   "setupLayout": {
     "model": {
       "needsDeploymentAdmin": "A super admin needs to set up a model service",
-      "waitingForAdmin": "Waiting for an admin to set up a model"
+      "waitingForAdmin": "Waiting for an admin to set up a model",
+      "waitingForOrgAdmin": "Waiting for an org admin to turn on a model service"
     },
     "agent": {
       "needsModel": "Set up a model first",

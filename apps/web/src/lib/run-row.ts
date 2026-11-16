@@ -22,12 +22,19 @@ export function canViewTrajectory(me: RunRowViewer, agentOwnerId: string | undef
   );
 }
 
-/** Whether the row offers 去配置模型服务 (`/admin/extensions`): super admins only. */
-export const canConfigureModels = (me: RunRowViewer): boolean => me.account.isSuperAdmin;
+/**
+ * Where the row's 去配置模型服务 leads, or null when the reader can act on neither page: the super
+ * admin's `/admin/models` (the platform's model services and their config), else the org admin's
+ * `/settings/models` (the services on in the org, their org config, the org's models).
+ */
+export function configureModelsHref(me: RunRowViewer): string | null {
+  if (me.account.isSuperAdmin) return "/admin/models";
+  return roleAtLeast(myRole(me), "admin") ? "/settings/models" : null;
+}
 
 /**
- * Failures a deployment's model service setup causes (credentials, a purpose without a model, a
- * model gone), which a super admin fixes in the extensions' config.
+ * Failures a model service's setup causes (credentials, a purpose without a model, a model gone or
+ * not on in the org), fixed on the models pages.
  */
 const MODEL_SETUP_ERRORS = new Set(["model.auth", "model.unconfigured", "run.model_unavailable"]);
 export const isModelSetupError = (code: string): boolean => MODEL_SETUP_ERRORS.has(code);

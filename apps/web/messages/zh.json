@@ -1527,10 +1527,13 @@
       "title": "开始之前",
       "description": "还差几步才能开始对话。",
       "model": {
-        "description": "至少启用一个提供模型的扩展，智能体才能回答。",
-        "askAdmin": "还没有可用的模型。模型由超级管理员在「管理 → 扩展」里配置。",
+        "description": "至少部署并配置一个模型服务，智能体才能回答。",
+        "askAdmin": "还没有可用的模型。模型服务由超级管理员在「管理 → 模型」里部署和配置。",
         "action": "去配置",
-        "waiting": "等待超级管理员配置"
+        "waiting": "等待超级管理员配置",
+        "enableDescription": "平台已部署模型服务，但本组织还没有启用。在「设置 → 模型」里启用一个，智能体才能回答。",
+        "askOrgAdmin": "平台已部署模型服务，组织管理员在本组织启用后就能使用。",
+        "enableAction": "去启用"
       },
       "agent": {
         "description": "智能体决定用哪个模型、能用哪些工具和技能。",
@@ -3582,8 +3585,7 @@
         "description": "已安装的模型供应商及其模型。价格为每百万 token 的单价，币种 {currency}（在部署设置中修改）；轨迹与评测里的成本都按这里的价格估算。"
       },
       "providerError": "供应商 {provider} 列模型失败，其他供应商不受影响。",
-      "noProviders": "还没有模型供应商。安装模型供应商插件后，它会出现在这里。",
-      "toPlugins": "前往插件",
+      "noProviders": "还没有模型服务。从插件市场安装一个模型服务插件，再在这里配置它。",
       "noModels": "这个供应商没有模型。",
       "columns": {
         "model": "模型",
@@ -3617,14 +3619,36 @@
       "purposes": {
         "title": "用途默认映射",
         "description": "内核与扩展按用途取模型。这里设部署默认，各组织的管理员可以在组织设置里覆盖。不设模型白名单。"
+      },
+      "toMarket": "浏览插件市场",
+      "setup": {
+        "title": "模型服务",
+        "description": "平台上的模型服务插件：在这里配置它的连接，各组织在本组织启用后即可使用。市场里还没安装的模型服务也列在这里。",
+        "configure": "配置",
+        "configureLabel": "配置 {plugin}",
+        "install": "安装",
+        "installLabel": "安装 {plugin}",
+        "notInstalled": "未安装",
+        "marketPointer": "其他插件在插件市场。"
       }
     },
     "org": {
       "pageTitle": "模型",
       "title": "模型用途",
       "description": "内核与扩展按用途取模型。每个用途默认使用超级管理员设的部署默认；你可以为本组织覆盖，或恢复默认。",
-      "noProviders": "本组织还没有可用的模型供应商。在插件页启用模型供应商插件，或请超级管理员安装。",
-      "toPlugins": "前往插件"
+      "noProviders": "平台还没有部署模型服务。模型服务由超级管理员在「管理 → 模型」里部署。",
+      "toAdminModels": "去部署模型服务",
+      "providers": {
+        "title": "模型服务",
+        "description": "本组织的模型来自这里启用的模型服务。平台部署的服务要在本组织启用后才能使用。",
+        "notEnabled": "本组织还没有启用模型服务。启用下面的一个服务，智能体才能回答。",
+        "enable": "启用",
+        "enableLabel": "在本组织启用 {plugin}",
+        "configure": "配置",
+        "configureLabel": "配置 {plugin}",
+        "enabledToast": "已在本组织启用「{plugin}」。",
+        "notOffered": "未向本组织开放"
+      }
     },
     "evalUnmapped": "还没有给评测评委配模型：评测不能开评委。",
     "capability": {
@@ -5526,7 +5550,8 @@
   "setupLayout": {
     "model": {
       "needsDeploymentAdmin": "需要超级管理员配置模型服务",
-      "waitingForAdmin": "等待管理员配置模型"
+      "waitingForAdmin": "等待管理员配置模型",
+      "waitingForOrgAdmin": "等待组织管理员启用模型服务"
     },
     "agent": {
       "needsModel": "先配置模型",

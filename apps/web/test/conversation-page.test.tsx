@@ -1899,7 +1899,7 @@ describe("run rows (spec §6.16.23)", () => {
     ).toBe("/trajectories/c1");
     expect(
       within(region).getByRole("link", { name: en.chat.run.configureModels }).getAttribute("href"),
-    ).toBe("/admin/extensions");
+    ).toBe("/admin/models");
     // no duplicate: the failure is the row, never a divider too
     expect(document.querySelector("[data-entry='divider']")).toBeNull();
   });
@@ -1913,12 +1913,12 @@ describe("run rows (spec §6.16.23)", () => {
     ],
     ["a member who does not own it: no links", as("member"), false, false],
     ["a guest: no links", as("guest", { id: "a1" }), false, false],
-    ["an org admin: the trajectory", as("admin"), true, false],
+    ["an org admin: the trajectory and the fix entry", as("admin"), true, "/settings/models"],
     [
       "a super admin who is a plain member: the fix entry only",
       as("member", { superAdmin: true }),
       false,
-      true,
+      "/admin/models",
     ],
   ])("%s", async (_name, me, trajectory, fix) => {
     api({ [`GET ${BASE}/events`]: () => json(200, { events: authFailure }) });
@@ -1927,9 +1927,12 @@ describe("run rows (spec §6.16.23)", () => {
     expect(within(region).queryByRole("link", { name: en.chat.run.trajectory }) !== null).toBe(
       trajectory,
     );
-    expect(within(region).queryByRole("link", { name: en.chat.run.configureModels }) !== null).toBe(
-      fix,
-    );
+    // the fix entry leads to the models page this reader can act on, never one they cannot
+    expect(
+      within(region)
+        .queryByRole("link", { name: en.chat.run.configureModels })
+        ?.getAttribute("href") ?? false,
+    ).toBe(fix);
   });
 
   it("a sub-agent conversation links no trajectory (the kernel checks the parent's agent)", async () => {
