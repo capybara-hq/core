@@ -1956,7 +1956,7 @@ describe("run rows (spec §6.16.23)", () => {
   async function expectRunLinks(
     me: ReturnType<typeof as>,
     trajectory: boolean,
-    fix: string | false,
+    fix: string | boolean,
   ) {
     await renderChatRoute({ locale: "en", me });
     const region = within(row()).getByRole("region", { name: "Run details" });
