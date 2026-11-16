@@ -1,5 +1,6 @@
 import { formatDuration } from "@capybara-hq/design";
 import { myRole, roleAtLeast } from "./members";
+import { type ModelConfigCause, type ModelConfigViewer, modelConfigHref } from "./model-config";
 import type { RunData } from "./timeline";
 
 /** What the gates read of `GET /me` (the session's `me`). */
@@ -23,22 +24,25 @@ export function canViewTrajectory(me: RunRowViewer, agentOwnerId: string | undef
 }
 
 /**
- * Where the row's "Configure model services" leads, or null when the reader can act on neither page, by the
- * setup checklist's rule: an org admin (a super admin too) goes to `/settings/models` (the services
- * on in the org, their org config, the org's models), a super admin who is not one of the org's
- * admins to `/admin/models` (the platform's model services and their config).
+ * Failures a model service's setup causes, by where they are fixed ({@link modelConfigHref}): a
+ * model gone or not on in the org (`not_enabled`), the platform's credentials or a purpose without
+ * a model (`platform`).
  */
-export function configureModelsHref(me: RunRowViewer): string | null {
-  if (roleAtLeast(myRole(me), "admin")) return "/settings/models";
-  return me.account.isSuperAdmin ? "/admin/models" : null;
-}
+const MODEL_SETUP_ERRORS: Readonly<Record<string, ModelConfigCause>> = {
+  "run.model_unavailable": "not_enabled",
+  "model.auth": "platform",
+  "model.unconfigured": "platform",
+};
+export const isModelSetupError = (code: string): boolean => MODEL_SETUP_ERRORS[code] !== undefined;
 
 /**
- * Failures a model service's setup causes (credentials, a purpose without a model, a model gone or
- * not on in the org), fixed on the models pages.
+ * Where a failed run's "Configure model services" leads for the error `code`, or null (not a model
+ * setup error, or a viewer who can act on neither page): the setup checklist's rule.
  */
-const MODEL_SETUP_ERRORS = new Set(["model.auth", "model.unconfigured", "run.model_unavailable"]);
-export const isModelSetupError = (code: string): boolean => MODEL_SETUP_ERRORS.has(code);
+export function configureModelsHref(v: ModelConfigViewer, code: string): string | null {
+  const cause = MODEL_SETUP_ERRORS[code];
+  return cause === undefined ? null : modelConfigHref(cause, v);
+}
 
 /** The parts after "运行": the model, the duration, the tokens (the unknown ones left out). */
 export function runParts(

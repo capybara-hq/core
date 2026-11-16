@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { modelConfigHref, modelConfigViewer } from "../src/lib/model-config";
 import {
   canViewTrajectory,
   configureModelsHref,
@@ -26,13 +27,33 @@ describe("run row role gating (the kernel's rules)", () => {
     expect(canViewTrajectory(me("admin"), undefined)).toBe(true);
   });
 
-  it("the model-service fix entry: the models page the reader can act on, for a model setup error", () => {
-    expect(configureModelsHref(me("member", { superAdmin: true }))).toBe("/admin/models");
-    expect(configureModelsHref(me("owner", { superAdmin: true }))).toBe("/settings/models");
-    expect(configureModelsHref(me("owner"))).toBe("/settings/models");
-    expect(configureModelsHref(me("admin"))).toBe("/settings/models");
-    expect(configureModelsHref(me("member"))).toBeNull();
-    expect(configureModelsHref(me("guest"))).toBeNull();
+  it("the one model-config rule: not_enabled for org admins, the platform's side for super admins", () => {
+    const v = (superAdmin: boolean, orgAdmin: boolean) => ({ superAdmin, orgAdmin });
+    expect(modelConfigHref("not_enabled", v(false, true))).toBe("/settings/models");
+    expect(modelConfigHref("not_enabled", v(true, true))).toBe("/settings/models");
+    expect(modelConfigHref("not_enabled", v(true, false))).toBeNull();
+    expect(modelConfigHref("platform", v(true, false))).toBe("/admin/models");
+    expect(modelConfigHref("platform", v(true, true))).toBe("/admin/models");
+    expect(modelConfigHref("platform", v(false, true))).toBeNull();
+    expect(modelConfigHref("platform", v(false, false))).toBeNull();
+    expect(modelConfigViewer(me("owner", { superAdmin: true }))).toEqual(v(true, true));
+    expect(modelConfigViewer(me("member"))).toEqual(v(false, false));
+  });
+
+  it("the model-service fix entry of a failed run: where its error is fixed, for a viewer who can", () => {
+    const fix = (role: string, code: string, superAdmin = false) =>
+      configureModelsHref(modelConfigViewer(me(role, { superAdmin })), code);
+    // a model not on in the org: the org's admins
+    expect(fix("admin", "run.model_unavailable")).toBe("/settings/models");
+    expect(fix("owner", "run.model_unavailable", true)).toBe("/settings/models");
+    expect(fix("member", "run.model_unavailable", true)).toBeNull();
+    // the platform's credentials or a purpose without a model: super admins
+    expect(fix("member", "model.auth", true)).toBe("/admin/models");
+    expect(fix("owner", "model.unconfigured", true)).toBe("/admin/models");
+    expect(fix("admin", "model.auth")).toBeNull();
+    expect(fix("member", "model.unconfigured")).toBeNull();
+    // not a model setup error
+    expect(fix("owner", "model.timeout", true)).toBeNull();
     for (const code of ["model.auth", "model.unconfigured", "run.model_unavailable"])
       expect(isModelSetupError(code)).toBe(true);
     for (const code of ["model.timeout", "model.rate_limited", "run.hook_denied", "conflict"])

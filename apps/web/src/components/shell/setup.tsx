@@ -16,6 +16,7 @@ import {
 import { useTranslations } from "next-intl";
 import { createContext, type ReactNode, useContext } from "react";
 import { type OrgReadiness, setupReady } from "../../lib/agents";
+import { type ModelConfigViewer, modelConfigHref, modelConfigViewer } from "../../lib/model-config";
 import { canUpdateOrg } from "../../lib/org-settings";
 import type { Me } from "../../lib/session";
 import { setupRouteOf, under } from "../../lib/setup-routes";
@@ -60,30 +61,32 @@ function setupRoleOf(me: Me): SetupRole {
 type ModelWait = "needsDeploymentAdmin" | "waitingForAdmin" | "waitingForOrgAdmin";
 
 /**
- * The model step and where it is fixed: `/admin/models` while the platform has no provider (super
- * admins), `/settings/models` while the org has not turned a deployed one on (org admins; a super
- * admin who is not one of them waits like a member). A done step links to the viewer's own models
- * page, if any.
+ * The model step and where it is fixed ({@link modelConfigHref}, the run row's rule too):
+ * `/admin/models` while the platform has no provider (super admins), `/settings/models` while the
+ * org has not turned a deployed one on (org admins; a super admin who is not one of them waits like
+ * a member). A done step links to the viewer's own models page, if any.
  */
 function modelStep(
   r: OrgReadiness,
-  superAdmin: boolean,
-  orgAdmin: boolean,
+  v: ModelConfigViewer,
   t: (key: "steps.model" | `model.${ModelWait}`) => string,
 ): SetupStep {
   const base = { id: "model", label: t("steps.model") };
-  const own = superAdmin ? "/admin/models" : orgAdmin ? "/settings/models" : undefined;
+  const own = v.superAdmin ? "/admin/models" : v.orgAdmin ? "/settings/models" : undefined;
   if (r.modelProvider === "ready")
     return { ...base, state: "done", ...(own !== undefined ? { href: own } : {}) };
-  if (r.modelProvider === "not_enabled")
-    return orgAdmin
-      ? { ...base, state: "todo", href: "/settings/models" }
-      : { ...base, state: "waiting", reason: t("model.waitingForOrgAdmin") };
-  if (superAdmin) return { ...base, state: "todo", href: "/admin/models" };
+  const href = modelConfigHref(r.modelProvider === "not_enabled" ? "not_enabled" : "platform", v);
+  if (href !== null) return { ...base, state: "todo", href };
   return {
     ...base,
     state: "waiting",
-    reason: t(orgAdmin ? "model.needsDeploymentAdmin" : "model.waitingForAdmin"),
+    reason: t(
+      r.modelProvider === "not_enabled"
+        ? "model.waitingForOrgAdmin"
+        : v.orgAdmin
+          ? "model.needsDeploymentAdmin"
+          : "model.waitingForAdmin",
+    ),
   };
 }
 
@@ -98,10 +101,9 @@ function modelStep(
  */
 export function useSetupSteps(me: Me, r: OrgReadiness): SetupStep[] {
   const t = useTranslations("setupLayout");
-  const role = setupRoleOf(me);
   const hasModel = r.modelProvider === "ready";
   const canCreateAgent = navLevelOf(me) !== "guest";
-  const model = modelStep(r, role === "superAdmin", canUpdateOrg(me), t);
+  const model = modelStep(r, modelConfigViewer(me), t);
   const agent: SetupStep =
     r.agents > 0
       ? {

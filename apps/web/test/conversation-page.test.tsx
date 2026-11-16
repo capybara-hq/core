@@ -1909,7 +1909,7 @@ describe("run rows (spec §6.16.23)", () => {
     ).toBe("/trajectories/c1");
     expect(
       within(region).getByRole("link", { name: en.chat.run.configureModels }).getAttribute("href"),
-    ).toBe("/settings/models");
+    ).toBe("/admin/models");
     // no duplicate: the failure is the row, never a divider too
     expect(document.querySelector("[data-entry='divider']")).toBeNull();
   });
@@ -1923,7 +1923,9 @@ describe("run rows (spec §6.16.23)", () => {
     ],
     ["a member who does not own it: no links", as("member"), false, false],
     ["a guest: no links", as("guest", { id: "a1" }), false, false],
-    ["an org admin: the trajectory and the fix entry", as("admin"), true, "/settings/models"],
+    // the platform's credentials are fixed on /admin/models: an org admin who is not a super admin
+    // gets no fix entry (the setup checklist's rule)
+    ["an org admin: the trajectory, no fix entry", as("admin"), true, false],
     [
       "a super admin who is a plain member: the fix entry only",
       as("member", { superAdmin: true }),
@@ -1932,6 +1934,30 @@ describe("run rows (spec §6.16.23)", () => {
     ],
   ])("%s", async (_name, me, trajectory, fix) => {
     api({ [`GET ${BASE}/events`]: () => json(200, { events: authFailure }) });
+    await expectRunLinks(me, trajectory, fix);
+  });
+
+  it("a model not on in the org: the fix entry leads its admins to /settings/models", async () => {
+    api({
+      [`GET ${BASE}/events`]: () =>
+        json(200, {
+          events: [
+            userMsg(1, "hello"),
+            runStarted(2),
+            ev(3, "run_failed", {
+              error: { code: "run.model_unavailable", message: "model not available" },
+            }),
+          ],
+        }),
+    });
+    await expectRunLinks(as("admin"), true, "/settings/models");
+  });
+
+  async function expectRunLinks(
+    me: ReturnType<typeof as>,
+    trajectory: boolean,
+    fix: string | false,
+  ) {
     await renderChatRoute({ locale: "en", me });
     const region = within(row()).getByRole("region", { name: "Run details" });
     expect(within(region).queryByRole("link", { name: en.chat.run.trajectory }) !== null).toBe(
@@ -1943,7 +1969,7 @@ describe("run rows (spec §6.16.23)", () => {
         .queryByRole("link", { name: en.chat.run.configureModels })
         ?.getAttribute("href") ?? false,
     ).toBe(fix);
-  });
+  }
 
   it("a sub-agent conversation links no trajectory (the kernel checks the parent's agent)", async () => {
     api({
