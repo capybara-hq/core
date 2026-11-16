@@ -11,9 +11,11 @@ snapshots, fills both lists of every logged follow-up narrowing and drops `selec
 agent template versions; the kernel no longer reads those forms. Saving an agent with a policy for
 a builtin that no longer exists (`SkillWrite`) is now refused like any unknown key instead of being
 dropped silently.
-Migration 0141 deletes the plugin install ledger rows of org skills and agent templates the org
-has since shared as its own items (recorded before ruling P3-46); the uninstall no longer checks
-for them.
+Migration 0141 deletes the plugin install ledger rows of org skills and agent templates without
+plugin provenance (shared by the org as its own items, or its own rows an old install added a
+version to; recorded before ruling P3-46); the uninstall no longer checks for promoted rows.
 Log events no longer accept the shapes of older logs: `compaction_summary` requires `savedTokens`
 and `step`, `compaction_failed` requires `step`, and `approval_requested` requires `requestedFor`
 and `approverRole` (each nullable); the web reads `savedTokens` as always present.
+Migration 0142 fills those fields on rows logged before they existed (`savedTokens` 0, `step` from
+the run's compaction usage, the approver fields from the approval row).
