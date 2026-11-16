@@ -580,8 +580,8 @@ export class AttachmentsService {
   }
 
   /**
-   * 构建模型请求时查附件行的声明信息（只含绑定在该会话、已 ready 的）：大小与 PDF 页数。
-   * 没有行的不在结果里；查询失败照常抛出。
+   * 构建模型请求时查附件行的声明信息（只含绑定在该会话、已 ready 的）：大小、PDF 页数，以及对象的无签名引用
+   * （`ObjectStore.uri`，存储没有时退回 `capybara://attachments/<id>`）。没有行的不在结果里；查询失败照常抛出。
    */
   async mediaInfo(
     orgId: string,
@@ -591,14 +591,25 @@ export class AttachmentsService {
     if (ids.length === 0) return new Map();
     const rows = await this.db
       .selectFrom("attachments")
-      .select(["id", "size", "pages", "etag"])
+      .select(["id", "size", "pages", "etag", "object_key"])
       .where("org_id", "=", orgId)
       .where("conversation_id", "=", conversationId)
       .where("purpose", "=", "chat")
       .where("status", "=", "ready")
       .where("id", "in", [...ids])
       .execute();
-    return new Map(rows.map((r) => [r.id, { size: Number(r.size), pages: r.pages, etag: r.etag }]));
+    const store = this.storage.kernel(orgId);
+    return new Map(
+      rows.map((r) => [
+        r.id,
+        {
+          size: Number(r.size),
+          pages: r.pages,
+          etag: r.etag,
+          uri: store.uri?.(r.object_key) ?? `capybara://attachments/${r.id}`,
+        },
+      ]),
+    );
   }
 
   /**

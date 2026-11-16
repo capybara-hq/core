@@ -38,7 +38,7 @@ import { KernelConfigService } from "../../src/infra/config/kernel-config.servic
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { MachinesService } from "../../src/local-devices/machines.js";
 import type { KernelLogger } from "../../src/log.js";
-import type { MediaInfo } from "../../src/runtime/context/build.js";
+import { type MediaInfo, TEXT_INLINE_MAX_CHARS } from "../../src/runtime/context/build.js";
 import { CLAUDE_CODE_TOOL_MAP } from "../../src/runtime/context/claude-tools.js";
 import { MORE_SKILLS_HEADER } from "../../src/runtime/context/skills.js";
 import { WRAP_UP_REMINDER } from "../../src/runtime/model-call.js";
@@ -353,11 +353,11 @@ async function catalogItem(name: string): Promise<string> {
 }
 
 /** 建、传、finalize 一个附件，返回 id。 */
-async function attach(name: string, bytes: Buffer): Promise<string> {
+async function attach(name: string, bytes: Buffer, contentType = "image/png"): Promise<string> {
   const created = await owner({
     method: "POST",
     url: `/api/v1/orgs/${orgId}/attachments`,
-    payload: { name, contentType: "image/png", size: bytes.length },
+    payload: { name, contentType, size: bytes.length },
   });
   expect(created.statusCode, created.body).toBe(201);
   const c = created.json() as {
@@ -374,7 +374,7 @@ async function attach(name: string, bytes: Buffer): Promise<string> {
   } else {
     const form = new FormData();
     for (const [key, v] of Object.entries(c.upload.fields ?? {})) form.append(key, v);
-    form.append("file", new Blob([Buffer.from(bytes)], { type: "image/png" }));
+    form.append("file", new Blob([Buffer.from(bytes)], { type: contentType }));
     up = await fetch(c.upload.url, { method: "POST", headers: c.upload.headers, body: form });
   }
   expect(up.status).toBeLessThan(300);
@@ -1380,6 +1380,33 @@ describe("reconstructRequest：基线零漂移", () => {
     });
     expect(again.drift).toEqual([]);
     expect(again.request).toEqual(sent.at(-1));
+  });
+
+  it("文本超过内联上限：记录里是 inline（旧规则），现状还原为引用行 → text_inline_threshold", async () => {
+    reset();
+    const info = await modelInfo("model-fake", "fake-v");
+    const agentId = await createAgent({ provider: "model-fake", model: "fake-v" });
+    const conv = await createConv(owner, orgId, agentId);
+    const big = Buffer.from("a".repeat(TEXT_INLINE_MAX_CHARS + 1), "utf8");
+    const id = await attach("big.txt", big, "text/plain");
+    await postWithFiles(conv, "echo:read this", [id]);
+    await waitForTerminal(db, conv, 1, 30_000);
+    const snap = await snapshotOf(conv);
+    const call = modelCalls(toEvents(snap))[0] as ModelCallEvent;
+    // 这份日志由新规则写成：引用行，零漂移
+    expect(call.payload.request.media).toEqual([{ attachmentId: id, outcome: "reference" }]);
+    await expectZeroDrift(conv, snap);
+    // 旧日志：同一个附件记录为内联（50 000 字符的旧规则）→ 现在渲染为引用行
+    const old = structuredClone(snap);
+    const ev = old.events.find((e) => e.seq === call.seq) as { payload: unknown };
+    const request = (ev.payload as { request: { media: { outcome: string }[] } }).request;
+    request.media[0] = { ...request.media[0], outcome: "inline" } as (typeof request.media)[0];
+    const out = reconstructRequest(old, call.seq, {
+      model: info,
+      ...(await mediaFor(conv, snap, call.seq, info)),
+    });
+    expect(out.drift).toEqual(["text_inline_threshold"]);
+    expect(JSON.stringify(out.request)).toContain("bytes of text; not sent inline");
   });
 
   it("不支持视觉的模型：图片换成占位，不取字节", async () => {

@@ -598,14 +598,16 @@ describe("只有附件的消息", () => {
   });
 });
 
-describe("大文本附件（Ruling M8）", () => {
-  it("fetchMedia 按 caps 只取开头；模型收到截断并注明的文档；mediaInfo 带 etag", async () => {
+describe("大文本附件（§5.2：引用，不截断）", () => {
+  it("fetchMedia 按 caps 只取开头；超过内联上限的文本发给模型是引用行；mediaInfo 带 etag 与引用", async () => {
     const big = Buffer.from("a,b\n".repeat(50_000)); // 200 000 字节
     const id = await ready(owner, "big.csv", "text/csv", big);
     const convId = await conversationWith("see-1");
     expect((await post(owner, convId, { text: "read", files: [id] })).statusCode).toBe(202);
     await waitForTerminal(db, convId);
 
+    // the service still honours a byte cap (the runtime no longer asks for one: an over-cap text is
+    // a reference, never a truncated inline)
     const got = await k.app
       .get(AttachmentsService)
       .fetchMedia(orgId, convId, [id], new Map([[id, 1000]]));
@@ -613,16 +615,17 @@ describe("大文本附件（Ruling M8）", () => {
     const info = await k.app.get(AttachmentsService).mediaInfo(orgId, convId, [id]);
     expect(info.get(id)).toMatchObject({ size: big.length, pages: null });
     expect(typeof info.get(id)?.etag).toBe("string");
+    // the unsigned reference: the fake store has no `uri`, so the kernel's fallback
+    expect(info.get(id)?.uri).toBe(`capybara://attachments/${id}`);
 
-    const doc = userBlocks(agentRequests()[0] as ModelRequest).find((b) => b.type === "document");
-    const sent =
-      doc?.type === "document" && doc.source.kind === "base64"
-        ? Buffer.from(doc.source.data, "base64").toString("utf8")
-        : "";
-    expect(sent.length).toBeLessThan(50_200);
-    expect(sent).toContain(`characters of a ${big.length}-byte file.]`);
+    const blocks = userBlocks(agentRequests()[0] as ModelRequest);
+    expect(blocks.some((b) => b.type === "document")).toBe(false);
+    const line = blocks.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("\n");
+    expect(line).toContain(`bytes of text; not sent inline`);
+    expect(line).toContain(`Unsigned object reference: capybara://attachments/${id}`);
+    expect(line).not.toContain("a,b");
 
-    // 提供方不支持按范围读（给了整个对象）：同样只留开头
+    // a provider that ignores a range read: `fetchMedia` still keeps only the first bytes
     const real = k.app.get(ExtensionHost).list("object-store")[0]?.impl as ObjectStore;
     const noRange: ObjectStore = {
       ...real,

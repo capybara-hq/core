@@ -22,12 +22,7 @@ import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { createLogger } from "../../src/log.js";
 import { COMPACTION_SETTINGS } from "../../src/runtime/compaction-settings.service.js";
-import {
-  type MediaBytes,
-  type MediaInfo,
-  TEXT_FETCH_MAX_BYTES,
-  TEXT_INLINE_MAX_CHARS,
-} from "../../src/runtime/context/build.js";
+import type { MediaBytes, MediaInfo } from "../../src/runtime/context/build.js";
 import { MediaCache } from "../../src/runtime/media-cache.js";
 import { type ModelStepDeps, RunError, runModelStep } from "../../src/runtime/model-call.js";
 import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
@@ -98,13 +93,11 @@ const provider: ModelProvider = {
 };
 
 /**
- * 假的附件来源：`rows` 是行（声明大小），`bytes` 是存储里的字节；`fetchFails` 次数内取字节抛错。
- * `caps` 里的附件只给开头若干字节（按范围读）。
+ * 假的附件来源：`rows` 是行（声明大小、引用），`bytes` 是存储里的字节；`fetchFails` 次数内取字节抛错。
  */
 let rows = new Map<string, MediaInfo>();
 let bytes = new Map<string, MediaBytes>();
 let fetched: string[][] = [];
-let fetchCaps: (ReadonlyMap<string, number> | undefined)[] = [];
 let fetchFails = 0;
 
 let deps: ModelStepDeps;
@@ -147,7 +140,6 @@ beforeAll(async () => {
         new Map(ids.flatMap((id) => (rows.has(id) ? [[id, rows.get(id) as MediaInfo]] : []))),
       fetch: async (_o, _c, ids, caps) => {
         fetched.push([...ids]);
-        fetchCaps.push(caps);
         if (fetchFails > 0) {
           fetchFails--;
           throw new Error("ECONNRESET");
@@ -183,7 +175,6 @@ beforeEach(async () => {
   rows = new Map();
   bytes = new Map();
   fetched = [];
-  fetchCaps = [];
   fetchFails = 0;
   budget = 20_971_520;
   await redis.flushdb();
@@ -219,7 +210,7 @@ const agent = (model: string, fallback: string | null = null): AgentDefinition =
 /** 登记一张图片（行 + 字节），返回 id。 */
 function image(data: Uint8Array): string {
   const id = randomUUID();
-  rows.set(id, { size: data.byteLength, pages: null });
+  rows.set(id, { size: data.byteLength, pages: null, uri: `capybara://attachments/${id}` });
   bytes.set(id, { mediaType: "image/png", data });
   return id;
 }
@@ -354,11 +345,11 @@ describe("主模型与兜底的能力不同", () => {
   });
 });
 
-describe("大文本附件（Ruling M8 / C1）", () => {
-  it("5 MB 的 CSV 发给 documents:true 模型：只按范围取开头，发出的文档被截断并注明", async () => {
+describe("大文本附件（§5.2：引用，不截断）", () => {
+  it("5 MB 的 CSV：不取字节，模型收到引用行（文档里没有正文）", async () => {
     const id = randomUUID();
     const big = new TextEncoder().encode("a,b\n".repeat(5 * 1024 * 256));
-    rows.set(id, { size: big.byteLength, pages: null });
+    rows.set(id, { size: big.byteLength, pages: null, uri: `capybara://attachments/${id}` });
     bytes.set(id, { mediaType: "text/csv", data: big });
     await eventLog.append(conversationId, [
       {
@@ -378,15 +369,13 @@ describe("大文本附件（Ruling M8 / C1）", () => {
       },
     ]);
     await step(agent("see"));
-    expect(fetchCaps.at(-1)?.get(id)).toBe(TEXT_FETCH_MAX_BYTES);
-    const doc = userBlocks(calls[0] as ModelRequest).find((b) => b.type === "document");
-    const sent =
-      doc?.type === "document" && doc.source.kind === "base64"
-        ? Buffer.from(doc.source.data, "base64").toString("utf8")
-        : "";
-    expect(sent.length).toBeLessThan(TEXT_INLINE_MAX_CHARS + 200);
-    expect(sent).toContain("[Truncated:");
-    expect(JSON.stringify(calls[0]).length).toBeLessThan(200_000);
+    expect(fetched.flat()).toEqual([]);
+    const blocks = userBlocks(calls[0] as ModelRequest);
+    expect(blocks.some((b) => b.type === "document")).toBe(false);
+    const line = blocks.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("\n");
+    expect(line).toContain(`[Attached file "big.csv" (text/csv), ${big.byteLength} bytes of text;`);
+    expect(line).toContain("Unsigned object reference: capybara://attachments/");
+    expect(line).not.toContain("a,b");
   });
 });
 
@@ -464,7 +453,7 @@ describe("供应商拒收媒体（Ruling M8 / I1）", () => {
 describe("model_call 记录媒体结果（I2）", () => {
   it("request.media 记下每个附件的结果与 etag", async () => {
     const id = image(new Uint8Array([4, 4]));
-    rows.set(id, { size: 2, pages: null, etag: "etag-1" });
+    rows.set(id, { size: 2, pages: null, etag: "etag-1", uri: `capybara://attachments/${id}` });
     await say("look", [id]);
     await step(agent("see"));
     const [mc] = await eventsOfType("model_call");
@@ -477,7 +466,7 @@ describe("model_call 记录媒体结果（I2）", () => {
 describe("每次运行的媒体缓存（9）", () => {
   it("同一次运行的第二步不再取同一附件的字节", async () => {
     const id = image(new Uint8Array([7, 7, 7]));
-    rows.set(id, { size: 3, pages: null, etag: "e" });
+    rows.set(id, { size: 3, pages: null, etag: "e", uri: `capybara://attachments/${id}` });
     await say("look", [id]);
     const cache = new MediaCache(budget);
     const runId = randomUUID();

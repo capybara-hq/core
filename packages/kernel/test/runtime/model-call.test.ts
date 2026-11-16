@@ -1223,7 +1223,14 @@ describe("runModelStep", () => {
         media: {
           info: async (_o, _c, ids) =>
             new Map(
-              ids.map((id): [string, MediaInfo] => [id, { size: data.byteLength, pages: null }]),
+              ids.map((id): [string, MediaInfo] => [
+                id,
+                {
+                  size: data.byteLength,
+                  pages: null,
+                  uri: `capybara://attachments/${id}`,
+                },
+              ]),
             ),
           fetch: async (_o, _c, ids) =>
             new Map(ids.map((id): [string, MediaBytes] => [id, { mediaType: "image/png", data }])),

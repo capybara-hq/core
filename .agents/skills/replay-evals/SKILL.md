@@ -26,7 +26,7 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   Also add a matching reason to `DriftReason` (`reconstruct.ts`, and add it to `DRIFT_ORDER` in order). It marks "an old log has no record of this"
   or "it can't be fetched at reconstruction", and add a case to the "drift reasons" group in `reconstruct.test.ts`. Existing reasons: `system_hash`,
   `tools_changed` (baseline check only), `tool_spec_missing`, `definition_missing`, `pinned_changed` (step replay, see "Pinned skills in old logs and the tool map"),
-  `subagent_changed` (child cases, see "Sub-agents"), `legacy_event`, `params_changed`, `model_switched` (see below), `media_missing`, `media_changed` (baseline check only), `context_fit` (context compaction spec §4.9), `tool_unmatched` (full-run replay).
+  `subagent_changed` (child cases, see "Sub-agents"), `legacy_event`, `params_changed`, `model_switched` (see below), `media_missing`, `media_changed` (baseline check only), `text_inline_threshold` (attachments-on-demand §5.2, see "Attachments"), `context_fit` (context compaction spec §4.9), `tool_unmatched` (full-run replay).
 - The runtime (request building, the loop, waits) lives in `packages/kernel/src/runtime`. An agent's `instructions` is derived from its
   `instructionFiles` on save.
 - The history sent to the model is append-only; model-visible text that appears in replay (such as `REPLAY_NO_RECORDING`) is always English.
@@ -55,6 +55,14 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   transcript. In the log: no `DriftReason`; old logs have none and rebuild byte for byte. Full-run replay:
   `recordedCalls` marks every recorded call from the step where one was logged onward (`devicePaths`), and
   `RecordedToolPipeline` appends it before a matched call's result when the eval conversation's latest differs.
+- **Attachments** (attachments-on-demand spec `docs/superpowers/specs/2026-11-17-attachments-on-demand-design.md` §5.2):
+  the log holds `image` / `document` / `file` blocks with a `ref` source, its name and its size; the request names the
+  model's content and the attachment's `MediaInfo` (size, PDF pages, etag, the unsigned `uri`) supplies the rest.
+  A `file` attachment, and a text attachment above `TEXT_INLINE_MAX_CHARS` (8 000), render as one reference line
+  (`attachmentReferenceText`, with the object URI and `FetchAttachment`) — never bytes, never a truncated inline. No
+  new model-visible input is logged, so nothing needs a `DriftReason` for new logs; a log recorded before the
+  threshold change holds the attachment as inlined in its `model_call.request.media`, and rebuilding it renders the
+  reference: `text_inline_threshold`. Case in `reconstruct.test.ts` ("文本超过内联上限 …").
 - **A question skipped by a message** (reply-while-question spec §12): the skipped result is a logged `tool_result`,
   the message a logged `user_message` taken in at the recorded `absorbedUpToSeq`; `question_answered` (outcome
   `skipped`, `skippedBySeq`) is not model-visible. No `DriftReason`; full-run replay returns the recorded skipped
