@@ -160,7 +160,7 @@ export async function takeSnapshot(
       versions.add((e.payload as { agentVersion: number }).agentVersion);
     } else if (e.type === "model_call") {
       const req = (e.payload as ModelCallEvent["payload"]).request;
-      for (const t of [...(req.tools ?? []), ...(req.catalog ?? [])]) hashes.add(t.specHash);
+      for (const t of [...req.tools, ...(req.catalog ?? [])]) hashes.add(t.specHash);
     }
   }
 

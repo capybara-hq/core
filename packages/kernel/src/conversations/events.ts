@@ -571,7 +571,10 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
           droppedParams: z.array(z.string()).optional(),
           /**
            * The input token estimate (uncalibrated) when the request went out. With the later
-           * `usage.inputTokens` it feeds the next `calibrate`.
+           * `usage.inputTokens` it feeds the next `calibrate`. The runtime always writes it; calls
+           * logged before it was recorded lack it, and no value would stand in for them (a made-up
+           * estimate would skew the calibration), so it stays optional and such a call calibrates
+           * nothing.
            */
           estimatedInputTokens: count.optional(),
           /**
