@@ -6,6 +6,18 @@ import type {
   SandboxProvider,
   SandboxRoots,
 } from "@capybara-hq/plugin-sdk";
+import {
+  type DeviceOperationV3,
+  parseOperationResultV3,
+  parseSandboxBrowseScope,
+  parseSandboxOperationScope,
+  parseSandboxPreparationScope,
+  type SandboxBackground,
+  type SandboxBrowse,
+  type SandboxOperation,
+  type SandboxPermissionSupport,
+  type SandboxPreparation,
+} from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { projectsUnsupported } from "../devices/errors.js";
 import { ApiError } from "../errors.js";
@@ -93,6 +105,191 @@ export class LocalDeviceProvider implements SandboxProvider {
     private readonly grants: Pick<NetworkGrants, "forExec" | "reportedMode">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
   ) {}
+
+  /** Dormant v3 adapter. It is not installed on the active v2 registered provider. */
+  stagedOperations(transport: {
+    call(
+      deviceId: string,
+      op: DeviceOperationV3,
+      args: Record<string, unknown>,
+      opts: { deadlineMs: number; signal: AbortSignal },
+    ): Promise<unknown>;
+    permissionSupport(deviceId: string, signal: AbortSignal): Promise<SandboxPermissionSupport>;
+  }): Required<
+    Pick<
+      SandboxProvider,
+      "operation" | "prepare" | "browse" | "permissionSupport" | "revokeOperation" | "background"
+    >
+  > {
+    const native = (
+      h: SandboxHandle,
+      scope: unknown,
+      prefix: "" | "prepare" | "browse",
+      factorySignal: AbortSignal,
+    ): Required<SandboxOperation> => {
+      const send = async (
+        op: string,
+        args: Record<string, unknown>,
+        signal: AbortSignal,
+      ): Promise<unknown> => {
+        const name = (
+          prefix ? prefix + op.charAt(0).toUpperCase() + op.slice(1) : op
+        ) as DeviceOperationV3;
+        const result = await transport.call(
+          h.id,
+          name,
+          { scope, ...args },
+          { deadlineMs: OP_DEADLINE_MS, signal: AbortSignal.any([factorySignal, signal]) },
+        );
+        return parseOperationResultV3(name, result);
+      };
+      return {
+        exec: async () => {
+          throw new Error("Execution requires its request-bound authority adapter");
+        },
+        readFile: async (path, opts) => {
+          const r = (await send(
+            "readFile",
+            {
+              path,
+              maxBytes: Math.min(
+                opts.maxBytes,
+                maxReadBytes(this.config.get().devices.local.maxFrameBytes),
+              ),
+            },
+            opts.signal,
+          )) as { dataB64: string; truncated: boolean } | null;
+          return r === null ? null : { data: bytesOf(r.dataB64), truncated: r.truncated };
+        },
+        writeFile: async (path, data, signal) => {
+          await send("writeFile", { path, dataB64: Buffer.from(data).toString("base64") }, signal);
+        },
+        stat: async (path, signal) =>
+          (await send("stat", { path }, signal)) as Awaited<ReturnType<SandboxOperation["stat"]>>,
+        list: async (path, opts) =>
+          (await send("list", { path, limit: opts.limit }, opts.signal)) as Awaited<
+            ReturnType<NonNullable<SandboxOperation["list"]>>
+          >,
+        scan: async (base, opts) =>
+          (await send("scan", { base }, opts.signal)) as Awaited<
+            ReturnType<NonNullable<SandboxOperation["scan"]>>
+          >,
+      };
+    };
+    const execArgs = async (
+      deviceId: string,
+      scope: import("@capybara-hq/plugin-sdk").SandboxOperationScope,
+    ) => {
+      const orgId = await this.targets.orgOf(deviceId);
+      if (orgId === null) throw deviceNotFound();
+      const policy = await this.sandbox.devicePolicy({ orgId, deviceId });
+      const limits = await this.sandbox.deviceLimits(
+        { orgId, deviceId },
+        { policy, source: "local" },
+      );
+      const runId = scope.actor.runId;
+      const grants =
+        runId === undefined
+          ? undefined
+          : grantsWithin(await this.grants.forExec({ orgId, deviceId, runId }), limits);
+      return { limits, ...(grants === undefined ? {} : { grants }) };
+    };
+    const background: SandboxBackground = {
+      start: async (h, input, args) => {
+        const scope = parseSandboxOperationScope(input);
+        const authority = await execArgs(h.id, scope);
+        const { signal, ...rest } = args;
+        signal.throwIfAborted();
+        return parseOperationResultV3(
+          "backgroundStart",
+          await transport.call(
+            h.id,
+            "backgroundStart",
+            { scope, ...rest, ...authority },
+            { deadlineMs: args.timeoutMs + EXEC_DEADLINE_MARGIN_MS, signal },
+          ),
+        ) as Awaited<ReturnType<SandboxBackground["start"]>>;
+      },
+      status: async (h, ref, signal) =>
+        parseOperationResultV3(
+          "backgroundStatus",
+          await transport.call(
+            h.id,
+            "backgroundStatus",
+            { ref },
+            { deadlineMs: OP_DEADLINE_MS, signal },
+          ),
+        ) as Awaited<ReturnType<SandboxBackground["status"]>>,
+      tail: async (h, ref, opts) => {
+        const r = parseOperationResultV3(
+          "backgroundTail",
+          await transport.call(
+            h.id,
+            "backgroundTail",
+            { ref, maxBytes: opts.maxBytes },
+            { deadlineMs: OP_DEADLINE_MS, signal: opts.signal },
+          ),
+        ) as { dataB64: string; truncated: boolean } | { unavailable: "lost" | "expired" };
+        return "unavailable" in r ? r : { data: bytesOf(r.dataB64), truncated: r.truncated };
+      },
+      stop: async (h, ref, opts) =>
+        parseOperationResultV3(
+          "backgroundStop",
+          await transport.call(
+            h.id,
+            "backgroundStop",
+            { ref, graceMs: opts.graceMs },
+            { deadlineMs: OP_DEADLINE_MS, signal: opts.signal },
+          ),
+        ) as Awaited<ReturnType<SandboxBackground["stop"]>>,
+    };
+    return {
+      permissionSupport: (h, signal) => transport.permissionSupport(h.id, signal),
+      operation: async (h, input, signal) => {
+        const scope = parseSandboxOperationScope(input);
+        const methods = native(h, scope, "", signal);
+        return {
+          ...methods,
+          exec: async (args) => {
+            const authority = await execArgs(h.id, scope);
+            const { signal: callSignal, ...rest } = args;
+            const combined = AbortSignal.any([signal, callSignal]);
+            combined.throwIfAborted();
+            return parseOperationResultV3(
+              "exec",
+              await transport.call(
+                h.id,
+                "exec",
+                { scope, ...rest, ...authority },
+                { deadlineMs: args.timeoutMs + EXEC_DEADLINE_MARGIN_MS, signal: combined },
+              ),
+            ) as ExecResult;
+          },
+        };
+      },
+      prepare: async (h, input, signal) => {
+        const n = native(h, parseSandboxPreparationScope(input), "prepare", signal);
+        return {
+          readFile: n.readFile,
+          writeFile: n.writeFile,
+          stat: n.stat,
+        } satisfies SandboxPreparation;
+      },
+      browse: async (h, input, signal) => {
+        const n = native(h, parseSandboxBrowseScope(input), "browse", signal);
+        return { stat: n.stat, list: n.list, scan: n.scan } satisfies SandboxBrowse;
+      },
+      revokeOperation: async (h, ref, signal) => {
+        await transport.call(
+          h.id,
+          "revokeOperation",
+          { ref },
+          { deadlineMs: OP_DEADLINE_MS, signal },
+        );
+      },
+      background,
+    };
+  }
 
   async createFileSystem(args: {
     name: string;

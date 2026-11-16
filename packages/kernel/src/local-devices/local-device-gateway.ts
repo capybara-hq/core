@@ -6,6 +6,7 @@ import {
   type KernelCancel,
   type KernelReq,
   parseDeviceFrame,
+  parseDeviceFrameV3,
 } from "@capybara-hq/plugin-sdk";
 import type { WebSocket } from "@fastify/websocket";
 import { Inject, Injectable } from "@nestjs/common";
@@ -592,4 +593,9 @@ export class LocalDeviceGateway {
       [...this.connections].map((c) => c.close(DEVICE_CLOSE.shutdown, "shutting down")),
     );
   }
+}
+
+/** Staged validation only; active connection acceptance above remains protocol 2. */
+export function validateDeviceOperationFrameV3(raw: string, from: "device" | "kernel") {
+  return parseDeviceFrameV3(raw, from);
 }

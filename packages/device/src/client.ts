@@ -42,6 +42,8 @@ const BACKOFF_BASE_MS = 1000;
 const BACKOFF_MAX_MS = 60_000;
 
 export interface ConnectOptions {
+  /** Staged backend lifecycle only; never announces protocol 3 or changes v2 dispatch. */
+  operations?: import("./exec/mac-operation-backend.js").MacOperationBackend;
   log?: CommandLog;
   /**
    * The local policy the executor reads: its summary goes in each hello, and the `policy` op
@@ -171,7 +173,9 @@ export function connect(
    * it the deployment would learn the change only at the next connect. An exec's ceiling changes
    * nothing here: the summary reports the owner's mode, which the kernel cuts itself.
    */
-  const pushPolicy = (): void => {
+  const pushPolicy = async (): Promise<void> => {
+    // Reconcile every file-generation check, even when the visible summary is unchanged.
+    await opts.operations?.reconcileOwnerCeiling(AbortSignal.timeout(30_000));
     if (!isOpen()) return;
     const summary = summaryNow();
     if (summary === undefined) return;
@@ -257,7 +261,9 @@ export function connect(
     }
     const ctl = new AbortController();
     running.set(req.id, ctl);
-    void serveOp(executor, req, ctl.signal, ctx).then(({ res, detail, run }) => {
+    void serveOp(executor, req, ctl.signal, ctx).then(async ({ res, detail, run }) => {
+      if (req.op === "policy")
+        await opts.operations?.reconcileOwnerCeiling(AbortSignal.timeout(30_000));
       running.delete(req.id);
       opts.log?.append(logEntryFor(req, res, new Date(now()), detail, run));
       if (cancelled.has(req.id)) {
@@ -414,7 +420,12 @@ export function connect(
           lastReportText = undefined;
         }, stableMs);
         sock.send(JSON.stringify(hello()));
-        if (opts.policy !== undefined) policyCheck = setInterval(pushPolicy, policyCheckMs);
+        if (opts.policy !== undefined)
+          policyCheck = setInterval(() => {
+            void pushPolicy().catch((error: unknown) =>
+              err(`Owner ceiling reconciliation failed: ${String(error)}`),
+            );
+          }, policyCheckMs);
         prune();
         for (const [id, p] of pending) {
           pending.delete(id);

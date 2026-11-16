@@ -527,3 +527,127 @@ export async function runOp(
 ): Promise<DeviceRes> {
   return (await serveOp(executor, req, signal, ctx)).res;
 }
+
+/** Dormant protocol-v3 operation adapter. Active serveOp/hello remain protocol 2 until Task 8. */
+export async function serveOperationV3(
+  backend: import("./exec/mac-operation-backend.js").MacOperationBackend,
+  handle: import("@capybara-hq/plugin-sdk").SandboxHandle,
+  request: import("@capybara-hq/plugin-sdk").KernelRequestV3,
+  signal: AbortSignal,
+): Promise<import("@capybara-hq/plugin-sdk").DeviceResponseV3> {
+  const sdk = await import("@capybara-hq/plugin-sdk");
+  try {
+    const parsed = sdk.parseDeviceFrameV3(JSON.stringify(request), "kernel");
+    if (parsed.type !== "req") throw new sdk.DeviceProtocolError("Expected an operation request");
+    const a = parsed.args;
+    signal.throwIfAborted();
+    let result: unknown;
+    if (parsed.op === "revokeOperation") {
+      await backend.revokeOperation(handle, sdk.parseSandboxOperationRef(a.ref), signal);
+      result = null;
+    } else if (["backgroundStatus", "backgroundTail", "backgroundStop"].includes(parsed.op)) {
+      const ref = sdk.parseSandboxExecutionRef(a.ref);
+      result =
+        parsed.op === "backgroundStatus"
+          ? await backend.background.status(handle, ref, signal)
+          : parsed.op === "backgroundTail"
+            ? await backend.background.tail(handle, ref, { maxBytes: a.maxBytes as number, signal })
+            : await backend.background.stop(handle, ref, { graceMs: a.graceMs as number, signal });
+    } else {
+      const prep = parsed.op.startsWith("prepare"),
+        browse = parsed.op.startsWith("browse");
+      if (parsed.op === "exec" || parsed.op === "backgroundStart") {
+        const scope = sdk.parseSandboxOperationScope(a.scope);
+        const limits = a.limits as SandboxLimits;
+        // These fields came only from the authenticated kernel transport and its current grant lookup.
+        const execution = backend.forExecution({
+          operationId: scope.operationId,
+          orgNetwork: limits.network,
+          ...(a.grants === undefined
+            ? {}
+            : { grants: a.grants as import("@capybara-hq/plugin-sdk").DeviceExecGrants }),
+        });
+        const args = {
+          command: a.command as string,
+          timeoutMs: a.timeoutMs as number,
+          maxOutputBytes: a.maxOutputBytes as number,
+          signal,
+          ...(a.cwd === undefined ? {} : { cwd: a.cwd as string }),
+          ...(a.env === undefined ? {} : { env: a.env as Record<string, string> }),
+        };
+        result =
+          parsed.op === "exec"
+            ? await (await execution.operation(handle, scope, signal)).exec(args)
+            : await execution.background.start(handle, scope, {
+                ...args,
+                taskId: a.taskId as string,
+                outputPath: a.outputPath as string,
+                retainUntilMs: a.retainUntilMs as number,
+              });
+      } else {
+        const operation = prep
+          ? await backend.prepare(handle, sdk.parseSandboxPreparationScope(a.scope), signal)
+          : browse
+            ? await backend.browse(handle, sdk.parseSandboxBrowseScope(a.scope), signal)
+            : await backend.operation(handle, sdk.parseSandboxOperationScope(a.scope), signal);
+        const suffix = prep ? parsed.op.slice(7) : browse ? parsed.op.slice(6) : parsed.op;
+        const method = suffix.charAt(0).toLowerCase() + suffix.slice(1);
+        if (method === "stat") result = await operation.stat(a.path as string, signal);
+        else if (method === "readFile" && "readFile" in operation)
+          result = await operation.readFile(a.path as string, {
+            maxBytes: a.maxBytes as number,
+            signal,
+          });
+        else if (method === "writeFile" && "writeFile" in operation) {
+          await operation.writeFile(
+            a.path as string,
+            new Uint8Array(Buffer.from(a.dataB64 as string, "base64")),
+            signal,
+          );
+          result = null;
+        } else if (method === "list" && "list" in operation && operation.list)
+          result = await operation.list(a.path as string, { limit: a.limit as number, signal });
+        else if (method === "scan" && "scan" in operation && operation.scan)
+          result = await operation.scan(a.base as string, { signal });
+        else
+          throw new sdk.SandboxPermissionUnsupportedError(
+            "Operation is unavailable on this capability",
+          );
+      }
+    }
+    if (
+      result !== null &&
+      typeof result === "object" &&
+      "data" in result &&
+      result.data instanceof Uint8Array
+    )
+      result = {
+        dataB64: Buffer.from(result.data).toString("base64"),
+        truncated: "truncated" in result && result.truncated,
+      };
+    return {
+      type: "res",
+      id: request.id,
+      ok: true,
+      result: sdk.parseOperationResultV3(parsed.op, result),
+    };
+  } catch (error) {
+    const kind = sdk.isSandboxScopeDeniedError(error)
+      ? "denied"
+      : sdk.isSandboxPermissionUnsupportedError(error)
+        ? "unsupported"
+        : sdk.isSandboxOperationOutcomeUnknownError(error)
+          ? "unknown"
+          : sdk.isSandboxGoneError(error)
+            ? "gone"
+            : sdk.isFileSystemGoneError(error)
+              ? "fs_gone"
+              : "error";
+    return {
+      type: "res",
+      id: request.id,
+      ok: false,
+      error: { kind, message: error instanceof Error ? error.message : String(error) },
+    };
+  }
+}

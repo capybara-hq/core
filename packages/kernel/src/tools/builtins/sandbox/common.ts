@@ -5,7 +5,10 @@ import {
   isSandboxGoneError,
   type Logger,
   type SandboxHandle,
+  type SandboxPreparation,
+  type SandboxPreparationScope,
   type SandboxRoots,
+  SandboxScopeDeniedError,
   ToolError,
   validateSandboxPath,
   validateSandboxPathShape,
@@ -46,7 +49,7 @@ export interface SandboxToolDeps {
    * `ifRunning`, which `TaskOutput` reads a task through.
    */
   sandbox: Pick<SandboxService, "cloudAvailable" | "availableFor" | "withSandbox"> &
-    Partial<Pick<SandboxService, "pathLease" | "currentInstance" | "ifRunning">>;
+    Partial<Pick<SandboxService, "pathLease" | "currentInstance" | "ifRunning" | "withOperations">>;
   /**
    * The device a call enters: the root conversation's, checked for its owner every call.
    * `usableNow` (absent in test stubs: only the cloud provider counts) tells a listing whether a
@@ -495,10 +498,29 @@ function copyFailureReason(e: unknown): string {
  * 单个附件失败（存储故障等）只跳过它并给出说明，不让工具调用失败；signal 已中止或实例已不在时照常抛出。
  * 返回本次复制的沙箱路径与失败说明。
  */
+export interface PreparationSession {
+  deviceId: string;
+  roots: SandboxRoots;
+  signal: AbortSignal;
+  p: SandboxPreparation;
+}
+/** Temporary protocol-2 binding; removed with the active caller cutover in Task8. */
+function legacyPreparationSession(s: SandboxSession): PreparationSession {
+  return {
+    deviceId: s.deviceId,
+    roots: s.roots,
+    signal: s.signal,
+    p: {
+      readFile: (path, opts) => s.p.readFile(s.h, path, opts),
+      writeFile: (path, data, signal) => s.p.writeFile(s.h, path, data, signal),
+      stat: (path, signal) => s.p.stat(s.h, path, signal),
+    },
+  };
+}
 async function syncAttachments(
   deps: SandboxToolDeps,
   ctx: BuiltinCallContext,
-  s: SandboxSession,
+  s: PreparationSession,
 ): Promise<{ copied: string[]; failures: string[] }> {
   const none = { copied: [], failures: [] };
   const conv = sandboxConversationOf(ctx);
@@ -514,8 +536,11 @@ async function syncAttachments(
 }
 
 /** The sync marker's entries (`{}` when it is missing, too large or unreadable). */
-async function readSyncMarker(s: SandboxSession, conv: string): Promise<Record<string, string>> {
-  const m = await s.p.readFile(s.h, syncMarkerPath(s.roots, conv), {
+async function readSyncMarker(
+  s: PreparationSession,
+  conv: string,
+): Promise<Record<string, string>> {
+  const m = await s.p.readFile(syncMarkerPath(s.roots, conv), {
     maxBytes: MARKER_MAX_BYTES,
     signal: s.signal,
   });
@@ -525,7 +550,7 @@ async function readSyncMarker(s: SandboxSession, conv: string): Promise<Record<s
 async function copyAttachments(
   deps: SandboxToolDeps,
   ctx: BuiltinCallContext,
-  s: SandboxSession,
+  s: PreparationSession,
   conv: string,
   list: Awaited<ReturnType<SandboxToolDeps["attachments"]["listForConversation"]>>,
 ): Promise<{ copied: string[]; failures: string[] }> {
@@ -543,7 +568,7 @@ async function copyAttachments(
       const opened = await deps.attachments.openForConversation(ctx.orgId, conv, a.id);
       if (!opened) continue;
       const bytes = new Uint8Array(await new Response(opened.body).arrayBuffer());
-      await s.p.writeFile(s.h, path, bytes, s.signal);
+      await s.p.writeFile(path, bytes, s.signal);
     } catch (e) {
       // 中止（超时 / 锁丢失 / 运行停止）与实例已不在（withSandbox 据此重建）不吞
       if (s.signal.aborted || isSandboxGoneError(e)) throw e;
@@ -556,7 +581,6 @@ async function copyAttachments(
     const next = { ...marker, [a.id]: name };
     try {
       await s.p.writeFile(
-        s.h,
         syncMarkerPath(s.roots, conv),
         utf8.encode(JSON.stringify(next)),
         s.signal,
@@ -639,6 +663,60 @@ export async function inSandbox<T>(
   ctx: BuiltinCallContext,
   fn: (s: SandboxSession) => Promise<T>,
 ): Promise<{ value: T; notices: string[] }> {
+  return inSandboxWith(deps, ctx, fn, false);
+}
+export async function inSandboxOperations<T>(
+  deps: SandboxToolDeps,
+  ctx: BuiltinCallContext,
+  fn: (s: SandboxSession) => Promise<T>,
+  stage?: {
+    purpose: SandboxPreparationScope["purpose"];
+    roots: (roots: SandboxRoots) => readonly string[];
+    run: (s: PreparationSession) => Promise<void>;
+  },
+): Promise<{ value: T; notices: string[] }> {
+  return inSandboxWith(deps, ctx, fn, true, stage);
+}
+/** Trusted copy callbacks only receive preparation's three methods. */
+export async function inSandboxPreparation<T>(
+  deps: SandboxToolDeps,
+  ctx: BuiltinCallContext,
+  purpose: SandboxPreparationScope["purpose"],
+  roots: (roots: SandboxRoots) => readonly string[],
+  fn: (s: PreparationSession) => Promise<T>,
+): Promise<{ value: T; notices: string[] }> {
+  void purpose;
+  void roots;
+  return inSandbox(deps, ctx, (s) => fn(legacyPreparationSession(s)));
+}
+/** Dormant replacement for the trusted-copy entry; Task8 removes the protocol-2 binding above. */
+export async function inSandboxOperationPreparation<T>(
+  deps: SandboxToolDeps,
+  ctx: BuiltinCallContext,
+  purpose: SandboxPreparationScope["purpose"],
+  roots: (roots: SandboxRoots) => readonly string[],
+  fn: (s: PreparationSession) => Promise<T>,
+): Promise<{ value: T; notices: string[] }> {
+  let value: T;
+  return inSandboxOperations(deps, ctx, async () => value, {
+    purpose,
+    roots,
+    run: async (s) => {
+      value = await fn(s);
+    },
+  });
+}
+async function inSandboxWith<T>(
+  deps: SandboxToolDeps,
+  ctx: BuiltinCallContext,
+  fn: (s: SandboxSession) => Promise<T>,
+  operations: boolean,
+  stage?: {
+    purpose: SandboxPreparationScope["purpose"];
+    roots: (roots: SandboxRoots) => readonly string[];
+    run: (s: PreparationSession) => Promise<void>;
+  },
+): Promise<{ value: T; notices: string[] }> {
   try {
     const deviceId = await deps.devices.forTool(ctx.orgId, sandboxConversationOf(ctx));
     // the mode once per call: the path checks follow it and the device_paths event records it;
@@ -656,7 +734,38 @@ export async function inSandbox<T>(
             deviceId,
           ) ?? null),
     ]);
-    return await deps.sandbox.withSandbox(
+    let prepared: { copied: string[]; failures: string[] } | undefined;
+    const enter: SandboxService["withSandbox"] = operations
+      ? (use, call, signal) => {
+          const claim = ctx.executionClaim;
+          if (!claim || !ctx.runId || claim.runId !== ctx.runId || !deps.sandbox.withOperations)
+            throw new SandboxScopeDeniedError("The tool has no current server execution claim");
+          return deps.sandbox.withOperations(
+            use,
+            {
+              claim,
+              callId: ctx.callId,
+              deadlineMs: Math.min(ctx.runDeadline ?? Infinity, Date.now() + 30000),
+              beforeUser: async (staging, info, sig) => {
+                prepared = await staging.prepare(
+                  "attachments",
+                  [attachmentsDir(info.roots, sandboxConversationOf(ctx))],
+                  (p, signal) =>
+                    syncAttachments(deps, ctx, { deviceId, roots: info.roots, p, signal }),
+                );
+                if (stage)
+                  await staging.prepare(stage.purpose, stage.roots(info.roots), (p, signal) =>
+                    stage.run({ deviceId, roots: info.roots, p, signal }),
+                  );
+                sig.throwIfAborted();
+              },
+            },
+            call,
+            signal,
+          );
+        }
+      : deps.sandbox.withSandbox.bind(deps.sandbox);
+    return await enter(
       {
         orgId: ctx.orgId,
         deviceId,
@@ -686,7 +795,8 @@ export async function inSandbox<T>(
         if (info.filesReset) notices.push(sandboxFilesResetNotice(info.roots));
         else if (info.restarted) notices.push(SANDBOX_RESTARTED_NOTICE);
         else if (info.fresh) notices.push(sandboxStartedNotice(info.roots, s.workingRoot));
-        const { copied, failures } = await syncAttachments(deps, ctx, s);
+        const { copied, failures } =
+          prepared ?? (await syncAttachments(deps, ctx, legacyPreparationSession(s)));
         if (copied.length > 0) {
           notices.push(`Attachments copied into the sandbox: ${copied.join(", ")}.`);
         }

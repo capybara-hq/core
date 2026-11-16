@@ -7,6 +7,8 @@ import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { PermissionAuthorityModule } from "../sandbox/permission-authority.module.js";
+import { PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
 import { assertThemeOnForAccount } from "../themes/theme-state.js";
 import { audit } from "./audit.js";
 import { MAX_PASSWORD_LENGTH, normalizeLogin, validatePassword } from "./login.js";
@@ -126,6 +128,7 @@ export class AccountsService {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(SuperAdminLock) private readonly adminLock: SuperAdminLock,
     @Inject(SetupLock) private readonly setupLock: SetupLock,
+    @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
   ) {}
 
   /** Checks the password length and hashes it (scrypt, slow): for callers that hash before their transaction opens. */
@@ -598,6 +601,24 @@ export class AccountsService {
     const id = before.id;
     const values: Updateable<AccountsTable> = { updated_at: new Date() };
     if (patch.displayName !== undefined) values.display_name = patch.displayName;
+    if (patch.status !== undefined && patch.status !== before.status) {
+      await this.ceilings.lock({}, "platform");
+      await this.ceilings.publishLocked(
+        {},
+        "platform",
+        patch.status === "disabled" ? (_scope, row) => row.account_id === id : false,
+      );
+      await this.db
+        .updateTable("conversations")
+        .set((eb) => ({
+          permission_profile: "approve-for-me",
+          permission_consent: null,
+          permission_revision: eb("permission_revision", "+", 1),
+        }))
+        .where("account_id", "=", id)
+        .where("permission_profile", "=", "full-access")
+        .execute();
+    }
     if (patch.status !== undefined) values.status = patch.status;
     if (patch.isSuperAdmin !== undefined) values.is_super_admin = patch.isSuperAdmin;
     const row = await this.db
@@ -656,7 +677,7 @@ export interface SuperAdminInput {
  * `createLocalAccount` import it alone.
  */
 @Module({
-  imports: [SetupLockModule, SuperAdminLockModule],
+  imports: [SetupLockModule, SuperAdminLockModule, PermissionAuthorityModule],
   providers: [AccountsService],
   exports: [AccountsService],
 })

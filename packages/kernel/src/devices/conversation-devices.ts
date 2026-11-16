@@ -1,10 +1,14 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { TransactionHost } from "../infra/database/transaction-host.js";
+import {
+  TransactionHost,
+  withTransactionFencePrelude,
+} from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import type { DeviceModeLevel } from "../runtime/context/device-paths.js";
 import type { SandboxMode } from "../sandbox/modes.js";
+import { PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
 import { PermissionFacts, type WorkingFacts } from "../sandbox/permission-facts.js";
 import { isInternalProvider, SandboxProviders } from "../sandbox/providers.js";
 import { homeOf } from "../sandbox/review/rules.js";
@@ -89,6 +93,7 @@ export class ConversationDevices {
     private readonly devices: Pick<DevicesService, "ensureDefault" | "modeLevel">,
     @Inject(PermissionFacts)
     private readonly facts: Pick<PermissionFacts, "readWorkingFacts" | "workingProject">,
+    @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
   ) {}
 
   /**
@@ -224,7 +229,10 @@ export class ConversationDevices {
       const im = await this.isImThread(rootConversationId);
       const chosen = await this.defaultFor(orgId, conv.account_id, im);
       if (chosen === null) throw sandboxUnavailable();
-      deviceId = await this.bind(rootConversationId, chosen);
+      deviceId = await withTransactionFencePrelude(
+        () => this.ceilings.lock({ orgId, deviceId: chosen, rootConversationId }, "root"),
+        () => this.bind(orgId, rootConversationId, chosen),
+      );
     }
     if (this.providers.cloud() === undefined && !(await this.isInternal(deviceId))) {
       throw sandboxUnavailable();
@@ -306,7 +314,16 @@ export class ConversationDevices {
 
   /** Binds an unbound conversation to `deviceId`; returns what it is bound to now. */
   @Transactional()
-  private async bind(conversationId: string, deviceId: string): Promise<string> {
+  private async bind(orgId: string, conversationId: string, deviceId: string): Promise<string> {
+    const subject = { orgId, deviceId, rootConversationId: conversationId };
+    await this.ceilings.lock(subject, "root");
+    const before = await this.db
+      .selectFrom("conversations")
+      .select("device_id")
+      .where("id", "=", conversationId)
+      .executeTakeFirstOrThrow();
+    if (before.device_id !== null) return before.device_id;
+    await this.ceilings.publishLocked(subject, "root", false, true);
     await this.db
       .updateTable("conversations")
       .set({ device_id: deviceId })

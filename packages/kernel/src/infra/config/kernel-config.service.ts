@@ -149,7 +149,10 @@ export class KernelConfigService {
    * Hot reload: re-validates the raw config; only hot fields are applied, other changes warn and
    * list the keys needing a restart; a validation failure keeps the current config.
    */
-  apply(raw: unknown): void {
+  async apply(
+    raw: unknown,
+    publish?: (before: KernelConfig, next: KernelConfig) => Promise<void>,
+  ): Promise<void> {
     const log = this.log;
     let next: KernelConfig;
     try {
@@ -166,14 +169,32 @@ export class KernelConfigService {
     const updated = structuredClone(this.current);
     const applied: string[] = [];
     for (const p of hot) {
+      setPath(updated as unknown as Record<string, unknown>, p, getPath(next, p));
+      applied.push(p);
+    }
+    if (applied.includes("devices.autoMode")) {
+      if (!publish) {
+        log.error("permission config reload rejected: durable publication is required");
+        return;
+      }
       try {
-        (HOT_APPLIERS[p] as (typeof HOT_APPLIERS)[string])({ log }, getPath(next, p));
-        setPath(updated as unknown as Record<string, unknown>, p, getPath(next, p));
-        applied.push(p);
-      } catch (e) {
+        await publish(this.current, updated);
+      } catch (error) {
+        log.error("permission config publication failed; keeping current config", {
+          error: errMsg(error),
+        });
+        return;
+      }
+    }
+    for (const p of [...applied]) {
+      try {
+        (HOT_APPLIERS[p] as (typeof HOT_APPLIERS)[string])({ log }, getPath(updated, p));
+      } catch (error) {
+        setPath(updated as unknown as Record<string, unknown>, p, getPath(this.current, p));
+        applied.splice(applied.indexOf(p), 1);
         log.error("config reload: cannot apply field; keeping current value", {
           key: p,
-          error: errMsg(e),
+          error: errMsg(error),
         });
       }
     }

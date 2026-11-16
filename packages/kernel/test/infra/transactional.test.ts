@@ -8,6 +8,7 @@ import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import {
   TransactionHost,
   withTransactionFence,
+  withTransactionFencePrelude,
 } from "../../src/infra/database/transaction-host.js";
 import { Transactional } from "../../src/infra/database/transactional.decorator.js";
 import { createLogger } from "../../src/log.js";
@@ -270,4 +271,45 @@ describe("TransactionHost and @Transactional", () => {
     expect(records.join("\n")).toContain("sync hook failed");
     new TransactionHost(pool, createLogger("error"));
   });
+});
+
+it("ordered authority preludes preserve inherited fences, join nested writes and reject new nested transactions", async () => {
+  const order: string[] = [];
+  await withTransactionFence(
+    async () => {
+      order.push("fence");
+      await sql`select 1`.execute(kdb.db);
+    },
+    () =>
+      withTransactionFencePrelude(
+        async () => {
+          order.push("authority");
+          await sql`select 1`.execute(kdb.db);
+        },
+        () =>
+          host.run(async () => {
+            order.push("body");
+            await host.run(async () => {
+              order.push("joined");
+            });
+            await expect(
+              host.run(
+                async () => {
+                  throw new Error("must not run");
+                },
+                { propagation: "requires_new" },
+              ),
+            ).rejects.toThrow("only one new transaction");
+          }),
+      ),
+  );
+  expect(order).toEqual(["authority", "fence", "body", "joined"]);
+  await expect(
+    host.run(() =>
+      withTransactionFencePrelude(
+        async () => {},
+        async () => {},
+      ),
+    ),
+  ).rejects.toThrow("before opening a transaction");
 });

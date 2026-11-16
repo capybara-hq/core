@@ -25,6 +25,8 @@ import {
   SANDBOX_DESTROY_FOR_JOB,
   SANDBOX_RESET_FILES_JOB,
 } from "../sandbox/jobs.js";
+import { OPERATION_RECONCILE, OPERATION_REVOKE } from "../sandbox/operation-intents.js";
+import { SandboxOperationReconcileJob } from "../sandbox/operation-reconcile.job.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
 import { SandboxService } from "../sandbox/sandbox.service.js";
 import { ScheduledTaskFireModule, ScheduledTaskFirer } from "../schedules/fire.js";
@@ -93,6 +95,8 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
     @Inject(DeviceOpResolver) private readonly deviceOps: Pick<DeviceOpResolver, "resolve">,
     @Inject(ScheduledRuns) private readonly scheduled: Pick<ScheduledRuns, "runNow">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "error" | "warn">,
+    @Inject(SandboxOperationReconcileJob)
+    private readonly operations: Pick<SandboxOperationReconcileJob, "reconcile" | "revoke">,
     @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME))
     private readonly queue: Pick<Queue, "removeJobScheduler">,
   ) {
@@ -119,6 +123,12 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
 
   private async dispatch(job: Job, token: string | undefined): Promise<void> {
     switch (job.name) {
+      case OPERATION_RECONCILE:
+        await this.operations.reconcile((job.data as { operationId: string }).operationId);
+        return;
+      case OPERATION_REVOKE:
+        await this.operations.revoke((job.data as { operationId: string }).operationId);
+        return;
       case STOP_DELETED_ORG_JOB:
         await this.deletion.stopOrg(job.data as StopDeletedOrgData);
         return;
@@ -232,6 +242,7 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
     QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
   ],
   providers: [
+    SandboxOperationReconcileJob,
     configuredProcessor(MaintenanceProcessor, MAINTENANCE_QUEUE_NAME, {
       concurrency: MAINTENANCE_CONCURRENCY,
     }),

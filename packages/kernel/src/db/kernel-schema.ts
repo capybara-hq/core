@@ -24,6 +24,45 @@ type TsNullable = ColumnType<Date | null, Date | string | null | undefined, Date
 /** jsonb 列：写入时传 JSON 字符串，读出为已解析对象。 */
 type Json<T = Record<string, unknown>> = ColumnType<T, string | undefined, string>;
 
+/** Durable operation admission and outcomes; retained independently of conversation deletion. */
+export interface SandboxOperationIntentsTable {
+  operation_id: string;
+  org_id: string;
+  account_id: string;
+  device_id: string;
+  root_conversation_id: string | null;
+  conversation_id: string | null;
+  run_id: string | null;
+  call_id: string | null;
+  ordinal: number;
+  method: "exec" | "readFile" | "writeFile" | "stat" | "list" | "scan";
+  input_hash: string;
+  admission_hash: string;
+  granted_hosts: Json<string[]>;
+  input: Json<unknown>;
+  scope: Json<
+    | import("@capybara-hq/plugin-sdk").SandboxOperationScope
+    | import("@capybara-hq/plugin-sdk").SandboxBrowseScope
+  >;
+  epochs: Json<import("../sandbox/permission-authority-epochs.js").AuthorityEpochVector>;
+  provider: string;
+  provider_version: string;
+  instance_generation: string;
+  deadline: Date;
+  retain_until: Date;
+  state: Generated<
+    "pending" | "admitted" | "dispatching" | "started-or-unknown" | "completed" | "revoked"
+  >;
+  execution_id: string;
+  holder_token: Generated<string>;
+  result: Json<unknown>;
+  reconcile_attempt: Generated<number>;
+  outcome_unknown: Generated<boolean>;
+  revoke_acknowledged: Generated<boolean>;
+  created_at: Ts;
+  updated_at: Ts;
+}
+
 export interface AccountsTable {
   id: string;
   display_name: string;
@@ -1034,6 +1073,16 @@ export interface DevicesTable {
 
 /** 0088_environments.sql, renamed in 0105: the instance and file system of a device. */
 export interface DeviceInstancesTable {
+  permission_roots: ColumnType<
+    import("@capybara-hq/plugin-sdk").SandboxRoots | null,
+    string | null | undefined,
+    string | null
+  >;
+  permission_runtime_identity: ColumnType<
+    import("../sandbox/permission-runtime-reports.js").PermissionRuntimeIdentity | null,
+    string | null | undefined,
+    string | null
+  >;
   device_id: string;
   org_id: string;
   provider: ColumnType<string | null, string | null | undefined, string | null>;
@@ -1453,8 +1502,33 @@ export interface KernelDatabase {
     kind: string;
     id: string;
     revision: ColumnType<number, number | undefined, number>;
+    full_revision: Generated<number>;
   };
   accounts: AccountsTable;
+  device_permission_reports: {
+    device_id: string;
+    provider: string;
+    provider_version: string;
+    instance_generation: string;
+    identity_hash: string;
+    report: Json<import("@capybara-hq/plugin-sdk").SandboxPermissionSupport>;
+    observed_at: Ts;
+  };
+  sandbox_operation_intents: SandboxOperationIntentsTable;
+  sandbox_operation_payload_chunks: {
+    operation_id: string;
+    slot: "input" | "result";
+    sequence: number;
+    data: Buffer;
+  };
+  permission_config_publication: {
+    id: string;
+    fingerprint: string;
+    projection: Json<
+      import("../sandbox/permission-config-publication.js").PermissionConfigProjection
+    >;
+    updated_at: Ts;
+  };
   account_initial_passwords: AccountInitialPasswordsTable;
   identities: IdentitiesTable;
   local_passwords: LocalPasswordsTable;

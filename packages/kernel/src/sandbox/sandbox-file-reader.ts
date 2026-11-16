@@ -1,4 +1,4 @@
-import { ToolError } from "@capybara-hq/plugin-sdk";
+import { SandboxScopeDeniedError, ToolError } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { ConversationDevices } from "../devices/conversation-devices.js";
 import { ApiError } from "../errors.js";
@@ -12,6 +12,7 @@ import {
   clip,
   mapSandboxError,
 } from "../tools/builtins/sandbox/common.js";
+import type { OperationInvocation } from "./operation-intents.js";
 import { SandboxService } from "./sandbox.service.js";
 
 /** What {@link SandboxFileReader.read} reads. */
@@ -43,23 +44,49 @@ export class SandboxFileReader {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(ConversationDevices) private readonly devices: Pick<ConversationDevices, "forTool">,
-    @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "withSandbox">,
+    @Inject(SandboxService)
+    private readonly sandbox: Pick<SandboxService, "withSandbox"> &
+      Partial<Pick<SandboxService, "withOperations">>,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
   ) {}
 
   async read(input: SandboxFileReadInput): Promise<Uint8Array> {
+    return this.readWith(input);
+  }
+  /** Dormant caller adapter; the invoking tool supplies its actual current server execution identity. */
+  async readOperation(
+    input: SandboxFileReadInput,
+    invocation: Omit<OperationInvocation, "ordinal">,
+  ): Promise<Uint8Array> {
+    return this.readWith(input, invocation);
+  }
+  private async readWith(
+    input: SandboxFileReadInput,
+    invocation?: Omit<OperationInvocation, "ordinal">,
+  ): Promise<Uint8Array> {
     const { orgId, path: given, maxBytes: max } = input;
     // the shape is checked before the sandbox is entered (nothing starts for a bad path)
     invalidPathAsApiError(() => checkPathShape(given));
     try {
       const root = await rootConversationOf(this.db.db, input.conversationId);
       const deviceId = await this.devices.forTool(orgId, root);
-      return await this.sandbox.withSandbox(
+      const enter: SandboxService["withSandbox"] = invocation
+        ? (ctx, fn, signal) => {
+            if (!this.sandbox.withOperations)
+              throw new SandboxScopeDeniedError("Operation admission is unavailable");
+            return this.sandbox.withOperations(ctx, invocation, fn, signal);
+          }
+        : this.sandbox.withSandbox.bind(this.sandbox);
+      return await enter(
         {
           orgId,
           deviceId,
-          holderConversationId: root,
-          actor: { accountId: input.actorAccountId, conversationId: input.conversationId },
+          holderConversationId: invocation ? input.conversationId : root,
+          actor: {
+            accountId: input.actorAccountId,
+            conversationId: input.conversationId,
+            ...(invocation && { runId: invocation.claim.runId }),
+          },
         },
         async (h, p, info, signal) => {
           const path = invalidPathAsApiError(() => checkPath(given, info.roots));

@@ -1,5 +1,11 @@
-import type { DeviceFeature, DeviceLocalPolicySummary } from "@capybara-hq/plugin-sdk";
+import type {
+  DeviceFeature,
+  DeviceLocalPolicySummary,
+  SandboxBrowseScope,
+  SandboxOperationScope,
+} from "@capybara-hq/plugin-sdk";
 import type { SandboxMode } from "../sandbox/modes.js";
+import { coversHost } from "../sandbox/modes.js";
 
 const KNOWN_FEATURES: readonly DeviceFeature[] = [
   "networkReport",
@@ -198,4 +204,22 @@ export function opExplains(op: PendingPolicyOp, diff: LocalPolicyDiff): boolean 
   if (!diff.remove.every((h) => op.remove.includes(h))) return false;
   if (diff.mode !== undefined && (op.mode === undefined || diff.mode.to !== op.mode)) return false;
   return true;
+}
+
+/** Revoke only authority removed from a starting grant; explicit additions are not owner baseline. */
+export function ownerPolicyRevokes(
+  next: DeviceLocalPolicySummary | null,
+  scope: SandboxOperationScope | SandboxBrowseScope,
+  method: string,
+  grantedHosts: readonly string[],
+): boolean {
+  if (!next) return true;
+  if (!("profile" in scope)) return next.mode !== "auto" && scope.readRoots.includes("/");
+  if (scope.profile === "full-access") return next.mode !== "auto";
+  if (method !== "exec" || scope.network.kind !== "allowlist") return false;
+  return scope.network.hosts.some(
+    (host) =>
+      !next.allowedDomains.some((pattern) => coversHost(pattern, host)) &&
+      !grantedHosts.includes(host),
+  );
 }

@@ -1,16 +1,22 @@
 import { randomUUID } from "node:crypto";
 import {
   type DeviceOp,
+  type DeviceOperationV3,
   type DeviceOpResults,
   DeviceProtocolError,
-  type DeviceRes,
+  type DeviceResponseV3,
   type ExtensionContext,
   FileSystemGoneError,
   type KernelCancel,
   type KernelReq,
   parseDeviceFrame,
+  parseDeviceFrameV3,
+  parseOperationResultV3,
   parseOpResult,
   SandboxGoneError,
+  SandboxOperationOutcomeUnknownError,
+  SandboxPermissionUnsupportedError,
+  SandboxScopeDeniedError,
   ToolError,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
@@ -99,7 +105,7 @@ return 1
 const ABORTED = Symbol("aborted");
 const GRACE_EXPIRED = Symbol("grace expired");
 
-type Outcome = { res: DeviceRes } | { error: typeof ABORTED | typeof GRACE_EXPIRED | Error };
+type Outcome = { res: DeviceResponseV3 } | { error: typeof ABORTED | typeof GRACE_EXPIRED | Error };
 
 export interface DeviceCallOptions {
   /** How long the machine may take for the operation (sent to it as `deadlineMs`). */
@@ -176,6 +182,29 @@ export class LocalDeviceRelay {
     args: unknown,
     opts: DeviceCallOptions,
   ): Promise<DeviceOpResults[Op]> {
+    return this.callWithCodec(deviceId, op, args, opts, false) as Promise<DeviceOpResults[Op]>;
+  }
+
+  /** Development staging: the active gateway continues rejecting protocol 3 until coordinated cutover. */
+  async callV3(
+    deviceId: string,
+    op: DeviceOperationV3,
+    args: Record<string, unknown>,
+    opts: DeviceCallOptions,
+  ): Promise<unknown> {
+    parseDeviceFrameV3(
+      JSON.stringify({ type: "req", id: "validation", op, args, deadlineMs: opts.deadlineMs }),
+      "kernel",
+    );
+    return this.callWithCodec(deviceId, op, args, opts, true);
+  }
+  private async callWithCodec(
+    deviceId: string,
+    op: DeviceOperationV3,
+    args: unknown,
+    opts: DeviceCallOptions,
+    staged: boolean,
+  ): Promise<unknown> {
     const { signal } = opts;
     signal.throwIfAborted();
     if (!(await this.holderLive(deviceId))) {
@@ -187,7 +216,7 @@ export class LocalDeviceRelay {
     const deadlineMs = Math.max(1, Math.ceil(opts.deadlineMs));
     const graceMs = this.graceMs();
     const listTtlMs = graceMs + deadlineMs + LIST_TTL_MARGIN_MS;
-    const reqJson = JSON.stringify({ type: "req", id, op, args, deadlineMs } satisfies KernelReq);
+    const reqJson = JSON.stringify({ type: "req", id, op, args, deadlineMs });
 
     let settle!: (r: Outcome) => void;
     const outcome = new Promise<Outcome>((resolve) => {
@@ -199,7 +228,7 @@ export class LocalDeviceRelay {
       };
     });
     const onStored = (raw: string | null) => {
-      if (raw !== null) settle(this.parseRes(raw, id));
+      if (raw !== null) settle(this.parseRes(raw, id, staged));
     };
     const onAbort = () => settle({ error: ABORTED });
 
@@ -268,7 +297,9 @@ export class LocalDeviceRelay {
       clearTimeout(timer);
       if ("res" in r) {
         await this.quietly("delete the result", deviceId, () => this.redis.del(deviceResKey(id)));
-        return this.resultOf(op, r.res);
+        return staged && r.res.ok
+          ? parseOperationResultV3(op, r.res.result)
+          : this.resultOf(op as DeviceOp, r.res);
       }
       if (r.error instanceof Error) {
         // a bad answer: drop it, give the request up, report the protocol error
@@ -382,9 +413,9 @@ export class LocalDeviceRelay {
   }
 
   /** A stored / published `res` frame for request `id`, or the protocol error it carries. */
-  private parseRes(raw: string, id: string): Outcome {
+  private parseRes(raw: string, id: string, staged = false): Outcome {
     try {
-      const f = parseDeviceFrame(raw, "device");
+      const f = staged ? parseDeviceFrameV3(raw, "device") : parseDeviceFrame(raw, "device");
       if (f.type !== "res" || f.id !== id) {
         return { error: new DeviceProtocolError("the connected machine sent an unexpected frame") };
       }
@@ -399,7 +430,7 @@ export class LocalDeviceRelay {
     }
   }
 
-  private resultOf<Op extends DeviceOp>(op: Op, res: DeviceRes): DeviceOpResults[Op] {
+  private resultOf<Op extends DeviceOp>(op: Op, res: DeviceResponseV3): DeviceOpResults[Op] {
     if (res.ok) {
       try {
         return parseOpResult(op, res.result);
@@ -411,6 +442,12 @@ export class LocalDeviceRelay {
     }
     const { kind, message } = res.error;
     switch (kind) {
+      case "denied":
+        throw new SandboxScopeDeniedError(message);
+      case "unsupported":
+        throw new SandboxPermissionUnsupportedError(message);
+      case "unknown":
+        throw new SandboxOperationOutcomeUnknownError(message);
       case "gone":
         throw new SandboxGoneError(message);
       case "fs_gone":

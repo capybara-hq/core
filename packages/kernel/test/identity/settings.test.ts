@@ -13,7 +13,13 @@ import {
   readClientExtensions,
   SettingsService,
 } from "../../src/identity/settings.js";
-import { accountsFor, adminLockFor, handlesFor, settingsFor } from "../helpers/identity.js";
+import {
+  accountsFor,
+  adminLockFor,
+  ceilingWritesFor,
+  handlesFor,
+  settingsFor,
+} from "../helpers/identity.js";
 
 let box: Awaited<ReturnType<typeof startTestPostgres>>;
 let raw: ReturnType<typeof createDb>;
@@ -317,6 +323,7 @@ describe("SettingsService devicesAutoMode", () => {
         get: () => ({ devices: { autoMode }, attribution: {} }) as never,
         fieldSource: () => source,
       },
+      ceilingWritesFor(db),
     );
   };
 

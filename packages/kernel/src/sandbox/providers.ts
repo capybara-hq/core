@@ -15,6 +15,7 @@ export const isInternalProvider = (name: string): boolean => name.startsWith("@"
 /** A sandbox provider: its name (plugin name, or an internal `@…` name) and implementation. */
 export interface SandboxProviderEntry {
   plugin: string;
+  version?: string;
   impl: SandboxProvider;
 }
 
@@ -49,7 +50,11 @@ export class SandboxProviders {
   cloud(): SandboxProviderEntry | undefined {
     const e = this.registry.list("sandbox").find((x) => x.capability === SANDBOX_EXTENSION_POINT);
     return e
-      ? { plugin: e.plugin, impl: guardProviderConnection(e.impl as SandboxProvider) }
+      ? {
+          plugin: e.plugin,
+          version: e.version,
+          impl: guardProviderConnection(e.impl as SandboxProvider),
+        }
       : undefined;
   }
 
@@ -64,7 +69,11 @@ export class SandboxProviders {
       .list("sandbox")
       .find((x) => x.capability === SANDBOX_EXTENSION_POINT && x.plugin === name);
     return e
-      ? { plugin: e.plugin, impl: guardProviderConnection(e.impl as SandboxProvider) }
+      ? {
+          plugin: e.plugin,
+          version: e.version,
+          impl: guardProviderConnection(e.impl as SandboxProvider),
+        }
       : undefined;
   }
 }

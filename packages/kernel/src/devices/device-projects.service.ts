@@ -20,6 +20,7 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { projectsUnsupported } from "../local-devices/local-device-provider.js";
 import { POLICY_REFUSAL_PREFIX } from "../local-devices/relay.js";
 import type { SandboxMode } from "../sandbox/modes.js";
+import { PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
 import { PermissionFacts } from "../sandbox/permission-facts.js";
 import { deviceNotFound, type HeldProvider, SandboxService } from "../sandbox/sandbox.service.js";
 import { SandboxProviderUnreachableError } from "../sandbox/unreachable.js";
@@ -116,6 +117,7 @@ export class DeviceProjectsService {
       PermissionFacts,
       "resolveProjectForBinding" | "projectMatches" | "projectScope"
     >,
+    @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
   ) {}
 
   /** The projects the device's current mode can read; see {@link DeviceProjectList}. */
@@ -291,6 +293,7 @@ export class DeviceProjectsService {
     auditDetail: Record<string, unknown> | undefined,
   ): Promise<DeviceProjectView> {
     await this.lockOwn(orgId, accountId, deviceId);
+    await this.ceilings.lock({ orgId, deviceId }, "device");
     const count = await this.db
       .selectFrom("device_projects")
       .select(sql<number>`count(*)::int`.as("n"))
@@ -304,6 +307,7 @@ export class DeviceProjectsService {
       .returning(["name", "path", "created_at"])
       .executeTakeFirst();
     if (row === undefined) throw nameTaken(p.name);
+    await this.ceilings.publishLocked({ orgId, deviceId }, "device", false);
     await audit(this.db.db, {
       actorAccountId: accountId,
       ...(actorTokenId !== undefined && { actorTokenId }),
@@ -326,6 +330,7 @@ export class DeviceProjectsService {
     auditDetail?: Record<string, unknown>,
   ): Promise<void> {
     await this.lockOwn(orgId, accountId, deviceId);
+    await this.ceilings.lock({ orgId, deviceId }, "device");
     const gone = await this.db
       .deleteFrom("device_projects")
       .where("device_id", "=", deviceId)
@@ -333,6 +338,30 @@ export class DeviceProjectsService {
       .returning("path")
       .executeTakeFirst();
     if (gone === undefined) return;
+    const roots = await this.db
+      .selectFrom("conversations")
+      .select("id")
+      .where("device_id", "=", deviceId)
+      .where("project_name", "=", name)
+      .where("project_path", "=", gone.path)
+      .execute();
+    const affected = new Set(roots.map((r) => r.id));
+    await this.ceilings.publishLocked(
+      { orgId, deviceId },
+      "device",
+      (_scope, row) => row.root_conversation_id !== null && affected.has(row.root_conversation_id),
+    );
+    if (affected.size)
+      await this.db
+        .updateTable("conversations")
+        .set((eb) => ({
+          permission_profile: "approve-for-me",
+          permission_consent: null,
+          permission_revision: eb("permission_revision", "+", 1),
+        }))
+        .where("id", "in", [...affected])
+        .where("permission_profile", "=", "full-access")
+        .execute();
     await audit(this.db.db, {
       actorAccountId: accountId,
       ...(actorTokenId !== undefined && { actorTokenId }),

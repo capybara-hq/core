@@ -18,6 +18,7 @@ import { MaintenanceModule, MaintenanceProcessor } from "../../src/runtime/maint
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
 import { RETIRED_SCHEDULER_IDS } from "../../src/runtime/retired-schedulers.js";
 import { SANDBOX_SUSPEND_JOB } from "../../src/sandbox/jobs.js";
+import { SandboxOperationReconcileJob } from "../../src/sandbox/operation-reconcile.job.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import {
   DRIFT_SCHEDULER_ID,
@@ -161,9 +162,9 @@ describe("output-cleanup", () => {
     expect(WorkerModule.forRoot(config(["worker"])).imports).toContain(MaintenanceModule);
     expect(
       (Reflect.getMetadata("providers", MaintenanceModule) as { provide: unknown }[]).map(
-        (p) => p.provide,
+        (p) => p.provide ?? p,
       ),
-    ).toEqual([MaintenanceProcessor]);
+    ).toEqual([SandboxOperationReconcileJob, MaintenanceProcessor]);
   });
 });
 
@@ -227,6 +228,7 @@ describe("MaintenanceProcessor (the one consumer)", () => {
         },
       },
       { error: () => {}, warn: (...a: unknown[]) => void warned.push(a) },
+      { reconcile: async () => {}, revoke: async () => {} },
       { removeJobScheduler: async () => true },
     );
     const job = (name: string, data: unknown) => ({ name, data, id: `${name}-1` }) as never;

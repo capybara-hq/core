@@ -1,4 +1,10 @@
-import { isFileSystemGoneError, isSandboxGoneError } from "@capybara-hq/plugin-sdk";
+import {
+  isFileSystemGoneError,
+  isSandboxGoneError,
+  isSandboxOperationOutcomeUnknownError,
+  isSandboxPermissionUnsupportedError,
+  isSandboxScopeDeniedError,
+} from "@capybara-hq/plugin-sdk";
 
 /**
  * How a provider call failed to reach the provider: `connect` when no connection was made (the
@@ -43,7 +49,14 @@ export function providerConnectionFailure(
   depth = 0,
 ): ProviderConnectionFailure | undefined {
   if (depth > MAX_DEPTH || typeof e !== "object" || e === null) return undefined;
-  if (isSandboxGoneError(e) || isFileSystemGoneError(e)) return undefined;
+  if (
+    isSandboxGoneError(e) ||
+    isFileSystemGoneError(e) ||
+    isSandboxScopeDeniedError(e) ||
+    isSandboxPermissionUnsupportedError(e) ||
+    isSandboxOperationOutcomeUnknownError(e)
+  )
+    return undefined;
   const { code, syscall, message, cause, errors } = e as {
     code?: unknown;
     syscall?: unknown;
@@ -103,6 +116,8 @@ export function guardProviderConnection<P extends object>(impl: P): P {
   return new Proxy(impl, {
     get(target, prop) {
       const value: unknown = Reflect.get(target, prop, target);
+      if (prop === "background" && value !== null && typeof value === "object")
+        return guardProviderConnection(value);
       if (typeof value !== "function") return value;
       return (...args: unknown[]) => {
         let r: unknown;
@@ -112,9 +127,19 @@ export function guardProviderConnection<P extends object>(impl: P): P {
           throw converted(e);
         }
         if (r instanceof Promise) {
-          return r.catch((e: unknown) => {
-            throw converted(e);
-          });
+          return r
+            .then((result: unknown) => {
+              if (
+                ["operation", "prepare", "browse"].includes(String(prop)) &&
+                result !== null &&
+                typeof result === "object"
+              )
+                return guardProviderConnection(result);
+              return result;
+            })
+            .catch((e: unknown) => {
+              throw converted(e);
+            });
         }
         return r;
       };

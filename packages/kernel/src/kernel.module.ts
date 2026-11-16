@@ -40,6 +40,7 @@ import { PlatformOpsModule } from "./platform/platform-ops.module.js";
 import { GatewayModule } from "./roles/gateway.module.js";
 import { WorkerModule } from "./roles/worker.module.js";
 import { UsageReportModule } from "./runtime/usage-report.js";
+import { PermissionAuthorityModule } from "./sandbox/permission-authority.module.js";
 
 /**
  * Global: the options the application was built with (`KERNEL_APP_OPTIONS`) and its `overrides`,
@@ -113,6 +114,7 @@ export class KernelModule {
         // KernelLifecycle's setup check, the extension host it drives, the catalog it syncs and
         // the producers its stop closes on every role (titles, usage.report, channel deliveries)
         IdentityModule,
+        PermissionAuthorityModule,
         ExtensionsModule,
         CatalogModule,
         TitlesModule,

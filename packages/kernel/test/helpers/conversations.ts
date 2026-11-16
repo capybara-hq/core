@@ -25,7 +25,7 @@ import type { TransactionHost } from "../../src/infra/database/transaction-host.
 import { OutboxService } from "../../src/infra/outbox/outbox.service.js";
 import { createLogger, type KernelLogger } from "../../src/log.js";
 import type { SkillInvoker } from "../../src/skills/invoke.js";
-import { handlesFor } from "./identity.js";
+import { ceilingWritesOver, handlesFor } from "./identity.js";
 
 export { legacyDbFor } from "./identity.js";
 
@@ -153,6 +153,7 @@ export function conversationsFor(
     { skipNetworkIn: async () => ({ records: [], seqs: new Map() }) },
     { emit: async () => {} },
     h.txHost,
+    ceilingWritesOver(h),
   );
 }
 

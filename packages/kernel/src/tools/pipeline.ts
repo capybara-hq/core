@@ -53,6 +53,7 @@ import {
 } from "../runtime/hook-calls.js";
 import { type SubagentParent, subagentWaitingIdemKey, type WaitingFor } from "../runtime/loop.js";
 import { assistantIdemKey, MAX_STEP_MODEL_CALLS, modelCallIdemKey } from "../runtime/model-call.js";
+import { currentExecutionClaim } from "../runtime/run-execution.js";
 import { rootSurfaceOf } from "../runtime/subagents/child.js";
 import type { DispatchArgs, DispatchOutcome } from "../runtime/subagents/dispatch.js";
 import { type MessageOutcome, SubagentMessages } from "../runtime/subagents/messages.js";
@@ -2026,7 +2027,10 @@ export class ToolPipeline {
       ownerAccountId: ctx.ownerAccountId,
       role: ctx.role,
       ...(tool.source.kind === "builtin" && stepTools !== undefined && { tools: stepTools }),
-      ...(tool.source.kind === "builtin" && { runId: ctx.runId }),
+      ...(tool.source.kind === "builtin" && {
+        runId: ctx.runId,
+        executionClaim: currentExecutionClaim(),
+      }),
       ...(tool.source.kind === "builtin" &&
         ctx.deadline !== undefined && { runDeadline: ctx.deadline }),
       // a reviewed call runs in the working root its review judged (project root spec §4.3)

@@ -8,6 +8,8 @@ import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { StepLogModule } from "../runtime/step-log.js";
 import { SandboxJobs } from "./jobs.js";
 import { SandboxLeases } from "./leases.js";
+import { OperationAuthorityModule } from "./operation-authority.module.js";
+import { OperationIntentsModule } from "./operation-intents.module.js";
 import { PermissionAuthorityModule } from "./permission-authority.module.js";
 import { PermissionFactsModule } from "./permission-facts.module.js";
 import { SandboxProviderRegistryModule } from "./providers.module.js";
@@ -26,6 +28,8 @@ import { SandboxService } from "./sandbox.service.js";
     SandboxProviderRegistryModule,
     PermissionAuthorityModule,
     PermissionFactsModule,
+    OperationIntentsModule,
+    OperationAuthorityModule,
     BackgroundStoreModule,
     // the command review's classifier: the `review` purpose, its hooks, usage and audit writes
     ModelsModule,
@@ -39,6 +43,8 @@ import { SandboxService } from "./sandbox.service.js";
     SandboxProviderRegistryModule,
     PermissionAuthorityModule,
     SandboxService,
+    OperationIntentsModule,
+    OperationAuthorityModule,
     SandboxJobs,
     CommandReviewService,
   ],

@@ -13,10 +13,13 @@ import type { TransactionHost } from "../../src/infra/database/transaction-host.
 import { LockService } from "../../src/infra/lock/lock.service.js";
 import type { KernelLogger } from "../../src/log.js";
 import { SandboxLeases } from "../../src/sandbox/leases.js";
+import type { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
+import type { SandboxOperationIntents } from "../../src/sandbox/operation-intents.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import type { SandboxProviders } from "../../src/sandbox/providers.js";
 import { LOCAL_PROVIDER, type SandboxProviderEntry } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
+import { instanceWritesFor } from "./identity.js";
 
 /** A kernel logger over a test's partial logger (the missing levels are dropped). */
 function kernelLog(log: Partial<Pick<Logger, "info" | "warn" | "error">>): KernelLogger {
@@ -117,6 +120,9 @@ export function sandboxServiceFor(d: SandboxServiceDeps): SandboxService {
         {} as BackgroundLaunchLock,
       ),
     new PermissionFacts(db, config, providers, new DeviceAccess(db, providers)),
+    { revokeHolders: async () => {} } as unknown as SandboxOperationIntents,
+    {} as SandboxOperationAuthority,
+    instanceWritesFor(d.db),
   );
 }
 

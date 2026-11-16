@@ -29,6 +29,7 @@ import {
   readDeploymentDevicePolicy,
 } from "./modes.js";
 import { permissionAvailabilityFor } from "./permission-availability.js";
+import { readRuntimeReport } from "./permission-runtime-reports.js";
 import { providerForDevice, SandboxProviders } from "./providers.js";
 import { homeOf } from "./review/rules.js";
 
@@ -302,21 +303,37 @@ export class PermissionFacts {
   }
 
   async scope(orgId: string, deviceId: string, projectPath: string | null, project: string | null) {
-    const policy = await this.devicePolicy({ orgId, deviceId });
+    const { policy, roots: ownerRoots } = await this.readDevice(orgId, deviceId);
     const device = await this.db
       .selectFrom("devices")
-      .select("provider")
+      .select(["provider", "source"])
       .where("id", "=", deviceId)
       .where("org_id", "=", orgId)
       .executeTakeFirst();
-    const availability = permissionAvailabilityFor(
-      device ? providerForDevice(this.providers, device.provider)?.impl : undefined,
-    );
+    const provider = device ? providerForDevice(this.providers, device.provider) : undefined;
+    let availability = permissionAvailabilityFor(provider?.impl);
+    if (availability.state === "unprobed" && provider) {
+      const machine =
+        provider.plugin === "@local"
+          ? await this.db
+              .selectFrom("device_machines")
+              .select("program_version")
+              .where("device_id", "=", deviceId)
+              .where("revoked_at", "is", null)
+              .executeTakeFirst()
+          : undefined;
+      availability = await readRuntimeReport(
+        this.db.db,
+        deviceId,
+        provider.plugin,
+        machine?.program_version ?? provider.version,
+      );
+    }
     // A ceiling restored to the same values is still a new authorization decision. Reads do
     // not initialize epoch rows; absent rows denote the pre-change revision zero.
     const epochRows = await this.db
       .selectFrom("permission_authority_epochs")
-      .select(["kind", "id", "revision"])
+      .select(["kind", "id", "full_revision"])
       .where((eb) =>
         eb.or([
           eb.and([eb("kind", "=", "platform"), eb("id", "=", "platform")]),
@@ -328,15 +345,26 @@ export class PermissionFacts {
     const authority = { platform: 0, org: 0, device: 0 };
     for (const row of epochRows)
       if (row.kind === "platform" || row.kind === "org" || row.kind === "device")
-        authority[row.kind] = row.revision;
+        authority[row.kind] = row.full_revision;
+    const instanceRoots = await this.db
+      .selectFrom("device_instances")
+      .select("handle")
+      .where("device_id", "=", deviceId)
+      .executeTakeFirst();
     const scopeRevision = permissionScopeHash({
       authority,
       deviceId,
       projectPath,
+      workingRoot:
+        projectPath ??
+        (ownerRoots as { workspace?: string } | null)?.workspace ??
+        rootsOf(instanceRoots?.handle ?? { id: deviceId }).workspace,
       mode: policy.mode,
       allowedMode: policy.allowedMode,
-      network: { ...policy.network, hosts: [...policy.network.hosts].sort() },
-      localAllowedDomains: [...policy.localAllowedDomains].sort(),
+      network:
+        device?.source === "local"
+          ? { kind: "environment" }
+          : { ...policy.network, hosts: [...policy.network.hosts].sort() },
     });
     return {
       deviceId,

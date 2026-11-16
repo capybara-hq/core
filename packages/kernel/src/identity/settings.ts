@@ -21,6 +21,7 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import { needsFullCeiling, PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
 import {
   applyDevicesAutoModePatch,
   DEVICES_AUTO_MODE_DEFAULT,
@@ -545,6 +546,7 @@ export class SettingsService {
     /** The startup config's `devices.autoMode`, which wins over the stored choice. */
     @Inject(KernelConfigService)
     private readonly config: Pick<KernelConfigService, "get" | "fieldSource">,
+    @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
   ) {}
 
   /** The settings with the platform's auto-mode switch and attribution defaults in effect. */
@@ -682,6 +684,7 @@ export class SettingsService {
     opts: { onlyNarrows?: boolean },
   ): Promise<void> {
     await this.adminLock.lockAndAuthorize(actorAccountId);
+    if (patch.devicesAutoMode !== undefined) await this.ceilings.lock({}, "platform");
     // The super admin lock serializes every settings write: the current overrides are read
     // and merged under it, so no concurrent change is lost
     const next: Partial<DeploymentSettings> = {};
@@ -762,6 +765,13 @@ export class SettingsService {
       const r = await this.checkDevicesAutoMode(patch.devicesAutoMode, opts);
       autoModeChange = { before: r.before, after: r.next.mode ?? DEVICES_AUTO_MODE_DEFAULT };
       writes.push([DEVICES_AUTO_MODE_SETTING, r.next]);
+      if (autoModeChange.before.mode !== autoModeChange.after)
+        await this.ceilings.publishLocked(
+          {},
+          "platform",
+          autoModeChange.after === "off" ? needsFullCeiling : false,
+          true,
+        );
     }
     // the platform's attribution defaults: a field set in the startup config is read-only
     if (patch.attribution !== undefined) {

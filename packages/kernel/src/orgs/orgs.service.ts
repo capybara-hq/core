@@ -21,6 +21,7 @@ import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { STOP_DELETED_ORG_JOB, type StopDeletedOrgData } from "../runtime/run-deletion.js";
 import { USAGE_REPORT_QUEUE } from "../runtime/usage-report-jobs.js";
+import { PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
 import { OrgLock } from "./org-lock.js";
 import type { OrgRole } from "./roles.js";
 
@@ -103,6 +104,7 @@ export class OrgsService {
     /** Records `org.deleted` for the subscribing plugins in the delete's transaction. */
     @Inject(LifecycleHooks)
     private readonly lifecycle: Pick<LifecycleHooks, "recordIn">,
+    @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
   ) {}
 
   /**
@@ -268,6 +270,8 @@ export class OrgsService {
   ): Promise<void> {
     // The same org authorization lock admits fenced worker writes before conversation locks.
     await this.orgLock.lockAndAuthorize(orgId, actor.id, "org.delete");
+    await this.ceilings.lock({ orgId }, "org");
+    await this.ceilings.publishLocked({ orgId }, "org");
     await this.db
       .updateTable("orgs")
       .set({ deleted_at: sql<Date>`now()` })

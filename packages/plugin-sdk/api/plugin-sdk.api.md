@@ -807,6 +807,12 @@ export type DeviceFeature = "networkReport" | "policyOp" | "policyOpId" | "mode"
 export type DeviceFrame = DeviceHello | DeviceRes | DevicePolicyChanged | KernelReq | KernelCancel;
 
 // @public
+export type DeviceFrameV3 = DeviceHelloV3 | KernelRequestV3 | KernelCancel | DeviceResponseV3 | {
+    type: "policy";
+    policy?: unknown;
+};
+
+// @public
 export interface DeviceHello {
     arch: string;
     features?: DeviceFeature[];
@@ -820,6 +826,20 @@ export interface DeviceHello {
     roots: SandboxRoots;
     sessionIsolation: boolean;
     type: "hello";
+}
+
+// @public
+export interface DeviceHelloV3 extends DeviceHello {
+    instanceGeneration: string;
+    ownerCeiling: DeviceOwnerCeilingV3;
+    permissionSupport: SandboxPermissionSupport;
+    protocol: 3;
+    runtimeIdentity?: {
+        runtimeHash: string;
+        helperHash: string;
+        imageFingerprint: string;
+        instanceGeneration: string;
+    };
 }
 
 // @public
@@ -859,6 +879,9 @@ export interface DeviceLocalPolicySummary {
 export type DeviceOp = "create" | "exec" | "readFile" | "writeFile" | "stat" | "killTagged" | "killAll" | "stop" | "policy" | "policyStatus" | "list" | "scan";
 
 // @public
+export type DeviceOperationV3 = DeviceOp | "prepareReadFile" | "prepareWriteFile" | "prepareStat" | "browseStat" | "browseList" | "browseScan" | "backgroundStart" | "backgroundStatus" | "backgroundTail" | "backgroundStop" | "revokeOperation";
+
+// @public
 export interface DeviceOpResults {
     create: DeviceCreateResult;
     exec: DeviceExecResult;
@@ -872,6 +895,13 @@ export interface DeviceOpResults {
     stat: DeviceStatResult;
     stop: null;
     writeFile: DeviceWriteFileResult;
+}
+
+// @public
+export interface DeviceOwnerCeilingV3 {
+    readonly fullAccess: boolean;
+    readonly restrictedAllowedDomains: readonly string[];
+    readonly revision: string;
 }
 
 // @public
@@ -959,6 +989,19 @@ export type DeviceRes = {
     ok: false;
     error: {
         kind: DeviceErrorKind;
+        message: string;
+    };
+};
+
+// @public
+export type DeviceResponseV3 = Exclude<DeviceRes, {
+    ok: false;
+}> | {
+    type: "res";
+    id: string;
+    ok: false;
+    error: {
+        kind: "gone" | "fs_gone" | "policy" | "error" | "denied" | "unsupported" | "unknown";
         message: string;
     };
 };
@@ -1832,6 +1875,15 @@ export interface KernelReq {
 }
 
 // @public
+export interface KernelRequestV3 {
+    args: Readonly<Record<string, unknown>>;
+    deadlineMs: number;
+    id: string;
+    op: DeviceOperationV3;
+    type: "req";
+}
+
+// @public
 export interface Lease {
     release(): Promise<void>;
     renew(): Promise<boolean>;
@@ -2353,6 +2405,9 @@ export function parseConnectorTemplateFile(json: unknown): ConnectorTemplateFile
 export function parseDeviceFrame(raw: string, from: "device" | "kernel"): DeviceFrame;
 
 // @public
+export function parseDeviceFrameV3(raw: string, from: "device" | "kernel"): DeviceFrameV3;
+
+// @public
 export interface ParsedSetupGuide {
     checks: SetupGuideCheckLine[];
     codeBlocks: SetupGuideCodeBlock[];
@@ -2407,6 +2462,9 @@ export function parseGitSource(git: unknown): GitSource | {
 export function parseMarketplaceManifest(json: unknown, opts?: MarketplaceParseOptions): MarketplaceManifest | {
     errors: string[];
 };
+
+// @public
+export function parseOperationResultV3(op: DeviceOperationV3, result: unknown): unknown;
 
 // @public
 export function parseOpResult<Op extends DeviceOp>(op: Op, result: unknown): DeviceOpResults[Op];
@@ -3340,6 +3398,9 @@ export function skillSandboxPath(name: string, digest: string, path: string, roo
 
 // @public
 export function slotRefOf(c: UiContribution): string;
+
+// @public
+export const STAGED_DEVICE_PROTOCOL_VERSION = 3;
 
 // @public
 export const STANDARD_KNOBS: readonly StandardKnob[];

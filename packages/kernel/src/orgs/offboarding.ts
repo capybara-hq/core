@@ -19,6 +19,7 @@ import type { KernelLogger } from "../log.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { RunControl } from "../runtime/run-control.js";
 import { oweDeviceDestroy } from "../sandbox/jobs.js";
+import { PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
 import { ApprovalsService } from "../tools/approvals.service.js";
 import { Credentials } from "../tools/credentials.js";
 import { QuestionsService } from "../tools/questions.service.js";
@@ -123,6 +124,7 @@ export class Offboarding {
     @Inject(LifecycleHooks)
     private readonly lifecycle: Pick<LifecycleHooks, "recordIn">,
     @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
+    @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
   ) {}
 
   /**
@@ -154,6 +156,12 @@ export class Offboarding {
     reason: OffboardReason,
     actor: { actorAccountId?: string; actorTokenId?: string } = {},
   ): Promise<OffboardResult> {
+    await this.ceilings.lock({ orgId }, "org");
+    await this.ceilings.publishLocked(
+      { orgId },
+      "org",
+      (_scope, row) => row.account_id === accountId,
+    );
     const deleted = await this.db
       .deleteFrom("memberships")
       .where("org_id", "=", orgId)

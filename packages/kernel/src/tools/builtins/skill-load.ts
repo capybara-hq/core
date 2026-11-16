@@ -37,7 +37,9 @@ import {
   clip,
   display,
   inSandbox,
+  inSandboxPreparation,
   mapSandboxError,
+  type PreparationSession,
   type SandboxSession,
   type SandboxToolDeps,
   sandboxBaseTimeoutMs,
@@ -255,10 +257,10 @@ interface LoadedVersion {
  * Every file is checked against the manifest before it is written; the marker is written last, so
  * a failure midway means the next call starts over.
  */
-async function copySkill(s: SandboxSession, v: LoadedVersion): Promise<void> {
+async function copySkill(s: PreparationSession, v: LoadedVersion): Promise<void> {
   const { name } = v.entry;
   const markerPath = skillMarkerPath(name, v.digest, s.roots.skills);
-  const m = await s.p.readFile(s.h, markerPath, { maxBytes: MARKER_MAX_BYTES, signal: s.signal });
+  const m = await s.p.readFile(markerPath, { maxBytes: MARKER_MAX_BYTES, signal: s.signal });
   const cur = m && !m.truncated ? parseMarker(m.data) : undefined;
   if (cur?.digest === v.digest) return;
   for (const f of v.manifest.files) {
@@ -266,15 +268,10 @@ async function copySkill(s: SandboxSession, v: LoadedVersion): Promise<void> {
       f.path === SKILL_ENTRY_FILE
         ? v.entryBytes
         : await readVerified(v.store, `${v.keyPrefix}${f.path}`, f, name, s.signal);
-    await s.p.writeFile(
-      s.h,
-      skillSandboxPath(name, v.digest, f.path, s.roots.skills),
-      data,
-      s.signal,
-    );
+    await s.p.writeFile(skillSandboxPath(name, v.digest, f.path, s.roots.skills), data, s.signal);
   }
   const entry: MarkerEntry = { digest: v.digest, files: v.manifest.files.map((f) => f.path) };
-  await s.p.writeFile(s.h, markerPath, new TextEncoder().encode(JSON.stringify(entry)), s.signal);
+  await s.p.writeFile(markerPath, new TextEncoder().encode(JSON.stringify(entry)), s.signal);
 }
 
 /** 本步可用的工具里是否有沙箱工具（没有时模型用不了复制进去的文件）。 */
@@ -806,14 +803,22 @@ export function skillLoadTool(deps: SkillLoadDeps): BuiltinTool {
           "follow the instructions in the body without them.";
       } else {
         // the skill's marker is read, compared and written: one holder at a time per skill
-        const r = await inSandbox(deps, ctx, (s) =>
-          withPathLease(
-            deps,
-            s,
-            skillMarkerPath(name, digest, s.roots.skills),
-            s.signal,
-            (signal) => copySkill({ ...s, signal }, v).then(() => s.roots),
-          ),
+        const r = await inSandboxPreparation(
+          deps,
+          ctx,
+          "skills",
+          (roots) => [
+            skillSandboxDir(name, digest, roots.skills),
+            skillMarkerPath(name, digest, roots.skills),
+          ],
+          (s) =>
+            withPathLease(
+              deps,
+              s,
+              skillMarkerPath(name, digest, s.roots.skills),
+              s.signal,
+              (signal) => copySkill({ ...s, signal }, v).then(() => s.roots),
+            ),
         );
         notices = r.notices;
         skillsRoot = r.value.skills;

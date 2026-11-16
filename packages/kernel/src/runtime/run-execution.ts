@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { Inject, Injectable } from "@nestjs/common";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost, withTransactionFence } from "../infra/database/transaction-host.js";
@@ -11,6 +12,11 @@ export interface ExecutionClaim {
   rootId: string;
   executionId: string;
 }
+
+// This carries invocation identity only. Consumers must revalidate it in PostgreSQL.
+const invocationClaim = new AsyncLocalStorage<Readonly<ExecutionClaim>>();
+export const currentExecutionClaim = (): Readonly<ExecutionClaim> | undefined =>
+  invocationClaim.getStore();
 
 /** Internal interruption: a revoked execution must never write its own terminal failure. */
 export class ExecutionRevoked extends Error {
@@ -56,16 +62,18 @@ export class RunExecution {
   }
 
   withClaim<T>(claim: ExecutionClaim, live: () => boolean, fn: () => Promise<T>): Promise<T> {
-    return withTransactionFence(async () => {
-      if (!live() || !(await this.lockLiveConversation(claim))) throw new ExecutionRevoked();
-      const run = await this.db
-        .selectFrom("runs")
-        .select("execution_id")
-        .where("id", "=", claim.runId)
-        .where("conversation_id", "=", claim.conversationId)
-        .executeTakeFirst();
-      if (run?.execution_id !== claim.executionId || !live()) throw new ExecutionRevoked();
-    }, fn);
+    return invocationClaim.run(Object.freeze({ ...claim }), () =>
+      withTransactionFence(async () => {
+        if (!live() || !(await this.lockLiveConversation(claim))) throw new ExecutionRevoked();
+        const run = await this.db
+          .selectFrom("runs")
+          .select("execution_id")
+          .where("id", "=", claim.runId)
+          .where("conversation_id", "=", claim.conversationId)
+          .executeTakeFirst();
+        if (run?.execution_id !== claim.executionId || !live()) throw new ExecutionRevoked();
+      }, fn),
+    );
   }
 
   /** Org, root, current conversation; allow FK references while excluding deletion and writes. */

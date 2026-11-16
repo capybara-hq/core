@@ -12,6 +12,18 @@ export * from "./context.js";
 export * from "./ctx.js";
 export * from "./define-extension.js";
 export * from "./device-protocol.js";
+// Development staging: removed with the coordinated device protocol v3 activation.
+export {
+  type DeviceFrameV3,
+  type DeviceHelloV3,
+  type DeviceOperationV3,
+  type DeviceOwnerCeilingV3,
+  type DeviceResponseV3,
+  type KernelRequestV3,
+  parseDeviceFrameV3,
+  parseOperationResultV3,
+  STAGED_DEVICE_PROTOCOL_VERSION,
+} from "./device-protocol-v3.js";
 export * from "./directory.js";
 export * from "./extension-point.js";
 export * from "./file-preview.js";

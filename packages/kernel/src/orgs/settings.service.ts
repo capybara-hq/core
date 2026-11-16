@@ -1,4 +1,4 @@
-import { type SandboxLimits, validateAllowHost } from "@capybara-hq/plugin-sdk";
+import type { SandboxLimits } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Module, Optional } from "@nestjs/common";
 import { z } from "zod";
 import {
@@ -28,6 +28,8 @@ import {
   orgEffectiveHosts,
   orgHostOutsideCeiling,
 } from "../sandbox/modes.js";
+import { PermissionAuthorityModule } from "../sandbox/permission-authority.module.js";
+import { needsFullCeiling, PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
 import {
   type DevicesAutoMode,
   type DevicesAutoModeView,
@@ -40,6 +42,11 @@ import {
   OrgUiArrangementPatchSchema,
   UiArrangementSchema,
 } from "../ui/arrangement.js";
+import {
+  type CloudNetworkSetting,
+  CloudNetworkSettingSchema,
+  invalidCloudNetwork,
+} from "./cloud-network-setting.js";
 import { OrgLock, OrgLockModule } from "./org-lock.js";
 
 /**
@@ -68,58 +75,12 @@ import { OrgLock, OrgLockModule } from "./org-lock.js";
  *   not in the PATCH yet; an invalid stored value reads as `{ enabled: false }` (fails closed).
  */
 
-/** The org cloud-network allowlist's host limit. */
-export const ORG_SANDBOX_ALLOW_HOSTS_MAX = 200;
-
-/** One host list of the org's cloud network: at most {@link ORG_SANDBOX_ALLOW_HOSTS_MAX} valid, unique hosts. */
-const orgHostList = (name: string) =>
-  z
-    .array(z.string())
-    .max(ORG_SANDBOX_ALLOW_HOSTS_MAX)
-    .superRefine((hosts, ctx) => {
-      hosts.forEach((h, i) => {
-        for (const message of validateAllowHost(h)) {
-          ctx.addIssue({ code: "custom", path: [i], message: `${h}: ${message}` });
-        }
-      });
-      if (new Set(hosts).size !== hosts.length) {
-        ctx.addIssue({ code: "custom", message: `${name} must not contain duplicates` });
-      }
-    })
-    .optional();
-
-/**
- * The org's sandbox-mode network (org egress ceiling spec §D1), stored as a delta over the
- * platform's `sandbox.limits.allowHosts`, never a copy of it, so platform changes keep reaching the
- * org:
- * - `mode`: the cloud network of a cloud device in sandbox mode, `open` (any public host; loopback,
- *   private and cloud metadata addresses are blocked outside the container) or `allowlist`; absent
- *   follows the platform's default (open). `sandbox.limits.orgHosts: within` makes it the allowlist.
- * - `base`: `platform` (the default: start from the platform's list) or `none` (only the org's own
- *   hosts).
- * - `extraHosts`: hosts the org adds (ignored outside the platform list under `within`).
- * - `excludedHosts`: platform entries the org drops (exact entries; any host is accepted, since the
- *   platform may drop an entry later).
- * The effective hosts ({@link orgEffectiveHosts} in `sandbox/modes.ts`) are also the ceiling a local
- * device in sandbox mode reaches (the device intersects them with its own list).
- */
-export const CloudNetworkSettingSchema = z
-  .object({
-    mode: z.enum(["open", "allowlist"]).optional(),
-    base: z.enum(["platform", "none"]).optional(),
-    extraHosts: orgHostList("extraHosts"),
-    excludedHosts: orgHostList("excludedHosts"),
-  })
-  .strict();
-
-export type CloudNetworkSetting = z.infer<typeof CloudNetworkSettingSchema>;
-
-/** What an invalid stored `cloudNetwork` reads as: the allowlist with no host (never wider). */
-export const invalidCloudNetwork = (): CloudNetworkSetting => ({
-  mode: "allowlist",
-  base: "none",
-});
-
+export {
+  type CloudNetworkSetting,
+  CloudNetworkSettingSchema,
+  invalidCloudNetwork,
+  ORG_SANDBOX_ALLOW_HOSTS_MAX,
+} from "./cloud-network-setting.js";
 /**
  * The org's auto-mode switch (auto mode spec §4.3): `allowed` or `off`; absent follows the
  * platform's `devices.autoMode`. An invalid stored value reads as `off` (narrower, never wider).
@@ -423,6 +384,7 @@ export class OrgSettingsService {
      */
     @Inject(KernelConfigService)
     private readonly config: Pick<KernelConfigService, "get" | "fieldSource">,
+    @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
     @Optional() @Inject(KERNEL_LOGGER) private readonly log?: KernelLogger,
   ) {}
 
@@ -604,6 +566,8 @@ export class OrgSettingsService {
     opts: { onlyNarrows?: boolean } | undefined,
   ): Promise<OrgSettings> {
     await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "org.update");
+    if (patch.autoMode !== undefined || patch.cloudNetwork !== undefined)
+      await this.ceilings.lock({ orgId }, "org");
     const row = await this.db
       .selectFrom("orgs")
       .select("settings")
@@ -689,6 +653,23 @@ export class OrgSettingsService {
       target: orgId,
       detail: { before, after, ...auditDetail },
     });
+    if (patch.autoMode !== undefined || patch.cloudNetwork !== undefined)
+      await this.ceilings.publishLocked(
+        { orgId },
+        "org",
+        (scope, row) => {
+          if (needsFullCeiling(scope)) return after.autoMode === "off";
+          if (!("network" in scope) || row.method !== "exec" || scope.network.kind !== "allowlist")
+            return false;
+          const hosts = this.effectiveNetwork(after).hosts;
+          return scope.network.hosts.some(
+            (host) =>
+              !hosts.some((pattern) => coversHost(pattern, host)) &&
+              !(this.effectiveNetwork(after).mode === "open" && row.granted_hosts.includes(host)),
+          );
+        },
+        before.autoMode !== after.autoMode,
+      );
     return after;
   }
 }
@@ -699,7 +680,7 @@ export class OrgSettingsService {
  * OrgsModule.
  */
 @Module({
-  imports: [OrgLockModule],
+  imports: [OrgLockModule, PermissionAuthorityModule],
   providers: [OrgSettingsService],
   exports: [OrgSettingsService],
 })

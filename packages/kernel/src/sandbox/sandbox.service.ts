@@ -1,3 +1,30 @@
+import { posix } from "node:path";
+import {
+  DEFAULT_SANDBOX_ROOTS,
+  isSandboxPermissionUnsupportedError,
+  isSandboxScopeDeniedError,
+  parseSandboxBrowseScope,
+  parseSandboxOperationScope,
+  parseSandboxPreparationScope,
+  type SandboxBrowse,
+  SandboxOperationOutcomeUnknownError,
+  SandboxPermissionUnsupportedError,
+  type SandboxPreparation,
+  type SandboxPreparationScope,
+  SandboxScopeDeniedError,
+} from "@capybara-hq/plugin-sdk";
+import { runOutsideTransaction } from "../infra/database/transaction-host.js";
+import {
+  createHeldOperations,
+  createLegacyHeldProvider,
+  type HeldProvider,
+} from "./held-operations.js";
+import { SandboxOperationAuthority } from "./operation-authority.js";
+import { type OperationInvocation, SandboxOperationIntents } from "./operation-intents.js";
+import { PermissionInstanceWrites } from "./permission-instance-writes.js";
+
+export type { HeldProvider } from "./held-operations.js";
+
 import { randomUUID } from "node:crypto";
 import {
   type ExecResult,
@@ -167,9 +194,6 @@ interface Instance {
  * The provider {@link SandboxService.withSandbox} passes to its callback: every `exec` carries the
  * holder's tag and the caller's actor, so the callback passes neither.
  */
-export type HeldProvider = Omit<SandboxProvider, "exec"> & {
-  exec(h: SandboxHandle, args: Omit<ExecArgs, "tag" | "actor">): Promise<ExecResult>;
-};
 
 /**
  * The provider {@link SandboxService.ifRunning} passes to its callback: every `exec` carries the
@@ -493,6 +517,22 @@ async function inPool<T>(items: T[], limit: number, fn: (x: T) => Promise<void>)
  * {@link availableFor} is false and uses throw `sandbox.unavailable` (503). No in-process state:
  * replicas share it through PG and Redis.
  */
+/** Available only to kernel staging callbacks, never to a held user-operation callback. */
+export interface SandboxStaging {
+  prepare<T>(
+    purpose: SandboxPreparationScope["purpose"],
+    roots: readonly string[],
+    fn: (p: SandboxPreparation, signal: AbortSignal) => Promise<T>,
+  ): Promise<T>;
+}
+export type OperationSessionInvocation = Omit<OperationInvocation, "ordinal"> & {
+  beforeUser?: (
+    staging: SandboxStaging,
+    info: SandboxUseInfo,
+    signal: AbortSignal,
+  ) => Promise<void>;
+};
+
 @Injectable()
 export class SandboxService {
   constructor(
@@ -510,6 +550,9 @@ export class SandboxService {
     @Inject(BackgroundTaskStore)
     private readonly background: Pick<BackgroundTaskStore, "pendingKills" | "clearKill">,
     @Inject(PermissionFacts) private readonly facts: Pick<PermissionFacts, "devicePolicy">,
+    @Inject(SandboxOperationIntents) private readonly operationIntents: SandboxOperationIntents,
+    @Inject(SandboxOperationAuthority) private readonly authority: SandboxOperationAuthority,
+    @Inject(PermissionInstanceWrites) private readonly instanceWrites: PermissionInstanceWrites,
   ) {}
 
   /** Poll interval while waiting for a lease (the leases' own). */
@@ -847,6 +890,170 @@ export class SandboxService {
    * - When `ctx.holderConversationId` last used another instance (another holder rebuilt it
    *   meanwhile), `info.restarted` is true, so it learns its processes are gone (final review m5).
    */
+  /** Trusted staging only. The callback receives no exec, browsing or lifecycle methods. */
+  async withPreparation<T>(
+    ctx: SandboxUseContext,
+    purpose: SandboxPreparationScope["purpose"],
+    roots: readonly string[],
+    fn: (p: SandboxPreparation, signal: AbortSignal) => Promise<T>,
+    signal: AbortSignal,
+  ): Promise<T> {
+    return this.withSandboxUse(
+      ctx,
+      async () => {
+        throw new Error("Preparation callback was not installed");
+      },
+      signal,
+      undefined,
+      (h, provider, info, sig) => this.prepareFor(ctx, h, provider, info, purpose, roots, fn, sig),
+    );
+  }
+  private async prepareFor<T>(
+    ctx: SandboxUseContext,
+    h: SandboxHandle,
+    provider: SandboxProvider,
+    info: SandboxUseInfo,
+    purpose: SandboxPreparationScope["purpose"],
+    roots: readonly string[],
+    fn: (p: SandboxPreparation, signal: AbortSignal) => Promise<T>,
+    sig: AbortSignal,
+  ): Promise<T> {
+    if (!provider.prepare)
+      throw new SandboxPermissionUnsupportedError(
+        "Trusted preparation is unavailable on this provider",
+      );
+    const prepare = provider.prepare.bind(provider);
+    const operation = async () => {
+      const authority = await runOutsideTransaction(() => this.authority.resolve(ctx, "stat", sig));
+      const base =
+        purpose === "skills"
+          ? info.roots.skills
+          : `${info.roots.workspace}/attachments/${authority.rootConversationId}`;
+      if (
+        roots.length === 0 ||
+        roots.some(
+          (root) =>
+            posix.normalize(root) !== root || (root !== base && !root.startsWith(`${base}/`)),
+        )
+      )
+        throw new SandboxScopeDeniedError(
+          "Preparation roots must stay inside the trusted purpose directory",
+        );
+      const operationId = randomUUID();
+      return prepare(
+        h,
+        parseSandboxPreparationScope({
+          operationId,
+          deviceId: ctx.deviceId,
+          purpose,
+          writeRoots: [...roots],
+          tag: operationId,
+        }),
+        sig,
+      );
+    };
+    return fn(
+      {
+        readFile: async (path, opts) =>
+          (await operation()).readFile(path, {
+            ...opts,
+            signal: AbortSignal.any([sig, opts.signal]),
+          }),
+        writeFile: async (path, data, signal) =>
+          (await operation()).writeFile(path, data, AbortSignal.any([sig, signal])),
+        stat: async (path, signal) =>
+          (await operation()).stat(path, AbortSignal.any([sig, signal])),
+      },
+      sig,
+    );
+  }
+  /** Owner browse scopes never manufacture a conversation or Full consent. */
+  async withBrowse<T>(
+    ctx: { orgId: string; deviceId: string; accountId: string },
+    fn: (p: SandboxBrowse, signal: AbortSignal) => Promise<T>,
+    signal: AbortSignal,
+  ): Promise<T> {
+    await this.authority.resolveBrowse(ctx, signal);
+    const row = await this.readRow(ctx);
+    if (!row)
+      throw new SandboxPermissionUnsupportedError(
+        "Start the device before using staged owner browsing",
+      );
+    const entry = await this.require(ctx.deviceId, ctx.orgId);
+    const result = await this.ifRunning(
+      ctx.deviceId,
+      { createdAt: row.created_at },
+      async (provider, h, sig) => {
+        if (!provider.browse)
+          throw new SandboxPermissionUnsupportedError(
+            "Owner browsing is unavailable on this provider",
+          );
+        const browse = provider.browse.bind(provider);
+        const call = async <R>(
+          method: "stat" | "list" | "scan",
+          input: unknown,
+          s: AbortSignal,
+          invoke: (p: SandboxBrowse, s: AbortSignal) => Promise<R>,
+        ): Promise<R> => {
+          const combined = AbortSignal.any([sig, s]);
+          const intent = await this.operationIntents.admitBrowse(
+            ctx,
+            {
+              provider: entry.plugin,
+              providerVersion: entry.version ?? "internal-v2",
+              generation: String(row.created_at.getTime()),
+            },
+            method,
+            input,
+            combined,
+          );
+          const admitted = await this.operationIntents.claimBrowse(ctx, intent.operation_id);
+          combined.throwIfAborted();
+          try {
+            const operation = await browse(h, parseSandboxBrowseScope(admitted.scope), combined);
+            const value = await invoke(operation, combined);
+            await runOutsideTransaction(() =>
+              this.operationIntents.complete(admitted.operation_id, admitted.execution_id, value),
+            );
+            return value;
+          } catch (error) {
+            await runOutsideTransaction(() => this.operationIntents.unknown(admitted.operation_id));
+            throw error;
+          }
+        };
+        return fn(
+          {
+            stat: (path, s) => call("stat", { path }, s, (p, signal) => p.stat(path, signal)),
+            list: (path, opts) =>
+              call("list", { path, limit: opts.limit }, opts.signal, (p, signal) =>
+                p.list(path, { limit: opts.limit, signal }),
+              ),
+            scan: (base, opts) =>
+              call("scan", { base }, opts.signal, (p, signal) => p.scan(base, { signal })),
+          },
+          sig,
+        );
+      },
+      signal,
+    );
+    if (result.kind !== "ran")
+      throw new SandboxPermissionUnsupportedError("The device instance is not running");
+    return result.value;
+  }
+
+  async withOperations<T>(
+    ctx: SandboxUseContext,
+    invocation: OperationSessionInvocation,
+    fn: (
+      h: SandboxHandle,
+      p: HeldProvider,
+      info: SandboxUseInfo,
+      signal: AbortSignal,
+    ) => Promise<T>,
+    signal: AbortSignal,
+  ): Promise<T> {
+    return this.withSandboxUse(ctx, fn, signal, invocation);
+  }
   async withSandbox<T>(
     ctx: SandboxUseContext,
     fn: (
@@ -856,6 +1063,26 @@ export class SandboxService {
       signal: AbortSignal,
     ) => Promise<T>,
     signal: AbortSignal,
+  ): Promise<T> {
+    return this.withSandboxUse(ctx, fn, signal);
+  }
+
+  private async withSandboxUse<T>(
+    ctx: SandboxUseContext,
+    fn: (
+      h: SandboxHandle,
+      p: HeldProvider,
+      info: SandboxUseInfo,
+      signal: AbortSignal,
+    ) => Promise<T>,
+    signal: AbortSignal,
+    invocation?: OperationSessionInvocation,
+    trusted?: (
+      h: SandboxHandle,
+      p: SandboxProvider,
+      info: SandboxUseInfo,
+      signal: AbortSignal,
+    ) => Promise<T>,
   ): Promise<T> {
     const p = await this.require(ctx.deviceId, ctx.orgId);
     const env = ctx.deviceId;
@@ -868,7 +1095,7 @@ export class SandboxService {
     let e = await seen(await this.enter(ctx, p, signal, null, want));
     try {
       try {
-        return await this.runAs(e, ctx, p, fn, signal);
+        return await this.runAs(e, ctx, p, fn, signal, invocation, trusted);
       } catch (err) {
         if (isFileSystemGoneError(err)) throw await this.filesGone(env, p, e);
         if (!isSandboxGoneError(err)) throw err;
@@ -882,7 +1109,7 @@ export class SandboxService {
           ? { fresh: true, restarted: false, filesReset: true }
           : { fresh: true, restarted: true };
         try {
-          return await this.runAs({ ...e, info }, ctx, p, fn, signal);
+          return await this.runAs({ ...e, info }, ctx, p, fn, signal, invocation, trusted);
         } catch (err2) {
           if (isFileSystemGoneError(err2)) throw await this.filesGone(env, p, e);
           throw err2;
@@ -1026,7 +1253,7 @@ export class SandboxService {
   }
 
   /** Runs `fn` as the holder `e`: its tag and the caller's actor on every exec, its lease's signal. */
-  private runAs<T>(
+  private async runAs<T>(
     e: Entered,
     ctx: SandboxUseContext,
     p: SandboxProviderEntry,
@@ -1037,12 +1264,128 @@ export class SandboxService {
       signal: AbortSignal,
     ) => Promise<T>,
     signal: AbortSignal,
+    invocation?: OperationSessionInvocation,
+    trusted?: (
+      h: SandboxHandle,
+      p: SandboxProvider,
+      info: SandboxUseInfo,
+      signal: AbortSignal,
+    ) => Promise<T>,
   ): Promise<T> {
     const sig = AbortSignal.any([signal, e.lease.signal]);
+    if (trusted) return trusted(e.handle, p.impl, { ...e.info, roots: rootsOf(e.handle) }, sig);
     const env = ctx.deviceId;
-    const impl = tagged<HeldProvider>(p.impl, e.lease.token, ctx.actor, () =>
-      this.register(env, e.lease.token),
-    );
+    let ordinal = 0;
+    const impl = invocation
+      ? createHeldOperations(p.impl, e.handle, sig, async (method, input, invoke) => {
+          const identity = { ...invocation, ordinal: ordinal++ };
+          sig.throwIfAborted();
+          await this.register(env, e.lease.token);
+          const pending = await runOutsideTransaction(() =>
+            this.operationIntents.pending(
+              ctx,
+              identity,
+              {
+                provider: p.plugin,
+                providerVersion: p.version ?? "internal-v2",
+                generation: String(e.createdAt),
+              },
+              method,
+              input,
+              e.lease.token,
+              sig,
+            ),
+          );
+          if (pending.state === "completed")
+            return (await this.operationIntents.result(pending)) as Awaited<
+              ReturnType<typeof invoke>
+            >;
+          await runOutsideTransaction(() => this.operationIntents.admit(ctx, identity));
+          const admitted = ["dispatching", "started-or-unknown"].includes(pending.state)
+            ? await runOutsideTransaction(() =>
+                this.operationIntents.claimReconciliation(
+                  ctx,
+                  identity,
+                  {
+                    provider: p.plugin,
+                    providerVersion: p.version ?? "internal-v2",
+                    generation: String(e.createdAt),
+                  },
+                  method,
+                  input,
+                  e.lease.token,
+                ),
+              )
+            : await runOutsideTransaction(() =>
+                this.operationIntents.claimDispatch(ctx, identity, e.lease.token),
+              );
+          if (admitted.state === "completed")
+            return (await this.operationIntents.result(admitted)) as Awaited<
+              ReturnType<typeof invoke>
+            >;
+          sig.throwIfAborted();
+          let result: Awaited<ReturnType<typeof invoke>>;
+          try {
+            result = await invoke(parseSandboxOperationScope(admitted.scope), sig);
+          } catch (error) {
+            if (isSandboxScopeDeniedError(error) || isSandboxPermissionUnsupportedError(error)) {
+              if (["dispatching", "started-or-unknown"].includes(pending.state)) {
+                await runOutsideTransaction(() =>
+                  this.operationIntents.unknown(admitted.operation_id),
+                );
+                throw new SandboxOperationOutcomeUnknownError(
+                  "The recorded operation remains unknown; changed runtime authority cannot prove it had no effect",
+                  { cause: error },
+                );
+              }
+              await runOutsideTransaction(() =>
+                this.operationIntents.complete(admitted.operation_id, identity.claim.executionId, {
+                  $failure: {
+                    kind: isSandboxScopeDeniedError(error) ? "denied" : "unsupported",
+                    message: error.message,
+                  },
+                }),
+              );
+              throw error;
+            }
+            await runOutsideTransaction(() => this.operationIntents.unknown(admitted.operation_id));
+            // A transport/gone error after durable dispatch cannot justify a new identity retry.
+            throw new SandboxOperationOutcomeUnknownError(
+              "The operation outcome must be reconciled with its recorded identity",
+              { cause: error },
+            );
+          }
+          // The provider has returned: storage/serialization errors cannot establish denial.
+          try {
+            await runOutsideTransaction(() =>
+              this.operationIntents.complete(
+                admitted.operation_id,
+                identity.claim.executionId,
+                result,
+              ),
+            );
+          } catch (error) {
+            await runOutsideTransaction(() => this.operationIntents.unknown(admitted.operation_id));
+            throw new SandboxOperationOutcomeUnknownError(
+              "The operation returned but its result could not be retained; reconcile the same identity",
+              { cause: error },
+            );
+          }
+          return result;
+        })
+      : createLegacyHeldProvider(p.impl, e.lease.token, ctx.actor, () =>
+          this.register(env, e.lease.token),
+        );
+    const info = { ...e.info, roots: rootsOf(e.handle) };
+    if (invocation?.beforeUser)
+      await invocation.beforeUser(
+        {
+          prepare: (purpose, roots, stage) =>
+            this.prepareFor(ctx, e.handle, p.impl, info, purpose, roots, stage, sig),
+        },
+        info,
+        sig,
+      );
     return fn(e.handle, impl, { ...e.info, roots: rootsOf(e.handle) }, sig);
   }
 
@@ -1285,6 +1628,7 @@ export class SandboxService {
     lease: SandboxLease,
   ): Promise<void> {
     if (tags.length === 0) return;
+    await runOutsideTransaction(() => this.operationIntents.revokeHolders(env, tags));
     const sig = AbortSignal.any([signal, lease.signal]);
     await this.kill(env, "takeover", () => p.impl.killTagged(handle, tags, sig), sig);
   }
@@ -1526,6 +1870,7 @@ export class SandboxService {
     signal: AbortSignal,
     dead: string[],
   ): Promise<void> {
+    await runOutsideTransaction(() => this.operationIntents.revokeHolders(deviceId, dead));
     await this.kill(
       deviceId,
       dead.length > 0 ? "takeover" : "resume",
@@ -1840,6 +2185,9 @@ export class SandboxService {
       org_id: ctx.orgId,
       provider: p.plugin,
       handle: null,
+      permission_roots: JSON.stringify(
+        row.permission_roots ?? (row.handle ? rootsOf(row.handle) : DEFAULT_SANDBOX_ROOTS),
+      ),
       status: "creating",
       last_used_at: sql<Date>`now()`,
       running_since: null,
@@ -1913,15 +2261,25 @@ export class SandboxService {
     }
     let createdAt: Date;
     try {
-      createdAt = await this.fenced(held, id, fence, {
-        status: "running",
-        handle: JSON.stringify(handle),
-        had_instance: true,
-        created_at: sql<Date>`now()`,
-        running_since: sql<Date>`now()`,
-        last_used_at: sql<Date>`now()`,
-        ...(!atFileSystem && { instance_limits: record }),
-      });
+      createdAt = await runOutsideTransaction(() =>
+        this.instanceWrites.commitHandle(
+          ctx.orgId,
+          id,
+          fence.gen,
+          rootsOf(handle),
+          {
+            status: "running",
+            handle: JSON.stringify(handle),
+            had_instance: true,
+            created_at: sql<Date>`now()`,
+            running_since: sql<Date>`now()`,
+            last_used_at: sql<Date>`now()`,
+            ...(!atFileSystem && { instance_limits: record }),
+          },
+          held.signal,
+        ),
+      );
+      fence.gen++;
     } catch (e) {
       // Lease lost before the handle was recorded: destroy the new instance (best effort) so it
       // does not leak. A provider that reuses instances by name (Ruling M10) may then hit the one

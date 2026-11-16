@@ -47,6 +47,7 @@ import type { KernelLogger } from "../log.js";
 import { GatewayRole } from "../roles/gateway-role.js";
 import { WorkerRole } from "../roles/worker-role.js";
 import { UsageReporter } from "../runtime/usage-report.js";
+import { PermissionConfigPublication } from "../sandbox/permission-config-publication.js";
 import { sandboxConfigWarnings } from "../sandbox/sandbox.service.js";
 import { warnLegacyToolKeys } from "../tools/legacy-data.js";
 import { KERNEL_APP_OPTIONS } from "./tokens.js";
@@ -117,6 +118,8 @@ export class KernelLifecycle
   private bootstrapPackages: ReadonlyMap<string, Uint8Array> | undefined;
 
   constructor(
+    @Inject(PermissionConfigPublication)
+    private readonly permissionConfig: PermissionConfigPublication,
     @Inject(AccountsService) private readonly accounts: AccountsService,
     @Inject(KernelConfigService) private readonly configService: KernelConfigService,
     @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
@@ -206,6 +209,7 @@ export class KernelLifecycle
       ),
     );
     this.checkpoint();
+    await this.permissionConfig.initialize();
     // Rows still holding a release-candidate tool key that migration 0063 could not map: one
     // read-only count, a WARN when there are any (tool naming spec §8.2); never blocks the start
     await warnLegacyToolKeys(this.kdb.db, this.log).catch((e: unknown) =>
@@ -284,8 +288,19 @@ export class KernelLifecycle
     }
     if (opts.source?.watch) {
       // 热更新：重新校验；只应用 hot 字段，其余变化 warn 并列出需重启的键；校验失败保持原配置
+      let reload = Promise.resolve();
       this.unwatchConfig = opts.source.watch(
-        (raw) => this.configService.apply(raw),
+        (raw) => {
+          reload = reload
+            .then(() =>
+              this.configService.apply(raw, (before, next) =>
+                this.permissionConfig.publish(before, next),
+              ),
+            )
+            .catch((error: unknown) =>
+              this.log.error("config reload failed", { error: errMsg(error) }),
+            );
+        },
         (err) => this.log.error("config watch error", { error: err.message }),
       );
     }

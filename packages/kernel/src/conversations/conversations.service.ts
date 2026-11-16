@@ -21,6 +21,7 @@ import { ProviderRegistry } from "../runtime/providers.js";
 import { RunControl as RunControlService } from "../runtime/run-control.js";
 import { RunDeletion } from "../runtime/run-deletion.js";
 import { rootConversationOf } from "../runtime/subagents/child.js";
+import { PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
 import { permissionScopeHash } from "../sandbox/permission-facts.js";
 import type { ScheduleMarker } from "../schedules/types.js";
 import { type RenderedInvocation, SkillInvoker } from "../skills/invoke.js";
@@ -473,6 +474,7 @@ export class ConversationsService {
     private readonly approvals: Pick<ApprovalsService, "skipNetworkIn">,
     @Inject(KernelEvents) private readonly events: Pick<KernelEvents, "emit">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
+    @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
   ) {}
 
   /**
@@ -836,6 +838,43 @@ export class ConversationsService {
     conversationId: string,
     accountId: string,
   ): Promise<void> {
+    const binding = await this.db
+      .selectFrom("conversations")
+      .select(["device_id", "parent_conversation_id"])
+      .where("id", "=", conversationId)
+      .where("org_id", "=", orgId)
+      .executeTakeFirst();
+    if (!binding) throw notFound();
+    // Root deletion closes the whole tree; a child is fenced through its actual root's authority.
+    let rootId = conversationId,
+      parent = binding.parent_conversation_id;
+    for (let depth = 0; parent && depth < 16; depth++) {
+      const ancestor = await this.db
+        .selectFrom("conversations")
+        .select(["id", "parent_conversation_id"])
+        .where("id", "=", parent)
+        .where("org_id", "=", orgId)
+        .executeTakeFirstOrThrow();
+      rootId = ancestor.id;
+      parent = ancestor.parent_conversation_id;
+    }
+    if (parent) throw notFound();
+    const root = await this.db
+      .selectFrom("conversations")
+      .select("device_id")
+      .where("id", "=", rootId)
+      .executeTakeFirstOrThrow();
+    const subject = {
+      orgId,
+      rootConversationId: rootId,
+      ...(root.device_id ? { deviceId: root.device_id } : {}),
+    };
+    await this.ceilings.lock(subject, "root");
+    await this.ceilings.publishLocked(
+      subject,
+      "root",
+      (_scope, intent) => conversationId === rootId || intent.conversation_id === conversationId,
+    );
     const row = await this.db
       .selectFrom("conversations")
       .select("id")

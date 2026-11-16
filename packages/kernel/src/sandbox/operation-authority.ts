@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import {
   type PermissionProfile,
+  parseSandboxBrowseScope,
   parseSandboxOperationScope,
   type SandboxActor,
+  type SandboxBrowseScope,
   type SandboxOperationScope,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
@@ -15,6 +17,7 @@ import { NetworkGrants } from "../local-devices/network-grants.js";
 import { coversHost } from "./modes.js";
 import { PermissionAuthorityEpochStore } from "./permission-authority-epochs.js";
 import { PermissionAuthorityLock } from "./permission-authority-lock.js";
+import { PermissionConfigPublication } from "./permission-config-publication.js";
 import { PermissionFacts, permissionScopeHash } from "./permission-facts.js";
 import type { SandboxUseContext } from "./use-context.js";
 export type SandboxAuthorityOperation =
@@ -79,6 +82,7 @@ export function intersectPermissionScope(f: PermissionScopeFacts): SandboxOperat
 @Injectable()
 export class SandboxOperationAuthority {
   constructor(
+    @Inject(PermissionConfigPublication) private readonly publication: PermissionConfigPublication,
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(PermissionProfileStore) private readonly profiles: PermissionProfileStore,
@@ -87,6 +91,58 @@ export class SandboxOperationAuthority {
     @Inject(PermissionAuthorityLock) private readonly locks: PermissionAuthorityLock,
     @Inject(PermissionAuthorityEpochStore) private readonly epochs: PermissionAuthorityEpochStore,
   ) {}
+  /** Owner project browsing has no conversation, profile, or fabricated root identity. */
+  @Transactional()
+  async resolveBrowse(
+    ctx: { orgId: string; deviceId: string; accountId: string },
+    signal: AbortSignal,
+  ): Promise<SandboxBrowseScope> {
+    signal.throwIfAborted();
+    await this.locks.acquire({ orgId: ctx.orgId, deviceId: ctx.deviceId }, { kind: "admit" });
+    await this.publication.assertCurrent();
+    const member = await this.db
+      .selectFrom("memberships as m")
+      .innerJoin("accounts as a", "a.id", "m.account_id")
+      .innerJoin("orgs as o", "o.id", "m.org_id")
+      .select("m.account_id")
+      .where("m.org_id", "=", ctx.orgId)
+      .where("m.account_id", "=", ctx.accountId)
+      .where("a.status", "=", "active")
+      .where("o.deleted_at", "is", null)
+      .executeTakeFirst();
+    if (!member) throw new ApiError("device.not_found", "Device not found");
+    await this.facts.preview(ctx.orgId, ctx.accountId, ctx.deviceId);
+    const scope = await this.facts.projectScope(ctx.orgId, ctx.accountId, ctx.deviceId);
+    if (!scope.supported || scope.widerThanAllowed)
+      throw new ApiError(
+        "device.projects_unsupported",
+        "Current owner and organization ceilings do not permit browsing",
+      );
+    const operationId = randomUUID();
+    const vector = await this.epochs.readLocked({ orgId: ctx.orgId, deviceId: ctx.deviceId });
+    return parseSandboxBrowseScope({
+      operationId,
+      deviceId: ctx.deviceId,
+      accountId: ctx.accountId,
+      admitBeforeMs: Date.now() + 30000,
+      ceilingRevision: permissionScopeHash(vector),
+      readRoots: scope.mode === "auto" ? ["/"] : [scope.workspace],
+      tag: operationId,
+    });
+  }
+  /** Server-owned approval provenance, persisted with admission rather than inferred from scope hosts. */
+  async grantedHosts(ctx: SandboxUseContext): Promise<string[]> {
+    if (!ctx.actor.runId) return [];
+    return [
+      ...((
+        await this.grants.forExec({
+          orgId: ctx.orgId,
+          deviceId: ctx.deviceId,
+          runId: ctx.actor.runId,
+        })
+      )?.hosts ?? []),
+    ];
+  }
   @Transactional()
   async resolve(
     ctx: SandboxUseContext,
@@ -114,6 +170,7 @@ export class SandboxOperationAuthority {
       rootConversationId: initial.id,
     };
     await this.locks.acquire(subject, { kind: "admit" });
+    await this.publication.assertCurrent();
     const root = await this.profiles.readOwnedRoot(
       ctx.orgId,
       ctx.holderConversationId,
@@ -169,7 +226,8 @@ export class SandboxOperationAuthority {
     const requested = [...baseHosts, ...(grant?.hosts ?? [])];
     const allowedHosts = requested.filter(
       (host) =>
-        policy.localAllowedDomains.some((pattern) => coversHost(pattern, host)) &&
+        (policy.localAllowedDomains.some((pattern) => coversHost(pattern, host)) ||
+          grant?.hosts.includes(host)) &&
         (policy.network.kind === "open-public" ||
           policy.network.hosts.some((pattern) => coversHost(pattern, host))),
     );

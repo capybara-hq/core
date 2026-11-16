@@ -32,6 +32,7 @@ import {
   readDeploymentDevicePolicy,
   type SandboxMode,
 } from "../sandbox/modes.js";
+import { needsFullCeiling, PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
 import { isInternalProvider, LOCAL_PROVIDER, SandboxProviders } from "../sandbox/providers.js";
 import { deviceNotFound, SandboxService } from "../sandbox/sandbox.service.js";
 import {
@@ -243,6 +244,7 @@ export class DevicesService {
     private readonly machines: Pick<MachinesService, "revoke" | "revokeActive">,
     @Inject(DevicePolicyService)
     private readonly policies: Pick<DevicePolicyService, "apply" | "summary">,
+    @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
   ) {}
 
   /**
@@ -504,6 +506,7 @@ export class DevicesService {
   ): Promise<void> {
     const before = await this.lockOwn(orgId, accountId, id);
     if (patch.mode !== undefined) {
+      await this.ceilings.lock({ orgId, deviceId: id }, "device");
       // A cloud device's owner narrows it to sandbox or clears the choice to follow the org (auto
       // mode spec §4.3, hardening D2); a local device's mode lives on its machine.
       if (before.source !== "cloud") {
@@ -522,6 +525,12 @@ export class DevicesService {
           .where("id", "=", id)
           .execute();
         const to = (await this.sandbox.devicePolicy({ orgId, deviceId: id })).mode;
+        await this.ceilings.publishLocked(
+          { orgId, deviceId: id },
+          "device",
+          to === "sandbox" ? needsFullCeiling : false,
+          true,
+        );
         if (from !== to) {
           await audit(this.db.db, {
             actorAccountId: accountId,
@@ -636,6 +645,8 @@ export class DevicesService {
     auditDetail?: Record<string, unknown>,
   ): Promise<void> {
     const before = await this.lockOwn(orgId, accountId, id);
+    await this.ceilings.lock({ orgId, deviceId: id }, "device");
+    await this.ceilings.publishLocked({ orgId, deviceId: id }, "device", true, true);
     await this.db
       .updateTable("devices")
       .set({ deleted_at: sql<Date>`now()`, updated_at: sql<Date>`now()` })

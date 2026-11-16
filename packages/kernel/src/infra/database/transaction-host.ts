@@ -34,6 +34,26 @@ export function withTransactionFence<T>(
   return fences.run(fence, fn);
 }
 
+/** Install once before opening a transaction: ordered authority precedes the inherited run fence.
+ * Existing transactions are rejected because their row locks cannot be retroactively reordered.
+ * The inherited fence remains intact; this does not expose an unfenced callback or dispatch API.
+ */
+export function withTransactionFencePrelude<T>(
+  prelude: () => Promise<void>,
+  fn: () => Promise<T>,
+): Promise<T> {
+  if (liveStore())
+    throw new Error("An ordered fence prelude must be installed before opening a transaction");
+  const inherited = fences.getStore();
+  let entered = false;
+  return withTransactionFence(async () => {
+    if (entered) throw new Error("An ordered fence prelude permits only one new transaction");
+    entered = true;
+    await prelude();
+    await inherited?.();
+  }, fn);
+}
+
 export type Propagation = "required" | "requires_new" | "mandatory";
 
 export interface TransactionOptions {

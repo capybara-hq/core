@@ -30,6 +30,7 @@ import type { OrgRole } from "../orgs/roles.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
 import { estimateTokens } from "../runtime/context/tokens.js";
 import type { ConversationKindForHooks } from "../runtime/hook-calls.js";
+import type { ExecutionClaim } from "../runtime/run-execution.js";
 import { SUBAGENT_LIMIT_DEFAULTS, subagentLimits } from "../runtime/subagents/limits.js";
 import { resolveRoster } from "../runtime/subagents/roster.js";
 import {
@@ -76,6 +77,8 @@ export interface ToolRefIssue {
  * （`ToolSearch` 据此搜索）。插件处理函数收到的仍是 `ToolCallContext`。
  */
 export interface BuiltinCallContext extends ToolCallContext {
+  /** Server execution identity only; operation admission revalidates current PG ownership. */
+  executionClaim?: Readonly<ExecutionClaim> | undefined;
   tools?: readonly ResolvedTool[];
   /** 本次运行 id（内置工具写自己的事件时用，如沙箱 deliver 的 `artifact_created`）。 */
   runId?: string;

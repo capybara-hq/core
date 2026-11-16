@@ -80,3 +80,78 @@ describe("KernelConfigService", () => {
     expect(lines.some((l) => l.msg.includes("rejected"))).toBe(true);
   });
 });
+
+it("publishes permission authority before exposing a hot ceiling and keeps old config on publication failure", async () => {
+  const { svc } = make();
+  let release!: () => void;
+  const barrier = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let entered!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const applied = svc.apply(raw({ devices: { autoMode: "off" } }), async () => {
+    entered();
+    await barrier;
+  });
+  await ready;
+  expect(svc.get().devices.autoMode).toBeUndefined();
+  release();
+  await applied;
+  expect(svc.get().devices.autoMode).toBe("off");
+  await svc.apply(raw({ devices: { autoMode: "allowed" } }), async () => {
+    throw new Error("database unavailable");
+  });
+  expect(svc.get().devices.autoMode).toBe("off");
+});
+it("observing restart-only network fields preserves the active effective configuration", async () => {
+  const { svc } = make();
+  const prior = svc.get();
+  let publications = 0;
+  await svc.apply(raw({ sandbox: { limits: { egress: "none" } } }), async () => {
+    publications++;
+  });
+  expect(svc.get().sandbox.limits.egress).toBe(prior.sandbox.limits.egress);
+  expect(publications).toBe(0);
+});
+
+it("permission publication keeps a bounded nonsecret projection of winning inputs and explicit PG delegation", async () => {
+  const {
+    permissionConfigProjection,
+    permissionConfigFingerprint,
+    parsePermissionConfigProjection,
+  } = await import("../../src/sandbox/permission-config-publication.js");
+  const delegated = resolveConfig(raw({}), {});
+  expect(permissionConfigProjection(delegated).autoMode).toEqual({ kind: "deployment-setting" });
+  const winning = resolveConfig(raw({ devices: { autoMode: "off" } }), {
+    CAPYBARA_DEVICES__AUTO_MODE: "allowed",
+  });
+  expect(permissionConfigProjection(winning).autoMode).toEqual({
+    kind: "configured",
+    value: "allowed",
+  });
+  const unrelated = structuredClone(winning);
+  unrelated.masterKey = Buffer.alloc(32, 9).toString("base64");
+  unrelated.sandbox.limits.cpu = 7;
+  expect(permissionConfigFingerprint(unrelated)).toBe(permissionConfigFingerprint(winning));
+  const projection = permissionConfigProjection(winning);
+  expect(() =>
+    parsePermissionConfigProjection({ ...projection, masterKey: winning.masterKey }),
+  ).toThrow();
+  expect(() =>
+    parsePermissionConfigProjection({ ...projection, allowHosts: ["127.0.0.1"] }),
+  ).toThrow();
+  expect(() =>
+    parsePermissionConfigProjection({
+      ...projection,
+      allowHosts: Array.from({ length: 4097 }, () => "example.com"),
+    }),
+  ).toThrow();
+  expect(
+    parsePermissionConfigProjection({
+      ...projection,
+      allowHosts: ["z.example.com", "a.example.com", "z.example.com"],
+    }).allowHosts,
+  ).toEqual(["a.example.com", "z.example.com"]);
+});

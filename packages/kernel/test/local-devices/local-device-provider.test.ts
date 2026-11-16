@@ -744,3 +744,44 @@ describe("LocalDeviceProvider: modes (auto mode spec §4.2, §4.3)", () => {
     expect((await execOnce(attended)).args?.limits).toMatchObject({ mode: "auto" });
   });
 });
+
+it("staged exec reads authenticated grants again at each invocation, including a resumed operation", async () => {
+  const sent: Record<string, unknown>[] = [];
+  const staged = provider.stagedOperations({
+    call: async (_device, _op, args) => {
+      sent.push(args);
+      return { exitCode: 0, stdout: "", stderr: "", truncated: false, timedOut: false };
+    },
+    permissionSupport: async () => ({
+      version: 1,
+      restricted: null,
+      fullAccess: false,
+      background: false,
+    }),
+  });
+  const signal = new AbortController().signal;
+  const scope = {
+    operationId: "operation",
+    admitBeforeMs: Date.now() + 30000,
+    deviceId: "device",
+    rootConversationId: "root",
+    profileRevision: 1,
+    ceilingRevision: "c",
+    profile: "approve-for-me" as const,
+    actor: { accountId: "owner", conversationId: "root", runId: "run" },
+    tag: "operation",
+    filesystem: { kind: "scoped" as const, readRoots: ["/work"], writeRoots: ["/work"] },
+    network: { kind: "allowlist" as const, hosts: ["example.com"] },
+  };
+  const operation = await staged.operation({ id: "device" }, scope, signal);
+  runGrants = { hosts: ["example.com"], source: { kind: "run", id: "run", accountId: "owner" } };
+  await operation.exec({ command: "true", timeoutMs: 100, maxOutputBytes: 100, signal });
+  runGrants = undefined;
+  await operation.exec({ command: "true", timeoutMs: 100, maxOutputBytes: 100, signal });
+  expect(sent[0]?.grants).toEqual({
+    hosts: ["example.com"],
+    source: { kind: "run", id: "run", accountId: "owner" },
+  });
+  expect(sent[1]?.grants).toBeUndefined();
+  expect(grantCalls).toHaveLength(2);
+});

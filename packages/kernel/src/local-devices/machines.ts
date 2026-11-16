@@ -6,6 +6,7 @@ import type {
   DeviceStopArgs,
   ExtensionContext,
 } from "@capybara-hq/plugin-sdk";
+import { type DeviceHelloV3, parseDeviceFrameV3 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { audit } from "../identity/audit.js";
@@ -18,6 +19,8 @@ import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { KERNEL_BUS, KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
+import { PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
+import { PermissionRuntimeReports } from "../sandbox/permission-runtime-reports.js";
 import { LOCAL_PROVIDER } from "../sandbox/providers.js";
 import { deviceNotFound } from "../sandbox/sandbox.service.js";
 import { deviceRevokedTopic } from "./keys.js";
@@ -29,6 +32,7 @@ import {
   localPolicyOf,
   opExplains,
   opVisibleIn,
+  ownerPolicyRevokes,
   pendingPolicyOpsOf,
   type ReportedPolicyOp,
 } from "./policy-summary.js";
@@ -85,6 +89,8 @@ export class MachinesService {
     @Inject(KERNEL_BUS) private readonly bus: ExtensionContext["bus"],
     @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
+    @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
+    @Inject(PermissionRuntimeReports) private readonly reports: PermissionRuntimeReports,
   ) {}
 
   /**
@@ -220,6 +226,14 @@ export class MachinesService {
     hello: DeviceHello,
     rawPolicy: unknown = hello.policy,
   ): Promise<void> {
+    const subject = await this.db
+      .selectFrom("device_machines")
+      .select(["org_id", "device_id"])
+      .where("id", "=", machineId)
+      .where("revoked_at", "is", null)
+      .executeTakeFirst();
+    if (!subject) return;
+    await this.ceilings.lock({ orgId: subject.org_id, deviceId: subject.device_id }, "device");
     const self = await this.db
       .selectFrom("device_machines")
       .select([
@@ -236,6 +250,8 @@ export class MachinesService {
       ])
       .where("id", "=", machineId)
       .where("revoked_at", "is", null)
+      .where("org_id", "=", subject.org_id)
+      .where("device_id", "=", subject.device_id)
       .forUpdate()
       .executeTakeFirst();
     if (self === undefined) return;
@@ -265,6 +281,19 @@ export class MachinesService {
       }
     }
     const policy = await this.reportedPolicy(machineId, self, hello.policy, rawPolicy);
+    if (
+      JSON.stringify(self.roots) !== JSON.stringify(hello.roots) ||
+      JSON.stringify(localPolicyOf(self.local_policy)) !== JSON.stringify(policy)
+    )
+      await this.ceilings.publishLocked(
+        { orgId: self.org_id, deviceId: self.device_id },
+        "device",
+        (scope, row) =>
+          JSON.stringify(self.roots) !== JSON.stringify(hello.roots) ||
+          ownerPolicyRevokes(localPolicyOf(policy), scope, row.method, row.granted_hosts),
+        localPolicyOf(self.local_policy)?.mode !== localPolicyOf(policy)?.mode ||
+          JSON.stringify(self.roots) !== JSON.stringify(hello.roots),
+      );
     await this.db
       .updateTable("device_machines")
       .set({
@@ -341,6 +370,29 @@ export class MachinesService {
     }
   }
 
+  /** Dormant authenticated hello adapter; the active gateway still accepts only protocol 2. */
+  @Transactional()
+  async recordHelloV3(machineId: string, hello: DeviceHelloV3): Promise<void> {
+    const parsed = parseDeviceFrameV3(JSON.stringify(hello), "device");
+    if (parsed.type !== "hello") throw new Error("Expected a validated operation hello");
+    await this.recordHello(machineId, parsed);
+    const machine = await this.db
+      .selectFrom("device_machines")
+      .select(["org_id", "device_id"])
+      .where("id", "=", machineId)
+      .where("revoked_at", "is", null)
+      .executeTakeFirst();
+    if (!machine) return;
+    await this.ceilings.lock({ orgId: machine.org_id, deviceId: machine.device_id }, "device");
+    await this.reports.record(
+      machine.device_id,
+      LOCAL_PROVIDER,
+      parsed.programVersion,
+      parsed.runtimeIdentity,
+      parsed.permissionSupport,
+    );
+  }
+
   /**
    * Stores the local policy summary a connected program pushed after its hello (a `policy` frame:
    * its policy file changed on the machine: its mode or its sandbox-mode allowlist), read and
@@ -355,15 +407,33 @@ export class MachinesService {
     summary: DeviceLocalPolicySummary | undefined,
     rawPolicy: unknown = summary,
   ): Promise<void> {
+    const subject = await this.db
+      .selectFrom("device_machines")
+      .select(["org_id", "device_id"])
+      .where("id", "=", machineId)
+      .where("revoked_at", "is", null)
+      .executeTakeFirst();
+    if (!subject) return;
+    await this.ceilings.lock({ orgId: subject.org_id, deviceId: subject.device_id }, "device");
     const self = await this.db
       .selectFrom("device_machines")
       .select(["device_id", "org_id", "account_id", "local_policy", "pending_policy_ops"])
       .where("id", "=", machineId)
       .where("revoked_at", "is", null)
+      .where("org_id", "=", subject.org_id)
+      .where("device_id", "=", subject.device_id)
       .forUpdate()
       .executeTakeFirst();
     if (self === undefined) return;
     const policy = await this.reportedPolicy(machineId, self, summary, rawPolicy);
+    if (JSON.stringify(localPolicyOf(self.local_policy)) !== JSON.stringify(policy))
+      await this.ceilings.publishLocked(
+        { orgId: self.org_id, deviceId: self.device_id },
+        "device",
+        (scope, row) =>
+          ownerPolicyRevokes(localPolicyOf(policy), scope, row.method, row.granted_hosts),
+        localPolicyOf(self.local_policy)?.mode !== localPolicyOf(policy)?.mode,
+      );
     await this.db
       .updateTable("device_machines")
       .set({ local_policy: jsonOrNull(policy), last_seen_at: sql<Date>`now()` })
@@ -503,10 +573,18 @@ export class MachinesService {
    * connection. Returns the revoked machine's id. Used by {@link issue} (replaced: no stop),
    * {@link revoke} and the device's deletion (`deleted`).
    */
+  @Transactional()
   async revokeActive(
     deviceId: string,
     reason: DeviceStopArgs["reason"] | null,
   ): Promise<string | null> {
+    const device = await this.db
+      .selectFrom("devices")
+      .select("org_id")
+      .where("id", "=", deviceId)
+      .executeTakeFirstOrThrow();
+    await this.ceilings.lock({ orgId: device.org_id, deviceId }, "device");
+    await this.ceilings.publishLocked({ orgId: device.org_id, deviceId }, "device", true, true);
     const row = await this.db
       .updateTable("device_machines")
       .set({ revoked_at: sql<Date>`now()` })
@@ -524,7 +602,21 @@ export class MachinesService {
    * Revokes one machine by id (a sign-in whose credential never reached the program), with the
    * same post-commit disconnect as a replacement (no stop frame). True when it was active.
    */
+  @Transactional()
   async revokeMachine(machineId: string): Promise<boolean> {
+    const machine = await this.db
+      .selectFrom("device_machines")
+      .select(["org_id", "device_id"])
+      .where("id", "=", machineId)
+      .executeTakeFirst();
+    if (!machine) return false;
+    await this.ceilings.lock({ orgId: machine.org_id, deviceId: machine.device_id }, "device");
+    await this.ceilings.publishLocked(
+      { orgId: machine.org_id, deviceId: machine.device_id },
+      "device",
+      true,
+      true,
+    );
     const row = await this.db
       .updateTable("device_machines")
       .set({ revoked_at: sql<Date>`now()` })

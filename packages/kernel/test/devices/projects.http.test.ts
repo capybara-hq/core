@@ -26,6 +26,7 @@ import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { deviceLeaseKey } from "../../src/local-devices/keys.js";
 import { MachinesService } from "../../src/local-devices/machines.js";
+import { PermissionCeilingWrites } from "../../src/sandbox/permission-ceiling-writes.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { SandboxProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
@@ -730,6 +731,7 @@ describe("device projects", () => {
         },
         k.app.get(DeviceAccess),
       ),
+      k.app.get(PermissionCeilingWrites),
     );
     // its files were made in auto mode with the open network, then the device was narrowed to
     // sandbox mode: the provider fixes limits at its file system, so a files reset is pending and

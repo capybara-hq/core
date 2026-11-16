@@ -19,10 +19,16 @@ import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
+import { PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
 import { deviceNotFound } from "../sandbox/sandbox.service.js";
 import { MachinesService } from "./machines.js";
 import { DEVICE_OP_RESOLVE_JOB, deviceOpResolveJobId } from "./policy-op-jobs.js";
-import { localPolicyOf, type PendingPolicyOp, pendingPolicyOpsOf } from "./policy-summary.js";
+import {
+  localPolicyOf,
+  ownerPolicyRevokes,
+  type PendingPolicyOp,
+  pendingPolicyOpsOf,
+} from "./policy-summary.js";
 import { LIST_TTL_MARGIN_MS, LocalDeviceRelay, ON_MACHINE_PREFIX } from "./relay.js";
 
 /** How long the machine may take to apply a policy change. */
@@ -122,6 +128,7 @@ export class DevicePolicyService {
     @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
+    @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
     @Optional()
     @Inject(DEVICE_POLICY_AFTER_CALL)
     private readonly afterCall: (opId: string) => void = () => {},
@@ -309,10 +316,19 @@ export class DevicePolicyService {
     ref: { machineId: string; opId: string },
     result: PolicyOpResult,
   ): Promise<PolicyChangeOutcome | null> {
+    const subject = await this.db
+      .selectFrom("device_machines")
+      .select(["org_id", "device_id"])
+      .where("id", "=", ref.machineId)
+      .executeTakeFirst();
+    if (!subject) return null;
+    await this.ceilings.lock({ orgId: subject.org_id, deviceId: subject.device_id }, "device");
     const row = await this.db
       .selectFrom("device_machines")
       .select(["org_id", "device_id", "local_policy", "pending_policy_ops", "revoked_at"])
       .where("id", "=", ref.machineId)
+      .where("org_id", "=", subject.org_id)
+      .where("device_id", "=", subject.device_id)
       .forUpdate()
       .executeTakeFirst();
     const op = pendingPolicyOpsOf(row?.pending_policy_ops).find((o) => o.id === ref.opId);
@@ -361,6 +377,17 @@ export class DevicePolicyService {
       })
       .where("id", "=", ref.machineId)
       .execute();
+    if (
+      policy !== undefined &&
+      live &&
+      JSON.stringify(policy) !== JSON.stringify(localPolicyOf(row.local_policy))
+    )
+      await this.ceilings.publishLocked(
+        { orgId: row.org_id, deviceId: row.device_id },
+        "device",
+        (scope, intent) => ownerPolicyRevokes(policy, scope, intent.method, intent.granted_hosts),
+        modeNow !== undefined,
+      );
     if (result.outcome === "applied") {
       if (op.add.length > 0 || op.remove.length > 0) {
         await auditOp("device.policy_changed", {

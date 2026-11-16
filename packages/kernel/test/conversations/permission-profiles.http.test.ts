@@ -17,8 +17,8 @@ import type { MembersService } from "../../src/orgs/members.service.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
 import { RunControl as RunControlService } from "../../src/runtime/run-control.js";
 import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
-import { PermissionAuthorityEpochStore } from "../../src/sandbox/permission-authority-epochs.js";
 import { PermissionAuthorityLock } from "../../src/sandbox/permission-authority-lock.js";
+import { PermissionCeilingWrites } from "../../src/sandbox/permission-ceiling-writes.js";
 import { SandboxProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { truncateTables } from "../helpers/db.js";
@@ -285,7 +285,7 @@ describe("Conversation permission profiles", () => {
     });
     expect(first.statusCode, first.body).toBe(409);
   });
-  it("a ceiling epoch change invalidates displayed Full consent even when policy values return to their old values", async () => {
+  it("a semantic Full ceiling change invalidates displayed Full consent even when policy values return to their old values", async () => {
     const req = await session("owner"),
       orgId = await createOrg(req),
       agentId = await createAgent(req, orgId),
@@ -300,7 +300,9 @@ describe("Conversation permission profiles", () => {
       await k.app
         .get(PermissionAuthorityLock)
         .acquire({ orgId, deviceId }, { kind: "write", level: "device" });
-      await k.app.get(PermissionAuthorityEpochStore).bumpLocked("device", deviceId, 0);
+      await k.app
+        .get(PermissionCeilingWrites)
+        .publishLocked({ orgId, deviceId }, "device", false, true);
     });
     const first = await req({
       method: "POST",
