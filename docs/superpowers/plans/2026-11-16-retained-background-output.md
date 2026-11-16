@@ -114,7 +114,8 @@ failures without awaiting supervisor stop inside its append queue.
   containing directory sync precedes cleanup completion; interruption at each barrier is retryable
   and preserves pending cancellation/operation tombstones. Replacement is never unlinked.
 - [ ] Add `checkpoint-failure-keeps-published-prefix`: inject partial write/ENOSPC/EIO/mirror and
-  checkpoint faults; only the last durably acknowledged prefix remains reader-visible. The
+  definitely pre-decision checkpoint faults; only the last verified prefix remains reader-visible.
+  Indeterminate final decision publication follows the separately reviewed recovery rules below. The
   helper rejects its append and exposes failure without waiting for cancellation completion.
 - [ ] Run `pnpm exec vitest run packages/device/test/output-spool.test.ts`; require deterministic
   barrier-driven PASS. These tests establish helper behavior only, not production worker wiring.
@@ -188,6 +189,36 @@ evidence/cancellation separate. Public status/stop signatures do not change.
   `pnpm exec vitest run packages/device/test/background-output.test.ts packages/device/test/output-spool.test.ts packages/device/test/mac-operation-backend.test.ts packages/device/test/operation-supervisor.test.ts packages/device/test/operation-ceilings.test.ts`.
   Record exactly which tests used injected IO vs production owned fixtures. Do not broaden into
   Linux/local-Docker conformance or services. Root coordinates already-authorized macOS adapter proof.
+
+#### Final commit-decision publication and recovery (accepted amendment)
+
+Implement the spec's final journal-commit uncertainty rules. Preserve the cause/phase: only final
+commit-decision uncertainty after every candidate prerequisite may recover a separately evidenced
+successor. Physical data/frame/overflow/final-flush and definitely pre-decision failures stay
+sticky. Live uncertain owners return no success/credit, retain the last verified prefix and
+cancellation uncertainty, and dispatch exact cancellation even when later writes fail.
+
+- [ ] Prove successful append and complete publication waits for the final decision-file and
+  namespace syncs, then survives restart without regressing acknowledged state.
+- [ ] Retain all six candidate replacement/file-sync/directory-sync failure cases before the
+  decision stage, including failure of every later fault write: no candidate-only promotion.
+- [ ] Validate independent decision evidence against exact ref/generation, candidate digest,
+  predecessor/version, pinned identities and lifecycle. Missing/torn/stale/wrong/conflicting
+  evidence cannot promote a candidate. Recovery must validate/finalize durability before newly
+  adopting a successor; failed recovery stays unknown rather than returning a regressed snapshot.
+- [ ] Test final decision taking effect while its durability call errors: live unknown and ungated
+  cancellation; coherent recovery may select only a properly evidenced successor. An append stays
+  interrupted collecting/lost; only a completion with every prerequisite may recover complete.
+- [ ] Test paired A/B histories with identical recovered evidence (successful ACK versus
+  indeterminate final return), plus successful durability with lost ACK. Evidence gives the same
+  deterministic recovery choice, without test-only syscall-return memory or replay.
+- [ ] Test valid success evidence together with independently durable collector-fault/cancellation
+  decisions: fault wins, stop outcomes and at-most-once tombstones survive, and raced zero exit
+  never creates an already-exited result on the fault branch.
+- [ ] Test repeated recovery and a second execution with acknowledged output/admission/revocation
+  state. Preserve all acknowledged lower bounds and exact-generation rejection without path/PID
+  discovery or append/effect replay. Keep Task 8's uncertainty/cursor/access/retirement consequence
+  explicit; unchanged public unions do not establish adapter or protocol activation.
 
 ## Acceptance and handoff
 
