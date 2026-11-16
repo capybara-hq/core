@@ -76,6 +76,8 @@ test("connect a machine: authorize → confirm on /devices/link → token → th
 
     await page.getByRole("button", { name: zh.deviceLink.openDevice }).click();
     await expect(page.locator('[data-template="DetailPage"]')).toBeVisible();
+    // Opening the device loads a new document; its server-rendered tabs are not interactive yet.
+    await hydrated(page);
     await expect(page.getByText(zh.devices.source.local)).toBeVisible();
     await expect(
       page.locator('[data-part="device-nameplate-status"]').getByText(zh.devices.state.offline),
