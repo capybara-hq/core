@@ -441,6 +441,17 @@ describe("buildTimeline", () => {
         },
         null,
       ),
+      // the kernel's notice for a template skill it could not read: no record, still the task's
+      ev(
+        4,
+        "user_message",
+        {
+          content: [{ type: "text", text: "gamma could not be read" }],
+          authorAccountId: "a1",
+          templateSkillNotice: { name: "gamma" },
+        },
+        null,
+      ),
     ];
     const out = buildTimeline(events, [], new Map(), "en");
     expect(out).toEqual([
@@ -452,6 +463,7 @@ describe("buildTimeline", () => {
         skills: [
           { label: "/alpha-notes", instructions: "alpha instructions" },
           { label: "/beta", instructions: "beta instructions" },
+          { label: "/gamma", instructions: "gamma could not be read" },
         ],
       },
     ]);

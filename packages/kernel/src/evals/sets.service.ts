@@ -114,9 +114,11 @@ export function caseTitle(s: CaseSnapshot): string {
     const payload = e.payload as {
       content?: { type: string; text?: string }[];
       skill?: { name: string; plugin?: string; arguments: string; template?: true };
+      templateSkillNotice?: { name: string };
     };
-    // a template sub-agent's skill, written after its task: the task titles the case
-    if (payload.skill?.template) continue;
+    // a template sub-agent's skill (or the notice that it could not be read), written after its
+    // task: the task titles the case
+    if (payload.skill?.template || payload.templateSkillNotice !== undefined) continue;
     // a skill invocation: what the person typed, never the rendered skill (content[0])
     if (payload.skill !== undefined) {
       text = typedInvocation(payload.skill);

@@ -345,8 +345,9 @@ export type TimelineEntry =
       seq: number;
       text: string;
       /**
-       * The template's skills the kernel wrote after the task (`skill.template`): each skill's
-       * chip ("/alpha-notes") and its rendered instructions (`content[0]`).
+       * The template's skills the kernel wrote after the task (`skill.template`, or
+       * `templateSkillNotice` for one it could not read): each skill's chip ("/alpha-notes") and
+       * its rendered instructions (`content[0]`, the notice for an unreadable one).
        */
       skills?: { label: string; instructions: string }[];
     }
@@ -959,10 +960,12 @@ export function buildEventTimeline(
           break;
         }
         const skill = e.payload.skill;
-        if (skill?.template) {
-          // A template sub-agent's skill the kernel wrote after the task: part of the task block,
-          // never a person's bubble.
-          const loaded = { label: `/${skill.name}`, instructions: userText(e) };
+        const notice = e.payload.templateSkillNotice;
+        if (skill?.template || notice !== undefined) {
+          // A template sub-agent's skill the kernel wrote after the task (or its notice that the
+          // skill could not be read): part of the task block, never a person's bubble.
+          const name = skill?.name ?? notice?.name ?? "";
+          const loaded = { label: `/${name}`, instructions: userText(e) };
           const task = out.findLast((x) => x.kind === "task");
           if (task?.kind === "task") task.skills = [...(task.skills ?? []), loaded];
           else out.push({ kind: "task", key, seq: e.seq, text: "", skills: [loaded] });

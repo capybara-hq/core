@@ -831,8 +831,9 @@ describe("dispatch idempotency under the parent run lock", () => {
         [{ type: "text", text: "take notes" }],
         [{ type: "text", text: templateSkillUnreadableText("beta-notes") }],
       ]);
-      // no record: nothing was rendered from the version
+      // no record: nothing was rendered from the version; the display-only marker names the skill
       expect(messages[1]?.payload.skill).toBeUndefined();
+      expect(messages[1]?.payload.templateSkillNotice).toEqual({ name: "beta-notes" });
       expect(messages[1]?.payload.dispatch).toBeUndefined();
     } finally {
       // the other cases keep their catalogs

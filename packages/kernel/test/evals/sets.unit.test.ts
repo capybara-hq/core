@@ -78,6 +78,34 @@ describe("caseTitle", () => {
     ]);
     expect(caseTitle(s)).toBe("/fix-issue 12");
   });
+  it("a template sub-agent's skills and the notice of an unreadable one leave the task as the title", () => {
+    const s = snap([
+      ev(1, "user_message", {
+        content: [{ type: "text", text: "take notes" }],
+        authorAccountId: "u",
+      }),
+      ev(2, "user_message", {
+        content: [{ type: "text", text: "Your sub-agent type comes with the skill ..." }],
+        authorAccountId: "u",
+        skill: {
+          id: "s",
+          version: 1,
+          source: "p/",
+          name: "alpha",
+          arguments: "",
+          mode: "inline",
+          template: true,
+        },
+      }),
+      ev(3, "user_message", {
+        content: [{ type: "text", text: "Your sub-agent type comes with the skill ..." }],
+        authorAccountId: "u",
+        templateSkillNotice: { name: "beta" },
+      }),
+      ev(4, "run_started", {}, "r2"),
+    ]);
+    expect(caseTitle(s)).toBe("take notes");
+  });
   it("没有用户消息时为空串", () => {
     expect(caseTitle(snap([ev(1, "run_started", {}, "r2")]))).toBe("");
   });

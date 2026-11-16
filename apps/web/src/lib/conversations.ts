@@ -157,6 +157,11 @@ type EventBody =
          * kernel wrote after the task (part of the task, not a person's message).
          */
         skill?: SkillInvocationRecord;
+        /**
+         * The kernel's notice, in place of a template skill's invocation, that the skill could not
+         * be read at dispatch: part of the task, not a person's message.
+         */
+        templateSkillNotice?: { name: string };
       };
     }
   | {

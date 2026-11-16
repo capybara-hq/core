@@ -35,8 +35,9 @@ type UserMessage = { type: "user_message"; payload: EventPayload<"user_message">
  * The invocation messages of `skills` for the child's effective definition `child` (its tools
  * decide the shell line), read from the versions its catalog lists. A version that cannot be read
  * or rendered (storage down, integrity, over the size limit) gets {@link
- * templateSkillUnreadableText} instead and a dispatch warning ({@link
- * templateSkillUnreadableWarning}, for `subagent_started.warnings`), and the dispatch goes on.
+ * templateSkillUnreadableText} instead (marked `templateSkillNotice`, display only) and a dispatch
+ * warning ({@link templateSkillUnreadableWarning}, for `subagent_started.warnings`), and the
+ * dispatch goes on.
  * Null when the run's signal aborted before a read: the dispatch writes nothing.
  */
 export async function templateSkillMessages(
@@ -75,11 +76,15 @@ export async function templateSkillMessages(
         version: s.version,
         err: e,
       });
-      messages.push(message(a.ctx, templateSkillUnreadableText(s.name)));
+      messages.push(
+        message(a.ctx, templateSkillUnreadableText(s.name), {
+          templateSkillNotice: { name: s.name },
+        }),
+      );
       warnings.push(templateSkillUnreadableWarning(s.name));
       continue;
     }
-    messages.push(message(a.ctx, text, record));
+    messages.push(message(a.ctx, text, { skill: record }));
   }
   return { messages, warnings };
 }
@@ -87,12 +92,10 @@ export async function templateSkillMessages(
 const message = (
   ctx: ToolStepContext,
   text: string,
-  skill?: NonNullable<EventPayload<"user_message">["skill"]>,
+  marker:
+    | Pick<EventPayload<"user_message">, "skill">
+    | Pick<EventPayload<"user_message">, "templateSkillNotice">,
 ): UserMessage => ({
   type: "user_message",
-  payload: {
-    content: [{ type: "text", text }],
-    ...(skill !== undefined && { skill }),
-    authorAccountId: ctx.accountId,
-  },
+  payload: { content: [{ type: "text", text }], ...marker, authorAccountId: ctx.accountId },
 });

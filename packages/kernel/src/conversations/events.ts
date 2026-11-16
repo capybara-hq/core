@@ -456,6 +456,14 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
         })
         .optional(),
       /**
+       * The kernel's notice, written at a template sub-agent's dispatch in place of a template
+       * skill's invocation, that the skill (`name`) could not be read
+       * (`runtime/subagents/template-skills.ts`). Display only (the model sees the text): nobody
+       * typed it, so the web shows it with the task and eval case titles skip it, as a `template`
+       * invocation. It carries no `skill` record: nothing was rendered from a version.
+       */
+      templateSkillNotice: z.object({ name: z.string() }).optional(),
+      /**
        * A scheduled task's message (scheduled tasks spec §6, §12): which task and tick posted it.
        * Not model-visible as such: request building renders only `taskName` and `localTime`, fixed
        * here at write time, as the header `[Scheduled task "<name>", run for <local time>]`
