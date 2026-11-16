@@ -1470,6 +1470,7 @@ States: `model`, `effort`, `agent`, `permission`, `long`
 | menu-tag | model | background-color | color.selected |
 | menu-note | model | font-size | type.micro |
 | menu-note | model | color | color.muted |
+| menu-note | model | border-top-color | color.line-soft |
 | menu | permission | background-color | color.panel |
 | menu-item | permission | padding-left | pad.default.x |
 | menu-item[aria-checked=true] | permission | background-color | color.selected |
@@ -1477,7 +1478,6 @@ States: `model`, `effort`, `agent`, `permission`, `long`
 | menu-desc | permission | color | color.muted |
 | menu-tag | permission | font-size | type.micro |
 | menu-note | permission | color | color.muted |
-| menu-note | model | border-top-color | color.line-soft |
 | menu-item[aria-checked=true] | effort | background-color | color.selected |
 | menu-item | effort | height | row.default |
 | menu-item | agent | height | row.default |
