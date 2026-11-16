@@ -47,6 +47,9 @@ export const SetupContext = createContext<{
 
 export const useSetup = () => useContext(SetupContext);
 
+/** The org's 扩展 page on its model tab: where an org admin switches on or configures a provider. */
+const ORG_MODEL_EXTENSIONS = "/extensions?tab=model";
+
 /** Who is looking at the checklist: what they may do decides each step's action. */
 type SetupRole = "superAdmin" | "orgAdmin" | "member" | "guest";
 
@@ -58,32 +61,39 @@ function setupRoleOf(me: Me): SetupRole {
 
 /**
  * The setup sidebar's steps (web-SSR spec §4), by what the viewer may do (cosmetic; the kernel
- * decides). The model is deployment-wide: a super admin configures it in the admin console,
- * everyone else waits (an org admin for a deployment admin). The agent: members and up create it
- * once a model exists, guests wait for an admin. Then the optional steps: org admins invite
- * members, connect a channel and install plugins; members connect their own accounts.
+ * decides). The model: when the platform offers a provider the org can switch on or configure
+ * (`orgCanAddModel`), org admins (a super admin too) do it on the org's 扩展 page, model tab,
+ * and everyone else waits for an org admin; when only the platform can help, a super admin goes
+ * to the admin console and an org admin waits for one. The agent: members and up create it once
+ * a model exists, guests wait for an admin. Then the optional steps: org admins invite members,
+ * connect a channel and install plugins; members connect their own accounts.
  */
 export function useSetupSteps(me: Me, r: OrgReadiness): SetupStep[] {
   const t = useTranslations("setupLayout");
   const role = setupRoleOf(me);
   const hasModel = r.modelProvider === "ready";
   const canCreateAgent = navLevelOf(me) !== "guest";
+  const inOrg = r.orgCanAddModel && canUpdateOrg(me);
   const model: SetupStep = hasModel
     ? {
         id: "model",
         label: t("steps.model"),
         state: "done",
-        ...(role === "superAdmin" ? { href: "/admin/extensions" } : {}),
+        ...(canUpdateOrg(me) ? { href: ORG_MODEL_EXTENSIONS } : {}),
       }
-    : role === "superAdmin"
-      ? { id: "model", label: t("steps.model"), state: "todo", href: "/admin/extensions" }
-      : {
-          id: "model",
-          label: t("steps.model"),
-          state: "waiting",
-          reason:
-            role === "orgAdmin" ? t("model.needsDeploymentAdmin") : t("model.waitingForAdmin"),
-        };
+    : inOrg
+      ? { id: "model", label: t("steps.model"), state: "todo", href: ORG_MODEL_EXTENSIONS }
+      : role === "superAdmin"
+        ? { id: "model", label: t("steps.model"), state: "todo", href: "/admin/extensions" }
+        : {
+            id: "model",
+            label: t("steps.model"),
+            state: "waiting",
+            reason:
+              role === "orgAdmin" && !r.orgCanAddModel
+                ? t("model.needsDeploymentAdmin")
+                : t("model.waitingForAdmin"),
+          };
   const agent: SetupStep =
     r.agents > 0
       ? {
@@ -129,7 +139,10 @@ export function useSetupSteps(me: Me, r: OrgReadiness): SetupStep[] {
 /** The setup sidebar's current item for a route: `home`, the step whose page it is, or none. */
 export function activeStepOf(pathname: string, steps: SetupStep[]): string {
   if (setupRouteOf(pathname) !== "step") return "home";
-  return steps.find((s) => s.href !== undefined && under(pathname, s.href))?.id ?? "";
+  return (
+    steps.find((s) => s.href !== undefined && under(pathname, s.href.split("?")[0] ?? s.href))
+      ?.id ?? ""
+  );
 }
 
 /** The icon of each optional step's row on the setup home (the workspace's own icons). */
@@ -165,9 +178,14 @@ export function SetupHome({
   const all = useSetupSteps(me, readiness);
   const required = all.filter((s) => !s.optional);
   const optional = all.filter((s) => s.optional);
-  const superAdmin = setupRoleOf(me) === "superAdmin";
+  const modelStep = required.find((s) => s.id === "model");
   const description: Record<string, string> = {
-    model: superAdmin ? t("chat.setup.model.description") : t("chat.setup.model.askAdmin"),
+    model:
+      modelStep?.state !== "waiting"
+        ? t("chat.setup.model.description")
+        : readiness.orgCanAddModel
+          ? t("chat.setup.model.askOrgAdmin")
+          : t("chat.setup.model.askAdmin"),
     agent: t("chat.setup.agent.description"),
   };
   const actionLabel: Record<string, string> = {

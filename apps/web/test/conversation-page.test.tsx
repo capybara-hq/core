@@ -1640,7 +1640,7 @@ describe("the new conversation once the org can run", () => {
     resetNavigation("/");
     expectNoFirstPaintFetch();
     const { container, calls } = await renderRouteWithCache("/", NEW_CHAT, {
-      readiness: { modelProvider: "none", agents: 0 },
+      readiness: { modelProvider: "none", orgCanAddModel: false, agents: 0 },
     });
     expect(container.querySelector('[data-template="ConversationPage"]')).toBeNull();
     expect(calls.some((c) => c.url.endsWith("/agents"))).toBe(false);

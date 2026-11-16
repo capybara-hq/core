@@ -28,9 +28,15 @@ import type { Me } from "../../src/lib/session";
 import { Link } from "./navigation";
 import { ME } from "./render";
 
-export const READY: OrgReadiness = { modelProvider: "ready", agents: 1 };
-export const NOT_READY: OrgReadiness = { modelProvider: "none", agents: 0 };
-export const PROVIDER_ONLY: OrgReadiness = { modelProvider: "ready", agents: 0 };
+export const READY: OrgReadiness = { modelProvider: "ready", orgCanAddModel: false, agents: 1 };
+export const NOT_READY: OrgReadiness = { modelProvider: "none", orgCanAddModel: false, agents: 0 };
+/** No model yet, but the platform offers one an org admin can switch on or configure here. */
+export const ORG_FIXABLE: OrgReadiness = { modelProvider: "none", orgCanAddModel: true, agents: 0 };
+export const PROVIDER_ONLY: OrgReadiness = {
+  modelProvider: "ready",
+  orgCanAddModel: false,
+  agents: 0,
+};
 
 /**
  * The shell data the `(app)` layout would read for `me` (`getShell()`): a ready org with no

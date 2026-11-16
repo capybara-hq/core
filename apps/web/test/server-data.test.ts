@@ -64,7 +64,7 @@ const ME = {
   memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "member" }],
   canCreateOrg: true,
 };
-const READY = { modelProvider: "ready", agents: 1 };
+const READY = { modelProvider: "ready", orgCanAddModel: false, agents: 1 };
 const PAPER = {
   id: "t-paper",
   version: "1.0.0",
