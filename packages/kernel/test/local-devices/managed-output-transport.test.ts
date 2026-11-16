@@ -2,21 +2,25 @@ import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import {
   type DeviceHelloV3,
+  isSandboxScopeDeniedError,
   type KernelReadyV3,
   parseDeviceFrameV3,
+  SandboxScopeDeniedError,
 } from "@capybara-hq/plugin-sdk";
 import { startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 import WebSocket, { WebSocketServer } from "ws";
 import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
+import { ApiError } from "../../src/errors.js";
 import type { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import type { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
+import { deviceLeaseKey, deviceReqKey } from "../../src/local-devices/keys.js";
 import { LocalDeviceGateway } from "../../src/local-devices/local-device-gateway.js";
 import { LocalDeviceProvider } from "../../src/local-devices/local-device-provider.js";
 import { LocalDeviceRelay } from "../../src/local-devices/relay.js";
-import { DeviceTargets } from "../../src/local-devices/targets.js";
+import { type DeviceTargetState, DeviceTargets } from "../../src/local-devices/targets.js";
 import { createLogger } from "../../src/log.js";
 
 let rd: TestContainer;
@@ -46,8 +50,35 @@ async function fixture(clientCap = 69632, serverCap = 100000) {
   let output = Buffer.alloc(0),
     expired = false,
     ended = false;
-  const cancelled = vi.fn(),
-    launched = vi.fn();
+  let targetState: DeviceTargetState = "active";
+  // What the fake device received: request ops and cancelled request ids.
+  const requested = vi.fn<(op: string, id: string) => void>(),
+    cancelled = vi.fn<(id: string) => void>();
+  // Redis seam for the gateway: hold the capacity publication, or fail it a number of times.
+  let publishGate: Promise<void> | undefined;
+  let failPublishes = 0;
+  const publishes = { ok: 0, failed: 0 };
+  const gatewayRedis = new Proxy(redis, {
+    get(target, prop, receiver) {
+      if (prop === "set")
+        return async (...a: Parameters<Redis["set"]>) => {
+          const transportKey = String(a[0]).startsWith("capk:device-transport:");
+          if (transportKey && failPublishes > 0) {
+            failPublishes--;
+            publishes.failed++;
+            throw Error("injected transient Redis failure");
+          }
+          const r = await (target.set as (...x: unknown[]) => Promise<unknown>)(...a);
+          if (transportKey) {
+            publishes.ok++;
+            await publishGate;
+          }
+          return r;
+        };
+      const v = Reflect.get(target, prop, receiver);
+      return typeof v === "function" ? v.bind(target) : v;
+    },
+  });
   const handle = { id: deviceId };
   const ref = {
     instanceId: deviceId,
@@ -62,7 +93,9 @@ async function fixture(clientCap = 69632, serverCap = 100000) {
       fullAccess: false,
       background: false,
     }),
-    background: { status: async () => ({ state: ended ? "exited" : "running" }) },
+    background: {
+      status: async () => ({ state: ended ? ("exited" as const) : ("running" as const) }),
+    },
   };
   const bus = createBus(redis, sub, `test-${deviceId}`),
     locks = new LockService(redis, createLogger("error", { write: () => {} }));
@@ -84,13 +117,13 @@ async function fixture(clientCap = 69632, serverCap = 100000) {
     },
     locks,
     bus,
-    redis,
+    gatewayRedis,
     config,
     log,
   );
   const relay = new LocalDeviceRelay(redis, bus, locks, config, log, {
     transport: targets.transport.bind(targets),
-    state: async () => "active",
+    state: async () => targetState,
   });
   const forbidden = vi.fn(() => {
     throw Error("No provision/native fallback is allowed");
@@ -98,7 +131,6 @@ async function fixture(clientCap = 69632, serverCap = 100000) {
   const provider = new LocalDeviceProvider(
     relay,
     {
-      transport: targets.transport.bind(targets),
       orgOf: forbidden,
       machineRoots: forbidden,
       machineFeatures: forbidden,
@@ -125,6 +157,7 @@ async function fixture(clientCap = 69632, serverCap = 100000) {
   });
   cleanups.push(() => gateway.stop());
   let socket: WebSocket;
+  const frames: string[] = [];
   let beforeReply = async () => {};
   const hello: DeviceHelloV3 = {
     type: "hello",
@@ -147,21 +180,39 @@ async function fixture(clientCap = 69632, serverCap = 100000) {
     },
     instanceGeneration: "g",
   };
-  const connect = async (cap = clientCap) => {
+  const connect = async (cap = clientCap, waitReady = true) => {
     socket = new WebSocket(`ws://127.0.0.1:${address.port}`);
     await once(socket, "open");
     let ready: KernelReadyV3 | undefined;
     const activeSocket = socket;
     socket.on("message", async (raw) => {
       const frame = parseDeviceFrameV3(raw.toString(), "kernel", ready?.maxFrameBytes ?? cap);
+      frames.push(frame.type);
       if (frame.type === "ready") {
         ready = frame;
         return;
       }
-      if (frame.type === "cancel") return;
+      if (frame.type === "cancel") {
+        cancelled(frame.id);
+        return;
+      }
       if (frame.type !== "req" || !ready) throw Error("Request before ready");
+      requested(frame.op, frame.id);
       const a = frame.args,
         r = a.ref as typeof ref;
+      if (frame.op === "backgroundStatus") {
+        await beforeReply();
+        // Like the device's session state, a non-read answer goes out on the current socket.
+        socket.send(
+          JSON.stringify({
+            type: "res",
+            id: frame.id,
+            ok: true,
+            result: await backend.background.status(),
+          }),
+        );
+        return;
+      }
       const result = expired
         ? { unavailable: "expired" }
         : {
@@ -190,14 +241,37 @@ async function fixture(clientCap = 69632, serverCap = 100000) {
       );
     });
     socket.send(JSON.stringify({ ...hello, transport: { maxFrameBytes: cap } }));
-    const session = { ready: () => ready };
+    const session = { ready: () => ready, socket: activeSocket };
+    if (!waitReady) return session;
     await expect.poll(() => session.ready()).toBeDefined();
     await expect.poll(() => targets.transport(deviceId).catch(() => null)).not.toBeNull();
     return session;
   };
   const session = await connect();
   return {
+    deviceId,
     relay,
+    gateway,
+    frames,
+    requested,
+    publishes,
+    failPublishes: (n: number) => {
+      failPublishes = n;
+    },
+    holdPublish: () => {
+      let release!: () => void;
+      publishGate = new Promise<void>((r) => {
+        release = r;
+      });
+      return () => {
+        publishGate = undefined;
+        release();
+      };
+    },
+    leaseHolder: () => locks.holderOf(deviceLeaseKey(deviceId)),
+    setState: (s: DeviceTargetState) => {
+      targetState = s;
+    },
     holdReplies: () => {
       let entered!: () => void, release!: () => void;
       const ready = new Promise<void>((r) => {
@@ -226,7 +300,6 @@ async function fixture(clientCap = 69632, serverCap = 100000) {
     session,
     forbidden,
     cancelled,
-    launched,
     emit: async (b: Buffer) => {
       output = Buffer.concat([output, b]);
     },
@@ -243,8 +316,9 @@ async function fixture(clientCap = 69632, serverCap = 100000) {
       await expect.poll(() => gateway.connectionCount()).toBe(0);
     },
     connect,
-    read: (offset: number, maxBytes: number) =>
-      staged.background.readOutput(handle, ref, { offset, maxBytes, signal: signal() }),
+    read: (offset: number, maxBytes: number, s: AbortSignal = signal()) =>
+      staged.background.readOutput(handle, ref, { offset, maxBytes, signal: s }),
+    status: () => staged.background.status(handle, ref, signal()),
   };
 }
 
@@ -290,40 +364,72 @@ it.each([
     expect(await f.read(0, 4)).toEqual({ unavailable: "expired" });
   },
 );
-it("rejects another generation and preserves task on read cancellation; reconnect changes the exact capacity", async () => {
+it("refuses another generation with a typed scope denial", async () => {
   const f = await fixture();
   await f.emit(Buffer.alloc(10000, 66));
-  await expect(
-    f.staged.background.readOutput(
+  const denied = await f.staged.background
+    .readOutput(
       f.handle,
       { ...f.ref, instanceGeneration: "other" },
       { offset: 0, maxBytes: 1, signal: signal() },
-    ),
-  ).rejects.toThrow();
+    )
+    .catch((e: unknown) => e);
+  expect(denied).toBeInstanceOf(SandboxScopeDeniedError);
+  expect(isSandboxScopeDeniedError(denied)).toBe(true);
+});
+it("a reconnect changes the exact capacity and fences requests of the old connection", async () => {
+  const f = await fixture();
+  await f.emit(Buffer.alloc(10000, 66));
   const old = await f.targets.transport(f.handle.id);
+  if (!old) throw Error("expected a transport");
+  // The device sees a random connection id, never the gateway's lease token.
+  expect(old.connectionId).toBe(f.session.ready()?.connectionId);
+  expect(await f.leaseHolder()).not.toBe(old.connectionId);
   await f.disconnect();
   const next = await f.connect(66560);
   expect(next.ready()?.connectionId).not.toBe(old.connectionId);
-  await expect(
-    f.relay.callV3(
-      f.handle.id,
-      "backgroundReadOutput",
-      { ref: f.ref, offset: 0, maxBytes: 3072 },
-      { deadlineMs: 1000, signal: signal(), connection: old },
-    ),
-  ).rejects.toThrow("capacity changed");
+  const stale = (op: "backgroundReadOutput" | "backgroundStatus") =>
+    f.relay
+      .callV3(
+        f.handle.id,
+        op,
+        op === "backgroundReadOutput" ? { ref: f.ref, offset: 0, maxBytes: 3072 } : { ref: f.ref },
+        { deadlineMs: 1000, signal: signal(), connection: old },
+      )
+      .then(
+        () => {
+          throw Error("expected the stale connection to be refused");
+        },
+        (e: unknown) => e as Error,
+      );
+  const read = await stale("backgroundReadOutput");
+  expect(read.message).toContain("connection changed");
+  expect(read.message).toContain("same offset");
+  const status = await stale("backgroundStatus");
+  expect(status.message).toContain("connection changed");
+  expect(status.message).not.toContain("offset");
   expect(await f.read(0, 65536)).toMatchObject({ nextOffset: 768 });
+});
+it("aborting an in-flight read cancels only that request and the task keeps running", async () => {
+  const f = await fixture();
+  await f.emit(Buffer.alloc(100, 69));
+  const held = f.holdReplies();
   const ctl = new AbortController();
+  const pending = f.read(0, 10, ctl.signal).catch((e: unknown) => e);
+  await held.ready;
+  expect(f.requested.mock.calls.map((c) => c[0])).toEqual(["backgroundReadOutput"]);
+  const id = f.requested.mock.calls[0]?.[1];
   ctl.abort(Error("cancel only read"));
-  await expect(
-    f.staged.background.readOutput(f.handle, f.ref, {
-      offset: 768,
-      maxBytes: 10,
-      signal: ctl.signal,
-    }),
-  ).rejects.toThrow("cancel only read");
-  expect(await f.backend.background.status()).toEqual({ state: "running" });
-  expect(f.cancelled).not.toHaveBeenCalled();
+  expect(await pending).toMatchObject({ message: "cancel only read" });
+  // the give-up reached the device as a cancel of exactly that request
+  await expect.poll(() => f.cancelled.mock.calls).toEqual([[id]]);
+  held.release();
+  expect(await f.status()).toEqual({ state: "running" });
+  expect(f.requested.mock.calls.map((c) => c[0])).toEqual([
+    "backgroundReadOutput",
+    "backgroundStatus",
+  ]);
+  expect(f.forbidden).not.toHaveBeenCalled();
 });
 it("zero capacity preserves probes and refuses data with an actionable error", async () => {
   const f = await fixture(65536, 100000);
@@ -343,7 +449,86 @@ it("a reconnect during a pending range refuses the old connection and retries at
   await f.disconnect();
   await f.connect(66560);
   held.release();
-  expect(await pending).toMatchObject({ message: expect.stringContaining("capacity changed") });
+  expect(await pending).toMatchObject({
+    message: expect.stringContaining("retry the read from the same offset"),
+  });
   expect(await f.read(0, 65536)).toMatchObject({ offset: 0, nextOffset: 768 });
+  // giving the read up cancels only that read on the machine, never the task
+  const readId = f.requested.mock.calls[0]?.[1];
+  for (const [id] of f.cancelled.mock.calls) expect(id).toBe(readId);
+  expect(await f.status()).toEqual({ state: "running" });
+});
+
+it("a non-read result answered after a reconnect within grace is delivered, not discarded", async () => {
+  const f = await fixture();
+  const held = f.holdReplies();
+  const pending = f.status().catch((e: unknown) => e);
+  await held.ready;
+  await f.disconnect();
+  await f.connect(66560);
+  held.release();
+  expect(await pending).toEqual({ state: "running" });
   expect(f.cancelled).not.toHaveBeenCalled();
+});
+
+it.each([
+  ["deleted", "device.not_found"],
+  ["revoked", "device.forbidden"],
+] as const)("a %s device yields %s from output reads and other staged ops", async (state, code) => {
+  const f = await fixture();
+  await f.disconnect();
+  f.setState(state);
+  const read = await f.read(0, 1).catch((e: unknown) => e);
+  expect(read).toBeInstanceOf(ApiError);
+  expect(read).toMatchObject({ code });
+  expect(await f.status().catch((e: unknown) => e)).toMatchObject({ code });
+});
+it("an active device without a connection yields device.offline", async () => {
+  const f = await fixture();
+  await f.disconnect();
+  expect(await f.read(0, 1).catch((e: unknown) => e)).toMatchObject({ code: "device.offline" });
+});
+
+it("closes a staged connection whose device answers before ready", async () => {
+  const f = await fixture();
+  await f.disconnect();
+  const release = f.holdPublish();
+  const s = await f.connect(69632, false);
+  const closed = once(s.socket, "close");
+  s.socket.send(JSON.stringify({ type: "res", id: "early", ok: true, result: null }));
+  expect((await closed)[0]).toBe(4400);
+  release();
+});
+it("publishes capacity before ready and holds queued requests until ready", async () => {
+  const f = await fixture();
+  await f.emit(Buffer.alloc(10, 70));
+  await f.disconnect();
+  f.frames.length = 0;
+  const release = f.holdPublish();
+  const s = await f.connect(69632, false);
+  await expect.poll(() => f.targets.transport(f.deviceId).catch(() => null)).not.toBeNull();
+  // capacity is readable, yet ready has not been sent: a reader never sees "not ready" after it
+  expect(s.ready()).toBeUndefined();
+  const pending = f.read(0, 10);
+  await expect.poll(() => redis.llen(deviceReqKey(f.deviceId))).toBe(1);
+  expect(f.frames).toEqual([]);
+  release();
+  expect(await pending).toMatchObject({ nextOffset: 10 });
+  expect(f.frames).toEqual(["ready", "req"]);
+});
+it("tolerates one transient capacity publication failure on ping and closes after repeated ones", async () => {
+  const f = await fixture();
+  await f.disconnect();
+  f.gateway.pingIntervalMs = 50;
+  const s = await f.connect();
+  f.failPublishes(1);
+  await expect.poll(() => f.publishes.failed).toBe(1);
+  const ok = f.publishes.ok;
+  await expect.poll(() => f.publishes.ok).toBeGreaterThan(ok + 1);
+  expect(s.socket.readyState).toBe(WebSocket.OPEN);
+  expect(f.gateway.connectionCount()).toBe(1);
+  expect(await f.read(0, 0)).toMatchObject({ nextOffset: 0 });
+  const closed = once(s.socket, "close");
+  f.failPublishes(10);
+  expect((await closed)[0]).toBe(1011);
 });

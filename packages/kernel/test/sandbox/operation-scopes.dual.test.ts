@@ -90,6 +90,7 @@ function replica(pool: ReturnType<typeof createDb>) {
     scope: await authority.resolve(ctx, operation, signal),
     permissionGrantId: null,
     grantedHosts: [],
+    executionGrants: null,
   });
   const outbox = new OutboxService(host, db, log, async () => {});
   const transitions = new PermissionTransitions(
@@ -135,6 +136,11 @@ beforeAll(async () => {
   await sql`alter table capybara.sandbox_operation_intents add column permission_grant_id uuid`.execute(
     pool,
   );
+  await sql
+    .raw(
+      `set search_path to capybara,public;${await readFile(new URL("../../src/migrations/0142_starting_execution_grants.sql", import.meta.url), "utf8")}`,
+    )
+    .execute(pool);
   replicas.push(...pools.map(replica));
 });
 afterAll(async () => {

@@ -34,21 +34,33 @@ export class DeviceTargets {
     @Inject(LockService) private readonly locks: Pick<LockService, "holderOf">,
   ) {}
 
-  /** Read capacity only under its exact authenticated gateway lease, never current config. */
-  async transport(deviceId: string): Promise<{ connectionId: string; maxFrameBytes: number }> {
-    const connectionId = await this.locks.holderOf(deviceLeaseKey(deviceId));
-    if (!connectionId)
-      throw new Error("Device transport is offline; reconnect and retry the same offset");
-    const raw = await this.redis.get(deviceTransportKey(deviceId, connectionId));
-    const cap: unknown = raw === null ? null : JSON.parse(raw);
-    if (
-      typeof cap !== "number" ||
-      !Number.isSafeInteger(cap) ||
-      cap < 1024 ||
-      (await this.locks.holderOf(deviceLeaseKey(deviceId))) !== connectionId
-    )
-      throw new Error("Device transport is not ready; reconnect and retry the same offset");
-    return { connectionId, maxFrameBytes: cap };
+  /**
+   * The negotiated transport of the machine's current connection, read only under its exact
+   * authenticated gateway lease (never current config): the random connection id the gateway sent
+   * in `ready` and the effective frame capacity. Null when no replica holds the machine's
+   * connection, so the caller maps that through the device's state (deleted, revoked, offline);
+   * throws while the holder has not published its capacity yet.
+   */
+  async transport(
+    deviceId: string,
+  ): Promise<{ connectionId: string; maxFrameBytes: number } | null> {
+    const lease = await this.locks.holderOf(deviceLeaseKey(deviceId));
+    if (!lease) return null;
+    const raw = await this.redis.get(deviceTransportKey(deviceId, lease));
+    const cap = raw === null ? null : (JSON.parse(raw) as unknown);
+    const ok =
+      cap !== null &&
+      typeof cap === "object" &&
+      typeof (cap as { connectionId?: unknown }).connectionId === "string" &&
+      (cap as { connectionId: string }).connectionId !== "" &&
+      Number.isSafeInteger((cap as { maxFrameBytes?: unknown }).maxFrameBytes) &&
+      (cap as { maxFrameBytes: number }).maxFrameBytes >= 1024;
+    if (!ok || (await this.locks.holderOf(deviceLeaseKey(deviceId))) !== lease)
+      throw new Error(
+        "The machine's connection is not ready yet; retry once capybara-device has reconnected",
+      );
+    const { connectionId, maxFrameBytes } = cap as { connectionId: string; maxFrameBytes: number };
+    return { connectionId, maxFrameBytes };
   }
 
   async state(deviceId: string): Promise<DeviceTargetState> {

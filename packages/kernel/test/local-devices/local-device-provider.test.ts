@@ -173,7 +173,6 @@ beforeAll(async () => {
   provider = new LocalDeviceProvider(
     relay,
     {
-      transport: async () => ({ connectionId: "test", maxFrameBytes }),
       orgOf: async () => orgOfEnv,
       machineRoots: async () => machineRoots,
       machineFeatures: async () => machineFeatures,

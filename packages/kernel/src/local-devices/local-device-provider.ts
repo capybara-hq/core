@@ -100,10 +100,7 @@ export class LocalDeviceProvider implements SandboxProvider {
   constructor(
     @Inject(LocalDeviceRelay) private readonly relay: LocalDeviceRelay,
     @Inject(DeviceTargets)
-    private readonly targets: Pick<
-      DeviceTargets,
-      "orgOf" | "machineRoots" | "machineFeatures" | "transport"
-    >,
+    private readonly targets: Pick<DeviceTargets, "orgOf" | "machineRoots" | "machineFeatures">,
     @Inject(SandboxService)
     private readonly sandbox: Pick<SandboxService, "devicePolicy" | "deviceLimits">,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
@@ -256,7 +253,8 @@ export class LocalDeviceProvider implements SandboxProvider {
           }),
           "kernel",
         );
-        const connection = await this.targets.transport(h.id);
+        // liveness first (R27): a deleted or revoked device keeps its typed error
+        const connection = await this.relay.connection(h.id);
         const capacity = Math.min(65536, maxReadBytes(connection.maxFrameBytes));
         const request = { ref, offset: opts.offset, maxBytes: Math.min(opts.maxBytes, capacity) };
         const result = parseOperationResultV3(

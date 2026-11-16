@@ -33,6 +33,9 @@ export const deviceTakeoverTopic = (deviceId: string): string => `device.takeove
 /** The machine's credential was revoked: its connection is closed. */
 export const deviceRevokedTopic = (deviceId: string): string => `device.revoked.${deviceId}`;
 
-/** Negotiated capacity for one lease token; expires with the connection. */
+/**
+ * Negotiated transport (`{ connectionId, maxFrameBytes }`) of the connection holding one lease
+ * token; expires with the connection.
+ */
 export const deviceTransportKey = (deviceId: string, connectionId: string): string =>
   `capk:device-transport:${deviceId}:${connectionId}`;

@@ -7,7 +7,6 @@ import {
   type DeviceResponseV3,
   type ExtensionContext,
   FileSystemGoneError,
-  type KernelCancel,
   type KernelReq,
   parseDeviceFrame,
   parseDeviceFrameV3,
@@ -59,6 +58,26 @@ export const POLICY_REFUSAL_PREFIX = "Refused by the machine's local policy: ";
 
 /** The text a machine's `error` result reaches the model with (ruling R28). */
 export const ON_MACHINE_PREFIX = "On the connected machine: ";
+
+/**
+ * The text of a staged (protocol 3) request refused because the machine's connection changed.
+ * Only an output read has an offset to retry from; every other operation is simply retried.
+ */
+export const connectionChangedMessage = (op: string): string =>
+  op === "backgroundReadOutput"
+    ? "The machine's connection changed during the read; retry the read from the same offset"
+    : `The machine's connection changed before ${op} was sent; retry the operation`;
+
+/**
+ * Whether a staged operation's result is fenced to the connection its request was sent on.
+ * Protocol 3 (spec B5) fences every request to its connection, so an old capacity is never used on
+ * a replacement socket. For results, only an output read is fenced: its range was sized for the
+ * old connection's capacity and an in-flight read that meets a reconnect fails so the reader
+ * retries from the same offset. Every other operation keeps protocol 2's grace semantics: the
+ * machine keeps it running across a socket blip and its result, validated by the gateway against
+ * the capacity of the connection it arrived on, is accepted after a reconnect within the grace.
+ */
+const connectionFenced = (op: string): boolean => op === "backgroundReadOutput";
 
 /** The longest one lease check of a waiting caller may take before it counts as "unknown". */
 export const LEASE_CHECK_TIMEOUT_MS = 2000;
@@ -157,6 +176,19 @@ export class LocalDeviceRelay {
   }
 
   /**
+   * The negotiated transport of the machine's current connection, for a staged call. Liveness is
+   * checked first (ruling R27): no holder throws `device.not_found` for a deleted device,
+   * `device.forbidden` for a revoked machine and `device.offline` otherwise.
+   */
+  async connection(deviceId: string): Promise<{ connectionId: string; maxFrameBytes: number }> {
+    if (await this.holderLive(deviceId)) {
+      const transport = await this.targets.transport(deviceId);
+      if (transport) return transport;
+    }
+    throw this.goneError(await this.targetState(deviceId)) ?? deviceOffline();
+  }
+
+  /**
    * Queues `op` for the machine without waiting for an answer (ruling R14: `stop`). The caller
    * checks {@link holderLive} first; the frame waits on the list for the grace like any request.
    */
@@ -209,16 +241,18 @@ export class LocalDeviceRelay {
   ): Promise<unknown> {
     const { signal } = opts;
     signal.throwIfAborted();
-    const connection = staged ? await this.targets.transport(deviceId) : undefined;
+    // liveness first: a deleted device or a revoked machine keeps its typed error (R27)
+    const connection = staged ? await this.connection(deviceId) : undefined;
+    if (!staged && !(await this.holderLive(deviceId))) {
+      throw this.goneError(await this.targetState(deviceId)) ?? deviceOffline();
+    }
     if (
       opts.connection &&
       (connection?.connectionId !== opts.connection.connectionId ||
         connection?.maxFrameBytes !== opts.connection.maxFrameBytes)
     )
-      throw new DeviceProtocolError("Connection capacity changed; retry from the same offset");
-    if (!(await this.holderLive(deviceId))) {
-      throw this.goneError(await this.targetState(deviceId)) ?? deviceOffline();
-    }
+      throw new DeviceProtocolError(connectionChangedMessage(op));
+    const fenced = staged && connectionFenced(op);
     signal.throwIfAborted();
 
     const id = randomUUID();
@@ -239,7 +273,7 @@ export class LocalDeviceRelay {
       };
     });
     const onStored = (raw: string | null) => {
-      if (raw !== null) settle(this.parseRes(raw, id, staged, connection));
+      if (raw !== null) settle(this.parseRes(raw, id, op, connection, fenced));
     };
     const onAbort = () => settle({ error: ABORTED });
 
@@ -267,17 +301,15 @@ export class LocalDeviceRelay {
         try {
           // a stalled Redis must not hold the give-up back: no answer in time means "unknown"
           const live = await this.leaseCheck(deviceId);
-          if (connection && live === true) {
+          if (fenced && connection && live === true) {
+            // an output read never waits across a reconnect: its range was sized for this socket
             const current = await this.targets.transport(deviceId);
             if (
-              current.connectionId !== connection.connectionId ||
-              current.maxFrameBytes !== connection.maxFrameBytes
+              current &&
+              (current.connectionId !== connection.connectionId ||
+                current.maxFrameBytes !== connection.maxFrameBytes)
             ) {
-              settle({
-                error: new DeviceProtocolError(
-                  "Connection capacity changed; retry from the same offset",
-                ),
-              });
+              settle({ error: new DeviceProtocolError(connectionChangedMessage(op)) });
               return;
             }
           }
@@ -321,16 +353,7 @@ export class LocalDeviceRelay {
       stopped = true;
       clearTimeout(timer);
       if ("res" in r) {
-        if (connection) {
-          const current = await this.targets.transport(deviceId);
-          if (
-            current.connectionId !== connection.connectionId ||
-            current.maxFrameBytes !== connection.maxFrameBytes
-          )
-            throw new DeviceProtocolError(
-              "Connection capacity changed; retry from the same offset",
-            );
-        }
+        // the result's connection tag was checked in parseRes: a later reconnect changes nothing
         await this.quietly("delete the result", deviceId, () => this.redis.del(deviceResKey(id)));
         return staged && r.res.ok
           ? parseOperationResultV3(
@@ -454,30 +477,45 @@ export class LocalDeviceRelay {
     }
   }
 
-  /** A stored / published `res` frame for request `id`, or the protocol error it carries. */
+  /**
+   * A stored / published `res` frame for request `id`, or the protocol error it carries. A staged
+   * frame carries the tag of the connection it arrived on (added by the gateway); a fenced
+   * operation ({@link connectionFenced}) accepts only its request's connection, any other staged
+   * operation a well-formed tag, and the frame is parsed against that connection's capacity.
+   */
   private parseRes(
     raw: string,
     id: string,
-    staged = false,
+    op: string,
     connection?: { connectionId: string; maxFrameBytes: number },
+    fenced = false,
   ): Outcome {
     try {
       let wire = raw;
-      if (staged) {
+      let cap: number | undefined;
+      if (connection) {
         const { connectionId, maxFrameBytes, ...frame } = JSON.parse(raw) as Record<
           string,
           unknown
         >;
         if (
-          !connection ||
-          connectionId !== connection.connectionId ||
-          maxFrameBytes !== connection.maxFrameBytes
+          typeof connectionId !== "string" ||
+          connectionId === "" ||
+          typeof maxFrameBytes !== "number" ||
+          !Number.isSafeInteger(maxFrameBytes) ||
+          maxFrameBytes < 1024
         )
-          throw new DeviceProtocolError("Connection capacity changed; retry from the same offset");
+          throw new DeviceProtocolError("the gateway stored a result without its connection");
+        if (
+          fenced &&
+          (connectionId !== connection.connectionId || maxFrameBytes !== connection.maxFrameBytes)
+        )
+          throw new DeviceProtocolError(connectionChangedMessage(op));
+        cap = maxFrameBytes;
         wire = JSON.stringify(frame);
       }
-      const f = staged
-        ? parseDeviceFrameV3(wire, "device", connection?.maxFrameBytes)
+      const f = connection
+        ? parseDeviceFrameV3(wire, "device", cap)
         : parseDeviceFrame(wire, "device");
       if (f.type !== "res" || f.id !== id) {
         return { error: new DeviceProtocolError("the connected machine sent an unexpected frame") };

@@ -31,7 +31,7 @@ import {
   deviceTransportKey,
 } from "./keys.js";
 import { type MachineIdentity, MachinesService } from "./machines.js";
-import { LIST_TTL_MARGIN_MS } from "./relay.js";
+import { connectionChangedMessage, LIST_TTL_MARGIN_MS } from "./relay.js";
 
 /** WebSocket close codes the gateway uses (the program reads 4002 and 4003). */
 export const DEVICE_CLOSE = {
@@ -63,6 +63,11 @@ export const CLAIM_TIMEOUT_MS = 5_000;
 export const CLAIM_RETRY_MS = 250;
 /** Traffic marks the machine seen at most this often per connection (the row has its own gate). */
 const TOUCH_EVERY_MS = 30_000;
+/**
+ * Consecutive failed capacity publications on ping after which a staged connection closes (its
+ * transport key lives three pings, so two misses still leave it readable).
+ */
+const MAX_PUBLISH_FAILURES = 3;
 /** How often a held connection re-checks its credential (membership, org, device). */
 const REAUTH_EVERY_MS = 60_000;
 
@@ -146,8 +151,15 @@ class DeviceConnection {
     private readonly staged = false,
   ) {}
 
+  /**
+   * The id a staged connection fences requests and results with (sent to the machine in `ready`).
+   * Random and separate from the lease token, which stays internal to the kernel.
+   */
+  readonly connectionId = randomUUID();
   private effectiveCap: number | undefined;
   private ready = false;
+  /** Consecutive failed capacity publications on ping (this socket's own state). */
+  private publishFailures = 0;
   private async publishCapacity(): Promise<void> {
     if (!this.staged || this.effectiveCap === undefined || this.state !== "holding") return;
     if (this.gw.maxFrameBytes() < this.effectiveCap) {
@@ -156,7 +168,7 @@ class DeviceConnection {
     }
     await this.gw.redis.set(
       deviceTransportKey(this.deviceId, this.token),
-      JSON.stringify(this.effectiveCap),
+      JSON.stringify({ connectionId: this.connectionId, maxFrameBytes: this.effectiveCap }),
       "PX",
       Math.max(this.gw.leaseTtlMs(), this.gw.pingIntervalMs * 3),
     );
@@ -303,7 +315,7 @@ class DeviceConnection {
         this.deviceId,
         JSON.stringify(
           this.staged
-            ? { ...res, connectionId: this.token, maxFrameBytes: this.effectiveCap }
+            ? { ...res, connectionId: this.connectionId, maxFrameBytes: this.effectiveCap }
             : res,
         ),
       );
@@ -315,7 +327,9 @@ class DeviceConnection {
       }
       await this.gw.bus.publish(
         deviceResTopic(res.id),
-        this.staged ? { ...res, connectionId: this.token, maxFrameBytes: this.effectiveCap } : res,
+        this.staged
+          ? { ...res, connectionId: this.connectionId, maxFrameBytes: this.effectiveCap }
+          : res,
       );
     } catch (e) {
       this.gw.log.warn("could not store a device result", {
@@ -388,15 +402,17 @@ class DeviceConnection {
       if (this.staged) {
         const raw = JSON.stringify({
           type: "ready",
-          connectionId: this.token,
+          connectionId: this.connectionId,
           maxFrameBytes: this.effectiveCap,
         });
         if (this.effectiveCap === undefined || Buffer.byteLength(raw) > this.effectiveCap)
           throw new Error("Check frame limits: ready cannot fit");
         parseDeviceFrameV3(raw, "kernel", this.effectiveCap);
+        // published before ready: a reader that sees the machine ready also finds its capacity
+        await this.publishCapacity();
+        if (this.state !== "holding") return false;
         this.socket.send(raw);
         this.ready = true;
-        await this.publishCapacity();
       }
       // what was queued while nobody held the machine
       this.drain();
@@ -461,7 +477,12 @@ class DeviceConnection {
             string,
             unknown
           >;
-          if (connectionId !== this.token || maxFrameBytes !== this.effectiveCap) {
+          // a cancel carries no capacity-sized payload and must reach the machine after a
+          // reconnect too (an operation keeps running across a socket blip, as in protocol 2)
+          if (
+            request.type !== "cancel" &&
+            (connectionId !== this.connectionId || maxFrameBytes !== this.effectiveCap)
+          ) {
             if (request.type === "req" && typeof request.id === "string")
               await this.store({
                 type: "res",
@@ -469,7 +490,7 @@ class DeviceConnection {
                 ok: false,
                 error: {
                   kind: "error",
-                  message: "Connection capacity changed; retry from the same offset",
+                  message: connectionChangedMessage(String(request.op)),
                 },
               });
             continue;
@@ -533,8 +554,22 @@ class DeviceConnection {
     // a backstop for a lost nudge (the bus delivers at most once)
     if (this.state === "holding") {
       if (this.staged)
-        void this.publishCapacity().catch(() =>
-          this.close(DEVICE_CLOSE.internal, "Capacity publication failed; reconnect"),
+        void this.publishCapacity().then(
+          () => {
+            this.publishFailures = 0;
+          },
+          (e: unknown) => {
+            // the key lives three pings: a transient failure is retried on the next ping, and
+            // only failures that would let the key expire close the connection
+            this.publishFailures++;
+            this.gw.log.warn("could not publish a device connection's capacity", {
+              deviceId: this.deviceId,
+              failures: this.publishFailures,
+              error: errMsg(e),
+            });
+            if (this.publishFailures >= MAX_PUBLISH_FAILURES)
+              void this.close(DEVICE_CLOSE.internal, "Capacity publication failed; reconnect");
+          },
         );
       this.drain();
     }

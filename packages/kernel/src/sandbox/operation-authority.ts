@@ -140,19 +140,6 @@ export class SandboxOperationAuthority {
       tag: operationId,
     });
   }
-  /** Server-owned approval provenance, persisted with admission rather than inferred from scope hosts. */
-  async grantedHosts(ctx: SandboxUseContext): Promise<string[]> {
-    if (!ctx.actor.runId) return [];
-    return [
-      ...((
-        await this.grants.forExec({
-          orgId: ctx.orgId,
-          deviceId: ctx.deviceId,
-          runId: ctx.actor.runId,
-        })
-      )?.hosts ?? []),
-    ];
-  }
   async subjectFor(ctx: SandboxUseContext) {
     const root = await this.profiles.readOwnedRoot(
       ctx.orgId,
