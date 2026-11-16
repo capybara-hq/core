@@ -115,6 +115,8 @@ def run(m):
     if op=='write':
         write_all(fds[m['file']],base64.b64decode(m['data'],validate=True),m['offset']);return None
     if op=='read':
+        offset=m['offset'];length=m['length'];total=m['total']
+        if any(type(n) is not int or n<0 or n>9007199254740991 for n in (offset,length,total)) or length>65536 or length>max(0,total-offset): raise ValueError('Read exceeds committed output snapshot')
         fd=fds['spool']
         if identity(fd)!=expected or os.fstat(fd).st_size<m['total']: raise ValueError('Retained output is short')
         parts=[];left=m['length'];offset=m['offset']

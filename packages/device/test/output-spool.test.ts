@@ -384,3 +384,57 @@ it("creation refuses final-file replacement before locator publication", async (
   expect(f.locator()).toBeUndefined();
   expect(await readFile(f.opts.outputPath, "utf8")).toBe("replacement");
 });
+
+it.each([false, true])(
+  "snapshots read options before yielding over a physical uncommitted suffix (signal replaced: %s)",
+  async (replaceSignal) => {
+    const entered = gate(),
+      release = gate();
+    let fail = false,
+      block = false;
+    const f = await fixture(async (name) => {
+      if (name === "checkpoint" && fail) throw Error("ENOSPC");
+      if (name === "read" && block) {
+        entered.release();
+        await release.promise;
+      }
+    });
+    const s = await f.create();
+    await s.append(Buffer.from("prefix"), signal);
+    fail = true;
+    await expect(s.append(Buffer.from("SECRET"), signal)).rejects.toThrow("ENOSPC");
+    block = true;
+    const opts = { offset: 0, maxBytes: 6, signal };
+    const reading = s.read(opts);
+    await entered.promise;
+    opts.offset = 6;
+    opts.maxBytes = 65536;
+    if (replaceSignal) opts.signal = AbortSignal.abort(Error("replacement signal"));
+    release.release();
+    expect(await reading).toEqual({
+      data: Buffer.from("prefix"),
+      offset: 0,
+      nextOffset: 6,
+      totalBytes: 6,
+    });
+  },
+);
+
+it("fixed helper rejects an offset/length pair beyond the committed snapshot", async () => {
+  let fail = false;
+  const f = await fixture(async (name) => {
+    if (fail && name === "checkpoint") throw Error("ENOSPC");
+  });
+  const s = await f.create();
+  await s.append(Buffer.from("prefix"), signal);
+  fail = true;
+  await expect(s.append(Buffer.from("SECRET"), signal)).rejects.toThrow();
+  const transport = s as unknown as { rpc: (message: object) => Promise<unknown> };
+  for (const request of [
+    { offset: 6, length: 6, total: 6 },
+    { offset: 0, length: 7, total: 6 },
+    { offset: -1, length: 1, total: 6 },
+    { offset: 0, length: 65537, total: 65537 },
+  ])
+    await expect(transport.rpc({ op: "read", ...request })).rejects.toThrow(/snapshot/);
+});

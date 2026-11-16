@@ -1,5 +1,16 @@
 import { randomUUID } from "node:crypto";
-import { closeSync, existsSync, fsyncSync, openSync, readFileSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import {
@@ -13,7 +24,6 @@ import {
   SandboxScopeDeniedError,
   type SandboxStopResult,
 } from "@capybara-hq/plugin-sdk";
-import { writePrivate } from "../state.js";
 import type { NativeHelperResult } from "./native-helper-client.js";
 import { digest, type LocalExecAuthority, type LocalOperationGrant } from "./operation-types.js";
 import {
@@ -77,12 +87,19 @@ export class MacOperationSupervisor {
   private spools = new Map<string, ManagedOutputSpool>();
   private queue: Promise<unknown> = Promise.resolve();
   private file: string;
+  private rollbackFile: string;
+  private verifiedJournal = JSON.stringify({ version: 1, entries: [] });
   private now: () => number;
   constructor(private readonly options: SupervisorOptions) {
     this.now = options.now ?? Date.now;
     this.file = join(options.stateDir, `operation-journal-${digest(options.deviceId)}.json`);
-    if (existsSync(this.file)) {
-      const raw = JSON.parse(readFileSync(this.file, "utf8")) as {
+    this.rollbackFile = `${this.file}.rollback`;
+    // A failed publication leaves this already-synced snapshot intact. Never infer a commit
+    // from the replacement's contents, and never require a subsequent fault write to recover.
+    const recovery = existsSync(this.rollbackFile) ? this.rollbackFile : this.file;
+    if (existsSync(recovery)) {
+      this.verifiedJournal = readFileSync(recovery, "utf8");
+      const raw = JSON.parse(this.verifiedJournal) as {
         version: number;
         entries: Entry[];
       };
@@ -112,16 +129,54 @@ export class MacOperationSupervisor {
     const text = JSON.stringify({ version: 1, entries: [...this.entries.values()] });
     if (Buffer.byteLength(text) > 64 * 1024 * 1024)
       throw new Error("Operation journal capacity exhausted");
-    writePrivate(this.file, text);
-    for (const path of [this.file, this.options.stateDir]) {
+    mkdirSync(this.options.stateDir, { recursive: true, mode: 0o700 });
+    const token = randomUUID();
+    const candidate = `${this.file}.${token}.candidate`;
+    const rollbackCandidate = `${this.rollbackFile}.${token}.candidate`;
+    const sync = (path: string) => {
       const fd = openSync(path, "r");
       try {
         fsyncSync(fd);
       } finally {
         closeSync(fd);
       }
+    };
+    const writeSynced = (path: string, content: string) => {
+      const fd = openSync(path, "wx", 0o600);
+      try {
+        writeFileSync(fd, content);
+        fsyncSync(fd);
+      } finally {
+        closeSync(fd);
+      }
+    };
+    try {
+      if (!existsSync(this.rollbackFile)) {
+        writeSynced(rollbackCandidate, this.verifiedJournal);
+        renameSync(rollbackCandidate, this.rollbackFile);
+        sync(this.options.stateDir);
+      }
+      // Preserve the last verified record throughout replacement, file sync and directory
+      // sync. Any exception before the final unlink keeps recovery on the older snapshot.
+      writeSynced(candidate, text);
+      renameSync(candidate, this.file);
+      sync(this.file);
+      sync(this.options.stateDir);
+      // Logical publication is the final atomic removal of the rollback guard, after all
+      // candidate durability operations. No fallible publication operation follows it.
+      // An unsaved guard deletion can only recover the conservative previous snapshot; this
+      // protocol does not claim arbitrary hardware/power-loss recovery beyond fsync ordering.
+      unlinkSync(this.rollbackFile);
+      this.verifiedJournal = text;
+    } finally {
+      // Orphan candidate cleanup is not a publication result and cannot undo a verified commit.
+      for (const path of [candidate, rollbackCandidate])
+        try {
+          rmSync(path, { force: true });
+        } catch {}
     }
   }
+
   private expireRetained(): void {
     let changed = false;
     for (const entry of this.entries.values()) {
@@ -452,6 +507,7 @@ export class MacOperationSupervisor {
     // The prelaunch collecting marker remains the durable fallback. New disk failure cannot
     // gate exact cancellation, and this function never waits for append/worker completion.
     void this.serial(() => this.persist()).catch(() => {});
+    if (entry.stop.outcome !== "stopped") this.faultOwners.set(entry.ref.operationId, live);
     if (
       !live.worker ||
       this.cancellations.has(entry.ref.operationId) ||
@@ -459,7 +515,6 @@ export class MacOperationSupervisor {
     )
       return;
     const worker = live.worker;
-    this.faultOwners.set(entry.ref.operationId, live);
     const attempt = new Promise<void>((resolve) => setImmediate(resolve))
       .then(async (): Promise<SandboxStopResult> => {
         try {
@@ -508,6 +563,8 @@ export class MacOperationSupervisor {
     | { data: Uint8Array; offset: number; nextOffset: number; totalBytes: number }
     | { unavailable: "lost" | "expired" }
   > {
+    ref = parseSandboxExecutionRef(ref);
+    opts = { offset: opts.offset, maxBytes: opts.maxBytes, signal: opts.signal };
     validateOutputRange(opts.offset, opts.maxBytes);
     opts.signal.throwIfAborted();
     const entry = this.validate(ref);
@@ -735,6 +792,8 @@ export class MacOperationSupervisor {
             if (e.stop?.outcome === "cancel-pending") {
               e.stop = { outcome: "stopped" };
               if (e.output) e.output.interruptedCancellation = false;
+              this.faultOwners.delete(ref.operationId);
+              this.options.onLiveChanged?.(this.live.size > 0 || this.faultOwners.size > 0);
               try {
                 this.persist();
               } catch (error) {

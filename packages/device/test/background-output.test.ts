@@ -1,13 +1,19 @@
+import * as fs from "node:fs";
 import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import {
   MacOperationSupervisor,
   type SupervisorOptions,
 } from "../src/exec/operation-supervisor.js";
 import { type MacWorkerRequest, startMacOperationWorker } from "../src/exec/operation-worker.js";
 import { shellQuote } from "../src/exec/shared.js";
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return { ...actual, fsyncSync: vi.fn(actual.fsyncSync), renameSync: vi.fn(actual.renameSync) };
+});
 
 const signal = new AbortController().signal;
 const dirs: string[] = [];
@@ -37,6 +43,7 @@ async function fixture(options: Partial<SupervisorOptions> = {}) {
   let finish!: (value: typeof result) => void;
   const cancelled = gate();
   let cancellationGate: Promise<void> = Promise.resolve();
+  let cancelFailures = 0;
   const supervisor = new MacOperationSupervisor({
     stateDir: root,
     deviceId: "d",
@@ -59,6 +66,10 @@ async function fixture(options: Partial<SupervisorOptions> = {}) {
             cancels++;
             cancelled.release();
             await cancellationGate;
+            if (cancelFailures > 0) {
+              cancelFailures--;
+              throw Error("owned cancellation failed");
+            }
             finish(result);
           },
         };
@@ -106,6 +117,9 @@ async function fixture(options: Partial<SupervisorOptions> = {}) {
     launches: () => launches,
     cancels: () => cancels,
     cancelled: cancelled.promise,
+    failCancels: (count: number) => {
+      cancelFailures = count;
+    },
     holdCancel: (p: Promise<void>) => {
       cancellationGate = p;
     },
@@ -711,3 +725,149 @@ it.each(["expiry-tombstone", "expiry-complete"])(
     expect(await readFile(join(f.root, "task.out"), "utf8")).toBe("retain artifact");
   },
 );
+
+it("retains the exact fault owner after an ordinary cancellation fails past worker cleanup", async () => {
+  const release = gate(),
+    retry = gate();
+  let fail = false,
+    watching = false;
+  const f = await fixture({
+    onLiveChanged: (live) => {
+      watching = live;
+    },
+    outputBarrier: async (name) => {
+      if (fail && name === "artifact-write") throw Error("collector fault");
+    },
+  });
+  const ref = await f.start();
+  await f.emit(Buffer.from("prefix"));
+  f.holdCancel(release.promise);
+  f.failCancels(1);
+  const stopped = f.supervisor.stop(ref, { graceMs: 0, signal });
+  await f.cancelled;
+  fail = true;
+  await expect(f.emit(Buffer.from("bad"))).rejects.toThrow("collector fault");
+  f.finish();
+  await f.supervisor.settled("op");
+  release.release();
+  expect(await stopped).toEqual({ outcome: "cancel-pending" });
+  expect(watching).toBe(true);
+  f.holdCancel(retry.promise);
+  expect(await f.supervisor.stop(ref, { graceMs: 0, signal })).toEqual({
+    outcome: "cancel-pending",
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(f.cancels()).toBe(2);
+  retry.release();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(await f.supervisor.stop(ref, { graceMs: 0, signal })).toEqual({ outcome: "stopped" });
+  expect(watching).toBe(false);
+});
+
+it.each(
+  ["append", "completion"].flatMap((stage) =>
+    ["replacement", "file-sync", "directory-sync"].map((boundary) => ({ stage, boundary })),
+  ),
+)(
+  "failed journal $stage $boundary preserves the last verified prefix even when every later fault write fails",
+  async ({ stage, boundary }) => {
+    let armed = false,
+      failed = false,
+      replaced = false;
+    const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
+    const originalSync = actual.fsyncSync,
+      originalRename = actual.renameSync;
+    const f = await fixture({
+      beforePersist: () => {
+        if (failed) throw Error("fault journal also failed");
+      },
+    });
+    const ref = await f.start();
+    await f.emit(Buffer.from("prefix"));
+    const sync = vi.spyOn(fs, "fsyncSync").mockImplementation((fd) => {
+      if (
+        armed &&
+        replaced &&
+        !failed &&
+        ((boundary === "file-sync" && fs.fstatSync(fd).isFile()) ||
+          (boundary === "directory-sync" && fs.fstatSync(fd).isDirectory()))
+      ) {
+        failed = true;
+        throw Error("journal sync failed");
+      }
+      originalSync(fd);
+    });
+    const rename = vi.spyOn(fs, "renameSync").mockImplementation((from, to) => {
+      originalRename(from, to);
+      if (armed && String(to).endsWith(".json")) replaced = true;
+      if (armed && !failed && boundary === "replacement" && String(to).endsWith(".json")) {
+        failed = true;
+        throw Error("journal replaced then failed");
+      }
+    });
+    try {
+      armed = true;
+      if (stage === "append") await expect(f.emit(Buffer.from("SECRET"))).rejects.toThrow();
+      else f.finish();
+      await f.cancelled;
+      await f.supervisor.settled("op").catch(() => {});
+      const journalName = fs.readdirSync(f.root).find((name) => name.endsWith(".json"));
+      const candidate = JSON.parse(fs.readFileSync(join(f.root, journalName as string), "utf8"));
+      expect(candidate.entries[0].output).toMatchObject(
+        stage === "completion" ? { state: "complete" } : { locator: { committed: 12 } },
+      );
+      const recovered = new MacOperationSupervisor({
+        stateDir: f.root,
+        deviceId: "d",
+        instanceGeneration: "g",
+        now: () => 1,
+      });
+      expect(await all(recovered, ref)).toEqual(Buffer.from("prefix"));
+      expect(await recovered.status(ref, signal)).toEqual({ state: "lost" });
+      expect(await recovered.stop(ref, { graceMs: 0, signal })).toEqual({
+        outcome: "cancel-pending",
+      });
+    } finally {
+      sync.mockRestore();
+      rename.mockRestore();
+    }
+  },
+);
+
+it("supervisor snapshots caller refs and read options through a pending bounded read", async () => {
+  const entered = gate(),
+    release = gate();
+  let block = false;
+  const f = await fixture({
+    outputBarrier: async (name) => {
+      if (block && name === "read") {
+        entered.release();
+        await release.promise;
+      }
+    },
+  });
+  const ref = await f.start();
+  await f.emit(Buffer.from("prefix"));
+  const callerRef = { ...ref },
+    opts = { offset: 0, maxBytes: 6, signal };
+  block = true;
+  const reading = f.supervisor.readOutput(callerRef, opts);
+  await entered.promise;
+  callerRef.operationId = "other";
+  callerRef.executionId = "other";
+  callerRef.instanceGeneration = "other";
+  opts.offset = 6;
+  opts.maxBytes = 0;
+  opts.signal = AbortSignal.abort(Error("other signal"));
+  release.release();
+  expect(await reading).toEqual({
+    data: Buffer.from("prefix"),
+    offset: 0,
+    nextOffset: 6,
+    totalBytes: 6,
+  });
+  f.finish();
+  await f.supervisor.settled("op");
+  f.expire();
+  await f.supervisor.expireOutput(ref);
+});

@@ -2,7 +2,11 @@ import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
-import { type SandboxExecutionRef, SandboxScopeDeniedError } from "@capybara-hq/plugin-sdk";
+import {
+  parseSandboxExecutionRef,
+  type SandboxExecutionRef,
+  SandboxScopeDeniedError,
+} from "@capybara-hq/plugin-sdk";
 import { OUTPUT_SPOOL_HELPER } from "./output-spool-helper.js";
 
 export interface OutputLocator {
@@ -131,6 +135,7 @@ export class ManagedOutputSpool {
     await this.options.barrier?.(name);
   }
   static async create(options: OutputSpoolOptions): Promise<ManagedOutputSpool> {
+    options = { ...options, ref: parseSandboxExecutionRef(options.ref) };
     const root = canonical(options.artifactRoot),
       path = canonical(options.outputPath);
     const rel = relative(root, path);
@@ -177,6 +182,11 @@ export class ManagedOutputSpool {
   static async openExisting(
     options: OutputSpoolOptions & { locator: OutputLocator; cleanup?: boolean },
   ): Promise<ManagedOutputSpool> {
+    options = {
+      ...options,
+      ref: parseSandboxExecutionRef(options.ref),
+      locator: structuredClone(options.locator),
+    };
     const record = options.locator;
     if (
       record.name !== nameFor(options.ref) ||
@@ -250,6 +260,7 @@ export class ManagedOutputSpool {
     maxBytes: number;
     signal: AbortSignal;
   }): Promise<{ data: Uint8Array; offset: number; nextOffset: number; totalBytes: number }> {
+    opts = { offset: opts.offset, maxBytes: opts.maxBytes, signal: opts.signal };
     validateOutputRange(opts.offset, opts.maxBytes);
     opts.signal.throwIfAborted();
     if (this.expired) return Promise.reject(Error("Retained output expired"));

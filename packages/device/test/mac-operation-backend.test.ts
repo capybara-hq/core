@@ -804,3 +804,50 @@ it("retained output controls use the exact reference without a fresh profile gra
   ).rejects.toThrow(/reference/);
   await f.backend.background.stop({ id: "d" }, ref, { graceMs: 0, signal });
 });
+
+it("restricted artifact creation preserves implicit write denies before any owned helper launch", async () => {
+  const { vi } = await import("vitest");
+  const policy = await import("../src/policy.js");
+  const { access, mkdir } = await import("node:fs/promises");
+  const f = await fixture();
+  const denied = join(f.roots.tmp, "owned-denied");
+  await mkdir(denied);
+  const spy = vi.spyOn(policy, "implicitWritePaths").mockReturnValue([denied]);
+  try {
+    const args = {
+      command: "fixture",
+      timeoutMs: 1000,
+      maxOutputBytes: 4,
+      signal,
+      taskId: "task",
+      outputPath: join(denied, "artifact.out"),
+      retainUntilMs: Date.now() + 60000,
+    };
+    await expect(
+      f.backend
+        .forExecution({
+          operationId: f.scope.operationId,
+          orgNetwork: { kind: "open-public", hosts: [] },
+        })
+        .background.start({ id: "d" }, f.scope, args),
+    ).rejects.toThrow(/protected|denied/);
+    expect(f.launched).toHaveLength(0);
+    await expect(access(args.outputPath)).rejects.toThrow();
+    const ref = await f.backend.background.start(
+      { id: "d" },
+      {
+        ...f.scope,
+        operationId: "full-artifact",
+        profile: "full-access",
+        filesystem: { kind: "device" },
+        network: { kind: "environment" },
+      },
+      args,
+    );
+    await f.backend.background.stop({ id: "d" }, ref, { graceMs: 0, signal });
+    await access(args.outputPath);
+    expect(f.launched).toHaveLength(1);
+  } finally {
+    spy.mockRestore();
+  }
+});

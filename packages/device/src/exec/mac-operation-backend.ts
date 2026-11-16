@@ -15,6 +15,7 @@ import {
   SandboxScopeDeniedError,
   validateSandboxPathShape,
 } from "@capybara-hq/plugin-sdk";
+import { implicitWritePaths } from "../policy.js";
 import type { NativeHelperRequest, NativeHelperResult } from "./native-helper-client.js";
 import { MacOperationSupervisor } from "./operation-supervisor.js";
 import {
@@ -187,7 +188,19 @@ export async function createMacOperationBackend(
         throw new SandboxScopeDeniedError("Invalid execution bounds");
       if (args.cwd) boundedPath(args.cwd, grant);
     }
-    if (background) boundedPath(background.outputPath, grant, true);
+    if (background) {
+      boundedPath(background.outputPath, grant, true);
+      const canonical = (path: string) => path.replace(/^\/(tmp|var|etc)(?=\/|$)/, "/private/$1");
+      if (
+        !grant.full &&
+        implicitWritePaths().some((root) =>
+          within(canonical(background.outputPath), canonical(root)),
+        )
+      )
+        throw new SandboxScopeDeniedError(
+          "Background artifact target is protected by the restricted write policy",
+        );
+    }
     const common = {
       scope,
       grant,
