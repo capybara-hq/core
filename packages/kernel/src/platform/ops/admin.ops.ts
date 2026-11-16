@@ -187,12 +187,13 @@ export class AdminOperations implements OnModuleInit {
         id: "admin.audit",
         description:
           "The platform-level audit log (super admin), newest first: deployment settings, accounts, marketplaces, catalog imports and scope, extensions, model prices and purposes, setup. Each event has its id, time, actor (id, name, email; null for the kernel itself), viaToken (done with a personal access token), viaAgent (done through the Platform tool), action and target; never the event's details, and never an org's own events (an org's log is orgs.audit, in that org). action filters by an action name or its prefix (e.g. marketplace.). limit is 1 to 100 (default 20); pages by keyset: pass the returned next as params.after (null: no more).",
-        // another org's events are never read through an agent (the conversation's org: orgs.audit)
+        // Another org's events are never read through an agent (the conversation's org: orgs.audit).
+        // The route's `orgId` query field is left out; parity treats `orgId` as implicit (never an
+        // operation field), so it needs no `omits` entry.
         input: AuditListQuery.omit({ orgId: true }).strict(),
         example: { limit: 20 },
         authz: { superAdmin: true },
         mirrors: ["GET /api/v1/admin/audit"],
-        omits: ["orgId"],
         confirm: "read",
         run: (input) => this.audit.list({ platform: true }, input),
       }),
