@@ -1,5 +1,9 @@
 # Permission profile feasibility results
 
+Historical snapshot of the bounded feasibility phase. Subsequent independent SDK/native API work
+is described in the [operation contract](2026-11-16-permission-operation-contract.md); it does not
+close the provider/runtime acceptance gate recorded here.
+
 Status: bounded investigation complete on 2026-11-16; feasibility gate **open**. The complete
 permission-profile contract is **unverified for local, Docker and E2B**. Product implementation
 has not started. No architecture impossibility was demonstrated and no architecture change was

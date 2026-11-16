@@ -58,8 +58,9 @@ existing Python/GCC tooling, TanStack Query and the existing design system.
 | A | 1; 5 complete | Additive SDK only; generic design commit `09272da87` is reviewed |
 | B | 2a and 3 | Portable native API/source and authority-lock foundation/root API are disjoint |
 | B-held | 2b | Linux restricted source/proof remainder stays held; no retry or alternate execution route |
-| C | independent parts of 4 and 11 | macOS implementation uses 1+2a and accepted local mechanism; additive publication may use 1+2a, wire remains v2 |
-| D | 6 | Kernel facade/admission and staged v3 codecs/adapters after 3–4; no v3 announcement |
+| C | macOS-only 4 and independent 11 | macOS uses reviewed 1+2a and accepted local mechanism; Linux/local-Docker restricted work held; wire stays v2 |
+| D0 | 6a | After accepted 3 only; may run alongside 2a/4; read-only facts/module extraction and M1 fix |
+| D | 6b | After 3, 4 and 6a; facade/admission and staged v3; no announcement |
 | E | 7 and 8 | Policy/cards and background cutover after 6; v3 activation only after Task 8 retirement tests |
 | F | 9; then 10 | Replay after 7–8; web after 3, 5, 9; no concurrent shared event edits |
 | G | independent preparation of 12 and 13 | Published SDK/testing prerequisite remains; Linux enforcement/full proof cannot pass held 2b |
@@ -232,6 +233,11 @@ up front; no upgrades. Preserve fixed order and exclusive-highest-level handling
   before enqueue. Test shared admission concurrency, root-write versus same-root admission,
   unrelated-root progress, ancestor ceiling-write exclusion, no upgrades, fixed order, CAS conflict
   and rollback in the foundation test; ordinary Read must not take a global exclusive lock.
+  Task 3 review obligation M1: reserve the first-send request/root identity early inside the existing
+  transaction, and initialize root epoch rows only for the winning inserted conversation. Concurrent
+  losing same-message retries return the winner without orphan `root` epoch rows for discarded UUIDs.
+  Test race and rollback by asserting every newly created root epoch belongs to the winning root;
+  advisory locking a proposed UUID must not by itself persist an epoch.
 - [ ] Run the two named tests; implement transactional root state, audit/event append, explicit Full
   consent scope, SessionOnly controller and human-only Platform exclusion. Preserve prior owner
   ceiling during migration and expose truthful unavailable reasons.
@@ -240,35 +246,184 @@ up front; no upgrades. Preserve fixed order and exclusive-highest-level handling
 - [ ] Run named tests, `pnpm check:migrations`, `pnpm check:platform-ops`, route parity and kernel conventions.
 - [ ] Review migration/access boundary alone and commit `feat(kernel): persist conversation permission profiles`.
 
-### Task 4: Local operation workers, supervision and owner-ceiling migration
+### Task 4: macOS operation backend and owned supervision (independent boundary)
 
-**Files:** Prepare modifications to `packages/device/src/state.ts`, `policy.ts`,
-`policy-store.ts`, `policy-ops.ts`, `commands/start.ts`, `commands/policy.ts`, `commands/mode.ts`,
-`cli.ts`, `exec/types.ts`, `exec/switch.ts`, `exec/os.ts`, `exec/docker.ts`, `exec/fs-helper.ts`,
-`exec/listing.ts`, `exec/groups.ts`, `exec/reap.ts`; create `exec/operation-worker.ts`,
-`exec/operation-supervisor.ts`, `exec/runtime-source.ts` and `test/operation-scopes.test.ts`.
-Update affected device tests and README; no kernel files. Implement factories behind the unactivated
-operation entry point; old wire still compiles. Task 6 prepares client/server-ops changes; Task 8's
-verified cutover gates activation/removal of old adapters together, not a released compatibility layer.
+**Prerequisites:** Accepted Task 1, reviewed Task 2a, and the accepted local macOS mechanism in
+`task-1-report.md`. Integration uses that existing immutable SRT/Seatbelt-worker mechanism; it does
+not translate or reroute any blocked Linux work. Linux/local-Docker restricted source, OS enforcement
+tests and real-provider conformance are held with 2b. Do not edit `exec/docker.ts` for this task.
+The new capability adapter returns `restricted: null` with the true pending-validation reason on
+those backends; it never falls back to Full. Existing raw wire2 behavior is not activated/replaced here.
 
-**Interfaces:** Implement SDK scopes and capability report; local configuration uses
-`DeviceOwnerCeiling`, independent from profile. Supervisor implements background contract and
-exact authenticated references. Factory workers initialize once and retain immutable policy.
+**Files:** Create `packages/device/src/exec/mac-operation-backend.ts`, `operation-types.ts`,
+`operation-worker.ts`, `operation-supervisor.ts`, `runtime-source.ts`, `native-helper-client.ts`,
+`packages/device/test/mac-operation-backend.test.ts`, `operation-supervisor.test.ts`,
+`native-helper-client.test.ts`, `operation-ceilings.test.ts`. Prepare additive helpers in
+`src/state.ts`, `policy.ts`, `policy-store.ts`, `exec/types.ts`, `exec/host.ts`, `exec/os.ts` only where
+existing pure policy/spawn/ownership primitives are reused; no global SandboxManager mutation.
+Keep legacy adapter removals (`switch`, CLI policy fields, old reaper/comment exceptions) with the
+Task 6/8 cutover. Add a device changeset and accurately scoped README notes; no kernel files.
 
-- [ ] Add failing first-read/outside-workspace project, Full→restricted write, concurrent opposing
-  grants in both orders, peer-proxy borrowing, preparation separation and owner-ceiling revocation tests.
-  Assert Full retains its existing OS syscall/socket/daemonization behavior without restricted filters.
-- [ ] Run device scope tests red; implement fresh workers, per-request ceiling intersection, protected
-  shared helper staging and all native methods. Remove the 60-second write mode and command-comment
-  background exception. Replace public auto/sandbox choice directly without widening stored authority.
-- [ ] Add trusted background-start retry, exact cancel, crash/disconnect and proxy-lifetime tests;
-  foreground cleanup never discovers ownership from model stdout or all-user scans.
-  Cover browse without conversation, bounded 65,536-byte tail, stop/exit race and repeat lookup after
-  admission expiry. Table-test every migration row with empty/nonempty lists and restrictive org
-  ceiling; no old auto narrowing from sandbox-only lists and no restricted widening.
-- [ ] Run device tests and actual macOS/Linux conformance; report unavailable runtime separately
-  from passing simulation. Positive native/shell controls must run after restrictions are installed.
-- [ ] Commit `feat(device): enforce immutable operation permissions` with device changeset.
+**Internal interfaces (device-private, no SDK contract change):**
+
+- `createMacOperationBackend(options: MacOperationBackendOptions): Promise<MacOperationBackend>`
+  returns `Required<Pick<SandboxProvider, "permissionCapabilities"|"operation"|"browse"|"prepare"|
+  "revokeOperation"|"background">>` plus the two private methods below. Options contain `deviceId`, `instanceGeneration`, `stateDir`,
+  `roots: SandboxRoots`, `pythonPath`, and `readOwnerCeiling(): Promise<DeviceOwnerCeiling>`.
+  Validate the supplied handle/device/generation on every entry. Unsupported OS/backend selection
+  happens before worker creation; only macOS selects this backend.
+  Its additional device-private `forExecution(authority: LocalExecAuthority):
+  Pick<MacOperationBackend, "operation"|"background">` returns a one-request facade, and
+  `reconcileOwnerCeiling(signal: AbortSignal): Promise<void>` handles actual owner policy changes.
+  Neither method is an SDK export or a model/tool input.
+- `startMacOperationWorker(request: MacWorkerRequest, signal: AbortSignal): Promise<MacWorkerHandle>`
+  owns one immutable worker. A request is exec with `SandboxOperationScope`/exec arguments, or one
+  native method with an explicitly tagged operation/browse/preparation scope. Private request data
+  is constructed by the backend, never selected by user command text. A handle has
+  `ready: Promise<void>`, `completion: Promise<ExecResult|NativeHelperResult>` and
+  `cancel(reason: string): Promise<void>`. `ready` resolves only after private IPC confirms fixed
+  configuration/proxy installation and required helper descriptors are available.
+- `MacOperationSupervisor` implements the SDK background methods and
+  `revokeOperation(ref: SandboxOperationRef, signal: AbortSignal): Promise<void>` against the
+  device-owned generation/journal. It consumes stable operation ID/input hashes before effects,
+  records exact trusted launch identities, owns terminal outcomes/retention, and retains worker/proxy
+  lifetime until owned execution ends. Caller RPC completion does not dispose an acknowledged task.
+- `runNativeHelper(request: NativeHelperRequest, roots: readonly PinnedNativeRoot[],
+  launch: NativeHelperLaunch, signal: AbortSignal): Promise<NativeHelperResult>` is private transport.
+  `PinnedNativeRoot` contains `{path:string, fd:number, access:"read"|"write"}`; the trusted caller
+  owns/cleans those descriptors. Launch chooses the fixed interpreter/helper and immutable macOS
+  wrapper, never an arbitrary user command. Private request/response shapes are Task 2a's helper
+  `method/path` (or scan base), limits/base64 and `{result}|{error}`; roots map to inherited fd indices.
+
+**Exact local ceiling source:** Define this device-private type in `exec/operation-types.ts`; it
+does not replace the SDK scope or add a remote project registry:
+
+```ts
+interface DeviceOwnerCeiling {
+  readonly revision: string;
+  readonly fullAccess: boolean;
+  readonly roots: Readonly<SandboxRoots>;
+  readonly restrictedProjectReach: "workspace" | "os-user";
+  readonly restrictedAllowedDomains: readonly string[];
+  readonly restrictedDeniedReadRoots: readonly string[];
+  readonly preparation: Readonly<{ skillsRoot: string; attachmentsBase: string }>;
+  readonly fullNetwork: "environment";
+}
+```
+
+`readOwnerCeiling` is a trusted bootstrap closure, not a callback obtained from a tool request.
+Derive it from the current valid on-disk `Policy` (`state.ts:readPolicyFile`) and credential:
+`fullAccess = policy.mode === "auto"`; `restrictedProjectReach` is `os-user` for that independently
+authorized old-auto ceiling and `workspace` for old-sandbox. `roots = osRoots(credential.dir)` from
+`exec/shared.ts`, checked against the backend's roots; request handles/paths do not supply them.
+`restrictedAllowedDomains` is a validated copy of `Policy.allowedDomains`; it is the restricted
+baseline only. Full keeps the OS environment network and never intersects this old sandbox-only list.
+Restricted operation allowance still respects current org limits and existing authenticated run/task
+grant semantics from `policy.ts:effectiveEgress/grantedHosts`; a raw user host list is not a grant.
+No new grant is inferred from `Policy.allowCredentials` (currently ignored), `cpu` or `memoryMb`.
+
+`restrictedDeniedReadRoots` reuses `policy.ts:deniedSecretPaths(home)` plus the trusted state directory;
+skills remain readonly to scoped user work and existing scoped write protections remain in force.
+Preparation roots are `roots.skills` and `${roots.workspace}/attachments`; attachment preparation is
+further confined to the kernel's existing root-conversation subtree, never the whole workspace.
+These locations authorize only purpose-specific staging; user arguments cannot select preparation.
+Workspace/project, scratch, skills and that conversation's attachment roots are selected by trusted
+kernel authority per operation, not all granted merely because they appear in this ceiling snapshot.
+
+The authoritative project inventory is kernel `device_projects`, written by `DeviceProjectsService`
+after owner checks. `state.ts` has no project-root allowlist and the device has no project inventory:
+do not invent either or populate one from incoming scope paths. The trusted kernel validates the
+bound project against that inventory before sending its immutable scope. Locally intersect the
+requested scoped data roots with the independent ceiling above: an outside-default-workspace project
+is permitted when old-auto already authorized that OS-user reach, while the conversation still gets
+only its scoped project/scratch/skill/attachment access. Old-sandbox remains workspace-bounded; a
+previously registered outside project or caller-supplied path cannot widen it. Owner narrowing may
+therefore make that project unavailable, as before. This preserves first-read behavior when only the
+conversation profile tightens, without manufacturing a new local-owner grant.
+
+Read and validate fresh policy for every operation. Build `revision` from the policy file generation
+(the existing inode/size/mtime identity used by PolicyStore), normalized policy and trusted root/device
+identity; return a frozen snapshot. Missing/malformed policy fails closed in this new backend rather
+than using `readPolicyFile`'s absent-file auto default or `PolicyStore.current()`'s last-good fallback.
+This strict additive reader leaves active wire2 behavior unchanged until the coordinated cutover.
+
+**Network grant provenance:** `SandboxExecOptions` currently has no grants field: its source
+`SandboxProvider.exec` omits that field. Existing `DeviceExecArgs` carries `limits` and `grants`.
+Reuse those authenticated device-transport fields, not a new SDK scope field or an interpretation
+of opaque `ceilingRevision`. Define private
+`LocalExecAuthority = { operationId: string; orgNetwork: SandboxLimits["network"];
+grants?: DeviceExecGrants }`. The actual source is `LocalDeviceProvider` reading current limits and
+`NetworkGrants.forExec` followed by `grantsWithin`, as its existing exec path already does. Task 6b
+preserves this separate provenance in staged v3 exec requests; Task 8 does the same for backgroundStart.
+Read it afresh for each actual admission, including approved resume; the device dispatcher validates
+the existing grant/source fields over its authenticated kernel connection and creates a frozen
+one-request facade. Require its operationId to match the scope and include org network/grants/source
+in the consumed input hash. Do not cache this authority on a shared factory or device handle.
+
+For restricted exec/background start, compute the current baseline plus explicit additions using
+the existing `effectiveEgress`/`grantedHosts` rules with restricted mode, fresh local
+`restrictedAllowedDomains`, the separate org network and explicit grants. Then intersect that result
+with the immutable scope's allowlist (or deny-all for scope `none`), preserving host-pattern narrowing.
+Only `grants` provides approved-addition provenance; a flattened scope host never does. Thus a host
+removed from the local baseline is denied unless still independently approved by a valid bounded
+run/task grant; a host absent from both inputs is denied. Read policy again immediately before launch;
+a changed revision before launch rejects the prepared attempt for fresh resolution instead of using
+its earlier baseline. Do not compare the local revision with the opaque composite ceiling hash.
+Full retains environment networking within its independent ceiling and ignores sandbox-only lists.
+Native/browse/preparation helpers have no network, require no execution-grant envelope and cannot
+receive one. Missing execution authority fails closed for restricted exec; staged baseline-only
+behavior must not be described as complete grant support.
+
+**Actual owner revocation trigger:** `reconcileOwnerCeiling` strictly re-reads local policy, compares
+the previous trusted snapshot and the durable starting grants, and records/cancels only affected
+owned operation IDs. Invalid/missing policy blocks new work and reconciles existing owned work
+fail-closed; Full→restricted and lost root reach revoke affected work. A restricted-baseline removal
+does not narrow Full, or a still-valid independently approved addition. Conversation-profile changes
+do not invoke this owner-revocation hook. Journaled cancellations survive a lost acknowledgement.
+Task 4 owns this method and deterministic policy-change/journal tests. Task 6b/8 must wire it after
+successful `PolicyStore.update`/server policy operations and from local file-generation detection
+before replacing old executors. Reuse the existing policy-check/reconciliation pattern (client
+`pushPolicy`, SwitchingExecutor's 1-second `sync` cadence); the new supervisor's check must remain
+active while it owns live work even if the WebSocket disconnects. A method call on the next tool
+alone is insufficient. Register/stop that owned watcher with supervisor lifetime and hook the strict
+reader rather than PolicyStore's last-good fallback. Tests may inject tick/changed-policy notifications;
+they cannot claim real revocation wiring until the actual caller/watcher integration is verified.
+
+**Helper consumption:** The current 2a helper requires supplied pinned directory descriptors and
+reads one JSON request from stdin. Its ordinary test adapter already passes an open directory as
+child fd 3 to `python3 -I`; no Linux launcher is required. The macOS trusted worker can use the same
+private extra-stdio mapping through its fixed SRT shell wrapper. Verify fd identity/availability
+with an ordinary owned-directory handshake before method dispatch; if the wrapper drops it, fail
+unsupported rather than reopening a root pathname. Close unrelated descriptors. No root descriptors
+are passed to arbitrary exec commands; native helper and user exec are separate worker requests.
+Canonical macOS `/tmp` paths, interpreter/library exceptions and literal ancestor access follow the
+reviewed local mechanism; native data authority still comes only from supplied descriptor roots.
+
+- [ ] Add deterministic ordinary tests using injectable trusted spawn/IPC/journal/clock dependencies,
+  not a model-selectable bypass. Test barriers await `ready`, journal-consumed, launch-ack and terminal
+  events; use controlled promises/IPC messages rather than fixed sleeps. Verify one initialization,
+  no config update, one fresh worker per native operation, descriptor close on every exit and bounded
+  output/JSON errors. Hooks observe trusted phases; command stdout cannot supply ownership or readiness.
+- [ ] Implement profile/ceiling intersection on every call, genuine Full via the existing OS user
+  without restricted child filters, and scoped macOS native/exec workers. The new backend has no
+  last-exec write window or shell-comment background privilege. Browse is stat/list/scan only;
+  preparation includes marker read/recheck/write and no exec. No shared handle stores authority.
+- [ ] Test first-read/project roots, ordinary native BFS semantics via 2a, Full→restricted freshness,
+  immutable overlapping worker lifetimes, owner-ceiling revocation, retry/hash mismatch/unknown
+  outcomes, expiry lookup, bounded 65,536-byte tail and stop/exit race. Full checks stay within owned
+  fixtures and must show that no restricted wrapper was selected. Keep managed cleanup guarantees;
+  no all-user scan or promise to discover arbitrary unregistered detached descendants.
+  Add ordinary deterministic cases for removed baseline host, approved once/task addition, unknown
+  scope-only host, scope/org intersection, stale local revision during startup, and authority hash/
+  operation-ID mismatch. Exercise owner-change hook while idle/disconnected with a live owned task;
+  assert recorded cancellation and sibling preservation without any network enforcement experiment.
+- [ ] After ordinary tests pass, validate the production macOS adapter against the already-approved
+  local acceptance cases with exact owned-resource cleanup, as Task 4's separate evidence. Do not
+  run Linux/local-Docker enforcement or launch-root experiments. Record unverified runtime behavior
+  honestly; passing fake IPC/helper fixtures alone does not advertise restricted support.
+- [ ] Run the four named device tests and affected existing device tests, review the device-private
+  boundary, and commit `feat(device): add scoped macOS operation backend`. Wire2 constants, hello,
+  dispatch and current consumers stay unchanged until coordinated Task 6/8 activation.
 
 ### Task 5: Generic neutral composer permission picker (complete)
 
@@ -286,7 +441,95 @@ may be folded into Task 10 without changing the accepted generic interface.
 - [ ] Run `pnpm exec vitest run --project design`; review the component API and visual states.
 - [ ] Commit the generic design support. App-specific labels/state belong to Task 10.
 
-### Task 6: Fresh kernel operation facade and preparation separation
+### Task 6a: Lower-level permission facts and acyclic modules (independent)
+
+**Dependencies/scope:** Requires accepted Task 3 only; can run while 2a is being fixed or Task 4 is
+implemented. Existing HTTP/tool results and active execution behavior remain unchanged. No fresh
+facade, operation admission/dispatch, protocol activation, OS runtime work or provider execution.
+First extract lower-level policy/profile facts from the Task 3 services,
+before injecting `SandboxOperationAuthority` into `SandboxService`. Current Authority → Profiles →
+SandboxService and Authority → SandboxService edges would become a runtime Nest cycle; project
+services can create another indirect path. Do not solve it with `forwardRef`, service locators or
+temporarily weaker authority checks.
+
+**Files:** Create `packages/kernel/src/sandbox/permission-facts.ts`, `permission-facts.module.ts`,
+`providers.module.ts`, `permission-authority.module.ts`, `operation-authority.module.ts`,
+`packages/kernel/src/conversations/permission-profile-store.ts`, `permission-profile-store.module.ts`,
+`packages/kernel/src/local-devices/network-grants.module.ts` and
+`packages/kernel/test/sandbox/permission-wiring.test.ts`. Modify existing `sandbox/sandbox.module.ts`,
+`sandbox/sandbox.service.ts`, `sandbox/operation-authority.ts`,
+`conversations/permission-profiles.service.ts`, `conversations/conversations.service.ts`,
+`conversations/conversations.module.ts`, `devices/conversation-devices.ts`,
+`local-devices/local-devices.module.ts`, and their named
+permission/first-send tests. Provider registry and NetworkGrants logic remain unchanged; declarations
+move to their own low-level modules, with one instance each.
+
+**Interfaces:** `PermissionFacts.readDevice(orgId,
+deviceId)` returns current persisted roots/policy/owner ceiling without lifecycle or provisioning;
+`PermissionFacts.projectMatches(deviceId,name,path): Promise<boolean>` checks stored project binding.
+`PermissionFacts.readProject(orgId,deviceId,name): Promise<{name:string;path:string}|null>` supplies
+the current stored project for the permission preview without invoking DeviceProjectsService.
+`PermissionFacts.readWorkingFacts({orgId,deviceId,rootConversationId,holderConversationId}):
+Promise<WorkingFacts>` extracts the exact DB-only algorithm currently in
+`devices/conversation-devices.ts:workingFacts/recordedWorkspace/machineRoots/workingProject`.
+Workspace precedence stays holder's latest `device_paths.roots.workspace` → root's latest event
+(when distinct) → active machine workspace → `DEFAULT_SANDBOX_ROOTS.workspace`. This is not a
+`working_directory` event and must not be replaced by current machine roots. Home stays the machine's
+absolute reported home, otherwise `homeOf(resolvedWorkspace)`, never a project-derived home.
+Project stays null for an unbound root or absent/invalid snapshot; otherwise use the bound root's
+latest `project_root` event with the same `root`/`unavailable` interpretation. Preserve event `seq`
+ordering, no-event and revoked-machine handling. Existing ConversationDevices.workingFacts delegates
+to this reader so tool/review callers and Authority keep one algorithm. Callers retain org/owner/
+root/holder checks. Move WorkingFacts as a type-only lower-layer declaration rather than importing
+the rich service; move pure `permissionScopeHash`/effective-view calculations to the facts layer
+too, so Authority imports no values from PermissionProfilesService. No DevicesModule or
+ConversationsModule import is allowed into OperationAuthorityModule to regain these helpers.
+`PermissionProfileStore.readRoot(orgId,conversationId)` returns the root's stored owner/device/profile,
+revision/consent/project/schedule facts, without calling the profile HTTP/view service. Preserve
+existing ownership/access checks in their callers. Move the exact `SandboxService.devicePolicy`
+read-only implementation to this lower layer and make its old method delegate if still needed.
+Use KernelDb/config/pure policy functions only; these providers import none of SandboxService,
+SandboxOperationAuthority, PermissionProfilesService, DeviceProjectsService or ConversationDevices.
+Both the profile service and Authority depend downward on the facts/store; Authority no longer
+depends on the profile service or lifecycle service. Extract `SandboxUseContext` to a type-only
+`sandbox/use-context.ts` if its existing service import would otherwise remain a runtime edge.
+Module graph: `SandboxProviderRegistryModule` in `providers.module.ts` imports only
+`ExtensionRegistryModule`, provides/exports the existing `SandboxProviders`. `NetworkGrantsModule`
+provides/exports existing DB-only `NetworkGrants` without importing SandboxModule or LocalDevicesModule.
+`PermissionAuthorityModule` provides/exports existing locks/epochs; `PermissionProfileStoreModule`
+provides/exports the read store. `PermissionFactsModule` depends on those lower-level readers/config
+as needed, never the lifecycle module. `OperationAuthorityModule` imports facts/profile-store,
+authority-foundation and network-grants modules, providing/exporting `SandboxOperationAuthority`.
+ConversationsModule and later SandboxModule import these providers downward; LocalDevicesModule
+reuses registry/network-grants exports instead of redeclaring them. Keep constructor injection tokens
+explicit; prefer method-shaped Pick/type-only dependencies over service cycles. A provider registry
+lookup may inspect registered metadata but must not start/probe an actual provider in this task.
+
+- [ ] Pin existing permission GET/preview, first-send/no-device, owner checks, scope hashes and
+  current authority-return semantics with the existing Task 3 tests. Add module resolution and
+  shared-provider identity assertions to `permission-wiring.test.ts`; lifecycle methods are spies
+  and must remain uncalled for reads. This is a normal Nest/DB integration test, not an OS experiment.
+  In `operation-authority.test.ts`, pin differing child/root recorded workspaces versus current
+  machine roots, holder absent → root fallback, both events absent → machine/default, reported-home
+  versus homeOf fallback and bound project snapshot/unavailable states. Assert identical resolved
+  roots, scope hashes and errors before/after; the extraction must not read only device-level facts.
+- [ ] Extract readers/modules and update constructor/module declarations before any later facade
+  injection; compile and resolve the full test application without `forwardRef` or locator callbacks.
+- [ ] Close M1 here: `PermissionProfilesService.lockInitial` reserves only the ordered transaction
+  locks, without initializing an epoch for the candidate UUID. Only the winning insert's
+  `initialize` path creates its root epoch. Extend first-send concurrent same-message and rollback
+  tests to assert exactly one root epoch for the winner and none for losing UUIDs.
+- [ ] Run `pnpm exec vitest run packages/kernel/test/sandbox/permission-wiring.test.ts packages/kernel/test/conversations/permission-profiles.http.test.ts packages/kernel/test/sandbox/operation-authority.test.ts packages/kernel/test/local-devices/network-grants.test.ts`,
+  the existing first-send idempotency cases and kernel conventions/typecheck. Prove unchanged result
+  and error shapes, zero new lifecycle calls and one NetworkGrants/registry instance.
+- [ ] Review and commit `refactor(kernel): extract permission authority readers`. No dependency on
+  Task 4 runtime readiness or held 2b; Task 6b consumes this finished lower-level graph.
+
+### Task 6b: Fresh operation facade, durable admission and staged protocol adapters
+
+**Prerequisites:** Tasks 3, 4 and 6a. The lower-level reader/module graph is already acyclic; do not
+reintroduce profile/lifecycle dependencies or duplicate extracted providers. This task retains the
+existing admission/fencing scope and waits for Task 8 before any protocol3 announcement.
 
 **Files:** Modify `packages/kernel/src/sandbox/sandbox.service.ts`, `sandbox.module.ts`,
 `providers.ts`, `sandbox-file-reader.ts`, `local-devices/local-device-provider.ts`,
@@ -336,6 +579,10 @@ Task 8's background callers and SID retirement are integrated and verified.
   Move entire marker read/recheck/write through preparation; test before first exec. Wrap nested
   provider errors and preserve relay denied/unsupported/unknown outcomes separately from gone.
   Validate all v3 user/browse/preparation/background frames and reject v2 only on coordinated activation.
+  Preserve existing authenticated `DeviceExecArgs.limits/grants` provenance for exec in the staged
+  transport and create Task 4's request-bound facade only after validation/current grant lookup.
+  Wire actual local policy update and file-generation reconciliation callers before new backend
+  activation; verify removed baseline versus explicit addition without parsing ceilingRevision.
 - [ ] Run named scope tests plus `packages/kernel/test/local-devices/local-device-provider.test.ts`,
   `packages/kernel/test/tools/sandbox/working-root.test.ts` and native reader tests; list dual test
   in `packages/kernel/test/container-tests.json`.
@@ -382,6 +629,10 @@ Use provider `background.start/status/tail/stop`; no PID text or shell-comment b
 methods never resume instances. Tail caps at 65,536 bytes; terminal stop outcomes distinguish prior
 exit, stop-won, cancel-pending and lost. Preserve five-second graceful stop and final-line limits.
 Add the one-time SID-row retirement job/migration; no conversion to trusted new refs.
+BackgroundStart carries the same separately resolved current org network/DeviceExecGrants provenance
+as exec, bound to its operation ID/input hash. Its acknowledged owned supervisor remains subscribed
+to strict local-owner reconciliation through idle/disconnection. Existing-result retry preserves
+recorded start authority; it does not manufacture a fresh operation or rewrite that starting grant.
 
 - [ ] Add failing lost-start-ack/retry, profile narrowing, owner revocation-before-ack, supervisor loss,
   exact generation mismatch and two-live-task cancellation tests. Assert only one launch and one

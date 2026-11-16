@@ -328,7 +328,14 @@ additive SDK/helper/testing release leaves v2 declarations, parsers and constant
 On activation v2 connections are refused with an upgrade instruction, with no
 compatibility fallback. Keep request/response transport and cancellation IDs. Every exec/readFile/
 writeFile/stat/list/scan request gains required `scope: SandboxOperationScope`; obsolete per-call
-mode and grants fields disappear. Exec data excludes actor/tag because scope carries them. All
+mode selection disappears. Exec data excludes actor/tag because scope carries them. Local exec and
+background-start transport retain a device-private, request-bound `LocalExecAuthority` envelope
+with the current org network ceiling and approved `DeviceExecGrants` provenance. The local provider
+reads those existing server-owned grant records for each actual call, binds the envelope to the
+admitted input hash and sends it over the authenticated device connection. It is not a model input
+or a new public SDK method argument. The device intersects its fresh owner baseline plus validated
+approved additions with the immutable scope; flattened scope hosts alone cannot identify additions
+or revive a removed baseline. Native, browsing and preparation calls grant no network access. All
 arguments are bounded/validated before side effects, including canonical path shapes, host syntax,
 revision integers and known enum values. TypeScript readonly is not wire validation.
 
@@ -394,6 +401,11 @@ Put the common native filesystem helper and Linux launcher/broker source in
 SHA-256 metadata. Export `SANDBOX_RUNTIME_SOURCE` with `{ version, files: readonly { name, source,
 sha256 }[] }`. The SDK performs no filesystem/process/network work and imports no Node runtime;
 consumers stage/build/launch it. Device imports only SDK; official plugins consume published SDK.
+
+Delivery is additive: the first bundle contains only the implemented portable native-file helper.
+Linux launcher/broker bytes and full permission-conformance exports remain withheld while their
+validation gate is held. Passing source packaging and ordinary native API compatibility tests does
+not establish restricted execution support for any provider.
 
 Consumer staging verifies version/hash and refuses replacement through a symlink or a writable
 ancestor. Cloud images provide root-owned runtime installation, built with their existing Python/GCC
