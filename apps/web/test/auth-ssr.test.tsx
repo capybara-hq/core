@@ -156,7 +156,7 @@ describe("/setup", () => {
     const client = testQueryClient();
     client.setQueryData(authSourcesQuery().queryKey, []);
     renderServer(
-      <ServerSetupStatusProvider value={true}>{await SetupPage()}</ServerSetupStatusProvider>,
+      <ServerSetupStatusProvider value={true}>{await SetupPage({})}</ServerSetupStatusProvider>,
       { client },
     );
     await settle();
@@ -191,7 +191,9 @@ describe("/setup", () => {
       },
     });
     renderServer(
-      <ServerSetupStatusProvider value={undefined}>{await SetupPage()}</ServerSetupStatusProvider>,
+      <ServerSetupStatusProvider value={undefined}>
+        {await SetupPage({})}
+      </ServerSetupStatusProvider>,
     );
     expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
     expect(screen.queryByRole("button", { name: en.setup.submit })).toBeNull();
@@ -210,7 +212,9 @@ describe("/setup", () => {
           : json(503, { error: { code: "upstream_unavailable", message: "x" } }),
     });
     renderServer(
-      <ServerSetupStatusProvider value={undefined}>{await SetupPage()}</ServerSetupStatusProvider>,
+      <ServerSetupStatusProvider value={undefined}>
+        {await SetupPage({})}
+      </ServerSetupStatusProvider>,
     );
     const retry = await screen.findByRole("button", { name: en.common.retry });
     up = true;

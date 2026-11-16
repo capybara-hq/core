@@ -75,9 +75,8 @@ export async function signIn(
   await page.goto("/");
   const setupButton = page.getByRole("button", { name: zh.setup.submit });
   const loginButton = page.getByRole("button", { name: zh.login.submit, exact: true });
+  // The server layouts settle setup redirects before either form renders.
   await expect(setupButton.or(loginButton)).toBeVisible();
-  // 登录页会再查一次是否已初始化：给它跳转的时间
-  await page.waitForLoadState("networkidle");
   if (await setupButton.isVisible()) {
     await page.getByLabel(zh.setup.loginLabel).fill(LOGIN);
     await page.getByLabel(zh.setup.passwordLabel).fill(PASSWORD);

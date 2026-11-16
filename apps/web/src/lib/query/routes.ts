@@ -94,6 +94,7 @@ import {
 import { setupRequestQuery } from "./from-template";
 import { inboxQuery, skillChangeQuery } from "./inbox";
 import { membersQuery } from "./members";
+import { permissionPreviewQuery } from "./permissions";
 import {
   chatTargetsQuery,
   conversationSchedulesQuery,
@@ -736,6 +737,8 @@ export const ROUTES: readonly RouteEntry[] = [
       const deviceId = devices === undefined ? undefined : chosenDeviceId(devices);
       if (deviceId === undefined) return;
       await qc.prefetchQuery({ ...q(deviceProjectsQuery(orgId, deviceId)), retry: false });
+      // The initial project is free mode, exactly as the composer starts; no device is provisioned.
+      await qc.prefetchQuery({ ...q(permissionPreviewQuery(orgId, deviceId)), retry: false });
     },
   },
   {

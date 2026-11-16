@@ -42,6 +42,7 @@ import { listUiContributions, type UiLocale } from "../ui";
 import { defineQuery } from "./define";
 import { keys } from "./keys";
 import { membersQuery } from "./members";
+import { permissionsQuery } from "./permissions";
 
 /**
  * The conversation page's reads (web query cache spec §5, §6): the row and the event log, the
@@ -447,6 +448,8 @@ export function conversationFollowUps(
       e.payload.byAccountId !== accountId,
   );
   if (stoppedByOther) add(membersQuery(orgId));
+  // Unlike the legacy skills fallback, an unknown account never authorizes this owner-only read.
+  if (accountId !== undefined && row.accountId === accountId) add(permissionsQuery(orgId, id));
   const mine = row.accountId === undefined || row.accountId === accountId;
   add(invocableSkillsQuery(orgId, row.agentId, mine ? id : undefined));
   const waits = openWaitReads(events);

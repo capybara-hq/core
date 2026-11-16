@@ -14,6 +14,7 @@ import {
   FakeEventSource,
   LIMITS,
   MODELS,
+  permissionPreview,
   renderChatRoute,
   runStarted,
   userMsg,
@@ -71,6 +72,8 @@ const newRoutes = (projects: unknown = projectsOf()) => ({
   [`GET ${ORG}/models`]: () => json(200, MODELS),
   [`GET ${ORG}/devices`]: () => json(200, DEVICES),
   [`GET ${ORG}/devices/e1/projects`]: () => json(200, projects),
+  [`GET ${ORG}/conversation-permission-preview?deviceId=e1`]: () =>
+    json(200, permissionPreview({ deviceId: "e1" })),
   [`GET ${ORG}/conversations/groups`]: () => json(200, GROUPS),
 });
 

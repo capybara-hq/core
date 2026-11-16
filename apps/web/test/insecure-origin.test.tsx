@@ -47,7 +47,7 @@ describe("InsecureOriginNotice", () => {
     );
 
   it.each(["zh", "en"] as const)(
-    "speaks to people, with no operator details (%s)",
+    "gives conditional sign-in advice, with no operator details (%s)",
     async (locale) => {
       vi.stubGlobal("isSecureContext", false);
       renderNotice(locale);
@@ -56,8 +56,8 @@ describe("InsecureOriginNotice", () => {
       expect(status.textContent).toContain(text);
       expect(text).toBe(
         locale === "zh"
-          ? "当前通过不安全的 http 地址访问，登录后可能无法保持登录状态。请使用 HTTPS 地址访问，或联系管理员。"
-          : "You are using an insecure http address, so you may not stay signed in. Use the HTTPS address or contact your administrator.",
+          ? "当前通过 HTTP 地址访问。如果登录后无法保持登录状态，请使用 HTTPS 地址或联系管理员。"
+          : "You are using an HTTP address. If you cannot stay signed in after logging in, use an HTTPS address or contact your administrator.",
       );
       expect(status.textContent).not.toMatch(/CAPYBARA_|COOKIE_SECURE|PUBLIC_URL/);
     },

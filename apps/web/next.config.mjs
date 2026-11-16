@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import createNextIntlPlugin from "next-intl/plugin";
 
 const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");
@@ -24,6 +25,30 @@ const nextConfig = {
   devIndicators: false,
   ...(devOrigins.length > 0 && { allowedDevOrigins: devOrigins }),
   transpilePackages: ["@capybara-hq/design"],
+  webpack(config, { dev }) {
+    if (dev) {
+      config.resolve.conditionNames = [
+        "@capybara-hq/source",
+        ...(config.resolve.conditionNames ?? ["..."]),
+      ];
+      // Expand layered imports before Next's legacy CSS loader reads them as media queries.
+      const designStyles = fileURLToPath(
+        new URL("../../packages/design/src/styles/index.css", import.meta.url),
+      );
+      config.module.rules.push({
+        enforce: "pre",
+        test: (resource) => resource === designStyles,
+        use: [
+          {
+            loader: fileURLToPath(
+              new URL("./scripts/design-css-imports-loader.cjs", import.meta.url),
+            ),
+          },
+        ],
+      });
+    }
+    return config;
+  },
   turbopack: {
     root: monorepoRoot,
     // 内部包按 "@capybara-hq/source" 条件直接编译源码（与 vitest / tsc 一致）；Turbopack 不支持自定义导出条件，用别名指到源码入口。

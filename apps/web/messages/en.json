@@ -44,7 +44,7 @@
       },
       "unknown": "Sign-in failed. Please try again."
     },
-    "insecureOrigin": "You are using an insecure http address, so you may not stay signed in. Use the HTTPS address or contact your administrator."
+    "insecureOrigin": "You are using an HTTP address. If you cannot stay signed in after logging in, use an HTTPS address or contact your administrator."
   },
   "changePassword": {
     "title": "Set a new password",

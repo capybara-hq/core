@@ -1,6 +1,11 @@
 /** Shared helpers for the conversation page tests: events, a fake EventSource, routes. */
 import { DEFAULT_LIMITS } from "../../src/lib/attachments";
 import type { ConversationEvent } from "../../src/lib/conversations";
+import type {
+  ConversationPermissions,
+  PermissionAvailability,
+  PermissionPreview,
+} from "../../src/lib/permissions";
 import { lastStubRoutes } from "./api";
 import { renderRouteWithCache } from "./query";
 
@@ -78,6 +83,56 @@ export const CONV = (id = "c1", extra: Record<string, unknown> = {}) => ({
   },
 });
 
+/** Direct runtime-report fixtures; method presence alone is not a supported report. */
+export function permissionAvailability(
+  state: PermissionAvailability["state"] = "unprobed",
+): PermissionAvailability {
+  if (state === "supported")
+    return {
+      state,
+      report: {
+        version: 1,
+        restricted: { filesystem: true, network: true, native: true, concurrentScopes: true },
+        fullAccess: true,
+        background: true,
+      },
+    };
+  return {
+    state,
+    reason:
+      state === "unprobed"
+        ? "Checked when this device starts"
+        : "Provider does not support permission-scoped operations",
+  };
+}
+
+/** A side-effect-free device preview, separate from a conversation's effective profile. */
+export const permissionPreview = (over: Partial<PermissionPreview> = {}): PermissionPreview => ({
+  deviceId: "d1",
+  project: null,
+  scopeRevision: "scope-1",
+  availability: permissionAvailability(),
+  fullAccessCeiling: true,
+  ...over,
+});
+
+/** Revision zero is a real initial profile, and no device has neither scope nor a ceiling. */
+export const permissionsView = (
+  over: Partial<ConversationPermissions> = {},
+): ConversationPermissions => ({
+  profile: "approve-for-me",
+  revision: 0,
+  rootConversationId: "c1",
+  deviceId: null,
+  consentScope: null,
+  scopeRevision: null,
+  availability: { state: "unsupported", reason: "Choose a device to run device operations" },
+  fullAccessCeiling: false,
+  startingWorkNotice:
+    "Changes apply to new operations. Work already started keeps its starting permissions.",
+  ...over,
+});
+
 const ENV_LIMITS = {
   cpu: 2,
   memoryMb: 2048,
@@ -128,20 +183,29 @@ export const DEVICES = {
 };
 
 /**
- * The new conversation's prefetch of the starting device's projects (project root §4.3), answered
- * empty for each of `ids`: a test about something else stubs it so.
+ * The new conversation's starting device reads: empty projects (project root §4.3) and a direct
+ * unprobed permission preview for each of `ids`. Tests override the facts they exercise.
  */
 export const noProjects = (
   ids: readonly string[] = ["e1", "e2", "e3", "d1", "d2"],
 ): Record<string, () => Response> =>
   Object.fromEntries(
-    ids.map((id) => [
-      `GET /api/v1/orgs/o1/devices/${id}/projects`,
-      () =>
-        new Response(
-          JSON.stringify({ projects: [], hidden: 0, mode: "auto", base: null, supported: true }),
-          { headers: { "content-type": "application/json" } },
-        ),
+    ids.flatMap((id) => [
+      [
+        `GET /api/v1/orgs/o1/devices/${id}/projects`,
+        () =>
+          new Response(
+            JSON.stringify({ projects: [], hidden: 0, mode: "auto", base: null, supported: true }),
+            { headers: { "content-type": "application/json" } },
+          ),
+      ],
+      [
+        `GET /api/v1/orgs/o1/conversation-permission-preview?deviceId=${encodeURIComponent(id)}`,
+        () =>
+          new Response(JSON.stringify(permissionPreview({ deviceId: id })), {
+            headers: { "content-type": "application/json" },
+          }),
+      ],
     ]),
   );
 
@@ -242,6 +306,7 @@ export function snapshotDefaults(id = "c1"): Parameters<typeof renderRouteWithCa
       usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
     }),
     [`GET ${base}/device`]: ok({ device: null }),
+    [`GET ${base}/permissions`]: ok(permissionsView({ rootConversationId: id })),
     "GET /api/v1/orgs/o1/ui/contributions": ok({ items: [] }),
     "GET /api/v1/orgs/o1/connectors": ok({ connectors: [] }),
     "GET /api/v1/orgs/o1/attachments/limits": ok(LIMITS),
