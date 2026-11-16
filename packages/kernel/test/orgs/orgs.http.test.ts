@@ -637,6 +637,8 @@ describe("GET /api/v1/orgs/:orgId/audit", () => {
       headers: { authorization: `Bearer ${token}` },
     });
     expect(res.statusCode).toBe(403);
+    expect(errCode(res)).toBe("forbidden");
+    expect((res.json() as { error: { message: string } }).error.message).toMatch(/Service tokens/);
   });
 
   it("a bad cursor or action is 400", async () => {

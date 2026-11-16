@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import { APP_PAGES } from "../src/components/shell/path";
+import { AUDIT_ACTION_KEYS } from "../src/lib/audit-actions";
 import { json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
@@ -54,8 +55,9 @@ describe("/settings/audit (org admins)", () => {
     await renderRouteWithCache("/settings/audit", routes, { locale: "zh", me: as("admin") });
     expect(template("SettingsPage")).not.toBeNull();
     const table = screen.getByRole("table", { name: zh.orgAudit.title });
-    // an action without a label is shown as written; the agent flag under the actor
-    expect(within(table).getByText("org.settings_updated")).toBeTruthy();
+    // org actions are labeled; the agent flag under the actor
+    expect(within(table).getByText(A.actions.orgSettingsUpdated)).toBeTruthy();
+    expect(within(table).queryByText("org.settings_updated")).toBeNull();
     expect(within(table).getByText(A.viaAgent)).toBeTruthy();
     expect(within(table).getByText(A.system)).toBeTruthy();
     expect(browser).toEqual([]);
@@ -85,6 +87,22 @@ describe("/settings/audit (org admins)", () => {
     });
     expect(template("StatusPage")?.getAttribute("data-kind")).toBe("no-access");
     expect(calls.map((c) => c.url).some((u) => u.includes("/audit"))).toBe(false);
+  });
+
+  it("an unknown action is shown as written", async () => {
+    stubApi({
+      [`GET ${O}/audit`]: () =>
+        json(200, { events: [event("1", "org.future_thing", "Grant")], next: null }),
+    });
+    await renderRouteWithCache("/settings/audit", lastStubRoutes(), { locale: "zh" });
+    expect(await screen.findByText("org.future_thing")).toBeTruthy();
+  });
+
+  it("every labeled action has zh and en copy", () => {
+    for (const key of Object.values(AUDIT_ACTION_KEYS)) {
+      expect(zh.admin.audit.actions, key).toHaveProperty(key);
+      expect(en.admin.audit.actions, key).toHaveProperty(key);
+    }
   });
 
   it("is a known app page", () => {
