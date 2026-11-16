@@ -33,7 +33,8 @@ import {
  * - `test-small-app-file`: a file with at most 5 `it` / `test` calls that boots an app: an import
  *   of `helpers/http-app`, a `buildKernel` / `startKernel` call, or a call to an exported helper
  *   that boots (scanned below).
- * - `test-double-boot`: more than one `buildKernel(` / `startKernel(` call in one file.
+ * - `test-double-boot`: multiple `buildKernel(` / `startKernel(` calls outside the explicit
+ *   container list; container tests may exercise several actual replicas.
  * - `test-portfolio-list-overlap`: a path listed twice (the second occurrence is reported).
  * - `test-portfolio-missing-file`: a listed path with no file (reported on the list file).
  * - `test-portfolio-baseline-unjustified`: a grandfather entry (the baseline's `files` object
@@ -379,6 +380,9 @@ export function changedTestFiles(cwd: string, base: string): Set<string> | undef
 /** One finding per problem in the test files, in path order. */
 function checkFiles(root: string, paths: string[], bootSymbols: Set<string>): Finding[] {
   const out: Finding[] = [];
+  const containers = new Set(
+    (readList(root, CONTAINER_LIST)?.entries ?? []).map((entry) => `${KERNEL_TEST_DIR}/${entry}`),
+  );
   for (const path of paths) {
     const file = join(root, path);
     const parsed = parseFile(file);
@@ -386,7 +390,11 @@ function checkFiles(root: string, paths: string[], bootSymbols: Set<string>): Fi
       out.push(parsed);
       continue;
     }
-    out.push(...analyze(parsed, file, bootSymbols));
+    out.push(
+      ...analyze(parsed, file, bootSymbols).filter(
+        (finding) => finding.rule !== RULE.doubleBoot || !containers.has(path),
+      ),
+    );
   }
   return out;
 }

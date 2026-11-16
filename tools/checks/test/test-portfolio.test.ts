@@ -41,6 +41,20 @@ describe("checkTestPortfolio", () => {
     ]);
   });
 
+  it("permits multiple replica boots only for explicit container membership", () => {
+    const root = fixture("replicas");
+    const got = checkTestPortfolio({ root });
+    expect(
+      got
+        .filter((f) => f.rule === "test-double-boot")
+        .map((f) => relative(root, f.file).split(sep).join("/")),
+    ).toEqual(["packages/kernel/test/integration.test.ts", "packages/kernel/test/unit.test.ts"]);
+    expect(
+      got.filter((f) => f.file.endsWith("unsafe-container.test.ts")).map((f) => f.rule),
+    ).toEqual(["test-timeout-override", "test-fixed-sleep", "test-small-app-file"]);
+    expect(got.some((f) => f.file.endsWith("/container.test.ts"))).toBe(false);
+  });
+
   it("skips a file listed in the grandfather list", () => {
     expect(
       checkTestPortfolio({
