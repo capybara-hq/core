@@ -1355,7 +1355,7 @@ describe("整轮回放", () => {
     };
   }
 
-  it("a marked recording replays from recorded permission evidence only: seeds once, review and managed paths verbatim, no live effect (Gate 9.5)", async () => {
+  it("a marked recording replays from recorded permission evidence only: seeds once, review and managed paths verbatim, target-run context not yet fed, no live effect (Gate 9.5)", async () => {
     const setId = await createSet();
     const conv = await createConv(admin, orgId, agentId);
     await seedPermissionRun(conv, "perm-marked");
@@ -1387,6 +1387,13 @@ describe("整轮回放", () => {
       expect(
         evs.filter((e) => e.type === "permission_context" && e.seq < (earlier?.seq ?? 0) + 1),
       ).toEqual([expect.objectContaining({ seq: earlier?.seq, payload: earlier?.payload })]);
+      // dormant until Gate 9.4 wires the request boundary: the target run's own context A is NOT
+      // fed into the eval conversation yet (9.4 must flip this assertion)
+      const a = orig.find((e) => e.type === "permission_context" && e.runId === "perm-marked");
+      expect(a).toBeDefined();
+      expect(
+        evs.filter((e) => e.type === "permission_context" && e.seq > (earlier?.seq ?? 0)),
+      ).toEqual([]);
       // the matched result carries the recorded review verbatim (a denial stays a denial)
       const result = evs.find((e) => e.type === "tool_result");
       expect(result?.payload).toMatchObject({
@@ -1411,8 +1418,12 @@ describe("整轮回放", () => {
     }
   });
 
-  it("a tampered recorded context reports permission_profile_changed; an unsupported version fails as eval.snapshot_invalid with no eval conversation (Gate 9.5)", async () => {
-    const tamper = async (runId: string, edit: (p: Record<string, unknown>) => void) => {
+  it("a tampered recorded context reports permission_profile_changed; an unsupported version or an invalid review fails as eval.snapshot_invalid with no eval conversation (Gate 9.5)", async () => {
+    const tamper = async (
+      runId: string,
+      edit: (p: Record<string, unknown>) => void,
+      type = "permission_context",
+    ) => {
       const setId = await createSet();
       const conv = await createConv(admin, orgId, agentId);
       await seedPermissionRun(conv, runId);
@@ -1425,7 +1436,7 @@ describe("整轮回放", () => {
       const snap = row.snapshot as {
         events: { type: string; runId: string | null; payload: Record<string, unknown> }[];
       };
-      const target = snap.events.find((e) => e.type === "permission_context" && e.runId === runId);
+      const target = snap.events.find((e) => e.type === type && e.runId === runId);
       if (target === undefined) throw new Error("no recorded context");
       edit(target.payload);
       await db
@@ -1451,6 +1462,17 @@ describe("整轮回放", () => {
     expect(corrupt.status).toBe("error");
     expect(corrupt.error).toMatchObject({ code: "eval.snapshot_invalid" });
     expect(corrupt.evalConversationId).toBeNull();
+    // an invalid recorded review is the snapshot's failure too, found before anything is seeded
+    const badReview = await tamper(
+      "perm-bad-review",
+      (p) => {
+        p.review = { ...(p.review as object), decision: "maybe" };
+      },
+      "tool_result",
+    );
+    expect(badReview.status).toBe("error");
+    expect(badReview.error).toMatchObject({ code: "eval.snapshot_invalid" });
+    expect(badReview.evalConversationId).toBeNull();
   });
 
   it("an old recording replays with no permission lines, metadata or feeder writes (Gate 9.5)", async () => {

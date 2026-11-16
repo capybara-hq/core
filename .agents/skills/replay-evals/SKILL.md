@@ -70,7 +70,10 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   the target run's are fed by a recorded-only feeder at the generated request boundary
   (`ModelStepDeps.permissionContext`, sparse `(step, attempt)` table, monotone, idem
   `replay_permission_context:<generatedRunId>:<originalSeq>`), none for a recording without markers;
-  `replayLoopDeps` (`evals/worker.ts`) strips any live recorder. The result reports
+  `replayLoopDeps` (`evals/worker.ts`) strips any live recorder. **Until Gate 9.4 wires the request
+  boundary nothing calls the feeder**: a full-run replay today only seeds earlier runs' contexts and
+  copies managed paths; the target run's own `permission_context` events are **not** injected into
+  generated requests. The result reports
   `permission_profile_changed` from the original-coordinate diagnostics. `RecordedToolPipeline` copies a
   managed `device_paths` whole and a matched result's `review` verbatim (absent stays absent); a replay
   never previews, reviews, admits, provisions, resumes, probes or touches a device.

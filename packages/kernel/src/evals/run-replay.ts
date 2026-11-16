@@ -561,11 +561,14 @@ export async function replayRun(
 
   const conversationId = randomUUID();
   const runId = randomUUID();
-  // recorded permission context (spec B4), both before anything is seeded so a corrupt recording
+  // recorded permission context (spec B4), both before anything is seeded so an invalid recording
   // fails as `eval.snapshot_invalid` without an eval conversation: the original-coordinate
   // diagnostics, and the recorded-only feeder (undefined for a recording without markers)
   const permissionContextDrift = recordedRunPermissionDrift(s);
   const permissionContext = recordedPermissionContext(s, eventLog, { conversationId, runId });
+  // the recorded tool results (reviews validated here) are read before the seed too, so an
+  // invalid recording leaves no eval conversation either
+  const recordings = recordedCalls(s);
   await d.seeder.seed(
     {
       evalRunId,
@@ -684,7 +687,7 @@ export async function replayRun(
   };
   const pipeline = new RecordedToolPipeline({
     eventLog,
-    recordings: recordedCalls(s),
+    recordings,
     // 出错直接抛出：tools 节点的异常让 loop 抛出，按崩溃处理
     beforeStep: async () => {
       if (await allowed()) return "continue";

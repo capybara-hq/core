@@ -500,9 +500,10 @@ export const ERROR_CODES = {
   "eval.agent_mismatch": 409,
   "eval.compact_not_replayable": 422,
   /**
-   * The case snapshot carries a recorded permission context (`permission_context`, a marked
-   * `device_paths`) with an unsupported version or an invalid v1 payload: it cannot be replayed,
-   * and the failure is the snapshot's, never the provider's.
+   * The case snapshot holds a recorded record replay cannot read (a permission context with an
+   * unsupported version or invalid payload, an invalid tool-result review, model calls out of
+   * step / attempt order): the case cannot be replayed, and the failure is the snapshot's, never
+   * the provider's.
    */
   "eval.snapshot_invalid": 422,
   "eval.run_not_found": 404,
