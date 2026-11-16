@@ -210,13 +210,6 @@ export class ProviderListError extends ApiError {
   }
 }
 
-/** {@link ProviderRegistry.readiness}: the org's model-provider state and the providers it left off. */
-export interface ModelProviderReadiness {
-  state: "ready" | "not_enabled" | "none";
-  /** With `not_enabled`: the loaded providers usable in the org once it enables them. */
-  notEnabled: string[];
-}
-
 /** Where a provider's calls for one org (or the platform) go: the call options and list digest. */
 type Target =
   | { ok: true; call: ModelCallOptions; hash: string | undefined }
@@ -252,10 +245,7 @@ export class ProviderRegistry {
     @Inject(REDIS) private readonly kv: Redis,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     @Inject(ModelEnablement)
-    private readonly enablement: Pick<
-      ModelEnablement,
-      "disabled" | "enabledIn" | "offeredWhileOff"
-    >,
+    private readonly enablement: Pick<ModelEnablement, "disabled" | "enabledIn">,
     @Inject(KERNEL_LOGGER) private readonly log?: Pick<Logger, "warn">,
     /** Overrides `models.listTimeoutMs` (tests). */
     @Optional()
@@ -263,7 +253,10 @@ export class ProviderRegistry {
     private readonly listTimeoutOverride?: number,
   ) {}
 
-  /** `listModels()` 加时限（到时按失败处理，供应商的调用留在后台、结果丢弃）。 */
+  /**
+   * `listModels()` with a time limit: a timeout counts as a failure; the provider's call runs on in
+   * the background and its result is dropped.
+   */
   private async listModelsWithTimeout(
     impl: ModelProvider,
     call: ModelCallOptions,
@@ -285,29 +278,17 @@ export class ProviderRegistry {
   }
 
   /**
-   * The org's model-provider readiness (org readiness, web-order spec §3.8), from extension state,
-   * the org's switches and its config only: never calls a vendor, so a provider whose vendor is
-   * down still counts. `ready`: a provider loaded on this replica is enabled in `orgId` with a
-   * valid effective config there. Otherwise `not_enabled` when loaded providers the org's extension
-   * list shows (`offeredWhileOff`: not named to other orgs only, not disabled) would be usable there
-   * once the org enables them (`notEnabled` names them), else `none`.
+   * Whether a model provider is usable in `orgId` (org readiness, web-order spec §3.8,
+   * `ReadinessService`), from extension state, the org's switches and its config only: never calls
+   * a vendor, so a provider whose vendor is down still counts. True when a provider loaded on this
+   * replica is enabled in `orgId` with a valid effective config there.
    */
-  async readiness(orgId: string): Promise<ModelProviderReadiness> {
+  async hasProvider(orgId: string): Promise<boolean> {
     const on = await this.enablement.enabledIn(orgId);
-    const providers = this.providers();
-    const offered = await this.enablement.offeredWhileOff(
-      orgId,
-      providers.filter((p) => !on.has(p.plugin)).map((p) => p.plugin),
-    );
-    const notEnabled: string[] = [];
-    for (const p of providers) {
-      if (on.has(p.plugin)) {
-        if ((await this.target(p, orgId, on)).ok) return { state: "ready", notEnabled: [] };
-      } else if (offered.has(p.plugin) && (await this.target(p, orgId, new Set([p.plugin]))).ok) {
-        notEnabled.push(p.plugin);
-      }
+    for (const p of this.providers()) {
+      if (on.has(p.plugin) && (await this.target(p, orgId, on)).ok) return true;
     }
-    return { state: notEnabled.length > 0 ? "not_enabled" : "none", notEnabled };
+    return false;
   }
 
   /** One implementation per plugin, in the order plugins first appear; another major is ignored. */

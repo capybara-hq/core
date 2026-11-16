@@ -1,5 +1,24 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.25
+
+### Minor Changes
+
+- 5408b24: Export an immutable, hashed Python 3 native-file helper source bundle and a fixture-owned ordinary
+  native API conformance harness. The helper preserves read/write/stat/list/scan semantics using
+  supplied pinned root descriptors. Each conformance invocation receives a fresh operation.
+  
+  These exports establish portable native API compatibility only. They do not declare restricted
+  runtime support or provide a Linux launcher, network broker, or full permission conformance suite.
+- 5408b24: Require exact-reference positional reads of retained background output, with bounded raw-byte slices and committed snapshot positions independent of terminal tail summaries.
+- 5408b24: Add immutable operation, owner browsing, trusted preparation and supervised background contracts with optional provider factories. Export strict, bounded scope/reference parsers and distinct tagged validation, denial, unsupported-permission and unknown-outcome errors. Existing device protocol v2 and provider method signatures remain unchanged.
+
+### Patch Changes
+
+- fb9afe0: Carry current mode ceilings on local stat and readFile requests so project context loads before
+  any command and reads cannot inherit a stale wider command decision. Device protocol v2 requires
+  a matching kernel and device upgrade; existing credentials and device files remain valid.
+
 ## 0.1.0-rc.24
 
 ### Minor Changes

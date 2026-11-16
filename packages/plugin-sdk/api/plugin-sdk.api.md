@@ -3108,7 +3108,7 @@ export function sanitizeThemeSvg(bytes: Uint8Array): {
 };
 
 // @public
-export const SDK_VERSION = "0.1.0-rc.24";
+export const SDK_VERSION = "0.1.0-rc.25";
 
 // @public
 export function secret<T extends z.ZodTypeAny>(schema: T): T;

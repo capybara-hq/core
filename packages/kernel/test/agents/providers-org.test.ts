@@ -243,7 +243,7 @@ describe("org-bound model provider calls", () => {
     const own = k.app.get(ProviderRegistry);
     expect(await idsOf(own, orgB, "model-fake")).toEqual(["b-only"]);
     expect(await idsOf(own, orgA, "model-fake")).toEqual(["fake-1", "fake-2"]);
-    expect((await own.readiness(orgA)).state).toBe("ready");
+    expect(await own.hasProvider(orgA)).toBe(true);
   });
 });
 

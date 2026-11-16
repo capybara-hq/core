@@ -214,7 +214,7 @@ function seeded(variant: SchedulesPageVariant, zone: string): QueryClient {
   qc.setQueryData(meQuery().queryKey, meAs(admin ? "owner" : "member"));
   qc.setQueryData(readinessQuery(ORG).queryKey, {
     modelProvider: "ready",
-    notEnabledProviders: [],
+    orgFixableProviders: [],
     agents: 3,
   });
   qc.setQueryData(agentsQuery(ORG).queryKey, { agents: AGENTS });

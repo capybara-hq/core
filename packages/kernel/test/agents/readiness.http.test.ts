@@ -22,6 +22,10 @@ import { enableExtensions, startKernel, type TestKernel } from "../helpers/runs.
 const NEEDS_CONFIG = fileURLToPath(
   new URL("../fixtures/plugins/model-needs-config/index.ts", import.meta.url),
 );
+/** A provider whose required key is overridable: the platform leaves it for each org to fill. */
+const ORG_KEY = fileURLToPath(
+  new URL("../fixtures/plugins/model-org-key/index.ts", import.meta.url),
+);
 const PW = "correct horse battery";
 
 let pgc: TestContainer;
@@ -89,17 +93,21 @@ async function ownerOrg(k: TestKernel) {
 const readiness = async (req: Req, orgId: string) => {
   const res = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/readiness` });
   expect(res.statusCode).toBe(200);
-  return res.json() as { modelProvider: string; notEnabledProviders: string[]; agents: number };
+  return res.json() as {
+    modelProvider: string;
+    orgFixableProviders: { provider: string; reason: string }[];
+    agents: number;
+  };
 };
 
 describe("org readiness", () => {
-  it("no provider, or one pending configuration: modelProvider none; unauthenticated is 401", async () => {
+  it("no provider, or one pending deployment configuration: none, only the super admin can help; unauthenticated is 401", async () => {
     const k = await boot([NEEDS_CONFIG]);
     try {
       const { req, orgId } = await ownerOrg(k);
       expect(await readiness(req, orgId)).toEqual({
         modelProvider: "none",
-        notEnabledProviders: [],
+        orgFixableProviders: [],
         agents: 0,
       });
       const anon = await k.http.inject({
@@ -124,14 +132,17 @@ describe("org readiness", () => {
       // loaded and configured but not enabled in the org: a model provider is on only where an
       // org enabled it; the answer names the providers an org admin can switch on
       expect(await readiness(req, orgId)).toEqual({
-        modelProvider: "not_enabled",
-        notEnabledProviders: ["model-fake", "model-needs-config"],
+        modelProvider: "org_fixable",
+        orgFixableProviders: [
+          { provider: "model-fake", reason: "not_enabled" },
+          { provider: "model-needs-config", reason: "not_enabled" },
+        ],
         agents: 0,
       });
       await enableExtensions(raw, orgId, "model-needs-config");
       expect(await readiness(req, orgId)).toEqual({
         modelProvider: "ready",
-        notEnabledProviders: [],
+        orgFixableProviders: [],
         agents: 0,
       });
       await enableExtensions(raw, orgId, "model-fake");
@@ -197,7 +208,7 @@ describe("org readiness", () => {
       await item("model-needs-config", { disabled: true });
       expect(await readiness(req, orgId)).toEqual({
         modelProvider: "none",
-        notEnabledProviders: [],
+        orgFixableProviders: [],
         agents: 0,
       });
       const list = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` });
@@ -209,6 +220,71 @@ describe("org readiness", () => {
     } finally {
       await db.deleteFrom("extension_catalog_sources").execute();
       await db.deleteFrom("catalog_items").execute();
+      await k.close();
+    }
+  });
+  it("a provider the org switched off: org_fixable, and ready again once an org admin switches it on", async () => {
+    const k = await boot([MODEL_FAKE], { "model-fake": { models: [{ id: "fake-1" }] } });
+    try {
+      const { req, orgId } = await ownerOrg(k);
+      const url = `/api/v1/orgs/${orgId}/extensions/model-fake`;
+      const on = async () => {
+        const res = await req({ method: "PUT", url, payload: { enabled: true } });
+        expect(res.statusCode, res.body).toBe(200);
+      };
+      await on();
+      expect(await readiness(req, orgId)).toMatchObject({ modelProvider: "ready" });
+      let off = await req({ method: "PUT", url, payload: { enabled: false } });
+      if (off.statusCode === 200 && "confirm" in off.json()) {
+        const { confirm } = off.json() as { confirm: string };
+        off = await req({ method: "PUT", url, payload: { enabled: false, confirm } });
+      }
+      expect(off.statusCode, off.body).toBe(200);
+      expect(await readiness(req, orgId)).toEqual({
+        modelProvider: "org_fixable",
+        orgFixableProviders: [{ provider: "model-fake", reason: "not_enabled" }],
+        agents: 0,
+      });
+      await on();
+      expect(await readiness(req, orgId)).toEqual({
+        modelProvider: "ready",
+        orgFixableProviders: [],
+        agents: 0,
+      });
+    } finally {
+      await k.close();
+    }
+  });
+
+  it("a provider on in the org that waits for the org's own key: org_fixable (needs_config) until the org fills it", async () => {
+    // the platform installed model-org-key without its (overridable, required) key
+    const k = await boot([ORG_KEY]);
+    try {
+      const { req, orgId } = await ownerOrg(k);
+      // off and keyless: switching it on is the org admin's, the key follows on the same page
+      expect(await readiness(req, orgId)).toEqual({
+        modelProvider: "org_fixable",
+        orgFixableProviders: [{ provider: "model-org-key", reason: "not_enabled" }],
+        agents: 0,
+      });
+      await enableExtensions(raw, orgId, "model-org-key");
+      expect(await readiness(req, orgId)).toEqual({
+        modelProvider: "org_fixable",
+        orgFixableProviders: [{ provider: "model-org-key", reason: "needs_config" }],
+        agents: 0,
+      });
+      const res = await req({
+        method: "PUT",
+        url: `/api/v1/orgs/${orgId}/extensions/model-org-key/overrides`,
+        payload: { values: { apiKey: "org-key-1234" } },
+      });
+      expect(res.statusCode, res.body).toBe(200);
+      expect(await readiness(req, orgId)).toEqual({
+        modelProvider: "ready",
+        orgFixableProviders: [],
+        agents: 0,
+      });
+    } finally {
       await k.close();
     }
   });

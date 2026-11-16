@@ -62,9 +62,10 @@ type ModelWait = "needsDeploymentAdmin" | "waitingForAdmin" | "waitingForOrgAdmi
 
 /**
  * The model step and where it is fixed ({@link modelConfigHref}, the run row's rule too):
- * `/admin/models` while the platform has no provider (super admins), `/settings/models` while the
- * org has not turned a deployed one on (org admins; a super admin who is not one of them waits like
- * a member). A done step links to the viewer's own models page, if any.
+ * `/admin/models` while only the platform can help (super admins), `/settings/models` while the org
+ * can fix it itself (`org_fixable`: a provider the platform offers is off here or waits for the
+ * org's config; org admins, a super admin who is not one of them waits like a member). A done step
+ * links to the viewer's own models page, if any.
  */
 function modelStep(
   r: OrgReadiness,
@@ -75,13 +76,14 @@ function modelStep(
   const own = v.superAdmin ? "/admin/models" : v.orgAdmin ? "/settings/models" : undefined;
   if (r.modelProvider === "ready")
     return { ...base, state: "done", ...(own !== undefined ? { href: own } : {}) };
-  const href = modelConfigHref(r.modelProvider === "not_enabled" ? "not_enabled" : "platform", v);
+  const fixable = r.modelProvider === "org_fixable";
+  const href = modelConfigHref(fixable ? "org_fixable" : "platform", v);
   if (href !== null) return { ...base, state: "todo", href };
   return {
     ...base,
     state: "waiting",
     reason: t(
-      r.modelProvider === "not_enabled"
+      fixable
         ? "model.waitingForOrgAdmin"
         : v.orgAdmin
           ? "model.needsDeploymentAdmin"
@@ -92,10 +94,10 @@ function modelStep(
 
 /**
  * The setup sidebar's steps (web-SSR spec §4), by what the viewer may do (cosmetic; the kernel
- * decides). The model: with no provider on the platform, a super admin deploys and configures one on
- * `/admin/models` and everyone else waits (an org admin for a super admin); with providers deployed
- * but none on in this org (`not_enabled`), the org's admins turn one on on `/settings/models` and
- * the others wait for them. The agent: members and up create it once a model exists, guests wait for
+ * decides). The model: when only the platform can help, a super admin deploys and configures a
+ * provider on `/admin/models` and everyone else waits (an org admin for a super admin); when the
+ * platform offers one the org can switch on or configure (`org_fixable`), the org's admins do it
+ * on `/settings/models` and the others wait for them. The agent: members and up create it once a model exists, guests wait for
  * an admin. Then the optional steps: org admins invite members, connect a channel and install
  * plugins; members connect their own accounts.
  */
@@ -149,7 +151,10 @@ export function useSetupSteps(me: Me, r: OrgReadiness): SetupStep[] {
 /** The setup sidebar's current item for a route: `home`, the step whose page it is, or none. */
 export function activeStepOf(pathname: string, steps: SetupStep[]): string {
   if (setupRouteOf(pathname) !== "step") return "home";
-  return steps.find((s) => s.href !== undefined && under(pathname, s.href))?.id ?? "";
+  return (
+    steps.find((s) => s.href !== undefined && under(pathname, s.href.split("?")[0] ?? s.href))
+      ?.id ?? ""
+  );
 }
 
 /** The icon of each optional step's row on the setup home (the workspace's own icons). */
@@ -186,11 +191,12 @@ export function SetupHome({
   const required = all.filter((s) => !s.optional);
   const optional = all.filter((s) => s.optional);
   const superAdmin = setupRoleOf(me) === "superAdmin";
-  // Providers deployed but none on in this org: turning one on is the org admins' (Settings →
-  // Models), never the super admins' deployment work.
-  const notEnabled = readiness.modelProvider === "not_enabled";
+  // The platform offers a provider the org can switch on or configure: that is the org admins'
+  // work (Settings → Models), never the super admins' deployment work.
+  const fixable = readiness.modelProvider === "org_fixable";
+  const toSwitchOn = readiness.orgFixableProviders.some((p) => p.reason === "not_enabled");
   const description: Record<string, string> = {
-    model: notEnabled
+    model: fixable
       ? canUpdateOrg(me)
         ? t("chat.setup.model.enableDescription")
         : t("chat.setup.model.askOrgAdmin")
@@ -200,7 +206,7 @@ export function SetupHome({
     agent: t("chat.setup.agent.description"),
   };
   const actionLabel: Record<string, string> = {
-    model: notEnabled ? t("chat.setup.model.enableAction") : t("chat.setup.model.action"),
+    model: toSwitchOn ? t("chat.setup.model.enableAction") : t("chat.setup.model.action"),
     agent: t("chat.setup.agent.action"),
   };
   const actionOf = (s: SetupStep): ReactNode => {

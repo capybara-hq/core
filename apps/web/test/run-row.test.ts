@@ -27,11 +27,11 @@ describe("run row role gating (the kernel's rules)", () => {
     expect(canViewTrajectory(me("admin"), undefined)).toBe(true);
   });
 
-  it("the one model-config rule: not_enabled for org admins, the platform's side for super admins", () => {
+  it("the one model-config rule: org_fixable for org admins, the platform's side for super admins", () => {
     const v = (superAdmin: boolean, orgAdmin: boolean) => ({ superAdmin, orgAdmin });
-    expect(modelConfigHref("not_enabled", v(false, true))).toBe("/settings/models");
-    expect(modelConfigHref("not_enabled", v(true, true))).toBe("/settings/models");
-    expect(modelConfigHref("not_enabled", v(true, false))).toBeNull();
+    expect(modelConfigHref("org_fixable", v(false, true))).toBe("/settings/models");
+    expect(modelConfigHref("org_fixable", v(true, true))).toBe("/settings/models");
+    expect(modelConfigHref("org_fixable", v(true, false))).toBeNull();
     expect(modelConfigHref("platform", v(true, false))).toBe("/admin/models");
     expect(modelConfigHref("platform", v(true, true))).toBe("/admin/models");
     expect(modelConfigHref("platform", v(false, true))).toBeNull();

@@ -222,12 +222,18 @@ around an empty table.
 A third layout beside the auth layout (sign-in, initialization, the org chooser) and the shell: the
 **setup layout** (`SetupPage`, design spec §5.5), drawn while the current org is not ready.
 Readiness comes from one cheap kernel read, `GET /api/v1/orgs/:orgId/readiness` (`org.read`) →
-`{ modelProvider: "ready" | "none", agents }`: `modelProvider` is `ready` when a model-provider
-extension is loaded (enabled and configured), read from extension state and never from a vendor
-(a provider whose vendor is down still counts); it is **deployment-wide** (model providers are
-not org-scoped, so every org reads the same value) and read per replica, from that replica's
-provider registry (a replica that has not reconciled a just-enabled provider answers `none` for
-a moment); `agents` counts the agents the caller can see.
+`{ modelProvider: "ready" | "org_fixable" | "none", orgFixableProviders, agents }`, computed in one
+place (`ReadinessService`, also behind the `agents.readiness` Platform operation): `modelProvider`
+is `ready` when a model-provider extension is usable in the org (loaded, on in the org, its
+effective config valid), read from extension state and never from a vendor (a provider whose vendor
+is down still counts), per replica, from that replica's provider registry (a replica that has not
+reconciled a just-enabled provider answers otherwise for a moment); `org_fixable` when none is but
+an org admin can make one usable on `/settings/models`: `orgFixableProviders` names each provider
+the org's extension list shows (`offeredToOrg`) with its reason, `not_enabled` (off in the org and
+switchable; the preinstalled providers are `optional`, off in every org until switched on) or
+`needs_config` (on but waiting for the org's own config: an org-level field or an overridable
+platform field); `none` when only the super admin can help (no provider loaded on the deployment
+that the org may use); `agents` counts the agents the caller can see.
 Ready = `modelProvider === "ready" && agents > 0`. The app frame reads it once and shares it with
 pages through `SetupContext`; pages never read it themselves.
 
@@ -265,14 +271,17 @@ pages through `SetupContext`; pages never read it themselves.
 
   | Step | Enterprise admin | Org admin | Member | Guest |
   |---|---|---|---|---|
-  | Model | 去配置 → `/admin/extensions` | "需要部署管理员配置模型服务" (no action: models are deployment-wide; org model purposes cannot add a provider) | "等待管理员配置模型" | same as member |
+  | Model, `org_fixable` | 去启用 → `/settings/models` when also an org admin (去配置 when every provider only `needs_config`); otherwise as member | 去启用 / 去配置 → `/settings/models` | "等待组织管理员配置模型服务", described as "平台提供了模型服务，组织管理员在本组织启用或配置好后就能使用。" | same as member |
+  | Model, `none` | 去配置 → `/admin/models` | "需要超级管理员配置模型服务" (no action) | "等待管理员配置模型" | same as member |
   | Agent | 新建 → `/agents/new` once a model exists; before that disabled with "先配置模型" | same | same | "等待管理员创建 agent" |
   | 可以稍后再做 | invite members, channels, plugins (when also an org admin) | invite members, channels, plugins | 我的连接 | — |
 
-  > Superseded by design review 2026-11-16 task 14: the model step leads super admins to `/admin/models` and, while the org has not turned a deployed service on, org admins to `/settings/models` (`modelConfigHref`).
+  The model step's links come from one rule, `modelConfigHref` (`apps/web/src/lib/model-config.ts`,
+  the run row's "Configure model services" uses it too). The setup sidebar marks the model step
+  current on the page it links to (`/settings/models` is a step page).
 
   A viewer with nothing to do right now also sees why, with a 刷新 button that re-reads readiness:
-  an org admin blocked on the model "需要部署管理员配置模型服务后才能继续", anyone else
+  an org admin blocked on the model (platform only) "配置好后点刷新继续", anyone else
   "组织还在配置中，管理员完成后你就能开始对话".
 
 ## 4. Where every page goes

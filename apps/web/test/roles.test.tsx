@@ -122,7 +122,7 @@ async function runRoutePage(page: RoutePage, me: Me): Promise<{ reads: string[] 
     async (path) => {
       if (path === "/api/v1/me") return reply(200, me);
       if (path === "/api/v1/orgs/o1/readiness")
-        return reply(200, { modelProvider: "ready", agents: 1 });
+        return reply(200, { modelProvider: "ready", orgFixableProviders: [], agents: 1 });
       reads.push(path);
       return reply(404, { error: { code: "not_found", message: "x" } });
     },
@@ -169,7 +169,7 @@ const PAGES: [string, ComponentType | RoutePage, "member" | "admin", string][] =
     zh.roles.need.admin,
   ],
   ["/evals", route("/evals", () => EvalsPage()), "admin", zh.roles.need.admin],
-  ["/evals/new", route("/evals/new", () => NewEvalSetPage()), "admin", zh.roles.need.admin],
+  ["/evals/new", route("/evals/new", () => NewEvalSetPage({})), "admin", zh.roles.need.admin],
   [
     "/evals/s1",
     route("/evals/s1", () => EvalSetPage(params({ setId: "s1" }))),
@@ -196,11 +196,11 @@ const PAGES: [string, ComponentType | RoutePage, "member" | "admin", string][] =
   ],
   [
     "/settings/models",
-    route("/settings/models", () => ModelsSettingsPage()),
+    route("/settings/models", () => ModelsSettingsPage({})),
     "admin",
     zh.roles.need.admin,
   ],
-  ["/extensions", route("/extensions", () => ExtensionsPage()), "member", zh.roles.need.member],
+  ["/extensions", route("/extensions", () => ExtensionsPage({})), "member", zh.roles.need.member],
   ["/settings/tokens", route("/settings/tokens", () => TokensPage()), "admin", zh.roles.need.admin],
   ["/settings/audit", route("/settings/audit", () => OrgAuditPage()), "admin", zh.roles.need.admin],
   [

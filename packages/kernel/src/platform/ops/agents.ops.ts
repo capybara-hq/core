@@ -20,11 +20,10 @@ import { AgentsFromTemplate } from "../../agents/from-template.service.js";
 import { OrgAgentTemplates } from "../../agents/org-templates.js";
 import { PendingConnectorsService } from "../../agents/pending-connectors.service.js";
 import { PresetAvatarSchema } from "../../agents/profile.js";
-import { orgReadiness } from "../../agents/readiness.js";
+import { ReadinessService } from "../../agents/readiness.service.js";
 import { CatalogRequestsService } from "../../catalog/requests.service.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import { roleAtLeast } from "../../orgs/roles.js";
-import { ProviderRegistry } from "../../runtime/providers.js";
 import { rootConversationOf } from "../../runtime/subagents/child.js";
 import { ConnectorsService } from "../../tools/connectors.service.js";
 import {
@@ -137,7 +136,7 @@ export class AgentsOperations implements OnModuleInit {
     @Inject(PendingConnectorsService) private readonly pending: PendingConnectorsService,
     @Inject(CatalogRequestsService) private readonly requests: CatalogRequestsService,
     @Inject(ConnectorsService) private readonly connectors: ConnectorsService,
-    @Inject(ProviderRegistry) private readonly providers: ProviderRegistry,
+    @Inject(ReadinessService) private readonly readiness: ReadinessService,
     @Inject(KernelDb) private readonly kdb: KernelDb,
   ) {}
 
@@ -805,17 +804,13 @@ export class AgentsOperations implements OnModuleInit {
       defineOperation({
         id: "agents.readiness",
         description:
-          "Whether the org can run agents: modelProvider is ready when a model provider is available in the org, not_enabled when deployed providers (notEnabledProviders) wait for an org admin to enable one, none otherwise; and how many agents you can see.",
+          "Whether the org can run agents: modelProvider is ready when a model provider is available in the org; org_fixable when an org admin can make one available on Settings > Models (orgFixableProviders names each provider and its reason: not_enabled, switch it on; needs_config, fill the org's config); none when only the super admin can help; and how many agents you can see.",
         input: z.object({}).strict(),
         example: {},
         authz: { orgAction: "org.read" },
         mirrors: ["GET /api/v1/orgs/:orgId/readiness"],
         confirm: "read",
-        run: async (_input, ctx) =>
-          orgReadiness(
-            await this.providers.readiness(ctx.orgId),
-            (await this.agents.listVisible(ctx.orgId, ctx.actorAccountId)).length,
-          ),
+        run: (_input, ctx) => this.readiness.get(ctx.orgId, ctx.actorAccountId),
       }),
     ]);
   }

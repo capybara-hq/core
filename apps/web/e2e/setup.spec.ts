@@ -47,14 +47,14 @@ test("setup wizard: a fresh deployment opens / → the setup page (language swit
   await modelStep.getByRole("link", { name: zh.chat.setup.model.enableAction }).click();
   await expect(page).toHaveURL(/\/settings\/models$/);
   await expect(setup).toBeVisible();
-  await expect(page.getByText(zh.models.org.providers.notEnabled)).toBeVisible();
+  await expect(page.getByText(zh.models.org.providers.orgFixable)).toBeVisible();
   await hydrated(page);
   await page
     .getByRole("button", {
       name: zh.models.org.providers.enableLabel.replace("{plugin}", "模拟模型"),
     })
     .click();
-  await expect(page.getByText(zh.models.org.providers.notEnabled)).toHaveCount(0);
+  await expect(page.getByText(zh.models.org.providers.orgFixable)).toHaveCount(0);
   await expect(
     page.locator('[data-part="step-item"][data-rove="model"][data-state="done"]'),
   ).toBeVisible();

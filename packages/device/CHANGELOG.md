@@ -1,5 +1,18 @@
 # @capybara-hq/device
 
+## 0.1.0-rc.13
+
+### Patch Changes
+
+- fb9afe0: Carry current mode ceilings on local stat and readFile requests so project context loads before
+  any command and reads cannot inherit a stale wider command decision. Device protocol v2 requires
+  a matching kernel and device upgrade; existing credentials and device files remain valid.
+- Updated dependencies [5408b24]
+- Updated dependencies [fb9afe0]
+- Updated dependencies [5408b24]
+- Updated dependencies [5408b24]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.25
+
 ## 0.1.0-rc.12
 
 ### Minor Changes

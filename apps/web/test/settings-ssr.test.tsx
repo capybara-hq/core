@@ -510,7 +510,8 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     };
     const calls = stubApi({
       ...routes,
-      [`GET ${O}/readiness`]: () => json(200, { modelProvider: "ready", agents: 1 }),
+      [`GET ${O}/readiness`]: () =>
+        json(200, { modelProvider: "ready", orgFixableProviders: [], agents: 1 }),
       [`PUT ${O}/extensions/todo`]: () =>
         json(200, { extension: { ...EXTENSION, enabled: false } }),
     });

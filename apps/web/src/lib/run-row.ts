@@ -25,11 +25,11 @@ export function canViewTrajectory(me: RunRowViewer, agentOwnerId: string | undef
 
 /**
  * Failures a model service's setup causes, by where they are fixed ({@link modelConfigHref}): a
- * model gone or not on in the org (`not_enabled`), failed credentials (`credentials`: the org's own
+ * model gone or not on in the org (`org_fixable`), failed credentials (`credentials`: the org's own
  * copy or the platform's), a purpose without a model (`platform`).
  */
 const MODEL_SETUP_ERRORS: Readonly<Record<string, ModelConfigCause>> = {
-  "run.model_unavailable": "not_enabled",
+  "run.model_unavailable": "org_fixable",
   "model.auth": "credentials",
   "model.unconfigured": "platform",
 };

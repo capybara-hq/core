@@ -27,8 +27,9 @@ export const modelProvidersOf = (extensions: readonly OrgExtension[]): OrgExtens
  * row (its icon, name, state as the Extensions page derives it) with "Turn on" while it is off and
  * the org may switch it on, and Configure where it has org config or overridable platform fields,
  * which opens the extension's Sheet (the one org config form, "Save and enable" while it is off).
- * The actions are the Extensions page's ({@link useOrgExtensionActions}). While the platform has providers but none is on here
- * (readiness `not_enabled`) a warn line above the section says to turn one on. Turning a service on
+ * The actions are the Extensions page's ({@link useOrgExtensionActions}). While no provider is
+ * ready here but the org can make one so (readiness `org_fixable`: one is off, or waits for the
+ * org's config) a warn line above the section says to turn one on or finish its configuration. Turning a service on
  * invalidates the org's readiness, models and purposes, so the setup frame, the checklist and the
  * catalog below follow. Switching a service off stays on the Extensions page.
  */
@@ -50,7 +51,7 @@ export function OrgModelProviders({
 }) {
   const t = useTranslations("models.org.providers");
   const capabilityLabel = useCapabilityLabel();
-  const notEnabled = useQuery(readinessQuery(orgId)).data?.modelProvider === "not_enabled";
+  const fixable = useQuery(readinessQuery(orgId)).data?.modelProvider === "org_fixable";
   const actions = useOrgExtensionActions({
     orgId,
     canEdit: true,
@@ -109,7 +110,7 @@ export function OrgModelProviders({
   const current = open === null ? undefined : actions.rows.find((r) => r.ext.plugin === open);
   return (
     <>
-      {notEnabled && <Callout tone="warn">{t("notEnabled")}</Callout>}
+      {fixable && <Callout tone="warn">{t("orgFixable")}</Callout>}
       <FormSection id="providers" title={t("title")} description={t("description")} flush>
         <ItemList label={t("title")} inset="flush" rows={listRows} />
       </FormSection>

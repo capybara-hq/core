@@ -11,7 +11,7 @@ import {
 } from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { FormError } from "../../../../components/form-error";
 import { useRouter } from "../../../../i18n/navigation";
 import { ApiClientError } from "../../../../lib/api";
@@ -33,6 +33,8 @@ const needsLogin = (e: unknown) => e instanceof ApiClientError && e.status === 4
 
 /** The link itself is unusable (unknown, expired or used). */
 const invalidLink = (e: unknown) => e instanceof ApiClientError && e.code === "bind.invalid";
+
+const noSubscribe = () => () => {};
 
 /** The confirm card's identity while it loads: the display name and the identity's rows. */
 const LOADING_FIELDS: FieldShape[] = [
@@ -65,6 +67,12 @@ export default function BindView({ token }: { token: string }) {
   const tc = useTranslations("common");
   const router = useRouter();
   const qc = useQueryClient();
+  // A full sign-in return can paint this page before its client handlers are attached.
+  const hydrated = useSyncExternalStore(
+    noSubscribe,
+    () => true,
+    () => false,
+  );
   const errorMessage = useErrorMessage();
   const query = pendingBindingQuery(token);
   const pendingBinding = useQuery({ ...query, retryOnMount: retryOnMountOf(query.queryKey) });
@@ -176,11 +184,16 @@ export default function BindView({ token }: { token: string }) {
             variant="primary"
             density="prominent"
             loading={pending}
+            disabled={!hydrated}
             onClick={() => void onConfirm()}
           >
             {t("confirm")}
           </Button>
-          <Button density="prominent" disabled={pending} onClick={() => navigateBrowser(HOME_PATH)}>
+          <Button
+            density="prominent"
+            disabled={!hydrated || pending}
+            onClick={() => navigateBrowser(HOME_PATH)}
+          >
             {t("cancel")}
           </Button>
         </Stack>
