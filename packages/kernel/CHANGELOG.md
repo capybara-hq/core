@@ -1,5 +1,21 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.35
+
+### Patch Changes
+
+- c412cf3: Fence replaced conversation executions, stop deleted organization and conversation runs, serialize
+  partial model selections, reject truncated compaction scratchpads, reconcile missed stream events,
+  and recover runs fairly with localized, actionable failures for exhausted job delivery.
+- fb9afe0: Carry current mode ceilings on local stat and readFile requests so project context loads before
+  any command and reads cannot inherit a stale wider command decision. Device protocol v2 requires
+  a matching kernel and device upgrade; existing credentials and device files remain valid.
+- Updated dependencies [5408b24]
+- Updated dependencies [fb9afe0]
+- Updated dependencies [5408b24]
+- Updated dependencies [5408b24]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.25
+
 ## 0.1.0-rc.34
 
 ### Patch Changes
