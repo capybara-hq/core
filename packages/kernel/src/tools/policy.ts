@@ -1,7 +1,8 @@
 import { sql } from "kysely";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
+import type { KernelLogger } from "../log.js";
 import { type OrgRole, roleAtLeast } from "../orgs/roles.js";
-import { readOrgSettings } from "../orgs/settings.service.js";
+import { FORBIDDEN_TOOLS_UNREADABLE_ERROR, readOrgSettings } from "../orgs/settings.service.js";
 import { grantRefusalOf } from "../schedules/grant-rules.js";
 import { findTaskGrant } from "../schedules/store.js";
 import {
@@ -135,7 +136,8 @@ export function connectorPolicy(input: {
  * 结果为 `ask` 时返回审批请求，默认指向发起人本人；记住的授权把 `ask` 放行时返回 `{ grant }`（按 allow 执行）。
  *
  * An unattended run (`ctx.unattended`, not a trial run; scheduled tasks spec §7):
- * - a tool in the org's `forbiddenTools` (by tool key or per-call key) is denied;
+ * - a tool in the org's `forbiddenTools` (by tool key or per-call key) is denied; when the stored
+ *   list cannot be read every call is refused (`FORBIDDEN_TOOLS_UNREADABLE_ERROR`);
  * - a Platform call that changes the agent's skills (`agents.register-skill`, ...) is an ask no
  *   grant covers, even on a private agent where it would run without asking;
  * - an ask is also allowed by a task grant of the current definition (`{ grant: "task" }`), never
@@ -143,7 +145,11 @@ export function connectorPolicy(input: {
  * - in `fail` mode an ask still left is refused (`{ refused, missingGrant }`, no approval), and
  *   `AskUserQuestion` is refused; in `wait` mode both ask the creator as in an attended run.
  */
-export function createDecidePolicy(db: KernelSchemaDb): DecidePolicy {
+export function createDecidePolicy(
+  db: KernelSchemaDb,
+  /** Warns when an org's stored security setting is unreadable (read narrower). */
+  log?: Pick<KernelLogger, "warn">,
+): DecidePolicy {
   return async (tool, agentDef, ctx) => {
     // a per-call policy (Platform tool spec §6.2): its key replaces the tool key for policies,
     // grants and approvals, and its policy replaces the tool's default
@@ -198,6 +204,10 @@ export function createDecidePolicy(db: KernelSchemaDb): DecidePolicy {
     // scheduled tasks spec §7: what an unattended run may not do at all
     const unattended = unattendedRules(ctx.unattended) ? ctx.unattended : undefined;
     if (unattended !== undefined) {
+      // fail closed: an unreadable list never runs as "nothing forbidden"
+      if (unattended.forbiddenToolsUnreadable === true) {
+        return { refused: FORBIDDEN_TOOLS_UNREADABLE_ERROR };
+      }
       const forbidden = unattended.forbiddenTools;
       if (forbidden.includes(tool.key) || forbidden.includes(policyKey)) return "deny";
       if (
@@ -212,7 +222,7 @@ export function createDecidePolicy(db: KernelSchemaDb): DecidePolicy {
     // `orgAsk`: the org setting, not the tool's own default, is what makes it ask
     let orgAsk = false;
     if (tool.source.kind === "builtin" && SANDBOX_ASK_TOOL_NAMES.has(tool.source.name)) {
-      if ((await readOrgSettings(db, ctx.orgId)).sandboxToolPolicy === "ask") {
+      if ((await readOrgSettings(db, ctx.orgId, log)).sandboxToolPolicy === "ask") {
         orgAsk = connectorDefault === "allow";
         connectorDefault = stricter(connectorDefault, "ask");
       }

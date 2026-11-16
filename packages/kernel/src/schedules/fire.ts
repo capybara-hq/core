@@ -21,6 +21,7 @@ import { KERNEL_LOGGER } from "../infra/tokens.js";
 import { deviceLeaseKey } from "../local-devices/keys.js";
 import type { KernelLogger } from "../log.js";
 import { OrgLock, OrgLockModule } from "../orgs/org-lock.js";
+import { FORBIDDEN_TOOLS_UNREADABLE_ERROR } from "../orgs/settings.service.js";
 import { RuntimeModule } from "../runtime/runtime.module.js";
 import { readScheduleSettings } from "./effective-settings.js";
 import {
@@ -264,6 +265,16 @@ export class ScheduledTaskFirer {
       return skip("missed");
     }
     if (!resumed && !settings.enabled) return skip("org_disabled");
+    // an unattended run must not run with nothing forbidden (a trial run is attended)
+    if (!resumed && !run.trial && settings.forbiddenToolsUnreadable) {
+      this.log.warn("scheduled task run failed: the org's forbidden tool list is unreadable", {
+        orgId,
+        taskId: task.id,
+        taskRunId: run.id,
+      });
+      await this.tracker.failStartIn(run.id, FORBIDDEN_TOOLS_UNREADABLE_ERROR);
+      return null;
+    }
     if (!resumed && !(await this.creatorActive(orgId, task.accountId))) {
       return skip("creator_inactive");
     }

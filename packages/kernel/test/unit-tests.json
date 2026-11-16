@@ -61,6 +61,7 @@
   "log.test.ts",
   "net/public-address.test.ts",
   "orgs/roles.test.ts",
+  "orgs/security-settings.test.ts",
   "platform/agent-docs.test.ts",
   "platform/availability.test.ts",
   "platform/registry.test.ts",

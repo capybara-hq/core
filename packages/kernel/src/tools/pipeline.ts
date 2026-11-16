@@ -838,7 +838,7 @@ export class ToolPipeline {
     };
     const decide = hooks?.decidePolicy;
     // the default policy reads live, on the context's handle
-    this.decide = decide ?? ((tool, def, c) => createDecidePolicy(kdb.db)(tool, def, c));
+    this.decide = decide ?? ((tool, def, c) => createDecidePolicy(kdb.db, log)(tool, def, c));
   }
 
   /**
