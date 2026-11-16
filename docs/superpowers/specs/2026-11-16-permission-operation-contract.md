@@ -281,6 +281,10 @@ export interface SandboxBackground {
   tail(h: SandboxHandle, ref: SandboxExecutionRef,
     opts: { maxBytes: number; signal: AbortSignal }):
     Promise<{ data: Uint8Array; truncated: boolean } | { unavailable: "lost" | "expired" }>;
+  readOutput(h: SandboxHandle, ref: SandboxExecutionRef,
+    opts: { offset: number; maxBytes: number; signal: AbortSignal }):
+    Promise<{ data: Uint8Array; offset: number; nextOffset: number; totalBytes: number } |
+      { unavailable: "lost" | "expired" }>;
   stop(h: SandboxHandle, ref: SandboxExecutionRef,
     opts: { graceMs: number; signal: AbortSignal }): Promise<SandboxStopResult>;
 }
@@ -293,6 +297,13 @@ transport, not transferable authorization. Scope/root and requested output path 
 launch. Start is idempotent for `(instanceGeneration, operationId)` so retry after lost acknowledgement
 returns the same reference; it must not launch twice. The trusted supervisor owns output descriptors
 and bounded status records. Kernel output retention and task APIs remain unchanged.
+
+Retained output also exposes exact-reference positional `readOutput`, with raw byte offsets,
+a snapshot total and at most 65,536 returned bytes including overlap. It uses a provider-owned
+append-only spool and preserves the separate ordinary `outputPath` artifact. It accepts no caller
+path or new execution scope and never provisions or resumes. Full output is independent of the
+foreground result cap and terminal summary lines. The exact byte, failure, durability and retention
+rules are in [the retained output design](2026-11-16-retained-background-output-design.md).
 
 Tail is execution-reference-bound, capped at 65,536 bytes, and never follows an arbitrary supplied
 path. Tail/status/stop never provision or resume. Preserve UTF-8 boundaries and existing final-line
