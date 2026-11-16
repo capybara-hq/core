@@ -147,22 +147,14 @@ export const OLD_REFERENCES: { re: RegExp; what: string; allowedIn?: RuleExempti
   },
   {
     // The builtin tool keys were aligned with Claude Code (tool-naming spec §3.2): the old keys live
-    // only in the legacy-text rewriter (replay of recordings), the migrations that rewrote stored
-    // keys, recordings and their tests. `agent` is an ordinary word and is never matched alone.
+    // only in the migrations that rewrote stored keys and their tests. `agent` is an ordinary word
+    // and is never matched alone.
     re: /\b(?:sandbox_(?:bash|read|write|edit|glob|grep|deliver)|skill_load|skill_write|ask_user|read_tool_output|tool_search)\b/,
     what: "an old builtin tool key (now Bash / Read / Write / Edit / Glob / Grep / Deliver / Skill / AskUserQuestion / ReadToolOutput / ToolSearch)",
     allowedIn: [
       {
-        path: /^packages\/kernel\/src\/runtime\/context\/legacy-text\.ts$/,
-        reason: "rebuilds the old model-visible texts of recordings made before the rename",
-      },
-      {
         path: /^packages\/kernel\/src\/migrations\/(?:0063_tool_keys_claude_code|0139_retire_legacy_forms)\.sql$/,
         reason: "migrations 0063 and 0139 map the stored old keys to the new ones",
-      },
-      {
-        path: /^packages\/kernel\/test\/evals\/fixtures\//,
-        reason: "recordings made before the rename, kept verbatim for the zero-drift tests",
       },
       {
         path: /^docs\/superpowers\/(?:specs|plans)\//,
@@ -179,11 +171,12 @@ export const OLD_REFERENCES: { re: RegExp; what: string; allowedIn?: RuleExempti
       },
       {
         path: /^packages\/kernel\/test\/tools\/(?:builtin-names|rename-compat)\.test\.ts$/,
-        reason: "tests of the migrations that rewrote the old keys and of the frozen replay texts",
+        reason:
+          "tests of the migrations that rewrote the old keys and that no builtin text names one",
       },
       {
         path: /^packages\/kernel\/test\/evals\/reconstruct\.test\.ts$/,
-        reason: "replay tests read recordings made with the old keys with zero drift",
+        reason: "asserts a rebuilt request's system texts name no old key",
       },
       {
         path: /^packages\/kernel\/test\/runtime\/claude-tools\.test\.ts$/,

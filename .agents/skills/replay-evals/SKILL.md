@@ -1,6 +1,6 @@
 ---
 name: replay-evals
-description: Use when changing request building (runtime/context/build.ts, model-call.ts, anything model-visible in the event log), the trajectory viewer, or evals (step / full-run replay, case snapshots, the judge). Covers the replay invariant and zero-drift fixtures (reconstruct.test.ts, rename-compat.test.ts), new model-visible input logged with a DriftReason, the Claude Code tool map and pinned skills (pinned_changed), skill invocations (skill_fork_result), the command review record (review, no DriftReason), background sub-agents, full-run replay from recorded tool results (RecordedToolPipeline), the eval queue cap-kernel-evals, per-org concurrency, token caps, privacy (trajectory 404, trajectory.viewed audit, no export), and hooks in replays (hook_denied is not model-visible; replays fire no hooks; compaction usage events).
+description: Use when changing request building (runtime/context/build.ts, model-call.ts, anything model-visible in the event log), the trajectory viewer, or evals (step / full-run replay, case snapshots, the judge). Covers the replay invariant and zero drift for logs written by the current format (reconstruct.test.ts; no frozen copies before 0.1.0), new model-visible input logged with a DriftReason, the Claude Code tool map and pinned skills (pinned_changed), skill invocations (skill_fork_result), the command review record (review, no DriftReason), background sub-agents, full-run replay from recorded tool results (RecordedToolPipeline), the eval queue cap-kernel-evals, per-org concurrency, token caps, privacy (trajectory 404, trajectory.viewed audit, no export), and hooks in replays (hook_denied is not model-visible; replays fire no hooks; compaction usage events).
 ---
 
 # Evals and replay
@@ -16,17 +16,21 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
 - `reconstructRequest` (`evals/reconstruct.ts`) shares `assembleModelRequest` (`runtime/model-call.ts`) with the runtime,
   and all its inputs come from the log: the `model_call` event records `toSeq`, `absorbedUpToSeq`, `params`, `toolChoice`, `maxOutputTokens`,
   `mediaBudgetBytes`, the sequence of tool specHashes and the system fingerprint; tool definitions are fetched from the snapshot by specHash.
-- **Run both zero-drift test groups before and after changing request building**:
-  - `packages/kernel/test/evals/reconstruct.test.ts` ("baseline zero drift": multi-step tools, `ToolSearch` loading, approval resume, skill catalog snapshot,
-    reminders, mid-run messages, compaction, images / placeholders, and so on; it reconstructs from logs produced by real runs and requires `drift` to be empty and the reconstructed request to equal the one sent to the model at the time);
-  - `packages/kernel/test/tools/rename-compat.test.ts` (fixtures recorded before the T22 rename, in `test/evals/fixtures/pre-rename/`; the old form
-    `{kind:"app", appId}` and `appId` event fields must show zero drift).
-  Run from the repo root: `pnpm exec vitest run packages/kernel/test/evals/reconstruct.test.ts packages/kernel/test/tools/rename-compat.test.ts`.
+- **Zero drift holds for logs written by the current format; no frozen copies before 0.1.0** (maintainer ruling 2026-11-16: no
+  compatibility of any kind before the first release, including replay of release-candidate logs). There are no recorded
+  fixtures and no frozen copies of old model-visible texts: a text change simply renders the new text for every log. A
+  `model_call` without a field the runtime always records (`tools`, `params`, `absorbedUpToSeq`, `maxOutputTokens`, or `media` /
+  `mediaBudgetBytes` when the request has media) is refused with `eval.recording_unsupported` (422), never rebuilt by guesswork.
+- **Run the zero-drift tests before and after changing request building**: `packages/kernel/test/evals/reconstruct.test.ts`
+  ("baseline zero drift": multi-step tools, `ToolSearch` loading, approval resume, skill catalog snapshot, reminders, mid-run
+  messages, compaction, images / placeholders, and so on; it reconstructs from logs produced by real runs on the current code and
+  requires `drift` to be empty and the reconstructed request to equal the one sent to the model at the time).
+  Run from the repo root: `pnpm exec vitest run packages/kernel/test/evals/reconstruct.test.ts`.
 - **Any new model-visible input must go into the log** (written into an event or the `model_call` record); request building must not read PG / config / the clock on the spot.
-  Also add a matching reason to `DriftReason` (`reconstruct.ts`, and add it to `DRIFT_ORDER` in order). It marks "an old log has no record of this"
-  or "it can't be fetched at reconstruction", and add a case to the "drift reasons" group in `reconstruct.test.ts`. Existing reasons: `system_hash`,
+  Also add a matching reason to `DriftReason` (`reconstruct.ts`, and add it to `DRIFT_ORDER` in order) when it can differ between the recording
+  and a reconstruction (a candidate changes it, or it can't be fetched at reconstruction), and add a case to the "drift reasons" group in `reconstruct.test.ts`. Existing reasons: `system_hash`,
   `tools_changed` (baseline check only), `tool_spec_missing`, `definition_missing`, `pinned_changed` (step replay, see "Pinned skills in old logs and the tool map"),
-  `subagent_changed` (child cases, see "Sub-agents"), `legacy_event`, `params_changed`, `model_switched` (see below), `media_missing`, `media_changed` (baseline check only), `context_fit` (context compaction spec §4.9), `tool_unmatched` (full-run replay).
+  `subagent_changed` (child cases, see "Sub-agents"), `params_changed`, `model_switched` (see below), `media_missing`, `media_changed` (baseline check only), `context_fit` (context compaction spec §4.9), `tool_unmatched` (full-run replay).
 - The runtime (request building, the loop, waits) lives in `packages/kernel/src/runtime`. An agent's `instructions` is derived from its
   `instructionFiles` on save.
 - The history sent to the model is append-only; model-visible text that appears in replay (such as `REPLAY_NO_RECORDING`) is always English.
@@ -165,7 +169,7 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
 - Promote on share (plugin scope phase 3, ruling P3-43): when an org skill is promoted to a platform skill, the owner's org row keeps its
   id and serves its own stored version while it equals the platform's, so the owner's agents see the same id, version and content: no
   "Updated skills" notice and no DriftReason. Other orgs' agents reference the platform id; an owner's later version reaches both as an
-  ordinary update. The zero-drift fixtures stay unchanged.
+  ordinary update.
 - A skill renamed under its id (the platform components migration renames an org skill whose name a platform skill on in the org has)
   is noticed as its old name removed and its new name added; no log before phase 2 holds such a change, so old logs render as before.
 - **Old logs render byte for byte as before**: a snapshot without `plugin` / `pinned` / `toolMap` means none, and a run on such a conversation
@@ -182,10 +186,7 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   gets the "The following tool-name map now applies:" notice, all from the log. `reconstruct.test.ts` "an old snapshot keeps its old map
   text; a new snapshot gets the new one" pins this; run the zero-drift tests before and after any change to `claude-tools.ts`.
 - Full-run replay copies the run's `skills_catalog` (an old one with `pinned`, and `toolMap`) unchanged into the eval conversation.
-- Zero-drift coverage: the fixture `test/evals/fixtures/pre-skills-default-on/` (a real recording at commit `3217c4f8d`, see its
-  README; never regenerate it): pinned skills, a pinned version change, a claude-code skill with the tool map, compactions and a
-  template child with a pinned skill, checked by `test/evals/pre-skills-default-on.test.ts` (every `model_call` of parent and child
-  with `drift: []`, `pinned_changed` / `subagent_changed` under a candidate); `reconstruct.test.ts` "a skill version change
+- Zero-drift coverage: `reconstruct.test.ts` "a skill version change
   mid-conversation, a claude-code skill with the tool map, and a compaction: nothing pinned …" and the drift-group `pinned_changed`
   cases; `skills-runtime.test.ts` for the "Pinned skills removed" notice; the phase B acceptance
   `packages/kernel/test/catalog/claude-superpowers.e2e.test.ts` (a superpowers import, `using-superpowers` in the catalog and loaded
@@ -212,10 +213,6 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   conversation or run, no `subagent_*` event, no `subagent_dispatches` row, nothing appended to another conversation, no child tokens.
   Parallel calls replay in the same step; a `SendMessage` matches because the recorded `Agent` result gave the model the same
   `agentId`. Pinned by `test/evals/subagents-replay.test.ts` and `run-replay.test.ts` ("replay never dispatches, sends or hands back").
-- **Foreground-era logs** (the `Agent` call with `resume`, the parent suspended on a `subagents` wait, the child's reply as the `Agent`
-  result, `subagent_started` without a `subagents` block) still rebuild byte for byte: fixture
-  `test/evals/fixtures/pre-background-subagents/` (a real recording at commit `285c1d8b`, see its README), `reconstruct.test.ts`
-  "foreground-era log replays with zero drift". Never regenerate it with current code.
 - **A child is an ordinary case** (`addCase` accepts `kind = 'subagent'`; sampling stays `chat` only), listed under its conversation's
   agent: the parent's for `general` / inline / plugin templates, the dispatched org agent's (its `runs.agent_version`) for an org agent.
   `takeSnapshot` copies `subagent: { definition, preamble }` from `subagent_started` and `parent` (the dispatching call, from
@@ -273,9 +270,11 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   report was logged (that request already sent the turn: append-only). Compaction records render it as `User: …`. The
   fallback reports (nothing dispatched before the run ended, an unreadable SKILL.md, storage down at dispatch) are fixed
   English texts in `runtime/subagents/skill-fork.ts`, logged like any report.
-- **The compaction line** (`Skills the user invoked earlier in this conversation: {names}. Call Skill …`) follows the restored
-  catalog after a summary whose range holds inline invocations. It is computed from the log only (`invokedSkillNames`, the
-  `skill` fields of covered messages), so replay renders it identically; logs without invocations render as before.
+- **The compaction line** (`Skills invoked earlier in this conversation: {names}. Call Skill …`) follows the restored
+  catalog after a summary whose range holds inline invocations: a person's and the template skills the kernel wrote as
+  invocations at a child's start (`skill.template`), so the line names no invoker. It is computed from the log only
+  (`invokedSkillNames`, the `skill` fields of covered messages), so replay renders it identically; logs without invocations
+  render as before.
 - **Template skills at child start** (`runtime/subagents/template-skills.ts`): a template child's `skills` are written at
   dispatch as inline invocation messages after the task (the version's `skill` record and rendered text), no longer as a
   preamble line. In the log, so no `DriftReason`: older children's logged preambles with the line still rebuild byte for

@@ -93,8 +93,6 @@ function samePlan(a: FitPlan | null | undefined, b: FitPlan | undefined): boolea
  *   {@link subagentChanged}); the request still renders the logged definition and preamble. A child
  *   case never consults `definitions` (no `definition_missing`) and has no `pinned_changed` (a
  *   logged child definition that pinned counts as `subagent_changed`);
- * - `legacy_event`：记录缺 `tools` / `params` / `absorbedUpToSeq` / `maxOutputTokens`，或还原出媒体而记录里没有
- *   `media` / `mediaBudgetBytes`（较早的事件）；
  * - `params_changed`：没给候选参数时，记录的参数按所用模型的声明清洗后有键被丢弃或值变了（换了模型或模型声明变了）；
  * - `media_missing`：某附件记录里不是「不再可用」，还原时却取不到；
  * - `media_changed`（只在基线判定）：其余任何媒体结果与记录不同（按附件 id 比 outcome 与 etag：预算省略、
@@ -117,7 +115,6 @@ export type DriftReason =
   | "pinned_changed"
   /** A child case's candidate has another effective definition than the logged one (phase C). */
   | "subagent_changed"
-  | "legacy_event"
   | "params_changed"
   /**
    * UI refresh B: a non-baseline reconstruction whose run used a person's mid-conversation model
@@ -142,7 +139,6 @@ const DRIFT_ORDER: readonly DriftReason[] = [
   "definition_missing",
   "pinned_changed",
   "subagent_changed",
-  "legacy_event",
   "params_changed",
   "model_switched",
   "media_missing",
@@ -200,6 +196,19 @@ export interface ReconstructResult {
 type ModelCallEvent = Extract<ConversationEvent, { type: "model_call" }>;
 type Recorded = ModelCallEvent["payload"]["request"];
 
+/**
+ * Zero drift holds only for logs written by the current format (no frozen copies before 0.1.0): a
+ * `model_call` without a field the runtime always records was written by a release candidate and
+ * is refused instead of rebuilt by guesswork.
+ */
+function unsupportedRecording(seq: number, fields: readonly string[]): never {
+  throw new ApiError(
+    "eval.recording_unsupported",
+    `The model_call at seq ${seq} has no ${fields.join(" / ")}: it was recorded by an earlier ` +
+      "format that replay does not support. Take a case from a conversation recorded by this version.",
+  );
+}
+
 function findCall(events: readonly ConversationEvent[], seq: number): ModelCallEvent {
   const call = events.find((e): e is ModelCallEvent => e.seq === seq && e.type === "model_call");
   if (!call) {
@@ -248,15 +257,10 @@ export function reconstructRequest(
   const call = findCall(all, modelCallSeq);
   const rec: Recorded = call.payload.request;
   const drift = new Set<DriftReason>();
-
-  if (
-    rec.tools === undefined ||
-    rec.params === undefined ||
-    rec.absorbedUpToSeq === undefined ||
-    rec.maxOutputTokens === undefined
-  ) {
-    drift.add("legacy_event");
-  }
+  const missing = (["tools", "params", "absorbedUpToSeq", "maxOutputTokens"] as const).filter(
+    (k) => rec[k] === undefined,
+  );
+  if (missing.length > 0) unsupportedRecording(call.seq, missing);
 
   const origVersion = recordedVersion(s, all, call);
   const version = opts.agentVersion ?? origVersion;
@@ -429,7 +433,7 @@ export function reconstructRequest(
 
   // 媒体：按附件 id 与记录比较
   if (meta.media !== undefined && (rec.media === undefined || rec.mediaBudgetBytes === undefined)) {
-    drift.add("legacy_event");
+    unsupportedRecording(call.seq, ["media", "mediaBudgetBytes"]);
   }
   const recordedMedia = new Map((rec.media ?? []).map((m) => [m.attachmentId, m]));
   for (const m of meta.media ?? []) {

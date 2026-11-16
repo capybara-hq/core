@@ -83,12 +83,10 @@ describe("checkTerms", () => {
     ]);
     expect(hits[0]?.message).toContain('"sandbox_bash"');
     expect(hits[0]?.message).toContain("Bash");
-    // the legacy text rewriter, recordings, historical specs, synced skills, and release
-    // history (changelogs, changesets archived by `changeset version`)
+    // historical specs, synced skills, and release history (changelogs, changesets archived by
+    // `changeset version`)
     const exempt = checkTerms(root).filter((x) =>
-      /legacy-text|fixtures\/pre-tool-rename|superpowers|skills\/onboarding|CHANGELOG\.md|\.changeset\/pre\//.test(
-        x.file,
-      ),
+      /superpowers|skills\/onboarding|CHANGELOG\.md|\.changeset\/pre\//.test(x.file),
     );
     expect(exempt).toEqual([]);
     // `agent` alone never matches

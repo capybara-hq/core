@@ -496,6 +496,11 @@ export const ERROR_CODES = {
   "eval.run_not_finished": 409,
   "eval.case_too_large": 413,
   "eval.call_not_found": 404,
+  /**
+   * A case's `model_call` lacks a field the current runtime always records (a release-candidate
+   * log): replay guarantees zero drift only for logs written by the current format.
+   */
+  "eval.recording_unsupported": 422,
   "eval.set_not_found": 404,
   "eval.case_not_found": 404,
   "eval.case_exists": 409,

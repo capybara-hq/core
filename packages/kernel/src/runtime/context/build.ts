@@ -20,7 +20,6 @@ import { catalogText, isAlwaysLoaded } from "../../tools/builtins/tool-search.js
 import type { ResolvedTool } from "../../tools/registry.js";
 import { renderSubagentDelivery } from "../subagents/render.js";
 import { devicePathsAt, devicePathsText } from "./device-paths.js";
-import { LEGACY_CATALOG_HEADER, LEGACY_SKILL_TEXTS, usesLegacyToolNames } from "./legacy-text.js";
 import { pluginContextsAfterSummary, pluginContextText } from "./plugin-context.js";
 import { latestProjectRoot, projectRootText } from "./project-root.js";
 import {
@@ -34,7 +33,6 @@ import {
 import {
   invokedSkillNames,
   invokedSkillsText,
-  SKILL_TEXTS,
   type SkillsSnapshot,
   skillsCatalogEvents,
   snapshotChangeText,
@@ -787,10 +785,6 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     const k = resultKey(e.runId, e.payload.callId);
     if (!results.has(k)) results.set(k, e.payload);
   }
-  // System texts naming a builtin: a request whose tools were recorded before the tool rename
-  // renders the frozen pre-rename wording, so it rebuilds exactly (tool naming spec §10)
-  const legacyNames = usesLegacyToolNames(input.tools ?? []);
-  const skillTexts = legacyNames ? LEGACY_SKILL_TEXTS : SKILL_TEXTS;
   // 技能目录（Ruling M17）：第一份快照进 system；之后的每份在所在位置追加变更提醒（相对上一份快照）。
   const skillSnaps = skillsCatalogEvents(events);
   const systemSkills = systemSkillsCatalog(events);
@@ -832,11 +826,12 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     const covered = skillSnaps.filter((e) => e.seq <= after).at(-1);
     // (phase B: plus the current pinned skills and tool-name map when they differ from system's)
     if (covered && covered !== systemSkills) {
-      const text = snapshotCurrentText(systemSkills?.payload, covered.payload, skillTexts);
+      const text = snapshotCurrentText(systemSkills?.payload, covered.payload);
       if (text !== "") messages.push({ role: "system", content: text });
     }
-    // phase D: the skills a person invoked in the summarised range, by name (from the log only)
-    const invoked = invokedSkillsText(invokedSkillNames(events, after), skillTexts);
+    // phase D: the skills invoked in the summarised range (a person's, and template skills the
+    // kernel wrote as invocations), by name (from the log only)
+    const invoked = invokedSkillsText(invokedSkillNames(events, after));
     if (invoked !== "") messages.push({ role: "system", content: invoked });
   }
   for (const [i, e] of events.entries()) {
@@ -943,7 +938,7 @@ export function buildModelRequest(input: BuildModelRequestInput): {
         break;
       case "skills_catalog":
         if (e !== systemSkills) {
-          const text = snapshotChangeText(prevSnapshot.get(e.seq), e.payload, skillTexts);
+          const text = snapshotChangeText(prevSnapshot.get(e.seq), e.payload);
           if (text !== "") messages.push({ role: "system", content: text });
         }
         break;
@@ -989,9 +984,7 @@ export function buildModelRequest(input: BuildModelRequestInput): {
       : `${BEHAVIOR_RULES}\n\n${agent.instructions}`;
   const system = [
     {
-      text: systemSkills
-        ? `${base}\n\n${snapshotSystemText(systemSkills.payload, skillTexts)}`
-        : base,
+      text: systemSkills ? `${base}\n\n${snapshotSystemText(systemSkills.payload)}` : base,
       cache: true,
     },
   ];
@@ -1007,10 +1000,7 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     tools = [...sorted.filter((t) => isAlwaysLoaded(t.key)), ...loaded];
     if (deferred.length > 0) {
       catalog = deferred;
-      system.push({
-        text: catalogText(deferred, legacyNames ? LEGACY_CATALOG_HEADER : undefined),
-        cache: true,
-      });
+      system.push({ text: catalogText(deferred), cache: true });
     }
   }
   const request: ModelRequest = {

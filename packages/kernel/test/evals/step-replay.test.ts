@@ -275,6 +275,13 @@ describe("replayStep", () => {
       mediaType: "image/png",
       source: { kind: "ref", attachmentId },
     });
+    // the current format records the request's media outcomes and budget with the call
+    const call = withImage.events.find((e) => e.seq === firstCall().seq);
+    if (!call) throw new Error("no model_call");
+    Object.assign((call.payload as { request: Record<string, unknown> }).request, {
+      media: [{ attachmentId, outcome: "bytes", etag: "e1" }],
+      mediaBudgetBytes: 20 * 1024 * 1024,
+    });
     const calls: { fn: string; orgId: string; conversationId: string; ids: readonly string[] }[] =
       [];
     const media: MediaSourceDeps = {

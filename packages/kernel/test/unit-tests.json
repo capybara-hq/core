@@ -31,7 +31,6 @@
   "devices/label.test.ts",
   "devices/sandbox-state.test.ts",
   "evals/diff.test.ts",
-  "evals/pre-skills-default-on.test.ts",
   "evals/sets.unit.test.ts",
   "evals/trajectory.test.ts",
   "extensions/config-issues.test.ts",

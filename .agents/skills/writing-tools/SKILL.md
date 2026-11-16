@@ -284,7 +284,7 @@ the same transaction as the business rows.
   to 10 MB of the old file for the digest and fails when the old content cannot be read for a reason other than the file being gone.
 - Old keys: the kernel reads only the current tool keys (no compatibility before 0.1.0). Migration 0063 rewrote the release-candidate keys in stored grants, pending
   approvals and questions, and 0139 those in agent versions and templates (and deleted the grants 0063 could not map); a call or a saved definition with an old key is
-  an unknown tool. `terms-tool-key` keeps old keys out of the code (the frozen replay texts of `runtime/context/legacy-text.ts` and the migrations aside).
+  an unknown tool. `terms-tool-key` keeps old keys out of the code (the migrations aside); replay has no frozen copies of the old texts.
 - Spilling: `Bash`'s `spillChars` is 30000, and large output is read as usual through `ReadToolOutput` / `{"$output": id}`.
 - Result prefix notices (English): on first use `Device started (first use in this conversation)…`, on a new instance
   `The device's instance was restarted; files are kept, running processes and /tmp are gone.`, and newly copied attachments list their paths. Before every call, attachments in the conversation that are ready are synced to

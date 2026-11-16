@@ -1,9 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { copyFileSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-import type { ModelInfo, ModelRequest } from "@capybara-hq/plugin-sdk";
 import {
   type FakeMcpServer,
   fakeExtensionEntry,
@@ -14,20 +12,10 @@ import {
 } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { reconstructRequest } from "../../src/evals/reconstruct.js";
-import { caseBase } from "../../src/evals/runs.service.js";
-import {
-  type CaseSnapshot,
-  readSnapshot,
-  replayableCalls,
-  toEvents,
-} from "../../src/evals/snapshot.js";
 import { KERNEL_MIGRATIONS_DIR, KERNEL_SCHEMA } from "../../src/kernel.js";
-import { ToolRegistry } from "../../src/tools/registry.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -50,45 +38,9 @@ import {
 
 /**
  * T22（D17 / C27 / C28）：「应用」改名「连接器」之后的兼容性。
- * - 改名前录制的会话（MCP 连接器工具、tool_search 加载、connection_required、审批）由日志还原零漂移；
  * - 已存 agent 版本里的 `{kind:"app", appId}` 能读、能跑，工具 key 不变；
  * - `/connectors` 路由可用，旧的 `/apps` 返回 404（无兼容别名）。
  */
-
-type Fixture = { model: ModelInfo; snapshot: CaseSnapshot; requests: ModelRequest[] };
-const fixture = JSON.parse(
-  readFileSync(
-    fileURLToPath(new URL("../evals/fixtures/pre-rename/mcp-conversation.json", import.meta.url)),
-    "utf8",
-  ),
-) as Fixture;
-
-describe("改名前录制的会话：还原零漂移", () => {
-  const calls = toEvents(fixture.snapshot).filter(
-    (e): e is Extract<ConversationEvent, { type: "model_call" }> => e.type === "model_call",
-  );
-
-  it("夹具覆盖连接器工具、tool_search、connection_required 与审批", () => {
-    const types = new Set(fixture.snapshot.events.map((e) => e.type));
-    for (const t of ["connection_required", "approval_requested", "approval_decided"]) {
-      expect(types.has(t as ConversationEvent["type"]), t).toBe(true);
-    }
-    const keys = fixture.snapshot.events
-      .filter((e) => e.type === "tool_result")
-      .map((e) => (e.payload as { toolKey: string }).toolKey);
-    expect(keys).toEqual(["tool_search", "docs__search", "priv__search", "docs__delete_doc"]);
-    expect(calls).toHaveLength(fixture.requests.length);
-    expect(replayableCalls(fixture.snapshot).length).toBeGreaterThan(0);
-  });
-
-  it("每次 model_call：reconstructRequest 无漂移，请求与供应商当时收到的逐项相等", () => {
-    for (const [i, c] of calls.entries()) {
-      const out = reconstructRequest(fixture.snapshot, c.seq, { model: fixture.model });
-      expect(out.drift, `model_call seq ${c.seq}`).toEqual([]);
-      expect(out.request, `model_call seq ${c.seq}`).toEqual(fixture.requests[i]);
-    }
-  });
-});
 
 const CONNECTOR = fakeExtensionEntry("fake-connector");
 
@@ -236,31 +188,6 @@ describe("改名后的路由与旧 agent 版本", () => {
     expect(results.map((e) => e.payload)).toMatchObject([
       { toolKey: "mcp__kb__search", content: "hits for x", isError: false },
     ]);
-  });
-
-  it("改名前的评测快照：readSnapshot + caseBase 交给实时注册表，连接器工具都在（没有 app:undefined）", async () => {
-    const docs = await install("fx_docs");
-    const priv = await install("fx_priv");
-    // 夹具定义引用的是录制库里的连接器 id：换成本库的 id，保持旧形 {kind:"app", appId}
-    const raw = structuredClone(fixture.snapshot) as unknown as {
-      definitions: Record<string, { tools: { kind: string; appId?: string }[] }>;
-    };
-    const def = raw.definitions[String(fixture.snapshot.agentVersion)];
-    expect(def?.tools.map((t) => t.kind)).toEqual(["app", "app"]);
-    const ids: string[] = [docs, priv];
-    def?.tools.forEach((t, i) => {
-      t.appId = ids[i] as string;
-    });
-    const snap = readSnapshot(raw);
-    const base = await caseBase(db, snap);
-    expect(base?.definition.disabledTools).toEqual([]);
-    const resolved = await k.app
-      .get(ToolRegistry)
-      .forAgent(orgId, { ...(base?.definition ?? { disabledTools: [] }), source: "web" });
-    const keys = resolved.tools.map((t) => t.key);
-    expect(keys).toEqual(expect.arrayContaining(["mcp__fx_docs__search", "mcp__fx_priv__search"]));
-    expect(JSON.stringify(resolved.unavailable)).not.toContain("undefined");
-    expect(resolved.unavailable).toEqual([]);
   });
 });
 
