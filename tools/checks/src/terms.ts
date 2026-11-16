@@ -413,7 +413,8 @@ function checkErrorCodes(root: string): Finding[] {
 function checkConfigKeys(root: string): Finding[] {
   const rule = "terms-config-key";
   const text = read(root, CONFIG_SCHEMA_FILE);
-  const body = text && objectBody(text, /^export const KernelConfigSchema = z\.object\(\{/);
+  const body =
+    text && objectBody(text, /^export const KernelConfigSchema = z\.(?:strictObject|object)\(\{/);
   if (!body) return [missing(root, CONFIG_SCHEMA_FILE, rule)];
   return body.flatMap((l) => {
     const m = /^ {2}"?([A-Za-z_$][\w$]*)"?\s*:/.exec(l.text);

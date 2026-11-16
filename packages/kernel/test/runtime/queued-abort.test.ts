@@ -517,7 +517,7 @@ it("deleting an org settles a queued job already read by a worker before deletio
 });
 
 it("deleting an org stops only the conversations that still have live work", async () => {
-  const deletingOrg = await createOrg(req, "Mostly idle org");
+  const deletingOrg = await createOrgWithProviders(k, req, "Mostly idle org");
   const agent = await createAgent(req, deletingOrg);
   const idle = await Promise.all([1, 2, 3].map(() => createConv(req, deletingOrg, agent)));
   const live = await createConv(req, deletingOrg, agent);
