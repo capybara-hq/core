@@ -282,6 +282,7 @@ describe("registry without a sandbox provider", () => {
       "Glob",
       "Grep",
       "Deliver",
+      "FetchAttachment",
       "TaskOutput",
       "TaskStop",
       "TaskList",

@@ -57,6 +57,7 @@ export const BUILTIN_TOOLS = [
   "Glob",
   "Grep",
   "Deliver",
+  "FetchAttachment",
   "WebSearch",
   "WebFetch",
   "Platform",
