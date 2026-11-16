@@ -51,6 +51,7 @@
   "tools/m3-segment2.dual.test.ts",
   "tools/network-ask.dual.test.ts",
   "tools/oauth/oauth.dual.test.ts",
+  "tools/permission-approvals.dual.test.ts",
   "tools/sandbox/read-before-write.dual.test.ts",
   "ui/embed.dual.test.ts",
   "ui/m4-segment3.dual.test.ts",

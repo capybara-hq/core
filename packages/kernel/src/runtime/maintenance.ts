@@ -27,6 +27,7 @@ import {
 } from "../sandbox/jobs.js";
 import { OPERATION_RECONCILE, OPERATION_REVOKE } from "../sandbox/operation-intents.js";
 import { SandboxOperationReconcileJob } from "../sandbox/operation-reconcile.job.js";
+import { PERMISSION_APPROVAL_RECHECK } from "../sandbox/permission-transitions.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
 import { SandboxService } from "../sandbox/sandbox.service.js";
 import { ScheduledTaskFireModule, ScheduledTaskFirer } from "../schedules/fire.js";
@@ -39,6 +40,10 @@ import {
 import { DeviceOpResolver } from "../tools/device-op-resolver.js";
 import { type DriftConnectorJobData, ToolDrift } from "../tools/drift.js";
 import { DRIFT_CONNECTOR_JOB } from "../tools/job-ids.js";
+import {
+  PermissionApprovalJobs,
+  type PermissionRecheckData,
+} from "../tools/permission-approval-jobs.js";
 import { ToolsModule } from "../tools/tools.module.js";
 import { MAINTENANCE_QUEUE_NAME } from "./maintenance-queue.js";
 import { RETIRED_SCHEDULER_IDS } from "./retired-schedulers.js";
@@ -77,6 +82,8 @@ export const MAINTENANCE_CONCURRENCY = 5;
 @Injectable()
 export class MaintenanceProcessor extends WorkerHost<Worker> {
   constructor(
+    @Inject(PermissionApprovalJobs)
+    private readonly permissionApprovals: Pick<PermissionApprovalJobs, "recheck">,
     @Inject(Waits)
     private readonly waits: Pick<
       Waits,
@@ -123,6 +130,9 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
 
   private async dispatch(job: Job, token: string | undefined): Promise<void> {
     switch (job.name) {
+      case PERMISSION_APPROVAL_RECHECK:
+        await this.permissionApprovals.recheck(job.data as PermissionRecheckData);
+        return;
       case OPERATION_RECONCILE:
         await this.operations.reconcile((job.data as { operationId: string }).operationId);
         return;

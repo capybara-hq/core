@@ -8,6 +8,7 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { PermissionAuthorityEpochStore } from "./permission-authority-epochs.js";
 import { type AuthoritySubject, PermissionAuthorityLock } from "./permission-authority-lock.js";
+import { PermissionTransitions } from "./permission-transitions.js";
 
 const required = <T>(value: T | null | undefined): T => {
   if (value === undefined || value === null) throw new Error("The authority subject is incomplete");
@@ -17,6 +18,7 @@ const required = <T>(value: T | null | undefined): T => {
 @Injectable()
 export class PermissionCeilingWrites {
   constructor(
+    @Inject(PermissionTransitions) private readonly transitions: PermissionTransitions,
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(PermissionAuthorityLock) private readonly locks: PermissionAuthorityLock,
@@ -44,17 +46,19 @@ export class PermissionCeilingWrites {
           })),
         )
         .execute();
-    if (deviceIds.length)
-      await this.db
-        .updateTable("conversations")
-        .set((eb) => ({
-          permission_profile: "approve-for-me",
-          permission_consent: null,
-          permission_revision: eb("permission_revision", "+", 1),
-        }))
+    if (deviceIds.length) {
+      const roots = await this.db
+        .selectFrom("conversations")
+        .selectAll()
         .where("device_id", "in", [...deviceIds])
+        .where("parent_conversation_id", "is", null)
         .where("permission_profile", "=", "full-access")
+        .orderBy("org_id")
+        .orderBy("id")
+        .forUpdate()
         .execute();
+      for (const root of roots) await this.resetRoot(root, {}, "platform");
+    }
   }
   @Transactional({ propagation: "mandatory" })
   async publishLocked(
@@ -88,17 +92,15 @@ export class PermissionCeilingWrites {
         .where("id", "=", id)
         .execute();
       let roots = this.db
-        .updateTable("conversations")
-        .set((eb) => ({
-          permission_profile: "approve-for-me",
-          permission_consent: null,
-          permission_revision: eb("permission_revision", "+", 1),
-        }))
+        .selectFrom("conversations")
+        .selectAll()
+        .where("parent_conversation_id", "is", null)
         .where("permission_profile", "=", "full-access");
       if (level !== "platform") roots = roots.where("org_id", "=", required(subject.orgId));
       if (level === "device") roots = roots.where("device_id", "=", required(subject.deviceId));
       if (level === "root") roots = roots.where("id", "=", required(subject.rootConversationId));
-      await roots.execute();
+      for (const root of await roots.orderBy("org_id").orderBy("id").forUpdate().execute())
+        await this.resetRoot(root, subject, level);
     }
     if (!revoke) return;
     let candidates = this.db
@@ -132,6 +134,36 @@ export class PermissionCeilingWrites {
         data: { operationId: row.operation_id },
       });
     }
+  }
+  private async resetRoot(
+    root: Selectable<import("../db/kernel-schema.js").ConversationsTable>,
+    subject: AuthoritySubject,
+    level: "platform" | "org" | "device" | "root",
+  ): Promise<void> {
+    const revision = root.permission_revision + 1;
+    await this.db
+      .updateTable("conversations")
+      .set({
+        permission_profile: "approve-for-me",
+        permission_consent: null,
+        permission_revision: revision,
+      })
+      .where("id", "=", root.id)
+      .execute();
+    await this.transitions.recordLocked(
+      {
+        orgId: root.org_id,
+        rootConversationId: root.id,
+        deviceId: root.device_id,
+        oldProfile: "full-access",
+        newProfile: "approve-for-me",
+        revision,
+        scopeRevision: null,
+        actorAccountId: null,
+        reason: "authority-changed",
+      },
+      { subject, level },
+    );
   }
 }
 /** Full and owner browsing outside the restricted workspace require the independent Full ceiling. */

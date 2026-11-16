@@ -26,6 +26,8 @@ import { type AuthoritySubject, PermissionAuthorityLock } from "./permission-aut
 import { permissionScopeHash } from "./permission-facts.js";
 import type { SandboxUseContext } from "./use-context.js";
 
+export class PermissionAdmissionStale extends Error {}
+
 export const OPERATION_RECONCILE = "sandbox-operation-reconcile";
 export const OPERATION_REVOKE = "sandbox-operation-revoke";
 export type OperationIntent = Selectable<SandboxOperationIntentsTable>;
@@ -91,7 +93,7 @@ export class SandboxOperationIntents {
     @Inject(OutboxService) private readonly outbox: OutboxService,
     @Inject(OperationPayloads) private readonly payloads: OperationPayloads,
   ) {}
-  /** Current run claim plus its actual tool_started row authorize an internal invocation identity. */
+  /** Current run claim plus its actual tool_call_started row authorize an internal invocation identity. */
   private async assertClaim(
     ctx: SandboxUseContext,
     invocation: OperationInvocation,
@@ -124,7 +126,7 @@ export class SandboxOperationIntents {
       .select("seq")
       .where("conversation_id", "=", c.conversationId)
       .where("run_id", "=", c.runId)
-      .where("type", "=", "tool_started")
+      .where("type", "=", "tool_call_started")
       .where(sql<string>`payload->>'callId'`, "=", invocation.callId)
       .executeTakeFirst();
     if (!call) denied("The operation has no recorded tool invocation");
@@ -151,6 +153,12 @@ export class SandboxOperationIntents {
       .executeTakeFirst();
     if (previous) {
       this.assertIdentity(previous, ctx, instance, method, hash);
+      if (
+        previous.state === "pending" &&
+        (previous.execution_id !== invocation.claim.executionId ||
+          previous.deadline.getTime() <= Date.now())
+      )
+        denied("Pending operation claim changed or admission deadline elapsed");
       if (previous.state !== "pending") {
         await this.locks.acquire(subjectOf(previous), { kind: "admit" });
         await this.assertClaim(ctx, invocation);
@@ -158,12 +166,24 @@ export class SandboxOperationIntents {
       }
     }
     // resolve joins this transaction and holds every shared ancestor through the insert commit.
-    const resolved = await this.authority.resolve(ctx, method, signal);
+    const {
+      scope: resolved,
+      permissionGrantId,
+      grantedHosts,
+    } = await this.authority.resolveInvocation(
+      ctx,
+      method,
+      { runId: invocation.claim.runId, callId: invocation.callId },
+      signal,
+    );
     await this.assertClaim(ctx, invocation);
-    const grantedHosts = method === "exec" ? await this.authority.grantedHosts(ctx) : [];
     if (resolved.rootConversationId !== invocation.claim.rootId)
       denied("The operation root no longer matches the execution claim");
-    const deadline = Math.min(resolved.admitBeforeMs, invocation.deadlineMs);
+    const deadline = Math.min(
+      resolved.admitBeforeMs,
+      invocation.deadlineMs,
+      previous?.deadline.getTime() ?? Infinity,
+    );
     if (!Number.isSafeInteger(deadline) || deadline <= Date.now())
       denied("Operation admission deadline elapsed");
     const scope = parseSandboxOperationScope({
@@ -191,6 +211,7 @@ export class SandboxOperationIntents {
         ordinal: invocation.ordinal,
         method,
         input_hash: hash,
+        permission_grant_id: permissionGrantId,
         granted_hosts: JSON.stringify(grantedHosts),
         admission_hash: permissionScopeHash({ method, inputDigest: described.digest, scope }),
         input: payload,
@@ -212,6 +233,7 @@ export class SandboxOperationIntents {
         .set({
           input: payload,
           scope: JSON.stringify(scope),
+          permission_grant_id: permissionGrantId,
           granted_hosts: JSON.stringify(grantedHosts),
           admission_hash: permissionScopeHash({ method, inputDigest: described.digest, scope }),
           epochs: JSON.stringify(vector),
@@ -362,17 +384,37 @@ export class SandboxOperationIntents {
       denied("Operation authority was revoked");
     }
     if (r.state !== "pending") return r;
+    if (r.deadline.getTime() <= Date.now()) denied("Operation admission deadline elapsed");
     const current = await this.epochs.readLocked(subjectOf(r));
     if (permissionScopeHash(current) !== permissionScopeHash(r.epochs))
-      denied("Authority changed before admission; the pending operation cannot start");
+      throw new PermissionAdmissionStale(
+        "Authority changed before admission; refresh this pending method only",
+      );
     if (r.deadline.getTime() <= Date.now()) denied("Operation admission deadline elapsed");
     // Re-read live access/project/tool state, not only the profile epoch.
-    const fresh = await this.authority.resolve(ctx, r.method, new AbortController().signal);
+    const {
+      scope: fresh,
+      permissionGrantId,
+      grantedHosts,
+    } = await this.authority.resolveInvocation(
+      ctx,
+      r.method,
+      { runId: invocation.claim.runId, callId: invocation.callId },
+      new AbortController().signal,
+    );
     if (
+      permissionGrantId !== r.permission_grant_id ||
+      permissionScopeHash(grantedHosts) !== permissionScopeHash(r.granted_hosts) ||
+      permissionScopeHash(fresh.filesystem) !==
+        permissionScopeHash(parseSandboxOperationScope(r.scope).filesystem) ||
+      permissionScopeHash(fresh.network) !==
+        permissionScopeHash(parseSandboxOperationScope(r.scope).network) ||
       fresh.ceilingRevision !== r.scope.ceilingRevision ||
       fresh.profileRevision !== parseSandboxOperationScope(r.scope).profileRevision
     )
-      denied("Authority changed before admission");
+      throw new PermissionAdmissionStale(
+        "Authority changed before admission; refresh this pending method only",
+      );
     await this.db
       .updateTable("sandbox_operation_intents")
       .set({ state: "admitted", updated_at: new Date() })

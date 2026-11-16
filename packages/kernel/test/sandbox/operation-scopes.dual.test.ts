@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { startTestPostgres, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
+import { EventLog } from "../../src/conversations/event-log.js";
 import { createDb } from "../../src/db/pool.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
@@ -20,6 +21,7 @@ import { PermissionAuthorityEpochStore } from "../../src/sandbox/permission-auth
 import { PermissionAuthorityLock } from "../../src/sandbox/permission-authority-lock.js";
 import { PermissionCeilingWrites } from "../../src/sandbox/permission-ceiling-writes.js";
 import { permissionScopeHash } from "../../src/sandbox/permission-facts.js";
+import { PermissionTransitions } from "../../src/sandbox/permission-transitions.js";
 
 let pg: TestContainer;
 function barrier() {
@@ -84,13 +86,25 @@ function replica(pool: ReturnType<typeof createDb>) {
       });
     },
   } as unknown as SandboxOperationAuthority;
+  authority.resolveInvocation = async (ctx, operation, _call, signal) => ({
+    scope: await authority.resolve(ctx, operation, signal),
+    permissionGrantId: null,
+    grantedHosts: [],
+  });
   const outbox = new OutboxService(host, db, log, async () => {});
+  const transitions = new PermissionTransitions(
+    db,
+    host,
+    lock,
+    new EventLog(db, { publish: async () => {} }, log, outbox, host),
+    outbox,
+  );
   return {
     host,
     db,
     lock,
     epochs,
-    ceilings: new PermissionCeilingWrites(db, host, lock, epochs, outbox),
+    ceilings: new PermissionCeilingWrites(transitions, db, host, lock, epochs, outbox),
     intents: new SandboxOperationIntents(
       db,
       host,
@@ -107,10 +121,10 @@ beforeAll(async () => {
   pools.push(createDb(pg.url, 5), createDb(pg.url, 5));
   const pool = required(pools[0]);
   await sql`create schema capybara`.execute(pool);
-  await sql`create table capybara.orgs(id text primary key, settings jsonb); create table capybara.deployment_settings(key text primary key,value jsonb); create table capybara.devices(id text primary key,org_id text,source text); create table capybara.device_instances(device_id text primary key, provider text,created_at timestamptz); create table capybara.conversations(id text primary key,org_id text,device_id text,permission_profile text,permission_consent jsonb,permission_revision integer default 0); create table capybara.runs(id text primary key,conversation_id text,execution_id text,trigger_account_id text,status text); create table capybara.conversation_events(conversation_id text,run_id text,type text,payload jsonb,seq bigint); create table capybara.permission_authority_epochs(kind text,id text,revision integer default 0,primary key(kind,id)); create table capybara.outbox(id bigserial,queue text,job_name text,job_id text,data jsonb,run_at timestamptz,org_id text,dead_at timestamptz); create unique index outbox_pending on capybara.outbox(queue,job_id) where dead_at is null`.execute(
+  await sql`create table capybara.orgs(id text primary key, settings jsonb); create table capybara.deployment_settings(key text primary key,value jsonb); create table capybara.devices(id text primary key,org_id text,source text); create table capybara.device_instances(device_id text primary key, provider text,created_at timestamptz); create table capybara.conversations(id text primary key,org_id text,device_id text,permission_profile text,permission_consent jsonb,permission_revision integer default 0,parent_conversation_id text); create table capybara.runs(id text primary key,conversation_id text,execution_id text,trigger_account_id text,status text); create table capybara.conversation_events(conversation_id text,run_id text,type text,payload jsonb,seq bigint); create table capybara.permission_authority_epochs(kind text,id text,revision integer default 0,primary key(kind,id)); create table capybara.outbox(id bigserial,queue text,job_name text,job_id text,data jsonb,run_at timestamptz,org_id text,dead_at timestamptz); create unique index outbox_pending on capybara.outbox(queue,job_id) where dead_at is null`.execute(
     pool,
   );
-  await sql`insert into capybara.orgs(id) values ('org'); insert into capybara.devices(id,org_id) values ('device','org'); insert into capybara.conversations(id,org_id) values ('root','org'); insert into capybara.runs values ('run','root','execution-1','owner','running'); insert into capybara.conversation_events values ('root','run','tool_started','{"callId":"call"}',1)`.execute(
+  await sql`insert into capybara.orgs(id) values ('org'); insert into capybara.devices(id,org_id) values ('device','org'); insert into capybara.conversations(id,org_id) values ('root','org'); insert into capybara.runs values ('run','root','execution-1','owner','running'); insert into capybara.conversation_events values ('root','run','tool_call_started','{"callId":"call"}',1)`.execute(
     pool,
   );
   await sql
@@ -118,6 +132,9 @@ beforeAll(async () => {
       `set search_path to capybara,public;${await readFile(new URL("../../src/migrations/0140_sandbox_operation_intents.sql", import.meta.url), "utf8")}`,
     )
     .execute(pool);
+  await sql`alter table capybara.sandbox_operation_intents add column permission_grant_id uuid`.execute(
+    pool,
+  );
   replicas.push(...pools.map(replica));
 });
 afterAll(async () => {

@@ -513,7 +513,7 @@ async function operationFixture(impl: Partial<SandboxProvider> = {}) {
       conversation_id: f.root.id,
       run_id: runId,
       seq: 1,
-      type: "tool_started",
+      type: "tool_call_started",
       payload: JSON.stringify({ callId, toolKey: "Read" }),
     })
     .execute();
@@ -1024,7 +1024,7 @@ it("authority is read after waiting for the shared lease and gone after dispatch
       conversation_id: f.root.id,
       run_id: f.claim.runId,
       seq: 2,
-      type: "tool_started",
+      type: "tool_call_started",
       payload: JSON.stringify({ callId: next.callId }),
     })
     .execute();
