@@ -27,7 +27,7 @@ import { ExtensionHost } from "./host.js";
 import { type ExtensionInstallRow, ExtensionInstalls } from "./installs.js";
 import { ExtensionLifecycle, PLUGINS_CHANGED_TOPIC, STALE_RECONCILE_PERIODS } from "./lifecycle.js";
 import { PluginApproveLock } from "./locks.js";
-import { permissionSetOfPackage, readExtensionPackage } from "./package.js";
+import { ExtensionPackageError, permissionSetOfPackage, readExtensionPackage } from "./package.js";
 import { buildPermissionSet, diffPermissions, type PermissionSet } from "./permission-set.js";
 import {
   type AdminExtensionView,
@@ -330,12 +330,13 @@ export class ExtensionAdmin {
         info = await this.packageInfo(r.sha256);
       } catch (err) {
         // One unreadable package (bytes missing / corrupt, over the current limit) does not break
-        // the list: it becomes a failed item.
+        // the list: it becomes a failed item. An invalid package is an expected state (repack
+        // needed), logged without a stack trace.
         const detail = `package ${r.name} ${r.version} (${r.sha256}) cannot be read: ${err instanceof Error ? err.message : String(err)}`;
         this.log.warn("plugin package unreadable for the admin view", {
           plugin: r.name,
           sha256: r.sha256,
-          err,
+          ...(err instanceof ExtensionPackageError ? { reason: detail } : { err }),
         });
         out.push({
           name: r.name,

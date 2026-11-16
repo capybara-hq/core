@@ -121,6 +121,7 @@ describe("registration", () => {
       "connectors.get",
       "connectors.list",
       "connectors.refresh",
+      "connectors.set-git-push-policy",
       "connectors.set-template-enabled",
       "connectors.template-disable-preview",
       "connectors.templates",
