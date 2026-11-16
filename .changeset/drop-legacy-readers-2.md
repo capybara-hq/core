@@ -11,3 +11,6 @@ snapshots, fills both lists of every logged follow-up narrowing and drops `selec
 agent template versions; the kernel no longer reads those forms. Saving an agent with a policy for
 a builtin that no longer exists (`SkillWrite`) is now refused like any unknown key instead of being
 dropped silently.
+Migration 0141 deletes the plugin install ledger rows of org skills and agent templates the org
+has since shared as its own items (recorded before ruling P3-46); the uninstall no longer checks
+for them.

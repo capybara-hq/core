@@ -1575,15 +1575,6 @@ export class PluginInstaller {
       return true;
     }
     if (c.kind === "plugin") return false;
-    // A row the org promoted is the org's own shared item (ruling P3-47): an install never
-    // removes or reverts it (P3-46 keeps plugin content from being promoted; this guards rows
-    // recorded before that or by a legacy install)
-    if (
-      (c.kind === "agent_template" || c.kind === "skill") &&
-      (await promotedOrgRow(t, orgId, c.kind, c.ref))
-    ) {
-      return false;
-    }
     if (c.kind === "agent_template") {
       if (c.created) return softDeleteTemplateIn(t, orgId, c.ref);
       if (c.skillVersion !== null) {
@@ -2752,44 +2743,4 @@ function orderByRequires(set: ExtensionManifest[]): string[] {
     placed.push((next as ExtensionManifest).name);
   }
   return placed;
-}
-
-/**
- * Whether org row `id` (a skill or an agent template of the org) is linked without a pin to a live
- * platform row the org promoted when sharing it (ruling P3-3): owned by the org and from no plugin
- * (`catalog_item_id` null). A component of the org's own uploaded plugin is a plugin's, so its
- * install copies are removed and reverted as any plugin's.
- */
-async function promotedOrgRow(
-  db: KernelSchemaDb,
-  orgId: string,
-  kind: "skill" | "agent_template",
-  id: string,
-): Promise<boolean> {
-  const row =
-    kind === "skill"
-      ? await db
-          .selectFrom("skills as s")
-          .innerJoin("platform_skills as p", "p.id", "s.platform_skill_id")
-          .select("s.id")
-          .where("s.id", "=", id)
-          .where("s.org_id", "=", orgId)
-          .where("s.pinned_version", "is", null)
-          .where("p.owner_org_id", "=", orgId)
-          // promoted, not an org plugin's component (which has its plugin, P3-2)
-          .where("p.catalog_item_id", "is", null)
-          .where("p.deleted_at", "is", null)
-          .executeTakeFirst()
-      : await db
-          .selectFrom("agent_templates as a")
-          .innerJoin("platform_agent_templates as p", "p.id", "a.platform_template_id")
-          .select("a.id")
-          .where("a.id", "=", id)
-          .where("a.org_id", "=", orgId)
-          .where("a.pinned_version", "is", null)
-          .where("p.owner_org_id", "=", orgId)
-          .where("p.catalog_item_id", "is", null)
-          .where("p.deleted_at", "is", null)
-          .executeTakeFirst();
-  return row !== undefined;
 }
