@@ -1543,7 +1543,7 @@ export class ConnectorsService {
   /**
    * The read-only checks of {@link setGitPushPolicy} (the Platform operation's precheck): the
    * connector exists (`connector.not_found`) and declares git hosts (400 on `policy`); with
-   * `onlyNarrows`, the change does not loosen it ({@link assertGitPushNarrows}).
+   * `onlyNarrows`, the change does not loosen it ({@link assertGitPushSettable}).
    */
   async checkGitPushPolicy(
     orgId: string,

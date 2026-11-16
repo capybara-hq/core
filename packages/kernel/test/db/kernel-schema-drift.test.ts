@@ -137,7 +137,7 @@ function nullability(type: string, where: string): boolean | "unknown" {
   }
   const parts = splitTop(t, "|").map((p) => p.trim());
   if (parts.length > 1)
-    return parts.some((p) => p === "null" || (p !== t && nullability(p, where)));
+    return parts.some((p) => p === "null" || (p !== t && nullability(p, where) === true));
   // `unknown` makes no nullability claim (jsonb columns): compatible with either.
   if (t === "unknown") return "unknown";
   if (t === "null") return true;
