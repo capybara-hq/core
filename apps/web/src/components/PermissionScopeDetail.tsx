@@ -38,8 +38,10 @@ export function PermissionScopeDetail({
                 <Text variant="small" tone="muted">
                   {g.label}
                 </Text>
-                {g.values.map((v) => (
-                  <Text key={v} variant="small" pre>
+                {g.values.map((v, i) => (
+                  // by position: an exact list may repeat a value
+                  // biome-ignore lint/suspicious/noArrayIndexKey: the list is fixed per render
+                  <Text key={i} variant="small" pre>
                     {v}
                   </Text>
                 ))}

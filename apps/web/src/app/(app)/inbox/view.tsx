@@ -809,7 +809,13 @@ function toolApprovalDetail({
           actions={
             final ? (
               <StatusMark
-                status={approval.status === "approved" ? "success" : "cancelled"}
+                status={
+                  approval.status === "approved"
+                    ? "success"
+                    : approval.status === "denied"
+                      ? "failed"
+                      : "cancelled" // as ApprovalCard: expired, cancelled, skipped, superseded
+                }
                 label={ta(
                   `decision.${approval.status as Exclude<typeof approval.status, "pending">}`,
                 )}

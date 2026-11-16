@@ -11,8 +11,9 @@ import {
 } from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { type ReactNode, useState, useSyncExternalStore } from "react";
+import { type ReactNode, useCallback, useState, useSyncExternalStore } from "react";
 import { useRouter } from "../../i18n/navigation";
+import { ApiClientError } from "../../lib/api";
 import type { Conversation, ConversationEvent } from "../../lib/conversations";
 import { canUpdateOrg } from "../../lib/org-settings";
 import {
@@ -22,6 +23,7 @@ import {
   setConversationPermissions,
 } from "../../lib/permissions";
 import { retryOnMountOf } from "../../lib/query/client";
+import { openWaitReads } from "../../lib/query/conversation";
 import { inboxChangeKeys } from "../../lib/query/inbox";
 import { keys } from "../../lib/query/keys";
 import { useAppMutation } from "../../lib/query/mutation";
@@ -132,8 +134,17 @@ export type PermissionChoiceInput = {
   deviceId: string | undefined;
   /** The selected project on that device (undefined: free mode). */
   project: string | undefined;
-  /** The device's display name, for the Full access confirmation. */
-  deviceLabel: string;
+  /**
+   * The device's display name, for the Full access confirmation; undefined while it is not known
+   * (Full then waits, as for the device check: the dialog never names a device "—").
+   */
+  deviceLabel: string | undefined;
+  /**
+   * An existing conversation's revision on display and whether its picker may be used now: an
+   * open Full access dialog closes for good when either changes (it never comes back by itself).
+   */
+  revision?: number;
+  editable?: boolean;
   /** A new conversation's choice governs its first operation; an existing one's new operations. */
   context: "new" | "existing";
   /**
@@ -208,12 +219,25 @@ export function usePermissionChoice(input: PermissionChoiceInput): {
       (shown !== undefined && shown.scopeRevision !== c.scopeRevision))
   )
     setChoice({ profile: DEFAULT_PERMISSION_PROFILE });
-  /** The preview the confirmation is about, frozen when it opened. */
-  const [asking, setAsking] = useState<PermissionPreview | null>(null);
-  const reasons = unavailableReasons(deviceId, {
+  /** The preview the confirmation is about, frozen when it opened, with the revision then. */
+  const [asked, setAsked] = useState<{
+    preview: PermissionPreview;
+    revision: number | undefined;
+  } | null>(null);
+  // the picker became unusable or another revision is on display: the question is void
+  if (asked !== null && (input.editable === false || asked.revision !== input.revision))
+    setAsked(null);
+  const asking = asked?.preview ?? null;
+  const setAsking = (p: PermissionPreview | null) =>
+    setAsked(p === null ? null : { preview: p, revision: input.revision });
+  const found = unavailableReasons(deviceId, {
     data: shown,
     failed: deviceId !== undefined && preview.failed,
   });
+  const reasons: typeof found =
+    deviceId !== undefined && input.deviceLabel === undefined && found["full-access"] === undefined
+      ? { ...found, "full-access": "checking" }
+      : found;
   const choose = (next: Choice) => {
     if (input.onChange === undefined) return setChoice(next);
     input.onChange(
@@ -288,7 +312,7 @@ export function usePermissionChoice(input: PermissionChoiceInput): {
         onOpenChange={(open) => {
           if (!open) setAsking(null);
         }}
-        title={t("full.title", { device: input.deviceLabel })}
+        title={t("full.title", { device: input.deviceLabel ?? "" })}
         footer={
           <>
             <Button variant="ghost" onClick={() => setAsking(null)}>
@@ -352,16 +376,6 @@ export function useLockedPermissionPicker(
   };
 }
 
-/** The approvals the log shows pending (requested, not yet decided). */
-function pendingApprovalIds(events: readonly ConversationEvent[] | undefined): string[] {
-  const open = new Set<string>();
-  for (const e of events ?? []) {
-    if (e.type === "approval_requested") open.add(e.payload.approvalId);
-    else if (e.type === "approval_decided") open.delete(e.payload.approvalId);
-  }
-  return [...open];
-}
-
 /**
  * An existing conversation's permission profile for its owner (permission profiles Task 10D):
  *
@@ -383,8 +397,8 @@ export function useConversationPermission(o: {
   conversationId: string;
   row: Conversation | undefined;
   events: readonly ConversationEvent[] | undefined;
-  /** The bound device's display name, for the Full access confirmation. */
-  deviceLabel: string;
+  /** The bound device's display name, for the Full access confirmation (undefined: unknown). */
+  deviceLabel: string | undefined;
 }): {
   picker: PickerProps | undefined;
   dialog: ReactNode;
@@ -405,13 +419,19 @@ export function useConversationPermission(o: {
   const read = useQuery({ ...q, enabled: owner, retryOnMount: retryOnMountOf(q.queryKey) });
   const view = owner ? read.data : undefined;
   const rootId = view?.rootConversationId;
+  const subscribe = useCallback((fn: () => void) => subscribePermissionWatermarks(qc, fn), [qc]);
   const required = useSyncExternalStore(
-    (fn) => subscribePermissionWatermarks(qc, fn),
+    subscribe,
     () =>
       rootId === undefined ? undefined : permissionWatermark(qc, { accountId, orgId, rootId }),
     () => undefined,
   );
-  const confirmed = permissionsConfirmed(view, required);
+  // A PATCH that got no answer (network, 5xx): it may have landed. Until a read that started after
+  // it succeeds, the shown profile is only the last confirmed one (in-flight reads are cancelled
+  // at the failure, so any later success started after it).
+  const [unknownAt, setUnknownAt] = useState<number | null>(null);
+  const unknown = unknownAt !== null && !(read.dataUpdatedAt > unknownAt);
+  const confirmed = permissionsConfirmed(view, required) && !unknown;
   const child = view !== undefined && rootId !== conversationId;
   const scheduled = Boolean(row?.scheduledTaskId);
   const interactiveRoot =
@@ -426,13 +446,23 @@ export function useConversationPermission(o: {
     },
     invalidates: () => [
       ...permissionKeysOfRoot(qc, orgId, conversationId),
-      ...pendingApprovalIds(o.events).map((id) => keys.org(orgId).approval(id)),
+      // pending asks of this log and the sub-agent waits it shows (a change supersedes both)
+      ...openWaitReads(o.events ?? []).approvals.map((id) => keys.org(orgId).approval(id)),
       ...inboxChangeKeys(orgId),
     ],
     onSuccess: () => toast.success(t("changed")),
     onError: (e) => {
-      setFailure(e);
       // the state may have moved (or the change may have landed without an answer): read it
+      if (!(e instanceof ApiClientError) || e.status === 0 || e.status >= 500) {
+        setFailure(null);
+        setUnknownAt(Date.now());
+        const queryKey = keys.org(orgId).conversation(conversationId).permissions();
+        void qc
+          .cancelQueries({ queryKey, exact: true })
+          .then(() => refreshPermissionViews(qc, orgId, conversationId));
+        return;
+      }
+      setFailure(e);
       refreshPermissionViews(qc, orgId, conversationId);
     },
   });
@@ -444,6 +474,8 @@ export function useConversationPermission(o: {
     project,
     deviceLabel: o.deviceLabel,
     context: "existing",
+    ...(view !== undefined ? { revision: view.revision } : {}),
+    editable: interactiveRoot && view !== undefined && confirmed && !patch.isPending,
     ...(view !== undefined ? { initial: view.profile } : {}),
     // the view is the scope the kernel checks a Full consent against: no preview is read
     preview: {
@@ -462,6 +494,7 @@ export function useConversationPermission(o: {
     onChange: (selection) => {
       if (view === undefined || !confirmed || patch.isPending) return;
       setFailure(null);
+      setUnknownAt(null);
       patch.mutate({ ...selection, expectedRevision: view.revision });
     },
   });
@@ -477,18 +510,28 @@ export function useConversationPermission(o: {
           ? "scheduled"
           : "profile",
   );
+  // Unconfirmed: why (no answer to a change, a failed read) and a Refresh that only reads,
+  // whenever nothing is being read (never left without a way out).
   const notice =
-    view !== undefined && !confirmed && read.isError ? (
+    view !== undefined && !confirmed && (unknown || read.isError || !read.isFetching) ? (
       <Stack gap={4}>
-        <Text variant="small" tone="muted">
-          {t("unconfirmedFailed")}
-        </Text>
-        <ApiErrorDetail error={read.error} />
-        <Stack direction="row">
-          <Button density="dense" disabled={read.isFetching} onClick={() => void read.refetch()}>
-            {t("refresh")}
-          </Button>
-        </Stack>
+        {unknown ? (
+          <Text variant="small" tone="muted">
+            {t("unknownOutcome")}
+          </Text>
+        ) : read.isError ? (
+          <Text variant="small" tone="muted">
+            {t("unconfirmedFailed")}
+          </Text>
+        ) : null}
+        {read.isError && <ApiErrorDetail error={read.error} />}
+        {!read.isFetching && (
+          <Stack direction="row">
+            <Button density="dense" onClick={() => void read.refetch()}>
+              {t("refresh")}
+            </Button>
+          </Stack>
+        )}
       </Stack>
     ) : failure !== null ? (
       <ApiErrorDetail error={failure} summaries={{ conflict: t("conflict") }} />

@@ -1623,7 +1623,7 @@
       "refresh": "Refresh",
       "changed": "Permissions changed. Changes apply to new operations. Work already started keeps its starting permissions.",
       "conflict": "The permissions or their scope changed meanwhile. Check the current choice and choose again.",
-      "saveFailed": "Couldn't change the permissions. The current state was read again; nothing was resent."
+      "unknownOutcome": "No answer arrived, so the change may or may not have been saved. The value shown is the last confirmed one."
     },
     "firstSend": {
       "unconfirmed": "Your earlier message got no answer, so it may already have started a conversation.",

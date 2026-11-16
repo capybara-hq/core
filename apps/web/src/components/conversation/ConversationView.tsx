@@ -269,7 +269,8 @@ export function useConversationPage(
     conversationId,
     row: conv.conversation,
     events: conv.events,
-    deviceLabel: device.data ? deviceName(device.data) : "—",
+    // unknown while the bound device is read (Full waits for it)
+    deviceLabel: device.data ? deviceName(device.data) : undefined,
   });
   const permissionPicker = permission.picker;
   // an owner's child follows its root's profile live through the root's stream

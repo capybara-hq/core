@@ -11,7 +11,7 @@ import { keys } from "./keys";
  * {@link clearPermissionWatermarks} drops it with the session (`resetSession`). Never persisted,
  * never sent to the server.
  */
-export type PermissionScope = { accountId: string; orgId: string; rootId: string };
+export type PermissionWatermarkScope = { accountId: string; orgId: string; rootId: string };
 
 type Store = { required: Map<string, number>; listeners: Set<() => void> };
 const stores = new WeakMap<QueryClient, Store>();
@@ -25,7 +25,7 @@ function storeOf(qc: QueryClient): Store {
   return s;
 }
 
-const scopeKey = (s: PermissionScope) => `${s.accountId}/${s.orgId}/${s.rootId}`;
+const scopeKey = (s: PermissionWatermarkScope) => `${s.accountId}/${s.orgId}/${s.rootId}`;
 const notify = (s: Store) => {
   for (const fn of [...s.listeners]) fn();
 };
@@ -33,7 +33,7 @@ const notify = (s: Store) => {
 /** Raise the root's required revision (monotonic: a lower revision never lowers it). */
 export function raisePermissionWatermark(
   qc: QueryClient,
-  scope: PermissionScope,
+  scope: PermissionWatermarkScope,
   revision: number,
 ): void {
   const s = storeOf(qc);
@@ -44,7 +44,10 @@ export function raisePermissionWatermark(
 }
 
 /** The root's required revision, or undefined when nothing raised one in this session. */
-export function permissionWatermark(qc: QueryClient, scope: PermissionScope): number | undefined {
+export function permissionWatermark(
+  qc: QueryClient,
+  scope: PermissionWatermarkScope,
+): number | undefined {
   return storeOf(qc).required.get(scopeKey(scope));
 }
 

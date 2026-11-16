@@ -19,7 +19,7 @@ import {
   snapshotDefaults,
 } from "./support/conversation";
 import { resetNavigation, router } from "./support/navigation";
-import { renderRouteWithCache } from "./support/query";
+import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { pageElement, testQueryClient } from "./support/render";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -301,6 +301,165 @@ describe("live profile change of an interactive root (Task 10D)", () => {
   });
 });
 
+describe("fix round 1 (10D review minors)", () => {
+  it("Minor 1: a PATCH without an answer is unconfirmed until a read started after it succeeds", async () => {
+    const user = userEvent.setup();
+    let patched = false;
+    let after = 0;
+    const late = deferred<Response>();
+    const calls = stubApi({
+      ...chatRoutes("c1"),
+      [`PATCH ${BASE}/c1/permissions`]: () => {
+        patched = true;
+        return Promise.reject(new TypeError("Failed to fetch"));
+      },
+      [`GET ${BASE}/c1/permissions`]: () =>
+        !patched
+          ? json(200, permissionsView({ revision: 3 }))
+          : ++after <= 2
+            ? failed()
+            : late.promise,
+    });
+    await renderRouteWithCache("/chat/c1", chatRoutes("c1", {}, permissionsView({ revision: 3 })), {
+      locale: "en",
+    });
+    await choose(user, "Request approval");
+    await screen.findByText(
+      "No answer arrived, so the change may or may not have been saved. The value shown is the last confirmed one.",
+    );
+    expect(editable()).toBeNull();
+    expect(locked()?.textContent).toBe("Approve for me");
+    expect(locked()?.getAttribute("title")).toBe(
+      "Last confirmed permissions. Refreshing before they can change again.",
+    );
+    await user.click(await screen.findByRole("button", { name: "Refresh" }));
+    await act(async () =>
+      late.resolve(json(200, permissionsView({ profile: "request-approval", revision: 4 }))),
+    );
+    await waitFor(() =>
+      expect(editable()?.getAttribute("aria-label")).toBe("Permissions: Request approval"),
+    );
+    expect(patches(calls)).toHaveLength(1);
+  });
+
+  it("Minor 2: a Full dialog closed by a newer revision never comes back by itself", async () => {
+    const user = userEvent.setup();
+    let read = 0;
+    const view = (revision: number) =>
+      permissionsView({
+        revision,
+        deviceId: "d1",
+        scopeRevision: "scope-9",
+        availability: permissionAvailability("supported"),
+        fullAccessCeiling: true,
+      });
+    const routes = {
+      ...chatRoutes("c1", { deviceId: "d1" }, view(2)),
+      [`GET ${BASE}/c1/device`]: () => json(200, { device: envView("d1", "Build box") }),
+    };
+    const calls = stubApi({
+      ...routes,
+      [`GET ${BASE}/c1/permissions`]: () => json(200, view(++read < 2 ? 2 : 3)),
+    });
+    await renderRouteWithCache("/chat/c1", routes, { locale: "en" });
+    const es = FakeEventSource.instances[0] as FakeEventSource;
+    act(() => es.emit("event", { ...profileEvent(1, 0), type: "run_started", payload: {} }));
+    await waitFor(() => expect(read).toBe(1));
+    await choose(user, /^Full access/);
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    act(() => es.emit("event", profileEvent(2, 3, "approve-for-me")));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(read).toBe(2));
+    await waitFor(() => expect(editable()).not.toBeNull());
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(patches(calls)).toHaveLength(0);
+  });
+
+  it("Minor 3: a PATCH also refreshes the sub-agent wait cards the root page shows", async () => {
+    const user = userEvent.setup();
+    const wait = {
+      seq: 1,
+      runId: "r1",
+      type: "subagent_waiting",
+      payload: {
+        subagentId: "sa1",
+        childRunId: "cr1",
+        kind: "approval",
+        approvalId: "ap2",
+        toolKey: "Bash",
+        requestedFor: "a1",
+        approverRole: null,
+      },
+      createdAt: "2026-11-16T10:00:00.000Z",
+    } as unknown as ConversationEvent;
+    const approvalRoute = {
+      "GET /api/v1/orgs/o1/approvals/ap2": () =>
+        json(404, { error: { code: "approval.not_found", message: "Not found" } }),
+    };
+    const routes = {
+      ...chatRoutes("c1", {}, permissionsView({ revision: 3 }), [wait]),
+      ...approvalRoute,
+    };
+    const calls = stubApi({
+      ...routes,
+      [`PATCH ${BASE}/c1/permissions`]: () => json(200, { revision: 4 }),
+      [`GET ${BASE}/c1/permissions`]: () =>
+        json(200, permissionsView({ profile: "request-approval", revision: 4 })),
+      "GET /api/v1/orgs/o1/inbox": () => json(200, { items: [] }),
+      "GET /api/v1/orgs/o1/inbox/count": () => json(200, { count: 0 }),
+    });
+    const route = await renderRouteWithCache("/chat/c1", routes, { locale: "en" });
+    await act(async () => {});
+    const waitReads = () => calls.filter((c) => c.url === "/api/v1/orgs/o1/approvals/ap2").length;
+    const before = waitReads();
+    await choose(user, "Request approval");
+    await waitFor(() => expect(patches(calls)).toHaveLength(1));
+    await waitFor(() => expect(waitReads()).toBeGreaterThan(before));
+    expect(route.client.getQueryData(permissionsQuery("o1", "c1").queryKey)).toMatchObject({
+      revision: 4,
+    });
+  });
+
+  it("Minor 4: Full waits until the device's name is known", async () => {
+    const user = userEvent.setup();
+    const view = permissionsView({
+      revision: 2,
+      deviceId: "d1",
+      scopeRevision: "scope-9",
+      availability: permissionAvailability("supported"),
+      fullAccessCeiling: true,
+    });
+    const routes = {
+      ...chatRoutes("c1", { deviceId: "d1" }, view),
+      // the bound device's read never answers
+      [`GET ${BASE}/c1/device`]: () => new Promise<Response>(() => {}),
+    };
+    await renderRouteEmptyCache("/chat/c1", routes, { locale: "en" });
+    const button = await waitFor(() => {
+      const b = editable();
+      expect(b).not.toBeNull();
+      return b as HTMLElement;
+    });
+    await user.click(button);
+    const full = within(screen.getByRole("menu")).getByRole("menuitemradio", {
+      name: /^Full access/,
+    });
+    expect(full.getAttribute("aria-disabled")).toBe("true");
+    expect(full.textContent).toContain("Checking this device…");
+  });
+
+  it("Minor 5: below the watermark with nothing in flight and no error, Refresh is offered", async () => {
+    stubApi({ [`GET ${BASE}/c1/permissions`]: () => json(200, permissionsView({ revision: 3 })) });
+    const client = testQueryClient();
+    client.setQueryData(permissionsQuery("o1", "c1").queryKey, permissionsView({ revision: 3 }));
+    raisePermissionWatermark(client, { accountId: "a1", orgId: "o1", rootId: "c1" }, 4);
+    const row = CONV("c1").conversation as unknown as Conversation;
+    render(pageElement(<Probe row={row} />, { client, locale: "en" }));
+    expect(await screen.findByRole("button", { name: "Refresh" })).toBeTruthy();
+    expect(screen.getByTestId("probe").textContent).toBe("locked:Approve for me");
+  });
+});
+
 /** The hook alone, as a remounting composer uses it. */
 function Probe({ row }: { row: Conversation }) {
   const p = useConversationPermission({
@@ -311,11 +470,14 @@ function Probe({ row }: { row: Conversation }) {
     deviceLabel: "—",
   });
   return (
-    <output data-testid="probe">
-      {p.picker === undefined
-        ? "none"
-        : `${p.picker.locked ? "locked" : "editable"}:${p.picker.value}`}
-    </output>
+    <>
+      <output data-testid="probe">
+        {p.picker === undefined
+          ? "none"
+          : `${p.picker.locked ? "locked" : "editable"}:${p.picker.value}`}
+      </output>
+      {p.notice}
+    </>
   );
 }
 
