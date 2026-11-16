@@ -269,6 +269,8 @@ pages through `SetupContext`; pages never read it themselves.
   | Agent | 新建 → `/agents/new` once a model exists; before that disabled with "先配置模型" | same | same | "等待管理员创建 agent" |
   | 可以稍后再做 | invite members, channels, plugins (when also an org admin) | invite members, channels, plugins | 我的连接 | — |
 
+  > Superseded by design review 2026-11-16 task 14: the model step leads super admins to `/admin/models` and, while the org has not turned a deployed service on, org admins to `/settings/models` (`modelConfigHref`).
+
   A viewer with nothing to do right now also sees why, with a 刷新 button that re-reads readiness:
   an org admin blocked on the model "需要部署管理员配置模型服务后才能继续", anyone else
   "组织还在配置中，管理员完成后你就能开始对话".

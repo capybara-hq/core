@@ -280,6 +280,8 @@ Steps per role, taken from the existing table:
 | 连接渠道 (optional) | when also org admin: `/channels/new` | `/channels/new` | — | — |
 | 邀请成员 (optional) | when also org admin: `/settings/members` | `/settings/members` | — | — |
 | 安装插件 (optional) | when also org admin: `/catalog` | `/catalog` | — | — |
+
+> Superseded by design review 2026-11-16 task 14: the model step leads super admins to `/admin/models` and, while the org has not turned a deployed service on, org admins to `/settings/models` (`modelConfigHref`).
 | 我的连接 (optional) | — | — | `/account/connections` | — |
 
 The columns are the viewer's highest role; the optional steps follow the org role, so an enterprise
