@@ -184,6 +184,7 @@ export class LangGraphLoop implements AgentLoop {
       sink: ctx.sink,
       absorbedUpToSeq,
       ...(maxSteps !== undefined && { maxSteps }),
+      ...(ctx.limits.deadline !== undefined && { deadline: ctx.limits.deadline }),
       mediaCache,
       agentId: ctx.agentId,
       accountId: ctx.triggerAccountId,

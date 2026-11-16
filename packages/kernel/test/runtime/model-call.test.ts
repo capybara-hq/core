@@ -261,6 +261,7 @@ const step = (
     signal?: AbortSignal;
     sink?: StreamSink;
     maxSteps?: number;
+    deadline?: number;
   } = {},
 ) =>
   runModelStep(deps, {
@@ -275,6 +276,7 @@ const step = (
     signal: over.signal ?? new AbortController().signal,
     sink: over.sink ?? (() => {}),
     ...(over.maxSteps !== undefined && { maxSteps: over.maxSteps }),
+    ...(over.deadline !== undefined && { deadline: over.deadline }),
   });
 
 const all = () => eventLog.readAfter(conversationId, 0, 10_000);
@@ -617,6 +619,104 @@ describe("runModelStep", () => {
     expect(elapsed).toBeGreaterThanOrEqual(1_900);
     expect(elapsed).toBeLessThan(4_500);
     expect((await ofType("model_call")).map((c) => c.payload.attempt)).toEqual([1, 2]);
+  });
+
+  /**
+   * Intercepts the retry-after wait (the only 30 s timer) so a test can fire it by hand: faking
+   * every timer starves the database driver, and a real 30 s wait is a fixed sleep.
+   */
+  const captureRetryWait = () => {
+    const waits: { fire: () => void; cleared: boolean }[] = [];
+    const real = globalThis.setTimeout;
+    const realClear = globalThis.clearTimeout;
+    const set = vi.spyOn(globalThis, "setTimeout").mockImplementation(((
+      fn: () => void,
+      ms?: number,
+    ) => {
+      if (ms !== 30_000) return real(fn, ms);
+      const w = { fire: fn, cleared: false };
+      waits.push(w);
+      return w as unknown as NodeJS.Timeout;
+    }) as typeof setTimeout);
+    const clear = vi.spyOn(globalThis, "clearTimeout").mockImplementation(((t: unknown) => {
+      const w = waits.find((x) => x === t);
+      if (w) w.cleared = true;
+      else realClear(t as NodeJS.Timeout);
+    }) as typeof clearTimeout);
+    const arrived = async () => {
+      await vi.waitFor(() => expect(waits).toHaveLength(1));
+      return waits[0] as { fire: () => void; cleared: boolean };
+    };
+    return {
+      arrived,
+      restore: () => {
+        set.mockRestore();
+        clear.mockRestore();
+      },
+    };
+  };
+
+  it("retry-after of 30 s that fits the run deadline → waited out on the same model", async () => {
+    let n = 0;
+    stubImpl = stub([stubInfo("flaky")], () => {
+      if (++n === 1) throw new ModelError("rate_limited", "slow", { retryAfterMs: 30_000 });
+      return "after the wait";
+    });
+    await say("hi");
+    const timers = captureRetryWait();
+    try {
+      const pending = step({
+        agent: agentWith({ model: { provider: "stub", model: "flaky" } }),
+        deadline: Date.now() + 120_000,
+      });
+      const wait = await timers.arrived();
+      expect(n).toBe(1);
+      wait.fire();
+      const r = await pending;
+      expect(n).toBe(2);
+      expect(r.content).toEqual([{ type: "text", text: "after the wait" }]);
+    } finally {
+      timers.restore();
+    }
+  });
+
+  it("retry-after longer than the time left to the deadline → fails without waiting", async () => {
+    stubImpl = stub([stubInfo("limited")], () => {
+      throw new ModelError("rate_limited", "slow", { retryAfterMs: 30_000 });
+    });
+    await say("hi");
+    const code = await runErrorCode(
+      step({
+        agent: agentWith({ model: { provider: "stub", model: "limited" } }),
+        deadline: Date.now() + 5_000,
+      }),
+    );
+    expect(code).toBe("model.rate_limited");
+    expect(await ofType("model_call")).toHaveLength(1);
+  });
+
+  it("abort interrupts a retry-after wait that fits the deadline", async () => {
+    stubImpl = stub([stubInfo("busy")], () => {
+      throw new ModelError("rate_limited", "slow", { retryAfterMs: 30_000 });
+    });
+    await say("hi");
+    const ac = new AbortController();
+    const timers = captureRetryWait();
+    try {
+      const pending = step({
+        signal: ac.signal,
+        agent: agentWith({ model: { provider: "stub", model: "busy" } }),
+        deadline: Date.now() + 120_000,
+      });
+      const wait = await timers.arrived();
+      ac.abort();
+      const r = await pending;
+      expect(wait.cleared).toBe(true);
+      expect(r).toMatchObject({ aborted: true, content: [] });
+      expect(await ofType("model_call")).toHaveLength(1);
+    } finally {
+      timers.restore();
+    }
   });
 
   it("模型不存在 → RunError(run.model_unavailable)", async () => {

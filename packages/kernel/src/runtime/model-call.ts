@@ -139,10 +139,18 @@ export const contextTooLargeText = (model: ModelInfo, target: number, estimate: 
 const DEFAULT_RETRY_DELAY_MS = 1000;
 
 /**
- * 供应商建议等待（retryAfterMs）的上限。超过它就不在同一模型上等待重试，直接切兜底（没有兜底则失败），
- * 避免一次运行被「请 10 分钟后再试」之类的建议长时间挂起。
+ * Longest provider-suggested wait (retryAfterMs) honoured on the same model when the run has no
+ * deadline. With a deadline the wait is honoured when it fits the time the run has left.
  */
 const MAX_RETRY_AFTER_MS = 10_000;
+
+/** Whether waiting `retryAfterMs` on the same model fits the run's remaining deadline. */
+function retryAfterFits(retryAfterMs: number | undefined, deadline: number | undefined): boolean {
+  const wait = retryAfterMs ?? 0;
+  if (deadline === undefined) return wait <= MAX_RETRY_AFTER_MS;
+  // the wait must leave time for the retry itself: a wait that ends at the deadline is no wait
+  return wait < deadline - Date.now();
+}
 
 /** 读事件日志的分页大小。 */
 const READ_PAGE = 1000;
@@ -271,6 +279,11 @@ export interface ModelStepInput {
    * reminder is sent.
    */
   maxSteps?: number;
+  /**
+   * The run's deadline in epoch ms (`LoopContext.limits.deadline`); absent: no deadline. A
+   * provider's retry-after is honoured when it fits the time left.
+   */
+  deadline?: number;
 }
 
 export interface ModelStepResult {
@@ -1589,7 +1602,7 @@ async function mergeWritten(
 
 /**
  * 降级梯子：主模型 → 主模型重试一次（等 `retryAfterMs ?? 1000`，可被中止）→ `agent.fallback`（若有）。
- * 建议等待超过 `MAX_RETRY_AFTER_MS` 时跳过同模型重试。
+ * 建议等待放不进运行剩余时间（无 deadline 时超过 `MAX_RETRY_AFTER_MS`）时跳过同模型重试。
  * 每次尝试解析出模型后、写 `model_call` 之前写本步的尾部提醒（均按本步幂等，只写一次）：所用模型不支持工具而本步有工具
  * → {@link TOOLS_UNSUPPORTED_REMINDER}；然后是轮次提醒或收尾提醒（收尾提醒因此位于请求末尾）。
  * 每次实际尝试写自己的 `model_call`（attempt 从 1 连续递增，跳过的不计）；重试前经 sink 发 `step_reset`。
@@ -1637,8 +1650,8 @@ async function ladder(
   let sentMedia: string[] = [];
   for (const rung of rungs) {
     if ((mainUnavailable || skipToFallback) && !rung.fallback) continue;
-    if (last && !rung.fallback && (last.retryAfterMs ?? 0) > MAX_RETRY_AFTER_MS) {
-      deps.log.warn("model retry skipped: suggested wait exceeds cap", {
+    if (last && !rung.fallback && !retryAfterFits(last.retryAfterMs, input.deadline)) {
+      deps.log.warn("model retry skipped: suggested wait exceeds the run deadline or cap", {
         conversationId,
         runId,
         step,
