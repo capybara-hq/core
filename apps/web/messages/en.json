@@ -2457,7 +2457,8 @@
       "tokens": "Service tokens",
       "preferences": "Preferences",
       "appearance": "Appearance",
-      "schedules": "Scheduled tasks"
+      "schedules": "Scheduled tasks",
+      "audit": "Audit log"
     },
     "empty": "No connector needs your own credential.",
     "emptyHint": "Connectors that use personal credentials show up here.",
@@ -6468,5 +6469,12 @@
     "send": "Send request",
     "sent": "Request sent to the organization's admins.",
     "refused": "The request can't be sent."
+  },
+  "orgAudit": {
+    "title": "Audit log",
+    "description": "Actions in this organization, newest first: members, settings, agents, connectors, skills, plugins and extensions. Only admins see this page.",
+    "empty": "No actions recorded yet.",
+    "emptyHint": "Changes made in this organization show up here.",
+    "loadMore": "Load more"
   }
 }

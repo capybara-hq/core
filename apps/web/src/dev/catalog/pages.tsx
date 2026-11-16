@@ -11,7 +11,7 @@ import type {
   AdminHealthQueue,
   AdminOverview,
   AdminUsageWeek,
-  PlatformAuditPage,
+  AuditPage,
 } from "../../lib/admin";
 import type { PlatformInboxView } from "../../lib/admin-inbox";
 import {
@@ -99,7 +99,7 @@ const ATTENTION: AdminAttention = {
   unavailable: [],
 };
 
-const AUDIT: PlatformAuditPage = {
+const AUDIT: AuditPage = {
   events: [
     {
       id: "12",

@@ -4,11 +4,11 @@ import { LEGACY_AUDIT_ACTIONS } from "../identity/audit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 
 /**
- * One platform-level audit event (admin overview spec §5.2, §9): who, what, on what and when, and
- * two flags. Never the event's `detail` (it may carry config field names or ids); a deleted actor
+ * One audit event (admin overview spec §5.2, §9): who, what, on what and when, and two flags.
+ * Never the event's `detail` (it may carry config field names, ids or values); a deleted actor
  * account reads as its id with a null name and email; `actor` is null for the kernel itself.
  */
-export interface PlatformAuditEvent {
+export interface AuditEvent {
   /** The event id (a bigserial, as a decimal string); also the keyset cursor. */
   id: string;
   at: string;
@@ -22,22 +22,36 @@ export interface PlatformAuditEvent {
   target: string | null;
 }
 
-/** A page of {@link PlatformAuditEvent}s; `next` is the `after` of the next page, null at the end. */
-export interface PlatformAuditPage {
-  events: PlatformAuditEvent[];
+/** A page of {@link AuditEvent}s; `next` is the `after` of the next page, null at the end. */
+export interface AuditPage {
+  events: AuditEvent[];
   next: string | null;
 }
 
+/** Whose events: the platform's (`org_id IS NULL`, decision D3) or one org's. */
+export type AuditScope = { platform: true } | { orgId: string };
+
+export interface AuditListQuery {
+  after?: string | undefined;
+  limit: number;
+  /** Only actions starting with this prefix, matched on the name as listed (legacy names mapped). */
+  action?: string | undefined;
+}
+
+/** `prefix` as a LIKE pattern matching the strings that start with it. */
+const likePrefix = (prefix: string): string => `${prefix.replace(/[\\%_]/g, "\\$&")}%`;
+
 /**
- * Reads the platform-level audit log: events with no org (`org_id IS NULL`, decision D3), newest
- * first by id, keyset paged (`audit_events_platform_idx`). Read-only and not audited (D5).
+ * Reads the audit log of one scope: the platform's (the admin console's 审计日志) or one org's (the
+ * org settings' 审计日志, and the super admin's view of an org), newest first by id, keyset paged
+ * (`audit_events_platform_idx` / `audit_events_org_id_idx`). Read-only and not audited (D5).
  */
 @Injectable()
-export class PlatformAuditService {
+export class AuditLogService {
   constructor(@Inject(KernelDb) private readonly kdb: KernelDb) {}
 
   /** `limit` events with an id below `after` (from the newest without it); one extra row tells `next`. */
-  async list(q: { after?: string | undefined; limit: number }): Promise<PlatformAuditPage> {
+  async list(scope: AuditScope, q: AuditListQuery): Promise<AuditPage> {
     let query = this.kdb.db
       .selectFrom("audit_events as a")
       .leftJoin("accounts as ac", "ac.id", "a.actor_account_id")
@@ -50,17 +64,34 @@ export class PlatformAuditService {
         "a.target",
         "ac.display_name",
         "ac.email",
-        // only the one flag the overview shows, never the whole detail (spec §9)
+        // only the one flag the log shows, never the whole detail (spec §9)
         sql<string | null>`a.detail->>'via'`.as("via"),
-      ])
-      .where("a.org_id", "is", null);
+      ]);
+    query =
+      "orgId" in scope
+        ? query.where("a.org_id", "=", scope.orgId)
+        : query.where("a.org_id", "is", null);
     if (q.after !== undefined) query = query.where("a.id", "<", q.after);
+    if (q.action !== undefined) {
+      const prefix = q.action;
+      const legacy = Object.keys(LEGACY_AUDIT_ACTIONS);
+      // a legacy row matches by the name it is listed under, never by its stored one
+      const legacyMatches = Object.entries(LEGACY_AUDIT_ACTIONS)
+        .filter(([, to]) => to.startsWith(prefix))
+        .map(([from]) => from);
+      query = query.where((eb) =>
+        eb.or([
+          eb.and([eb("a.action", "like", likePrefix(prefix)), eb("a.action", "not in", legacy)]),
+          ...(legacyMatches.length > 0 ? [eb("a.action", "in", legacyMatches)] : []),
+        ]),
+      );
+    }
     const rows = await query
       .orderBy("a.id", "desc")
       .limit(q.limit + 1)
       .execute();
     const events = rows.slice(0, q.limit).map(
-      (r): PlatformAuditEvent => ({
+      (r): AuditEvent => ({
         id: String(r.id),
         at: r.at.toISOString(),
         actor:

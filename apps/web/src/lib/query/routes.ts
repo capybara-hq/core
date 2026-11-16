@@ -109,6 +109,7 @@ import {
   extensionPointDefaultsQuery,
   invitationsQuery,
   modelsCatalogQuery,
+  orgAuditQuery,
   orgFilePreviewersQuery,
   orgPurposesQuery,
   orgSettingsQuery,
@@ -1229,6 +1230,12 @@ export const ROUTES: readonly RouteEntry[] = [
     pattern: "/settings/sandbox",
     queries: ({ orgId, me }) =>
       orgId === null || !atLeast(me, "member") ? [] : [q(orgSettingsQuery(orgId))],
+  },
+  {
+    pattern: "/settings/audit",
+    // Org admins (org.update): the newest page of the org's audit log.
+    queries: ({ orgId, me }) =>
+      orgId === null || !atLeast(me, "admin") ? [] : [q(orgAuditQuery(orgId))],
   },
   {
     pattern: "/settings/tokens",

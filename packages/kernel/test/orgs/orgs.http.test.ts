@@ -6,6 +6,7 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import type { Account, AccountsService } from "../../src/identity/accounts.js";
 import type { ApiTokenService } from "../../src/identity/api-tokens.js";
+import { audit } from "../../src/identity/audit.js";
 import { createLogger } from "../../src/log.js";
 import type { MembersService } from "../../src/orgs/members.service.js";
 import type { OrgRole } from "../../src/orgs/roles.js";
@@ -56,7 +57,7 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 beforeEach(async () => {
-  await truncateTables(raw, "capybara.accounts, capybara.orgs");
+  await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
   await redis.flushdb();
   owner = await accounts.createLocal({ login: "owner", password: PW, displayName: "Owner" });
   other = await accounts.createLocal({ login: "other", password: PW, displayName: "Other" });
@@ -545,5 +546,134 @@ describe("组织 HTTP", () => {
     });
     expect(res.statusCode).toBe(404);
     expect(other.id).toBeDefined();
+  });
+});
+
+// The org audit log over HTTP (`GET /api/v1/orgs/:orgId/audit`) and the super admin's `orgId`
+// filter on `GET /api/v1/admin/audit`: scoping (an org admin reads only their org; members are
+// refused, non-members get 404), keyset paging, the action prefix, never `detail`.
+
+type Page = {
+  events: { id: string; action: string; target: string | null; actor: unknown }[];
+  next: string | null;
+};
+
+/** Two orgs, A (owned by `owner`) and B (owned by `bob`), each with its own audited rows. */
+async function twoOrgs() {
+  const a = await session("owner");
+  const orgA = await createOrg(a, "org-a", "org-a");
+  await accounts.createLocal({ login: "bob", password: PW, displayName: "Bob" });
+  const b = await session("bob");
+  const orgB = await createOrg(b, "org-b", "org-b");
+  for (let i = 0; i < 5; i++) {
+    await audit(db, {
+      actorAccountId: owner.id,
+      orgId: orgA,
+      action: "org.settings_updated",
+      target: `a-${i}`,
+      detail: { fields: ["secretField"] },
+    });
+  }
+  await audit(db, { orgId: orgB, action: "org.settings_updated", target: "b-only" });
+  return { a, b, orgA, orgB };
+}
+
+describe("GET /api/v1/orgs/:orgId/audit", () => {
+  it("an org admin reads only their org, newest first, keyset paged, never detail", async () => {
+    const { orgA } = await twoOrgs();
+    const { req: admin } = await memberAs(orgA, "admin", "ada");
+    const all = (
+      await admin({ method: "GET", url: `/api/v1/orgs/${orgA}/audit?limit=100` })
+    ).json() as Page;
+    const targets = all.events.map((e) => e.target);
+    expect(targets).not.toContain("b-only");
+    // the seeded rows, newest first, among the org's own (org.created, the admin's membership)
+    expect(targets.filter((x) => x?.startsWith("a-"))).toEqual(["a-4", "a-3", "a-2", "a-1", "a-0"]);
+    expect(all.next).toBeNull();
+    expect(JSON.stringify(all)).not.toMatch(/secretField|"detail"/);
+    // keyset paging gives the same rows
+    const seen: string[] = [];
+    let after: string | null | undefined;
+    do {
+      const q = after === undefined ? "" : `&after=${after}`;
+      const res = await admin({ method: "GET", url: `/api/v1/orgs/${orgA}/audit?limit=2${q}` });
+      expect(res.statusCode).toBe(200);
+      const page = res.json() as Page;
+      expect(page.events.length).toBeLessThanOrEqual(2);
+      seen.push(...page.events.map((e) => e.id));
+      after = page.next;
+    } while (after !== null);
+    expect(seen).toEqual(all.events.map((e) => e.id));
+    // the action prefix
+    const filtered = (
+      await admin({ method: "GET", url: `/api/v1/orgs/${orgA}/audit?action=org.settings_` })
+    ).json() as Page;
+    expect(filtered.events.map((e) => e.target)).toEqual(["a-4", "a-3", "a-2", "a-1", "a-0"]);
+  });
+
+  it("org A's admin cannot read org B (404); a member or guest is refused (403)", async () => {
+    const { a, orgA, orgB } = await twoOrgs();
+    const res = await a({ method: "GET", url: `/api/v1/orgs/${orgB}/audit` });
+    expect(res.statusCode).toBe(404);
+    expect(errCode(res)).toBe("org.not_found");
+    for (const role of ["member", "guest"] as const) {
+      const { req } = await memberAs(orgA, role, `m-${role}`);
+      const r = await req({ method: "GET", url: `/api/v1/orgs/${orgA}/audit` });
+      expect(r.statusCode, role).toBe(403);
+      expect(errCode(r)).toBe("forbidden");
+    }
+  });
+
+  it("a service token is refused even as admin (org.update is human-only)", async () => {
+    const { orgA } = await twoOrgs();
+    const { token } = await tokens.createService(orgA, {
+      name: "ci",
+      role: "admin",
+      createdBy: owner.id,
+    });
+    const res = await k.http.inject({
+      method: "GET",
+      url: `/api/v1/orgs/${orgA}/audit`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it("a bad cursor or action is 400", async () => {
+    const { a, orgA } = await twoOrgs();
+    for (const q of ["after=abc", "action=Org%25", "limit=0"]) {
+      const res = await a({ method: "GET", url: `/api/v1/orgs/${orgA}/audit?${q}` });
+      expect(res.statusCode, q).toBe(400);
+    }
+  });
+});
+
+describe("GET /api/v1/admin/audit?orgId=", () => {
+  it("the super admin reads one org's log with orgId, the platform's without", async () => {
+    const { orgA, orgB } = await twoOrgs();
+    await audit(db, { actorAccountId: owner.id, action: "account.created", target: "acc-new" });
+    await accounts.createLocal({
+      login: "root",
+      password: PW,
+      displayName: "Root",
+      superAdmin: true,
+    });
+    const root = await session("root");
+    const ofB = (
+      await root({ method: "GET", url: `/api/v1/admin/audit?orgId=${orgB}` })
+    ).json() as Page;
+    expect(ofB.events.map((e) => e.target)).toEqual(["b-only", orgB]);
+    const ofA = (
+      await root({ method: "GET", url: `/api/v1/admin/audit?orgId=${orgA}&limit=2` })
+    ).json() as Page;
+    expect(ofA.events.map((e) => e.target)).toEqual(["a-4", "a-3"]);
+    expect(ofA.next).not.toBeNull();
+    const platform = (await root({ method: "GET", url: "/api/v1/admin/audit" })).json() as Page;
+    expect(platform.events.map((e) => e.target)).not.toContain("b-only");
+    expect(platform.events.map((e) => e.action)).toContain("account.created");
+    // not for an org admin
+    const a = await session("owner");
+    const res = await a({ method: "GET", url: `/api/v1/admin/audit?orgId=${orgA}` });
+    expect(res.statusCode).toBe(403);
   });
 });

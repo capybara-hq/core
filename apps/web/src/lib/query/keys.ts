@@ -289,6 +289,8 @@ export const keys = {
       orgFilePreviewers: (): readonly unknown[] => [...all, "orgFilePreviewers"],
       /** The org's service tokens. */
       serviceTokens: (): readonly unknown[] => [...all, "serviceTokens"],
+      /** A page of the org's audit log (`after`: the cursor, "" for the newest). */
+      orgAudit: (after = ""): readonly unknown[] => [...all, "orgAudit", after],
       /** The org's eval sets. */
       evalSets: (): readonly unknown[] => [...all, "evalSets"],
       /** One eval set (with its cases). */

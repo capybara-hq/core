@@ -125,7 +125,7 @@ describe("组织设置（SettingsPage）", () => {
     await screen.findByText(en.orgSettings.readonly);
     expect(screen.getByRole("link", { name: nav.members })).toBeTruthy();
     expect(screen.getByRole("link", { name: nav.sandbox })).toBeTruthy();
-    for (const hidden of [nav.models, nav.tokens]) {
+    for (const hidden of [nav.models, nav.tokens, nav.audit]) {
       expect(screen.queryByRole("link", { name: hidden })).toBeNull();
     }
   });

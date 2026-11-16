@@ -2,10 +2,10 @@ import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
 import { DeploymentSettingsBody, PurposeParams } from "../../admin/admin.schemas.js";
 import { AuditListQuery } from "../../admin/audit.schemas.js";
+import { AuditLogService } from "../../admin/audit-log.service.js";
 import { AdminHealthService } from "../../admin/health.service.js";
 import { UsageQuery } from "../../admin/overview.schemas.js";
 import { type AdminAttention, AdminOverviewService } from "../../admin/overview.service.js";
-import { PlatformAuditService } from "../../admin/platform-audit.service.js";
 import { AdminUsageService } from "../../admin/usage.service.js";
 import { ApiError } from "../../errors.js";
 import { ExtensionDisplayNames } from "../../extensions/display-name.js";
@@ -119,7 +119,7 @@ export class AdminOperations implements OnModuleInit {
     @Inject(PricesService) private readonly prices: PricesService,
     @Inject(ModelPurposesService) private readonly purposes: ModelPurposesService,
     @Inject(ThemesService) private readonly themes: ThemesService,
-    @Inject(PlatformAuditService) private readonly audit: PlatformAuditService,
+    @Inject(AuditLogService) private readonly audit: AuditLogService,
     @Inject(AdminOverviewService) private readonly overview: AdminOverviewService,
     @Inject(AdminHealthService) private readonly health: AdminHealthService,
     @Inject(AdminUsageService) private readonly usage: AdminUsageService,
@@ -186,13 +186,15 @@ export class AdminOperations implements OnModuleInit {
       defineOperation({
         id: "admin.audit",
         description:
-          "The platform-level audit log (super admin), newest first: deployment settings, accounts, marketplaces, catalog imports and scope, extensions, model prices and purposes, setup. Each event has its id, time, actor (id, name, email; null for the kernel itself), viaToken (done with a personal access token), viaAgent (done through the Platform tool), action and target; never the event's details, and never an org's own events. limit is 1 to 100 (default 20); pages by keyset: pass the returned next as params.after (null: no more).",
-        input: AuditListQuery.strict(),
+          "The platform-level audit log (super admin), newest first: deployment settings, accounts, marketplaces, catalog imports and scope, extensions, model prices and purposes, setup. Each event has its id, time, actor (id, name, email; null for the kernel itself), viaToken (done with a personal access token), viaAgent (done through the Platform tool), action and target; never the event's details, and never an org's own events (an org's log is orgs.audit, in that org). action filters by an action name or its prefix (e.g. marketplace.). limit is 1 to 100 (default 20); pages by keyset: pass the returned next as params.after (null: no more).",
+        // another org's events are never read through an agent (the conversation's org: orgs.audit)
+        input: AuditListQuery.omit({ orgId: true }).strict(),
         example: { limit: 20 },
         authz: { superAdmin: true },
         mirrors: ["GET /api/v1/admin/audit"],
+        omits: ["orgId"],
         confirm: "read",
-        run: (input) => this.audit.list(input),
+        run: (input) => this.audit.list({ platform: true }, input),
       }),
       defineOperation({
         id: "admin.settings",

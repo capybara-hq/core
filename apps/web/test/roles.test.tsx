@@ -20,6 +20,7 @@ import ExtensionsPage from "../src/app/(app)/extensions/page";
 import PluginEnablePage from "../src/app/(app)/plugins/[itemId]/enable/page";
 import PluginItemPage from "../src/app/(app)/plugins/[itemId]/page";
 import PluginsPage from "../src/app/(app)/plugins/page";
+import OrgAuditPage from "../src/app/(app)/settings/audit/page";
 import MembersPage from "../src/app/(app)/settings/members/page";
 import ModelsSettingsPage from "../src/app/(app)/settings/models/page";
 import OrganizationPage from "../src/app/(app)/settings/organization/page";
@@ -201,6 +202,7 @@ const PAGES: [string, ComponentType | RoutePage, "member" | "admin", string][] =
   ],
   ["/extensions", route("/extensions", () => ExtensionsPage()), "member", zh.roles.need.member],
   ["/settings/tokens", route("/settings/tokens", () => TokensPage()), "admin", zh.roles.need.admin],
+  ["/settings/audit", route("/settings/audit", () => OrgAuditPage()), "admin", zh.roles.need.admin],
   [
     "/settings/organization",
     route("/settings/organization", () => OrganizationPage()),

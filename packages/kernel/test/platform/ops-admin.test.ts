@@ -191,6 +191,7 @@ describe("registration and who may call", () => {
       "models.set-platform-purpose",
       "models.set-price",
       "models.set-purpose",
+      "orgs.audit",
       "orgs.current",
       "orgs.get",
       "orgs.list",
@@ -382,6 +383,34 @@ describe("orgs", () => {
       via: "agent",
     });
   });
+
+  it("orgs.audit pages this org's audit log like GET /orgs/:orgId/audit (org admins only)", async () => {
+    const o = op("orgs.audit");
+    expect(o.confirm).toBe("read");
+    expect(o.description).toContain("pass the returned next as params.after");
+    expect(availability(o, facts("member")).ok).toBe(false);
+    expect(availability(o, facts("admin"))).toEqual({ ok: true });
+    // another org's event is never listed
+    await sql`INSERT INTO capybara.audit_events (org_id, action, target)
+      VALUES (${org2}, 'org.updated', 'beta-only')`.execute(db);
+    const all = (await run("orgs.audit", { limit: 100 })) as {
+      events: { id: string; action: string; target: string | null; viaAgent: boolean }[];
+      next: string | null;
+    };
+    // the rename through orgs.update above, by the agent
+    expect(all.events).toContainEqual(
+      expect.objectContaining({ action: "org.updated", target: orgId, viaAgent: true }),
+    );
+    expect(all.events.map((e) => e.target)).not.toContain("beta-only");
+    expect(JSON.stringify(all)).not.toContain("Acme Research");
+    const one = (await run("orgs.audit", { limit: 1 })) as typeof all;
+    expect(one.events).toEqual([all.events[0]]);
+    const after = (await run("orgs.audit", { limit: 1, after: one.next })) as typeof all;
+    expect(after.events).toEqual([all.events[1]]);
+    // the same rows as the route
+    const http = await root({ method: "GET", url: `/api/v1/orgs/${orgId}/audit?limit=100` });
+    expect(http.json()).toEqual(all);
+  });
 });
 
 describe("admin and models", () => {
@@ -507,6 +536,8 @@ describe("admin and models", () => {
     expect(o.confirm).toBe("read");
     expect(o.description).toContain("pass the returned next as params.after");
     expect(availability(o, facts("owner")).ok).toBe(false);
+    // another org's events are never read through an agent
+    expect(o.input.safeParse({ orgId }).success).toBe(false);
     const all = (await run("admin.audit", { limit: 100 })) as {
       events: { id: string; action: string; viaAgent: boolean }[];
       next: string | null;
