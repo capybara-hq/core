@@ -917,13 +917,13 @@ describe("confirm installs the extension and stores the scope", () => {
 describe("invalid plugins: nothing is written", () => {
   beforeEach(reset);
 
-  it("a pre-0.1.0 tgz (capybara section or app.yaml) is 422 catalog.legacy_format with the repack message", async () => {
+  it("an old-format tgz (capybara section or app.yaml) is the ordinary 422 catalog.invalid_manifest naming the expected manifest", async () => {
     for (const bytes of [await legacyTgz(), await legacyTgz({ appYaml: true })]) {
       const res = await prepareFile(admin, bytes);
       expect(res.statusCode, res.body).toBe(422);
-      expect(res.json().error.code).toBe("catalog.legacy_format");
+      expect(res.json().error.code).toBe("catalog.invalid_manifest");
       expect(res.json().error.message).toMatch(
-        /uses the pre-0\.1\.0 package format \(capybara section \/ app\.yaml\); repack it as a plugin with \.capybara-plugin\/plugin\.json \(pnpm pack-plugin\)/,
+        /\.capybara-plugin\/plugin\.json not found in the package.*capybara-plugin pack/,
       );
     }
     await nothingStored();

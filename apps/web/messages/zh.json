@@ -238,7 +238,6 @@
       "single_provider_enabled": "只能启用一个提供方：请先停用已启用的那一个，再启用这个。",
       "single_provider_required": "这个能力由部署必需的插件提供，不能替换。",
       "package_invalid": "扩展包不合法：",
-      "legacy_format": "该包是 0.1.0 之前的旧格式。请用 pnpm pack-plugin 重新打包为带 .capybara-plugin/plugin.json 的插件后再上传。",
       "no_extension": "该插件不含扩展，部署上没有可安装的扩展。请改为安装到平台目录。",
       "package_too_large": "扩展包超过大小上限。",
       "unavailable": "扩展当前不可用。",
@@ -265,7 +264,6 @@
       "connector_removed": "本次启用要接管的连接器在启用过程中被删除了，请重试。",
       "icon_not_found": "没有图标。",
       "invalid_manifest": "插件包不合法：",
-      "legacy_format": "该包使用 0.1.0 之前的包格式。请用 .capybara-plugin/plugin.json 重新打包为插件（pnpm pack-plugin）后再导入。",
       "no_extension": "该插件没有扩展，部署上没有可安装的内容。",
       "dependency_unresolved": "该插件依赖的插件在平台上没有满足版本范围的版本，请先让超级管理员安装。",
       "dependency_disabled": "该插件依赖的插件已被超级管理员禁用。",
@@ -3729,8 +3727,7 @@
           "approval": "待批准权限",
           "dependency": "依赖缺失",
           "conflict": "冲突",
-          "converging": "正在收敛",
-          "legacy_format": "需要重新打包"
+          "converging": "正在收敛"
         },
         "problems": {
           "list_failed": "列模型失败",
@@ -4333,7 +4330,6 @@
         "failed": "失败",
         "dependency": "依赖缺失",
         "conflict": "冲突",
-        "legacy_format": "需要重新打包",
         "runningOrgsConfigure": "运行中 · 组织需各自配置（{count}）"
       },
       "replicas": {

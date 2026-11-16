@@ -135,7 +135,7 @@ import { maxSatisfying, satisfiesRange } from "./versions.js";
  *
  * prepare: the tgz is always hostile input, and **nothing is written until every check passes**
  * (F-AD): `readPluginPackage` (plugin.json, package.json, listed / scanned skills and templates,
- * icons; a pre-0.1.0 tgz is `catalog.legacy_format`), the extension's module graph and migrations
+ * icons), the extension's module graph and migrations
  * (`readExtensionPackage`), the extension's deployment state (config-declared names are
  * refused; name ownership; a downgrade to a version with unrun migrations is refused), each skill by
  * the skill package rules, each connector template against the connector loaded on this replica (or
@@ -557,15 +557,12 @@ const mismatch = (what: string) =>
   );
 
 /**
- * The API error of a plugin package that cannot be read in a catalog path: the pre-0.1.0 format ->
- * `catalog.legacy_format`; undeclared client code -> `client.undeclared`; a failing theme (themes
+ * The API error of a plugin package that cannot be read in a catalog path: undeclared client code -> `client.undeclared`; a failing theme (themes
  * spec §5) -> `theme.invalid` (details `[{ theme, errors }]`) or `theme.unreadable` (details
  * `[{ theme, issues }]`, the failing pairs); anything else -> `catalog.invalid_manifest` (issues as
  * details).
  */
 export function catalogPackageError(e: PluginPackageError | ExtensionPackageError): ApiError {
-  const legacy = e.code === "catalog.legacy_format" || e.code === "extension.legacy_format";
-  if (legacy) return new ApiError("catalog.legacy_format", e.message, e.issues);
   if (e.code === "client.undeclared") return new ApiError("client.undeclared", e.message);
   if (e.code === "theme.invalid" || e.code === "theme.unreadable") {
     return themeApiError(e as PluginPackageError);

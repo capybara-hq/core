@@ -304,19 +304,12 @@ export async function runExtensionsApprove(
  * One `extensions list` line: name, version, source, desired state, deployment status. SOURCE:
  * config / install / bootstrap (an install record the bootstrap step created); DESIRED: enabled /
  * disabled, `required` for a required bootstrap plugin (always enabled, cannot be disabled or
- * uninstalled), `always` for a config-declared extension. A package in the pre-0.1.0 format shows
- * `legacy_format` with the repack message; any other unreadable package shows `unknown` with the
- * reason.
+ * uninstalled), `always` for a config-declared extension. An unreadable package shows `unknown` with the reason.
  */
 function listLine(v: AdminExtensionView): string {
   const source = v.installSource === "bootstrap" ? "bootstrap" : v.source;
   const desired = v.required ? "required" : v.desired ? v.desired.state : "always";
-  const status =
-    v.status === "legacy_format"
-      ? `legacy_format (${v.error ?? ""})`
-      : v.error !== undefined
-        ? `unknown (${unreadable(v)})`
-        : v.status;
+  const status = v.error !== undefined ? `unknown (${unreadable(v)})` : v.status;
   return [v.name, v.version, source, desired, status].join("\t");
 }
 

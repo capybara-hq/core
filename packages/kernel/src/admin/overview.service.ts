@@ -41,8 +41,8 @@ export interface AdminOverviewStats {
 /**
  * Why an extension needs a look (spec §5.2), from its status and `configValid`: `config` (missing
  * or invalid deployment config), `load_failed`, `approval` (permissions wait for confirmation),
- * `dependency`, `conflict`, `converging` (replicas disagree, or a migration waits) and
- * `legacy_format`. Never the raw replica detail.
+ * `dependency`, `conflict` and `converging` (replicas disagree, or a migration waits). Never the
+ * raw replica detail.
  */
 export type AttentionExtensionReason =
   | "config"
@@ -50,8 +50,7 @@ export type AttentionExtensionReason =
   | "approval"
   | "dependency"
   | "conflict"
-  | "converging"
-  | "legacy_format";
+  | "converging";
 
 /** What is wrong with a model provider: its model list failed, or it lists no usable chat model. */
 export type AttentionProviderProblem = "list_failed" | "no_chat_model";
@@ -143,7 +142,6 @@ export function extensionReason(
       return "approval";
     case "dependency":
     case "conflict":
-    case "legacy_format":
       return e.status;
     case "converging":
     case "pending_migration":

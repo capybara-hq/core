@@ -231,11 +231,13 @@ describe("items", () => {
     );
   });
 
-  it("a pre-0.1.0 package from npm is 422 catalog.legacy_format", async () => {
+  it("an old-format package from npm is the ordinary 422 catalog.invalid_manifest", async () => {
     const res = await prepareNpm(admin, { package: "@acme/plugin-legacy" });
     expect(res.statusCode, res.body).toBe(422);
-    expect(res.json().error.code).toBe("catalog.legacy_format");
-    expect(res.json().error.message).toMatch(/^Package @acme\/plugin-legacy uses the pre-0\.1\.0/);
+    expect(res.json().error.code).toBe("catalog.invalid_manifest");
+    expect(res.json().error.message).toMatch(
+      /\.capybara-plugin\/plugin\.json not found in the package.*capybara-plugin pack/,
+    );
   });
 
   it("concurrent confirms of the same version: one 201, one 409, distinct prefixes, the winner's files intact", async () => {

@@ -223,13 +223,14 @@ bundles) are not read any more, and there is no converter:
   `deployment/directory/` in object storage are left in place, unreferenced; delete them by hand if
   you want the space back. Re-import the plugins you need, repacked.
 - **Installed extension packages need a repack.** An extension installed from an earlier-format
-  package stays installed, but no replica loads it: the admin console shows it as "Repack needed"
-  (`legacy_format`) with the reason, and approving it returns `extension.legacy_format`. Reinstall it
+  package stays installed, but no replica loads it: the admin console shows it as failed with the
+  reason, and approving it returns `extension.package_unavailable`. Reinstall it
   from a tgz repacked with `capybara-plugin pack` (same npm package, so its data, secrets, config and
   approval carry over). `openai-compatible` and `object-store-s3` are bootstrap plugins and are
   unaffected.
-- **Uploads in the earlier format are refused** with `catalog.legacy_format` or
-  `extension.legacy_format` and a message asking to repack the package. The catalog no longer
+- **Uploads in the earlier format are refused** as an invalid package
+  (`catalog.invalid_manifest` / `extension.package_invalid`); the message names the missing
+  `.capybara-plugin/plugin.json`. The catalog no longer
   takes zip uploads of skills or connector templates; package them as a plugin (an org can still
   upload a skill zip under Skills).
 - **Routes changed** (the web app follows): plugin import is `POST /api/v1/admin/catalog/import/file`

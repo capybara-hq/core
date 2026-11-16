@@ -238,7 +238,6 @@
       "single_provider_enabled": "Only one extension may provide this; disable the enabled one first, then enable this one.",
       "single_provider_required": "A plugin this deployment requires provides this; it can't be replaced.",
       "package_invalid": "The extension package is invalid:",
-      "legacy_format": "The package uses the pre-0.1.0 package format. Repack it as a plugin with .capybara-plugin/plugin.json (pnpm pack-plugin) and upload it again.",
       "no_extension": "This plugin has no extension, so there is no extension to install on the deployment. Install it into the platform catalog instead.",
       "package_too_large": "The extension package is over the size limit.",
       "unavailable": "The extension is unavailable right now.",
@@ -265,7 +264,6 @@
       "connector_removed": "The connector this install was going to take back was removed during the switch-on. Try again.",
       "icon_not_found": "No icon.",
       "invalid_manifest": "The plugin package is invalid:",
-      "legacy_format": "The package uses the pre-0.1.0 package format. Repack it as a plugin with .capybara-plugin/plugin.json (pnpm pack-plugin) and import it again.",
       "no_extension": "This plugin has no extension, so there is nothing to install on the deployment.",
       "dependency_unresolved": "A plugin this one depends on is not on the platform at a matching version. Ask the super admin to install it first.",
       "dependency_disabled": "A plugin this one depends on is disabled by the super admin.",
@@ -3741,8 +3739,7 @@
           "approval": "Permissions to approve",
           "dependency": "Dependency missing",
           "conflict": "Conflict",
-          "converging": "Converging",
-          "legacy_format": "Needs repackaging"
+          "converging": "Converging"
         },
         "problems": {
           "list_failed": "Model list failed",
@@ -4345,7 +4342,6 @@
         "failed": "Failed",
         "dependency": "Missing dependency",
         "conflict": "Conflict",
-        "legacy_format": "Repack needed",
         "runningOrgsConfigure": "Running · orgs configure their own ({count})"
       },
       "replicas": {

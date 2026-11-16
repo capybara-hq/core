@@ -8,12 +8,8 @@ import {
   isSafePackagePath,
   PLUGIN_MANIFEST_FILE,
 } from "@capybara-hq/plugin-sdk";
-import { LEGACY_FORMAT_MESSAGE, packagePath } from "../packages/tgz.js";
-import {
-  ExtensionPackageError,
-  type ExtensionPackageLimits,
-  extractExtensionPackage,
-} from "./package.js";
+import { packagePath } from "../packages/tgz.js";
+import { type ExtensionPackageLimits, extractExtensionPackage } from "./package.js";
 
 /**
  * 把内容寻址的插件包同步到本副本的本地目录（C13）：`<dir>/<name>/<sha256 前 16 位>/`。
@@ -179,9 +175,8 @@ export async function syncPackage(
 
 /**
  * The extension entry (relative to the package root) from the unpacked package's
- * `.capybara-plugin/plugin.json`. A package in the pre-0.1.0 format (no plugin.json, a `capybara`
- * section or `app.yaml`) -> {@link ExtensionPackageError} `extension.legacy_format` (the host
- * records it as the replica's failure instead of loading).
+ * `.capybara-plugin/plugin.json`. A package without plugin.json fails with an ordinary
+ * error (the host records it as the replica's failure instead of loading).
  */
 async function extensionEntryOf(root: string, name: string): Promise<string> {
   const read = async (path: string): Promise<unknown> => {
@@ -196,13 +191,6 @@ async function extensionEntryOf(root: string, name: string): Promise<string> {
     | { extension?: { entry?: unknown } }
     | undefined;
   if (manifest === undefined) {
-    const pkg = (await read("package.json")) as { capybara?: unknown } | undefined;
-    if (pkg?.capybara !== undefined || existsSync(join(root, "app.yaml"))) {
-      throw new ExtensionPackageError(
-        [`Package of extension ${name} ${LEGACY_FORMAT_MESSAGE}`],
-        "extension.legacy_format",
-      );
-    }
     throw new Error(`package ${name}: ${PLUGIN_MANIFEST_FILE} is missing`);
   }
   const entry = manifest.extension?.entry;

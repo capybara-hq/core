@@ -1261,11 +1261,11 @@ describe("/admin/plugins/import (WizardPage)", () => {
     expect(within(zone).getByText("todo.tgz")).toBeTruthy();
   });
 
-  it("a pre-0.1.0 upload shows the legacy-format error prominently", async () => {
+  it("an upload without a plugin manifest shows the invalid-package error prominently", async () => {
     stubApi({
       "GET /api/v1/me": () => json(200, ME),
       "POST /api/v1/admin/catalog/import/file": () =>
-        json(422, { error: { code: "catalog.legacy_format", message: "x" } }),
+        json(422, { error: { code: "catalog.invalid_manifest", message: "x" } }),
     });
     await renderRouteWithCache(importPath(), lastStubRoutes());
     const user = userEvent.setup();
@@ -1275,7 +1275,7 @@ describe("/admin/plugins/import (WizardPage)", () => {
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     await user.upload(input, new File([new Uint8Array([1, 2, 3])], "old.tgz"));
     await user.click(screen.getByRole("button", { name: en.catalog.admin.review.fetch }));
-    expect(await screen.findByText(`${en.errors.catalog.legacy_format}`)).toBeTruthy();
+    expect(await screen.findByText(`${en.errors.catalog.invalid_manifest}`)).toBeTruthy();
   });
 });
 

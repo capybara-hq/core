@@ -16,7 +16,6 @@ export {
 } from "./catalog/git-source.js";
 export type { PluginConfirmResult, PluginReview } from "./catalog/plugin-import.js";
 export {
-  LEGACY_FORMAT_MESSAGE,
   type PluginPackage,
   PluginPackageError,
   type ReadPluginPackageOptions,

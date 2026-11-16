@@ -836,7 +836,7 @@ describe("从清单引入", () => {
     await nothingImported();
   });
 
-  it("an npm or archive entry whose tgz is the pre-0.1.0 format is 422 catalog.legacy_format", async () => {
+  it("an npm or archive entry whose tgz is an old-format tgz is the ordinary 422 catalog.invalid_manifest", async () => {
     await resetAll();
     const legacy = pkgs["cat-l"] as Uint8Array;
     cat.setManifest({
@@ -848,8 +848,10 @@ describe("从清单引入", () => {
     for (const name of ["cat-l", "cat-la"]) {
       const res = await importEntry(admin, id2, name);
       expect(res.statusCode, res.body).toBe(422);
-      expect(res.json().error.code).toBe("catalog.legacy_format");
-      expect(res.json().error.message).toMatch(/pre-0\.1\.0 package format/);
+      expect(res.json().error.code).toBe("catalog.invalid_manifest");
+      expect(res.json().error.message).toMatch(
+        /\.capybara-plugin\/plugin\.json not found in the package.*capybara-plugin pack/,
+      );
     }
     await nothingImported();
   });

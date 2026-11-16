@@ -26,7 +26,7 @@ export interface AdminOverview {
 
 /**
  * Why an extension needs a look: `config` (missing deployment config while `pending_config`, else
- * invalid), `load_failed`, `approval`, `dependency`, `conflict`, `converging`, `legacy_format`.
+ * invalid), `load_failed`, `approval`, `dependency`, `conflict`, `converging`.
  */
 export type AttentionExtensionReason =
   | "config"
@@ -34,8 +34,7 @@ export type AttentionExtensionReason =
   | "approval"
   | "dependency"
   | "conflict"
-  | "converging"
-  | "legacy_format";
+  | "converging";
 
 /** What is wrong with a model provider: its model list failed, or no usable chat model. */
 export type AttentionProviderProblem = "list_failed" | "no_chat_model";

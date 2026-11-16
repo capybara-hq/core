@@ -165,8 +165,7 @@ export class ExtensionAdminOps {
       );
     }
     // The downgrade check needs the target package's migration files: read and parse the package
-    // outside the transaction (inside it only _migrations is compared). A stored package in the
-    // pre-0.1.0 format -> extension.legacy_format.
+    // outside the transaction (inside it only _migrations is compared).
     const target = await readExtensionPackage(await this.blobs.get(sha256), {
       maxBytes: this.config.get().packages.maxBytes,
       hostSdkVersion: SDK_VERSION,

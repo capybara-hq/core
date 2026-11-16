@@ -114,7 +114,7 @@ async function query<T>(f: (db: ReturnType<typeof kernelDb>) => Promise<T>): Pro
   }
 }
 
-const LEGACY = /pre-0\.1\.0 package format/;
+const NO_MANIFEST = /plugin\.json not found in the package/;
 
 /**
  * Whether a Redis key exists, in the database of `url` (bare RESP inline commands: the CLI tests
@@ -293,24 +293,24 @@ describe("capybara plugins list / import", () => {
     expect(r.stderr).toMatch(/capybara: plugins import failed: .*Object storage is not available/);
   }, 90_000);
 
-  it("a pre-0.1.0 tgz gets the legacy-format message from plugins import", async () => {
+  it("a pre-0.1.0 tgz is refused naming the manifest path from plugins import", async () => {
     for (const appYaml of [false, true]) {
       const file = join(work, `legacy-${appYaml}.tgz`);
       await writeFile(file, await legacyTgz({ appYaml }));
       const r = await run(["plugins", "import", file, "--yes"]);
       expect(r.code).toBe(1);
       expect(r.stderr).toMatch(/^capybara: plugins import failed: /);
-      expect(r.stderr).toMatch(LEGACY);
+      expect(r.stderr).toMatch(NO_MANIFEST);
       expect(r.stderr).not.toContain("    at ");
     }
   }, 90_000);
 
-  it("extensions install: a pre-0.1.0 tgz gets the legacy-format message", async () => {
+  it("extensions install: a pre-0.1.0 tgz is refused naming the manifest path", async () => {
     const file = join(work, "legacy-false.tgz");
     const r = await run(["extensions", "install", file, "--yes"]);
     expect(r.code).toBe(1);
     expect(r.stderr).toMatch(/^capybara: extensions install failed: /);
-    expect(r.stderr).toMatch(LEGACY);
+    expect(r.stderr).toMatch(NO_MANIFEST);
   }, 90_000);
 
   it("extensions install: a declarative plugin is refused with the no-extension message", async () => {
