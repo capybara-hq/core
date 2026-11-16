@@ -15,6 +15,7 @@ import {
   onManagedInstance,
   readerOf,
   statusEnd,
+  summaryLines,
 } from "../../../background/managed.js";
 import {
   assembleTaskOutput,
@@ -577,7 +578,8 @@ function managedReadError(env: TaskEnv, task: BackgroundTaskRow, e: unknown): un
 
 /** Why a managed task's retained output cannot be read (the cursor never moves for it). */
 function retainedUnavailableText(e: ManagedOutputUnavailableError): string {
-  if (e.reason === "expired") return "[Output unavailable: the task's retained output has expired.]";
+  if (e.reason === "expired")
+    return "[Output unavailable: the task's retained output has expired.]";
   if (e.reason === "mismatch") {
     return "[Output unavailable: the read position is past the task's retained output.]";
   }
@@ -659,6 +661,26 @@ async function managedTaskOutput(
   }
   const budget = deps.config.get().tools.outputSpillChars;
   const cur = task;
+  // A stop was asked for: the SDK status has no stopped state (an applied cancellation reads as an
+  // exit), so the end is settled only by the provider's atomically claimed stop outcome.
+  const cancelling = cur.launchState === "cancel-pending" || cur.cancelRequestedAt !== null;
+  const settleEnd = async (
+    t: BackgroundTaskRow,
+    end: { to: BackgroundFinish; lastLines: string } | null,
+  ): Promise<BackgroundTaskRow> => {
+    if (end === null || t.status !== "running") return t;
+    if (!cancelling) return settle(env, t, end);
+    try {
+      return await env.tasks.stopper.stop(t, "revoked", ctx.signal, { reported: true });
+    } catch (e) {
+      // the owed stop stays with the poller; this read still answers
+      env.log?.warn("cannot settle a cancelled background task from TaskOutput", {
+        taskId: t.id,
+        err: e,
+      });
+      return (await env.store.get(t.id)) ?? t;
+    }
+  };
   let seen: Awaited<ReturnType<typeof onManagedInstance<ManagedSeen>>>;
   try {
     seen = await onManagedInstance(
@@ -679,7 +701,9 @@ async function managedTaskOutput(
           if (!(e instanceof ManagedOutputUnavailableError)) throw e;
           read = e;
         }
-        const lastLines = end === null ? "" : await lastLinesByRef(bg, h, ref, sig);
+        // a cancellation's end is settled by the exact stop below, which reads its own tail
+        const lastLines =
+          end === null || cancelling ? "" : summaryLines(await lastLinesByRef(bg, h, ref, sig));
         return { end, read, lastLines };
       },
       ctx.signal,
@@ -690,15 +714,14 @@ async function managedTaskOutput(
   }
   if (seen.kind !== "ran") {
     if (task.status === "running") {
-      const to =
-        seen.kind === "not_running" ? notRunningAs(seen.status, false) : RECREATED;
-      task = await settle(env, task, { to, lastLines: "" });
+      const to = seen.kind === "not_running" ? notRunningAs(seen.status, false) : RECREATED;
+      task = await settleEnd(task, { to, lastLines: "" });
     }
     return result(task, [statusLine(task), unavailableText(task, seen)]);
   }
   const { end, read, lastLines } = seen.value;
   if (read instanceof ManagedOutputUnavailableError) {
-    task = await settle(env, task, end === null ? null : { to: end, lastLines });
+    task = await settleEnd(task, end === null ? null : { to: end, lastLines });
     const lines = [statusLine(task), retainedUnavailableText(read)];
     const summary = task.status === "running" ? null : await finishSummary(deps, task);
     if (summary !== null) {
@@ -708,7 +731,7 @@ async function managedTaskOutput(
   }
   const used = read.delivered.length;
   if (used > 0) await env.store.advanceOffset(task.id, read.nextOffset);
-  task = await settle(env, task, end === null ? null : { to: end, lastLines });
+  task = await settleEnd(task, end === null ? null : { to: end, lastLines });
   const parts: string[] = [];
   if (read.remaining > 0) {
     parts.push(

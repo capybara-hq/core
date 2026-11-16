@@ -1035,14 +1035,20 @@ export class SandboxOperationIntents {
   async result(row: OperationIntent): Promise<unknown> {
     return operationResult(await this.payloads.load(row.operation_id, "result", row.result));
   }
+  /**
+   * The dispatcher with `executionId` gave up on its dispatch: its outcome is unknown. Fenced by
+   * the execution, so a superseded dispatcher never clears a newer retry's `dispatching` marker
+   * (without `executionId`: the orphan cleanup of the reconcile job).
+   */
   @Transactional({ propagation: "requires_new" })
-  async unknown(id: string): Promise<void> {
-    await this.db
+  async unknown(id: string, executionId?: string): Promise<void> {
+    let q = this.db
       .updateTable("sandbox_operation_intents")
       .set({ state: "started-or-unknown", outcome_unknown: true, updated_at: new Date() })
       .where("operation_id", "=", id)
-      .where("state", "=", "dispatching")
-      .execute();
+      .where("state", "=", "dispatching");
+    if (executionId !== undefined) q = q.where("execution_id", "=", executionId);
+    await q.execute();
   }
   /** Recovery never borrows a holder token. Only a new live run claim can reconcile by ID. */
   @Transactional({ propagation: "requires_new" })

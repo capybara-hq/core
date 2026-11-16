@@ -686,7 +686,7 @@ describe("managed background launch identity", () => {
     release.resolve();
     const r = await work;
     expect(r.ok).toBe(false);
-    expect(String((r as { error: unknown }).error)).toMatch(/stopped while it was starting/);
+    expect(String((r as { error: unknown }).error)).toMatch(/is being stopped/);
     expect(await f.task()).toMatchObject({
       launch_state: "cancel-pending",
       status: "running",
@@ -1202,5 +1202,22 @@ describe("managed background launch identity", () => {
     expect((await f.revokeJobs()).some((j) => j.jobId.endsWith("-retry"))).toBe(true);
     await reconcileJob().revoke(f.operationId);
     expect(f.provider.revoked).toEqual([f.operationId]);
+  });
+
+  it("a stale dispatcher's unknown cannot clear the current dispatch marker (8.3 review M1)", async () => {
+    const f = await fixture();
+    const entered = barrier();
+    const release = barrier();
+    f.provider.hooks.beforeEffect = async () => {
+      entered.resolve();
+      await release.promise;
+    };
+    const work = f.outcome(f.run({ command: "npm run dev" }));
+    await entered.promise;
+    const intents = k.app.get(SandboxOperationIntents);
+    await intents.unknown(f.operationId, "a-superseded-execution");
+    expect((await f.intent())?.state).toBe("dispatching");
+    release.resolve();
+    expect((await work).ok).toBe(true);
   });
 });

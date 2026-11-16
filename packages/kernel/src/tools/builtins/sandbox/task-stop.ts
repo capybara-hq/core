@@ -1,5 +1,9 @@
 import { rootsOf, ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
-import { lastLinesByRef, onManagedInstance } from "../../../background/managed.js";
+import {
+  LAST_LINES_UNAVAILABLE,
+  lastLinesByRef,
+  onManagedInstance,
+} from "../../../background/managed.js";
 import { decodeTail, tailCommand } from "../../../background/session.js";
 import { type BackgroundTaskRow, isManagedTask } from "../../../background/store.js";
 import type { BuiltinResult, BuiltinTool } from "../../registry.js";
@@ -67,9 +71,11 @@ async function lastLinesOf(
         (bg, h, ref, sig) => lastLinesByRef(bg, h, ref, sig),
         signal,
       );
-      return r.kind === "ran" ? r.value : null;
+      if (r.kind !== "ran") return null;
+      // retained output that cannot be read is labelled, never shown as no output
+      return r.value ?? LAST_LINES_UNAVAILABLE;
     } catch {
-      return null;
+      return LAST_LINES_UNAVAILABLE;
     }
   }
   try {
@@ -108,9 +114,11 @@ async function ended(
       ? "[No output: the command never started.]"
       : lines === null
         ? "[Last lines unavailable: the sandbox that ran this task is not running.]"
-        : lines === ""
-          ? "[No output.]"
-          : `Last lines:\n${lines.replace(/\n$/, "")}`;
+        : lines === LAST_LINES_UNAVAILABLE
+          ? LAST_LINES_UNAVAILABLE
+          : lines === ""
+            ? "[No output.]"
+            : `Last lines:\n${lines.replace(/\n$/, "")}`;
   return text(
     task,
     `Background task ${task.id} ("${task.description}") ${what}.\n${statusLine(task)}\n${tail}`,

@@ -1037,7 +1037,9 @@ export class SandboxService {
             );
             return value;
           } catch (error) {
-            await runOutsideTransaction(() => this.operationIntents.unknown(admitted.operation_id));
+            await runOutsideTransaction(() =>
+              this.operationIntents.unknown(admitted.operation_id, admitted.execution_id),
+            );
             throw error;
           }
         };
@@ -1406,7 +1408,7 @@ export class SandboxService {
             if (isSandboxScopeDeniedError(error) || isSandboxPermissionUnsupportedError(error)) {
               if (["dispatching", "started-or-unknown"].includes(pending.state)) {
                 await runOutsideTransaction(() =>
-                  this.operationIntents.unknown(admitted.operation_id),
+                  this.operationIntents.unknown(admitted.operation_id, admitted.execution_id),
                 );
                 throw new SandboxOperationOutcomeUnknownError(
                   "The recorded operation remains unknown; changed runtime authority cannot prove it had no effect",
@@ -1423,7 +1425,9 @@ export class SandboxService {
               );
               throw error;
             }
-            await runOutsideTransaction(() => this.operationIntents.unknown(admitted.operation_id));
+            await runOutsideTransaction(() =>
+              this.operationIntents.unknown(admitted.operation_id, admitted.execution_id),
+            );
             // A transport/gone error after durable dispatch cannot justify a new identity retry.
             throw new SandboxOperationOutcomeUnknownError(
               "The operation outcome must be reconciled with its recorded identity",
@@ -1443,7 +1447,7 @@ export class SandboxService {
               );
             } catch (error) {
               await runOutsideTransaction(() =>
-                this.operationIntents.unknown(admitted.operation_id),
+                this.operationIntents.unknown(admitted.operation_id, admitted.execution_id),
               );
               throw new SandboxOperationOutcomeUnknownError(
                 "The start returned but could not be acknowledged; reconcile the same identity",
@@ -1461,7 +1465,9 @@ export class SandboxService {
               ),
             );
           } catch (error) {
-            await runOutsideTransaction(() => this.operationIntents.unknown(admitted.operation_id));
+            await runOutsideTransaction(() =>
+              this.operationIntents.unknown(admitted.operation_id, admitted.execution_id),
+            );
             throw new SandboxOperationOutcomeUnknownError(
               "The operation returned but its result could not be retained; reconcile the same identity",
               { cause: error },

@@ -136,16 +136,35 @@ export function stopEnd(r: SandboxStopResult): BackgroundFinish | null {
   return null;
 }
 
-/** A finish or stop summary: the exact tail's last 20 lines; empty when it is unavailable. */
+/**
+ * What a finish summary keeps when the exact tail could not be read: labelled, never mistaken for
+ * a task that wrote nothing.
+ */
+export const LAST_LINES_UNAVAILABLE =
+  "[Last lines unavailable: the task's retained output could not be read.]";
+
+/**
+ * A finish or stop summary: the exact tail's last 20 lines; null when the retained output is
+ * unavailable (lost or expired) or the tail read failed.
+ */
 export async function lastLinesByRef(
   bg: SandboxBackground,
   h: SandboxHandle,
   ref: SandboxExecutionRef,
   signal: AbortSignal,
-): Promise<string> {
-  const r = await bg.tail(h, ref, { maxBytes: MANAGED_TAIL_BYTES, signal });
-  return "unavailable" in r ? "" : lastLinesOf(r.data);
+): Promise<string | null> {
+  try {
+    const r = await bg.tail(h, ref, { maxBytes: MANAGED_TAIL_BYTES, signal });
+    return "unavailable" in r ? null : lastLinesOf(r.data);
+  } catch {
+    // the end the caller already established stands; only its last lines are missing
+    signal.throwIfAborted();
+    return null;
+  }
 }
+
+/** {@link lastLinesByRef}'s answer as a finish event keeps it. */
+export const summaryLines = (lines: string | null): string => lines ?? LAST_LINES_UNAVAILABLE;
 
 /** The positional reader of the task's retained output by its exact ref. */
 export const readerOf =

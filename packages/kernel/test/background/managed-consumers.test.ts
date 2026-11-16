@@ -186,13 +186,18 @@ describe("TaskOutput on managed output", () => {
       new Uint8Array(
         Buffer.concat([
           emoji.subarray(2),
-          Buffer.from("\n- Press Enter to open https://github.com/login/device in your browser...\n"),
+          Buffer.from(
+            "\n- Press Enter to open https://github.com/login/device in your browser...\n",
+          ),
         ]),
       ),
     );
     const second = await f.taskOutput({});
     expect(textOf(second)).toContain("😀");
-    expect((second as { loginCode?: unknown }).loginCode).toEqual({ url: "https://github.com/login/device", code: "1A2B-C3D4" });
+    expect((second as { loginCode?: unknown }).loginCode).toEqual({
+      url: "https://github.com/login/device",
+      code: "1A2B-C3D4",
+    });
   });
 
   it("at a verified terminal end consumes invalid bytes, finishes once reported and owes no wake", async () => {
@@ -207,7 +212,7 @@ describe("TaskOutput on managed output", () => {
     expect(row).toMatchObject({ status: "failed", exit_code: 3, launch_state: "terminal" });
     const events = await f.finishedEvents();
     expect(events).toHaveLength(1);
-    expect((events[0]?.payload as { reported: boolean }).reported).toBe(true);
+    expect((events[0]?.payload as { reported: boolean } | undefined)?.reported).toBe(true);
     expect(ensureRuns(f.conversationId)).toHaveLength(0);
     // the true terminal settlement retires the running authority
     expect((await f.intent()).state).toBe("completed");
@@ -386,7 +391,7 @@ describe("TaskStop and the stopper on managed tasks", () => {
     f.provider.only().stopAs = "stopped";
     await poller().pollOnce();
     const [event] = await f.finishedEvents();
-    expect((event?.payload as { stoppedBy?: string }).stoppedBy).toBe("person");
+    expect((event?.payload as { stoppedBy?: string } | undefined)?.stoppedBy).toBe("person");
     expect(ensureRuns(f.conversationId)).toHaveLength(0);
   });
 
@@ -450,10 +455,12 @@ describe("TaskStop and the stopper on managed tasks", () => {
     );
     await entered.promise;
     const row = await f.taskRow();
-    const stopped = await k.app.get(BackgroundTaskStopper).stop(await getTask(store, row.id), "tool");
+    const stopped = await k.app
+      .get(BackgroundTaskStopper)
+      .stop(await getTask(store, row.id), "tool");
     expect(stopped.status).toBe("running");
     release.resolve();
-    expect(await launch).toMatch(/stopped while it was starting/);
+    expect(await launch).toMatch(/is being stopped/);
     expect(await f.taskRow()).toMatchObject({
       launch_state: "cancel-pending",
       cancel_requested_by: "tool",
@@ -613,7 +620,10 @@ describe("tool and HTTP surfaces stay the same for managed tasks", () => {
           minLength: 1,
           description: "The id of the background task (bt_...) that Bash returned.",
         },
-        block: { type: "boolean", description: "Whether to wait for the task to finish. Default true." },
+        block: {
+          type: "boolean",
+          description: "Whether to wait for the task to finish. Default true.",
+        },
         timeout: {
           type: "number",
           minimum: 0,
@@ -676,6 +686,155 @@ describe("a retried Bash call of a finished managed task", () => {
     });
     expect(textOf(r)).toContain(f.taskId);
     expect(textOf(r)).toContain("Output:");
+    expect(f.provider.calls.start).toBe(1);
+  });
+});
+
+describe("fix round 1", () => {
+  it("I1: a pending cancellation the device applied later finishes stopped through TaskOutput", async () => {
+    const f = await fixture();
+    f.provider.only().stopAs = "cancel-pending";
+    expect(textOf(await f.taskStop())).toMatch(/stop requested/);
+    f.provider.applyPendingCancel();
+    const r = textOf(await f.taskOutput({ block: true, timeout: 60_000 }));
+    expect(r).toContain("Status: stopped");
+    const [event] = await f.finishedEvents();
+    expect((event?.payload as { status: string } | undefined)?.status).toBe("stopped");
+    expect(await f.taskRow()).toMatchObject({ status: "stopped", exit_code: null });
+  });
+
+  it("I1: a person's pending stop settled by a TaskOutput read keeps the person's no-wake rule", async () => {
+    const f = await fixture();
+    f.provider.only().stopAs = "cancel-pending";
+    await f.req({
+      method: "POST",
+      url: `/api/v1/orgs/${f.orgId}/conversations/${f.conversationId}/background-tasks/${f.taskId}/stop`,
+    });
+    f.provider.applyPendingCancel();
+    await f.taskOutput({});
+    const [event] = await f.finishedEvents();
+    expect(event?.payload).toMatchObject({ status: "stopped", stoppedBy: "person" });
+    expect(ensureRuns(f.conversationId)).toHaveLength(0);
+  });
+
+  it("M2: an owed cancellation on a destroyed instance settles lost and frees its slot", async () => {
+    const f = await fixture();
+    f.provider.only().stopAs = "cancel-pending";
+    await f.taskStop();
+    await f.db
+      .updateTable("device_instances")
+      .set({ status: "destroyed" })
+      .where("device_id", "=", f.deviceId)
+      .execute();
+    await poller().pollOnce();
+    expect(await f.taskRow()).toMatchObject({
+      status: "lost",
+      lost_reason: "sandbox_gone",
+      launch_state: "cancel-pending",
+    });
+    expect(await k.app.get(BackgroundTaskStore).countRunning(f.conversationId)).toBe(0);
+    expect((await f.intent()).state).toBe("background-running");
+  });
+
+  it("M2: an owed cancellation on a suspended instance stays owed", async () => {
+    const f = await fixture();
+    f.provider.only().stopAs = "cancel-pending";
+    await f.taskStop();
+    await f.db
+      .updateTable("device_instances")
+      .set({ status: "suspended" })
+      .where("device_id", "=", f.deviceId)
+      .execute();
+    await poller().pollOnce();
+    expect(await f.taskRow()).toMatchObject({ status: "running", launch_state: "cancel-pending" });
+  });
+
+  it("M3: an unavailable tail is labelled unavailable, never as no output", async () => {
+    const f = await fixture();
+    f.provider.write("something\n");
+    f.provider.only().retained = "lost";
+    const r = textOf(await f.taskStop());
+    expect(r).toContain("was stopped");
+    expect(r).toContain("Last lines unavailable");
+    expect(r).not.toContain("[No output.]");
+    const [event] = await f.finishedEvents();
+    expect((event?.payload as { lastLines: string } | undefined)?.lastLines).toContain(
+      "unavailable",
+    );
+  });
+
+  it("M4: typed refusals of an HTTP read are 409s, and a finished task falls back to its event", async () => {
+    const f = await fixture();
+    f.provider.write("kept\n");
+    const url = `/api/v1/orgs/${f.orgId}/conversations/${f.conversationId}/background-tasks/${f.taskId}/output`;
+    // the instance's handle no longer names the task's recorded instance
+    await f.db
+      .updateTable("device_instances")
+      .set({ handle: JSON.stringify({ id: "another-handle", roots: { workspace: "/work" } }) })
+      .where("device_id", "=", f.deviceId)
+      .execute();
+    const denied = await f.req({ method: "GET", url });
+    expect(denied.statusCode).toBe(409);
+    await f.db
+      .updateTable("device_instances")
+      .set({ handle: JSON.stringify({ id: f.deviceId, roots: { workspace: "/work" } }) })
+      .where("device_id", "=", f.deviceId)
+      .execute();
+    f.provider.exit(0);
+    await poller().pollOnce();
+    // the provider no longer offers background supervision
+    const bg = f.provider.impl.background;
+    (f.provider.impl as { background?: unknown }).background = undefined;
+    try {
+      const res = await f.req({ method: "GET", url });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toMatchObject({ source: "event", unavailable: { reason: "read_failed" } });
+    } finally {
+      (f.provider.impl as { background?: unknown }).background = bg;
+    }
+  });
+
+  it("M5: a tail failure after a successful stop keeps the stopped outcome", async () => {
+    const f = await fixture();
+    f.provider.state.failTail = true;
+    const r = textOf(await f.taskStop());
+    expect(r).toContain("was stopped");
+    expect(await f.taskRow()).toMatchObject({ status: "stopped", launch_state: "terminal" });
+    expect(f.provider.calls.stop).toHaveLength(1);
+  });
+
+  it("M7: one task's failing status does not hold back the other tasks of its instance", async () => {
+    const f = await fixture();
+    const second = await f.launchAnother();
+    const [first, other] = [...f.provider.executions.values()];
+    if (!first || !other) throw new Error("two launches expected");
+    f.provider.state.statusFailsFor.add(first.ref.operationId);
+    other.status = { state: "exited", exitCode: 0, timedOut: false };
+    expect(await poller().pollOnce()).toBe(1);
+    expect((await k.app.get(BackgroundTaskStore).get(second))?.status).toBe("completed");
+    expect((await f.taskRow()).status).toBe("running");
+  });
+
+  it("M10: a retry of an acknowledged task stopped later says it is being stopped", async () => {
+    const f = await fixture();
+    f.provider.only().stopAs = "cancel-pending";
+    await f.taskStop();
+    await f.db
+      .updateTable("runs")
+      .set({ execution_id: randomUUID() })
+      .where("id", "=", f.runId)
+      .execute();
+    const { runInBackgroundManaged } = await import("../../src/tools/builtins/sandbox/bash.js");
+    const r = await runInBackgroundManaged(f.depsOf(k), await f.ctxFor(), {
+      command: "npm run dev",
+      description: "Serve",
+      run_in_background: true,
+    }).then(
+      () => "ok",
+      (e: unknown) => String(e),
+    );
+    expect(r).toMatch(/is being stopped/);
+    expect(r).not.toMatch(/while it was starting;/);
     expect(f.provider.calls.start).toBe(1);
   });
 });

@@ -6,7 +6,6 @@ import {
   type SandboxExecutionStatus,
   type SandboxProvider,
   SandboxScopeDeniedError,
-  type SandboxStopResult,
 } from "@capybara-hq/plugin-sdk";
 import { expect } from "vitest";
 import { BackgroundTaskFinisher } from "../../src/background/finish.js";
@@ -54,6 +53,8 @@ export interface OwnedExecution {
   /** What a stop answers while the execution runs (default `stopped`). */
   stopAs: "stopped" | "cancel-pending" | "lost";
   retained: "ok" | "lost" | "expired";
+  /** The device applied a cancellation: the process exited, the claimed outcome is `stopped`. */
+  cancelled?: boolean;
 }
 
 /**
@@ -78,6 +79,10 @@ export function managedOutputProvider() {
     beforeRead: undefined as (() => Promise<void>) | undefined,
     /** Runs before a new execution is launched (a start may be held or fail before its effect). */
     beforeStart: undefined as (() => Promise<void>) | undefined,
+    /** Tail reads throw (a dropped connection after a stop). */
+    failTail: false,
+    /** Status reads of these operations throw. */
+    statusFailsFor: new Set<string>(),
   };
   const owned = (ref: SandboxExecutionRef): OwnedExecution => {
     const e = executions.get(ref.operationId);
@@ -124,6 +129,7 @@ export function managedOutputProvider() {
     },
     async status(_h, ref) {
       calls.status++;
+      if (state.statusFailsFor.has(ref.operationId)) throw new Error("status read failed");
       return owned(ref).status;
     },
     async readOutput(_h, ref, opts) {
@@ -148,6 +154,7 @@ export function managedOutputProvider() {
     async tail(_h, ref, opts) {
       calls.tail++;
       const e = owned(ref);
+      if (state.failTail) throw new Error("device connection closed during the tail");
       if (e.retained !== "ok") return { unavailable: e.retained };
       const text = Buffer.from(e.output).toString("utf8");
       const lines = text.replace(/\n$/, "").split("\n").slice(-20).join("\n");
@@ -158,6 +165,8 @@ export function managedOutputProvider() {
     async stop(_h, ref, opts) {
       calls.stop.push({ graceMs: opts.graceMs });
       const e = owned(ref);
+      // the atomically claimed outcome of an applied cancellation is kept on every retry
+      if (e.cancelled) return { outcome: "stopped" };
       if (e.status.state === "exited")
         return {
           outcome: "already-exited",
@@ -167,6 +176,7 @@ export function managedOutputProvider() {
       if (e.status.state === "lost") return { outcome: "lost" };
       if (e.stopAs === "stopped") {
         e.status = { state: "exited", exitCode: 143, timedOut: false };
+        e.cancelled = true;
         return { outcome: "stopped" };
       }
       if (e.stopAs === "lost") {
@@ -233,6 +243,11 @@ export function managedOutputProvider() {
     },
     exit(exitCode: number | null, timedOut = false) {
       only().status = { state: "exited", exitCode, timedOut };
+    },
+    /** The device applies the pending cancellation on its own (status then shows exit 143). */
+    applyPendingCancel(e: OwnedExecution = only()) {
+      e.status = { state: "exited", exitCode: 143, timedOut: false };
+      e.cancelled = true;
     },
   };
 }
@@ -369,7 +384,13 @@ export async function managedTaskFixture(opts: {
     .execute();
   let seq = 0;
   const event = async (type: string, payload: object) => {
-    seq++;
+    // the kernel may have appended events of its own since (a launch's notices)
+    const conv = await db
+      .selectFrom("conversations")
+      .select("last_seq")
+      .where("id", "=", conversationId)
+      .executeTakeFirstOrThrow();
+    seq = Math.max(seq, Number(conv.last_seq)) + 1;
     await db
       .insertInto("conversation_events")
       .values({
@@ -414,9 +435,7 @@ export async function managedTaskFixture(opts: {
     eventLog: kk.app.get(EventLog),
     config: kk.app.get(KernelConfigService),
   });
-  const ctxFor = async (
-    over: Partial<BuiltinCallContext> = {},
-  ): Promise<BuiltinCallContext> => ({
+  const ctxFor = async (over: Partial<BuiltinCallContext> = {}): Promise<BuiltinCallContext> => ({
     orgId,
     accountId: opts.accountId,
     agentId,
@@ -449,6 +468,23 @@ export async function managedTaskFixture(opts: {
     });
     taskId = (await taskRow()).id;
   }
+  /** Launches one more managed task in the same run, as a new Bash call. */
+  const launchAnother = async (): Promise<string> => {
+    const another = randomUUID();
+    await event("tool_call_started", { callId: another, toolKey: "Bash" });
+    await runInBackgroundManaged(depsOf(k), await ctxFor({ callId: another }), {
+      command: "npm run worker",
+      description: "Worker",
+      run_in_background: true,
+    });
+    const row = await db
+      .selectFrom("background_tasks")
+      .select("id")
+      .where("run_id", "=", runId)
+      .where("call_id", "=", another)
+      .executeTakeFirstOrThrow();
+    return row.id;
+  };
   const taskOutput = async (
     input: { block?: boolean; timeout?: number; task_id?: string },
     kk: TestKernel = k,
@@ -489,6 +525,7 @@ export async function managedTaskFixture(opts: {
     intent,
     taskOutput,
     taskStop,
+    launchAnother,
     finishedEvents,
   };
 }

@@ -1,4 +1,11 @@
-import { isSandboxGoneError, rootsOf } from "@capybara-hq/plugin-sdk";
+import {
+  DeviceProtocolError,
+  isSandboxGoneError,
+  isSandboxPermissionUnsupportedError,
+  isSandboxScopeDeniedError,
+  rootsOf,
+  ToolError,
+} from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { ConversationAccess } from "../conversations/access.js";
 import { EventLog } from "../conversations/event-log.js";
@@ -375,7 +382,18 @@ export class BackgroundTasks {
           reason: e.code === "device.offline" ? "device_offline" : "no_access",
         };
       }
-      if (e instanceof ManagedRefError || e instanceof ManagedOutputCapacityError) {
+      // a typed refusal (including the kernel's own instance check) is no access; a missing
+      // background capability, a protocol or transport failure, a bad ref, capacity or a timeout
+      // is a failed read: never a 500, and a finished task still gets its finish summary
+      if (isSandboxScopeDeniedError(e)) return { kind: "unavailable", reason: "no_access" };
+      if (
+        e instanceof ManagedRefError ||
+        e instanceof ManagedOutputCapacityError ||
+        isSandboxPermissionUnsupportedError(e) ||
+        e instanceof DeviceProtocolError ||
+        e instanceof ToolError ||
+        (e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError"))
+      ) {
         return { kind: "unavailable", reason: "read_failed" };
       }
       throw e;

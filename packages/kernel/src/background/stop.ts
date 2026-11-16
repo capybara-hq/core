@@ -15,6 +15,7 @@ import {
   MANAGED_STOP_GRACE_MS,
   onManagedInstance,
   stopEnd,
+  summaryLines,
 } from "./managed.js";
 import {
   actingAs,
@@ -99,18 +100,20 @@ export class BackgroundTaskStopper {
    * started the command yet (no `sid`) is only claimed: the launch then kills what it starts and
    * finishes the row `stopped`. When the stop fails while the sandbox runs (busy, a provider
    * error, a session that could not be confirmed empty), the claim is given up, the task stays
-   * `running` and the error is thrown.
+   * `running` and the error is thrown. `how.reported`: the caller's own result tells the model this
+   * finish (a managed task's cancellation settled from a TaskOutput read).
    */
   async stop(
     task: BackgroundTaskRow,
     why: StopReason,
     signal?: AbortSignal,
+    how: { reported?: boolean } = {},
   ): Promise<BackgroundTaskRow> {
     if (!(await this.store.claimStop(task.id))) return (await this.store.get(task.id)) ?? task;
     // read after the claim: a launch recording its session before the claim is seen here, one
     // recording it after sees the claim (both are single-row updates of the same row)
     const cur = (await this.store.get(task.id)) ?? task;
-    if (isManagedTask(cur)) return this.stopManaged(cur, why, signal);
+    if (isManagedTask(cur)) return this.stopManaged(cur, why, signal, how.reported);
     if (cur.status !== "running" || cur.sid === null || cur.sandboxCreatedAt === null) return cur;
     const started = { ...cur, sandboxCreatedAt: cur.sandboxCreatedAt };
     const sid = cur.sid;
@@ -163,6 +166,7 @@ export class BackgroundTaskStopper {
     cur: BackgroundTaskRow,
     why: StopReason,
     signal: AbortSignal | undefined,
+    reportedHere: boolean | undefined,
   ): Promise<BackgroundTaskRow> {
     if (cur.status !== "running") return cur;
     const asker: CancelRequester | null = why === "revoked" ? null : why;
@@ -172,7 +176,8 @@ export class BackgroundTaskStopper {
       if (asker !== null) await this.store.requestCancel(cur.id, asker, false);
       return (await this.store.get(cur.id)) ?? cur;
     }
-    const reported = by === "tool" && why === "tool";
+    // `reportedHere`: the caller's own result tells the model this finish (a TaskOutput read)
+    const reported = reportedHere ?? (by === "tool" && why === "tool");
     const stoppedBy: BackgroundStoppedBy | undefined =
       by === "person"
         ? "person"
@@ -196,7 +201,9 @@ export class BackgroundTaskStopper {
           const to = stopEnd(
             await bg.stop(h, ref, { graceMs: MANAGED_STOP_GRACE_MS, signal: sig }),
           );
-          return { to, lastLines: to === null ? "" : await lastLinesByRef(bg, h, ref, sig) };
+          // once the provider claimed the outcome it stands: a failed tail only loses the lines
+          const lines = to === null ? "" : summaryLines(await lastLinesByRef(bg, h, ref, sig));
+          return { to, lastLines: lines };
         },
         signal,
       );
@@ -212,8 +219,10 @@ export class BackgroundTaskStopper {
       if (r.value.to === null) return pending();
       await this.finisher.finish(cur, r.value.to, r.value.lastLines, reported, opts);
     } else if (r.kind === "not_running") {
-      // the instance is not running and is never resumed for a stop: the cancellation stays owed
-      return pending();
+      // never resumed for a stop: a suspended instance keeps the cancellation owed; a missing or
+      // destroyed one is lost like an acknowledged task's (the uncertain record is retained)
+      if (r.status === "suspended") return pending();
+      await this.finisher.finish(cur, notRunningAs(r.status, false), "", reported, opts);
     } else {
       await this.finisher.finish(cur, RECREATED, "", reported, opts);
     }

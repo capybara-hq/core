@@ -16,7 +16,13 @@ import {
 import { sandboxBaseTimeoutMs } from "../tools/builtins/sandbox/common.js";
 import { type BackgroundFinish, BackgroundTaskFinisher } from "./finish.js";
 import { LAUNCH_EXEC_TIMEOUT_MS } from "./launch.js";
-import { exactRefOf, lastLinesByRef, onManagedInstance, statusEnd } from "./managed.js";
+import {
+  exactRefOf,
+  lastLinesByRef,
+  onManagedInstance,
+  statusEnd,
+  summaryLines,
+} from "./managed.js";
 import { actingAs, taskActor } from "./session.js";
 import { parsePollOutput, polledAs, pollScript, type TaskReport } from "./status.js";
 import { BackgroundTaskStopper, notRunningAs, RECREATED } from "./stop.js";
@@ -26,6 +32,9 @@ import { type BackgroundTaskRow, BackgroundTaskStore } from "./store.js";
 export const BACKGROUND_POLL_JOB = "background-task-poll";
 /** The daily prune of finished background tasks older than `tools.outputRetentionDays`. */
 export const BACKGROUND_PRUNE_JOB = "background-task-prune";
+
+/** The most owed managed cancellations one poll applies (each a lease and up to a 5 s grace). */
+export const MANAGED_STOPS_PER_TICK = 8;
 
 /** The least age at which a reservation counts as abandoned, whatever the config. */
 const LAUNCH_ABANDONED_FLOOR_MS = 120_000;
@@ -173,7 +182,8 @@ export class BackgroundTaskPollJob {
         });
       }
     }
-    for (const t of cancels) {
+    // bounded per tick: the rest stay owed (oldest first) for the next ticks
+    for (const t of cancels.slice(0, MANAGED_STOPS_PER_TICK)) {
       if (signal.aborted) break;
       try {
         if (!(await this.sandbox.availableFor(t.deviceId as string))) continue;
@@ -201,9 +211,23 @@ export class BackgroundTaskPollJob {
       async (bg, h, _ref, sig) => {
         const ends = new Map<string, { to: BackgroundFinish; lastLines: string }>();
         for (const t of tasks) {
-          const { ref } = exactRefOf(t);
-          const to = statusEnd(await bg.status(h, ref, sig));
-          if (to) ends.set(t.id, { to, lastLines: await lastLinesByRef(bg, h, ref, sig) });
+          // one task's failing status never holds back the others of its instance
+          try {
+            const { ref } = exactRefOf(t);
+            const to = statusEnd(await bg.status(h, ref, sig));
+            if (to) {
+              ends.set(t.id, {
+                to,
+                lastLines: summaryLines(await lastLinesByRef(bg, h, ref, sig)),
+              });
+            }
+          } catch (err) {
+            sig.throwIfAborted();
+            this.log.warn("cannot read a managed background task's status; retrying next tick", {
+              taskId: t.id,
+              err,
+            });
+          }
         }
         return ends;
       },

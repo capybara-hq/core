@@ -124,7 +124,7 @@ describe("managed background tasks across two replicas", () => {
     expect(Number((await f.taskRow()).read_offset)).toBe(Buffer.byteLength(body));
     const events = await f.finishedEvents();
     expect(events).toHaveLength(1);
-    expect((events[0]?.payload as { reported: boolean }).reported).toBe(true);
+    expect((events[0]?.payload as { reported: boolean } | undefined)?.reported).toBe(true);
     expect(await f.taskRow()).toMatchObject({ status: "completed", launch_state: "terminal" });
   });
 
@@ -159,7 +159,7 @@ describe("managed background tasks across two replicas", () => {
       await ceiling.publishLocked(subject, "device");
     });
     expect((await f.intent()).state).toBe("revoked");
-    const [na, nb] = await Promise.all([poller(b).pollOnce(), poller(b).pollOnce()]);
+    const [na, nb] = await Promise.all([poller(a).pollOnce(), poller(b).pollOnce()]);
     expect(na + nb).toBe(1);
     expect(f.provider.calls.stop).toEqual([{ graceMs: 5000 }]);
     expect(await f.taskRow()).toMatchObject({ status: "stopped", launch_state: "terminal" });
@@ -169,7 +169,15 @@ describe("managed background tasks across two replicas", () => {
   it("an HTTP read on one replica ends at its probed total while the other reads and finishes", async () => {
     const f = await fixture();
     f.provider.write("first part\n");
-    holdReads(f, 2);
+    // both replicas probe first; the output grows before either reads its range
+    const probes = barrier();
+    let reads = 0;
+    f.provider.state.beforeRead = async () => {
+      reads++;
+      if (reads === 2) probes.resolve();
+      if (reads <= 2) await probes.promise;
+      if (reads === 3) f.provider.write("GROWN\n");
+    };
     const http = f.req({
       method: "GET",
       url: `/api/v1/orgs/${f.orgId}/conversations/${f.conversationId}/background-tasks/${f.taskId}/output`,
@@ -184,9 +192,15 @@ describe("managed background tasks across two replicas", () => {
     expect(res.statusCode).toBe(200);
     expect((res.json() as { text: string }).text).toBe("first part\n");
     expect(textOf(out)).toContain("first part");
-    expect(textOf(await f.taskOutput({}, a))).toContain("second part");
+    expect(textOf(out)).not.toContain("GROWN");
+    f.provider.state.beforeRead = undefined;
+    const rest = textOf(await f.taskOutput({}, a));
+    expect(rest).toContain("GROWN");
+    expect(rest).toContain("second part");
     expect(await f.finishedEvents()).toHaveLength(1);
-    expect(Number((await f.taskRow()).read_offset)).toBe(Buffer.byteLength("first part\nsecond part\n"));
+    expect(Number((await f.taskRow()).read_offset)).toBe(
+      Buffer.byteLength("first part\nGROWN\nsecond part\n"),
+    );
   });
 
   it("recovery on one replica never re-sends a start the other replica is still dispatching", async () => {
@@ -217,5 +231,16 @@ describe("managed background tasks across two replicas", () => {
     expect(f.provider.executions.size).toBe(1);
     expect(await f.taskRow()).toMatchObject({ launch_state: "acknowledged" });
     expect((await f.intent()).state).toBe("background-running");
+  });
+
+  it("a TaskOutput on one replica and a poll on the other settle an applied cancellation once, stopped", async () => {
+    const f = await fixture();
+    f.provider.only().stopAs = "cancel-pending";
+    await f.taskStop(a);
+    f.provider.applyPendingCancel();
+    await Promise.all([f.taskOutput({}, a), poller(b).pollOnce()]);
+    const events = await f.finishedEvents();
+    expect(events).toHaveLength(1);
+    expect((events[0]?.payload as { status: string } | undefined)?.status).toBe("stopped");
   });
 });
