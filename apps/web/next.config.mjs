@@ -24,6 +24,15 @@ const nextConfig = {
   devIndicators: false,
   ...(devOrigins.length > 0 && { allowedDevOrigins: devOrigins }),
   transpilePackages: ["@capybara-hq/design"],
+  webpack(config, { dev }) {
+    if (dev) {
+      config.resolve.conditionNames = [
+        "@capybara-hq/source",
+        ...(config.resolve.conditionNames ?? ["..."]),
+      ];
+    }
+    return config;
+  },
   turbopack: {
     root: monorepoRoot,
     // 内部包按 "@capybara-hq/source" 条件直接编译源码（与 vitest / tsc 一致）；Turbopack 不支持自定义导出条件，用别名指到源码入口。

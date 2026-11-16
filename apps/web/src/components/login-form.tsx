@@ -77,9 +77,9 @@ export function LoginForm({ onSuccess }: { onSuccess: () => void }) {
 }
 
 /**
- * Shown to everyone when the page is served over plain http from a non-localhost host, where the
- * browser drops Secure session cookies. One sentence for people; the operator's details (the
- * settings to change) live in the admin console and the docs. Renders nothing otherwise.
+ * Advises people using an insecure browser origin if they cannot stay signed in. The origin
+ * alone does not establish the server's effective session-cookie flags. Operator details live
+ * in the admin console and the docs. Renders nothing in a secure context.
  */
 export function InsecureOriginNotice() {
   const t = useTranslations("login");

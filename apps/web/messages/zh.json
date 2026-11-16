@@ -44,7 +44,7 @@
       },
       "unknown": "登录失败，请重试。"
     },
-    "insecureOrigin": "当前通过不安全的 http 地址访问，登录后可能无法保持登录状态。请使用 HTTPS 地址访问，或联系管理员。"
+    "insecureOrigin": "当前通过 HTTP 地址访问。如果登录后无法保持登录状态，请使用 HTTPS 地址或联系管理员。"
   },
   "changePassword": {
     "title": "设置新密码",
