@@ -144,15 +144,15 @@ test("creating an org lands on its setup frame with the setup steps; its shell n
   const sidebar = setupSidebar(page);
   await expect(sidebar.locator('[data-part="org-switcher"]')).toHaveAttribute("title", name);
   await expect(workSidebar(page)).toHaveCount(0);
-  // the setup sidebar's steps: the model is done (the e2e stack loads model-fake), the agent is
-  // next; an owner also sees the optional steps
-  await expect(sidebar.locator('[data-part="step-item"][data-rove="model"]')).toHaveAttribute(
-    "data-state",
-    "done",
-  );
+  // the setup sidebar's steps: the e2e stack loads model-fake, but a provider is on only in the
+  // orgs that switched it on, so the new org's owner turns one on on /settings/models first and
+  // the agent waits for the model; an owner also sees the optional steps
+  const modelStep = sidebar.locator('[data-part="step-item"][data-rove="model"]');
+  await expect(modelStep).toHaveAttribute("data-state", "todo");
+  await expect(modelStep).toHaveAttribute("href", "/settings/models");
   await expect(sidebar.locator('[data-part="step-item"][data-rove="agent"]')).toHaveAttribute(
     "data-state",
-    "todo",
+    "waiting",
   );
   await expect(sidebar.locator('[data-part="step-item"][data-optional="true"]')).not.toHaveCount(0);
 
