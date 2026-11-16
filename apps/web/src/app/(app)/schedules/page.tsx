@@ -13,7 +13,7 @@ export default async function SchedulesPage({
   searchParams,
 }: {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
-} = {}) {
+}) {
   const search = (await searchParams) ?? {};
   return (
     <SchedulesView initial={schedulesUrlOf(search, await currentCookie(SCHEDULES_VIEW_COOKIE))} />

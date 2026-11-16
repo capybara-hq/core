@@ -168,7 +168,7 @@ const PAGES: [string, ComponentType | RoutePage, "member" | "admin", string][] =
     zh.roles.need.admin,
   ],
   ["/evals", route("/evals", () => EvalsPage()), "admin", zh.roles.need.admin],
-  ["/evals/new", route("/evals/new", () => NewEvalSetPage()), "admin", zh.roles.need.admin],
+  ["/evals/new", route("/evals/new", () => NewEvalSetPage({})), "admin", zh.roles.need.admin],
   [
     "/evals/s1",
     route("/evals/s1", () => EvalSetPage(params({ setId: "s1" }))),
@@ -195,11 +195,11 @@ const PAGES: [string, ComponentType | RoutePage, "member" | "admin", string][] =
   ],
   [
     "/settings/models",
-    route("/settings/models", () => ModelsSettingsPage()),
+    route("/settings/models", () => ModelsSettingsPage({})),
     "admin",
     zh.roles.need.admin,
   ],
-  ["/extensions", route("/extensions", () => ExtensionsPage()), "member", zh.roles.need.member],
+  ["/extensions", route("/extensions", () => ExtensionsPage({})), "member", zh.roles.need.member],
   ["/settings/tokens", route("/settings/tokens", () => TokensPage()), "admin", zh.roles.need.admin],
   [
     "/settings/organization",

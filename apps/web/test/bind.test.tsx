@@ -1,15 +1,19 @@
 import { QueryObserver } from "@tanstack/react-query";
-import { cleanup, screen, within } from "@testing-library/react";
+import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { hydrateRoot, type Root } from "react-dom/client";
+import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
+import BindView from "../src/app/(auth)/bind/[token]/view";
 import { identitiesQuery } from "../src/lib/query/account";
+import { pendingBindingQuery } from "../src/lib/query/auth";
 import { meQuery } from "../src/lib/query/shell";
 import { json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderAuthRouteWithCache } from "./support/query";
-import { ME } from "./support/render";
+import { ME, pageElement, testQueryClient } from "./support/render";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 const navigateBrowser = vi.hoisted(() => vi.fn());
@@ -45,7 +49,51 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("绑定确认页（AuthPage）", () => {
+describe("binding confirmation (AuthPage)", () => {
+  it("keeps confirmation and cancel disabled until hydration, then binds only on a human click", async () => {
+    let finishConfirmation!: (response: Response) => void;
+    const response = new Promise<Response>((resolve) => {
+      finishConfirmation = resolve;
+    });
+    const calls = stubApi({ [`POST ${PATH}`]: () => response });
+    const client = testQueryClient();
+    client.setQueryData(pendingBindingQuery("cap_bind_tok").queryKey, BINDING);
+    const ui = pageElement(<BindView token="cap_bind_tok" />, { client });
+    const container = document.createElement("div");
+    container.innerHTML = renderToString(ui);
+    document.body.append(container);
+    let root: Root | undefined;
+    try {
+      const confirm = within(container).getByRole("button", { name: en.bind.confirm });
+      const cancel = within(container).getByRole("button", { name: en.bind.cancel });
+      expect(confirm).toHaveProperty("disabled", true);
+      expect(cancel).toHaveProperty("disabled", true);
+      expect(calls).toHaveLength(0);
+      const errors: unknown[] = [];
+      await act(async () => {
+        root = hydrateRoot(container, ui, { onRecoverableError: (e) => errors.push(e) });
+      });
+      expect(errors).toEqual([]);
+      expect(confirm).toHaveProperty("disabled", false);
+      expect(cancel).toHaveProperty("disabled", false);
+      expect(calls).toHaveLength(0);
+      const user = userEvent.setup();
+      await user.click(confirm);
+      expect(confirm).toHaveProperty("disabled", true);
+      expect(cancel).toHaveProperty("disabled", true);
+      await user.click(confirm);
+      expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
+      finishConfirmation(json(200, { binding: BINDING }));
+      expect(await within(container).findByText(en.bind.doneTitle)).toBeTruthy();
+      expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
+    } finally {
+      finishConfirmation(json(200, { binding: BINDING }));
+      act(() => root?.unmount());
+      container.remove();
+      client.clear();
+    }
+  });
+
   it.each(["zh", "en"] as const)(
     "醒目展示 IM 显示名、来源与租户和防钓鱼提示；确认 → POST 并显示成功（%s）",
     async (locale) => {
