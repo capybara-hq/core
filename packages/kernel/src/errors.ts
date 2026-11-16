@@ -499,6 +499,12 @@ export const ERROR_CODES = {
   "eval.too_many_cases": 409,
   "eval.agent_mismatch": 409,
   "eval.compact_not_replayable": 422,
+  /**
+   * The case snapshot carries a recorded permission context (`permission_context`, a marked
+   * `device_paths`) with an unsupported version or an invalid v1 payload: it cannot be replayed,
+   * and the failure is the snapshot's, never the provider's.
+   */
+  "eval.snapshot_invalid": 422,
   "eval.run_not_found": 404,
   "eval.token_cap_invalid": 400,
   "eval.run_finished": 409,

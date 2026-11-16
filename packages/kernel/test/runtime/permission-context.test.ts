@@ -11,6 +11,7 @@ import {
   type PermissionContextV1,
   PermissionContextV1Schema,
 } from "../../src/conversations/events.js";
+import { ApiError } from "../../src/errors.js";
 import { reconstructRequest } from "../../src/evals/reconstruct.js";
 import type { CaseSnapshot } from "../../src/evals/snapshot.js";
 import { COMPACTION_SETTINGS } from "../../src/identity/settings.js";
@@ -36,6 +37,7 @@ import {
   permissionQuote,
   RecordedPermissionContextError,
 } from "../../src/runtime/context/permission-profile.js";
+import { coversHost } from "../../src/sandbox/modes.js";
 
 const root = "00000000-0000-4000-8000-000000000001";
 const device = "00000000-0000-4000-8000-000000000002";
@@ -133,6 +135,58 @@ describe("recorded permission context", () => {
         payload: { ...paths, mode: "auto" },
       }).success,
     ).toBe(false);
+  });
+  // 9.2 review M1: live build and the raw-coordinate checker share one marker/version rule
+  it.each<[string, ConversationEvent[]]>([
+    [
+      "a device_paths marker 2",
+      [event("device_paths", { ...paths, permissionContextVersion: 2 }, 1)],
+    ],
+    [
+      "a device_paths null marker",
+      [event("device_paths", { ...paths, permissionContextVersion: null }, 1)],
+    ],
+    [
+      "a device_paths string marker",
+      [event("device_paths", { roots: paths.roots, permissionContextVersion: "1" }, 1)],
+    ],
+    [
+      "a permission_context version 2",
+      [event("permission_context", { ...supported, version: 2 }, 1)],
+    ],
+    [
+      "a permission_context with an unknown key",
+      [event("permission_context", { ...supported, grant: true }, 1)],
+    ],
+    [
+      "a summary-restored device_paths marker 2",
+      [
+        event("device_paths", { ...paths, permissionContextVersion: 2 }, 1),
+        event("compaction_summary", { coversUpToSeq: 1, text: "Summary" }, 2),
+      ],
+    ],
+    [
+      "a covered superseded permission_context version 2",
+      [
+        event("permission_context", { ...supported, version: 2 }, 1),
+        event("permission_context", supported, 2),
+        event("compaction_summary", { coversUpToSeq: 2, text: "Summary" }, 3),
+      ],
+    ],
+  ])("live build refuses %s with the typed recorded-context error", (_name, events) => {
+    let thrown: unknown;
+    try {
+      build(events);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(RecordedPermissionContextError);
+  });
+  it("live build keeps an unmarked path whose marker key is explicitly undefined", () => {
+    const legacy = { roots: paths.roots, permissionContextVersion: undefined };
+    expect(build([event("device_paths", legacy, 1)]).request.messages).toEqual([
+      { role: "system", content: devicePathsText({ roots: paths.roots }) },
+    ]);
   });
   it("restores the latest covered permission after paths and before plugins", () => {
     const result = build([
@@ -1047,9 +1101,15 @@ describe("ordered history, summaries and original request metadata", () => {
       const { snap, callSeq } = recording(events);
       expect(reconstructRequest(snap, callSeq, { model }).drift).toEqual([]);
       mutate(eventAt(snap, seq).payload as Record<string, unknown>);
-      expect(() => reconstructRequest(snap, callSeq, { model })).toThrow(
-        RecordedPermissionContextError,
-      );
+      // 9.2 review M2: the snapshot's failure (4xx), never a provider error
+      let thrown: unknown;
+      try {
+        reconstructRequest(snap, callSeq, { model });
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).toBeInstanceOf(ApiError);
+      expect(thrown).toMatchObject({ code: "eval.snapshot_invalid", status: 422 });
     },
   );
   it("keeps unmarked historical paths replayable with their legacy text", () => {
@@ -1364,6 +1424,24 @@ describe("authority boundary normalization", () => {
   ])("rejects %s instead of normalizing it", (_name, p) => {
     expect(PermissionContextV1Schema.safeParse(p).success).toBe(false);
     expect(() => permissionContextText(p)).toThrow();
+  });
+  // 9.2 review M4: the schema's outer-allowlist coverage is the authority's own coversHost
+  it.each<[string, string]>([
+    ["example.com", "example.com"],
+    ["example.com", "api.example.com"],
+    ["*.example.com", "api.example.com"],
+    ["*.example.com", "a.b.example.com"],
+    ["*.example.com", "example.com"],
+    ["*.example.com", "badexample.com"],
+    ["*.example.com", "*.example.com"],
+    ["*.example.com", "*.api.example.com"],
+    ["api.example.com", "*.example.com"],
+  ])("outer allowlist %s covers %s exactly as sandbox coversHost", (pattern, host) => {
+    const p = withScope("request-approval", "cloud", (s) => {
+      s.network = { kind: "allowlist", hosts: [host] };
+      s.outerNetwork = { kind: "allowlist", hosts: [pattern] };
+    });
+    expect(PermissionContextV1Schema.safeParse(p).success).toBe(coversHost(pattern, host));
   });
   it.each(["/project/", "/./project", "/a/../project", "//project"])(
     "rejects managed working root %s",

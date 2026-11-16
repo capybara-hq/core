@@ -209,7 +209,13 @@ export function permissionContextMeta(
   };
 }
 
-/** One traversal for request rendering and original-coordinate replay diagnostics. */
+/**
+ * One traversal for request rendering and original-coordinate replay diagnostics. Both callers get
+ * the same marker rule: a present marker or version that fails its strict v1 schema (covered by a
+ * summary or not) throws {@link RecordedPermissionContextError} before anything renders, so it is
+ * never shown as historical device-mode text nor surfaces as a raw schema error. Unmarked events
+ * are left to their historical rendering.
+ */
 export function permissionContextHistory(
   events: readonly ConversationEvent[],
   coversUpToSeq?: number,
@@ -218,6 +224,7 @@ export function permissionContextHistory(
   ordered: Map<number, PermissionContribution>;
   meta: PermissionContextMetaV1 | undefined;
 } {
+  assertRecordedPermissionEvents(events);
   const sorted = [...events].sort((a, b) => a.seq - b.seq);
   const floor = coversUpToSeq ?? Number.NEGATIVE_INFINITY;
   const restored: (PermissionContribution & { seq: number })[] = [];
