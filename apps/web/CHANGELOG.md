@@ -1,5 +1,22 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.36
+
+### Patch Changes
+
+- ae01833: Keep IM binding confirmation and cancel disabled until their browser handlers are ready after sign-in.
+- 62d792f: Unify project-context warnings with expandable run details and mark unavailable projects in the composer. Provide device and new free-conversation links without changing the existing project binding.
+  
+  Keep tool approval status on one line when a long command description competes for space.
+  
+  Keep long project paths within phone widths and scroll to project details after their layout settles.
+- 50eaf97: Use Webpack in the development web server to avoid repeated Turbopack HMR reloads.
+  Preserve design cascade layers when expanding stylesheet imports for Webpack development.
+  Make the HTTP login notice conditional on sign-in problems because the browser origin does not
+  reveal the server's cookie settings.
+- Updated dependencies [62d792f]
+  - @capybara-hq/design@0.2.0-rc.9
+
 ## 0.1.0-rc.35
 
 No changes in this release.
