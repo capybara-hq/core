@@ -200,8 +200,8 @@ docker compose -f docker/compose.dev.yaml up -d   # local postgres + valkey
 
 - **Design before code for larger changes.** A new feature, a cross-package change, a new contract
   or a behavior change starts with a design doc in `docs/superpowers/specs/`, reviewed by a
-  maintainer; then a plan in `docs/superpowers/plans/`, also reviewed; then implementation. Small
-  fixes skip this.
+  maintainer, with a section `## AGENTS.md rules touched` (`check:agent-docs`); then a plan in
+  `docs/superpowers/plans/`, also reviewed; then implementation. Small fixes skip this.
 - **Executing a plan with subagents:** plan the execution before the first dispatch (waves of tasks
   with disjoint files in parallel, batched review and fixes per wave, trust-boundary / migration /
   multi-replica / cross-tenant tasks reviewed alone on the most capable model): the
