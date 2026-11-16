@@ -29,26 +29,35 @@ const FOURTEEN_TYPES = [
   "application/x-ndjson",
 ];
 
+const zhMore = (n: number) => `等 ${n} 种`;
+const enMore = (n: number) => `and ${n} total`;
+
 describe("typeList", () => {
   it("lists at most six labels then a count", () => {
-    expect(typeList(FOURTEEN_TYPES)).toBe("PNG / JPEG / GIF / WebP / PDF / TXT 等 14 种");
-    expect(typeList(FOURTEEN_TYPES, "en")).toBe("PNG / JPEG / GIF / WebP / PDF / TXT and 14 total");
+    expect(typeList(FOURTEEN_TYPES, zhMore)).toBe("PNG / JPEG / GIF / WebP / PDF / TXT 等 14 种");
+    expect(typeList(FOURTEEN_TYPES, enMore)).toBe(
+      "PNG / JPEG / GIF / WebP / PDF / TXT and 14 total",
+    );
   });
 
   it("the cap is six, so seven truncates too", () => {
-    expect(typeList(FOURTEEN_TYPES.slice(0, 7), "zh")).toBe(
+    expect(typeList(FOURTEEN_TYPES.slice(0, 7), zhMore)).toBe(
       "PNG / JPEG / GIF / WebP / PDF / TXT 等 7 种",
     );
-    expect(typeList(FOURTEEN_TYPES.slice(0, 7), "en")).toBe(
+    expect(typeList(FOURTEEN_TYPES.slice(0, 7), enMore)).toBe(
       "PNG / JPEG / GIF / WebP / PDF / TXT and 7 total",
     );
   });
 
   it("six or fewer join with no count", () => {
-    expect(typeList(FOURTEEN_TYPES.slice(0, 6), "zh")).toBe("PNG / JPEG / GIF / WebP / PDF / TXT");
-    expect(typeList(FOURTEEN_TYPES.slice(0, 6), "en")).toBe("PNG / JPEG / GIF / WebP / PDF / TXT");
-    expect(typeList(["image/png", "application/pdf"], "en")).toBe("PNG / PDF");
-    expect(typeList([], "zh")).toBe("");
+    expect(typeList(FOURTEEN_TYPES.slice(0, 6), zhMore)).toBe(
+      "PNG / JPEG / GIF / WebP / PDF / TXT",
+    );
+    expect(typeList(FOURTEEN_TYPES.slice(0, 6), enMore)).toBe(
+      "PNG / JPEG / GIF / WebP / PDF / TXT",
+    );
+    expect(typeList(["image/png", "application/pdf"], enMore)).toBe("PNG / PDF");
+    expect(typeList([], zhMore)).toBe("");
   });
 });
 
@@ -111,7 +120,7 @@ describe("DEFAULT_LIMITS", () => {
       expect(precheckFile({ name: "f", type, size: 1 }, DEFAULT_LIMITS)).toBeNull();
     }
     // and the refusal line stays one short line
-    expect(typeList(DEFAULT_LIMITS.types, "zh")).toBe(
+    expect(typeList(DEFAULT_LIMITS.types, zhMore)).toBe(
       "PNG / JPEG / GIF / WebP / PDF / TXT 等 13 种",
     );
   });

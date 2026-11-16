@@ -1,6 +1,3 @@
-import en from "../../messages/en.json";
-import zh from "../../messages/zh.json";
-import type { AppLocale } from "../i18n/routing";
 import { ApiClientError, apiFetch } from "./api";
 
 /**
@@ -199,11 +196,6 @@ export async function uploadAttachment(
 }
 
 /** The words after a truncated label list, per locale (the catalog holds one key per language). */
-const FILE_TYPE_MORE: Record<AppLocale, string> = {
-  zh: zh.chat.fileTypeMore,
-  en: en.chat.fileTypeMore,
-};
-
 /** How many labels the refusal line shows before the count. */
 const TYPE_LIST_LABELS = 6;
 
@@ -212,11 +204,15 @@ const TYPE_LIST_LABELS = 6;
  * count ("PNG / … / TXT 等 13 种" / "PNG / … / TXT and 13 total"), so the line stays short however
  * many types the deployment allows.
  */
-export const typeList = (types: readonly string[], locale: AppLocale = "zh"): string => {
+export const typeList = (
+  types: readonly string[],
+  /** The "and N total" wording of the caller's locale: a translated template, not a catalog import
+   *  (importing the message catalogs here would put both of them in the chat chunks). */
+  more: (total: number) => string,
+): string => {
   const labels = types.map(attachmentTypeLabel);
   if (labels.length <= TYPE_LIST_LABELS) return labels.join(" / ");
-  const more = FILE_TYPE_MORE[locale].replace("{count}", String(labels.length));
-  return `${labels.slice(0, TYPE_LIST_LABELS).join(" / ")} ${more}`;
+  return `${labels.slice(0, TYPE_LIST_LABELS).join(" / ")} ${more(labels.length)}`;
 };
 
 /** 文件卡片上的类型说明。 */
