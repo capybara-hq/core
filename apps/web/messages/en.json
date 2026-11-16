@@ -3638,6 +3638,8 @@
         "description": "The platform's model service plugins: configure their connection here; each organization can use one once it turns it on. Model services in the marketplace that are not installed yet are listed here too.",
         "configure": "Configure",
         "configureLabel": "Configure {plugin}",
+        "enable": "Enable",
+        "enableLabel": "Enable {plugin}",
         "install": "Install",
         "installLabel": "Install {plugin}",
         "notInstalled": "Not installed",

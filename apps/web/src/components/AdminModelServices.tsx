@@ -16,7 +16,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { useRouter } from "../i18n/navigation";
-import type { AdminExtension } from "../lib/admin-extensions";
+import { type AdminExtension, enableExtension } from "../lib/admin-extensions";
 import { issueLines } from "../lib/api";
 import {
   displayNameOf,
@@ -103,6 +103,22 @@ export function AdminModelServices({
     invalidates: () => [],
     onSuccess: (p) => qc.setQueryData(stagedImportQuery(p.stagingId).queryKey, p),
   });
+  // A deployed service the super admin disabled: the extension page's enable, from its row
+  const enable = useAppMutation({
+    fn: (name: string) => enableExtension(name),
+    invalidates: () => extensionChangeKeys(orgId),
+  });
+  async function enableService(name: string) {
+    setBusy(name);
+    setNotice(undefined);
+    try {
+      await enable.mutateAsync(name);
+    } catch (err) {
+      setNotice({ message: errorMessage(err), extra: issueLines(err) });
+    } finally {
+      setBusy(undefined);
+    }
+  }
   async function install(e: MarketplaceEntry) {
     setBusy(e.name);
     setNotice(undefined);
@@ -119,6 +135,8 @@ export function AdminModelServices({
   const deployed: ItemListRow[] = services.map((p) => {
     const label = extensionLabel(p, lang);
     const attention = p.status !== "enabled" && p.status !== "disabled";
+    // disabled on the deployment and not held off by another provider of a single-provider point
+    const canEnable = p.desired?.state === "disabled" && p.enableBlocked === undefined;
     return {
       id: `ext:${p.name}`,
       mark: { text: label, image: p.icon ?? null },
@@ -128,16 +146,32 @@ export function AdminModelServices({
         .filter((x): x is string => x !== null)
         .join(" · "),
       status: { label: ts(p.status), ...(attention ? { tone: "accent" as const } : {}) },
-      ...(p.configurable
+      ...(p.configurable || canEnable
         ? {
             actions: (
-              <Button
-                density="dense"
-                aria-label={t("setup.configureLabel", { plugin: label })}
-                onClick={() => setOpen(p.name)}
-              >
-                {t("setup.configure")}
-              </Button>
+              <>
+                {canEnable && (
+                  <Button
+                    density="dense"
+                    variant="secondary"
+                    loading={busy === p.name}
+                    disabled={busy !== undefined}
+                    aria-label={t("setup.enableLabel", { plugin: label })}
+                    onClick={() => void enableService(p.name)}
+                  >
+                    {t("setup.enable")}
+                  </Button>
+                )}
+                {p.configurable && (
+                  <Button
+                    density="dense"
+                    aria-label={t("setup.configureLabel", { plugin: label })}
+                    onClick={() => setOpen(p.name)}
+                  >
+                    {t("setup.configure")}
+                  </Button>
+                )}
+              </>
             ),
           }
         : {}),

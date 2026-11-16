@@ -3626,6 +3626,8 @@
         "description": "平台上的模型服务插件：在这里配置它的连接，各组织在本组织启用后即可使用。市场里还没安装的模型服务也列在这里。",
         "configure": "配置",
         "configureLabel": "配置 {plugin}",
+        "enable": "启用",
+        "enableLabel": "启用 {plugin}",
         "install": "安装",
         "installLabel": "安装 {plugin}",
         "notInstalled": "未安装",

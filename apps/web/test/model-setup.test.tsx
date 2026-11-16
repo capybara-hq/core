@@ -486,6 +486,42 @@ describe("/admin/models: 模型服务", () => {
     );
   });
 
+  it("a deployed service the super admin disabled has 启用 on its row (the extension page's enable)", async () => {
+    const disabled = deployed({
+      status: "disabled",
+      desired: { version: "0.1.0", sha256: SHA, state: "disabled" },
+    });
+    adminKernel([disabled], []);
+    await renderRouteWithCache("/admin/models", lastStubRoutes());
+    const calls = stubApi({
+      ...lastStubRoutes(),
+      "POST /api/v1/admin/extensions/anthropic/enable": () =>
+        json(200, { ...disabled, desired: { version: "0.1.0", sha256: SHA, state: "enabled" } }),
+    });
+    const list = await screen.findByRole("list", { name: en.models.admin.setup.title });
+    const row = within(list).getByText("Anthropic models").closest("li") as HTMLElement;
+    await userEvent.setup().click(
+      within(row).getByRole("button", {
+        name: en.models.admin.setup.enableLabel.replace("{plugin}", "Anthropic models"),
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(
+        calls.some((c) => c.method === "POST" && c.url.endsWith("/extensions/anthropic/enable")),
+      ).toBe(true),
+    );
+    // an enabled service has no such button
+    cleanup();
+    adminKernel([deployed({ status: "enabled" })], []);
+    await renderRouteWithCache("/admin/models", lastStubRoutes());
+    const again = await screen.findByRole("list", { name: en.models.admin.setup.title });
+    expect(
+      within(again).queryByRole("button", {
+        name: en.models.admin.setup.enableLabel.replace("{plugin}", "Anthropic models"),
+      }),
+    ).toBeNull();
+  });
+
   it("no model service anywhere: the list's empty state links to the marketplace", async () => {
     adminKernel([], [entry("lark", ["provides:channel@1"])]);
     await renderRouteWithCache("/admin/models", lastStubRoutes());
