@@ -21,7 +21,10 @@ import { childResult, finishedEvent } from "../../../src/runtime/subagents/child
 import { type DispatchDeps, dispatchSubagent } from "../../../src/runtime/subagents/dispatch.js";
 import { SubagentMessages } from "../../../src/runtime/subagents/messages.js";
 import { SUBAGENT_PREAMBLE } from "../../../src/runtime/subagents/preamble.js";
-import { templateSkillUnreadableText } from "../../../src/runtime/subagents/template-skills.js";
+import {
+  templateSkillUnreadableText,
+  templateSkillUnreadableWarning,
+} from "../../../src/runtime/subagents/template-skills.js";
 import { SkillInvoker } from "../../../src/skills/invoke.js";
 import { AGENT_REFUSALS, agentStartedText } from "../../../src/tools/builtins/agent.js";
 import {
@@ -766,7 +769,7 @@ describe("dispatch idempotency under the parent run lock", () => {
     expect(new Set(owed).size).toBe(2);
   });
 
-  it("a template skill that cannot be read at dispatch (no object storage) becomes a load-it message; the dispatch goes on", async () => {
+  it("a template skill that cannot be read at dispatch (no object storage) becomes a load-it message and a warning; the dispatch goes on, a stopped run's does not", async () => {
     const { ctx } = await parentRun();
     const skillId = randomUUID();
     await db
@@ -804,15 +807,30 @@ describe("dispatch idempotency under the parent run lock", () => {
           ],
         },
       };
+      const input = { description: "Notes", prompt: "take notes", subagent_type: "noter" };
+      // a stopped parent run reads no skill and dispatches nothing
+      const stopped = new AbortController();
+      stopped.abort();
+      const before = (await children(ctx.conversationId)).length;
+      expect(
+        await dispatchSubagent(deps(), {
+          ctx: { ...ctx, agent, signal: stopped.signal },
+          callId: "c-stopped",
+          input,
+        }),
+      ).toEqual({ kind: "refused", content: AGENT_REFUSALS.notAvailableHere });
+      expect(await children(ctx.conversationId)).toHaveLength(before);
       const out = await dispatchSubagent(deps(), {
         ctx: { ...ctx, agent },
         callId: "c-skill",
-        input: { description: "Notes", prompt: "take notes", subagent_type: "noter" },
+        input,
       });
       expect(out.kind).toBe("dispatched");
       const child = (out as { childConversationId: string }).childConversationId;
       const events = await eventsOf(db, child);
-      expect(ofType(events, "subagent_started")[0]?.payload.preamble).toBe(SUBAGENT_PREAMBLE);
+      const started = ofType(events, "subagent_started")[0];
+      expect(started?.payload.preamble).toBe(SUBAGENT_PREAMBLE);
+      expect(started?.payload.warnings).toEqual([templateSkillUnreadableWarning("beta-notes")]);
       const messages = ofType(events, "user_message");
       expect(messages.map((m) => m.payload.content)).toEqual([
         [{ type: "text", text: "take notes" }],

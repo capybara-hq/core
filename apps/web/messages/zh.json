@@ -1409,6 +1409,7 @@
       "fork": "子智能体"
     },
     "skillInstructions": "技能说明",
+    "templateSkill": "子智能体技能 {skill}",
     "skillReport": "报告",
     "skillWaits": "运行 {skill} 的子智能体完成后一起回复。",
     "interjectionPending": "待处理",

@@ -235,11 +235,14 @@ export async function dispatchSubagent(d: DispatchDeps, a: DispatchArgs): Promis
   }
   // read and rendered before the transaction (object storage): the template's skills as the
   // child's invocation messages, after its task
-  const skillMessages = await templateSkillMessages(d, {
+  const loaded = await templateSkillMessages(d, {
     ctx,
     child: eff.definition,
     skills: eff.skills,
   });
+  // the parent run was stopped: nothing is dispatched (as when the commit finds it not running)
+  if (loaded === null) return refused(AGENT_REFUSALS.notAvailableHere);
+  warnings.push(...loaded.warnings);
   const childId = randomUUID();
   const plan: DispatchPlan = {
     childConversationId: childId,
@@ -310,7 +313,7 @@ export async function dispatchSubagent(d: DispatchDeps, a: DispatchArgs): Promis
         undefined,
         fork?.skill,
       ),
-      ...skillMessages,
+      ...loaded.messages,
     ]);
     return task as ConversationEvent;
   });

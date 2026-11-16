@@ -529,6 +529,7 @@ describe("child cases", () => {
       name: "alpha-notes",
       arguments: "",
       mode: "inline",
+      template: true,
     });
     const text = (invoked.payload.content[0] as { text: string }).text;
     expect(text).toBe(

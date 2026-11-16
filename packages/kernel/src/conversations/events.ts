@@ -451,10 +451,15 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
        */
       retryOf: seqNo.optional(),
       /**
-       * A person's skill invocation (`/name args`, phase D spec §4.3): which skill version was
-       * rendered into `content[0]`, with the arguments as typed (trimmed). Not model-visible (the
-       * rendered text is); the web renders the chip and the arguments from it. `name` is the
-       * skill's bare name, `plugin` its catalog item; `agentType` is set for `mode: "fork"`.
+       * A skill invocation: which skill version was rendered into `content[0]`, with the
+       * arguments (trimmed). Not model-visible (the rendered text is). `name` is the skill's bare
+       * name, `plugin` its catalog item; `agentType` is set for `mode: "fork"`.
+       * - A person's (`/name args`, phase D spec §4.3): the arguments as typed; the web renders
+       *   the chip and the arguments from it.
+       * - `template: true`: written by the kernel at a template sub-agent's dispatch, after its
+       *   task, for each of the template's skills (`runtime/subagents/template-skills.ts`;
+       *   `mode: "inline"`, no arguments, `authorAccountId` the person whose run dispatched it);
+       *   nobody typed it: the web shows it with the task, never as a person's message.
        */
       skill: z
         .object({
@@ -466,6 +471,7 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
           arguments: z.string(),
           mode: z.enum(["inline", "fork"]),
           agentType: z.string().optional(),
+          template: z.literal(true).optional(),
         })
         .optional(),
       /**

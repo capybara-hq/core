@@ -153,7 +153,8 @@ type EventBody =
         };
         /**
          * A person's skill invocation (phase D): `content[0]` is the rendered skill, this is what
-         * they typed (the chip and the arguments).
+         * they typed (the chip and the arguments). `template`: a template sub-agent's skill the
+         * kernel wrote after the task (part of the task, not a person's message).
          */
         skill?: SkillInvocationRecord;
       };
@@ -530,6 +531,11 @@ export interface SkillInvocationRecord {
   mode: "inline" | "fork";
   /** Fork only: the sub-agent type it ran as. */
   agentType?: string;
+  /**
+   * Written by the kernel at a template sub-agent's dispatch (one per template skill, after the
+   * task): nobody typed it; shown with the task.
+   */
+  template?: true;
 }
 
 /** Phase D: the report of the sub-agent that ran a person's fork invocation (model-visible). */

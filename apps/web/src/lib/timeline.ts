@@ -339,7 +339,17 @@ export type TimelineEntry =
       toolKey: string;
       expiresAt?: string;
     }
-  | { kind: "task"; key: string; seq: number; text: string }
+  | {
+      kind: "task";
+      key: string;
+      seq: number;
+      text: string;
+      /**
+       * The template's skills the kernel wrote after the task (`skill.template`): each skill's
+       * chip ("/alpha-notes") and its rendered instructions (`content[0]`).
+       */
+      skills?: { label: string; instructions: string }[];
+    }
   | {
       /** A sub-agent's delivery to its parent (`subagent_delivery`, agent map spec §4.5). */
       kind: "delivery";
@@ -951,6 +961,15 @@ export function buildEventTimeline(
           break;
         }
         const skill = e.payload.skill;
+        if (skill?.template) {
+          // A template sub-agent's skill the kernel wrote after the task: part of the task block,
+          // never a person's bubble.
+          const loaded = { label: `/${skill.name}`, instructions: userText(e) };
+          const task = out.findLast((x) => x.kind === "task");
+          if (task?.kind === "task") task.skills = [...(task.skills ?? []), loaded];
+          else out.push({ kind: "task", key, seq: e.seq, text: "", skills: [loaded] });
+          break;
+        }
         const text = skill ? skill.arguments : userText(e);
         const files = messageFiles(e.payload.content);
         const retryOf = e.payload.retryOf;

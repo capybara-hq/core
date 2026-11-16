@@ -11,9 +11,10 @@ import type { TemplateSkill } from "./definition.js";
  * §6.1): the dispatch writes one skill invocation message per skill the child has, after its task
  * message and in the same transaction, so the child starts with the instructions instead of
  * spending model steps on `Skill` calls. Each message is a `user_message` with the `skill` record
- * (`mode: "inline"`, no arguments) and the version's rendered `<skill_invocation>` text, as a
- * person's inline invocation is logged: the text is fixed in the log (replay never renders it
- * again), and the record lets the child's `Skill` copy the files of that version.
+ * (`mode: "inline"`, no arguments, `template: true`: nobody typed it) and the version's rendered
+ * `<skill_invocation>` text, as an inline invocation is logged: the text is fixed in the log
+ * (replay never renders it again), and the record lets the child's `Skill` copy the files of that
+ * version.
  */
 
 /** The lead of a template skill's invocation message (model-visible, English). */
@@ -24,20 +25,29 @@ export const templateSkillLeadText = (name: string): string =>
 export const templateSkillUnreadableText = (name: string): string =>
   `Your sub-agent type comes with the skill "${name}", but it could not be read when you started; load it with Skill before you use it.`;
 
+/** The dispatch warning of a template skill that could not be read or rendered (not model-visible). */
+export const templateSkillUnreadableWarning = (name: string): string =>
+  `The skill "${name}" could not be read at dispatch; the sub-agent was told to load it with Skill.`;
+
 type UserMessage = { type: "user_message"; payload: EventPayload<"user_message"> };
 
 /**
  * The invocation messages of `skills` for the child's effective definition `child` (its tools
  * decide the shell line), read from the versions its catalog lists. A version that cannot be read
  * or rendered (storage down, integrity, over the size limit) gets {@link
- * templateSkillUnreadableText} instead, and the dispatch goes on.
+ * templateSkillUnreadableText} instead and a dispatch warning ({@link
+ * templateSkillUnreadableWarning}, for `subagent_started.warnings`), and the dispatch goes on.
+ * Null when the run's signal aborted before a read: the dispatch writes nothing.
  */
 export async function templateSkillMessages(
   d: { invoker: Pick<SkillInvoker, "renderTask">; log: Pick<Logger, "warn"> },
   a: { ctx: ToolStepContext; child: AgentDefinition; skills: readonly TemplateSkill[] },
-): Promise<UserMessage[]> {
-  const out: UserMessage[] = [];
+): Promise<{ messages: UserMessage[]; warnings: string[] } | null> {
+  const messages: UserMessage[] = [];
+  const warnings: string[] = [];
   for (const s of a.skills) {
+    // a stopped run reads no more skill files (as the fork path checks before its read)
+    if (a.ctx.signal.aborted) return null;
     const record: NonNullable<EventPayload<"user_message">["skill"]> = {
       id: s.id,
       version: s.version,
@@ -46,6 +56,7 @@ export async function templateSkillMessages(
       ...(s.plugin !== undefined && { plugin: s.plugin }),
       arguments: "",
       mode: "inline",
+      template: true,
     };
     let text: string;
     try {
@@ -64,12 +75,13 @@ export async function templateSkillMessages(
         version: s.version,
         err: e,
       });
-      out.push(message(a.ctx, templateSkillUnreadableText(s.name)));
+      messages.push(message(a.ctx, templateSkillUnreadableText(s.name)));
+      warnings.push(templateSkillUnreadableWarning(s.name));
       continue;
     }
-    out.push(message(a.ctx, text, record));
+    messages.push(message(a.ctx, text, record));
   }
-  return out;
+  return { messages, warnings };
 }
 
 const message = (

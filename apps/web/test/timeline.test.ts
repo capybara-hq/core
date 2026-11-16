@@ -416,6 +416,64 @@ describe("buildTimeline", () => {
     ]);
   });
 
+  it("a template sub-agent's skills the kernel wrote after the task join the task block, never a person's bubble", () => {
+    const skill = (name: string) => ({
+      id: `s-${name}`,
+      version: 1,
+      source: `skills/s-${name}/`,
+      name,
+      arguments: "",
+      mode: "inline",
+      template: true,
+    });
+    const events = [
+      ev(
+        1,
+        "user_message",
+        {
+          content: [{ type: "text", text: "take notes" }],
+          authorAccountId: "a1",
+          dispatch: { parentConversationId: "p", parentRunId: "r0", callId: "c" },
+        },
+        null,
+      ),
+      ev(
+        2,
+        "user_message",
+        {
+          content: [{ type: "text", text: "alpha instructions" }],
+          authorAccountId: "a1",
+          skill: skill("alpha-notes"),
+        },
+        null,
+      ),
+      ev(
+        3,
+        "user_message",
+        {
+          content: [{ type: "text", text: "beta instructions" }],
+          authorAccountId: "a1",
+          skill: skill("beta"),
+        },
+        null,
+      ),
+    ];
+    const out = buildTimeline(events, [], new Map(), "en");
+    expect(out).toEqual([
+      {
+        kind: "task",
+        key: "e1",
+        seq: 1,
+        text: "take notes",
+        skills: [
+          { label: "/alpha-notes", instructions: "alpha instructions" },
+          { label: "/beta", instructions: "beta instructions" },
+        ],
+      },
+    ]);
+    expect(out.some((e) => e.kind === "user")).toBe(false);
+  });
+
   it("a manual compact run's row names itself and its failure is a failed divider", () => {
     const events = [
       ev(1, "run_started", {

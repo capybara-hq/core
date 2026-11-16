@@ -771,7 +771,20 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
         );
       }
       case "task":
-        return renderTask?.(e) ?? null;
+        return e.skills === undefined ? (
+          (renderTask?.(e) ?? null)
+        ) : (
+          <>
+            {renderTask?.(e) ?? null}
+            {e.skills.map((s) => (
+              <Disclosure key={s.label} summary={t("templateSkill", { skill: s.label })}>
+                <Text variant="small" tone="muted" pre>
+                  {s.instructions}
+                </Text>
+              </Disclosure>
+            ))}
+          </>
+        );
       case "delivery":
         return <DeliveryRow e={e} onOpen={onOpenAgent} />;
       case "skill-report":

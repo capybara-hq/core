@@ -101,8 +101,8 @@ const STATUSES: Record<
 
 /**
  * The text of the snapshot run's trigger message (the latest `user_message` before its
- * `run_started`; in a child case the latest task or parent message, never a template skill's
- * invocation written after the task), whitespace collapsed, first 80 characters.
+ * `run_started`, never a template skill's invocation written after a sub-agent's task),
+ * whitespace collapsed, first 80 characters.
  */
 export function caseTitle(s: CaseSnapshot): string {
   const started = s.events.find((e) => e.type === "run_started" && e.runId === s.runId);
@@ -113,10 +113,10 @@ export function caseTitle(s: CaseSnapshot): string {
     if (e.type !== "user_message") continue;
     const payload = e.payload as {
       content?: { type: string; text?: string }[];
-      skill?: { name: string; plugin?: string; arguments: string };
-      dispatch?: unknown;
+      skill?: { name: string; plugin?: string; arguments: string; template?: true };
     };
-    if (s.subagent !== undefined && payload.dispatch === undefined) continue;
+    // a template sub-agent's skill, written after its task: the task titles the case
+    if (payload.skill?.template) continue;
     // a skill invocation: what the person typed, never the rendered skill (content[0])
     if (payload.skill !== undefined) {
       text = typedInvocation(payload.skill);

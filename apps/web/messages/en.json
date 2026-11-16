@@ -1409,6 +1409,7 @@
       "fork": "sub-agent"
     },
     "skillInstructions": "Skill instructions",
+    "templateSkill": "Skill {skill} for this sub-agent",
     "skillReport": "Report",
     "skillWaits": "Answered after the sub-agent running {skill} finishes.",
     "interjectionPending": "Pending",

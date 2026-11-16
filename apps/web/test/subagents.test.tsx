@@ -520,6 +520,39 @@ describe("sub-agents on the conversation page", () => {
     expect(window.location.hash).toBe("");
   });
 
+  it("a template child's skills (written by the kernel after its task) show with the task, not as a person's message", async () => {
+    const [started, task, ...rest] = childEvents(false);
+    const loaded = ev(
+      50,
+      "user_message",
+      {
+        content: [{ type: "text", text: "Write notes in alpha order." }],
+        authorAccountId: "a1",
+        skill: {
+          id: "s1",
+          version: 1,
+          source: "skills/s1/",
+          name: "alpha-notes",
+          arguments: "",
+          mode: "inline",
+          template: true,
+        },
+      },
+      null,
+      "ch2",
+    );
+    api({}, { child: [started, task, loaded, ...rest] as ConversationEvent[] });
+    window.history.replaceState(null, "", "/chat/c1#subagent=ch2");
+    await renderChat();
+    const panel = await childPanelWith((p) => within(p).getByText("All tests pass."));
+    expect(within(panel).getByText("Do Check tests")).toBeTruthy();
+    expect(
+      within(panel).getByText(en.chat.templateSkill.replace("{skill}", "/alpha-notes")),
+    ).toBeTruthy();
+    // no person's bubble with the skill chip
+    expect(within(panel).queryByText("/alpha-notes")).toBeNull();
+  });
+
   it("a finished child shows no stop", async () => {
     api({}, { child: childEvents(false) });
     window.history.replaceState(null, "", "/chat/c1#subagent=ch2");
