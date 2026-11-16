@@ -63,6 +63,7 @@ process.env[PEER_TOKEN_ENV] = token;
 const nextUpgrades = new EventEmitter();
 const app = next({
   dev,
+  ...(dev && { webpack: true }),
   dir: import.meta.dirname,
   port,
   httpServer: nextUpgrades,
