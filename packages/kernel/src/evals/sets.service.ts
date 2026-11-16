@@ -100,7 +100,9 @@ const STATUSES: Record<
 };
 
 /**
- * 快照运行的触发消息（该运行 `run_started` 之前最近的一条 `user_message`）的文本，空白折叠后取前 80 个字符。
+ * The text of the snapshot run's trigger message (the latest `user_message` before its
+ * `run_started`; in a child case the latest task or parent message, never a template skill's
+ * invocation written after the task), whitespace collapsed, first 80 characters.
  */
 export function caseTitle(s: CaseSnapshot): string {
   const started = s.events.find((e) => e.type === "run_started" && e.runId === s.runId);
@@ -112,7 +114,9 @@ export function caseTitle(s: CaseSnapshot): string {
     const payload = e.payload as {
       content?: { type: string; text?: string }[];
       skill?: { name: string; plugin?: string; arguments: string };
+      dispatch?: unknown;
     };
+    if (s.subagent !== undefined && payload.dispatch === undefined) continue;
     // a skill invocation: what the person typed, never the rendered skill (content[0])
     if (payload.skill !== undefined) {
       text = typedInvocation(payload.skill);

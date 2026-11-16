@@ -15,6 +15,7 @@ import { KernelConfigService } from "../../../src/infra/config/kernel-config.ser
 import { ModelPurposesService } from "../../../src/models/purposes.js";
 import { ProviderRegistry } from "../../../src/runtime/providers.js";
 import { type DispatchDeps, dispatchSubagent } from "../../../src/runtime/subagents/dispatch.js";
+import { SkillInvoker } from "../../../src/skills/invoke.js";
 import { AGENT_REFUSALS } from "../../../src/tools/builtins/agent.js";
 import { type ScriptRule, scriptRules } from "../../fixtures/plugins/model-script/index.js";
 import { legacyDbFor } from "../../helpers/conversations.js";
@@ -419,6 +420,7 @@ describe("the depth limit and gates on a forged call", () => {
     eventLog: k.app.get(EventLog),
     purposes: k.app.get(ModelPurposesService),
     registry: k.app.get(ProviderRegistry),
+    invoker: k.app.get(SkillInvoker),
     config: { get: () => k.app.get(KernelConfigService).get() },
     // the children are finished by hand (or not at all) here: no run job is owed, none runs
     owe: async () => true,

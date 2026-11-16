@@ -276,6 +276,12 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
 - **The compaction line** (`Skills the user invoked earlier in this conversation: {names}. Call Skill …`) follows the restored
   catalog after a summary whose range holds inline invocations. It is computed from the log only (`invokedSkillNames`, the
   `skill` fields of covered messages), so replay renders it identically; logs without invocations render as before.
+- **Template skills at child start** (`runtime/subagents/template-skills.ts`): a template child's `skills` are written at
+  dispatch as inline invocation messages after the task (the version's `skill` record and rendered text), no longer as a
+  preamble line. In the log, so no `DriftReason`: older children's logged preambles with the line still rebuild byte for
+  byte, and a candidate that changes a template's skills is flagged by `subagent_changed` as before. A child case is titled by
+  its task, never by these messages (`caseTitle`). Pinned by `subagents-replay.test.ts` ("an inline child starts with its
+  template's skills …").
 - **No new `DriftReason`**: the invocation text and the fork report are inputs fixed in the log, like the `@` resource bodies read
   with the person's credentials at send time. A baseline reconstructs them byte for byte, and a candidate agent version that no
   longer selects the invoked skill still replays the recorded message (a person's input is not the agent's to change).

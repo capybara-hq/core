@@ -435,9 +435,13 @@ Specs `docs/superpowers/specs/2026-10-26-subagents-design.md` §4–§9 (phase C
 - **Skills of a child** (skills default-on spec §6.1): a template or inline child's `disabledSkills` are the parent's plus the
   template's `disallowedSkills` (`<plugin>:*`, `<plugin>:<name>`, a bare `<name>` for an org skill without a plugin; unresolved ones
   dropped); an org agent child has its own. A template's `skills` (plugin templates by name, inline ones by skill id, which a save
-  checks against the agent's skills: `agent.subagents_invalid` `skill_not_available`) are never pinned: the ones in the child's
-  catalog become one logged preamble line, `Before you start, load these skills with Skill: <a>, <b>.`, and the others warnings in
-  `subagent_started.warnings`. General-purpose and org agent children get no line.
+  checks against the agent's skills: `agent.subagents_invalid` `skill_not_available`) are never pinned: the dispatch writes each
+  one in the child's catalog as a skill invocation message after the task (`runtime/subagents/template-skills.ts`: a
+  `user_message` with the version's `skill` record, `mode: "inline"`, and its rendered `<skill_invocation>` text, read with
+  `SkillInvoker.renderTask` before the transaction), so the child starts with the instructions and spends no step on `Skill`;
+  a version that cannot be read or rendered gets a "load it with Skill" message instead and the dispatch goes on. The others are
+  warnings in `subagent_started.warnings`. General-purpose and org agent children have none. Children dispatched before this
+  logged a `Before you start, load these skills with Skill: …` line in their preamble instead (it replays from the log).
 - **Agent tree API**: `GET …/conversations/:id/agent-tree` (each node's status, type, model, start / end, tokens, tool calls) feeds the
   web agent map; a sub-agent conversation is reachable by a viewer whose root conversation it is.
 - **A person's forked skill** (`/name` of a `context: fork` skill) dispatches through the same code but has no `Agent` call: the

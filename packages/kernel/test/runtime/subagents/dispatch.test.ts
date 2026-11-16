@@ -21,6 +21,8 @@ import { childResult, finishedEvent } from "../../../src/runtime/subagents/child
 import { type DispatchDeps, dispatchSubagent } from "../../../src/runtime/subagents/dispatch.js";
 import { SubagentMessages } from "../../../src/runtime/subagents/messages.js";
 import { SUBAGENT_PREAMBLE } from "../../../src/runtime/subagents/preamble.js";
+import { templateSkillUnreadableText } from "../../../src/runtime/subagents/template-skills.js";
+import { SkillInvoker } from "../../../src/skills/invoke.js";
 import { AGENT_REFUSALS, agentStartedText } from "../../../src/tools/builtins/agent.js";
 import {
   SEND_MESSAGE_REFUSALS,
@@ -723,6 +725,7 @@ describe("dispatch idempotency under the parent run lock", () => {
     eventLog: k.app.get(EventLog),
     purposes: k.app.get(ModelPurposesService),
     registry: k.app.get(ProviderRegistry),
+    invoker: k.app.get(SkillInvoker),
     config: { get: () => k.app.get(KernelConfigService).get() },
     // the child runs are not executed here
     owe: async () => true,
@@ -761,6 +764,71 @@ describe("dispatch idempotency under the parent run lock", () => {
     // found already dispatched owes nothing again: its child's job was owed with the first holder
     expect(owed).toHaveLength(2);
     expect(new Set(owed).size).toBe(2);
+  });
+
+  it("a template skill that cannot be read at dispatch (no object storage) becomes a load-it message; the dispatch goes on", async () => {
+    const { ctx } = await parentRun();
+    const skillId = randomUUID();
+    await db
+      .insertInto("skills")
+      .values({
+        id: skillId,
+        org_id: orgId,
+        scope: "org",
+        name: "beta-notes",
+        description: "Use for beta notes.",
+        current_version: 1,
+        created_by: ownerId,
+      })
+      .execute();
+    await db
+      .insertInto("skill_versions")
+      .values({
+        skill_id: skillId,
+        version: 1,
+        manifest: JSON.stringify({
+          name: "beta-notes",
+          description: "Use for beta notes.",
+          files: [{ path: "SKILL.md", size: 10, sha256: "0".repeat(64) }],
+        }),
+        object_prefix: `skills/${skillId}/`,
+        created_by: ownerId,
+      })
+      .execute();
+    try {
+      const agent = {
+        ...ctx.agent,
+        subagents: {
+          inline: [
+            { name: "noter", description: "Notes.", instructions: "Note.", skills: [skillId] },
+          ],
+        },
+      };
+      const out = await dispatchSubagent(deps(), {
+        ctx: { ...ctx, agent },
+        callId: "c-skill",
+        input: { description: "Notes", prompt: "take notes", subagent_type: "noter" },
+      });
+      expect(out.kind).toBe("dispatched");
+      const child = (out as { childConversationId: string }).childConversationId;
+      const events = await eventsOf(db, child);
+      expect(ofType(events, "subagent_started")[0]?.payload.preamble).toBe(SUBAGENT_PREAMBLE);
+      const messages = ofType(events, "user_message");
+      expect(messages.map((m) => m.payload.content)).toEqual([
+        [{ type: "text", text: "take notes" }],
+        [{ type: "text", text: templateSkillUnreadableText("beta-notes") }],
+      ]);
+      // no record: nothing was rendered from the version
+      expect(messages[1]?.payload.skill).toBeUndefined();
+      expect(messages[1]?.payload.dispatch).toBeUndefined();
+    } finally {
+      // the other cases keep their catalogs
+      await db
+        .updateTable("skills")
+        .set({ deleted_at: new Date() })
+        .where("id", "=", skillId)
+        .execute();
+    }
   });
 
   it("a call dispatched before background Agent (no tool_result yet) is paired once, under its logged key", async () => {

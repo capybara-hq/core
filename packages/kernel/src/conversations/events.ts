@@ -1173,8 +1173,9 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
        */
       definition: LoggedAgentDefinition,
       /**
-       * `SUBAGENT_PREAMBLE` at dispatch time; since skills were on by default, followed by the line
-       * naming a template's skills the child loads first (skills default-on spec §6.1).
+       * `SUBAGENT_PREAMBLE` at dispatch time. Children dispatched between skills default-on and
+       * template skills written as invocations end it with the line naming a template's skills
+       * the child loads first (`Before you start, load these skills with Skill: …`).
        */
       preamble: z.string(),
       /** The child's step limit; 0 = no limit (`runtime.maxSteps` 0, no template limit). */
