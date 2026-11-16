@@ -1,3 +1,4 @@
+import { posix } from "node:path";
 import {
   CONTEXT_LIMITS,
   type ContentBlock,
@@ -50,6 +51,11 @@ const PermissionPath = z
   .refine(
     (value) => validateSandboxPathShape(value).length === 0,
     "Expected an absolute bounded device path",
+  )
+  // the authority's exact spelling: no "." segments and no trailing slash, never repaired here
+  .refine(
+    (value) => posix.normalize(value) === value && (value === "/" || !value.endsWith("/")),
+    "Expected a normalized device path",
   );
 const PermissionHosts = z
   .array(

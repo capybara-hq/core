@@ -39,7 +39,10 @@ import {
   planSqueezedFit,
   sentOutputCap,
 } from "../runtime/context/fit.js";
-import { permissionContextHistory } from "../runtime/context/permission-profile.js";
+import {
+  assertRecordedPermissionEvents,
+  permissionContextHistory,
+} from "../runtime/context/permission-profile.js";
 import { estimateTokens } from "../runtime/context/tokens.js";
 import { assembleModelRequest, type MediaSourceDeps } from "../runtime/model-call.js";
 import { CHILD_REMOVED_TOOLS } from "../runtime/subagents/definition.js";
@@ -223,11 +226,16 @@ function inputEvents(events: readonly ConversationEvent[], call: ModelCallEvent)
   return events.filter((e) => e.seq <= upTo);
 }
 
-/** Compare only the original request range, never live state or candidate-generated history. */
+/**
+ * Compare only the original request range, never live state or candidate-generated history.
+ * Throws `RecordedPermissionContextError` first when any recorded v1 event in the snapshot
+ * (inside or outside the range, covered by a summary or not) fails its strict schema.
+ */
 export function recordedPermissionContextDrift(
   events: readonly ConversationEvent[],
   call: ModelCallEvent,
 ): DriftReason[] {
+  assertRecordedPermissionEvents(events);
   const bounded = inputEvents(events, call);
   const rebuilt = permissionContextHistory(
     bounded,

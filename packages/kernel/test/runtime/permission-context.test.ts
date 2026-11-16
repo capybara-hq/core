@@ -7,6 +7,7 @@ import {
   ConversationEventSchema,
   type ManagedDevicePathsV1,
   ManagedDevicePathsV1Schema,
+  type PermissionContextMetaV1,
   type PermissionContextV1,
   PermissionContextV1Schema,
 } from "../../src/conversations/events.js";
@@ -16,10 +17,12 @@ import { COMPACTION_SETTINGS } from "../../src/identity/settings.js";
 import { buildModelRequest } from "../../src/runtime/context/build.js";
 import { compactionPlan } from "../../src/runtime/context/compaction.js";
 import {
-  type DevicePathsPayload,
   devicePathsChange,
   devicePathsChangeFromPayload,
+  devicePathsIdemKey,
+  devicePathsLevel,
   devicePathsText,
+  type LegacyDevicePathsPayload,
 } from "../../src/runtime/context/device-paths.js";
 import {
   canonicalPermissionJson,
@@ -31,6 +34,7 @@ import {
   permissionContextMeta,
   permissionContextText,
   permissionQuote,
+  RecordedPermissionContextError,
 } from "../../src/runtime/context/permission-profile.js";
 
 const root = "00000000-0000-4000-8000-000000000001";
@@ -176,6 +180,15 @@ function snapshot(profile: PermissionProfile, location: "local" | "cloud"): Perm
     },
   };
 }
+function scopeOf(p: PermissionContextV1): NonNullable<PermissionContextV1["scope"]> {
+  if (p.scope === null) throw new Error("Expected a supported snapshot with a scope");
+  return p.scope;
+}
+function scopedFs(p: PermissionContextV1) {
+  const fs = scopeOf(p).filesystem;
+  if (fs.kind !== "scoped") throw new Error("Expected a scoped filesystem");
+  return fs;
+}
 const literalCases: { profile: PermissionProfile; location: "local" | "cloud"; lines: string[] }[] =
   [
     {
@@ -259,6 +272,14 @@ const literalCases: { profile: PermissionProfile; location: "local" | "cloud"; l
       ],
     },
   ];
+function literalText(index: number): string {
+  return literalLines(index).join("\n");
+}
+function literalLines(index: number): string[] {
+  const row = literalCases[index];
+  if (row === undefined) throw new Error(`No literal case ${index}`);
+  return row.lines;
+}
 describe("frozen v1 text and availability matrix", () => {
   for (const row of literalCases) {
     it(`${row.location} ${row.profile} supported uses exact authority lines`, () => {
@@ -313,7 +334,7 @@ describe("frozen v1 text and availability matrix", () => {
     p.execution = "scheduled";
     expect(permissionContextText(p)).toBe(
       [
-        ...literalCases[0]!.lines.slice(0, -2),
+        ...literalLines(0).slice(0, -2),
         "Scheduled run: only the unattended policy and explicit task grants apply; interactive approvals and chat Full access do not apply.",
         closing,
       ].join("\n"),
@@ -321,8 +342,8 @@ describe("frozen v1 text and availability matrix", () => {
   });
   it("renders allowlists and applied cloud network-off exactly", () => {
     const p = snapshot("approve-for-me", "cloud");
-    p.scope!.network = { kind: "allowlist", hosts: ["api.example.com"] };
-    p.scope!.outerNetwork = { kind: "allowlist", hosts: ["*.example.com"] };
+    scopeOf(p).network = { kind: "allowlist", hosts: ["api.example.com"] };
+    scopeOf(p).outerNetwork = { kind: "allowlist", hosts: ["*.example.com"] };
     expect(permissionContextText(p)).toBe(
       [
         "Permission context for new operations: Approve for me.",
@@ -335,10 +356,10 @@ describe("frozen v1 text and availability matrix", () => {
       ].join("\n"),
     );
     const full = snapshot("full-access", "cloud");
-    full.scope!.outerNetwork = { kind: "none" };
+    scopeOf(full).outerNetwork = { kind: "none" };
     expect(permissionContextText(full)).toBe(
       [
-        ...literalCases[5]!.lines.slice(0, -3),
+        ...literalLines(5).slice(0, -3),
         "Outer network boundary: network access is disabled.",
         fullPolicy,
         closing,
@@ -374,29 +395,29 @@ describe("frozen v1 text and availability matrix", () => {
 });
 
 describe("complete strict schema", () => {
-  const invalid: [string, (p: Record<string, any>) => void][] = [
+  const invalid: [string, (p: PermissionContextV1) => void][] = [
     [
       "unknown top-level key",
       (p) => {
-        p.grant = true;
+        Object.assign(p, { grant: true });
       },
     ],
     [
       "unknown version",
       (p) => {
-        p.version = 2;
+        Object.assign(p, { version: 2 });
       },
     ],
     [
       "omitted null field",
       (p) => {
-        delete p.scopeRevision;
+        Reflect.deleteProperty(p, "scopeRevision");
       },
     ],
     [
       "undefined required field",
       (p) => {
-        p.authorityRevision = undefined;
+        Object.assign(p, { authorityRevision: undefined });
       },
     ],
     [
@@ -450,7 +471,7 @@ describe("complete strict schema", () => {
     [
       "supported reason",
       (p) => {
-        p.availability.reason = "No";
+        Object.assign(p.availability, { reason: "No" });
       },
     ],
     [
@@ -462,8 +483,7 @@ describe("complete strict schema", () => {
     [
       "unprobed no reason",
       (p) => {
-        p.availability = { state: "unprobed" };
-        p.scope = null;
+        Object.assign(p, { availability: { state: "unprobed" }, scope: null });
       },
     ],
     [
@@ -502,43 +522,44 @@ describe("complete strict schema", () => {
     [
       "restricted device filesystem",
       (p) => {
-        p.scope.filesystem = { kind: "device" };
+        scopeOf(p).filesystem = { kind: "device" };
       },
     ],
     [
       "restricted environment network",
       (p) => {
-        p.scope.network = { kind: "environment" };
+        scopeOf(p).network = { kind: "environment" };
       },
     ],
     [
       "missing readable write root",
       (p) => {
-        p.scope.filesystem.writeDirectories.push("/write");
+        scopedFs(p).writeDirectories.push("/write");
       },
     ],
     [
       "missing working root",
       (p) => {
-        p.scope.filesystem.readDirectories = p.scope.filesystem.writeDirectories = ["/other"];
+        scopedFs(p).readDirectories = ["/other"];
+        scopedFs(p).writeDirectories = ["/other"];
       },
     ],
     [
       "unsorted roots",
       (p) => {
-        p.scope.filesystem.readDirectories = ["/z", "/project"];
+        scopedFs(p).readDirectories = ["/z", "/project"];
       },
     ],
     [
       "duplicate roots",
       (p) => {
-        p.scope.filesystem.readDirectories.push("/project");
+        scopedFs(p).readDirectories.push("/project");
       },
     ],
     [
       "too many roots",
       (p) => {
-        p.scope.filesystem.readDirectories = Array.from(
+        scopedFs(p).readDirectories = Array.from(
           { length: 65 },
           (_, i) => `/p${i.toString().padStart(2, "0")}`,
         );
@@ -547,55 +568,55 @@ describe("complete strict schema", () => {
     [
       "relative working root",
       (p) => {
-        p.scope.workingRoot = "project";
+        scopeOf(p).workingRoot = "project";
       },
     ],
     [
       "oversized path",
       (p) => {
-        p.scope.workingRoot = `/${"x".repeat(4096)}`;
+        scopeOf(p).workingRoot = `/${"x".repeat(4096)}`;
       },
     ],
     [
       "dot-dot path",
       (p) => {
-        p.scope.workingRoot = "/a/../project";
+        scopeOf(p).workingRoot = "/a/../project";
       },
     ],
     [
       "control path",
       (p) => {
-        p.scope.workingRoot = "/a\nproject";
+        scopeOf(p).workingRoot = "/a\nproject";
       },
     ],
     [
       "empty allowlist",
       (p) => {
-        p.scope.network = { kind: "allowlist", hosts: [] };
+        scopeOf(p).network = { kind: "allowlist", hosts: [] };
       },
     ],
     [
       "unsorted hosts",
       (p) => {
-        p.scope.network = { kind: "allowlist", hosts: ["z.example.com", "a.example.com"] };
+        scopeOf(p).network = { kind: "allowlist", hosts: ["z.example.com", "a.example.com"] };
       },
     ],
     [
       "duplicate hosts",
       (p) => {
-        p.scope.network = { kind: "allowlist", hosts: ["a.example.com", "a.example.com"] };
+        scopeOf(p).network = { kind: "allowlist", hosts: ["a.example.com", "a.example.com"] };
       },
     ],
     [
       "unnormalized host",
       (p) => {
-        p.scope.network = { kind: "allowlist", hosts: ["A.example.com"] };
+        scopeOf(p).network = { kind: "allowlist", hosts: ["A.example.com"] };
       },
     ],
     [
       "too many hosts",
       (p) => {
-        p.scope.network = {
+        scopeOf(p).network = {
           kind: "allowlist",
           hosts: Array.from(
             { length: 101 },
@@ -607,35 +628,35 @@ describe("complete strict schema", () => {
     [
       "extra network field",
       (p) => {
-        p.scope.network.hosts = [];
+        Object.assign(scopeOf(p).network, { hosts: [] });
       },
     ],
     [
       "local cloud outer boundary",
       (p) => {
-        p.scope.outerNetwork = { kind: "open-public" };
+        scopeOf(p).outerNetwork = { kind: "open-public" };
       },
     ],
     [
       "cloud host outer boundary",
       (p) => {
-        p.scope.location = "cloud";
+        scopeOf(p).location = "cloud";
       },
     ],
     [
       "cloud none with allowlist",
       (p) => {
-        p.scope.location = "cloud";
-        p.scope.outerNetwork = { kind: "none" };
-        p.scope.network = { kind: "allowlist", hosts: ["example.com"] };
+        scopeOf(p).location = "cloud";
+        scopeOf(p).outerNetwork = { kind: "none" };
+        scopeOf(p).network = { kind: "allowlist", hosts: ["example.com"] };
       },
     ],
     [
       "cloud hosts exceeding outer ceiling",
       (p) => {
-        p.scope.location = "cloud";
-        p.scope.outerNetwork = { kind: "allowlist", hosts: ["other.com"] };
-        p.scope.network = { kind: "allowlist", hosts: ["example.com"] };
+        scopeOf(p).location = "cloud";
+        scopeOf(p).outerNetwork = { kind: "allowlist", hosts: ["other.com"] };
+        scopeOf(p).network = { kind: "allowlist", hosts: ["example.com"] };
       },
     ],
     [
@@ -660,7 +681,7 @@ describe("complete strict schema", () => {
   it("accepts consent fallback and Unicode code-point sorted roots without reordering", () => {
     const p = snapshot("approve-for-me", "local");
     p.selectedProfile = "full-access";
-    p.scope!.filesystem = {
+    scopeOf(p).filesystem = {
       kind: "scoped",
       readDirectories: ["/project", "/\ue000", "/\u{10000}"],
       writeDirectories: ["/project"],
@@ -833,7 +854,7 @@ describe("ordered history, summaries and original request metadata", () => {
   it("renders A to B to A append-only and folds only at the requested bound", () => {
     expect(build(changes).request.messages.map((m) => m.content)).toEqual([
       expected,
-      literalCases[1]!.lines.join("\n"),
+      literalText(1),
       expected,
     ]);
     expect(permissionContextAt([...changes].reverse(), 4)?.seq).toBe(3);
@@ -841,11 +862,11 @@ describe("ordered history, summaries and original request metadata", () => {
     expect(build(changes).meta.permissionContext?.contextSeq).toBe(5);
   });
   it.each([
-    [0, [expected, literalCases[1]!.lines.join("\n"), expected]],
-    [1, [expected, literalCases[1]!.lines.join("\n"), expected]],
-    [2, [expected, literalCases[1]!.lines.join("\n"), expected]],
-    [3, [literalCases[1]!.lines.join("\n"), expected]],
-    [4, [literalCases[1]!.lines.join("\n"), expected]],
+    [0, [expected, literalText(1), expected]],
+    [1, [expected, literalText(1), expected]],
+    [2, [expected, literalText(1), expected]],
+    [3, [literalText(1), expected]],
+    [4, [literalText(1), expected]],
     [5, [expected]],
   ])(
     "summary at %s restores only the latest covered snapshot and later transitions",
@@ -904,6 +925,19 @@ describe("ordered history, summaries and original request metadata", () => {
       },
     });
   }
+  type ModelCallPayload = Extract<ConversationEvent, { type: "model_call" }>["payload"];
+  function eventAt(snap: CaseSnapshot, seq: number): CaseSnapshot["events"][number] {
+    const found = snap.events.find((e) => e.seq === seq);
+    if (found === undefined) throw new Error(`No event at seq ${seq}`);
+    return found;
+  }
+  const callOf = (snap: CaseSnapshot, callSeq: number) =>
+    eventAt(snap, callSeq).payload as ModelCallPayload;
+  function metaOf(call: ModelCallPayload): PermissionContextMetaV1 {
+    const meta = call.request.permissionContext;
+    if (meta === undefined) throw new Error("Expected recorded permission metadata");
+    return meta;
+  }
   it("normal recorded transitions are zero drift and candidate instructions/model retain permission history", () => {
     const { snap, callSeq } = recording();
     const baseline = reconstructRequest(snap, callSeq, { model });
@@ -927,23 +961,22 @@ describe("ordered history, summaries and original request metadata", () => {
     "wrong version",
   ])("diagnoses %s using only the original bounded request", (kind) => {
     const { snap, callSeq } = recording();
-    const call = snap.events.at(-1)!;
-    const payload = call.payload as Extract<ConversationEvent, { type: "model_call" }>["payload"];
+    const payload = callOf(snap, callSeq);
     if (kind === "missing context") snap.events = snap.events.filter((e) => e.seq !== 3);
-    if (kind === "altered context")
-      ((snap.events.find((e) => e.seq === 3)!.payload as PermissionContextV1).effectiveProfile =
-        "request-approval"),
-        ((snap.events.find((e) => e.seq === 3)!.payload as PermissionContextV1).selectedProfile =
-          "request-approval");
+    if (kind === "altered context") {
+      const altered = eventAt(snap, 3).payload as PermissionContextV1;
+      altered.effectiveProfile = "request-approval";
+      altered.selectedProfile = "request-approval";
+    }
     if (kind === "missing metadata") delete payload.request.permissionContext;
-    if (kind === "altered hash") payload.request.permissionContext!.hash = "a".repeat(64);
-    if (kind === "bad locator") payload.request.permissionContext!.contextSeq = 3;
+    if (kind === "altered hash") metaOf(payload).hash = "a".repeat(64);
+    if (kind === "bad locator") metaOf(payload).contextSeq = 3;
     if (kind === "future locator") {
-      payload.request.permissionContext!.contextSeq = callSeq + 1;
-      snap.events.push({ ...snap.events[0]!, seq: callSeq + 1 });
+      metaOf(payload).contextSeq = callSeq + 1;
+      snap.events.push({ ...eventAt(snap, 1), seq: callSeq + 1 });
     }
     if (kind === "null metadata") Object.assign(payload.request, { permissionContext: null });
-    if (kind === "wrong version") Object.assign(payload.request.permissionContext!, { version: 2 });
+    if (kind === "wrong version") Object.assign(metaOf(payload), { version: 2 });
     expect(reconstructRequest(snap, callSeq, { model }).drift).toEqual([
       "permission_profile_changed",
     ]);
@@ -951,21 +984,397 @@ describe("ordered history, summaries and original request metadata", () => {
   it("detects altered managed paths when there is no permission locator", () => {
     const { snap, callSeq } = recording([event("device_paths", paths, 1)]);
     expect(reconstructRequest(snap, callSeq, { model }).drift).toEqual([]);
-    (snap.events[0]!.payload as ManagedDevicePathsV1).workingRoot = "/tampered";
+    (eventAt(snap, 1).payload as ManagedDevicePathsV1).workingRoot = "/tampered";
     expect(reconstructRequest(snap, callSeq, { model }).drift).toEqual([
       "permission_profile_changed",
     ]);
   });
+  const second: ManagedDevicePathsV1 = { ...paths, workingRoot: "/elsewhere" };
+  const summaryAt = (coversUpToSeq: number, seq: number) =>
+    event("compaction_summary", { coversUpToSeq, text: "Summary" }, seq);
+  it.each<[string, ConversationEvent[], number, (payload: Record<string, unknown>) => void]>([
+    [
+      "an uncovered legacy path with marker 2",
+      [event("device_paths", { roots: paths.roots }, 1)],
+      1,
+      (p) => Object.assign(p, { permissionContextVersion: 2 }),
+    ],
+    [
+      "an uncovered managed path with marker 2",
+      [event("device_paths", paths, 1)],
+      1,
+      (p) => Object.assign(p, { permissionContextVersion: 2 }),
+    ],
+    [
+      "an uncovered managed path with a null marker",
+      [event("device_paths", paths, 1)],
+      1,
+      (p) => Object.assign(p, { permissionContextVersion: null }),
+    ],
+    [
+      "an uncovered managed path with a string marker",
+      [event("device_paths", paths, 1)],
+      1,
+      (p) => Object.assign(p, { permissionContextVersion: "1" }),
+    ],
+    [
+      "a covered superseded permission context with version 2",
+      [...changes.slice(0, 2), summaryAt(3, 4)],
+      1,
+      (p) => Object.assign(p, { version: 2 }),
+    ],
+    [
+      "a covered superseded permission context with an unknown key",
+      [...changes.slice(0, 2), summaryAt(3, 4)],
+      1,
+      (p) => Object.assign(p, { grant: true }),
+    ],
+    [
+      "a covered superseded managed path with marker 2",
+      [event("device_paths", paths, 1), event("device_paths", second, 2), summaryAt(2, 3)],
+      1,
+      (p) => Object.assign(p, { permissionContextVersion: 2 }),
+    ],
+    [
+      "the latest covered managed path with marker 2",
+      [event("device_paths", paths, 1), summaryAt(1, 2)],
+      1,
+      (p) => Object.assign(p, { permissionContextVersion: 2 }),
+    ],
+  ])(
+    "rejects %s in a raw snapshot instead of replaying it as history",
+    (_name, events, seq, mutate) => {
+      const { snap, callSeq } = recording(events);
+      expect(reconstructRequest(snap, callSeq, { model }).drift).toEqual([]);
+      mutate(eventAt(snap, seq).payload as Record<string, unknown>);
+      expect(() => reconstructRequest(snap, callSeq, { model })).toThrow(
+        RecordedPermissionContextError,
+      );
+    },
+  );
+  it("keeps unmarked historical paths replayable with their legacy text", () => {
+    const legacy = {
+      roots: paths.roots,
+      tier: "dev",
+      isolation: "sandbox",
+      network: "none",
+    } as const;
+    const { snap, callSeq } = recording([event("device_paths", legacy, 1)]);
+    const result = reconstructRequest(snap, callSeq, { model });
+    expect(result.drift).toEqual([]);
+    expect(result.meta).not.toHaveProperty("permissionContext");
+    expect(result.request.messages).toEqual([{ role: "system", content: devicePathsText(legacy) }]);
+  });
   it("cannot satisfy metadata from events after min(toSeq, callSeq - 1)", () => {
     for (const futureToSeq of [false, true]) {
       const { snap, callSeq } = recording();
-      const call = snap.events.at(-1)!.payload as Extract<
-        ConversationEvent,
-        { type: "model_call" }
-      >["payload"];
-      snap.events.push({ ...snap.events[0]!, seq: callSeq + 1, payload: b });
+      const call = callOf(snap, callSeq);
+      snap.events.push({ ...eventAt(snap, 1), seq: callSeq + 1, payload: b });
       if (futureToSeq) call.request.toSeq = 100;
       expect(reconstructRequest(snap, callSeq, { model }).drift).toEqual([]);
     }
   });
+});
+
+/** Bytes and keys produced by the base commit (94bc2dddd) helpers; historical logs keep them. */
+const legacyRootsLine =
+  "This device's directories: workspace /workspace, skills /skills (read only), temporary files /tmp. Use these paths in commands and tool calls.";
+const legacyMatrix: [string, Record<string, unknown>, string | null, string][] = [
+  ["roots only", {}, null, "8afd61ecbef8c4de"],
+  [
+    "strict sandbox",
+    { tier: "strict", isolation: "sandbox" },
+    "Sandbox level: strict. Only the organization's allowed domains are reachable; other domains need the user's approval.",
+    "9ec00bbe602a0f98",
+  ],
+  [
+    "strict unattended",
+    { tier: "strict", isolation: "sandbox", unattended: true },
+    "Sandbox level: strict. Only the organization's allowed domains are reachable; approvals are not available in a scheduled run, so other domains stay blocked.",
+    "53e6947b45444f6a",
+  ],
+  [
+    "dev sandbox without local facts",
+    { tier: "dev", isolation: "sandbox" },
+    "Sandbox level: development. Package registries and common developer hosts are reachable; other domains need the user's approval. Local servers and unix sockets work.",
+    "28637d57393a1fe2",
+  ],
+  [
+    "dev local facts",
+    { tier: "dev", isolation: "sandbox", localhost: "off-proxy-detected", unixSockets: "roots" },
+    "Sandbox level: development. Package registries and common developer hosts are reachable; other domains need the user's approval. Local servers are blocked on this machine because a local proxy was detected (the user can allow them on the device); unix sockets work under the device's directories only.",
+    "faa3d716c4d72d02",
+  ],
+  [
+    "open container",
+    { tier: "open", isolation: "sandbox", localhost: "on", unixSockets: "all-masked" },
+    "Sandbox level: open. Any public address is reachable. Local servers work; unix sockets work inside the device's container only.",
+    "411828ad28e6ab81",
+  ],
+  [
+    "open without sandbox",
+    { tier: "open", isolation: "none" },
+    "Sandbox level: open, without a sandbox. Commands run directly on the user's computer as the user, with their files, credentials and network; be careful with anything that deletes files or sends data out.",
+    "6f1093b66c0fb300",
+  ],
+  [
+    "network off",
+    { tier: "dev", isolation: "sandbox", network: "none" },
+    "Sandbox level: development. The network is switched off for this organization: no domain is reachable and approval requests cannot change that.",
+    "ba44d14b22c09651",
+  ],
+  [
+    "tier without isolation",
+    { tier: "strict" },
+    "Sandbox level: strict. Only the organization's allowed domains are reachable; other domains need the user's approval.",
+    "9ec00bbe602a0f98",
+  ],
+  [
+    "auto local",
+    {
+      mode: "auto",
+      allowedMode: "auto",
+      network: { kind: "allowlist", hosts: ["a.example.com"] },
+      local: true,
+    },
+    "Mode: auto. Commands run as the user on this machine, with their files, credentials and network; every command is reviewed and dangerous ones are blocked or need approval.",
+    "cff5540b9e34d187",
+  ],
+  [
+    "sandbox local",
+    {
+      mode: "sandbox",
+      allowedMode: "auto",
+      network: { kind: "allowlist", hosts: [] },
+      local: true,
+    },
+    "Mode: sandbox. Only the workspace, skills and temporary files are writable; the network reaches the allowed hosts.",
+    "b5082f56227562e5",
+  ],
+  [
+    "cloud public",
+    {
+      mode: "sandbox",
+      allowedMode: "sandbox",
+      network: { kind: "open-public", hosts: [] },
+      local: false,
+    },
+    "Mode: sandbox. Commands run in the device's container; outside it only public addresses are reachable (loopback, private and cloud metadata addresses are blocked).",
+    "e843762dbbff2c3c",
+  ],
+  [
+    "cloud allowlist",
+    { mode: "auto", allowedMode: "auto", network: { kind: "allowlist", hosts: ["a.example.com"] } },
+    "Mode: auto. Commands run in the device's container; outside it the network reaches the organization's allowlisted hosts.",
+    "cff5540b9e34d187",
+  ],
+];
+describe("historical device paths keep their exact bytes and keys", () => {
+  it.each(legacyMatrix)("%s renders, keys and compares as before", (_name, level, line, digest) => {
+    const p = { roots: paths.roots, ...level } as LegacyDevicePathsPayload;
+    const text = line === null ? legacyRootsLine : `${legacyRootsLine}\n${line}`;
+    expect(devicePathsText(p)).toBe(text);
+    expect(devicePathsIdemKey(p, 0)).toBe(`device_paths:${digest}:0`);
+    expect(devicePathsIdemKey(p, 7)).toBe(`device_paths:${digest}:7`);
+    const first = devicePathsChange(undefined, p.roots, "run", devicePathsLevel(p));
+    expect(first?.idemKey).toBe(`device_paths:${digest}:0`);
+    expect(devicePathsChangeFromPayload(undefined, p, "run")).toEqual(first);
+    expect(
+      devicePathsChange({ seq: 3, payload: p }, p.roots, undefined, devicePathsLevel(p)),
+    ).toBeNull();
+    expect(devicePathsChangeFromPayload({ seq: 3, payload: p }, p)).toBeNull();
+    expect(ConversationEventSchema.safeParse({ type: "device_paths", payload: p }).success).toBe(
+      true,
+    );
+    const result = build([event("device_paths", p, 1)]);
+    expect(result.request.messages).toEqual([{ role: "system", content: text }]);
+    expect(result.meta).not.toHaveProperty("permissionContext");
+  });
+  it("leaves audit-only profile, review and approval events without text, metadata or drift", () => {
+    const audit = [
+      event("device_paths", { roots: paths.roots, tier: "dev", isolation: "sandbox" }, 1),
+      event("permission_profile_changed", { selectedProfile: "full-access" }, 2),
+      event("permission_reviewed", {}, 3),
+      event("approval_requested", {}, 4),
+    ];
+    const result = build(audit);
+    expect(result.request.messages.map((m) => m.content)).toEqual([
+      devicePathsText({ roots: paths.roots, tier: "dev", isolation: "sandbox" }),
+    ]);
+    expect(result.meta).not.toHaveProperty("permissionContext");
+    expect(result.meta.systemHash).toBe(build([]).meta.systemHash);
+  });
+});
+
+describe("authority boundary normalization", () => {
+  const scoped = (readDirectories: string[], writeDirectories = ["/project"]) => {
+    const p = snapshot("request-approval", "local");
+    if (p.scope === null) throw new Error("supported snapshot has a scope");
+    p.scope.filesystem = { kind: "scoped", readDirectories, writeDirectories };
+    return p;
+  };
+  const withScope = (
+    profile: PermissionProfile,
+    location: "local" | "cloud",
+    edit: (scope: NonNullable<PermissionContextV1["scope"]>) => void,
+  ) => {
+    const p = snapshot(profile, location);
+    if (p.scope === null) throw new Error("supported snapshot has a scope");
+    edit(p.scope);
+    return p;
+  };
+  const host253 = `${"a".repeat(63)}.${"b".repeat(63)}.${"c".repeat(63)}.${"d".repeat(57)}.com`;
+  it.each<[string, PermissionContextV1]>([
+    [
+      "64 combined roots",
+      scoped([
+        "/project",
+        ...Array.from({ length: 63 }, (_, i) => `/r${String(i).padStart(2, "0")}`),
+      ]),
+    ],
+    [
+      "100 hosts",
+      withScope("request-approval", "local", (s) => {
+        s.network = {
+          kind: "allowlist",
+          hosts: Array.from(
+            { length: 100 },
+            (_, i) => `h${String(i).padStart(3, "0")}.example.com`,
+          ),
+        };
+      }),
+    ],
+    [
+      "a 253-character host",
+      withScope("request-approval", "local", (s) => {
+        s.network = { kind: "allowlist", hosts: [host253] };
+      }),
+    ],
+    [
+      "a 4096-character working root",
+      (() => {
+        const long = `/${"x".repeat(4095)}`;
+        const p = scoped([long], [long]);
+        if (p.scope) p.scope.workingRoot = long;
+        return p;
+      })(),
+    ],
+    [
+      "the largest safe profile revision",
+      { ...supported, profileRevision: Number.MAX_SAFE_INTEGER },
+    ],
+    [
+      "256-character revisions",
+      { ...supported, scopeRevision: "s".repeat(256), authorityRevision: "a".repeat(256) },
+    ],
+    [
+      "a 1000-character reason",
+      {
+        ...supported,
+        scope: null,
+        availability: { state: "unsupported", reason: "r".repeat(1000) },
+      },
+    ],
+    [
+      "a wildcard outer pattern covering a nested host",
+      withScope("approve-for-me", "cloud", (s) => {
+        s.network = { kind: "allowlist", hosts: ["a.b.example.com", "api.example.com"] };
+        s.outerNetwork = { kind: "allowlist", hosts: ["*.example.com"] };
+      }),
+    ],
+    [
+      "an exact outer host equal to the restricted host",
+      withScope("request-approval", "cloud", (s) => {
+        s.network = { kind: "allowlist", hosts: ["example.com"] };
+        s.outerNetwork = { kind: "allowlist", hosts: ["example.com"] };
+      }),
+    ],
+    [
+      "restricted hosts under an open public outer boundary",
+      withScope("request-approval", "cloud", (s) => {
+        s.network = { kind: "allowlist", hosts: ["*.example.com"] };
+      }),
+    ],
+    [
+      "Full cloud environment behind a disabled outer boundary",
+      withScope("full-access", "cloud", (s) => {
+        s.outerNetwork = { kind: "none" };
+      }),
+    ],
+  ])("accepts %s at the authority bound", (_name, p) => {
+    expect(PermissionContextV1Schema.parse(p)).toEqual(p);
+    expect(permissionContextHash(p)).toMatch(/^[a-f0-9]{64}$/);
+  });
+  it.each<[string, PermissionContextV1]>([
+    ["a dot segment in a readable directory", scoped(["/./project", "/project"])],
+    ["a nested dot segment in a readable directory", scoped(["/a/./b", "/project"])],
+    ["a trailing slash in a readable directory", scoped(["/project", "/z/"])],
+    ["a trailing slash in a writable directory", scoped(["/project", "/z/"], ["/project", "/z/"])],
+    ["an empty segment in a readable directory", scoped(["//z", "/project"])],
+    [
+      "a trailing slash in the working root",
+      withScope("full-access", "local", (s) => {
+        s.workingRoot = "/project/";
+      }),
+    ],
+    [
+      "a dot segment in the working root",
+      withScope("full-access", "local", (s) => {
+        s.workingRoot = "/project/.";
+      }),
+    ],
+    [
+      "a 254-character host",
+      withScope("request-approval", "local", (s) => {
+        s.network = { kind: "allowlist", hosts: [`a${host253}`] };
+      }),
+    ],
+    [
+      "a wildcard outer pattern used for its bare apex",
+      withScope("request-approval", "cloud", (s) => {
+        s.network = { kind: "allowlist", hosts: ["example.com"] };
+        s.outerNetwork = { kind: "allowlist", hosts: ["*.example.com"] };
+      }),
+    ],
+    [
+      "a restricted wildcard wider than an exact outer host",
+      withScope("request-approval", "cloud", (s) => {
+        s.network = { kind: "allowlist", hosts: ["*.example.com"] };
+        s.outerNetwork = { kind: "allowlist", hosts: ["api.example.com"] };
+      }),
+    ],
+    [
+      "a host with a port",
+      withScope("request-approval", "local", (s) => {
+        s.network = { kind: "allowlist", hosts: ["example.com:443"] };
+      }),
+    ],
+    [
+      "an IP literal host",
+      withScope("request-approval", "local", (s) => {
+        s.network = { kind: "allowlist", hosts: ["10.0.0.1"] };
+      }),
+    ],
+    [
+      "an empty outer allowlist",
+      withScope("full-access", "cloud", (s) => {
+        s.outerNetwork = { kind: "allowlist", hosts: [] };
+      }),
+    ],
+  ])("rejects %s instead of normalizing it", (_name, p) => {
+    expect(PermissionContextV1Schema.safeParse(p).success).toBe(false);
+    expect(() => permissionContextText(p)).toThrow();
+  });
+  it.each(["/project/", "/./project", "/a/../project", "//project"])(
+    "rejects managed working root %s",
+    (workingRoot) => {
+      expect(ManagedDevicePathsV1Schema.safeParse({ ...paths, workingRoot }).success).toBe(false);
+      expect(
+        ManagedDevicePathsV1Schema.safeParse({
+          ...paths,
+          roots: { ...paths.roots, tmp: workingRoot },
+        }).success,
+      ).toBe(false);
+    },
+  );
 });

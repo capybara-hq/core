@@ -9,6 +9,19 @@ import {
   permissionCodePointCompare,
 } from "../../conversations/events.js";
 
+/** A recorded log carries a present v1 marker or version that its strict schema rejects. */
+export class RecordedPermissionContextError extends Error {
+  override readonly name = "RecordedPermissionContextError";
+  constructor(
+    readonly seq: number,
+    readonly eventType: "permission_context" | "device_paths",
+  ) {
+    super(
+      `Recorded ${eventType} event at seq ${seq} has an unsupported version or an invalid v1 payload`,
+    );
+  }
+}
+
 /** Canonical v1 bytes: explicit nulls, code-point object keys, validated array order. */
 export function canonicalPermissionJson(value: unknown): string {
   if (value === null || typeof value === "string" || typeof value === "boolean")
@@ -158,6 +171,27 @@ export function permissionContextAt(
     )
       latest = e;
   return latest;
+}
+/**
+ * Snapshot validation for raw (cast) events: every `permission_context` and every `device_paths`
+ * carrying a marker must satisfy its strict v1 schema, covered or not, before any rendering; an
+ * unsupported version must never fall back to historical text. Unmarked paths keep their parser.
+ */
+export function assertRecordedPermissionEvents(events: readonly ConversationEvent[]): void {
+  for (const e of events) {
+    if (e.type === "permission_context") {
+      if (!PermissionContextV1Schema.safeParse(e.payload).success)
+        throw new RecordedPermissionContextError(e.seq, e.type);
+    } else if (
+      e.type === "device_paths" &&
+      typeof e.payload === "object" &&
+      e.payload !== null &&
+      (e.payload as { permissionContextVersion?: unknown }).permissionContextVersion !==
+        undefined &&
+      !ManagedDevicePathsV1Schema.safeParse(e.payload).success
+    )
+      throw new RecordedPermissionContextError(e.seq, e.type);
+  }
 }
 export interface PermissionContribution {
   type: "permission_context" | "device_paths";
