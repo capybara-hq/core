@@ -1028,8 +1028,12 @@ describe("sandbox tools", () => {
     );
     expect(cat.content).toContain("apple,3");
 
+    // the copied file is an ordinary workspace file: Glob lists it (nothing hides a marker name)
+    const glob = await call(conv, "Glob", { pattern: "**/fruit.csv" }, 4);
+    expect(glob.content).toContain(`${dir}/fruit.csv`);
+
     // a second call returns the same path, copies the same bytes and adds no copy notice
-    const again = await call(conv, "FetchAttachment", { file: "fruit.csv" }, 4);
+    const again = await call(conv, "FetchAttachment", { file: "fruit.csv" }, 5);
     expect(again.content).toContain(`${dir}/fruit.csv`);
     expect(again.content).not.toContain("Attachments copied");
 
@@ -1041,7 +1045,7 @@ describe("sandbox tools", () => {
       conv,
       "Bash",
       { description: "Test step", command: `cat ${dir}/fruit.csv` },
-      5,
+      6,
     );
     expect(r.content).not.toContain("Attachments copied");
     expect(r.content).toContain("apple,3");
