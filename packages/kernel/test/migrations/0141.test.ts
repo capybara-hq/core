@@ -10,8 +10,8 @@ import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 
 /**
  * 0141_install_ledger_promoted_rows.sql (no compatibility before 0.1.0): a plugin install's ledger
- * row for an org skill or agent template the org promoted to its own shared item goes; rows of
- * plugin-owned platform items, pinned copies and other orgs' items stay. Migrates to the migration
+ * rows for org skills and agent templates without plugin provenance (promoted already, or the org's
+ * own rows P3-46 would let it promote) go; rows of plugin-provenance org rows and other kinds stay. Migrates to the migration
  * before it, seeds the rows, runs 0141, then runs it again (idempotent).
  */
 const FILE = "0141_install_ledger_promoted_rows.sql";
@@ -52,34 +52,35 @@ beforeAll(async () => {
     values (${ITEM}, 'item', '@x/item', 'x', 'd', '1.0.0', 'a1')`.execute(db);
   await sql`insert into capybara.plugin_installs (id, org_id, item_id, version, status, installed_by)
     values (${INSTALL}, 'o1', ${ITEM}, '1.0.0', 'installed', 'a1')`.execute(db);
-  // platform rows: promoted by o1, promoted by o2, from the plugin
+  // platform rows: promoted by o1, from the plugin
   await sql`insert into capybara.platform_skills
     (id, name, description, current_version, owner_org_id, catalog_item_id) values
     ('ps-own', 'own', 'd', 1, 'o1', null),
-    ('ps-other', 'other', 'd', 1, 'o2', null),
     ('ps-plugin', 'plug', 'd', 1, null, ${ITEM})`.execute(db);
   await sql`insert into capybara.skills
-    (id, org_id, scope, name, description, current_version, platform_skill_id, pinned_version)
+    (id, org_id, scope, name, description, current_version, platform_skill_id, catalog_item_id)
     values
     ('s-promoted', 'o1', 'org', 'own', 'd', 1, 'ps-own', null),
-    ('s-pinned', 'o1', 'org', 'own2', 'd', 1, 'ps-own', 1),
-    ('s-other', 'o1', 'org', 'other', 'd', 1, 'ps-other', null),
-    ('s-plugin', 'o1', 'org', 'plug', 'd', 1, 'ps-plugin', null)`.execute(db);
+    ('s-own', 'o1', 'org', 'own2', 'd', 1, null, null),
+    ('s-plugin', 'o1', 'org', 'plug', 'd', 1, 'ps-plugin', ${ITEM}),
+    ('s-copy', 'o1', 'org', 'copy', 'd', 1, null, ${ITEM})`.execute(db);
   await sql`insert into capybara.platform_agent_templates
     (id, plugin_name, name, current_version, owner_org_id, catalog_item_id) values
     ('pt-own', null, 'own', 1, 'o1', null)`.execute(db);
   await sql`insert into capybara.agent_templates
     (id, org_id, name, plugin_name, current_version, platform_template_id) values
     ('t-promoted', 'o1', 'own', null, 1, 'pt-own'),
-    ('t-plain', 'o1', 'plain', null, 1, null)`.execute(db);
+    ('t-plain', 'o1', 'plain', null, 1, null),
+    ('t-plugin', 'o1', 'tpl', 'pl', 1, null)`.execute(db);
   await sql`insert into capybara.plugin_install_components
     (install_id, kind, ref, created, skill_version) values
     (${INSTALL}, 'skill', 's-promoted', true, null),
-    (${INSTALL}, 'skill', 's-pinned', true, null),
-    (${INSTALL}, 'skill', 's-other', true, null),
+    (${INSTALL}, 'skill', 's-own', false, 2),
     (${INSTALL}, 'skill', 's-plugin', true, null),
+    (${INSTALL}, 'skill', 's-copy', true, null),
     (${INSTALL}, 'agent_template', 't-promoted', false, 1),
     (${INSTALL}, 'agent_template', 't-plain', true, null),
+    (${INSTALL}, 'agent_template', 't-plugin', true, null),
     (${INSTALL}, 'extension', 'ext', true, null)`.execute(db);
   await migrate(pg.url, { schema: "capybara", dir: copyMigrations((f) => f <= FILE) });
 });
@@ -91,15 +92,14 @@ afterAll(async () => {
 });
 
 const expected = [
-  { kind: "agent_template", ref: "t-plain" },
+  { kind: "agent_template", ref: "t-plugin" },
   { kind: "extension", ref: "ext" },
-  { kind: "skill", ref: "s-other" },
-  { kind: "skill", ref: "s-pinned" },
+  { kind: "skill", ref: "s-copy" },
   { kind: "skill", ref: "s-plugin" },
 ];
 
 describe("0141_install_ledger_promoted_rows", () => {
-  it("drops only the ledger rows of the install org's own promoted items", async () => {
+  it("keeps only the ledger rows of org rows with plugin provenance (and other kinds)", async () => {
     expect(await ledger()).toEqual(expected);
   });
 
