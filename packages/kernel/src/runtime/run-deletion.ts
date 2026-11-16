@@ -1,5 +1,6 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { BackgroundTaskStopper } from "../background/stop.js";
+import { RUNNING_TASK_STATUS } from "../background/store.js";
 import { conversationTree } from "../conversations/tree.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
@@ -72,7 +73,7 @@ export class RunDeletion {
               .selectFrom("background_tasks as b")
               .select("b.id")
               .whereRef("b.sandbox_conversation_id", "=", "c.id")
-              .where("b.status", "=", "running"),
+              .where("b.status", "=", RUNNING_TASK_STATUS),
           ),
         ]),
       )

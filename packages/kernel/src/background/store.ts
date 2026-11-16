@@ -15,6 +15,9 @@ export type BackgroundTaskStatus =
   | "timed_out"
   | "lost";
 
+/** The status of a task that is still live; the one filter every "running tasks" read shares. */
+export const RUNNING_TASK_STATUS = "running" satisfies BackgroundTaskStatus;
+
 /** A task as the kernel reads it: the columns of `capybara.background_tasks`, camel-cased. */
 export interface BackgroundTaskRow {
   id: string;
@@ -296,7 +299,7 @@ export class BackgroundTaskStore {
       .selectFrom("background_tasks")
       .selectAll()
       .where("sandbox_conversation_id", "=", sandboxConversationId)
-      .where("status", "=", "running")
+      .where("status", "=", RUNNING_TASK_STATUS)
       .orderBy("started_at", "asc")
       .orderBy("id", "asc")
       .execute();
