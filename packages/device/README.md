@@ -269,3 +269,26 @@ starts. The service runs `node <bin> start` with the `PATH` of the shell that in
 agent out and waits (up to 10 s) until launchd has let it go, because `launchctl bootout` returns
 before that; a `bootstrap` that still fails with error 5 (Input/output error) is retried a few
 times. On Linux, installing again restarts the unit so the new file applies.
+
+## Staged operation backend
+
+The package includes a private macOS operation backend for the forthcoming permission-profile
+protocol. The current CLI, wire version 2, hello and dispatch still use the existing executors.
+The staged factory does not advertise restricted support: actual adapter acceptance and the
+coordinated policy-writer, background and protocol integration gates remain open. Linux and local
+Docker restricted operation support also remain unavailable; there is no Full fallback.
+
+Each restricted operation has its own immutable sandbox-runtime process and proxy lifetime.
+Native methods use the SDK's hash-checked Python helper and pinned directory descriptors, with a
+private descriptor-identity handshake before dispatch. Full uses the existing OS user directly.
+Execution grants arrive separately over authenticated transport; scope hosts cannot manufacture
+an owner allowance. Strict fresh owner-policy reads fail closed on missing or malformed policy.
+
+The private supervisor consumes operation IDs durably before launch, records trusted child
+identities, bounds output tails to 65,536 bytes and preserves cancellation and unknown outcomes.
+A restarted supervisor never signals a recorded PID or relaunches a consumed operation. Cleanup
+covers its registered execution groups; it does not discover arbitrary unregistered detached
+processes. Its owner-policy watcher runs while it owns live work independently of connection state.
+The later protocol cutover must also call reconciliation after successful policy writes and verify
+that live integration before enabling this backend. Journals fail closed when their bounded
+capacity is exhausted; terminal results remain subject to their reference retention deadlines.
