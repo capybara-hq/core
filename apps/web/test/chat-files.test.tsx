@@ -545,7 +545,7 @@ describe("输入框：上传文件（修正轮 1）", () => {
 });
 
 describe("时间线：消息附件", () => {
-  it("图片显示缩略图，其他文件显示文件卡片；都指向 download", async () => {
+  it("an image shows as a thumbnail, other files as file cards", async () => {
     stubApi({
       [`GET ${BASE}/events`]: () =>
         json(200, {
@@ -576,6 +576,53 @@ describe("时间线：消息附件", () => {
     expect(within(card).getByText("PDF")).toBeTruthy();
     // 文本仍只显示用户输入
     expect(screen.getByText("hi")).toBeTruthy();
+  });
+
+  it("a sized block: the file card shows its size, and a thumbnail click zooms in the page (§5.6)", async () => {
+    stubApi({
+      [`GET ${BASE}/events`]: () =>
+        json(200, {
+          events: [
+            userMsg(1, [
+              { type: "text", text: "hi" },
+              {
+                type: "image",
+                mediaType: "image/png",
+                source: { kind: "ref", attachmentId: ID1 },
+                name: "chart.png",
+                size: 1_258_291,
+              },
+              {
+                type: "file",
+                mediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                source: { kind: "ref", attachmentId: ID2 },
+                name: "电商工行.xlsx",
+                size: 1_258_291,
+              },
+            ]),
+          ],
+        }),
+    });
+    const open = vi.fn();
+    vi.stubGlobal("open", open);
+    const user = userEvent.setup();
+    await renderChat("en");
+    const log = screen.getByRole("log");
+    // A file block reaches the bubble too (type badge and size) and still downloads on click
+    const chip = within(log).getByRole("button", { name: /电商工行\.xlsx/ });
+    expect(within(chip).getByText("XLSX")).toBeTruthy();
+    expect(within(chip).getByText("1.2 MB")).toBeTruthy();
+    // A thumbnail click zooms in the page instead of opening a new tab
+    const thumb = within(log).getByRole("button", { name: "chart.png" });
+    await user.click(thumb);
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText("chart.png")).toBeTruthy();
+    expect(within(dialog).getByText("1.2 MB")).toBeTruthy();
+    expect(open).not.toHaveBeenCalled();
+    // Escape closes it and the focus goes back to the thumbnail
+    await user.keyboard("{Escape}");
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(document.activeElement).toBe(thumb);
   });
 
   it("同时带 @ 资源与上传文件：资源正文不展开，两类附件分别显示", async () => {

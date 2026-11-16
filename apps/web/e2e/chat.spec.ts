@@ -1,8 +1,13 @@
+import { fileURLToPath } from "node:url";
 import { expect, type Page, test } from "@playwright/test";
 import {
+  composer,
+  createAgent,
+  currentOrg,
   designZh,
   interject,
   openAgentSection,
+  openConversation,
   replies,
   saveSection,
   send,
@@ -16,6 +21,22 @@ const LONG_TEXT = "Capybaras are the largest living rodents and very calm swimme
   .repeat(4)
   .trim();
 const SECOND_TEXT = "first answer arrives slowly";
+
+/**
+ * The test toolkit's media samples, loaded from source by path (the way global-setup loads the fake
+ * servers), so the e2e needs no package dependency for them.
+ */
+const mediaSamples = fileURLToPath(
+  new URL("../../../packages/testing/src/media-samples.ts", import.meta.url),
+);
+
+/** A 32 × 32 solid red PNG (one of the samples the fake object store serves back). */
+async function solidPng(): Promise<Buffer> {
+  const { solidPngBase64 } = (await import(mediaSamples)) as {
+    solidPngBase64: (rgb: [number, number, number], size?: number) => string;
+  };
+  return Buffer.from(solidPngBase64([255, 0, 0], 32), "base64");
+}
 
 /** Assistant prose (`data-streaming` on its entry while it streams). */
 const assistants = replies;
@@ -160,4 +181,46 @@ test("登录 → 新建 agent → 流式回复、停止、插话、刷新后历�
   expect(gone?.status()).toBe(200);
   await expect(page.locator('[data-template="StatusPage"][data-kind="404"]')).toBeVisible();
   await expect(page.getByRole("navigation", { name: "主导航" })).toBeVisible();
+});
+
+test("image attachment zoom: a thumbnail click zooms in the page and Escape returns the focus", async ({
+  page,
+}) => {
+  await signIn(page);
+  const orgId = await currentOrg(page);
+  const agentId = await createAgent(page, orgId, "Zoom agent");
+  await openConversation(page, orgId, agentId);
+  // Upload a PNG and send it: the kernel logs the attachment block (name and size)
+  const png = await solidPng();
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "zoom.png",
+    mimeType: "image/png",
+    buffer: png,
+  });
+  const strip = page.getByRole("group", { name: zh.chat.files });
+  await expect(strip.getByRole("progressbar")).toHaveCount(0);
+  await composer(page).fill("media:");
+  await composer(page).press("Enter");
+
+  const user = page.locator('[data-entry="user"]').filter({ hasText: "media:" });
+  const thumb = user.getByRole("button", { name: "zoom.png" });
+  await expect(thumb.locator("img")).toBeVisible();
+  await thumb.click();
+
+  // The zoom: the image (loaded through the download 302), its name and size, the download action;
+  // no new tab.
+  const dialog = page.getByRole("dialog", { name: designZh("files.preview") });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText("zoom.png")).toBeVisible();
+  await expect(dialog.getByText(/^\d+(\.\d+)? (B|KB|MB)$/)).toBeVisible();
+  await expect(dialog.getByRole("button", { name: designZh("files.download") })).toBeVisible();
+  await expect
+    .poll(() =>
+      dialog.locator("img").evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth),
+    )
+    .toBe(32);
+
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(thumb).toBeFocused();
 });

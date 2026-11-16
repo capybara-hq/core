@@ -464,6 +464,38 @@ button.cb-tool-line:focus-visible {
   font-weight: 600;
 }
 
+/* ── Image zoom ── */
+
+/*
+ * Clicking a thumbnail shows the image over the page (spec §5.6). The frame is the dialog itself
+ * (one box is enough): the image alone, capped at 86vw × 86vh less the head, the caption and the
+ * foot the dialog keeps around it, with no motion of its own.
+ */
+.cb-image-zoom {
+  display: flex;
+  justify-content: center;
+}
+.cb-image-zoom img {
+  display: block;
+  max-width: min(86vw, 100%);
+  max-height: calc(86vh - 10rem);
+  object-fit: contain;
+}
+.cb-image-zoom-caption {
+  display: flex;
+  justify-content: center;
+  gap: var(--cb-space-2);
+  margin-top: var(--cb-space-2);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-image-zoom-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ── Run divider ── */
 
 .cb-run-divider {
