@@ -106,7 +106,7 @@ export interface BuildModelRequestInput {
    * `background_task_finished` and `subagent_delivery`, {@link isAbsorbable}) the loop took. 提供时：
    * - seq 大于它的可吸收事件不进请求（运行中途到达、尚未被吸收的插话或后台任务结束，由后续步骤吸收或触发下一轮）；
    * - 每个可吸收事件放在**吸收它的那次模型调用**的位置：日志里第一个 `request.absorbedUpToSeq`
-   *   不小于它的 `model_call` 之前（没有该字段的旧 model_call 视为吸收了它之前的全部消息），
+   *   不小于它的 `model_call` 之前，
    *   本次请求吸收的放在末尾。于是模型看到的历史只追加（插话不会插到已发送的回复之前），
    *   且请求可由日志 + `model_call` 精确还原。
    * 不提供时按 seq 原样回放全部可吸收事件。
@@ -627,9 +627,9 @@ export function buildModelRequest(input: BuildModelRequestInput): {
   const messages: ModelMessage[] = [];
   const reminderSeqs: number[] = [];
   const absorbed = input.absorbedUpToSeq;
-  /** model_call 吸收到的位置；没有该字段的旧事件视为吸收了它之前的全部消息。 */
+  /** Where a model_call had taken in absorbable events. */
   const absorbedBy = (e: ConversationEvent & { type: "model_call" }) =>
-    e.payload.request.absorbedUpToSeq ?? e.seq;
+    e.payload.request.absorbedUpToSeq;
   /** 每个位置之前最近一次 model_call 的吸收位置（之前没有 model_call 为 undefined）。 */
   const callBefore: (number | undefined)[] = [];
   let lastCall: number | undefined;

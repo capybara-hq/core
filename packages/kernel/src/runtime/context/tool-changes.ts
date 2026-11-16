@@ -25,7 +25,7 @@ export function previousToolSet(events: readonly ConversationEvent[]): Set<strin
   for (const e of events) {
     if (e.type === "model_call") {
       const { tools, catalog, toolsOmitted } = e.payload.request;
-      if (tools === undefined || toolsOmitted === true) continue;
+      if (toolsOmitted === true) continue;
       known = new Set([...tools, ...(catalog ?? [])].map((t) => t.key));
     } else if (e.type === "tools_changed" && known !== null) {
       for (const k of e.payload.removed) known.delete(k);

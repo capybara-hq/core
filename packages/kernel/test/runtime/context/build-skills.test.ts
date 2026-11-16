@@ -165,7 +165,11 @@ describe("skills catalog in the request", () => {
         provider: "model-fake",
         model: "fake-1",
         fallback: false,
-        request: first.meta,
+        request: {
+          ...first.meta,
+          maxOutputTokens: 4096,
+          absorbedUpToSeq: log.events.at(-1)?.seq ?? 0,
+        },
       },
     });
     log.assistant("hello");

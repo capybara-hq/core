@@ -71,7 +71,7 @@ import { toolLabel, toolLabelOfKey, toolLabelText } from "./tool-label";
  *   task's description, and `background_task_finished` is a `background` notice entry.
  * - Interjections (run input spec D4): a person's message logged while a run is going stands where
  *   the model took it in, not at its `seq`: right before the first `model_call` whose
- *   `request.absorbedUpToSeq` covers it (a call without the field covers everything before it), so
+ *   `request.absorbedUpToSeq` covers it, so
  *   it sits below the step that was streaming when it was sent. Not taken in yet while the run goes
  *   on, it is `pending` and stands after the streaming drafts; a run that ends without taking it in
  *   leaves it after the run's row, where it starts the next run. A fork invocation stands before its
@@ -916,10 +916,9 @@ export function buildEventTimeline(
         }
         break;
       case "model_call":
-        // the interjections this request took in stand before its output (a call logged before
-        // the field took in everything before it, as the kernel reads it)
-        placeHeld(e.payload.request?.absorbedUpToSeq ?? e.seq);
-        absorbed = Math.max(absorbed, e.payload.request?.absorbedUpToSeq ?? 0);
+        // the interjections this request took in stand before its output
+        placeHeld(e.payload.request.absorbedUpToSeq);
+        absorbed = Math.max(absorbed, e.payload.request.absorbedUpToSeq);
         if (e.runId !== null) {
           const k = stepKey(e.runId, e.payload.step);
           models.set(k, { provider: e.payload.provider, model: e.payload.model });

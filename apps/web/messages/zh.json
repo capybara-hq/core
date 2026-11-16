@@ -409,7 +409,6 @@
       "run_not_finished": "运行还没结束，结束后才能加入评测集。",
       "case_too_large": "这次运行太大，不能加入评测集。",
       "call_not_found": "快照里找不到这次模型调用。",
-      "recording_unsupported": "这次运行由较早的格式录制，回放不支持。请使用当前版本录制的运行。",
       "case_not_found": "用例不存在。",
       "run_not_found": "评测运行不存在。",
       "result_not_found": "评测结果不存在。",

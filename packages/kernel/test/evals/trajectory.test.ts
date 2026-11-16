@@ -27,12 +27,18 @@ function log() {
   return { events, e };
 }
 
-const request = (over: Partial<EventPayload<"model_call">["request"]> = {}) => ({
+const request = (
+  over: Partial<EventPayload<"model_call">["request"]> = {},
+): EventPayload<"model_call">["request"] => ({
   fromSeq: 1,
   toSeq: 2,
   summarySeq: null,
   systemHash: "sys",
   reminderSeqs: [],
+  maxOutputTokens: 4096,
+  params: {},
+  absorbedUpToSeq: 1,
+  tools: [],
   ...over,
 });
 

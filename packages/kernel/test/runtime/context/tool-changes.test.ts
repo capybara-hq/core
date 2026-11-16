@@ -9,10 +9,10 @@ import {
 } from "../../../src/runtime/context/tool-changes.js";
 import { AGENT, compactionSettings, Log, MODEL, NO_TAIL_LIMIT } from "./fixtures.js";
 
-/** A model_call that offered `tools` (and a ToolSearch `catalog`); `tools` undefined = older log. */
+/** A model_call that offered `tools` (and a ToolSearch `catalog`). */
 function call(
   log: Log,
-  tools: string[] | undefined,
+  tools: string[],
   opts: { step?: number; catalog?: string[]; runId?: string; omitted?: boolean } = {},
 ): ConversationEvent {
   const ref = (key: string) => ({ key, specHash: `h-${key}` });
@@ -31,7 +31,10 @@ function call(
           summarySeq: null,
           systemHash: "x",
           reminderSeqs: [],
-          ...(tools !== undefined && { tools: tools.map(ref) }),
+          maxOutputTokens: 4096,
+          params: {},
+          absorbedUpToSeq: log.events.at(-1)?.seq ?? 0,
+          tools: tools.map(ref),
           ...(opts.catalog !== undefined && { catalog: opts.catalog.map(ref) }),
           ...(opts.omitted === true && { toolsOmitted: true as const }),
         },
@@ -78,10 +81,10 @@ describe("toolSetChange", () => {
     expect(toolSetChange(log.events, ["B"])).toEqual({ added: [], removed: ["A"] });
   });
 
-  it("skips calls without recorded tools and a call whose tools were omitted for a model without tools", () => {
+  it("skips a call whose tools were omitted for a model without tools", () => {
     const log = new Log();
     expect(previousToolSet(log.events)).toBeNull();
-    call(log, undefined);
+    call(log, [], { omitted: true });
     expect(previousToolSet(log.events)).toBeNull();
     call(log, ["A"], { step: 2 });
     call(log, [], { step: 3, omitted: true });

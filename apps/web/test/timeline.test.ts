@@ -14,6 +14,9 @@ import {
 } from "../src/lib/timeline";
 
 let t = 0;
+/** A model_call's request: it took in everything up to `seq` and offered no tools. */
+const req = (seq: number) => ({ absorbedUpToSeq: seq, tools: [] });
+
 function ev(seq: number, type: string, payload: unknown, runId: string | null = "r1") {
   t += 1000;
   return {
@@ -682,9 +685,9 @@ describe("run rows (spec §6.16.23)", () => {
     const events = [
       user(1, "hi"),
       ev(2, "run_started", { agentVersion: 1, model: { provider: "p", model: "m" } }, "r1"),
-      ev(3, "model_call", { step: 0, provider: "p", model: "m2" }, "r1"),
+      ev(3, "model_call", { step: 0, provider: "p", model: "m2", request: req(3) }, "r1"),
       usage(4, "r1", 100, 20),
-      ev(5, "model_call", { step: 1, provider: "p", model: "m2" }, "r1"),
+      ev(5, "model_call", { step: 1, provider: "p", model: "m2", request: req(5) }, "r1"),
       usage(6, "r1", 200, 30),
       ev(
         7,
@@ -711,7 +714,7 @@ describe("run rows (spec §6.16.23)", () => {
     const events = [
       user(1, "hi"),
       ev(2, "run_started", { agentVersion: 1, model: { provider: "p", model: "m" } }, "r1"),
-      ev(3, "model_call", { step: 0, provider: "p", model: "m" }, "r1"),
+      ev(3, "model_call", { step: 0, provider: "p", model: "m", request: req(3) }, "r1"),
     ];
     expect(kinds(buildTimeline(events, [], new Map(), "en"))).toEqual(["user"]);
   });

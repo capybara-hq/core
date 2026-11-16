@@ -18,9 +18,9 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   `mediaBudgetBytes`, the sequence of tool specHashes and the system fingerprint; tool definitions are fetched from the snapshot by specHash.
 - **Zero drift holds for logs written by the current format; no frozen copies before 0.1.0** (maintainer ruling 2026-11-16: no
   compatibility of any kind before the first release, including replay of release-candidate logs). There are no recorded
-  fixtures and no frozen copies of old model-visible texts: a text change simply renders the new text for every log. A
-  `model_call` without a field the runtime always records (`tools`, `params`, `absorbedUpToSeq`, `maxOutputTokens`, or `media` /
-  `mediaBudgetBytes` when the request has media) is refused with `eval.recording_unsupported` (422), never rebuilt by guesswork.
+  fixtures and no frozen copies of old model-visible texts: a text change simply renders the new text for every log. The
+  event schema requires what the runtime always records on a `model_call` (`tools`, `params`, `absorbedUpToSeq`,
+  `maxOutputTokens`, and `media` with `mediaBudgetBytes` when the request has media), so readers never guess a missing one.
 - **Run the zero-drift tests before and after changing request building**: `packages/kernel/test/evals/reconstruct.test.ts`
   ("baseline zero drift": multi-step tools, `ToolSearch` loading, approval resume, skill catalog snapshot, reminders, mid-run
   messages, compaction, images / placeholders, and so on; it reconstructs from logs produced by real runs on the current code and

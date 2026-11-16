@@ -484,7 +484,12 @@ describe("sub-agents on the conversation page", () => {
     const offered = ev(
       100,
       "model_call",
-      { step: 1, provider: "model-fake", model: "fake-1", request: { tools: [{ key: "Bash" }] } },
+      {
+        step: 1,
+        provider: "model-fake",
+        model: "fake-1",
+        request: { absorbedUpToSeq: 99, tools: [{ key: "Bash" }] },
+      },
       "run-ch2",
       "ch2",
     );

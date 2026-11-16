@@ -456,7 +456,7 @@ export const usageTotal = (u: ConversationUsage) =>
  */
 export function subagentToolKeys(events: readonly ConversationEvent[]): string[] {
   for (const e of events) {
-    if (e.type === "model_call") return (e.payload.request?.tools ?? []).map((t) => t.key);
+    if (e.type === "model_call") return e.payload.request.tools.map((t) => t.key);
   }
   return [];
 }

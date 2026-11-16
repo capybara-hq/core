@@ -541,98 +541,107 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       provider: z.string(),
       model: z.string(),
       fallback: z.boolean(),
-      request: z.object({
-        fromSeq: seqNo,
-        toSeq: seqNo,
-        summarySeq: seqNo.nullable(),
-        systemHash: z.string(),
-        reminderSeqs: z.array(seqNo),
-        /** 本次请求的输出上限（`min(模型上限, maxOutputTokens 旋钮 ?? runtime.maxOutputTokens)`）。较早的事件可能没有。 */
-        maxOutputTokens: count.optional(),
-        /**
-         * 本次请求的模型参数（`ModelRequest.params`）：agent 保存的参数按该模型声明 sanitize 后的结果
-         * （已补默认值）。主模型尝试来自 `modelParams`，兜底尝试来自 `fallbackParams`。较早的事件可能没有。
-         */
-        params: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
-        /** sanitize 时丢弃的参数键（未声明或值不再合法，如插件升级后）；没有丢弃时不写。 */
-        droppedParams: z.array(z.string()).optional(),
-        /**
-         * 发出请求时的输入 token 估算（未校正）。与随后 `usage.inputTokens` 一起供下一次
-         * `calibrate` 使用。较早的事件可能没有。
-         */
-        estimatedInputTokens: count.optional(),
-        /**
-         * 发出请求时 loop 已吸收到的 user_message seq（R31）：seq 更大的 user_message 不进本次请求
-         * （由后续步骤吸收或触发下一轮）。还原请求时据此放置 / 排除用户消息。较早的事件可能没有。
-         */
-        absorbedUpToSeq: seqNo.optional(),
-        /**
-         * 本次请求带给模型的工具（按发送顺序：未启用 ToolSearch 时按 key 排序；启用时为内置工具按 key 排序，
-         * 其后是已加载工具按首次加载顺序）及其定义指纹（`ResolvedTool.specHash`）。
-         * 模型不支持工具时为空数组。较早的事件可能没有。
-         */
-        tools: z.array(z.object({ key: z.string(), specHash: z.string() })).optional(),
-        /**
-         * The kernel left this step's tools out because the model has no tool support
-         * (`capabilities.tools` false while the step had tools): `tools` is empty and says nothing
-         * about the step's resolved set. Absent when the request carried the step's tools.
-         */
-        toolsOmitted: z.literal(true).optional(),
-        /**
-         * 启用 ToolSearch 时 system 第二块目录里的工具（按 key 排序）及定义指纹；定义同样存在
-         * `capybara.tool_specs`，目录文本可由它们还原。未启用时不写。
-         */
-        catalog: z.array(z.object({ key: z.string(), specHash: z.string() })).optional(),
-        /**
-         * 本次请求的 `toolChoice`：收尾调用为 `"none"`（照常带工具，但不得调用）；普通步骤不写（由模型决定）。
-         * 定义本身按 specHash 存在 `capybara.tool_specs`。
-         */
-        toolChoice: z.enum(["auto", "none"]).optional(),
-        /**
-         * 请求里每个附件的处理结果（Ruling M8，按首次出现，同一附件一条）：发了字节（`bytes`，带 finalize 时的
-         * etag）、内联文本、模型不支持的占位、因请求媒体预算省略（`omitted`）、图片太多（`too_many_images`）、
-         * 单个超过供应商上限（`too_large`）、不再可用、PDF 页数太多、
-         * 被 `media_excluded` 排除。没有媒体时不写；较早的事件没有。
-         */
-        media: z
-          .array(
-            z.object({
-              attachmentId: AttachmentIdSchema,
-              outcome: z.enum([
-                "bytes",
-                "inline",
-                "placeholder_unsupported",
-                "omitted",
-                "too_many_images",
-                "too_large",
-                "unavailable",
-                "too_many_pages",
-                "excluded",
-              ]),
-              etag: z.string().max(1024).optional(),
-            }),
-          )
-          .optional(),
-        /**
-         * 本次请求的媒体字节预算（`attachments.requestMediaBytes`，见 planMedia）：请求里有媒体时才写，
-         * 还原时用它重现同样的省略结果。较早的事件没有。
-         */
-        mediaBudgetBytes: count.optional(),
-        /**
-         * The hard fit guard's plan (context compaction spec §4.3): indexes into the assembled
-         * request's message list that were dropped, and text / tool_result blocks replaced by the
-         * truncation note. `assembleModelRequest` applies it (the runtime `buildRequest` calls it,
-         * and `evals/reconstruct` calls it directly), so the request replays byte-for-byte; absent
-         * when the request fit (and in older recordings). A candidate model with another window
-         * recomputes it and reports `context_fit`.
-         */
-        fit: z
-          .object({
-            droppedMessageIndexes: z.array(count),
-            truncated: z.array(z.object({ messageIndex: count, block: count, note: z.string() })),
-          })
-          .optional(),
-      }),
+      request: z
+        .object({
+          fromSeq: seqNo,
+          toSeq: seqNo,
+          summarySeq: seqNo.nullable(),
+          systemHash: z.string(),
+          reminderSeqs: z.array(seqNo),
+          /**
+           * The request's output cap: `min(model cap, maxOutputTokens knob ??
+           * runtime.maxOutputTokens)`, clamped by the hard fit guard.
+           */
+          maxOutputTokens: count,
+          /**
+           * The request's model parameters (`ModelRequest.params`): the agent's saved parameters
+           * sanitized against the model's declarations (defaults filled in), from `modelParams` for
+           * the agent's model and `fallbackParams` for a fallback attempt.
+           */
+          params: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])),
+          /** sanitize 时丢弃的参数键（未声明或值不再合法，如插件升级后）；没有丢弃时不写。 */
+          droppedParams: z.array(z.string()).optional(),
+          /**
+           * 发出请求时的输入 token 估算（未校正）。与随后 `usage.inputTokens` 一起供下一次
+           * `calibrate` 使用。较早的事件可能没有。
+           */
+          estimatedInputTokens: count.optional(),
+          /**
+           * The largest absorbable event seq the loop had taken in when the request went out (R31):
+           * absorbable events with a larger seq are not in this request (a later step takes them in
+           * or they start the next run). Reconstruction places and leaves out messages by it.
+           */
+          absorbedUpToSeq: seqNo,
+          /**
+           * 本次请求带给模型的工具（按发送顺序：未启用 ToolSearch 时按 key 排序；启用时为内置工具按 key 排序，
+           * 其后是已加载工具按首次加载顺序）及其定义指纹（`ResolvedTool.specHash`）。
+           * 模型不支持工具时为空数组（见 `toolsOmitted`）。
+           */
+          tools: z.array(z.object({ key: z.string(), specHash: z.string() })),
+          /**
+           * The kernel left this step's tools out because the model has no tool support
+           * (`capabilities.tools` false while the step had tools): `tools` is empty and says nothing
+           * about the step's resolved set. Absent when the request carried the step's tools.
+           */
+          toolsOmitted: z.literal(true).optional(),
+          /**
+           * 启用 ToolSearch 时 system 第二块目录里的工具（按 key 排序）及定义指纹；定义同样存在
+           * `capybara.tool_specs`，目录文本可由它们还原。未启用时不写。
+           */
+          catalog: z.array(z.object({ key: z.string(), specHash: z.string() })).optional(),
+          /**
+           * 本次请求的 `toolChoice`：收尾调用为 `"none"`（照常带工具，但不得调用）；普通步骤不写（由模型决定）。
+           * 定义本身按 specHash 存在 `capybara.tool_specs`。
+           */
+          toolChoice: z.enum(["auto", "none"]).optional(),
+          /**
+           * 请求里每个附件的处理结果（Ruling M8，按首次出现，同一附件一条）：发了字节（`bytes`，带 finalize 时的
+           * etag）、内联文本、模型不支持的占位、因请求媒体预算省略（`omitted`）、图片太多（`too_many_images`）、
+           * 单个超过供应商上限（`too_large`）、不再可用、PDF 页数太多、
+           * 被 `media_excluded` 排除。没有媒体时不写；有媒体时与 `mediaBudgetBytes` 一起写。
+           */
+          media: z
+            .array(
+              z.object({
+                attachmentId: AttachmentIdSchema,
+                outcome: z.enum([
+                  "bytes",
+                  "inline",
+                  "placeholder_unsupported",
+                  "omitted",
+                  "too_many_images",
+                  "too_large",
+                  "unavailable",
+                  "too_many_pages",
+                  "excluded",
+                ]),
+                etag: z.string().max(1024).optional(),
+              }),
+            )
+            .optional(),
+          /**
+           * 本次请求的媒体字节预算（`attachments.requestMediaBytes`，见 planMedia）：请求里有媒体时才写（与
+           * `media` 同在），还原时用它重现同样的省略结果。
+           */
+          mediaBudgetBytes: count.optional(),
+          /**
+           * The hard fit guard's plan (context compaction spec §4.3): indexes into the assembled
+           * request's message list that were dropped, and text / tool_result blocks replaced by the
+           * truncation note. `assembleModelRequest` applies it (the runtime `buildRequest` calls it,
+           * and `evals/reconstruct` calls it directly), so the request replays byte-for-byte; absent
+           * when the request fit (and in older recordings). A candidate model with another window
+           * recomputes it and reports `context_fit`.
+           */
+          fit: z
+            .object({
+              droppedMessageIndexes: z.array(count),
+              truncated: z.array(z.object({ messageIndex: count, block: count, note: z.string() })),
+            })
+            .optional(),
+        })
+        .refine((r) => (r.media === undefined) === (r.mediaBudgetBytes === undefined), {
+          message: "media and mediaBudgetBytes are recorded together",
+        }),
     }),
   ),
   ev(

@@ -72,25 +72,14 @@ describe("media_excluded 与 model_call.request.media（Ruling M8）", () => {
     expect(excluded([uuid(1)], "other")).toBe(false);
   });
 
-  it("model_call.request.media：可选；outcome 限定取值，etag 可选", () => {
-    const call = (media?: unknown) =>
+  it("model_call.request.media: optional, recorded with mediaBudgetBytes; outcome limited, etag optional", () => {
+    const call = (media?: unknown, budget: number | null = media === undefined ? null : 1) =>
       ConversationEventSchema.safeParse({
         type: "model_call",
-        payload: {
-          step: 1,
-          attempt: 1,
-          provider: "p",
-          model: "m",
-          fallback: false,
-          request: {
-            fromSeq: 1,
-            toSeq: 2,
-            summarySeq: null,
-            systemHash: "h",
-            reminderSeqs: [],
-            ...(media !== undefined && { media }),
-          },
-        },
+        payload: modelCall({
+          ...(media !== undefined && { media }),
+          ...(budget !== null && { mediaBudgetBytes: budget }),
+        }),
       }).success;
     expect(call()).toBe(true);
     expect(
@@ -101,6 +90,55 @@ describe("media_excluded 与 model_call.request.media（Ruling M8）", () => {
     ).toBe(true);
     expect(call([{ attachmentId: uuid(1), outcome: "sent" }])).toBe(false);
     expect(call([{ attachmentId: "x", outcome: "bytes" }])).toBe(false);
+    // media and its budget are recorded together
+    expect(call([{ attachmentId: uuid(1), outcome: "bytes" }], null)).toBe(false);
+    expect(call(undefined, 1)).toBe(false);
+  });
+});
+
+/** A model_call payload with every field the runtime records, `request` merged with `over`. */
+function modelCall(over: Record<string, unknown> = {}) {
+  return {
+    step: 1,
+    attempt: 1,
+    provider: "p",
+    model: "m",
+    fallback: false,
+    request: {
+      fromSeq: 1,
+      toSeq: 2,
+      summarySeq: null,
+      systemHash: "h",
+      reminderSeqs: [],
+      maxOutputTokens: 4096,
+      params: {},
+      absorbedUpToSeq: 1,
+      tools: [],
+      ...over,
+    },
+  };
+}
+
+describe("model_call.request", () => {
+  it("requires the fields the runtime always records", () => {
+    const parse = (payload: unknown) =>
+      ConversationEventSchema.safeParse({ type: "model_call", payload }).success;
+    expect(parse(modelCall())).toBe(true);
+    for (const field of ["tools", "params", "absorbedUpToSeq", "maxOutputTokens"]) {
+      const p = modelCall();
+      delete (p.request as Record<string, unknown>)[field];
+      expect(parse(p), field).toBe(false);
+    }
+  });
+
+  it("toolsOmitted is only ever true", () => {
+    const parse = (toolsOmitted: unknown) =>
+      ConversationEventSchema.safeParse({
+        type: "model_call",
+        payload: modelCall({ toolsOmitted }),
+      }).success;
+    expect(parse(true)).toBe(true);
+    expect(parse(false)).toBe(false);
   });
 });
 

@@ -409,7 +409,6 @@
       "run_not_finished": "The run has not finished yet. Add it after it ends.",
       "case_too_large": "This run is too large to add to an eval set.",
       "call_not_found": "This model call is not in the snapshot.",
-      "recording_unsupported": "This run was recorded by an earlier format that replay does not support. Use a run recorded by this version.",
       "case_not_found": "The case doesn't exist.",
       "run_not_found": "The eval run doesn't exist.",
       "result_not_found": "The eval result doesn't exist.",

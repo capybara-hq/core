@@ -862,7 +862,17 @@ describe("the conversation page (ConversationPage)", () => {
     await renderChat();
     await screen.findByRole("button", { name: en.chat.stop });
     const es = FakeEventSource.instances[0] as FakeEventSource;
-    act(() => es.emit("event", ev(3, "model_call", { step: 0, provider: "p", model: "m" })));
+    act(() =>
+      es.emit(
+        "event",
+        ev(3, "model_call", {
+          step: 0,
+          provider: "p",
+          model: "m",
+          request: { absorbedUpToSeq: 3, tools: [] },
+        }),
+      ),
+    );
     const user = userEvent.setup();
     await user.type(input(), "later{Enter}");
     await screen.findByText("later");

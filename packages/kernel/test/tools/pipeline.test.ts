@@ -1597,6 +1597,9 @@ describe("ToolSearch 模式", () => {
             summarySeq: null,
             systemHash: "x",
             reminderSeqs: [],
+            maxOutputTokens: 4096,
+            params: {},
+            absorbedUpToSeq: 1,
             tools: sent.map((t) => ({ key: t.key, specHash: t.specHash })),
             ...(catalog && {
               catalog: resolved

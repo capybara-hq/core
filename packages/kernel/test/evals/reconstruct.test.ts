@@ -1339,21 +1339,6 @@ describe("reconstructRequest：基线零漂移", () => {
     expect(reconstructRequest(snap, head.seq, { model: info, ...headMedia }).request).toEqual(
       sent[0],
     );
-    // a recording without the media outcomes or the budget (an earlier format) is refused
-    for (const field of ["mediaBudgetBytes", "media"]) {
-      const old = structuredClone(snap);
-      const ev = old.events.find((e) => e.seq === head.seq) as { payload: unknown };
-      delete (ev.payload as { request: Record<string, unknown> }).request[field];
-      const err = (() => {
-        try {
-          reconstructRequest(old, head.seq, { model: info, ...headMedia });
-        } catch (e) {
-          return e;
-        }
-      })();
-      expect(err, field).toBeInstanceOf(ApiError);
-      expect((err as ApiError).code, field).toBe("eval.recording_unsupported");
-    }
 
     // 附件对象被删：带过字节的请求还原时只能给占位，记 media_missing
     await k.app.get(StorageService).kernel(orgId).delete(`attachments/${keep}`);
@@ -2535,24 +2520,6 @@ describe("reconstructRequest：漂移原因", () => {
     const out = reconstructRequest(s, seq, { model: info });
     expect(out.drift).toEqual(["tool_spec_missing"]);
     expect(out.request.tools.map((t) => t.name)).not.toContain(victim.key);
-  });
-
-  it("a recording without tools / params / absorbedUpToSeq / maxOutputTokens is refused: eval.recording_unsupported", () => {
-    for (const field of ["tools", "params", "absorbedUpToSeq", "maxOutputTokens"]) {
-      const s = clone();
-      const call = s.events.find((e) => e.seq === seq) as { payload: unknown };
-      delete (call.payload as { request: Record<string, unknown> }).request[field];
-      const err = (() => {
-        try {
-          reconstructRequest(s, seq, { model: info });
-        } catch (e) {
-          return e;
-        }
-      })();
-      expect(err, field).toBeInstanceOf(ApiError);
-      expect((err as ApiError).code, field).toBe("eval.recording_unsupported");
-      expect((err as ApiError).message, field).toContain(field);
-    }
   });
 
   it("a candidate model replacing the run's model switch -> model_switched (never for a baseline)", () => {

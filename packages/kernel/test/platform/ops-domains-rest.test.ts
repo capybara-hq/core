@@ -229,7 +229,17 @@ async function seedFinishedRun(
         provider: MODEL.provider,
         model: MODEL.model,
         fallback: false,
-        request: { fromSeq: 1, toSeq: 1, summarySeq: null, systemHash: "h", reminderSeqs: [] },
+        request: {
+          fromSeq: 1,
+          toSeq: 1,
+          summarySeq: null,
+          systemHash: "h",
+          reminderSeqs: [],
+          maxOutputTokens: 4096,
+          params: {},
+          absorbedUpToSeq: 1,
+          tools: [],
+        },
       },
     },
     {

@@ -224,14 +224,14 @@ export function openingSeqs(
   );
   const upTo =
     first?.type === "model_call"
-      ? Math.min(first.payload.request.absorbedUpToSeq ?? first.seq, first.seq)
+      ? Math.min(first.payload.request.absorbedUpToSeq, first.seq)
       : absorbedUpToSeq;
   let floor = Number.NEGATIVE_INFINITY;
   for (const e of sorted) {
     if (e.seq >= start.seq) break;
     if (e.type === "assistant_message") floor = Math.max(floor, e.seq);
     else if (e.type === "model_call") {
-      floor = Math.max(floor, e.payload.request.absorbedUpToSeq ?? e.seq);
+      floor = Math.max(floor, e.payload.request.absorbedUpToSeq);
     }
   }
   return sorted

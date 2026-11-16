@@ -379,7 +379,17 @@ describe("useConversation and the cache", () => {
     const qc = cached();
     mount(qc);
     const es = FakeEventSource.instances[0] as FakeEventSource;
-    act(() => es.emit("event", ev(3, "model_call", { step: 0, provider: "p", model: "m" })));
+    act(() =>
+      es.emit(
+        "event",
+        ev(3, "model_call", {
+          step: 0,
+          provider: "p",
+          model: "m",
+          request: { absorbedUpToSeq: 3, tools: [] },
+        }),
+      ),
+    );
     // a send's answer lands in the log before the stream delivers 4..8
     act(() => void appendEvents(qc, "o1", "c1", [userMsg(9, "sent")]));
     act(() => es.giveUp());

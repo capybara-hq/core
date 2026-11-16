@@ -134,7 +134,7 @@ export interface ReconstructOptions {
   /** 附件行信息与字节（调用方按 {@link snapshotMediaRefs} 取）；缺省表示都取不到。 */
   mediaInfo?: ReadonlyMap<string, MediaInfo>;
   media?: ReadonlyMap<string, MediaBytes | null>;
-  /** 单次请求的媒体字节预算；缺省用记录的 `mediaBudgetBytes`（较早的事件没有时不限）。 */
+  /** 单次请求的媒体字节预算；缺省用记录的 `mediaBudgetBytes`（请求里有媒体时才有记录）。 */
   mediaBudgetBytes?: number;
   /** The candidate's model (a non-baseline reconstruction): checked against the run's switch. */
   modelRef?: ModelRef;
@@ -170,19 +170,6 @@ export interface ReconstructResult {
 
 type ModelCallEvent = Extract<ConversationEvent, { type: "model_call" }>;
 type Recorded = ModelCallEvent["payload"]["request"];
-
-/**
- * Zero drift holds only for logs written by the current format (no frozen copies before 0.1.0): a
- * `model_call` without a field the runtime always records was written by a release candidate and
- * is refused instead of rebuilt by guesswork.
- */
-function unsupportedRecording(seq: number, fields: readonly string[]): never {
-  throw new ApiError(
-    "eval.recording_unsupported",
-    `The model_call at seq ${seq} has no ${fields.join(" / ")}: it was recorded by an earlier ` +
-      "format that replay does not support. Take a case from a conversation recorded by this version.",
-  );
-}
 
 function findCall(events: readonly ConversationEvent[], seq: number): ModelCallEvent {
   const call = events.find((e): e is ModelCallEvent => e.seq === seq && e.type === "model_call");
@@ -232,10 +219,6 @@ export function reconstructRequest(
   const call = findCall(all, modelCallSeq);
   const rec: Recorded = call.payload.request;
   const drift = new Set<DriftReason>();
-  const missing = (["tools", "params", "absorbedUpToSeq", "maxOutputTokens"] as const).filter(
-    (k) => rec[k] === undefined,
-  );
-  if (missing.length > 0) unsupportedRecording(call.seq, missing);
 
   const origVersion = recordedVersion(s, all, call);
   const version = opts.agentVersion ?? origVersion;
@@ -297,8 +280,8 @@ export function reconstructRequest(
   const tools: RequestTool[] = [];
   const seen = new Set<string>();
   const kept = (list: Recorded["tools"]) =>
-    (list ?? []).filter((t) => s.toolSpecs[t.specHash] !== undefined);
-  for (const t of [...(rec.tools ?? []), ...(rec.catalog ?? [])]) {
+    list.filter((t) => s.toolSpecs[t.specHash] !== undefined);
+  for (const t of [...rec.tools, ...(rec.catalog ?? [])]) {
     if (seen.has(t.key)) continue;
     seen.add(t.key);
     const spec = s.toolSpecs[t.specHash];
@@ -319,10 +302,11 @@ export function reconstructRequest(
 
   let params = opts.params;
   if (params === undefined) {
-    const recorded = rec.params ?? {};
-    const clean = sanitizeParams(opts.model.parameters, recorded);
+    const clean = sanitizeParams(opts.model.parameters, rec.params);
     params = clean.value;
-    if (clean.dropped.length > 0 || !sameParams(clean.value, recorded)) drift.add("params_changed");
+    if (clean.dropped.length > 0 || !sameParams(clean.value, rec.params)) {
+      drift.add("params_changed");
+    }
   }
   const budget = opts.mediaBudgetBytes ?? rec.mediaBudgetBytes;
 
@@ -332,7 +316,7 @@ export function reconstructRequest(
     agentVersion: version,
     model: opts.model,
     step: call.payload.step,
-    ...(rec.absorbedUpToSeq !== undefined && { absorbedUpToSeq: rec.absorbedUpToSeq }),
+    absorbedUpToSeq: rec.absorbedUpToSeq,
     params,
     tools,
     toolSearch: rec.catalog !== undefined,
@@ -340,13 +324,11 @@ export function reconstructRequest(
     ...(opts.mediaInfo !== undefined && { mediaInfo: opts.mediaInfo }),
     ...(opts.media !== undefined && { media: opts.media }),
     ...(budget !== undefined && { mediaBudgetBytes: budget }),
-    defaultMaxOutputTokens: rec.maxOutputTokens ?? opts.model.maxOutputTokens,
+    defaultMaxOutputTokens: rec.maxOutputTokens,
     // The baseline replays the recorded output cap as sent: the runtime may have clamped it below
     // the agent's `maxOutputTokens` knob (context compaction spec §4.3), and recomputing it from the
     // knob would replay a larger cap. A candidate below recomputes the clamp and the trim instead.
-    ...(baseline && rec.maxOutputTokens !== undefined
-      ? { recordedMaxOutputTokens: rec.maxOutputTokens }
-      : {}),
+    ...(baseline && { recordedMaxOutputTokens: rec.maxOutputTokens }),
     // the baseline replays the recorded trim (no reserve needed); a candidate below recomputes it
     ...(baseline && rec.fit !== undefined ? { fit: rec.fit } : {}),
   });
@@ -387,18 +369,14 @@ export function reconstructRequest(
     if (meta.systemHash !== rec.systemHash) drift.add("system_hash");
     // 与记录比较时排除快照里缺定义的工具（已记 tool_spec_missing）
     if (
-      rec.tools !== undefined &&
-      (!sameList(meta.tools, kept(rec.tools)) ||
-        !sameList(meta.catalog, rec.catalog === undefined ? undefined : kept(rec.catalog)))
+      !sameList(meta.tools, kept(rec.tools)) ||
+      !sameList(meta.catalog, rec.catalog === undefined ? undefined : kept(rec.catalog))
     ) {
       drift.add("tools_changed");
     }
   }
 
   // 媒体：按附件 id 与记录比较
-  if (meta.media !== undefined && (rec.media === undefined || rec.mediaBudgetBytes === undefined)) {
-    unsupportedRecording(call.seq, ["media", "mediaBudgetBytes"]);
-  }
   const recordedMedia = new Map((rec.media ?? []).map((m) => [m.attachmentId, m]));
   for (const m of meta.media ?? []) {
     const was = recordedMedia.get(m.attachmentId);
@@ -406,15 +384,14 @@ export function reconstructRequest(
       drift.add("media_missing");
     } else if (
       baseline &&
-      rec.media !== undefined &&
       (was === undefined || was.outcome !== m.outcome || was.etag !== m.etag)
     ) {
       drift.add("media_changed");
     }
   }
-  if (baseline && rec.media !== undefined) {
+  if (baseline) {
     const now = new Set((meta.media ?? []).map((m) => m.attachmentId));
-    if (rec.media.some((m) => !now.has(m.attachmentId))) drift.add("media_changed");
+    if ((rec.media ?? []).some((m) => !now.has(m.attachmentId))) drift.add("media_changed");
   }
 
   return { request, meta, drift: DRIFT_ORDER.filter((r) => drift.has(r)), mediaTokens };

@@ -132,6 +132,7 @@ export class Log {
 
   /** 一次模型调用记录；`absorbedUpToSeq` 省略时模拟没有该字段的旧事件。 */
   modelCall(
+    /** Default: the call's own seq (it took in everything before it). */
     absorbedUpToSeq?: number,
     step = 1,
     params?: Record<string, string | number | boolean>,
@@ -152,8 +153,10 @@ export class Log {
           summarySeq: null,
           systemHash: "x",
           reminderSeqs: [],
-          ...(absorbedUpToSeq !== undefined && { absorbedUpToSeq }),
-          ...(params !== undefined && { params }),
+          maxOutputTokens: 4096,
+          absorbedUpToSeq: absorbedUpToSeq ?? this.nextSeq,
+          params: params ?? {},
+          tools: [],
         },
       },
     });

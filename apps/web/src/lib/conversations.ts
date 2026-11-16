@@ -185,11 +185,8 @@ type EventBody =
         step: number;
         provider: string;
         model: string;
-        /**
-         * The user messages the request took in (absent in older logs) and the tools it offered
-         * by key.
-         */
-        request?: { absorbedUpToSeq?: number; tools?: { key: string }[] };
+        /** The user messages the request took in and the tools it offered by key. */
+        request: { absorbedUpToSeq: number; tools: { key: string }[] };
       };
     }
   | {

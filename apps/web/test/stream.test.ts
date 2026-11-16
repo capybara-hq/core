@@ -287,7 +287,12 @@ describe("reduceChat", () => {
 
   it("thinking carries the model that produced it: the step's model_call, else run_started's", () => {
     const call = (seq: number, step: number, provider: string, model: string) =>
-      ev(seq, "model_call", { step, provider, model });
+      ev(seq, "model_call", {
+        step,
+        provider,
+        model,
+        request: { absorbedUpToSeq: seq, tools: [] },
+      });
     const s = apply(
       initialChatState,
       [started(1), call(2, 0, "p", "m"), thought(3, 0, "a"), call(4, 1, "fb", "x")],
