@@ -737,6 +737,8 @@ export const CONVERSATION_SIDE_KEYS = (orgId: string, id: string): (readonly unk
     c.background(),
     c.row(),
     c.toolInfoAll(),
+    // the owner's permissions (a profile change while away); a viewer's has no observer
+    c.permissions(),
     keys.org(orgId).uiViews(id),
   ];
 };

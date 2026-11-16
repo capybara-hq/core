@@ -1617,7 +1617,13 @@
         "limits": "This is not root access: sudo may still ask for a password, and platform and organization denials still apply.",
         "confirm": "Use Full access",
         "cancel": "Cancel"
-      }
+      },
+      "unconfirmed": "Last confirmed permissions. Refreshing before they can change again.",
+      "unconfirmedFailed": "Couldn't confirm the current permissions. The value shown is the last confirmed one.",
+      "refresh": "Refresh",
+      "changed": "Permissions changed. Changes apply to new operations. Work already started keeps its starting permissions.",
+      "conflict": "The permissions or their scope changed meanwhile. Check the current choice and choose again.",
+      "saveFailed": "Couldn't change the permissions. The current state was read again; nothing was resent."
     },
     "firstSend": {
       "unconfirmed": "Your earlier message got no answer, so it may already have started a conversation.",
@@ -1989,7 +1995,8 @@
       "denied": "Denied",
       "expired": "Expired",
       "cancelled": "Cancelled",
-      "skipped": "Skipped"
+      "skipped": "Skipped",
+      "superseded": "Superseded"
     },
     "decidedBy": "Handled by {who}",
     "you": "you",
@@ -2022,6 +2029,18 @@
         "failed": "The change to the device's network rules did not take effect: {message} You can decide again.",
         "appliedUndecided": "The device allowed it, but the person who chose this can no longer decide this request."
       }
+    },
+    "permissionScope": {
+      "intro": "Approving grants this access for this operation only. Each directory includes everything inside it.",
+      "write": "Read and write",
+      "read": "Read only",
+      "hosts": "Network hosts",
+      "target": "Target file (for reference)"
+    },
+    "superseded": {
+      "user": "A permission change replaced this request before anyone decided it. Nothing was approved; if still needed, a new request appears.",
+      "authorityChanged": "A device or organization permission change replaced this request before anyone decided it. Nothing was approved.",
+      "revision": "Permissions revision {n}"
     }
   },
   "question": {
@@ -5423,7 +5442,8 @@
       "loadFailed": "The sub-agent cannot be opened."
     },
     "contextTotal": "Total tokens with sub-agents {n}",
-    "background": "Background tasks"
+    "background": "Background tasks",
+    "startingGrant": "Running work keeps the permissions it started with; a permission change applies to new operations. Revoked device or organization access can still stop it."
   },
   "background": {
     "inBackground": "In background",

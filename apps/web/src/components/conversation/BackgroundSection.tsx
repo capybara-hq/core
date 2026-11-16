@@ -9,10 +9,12 @@ import {
   formatDuration,
   PropertySection,
   RightPanel,
+  Stack,
   type SubagentStatus,
   subagentWaitKind,
   TaskOutputPanel,
   type TaskOutputUnavailable,
+  Text,
   useNow,
 } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
@@ -125,14 +127,26 @@ export function BackgroundSection({
 }) {
   const t = useTranslations("subagents");
   const kindOf = (id: string) => (tasks.some((x) => x.id === id) ? "task" : "subagent");
+  // Work under way keeps the grant it started with (permission profiles): said whenever some runs,
+  // without naming a per-task profile the list does not record.
+  const running =
+    tasks.some((x) => x.status === "running") ||
+    views.some((v) => v.status === "running" || v.status === "waiting" || v.status === "queued");
   return (
     <PropertySection title={t("background")}>
-      <BackgroundTasks
-        items={backgroundItems(views, tasks, stopping)}
-        onStop={(id) => onStop({ kind: kindOf(id), id })}
-        onOpen={(id) => onOpen({ kind: kindOf(id), id })}
-        onOpenCompleted={onOpenCompleted}
-      />
+      <Stack gap={8}>
+        <BackgroundTasks
+          items={backgroundItems(views, tasks, stopping)}
+          onStop={(id) => onStop({ kind: kindOf(id), id })}
+          onOpen={(id) => onOpen({ kind: kindOf(id), id })}
+          onOpenCompleted={onOpenCompleted}
+        />
+        {running && (
+          <Text variant="small" tone="muted">
+            {t("startingGrant")}
+          </Text>
+        )}
+      </Stack>
     </PropertySection>
   );
 }

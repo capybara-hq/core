@@ -134,6 +134,11 @@ export function openConversationStream(
   conversationId: string,
   afterSeq: number,
   handlers: StreamHandlers,
+  /**
+   * `eventsOnly`: a notification-only subscriber (an owner child following its root's profile):
+   * live drafts (`draft` / `delta` frames) are ignored, so no draft is ever read for them.
+   */
+  opts: { eventsOnly?: boolean } = {},
 ): () => void {
   const es = new EventSource(streamUrl(orgId, conversationId, afterSeq));
   let closed = false;
@@ -168,6 +173,7 @@ export function openConversationStream(
     handlers.onEvent(data as ConversationEvent);
   });
   es.addEventListener("draft", (e) => {
+    if (opts.eventsOnly) return;
     const d = parse(e) as Partial<RunDraftSnapshot & { runId: string }> | undefined;
     if (closed || typeof d?.runId !== "string" || typeof d.step !== "number") return;
     live.draft({
@@ -178,6 +184,7 @@ export function openConversationStream(
     });
   });
   es.addEventListener("delta", (e) => {
+    if (opts.eventsOnly) return;
     const data = parse(e);
     if (!closed && data !== undefined) live.delta(data as StreamDelta);
   });

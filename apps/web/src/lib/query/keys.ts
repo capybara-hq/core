@@ -416,6 +416,8 @@ export const keys = {
         contribution: string,
         rest: string,
       ): readonly unknown[] => [...all, "uiView", scope, plugin, contribution, rest],
+      /** Every conversation's pieces of the org (a prefix: e.g. the owner views naming a root). */
+      conversationsAll: (): readonly unknown[] => [...all, "conversation"],
       /** One conversation's pieces (its row, events and what lives outside the log). */
       conversation(id: string) {
         const c = [...all, "conversation", id] as const;

@@ -1,19 +1,40 @@
 "use client";
 
-import { Button, Dialog, type IconName, type PickerProps, Stack, Text } from "@capybara-hq/design";
-import { useQuery } from "@tanstack/react-query";
+import {
+  Button,
+  Dialog,
+  type IconName,
+  type PickerProps,
+  Stack,
+  Text,
+  useToast,
+} from "@capybara-hq/design";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useState, useSyncExternalStore } from "react";
 import { useRouter } from "../../i18n/navigation";
-import type { ConversationEvent } from "../../lib/conversations";
+import type { Conversation, ConversationEvent } from "../../lib/conversations";
 import { canUpdateOrg } from "../../lib/org-settings";
-import type {
-  PermissionPreview,
-  PermissionProfile,
-  PermissionSelection,
+import {
+  type PermissionPreview,
+  type PermissionProfile,
+  type PermissionSelection,
+  setConversationPermissions,
 } from "../../lib/permissions";
 import { retryOnMountOf } from "../../lib/query/client";
-import { permissionPreviewQuery } from "../../lib/query/permissions";
+import { inboxChangeKeys } from "../../lib/query/inbox";
+import { keys } from "../../lib/query/keys";
+import { useAppMutation } from "../../lib/query/mutation";
+import {
+  permissionKeysOfRoot,
+  permissionsConfirmed,
+  permissionWatermark,
+  raisePermissionWatermark,
+  refreshPermissionViews,
+  subscribePermissionWatermarks,
+} from "../../lib/query/permission-state";
+import { permissionPreviewQuery, permissionsQuery } from "../../lib/query/permissions";
+import { ApiErrorDetail } from "../ApiErrorDetail";
 import { useSession } from "../shell/session";
 
 /**
@@ -309,7 +330,7 @@ export function usePermissionChoice(input: PermissionChoiceInput): {
  */
 export function useLockedPermissionPicker(
   profile: PermissionProfile | undefined,
-  why: "profile" | "inherited" | "scheduled" = "profile",
+  why: "profile" | "inherited" | "scheduled" | "unconfirmed" = "profile",
 ): PickerProps | undefined {
   const t = useTranslations("chat.permission");
   if (profile === undefined) return undefined;
@@ -322,9 +343,160 @@ export function useLockedPermissionPicker(
           ? t("locked.inherited")
           : why === "scheduled"
             ? t("locked.scheduled")
-            : t(`description.${PROFILE_KEY[profile]}`),
+            : why === "unconfirmed"
+              ? t("unconfirmed")
+              : t(`description.${PROFILE_KEY[profile]}`),
     },
     groups: [],
     onPick: () => {},
+  };
+}
+
+/** The approvals the log shows pending (requested, not yet decided). */
+function pendingApprovalIds(events: readonly ConversationEvent[] | undefined): string[] {
+  const open = new Set<string>();
+  for (const e of events ?? []) {
+    if (e.type === "approval_requested") open.add(e.payload.approvalId);
+    else if (e.type === "approval_decided") open.delete(e.payload.approvalId);
+  }
+  return [...open];
+}
+
+/**
+ * An existing conversation's permission profile for its owner (permission profiles Task 10D):
+ *
+ * - Read: the owner-only authoritative view (`enabled` only for the owner; a viewer reads nothing
+ *   and gets no picker). Until it lands, the profile the log recorded is shown, locked.
+ * - Edit: only an interactive root (no parent, no scheduled task) whose view is confirmed. A new
+ *   choice is a PATCH with the view's `expectedRevision` (Full only after the dialog for the
+ *   view's own device, project and scope revision). The answer's revision raises the root's
+ *   watermark inside the mutation, before the views are read again.
+ * - Confirmation: below the watermark (a PATCH or a root profile event this view has not read
+ *   yet) the last confirmed profile is shown locked and marked unconfirmed; a failed read shows
+ *   its error with a Refresh that only reads. Nothing is rolled back or sent again.
+ * - A failed PATCH (409: revision, binding or consent changed meanwhile; or no answer) reads the
+ *   state again and needs a new choice: never resent.
+ * - A child shows its root's profile as inherited, a scheduled task's as its own rules, locked.
+ */
+export function useConversationPermission(o: {
+  orgId: string;
+  conversationId: string;
+  row: Conversation | undefined;
+  events: readonly ConversationEvent[] | undefined;
+  /** The bound device's display name, for the Full access confirmation. */
+  deviceLabel: string;
+}): {
+  picker: PickerProps | undefined;
+  dialog: ReactNode;
+  /** The unconfirmed read's error and Refresh, or the last change's failure; null: nothing. */
+  notice: ReactNode;
+  /** The root an owner's child inherits from (its subscription's), else undefined. */
+  inheritedRootId: string | undefined;
+} {
+  const { orgId, conversationId, row } = o;
+  const t = useTranslations("chat.permission");
+  const qc = useQueryClient();
+  const toast = useToast();
+  const session = useSession();
+  const accountId = session.me.account.id;
+  // an unknown owner never authorizes the owner read (as in the route's prefetch)
+  const owner = row !== undefined && row.accountId === accountId;
+  const q = permissionsQuery(orgId, conversationId);
+  const read = useQuery({ ...q, enabled: owner, retryOnMount: retryOnMountOf(q.queryKey) });
+  const view = owner ? read.data : undefined;
+  const rootId = view?.rootConversationId;
+  const required = useSyncExternalStore(
+    (fn) => subscribePermissionWatermarks(qc, fn),
+    () =>
+      rootId === undefined ? undefined : permissionWatermark(qc, { accountId, orgId, rootId }),
+    () => undefined,
+  );
+  const confirmed = permissionsConfirmed(view, required);
+  const child = view !== undefined && rootId !== conversationId;
+  const scheduled = Boolean(row?.scheduledTaskId);
+  const interactiveRoot =
+    owner && !child && !scheduled && row !== undefined && !row.parentConversationId;
+  const [failure, setFailure] = useState<unknown>(null);
+  const patch = useAppMutation({
+    fn: async (v: PermissionSelection & { expectedRevision: number }) => {
+      const r = await setConversationPermissions(orgId, conversationId, v);
+      // the barrier first: the reads below may fail, and a cached older view must not unlock
+      raisePermissionWatermark(qc, { accountId, orgId, rootId: conversationId }, r.revision);
+      return r;
+    },
+    invalidates: () => [
+      ...permissionKeysOfRoot(qc, orgId, conversationId),
+      ...pendingApprovalIds(o.events).map((id) => keys.org(orgId).approval(id)),
+      ...inboxChangeKeys(orgId),
+    ],
+    onSuccess: () => toast.success(t("changed")),
+    onError: (e) => {
+      setFailure(e);
+      // the state may have moved (or the change may have landed without an answer): read it
+      refreshPermissionViews(qc, orgId, conversationId);
+    },
+  });
+  const deviceId = view?.deviceId ?? undefined;
+  const project = row?.project?.name;
+  const choice = usePermissionChoice({
+    orgId,
+    deviceId,
+    project,
+    deviceLabel: o.deviceLabel,
+    context: "existing",
+    ...(view !== undefined ? { initial: view.profile } : {}),
+    // the view is the scope the kernel checks a Full consent against: no preview is read
+    preview: {
+      data:
+        view?.deviceId != null && view.scopeRevision !== null
+          ? {
+              deviceId: view.deviceId,
+              project: project ?? null,
+              scopeRevision: view.scopeRevision,
+              availability: view.availability,
+              fullAccessCeiling: view.fullAccessCeiling,
+            }
+          : undefined,
+      failed: view?.deviceId != null && view.scopeRevision === null,
+    },
+    onChange: (selection) => {
+      if (view === undefined || !confirmed || patch.isPending) return;
+      setFailure(null);
+      patch.mutate({ ...selection, expectedRevision: view.revision });
+    },
+  });
+  const recorded = owner ? recordedProfile(o.events) : undefined;
+  const editable = interactiveRoot && view !== undefined && confirmed && !patch.isPending;
+  const locked = useLockedPermissionPicker(
+    owner ? (view?.profile ?? recorded) : undefined,
+    view !== undefined && !confirmed
+      ? "unconfirmed"
+      : child
+        ? "inherited"
+        : scheduled
+          ? "scheduled"
+          : "profile",
+  );
+  const notice =
+    view !== undefined && !confirmed && read.isError ? (
+      <Stack gap={4}>
+        <Text variant="small" tone="muted">
+          {t("unconfirmedFailed")}
+        </Text>
+        <ApiErrorDetail error={read.error} />
+        <Stack direction="row">
+          <Button density="dense" disabled={read.isFetching} onClick={() => void read.refetch()}>
+            {t("refresh")}
+          </Button>
+        </Stack>
+      </Stack>
+    ) : failure !== null ? (
+      <ApiErrorDetail error={failure} summaries={{ conflict: t("conflict") }} />
+    ) : null;
+  return {
+    picker: editable ? choice.picker : locked,
+    dialog: editable ? choice.dialog : null,
+    notice,
+    inheritedRootId: owner && child ? rootId : undefined,
   };
 }
