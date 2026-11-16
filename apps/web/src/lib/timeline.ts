@@ -189,7 +189,7 @@ export interface ApprovalItem {
   input: unknown;
   expiresAt: string;
   policy?: ApprovalPolicy;
-  /** Who may decide it (absent in older logs). */
+  /** Who may decide it (absent when the event names neither an account nor a role). */
   approver?: Waiter;
   /** A network ask (network ask spec §6.5): the device-layer hosts asked for. */
   network?: { hosts: string[] };
@@ -334,7 +334,7 @@ export type TimelineEntry =
       wait: SubagentWaitKind;
       approvalId?: string;
       questionId?: string;
-      /** Who may decide the sub-agent's approval (absent in older logs). */
+      /** Who may decide the sub-agent's approval (absent when the event names nobody). */
       approver?: Waiter;
       toolKey: string;
       expiresAt?: string;
@@ -1145,8 +1145,7 @@ export function buildEventTimeline(
         // A non-zero exit is information, not a failure (the summary names the code); a timeout or
         // a stopped command fails. A read-before-write refusal (`guard` view) is the guard working,
         // and a call to a tool the step's request did not carry (`not_loaded` view) is the catalog
-        // working: the model still gets an error, the row a neutral outcome. Older logs have
-        // neither view.
+        // working: the model still gets an error, the row a neutral outcome.
         const guard = view?.kind === "guard" ? view.reason : undefined;
         const notLoaded = view?.kind === "not_loaded";
         const failed =
@@ -1535,8 +1534,8 @@ export function buildEventTimeline(
         break;
       }
       case "compaction_summary":
-        // the summary event's own estimate (context compaction spec §4.9); with no value (an older
-        // log) or nothing saved there is no number to show, so the divider stays plain
+        // the summary event's own estimate (context compaction spec §4.9); with nothing saved
+        // there is no number to show, so the divider stays plain
         out.push({
           kind: "divider",
           key,

@@ -647,7 +647,7 @@ export interface Conversation {
    * start recorded one (and in a list row).
    */
   projectState?: ProjectState | null;
-  /** What it is doing now: a run in progress, or waiting for me . */
+  /** What it is doing now: a run in progress, or waiting for me. */
   activity: "running" | "waiting" | null;
 }
 

@@ -395,9 +395,16 @@ describe("openConversationStream", () => {
     const es = FakeEventSource.instances[0];
     expect(es?.url).toBe("/api/v1/orgs/o1/conversations/c1/stream?after=7");
     es?.emit("event", user(8, "x"));
-    es?.emit("delta", delta("hi"));
+    es?.emit("delta", { ...delta("hi"), offset: 0 });
     expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({ seq: 8 }));
-    expect(onDelta).toHaveBeenCalledWith(delta("hi"));
+    // the channel's first delta (offset 0) starts it over: handed on as a replacing draft
+    expect(onDelta).toHaveBeenCalledWith({
+      runId: RUN,
+      step: 0,
+      delta: "draft",
+      text: "hi",
+      replace: true,
+    });
     close();
     expect(es?.closed).toBe(true);
   });

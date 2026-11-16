@@ -399,8 +399,8 @@ export interface ModelInfo {
     maxInputTokens: number;
     maxBatch: number;
   };
-  /** 上下文窗口（token）；旧内核可能没有。 */
-  contextWindow?: number;
+  /** The context window (tokens). */
+  contextWindow: number;
   capabilities: { reasoning: boolean };
   parameters: ModelParameter[];
 }
