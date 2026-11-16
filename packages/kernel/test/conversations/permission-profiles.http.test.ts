@@ -5,6 +5,7 @@ import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
+import { PermissionProfilesService } from "../../src/conversations/permission-profiles.service.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import type { Account, AccountsService } from "../../src/identity/accounts.js";
@@ -141,7 +142,7 @@ async function localDevice(orgId: string, name = "Laptop") {
   Object.assign(impl, {
     operation: neverProbe,
     revokeOperation: neverProbe,
-    permissionCapabilities: neverProbe,
+    permissionSupport: neverProbe,
   });
   providers.register({ plugin: "@permission-test", impl });
   const db = kernelDb(raw);
@@ -189,15 +190,11 @@ describe("Conversation permission profiles", () => {
       const firstDevice = change === "null-to-device" ? null : await localDevice(orgId);
       const nextDevice =
         change === "project-switch" ? firstDevice : await localDevice(orgId, "Next laptop");
-      await db
-        .updateTable("conversations")
-        .set({
-          device_id: firstDevice,
-          project_name: change === "project-switch" ? "before" : null,
-          project_path: change === "project-switch" ? "/work/before" : null,
-        })
-        .where("id", "=", conv.id)
-        .execute();
+      // Fixture setup intentionally writes the otherwise immutable project binding.
+      await sql`UPDATE capybara.conversations SET device_id = ${firstDevice},
+        project_name = ${change === "project-switch" ? "before" : null},
+        project_path = ${change === "project-switch" ? "/work/before" : null}
+        WHERE id = ${conv.id}`.execute(raw);
       const permissionState = () =>
         Promise.all([
           db
@@ -227,8 +224,8 @@ describe("Conversation permission profiles", () => {
       const before = await permissionState();
       const locks = k.app.get(PermissionAuthorityLock);
       const acquire = locks.acquire.bind(locks);
-      const reached = Promise.withResolvers<Parameters<PermissionAuthorityLock["acquire"]>[0]>();
-      const resume = Promise.withResolvers<void>();
+      const reached = deferred<Parameters<PermissionAuthorityLock["acquire"]>[0]>();
+      const resume = deferred<void>();
       const gate = vi.spyOn(locks, "acquire").mockImplementationOnce(async (subject, intent) => {
         // The service has read the binding, but has not acquired any authority lock yet.
         reached.resolve(subject);
@@ -243,16 +240,10 @@ describe("Conversation permission profiles", () => {
       const selected = await reached.promise;
       try {
         // A separate connection commits the binding writer before the PATCH takes root-write.
-        await db
-          .updateTable("conversations")
-          .set({
-            device_id: nextDevice,
-            ...(change === "project-switch"
-              ? { project_name: "after", project_path: "/work/after" }
-              : {}),
-          })
-          .where("id", "=", conv.id)
-          .execute();
+        await sql`UPDATE capybara.conversations SET device_id = ${nextDevice},
+          project_name = CASE WHEN ${change === "project-switch"} THEN 'after' ELSE project_name END,
+          project_path = CASE WHEN ${change === "project-switch"} THEN '/work/after' ELSE project_path END
+          WHERE id = ${conv.id}`.execute(raw);
       } finally {
         resume.resolve();
       }
@@ -725,6 +716,78 @@ describe("Conversation permission profiles", () => {
       ).statusCode,
     ).toBe(403);
   });
+  it("initializes only the winning root epoch on concurrent first-send and rolls back failed creation", async () => {
+    const req = await session("owner");
+    const orgId = await createOrg(req);
+    const agentId = await createAgent(req, orgId);
+    const profiles = k.app.get(PermissionProfilesService);
+    const lock = profiles.lockInitial.bind(profiles);
+    const candidates: string[] = [];
+    const both = deferred<void>();
+    const spy = vi.spyOn(profiles, "lockInitial").mockImplementation(async (...args) => {
+      candidates.push(args[1]);
+      if (candidates.length === 2) both.resolve();
+      await both.promise;
+      await lock(...args);
+    });
+    const url = `/api/v1/orgs/${orgId}/conversations/first-message`;
+    const payload = {
+      agentId,
+      message: { text: "hello", clientMessageId: "concurrent" },
+      permission: { profile: "approve-for-me" },
+    };
+    let answers: Awaited<ReturnType<Req>>[];
+    try {
+      answers = await Promise.all([
+        req({ method: "POST", url, payload }),
+        req({ method: "POST", url, payload }),
+      ]);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(answers.map((a) => a.statusCode).sort()).toEqual([200, 201]);
+    const winner = answers[0]?.json().conversation.id;
+    expect(answers[1]?.json().conversation.id).toBe(winner);
+    expect(candidates).toHaveLength(2);
+    const db = kernelDb(raw);
+    expect(
+      await db
+        .selectFrom("permission_authority_epochs")
+        .select("id")
+        .where("kind", "=", "root")
+        .where("id", "in", candidates)
+        .execute(),
+    ).toEqual([{ id: winner }]);
+    const rollbackIds: string[] = [];
+    const init = profiles.initialize.bind(profiles);
+    const fail = vi.spyOn(profiles, "initialize").mockImplementation(async (...args) => {
+      rollbackIds.push(args[1]);
+      await init(...args);
+      throw new Error("Injected failure after epoch initialization");
+    });
+    try {
+      const failed = await req({
+        method: "POST",
+        url,
+        payload: { ...payload, message: { ...payload.message, clientMessageId: "rollback" } },
+      });
+      expect(failed.statusCode).toBe(500);
+    } finally {
+      fail.mockRestore();
+    }
+    expect(rollbackIds).toHaveLength(1);
+    expect(
+      await db
+        .selectFrom("permission_authority_epochs")
+        .select("id")
+        .where("kind", "=", "root")
+        .where("id", "in", rollbackIds)
+        .execute(),
+    ).toEqual([]);
+    expect(
+      await db.selectFrom("conversations").select("id").where("id", "in", rollbackIds).execute(),
+    ).toEqual([]);
+  });
   it("persists both restricted initial selections without a device and rejects changed-body retries", async () => {
     const req = await session("owner");
     const orgId = await createOrg(req);
@@ -829,3 +892,11 @@ describe("Conversation permission profiles", () => {
     ).toEqual([]);
   });
 });
+
+function deferred<T = void>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}

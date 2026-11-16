@@ -6,11 +6,15 @@ import type { BackgroundLaunchLock } from "../../src/background/launch-lock.js";
 import { BackgroundTaskStore } from "../../src/background/store.js";
 import type { KernelConfig } from "../../src/config/schema.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
+import { DeviceAccess } from "../../src/devices/access.js";
+import type { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import type { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
 import type { KernelLogger } from "../../src/log.js";
 import { SandboxLeases } from "../../src/sandbox/leases.js";
+import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
+import type { SandboxProviders } from "../../src/sandbox/providers.js";
 import { LOCAL_PROVIDER, type SandboxProviderEntry } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 
@@ -81,26 +85,29 @@ export function sandboxServiceFor(d: SandboxServiceDeps): SandboxService {
       ...(d.lockTtlMs !== undefined && { ttlMs: d.lockTtlMs }),
       ...(d.lockPollMs !== undefined && { pollMs: d.lockPollMs }),
     });
+  const db = kernelDbOver(d.db);
+  const providers: Pick<SandboxProviders, "cloud" | "forName"> = {
+    cloud: d.provider,
+    forName: (plugin) => {
+      const own = d.internal?.find((e) => e.plugin === plugin);
+      if (own) return own;
+      const impl = d.lookup?.(plugin);
+      return impl ? { plugin, impl } : undefined;
+    },
+  };
+  const config: Pick<KernelConfigService, "get" | "fieldSource"> = {
+    get: () => d.config() as KernelConfig,
+    fieldSource: (path: string) =>
+      path === "devices.autoMode" && d.config().devices.autoMode !== undefined
+        ? ("file" as const)
+        : undefined,
+  };
   return new SandboxService(
     kernelDbOver(d.db),
     d.redis,
     leases,
-    {
-      cloud: d.provider,
-      forName: (plugin) => {
-        const own = d.internal?.find((e) => e.plugin === plugin);
-        if (own) return own;
-        const impl = d.lookup?.(plugin);
-        return impl ? { plugin, impl } : undefined;
-      },
-    },
-    {
-      get: () => d.config() as KernelConfig,
-      fieldSource: (path: string) =>
-        path === "devices.autoMode" && d.config().devices.autoMode !== undefined
-          ? ("file" as const)
-          : undefined,
-    },
+    providers,
+    config,
     kernelLog(d.log),
     d.background ??
       new BackgroundTaskStore(
@@ -109,6 +116,7 @@ export function sandboxServiceFor(d: SandboxServiceDeps): SandboxService {
         // the sandbox service never reserves a launch
         {} as BackgroundLaunchLock,
       ),
+    new PermissionFacts(db, config, providers, new DeviceAccess(db, providers)),
   );
 }
 

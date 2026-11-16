@@ -21,10 +21,12 @@ import {
 } from "../../src/devices/device-projects.service.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
 import { ApiError } from "../../src/errors.js";
+import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { deviceLeaseKey } from "../../src/local-devices/keys.js";
 import { MachinesService } from "../../src/local-devices/machines.js";
+import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { SandboxProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { legacyDbFor } from "../helpers/conversations.js";
@@ -706,16 +708,10 @@ describe("device projects", () => {
       },
     } as unknown as SandboxProvider;
     const real = k.app.get(SandboxProviders);
-    const sandbox = k.app.get(SandboxService);
     const service = new DeviceProjectsService(
       k.app.get(KernelDb),
       txHost,
       {
-        cloud: () => ({ plugin: real.cloud()?.plugin as string, impl }),
-        forName: () => ({ plugin: real.cloud()?.plugin as string, impl }),
-      },
-      {
-        devicePolicy: (dev) => sandbox.devicePolicy(dev),
         withSandbox: (_ctx, fn, signal) =>
           fn(
             { id },
@@ -725,6 +721,15 @@ describe("device projects", () => {
           ),
       },
       k.app.get(DeviceAccess),
+      new PermissionFacts(
+        k.app.get(KernelDb),
+        k.app.get(KernelConfigService),
+        {
+          cloud: () => ({ plugin: real.cloud()?.plugin as string, impl }),
+          forName: () => ({ plugin: real.cloud()?.plugin as string, impl }),
+        },
+        k.app.get(DeviceAccess),
+      ),
     );
     // its files were made in auto mode with the open network, then the device was narrowed to
     // sandbox mode: the provider fixes limits at its file system, so a files reset is pending and

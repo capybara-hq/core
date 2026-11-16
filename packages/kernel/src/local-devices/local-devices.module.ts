@@ -1,10 +1,12 @@
 import { Inject, Module, type OnModuleInit } from "@nestjs/common";
 import { LOCAL_PROVIDER, SandboxProviders } from "../sandbox/providers.js";
+import { SandboxProviderRegistryModule } from "../sandbox/providers.module.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
 import { DevicePolicyService } from "./device-policy.service.js";
 import { LocalDeviceProvider } from "./local-device-provider.js";
 import { MachinesService } from "./machines.js";
 import { NetworkGrants } from "./network-grants.js";
+import { NetworkGrantsModule } from "./network-grants.module.js";
 import { LocalDeviceRelay } from "./relay.js";
 import { DeviceTargets } from "./targets.js";
 
@@ -17,21 +19,20 @@ import { DeviceTargets } from "./targets.js";
  * (the socket itself is held by the gateway role).
  */
 @Module({
-  imports: [SandboxModule],
+  imports: [SandboxModule, SandboxProviderRegistryModule, NetworkGrantsModule],
   providers: [
     DeviceTargets,
     LocalDeviceRelay,
     LocalDeviceProvider,
     MachinesService,
     DevicePolicyService,
-    NetworkGrants,
   ],
   exports: [
+    NetworkGrantsModule,
     LocalDeviceRelay,
     LocalDeviceProvider,
     MachinesService,
     DevicePolicyService,
-    NetworkGrants,
   ],
 })
 export class LocalDevicesModule implements OnModuleInit {

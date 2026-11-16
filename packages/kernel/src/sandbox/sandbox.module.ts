@@ -2,16 +2,15 @@ import { Module } from "@nestjs/common";
 import { BackgroundStoreModule } from "../background/store.module.js";
 import { EventLogModule } from "../conversations/event-log.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
-import { ExtensionRegistryModule } from "../extensions/registry.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
 import { ModelsModule } from "../models/models.module.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { StepLogModule } from "../runtime/step-log.js";
 import { SandboxJobs } from "./jobs.js";
 import { SandboxLeases } from "./leases.js";
-import { PermissionAuthorityEpochStore } from "./permission-authority-epochs.js";
-import { PermissionAuthorityLock } from "./permission-authority-lock.js";
-import { SandboxProviders } from "./providers.js";
+import { PermissionAuthorityModule } from "./permission-authority.module.js";
+import { PermissionFactsModule } from "./permission-facts.module.js";
+import { SandboxProviderRegistryModule } from "./providers.module.js";
 import { CommandReviewService } from "./review/review.service.js";
 import { SandboxService } from "./sandbox.service.js";
 
@@ -24,7 +23,9 @@ import { SandboxService } from "./sandbox.service.js";
  */
 @Module({
   imports: [
-    ExtensionRegistryModule,
+    SandboxProviderRegistryModule,
+    PermissionAuthorityModule,
+    PermissionFactsModule,
     BackgroundStoreModule,
     // the command review's classifier: the `review` purpose, its hooks, usage and audit writes
     ModelsModule,
@@ -33,21 +34,12 @@ import { SandboxService } from "./sandbox.service.js";
     StepLogModule,
     QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
   ],
-  providers: [
-    PermissionAuthorityLock,
-    PermissionAuthorityEpochStore,
-    SandboxProviders,
-    SandboxLeases,
-    SandboxService,
-    SandboxJobs,
-    CommandReviewService,
-  ],
+  providers: [SandboxLeases, SandboxService, SandboxJobs, CommandReviewService],
   exports: [
-    PermissionAuthorityLock,
-    PermissionAuthorityEpochStore,
+    SandboxProviderRegistryModule,
+    PermissionAuthorityModule,
     SandboxService,
     SandboxJobs,
-    SandboxProviders,
     CommandReviewService,
   ],
 })

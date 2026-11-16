@@ -1,12 +1,10 @@
 import { posix } from "node:path";
 import {
-  DEFAULT_SANDBOX_ROOTS,
   DeviceProtocolError,
   isDeviceProjectName,
   isFileSystemGoneError,
   isSandboxGoneError,
   MAX_DEVICE_SCAN_RESULTS,
-  rootsOf,
   type SandboxHandle,
   type SandboxProvider,
   ToolError,
@@ -20,16 +18,28 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { projectsUnsupported } from "../local-devices/local-device-provider.js";
-import { deviceFeaturesOf, localModeOf } from "../local-devices/policy-summary.js";
 import { POLICY_REFUSAL_PREFIX } from "../local-devices/relay.js";
 import type { SandboxMode } from "../sandbox/modes.js";
-import { providerForDevice, SandboxProviders } from "../sandbox/providers.js";
+import { PermissionFacts } from "../sandbox/permission-facts.js";
 import { deviceNotFound, type HeldProvider, SandboxService } from "../sandbox/sandbox.service.js";
 import { SandboxProviderUnreachableError } from "../sandbox/unreachable.js";
 import { DeviceAccess } from "./access.js";
+import {
+  baseOf,
+  clipped,
+  type DeviceProjectScope,
+  homeUnknown,
+  nameInvalid,
+  nameTaken,
+  outsideMode,
+  tooBroad,
+  withinMode,
+} from "./project-rules.js";
 // a path above the owner's home is never stored as a project: the working root would fall back for
 // it anyway (project root §4.3), so both use the one rule; the home itself may be one
 import { aboveHome } from "./working-root.js";
+
+export { type DeviceProjectScope, withinMode } from "./project-rules.js";
 
 /** The most projects one device keeps (project root §4.1). */
 export const MAX_DEVICE_PROJECTS = 100;
@@ -82,79 +92,7 @@ export interface DeviceProjectCandidates {
   supported: boolean;
 }
 
-/** What a project's scope is read from: the device's mode now and the bases it gives. */
-export interface DeviceProjectScope {
-  source: "cloud" | "local";
-  mode: SandboxMode;
-  /** The workspace root as last known (a machine's hello, a cloud instance's handle). */
-  workspace: string;
-  /** The owner's home a local machine reported; null when unknown (and for a cloud device). */
-  home: string | null;
-  supported: boolean;
-  /**
-   * A machine whose own policy is auto mode while the organization allows only sandbox mode: exec
-   * refuses it (`device.auto_mode_not_allowed`), and the kernel reads nothing on it unasked.
-   */
-  widerThanAllowed: boolean;
-}
-
 type Scope = DeviceProjectScope;
-
-/** Only the owner's home bounds nothing: auto mode on a machine reads what its owner can. */
-const homeBased = (s: Pick<Scope, "source" | "mode">): boolean =>
-  s.source === "local" && s.mode === "auto";
-
-/** The base a relative path is resolved against in the scope's mode (project root §4.2). */
-const baseOf = (s: Scope, workspace: string = s.workspace): string | null =>
-  homeBased(s) ? s.home : workspace;
-
-/**
- * `path` lies inside what the scope's mode may read (sandbox mode and cloud: the workspace, as the
- * held instance reports it when given).
- */
-export const withinMode = (s: Scope, path: string, workspace: string = s.workspace): boolean =>
-  homeBased(s) || path === workspace || path.startsWith(workspace === "/" ? "/" : `${workspace}/`);
-
-/** `path` relative to `base` ("" for the base itself); `path` must lie under it. */
-const relativeTo = (base: string, path: string): string =>
-  path === base ? "" : posix.relative(base, path);
-
-const nameInvalid = (name: string): ApiError =>
-  new ApiError(
-    "device.project_name_invalid",
-    `"${clipped(name)}" is not a valid project name: use 1-64 characters, not . or .., without / or control characters, and without leading or trailing spaces`,
-  );
-const nameTaken = (name: string): ApiError =>
-  new ApiError(
-    "device.project_name_taken",
-    `This device already has a project named "${clipped(name)}"; pick another name`,
-  );
-const projectNotFound = (name: string): ApiError =>
-  new ApiError("device.project_not_found", `This device has no project named "${clipped(name)}"`);
-const outsideMode = (path: string, mode: SandboxMode): ApiError =>
-  new ApiError(
-    "device.project_outside_mode",
-    mode === "sandbox"
-      ? `${clipped(path)} is outside the device's workspace, the only directory it can read in sandbox mode`
-      : `${clipped(path)} is outside the device's workspace, the only directory a cloud device can read`,
-  );
-const tooBroad = (path: string): ApiError =>
-  new ApiError(
-    "device.project_path_too_broad",
-    `${clipped(path)} holds the owner's home directory (or other people's): pick the project's own directory, the home or below it`,
-  );
-
-const homeUnknown = (): ApiError =>
-  new ApiError(
-    "device.project_home_unknown",
-    "In auto mode a project's path is relative to the owner's home directory, which this device has not reported; update capybara-device on that machine and reconnect it",
-  );
-
-/** A device-supplied or person-supplied string inside a message, bounded. */
-function clipped(s: string, max = 200): string {
-  return s.length <= max ? s : `${s.slice(0, max)}…`;
-}
-
 /**
  * A device's projects (project root design §4.1, §4.2, §6): kept in `device_projects`, keyed by the
  * device's id, written only here. Only the device's owner reads or changes them (anyone else gets
@@ -170,11 +108,14 @@ export class DeviceProjectsService {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
-    @Inject(SandboxProviders)
-    private readonly providers: Pick<SandboxProviders, "cloud" | "forName">,
     @Inject(SandboxService)
-    private readonly sandbox: Pick<SandboxService, "withSandbox" | "devicePolicy">,
+    private readonly sandbox: Pick<SandboxService, "withSandbox">,
     @Inject(DeviceAccess) private readonly access: Pick<DeviceAccess, "usable">,
+    @Inject(PermissionFacts)
+    private readonly facts: Pick<
+      PermissionFacts,
+      "resolveProjectForBinding" | "projectMatches" | "projectScope"
+    >,
   ) {}
 
   /** The projects the device's current mode can read; see {@link DeviceProjectList}. */
@@ -415,20 +356,7 @@ export class DeviceProjectsService {
     accountId: string,
     name: string,
   ): Promise<{ name: string; path: string }> {
-    const scope = await this.scope(orgId, accountId, deviceId);
-    if (!scope.supported) throw projectsUnsupported(scope.source === "local");
-    const row = await this.db
-      .selectFrom("device_projects")
-      .select(["name", "path"])
-      .where("device_id", "=", deviceId)
-      .where("name", "=", name)
-      .executeTakeFirst();
-    if (row === undefined) throw projectNotFound(name);
-    if (!withinMode(scope, row.path)) throw outsideMode(row.path, scope.mode);
-    // a home reported after the project was added can put it above the home: the working root
-    // would fall back for it, so it is not bound (the add rule, project root §4.3)
-    if (aboveHome(row.path, scope.home)) throw tooBroad(row.path);
-    return { name: row.name, path: row.path };
+    return this.facts.resolveProjectForBinding(orgId, deviceId, accountId, name);
   }
 
   /**
@@ -437,14 +365,7 @@ export class DeviceProjectsService {
    * longer serves the conversations bound to it. Reads only.
    */
   async keeps(deviceId: string, name: string, path: string): Promise<boolean> {
-    const row = await this.db
-      .selectFrom("device_projects")
-      .select("name")
-      .where("device_id", "=", deviceId)
-      .where("name", "=", name)
-      .where("path", "=", path)
-      .executeTakeFirst();
-    return row !== undefined;
+    return this.facts.projectMatches(deviceId, name, path);
   }
 
   /**
@@ -463,53 +384,7 @@ export class DeviceProjectsService {
    * offers projects. Anyone else's device (or a missing one) → `device.not_found`.
    */
   private async scope(orgId: string, accountId: string, deviceId: string): Promise<Scope> {
-    const row = await this.db
-      .selectFrom("devices as e")
-      .leftJoin("device_machines as m", (j) =>
-        j.onRef("m.device_id", "=", "e.id").on("m.revoked_at", "is", null),
-      )
-      .leftJoin("device_instances as i", "i.device_id", "e.id")
-      .select([
-        "e.source",
-        "e.provider",
-        "m.features",
-        "m.local_policy",
-        "m.home",
-        sql<string | null>`m.roots->>'workspace'`.as("machine_workspace"),
-        "i.handle",
-      ])
-      .where("e.id", "=", deviceId)
-      .where("e.org_id", "=", orgId)
-      .where("e.owner_kind", "=", "personal")
-      .where("e.owner_account_id", "=", accountId)
-      .where("e.deleted_at", "is", null)
-      .executeTakeFirst();
-    if (row === undefined) throw deviceNotFound();
-    // `devicePolicy`, not `modeLevel` as the command review reads: a cloud device with a pending
-    // files reset is scoped by the narrower mode it will run at, never the wider one its instance
-    // still has, on purpose (projects are offered for what the device will read; no effect today)
-    const { mode, allowedMode } = await this.sandbox.devicePolicy({ orgId, deviceId });
-    if (row.source === "local") {
-      return {
-        source: "local",
-        mode,
-        widerThanAllowed:
-          allowedMode === "sandbox" && localModeOf(row.features, row.local_policy) === "auto",
-        workspace: row.machine_workspace ?? DEFAULT_SANDBOX_ROOTS.workspace,
-        home: row.home,
-        supported: deviceFeaturesOf(row.features).includes("projects"),
-      };
-    }
-    const impl = providerForDevice(this.providers, row.provider)?.impl;
-    const handle = row.handle as SandboxHandle | null;
-    return {
-      source: "cloud",
-      mode,
-      widerThanAllowed: false,
-      workspace: handle === null ? DEFAULT_SANDBOX_ROOTS.workspace : rootsOf(handle).workspace,
-      home: null,
-      supported: typeof impl?.list === "function" && typeof impl.scan === "function",
-    };
+    return this.facts.projectScope(orgId, accountId, deviceId);
   }
 
   /**
@@ -672,3 +547,6 @@ async function listFailure(
       : `${clipped(path)} is a file, not a directory`,
   );
 }
+
+const relativeTo = (base: string, path: string): string =>
+  path === base ? "" : posix.relative(base, path);

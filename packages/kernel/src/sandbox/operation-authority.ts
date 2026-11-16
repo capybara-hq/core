@@ -6,22 +6,17 @@ import {
   type SandboxOperationScope,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
-import {
-  PermissionProfilesService,
-  permissionScopeHash,
-} from "../conversations/permission-profiles.service.js";
-import { ConversationDevices } from "../devices/conversation-devices.js";
-import { DeviceProjectsService } from "../devices/device-projects.service.js";
+import { PermissionProfileStore } from "../conversations/permission-profile-store.js";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { NetworkGrants } from "../local-devices/network-grants.js";
-import { localPolicyOf } from "../local-devices/policy-summary.js";
 import { coversHost } from "./modes.js";
 import { PermissionAuthorityEpochStore } from "./permission-authority-epochs.js";
 import { PermissionAuthorityLock } from "./permission-authority-lock.js";
-import { SandboxService, type SandboxUseContext } from "./sandbox.service.js";
+import { PermissionFacts, permissionScopeHash } from "./permission-facts.js";
+import type { SandboxUseContext } from "./use-context.js";
 export type SandboxAuthorityOperation =
   | "exec"
   | "readFile"
@@ -86,10 +81,8 @@ export class SandboxOperationAuthority {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
-    @Inject(PermissionProfilesService) private readonly profiles: PermissionProfilesService,
-    @Inject(ConversationDevices) private readonly devices: ConversationDevices,
-    @Inject(DeviceProjectsService) private readonly projects: DeviceProjectsService,
-    @Inject(SandboxService) private readonly sandbox: SandboxService,
+    @Inject(PermissionProfileStore) private readonly profiles: PermissionProfileStore,
+    @Inject(PermissionFacts) private readonly facts: PermissionFacts,
     @Inject(NetworkGrants) private readonly grants: NetworkGrants,
     @Inject(PermissionAuthorityLock) private readonly locks: PermissionAuthorityLock,
     @Inject(PermissionAuthorityEpochStore) private readonly epochs: PermissionAuthorityEpochStore,
@@ -109,27 +102,27 @@ export class SandboxOperationAuthority {
       throw new ApiError("forbidden", "Unknown sandbox operation");
     if (ctx.actor.conversationId !== ctx.holderConversationId)
       throw new ApiError("forbidden", "Operation actor does not match its conversation");
-    const initial = await this.profiles.get(
+    const initial = await this.profiles.readOwnedRoot(
       ctx.orgId,
       ctx.holderConversationId,
       ctx.actor.accountId,
     );
+    await this.facts.view(ctx.orgId, ctx.actor.accountId, initial);
     const subject = {
       orgId: ctx.orgId,
       deviceId: ctx.deviceId,
-      rootConversationId: initial.rootConversationId,
+      rootConversationId: initial.id,
     };
     await this.locks.acquire(subject, { kind: "admit" });
-    const view = await this.profiles.get(ctx.orgId, ctx.holderConversationId, ctx.actor.accountId);
+    const root = await this.profiles.readOwnedRoot(
+      ctx.orgId,
+      ctx.holderConversationId,
+      ctx.actor.accountId,
+    );
+    const view = await this.facts.view(ctx.orgId, ctx.actor.accountId, root);
     if (view.deviceId !== ctx.deviceId)
       throw new ApiError("device.not_found", "The conversation is not bound to this device");
-    const root = await this.db
-      .selectFrom("conversations")
-      .select(["scheduled_task_id", "project_name", "project_path"])
-      .where("id", "=", view.rootConversationId)
-      .where("org_id", "=", ctx.orgId)
-      .executeTakeFirstOrThrow();
-    await this.profiles.preview(
+    await this.facts.preview(
       ctx.orgId,
       ctx.actor.accountId,
       ctx.deviceId,
@@ -151,28 +144,20 @@ export class SandboxOperationAuthority {
         throw new ApiError("forbidden", "The operation run is no longer authorized");
       unattended ||= run.scheduled_task_run_id !== null;
     }
-    const policy = await this.sandbox.devicePolicy(ctx);
-    const working = await this.devices.workingFacts(
-      ctx.orgId,
-      view.rootConversationId,
-      ctx.holderConversationId,
-      ctx.deviceId,
-    );
+    const { policy, owner } = await this.facts.readDevice(ctx.orgId, ctx.deviceId);
+    const working = await this.facts.readWorkingFacts({
+      orgId: ctx.orgId,
+      rootConversationId: view.rootConversationId,
+      holderConversationId: ctx.holderConversationId,
+      deviceId: ctx.deviceId,
+    });
     if (
       root.project_name &&
       root.project_path &&
-      !(await this.projects.keeps(ctx.deviceId, root.project_name, root.project_path))
+      !(await this.facts.projectMatches(ctx.deviceId, root.project_name, root.project_path))
     )
       throw new ApiError("conflict", "The conversation project binding changed");
     const workingRoot = root.project_path ?? working.workspace;
-    const machine = await this.db
-      .selectFrom("device_machines")
-      .select("local_policy")
-      .where("device_id", "=", ctx.deviceId)
-      .where("org_id", "=", ctx.orgId)
-      .where("revoked_at", "is", null)
-      .executeTakeFirst();
-    const owner = machine ? localPolicyOf(machine.local_policy) : null;
     const grant = ctx.actor.runId
       ? await this.grants.forExec({
           orgId: ctx.orgId,

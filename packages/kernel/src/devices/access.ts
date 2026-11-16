@@ -2,7 +2,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { isInternalProvider, SandboxProviders } from "../sandbox/providers.js";
-import { deviceNotFound } from "../sandbox/sandbox.service.js";
+import { deviceNotFound } from "./errors.js";
 
 /** What decides a device's provider: its own record and its instance row's (if any). */
 export interface ProviderFacts {

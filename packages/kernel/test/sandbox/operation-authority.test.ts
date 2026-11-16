@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { intersectPermissionScope } from "../../src/sandbox/operation-authority.js";
+import { permissionScopeHash } from "../../src/sandbox/permission-facts.js";
 
 describe("operation authority intersection", () => {
   const base = {
@@ -58,4 +59,13 @@ describe("operation authority intersection", () => {
     expect(scope.network).toEqual({ kind: "none" });
     expect(Object.isFrozen(scope)).toBe(true);
   });
+});
+
+it("preserves canonical permission scope fingerprints across object key order and omitted fields", () => {
+  expect(
+    permissionScopeHash({ z: null, a: ["workspace", { y: 2, x: 1 }], omitted: undefined }),
+  ).toBe("f92f26a2fd2af84edb3a43e5d7436e73dc3e80891a35ca22cf013ab2b107b397");
+  expect(permissionScopeHash({ a: ["workspace", { x: 1, y: 2 }], z: null })).toBe(
+    "f92f26a2fd2af84edb3a43e5d7436e73dc3e80891a35ca22cf013ab2b107b397",
+  );
 });

@@ -7,6 +7,7 @@ import type {
   SandboxRoots,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
+import { projectsUnsupported } from "../devices/errors.js";
 import { ApiError } from "../errors.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
@@ -28,23 +29,13 @@ export const OP_DEADLINE_MS = 30_000;
  */
 export const FRAME_ENVELOPE_BYTES = 64 * 1024;
 
+export { projectsUnsupported } from "../devices/errors.js";
+
 /** The most raw bytes whose base64 plus {@link FRAME_ENVELOPE_BYTES} fit in `maxFrameBytes`. */
 export const maxReadBytes = (maxFrameBytes: number): number =>
   Math.max(0, Math.floor((maxFrameBytes - FRAME_ENVELOPE_BYTES) / 4) * 3);
 
 const NAME_PREFIX = "cap-device-";
-
-/**
- * The device offers no projects (project root §4.1): a local machine whose `capybara-device`
- * does not announce `projects`, or a cloud provider without `list` / `scan`.
- */
-export const projectsUnsupported = (local: boolean): ApiError =>
-  new ApiError(
-    "device.projects_unsupported",
-    local
-      ? "This device's capybara-device does not support projects; update capybara-device on that machine and reconnect it."
-      : "This device's sandbox provider does not support projects; its conversations work without one.",
-  );
 
 /**
  * The refusal of a command on a machine whose local policy is auto mode while the organization (or

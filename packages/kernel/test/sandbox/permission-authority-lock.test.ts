@@ -40,8 +40,8 @@ afterAll(async () => {
 });
 const subject = { orgId: "org", rootConversationId: "root" };
 it("shared admissions coexist, root writer excludes its readers and unrelated roots progress", async () => {
-  const held = Promise.withResolvers<void>();
-  const release = Promise.withResolvers<void>();
+  const held = deferred<void>();
+  const release = deferred<void>();
   const reader = host.run(async () => {
     await lock.acquire(subject, { kind: "admit" });
     held.resolve();
@@ -102,8 +102,8 @@ it("forbids upgrades and CAS without the matching writer; rollback restores epoc
   });
 });
 it("an ancestor ceiling writer excludes admissions while platform writes need no fabricated org", async () => {
-  const held = Promise.withResolvers<void>(),
-    release = Promise.withResolvers<void>();
+  const held = deferred<void>(),
+    release = deferred<void>();
   const writer = host.run(async () => {
     await lock.acquire({ orgId: "org" }, { kind: "write", level: "org" });
     held.resolve();
@@ -155,3 +155,11 @@ it("ordinary reads take shared locks only, require fixed-order whole-subject acq
   ).rejects.toThrow("Conversation not found");
   await expect(epochs.readLocked(subject)).rejects.toThrow("mandatory");
 });
+
+function deferred<T = void>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}

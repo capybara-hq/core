@@ -25,14 +25,14 @@ import { SESSION_MODE_SCRIPT } from "../background/launch.js";
 import { BackgroundTaskStore } from "../background/store.js";
 import type { KernelConfig } from "../config/schema.js";
 import type { DeviceInstancesTable, KernelDatabase } from "../db/kernel-schema.js";
+import { deviceNotFound } from "../devices/errors.js";
 import { ApiError } from "../errors.js";
 import { readSandboxLimitOverride } from "../identity/settings.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
-import { localModeOf } from "../local-devices/policy-summary.js";
 import type { KernelLogger } from "../log.js";
-import { effectiveSandboxLimits, readOrgSettings } from "../orgs/settings.service.js";
+import { effectiveSandboxLimits } from "../orgs/settings.service.js";
 import { canonicalJson } from "../tools/canonical-json.js";
 import {
   type SandboxLease,
@@ -46,12 +46,11 @@ import {
   appliedOf,
   type DeviceNetwork,
   type EffectiveDevicePolicy,
-  effectiveDevicePolicy,
   instanceLimitsJson,
-  readDeploymentDevicePolicy,
   readInstanceLimits,
   sameApplied,
 } from "./modes.js";
+import { PermissionFacts } from "./permission-facts.js";
 import {
   isInternalProvider,
   LOCAL_PROVIDER,
@@ -60,7 +59,9 @@ import {
   SandboxProviders,
 } from "./providers.js";
 import { SandboxProviderUnreachableError } from "./unreachable.js";
+import type { SandboxUseContext } from "./use-context.js";
 
+export { deviceNotFound } from "../devices/errors.js";
 // Moved to leases.ts (phase C); re-exported for existing importers
 export {
   SANDBOX_LOCK_PREFIX,
@@ -68,6 +69,7 @@ export {
   SandboxLockLostError,
   sandboxBusy,
 } from "./leases.js";
+export type { SandboxUseContext } from "./use-context.js";
 
 /** Margin (ms) of a holder record's TTL beyond the longest command: by then the in-sandbox limit has ended its commands. */
 const HOLDER_TTL_MARGIN_MS = 10 * 60_000;
@@ -140,23 +142,6 @@ export interface SandboxUseInfo {
 
 /** {@link SandboxUseInfo} before the roots are read from the handle. */
 type EnteredInfo = Omit<SandboxUseInfo, "roots">;
-
-/** Who uses the sandbox in {@link SandboxService.withSandbox}. */
-export interface SandboxUseContext {
-  orgId: string;
-  deviceId: string;
-  /** The agent conversation using it (a sub-agent's own for a child): what it last saw is tracked. */
-  holderConversationId: string;
-  /** Passed with every `exec` (audit and attribution). */
-  actor: SandboxActor;
-  /**
-   * A use that tells the model nothing (the run-start read of a bound project): it does not mark
-   * the holder as having seen the instance, so the holder's next ordinary use still learns that
-   * the instance started, restarted or had its files reset ({@link SandboxUseInfo}); what this use
-   * itself caused (a creation, a rebuild) is kept for that next use.
-   */
-  silent?: true;
-}
 
 export type { SandboxProviderEntry } from "./providers.js";
 
@@ -233,10 +218,6 @@ const opSignal = (lease: SandboxLease): AbortSignal =>
 
 /** The provider-side name of a device's file system and instance. */
 export const deviceResourceName = (deviceId: string): string => `cap-device-${deviceId}`;
-
-/** The device is missing, deleted, or not in the caller's org (404; ids cannot be probed). */
-export const deviceNotFound = (): ApiError =>
-  new ApiError("device.not_found", "This device does not exist or was deleted.");
 
 /**
  * The device's file system is gone at the provider (409); never replaced silently. On a
@@ -528,6 +509,7 @@ export class SandboxService {
     /** Background tasks lost while their process may live on (killed after a resume). */
     @Inject(BackgroundTaskStore)
     private readonly background: Pick<BackgroundTaskStore, "pendingKills" | "clearKill">,
+    @Inject(PermissionFacts) private readonly facts: Pick<PermissionFacts, "devicePolicy">,
   ) {}
 
   /** Poll interval while waiting for a lease (the leases' own). */
@@ -585,37 +567,7 @@ export class SandboxService {
    * device and a missing one have none). Without `deviceId`: an org-level policy with no choice.
    */
   async devicePolicy(device: { orgId: string; deviceId?: string }): Promise<EffectiveDevicePolicy> {
-    const [deployment, settings, mode] = await Promise.all([
-      readDeploymentDevicePolicy(this.db.db, this.config),
-      readOrgSettings(this.db.db, device.orgId),
-      device.deviceId === undefined ? null : this.deviceChosenMode(device.orgId, device.deviceId),
-    ]);
-    return effectiveDevicePolicy(deployment, settings, mode);
-  }
-
-  /**
-   * The mode a device chose: a local device's derived one (`localModeOf`, which never returns null
-   * — a machine with no summary or no mode feature is sandbox); a cloud device's narrowing switch
-   * (`devices.mode`, `sandbox` only), or null for a cloud device that follows the platform and the
-   * org.
-   */
-  private async deviceChosenMode(
-    orgId: string,
-    deviceId: string,
-  ): Promise<EffectiveDevicePolicy["mode"] | null> {
-    const row = await this.db
-      .selectFrom("devices as e")
-      .leftJoin("device_machines as m", (j) =>
-        j.onRef("m.device_id", "=", "e.id").on("m.revoked_at", "is", null),
-      )
-      .select(["e.source", "e.mode", "m.features", "m.local_policy"])
-      .where("e.id", "=", deviceId)
-      .where("e.org_id", "=", orgId)
-      .where("e.deleted_at", "is", null)
-      .executeTakeFirst();
-    if (row === undefined) return null;
-    if (row.source === "local") return localModeOf(row.features, row.local_policy);
-    return row.mode === "sandbox" ? "sandbox" : null;
+    return this.facts.devicePolicy(device);
   }
 
   /** The device's source (`local` for a connected machine, else `cloud`); cloud when unknown. */

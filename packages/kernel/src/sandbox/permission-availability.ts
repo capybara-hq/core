@@ -1,7 +1,7 @@
-import type { SandboxPermissionCapabilities, SandboxProvider } from "@capybara-hq/plugin-sdk";
+import type { SandboxPermissionSupport, SandboxProvider } from "@capybara-hq/plugin-sdk";
 /** Read models never provision or probe. Runtime activation will persist provenance-bound reports. */
 export type PermissionAvailability =
-  | { state: "supported"; report: SandboxPermissionCapabilities }
+  | { state: "supported"; report: SandboxPermissionSupport }
   | { state: "unsupported"; reason: string }
   | { state: "unprobed"; reason: string };
 export const unprobedPermissionAvailability = (): PermissionAvailability => ({
@@ -19,7 +19,7 @@ export function permissionAvailabilityFor(
   if (
     !provider ||
     typeof provider.operation !== "function" ||
-    typeof provider.permissionCapabilities !== "function" ||
+    typeof provider.permissionSupport !== "function" ||
     typeof provider.revokeOperation !== "function"
   )
     return {

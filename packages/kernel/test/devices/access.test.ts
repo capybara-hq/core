@@ -18,6 +18,7 @@ import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { REDIS } from "../../src/infra/tokens.js";
 import { deviceLeaseKey } from "../../src/local-devices/keys.js";
+import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import {
   LOCAL_PROVIDER,
   type SandboxProviderEntry,
@@ -627,6 +628,7 @@ describe("local devices", () => {
       noCloud,
       access,
       k.app.get(DevicesService),
+      k.app.get(PermissionFacts),
     );
     const agentId = randomUUID();
     await sql`INSERT INTO capybara.agents (id, org_id, owner_account_id, visibility, current_version)
@@ -658,6 +660,7 @@ describe("local devices", () => {
         providers,
         new DeviceAccess(kdb, { cloud: () => undefined, forName: () => entry }),
         k.app.get(DevicesService),
+        k.app.get(PermissionFacts),
       );
     const registered = make({
       cloud: () => undefined,

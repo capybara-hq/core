@@ -21,6 +21,7 @@ import { ProviderRegistry } from "../runtime/providers.js";
 import { RunControl as RunControlService } from "../runtime/run-control.js";
 import { RunDeletion } from "../runtime/run-deletion.js";
 import { rootConversationOf } from "../runtime/subagents/child.js";
+import { permissionScopeHash } from "../sandbox/permission-facts.js";
 import type { ScheduleMarker } from "../schedules/types.js";
 import { type RenderedInvocation, SkillInvoker } from "../skills/invoke.js";
 import { type ApprovalRecord, ApprovalsService } from "../tools/approvals.service.js";
@@ -38,7 +39,7 @@ import {
   readMessageContext,
 } from "./message-context.js";
 import type { PermissionSelection } from "./permission-profiles.schemas.js";
-import { PermissionProfilesService, permissionScopeHash } from "./permission-profiles.service.js";
+import { PermissionProfilesService } from "./permission-profiles.service.js";
 import {
   NO_SELECTION,
   planSelection,

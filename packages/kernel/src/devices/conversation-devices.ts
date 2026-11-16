@@ -1,18 +1,19 @@
-import { DEFAULT_SANDBOX_ROOTS } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
-import { sql } from "kysely";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import type { DeviceModeLevel } from "../runtime/context/device-paths.js";
 import type { SandboxMode } from "../sandbox/modes.js";
+import { PermissionFacts, type WorkingFacts } from "../sandbox/permission-facts.js";
 import { isInternalProvider, SandboxProviders } from "../sandbox/providers.js";
 import { homeOf } from "../sandbox/review/rules.js";
 import { deviceNotFound, sandboxUnavailable } from "../sandbox/sandbox.service.js";
 import { DeviceAccess } from "./access.js";
 import { DevicesService } from "./devices.service.js";
 import { type WorkingProject, workingRootOf } from "./working-root.js";
+
+export type { WorkingFacts } from "../sandbox/permission-facts.js";
 
 /** `details[0].reason` of the error an anonymous IM conversation's sandbox call gets. */
 export const ANONYMOUS_NO_DEVICE = "anonymous";
@@ -68,22 +69,6 @@ export interface CommandReviewFacts {
 }
 
 /**
- * What decides the working root of a call (project root spec §4.3), read the same way for a
- * sandbox tool and for the command review, so both decide the same root.
- */
-export interface WorkingFacts {
-  /**
-   * The device's workspace: the latest `device_paths` roots recorded in the calling conversation,
-   * else the root's, else the machine's reported roots, else the default.
-   */
-  workspace: string;
-  /** The owner's home: the machine's reported home, else the workspace's home prefix; null: unknown. */
-  home: string | null;
-  /** The root conversation's latest project snapshot; null: free, or none recorded yet. */
-  project: WorkingProject | null;
-}
-
-/**
  * Which device a conversation works in (spec 2026-11-07-environments-design §4.1 items 1, 3;
  * §4.2 items 8, 9, 12). A conversation is bound once, to a device of its owner
  * (`conversations.account_id`): the one chosen at its first send, else the owner's IM default
@@ -102,6 +87,8 @@ export class ConversationDevices {
     @Inject(DeviceAccess) private readonly access: Pick<DeviceAccess, "usable">,
     @Inject(DevicesService)
     private readonly devices: Pick<DevicesService, "ensureDefault" | "modeLevel">,
+    @Inject(PermissionFacts)
+    private readonly facts: Pick<PermissionFacts, "readWorkingFacts" | "workingProject">,
   ) {}
 
   /**
@@ -182,76 +169,15 @@ export class ConversationDevices {
     conversationId: string,
     deviceId: string,
   ): Promise<WorkingFacts> {
-    const [recorded, recordedRoot, machine, project] = await Promise.all([
-      this.recordedWorkspace(conversationId),
-      conversationId === rootConversationId ? null : this.recordedWorkspace(rootConversationId),
-      this.machineRoots(deviceId),
-      this.workingProject(orgId, rootConversationId),
-    ]);
-    const workspace =
-      recorded ?? recordedRoot ?? machine?.workspace ?? DEFAULT_SANDBOX_ROOTS.workspace;
-    // never from a project root: the machine's home, else the device workspace's home prefix
-    const reported = machine?.home;
-    const home = reported?.startsWith("/") ? reported : homeOf(workspace);
-    return { workspace, home, project };
+    return this.facts.readWorkingFacts({
+      orgId,
+      rootConversationId,
+      holderConversationId: conversationId,
+      deviceId,
+    });
   }
-
-  /**
-   * The project snapshot that decides the working root of the conversation tree rooted at
-   * `rootConversationId` (project root spec §4.3): its latest `project_root` event, read only when
-   * the conversation is bound to a project (a free conversation reads one row by its key). Null:
-   * free, or bound with no snapshot recorded yet.
-   */
   async workingProject(orgId: string, rootConversationId: string): Promise<WorkingProject | null> {
-    const conv = await this.db
-      .selectFrom("conversations")
-      .select("project_path")
-      .where("id", "=", rootConversationId)
-      .where("org_id", "=", orgId)
-      .executeTakeFirst();
-    if (conv?.project_path == null) return null;
-    const row = await this.db
-      .selectFrom("conversation_events")
-      .select([
-        sql<string | null>`payload->>'root'`.as("root"),
-        sql<boolean>`payload ? 'unavailable'`.as("unavailable"),
-      ])
-      .where("conversation_id", "=", rootConversationId)
-      .where("type", "=", "project_root")
-      .orderBy("seq", "desc")
-      .limit(1)
-      .executeTakeFirst();
-    if (row === undefined || typeof row.root !== "string") return null;
-    return { root: row.root, unavailable: row.unavailable !== false };
-  }
-
-  /** The workspace root of a conversation's latest `device_paths` event, or null. */
-  private async recordedWorkspace(conversationId: string): Promise<string | null> {
-    const row = await this.db
-      .selectFrom("conversation_events")
-      .select(sql<string | null>`payload->'roots'->>'workspace'`.as("workspace"))
-      .where("conversation_id", "=", conversationId)
-      .where("type", "=", "device_paths")
-      .orderBy("seq", "desc")
-      .limit(1)
-      .executeTakeFirst();
-    return row?.workspace ?? null;
-  }
-
-  /**
-   * The workspace root and the owner's home the device's active machine last reported, or null
-   * (cloud: no machine).
-   */
-  private async machineRoots(
-    deviceId: string,
-  ): Promise<{ workspace: string | null; home: string | null } | null> {
-    const row = await this.db
-      .selectFrom("device_machines")
-      .select([sql<string | null>`roots->>'workspace'`.as("workspace"), "home"])
-      .where("device_id", "=", deviceId)
-      .where("revoked_at", "is", null)
-      .executeTakeFirst();
-    return row === undefined ? null : { workspace: row.workspace ?? null, home: row.home ?? null };
+    return this.facts.workingProject(orgId, rootConversationId);
   }
 
   /**
