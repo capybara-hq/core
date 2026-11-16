@@ -379,6 +379,13 @@ it.each(["collecting", "fault", "complete"])(
       await expect(f.emit(Buffer.from("bad"))).rejects.toThrow();
       await f.cancelled;
       await f.supervisor.settled("op");
+      const controls = fs
+        .readdirSync(f.root)
+        .filter((name) => name.startsWith("operation-control-"));
+      expect(controls).toHaveLength(1);
+      expect(
+        JSON.parse(fs.readFileSync(join(f.root, controls[0] as string), "utf8")),
+      ).toMatchObject({ ref, fault: true });
     }
     const recovered = new MacOperationSupervisor({
       stateDir: f.root,
@@ -870,4 +877,388 @@ it("supervisor snapshots caller refs and read options through a pending bounded 
   await f.supervisor.settled("op");
   f.expire();
   await f.supervisor.expireOutput(ref);
+});
+
+it("syncs the final decision namespace before append ACK and complete visibility", async () => {
+  const f = await fixture();
+  const ref = await f.start();
+  const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
+  const events: string[] = [];
+  const rename = vi.spyOn(fs, "renameSync").mockImplementation((from, to) => {
+    actual.renameSync(from, to);
+    events.push(String(to).endsWith(".decision") ? "decision" : "replacement");
+  });
+  const sync = vi.spyOn(fs, "fsyncSync").mockImplementation((fd) => {
+    actual.fsyncSync(fd);
+    events.push(fs.fstatSync(fd).isDirectory() ? "directory" : "file");
+  });
+  try {
+    await f.emit(Buffer.from("prefix"));
+    expect(events.slice(-3)).toEqual(["decision", "file", "directory"]);
+    events.length = 0;
+    f.finish();
+    await f.supervisor.settled("op");
+    expect(events.slice(-3)).toEqual(["decision", "file", "directory"]);
+    const recovered = new MacOperationSupervisor({
+      stateDir: f.root,
+      deviceId: "d",
+      instanceGeneration: "g",
+      now: () => 1,
+    });
+    expect(await all(recovered, ref)).toEqual(Buffer.from("prefix"));
+    expect(await recovered.status(ref, signal)).toMatchObject({ state: "exited", exitCode: 0 });
+  } finally {
+    rename.mockRestore();
+    sync.mockRestore();
+  }
+});
+
+function recover(root: string, options: Partial<SupervisorOptions> = {}) {
+  return new MacOperationSupervisor({
+    stateDir: root,
+    deviceId: "d",
+    instanceGeneration: "g",
+    now: () => 1,
+    ...options,
+  });
+}
+function journalPaths(root: string) {
+  const name = fs
+    .readdirSync(root)
+    .find((name) => name.startsWith("operation-journal-") && name.endsWith(".json"));
+  const file = join(root, name as string);
+  return { file, decision: `${file}.decision`, predecessor: `${file}.rollback` };
+}
+// Capture the exact bytes at the indistinguishable boundary: the durable syscall has run,
+// but its caller may receive an error. Subsequent persistence is deliberately unavailable.
+async function uncertainPublication(
+  stage: "append" | "completion",
+  boundary = "directory",
+  withOther = false,
+) {
+  let failed = false,
+    deciding = false;
+  const f = await fixture({
+    beforePersist: () => {
+      if (failed) throw Error("later writes unavailable");
+    },
+  });
+  let otherRef: Awaited<ReturnType<MacOperationSupervisor["start"]>> | undefined;
+  if (withOther) {
+    otherRef = await f.supervisor.start(
+      {
+        ...f.request,
+        scope: { ...f.request.scope, operationId: "other-output" },
+        managedOutput: { artifactRoot: f.root, outputPath: join(f.root, "other.out") },
+      },
+      "other",
+      2000,
+      signal,
+    );
+    await f.emit(Buffer.from("other acknowledged prefix"));
+    f.finish();
+    await f.supervisor.settled("other-output");
+  }
+  await f.supervisor.revokeOperation(
+    { operationId: "unrelated-revoked", admitBeforeMs: 1000 },
+    signal,
+  );
+  const ref = await f.start();
+  await f.emit(Buffer.from("prefix"));
+  const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
+  let beforeError: string[] = [];
+  const paths = journalPaths(f.root);
+  const capture = () =>
+    [paths.file, paths.predecessor, paths.decision].map((path) => fs.readFileSync(path, "utf8"));
+  const rename = vi.spyOn(fs, "renameSync").mockImplementation((from, to) => {
+    if (String(to) === paths.decision && boundary === "missing") {
+      failed = true;
+      throw Error("decision rename uncertain without effect");
+    }
+    actual.renameSync(from, to);
+    if (String(to) === paths.decision) {
+      deciding = true;
+      if (boundary === "rename") {
+        beforeError = capture();
+        failed = true;
+        throw Error("decision renamed then error");
+      }
+    }
+  });
+  const sync = vi.spyOn(fs, "fsyncSync").mockImplementation((fd) => {
+    actual.fsyncSync(fd);
+    if (
+      deciding &&
+      !failed &&
+      ((boundary === "file" && fs.fstatSync(fd).isFile()) ||
+        (boundary === "directory" && fs.fstatSync(fd).isDirectory()))
+    ) {
+      beforeError = capture();
+      failed = true;
+      throw Error("final decision durability unknown");
+    }
+  });
+  try {
+    if (stage === "append") await expect(f.emit(Buffer.from("suffix"))).rejects.toThrow();
+    else f.finish();
+    await f.cancelled;
+    await f.supervisor.settled("op").catch(() => {});
+    expect(failed).toBe(true);
+    expect(await all(f.supervisor, ref)).toEqual(Buffer.from("prefix"));
+    expect(await f.supervisor.status(ref, signal)).toEqual({ state: "lost" });
+    if (boundary !== "missing") expect(capture()).toEqual(beforeError);
+  } finally {
+    sync.mockRestore();
+    rename.mockRestore();
+  }
+  return { f, ref, paths, evidence: beforeError, otherRef };
+}
+
+it.each(["append", "completion"] as const)(
+  "recovers an uncertain %s only after finalizing evidence; repeated recovery is stable",
+  async (stage) => {
+    const { f, ref } = await uncertainPublication(stage);
+    for (let i = 0; i < 2; i++) {
+      const recovered = recover(f.root);
+      expect(await all(recovered, ref)).toEqual(
+        Buffer.from(stage === "append" ? "prefixsuffix" : "prefix"),
+      );
+      expect(await recovered.status(ref, signal)).toMatchObject({
+        state: stage === "append" ? "lost" : "exited",
+      });
+      expect(await recovered.stop(ref, { graceMs: 0, signal })).toMatchObject({
+        outcome: stage === "append" ? "cancel-pending" : "already-exited",
+      });
+      expect(f.launches()).toBe(1);
+      await expect(
+        recovered.start(
+          { ...f.request, scope: { ...f.request.scope, operationId: "unrelated-revoked" } },
+          "new",
+          2000,
+          signal,
+        ),
+      ).rejects.toThrow();
+      await expect(
+        recovered.readOutput(
+          { ...ref, instanceGeneration: "other" },
+          { offset: 0, maxBytes: 1, signal },
+        ),
+      ).rejects.toThrow();
+    }
+  },
+);
+
+it.each(["rename", "file", "missing"])(
+  "keeps live output unknown at the final decision %s boundary",
+  async (boundary) => {
+    const { f, ref } = await uncertainPublication("append", boundary);
+    const recovered = recover(f.root);
+    expect(await all(recovered, ref)).toEqual(
+      Buffer.from(boundary === "missing" ? "prefix" : "prefixsuffix"),
+    );
+    expect(await recovered.status(ref, signal)).toEqual({ state: "lost" });
+  },
+);
+
+it.each(["file", "directory"])(
+  "failed recovery %s finalization stays unknown and cannot overwrite commit evidence",
+  async (boundary) => {
+    const { f, ref, paths, evidence } = await uncertainPublication("completion");
+    const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
+    const sync = vi.spyOn(fs, "fsyncSync").mockImplementation((fd) => {
+      if (
+        (boundary === "file" && fs.fstatSync(fd).isFile()) ||
+        (boundary === "directory" && fs.fstatSync(fd).isDirectory())
+      )
+        throw Error("recovery durability unavailable");
+      actual.fsyncSync(fd);
+    });
+    try {
+      const recovered = recover(f.root);
+      expect(await recovered.status(ref, signal)).toEqual({ state: "lost" });
+      expect(await recovered.readOutput(ref, { offset: 0, maxBytes: 65536, signal })).toEqual({
+        unavailable: "lost",
+      });
+      await expect(
+        recovered.start(
+          { ...f.request, scope: { ...f.request.scope, operationId: "new" } },
+          "new",
+          2000,
+          signal,
+        ),
+      ).rejects.toThrow();
+      expect(
+        [paths.file, paths.predecessor, paths.decision].map((p) => fs.readFileSync(p, "utf8")),
+      ).toEqual(evidence);
+    } finally {
+      sync.mockRestore();
+    }
+    expect(await recover(f.root).status(ref, signal)).toMatchObject({ state: "exited" });
+  },
+);
+
+it.each(["torn", "stale", "generation", "candidate", "predecessor", "conflicting"])(
+  "rejects %s final decision evidence without promoting candidate completion",
+  async (kind) => {
+    const { f, ref, paths } = await uncertainPublication("completion");
+    const decision = JSON.parse(fs.readFileSync(paths.decision, "utf8"));
+    if (kind === "stale") decision.transaction.revision--;
+    if (kind === "generation") decision.transaction.generation = "other-generation";
+    if (kind === "candidate") decision.candidate = "wrong";
+    if (kind === "predecessor") decision.predecessor = "wrong";
+    if (kind === "conflicting") decision.outputs[0].state = "collecting";
+    fs.writeFileSync(paths.decision, kind === "torn" ? "{" : JSON.stringify(decision));
+    const recovered = recover(f.root);
+    expect(await recovered.status(ref, signal)).toEqual({ state: "lost" });
+    expect(await recovered.readOutput(ref, { offset: 0, maxBytes: 65536, signal })).toEqual({
+      unavailable: "lost",
+    });
+    expect(f.launches()).toBe(1);
+  },
+);
+
+it("lost ACK after a durably committed append recovers bytes without replaying effects", async () => {
+  const f = await fixture();
+  f.request.onOutput = async () => {
+    throw Error("caller ACK lost after durable append");
+  };
+  const ref = await f.start();
+  await expect(f.emit(Buffer.from("prefix"))).rejects.toThrow("caller ACK lost");
+  const recovered = recover(f.root);
+  expect(await all(recovered, ref)).toEqual(Buffer.from("prefix"));
+  expect(await recovered.start(f.request, "stable", 2000, signal)).toEqual(ref);
+  expect(f.launches()).toBe(1);
+  f.finish();
+  await f.supervisor.settled("op");
+});
+
+it.each(["fault", "stopped"])(
+  "independently durable %s control wins over coherent completion evidence",
+  async (kind) => {
+    const { f, ref, paths } = await uncertainPublication("completion");
+    // Inject a durable independent control record using the exact owned ref. This models a
+    // later fault/stop record surviving alongside the prepared completion decision.
+    const { digest } = await import("../src/exec/operation-types.js");
+    const controlFile = join(f.root, `operation-control-${digest(ref)}.json`);
+    const control = { version: 1, ref, revoked: true, fault: kind === "fault", stop: "stopped" };
+    fs.writeFileSync(controlFile, JSON.stringify(control), { mode: 0o600 });
+    const fd = fs.openSync(controlFile, "r");
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    const dir = fs.openSync(f.root, "r");
+    fs.fsyncSync(dir);
+    fs.closeSync(dir);
+    const saved = fs.readFileSync(paths.decision, "utf8");
+    for (let i = 0; i < 2; i++) {
+      const recovered = recover(f.root);
+      expect(await recovered.status(ref, signal)).toMatchObject({
+        state: kind === "fault" ? "lost" : "exited",
+      });
+      expect(await recovered.stop(ref, { graceMs: 0, signal })).toEqual({ outcome: "stopped" });
+      expect(await all(recovered, ref)).toEqual(Buffer.from("prefix"));
+      expect(fs.readFileSync(paths.decision, "utf8")).toBe(saved);
+    }
+  },
+);
+
+it("actual owned cancellation remains durably stopped while the shared journal is blocked", async () => {
+  let fail = false;
+  const f = await fixture();
+  const ref = await f.start();
+  await f.emit(Buffer.from("prefix"));
+  const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
+  const rename = vi.spyOn(fs, "renameSync").mockImplementation((from, to) => {
+    actual.renameSync(from, to);
+    if (String(to).endsWith(".decision") && !fail) {
+      fail = true;
+      throw Error("uncertain final decision");
+    }
+  });
+  try {
+    await expect(f.emit(Buffer.from("suffix"))).rejects.toThrow();
+    await f.cancelled;
+    await f.supervisor.settled("op").catch(() => {});
+  } finally {
+    rename.mockRestore();
+  }
+  const recovered = recover(f.root);
+  expect(await recovered.status(ref, signal)).toEqual({ state: "lost" });
+  expect(await recovered.stop(ref, { graceMs: 0, signal })).toEqual({ outcome: "stopped" });
+  expect(await all(recovered, ref)).toEqual(Buffer.from("prefixsuffix"));
+});
+
+it("identical finalized evidence gives the same recovery for successful ACK and unknown caller outcome", async () => {
+  const { f, ref, paths, evidence } = await uncertainPublication("completion");
+  // These bytes were captured after the real fsync and before its injected error. They are
+  // identical to the bytes a successful-return history exposes; the former return is no input.
+  const results = [];
+  for (const _history of ["successful ACK", "unknown caller outcome"]) {
+    [paths.file, paths.predecessor, paths.decision].forEach((path, index) => {
+      fs.writeFileSync(path, evidence[index] as string);
+    });
+    const recovered = recover(f.root);
+    results.push({ status: await recovered.status(ref, signal), bytes: await all(recovered, ref) });
+  }
+  expect(results[0]).toEqual(results[1]);
+  expect(results[0]).toMatchObject({ status: { state: "exited" }, bytes: Buffer.from("prefix") });
+  expect(f.launches()).toBe(1);
+});
+
+it("retains another execution's acknowledged complete output across an uncertain successor", async () => {
+  const { f, ref, otherRef } = await uncertainPublication("completion", "directory", true);
+  if (!otherRef) throw Error("Missing owned fixture execution");
+  for (let i = 0; i < 2; i++) {
+    const recovered = recover(f.root);
+    expect(await all(recovered, otherRef)).toEqual(Buffer.from("other acknowledged prefix"));
+    expect(await recovered.status(otherRef, signal)).toMatchObject({
+      state: "exited",
+      exitCode: 0,
+    });
+    expect(await all(recovered, ref)).toEqual(Buffer.from("prefix"));
+  }
+  expect(f.launches()).toBe(2);
+});
+
+it.each(["missing", "torn"])(
+  "a %s decided candidate cannot regress to a successful predecessor snapshot",
+  async (kind) => {
+    const { f, ref, paths } = await uncertainPublication("completion");
+    if (kind === "missing") fs.rmSync(paths.file);
+    else fs.writeFileSync(paths.file, "{");
+    const recovered = recover(f.root);
+    expect(await recovered.status(ref, signal)).toEqual({ state: "lost" });
+    expect(await recovered.readOutput(ref, { offset: 0, maxBytes: 65536, signal })).toEqual({
+      unavailable: "lost",
+    });
+  },
+);
+
+it("missing predecessor fails closed instead of forgetting consumed operations", async () => {
+  const { f, paths } = await uncertainPublication("completion");
+  fs.rmSync(paths.predecessor);
+  expect(() => recover(f.root)).toThrow("predecessor");
+});
+
+it("coherent hashes cannot authorize a successor that erases a prior operation tombstone", async () => {
+  const { f, ref, paths } = await uncertainPublication("completion");
+  const { digest } = await import("../src/exec/operation-types.js");
+  const candidate = JSON.parse(fs.readFileSync(paths.file, "utf8"));
+  const decision = JSON.parse(fs.readFileSync(paths.decision, "utf8"));
+  candidate.entries = candidate.entries.filter(
+    (entry: { ref: { operationId: string } }) => entry.ref.operationId !== "unrelated-revoked",
+  );
+  const text = JSON.stringify(candidate);
+  decision.candidate = digest(text);
+  fs.writeFileSync(paths.file, text);
+  fs.writeFileSync(paths.decision, JSON.stringify(decision));
+  const recovered = recover(f.root);
+  expect(await recovered.status(ref, signal)).toEqual({ state: "lost" });
+  await expect(
+    recovered.start(
+      { ...f.request, scope: { ...f.request.scope, operationId: "unrelated-revoked" } },
+      "new",
+      2000,
+      signal,
+    ),
+  ).rejects.toThrow();
 });

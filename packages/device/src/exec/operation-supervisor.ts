@@ -8,7 +8,6 @@ import {
   readFileSync,
   renameSync,
   rmSync,
-  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -32,7 +31,12 @@ import {
   startMacOperationWorker,
   type TrustedLaunchIdentity,
 } from "./operation-worker.js";
-import { ManagedOutputSpool, type OutputLocator, validateOutputRange } from "./output-spool.js";
+import {
+  finalizeRecoveredOutput,
+  ManagedOutputSpool,
+  type OutputLocator,
+  validateOutputRange,
+} from "./output-spool.js";
 
 interface Entry {
   ref: SandboxExecutionRef;
@@ -53,7 +57,8 @@ interface Entry {
   tail?: string;
   output?: {
     locator: OutputLocator;
-    state: "collecting" | "complete" | "fault";
+    state: "collecting" | "complete" | "fault" | "uncertain";
+    unavailable?: boolean;
     interruptedCancellation: boolean;
     expired?: boolean;
     cleaned?: boolean;
@@ -76,6 +81,65 @@ export interface SupervisorOptions {
   outputBarrier?: (name: string) => Promise<void>;
   beforePersist?: () => void;
 }
+interface Journal {
+  version: 1;
+  transaction?: {
+    id: string;
+    revision: number;
+    predecessor: string;
+    deviceId: string;
+    generation: string;
+  };
+  entries: Entry[];
+}
+interface Decision {
+  version: 1;
+  transaction: NonNullable<Journal["transaction"]>;
+  candidate: string;
+  predecessor: string;
+  outputs: {
+    ref: SandboxExecutionRef;
+    locator: OutputLocator;
+    state: NonNullable<Entry["output"]>["state"];
+  }[];
+}
+class JournalCommitUncertainError extends Error {}
+function syncPath(path: string): void {
+  const fd = openSync(path, "r");
+  try {
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+function writeSynced(path: string, text: string): void {
+  const fd = openSync(path, "wx", 0o600);
+  try {
+    writeFileSync(fd, text);
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+function parseJournal(text: string): Journal {
+  const raw = JSON.parse(text) as Journal;
+  if (raw.version !== 1 || !Array.isArray(raw.entries))
+    throw Error("Unsupported operation journal");
+  const ids = new Set<string>();
+  for (const entry of raw.entries) {
+    parseSandboxExecutionRef(entry.ref);
+    if (ids.has(entry.ref.operationId)) throw Error("Conflicting operation journal");
+    ids.add(entry.ref.operationId);
+  }
+  return raw;
+}
+function outputEvidence(journal: Journal): Decision["outputs"] {
+  return journal.entries.flatMap((entry) =>
+    entry.output
+      ? [{ ref: entry.ref, locator: entry.output.locator, state: entry.output.state }]
+      : [],
+  );
+}
 /** One owner process per generation. A restarted process never reuses recorded PIDs. */
 export class MacOperationSupervisor {
   private entries = new Map<string, Entry>();
@@ -88,35 +152,220 @@ export class MacOperationSupervisor {
   private queue: Promise<unknown> = Promise.resolve();
   private file: string;
   private rollbackFile: string;
+  private decisionFile: string;
+  private journalBlocked = false;
   private verifiedJournal = JSON.stringify({ version: 1, entries: [] });
   private now: () => number;
   constructor(private readonly options: SupervisorOptions) {
     this.now = options.now ?? Date.now;
     this.file = join(options.stateDir, `operation-journal-${digest(options.deviceId)}.json`);
     this.rollbackFile = `${this.file}.rollback`;
-    // A failed publication leaves this already-synced snapshot intact. Never infer a commit
-    // from the replacement's contents, and never require a subsequent fault write to recover.
-    const recovery = existsSync(this.rollbackFile) ? this.rollbackFile : this.file;
-    if (existsSync(recovery)) {
-      this.verifiedJournal = readFileSync(recovery, "utf8");
-      const raw = JSON.parse(this.verifiedJournal) as {
-        version: number;
-        entries: Entry[];
-      };
-      if (raw.version !== 1 || !Array.isArray(raw.entries))
-        throw new Error("Unsupported operation journal");
-      for (const e of raw.entries) {
-        parseSandboxExecutionRef(e.ref);
-        if (e.state === "running" || e.state === "consumed") e.state = "unknown";
-        if (
-          e.output &&
-          e.output.state !== "complete" &&
-          e.output.interruptedCancellation &&
-          e.stop?.outcome !== "stopped"
-        )
-          e.stop = { outcome: "cancel-pending" };
-        this.entries.set(e.ref.operationId, e);
+    this.decisionFile = `${this.file}.decision`;
+    const predecessor = existsSync(this.rollbackFile)
+      ? readFileSync(this.rollbackFile, "utf8")
+      : this.verifiedJournal;
+    let selected = predecessor;
+    let uncertain: Journal | undefined;
+    if (existsSync(this.file) && !existsSync(this.rollbackFile))
+      throw Error("Operation journal predecessor is missing");
+    if (existsSync(this.decisionFile) && !existsSync(this.file)) this.journalBlocked = true;
+    if (existsSync(this.file)) {
+      const candidate = readFileSync(this.file, "utf8");
+      // An identical checkpoint is itself the durable floor, including a previous ACK.
+      if (candidate === predecessor) selected = candidate;
+      else if (existsSync(this.decisionFile)) {
+        try {
+          const next = parseJournal(candidate),
+            prior = parseJournal(predecessor);
+          uncertain = next;
+          const decision = JSON.parse(readFileSync(this.decisionFile, "utf8")) as Decision;
+          const tx = next.transaction;
+          if (
+            !tx ||
+            tx.deviceId !== options.deviceId ||
+            decision.version !== 1 ||
+            JSON.stringify(decision.transaction) !== JSON.stringify(tx) ||
+            decision.candidate !== digest(candidate) ||
+            decision.predecessor !== digest(predecessor) ||
+            tx.predecessor !== decision.predecessor ||
+            tx.revision !== (prior.transaction?.revision ?? 0) + 1 ||
+            JSON.stringify(decision.outputs) !== JSON.stringify(outputEvidence(next))
+          )
+            throw Error("Invalid operation commit evidence");
+          this.validateSuccessor(prior, next);
+          for (const entry of next.entries) {
+            if (entry.ref.instanceId !== options.deviceId) throw Error("Wrong instance in journal");
+            const old = prior.entries.find((e) => e.ref.operationId === entry.ref.operationId);
+            if (!old && entry.ref.instanceGeneration !== tx.generation)
+              throw Error("Wrong execution generation in commit evidence");
+            if (
+              entry.output &&
+              !entry.output.expired &&
+              JSON.stringify(old?.output) !== JSON.stringify(entry.output)
+            )
+              finalizeRecoveredOutput(
+                options.stateDir,
+                options.pythonPath ?? "/usr/bin/python3",
+                entry.output.locator,
+              );
+          }
+          // Readable decision bytes are not proof of the former syscall's outcome. Validate
+          // and finalize all evidence anew before exposing the successor after restart.
+          syncPath(this.file);
+          syncPath(this.decisionFile);
+          syncPath(options.stateDir);
+          selected = candidate;
+          uncertain = undefined;
+        } catch {
+          this.journalBlocked = true;
+          // Never report a shorter successful snapshot if C could have been acknowledged.
+        }
       }
+    }
+    this.verifiedJournal = selected;
+    const raw = parseJournal(selected);
+    if (this.journalBlocked && !uncertain) {
+      for (const entry of raw.entries) {
+        entry.state = "unknown";
+        delete entry.result;
+        if (entry.output) entry.output.unavailable = true;
+      }
+    }
+    if (uncertain) {
+      for (const candidate of uncertain.entries) {
+        const old = raw.entries.find((e) => e.ref.operationId === candidate.ref.operationId);
+        if (JSON.stringify(old) === JSON.stringify(candidate)) continue;
+        if (old) {
+          old.state = "unknown";
+          delete old.result;
+          if (old.output) old.output.unavailable = true;
+        }
+        // Preserve possibly consumed identities without treating a candidate as a commit.
+        if (!old) {
+          const tombstone: Entry = { ...candidate, state: "unknown", revoked: true };
+          delete tombstone.result;
+          if (candidate.output)
+            tombstone.output = {
+              ...candidate.output,
+              state: "uncertain",
+              unavailable: true,
+              interruptedCancellation: true,
+            };
+          raw.entries.push(tombstone);
+        }
+      }
+    }
+    for (const e of raw.entries) {
+      this.recoverControl(e);
+      if (e.state === "running" || e.state === "consumed") e.state = "unknown";
+      if (
+        e.output &&
+        e.output.state !== "complete" &&
+        e.output.interruptedCancellation &&
+        e.stop?.outcome !== "stopped"
+      )
+        e.stop = { outcome: "cancel-pending" };
+      this.entries.set(e.ref.operationId, e);
+    }
+  }
+  private validateSuccessor(prior: Journal, next: Journal): void {
+    for (const old of prior.entries) {
+      const entry = next.entries.find((e) => e.ref.operationId === old.ref.operationId);
+      if (
+        !entry ||
+        JSON.stringify(entry.ref) !== JSON.stringify(old.ref) ||
+        entry.hash !== old.hash ||
+        (old.revoked && !entry.revoked) ||
+        (old.stop?.outcome === "stopped" && entry.stop?.outcome !== "stopped")
+      )
+        throw Error("Commit would regress an operation tombstone");
+      if (old.output) {
+        const output = entry.output;
+        if (
+          !output ||
+          output.locator.committed < old.output.locator.committed ||
+          JSON.stringify({ ...output.locator, committed: 0 }) !==
+            JSON.stringify({ ...old.output.locator, committed: 0 }) ||
+          (old.output.state === "fault" && output.state !== "fault") ||
+          (old.output.state === "complete" &&
+            output.state !== "complete" &&
+            output.state !== "fault") ||
+          (old.output.expired && !output.expired) ||
+          (old.output.cleaned && !output.cleaned)
+        )
+          throw Error("Commit would regress retained output");
+      }
+    }
+  }
+  private controlFile(entry: Entry): string {
+    return join(this.options.stateDir, `operation-control-${digest(entry.ref)}.json`);
+  }
+  private recoverControl(entry: Entry): void {
+    const file = this.controlFile(entry);
+    if (!existsSync(file)) return;
+    try {
+      const control = JSON.parse(readFileSync(file, "utf8"));
+      if (
+        control.version !== 1 ||
+        JSON.stringify(control.ref) !== JSON.stringify(entry.ref) ||
+        control.revoked !== true ||
+        typeof control.fault !== "boolean" ||
+        !["stopped", "cancel-pending"].includes(control.stop)
+      )
+        throw Error("Invalid operation control");
+      syncPath(file);
+      syncPath(this.options.stateDir);
+      entry.revoked = true;
+      entry.stop = { outcome: control.stop };
+      if (control.fault && entry.output) {
+        entry.output.state = "fault";
+        entry.state = "unknown";
+        delete entry.result;
+      }
+      if (entry.output) entry.output.interruptedCancellation = control.stop !== "stopped";
+    } catch {
+      this.journalBlocked = true;
+      entry.revoked = true;
+      entry.state = "unknown";
+      delete entry.result;
+      entry.stop = { outcome: "cancel-pending" };
+      if (entry.output) {
+        if (entry.output.state !== "fault") entry.output.state = "uncertain";
+        entry.output.interruptedCancellation = true;
+      }
+    }
+  }
+  private persistControl(entry: Entry): void {
+    this.options.beforePersist?.();
+    const file = this.controlFile(entry),
+      temporary = `${file}.${randomUUID()}.candidate`;
+    let fault = entry.output?.state === "fault",
+      stopped = entry.stop?.outcome === "stopped";
+    if (existsSync(file)) {
+      const prior = JSON.parse(readFileSync(file, "utf8"));
+      if (JSON.stringify(prior.ref) !== JSON.stringify(entry.ref))
+        throw Error("Control reference mismatch");
+      fault ||= prior.fault === true;
+      stopped ||= prior.stop === "stopped";
+    }
+    try {
+      writeSynced(
+        temporary,
+        JSON.stringify({
+          version: 1,
+          ref: entry.ref,
+          revoked: true,
+          fault,
+          stop: stopped ? "stopped" : "cancel-pending",
+        }),
+      );
+      renameSync(temporary, file);
+      syncPath(file);
+      syncPath(this.options.stateDir);
+    } finally {
+      try {
+        rmSync(temporary, { force: true });
+      } catch {}
     }
   }
   private serial<T>(fn: () => Promise<T> | T): Promise<T> {
@@ -125,52 +374,63 @@ export class MacOperationSupervisor {
     return next;
   }
   private persist(): void {
+    if (this.journalBlocked)
+      throw Error("Operation journal requires recovery after uncertain commit");
     this.options.beforePersist?.();
-    const text = JSON.stringify({ version: 1, entries: [...this.entries.values()] });
+    const prior = parseJournal(this.verifiedJournal);
+    const transaction = {
+      id: randomUUID(),
+      revision: (prior.transaction?.revision ?? 0) + 1,
+      predecessor: digest(this.verifiedJournal),
+      deviceId: this.options.deviceId,
+      generation: this.options.instanceGeneration,
+    };
+    const journal: Journal = { version: 1, transaction, entries: [...this.entries.values()] };
+    const text = JSON.stringify(journal);
     if (Buffer.byteLength(text) > 64 * 1024 * 1024)
-      throw new Error("Operation journal capacity exhausted");
+      throw Error("Operation journal capacity exhausted");
     mkdirSync(this.options.stateDir, { recursive: true, mode: 0o700 });
-    const token = randomUUID();
-    const candidate = `${this.file}.${token}.candidate`;
-    const rollbackCandidate = `${this.rollbackFile}.${token}.candidate`;
-    const sync = (path: string) => {
-      const fd = openSync(path, "r");
-      try {
-        fsyncSync(fd);
-      } finally {
-        closeSync(fd);
-      }
-    };
-    const writeSynced = (path: string, content: string) => {
-      const fd = openSync(path, "wx", 0o600);
-      try {
-        writeFileSync(fd, content);
-        fsyncSync(fd);
-      } finally {
-        closeSync(fd);
-      }
-    };
+    const candidate = `${this.file}.${transaction.id}.candidate`;
+    const rollbackCandidate = `${this.rollbackFile}.${transaction.id}.candidate`;
+    const decisionCandidate = `${this.decisionFile}.${transaction.id}.candidate`;
+    let deciding = false;
     try {
-      if (!existsSync(this.rollbackFile)) {
-        writeSynced(rollbackCandidate, this.verifiedJournal);
-        renameSync(rollbackCandidate, this.rollbackFile);
-        sync(this.options.stateDir);
+      // Advance the durable floor before touching C. Keep the old decision until the floor
+      // is synced: a crash here must still retain the previous acknowledged successor.
+      writeSynced(rollbackCandidate, this.verifiedJournal);
+      renameSync(rollbackCandidate, this.rollbackFile);
+      syncPath(this.options.stateDir);
+      if (existsSync(this.decisionFile)) {
+        rmSync(this.decisionFile);
+        syncPath(this.options.stateDir);
       }
-      // Preserve the last verified record throughout replacement, file sync and directory
-      // sync. Any exception before the final unlink keeps recovery on the older snapshot.
       writeSynced(candidate, text);
       renameSync(candidate, this.file);
-      sync(this.file);
-      sync(this.options.stateDir);
-      // Logical publication is the final atomic removal of the rollback guard, after all
-      // candidate durability operations. No fallible publication operation follows it.
-      // An unsaved guard deletion can only recover the conservative previous snapshot; this
-      // protocol does not claim arbitrary hardware/power-loss recovery beyond fsync ordering.
-      unlinkSync(this.rollbackFile);
+      syncPath(this.file);
+      syncPath(this.options.stateDir);
+      const decision: Decision = {
+        version: 1,
+        transaction,
+        candidate: digest(text),
+        predecessor: transaction.predecessor,
+        outputs: outputEvidence(journal),
+      };
+      writeSynced(decisionCandidate, JSON.stringify(decision));
+      deciding = true;
+      renameSync(decisionCandidate, this.decisionFile);
+      syncPath(this.decisionFile);
+      syncPath(this.options.stateDir);
       this.verifiedJournal = text;
+    } catch (cause) {
+      if (deciding) {
+        this.journalBlocked = true;
+        throw new JournalCommitUncertainError("Operation final commit outcome is unknown", {
+          cause,
+        });
+      }
+      throw cause;
     } finally {
-      // Orphan candidate cleanup is not a publication result and cannot undo a verified commit.
-      for (const path of [candidate, rollbackCandidate])
+      for (const path of [candidate, rollbackCandidate, decisionCandidate])
         try {
           rmSync(path, { force: true });
         } catch {}
@@ -321,12 +581,14 @@ export class MacOperationSupervisor {
             onOutput: async (b, stream = "stdout") => {
               const spool = this.spools.get(entry.ref.operationId);
               if (spool) {
+                if (entry.output?.state === "uncertain")
+                  throw new JournalCommitUncertainError("Managed output commit remains unknown");
                 if (entry.output?.state === "fault")
                   throw Error("Managed output collection has failed");
                 try {
                   await spool.append(b, new AbortController().signal);
                 } catch (error) {
-                  this.collectorFault(entry, live);
+                  this.collectorFault(entry, live, error);
                   throw error;
                 }
               } else appendTail(decoders[stream].write(b));
@@ -336,14 +598,15 @@ export class MacOperationSupervisor {
           controller.signal,
         );
         live.worker = worker;
-        if (entry.output?.state === "fault") this.collectorFault(entry, live);
+        if (entry.output?.state === "fault" || entry.output?.state === "uncertain")
+          this.collectorFault(entry, live);
         live.finished = worker.completion
           .then(
             async (value) => {
               appendTail(decoders.stdout.end());
               appendTail(decoders.stderr.end());
               const spool = this.spools.get(entry.ref.operationId);
-              if (spool && entry.output?.state !== "fault") {
+              if (spool && entry.output?.state !== "fault" && entry.output?.state !== "uncertain") {
                 try {
                   await spool.flush();
                 } catch {
@@ -351,7 +614,7 @@ export class MacOperationSupervisor {
                 }
               }
               await this.serial(() => {
-                if (entry.output?.state === "fault") return;
+                if (entry.output?.state === "fault" || entry.output?.state === "uncertain") return;
                 const oldOutput = entry.output;
                 if (oldOutput)
                   entry.output = {
@@ -376,19 +639,23 @@ export class MacOperationSupervisor {
                   this.persist();
                 } catch (error) {
                   if (oldOutput) entry.output = oldOutput;
-                  if (entry.output) this.collectorFault(entry, live);
+                  if (entry.output) this.collectorFault(entry, live, error);
                   throw error;
                 }
               });
               resolve(value);
             },
             async (error) => {
-              if (entry.output) this.collectorFault(entry, live);
+              if (entry.output) this.collectorFault(entry, live, error);
               appendTail(decoders.stdout.end());
               appendTail(decoders.stderr.end());
               await this.serial(() => {
                 entry.state = "unknown";
                 this.persist();
+              }).catch((persistenceError) => {
+                // Keep an output failure's original phase; a later journal error cannot
+                // turn final-decision uncertainty into a physical collector fault.
+                if (!entry.output) throw persistenceError;
               });
               reject(error);
             },
@@ -402,7 +669,7 @@ export class MacOperationSupervisor {
             this.options.onLiveChanged?.(this.live.size > 0 || this.faultOwners.size > 0);
           })
           .catch((error) => {
-            if (entry.output) this.collectorFault(entry, live);
+            if (entry.output) this.collectorFault(entry, live, error);
             entry.state = "unknown";
             delete entry.result;
             reject(
@@ -496,9 +763,14 @@ export class MacOperationSupervisor {
       throw new SandboxOperationOutcomeUnknownError("Consumed background start outcome is unknown");
     return { ...entry.ref };
   }
-  private collectorFault(entry: Entry, live: Live): void {
+  private collectorFault(entry: Entry, live: Live, cause?: unknown): void {
     if (!entry.output) return;
-    entry.output.state = "fault";
+    if (entry.output.state !== "fault")
+      entry.output.state =
+        cause instanceof JournalCommitUncertainError ||
+        (cause === undefined && entry.output.state === "uncertain")
+          ? "uncertain"
+          : "fault";
     entry.output.interruptedCancellation = entry.stop?.outcome !== "stopped";
     entry.state = "unknown";
     delete entry.result;
@@ -506,6 +778,9 @@ export class MacOperationSupervisor {
     if (entry.stop?.outcome !== "stopped") entry.stop = { outcome: "cancel-pending" };
     // The prelaunch collecting marker remains the durable fallback. New disk failure cannot
     // gate exact cancellation, and this function never waits for append/worker completion.
+    try {
+      this.persistControl(entry);
+    } catch {}
     void this.serial(() => this.persist()).catch(() => {});
     if (entry.stop.outcome !== "stopped") this.faultOwners.set(entry.ref.operationId, live);
     if (
@@ -526,6 +801,9 @@ export class MacOperationSupervisor {
         if (entry.output) entry.output.interruptedCancellation = false;
         this.faultOwners.delete(entry.ref.operationId);
         this.options.onLiveChanged?.(this.live.size > 0 || this.faultOwners.size > 0);
+        try {
+          this.persistControl(entry);
+        } catch {}
         await this.serial(() => this.persist()).catch(() => {});
         return entry.stop;
       })
@@ -568,7 +846,7 @@ export class MacOperationSupervisor {
     validateOutputRange(opts.offset, opts.maxBytes);
     opts.signal.throwIfAborted();
     const entry = this.validate(ref);
-    if (!entry?.output) return { unavailable: "lost" };
+    if (!entry?.output || entry.output.unavailable) return { unavailable: "lost" };
     if (entry.retainUntilMs <= this.now() || entry.output.expired) {
       await this.expireOutput(ref).catch(() => {});
       return { unavailable: "expired" };
@@ -655,7 +933,13 @@ export class MacOperationSupervisor {
   async status(ref: SandboxExecutionRef, signal: AbortSignal): Promise<SandboxExecutionStatus> {
     signal.throwIfAborted();
     const e = this.validate(ref);
-    if (!e || e.retainUntilMs <= this.now() || e.output?.state === "fault")
+    if (
+      !e ||
+      e.retainUntilMs <= this.now() ||
+      e.output?.state === "fault" ||
+      e.output?.state === "uncertain" ||
+      e.output?.unavailable
+    )
       return { state: "lost" };
     if (e.state === "completed" && e.result && "exitCode" in e.result)
       return { state: "exited", exitCode: e.result.exitCode, timedOut: e.result.timedOut };
@@ -737,7 +1021,7 @@ export class MacOperationSupervisor {
       throw new SandboxScopeDeniedError("Invalid stop grace");
     const e = this.validate(ref);
     if (!e) return { outcome: "lost" };
-    if (e.output?.state === "fault") {
+    if (e.output?.state === "fault" || e.output?.state === "uncertain" || e.output?.unavailable) {
       if (e.stop?.outcome === "stopped") return e.stop;
       const live = this.live.get(ref.operationId) ?? this.faultOwners.get(ref.operationId);
       if (live) this.collectorFault(e, live);
@@ -745,7 +1029,7 @@ export class MacOperationSupervisor {
     }
     let outcome: SandboxStopResult | Promise<SandboxStopResult> = { outcome: "cancel-pending" };
     await this.serial(() => {
-      if (e.output?.state === "fault") {
+      if (e.output?.state === "fault" || e.output?.state === "uncertain" || e.output?.unavailable) {
         const live = this.live.get(ref.operationId) ?? this.faultOwners.get(ref.operationId);
         if (live) this.collectorFault(e, live);
         outcome = e.stop?.outcome === "stopped" ? e.stop : { outcome: "cancel-pending" };
@@ -772,6 +1056,7 @@ export class MacOperationSupervisor {
       }
       e.revoked = true;
       e.stop = { outcome: "cancel-pending" };
+      this.persistControl(e);
       this.persist();
       const live = this.live.get(ref.operationId);
       if (!live) return;
@@ -795,9 +1080,10 @@ export class MacOperationSupervisor {
               this.faultOwners.delete(ref.operationId);
               this.options.onLiveChanged?.(this.live.size > 0 || this.faultOwners.size > 0);
               try {
+                this.persistControl(e);
                 this.persist();
               } catch (error) {
-                if (e.output?.state !== "fault") throw error;
+                if (e.output?.state !== "fault" && e.output?.state !== "uncertain") throw error;
               }
             }
           });
@@ -809,6 +1095,7 @@ export class MacOperationSupervisor {
             if (
               e.stop?.outcome === "cancel-pending" &&
               e.output?.state !== "fault" &&
+              e.output?.state !== "uncertain" &&
               e.state === "completed" &&
               e.result &&
               "exitCode" in e.result
@@ -870,7 +1157,8 @@ export class MacOperationSupervisor {
         e.ref.instanceGeneration !== this.options.instanceGeneration
       )
         continue;
-      if (e.output?.state === "fault") await this.serial(() => this.persist()).catch(() => {});
+      if (e.output?.state === "fault" || e.output?.state === "uncertain" || e.output?.unavailable)
+        await this.serial(() => this.persist()).catch(() => {});
       if (e.stop?.outcome === "cancel-pending") await this.stop(e.ref, { graceMs: 0, signal });
       else if (e.request && !e.revoked && e.state !== "completed" && !allowed(e.request))
         await this.revokeOperation(

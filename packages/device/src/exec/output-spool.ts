@@ -1,4 +1,4 @@
-import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { type ChildProcessWithoutNullStreams, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -55,6 +55,46 @@ function nameFor(ref: SandboxExecutionRef): string {
       JSON.stringify([ref.instanceId, ref.instanceGeneration, ref.operationId, ref.executionId]),
     )
     .digest("hex")}.spool`;
+}
+/** Recovery only: verify the pinned prefix and finalize its file/namespace durability. */
+export function finalizeRecoveredOutput(
+  privateRoot: string,
+  pythonPath: string,
+  locator: OutputLocator,
+): void {
+  const ref = parseSandboxExecutionRef(locator.ref);
+  if (
+    locator.name !== nameFor(ref) ||
+    !Number.isSafeInteger(locator.committed) ||
+    locator.committed < 0
+  )
+    throw Error("Invalid recovered output locator");
+  const messages = [
+    {
+      op: "init",
+      root: canonical(privateRoot),
+      name: locator.name,
+      identity: locator.identity,
+      directory: locator.directory,
+      committed: locator.committed,
+      existing: true,
+    },
+    { op: "sync", file: "spool" },
+    { op: "syncParent" },
+    { op: "close" },
+  ];
+  const result = spawnSync(pythonPath, ["-I", "-c", OUTPUT_SPOOL_HELPER], {
+    input: `${messages.map((message) => JSON.stringify(message)).join("\n")}\n`,
+    encoding: "utf8",
+    maxBuffer: 90000,
+  });
+  if (result.error || result.status !== 0) throw Error("Cannot finalize recovered output");
+  const replies = result.stdout
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  if (replies.length !== messages.length - 1 || replies.some((reply) => reply.error !== undefined))
+    throw Error("Cannot verify recovered output");
 }
 /** One bounded append at a time. Disk files, never an in-memory tail, are the retained authority. */
 export class ManagedOutputSpool {

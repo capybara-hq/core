@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import {
+  finalizeRecoveredOutput,
   ManagedOutputSpool,
   type OutputLocator,
   type OutputSpoolOptions,
@@ -438,3 +439,30 @@ it("fixed helper rejects an offset/length pair beyond the committed snapshot", a
   ])
     await expect(transport.rpc({ op: "read", ...request })).rejects.toThrow(/snapshot/);
 });
+
+it("recovery verifies the exact pinned prefix and finalizes spool durability without appending", async () => {
+  const f = await fixture();
+  const spool = await f.create();
+  await spool.append(Buffer.from("prefix"), signal);
+  await spool.close();
+  expect(() =>
+    finalizeRecoveredOutput(f.opts.privateRoot, f.opts.pythonPath, f.locator()),
+  ).not.toThrow();
+  expect(await readFile(join(f.opts.privateRoot, f.locator().name))).toEqual(Buffer.from("prefix"));
+  expect(await readFile(f.opts.outputPath)).toEqual(Buffer.from("prefix"));
+});
+it.each(["short", "identity", "directory", "reference"])(
+  "recovery refuses %s output evidence before adopting its checkpoint",
+  async (kind) => {
+    const f = await fixture();
+    const spool = await f.create();
+    await spool.append(Buffer.from("prefix"), signal);
+    await spool.close();
+    const locator = structuredClone(f.locator());
+    if (kind === "short") await writeFile(join(f.opts.privateRoot, locator.name), "p");
+    if (kind === "identity") locator.identity.ino++;
+    if (kind === "directory") locator.directory.ino++;
+    if (kind === "reference") locator.ref = { ...locator.ref, instanceGeneration: "other" };
+    expect(() => finalizeRecoveredOutput(f.opts.privateRoot, f.opts.pythonPath, locator)).toThrow();
+  },
+);
