@@ -30,6 +30,13 @@ const unitTests = JSON.parse(
 const containerTests = JSON.parse(
   readFileSync(new URL("./packages/kernel/test/container-tests.json", import.meta.url), "utf8"),
 ) as string[];
+// Testing-package container tests: real hardened Docker containers (each file skips cleanly
+// without Docker). Checked-in list, like the kernel's (check:test-portfolio enforces it).
+const testingContainerTests = (
+  JSON.parse(
+    readFileSync(new URL("./packages/testing/test/container-tests.json", import.meta.url), "utf8"),
+  ) as string[]
+).map((p) => `packages/testing/test/${p}`);
 
 export default defineConfig({
   resolve: { conditions },
@@ -56,6 +63,7 @@ export default defineConfig({
             "packages/design/**",
             "packages/plugin-client/**",
             "packages/kernel/test/**",
+            ...testingContainerTests,
             "**/node_modules/**",
           ],
           // One PostgreSQL + one Valkey per run, handed to workers via env vars: startTestPostgres()
@@ -95,6 +103,17 @@ export default defineConfig({
           name: "kernel-container",
           include: containerTests.map(kernelTest),
           globalSetup: ["packages/testing/src/global-setup.ts"],
+          testTimeout: 240_000,
+          hookTimeout: 300_000,
+        },
+      },
+      // Testing-package container tests: one hardened device container per file running the
+      // restricted Linux runtime for real. Upper bounds sized to the category, as kernel-container.
+      {
+        extends: true,
+        test: {
+          name: "testing-container",
+          include: testingContainerTests,
           testTimeout: 240_000,
           hookTimeout: 300_000,
         },

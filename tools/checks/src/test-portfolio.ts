@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { isAbsolute, join, relative, sep } from "node:path";
 import {
   collectImports,
@@ -37,6 +37,10 @@ import {
  *   container list; container tests may exercise several actual replicas.
  * - `test-portfolio-list-overlap`: a path listed twice (the second occurrence is reported).
  * - `test-portfolio-missing-file`: a listed path with no file (reported on the list file).
+ * - `test-portfolio-container-unlisted`: a `packages/testing/test` file that starts a hardened
+ *   device container (`startDevice(`) but is missing from that package's `container-tests.json`,
+ *   which `vitest.config.ts` reads for the `testing-container` project. The testing list obeys
+ *   the overlap and missing-file rules too.
  * - `test-portfolio-baseline-unjustified`: a grandfather entry (the baseline's `files` object
  *   maps a repo-relative path to the reason it stays) with an empty reason.
  * - `test-portfolio-baseline-removed-claim`: a grandfather entry whose reason says the file was
@@ -54,6 +58,9 @@ export const KERNEL_TEST_DIR = "packages/kernel/test";
 export const PORTFOLIO_BASELINE_FILE = "tools/checks/test-portfolio-baseline.json";
 export const UNIT_LIST = "unit-tests.json";
 export const CONTAINER_LIST = "container-tests.json";
+export const TESTING_TEST_DIR = "packages/testing/test";
+/** The call that marks a testing-package test as a container test. */
+const CONTAINER_MARKER = "startDevice(";
 
 const RULE = {
   sleep: "test-fixed-sleep",
@@ -63,6 +70,7 @@ const RULE = {
   doubleBoot: "test-double-boot",
   overlap: "test-portfolio-list-overlap",
   missing: "test-portfolio-missing-file",
+  unlisted: "test-portfolio-container-unlisted",
   unjustified: "test-portfolio-baseline-unjustified",
   removedClaim: "test-portfolio-baseline-removed-claim",
   stale: "test-portfolio-baseline-stale",
@@ -412,8 +420,9 @@ function entryLine(lines: string[], entry: string, fromLine: number): number {
 function readList(
   root: string,
   name: string,
+  dir = KERNEL_TEST_DIR,
 ): { file: string; lines: string[]; entries: string[] } | undefined {
-  const file = join(root, KERNEL_TEST_DIR, name);
+  const file = join(root, dir, name);
   if (!existsSync(file)) return undefined;
   const text = readFileSync(file, "utf8");
   const parsed = JSON.parse(text) as unknown;
@@ -455,6 +464,71 @@ function checkLists(root: string): Finding[] {
         });
       }
     }
+  }
+  return [...out, ...checkTestingList(root)];
+}
+
+/** Testing-package test files (fixtures excluded), repo-relative. */
+function testingTestFiles(root: string): string[] {
+  const base = join(root, TESTING_TEST_DIR);
+  if (!existsSync(base)) return [];
+  const out: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        if (entry.name !== "fixtures" && entry.name !== "node_modules") walk(join(dir, entry.name));
+      } else if (TEST_FILE.test(entry.name)) {
+        out.push(repoPath(root, join(dir, entry.name)));
+      }
+    }
+  };
+  walk(base);
+  return out.sort();
+}
+
+/** The testing package's container list: no overlap, no missing file, no unlisted container test. */
+function checkTestingList(root: string): Finding[] {
+  const out: Finding[] = [];
+  const list = readList(root, CONTAINER_LIST, TESTING_TEST_DIR);
+  const listed = new Set<string>();
+  if (list !== undefined) {
+    const seen = new Map<string, number>();
+    let line = 0;
+    for (const entry of list.entries) {
+      line = entryLine(list.lines, entry, line + 1);
+      const previous = seen.get(entry);
+      if (previous !== undefined) {
+        out.push({
+          file: list.file,
+          line,
+          rule: RULE.overlap,
+          message: `"${entry}" is listed twice (first at ${repoPath(root, list.file)}:${previous})`,
+        });
+        continue;
+      }
+      seen.set(entry, line);
+      listed.add(`${TESTING_TEST_DIR}/${entry}`);
+      if (!existsSync(join(root, TESTING_TEST_DIR, entry))) {
+        out.push({
+          file: list.file,
+          line,
+          rule: RULE.missing,
+          message: `"${entry}" is listed but ${TESTING_TEST_DIR}/${entry} does not exist`,
+        });
+      }
+    }
+  }
+  for (const path of testingTestFiles(root)) {
+    if (listed.has(path)) continue;
+    const lines = readFileSync(join(root, path), "utf8").split("\n");
+    const index = lines.findIndex((text) => text.includes(CONTAINER_MARKER));
+    if (index < 0) continue;
+    out.push({
+      file: join(root, path),
+      line: index + 1,
+      rule: RULE.unlisted,
+      message: `starts a device container but is not listed in ${TESTING_TEST_DIR}/${CONTAINER_LIST}; add it so the testing-container project runs it`,
+    });
   }
   return out;
 }
