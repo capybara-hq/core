@@ -22,7 +22,6 @@ import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
 import type { KernelHttp } from "../../src/http/app.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
-import { OUTBOX_STRICT_CONFLICTS } from "../../src/infra/outbox/outbox.service.js";
 import { createLogger } from "../../src/log.js";
 import { runJobId } from "../../src/runtime/run-queue.js";
 import { builtinsOff } from "./disabled-tools.js";
@@ -156,7 +155,7 @@ function assertOffline(config: KernelConfig, allowOfficialMarketplace: boolean |
 function strictOutbox(opts: KernelAppOptions): KernelAppOptions {
   return {
     ...opts,
-    overrides: [{ provide: OUTBOX_STRICT_CONFLICTS, useValue: true }, ...(opts.overrides ?? [])],
+    overrides: [...(opts.overrides ?? [])],
   };
 }
 

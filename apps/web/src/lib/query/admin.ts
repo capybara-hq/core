@@ -57,10 +57,10 @@ export const adminAttentionQuery = () =>
  * retry or discard (which invalidates the overview) reads them again. Read only when the attention
  * lists name dead rows.
  */
-export const adminOutboxDeadQuery = () =>
+export const adminOutboxDeadQuery = (after?: string) =>
   defineQuery({
-    key: d().adminOutboxDead(),
-    fn: () => listOutboxDead(),
+    key: d().adminOutboxDead(after),
+    fn: () => listOutboxDead(after),
     freshness: "deployment",
   });
 

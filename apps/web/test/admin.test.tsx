@@ -385,7 +385,7 @@ describe("/admin 概览（OverviewPage）", () => {
                   ]
                 : [],
             }),
-          "GET /api/v1/admin/outbox/dead": () => json(200, { items }),
+          "GET /api/v1/admin/outbox/dead": () => json(200, { items, next: null }),
           "POST /api/v1/admin/outbox/dead/7/retry": () => {
             items = items.filter((i) => i.id !== "7");
             return json(200, { outcome: "retried" });
@@ -428,6 +428,43 @@ describe("/admin 概览（OverviewPage）", () => {
     },
   );
 
+  it("attention: dead outbox rows beyond the first page load on request", async () => {
+    const o = zh.admin.overview.attention;
+    const deadRow = (id: string, jobName: string) => ({
+      id,
+      queue: "cap-kernel-maintenance",
+      jobName,
+      jobId: `job-${id}`,
+      orgId: null,
+      attempts: 20,
+      lastError: null,
+      deadAt: "2026-11-12T08:00:00.000Z",
+      createdAt: "2026-11-12T07:00:00.000Z",
+    });
+    const calls = stubApi(
+      overviewRoutes({
+        "GET /api/v1/admin/overview/attention": () =>
+          json(200, {
+            ...EMPTY_ATTENTION,
+            outbox: [{ kind: "outbox_dead", count: 2, oldestAt: "2026-11-12T08:00:00.000Z" }],
+          }),
+        "GET /api/v1/admin/outbox/dead": () =>
+          json(200, { items: [deadRow("7", "first-page-job")], next: "cursor-1" }),
+        "GET /api/v1/admin/outbox/dead?after=cursor-1": () =>
+          json(200, { items: [deadRow("8", "second-page-job")], next: null }),
+      }),
+    );
+    await renderRouteWithCache("/admin", lastStubRoutes(), { locale: "zh" });
+    const list = await screen.findByRole("list", { name: o.groups.outbox });
+    await within(list).findByText("first-page-job");
+    expect(within(list).queryByText("second-page-job")).toBeNull();
+    await userEvent.setup().click(await screen.findByRole("button", { name: o.outbox.loadMore }));
+    await within(list).findByText("second-page-job");
+    expect(within(list).getByText("first-page-job")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: o.outbox.loadMore })).toBeNull();
+    expect(calls.some((c) => c.url.endsWith("/outbox/dead?after=cursor-1"))).toBe(true);
+  });
+
   it("attention: a failed read of the dead outbox rows is the group's unavailable state with retry", async () => {
     const o = zh.admin.overview.attention;
     let failing = true;
@@ -455,6 +492,7 @@ describe("/admin 概览（OverviewPage）", () => {
                     createdAt: "2026-11-12T07:00:00.000Z",
                   },
                 ],
+                next: null,
               }),
       }),
     );

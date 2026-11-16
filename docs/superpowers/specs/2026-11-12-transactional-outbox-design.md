@@ -174,7 +174,7 @@ never blocks a new owed job with the same id, and the conflict lookup ignores de
 A conflict means the same job is already owed; the job ids are built so that a conflict always
 carries the same data (a run job id names the conversation and its trigger seq, and one active run
 per conversation is a unique index, so two different runs cannot share it). As a guard, a conflict
-whose stored `data` differs throws in tests and logs an error in production (**designer's call**).
+whose stored `data` differs throws `OutboxConflictError` in every environment, so the caller's transaction fails visibly.
 Rows are deleted on delivery, so the table stays small; `dead_at` rows are the only ones that stay.
 
 A SQL migration that changes state which owes work (a scope it rewrites, for example) inserts the
@@ -465,7 +465,7 @@ permanent exceptions, each with its reason.
 9. Policy ops require a new device feature flag `policyOpId` (no compatibility for older devices).
 10. `run-orphan-check` every minute: repairs running orphans, reports and re-adds queued ones.
 11. Org deletion deletes its pending rows, except its own cleanup work.
-12. A job-id conflict with different data throws in tests and logs in production.
+12. A job-id conflict with different data throws `OutboxConflictError` in every environment.
 13. Migrations that change state owing work insert the outbox rows themselves.
 14. New job names on `cap-kernel-maintenance`.
 15. Latency budget +5 ms p50 on message-to-run-job-added.

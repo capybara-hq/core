@@ -498,8 +498,13 @@ export const keys = {
        * numbers (an extension or plugin change) reads the lists again too.
        */
       adminAttention: (): readonly unknown[] => [...all, "adminOverview", "attention"],
-      /** The dead outbox rows (under `adminOverview`, read again with the numbers). */
-      adminOutboxDead: (): readonly unknown[] => [...all, "adminOverview", "outboxDead"],
+      /** A page of the dead outbox rows (under `adminOverview`, read again with the numbers). */
+      adminOutboxDead: (after?: string): readonly unknown[] => [
+        ...all,
+        "adminOverview",
+        "outboxDead",
+        after,
+      ],
       /** The admin overview's 运行状况 (polled while the page shows). */
       adminHealth: (): readonly unknown[] => [...all, "adminHealth"],
       /** The admin overview's 用量 in the reader's zone (the days are calendar days in it). */

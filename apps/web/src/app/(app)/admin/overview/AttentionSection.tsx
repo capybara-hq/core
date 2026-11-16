@@ -8,12 +8,13 @@ import {
   type ItemListRow,
   LinkButton,
   OverviewSection,
+  Stack,
   Subsection,
   Text,
   useToast,
   versionLabel,
 } from "@capybara-hq/design";
-import { type UseQueryResult, useQuery } from "@tanstack/react-query";
+import { type UseQueryResult, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import {
@@ -22,6 +23,7 @@ import {
   type AttentionOutboxDead,
   type AttentionSource,
   discardOutboxDead,
+  type OutboxDeadPage,
   type OutboxDeadRow,
   retryOutboxDead,
 } from "../../../../lib/admin";
@@ -295,12 +297,36 @@ function OutboxDeadList({
 }: {
   label: string;
   summary: AttentionOutboxDead[];
-  dead: UseQueryResult<{ items: OutboxDeadRow[] }>;
+  dead: UseQueryResult<OutboxDeadPage>;
   t: T;
 }) {
   const errorMessage = useErrorMessage();
   const toast = useToast();
   const [discarding, setDiscarding] = useState<OutboxDeadRow | null>(null);
+  const qc = useQueryClient();
+  // Later pages belong to the first page they continue: a newer answer for the first page (every
+  // retry and discard refetches it) starts over, so a row handled on a later page never stays
+  const firstAt = dead.dataUpdatedAt;
+  const [more, setMore] = useState<{ source: number; pages: OutboxDeadPage[] }>({
+    source: firstAt,
+    pages: [],
+  });
+  const pages = more.source === firstAt ? more.pages : [];
+  const next = pages.length > 0 ? (pages.at(-1) as OutboxDeadPage).next : (dead.data?.next ?? null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [moreError, setMoreError] = useState<string | null>(null);
+  const loadMore = async (after: string) => {
+    setLoadingMore(true);
+    setMoreError(null);
+    try {
+      const page = await qc.fetchQuery(adminOutboxDeadQuery(after));
+      setMore({ source: firstAt, pages: [...pages, page] });
+    } catch (e) {
+      setMoreError(errorMessage(e));
+    } finally {
+      setLoadingMore(false);
+    }
+  };
   const d = keys.deployment();
   const invalidates = () => [d.adminOverview(), d.platformAuditAll()];
   const retry = useAppMutation({
@@ -320,7 +346,7 @@ function OutboxDeadList({
   const rows: ItemListRow[] =
     dead.data === undefined
       ? summary.map((o) => ({ id: o.kind, title: t("outbox.count", { n: o.count }) }))
-      : dead.data.items.map((r) => ({
+      : [...dead.data.items, ...pages.flatMap((p) => p.items)].map((r) => ({
           id: r.id,
           title: r.jobName,
           meta: [r.queue, r.lastError].filter((x) => x !== null && x !== "").join(" · "),
@@ -338,6 +364,14 @@ function OutboxDeadList({
   return (
     <>
       <ItemList label={label} rows={rows} />
+      {next !== null && (
+        <Stack direction="row" gap={8} align="center">
+          <Button loading={loadingMore} onClick={() => void loadMore(next)}>
+            {t("outbox.loadMore")}
+          </Button>
+          {moreError !== null && <Text tone="fail">{moreError}</Text>}
+        </Stack>
+      )}
       <Dialog
         open={discarding !== null}
         onOpenChange={(open) => {

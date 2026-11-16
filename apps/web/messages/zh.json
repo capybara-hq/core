@@ -3745,7 +3745,8 @@
           "discardHint": "{job} 将不会再运行。如果仍需要这项工作，请改为重试。",
           "retried": "已重新排入队列。",
           "alreadyOwed": "同一任务已在队列中，这份副本已丢弃。",
-          "discarded": "已丢弃。"
+          "discarded": "已丢弃。",
+          "loadMore": "加载更多"
         },
         "queue": {
           "lostJobs": "队列丢失了后台任务",

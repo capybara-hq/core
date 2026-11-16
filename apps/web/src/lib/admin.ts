@@ -450,9 +450,17 @@ export interface OutboxDeadRow {
 /** What a retry did: due again, or discarded because the same job is owed already. */
 export type OutboxRetryOutcome = "retried" | "already_owed";
 
-/** The dead outbox rows, oldest first (at most 200). */
-export const listOutboxDead = () =>
-  apiFetch<{ items: OutboxDeadRow[] }>("/api/v1/admin/outbox/dead");
+/** A page of dead outbox rows, oldest first (at most 200); `next` is the `after` of the next page. */
+export interface OutboxDeadPage {
+  items: OutboxDeadRow[];
+  next: string | null;
+}
+
+/** The dead outbox rows, oldest first: the first page or the one after the cursor `after`. */
+export const listOutboxDead = (after?: string) =>
+  apiFetch<OutboxDeadPage>(
+    `/api/v1/admin/outbox/dead${after === undefined ? "" : `?after=${encodeURIComponent(after)}`}`,
+  );
 
 /** Queues a dead outbox row again (or drops it when the same job is owed already). */
 export const retryOutboxDead = (id: string) =>

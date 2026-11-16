@@ -11,7 +11,6 @@ import {
   OUTBOX_DISPATCH_FAILS,
   OutboxDispatcher,
 } from "../../src/infra/outbox/outbox.dispatcher.js";
-import { OUTBOX_STRICT_CONFLICTS } from "../../src/infra/outbox/outbox.service.js";
 import { RUN_QUEUE_NAME } from "../../src/runtime/run-queue.js";
 import {
   MAINTENANCE_QUEUE_NAME,
@@ -78,10 +77,7 @@ beforeAll(async () => {
   k = await startKernel(
     runConfig({ pg: pgc.url, redis: rd.url }, { extensions: [MODEL_FAKE, MEM_CONNECTOR] }),
     {
-      overrides: [
-        { provide: OUTBOX_DISPATCH_FAILS, useValue: () => failing },
-        { provide: OUTBOX_STRICT_CONFLICTS, useValue: true },
-      ],
+      overrides: [{ provide: OUTBOX_DISPATCH_FAILS, useValue: () => failing }],
     },
   );
   raw = createDb(pgc.url, 5);

@@ -45,7 +45,7 @@ export function eventLogFor(
     h.db,
     bus,
     quiet,
-    outbox ?? new OutboxService(h.txHost, h.db, quiet, async () => {}),
+    outbox ?? new OutboxService(h.txHost, h.db, async () => {}),
     h.txHost,
   );
 }

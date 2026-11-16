@@ -116,7 +116,7 @@ export function orgsFor(
   const h = handlesFor(db);
   return new OrgsService(
     h.db,
-    new OutboxService(h.txHost, h.db, quiet, async () => {}),
+    new OutboxService(h.txHost, h.db, async () => {}),
     h.txHost,
     settings,
     tokens,
