@@ -288,14 +288,14 @@ describe("输入框：上传文件", () => {
     const calls = stubApi();
     const { container } = await renderChat("zh");
     const user = userEvent.setup({ applyAccept: false });
-    await user.upload(fileInput(container), new File(["x"], "a.zip", { type: "application/zip" }));
+    await user.upload(
+      fileInput(container),
+      new File(["x"], "a.exe", { type: "application/x-msdownload" }),
+    );
     const group = await screen.findByRole("group", { name: zh.chat.files });
-    // 未取到上限（接口不可用）时按内核默认值预检，文案由上限拼出
+    // 未取到上限（接口不可用）时按内核默认值预检，文案由上限拼出（至多六个标签，再补数量）
     expect(within(group).getByRole("alert").textContent).toBe(
-      zh.chat.fileTypeNotAllowed.replace(
-        "{types}",
-        "PNG / JPEG / GIF / WebP / PDF / TXT / Markdown / CSV",
-      ),
+      zh.chat.fileTypeNotAllowed.replace("{types}", "PNG / JPEG / GIF / WebP / PDF / TXT 等 13 种"),
     );
     // 图片上限 5 MB
     await user.upload(fileInput(container), png("huge.png", 5 * 1024 * 1024 + 1));
@@ -307,7 +307,7 @@ describe("输入框：上传文件", () => {
     // 有出错的文件时不能发送；移除后可以
     await user.type(screen.getByLabelText(zh.chat.inputLabel), "hi");
     expect(screen.getByRole("button", { name: zh.chat.send })).toHaveProperty("disabled", true);
-    await user.click(within(group).getByRole("button", { name: "移除 a.zip" }));
+    await user.click(within(group).getByRole("button", { name: "移除 a.exe" }));
     await user.click(within(group).getByRole("button", { name: "移除 huge.png" }));
     expect(screen.queryByRole("group", { name: zh.chat.files })).toBeNull();
     expect(screen.getByRole("button", { name: zh.chat.send })).toHaveProperty("disabled", false);
@@ -471,9 +471,16 @@ describe("输入框：上传文件（修正轮 1）", () => {
     const { container } = await renderChat("en");
     await userEvent
       .setup({ applyAccept: false })
-      .upload(fileInput(container), new File(["x"], "a.zip", { type: "application/zip" }));
+      .upload(fileInput(container), new File(["x"], "a.exe", { type: "application/x-msdownload" }));
     const group = await screen.findByRole("group", { name: en.chat.files });
-    expect(within(group).queryByRole("button", { name: "Retry a.zip" })).toBeNull();
+    // the count suffix follows the page locale
+    expect(within(group).getByRole("alert").textContent).toBe(
+      en.chat.fileTypeNotAllowed.replace(
+        "{types}",
+        "PNG / JPEG / GIF / WebP / PDF / TXT and 13 total",
+      ),
+    );
+    expect(within(group).queryByRole("button", { name: "Retry a.exe" })).toBeNull();
   });
 
   it("发送时内核说附件不存在：对应条目标为出错（可重试），其余保持就绪", async () => {

@@ -2,7 +2,7 @@
 
 import { formatBytes, useToast } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiClientError, clientError } from "../lib/api";
 import {
@@ -12,6 +12,7 @@ import {
   typeList,
   uploadAttachment,
 } from "../lib/attachments";
+import { labelLocale } from "../lib/extension-label";
 import { retryOnMountOf } from "../lib/query/client";
 import { attachmentLimitsQuery } from "../lib/query/conversation";
 import { useAppMutation } from "../lib/query/mutation";
@@ -61,6 +62,7 @@ function failedIds(e: unknown): Set<string> {
  */
 export function useDraftFiles(orgId: string, initial: readonly DraftFile[] = []) {
   const t = useTranslations("chat");
+  const locale = labelLocale(useLocale());
   const toast = useToast();
   const errorMessage = useErrorMessage();
   // Until the limits are read (or when the read failed) the defaults apply; an older kernel
@@ -241,7 +243,7 @@ export function useDraftFiles(orgId: string, initial: readonly DraftFile[] = [])
           other: formatBytes(limits.maxBytes),
         });
       case "attachment.type_not_allowed":
-        return t("fileTypeNotAllowed", { types: typeList(limits.types) });
+        return t("fileTypeNotAllowed", { types: typeList(limits.types, locale) });
       default:
         return errorMessage(f.error);
     }

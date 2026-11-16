@@ -1436,6 +1436,7 @@
     "filesOverBudget": "选中的文件合计超过单次请求的 {max}，发送后较早的文件会被省略。",
     "fileTooLarge": "文件太大：图片最多 {image}，其他文件最多 {other}。",
     "fileTypeNotAllowed": "不支持这种文件类型。可以上传：{types}。",
+    "fileTypeMore": "等 {count} 种",
     "newPlaceholder": "想让 {agent} 做什么？",
     "runningHint": "运行中发送的消息会在下一步交给智能体",
     "waitingSkipHint": "也可以直接回复：发送消息会跳过上面的提问",
