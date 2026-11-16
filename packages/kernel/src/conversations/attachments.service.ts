@@ -1,10 +1,5 @@
 import { randomUUID } from "node:crypto";
-import {
-  IMAGE_MEDIA_TYPES,
-  type ImageMediaType,
-  MEDIA_LIMITS,
-  type PresignedUpload,
-} from "@capybara-hq/plugin-sdk";
+import { MEDIA_LIMITS, type PresignedUpload } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import type { AttachmentPurpose } from "../db/kernel-schema.js";
@@ -21,6 +16,7 @@ import type { MediaBytes, MediaInfo } from "../runtime/context/build.js";
 import { StorageService } from "../storage/storage.service.js";
 import { ConversationAccess } from "./access.js";
 import type { LogContentBlock } from "./events.js";
+import { isImageContentType, isMediaContentType } from "./media-types.js";
 
 /** 预签名上传的有效期（秒）。尽量短：表单在有效期内可被再次使用（内容替换由 etag 核对兜底）。 */
 export const ATTACHMENT_UPLOAD_TTL_SECONDS = 300;
@@ -112,8 +108,10 @@ const notFound = () => new ApiError("attachment.not_found", "Attachment not foun
 export const normalizeContentType = (ct: string): string =>
   (ct.split(";")[0] ?? "").trim().toLowerCase();
 
-const isImage = (ct: string): ct is ImageMediaType =>
-  (IMAGE_MEDIA_TYPES as readonly string[]).includes(ct);
+/** A logged image block (the narrowed media type the log carries). */
+type ImageBlock = Extract<LogContentBlock, { type: "image" }>;
+/** A logged document block. */
+type DocumentBlock = Extract<LogContentBlock, { type: "document" }>;
 
 /** 对象键：只用附件 id，用户的文件名不进键。技能包另放 `skill-packages/<id>`。 */
 const objectKey = (id: string, purpose: AttachmentPurpose = "chat") =>
@@ -127,7 +125,12 @@ const startsWith = (b: Uint8Array, sig: readonly number[], at = 0) =>
   sig.every((x, i) => b[at + i] === x);
 const ascii = (s: string) => [...s].map((c) => c.charCodeAt(0));
 
-/** 文件开头是否与声明的类型相符（图片与 PDF 看签名，文本不能含 NUL）。 */
+/**
+ * Whether the head of the file matches the declared content type. Images, a PDF, a zip and the
+ * Office formats (which are zips themselves) are checked by signature; text and JSON must not
+ * contain a NUL byte. Any other accepted type has no signature to check, so it passes (its bytes are
+ * never rendered: only images and a PDF are served inline).
+ */
 export function sniffMatches(contentType: string, head: Uint8Array): boolean {
   switch (contentType) {
     case "image/png":
@@ -141,12 +144,17 @@ export function sniffMatches(contentType: string, head: Uint8Array): boolean {
     case "application/pdf":
       return Buffer.from(head.buffer, head.byteOffset, head.byteLength).includes("%PDF-");
     case "application/zip":
-      // 本地文件头，或空 zip 的中央目录结尾
+    case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+    case "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+    case "application/vnd.openxmlformats-officedocument.presentationml.presentation":
+      // the local file header, or an empty zip's end of central directory (OOXML files are zips)
       return (
         startsWith(head, [0x50, 0x4b, 0x03, 0x04]) || startsWith(head, [0x50, 0x4b, 0x05, 0x06])
       );
-    default:
+    case "application/json":
       return !head.includes(0);
+    default:
+      return contentType.startsWith("text/") ? !head.includes(0) : true;
   }
 }
 
@@ -185,7 +193,7 @@ export class AttachmentsService {
     const { maxBytes } = this.config.get().attachments;
     return Math.min(
       maxBytes,
-      isImage(contentType) ? MEDIA_LIMITS.imageBytes : MEDIA_LIMITS.documentBytes,
+      isImageContentType(contentType) ? MEDIA_LIMITS.imageBytes : MEDIA_LIMITS.documentBytes,
     );
   }
 
@@ -224,7 +232,7 @@ export class AttachmentsService {
         ? contentType !== SKILL_PACKAGE_CONTENT_TYPE
         : avatar
           ? !(AGENT_AVATAR_CONTENT_TYPES as readonly string[]).includes(contentType)
-          : !(cfg.allowedTypes as readonly string[]).includes(contentType)
+          : !cfg.allowedTypes.includes(contentType)
     ) {
       throw new ApiError(
         "attachment.type_not_allowed",
@@ -394,7 +402,7 @@ export class AttachmentsService {
     if (!head || !this.sameContent(row.etag, head.etag, { orgId, attachmentId: id })) {
       throw notFound();
     }
-    const inline = isImage(row.content_type) || row.content_type === "application/pdf";
+    const inline = isImageContentType(row.content_type) || row.content_type === "application/pdf";
     return store.presignGet(row.object_key, {
       ttlSeconds: ATTACHMENT_DOWNLOAD_TTL_SECONDS,
       downloadName: row.name,
@@ -491,6 +499,7 @@ export class AttachmentsService {
         "conversation_id",
         "name",
         "content_type",
+        "size",
         "status",
         sql<boolean>`expires_at IS NOT NULL AND expires_at <= now()`.as("expired"),
       ])
@@ -526,18 +535,27 @@ export class AttachmentsService {
       }
       if (r.conversation_id === null) toBind.push(id);
       const source = { kind: "ref" as const, attachmentId: id };
+      const size = Number(r.size);
+      // The model reads images, PDFs and text files itself; every other accepted type becomes a
+      // `file` block the model only gets a reference to (the bytes stay in the object store).
       blocks.push(
-        isImage(r.content_type)
-          ? { type: "image", mediaType: r.content_type, source, name: r.name }
-          : {
-              type: "document",
-              mediaType: r.content_type as Extract<
-                LogContentBlock,
-                { type: "document" }
-              >["mediaType"],
+        isImageContentType(r.content_type)
+          ? {
+              type: "image",
+              mediaType: r.content_type as ImageBlock["mediaType"],
               source,
               name: r.name,
-            },
+              size,
+            }
+          : isMediaContentType(r.content_type)
+            ? {
+                type: "document",
+                mediaType: r.content_type as DocumentBlock["mediaType"],
+                source,
+                name: r.name,
+                size,
+              }
+            : { type: "file", mediaType: r.content_type, source, name: r.name, size },
       );
     }
     if (toBind.length > 0) {
@@ -562,8 +580,8 @@ export class AttachmentsService {
   }
 
   /**
-   * 构建模型请求时查附件行的声明信息（只含绑定在该会话、已 ready 的）：大小与 PDF 页数。
-   * 没有行的不在结果里；查询失败照常抛出。
+   * 构建模型请求时查附件行的声明信息（只含绑定在该会话、已 ready 的）：大小、PDF 页数，以及对象的无签名引用
+   * （`ObjectStore.uri`，存储没有时退回 `capybara://attachments/<id>`）。没有行的不在结果里；查询失败照常抛出。
    */
   async mediaInfo(
     orgId: string,
@@ -573,14 +591,25 @@ export class AttachmentsService {
     if (ids.length === 0) return new Map();
     const rows = await this.db
       .selectFrom("attachments")
-      .select(["id", "size", "pages", "etag"])
+      .select(["id", "size", "pages", "etag", "object_key"])
       .where("org_id", "=", orgId)
       .where("conversation_id", "=", conversationId)
       .where("purpose", "=", "chat")
       .where("status", "=", "ready")
       .where("id", "in", [...ids])
       .execute();
-    return new Map(rows.map((r) => [r.id, { size: Number(r.size), pages: r.pages, etag: r.etag }]));
+    const store = this.storage.kernel(orgId);
+    return new Map(
+      rows.map((r) => [
+        r.id,
+        {
+          size: Number(r.size),
+          pages: r.pages,
+          etag: r.etag,
+          uri: store.uri?.(r.object_key) ?? `capybara://attachments/${r.id}`,
+        },
+      ]),
+    );
   }
 
   /**

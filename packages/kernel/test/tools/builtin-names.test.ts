@@ -119,7 +119,7 @@ describe("builtin names", () => {
     expect(BUILTIN_TOOL_NAMES).toHaveLength(Object.values(BUILTIN).length);
   });
 
-  it("the sandbox lists name the nine sandbox tools, Deliver and the task tools included", () => {
+  it("the sandbox lists name the sandbox tools, Deliver, FetchAttachment and the task tools included", () => {
     expect([...SANDBOX_TOOL_NAMES]).toEqual([
       "Bash",
       "Read",
@@ -128,6 +128,7 @@ describe("builtin names", () => {
       "Glob",
       "Grep",
       "Deliver",
+      "FetchAttachment",
       "TaskOutput",
       "TaskStop",
       "TaskList",
@@ -219,12 +220,13 @@ describe("builtin names", () => {
     expect(byName.get("ScheduleUpdate")?.callPolicy).toBeTypeOf("function");
   });
 
-  it("the legacy map covers the 12 old names, one per new name (the task, web, message, Platform, CurrentTime and schedule tools never had one)", () => {
+  it("the legacy map covers the 12 old names, one per new name (the task, web, message, Platform, CurrentTime, schedule and attachment tools never had one)", () => {
     expect(Object.keys(LEGACY_BUILTINS)).toHaveLength(12);
     const never: readonly string[] = [
       BUILTIN.TaskOutput,
       BUILTIN.TaskStop,
       BUILTIN.TaskList,
+      BUILTIN.FetchAttachment,
       BUILTIN.SendMessage,
       BUILTIN.SubagentHandback,
       ...WEB_TOOL_NAMES,

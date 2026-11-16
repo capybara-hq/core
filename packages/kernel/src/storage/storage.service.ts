@@ -105,7 +105,7 @@ export class PrefixedStorage {
 
   private scopedStore(ks: KeySpace): ObjectStore {
     const scoped = () => new ScopedStore(this.require(), ks);
-    return {
+    const store: ObjectStore = {
       put: async (key, body, opts) => scoped().put(key, body, opts),
       get: async (key, opts) => scoped().get(key, opts),
       head: async (key) => scoped().head(key),
@@ -115,6 +115,14 @@ export class PrefixedStorage {
       presignGet: async (key, opts) => scoped().presignGet(key, opts),
       presignPut: async (key, opts) => scoped().presignPut(key, opts),
     };
+    // the unsigned URI of a key (`s3://bucket/key`, no credentials) comes from the provider when it
+    // has one and carries the prefix; without it `uri` stays absent (the caller falls back)
+    const provider = this.d.provider();
+    const uri = provider?.uri;
+    if (provider !== undefined && uri !== undefined) {
+      store.uri = (key) => uri.call(provider, ks.key(key));
+    }
+    return store;
   }
 
   /** 删除该组织的全部对象：`kernel/<orgId>/` 与每个插件的 `plugins/<插件>/<orgId>/`。返回删除数。 */

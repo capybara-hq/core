@@ -78,6 +78,8 @@ export interface QueuedFile {
   attachmentId: string;
   name: string;
   mediaType: string;
+  /** The attachment's size in bytes when the block carries it (the chip shows it). */
+  size?: number;
 }
 
 /** What `POST …/queue` takes (the message fields that can be queued). */

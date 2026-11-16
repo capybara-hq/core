@@ -110,21 +110,18 @@ test("拖入与粘贴文件：同样上传并随消息发送", async ({ page }) 
 test("前端拦下不允许的类型：显示与内核错误码一致的文案，不能发送，移除后恢复", async ({ page }) => {
   await openChat(page, "Files agent");
   await page.locator('input[type="file"]').setInputFiles({
-    name: "a.zip",
-    mimeType: "application/zip",
-    buffer: Buffer.from("PK"),
+    name: "a.exe",
+    mimeType: "application/x-msdownload",
+    buffer: Buffer.from("MZ"),
   });
   const files = draftFiles(page);
-  // 文案由内核 GET /attachments/limits 返回的类型拼出
+  // 文案由内核 GET /attachments/limits 返回的类型拼出（至多六个标签，再补数量）
   await expect(files.getByRole("alert")).toHaveText(
-    zh.chat.fileTypeNotAllowed.replace(
-      "{types}",
-      "PNG / JPEG / GIF / WebP / PDF / TXT / Markdown / CSV",
-    ),
+    zh.chat.fileTypeNotAllowed.replace("{types}", "PNG / JPEG / GIF / WebP / PDF / TXT 等 13 种"),
   );
   await composer(page).fill("echo:hi");
   await expect(sendButton(page)).toBeDisabled();
-  await files.getByRole("button", { name: "移除 a.zip" }).click();
+  await files.getByRole("button", { name: "移除 a.exe" }).click();
   await expect(files).toHaveCount(0);
   await expect(sendButton(page)).toBeEnabled();
 });

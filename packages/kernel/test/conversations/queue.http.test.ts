@@ -4,6 +4,7 @@ import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { QUEUE_MAX_ITEMS } from "../../src/conversations/queue.js";
+import { ConversationQueue } from "../../src/conversations/queue.service.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import {
@@ -593,6 +594,37 @@ describe("offboarding and queue dispatch lock in the same order (final review m2
     const removed = await removing;
     expect(removed.statusCode, removed.body).toBeLessThan(300);
     expect(await queueRows(conv)).toEqual([]);
+  });
+});
+
+describe("queued files keep their chip metadata (attachments-on-demand)", () => {
+  it("a queued file attachment is listed with its size, file types included", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    const id = randomUUID();
+    const XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    await db
+      .insertInto("attachments")
+      .values({
+        id,
+        org_id: orgId,
+        account_id: ownerId,
+        name: "book.xlsx",
+        content_type: XLSX,
+        size: 1234,
+        object_key: `attachments/${id}`,
+        status: "ready",
+        etag: "e1",
+      })
+      .execute();
+    // the app's own queue (one transaction host with its conversations service)
+    const { item } = await k.app.get(ConversationQueue).add(orgId, conv, ownerId, {
+      text: "process this",
+      clientMessageId: "with-file",
+      files: [id],
+    });
+    expect(item?.files).toEqual([
+      { attachmentId: id, name: "book.xlsx", mediaType: XLSX, size: 1234 },
+    ]);
   });
 });
 

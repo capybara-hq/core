@@ -66,20 +66,20 @@ export type ModelCallPurpose = "step" | "compaction" | "title" | "web_fetch" | "
 export type UsagePurpose = ModelCallPurpose | "embedding";
 
 /**
- * An image or document of a `model.request` payload. Hook payloads never carry media bytes or
- * attachment ids: each image or document block is replaced by this placeholder.
+ * An image, document or file of a `model.request` payload. Hook payloads never carry media bytes or
+ * attachment ids: each image / document / file block is replaced by this placeholder.
  * `size` is the size of the bytes sent to the provider, in bytes (0 when unknown).
  */
 export interface HookMediaPlaceholder {
   type: "media_omitted";
-  kind: "image" | "document";
+  kind: "image" | "document" | "file";
   mediaType: string;
   size: number;
 }
 
-/** A content block of a `model.request` payload: image and document blocks become placeholders. */
+/** A content block of a `model.request` payload: image, document and file blocks become placeholders. */
 export type HookContentBlock =
-  | Exclude<ContentBlock, { type: "image" } | { type: "document" }>
+  | Exclude<ContentBlock, { type: "image" } | { type: "document" } | { type: "file" }>
   | HookMediaPlaceholder;
 
 /** A message of a `model.request` payload (see {@link HookContentBlock}). */

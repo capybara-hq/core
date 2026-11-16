@@ -5,7 +5,9 @@ import {
   BubbleAttachments,
   Disclosure,
   FileOutputs,
+  formatBytes,
   ImageOutput,
+  ImageZoom,
   isInlineImageType,
   Prose,
   RunDivider,
@@ -439,6 +441,8 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
     selectedFile,
     removedFiles,
   } = c;
+  /** The image this entry's zoom shows (§5.6): a thumbnail click sets it, closing clears it. */
+  const [zoomId, setZoomId] = useState<string | null>(null);
   // Callbacks go through the ref at call time: a memoized entry never calls a stale one.
   const cb = c.cb;
   const onRetry = c.has.retry ? (d: FailedRun) => cb.current.onRetry?.(d) : undefined;
@@ -641,6 +645,8 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
   const entry = (e: TimelineEntry): ReactNode => {
     switch (e.kind) {
       case "user": {
+        const srcOf = (id: string) =>
+          `${attachmentDownloadUrl(orgId, id)}${retried.has(id) ? "?retry=1" : ""}`;
         const atts: BubbleAttachment[] = [
           ...e.files.map(
             (f): BubbleAttachment => ({
@@ -648,11 +654,8 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
               kind: f.kind === "image" ? "image" : "file",
               name: f.name,
               type: typeBadge(f.name, f.mediaType),
-              ...(f.kind === "image"
-                ? {
-                    src: `${attachmentDownloadUrl(orgId, f.attachmentId)}${retried.has(f.attachmentId) ? "?retry=1" : ""}`,
-                  }
-                : {}),
+              ...(f.size !== undefined ? { size: formatBytes(f.size) } : {}),
+              ...(f.kind === "image" ? { src: srcOf(f.attachmentId) } : {}),
             }),
           ),
           ...e.attachments.map(
@@ -663,6 +666,8 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
             }),
           ),
         ];
+        // The attachment the zoom is showing, if any (undefined while the dialog is closed)
+        const zoomed = e.files.find((f) => f.attachmentId === zoomId);
         const details =
           e.instructions !== undefined || e.waitsFor !== undefined || e.pending ? (
             <>
@@ -686,26 +691,47 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
             </>
           ) : undefined;
         return (
-          <UserBubble
-            text={e.text}
-            {...(e.pending ? { queued: true } : {})}
-            {...(e.sender ? { sender: e.sender.name ?? t("parentAgent") } : {})}
-            {...(e.skill ? { skill: e.skill.label } : {})}
-            {...(details !== undefined ? { details } : {})}
-            {...(atts.length > 0
-              ? {
-                  attachments: (
-                    <BubbleAttachments
-                      items={atts}
-                      onImageError={onImageError}
-                      onOpen={(id) => {
-                        if (!id.startsWith("@")) openDownload(attachmentDownloadUrl(orgId, id));
-                      }}
-                    />
-                  ),
-                }
-              : {})}
-          />
+          <>
+            <UserBubble
+              text={e.text}
+              {...(e.pending ? { queued: true } : {})}
+              {...(e.sender ? { sender: e.sender.name ?? t("parentAgent") } : {})}
+              {...(e.skill ? { skill: e.skill.label } : {})}
+              {...(details !== undefined ? { details } : {})}
+              {...(atts.length > 0
+                ? {
+                    attachments: (
+                      <BubbleAttachments
+                        items={atts}
+                        onImageError={onImageError}
+                        onOpen={(id) => {
+                          const file = e.files.find((f) => f.attachmentId === id);
+                          // An image zooms in the page; every other attachment downloads as before.
+                          if (file?.kind === "image") setZoomId(id);
+                          else if (!id.startsWith("@"))
+                            openDownload(attachmentDownloadUrl(orgId, id));
+                        }}
+                      />
+                    ),
+                  }
+                : {})}
+            />
+            {e.files.some((f) => f.kind === "image") ? (
+              <ImageZoom
+                open={zoomId !== null}
+                onOpenChange={(open) => {
+                  if (!open) setZoomId(null);
+                }}
+                src={zoomed !== undefined ? srcOf(zoomed.attachmentId) : ""}
+                name={zoomed?.name ?? ""}
+                {...(zoomed?.size !== undefined ? { size: formatBytes(zoomed.size) } : {})}
+                onDownload={() => {
+                  if (zoomed !== undefined)
+                    openDownload(attachmentDownloadUrl(orgId, zoomed.attachmentId));
+                }}
+              />
+            ) : null}
+          </>
         );
       }
       case "prose":

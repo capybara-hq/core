@@ -92,17 +92,17 @@ const base64Bytes = (data: string): number => {
 };
 
 /**
- * The `model.request` payload's request (F10, I-3): the request sent to the provider with every image
- * and document block replaced by a {@link HookMediaPlaceholder} (`kind`, `mediaType`, decoded `size`),
- * so hook payloads carry neither media bytes nor attachment ids. Media never sits outside user
- * messages, but every message is projected anyway. Building the copy also keeps the per-call clone
- * and freeze of the payload small. A `ref` source should never reach here (the kernel resolves refs
- * before sending); it becomes a placeholder of size 0 and logs a warning.
+ * The `model.request` payload's request (F10, I-3): the request sent to the provider with every image,
+ * document and file block replaced by a {@link HookMediaPlaceholder} (`kind`, `mediaType`, decoded
+ * `size`), so hook payloads carry neither media bytes nor attachment ids. Media never sits outside
+ * user messages, but every message is projected anyway. Building the copy also keeps the per-call
+ * clone and freeze of the payload small. A `ref` source should never reach here (the kernel resolves
+ * refs before sending); it becomes a placeholder of size 0 and logs a warning.
  */
 export function hookRequestOf(request: ModelRequest, log?: Pick<Logger, "warn">): HookModelRequest {
   let refs = 0;
   const project = (b: ContentBlock): HookContentBlock => {
-    if (b.type !== "image" && b.type !== "document") return b;
+    if (b.type !== "image" && b.type !== "document" && b.type !== "file") return b;
     if (b.source.kind === "ref") refs++;
     return {
       type: "media_omitted",

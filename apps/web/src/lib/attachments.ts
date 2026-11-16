@@ -26,7 +26,18 @@ export const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"
  * `MEDIA_LIMITS.imageBytes`）。以内核的错误码为准，这里只是提前拦下。
  */
 export const DEFAULT_LIMITS: AttachmentLimits = {
-  types: [...IMAGE_TYPES, "application/pdf", "text/plain", "text/markdown", "text/csv"],
+  types: [
+    ...IMAGE_TYPES,
+    "application/pdf",
+    "text/plain",
+    "text/markdown",
+    "text/csv",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/zip",
+    "application/json",
+  ],
   maxBytes: 20_971_520,
   imageMaxBytes: 5_242_880,
   maxPerMessage: 10,
@@ -50,6 +61,11 @@ const BY_EXTENSION: Record<string, string> = {
   md: "text/markdown",
   markdown: "text/markdown",
   csv: "text/csv",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  zip: "application/zip",
+  json: "application/json",
 };
 
 /** 文件的内容类型：去参数、转小写；为空时按扩展名推断。 */
@@ -179,9 +195,24 @@ export async function uploadAttachment(
   return finalizeAttachment(orgId, created.id, opts.signal);
 }
 
-/** 允许类型的简短列表（预检文案用）：`PNG / JPEG / … / CSV`。 */
-export const typeList = (types: readonly string[]): string =>
-  types.map(attachmentTypeLabel).join(" / ");
+/** How many labels the refusal line shows before the count. */
+const TYPE_LIST_LABELS = 6;
+
+/**
+ * The allowed types for the refusal line: at most six labels joined by " / ", then the localized
+ * count ("PNG / … / TXT 等 13 种" / "PNG / … / TXT and 13 total"), so the line stays short however
+ * many types the deployment allows.
+ */
+export const typeList = (
+  types: readonly string[],
+  /** The "and N total" wording of the caller's locale: a translated template, not a catalog import
+   *  (importing the message catalogs here would put both of them in the chat chunks). */
+  more: (total: number) => string,
+): string => {
+  const labels = types.map(attachmentTypeLabel);
+  if (labels.length <= TYPE_LIST_LABELS) return labels.join(" / ");
+  return `${labels.slice(0, TYPE_LIST_LABELS).join(" / ")} ${more(labels.length)}`;
+};
 
 /** 文件卡片上的类型说明。 */
 export function attachmentTypeLabel(mediaType: string): string {
@@ -202,6 +233,16 @@ export function attachmentTypeLabel(mediaType: string): string {
       return "Markdown";
     case "text/csv":
       return "CSV";
+    case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+      return "XLSX";
+    case "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+      return "DOCX";
+    case "application/vnd.openxmlformats-officedocument.presentationml.presentation":
+      return "PPTX";
+    case "application/zip":
+      return "ZIP";
+    case "application/json":
+      return "JSON";
     default:
       return mediaType;
   }

@@ -99,6 +99,9 @@ function samePlan(a: FitPlan | null | undefined, b: FitPlan | undefined): boolea
  * - `media_missing`：某附件记录里不是「不再可用」，还原时却取不到；
  * - `media_changed`（只在基线判定）：其余任何媒体结果与记录不同（按附件 id 比 outcome 与 etag：预算省略、
  *   图片数 / 页数上限、对象被替换后 etag 变了等）；
+ * - `text_inline_threshold` (attachments-on-demand spec §5.2): a text attachment the record has as
+ *   `inline` under the old 50 000-character rule — or as `bytes`, its text-document shape for a model
+ *   with `documents`; the 8 000-character rule renders it as a reference;
  * - `context_fit` (context compaction spec §4.9, never for a baseline): the candidate model's window
  *   makes the hard fit guard plan a different trim than the recorded `model_call.request.fit` (the
  *   recorded plan is replayed for a baseline; a candidate applies its recomputed plan).
@@ -127,6 +130,13 @@ export type DriftReason =
   | "media_missing"
   | "media_changed"
   /**
+   * Attachments-on-demand spec §5.2: a text attachment the log recorded as inlined under the old
+   * 50 000-character threshold — inline, or a text document (`bytes`) for a model with `documents` —
+   * is a reference now that the threshold is 8 000 (the log holds the `ref`, the inline was the
+   * request's). The rebuilt request is right; it differs from the record.
+   */
+  | "text_inline_threshold"
+  /**
    * Context compaction spec §4.9: a candidate model whose context window makes the hard-fit guard
    * trim differently from the recorded plan (`model_call.request.fit`). The fitted request still
    * goes out against the candidate's window.
@@ -147,6 +157,7 @@ const DRIFT_ORDER: readonly DriftReason[] = [
   "model_switched",
   "media_missing",
   "media_changed",
+  "text_inline_threshold",
   "context_fit",
   "tool_unmatched",
 ];
@@ -434,7 +445,11 @@ export function reconstructRequest(
   const recordedMedia = new Map((rec.media ?? []).map((m) => [m.attachmentId, m]));
   for (const m of meta.media ?? []) {
     const was = recordedMedia.get(m.attachmentId);
-    if (m.outcome === "unavailable" && was?.outcome !== "unavailable") {
+    if (m.outcome === "reference" && (was?.outcome === "inline" || was?.outcome === "bytes")) {
+      // the text inline rule changed (§5.2): the record inlined it under the old threshold — as
+      // `inline` for a model without documents, as a text document (`bytes`) for one with them
+      drift.add("text_inline_threshold");
+    } else if (m.outcome === "unavailable" && was?.outcome !== "unavailable") {
       drift.add("media_missing");
     } else if (
       baseline &&
