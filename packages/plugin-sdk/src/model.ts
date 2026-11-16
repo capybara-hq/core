@@ -3,6 +3,7 @@
  * 当前契约为 `model-provider@2`（`ModelProvider` / `ModelInfo` / `ModelRequest`，参数由插件按模型声明，
  * 见 `model-params.ts`）；旧契约 `model-provider@1`（`ModelProviderV1` 等）由内核经适配层继续支持。
  */
+import type { ModelCallPurpose } from "./hooks.js";
 import type { Effort, ModelParameter, ParamValue } from "./model-params.js";
 import type { LocalizedName } from "./plugin-package.js";
 
@@ -236,6 +237,12 @@ export interface ModelRequest {
   params: Record<string, ParamValue>;
   /** @deprecated `model-provider@1` 用；`@2` 插件读 `params.effort`。 */
   effort?: Effort;
+  /**
+   * What this call is for, when the kernel says so: `"compaction"` for a conversation summary call.
+   * Absent on ordinary step calls. Informational (a scripted test model keys on it); real providers
+   * ignore it and must not forward it to a vendor API.
+   */
+  purpose?: ModelCallPurpose;
 }
 
 /** `model-provider@1` 的请求：没有 `params` 与 `toolChoice`。 */

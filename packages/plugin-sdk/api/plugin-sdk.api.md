@@ -2143,6 +2143,7 @@ export interface ModelRequest {
     messages: ModelMessage[];
     model: string;
     params: Record<string, ParamValue>;
+    purpose?: ModelCallPurpose;
     system: {
         text: string;
         cache: boolean;

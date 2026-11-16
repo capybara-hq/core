@@ -9,9 +9,6 @@ import { scheduleHeader, senderTranscriptLabel } from "./run-context.js";
 import { estimateTokens } from "./tokens.js";
 import { toolsChangedText } from "./tool-changes.js";
 
-/** 压缩请求的标记：放在 system 中，便于识别（model-fake 据此返回摘要）。 */
-export const COMPACTION_MARKER = "CAPYBARA_COMPACTION";
-
 /**
  * The summary request's output cap when the caller gives none: the built-in default of the
  * `compaction.maxOutputTokens` setting (context compaction spec §4.8). The effective setting is
@@ -29,7 +26,6 @@ const MIN_SUMMARY_RATIO = 0.05;
  * with nine sections; only the `<summary>` is stored and sent again in later requests.
  */
 const COMPACTION_INSTRUCTION = [
-  COMPACTION_MARKER,
   "You are summarizing the earlier part of a conversation between people and an AI agent, so the agent can continue without the full history.",
   "If the transcript starts with an earlier summary, merge it into your summary.",
   "Write in the same language as the conversation.",
@@ -498,7 +494,7 @@ function splitLine(line: string, max: number): string[] {
 }
 
 /**
- * The summary request: the marked English instruction as the system prompt and the transcript as
+ * The summary request: the English instruction (request `purpose: "compaction"`) as the system prompt and the transcript as
  * the only user message. `maxOutputTokens` is the effective `compaction.maxOutputTokens` setting,
  * which the caller narrows to the model's own cap (context compaction spec §4.8); omitted, it is
  * the built-in default.
@@ -520,6 +516,7 @@ export function buildCompactionRequest(
     tools: [],
     maxOutputTokens,
     params: {},
+    purpose: "compaction",
   };
 }
 

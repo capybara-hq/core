@@ -24,10 +24,7 @@ import { ExtensionHost } from "../../src/extensions/host.js";
 import { createLogger } from "../../src/log.js";
 import { COMPACTION_SETTINGS } from "../../src/runtime/compaction-settings.service.js";
 import type { MediaBytes, MediaInfo } from "../../src/runtime/context/build.js";
-import {
-  COMPACTION_MARKER,
-  compactionRequestOverhead,
-} from "../../src/runtime/context/compaction.js";
+import { compactionRequestOverhead } from "../../src/runtime/context/compaction.js";
 import { estimateTokens } from "../../src/runtime/context/tokens.js";
 import {
   BUDGET_WRAP_UP_REMINDER,
@@ -970,10 +967,7 @@ describe("runModelStep", () => {
       // 供应商把绝大部分输入报为缓存读，inputTokens 只是未缓存部分；三者之和等于真实输入。
       stubImpl = stub(
         [stubInfo("cached", { contextWindow: 2000 })],
-        (req) =>
-          req.system.some((x) => x.text.includes(COMPACTION_MARKER))
-            ? `Summary: ${"s".repeat(300)}`
-            : "answer",
+        (req) => (req.purpose === "compaction" ? `Summary: ${"s".repeat(300)}` : "answer"),
         (_req, estimate) => ({
           inputTokens: 20,
           outputTokens: 2,
@@ -1055,9 +1049,7 @@ describe("runModelStep", () => {
       // bounds the target was about one token, so every step compacted and trimmed (spec §4.1)
       const model = stubInfo("wide-out", { contextWindow: 2000, maxOutputTokens: 4096 });
       const s = stub([model], (req) =>
-        req.system.some((x) => x.text.includes(COMPACTION_MARKER))
-          ? `Summary: ${"s".repeat(300)}`
-          : "ok",
+        req.purpose === "compaction" ? `Summary: ${"s".repeat(300)}` : "ok",
       );
       stubImpl = s;
       const agent = agentWith({ model: { provider: "stub", model: "wide-out" } });
@@ -1188,15 +1180,13 @@ describe("runModelStep", () => {
       const scratchpad = `<analysis>${"unfinished reasoning ".repeat(30)}`;
       const s = stub(
         [stubInfo("small", { contextWindow: 15_000, maxOutputTokens: 1000 })],
-        (req) =>
-          req.system.some((x) => x.text.includes(COMPACTION_MARKER)) ? scratchpad : "answer",
+        (req) => (req.purpose === "compaction" ? scratchpad : "answer"),
       );
       stubImpl = {
         ...s,
         async *stream(req, options) {
           for await (const event of s.stream(req, options)) {
-            yield event.type === "message_complete" &&
-            req.system.some((x) => x.text.includes(COMPACTION_MARKER))
+            yield event.type === "message_complete" && req.purpose === "compaction"
               ? { ...event, stopReason: "max_tokens" as const }
               : event;
           }
@@ -1217,9 +1207,7 @@ describe("runModelStep", () => {
         expect(result.content).toEqual([{ type: "text", text: "answer" }]);
         expect(await ofType("compaction_summary")).toHaveLength(0);
         expect(await ofType("compaction_failed")).toHaveLength(1);
-        const request = s.calls.find(
-          (c) => !c.system.some((x) => x.text.includes(COMPACTION_MARKER)),
-        );
+        const request = s.calls.find((c) => c.purpose !== "compaction");
         expect(JSON.stringify(request?.messages)).toContain(marker);
         expect(JSON.stringify(request?.messages)).not.toContain(scratchpad);
       });
@@ -1230,8 +1218,7 @@ describe("runModelStep", () => {
       // where the backoff still applies
       const s = stub(
         [stubInfo("small", { contextWindow: 15_000, maxOutputTokens: 1000 })],
-        (req) =>
-          req.system.some((x) => x.text.includes(COMPACTION_MARKER)) ? "too short" : "answer",
+        (req) => (req.purpose === "compaction" ? "too short" : "answer"),
       );
       stubImpl = s;
       // 3000 ASCII characters per turn ≈ 1505 tokens, so one attempt's transcript (5 turns, and 7
@@ -1256,8 +1243,7 @@ describe("runModelStep", () => {
         const failed = await ofType("compaction_failed");
         expect(failed.map((f) => f.payload.attempt)).toEqual([1]);
         expect(await ofType("compaction_summary")).toHaveLength(0);
-        const compactionCalls = () =>
-          s.calls.filter((c) => c.system.some((x) => x.text.includes(COMPACTION_MARKER))).length;
+        const compactionCalls = () => s.calls.filter((c) => c.purpose === "compaction").length;
         expect(compactionCalls()).toBe(1);
 
         // 下一轮（失败后新增 1 个 user 轮次 < 2^1）：跳过压缩。
@@ -1278,9 +1264,7 @@ describe("runModelStep", () => {
 
     it("the hard line compacts even with enabled: false, and proactive compaction stays off below it (spec §4.1)", async () => {
       stubImpl = stub([stubInfo("tight", { contextWindow: 6000, maxOutputTokens: 1000 })], (req) =>
-        req.system.some((x) => x.text.includes(COMPACTION_MARKER))
-          ? `Summary: ${"s".repeat(300)}`
-          : "answer",
+        req.purpose === "compaction" ? `Summary: ${"s".repeat(300)}` : "answer",
       );
       const agent = agentWith({ model: { provider: "stub", model: "tight" } });
       const original = deps.compactionSettings;
@@ -1318,7 +1302,7 @@ describe("runModelStep", () => {
 
     it("the hard line still attempts compaction during a backoff (spec §4.1)", async () => {
       stubImpl = stub([stubInfo("tight", { contextWindow: 6000, maxOutputTokens: 1000 })], (req) =>
-        req.system.some((x) => x.text.includes(COMPACTION_MARKER)) ? "too short" : "answer",
+        req.purpose === "compaction" ? "too short" : "answer",
       );
       const agent = agentWith({ model: { provider: "stub", model: "tight" } });
       for (let i = 0; i < 30; i++) {
@@ -1409,7 +1393,7 @@ describe("runModelStep", () => {
       it("a context_overflow then success after forced compaction logs compaction_summary before the retried model_call", async () => {
         let stepCalls = 0;
         const s = stub([stubInfo("compact")], (req) => {
-          if (req.system.some((x) => x.text.includes(COMPACTION_MARKER))) {
+          if (req.purpose === "compaction") {
             return `Summary: ${"s".repeat(300)}`;
           }
           stepCalls++;
@@ -1464,7 +1448,7 @@ describe("runModelStep", () => {
         let fallbackStepCalls = 0;
         const s = stub([stubInfo("main"), stubInfo("fb", { contextWindow: 4000 })], (req) => {
           if (req.model === "main") throw new ModelError("server", "down", { retryAfterMs: 1 });
-          if (req.system.some((x) => x.text.includes(COMPACTION_MARKER))) {
+          if (req.purpose === "compaction") {
             return `Summary: ${"s".repeat(300)}`;
           }
           fallbackStepCalls++;
@@ -1480,9 +1464,7 @@ describe("runModelStep", () => {
         });
         await withSettings({ enabled: false, reserveTokens: 0 }, async () => {
           expect((await step({ agent })).content).toEqual([{ type: "text", text: "fb answer" }]);
-          const compactionCalls = s.calls.filter((c) =>
-            c.system.some((x) => x.text.includes(COMPACTION_MARKER)),
-          );
+          const compactionCalls = s.calls.filter((c) => c.purpose === "compaction");
           expect(compactionCalls).toHaveLength(1);
           expect(compactionCalls[0]?.model).toBe("fb");
         });
@@ -1492,7 +1474,7 @@ describe("runModelStep", () => {
         const id = randomUUID();
         let compactionCalls = 0;
         const s = stub([vision()], (req) => {
-          if (req.system.some((x) => x.text.includes(COMPACTION_MARKER))) {
+          if (req.purpose === "compaction") {
             compactionCalls++;
             return `Summary: ${"s".repeat(300)}`;
           }
@@ -1523,7 +1505,7 @@ describe("runModelStep", () => {
         const s = stub(
           [stubInfo("trimmed", { contextWindow: 2000, maxOutputTokens: 100 })],
           (req) => {
-            if (req.system.some((x) => x.text.includes(COMPACTION_MARKER))) return "too short";
+            if (req.purpose === "compaction") return "too short";
             if (estimateTokens(req.messages, req.system, req.tools) > 1500) {
               throw new ModelError("context_overflow", "estimate said it fit");
             }
@@ -1564,7 +1546,7 @@ describe("runModelStep", () => {
         stubImpl = stub(
           [stubInfo("aggressive", { contextWindow: 20_000, maxOutputTokens: 100 })],
           (req) => {
-            if (req.system.some((x) => x.text.includes(COMPACTION_MARKER))) return "too short";
+            if (req.purpose === "compaction") return "too short";
             calls++;
             if (calls <= 2) throw new ModelError("context_overflow", "estimate said it fit");
             return "trimmed answer";
@@ -1600,7 +1582,7 @@ describe("runModelStep", () => {
 
       it("a persistent overflow across a fallback stops at four model_call rows with model.context_overflow", async () => {
         const s = stub([stubInfo("main"), stubInfo("fb", { contextWindow: 4000 })], (req) => {
-          if (req.system.some((x) => x.text.includes(COMPACTION_MARKER))) {
+          if (req.purpose === "compaction") {
             return `Summary: ${"s".repeat(300)}`;
           }
           throw new ModelError("context_overflow", "always too long");
@@ -1620,8 +1602,7 @@ describe("runModelStep", () => {
         });
       });
 
-      const isCompactionCall = (req: ModelRequest): boolean =>
-        req.system.some((x) => x.text.includes(COMPACTION_MARKER));
+      const isCompactionCall = (req: ModelRequest): boolean => req.purpose === "compaction";
 
       const compactionUsages = async () =>
         (await ofType("usage")).filter((e) => e.payload.purpose === "compaction");
@@ -1935,7 +1916,7 @@ describe("runModelStep", () => {
         threshold: 0.5,
       };
       const compactionCalls = (calls: ModelRequest[]) =>
-        calls.filter((c) => c.system.some((x) => x.text.includes(COMPACTION_MARKER)));
+        calls.filter((c) => c.purpose === "compaction");
       const transcriptOf = (req: ModelRequest): string => {
         const c = req.messages[0]?.content;
         return Array.isArray(c) && c[0]?.type === "text" ? c[0].text : "";
@@ -1945,9 +1926,7 @@ describe("runModelStep", () => {
         const seen: ModelRequest[] = [];
         stubImpl = stub([chunked()], (req) => {
           seen.push(req);
-          return req.system.some((x) => x.text.includes(COMPACTION_MARKER))
-            ? `Summary: ${"s".repeat(300)}`
-            : "answer";
+          return req.purpose === "compaction" ? `Summary: ${"s".repeat(300)}` : "answer";
         });
         const agent = agentWith({ model: { provider: "stub", model: "chunked" } });
         await withSettings(settings, async () => {
@@ -1986,9 +1965,7 @@ describe("runModelStep", () => {
         const seen: ModelRequest[] = [];
         stubImpl = stub([chunked()], (req) => {
           seen.push(req);
-          return req.system.some((x) => x.text.includes(COMPACTION_MARKER))
-            ? `Summary: ${"s".repeat(300)}`
-            : "answer";
+          return req.purpose === "compaction" ? `Summary: ${"s".repeat(300)}` : "answer";
         });
         const agent = agentWith({ model: { provider: "stub", model: "chunked" } });
         await withSettings(settings, async () => {
@@ -2013,7 +1990,7 @@ describe("runModelStep", () => {
       it("a failing middle chunk writes one compaction_failed naming the chunk and no summary", async () => {
         let attempts = 0;
         stubImpl = stub([chunked()], (req) => {
-          if (req.system.some((x) => x.text.includes(COMPACTION_MARKER))) {
+          if (req.purpose === "compaction") {
             attempts++;
             if (attempts === 2) throw new ModelError("server", "chunk blew up");
             return `Summary: ${"s".repeat(300)}`;
@@ -2040,7 +2017,7 @@ describe("runModelStep", () => {
       it("an empty intermediate summary fails the chunk instead of silently dropping earlier chunks", async () => {
         let attempts = 0;
         stubImpl = stub([chunked()], (req) => {
-          if (req.system.some((x) => x.text.includes(COMPACTION_MARKER))) {
+          if (req.purpose === "compaction") {
             attempts++;
             // only the analysis scratchpad: extractSummary yields nothing to carry forward
             if (attempts === 2) return "<analysis>still thinking</analysis>";
@@ -2068,9 +2045,7 @@ describe("runModelStep", () => {
 
       it("publishes preparing → summarizing (chars, chunk i/N) → writing, then clears", async () => {
         stubImpl = stub([chunked()], (req) =>
-          req.system.some((x) => x.text.includes(COMPACTION_MARKER))
-            ? `Summary: ${"s".repeat(300)}`
-            : "answer",
+          req.purpose === "compaction" ? `Summary: ${"s".repeat(300)}` : "answer",
         );
         const agent = agentWith({ model: { provider: "stub", model: "chunked" } });
         const updates: {
@@ -2116,9 +2091,7 @@ describe("runModelStep", () => {
         const seen: ModelRequest[] = [];
         stubImpl = stub([tiny], (req) => {
           seen.push(req);
-          return req.system.some((x) => x.text.includes(COMPACTION_MARKER))
-            ? `Summary: ${"s".repeat(300)}`
-            : "answer";
+          return req.purpose === "compaction" ? `Summary: ${"s".repeat(300)}` : "answer";
         });
         const agent = agentWith({ model: { provider: "stub", model: "tiny" } });
         await withSettings(settings, async () => {
@@ -2144,7 +2117,7 @@ describe("runModelStep", () => {
         const seen: ModelRequest[] = [];
         stubImpl = stub([chunked()], (req) => {
           seen.push(req);
-          return req.system.some((x) => x.text.includes(COMPACTION_MARKER)) ? nearCap : "answer";
+          return req.purpose === "compaction" ? nearCap : "answer";
         });
         const agent = agentWith({ model: { provider: "stub", model: "chunked" } });
         await withSettings(settings, async () => {
@@ -2181,7 +2154,7 @@ describe("runModelStep", () => {
 
       it("a failed compaction publishes no writing phase and clears the progress", async () => {
         stubImpl = stub([chunked()], (req) => {
-          if (req.system.some((x) => x.text.includes(COMPACTION_MARKER))) {
+          if (req.purpose === "compaction") {
             throw new ModelError("server", "summary call failed");
           }
           return "answer";
@@ -2218,7 +2191,7 @@ describe("runModelStep", () => {
           },
           async *stream(req): AsyncGenerator<ModelStreamEvent> {
             calls.push(req);
-            if (req.system.some((x) => x.text.includes(COMPACTION_MARKER))) {
+            if (req.purpose === "compaction") {
               yield { type: "text_delta", text: "Summary so far" };
               // the person stops the run while the summary streams; the runtime's abort path
               // closes the stream instead of reading on, so the provider stops right here
@@ -2819,7 +2792,7 @@ describe("model.request hooks: stickiness, compaction (M-4, M-2, I-1)", () => {
       provider: "model-fake",
       model: "fake-small",
     });
-    expect(JSON.stringify(compactReq?.request)).toContain(COMPACTION_MARKER);
+    expect(compactReq?.request).toMatchObject({ purpose: "compaction" });
     const compactRes = seen.find((x) => x.mount === "model.response")?.payload;
     expect(compactRes).toMatchObject({ outcome: "ok", usage: expect.any(Object) });
 
