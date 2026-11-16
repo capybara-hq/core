@@ -348,8 +348,44 @@ function transcriptLine(e: ConversationEvent): string | null {
     // stale names should not be summarised as current
     case "tool_result":
       return `Tool result ${e.payload.toolKey}${e.payload.isError ? " (error)" : ""}: ${e.payload.content}`;
-    default:
+    // Every other event type is left out of the transcript: not model-visible, or re-rendered
+    // after the summary (build.ts). Adding an event type fails typecheck until it is listed.
+    case "model_call":
+    case "run_started":
+    case "usage":
+    case "device_paths":
+    case "project_root":
+    case "run_context":
+    case "plugin_context":
+    case "tool_call_started":
+    case "connection_required":
+    case "approval_requested":
+    case "approval_decided":
+    case "approval_updated":
+    case "question_asked":
+    case "question_answered":
+    case "media_excluded":
+    case "artifact_created":
+    case "skills_catalog":
+    case "hook_denied":
+    case "network_blocked":
+    case "device_code":
+    case "model_switched":
+    case "subagent_started":
+    case "subagent_dispatched":
+    case "subagent_waiting":
+    case "subagent_finished":
+    case "compaction_summary":
+    case "compaction_failed":
+    case "run_finished":
+    case "run_aborted":
+    case "run_failed":
       return null;
+    default: {
+      const unrendered: never = e;
+      void unrendered;
+      return null;
+    }
   }
 }
 

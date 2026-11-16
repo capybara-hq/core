@@ -947,8 +947,33 @@ export function buildModelRequest(input: BuildModelRequestInput): {
           if (text !== "") messages.push({ role: "system", content: text });
         }
         break;
-      default:
+      // Not model-visible as events of their own. tool_result is rendered with its assistant
+      // message's tool call (the `results` map above); compaction_summary is the `summary` that
+      // seeds the request; the rest are lifecycle, usage, approval, question and display records.
+      // Adding an event type fails typecheck here until it is listed with how it renders.
+      case "tool_result":
+      case "run_started":
+      case "usage":
+      case "tool_call_started":
+      case "connection_required":
+      case "approval_requested":
+      case "approval_decided":
+      case "approval_updated":
+      case "question_asked":
+      case "question_answered":
+      case "media_excluded":
+      case "artifact_created":
+      case "compaction_summary":
+      case "compaction_failed":
+      case "run_finished":
+      case "run_aborted":
+      case "run_failed":
         break;
+      default: {
+        const unrendered: never = e;
+        void unrendered;
+        break;
+      }
     }
   }
 
