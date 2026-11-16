@@ -1,0 +1,198 @@
+[
+  {
+    "path": ".changeset/managed-output-transport.md",
+    "beforeSha256": null,
+    "sha256": "75e111c6fc0338ea17bed3acbe834ae4cd1cda2f211accf79e08873dc319cbc2",
+    "bytes": 337,
+    "new": true
+  },
+  {
+    "path": "packages/device/src/client.ts",
+    "beforeSha256": "ba441656c5af2fff19cad5760c2f6bd916ffff646e24975134b15709cfa13ef1",
+    "sha256": "7417321a0a3e12988786814bc05bdf8f372fd82ef5b842e039693443873657b6",
+    "bytes": 19269,
+    "new": false
+  },
+  {
+    "path": "packages/device/src/server-ops.ts",
+    "beforeSha256": "8facb8cd847a1bc01e27bb01df893c8aeb8ef8185176dafeb5729f3cd9342080",
+    "sha256": "e601688f1f2b4316c3588bf388bc2d16d15c53c237067beecd2ee71de47131d7",
+    "bytes": 26664,
+    "new": false
+  },
+  {
+    "path": "packages/device/src/staged-session.ts",
+    "beforeSha256": null,
+    "sha256": "f67a74e8665f309c8978a1f8610ddf5827a1a82d5e9dc8d8bc6fb4de3e9c8c57",
+    "bytes": 3731,
+    "new": true
+  },
+  {
+    "path": "packages/device/test/staged-session.test.ts",
+    "beforeSha256": null,
+    "sha256": "81d0a9fb2fc4085f4eb46d48e1edc664c710dba0a8e8d8a30ca115157fd20f66",
+    "bytes": 9273,
+    "new": true
+  },
+  {
+    "path": "packages/kernel/src/db/kernel-schema.ts",
+    "beforeSha256": "6abc27bcba62188ee71270c39d86a94567322b191c07946fc113f172fd82ae36",
+    "sha256": "eb6f77cd619f835e14743ac7f186af45b32ad6b4fdc314e2f2adc2709edc36ff",
+    "bytes": 87135,
+    "new": false
+  },
+  {
+    "path": "packages/kernel/src/local-devices/keys.ts",
+    "beforeSha256": "27e949b852493c80d614bad8d67e12b1c0c809dd29b0b506c2a31612b2c631fa",
+    "sha256": "6ff5dd9f36750f7d21b606e309ab4d72e169de9453914183ab138658b0e8f2b1",
+    "bytes": 1941,
+    "new": false
+  },
+  {
+    "path": "packages/kernel/src/local-devices/local-device-gateway.ts",
+    "beforeSha256": "a3c2506deccb975dbead51d4532b78dfd31dc064f35548c0648f3f6e5bec14f9",
+    "sha256": "1bc6364c911aa5b76baa9c89f641b1c64931a87e5c8b00161809b503a5ae1b13",
+    "bytes": 27097,
+    "new": false
+  },
+  {
+    "path": "packages/kernel/src/local-devices/local-device-provider.ts",
+    "beforeSha256": "3155ac9b870f307a712c8f84f331796036953634fa6ed70abae62912029e5ac5",
+    "sha256": "39f30c66b2c60190dfd063f7ac535de19050e615d03599a89ec4e62f54f240f6",
+    "bytes": 22984,
+    "new": false
+  },
+  {
+    "path": "packages/kernel/src/local-devices/policy-summary.ts",
+    "beforeSha256": "110f021043fb3587ad2cccef176a5ddfd90ded47a3368e5d47fad2554b838d53",
+    "sha256": "e2c544165381b784ba6bf30ee42839bf3518c571cbee2a45cda83c776cb03352",
+    "bytes": 9629,
+    "new": false
+  },
+  {
+    "path": "packages/kernel/src/local-devices/relay.ts",
+    "beforeSha256": "be869aacba418f9fcffff2fc26fd328a028483669746b8c4dfee995caec02a0b",
+    "sha256": "00b94aedd959f55f4e09f60f33250aed09c72a1e9bf869a2a40e207eb21385ba",
+    "bytes": 20325,
+    "new": false
+  },
+  {
+    "path": "packages/kernel/src/local-devices/targets.ts",
+    "beforeSha256": "2a659d0c8486c5cf07a2c6ba14277b8a75b1c143e46fe34720bb5de92fa568ff",
+    "sha256": "b705eee6f39b9faee913785b92459cb338663f9c2780b426d331aabbcbf09995",
+    "bytes": 4544,
+    "new": false
+  },
+  {
+    "path": "packages/kernel/src/migrations/0142_starting_execution_grants.sql",
+    "beforeSha256": null,
+    "sha256": "ea99ae77da15a9c4bea1a97c7c8f1ad616081edbc0a24530ee0a6927ac1dc963",
+    "bytes": 812,
+    "new": true
+  },
+  {
+    "path": "packages/kernel/src/orgs/settings.service.ts",
+    "beforeSha256": "31afcd511bb2050da1b4ba031f7d406c1690a08d83dd49a78ca2400be1104c82",
+    "sha256": "1316fb2038ef0e06e9a83588629ebd6fe7fd7d64227189b7ff46e7c7c1a3fda0",
+    "bytes": 31214,
+    "new": false
+  },
+  {
+    "path": "packages/kernel/src/sandbox/operation-authority-types.ts",
+    "beforeSha256": null,
+    "sha256": "29ac25d4426a14cd1dac226a6edc40310541846bda91431f7027681f8d4bdfde",
+    "bytes": 1887,
+    "new": true
+  },
+  {
+    "path": "packages/kernel/src/sandbox/operation-authority.ts",
+    "beforeSha256": "bdb3f2503668d53e3e12b5beb29b79022e670ab869b82cf1402fb1a57c4af73d",
+    "sha256": "7957edf757c29e00aa2c61084a302bcd46bb4d1b880f898ba0b30df4499de5c6",
+    "bytes": 17801,
+    "new": false
+  },
+  {
+    "path": "packages/kernel/src/sandbox/operation-intents.ts",
+    "beforeSha256": "b7f060f6d16466d586cbce351b6004cf77b71ffc86bc445b4cabfaa56686f963",
+    "sha256": "61527ad8925f453c1da0cb66160b061886db881c7de4369991ec11a75cd86a92",
+    "bytes": 26265,
+    "new": false
+  },
+  {
+    "path": "packages/kernel/src/sandbox/permission-call-grants.ts",
+    "beforeSha256": "8da615fbf089e16e3f5a7734cde4609508cd0f3984dbe3bab04983bdea83e4fd",
+    "sha256": "9bf1ed0c457dad8542be8b7215683cdd9f181b23fbe5ed0a30c43815fb3f6993",
+    "bytes": 17177,
+    "new": false
+  },
+  {
+    "path": "packages/kernel/src/sandbox/permission-config-publication.ts",
+    "beforeSha256": "9e32a59f22ad737b5fb083c50a4a46e88d4d9a2ed16dfe12ab9be3c1ae139b23",
+    "sha256": "77cad71c6a7a599a04f80113f32b7031ff1df1e48a489458288dc1377714e3f5",
+    "bytes": 12366,
+    "new": false
+  },
+  {
+    "path": "packages/kernel/test/config/permission-config-activation.test.ts",
+    "beforeSha256": "9188bdb340f1371b61e3409f62f5d9c2132636870355e05abc29c2b2bfe24f16",
+    "sha256": "5e8b1240582a11874d7be57db42ee2fa0ec03b2cd323b377ee68464f8995931d",
+    "bytes": 24342,
+    "new": false
+  },
+  {
+    "path": "packages/kernel/test/local-devices/fake-machine.ts",
+    "beforeSha256": "9c9b8de57392f287eccec9cadd8caf2484ad373788f8059a0658dde93f9d9f0a",
+    "sha256": "0419539dff7d37d0907dc7d3fa60f6e54e7d77d812592fefcbac4600a77c1840",
+    "bytes": 4736,
+    "new": false
+  },
+  {
+    "path": "packages/kernel/test/local-devices/local-device-provider.test.ts",
+    "beforeSha256": "180e6dc037a5616f9b85d662db5f3481cf74c466716d035389300e21a22336f0",
+    "sha256": "7379dea480c0e328ddd90415056938f5e8105bebc5f9b48ff0d29cae8427b4b8",
+    "bytes": 31766,
+    "new": false
+  },
+  {
+    "path": "packages/kernel/test/local-devices/managed-output-transport.test.ts",
+    "beforeSha256": null,
+    "sha256": "230059f0596439f200e1107cb3323da1cb057ff92db26864fede6cd3cea89800",
+    "bytes": 11834,
+    "new": true
+  },
+  {
+    "path": "packages/kernel/test/sandbox/permission-call-grants.test.ts",
+    "beforeSha256": "f1c9798ed558ceb4662109cfbd2cecdf437378c3dc945c49ac405da71c844907",
+    "sha256": "c41f9a8b43ee0614832c9d273335c2b54075494442f7678011fa1afab9294bdb",
+    "bytes": 17232,
+    "new": false
+  },
+  {
+    "path": "packages/plugin-sdk/api/plugin-sdk.api.md",
+    "beforeSha256": "8080ad50506e9ce3a900766bbcb8358e9a0754d3b6c167c4429d19a86fff5bc3",
+    "sha256": "fc11096b3fa3150304586ee2a1e078bcb2d90b2594d673dcd19308774ac2f26d",
+    "bytes": 106105,
+    "new": false
+  },
+  {
+    "path": "packages/plugin-sdk/src/device-protocol-v3.ts",
+    "beforeSha256": "99321d736f25593796eedcf28cb8fd9d5cdc6e843fc2a36368877d4b15d75b8f",
+    "sha256": "c2760ea663e9cde3082bc14acd55e6ea16a835db4c089f5adeadf454cb047da2",
+    "bytes": 16439,
+    "new": false
+  },
+  {
+    "path": "packages/plugin-sdk/src/index.ts",
+    "beforeSha256": "b5e64db4b4a3478052cbe891225ce213caa4ad4ec67d90ce03274b703e41bd7d",
+    "sha256": "e3a368fc1097b9e39e8fc84247773e053a23e2f7a6dbade64abfadb3e89e1ead",
+    "bytes": 2320,
+    "new": false
+  },
+  {
+    "path": "packages/plugin-sdk/test/device-protocol-v3.test.ts",
+    "beforeSha256": "ae50f375f9cdb6217206c3302c871839460fc46112b36a2c13bc3f365618c8ab",
+    "sha256": "c881ede860f5ba4a12afa9a863f62f3748f6d16b8577af49fd6f4b6d434cf2fc",
+    "bytes": 9222,
+    "new": false
+  }
+]

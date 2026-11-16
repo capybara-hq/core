@@ -1,0 +1,164 @@
+{
+  "note": "Frozen handoff evidence. Historical paths and statuses inside reports reflect their original checkpoint; read the handoff document first. Source and patches are already committed; do not apply them again. Exact patch/report files containing intentional diagnostic/context whitespace are gzip-compressed; decompress them before reading and verify uncompressedSha256.",
+  "files": [
+    {
+      "file": "task-9-2-report.md.gz",
+      "sha256": "c0f929be840dd80b19931de7117bf6cb1ede23b8afee477b637c057bf2d4534d",
+      "originalPath": "/Users/grant/Capybara/core/.claude/worktrees/fix-project-file-read-mode/.superpowers/sdd/2026-11-16-permission-profile-delivery/task-9-2-report.md",
+      "uncompressedSha256": "4c5d59da239658dadcb2431eb1aef31f6c219072f9f1b49e4e510e5140b32726"
+    },
+    {
+      "file": "task-9-2-manifest.json",
+      "sha256": "5ac0508ec0f526ca1fce555fce71e9e4fcb3150585089a51cb5bedae003dc7ed",
+      "originalPath": "/Users/grant/Capybara/core/.claude/worktrees/fix-project-file-read-mode/.superpowers/sdd/2026-11-16-permission-profile-delivery/task-9-2-manifest.json"
+    },
+    {
+      "file": "task-9-2-exact-base.diff.gz",
+      "sha256": "44ecd116cd18079d39fd983b097db35e41342d9d59dcb89085c44761bcf876fb",
+      "originalPath": "/Users/grant/Capybara/core/.claude/worktrees/fix-project-file-read-mode/.superpowers/sdd/2026-11-16-permission-profile-delivery/task-9-2-exact-base.diff",
+      "uncompressedSha256": "07ee248c731c20ce8a408697ab594759e1cf18e2db063f3ad58a90e19c527b8b"
+    },
+    {
+      "file": "task-9-2-historical-fixtures.json",
+      "sha256": "3c4abafc273cda0bb50ab90931a2b980fe6ac929b3456289a83a4c8d69df5f38",
+      "originalPath": "/Users/grant/Capybara/core/.claude/worktrees/fix-project-file-read-mode/.superpowers/sdd/2026-11-16-permission-profile-delivery/task-9-2-historical-fixtures.json"
+    },
+    {
+      "file": "task-9-2-brief.md",
+      "sha256": "8a63832fd84a5740a596215c97593a8b6be311a62205c4572c8a707c94661330",
+      "originalPath": "/Users/grant/Capybara/core/.claude/worktrees/fix-project-file-read-mode/.superpowers/sdd/2026-11-16-permission-profile-delivery/task-9-2-brief.md"
+    },
+    {
+      "file": "task-9-2-final-tests.log.gz",
+      "sha256": "738bfc23d16c2b15c08df6f6deba218e9cb9f68e9e847ee68849c2705a88b564",
+      "originalPath": "/Users/grant/Capybara/core/.claude/worktrees/fix-project-file-read-mode/.superpowers/sdd/2026-11-16-permission-profile-delivery/task-9-2-final-tests.log",
+      "uncompressedSha256": "063461c3b3ea97709520777f492f4107f64cf1a5ff8685cbc862dec76d292e43"
+    },
+    {
+      "file": "task-10-plan-proposal.md",
+      "sha256": "ce2a4d5403d8f66beb106ca2fd4fd1b732d0f0d32a17e23dbe878ba36fd75754",
+      "originalPath": "/Users/grant/Capybara/core/.claude/worktrees/fix-project-file-read-mode/.superpowers/sdd/2026-11-16-permission-profile-delivery/task-10-plan-proposal.md"
+    },
+    {
+      "file": "task-10-preflight-proposal.md",
+      "sha256": "e77e8b1d67ee0a0fe88141419cbd04fbf002cd6cad08c422e873093dd27cb2b8",
+      "originalPath": "/Users/grant/Capybara/core/.claude/worktrees/fix-project-file-read-mode/.superpowers/sdd/2026-11-16-permission-profile-delivery/task-10-preflight-proposal.md"
+    },
+    {
+      "file": "task-10-amendment-report.md",
+      "sha256": "60b7eff6bc6d8c46cc0ce397e9ff42fcf2518f20c97185fafc1f5829e35e8cc8",
+      "originalPath": "/Users/grant/Capybara/core/.claude/worktrees/fix-project-file-read-mode/.superpowers/sdd/2026-11-16-permission-profile-delivery/task-10-amendment-report.md"
+    },
+    {
+      "file": "task-10-builder-review.md",
+      "sha256": "bf885c430c86ef724b059e0bb0491b284616430f5e53ad788a4ddcc3db0f0690",
+      "originalPath": "/Users/grant/Capybara/core/.claude/worktrees/fix-project-file-read-mode/.superpowers/sdd/2026-11-16-permission-profile-delivery/task-10-builder-review.md"
+    },
+    {
+      "file": "task-10-controller-preflight.md",
+      "sha256": "00cf4155dce3ccc7d8037e919a41fd53f805734adc9989ffb14284a17d97a124",
+      "originalPath": "/Users/grant/Capybara/core/.claude/worktrees/fix-project-file-read-mode/.superpowers/sdd/2026-11-16-permission-profile-delivery/task-10-controller-preflight.md"
+    },
+    {
+      "file": "task-8-1-report.md",
+      "sha256": "0bdb146ebef601df91c15a931bd72198f7054bf80ec68f9b2df4e97d223db665",
+      "originalPath": "/Users/grant/.codex/worktrees/vpn-web-verification/core/.superpowers/sdd/2026-11-16-permission-profile-delivery/task-8-1-report.md"
+    },
+    {
+      "file": "task-8-1-new-code.patch.gz",
+      "sha256": "a3e768453733e5358e2fc119059686c1b358726e70d0428c9c5c469d3eb1e18b",
+      "originalPath": "/Users/grant/.codex/worktrees/vpn-web-verification/core/.superpowers/sdd/2026-11-16-permission-profile-delivery/task-8-1-new-code.patch",
+      "uncompressedSha256": "b8f136f538a7f0ccd3bc0667bf540d3b5c91b6b6ef699a8aade4e8c73574dd90"
+    },
+    {
+      "file": "task-8-1-new-code-manifest.json",
+      "sha256": "8a10533ec75b7f40aac7a05679e21479c488a659d97cfeadf8c19030dad9e373",
+      "originalPath": "/Users/grant/.codex/worktrees/vpn-web-verification/core/.superpowers/sdd/2026-11-16-permission-profile-delivery/task-8-1-new-code-manifest.json"
+    },
+    {
+      "file": "task-8-1-full-head-manifest.json",
+      "sha256": "9b5dc2c9cbd2de0bde11bad188016b4d8eff1e0d89d9cd4ac774cdf477d94d4c",
+      "originalPath": "/Users/grant/.codex/worktrees/vpn-web-verification/core/.superpowers/sdd/2026-11-16-permission-profile-delivery/task-8-1-full-head-manifest.json"
+    },
+    {
+      "file": "task-8-1-freeze.json",
+      "sha256": "b3318e2909ec15e7aba380fdbcd2b72e084ae6deab2e84048614918cdf24d7af",
+      "originalPath": "/Users/grant/.codex/worktrees/vpn-web-verification/core/.superpowers/sdd/2026-11-16-permission-profile-delivery/task-8-1-freeze.json"
+    },
+    {
+      "file": "task-8-1-component-integration.json",
+      "sha256": "0abbc72f6d8fb757ecb7e264ba9f1003378298f75a03b1c3933e8fe6a06a39c8",
+      "originalPath": "/Users/grant/.codex/worktrees/vpn-web-verification/core/.superpowers/sdd/2026-11-16-permission-profile-delivery/task-8-1-component-integration.json"
+    },
+    {
+      "file": "task-8-1-component-preservation.json",
+      "sha256": "d863de9252038fef3a0182d18e59e526d9e50f8ba080dc1acd962cccf6083791",
+      "originalPath": "/Users/grant/.codex/worktrees/vpn-web-verification/core/.superpowers/sdd/2026-11-16-permission-profile-delivery/task-8-1-component-preservation.json"
+    },
+    {
+      "file": "task-8-1-brief.md",
+      "sha256": "c9dc1a4217d6bc2e899f53f22c777834a31a1caef2bbf8506d0702d68cb4b131",
+      "originalPath": "/Users/grant/.codex/worktrees/vpn-web-verification/core/.superpowers/sdd/2026-11-16-permission-profile-delivery/task-8-1-brief.md"
+    },
+    {
+      "file": "task-10a-report.md",
+      "sha256": "111f1c5520bc4f62fea26c7e7524047d88deac1c9f5b8ca1e2e3acc3cf5bd199",
+      "originalPath": "/Users/grant/Capybara/core/.claude/worktrees/fix-project-context-notice/.superpowers/sdd/2026-11-16-permission-profile-delivery/task-10a-report.md"
+    },
+    {
+      "file": "task-10a-review.md",
+      "sha256": "9c23c1718fd9d89ed435b16c47509ec9de4d0a3f76b2ceb7a28fd36eb363ef2f",
+      "originalPath": "/Users/grant/Capybara/core/.claude/worktrees/fix-project-context-notice/.superpowers/sdd/2026-11-16-permission-profile-delivery/task-10a-review.md"
+    },
+    {
+      "file": "capybara-bind-hydration-report.md",
+      "sha256": "d577b0b08095c420fceaa9618b41642daee0ae55a2cd3895c1202222cafde79d",
+      "originalPath": "/tmp/capybara-bind-hydration-report.md"
+    },
+    {
+      "file": "capybara-bind-hydration-review.md",
+      "sha256": "d4b142ff2db4e670178f7205b709e58e1f66d88f2636a89f959ccbda7fabacdf",
+      "originalPath": "/tmp/capybara-bind-hydration-review.md"
+    },
+    {
+      "file": "capybara-bind-validation-fix-1-report.md",
+      "sha256": "f703685043302fa9d627d57395f5e0341e91edc4cdbbc23b6454b0110bf7bb42",
+      "originalPath": "/tmp/capybara-bind-validation-fix-1-report.md"
+    },
+    {
+      "file": "capybara-bind-validation-fix-1-review.md",
+      "sha256": "a384c338c1658beb8bd25d9f3f76777425595e6eb162803f43c74c8b61155c6f",
+      "originalPath": "/tmp/capybara-bind-validation-fix-1-review.md"
+    },
+    {
+      "file": "capybara-bind-hydration-verify-validation.json",
+      "sha256": "e97731356800a49b03401593903bc3f9e3285412cfa5c0a8a0f50e7d154b3b08",
+      "originalPath": "/tmp/capybara-bind-hydration-verify-validation.json"
+    },
+    {
+      "file": "capybara-sdk-release-ea005-artifact-report.md",
+      "sha256": "54a21d3b3f195c4ae4915d5c7df4c54686fe97e8098130a48630cb65a0595c14",
+      "originalPath": "/tmp/capybara-sdk-release-ea005-artifact-report.md"
+    },
+    {
+      "file": "capybara-sdk-release-ea005-review.md",
+      "sha256": "7d24bf44350551ff89dd84a42e006a00acc7670d32686ab101b6fc2833300182",
+      "originalPath": "/tmp/capybara-sdk-release-ea005-review.md"
+    },
+    {
+      "file": "capybara-sdk-release-6caeb-equivalence.json",
+      "sha256": "cc24ffb223cbf7f6974ae09d9ba86374d963aba5efbd297d98b879fa351b57de",
+      "originalPath": "/tmp/capybara-sdk-release-6caeb-equivalence.json"
+    },
+    {
+      "file": "task-9-2-source-tsconfig.json",
+      "sha256": "2dff6b03244fa050cc4f4d194057a655f5b354a29a26ec5e132b52d9365c0ed4",
+      "originalPath": "/Users/grant/Capybara/core/.claude/worktrees/fix-project-file-read-mode/.superpowers/sdd/2026-11-16-permission-profile-delivery/task-9-2-source-tsconfig.json"
+    },
+    {
+      "file": "task-9-2-test-tsconfig.json",
+      "sha256": "f62421083ebb76492b3d98d67f956ef4d8462d1b8594f6792bf7c9e54ccaecc3",
+      "originalPath": "/Users/grant/Capybara/core/.claude/worktrees/fix-project-file-read-mode/.superpowers/sdd/2026-11-16-permission-profile-delivery/task-9-2-test-tsconfig.json"
+    }
+  ]
+}
