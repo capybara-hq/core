@@ -1,6 +1,7 @@
 import type { AgentProfile } from "./agents";
 import { apiFetch } from "./api";
 import type { OrgRole } from "./members";
+import type { PermissionProfile, PermissionSelection } from "./permissions";
 
 /**
  * 内核会话 API 的类型（浏览器端视角：只声明界面用到的字段；时间为 JSON 字符串）。
@@ -166,6 +167,22 @@ type EventBody =
         effort: string | null;
         byAccountId: string | null;
         reason: "user" | "unavailable";
+      };
+    }
+  | {
+      /**
+       * A root conversation's permission profile was set (revision 0: the first message's choice)
+       * or changed. A recorded fact only: it is not an owner's live view of the profile.
+       */
+      type: "permission_profile_changed";
+      payload: {
+        oldProfile: PermissionProfile;
+        newProfile: PermissionProfile;
+        actorAccountId: string | null;
+        reason?: "user" | "authority-changed";
+        deviceId: string | null;
+        scopeRevision: string | null;
+        revision: number;
       };
     }
   | {
@@ -774,30 +791,53 @@ const messageBody = (m: MessageInput) => ({
 });
 
 /**
- * Create on first send: the conversation and its first message in one call. A retry with the same
- * `clientMessageId` returns the same conversation.
+ * What a new conversation's first message asks for (`POST …/conversations/first-message`): the
+ * message, the permission profile chosen in the composer (with the consented scope revision for
+ * Full access) and the device and project; no device for a device-less restricted choice.
  */
-export const createConversationWithMessage = (
-  orgId: string,
-  agentId: string,
-  message: Omit<MessageInput, "retryOf">,
-  deviceId?: string,
+export interface FirstMessageRequest {
+  agentId: string;
+  message: Omit<MessageInput, "retryOf" | "clientMessageId">;
+  permission: PermissionSelection;
+  deviceId?: string;
   /** One of the device's projects to bind (project root §4.3); undefined: free mode. */
-  project?: string,
-) =>
-  apiFetch<{
-    conversation: Conversation;
-    event: ConversationEvent;
-    /** Every event the create wrote, from seq 1 (a `model_switched` first); older kernels omit it. */
-    events?: ConversationEvent[];
-  }>(base(orgId), {
+  project?: string;
+}
+
+/** The first message's answer: 201 created, or 200 for a retry of the same request. */
+export interface FirstMessageAnswer {
+  conversation: Conversation;
+  event: ConversationEvent;
+  /** Every event the create wrote, from seq 1 (the initial profile, a `model_switched` …). */
+  events?: ConversationEvent[];
+}
+
+/**
+ * The first message's exact request body, built once (the browser context included): every retry
+ * of it sends these bytes again, so a retry after a lost answer is the same request to the kernel
+ * (same `clientMessageId`, same body) and never a second conversation.
+ */
+export function serializeFirstMessage(r: FirstMessageRequest, clientMessageId: string): string {
+  return JSON.stringify({
+    agentId: r.agentId,
+    message: messageBody({ ...r.message, clientMessageId }),
+    ...(r.deviceId !== undefined ? { deviceId: r.deviceId } : {}),
+    ...(r.project !== undefined ? { project: r.project } : {}),
+    permission: r.permission,
+  });
+}
+
+/**
+ * Create on first send, atomically with the chosen permission profile: the conversation, its
+ * profile and its first message in one call (the profile governs the first operation; nothing is
+ * created and then changed). Sends `serializedBody` as it is: build it once with
+ * {@link serializeFirstMessage}. A generic 409 `conflict` is a stale displayed scope or the same
+ * id with another body; it never says whether an earlier attempt committed.
+ */
+export const submitFirstMessage = (orgId: string, serializedBody: string) =>
+  apiFetch<FirstMessageAnswer>(`${base(orgId)}/first-message`, {
     method: "POST",
-    body: JSON.stringify({
-      agentId,
-      message: messageBody(message),
-      ...(deviceId !== undefined ? { deviceId } : {}),
-      ...(project !== undefined ? { project } : {}),
-    }),
+    body: serializedBody,
   });
 
 /** Rename (owner only): a manual title is never regenerated. */

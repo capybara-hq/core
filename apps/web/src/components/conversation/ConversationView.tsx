@@ -77,7 +77,7 @@ import {
   newClientMessageId,
 } from "./ComposerBar";
 import { LeftoverBubbles, PendingBubbles, usePendingSends } from "./PendingBubbles";
-import { useLockedPermissionPicker } from "./PermissionPicker";
+import { recordedProfile, useLockedPermissionPicker } from "./PermissionPicker";
 import { useDeviceRefresh } from "./PropertiesSections";
 import { useRightAreaSlot } from "./RightArea";
 import { Thread, type ThreadProps } from "./Thread";
@@ -272,8 +272,11 @@ export function useConversationPage(
     enabled: owner,
     retryOnMount: retryOnMountOf(permissionsQ.queryKey),
   });
+  // Until the owner's read lands (a conversation just created by its first message), the profile
+  // the log recorded for it is shown: never a default, never a fabricated view.
+  const recorded = owner ? recordedProfile(conv.events) : undefined;
   const permissionPicker = useLockedPermissionPicker(
-    owner ? permissions.data?.profile : undefined,
+    owner ? (permissions.data?.profile ?? recorded) : undefined,
     permissions.data !== undefined && permissions.data.rootConversationId !== conversationId
       ? "inherited"
       : row?.scheduledTaskId

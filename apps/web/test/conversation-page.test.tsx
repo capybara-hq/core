@@ -1428,7 +1428,7 @@ describe("a new conversation (/)", () => {
   it("?agent= picks the agent; the first send creates the conversation and replaces the URL", async () => {
     resetNavigation("/");
     const calls = stubApi({
-      "POST /api/v1/orgs/o1/conversations": () =>
+      "POST /api/v1/orgs/o1/conversations/first-message": () =>
         json(201, { ...CONV("c9", { agentId: "ag2" }), event: userMsg(1, "start") }),
     });
     const { calls: server } = await renderRouteWithCache("/?agent=ag2", NEW_CHAT);
@@ -1500,7 +1500,7 @@ describe("the first message from / (conversation send spec §2.1)", () => {
     let answer: (r: Response) => void = () => {};
     let cmid = "";
     const calls = stubApi({
-      "POST /api/v1/orgs/o1/conversations": (c) => {
+      "POST /api/v1/orgs/o1/conversations/first-message": (c) => {
         cmid = (bodyOf(c) as { message: { clientMessageId: string } }).message.clientMessageId;
         return new Promise<Response>((r) => {
           answer = r;

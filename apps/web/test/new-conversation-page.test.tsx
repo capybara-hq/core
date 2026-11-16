@@ -18,11 +18,15 @@ import {
   CONV,
   DEVICES,
   envView,
+  ev,
   FakeEventSource,
   LIMITS,
   MODELS,
   noProjects,
+  permissionPreview,
+  permissionsView,
   renderChatRoute,
+  snapshotDefaults,
   userMsg,
 } from "./support/conversation";
 import { Link, resetNavigation, router } from "./support/navigation";
@@ -210,7 +214,7 @@ describe("the new conversation page (agent profile design §4)", () => {
 
   it("selecting another agent switches the quick actions and the composer's agent", async () => {
     const calls = stubApi({
-      [`POST ${ORG}/conversations`]: () =>
+      [`POST ${ORG}/conversations/first-message`]: () =>
         json(201, { ...CONV("c9", { agentId: "ag1" }), event: userMsg(1, "go") }),
     });
     await renderRouteWithCache("/", routes());
@@ -424,7 +428,7 @@ describe("the device picker (environments design §4.1)", () => {
 
   it("new conversation sends the chosen device", async () => {
     resetNavigation("/");
-    const calls = stubApi({ [`POST ${ORG}/conversations`]: createdAt });
+    const calls = stubApi({ [`POST ${ORG}/conversations/first-message`]: createdAt });
     await renderRouteWithCache("/", withDevices(DEVICES));
     const user = userEvent.setup();
     expect(picker()?.textContent).toContain(en.devices.personal);
@@ -445,7 +449,7 @@ describe("the device picker (environments design §4.1)", () => {
 
   it("picker defaults to the last used device", async () => {
     resetNavigation("/");
-    const calls = stubApi({ [`POST ${ORG}/conversations`]: createdAt });
+    const calls = stubApi({ [`POST ${ORG}/conversations/first-message`]: createdAt });
     await renderRouteWithCache("/", withDevices({ ...DEVICES, lastUsedId: "e2" }));
     expect(picker()?.textContent).toContain("Build box");
     await send("go");
@@ -533,7 +537,7 @@ describe("the device picker (environments design §4.1)", () => {
 
   it("without a cloud sandbox the picker still lists the local devices", async () => {
     resetNavigation("/");
-    const calls = stubApi({ [`POST ${ORG}/conversations`]: createdAt });
+    const calls = stubApi({ [`POST ${ORG}/conversations/first-message`]: createdAt });
     await renderRouteWithCache(
       "/",
       withDevices({
@@ -549,9 +553,9 @@ describe("the device picker (environments design §4.1)", () => {
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({ deviceId: "d1" });
   });
 
-  it("without a cloud sandbox and only offline devices, send waits and says why", async () => {
+  it("without a cloud sandbox and only offline devices, a restricted first send goes without a device", async () => {
     resetNavigation("/");
-    const calls = stubApi({ [`POST ${ORG}/conversations`]: createdAt });
+    const calls = stubApi({ [`POST ${ORG}/conversations/first-message`]: createdAt });
     await renderRouteWithCache(
       "/",
       withDevices({
@@ -562,16 +566,31 @@ describe("the device picker (environments design §4.1)", () => {
       }),
     );
     expect(picker()?.textContent).toContain("—");
+    // the reason is said, without blocking a device-less conversation
     expect(screen.getByText(en.chat.deviceOffline)).toBeTruthy();
-    await send("go");
-    await act(() => new Promise((r) => setTimeout(r, 20)));
-    expect(calls.some((c) => c.method === "POST")).toBe(false);
-    expect(router.replace).not.toHaveBeenCalled();
+    const user = userEvent.setup();
+    // Full access needs a device; the restricted choices stay
+    await user.click(screen.getByRole("button", { name: /^Permissions: / }));
+    const full = await screen.findByRole("menuitemradio", { name: /^Full access/ });
+    expect(full.getAttribute("aria-disabled")).toBe("true");
+    expect(full.textContent).toContain(en.chat.permission.reason.noDevice);
+    await user.click(screen.getByRole("menuitemradio", { name: /^Request approval/ }));
+    await user.type(input(), "go{Enter}");
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
+    const body = bodyOf(calls.find((c) => c.method === "POST")) as Record<string, unknown>;
+    expect(body).not.toHaveProperty("deviceId");
+    expect(body).not.toHaveProperty("project");
+    expect(body.permission).toEqual({ profile: "request-approval" });
+    // no device: no preview read, nothing provisioned
+    expect(calls.filter((c) => c.url.includes("permission-preview"))).toEqual([]);
+    expect(calls.filter((c) => c.method !== "GET").map((c) => c.url)).toEqual([
+      `${ORG}/conversations/first-message`,
+    ]);
   });
 
   it("without a sandbox provider there is no picker and the send carries no device", async () => {
     resetNavigation("/");
-    const calls = stubApi({ [`POST ${ORG}/conversations`]: createdAt });
+    const calls = stubApi({ [`POST ${ORG}/conversations/first-message`]: createdAt });
     await renderRouteWithCache(
       "/",
       withDevices({ items: [], defaultId: null, lastUsedId: null, cloudAvailable: false }),
@@ -579,7 +598,10 @@ describe("the device picker (environments design §4.1)", () => {
     expect(picker()).toBeNull();
     await send("go");
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
-    expect(bodyOf(calls.find((c) => c.method === "POST"))).not.toHaveProperty("deviceId");
+    const body = bodyOf(calls.find((c) => c.method === "POST")) as Record<string, unknown>;
+    expect(body).not.toHaveProperty("deviceId");
+    expect(body.permission).toEqual({ profile: "approve-for-me" });
+    expect(calls.filter((c) => c.url.includes("permission-preview"))).toEqual([]);
   });
 });
 
@@ -649,5 +671,377 @@ describe("the new conversation on a touch device (phones, maintainer decision 20
         .getAllByRole("button")
         .map((b) => b.textContent),
     ).toEqual(["Summarize", "Translate"]);
+  });
+});
+
+describe("the first send carries the permission choice (atomic first message, Task 10 slice C)", () => {
+  const FIRST = `POST ${ORG}/conversations/first-message`;
+  const PREVIEW_E1 = `GET ${ORG}/conversation-permission-preview?deviceId=e1`;
+  const created =
+    (id = "c9", events?: unknown[]) =>
+    () =>
+      json(201, {
+        ...CONV(id, { agentId: "ag2" }),
+        event: userMsg(1, "go"),
+        ...(events ? { events } : {}),
+      });
+  const conflict = () =>
+    json(409, { error: { code: "conflict", message: "The displayed permission scope changed" } });
+  const permissionButton = () => screen.getByRole("button", { name: /^Permissions: / });
+  const writes = (calls: { method: string; url: string }[]) =>
+    calls.filter((c) => c.method !== "GET").map((c) => `${c.method} ${c.url}`);
+  const firstBodies = (calls: { method: string; url: string; body: unknown }[]) =>
+    calls.filter((c) => c.method === "POST").map((c) => String(c.body));
+  const idOf = (body: string | undefined) =>
+    (JSON.parse(body ?? "{}") as { message: { clientMessageId: string } }).message.clientMessageId;
+  async function choose(user: ReturnType<typeof userEvent.setup>, name: string) {
+    await user.click(permissionButton());
+    await user.click(await screen.findByRole("menuitemradio", { name: new RegExp(`^${name}`) }));
+  }
+  async function chooseFull(user: ReturnType<typeof userEvent.setup>) {
+    await vi.waitFor(async () => {
+      await user.click(permissionButton());
+      const full = await screen.findByRole("menuitemradio", { name: /^Full access/ });
+      expect(full.getAttribute("aria-disabled")).toBeNull();
+      await user.click(full);
+    });
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Use Full access" }));
+    await vi.waitFor(() =>
+      expect(permissionButton().getAttribute("aria-label")).toBe("Permissions: Full access"),
+    );
+  }
+  const retryOriginal = () =>
+    screen.getAllByRole("button", { name: en.chat.firstSend.retryOriginal });
+
+  it("Approve for me is the default and the only write is one first-message request", async () => {
+    const browser = expectNoFirstPaintFetch();
+    const calls = stubApi({ [FIRST]: created() });
+    await renderRouteWithCache("/", routes());
+    expect(browser).toEqual([]);
+    expect(permissionButton().getAttribute("aria-label")).toBe("Permissions: Approve for me");
+    await userEvent.setup().type(input(), "go{Enter}");
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
+    // never the legacy create, never a create-then-PATCH
+    expect(writes(calls)).toEqual([FIRST]);
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({
+      agentId: "ag2",
+      deviceId: "e1",
+      message: { text: "go" },
+      permission: { profile: "approve-for-me" },
+    });
+  });
+
+  it("Request approval reaches the first message with the model choice", async () => {
+    const calls = stubApi({ [FIRST]: created() });
+    await renderRouteWithCache("/", routes());
+    const user = userEvent.setup();
+    await choose(user, "Request approval");
+    await user.type(input(), "go{Enter}");
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
+    expect(writes(calls)).toEqual([FIRST]);
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({
+      permission: { profile: "request-approval" },
+      deviceId: "e1",
+    });
+  });
+
+  it("Full access asks first and sends the consented scope revision of the displayed device", async () => {
+    const calls = stubApi({ [FIRST]: created() });
+    await renderRouteWithCache("/", routes());
+    const user = userEvent.setup();
+    await user.click(permissionButton());
+    await user.click(await screen.findByRole("menuitemradio", { name: /^Full access/ }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.textContent).toContain("not root access");
+    // cancel changes nothing
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(permissionButton().getAttribute("aria-label")).toBe("Permissions: Approve for me");
+    await chooseFull(user);
+    // unprobed: Full stays choosable and the note says when it is checked, nothing provisioned
+    await user.click(permissionButton());
+    expect(screen.getByRole("menu").textContent).toContain(en.chat.permission.note.unprobed);
+    await user.keyboard("{Escape}");
+    await user.type(input(), "go{Enter}");
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
+    expect(writes(calls)).toEqual([FIRST]);
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({
+      deviceId: "e1",
+      permission: { profile: "full-access", consentScopeRevision: "scope-1" },
+    });
+  });
+
+  it("another device clears Full back to Approve for me before the send", async () => {
+    const calls = stubApi({
+      [FIRST]: created(),
+      [`GET ${ORG}/conversation-permission-preview?deviceId=e2`]: () =>
+        json(200, permissionPreview({ deviceId: "e2", scopeRevision: "scope-9" })),
+    });
+    await renderRouteWithCache("/", routes());
+    const user = userEvent.setup();
+    await chooseFull(user);
+    await user.click(screen.getByRole("button", { name: new RegExp(`^${en.chat.pickDevice}: `) }));
+    await user.click(await screen.findByRole("menuitemradio", { name: /Build box/ }));
+    await vi.waitFor(() =>
+      expect(permissionButton().getAttribute("aria-label")).toBe("Permissions: Approve for me"),
+    );
+    await user.type(input(), "go{Enter}");
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({
+      deviceId: "e2",
+      permission: { profile: "approve-for-me" },
+    });
+  });
+
+  it("on a phone the options sheet chooses the profile the first message carries", async () => {
+    const original = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      matches: query.includes("coarse"),
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    })) as unknown as typeof window.matchMedia;
+    try {
+      const calls = stubApi({ [FIRST]: created() });
+      await renderRouteWithCache("/", routes());
+      const user = userEvent.setup();
+      await user.click(document.querySelector('[data-part="composer-options"]') as HTMLElement);
+      const sheet = screen.getByRole("dialog");
+      const group = within(sheet).getByRole("radiogroup", { name: "Permissions" });
+      await user.click(within(group).getByRole("radio", { name: /^Request approval/ }));
+      await user.keyboard("{Escape}");
+      await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      await user.type(input(), "go{Enter}");
+      await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
+      expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({
+        permission: { profile: "request-approval" },
+      });
+    } finally {
+      window.matchMedia = original;
+    }
+  });
+
+  it("a lost reply is retried with the same bytes and id: one conversation, one navigation", async () => {
+    let n = 0;
+    const calls = stubApi({
+      [FIRST]: () => {
+        n += 1;
+        if (n === 1) throw new TypeError("Failed to fetch");
+        return created()();
+      },
+    });
+    await renderRouteWithCache("/", routes());
+    const user = userEvent.setup();
+    await user.type(input(), "go{Enter}");
+    // the outcome is unknown: the draft comes back, nothing claims the create failed
+    await vi.waitFor(() => expect(input()).toHaveProperty("value", "go"));
+    expect(document.body.textContent).toContain(en.chat.firstSend.unconfirmed);
+    expect(router.replace).not.toHaveBeenCalled();
+    // an unchanged send is the original's retry
+    await user.click(input());
+    await user.keyboard("{Enter}");
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
+    const bodies = firstBodies(calls);
+    expect(bodies).toHaveLength(2);
+    expect(bodies[1]).toBe(bodies[0]);
+    expect(router.replace).toHaveBeenCalledTimes(1);
+  });
+
+  it("stale Full consent (409): the original stays recoverable, consent is asked again, the updated send is a new request", async () => {
+    let n = 0;
+    const calls = stubApi({
+      [FIRST]: () => {
+        n += 1;
+        return n <= 2 ? conflict() : created()();
+      },
+      [PREVIEW_E1]: () =>
+        json(200, permissionPreview({ deviceId: "e1", scopeRevision: "scope-2" })),
+    });
+    await renderRouteWithCache("/", routes());
+    const user = userEvent.setup();
+    await chooseFull(user);
+    await user.type(input(), "go{Enter}");
+    // the draft comes back, Full consent is dropped, the device's preview is read again
+    await vi.waitFor(() => expect(input()).toHaveProperty("value", "go"));
+    expect(permissionButton().getAttribute("aria-label")).toBe("Permissions: Approve for me");
+    await vi.waitFor(() =>
+      expect(calls.some((c) => c.method === "GET" && c.url.endsWith("preview?deviceId=e1"))).toBe(
+        true,
+      ),
+    );
+    expect(document.body.textContent).toContain(en.chat.firstSend.conflict);
+    expect(router.replace).not.toHaveBeenCalled();
+    // Retry original sends the original bytes and id again; another conflict sends nothing more
+    await user.click(retryOriginal()[0] as HTMLElement);
+    await vi.waitFor(() => expect(n).toBe(2));
+    await act(() => new Promise((r) => setTimeout(r, 20)));
+    expect(n).toBe(2);
+    const [first, retried] = firstBodies(calls);
+    expect(retried).toBe(first);
+    // the composer kept the person's draft through the retry
+    expect(input()).toHaveProperty("value", "go");
+    // fresh consent to the new scope, then the updated send: a new id, the new revision
+    await chooseFull(user);
+    await user.click(input());
+    await user.keyboard("{Enter}");
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
+    const bodies = firstBodies(calls);
+    expect(bodies).toHaveLength(3);
+    expect(JSON.parse(bodies[0] as string).permission).toEqual({
+      profile: "full-access",
+      consentScopeRevision: "scope-1",
+    });
+    expect(JSON.parse(bodies[2] as string).permission).toEqual({
+      profile: "full-access",
+      consentScopeRevision: "scope-2",
+    });
+    expect(idOf(bodies[2])).not.toBe(idOf(bodies[0]));
+    expect(writes(calls).every((w) => w === FIRST)).toBe(true);
+  });
+
+  it("a 409 drops Full consent even when the scope read again looks unchanged", async () => {
+    const calls = stubApi({
+      [FIRST]: conflict,
+      [PREVIEW_E1]: () => json(200, permissionPreview({ deviceId: "e1" })),
+    });
+    await renderRouteWithCache("/", routes());
+    const user = userEvent.setup();
+    await chooseFull(user);
+    await user.type(input(), "go{Enter}");
+    await vi.waitFor(() => expect(input()).toHaveProperty("value", "go"));
+    await vi.waitFor(() =>
+      expect(calls.some((c) => c.method === "GET" && c.url.endsWith("preview?deviceId=e1"))).toBe(
+        true,
+      ),
+    );
+    expect(permissionButton().getAttribute("aria-label")).toBe("Permissions: Approve for me");
+    // nothing resent on its own
+    await act(() => new Promise((r) => setTimeout(r, 20)));
+    expect(writes(calls)).toEqual([FIRST]);
+  });
+
+  it("lost reply, then a changed profile and a generic conflict: the original is still recovered with its own bytes", async () => {
+    let n = 0;
+    const calls = stubApi({
+      [FIRST]: () => {
+        n += 1;
+        if (n === 1) throw new TypeError("Failed to fetch");
+        if (n === 2) return conflict();
+        return created()();
+      },
+    });
+    await renderRouteWithCache("/", routes());
+    const user = userEvent.setup();
+    await user.type(input(), "go{Enter}");
+    await vi.waitFor(() => expect(input()).toHaveProperty("value", "go"));
+    // a changed choice makes it a new logical request with a new id
+    await choose(user, "Request approval");
+    await user.click(input());
+    await user.keyboard("{Enter}");
+    await vi.waitFor(() => expect(n).toBe(2));
+    await vi.waitFor(() => expect(input()).toHaveProperty("value", "go"));
+    const [original, updated] = firstBodies(calls);
+    expect(idOf(updated)).not.toBe(idOf(original));
+    expect(JSON.parse(updated as string).permission).toEqual({ profile: "request-approval" });
+    // both stay recoverable; the original's retry sends exactly what it sent first
+    expect(retryOriginal()).toHaveLength(2);
+    await user.click(retryOriginal()[0] as HTMLElement);
+    await vi.waitFor(() => expect(n).toBe(3));
+    expect(firstBodies(calls)[2]).toBe(original);
+    // the original's own conversation is offered; the newer draft and view stay
+    const open = await screen.findByRole("link", { name: en.chat.firstSend.open });
+    expect(open.getAttribute("href")).toBe("/chat/c9");
+    expect(router.replace).not.toHaveBeenCalled();
+    expect(input()).toHaveProperty("value", "go");
+    expect(permissionButton().getAttribute("aria-label")).toBe("Permissions: Request approval");
+  });
+
+  it("a late answer after the page is gone neither navigates nor resends", async () => {
+    let answer: (r: Response) => void = () => {};
+    const calls = stubApi({
+      [FIRST]: () =>
+        new Promise<Response>((r) => {
+          answer = r;
+        }),
+    });
+    await renderRouteWithCache("/", routes());
+    await userEvent.setup().type(input(), "go{Enter}");
+    await vi.waitFor(() => expect(document.querySelector("[data-pending]")).not.toBeNull());
+    cleanup();
+    await act(async () => answer(created()()));
+    await act(() => new Promise((r) => setTimeout(r, 20)));
+    expect(router.replace).not.toHaveBeenCalled();
+    expect(writes(calls)).toEqual([FIRST]);
+  });
+
+  it("the chosen profile survives the handoff: the recorded label shows while the owner read loads, never Approve", async () => {
+    const calls = stubApi({
+      [FIRST]: created("c1", [
+        ev(
+          1,
+          "permission_profile_changed",
+          {
+            oldProfile: "approve-for-me",
+            newProfile: "request-approval",
+            actorAccountId: "a1",
+            deviceId: "e1",
+            scopeRevision: null,
+            revision: 0,
+          },
+          null,
+        ),
+        { ...userMsg(2, "go"), runId: null },
+      ]),
+    });
+    const view = await renderRouteWithCache("/", routes());
+    const user = userEvent.setup();
+    await choose(user, "Request approval");
+    await user.type(input(), "go{Enter}");
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c1"));
+    // the pending bubble showed once and the composer never said Approve for me
+    stubApi({
+      ...snapshotDefaults("c1"),
+      [`GET ${ORG}/conversations/c1/permissions`]: () => new Promise<Response>(() => {}),
+    });
+    await act(() => view.navigate("/chat/c1"));
+    const pickers = await vi.waitFor(() => {
+      const p = document.querySelector('[data-part="composer-pickers"]') as HTMLElement;
+      expect(within(p).getByText("Request approval")).toBeTruthy();
+      return p;
+    });
+    expect(within(pickers).queryByText("Approve for me")).toBeNull();
+    expect(screen.getAllByText("go")).toHaveLength(1);
+    expect(writes(calls)).toEqual([FIRST]);
+  });
+
+  it("a shared viewer of a conversation never sees the recorded profile as a live choice", async () => {
+    stubApi({
+      ...snapshotDefaults("c1"),
+      [`GET ${ORG}/conversations/c1`]: () => json(200, CONV("c1", { accountId: "someone-else" })),
+      [`GET ${ORG}/conversations/c1/events`]: () =>
+        json(200, {
+          events: [
+            ev(
+              1,
+              "permission_profile_changed",
+              {
+                oldProfile: "approve-for-me",
+                newProfile: "full-access",
+                actorAccountId: "someone-else",
+                deviceId: "e1",
+                scopeRevision: "scope-1",
+                revision: 0,
+              },
+              null,
+            ),
+            userMsg(2, "hi"),
+          ],
+        }),
+      [`GET ${ORG}/conversations/c1/permissions`]: () => json(200, permissionsView()),
+    });
+    const { calls } = await renderChatRoute({ locale: "en" });
+    await screen.findByText("hi");
+    expect(screen.queryByText("Full access")).toBeNull();
+    expect(calls.filter((c) => c.url.endsWith("/permissions"))).toEqual([]);
   });
 });
