@@ -97,9 +97,9 @@ function modelStep(
  * decides). The model: when only the platform can help, a super admin deploys and configures a
  * provider on `/admin/models` and everyone else waits (an org admin for a super admin); when the
  * platform offers one the org can switch on or configure (`org_fixable`), the org's admins do it
- * on `/settings/models` and the others wait for them. The agent: members and up create it once a model exists, guests wait for
- * an admin. Then the optional steps: org admins invite members, connect a channel and install
- * plugins; members connect their own accounts.
+ * on `/settings/models` and the others wait for them. The agent: members and up create it once a
+ * model exists, guests wait for an admin. Then the optional steps: org admins invite members,
+ * connect a channel and install plugins; members connect their own accounts.
  */
 export function useSetupSteps(me: Me, r: OrgReadiness): SetupStep[] {
   const t = useTranslations("setupLayout");
@@ -151,10 +151,7 @@ export function useSetupSteps(me: Me, r: OrgReadiness): SetupStep[] {
 /** The setup sidebar's current item for a route: `home`, the step whose page it is, or none. */
 export function activeStepOf(pathname: string, steps: SetupStep[]): string {
   if (setupRouteOf(pathname) !== "step") return "home";
-  return (
-    steps.find((s) => s.href !== undefined && under(pathname, s.href.split("?")[0] ?? s.href))
-      ?.id ?? ""
-  );
+  return steps.find((s) => s.href !== undefined && under(pathname, s.href))?.id ?? "";
 }
 
 /** The icon of each optional step's row on the setup home (the workspace's own icons). */
