@@ -1767,6 +1767,9 @@ export function isFileSystemGoneError(e: unknown): e is FileSystemGoneError;
 export function isModelError(e: unknown): e is ModelError;
 
 // @public
+export function isPermissionProfile(value: unknown): value is PermissionProfile;
+
+// @public
 export function isPolicyOpId(v: unknown): v is string;
 
 // @public
@@ -1780,6 +1783,18 @@ export function isSafePackagePath(p: string): boolean;
 
 // @public
 export function isSandboxGoneError(e: unknown): e is SandboxGoneError;
+
+// @public
+export function isSandboxOperationOutcomeUnknownError(e: unknown): e is SandboxOperationOutcomeUnknownError;
+
+// @public
+export function isSandboxPermissionUnsupportedError(e: unknown): e is SandboxPermissionUnsupportedError;
+
+// @public
+export function isSandboxScopeDeniedError(e: unknown): e is SandboxScopeDeniedError;
+
+// @public
+export function isSandboxScopeValidationError(e: unknown): e is SandboxScopeValidationError;
 
 // @public
 export function isSecret(schema: z.ZodTypeAny): boolean;
@@ -2402,6 +2417,21 @@ export function parsePluginManifest(json: unknown): PluginManifest | {
 };
 
 // @public
+export function parseSandboxBrowseScope(value: unknown): SandboxBrowseScope;
+
+// @public
+export function parseSandboxExecutionRef(value: unknown): SandboxExecutionRef;
+
+// @public
+export function parseSandboxOperationRef(value: unknown): SandboxOperationRef;
+
+// @public
+export function parseSandboxOperationScope(value: unknown): SandboxOperationScope;
+
+// @public
+export function parseSandboxPreparationScope(value: unknown): SandboxPreparationScope;
+
+// @public
 export function parseSetupGuide(source: string): ParsedSetupGuide;
 
 // @public
@@ -2435,6 +2465,9 @@ export interface ParseThemeOptions {
 
 // @public
 export function parseToolKey(key: string): ParsedToolKey | null;
+
+// @public
+export type PermissionProfile = "request-approval" | "approve-for-me" | "full-access";
 
 // @public @deprecated
 export const PLACE_SLOTS: Readonly<Record<UiPlace, UiSlotId>>;
@@ -2756,6 +2789,72 @@ export interface SandboxActor {
 }
 
 // @public
+export interface SandboxBackground {
+    start(h: SandboxHandle, scope: SandboxOperationScope, args: SandboxExecOptions & {
+        taskId: string;
+        outputPath: string;
+        retainUntilMs: number;
+    }): Promise<SandboxExecutionRef>;
+    status(h: SandboxHandle, ref: SandboxExecutionRef, signal: AbortSignal): Promise<SandboxExecutionStatus>;
+    stop(h: SandboxHandle, ref: SandboxExecutionRef, opts: {
+        graceMs: number;
+        signal: AbortSignal;
+    }): Promise<SandboxStopResult>;
+    tail(h: SandboxHandle, ref: SandboxExecutionRef, opts: {
+        maxBytes: number;
+        signal: AbortSignal;
+    }): Promise<{
+        data: Uint8Array;
+        truncated: boolean;
+    } | {
+        unavailable: "lost" | "expired";
+    }>;
+}
+
+// @public
+export type SandboxBrowse = Pick<SandboxOperation, "stat"> & Required<Pick<SandboxOperation, "list" | "scan">>;
+
+// @public
+export interface SandboxBrowseScope extends SandboxOperationRef {
+    readonly accountId: string;
+    readonly ceilingRevision: string;
+    readonly deviceId: string;
+    readonly readRoots: readonly string[];
+    readonly tag: string;
+}
+
+// @public
+export type SandboxExecOptions = Omit<Parameters<SandboxProvider["exec"]>[1], "tag" | "actor">;
+
+// @public
+export interface SandboxExecutionRef {
+    readonly executionId: string;
+    readonly instanceGeneration: string;
+    readonly instanceId: string;
+    readonly operationId: string;
+}
+
+// @public
+export type SandboxExecutionStatus = {
+    state: "running";
+} | {
+    state: "exited";
+    exitCode: number | null;
+    timedOut: boolean;
+} | {
+    state: "lost";
+};
+
+// @public
+export type SandboxFileScope = {
+    readonly kind: "scoped";
+    readonly readRoots: readonly string[];
+    readonly writeRoots: readonly string[];
+} | {
+    readonly kind: "device";
+};
+
+// @public
 export class SandboxGoneError extends Error {
     constructor(message: string, opts?: {
         cause?: unknown;
@@ -2782,7 +2881,109 @@ export interface SandboxLimits {
 }
 
 // @public
+export type SandboxNetworkScope = {
+    readonly kind: "none";
+} | {
+    readonly kind: "allowlist";
+    readonly hosts: readonly string[];
+} | {
+    readonly kind: "environment";
+};
+
+// @public
+export interface SandboxOperation {
+    exec(args: SandboxExecOptions): Promise<ExecResult>;
+    list?(path: string, opts: {
+        limit: number;
+        signal: AbortSignal;
+    }): Promise<{
+        entries: {
+            name: string;
+            isDir: boolean;
+        }[];
+        truncated: boolean;
+    } | null>;
+    readFile(path: string, opts: {
+        maxBytes: number;
+        signal: AbortSignal;
+    }): Promise<{
+        data: Uint8Array;
+        truncated: boolean;
+    } | null>;
+    scan?(base: string, opts: {
+        signal: AbortSignal;
+    }): Promise<{
+        path: string;
+        suggestedName: string;
+    }[]>;
+    stat(path: string, signal: AbortSignal): Promise<{
+        size: number;
+        isDir: boolean;
+    } | null>;
+    writeFile(path: string, data: Uint8Array, signal: AbortSignal): Promise<void>;
+}
+
+// @public
+export class SandboxOperationOutcomeUnknownError extends Error {
+    constructor(message: string, opts?: ErrorOptions);
+    readonly sandboxOperationOutcomeUnknown: true;
+}
+
+// @public
+export interface SandboxOperationRef {
+    readonly admitBeforeMs: number;
+    readonly operationId: string;
+}
+
+// @public
+export interface SandboxOperationScope extends SandboxOperationRef {
+    readonly actor: Readonly<SandboxActor>;
+    readonly ceilingRevision: string;
+    readonly deviceId: string;
+    readonly filesystem: SandboxFileScope;
+    readonly network: SandboxNetworkScope;
+    readonly profile: PermissionProfile;
+    readonly profileRevision: number;
+    readonly rootConversationId: string;
+    readonly tag: string;
+}
+
+// @public
+export interface SandboxPermissionCapabilities {
+    readonly background: boolean;
+    readonly fullAccess: boolean;
+    readonly restricted: {
+        readonly filesystem: true;
+        readonly network: true;
+        readonly native: true;
+        readonly concurrentScopes: true;
+    } | null;
+    readonly unavailableReason?: string;
+    readonly version: 1;
+}
+
+// @public
+export class SandboxPermissionUnsupportedError extends Error {
+    constructor(message: string, opts?: ErrorOptions);
+    readonly sandboxPermissionUnsupported: true;
+}
+
+// @public
+export type SandboxPreparation = Pick<SandboxOperation, "readFile" | "writeFile" | "stat">;
+
+// @public
+export interface SandboxPreparationScope {
+    readonly deviceId: string;
+    readonly operationId: string;
+    readonly purpose: "skills" | "attachments";
+    readonly tag: string;
+    readonly writeRoots: readonly string[];
+}
+
+// @public
 export interface SandboxProvider {
+    background?: SandboxBackground;
+    browse?(h: SandboxHandle, scope: SandboxBrowseScope, signal: AbortSignal): Promise<SandboxBrowse>;
     readonly concurrentExec: true;
     create(args: {
         name: string;
@@ -2824,6 +3025,9 @@ export interface SandboxProvider {
         }[];
         truncated: boolean;
     } | null>;
+    operation?(h: SandboxHandle, scope: SandboxOperationScope, signal: AbortSignal): Promise<SandboxOperation>;
+    permissionCapabilities?(h: SandboxHandle, signal: AbortSignal): Promise<SandboxPermissionCapabilities>;
+    prepare?(h: SandboxHandle, scope: SandboxPreparationScope, signal: AbortSignal): Promise<SandboxPreparation>;
     readFile(h: SandboxHandle, path: string, opts: {
         maxBytes: number;
         signal: AbortSignal;
@@ -2832,6 +3036,7 @@ export interface SandboxProvider {
         truncated: boolean;
     } | null>;
     resume(h: SandboxHandle, signal: AbortSignal): Promise<"resumed" | "gone">;
+    revokeOperation?(h: SandboxHandle, ref: SandboxOperationRef, signal: AbortSignal): Promise<void>;
     scan?(h: SandboxHandle, base: string, opts: {
         limits: Pick<SandboxLimits, "mode">;
         signal: AbortSignal;
@@ -2855,6 +3060,31 @@ export interface SandboxRoots {
     tmp: string;
     workspace: string;
 }
+
+// @public
+export class SandboxScopeDeniedError extends Error {
+    constructor(message: string, opts?: ErrorOptions);
+    readonly sandboxScopeDenied: true;
+}
+
+// @public
+export class SandboxScopeValidationError extends Error {
+    constructor(message: string, opts?: ErrorOptions);
+    readonly sandboxScopeValidation: true;
+}
+
+// @public
+export type SandboxStopResult = {
+    outcome: "already-exited";
+    exitCode: number | null;
+    timedOut: boolean;
+} | {
+    outcome: "stopped";
+} | {
+    outcome: "cancel-pending";
+} | {
+    outcome: "lost";
+};
 
 // @public
 export function sanitizeParams(decl: ModelParameter[], params: Record<string, unknown>): {

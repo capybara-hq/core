@@ -9,6 +9,18 @@
  * (`create`) attach to it and come and go (`destroy` drops the instance and keeps the files).
  */
 
+import type {
+  SandboxBackground,
+  SandboxBrowse,
+  SandboxBrowseScope,
+  SandboxOperation,
+  SandboxOperationRef,
+  SandboxOperationScope,
+  SandboxPermissionCapabilities,
+  SandboxPreparation,
+  SandboxPreparationScope,
+} from "./sandbox-operation.js";
+
 /** Sandbox extension point ref. */
 export const SANDBOX_EXTENSION_POINT = "sandbox@2";
 
@@ -28,6 +40,10 @@ export interface SandboxLimits {
   /**
    * `auto`: no OS sandbox (local: the owner; cloud: the container is the boundary);
    * `sandbox`: the OS sandbox with the network limited by {@link SandboxLimits.network}.
+   * For operation-capable providers this encodes the independent device ceiling: auto allows
+   * Full access when separately authorized, sandbox permits restricted operations only.
+   * It never selects a conversation profile or changes per operation. Legacy consumers retain
+   * the current mode behavior until coordinated protocol activation.
    */
   mode: "auto" | "sandbox";
   /**
@@ -209,6 +225,36 @@ export const SANDBOX_TAG_RE = /^[a-z0-9-]{1,64}$/;
  * aborted `exec` kills only its own command.
  */
 export interface SandboxProvider {
+  /** Runtime permission support for this instance; does not grant consent or provision an instance. */
+  permissionCapabilities?(
+    h: SandboxHandle,
+    signal: AbortSignal,
+  ): Promise<SandboxPermissionCapabilities>;
+  /**
+   * Fresh immutable grant for one actual method invocation. Lightweight until a method is called;
+   * never cache grants on the handle or fall back to raw methods when unsupported.
+   */
+  operation?(
+    h: SandboxHandle,
+    scope: SandboxOperationScope,
+    signal: AbortSignal,
+  ): Promise<SandboxOperation>;
+  /** Trusted skill/attachment staging only; never exposed to user operations. */
+  prepare?(
+    h: SandboxHandle,
+    scope: SandboxPreparationScope,
+    signal: AbortSignal,
+  ): Promise<SandboxPreparation>;
+  /** Owner-authenticated metadata browsing without conversation/profile consent. */
+  browse?(h: SandboxHandle, scope: SandboxBrowseScope, signal: AbortSignal): Promise<SandboxBrowse>;
+  /**
+   * Required for permission support: idempotently persist an operation-ID tombstone before
+   * cancelling exact owned work. A delayed launch checks it before effects; retain it through
+   * admitBeforeMs and any owned execution's lifetime, including across kernel restarts.
+   */
+  revokeOperation?(h: SandboxHandle, ref: SandboxOperationRef, signal: AbortSignal): Promise<void>;
+  /** Exact registered background ownership; missing support must not fall back to shell launch. */
+  background?: SandboxBackground;
   /** `exec` / `readFile` / `writeFile` / `stat` may run concurrently on one instance (required). */
   readonly concurrentExec: true;
   /**
