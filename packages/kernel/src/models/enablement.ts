@@ -2,6 +2,7 @@ import { Inject, Injectable, Module } from "@nestjs/common";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { enabledExtensionsQuery } from "../extensions/enabled.js";
+import { offeredWhileOff } from "../extensions/plugin-items.js";
 import { ExtensionRegistry, ExtensionRegistryModule } from "../extensions/registry.js";
 import { audit } from "../identity/audit.js";
 import { SuperAdminLock, SuperAdminLockModule } from "../identity/super-admin.js";
@@ -112,6 +113,14 @@ export class ModelEnablement {
   async enabledIn(orgId: string): Promise<Set<string>> {
     const rows = await enabledExtensionsQuery(this.db, orgId).execute();
     return new Set(rows.map((r) => r.plugin));
+  }
+
+  /**
+   * The extensions of `plugins`, off in `orgId`, that its extension list shows (the rule the list
+   * uses, {@link offeredWhileOff}): the ones an org admin can switch on there.
+   */
+  offeredWhileOff(orgId: string, plugins: readonly string[]): Promise<Set<string>> {
+    return offeredWhileOff(this.db, orgId, plugins);
   }
 
   /** Whether neither the platform nor `orgId` disabled the model (the lists only; see the class). */

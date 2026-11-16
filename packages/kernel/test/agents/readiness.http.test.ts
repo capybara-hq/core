@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
@@ -164,6 +165,50 @@ describe("org readiness", () => {
         expect(visible).toBe(1);
       }
     } finally {
+      await k.close();
+    }
+  });
+
+  it("names only the providers the org's extension list shows: not one named to other orgs, not a disabled one", async () => {
+    const k = await boot([MODEL_FAKE, NEEDS_CONFIG], {
+      "model-fake": { models: [{ id: "fake-1" }] },
+      "model-needs-config": { apiKey: "k" },
+    });
+    try {
+      const { req, orgId } = await ownerOrg(k);
+      const item = async (plugin: string, values: { scope?: "named"; disabled?: boolean }) => {
+        const id = randomUUID();
+        await db
+          .insertInto("catalog_items")
+          .values({
+            id,
+            name: plugin,
+            package_name: `@acme/plugin-${plugin}`,
+            publisher: "Acme",
+            description: "Test",
+            latest_version: "1.0.0",
+            ...values,
+          })
+          .execute();
+        await db.insertInto("extension_catalog_sources").values({ plugin, item_id: id }).execute();
+      };
+      // named to no org but others (an empty list here), and disabled by the super admin
+      await item("model-fake", { scope: "named" });
+      await item("model-needs-config", { disabled: true });
+      expect(await readiness(req, orgId)).toEqual({
+        modelProvider: "none",
+        notEnabledProviders: [],
+        agents: 0,
+      });
+      const list = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` });
+      const plugins = (list.json() as { extensions: { plugin: string }[] }).extensions.map(
+        (e) => e.plugin,
+      );
+      expect(plugins).not.toContain("model-fake");
+      expect(plugins).not.toContain("model-needs-config");
+    } finally {
+      await db.deleteFrom("extension_catalog_sources").execute();
+      await db.deleteFrom("catalog_items").execute();
       await k.close();
     }
   });

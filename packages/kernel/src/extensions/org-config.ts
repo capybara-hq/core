@@ -11,7 +11,7 @@ import {
   disabledPluginItems,
   pluginItemDisabled,
 } from "../catalog/request-rules.js";
-import { type PluginScope, visibleTo } from "../catalog/scope.js";
+import type { PluginScope } from "../catalog/scope.js";
 import { changedPaths, configFields, getPath, secretValues } from "../config/fields.js";
 import { createSecrets, type Keyring } from "../ctx/secrets.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
@@ -38,7 +38,14 @@ import {
   type PermissionGroup,
   permissionGroups,
 } from "./permission-view.js";
-import { type ExtensionPluginItem, itemLocked, pluginItemsOf } from "./plugin-items.js";
+import {
+  type ExtensionPluginItem,
+  itemLocked,
+  itemsVisible,
+  offeredToOrg,
+  pluginItemsOf,
+  scopeListedFor,
+} from "./plugin-items.js";
 import { ExtensionAvailability, type ExtensionUnavailableReason } from "./unavailable.js";
 
 export { type ConfigIssue, toIssues };
@@ -336,17 +343,16 @@ export class OrgExtensionConfigs {
       ...loaded.map((m) => m.name),
       ...installed.map((i) => i.name),
     ]);
-    // An extension whose plugin the org is not offered (a `named` plugin without it) is absent
-    const listed = new Set(
-      (
-        await t
-          .selectFrom("catalog_item_scope_orgs")
-          .select("item_id")
-          .where("org_id", "=", orgId)
-          .execute()
-      ).map((r) => r.item_id),
-    );
-    const seen = (name: string) => required.has(name) || itemsVisible(items.get(name), listed);
+    // An extension the org is not offered (a `named` plugin without it, or one off here whose
+    // item the super admin disabled) is absent: the rule readiness shares
+    const listed = await scopeListedFor(t, orgId);
+    const seen = (name: string) =>
+      offeredToOrg({
+        required: required.has(name),
+        enabled: rows.find((r) => r.plugin === name)?.enabled ?? false,
+        items: items.get(name),
+        listed,
+      });
     const views = loaded
       .filter((m) => seen(m.name))
       .map((m) =>
@@ -896,22 +902,9 @@ export class OrgExtensionConfigs {
 }
 
 /**
- * Whether an org may see an extension with these live catalog items (`listed`: the items whose
- * `named` list has the org): one visible item is enough; without an item (config-declared, or its
- * items deleted) it is visible. A builtin item counts as `all`.
- */
-function itemsVisible(
-  items: readonly ExtensionPluginItem[] | undefined,
-  listed: ReadonlySet<string>,
-): boolean {
-  if (!items) return true;
-  return items.some((i) => visibleTo({ scope: i.builtin ? "all" : i.scope }, listed.has(i.id)));
-}
-
-/**
- * Whether the org sees `plugin` in its extension list (a required bootstrap plugin always; else
- * under its catalog items' scope, as {@link OrgExtensionConfigs.list} filters). `db` may be a
- * transaction.
+ * Whether the org may see `plugin` (a required bootstrap plugin always; else under its catalog
+ * items' scope; the list also hides one off here whose item is disabled, {@link offeredToOrg}).
+ * `db` may be a transaction.
  */
 export async function extensionVisibleTo(
   db: KernelSchemaDb,

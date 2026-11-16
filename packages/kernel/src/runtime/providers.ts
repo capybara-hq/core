@@ -252,7 +252,10 @@ export class ProviderRegistry {
     @Inject(REDIS) private readonly kv: Redis,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     @Inject(ModelEnablement)
-    private readonly enablement: Pick<ModelEnablement, "disabled" | "enabledIn">,
+    private readonly enablement: Pick<
+      ModelEnablement,
+      "disabled" | "enabledIn" | "offeredWhileOff"
+    >,
     @Inject(KERNEL_LOGGER) private readonly log?: Pick<Logger, "warn">,
     /** Overrides `models.listTimeoutMs` (tests). */
     @Optional()
@@ -285,16 +288,22 @@ export class ProviderRegistry {
    * The org's model-provider readiness (org readiness, web-order spec §3.8), from extension state,
    * the org's switches and its config only: never calls a vendor, so a provider whose vendor is
    * down still counts. `ready`: a provider loaded on this replica is enabled in `orgId` with a
-   * valid effective config there. Otherwise `not_enabled` when loaded providers would be usable
-   * there once the org enables them (`notEnabled` names them), else `none`.
+   * valid effective config there. Otherwise `not_enabled` when loaded providers the org's extension
+   * list shows (`offeredWhileOff`: not named to other orgs only, not disabled) would be usable there
+   * once the org enables them (`notEnabled` names them), else `none`.
    */
   async readiness(orgId: string): Promise<ModelProviderReadiness> {
     const on = await this.enablement.enabledIn(orgId);
+    const providers = this.providers();
+    const offered = await this.enablement.offeredWhileOff(
+      orgId,
+      providers.filter((p) => !on.has(p.plugin)).map((p) => p.plugin),
+    );
     const notEnabled: string[] = [];
-    for (const p of this.providers()) {
+    for (const p of providers) {
       if (on.has(p.plugin)) {
         if ((await this.target(p, orgId, on)).ok) return { state: "ready", notEnabled: [] };
-      } else if ((await this.target(p, orgId, new Set([p.plugin]))).ok) {
+      } else if (offered.has(p.plugin) && (await this.target(p, orgId, new Set([p.plugin]))).ok) {
         notEnabled.push(p.plugin);
       }
     }

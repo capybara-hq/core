@@ -1,5 +1,6 @@
-import type { PluginScope } from "../catalog/scope.js";
+import { type PluginScope, visibleTo } from "../catalog/scope.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
+import { requiredExtensions } from "./enabled.js";
 
 /** The catalog item (the plugin) an extension ships in. */
 export interface ExtensionPluginItem {
@@ -51,3 +52,63 @@ export async function pluginItemsOf(
  * one, layering spec §4): its switch cannot go off.
  */
 export const itemLocked = (i: ExtensionPluginItem): boolean => i.builtin;
+
+/**
+ * Whether an org may see an extension with these live catalog items (`listed`: the items whose
+ * `named` list has the org): one visible item is enough; without an item (config-declared, or its
+ * items deleted) it is visible. A builtin item counts as `all`.
+ */
+export function itemsVisible(
+  items: readonly ExtensionPluginItem[] | undefined,
+  listed: ReadonlySet<string>,
+): boolean {
+  if (!items) return true;
+  return items.some((i) => visibleTo({ scope: i.builtin ? "all" : i.scope }, listed.has(i.id)));
+}
+
+/**
+ * Whether the org's extension list shows an extension, the one rule the list
+ * (`OrgExtensionConfigs.list`) and the model-provider readiness share: a required bootstrap plugin
+ * always; else under its catalog items' scope, and, while it is off in the org, only when none of
+ * its items is disabled (nothing can newly enable it then, Ruling M-5; one already on stays).
+ */
+export const offeredToOrg = (e: {
+  required: boolean;
+  enabled: boolean;
+  items: readonly ExtensionPluginItem[] | undefined;
+  listed: ReadonlySet<string>;
+}): boolean =>
+  e.required ||
+  (itemsVisible(e.items, e.listed) && (e.enabled || !(e.items ?? []).some((i) => i.disabled)));
+
+/** The ids of the catalog items whose `named` list has `orgId`. `db` may be a transaction. */
+export async function scopeListedFor(db: KernelSchemaDb, orgId: string): Promise<Set<string>> {
+  const rows = await db
+    .selectFrom("catalog_item_scope_orgs")
+    .select("item_id")
+    .where("org_id", "=", orgId)
+    .execute();
+  return new Set(rows.map((r) => r.item_id));
+}
+
+/**
+ * The extensions of `names`, off in `orgId`, that its extension list shows ({@link offeredToOrg}
+ * with `enabled` false): the ones an org admin can switch on there. Plain reads.
+ */
+export async function offeredWhileOff(
+  db: KernelSchemaDb,
+  orgId: string,
+  names: readonly string[],
+): Promise<Set<string>> {
+  if (names.length === 0) return new Set();
+  const [required, items, listed] = await Promise.all([
+    requiredExtensions(db),
+    pluginItemsOf(db, names),
+    scopeListedFor(db, orgId),
+  ]);
+  return new Set(
+    names.filter((n) =>
+      offeredToOrg({ required: required.has(n), enabled: false, items: items.get(n), listed }),
+    ),
+  );
+}
