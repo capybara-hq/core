@@ -22,6 +22,7 @@ import {
   startMacOperationWorker,
   type TrustedLaunchIdentity,
 } from "./operation-worker.js";
+import { ManagedOutputSpool, type OutputLocator, validateOutputRange } from "./output-spool.js";
 
 interface Entry {
   ref: SandboxExecutionRef;
@@ -40,11 +41,19 @@ interface Entry {
     kind: MacWorkerRequest["kind"];
   };
   tail?: string;
+  output?: {
+    locator: OutputLocator;
+    state: "collecting" | "complete" | "fault";
+    interruptedCancellation: boolean;
+    expired?: boolean;
+    cleaned?: boolean;
+  };
 }
 interface Live {
   worker?: MacWorkerHandle;
   controller: AbortController;
   completion: Promise<ExecResult | NativeHelperResult>;
+  finished?: Promise<void>;
 }
 export interface SupervisorOptions {
   stateDir: string;
@@ -53,6 +62,9 @@ export interface SupervisorOptions {
   now?: () => number;
   start?: (request: MacWorkerRequest, signal: AbortSignal) => Promise<MacWorkerHandle>;
   onLiveChanged?: (live: boolean) => void;
+  pythonPath?: string;
+  outputBarrier?: (name: string) => Promise<void>;
+  beforePersist?: () => void;
 }
 /** One owner process per generation. A restarted process never reuses recorded PIDs. */
 export class MacOperationSupervisor {
@@ -60,6 +72,9 @@ export class MacOperationSupervisor {
   private live = new Map<string, Live>();
   // Stop ownership outlives worker completion until the cancellation attempt settles.
   private cancellations = new Map<string, Promise<SandboxStopResult>>();
+  private faultOwners = new Map<string, Live>();
+  private outputReads = new Map<string, Set<Promise<unknown>>>();
+  private spools = new Map<string, ManagedOutputSpool>();
   private queue: Promise<unknown> = Promise.resolve();
   private file: string;
   private now: () => number;
@@ -76,6 +91,13 @@ export class MacOperationSupervisor {
       for (const e of raw.entries) {
         parseSandboxExecutionRef(e.ref);
         if (e.state === "running" || e.state === "consumed") e.state = "unknown";
+        if (
+          e.output &&
+          e.output.state !== "complete" &&
+          e.output.interruptedCancellation &&
+          e.stop?.outcome !== "stopped"
+        )
+          e.stop = { outcome: "cancel-pending" };
         this.entries.set(e.ref.operationId, e);
       }
     }
@@ -86,6 +108,7 @@ export class MacOperationSupervisor {
     return next;
   }
   private persist(): void {
+    this.options.beforePersist?.();
     const text = JSON.stringify({ version: 1, entries: [...this.entries.values()] });
     if (Buffer.byteLength(text) > 64 * 1024 * 1024)
       throw new Error("Operation journal capacity exhausted");
@@ -105,7 +128,8 @@ export class MacOperationSupervisor {
       if (
         entry.retainUntilMs > this.now() ||
         this.live.has(entry.ref.operationId) ||
-        this.cancellations.has(entry.ref.operationId)
+        this.cancellations.has(entry.ref.operationId) ||
+        (entry.output && !entry.output.cleaned)
       )
         continue;
       if (
@@ -133,7 +157,6 @@ export class MacOperationSupervisor {
       throw new SandboxScopeDeniedError(
         "Execution reference belongs to another instance generation",
       );
-    this.expireRetained();
     const e = this.entries.get(ref.operationId);
     if (e && JSON.stringify(e.ref) !== JSON.stringify(ref))
       throw new SandboxScopeDeniedError("Execution reference does not match its owned execution");
@@ -240,20 +263,47 @@ export class MacOperationSupervisor {
               });
               await request.onLaunch(identity);
             },
-            onOutput: (b, stream = "stdout") => {
-              appendTail(decoders[stream].write(b));
-              request.onOutput?.(b, stream);
+            onOutput: async (b, stream = "stdout") => {
+              const spool = this.spools.get(entry.ref.operationId);
+              if (spool) {
+                if (entry.output?.state === "fault")
+                  throw Error("Managed output collection has failed");
+                try {
+                  await spool.append(b, new AbortController().signal);
+                } catch (error) {
+                  this.collectorFault(entry, live);
+                  throw error;
+                }
+              } else appendTail(decoders[stream].write(b));
+              await request.onOutput?.(b, stream);
             },
           },
           controller.signal,
         );
         live.worker = worker;
-        void worker.completion
+        if (entry.output?.state === "fault") this.collectorFault(entry, live);
+        live.finished = worker.completion
           .then(
             async (value) => {
               appendTail(decoders.stdout.end());
               appendTail(decoders.stderr.end());
+              const spool = this.spools.get(entry.ref.operationId);
+              if (spool && entry.output?.state !== "fault") {
+                try {
+                  await spool.flush();
+                } catch {
+                  this.collectorFault(entry, live);
+                }
+              }
               await this.serial(() => {
+                if (entry.output?.state === "fault") return;
+                const oldOutput = entry.output;
+                if (oldOutput)
+                  entry.output = {
+                    ...oldOutput,
+                    state: "complete",
+                    interruptedCancellation: false,
+                  };
                 entry.state = "completed";
                 entry.result = value;
                 if (
@@ -267,11 +317,18 @@ export class MacOperationSupervisor {
                     exitCode: value.exitCode,
                     timedOut: value.timedOut,
                   };
-                this.persist();
+                try {
+                  this.persist();
+                } catch (error) {
+                  if (oldOutput) entry.output = oldOutput;
+                  if (entry.output) this.collectorFault(entry, live);
+                  throw error;
+                }
               });
               resolve(value);
             },
             async (error) => {
+              if (entry.output) this.collectorFault(entry, live);
               appendTail(decoders.stdout.end());
               appendTail(decoders.stderr.end());
               await this.serial(() => {
@@ -281,12 +338,16 @@ export class MacOperationSupervisor {
               reject(error);
             },
           )
-          .finally(() => {
+          .finally(async () => {
+            const spool = this.spools.get(entry.ref.operationId);
+            this.spools.delete(entry.ref.operationId);
+            await spool?.close();
             signal.removeEventListener("abort", abort);
             this.live.delete(entry.ref.operationId);
-            this.options.onLiveChanged?.(this.live.size > 0);
+            this.options.onLiveChanged?.(this.live.size > 0 || this.faultOwners.size > 0);
           })
           .catch((error) => {
+            if (entry.output) this.collectorFault(entry, live);
             entry.state = "unknown";
             delete entry.result;
             reject(
@@ -309,7 +370,7 @@ export class MacOperationSupervisor {
         });
         reject(error);
         this.live.delete(entry.ref.operationId);
-        this.options.onLiveChanged?.(this.live.size > 0);
+        this.options.onLiveChanged?.(this.live.size > 0 || this.faultOwners.size > 0);
         throw error;
       }
     })();
@@ -341,19 +402,192 @@ export class MacOperationSupervisor {
     if (!Number.isSafeInteger(retainUntilMs) || retainUntilMs <= this.now())
       throw new SandboxScopeDeniedError("Background retention must be in the future");
     const { entry, fresh } = await this.admit(request, hash, retainUntilMs, signal);
-    if (fresh) await this.launch(entry, request, signal, true);
-    else if (entry.state === "unknown" || entry.state === "consumed")
+    if (fresh) {
+      if (!request.managedOutput)
+        throw new SandboxScopeDeniedError("Background start requires a trusted managed artifact");
+      try {
+        await request.beforeLaunch();
+        const spool = await ManagedOutputSpool.create({
+          privateRoot: this.options.stateDir,
+          ...request.managedOutput,
+          ref: entry.ref,
+          pythonPath: request.pythonPath,
+          barrier: this.options.outputBarrier,
+          publish: (locator) =>
+            this.serial(() => {
+              const previous = entry.output;
+              entry.output = {
+                locator,
+                state: previous?.state ?? "collecting",
+                interruptedCancellation: true,
+              };
+              try {
+                this.persist();
+              } catch (error) {
+                if (previous) entry.output = previous;
+                else delete entry.output;
+                throw error;
+              }
+            }),
+        });
+        this.spools.set(entry.ref.operationId, spool);
+        await this.launch(entry, request, signal, true);
+      } catch (error) {
+        await this.spools.get(entry.ref.operationId)?.close();
+        this.spools.delete(entry.ref.operationId);
+        throw error;
+      }
+    } else if (!entry.output && (entry.state === "unknown" || entry.state === "consumed"))
       throw new SandboxOperationOutcomeUnknownError("Consumed background start outcome is unknown");
     return { ...entry.ref };
   }
+  private collectorFault(entry: Entry, live: Live): void {
+    if (!entry.output) return;
+    entry.output.state = "fault";
+    entry.output.interruptedCancellation = entry.stop?.outcome !== "stopped";
+    entry.state = "unknown";
+    delete entry.result;
+    entry.revoked = true;
+    if (entry.stop?.outcome !== "stopped") entry.stop = { outcome: "cancel-pending" };
+    // The prelaunch collecting marker remains the durable fallback. New disk failure cannot
+    // gate exact cancellation, and this function never waits for append/worker completion.
+    void this.serial(() => this.persist()).catch(() => {});
+    if (
+      !live.worker ||
+      this.cancellations.has(entry.ref.operationId) ||
+      entry.stop.outcome === "stopped"
+    )
+      return;
+    const worker = live.worker;
+    this.faultOwners.set(entry.ref.operationId, live);
+    const attempt = new Promise<void>((resolve) => setImmediate(resolve))
+      .then(async (): Promise<SandboxStopResult> => {
+        try {
+          await worker.cancel("Managed output collection failed", 0);
+        } catch {
+          return { outcome: "cancel-pending" };
+        }
+        entry.stop = { outcome: "stopped" };
+        if (entry.output) entry.output.interruptedCancellation = false;
+        this.faultOwners.delete(entry.ref.operationId);
+        this.options.onLiveChanged?.(this.live.size > 0 || this.faultOwners.size > 0);
+        await this.serial(() => this.persist()).catch(() => {});
+        return entry.stop;
+      })
+      .finally(() => {
+        this.cancellations.delete(entry.ref.operationId);
+      });
+    this.cancellations.set(entry.ref.operationId, attempt);
+  }
+  private async retained(
+    entry: Entry,
+    cleanup = false,
+  ): Promise<{ spool: ManagedOutputSpool; temporary: boolean }> {
+    const live = this.spools.get(entry.ref.operationId);
+    if (live) return { spool: live, temporary: false };
+    if (!entry.output) throw Error("Retained output lost");
+    const spool = await ManagedOutputSpool.openExisting({
+      privateRoot: this.options.stateDir,
+      artifactRoot: this.options.stateDir,
+      outputPath: "unused",
+      ref: entry.ref,
+      locator: entry.output.locator,
+      cleanup,
+      pythonPath: this.options.pythonPath ?? "/usr/bin/python3",
+      publish: async () => {
+        throw Error("Recovered output cannot append");
+      },
+      barrier: this.options.outputBarrier,
+    });
+    return { spool, temporary: true };
+  }
+  async readOutput(
+    ref: SandboxExecutionRef,
+    opts: { offset: number; maxBytes: number; signal: AbortSignal },
+  ): Promise<
+    | { data: Uint8Array; offset: number; nextOffset: number; totalBytes: number }
+    | { unavailable: "lost" | "expired" }
+  > {
+    validateOutputRange(opts.offset, opts.maxBytes);
+    opts.signal.throwIfAborted();
+    const entry = this.validate(ref);
+    if (!entry?.output) return { unavailable: "lost" };
+    if (entry.retainUntilMs <= this.now() || entry.output.expired) {
+      await this.expireOutput(ref).catch(() => {});
+      return { unavailable: "expired" };
+    }
+    const reading = (async () => {
+      let retained: Awaited<ReturnType<MacOperationSupervisor["retained"]>> | undefined;
+      try {
+        retained = await this.retained(entry);
+        return await retained.spool.read(opts);
+      } catch {
+        opts.signal.throwIfAborted();
+        return { unavailable: "lost" as const };
+      } finally {
+        if (retained?.temporary) {
+          const closing = retained.spool.close();
+          if (opts.signal.aborted) void closing.catch(() => {});
+          else await closing;
+        }
+      }
+    })();
+    let readers = this.outputReads.get(ref.operationId);
+    if (!readers) {
+      readers = new Set();
+      this.outputReads.set(ref.operationId, readers);
+    }
+    readers.add(reading);
+    try {
+      return await reading;
+    } finally {
+      readers.delete(reading);
+      if (!readers.size) this.outputReads.delete(ref.operationId);
+    }
+  }
+
+  async expireOutput(ref: SandboxExecutionRef): Promise<void> {
+    const entry = this.validate(ref);
+    if (
+      !entry?.output ||
+      entry.output.cleaned ||
+      entry.retainUntilMs > this.now() ||
+      this.live.has(ref.operationId) ||
+      this.cancellations.has(ref.operationId) ||
+      entry.stop?.outcome === "cancel-pending" ||
+      entry.output.interruptedCancellation
+    )
+      return;
+    await Promise.allSettled([...(this.outputReads.get(ref.operationId) ?? [])]);
+    const { spool } = await this.retained(entry, entry.output.expired === true);
+    try {
+      await spool.expire(
+        () =>
+          this.serial(() => {
+            if (entry.output) entry.output.expired = true;
+            this.persist();
+          }),
+        () =>
+          this.serial(() => {
+            if (entry.output) entry.output.cleaned = true;
+            this.persist();
+          }),
+      );
+    } finally {
+      await spool.close();
+    }
+  }
   async settled(id: string): Promise<void> {
-    await this.live.get(id)?.completion;
+    const live = this.live.get(id);
+    await live?.completion;
+    await live?.finished;
     await this.queue;
   }
   async status(ref: SandboxExecutionRef, signal: AbortSignal): Promise<SandboxExecutionStatus> {
     signal.throwIfAborted();
     const e = this.validate(ref);
-    if (!e || e.retainUntilMs <= this.now()) return { state: "lost" };
+    if (!e || e.retainUntilMs <= this.now() || e.output?.state === "fault")
+      return { state: "lost" };
     if (e.state === "completed" && e.result && "exitCode" in e.result)
       return { state: "exited", exitCode: e.result.exitCode, timedOut: e.result.timedOut };
     return { state: this.live.has(ref.operationId) ? "running" : "lost" };
@@ -365,7 +599,46 @@ export class MacOperationSupervisor {
     opts.signal.throwIfAborted();
     const e = this.validate(ref);
     if (!e) return { unavailable: "lost" };
-    if (e.retainUntilMs <= this.now()) return { unavailable: "expired" };
+    if (e.retainUntilMs <= this.now()) {
+      await this.expireOutput(ref);
+      this.expireRetained();
+      return { unavailable: "expired" };
+    }
+    if (e.output) {
+      if (!Number.isSafeInteger(opts.maxBytes) || opts.maxBytes < 0 || opts.maxBytes > 65536)
+        throw new SandboxScopeDeniedError("Tail budget must be between 0 and 65536 bytes");
+      const total = e.output.locator.committed;
+      const raw = await this.readOutput(ref, {
+        offset: Math.max(0, total - 65536),
+        maxBytes: Math.min(65536, total),
+        signal: opts.signal,
+      });
+      if ("unavailable" in raw) return raw;
+      let begin = 0;
+      while (begin < raw.data.length && ((raw.data[begin] as number) & 0xc0) === 0x80) begin++;
+      const decoder = new StringDecoder("utf8");
+      let text = decoder.write(Buffer.from(raw.data.subarray(begin)));
+      if (e.output.state !== "collecting" || !this.live.has(ref.operationId)) text += decoder.end();
+      const bytes = Buffer.from(text);
+      let start = Math.max(0, bytes.length - opts.maxBytes);
+      if (e.output.state === "complete") {
+        let cursor = bytes.length - (bytes.at(-1) === 10 ? 1 : 0);
+        for (let line = 0; line < 20; line++) {
+          const previous = bytes.lastIndexOf(10, cursor - 1);
+          if (previous < 0) {
+            cursor = -1;
+            break;
+          }
+          cursor = previous;
+        }
+        start = Math.max(start, cursor + 1);
+      }
+      while (start < bytes.length && ((bytes[start] as number) & 0xc0) === 0x80) start++;
+      return {
+        data: bytes.subarray(start),
+        truncated: total > raw.data.length || begin > 0 || start > 0,
+      };
+    }
     if (e.state === "unknown") return { unavailable: "lost" };
     if (!Number.isSafeInteger(opts.maxBytes) || opts.maxBytes < 0 || opts.maxBytes > 65536)
       throw new SandboxScopeDeniedError("Tail budget must be between 0 and 65536 bytes");
@@ -395,8 +668,20 @@ export class MacOperationSupervisor {
       throw new SandboxScopeDeniedError("Invalid stop grace");
     const e = this.validate(ref);
     if (!e) return { outcome: "lost" };
+    if (e.output?.state === "fault") {
+      if (e.stop?.outcome === "stopped") return e.stop;
+      const live = this.live.get(ref.operationId) ?? this.faultOwners.get(ref.operationId);
+      if (live) this.collectorFault(e, live);
+      return { outcome: "cancel-pending" };
+    }
     let outcome: SandboxStopResult | Promise<SandboxStopResult> = { outcome: "cancel-pending" };
     await this.serial(() => {
+      if (e.output?.state === "fault") {
+        const live = this.live.get(ref.operationId) ?? this.faultOwners.get(ref.operationId);
+        if (live) this.collectorFault(e, live);
+        outcome = e.stop?.outcome === "stopped" ? e.stop : { outcome: "cancel-pending" };
+        return;
+      }
       const active = this.cancellations.get(ref.operationId);
       if (active) {
         outcome = active;
@@ -433,10 +718,16 @@ export class MacOperationSupervisor {
             }
           } else live.controller.abort("Stopped");
           await live.completion.catch(() => {});
+          await live.finished;
           await this.serial(() => {
             if (e.stop?.outcome === "cancel-pending") {
               e.stop = { outcome: "stopped" };
-              this.persist();
+              if (e.output) e.output.interruptedCancellation = false;
+              try {
+                this.persist();
+              } catch (error) {
+                if (e.output?.state !== "fault") throw error;
+              }
             }
           });
           return e.stop ?? { outcome: "cancel-pending" };
@@ -446,6 +737,7 @@ export class MacOperationSupervisor {
             this.cancellations.delete(ref.operationId);
             if (
               e.stop?.outcome === "cancel-pending" &&
+              e.output?.state !== "fault" &&
               e.state === "completed" &&
               e.result &&
               "exitCode" in e.result
@@ -507,6 +799,7 @@ export class MacOperationSupervisor {
         e.ref.instanceGeneration !== this.options.instanceGeneration
       )
         continue;
+      if (e.output?.state === "fault") await this.serial(() => this.persist()).catch(() => {});
       if (e.stop?.outcome === "cancel-pending") await this.stop(e.ref, { graceMs: 0, signal });
       else if (e.request && !e.revoked && e.state !== "completed" && !allowed(e.request))
         await this.revokeOperation(

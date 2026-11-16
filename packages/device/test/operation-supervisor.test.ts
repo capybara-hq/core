@@ -74,7 +74,10 @@ async function fixture(denyCancel: boolean | number = false) {
   return {
     stateDir,
     supervisor,
-    emit: (bytes: Buffer, stream?: "stdout" | "stderr") => output(bytes, stream),
+    emit: async (bytes: Buffer, stream?: "stdout" | "stderr") => {
+      for (let offset = 0; offset < bytes.length; offset += 65536)
+        await output(bytes.subarray(offset, offset + 65536), stream);
+    },
     setNow: (n: number) => {
       now = n;
     },
@@ -83,19 +86,20 @@ async function fixture(denyCancel: boolean | number = false) {
     finish: () => finish(result),
   };
 }
-const request = () => ({
+const request = (stateDir: string) => ({
+  managedOutput: { artifactRoot: stateDir, outputPath: join(stateDir, "artifact.out") },
   kind: "exec" as const,
   scope,
   grant,
   args: { command: "echo hello", timeoutMs: 1000, maxOutputBytes: 1000 },
-  stateDir: "unused",
+  stateDir,
   pythonPath: "/usr/bin/python3",
   beforeLaunch: async () => {},
   onLaunch: async () => {},
 });
 it("consumes before launch, retains reference on retry, rejects changed input and expires tail", async () => {
   const f = await fixture();
-  const req = request();
+  const req = request(f.stateDir);
   const ref = await f.supervisor.start(req, "hash", 2000, signal);
   expect(f.starts()).toBe(1);
   expect(await f.supervisor.start(req, "hash", 2000, signal)).toEqual(ref);
@@ -127,8 +131,14 @@ it("records revoke before start and rejects expired or wrong-generation referenc
     { operationId: scope.operationId, admitBeforeMs: scope.admitBeforeMs },
     signal,
   );
-  await expect(f.supervisor.start(request(), "hash", 2000, signal)).rejects.toThrow(/revoked/);
-  const other = { ...request(), scope: { ...scope, operationId: "other" } };
+  await expect(f.supervisor.start(request(f.stateDir), "hash", 2000, signal)).rejects.toThrow(
+    /revoked/,
+  );
+  const other = {
+    ...request(f.stateDir),
+    managedOutput: { artifactRoot: f.stateDir, outputPath: join(f.stateDir, "other.out") },
+    scope: { ...scope, operationId: "other" },
+  };
   const ref = await f.supervisor.start(other, "other", 2000, signal);
   await expect(
     f.supervisor.status({ ...ref, instanceGeneration: "wrong" }, signal),
@@ -138,7 +148,7 @@ it("records revoke before start and rejects expired or wrong-generation referenc
 });
 it("restart preserves consumed unknown and never replays effects", async () => {
   const f = await fixture();
-  const ref = await f.supervisor.start(request(), "hash", 2000, signal);
+  const ref = await f.supervisor.start(request(f.stateDir), "hash", 2000, signal);
   const recovered = new MacOperationSupervisor({
     stateDir: f.stateDir,
     deviceId: "d",
@@ -149,14 +159,14 @@ it("restart preserves consumed unknown and never replays effects", async () => {
     },
   });
   expect(await recovered.status(ref, signal)).toEqual({ state: "lost" });
-  await expect(recovered.execute(request(), "hash", signal)).rejects.toThrow(/unknown/);
+  await expect(recovered.execute(request(f.stateDir), "hash", signal)).rejects.toThrow(/unknown/);
   await f.supervisor.stop(ref, { graceMs: 0, signal });
 });
 
 it("bounds tails to 65536 bytes and never splits a UTF-8 character", async () => {
   const f = await fixture();
-  const ref = await f.supervisor.start(request(), "hash", 2000, signal);
-  f.emit(Buffer.from(`${"a".repeat(70000)}😀`));
+  const ref = await f.supervisor.start(request(f.stateDir), "hash", 2000, signal);
+  await f.emit(Buffer.from(`${"a".repeat(70000)}😀`));
   const tail = await f.supervisor.tail(ref, { maxBytes: 3, signal });
   expect(tail).toEqual({ data: Buffer.alloc(0), truncated: true });
   const all = await f.supervisor.tail(ref, { maxBytes: 65536, signal });
@@ -166,7 +176,7 @@ it("bounds tails to 65536 bytes and never splits a UTF-8 character", async () =>
 });
 it("cancellation wins the terminal stop race and retries preserve its outcome", async () => {
   const f = await fixture();
-  const ref = await f.supervisor.start(request(), "hash", 2000, signal);
+  const ref = await f.supervisor.start(request(f.stateDir), "hash", 2000, signal);
   expect(await f.supervisor.stop(ref, { graceMs: 0, signal })).toEqual({ outcome: "stopped" });
   expect(await f.supervisor.stop(ref, { graceMs: 0, signal })).toEqual({ outcome: "stopped" });
   expect(f.cancelled()).toBe(1);
@@ -174,14 +184,16 @@ it("cancellation wins the terminal stop race and retries preserve its outcome", 
 it("expired admission is rejected but retained completed lookup still works after its admission deadline", async () => {
   const f = await fixture();
   f.setNow(1001);
-  await expect(f.supervisor.start(request(), "hash", 2000, signal)).rejects.toThrow(/expired/);
+  await expect(f.supervisor.start(request(f.stateDir), "hash", 2000, signal)).rejects.toThrow(
+    /expired/,
+  );
   expect(f.starts()).toBe(0);
   f.setNow(1);
-  const ref = await f.supervisor.start(request(), "hash", 2000, signal);
+  const ref = await f.supervisor.start(request(f.stateDir), "hash", 2000, signal);
   f.finish();
   await f.supervisor.settled("op");
   f.setNow(1001);
-  expect(await f.supervisor.start(request(), "hash", 2000, signal)).toEqual(ref);
+  expect(await f.supervisor.start(request(f.stateDir), "hash", 2000, signal)).toEqual(ref);
   expect(f.starts()).toBe(1);
 });
 
@@ -256,6 +268,7 @@ it.runIf(process.platform === "darwin")(
               maxOutputBytes: 1000,
             },
             stateDir,
+            managedOutput: { artifactRoot: stateDir, outputPath: join(stateDir, `${id}.out`) },
             pythonPath: "/usr/bin/python3",
             beforeLaunch: async () => {},
             onLaunch: async (info) => {
@@ -338,7 +351,7 @@ it.runIf(process.platform === "darwin")(
 
 it("a denied trusted cancellation remains durable cancel-pending without a false stopped result", async () => {
   const f = await fixture(true);
-  const ref = await f.supervisor.start(request(), "hash", 2000, signal);
+  const ref = await f.supervisor.start(request(f.stateDir), "hash", 2000, signal);
   expect(await f.supervisor.stop(ref, { graceMs: 0, signal })).toEqual({
     outcome: "cancel-pending",
   });
@@ -457,8 +470,8 @@ it.runIf(process.platform === "darwin")(
 
 it("terminal tails preserve the existing final twenty-line limit", async () => {
   const f = await fixture();
-  const ref = await f.supervisor.start(request(), "hash", 2000, signal);
-  f.emit(Buffer.from(Array.from({ length: 30 }, (_, i) => `line-${i}\n`).join("")));
+  const ref = await f.supervisor.start(request(f.stateDir), "hash", 2000, signal);
+  await f.emit(Buffer.from(Array.from({ length: 30 }, (_, i) => `line-${i}\n`).join("")));
   f.finish();
   await f.supervisor.settled("op");
   const tail = await f.supervisor.tail(ref, { maxBytes: 65536, signal });
@@ -490,7 +503,7 @@ it.runIf(process.platform === "darwin")(
     const script =
       "import signal,sys; signal.signal(signal.SIGTERM,lambda *args:(print('clean',flush=True),sys.exit(0))); print('armed',flush=True); signal.pause()";
     const req: MacWorkerRequest = {
-      ...request(),
+      ...request(stateDir),
       scope: { ...scope, admitBeforeMs: Date.now() + 30000 },
       stateDir,
       args: {
@@ -522,7 +535,7 @@ it.runIf(process.platform === "darwin")(
 
 it("retries a failed exact cancellation and preserves the completed stop outcome", async () => {
   const f = await fixture(1);
-  const ref = await f.supervisor.start(request(), "hash", 2000, signal);
+  const ref = await f.supervisor.start(request(f.stateDir), "hash", 2000, signal);
   try {
     expect(await f.supervisor.stop(ref, { graceMs: 0, signal })).toEqual({
       outcome: "cancel-pending",
@@ -537,7 +550,7 @@ it("retries a failed exact cancellation and preserves the completed stop outcome
 });
 it("owner reconciliation retries already revoked work until exact cancellation succeeds", async () => {
   const f = await fixture(1);
-  const ref = await f.supervisor.start(request(), "hash", 2000, signal);
+  const ref = await f.supervisor.start(request(f.stateDir), "hash", 2000, signal);
   try {
     await f.supervisor.reconcile(() => false, signal);
     expect(f.cancelled()).toBe(1);
@@ -551,7 +564,7 @@ it("owner reconciliation retries already revoked work until exact cancellation s
 });
 it("natural completion resolves a prior pending cancellation without signaling again", async () => {
   const f = await fixture(true);
-  const ref = await f.supervisor.start(request(), "hash", 2000, signal);
+  const ref = await f.supervisor.start(request(f.stateDir), "hash", 2000, signal);
   expect(await f.supervisor.stop(ref, { graceMs: 0, signal })).toEqual({
     outcome: "cancel-pending",
   });
@@ -586,15 +599,15 @@ it("worker cancellation attempts retry failures and coalesce only the active att
 
 it("live tails withhold a trailing partial UTF-8 character until its next chunk", async () => {
   const f = await fixture();
-  const ref = await f.supervisor.start(request(), "hash", 2000, signal);
+  const ref = await f.supervisor.start(request(f.stateDir), "hash", 2000, signal);
   try {
     const character = Buffer.from("😀");
-    f.emit(character.subarray(0, 2), "stdout");
+    await f.emit(character.subarray(0, 2), "stdout");
     expect(await f.supervisor.tail(ref, { maxBytes: 65536, signal })).toEqual({
       data: Buffer.alloc(0),
       truncated: false,
     });
-    f.emit(character.subarray(2), "stdout");
+    await f.emit(character.subarray(2), "stdout");
     expect(await f.supervisor.tail(ref, { maxBytes: 65536, signal })).toEqual({
       data: character,
       truncated: false,
@@ -603,20 +616,29 @@ it("live tails withhold a trailing partial UTF-8 character until its next chunk"
     await f.supervisor.stop(ref, { graceMs: 0, signal });
   }
 });
-it("interleaved stdout and stderr decode their character fragments independently", async () => {
+it("merged output preserves bytes even when source fragments are invalid UTF-8", async () => {
   const f = await fixture();
-  const ref = await f.supervisor.start(request(), "hash", 2000, signal);
+  const ref = await f.supervisor.start(request(f.stateDir), "hash", 2000, signal);
   try {
     const out = Buffer.from("😀");
     const err = Buffer.from("€");
-    f.emit(out.subarray(0, 2), "stdout");
-    f.emit(err.subarray(0, 1), "stderr");
-    f.emit(out.subarray(2), "stdout");
+    await f.emit(out.subarray(0, 2), "stdout");
+    await f.emit(err.subarray(0, 1), "stderr");
+    await f.emit(out.subarray(2), "stdout");
     let tail = await f.supervisor.tail(ref, { maxBytes: 65536, signal });
-    expect("data" in tail && Buffer.from(tail.data).toString()).toBe("😀");
-    f.emit(err.subarray(1), "stderr");
+    expect("data" in tail && Buffer.from(tail.data).toString()).toBe(
+      Buffer.concat([out.subarray(0, 2), err.subarray(0, 1), out.subarray(2)]).toString(),
+    );
+    await f.emit(err.subarray(1), "stderr");
     tail = await f.supervisor.tail(ref, { maxBytes: 65536, signal });
-    expect("data" in tail && Buffer.from(tail.data).toString()).toBe("😀€");
+    expect("data" in tail && Buffer.from(tail.data).toString()).toBe(
+      Buffer.concat([
+        out.subarray(0, 2),
+        err.subarray(0, 1),
+        out.subarray(2),
+        err.subarray(1),
+      ]).toString(),
+    );
   } finally {
     await f.supervisor.stop(ref, { graceMs: 0, signal });
   }
@@ -663,7 +685,7 @@ it("concurrent stops retain the claimed winner after worker completion before ca
       };
     },
   });
-  const ref = await supervisor.start(request(), "hash", 2000, signal);
+  const ref = await supervisor.start(request(stateDir), "hash", 2000, signal);
   const first = supervisor.stop(ref, { graceMs: 0, signal });
   try {
     await cancelling;
@@ -692,7 +714,7 @@ it.each([1, 2001])(
   async (now) => {
     const { vi } = await import("vitest");
     const f = await fixture(true);
-    const oldRef = await f.supervisor.start(request(), "old-hash", 2000, signal);
+    const oldRef = await f.supervisor.start(request(f.stateDir), "old-hash", 2000, signal);
     expect(await f.supervisor.stop(oldRef, { graceMs: 0, signal })).toEqual({
       outcome: "cancel-pending",
     });
@@ -724,7 +746,8 @@ it.each([1, 2001])(
       },
     });
     const currentRequest = {
-      ...request(),
+      ...request(f.stateDir),
+      managedOutput: { artifactRoot: f.stateDir, outputPath: join(f.stateDir, "current.out") },
       scope: { ...scope, operationId: "current", admitBeforeMs: 4000 },
     };
     const ref = await current.start(currentRequest, "current-hash", 5000, signal);
@@ -735,7 +758,9 @@ it.each([1, 2001])(
       expect(f.cancelled()).toBe(1);
       expect(kill).not.toHaveBeenCalled();
       expect(await current.stop(ref, { graceMs: 0, signal })).toEqual({ outcome: "stopped" });
-      await expect(current.start(request(), "old-hash", 5000, signal)).rejects.toThrow(/revoked/);
+      await expect(current.start(request(f.stateDir), "old-hash", 5000, signal)).rejects.toThrow(
+        /revoked/,
+      );
       const file = (await readdir(f.stateDir)).find((name) =>
         name.startsWith("operation-journal-"),
       );

@@ -92,6 +92,7 @@ export async function createMacOperationBackend(
     stateDir: options.stateDir,
     deviceId: options.deviceId,
     instanceGeneration: options.instanceGeneration,
+    pythonPath: options.pythonPath,
     ...(dependencies.now ? { now: dependencies.now } : {}),
     ...(dependencies.startWorker ? { start: dependencies.startWorker } : {}),
     onLiveChanged: (live) => {
@@ -214,6 +215,18 @@ export async function createMacOperationBackend(
           ...common,
           kind: "exec",
           scope: scope as SandboxOperationScope,
+          ...(background
+            ? {
+                managedOutput: {
+                  outputPath: background.outputPath,
+                  artifactRoot: grant.full
+                    ? "/"
+                    : ([...grant.writeRoots]
+                        .filter((root) => within(background.outputPath, root))
+                        .sort((a, b) => b.length - a.length)[0] as string),
+                },
+              }
+            : {}),
           args: {
             ...(args as Omit<Parameters<SandboxOperation["exec"]>[0], "signal">),
             cwd: args?.cwd ?? options.roots.workspace,
@@ -311,6 +324,10 @@ export async function createMacOperationBackend(
     status: async (h, ref, signal) => {
       checkHandle(h);
       return supervisor.status(ref, signal);
+    },
+    readOutput: async (h, ref, opts) => {
+      checkHandle(h);
+      return supervisor.readOutput(ref, opts);
     },
     tail: async (h, ref, opts) => {
       checkHandle(h);
