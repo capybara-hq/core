@@ -10,7 +10,15 @@ import { usableSkills } from "../../src/skills/usable.js";
 import { lifePkg, pluginTgz } from "../helpers/plugin-packages.js";
 import { createOrg, type Req, waitFor } from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
-import { importPlugin, type OrgEnv, resetOrgCatalog, setScope, startOrgEnv } from "./org-env.js";
+import {
+  importPlugin,
+  type OrgEnv,
+  resetOrgCatalog,
+  scopeQueueIdle,
+  setScope,
+  startOrgEnv,
+  syncItemNow,
+} from "./org-env.js";
 import { bundlePlugin, skillPlugin } from "./packages.js";
 
 /**
@@ -111,7 +119,13 @@ async function extensionAudits(name: string) {
   }));
 }
 
-/** Makes an item imported by the super admin org A's own (pre-flight F6). */
+/**
+ * Makes an item imported by the super admin org A's own (pre-flight F6), installed in org A only.
+ * The import owed a scope sync with its commit; delivered after the scope change below, it would
+ * install the plugin in org A between an update's preview and its confirm, and the confirm would
+ * then refuse the preview as stale (`plugin.upgrade_stale`: the orgs the extension leaves are part
+ * of what the admin confirms). So the owed sync settles first, then the item converges here.
+ */
 async function ownedByA(itemId: string): Promise<void> {
   await env.db
     .updateTable("catalog_items")
@@ -119,6 +133,8 @@ async function ownedByA(itemId: string): Promise<void> {
     .where("id", "=", itemId)
     .execute();
   await setScope(env, itemId, "named", [orgA]);
+  await waitFor(() => scopeQueueIdle(env), 30_000, "the import's scope sync settled");
+  await syncItemNow(env, itemId);
 }
 
 const usable = async (orgId: string) => (await usableSkills(env.db, orgId)).map((s) => s.name);
@@ -203,12 +219,7 @@ describe("owner updates without an extension", () => {
   it("a version dropping the extension applies at once", async () => {
     // v1 with an extension, seeded as a super admin import, then owned by org A (pre-flight F6)
     const itemId = await importPlugin(env, await lifePkg({ name: "own-ext", version: "1.0.0" }));
-    await env.db
-      .updateTable("catalog_items")
-      .set({ owner_org_id: orgA, shareable: false, shown_to_others: false })
-      .where("id", "=", itemId)
-      .execute();
-    await setScope(env, itemId, "named", [orgA]);
+    await ownedByA(itemId);
     expect(
       await env.db
         .selectFrom("extension_installs")
