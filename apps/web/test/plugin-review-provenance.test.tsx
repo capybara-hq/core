@@ -1,6 +1,6 @@
 // The provenance fact of a plugin review is labelled as an unverified attestation: the kernel
 // does not verify the SLSA signatures (packages/kernel/src/packages/provenance.ts).
-import { cleanup, screen } from "@testing-library/react";
+import { cleanup } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { PluginReviewBody } from "../src/components/PluginReviewBody";
 import type { PluginReview } from "../src/lib/catalog";
@@ -37,7 +37,7 @@ describe("PluginReviewBody provenance", () => {
   ] as const) {
     it(`labels the attestation as unverified (${locale})`, () => {
       renderPage(<PluginReviewBody review={review} />, { locale });
-      expect(screen.getByText(new RegExp(text.replace(/[()]/g, "\\$&")))).toBeTruthy();
+      expect(document.body.textContent).toContain(text);
     });
   }
 });
