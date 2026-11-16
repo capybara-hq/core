@@ -58,9 +58,9 @@ existing Python/GCC tooling, TanStack Query and the existing design system.
 | A | 1; 5 complete | Additive SDK only; generic design commit `09272da87` is reviewed |
 | B | 2a and 3 | Portable native API/source and authority-lock foundation/root API are disjoint |
 | B-held | 2b | Linux restricted source/proof remainder stays held; no retry or alternate execution route |
-| C | macOS-only 4 and independent 11 | macOS uses reviewed 1+2a and accepted local mechanism; Linux/local-Docker restricted work held; wire stays v2 |
+| C | macOS-only 4, independent 11 and dormant 6b implementation after 6a | 6b consumes the frozen Task 4 interfaces in disjoint files; both high-risk reviews must pass before acceptance or activation; Linux/local-Docker work held; wire stays v2 |
 | D0 | 6a | After accepted 3 only; may run alongside 2a/4; read-only facts/module extraction and M1 fix |
-| D | 6b | After 3, 4 and 6a; facade/admission and staged v3; no announcement |
+| D | 4 + 6b acceptance gate | Both independent reviews must pass; facade/admission and staged v3 stay dormant; no announcement |
 | E | 7 and 8 | Policy/cards and background cutover after 6; v3 activation only after Task 8 retirement tests |
 | F | 9; then 10 | Replay after 7–8; web after 3, 5, 9; no concurrent shared event edits |
 | G | independent preparation of 12 and 13 | Published SDK/testing prerequisite remains; Linux enforcement/full proof cannot pass held 2b |
@@ -527,9 +527,13 @@ lookup may inspect registered metadata but must not start/probe an actual provid
 
 ### Task 6b: Fresh operation facade, durable admission and staged protocol adapters
 
-**Prerequisites:** Tasks 3, 4 and 6a. The lower-level reader/module graph is already acyclic; do not
-reintroduce profile/lifecycle dependencies or duplicate extracted providers. This task retains the
-existing admission/fencing scope and waits for Task 8 before any protocol3 announcement.
+**Prerequisites:** Accepted Tasks 3 and 6a plus the frozen Task 4 device-private interfaces.
+Dormant implementation may run alongside Task 4 fixes in disjoint files; Task 4 and Task 6b both
+require independent acceptance before any caller activation or downstream reliance. An interface
+change in Task 4 is coordinated before changing a consumer. The lower-level reader/module graph
+is already acyclic; do not reintroduce profile/lifecycle dependencies or duplicate extracted
+providers. This task retains the existing admission/fencing scope and waits for Task 8 before any
+protocol3 announcement.
 
 **Files:** Modify `packages/kernel/src/sandbox/sandbox.service.ts`, `sandbox.module.ts`,
 `providers.ts`, `sandbox-file-reader.ts`, `local-devices/local-device-provider.ts`,
