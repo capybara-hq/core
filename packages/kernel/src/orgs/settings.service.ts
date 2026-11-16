@@ -28,6 +28,7 @@ import {
   orgEffectiveHosts,
   orgHostOutsideCeiling,
 } from "../sandbox/modes.js";
+import { isExecutionMethod } from "../sandbox/operation-authority-types.js";
 import { PermissionAuthorityModule } from "../sandbox/permission-authority.module.js";
 import { needsFullCeiling, PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
 import {
@@ -659,7 +660,11 @@ export class OrgSettingsService {
         "org",
         (scope, row) => {
           if (needsFullCeiling(scope)) return after.autoMode === "off";
-          if (!("network" in scope) || row.method !== "exec" || scope.network.kind !== "allowlist")
+          if (
+            !("network" in scope) ||
+            !isExecutionMethod(row.method) ||
+            scope.network.kind !== "allowlist"
+          )
             return false;
           const hosts = this.effectiveNetwork(after).hosts;
           return scope.network.hosts.some(

@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
@@ -19,6 +19,8 @@ async function fixture() {
     skills: join(dir, "skills"),
     tmp: join(dir, "tmp"),
   };
+  await Promise.all(Object.values(roots).map((root) => mkdir(root)));
+  let ceilingReads = 0;
   let ceiling: DeviceOwnerCeiling = {
     revision: "one",
     fullAccess: true,
@@ -46,7 +48,10 @@ async function fixture() {
       stateDir: dir,
       roots,
       pythonPath: "/usr/bin/python3",
-      readOwnerCeiling: async () => ceiling,
+      readOwnerCeiling: async () => {
+        ceilingReads++;
+        return ceiling;
+      },
     },
     {
       restrictedSupported: true,
@@ -111,6 +116,7 @@ async function fixture() {
     roots,
     scope,
     launched,
+    ceilingReads: () => ceilingReads,
     beforeStart: (fn: () => Promise<void>) => {
       beforeStart = fn;
     },
@@ -759,3 +765,89 @@ it.runIf(process.platform === "darwin")(
     });
   },
 );
+
+it("retained output controls use the exact reference without a fresh profile grant", async () => {
+  const f = await fixture();
+  f.hold();
+  const scope = {
+    ...f.scope,
+    profile: "full-access" as const,
+    filesystem: { kind: "device" as const },
+    network: { kind: "environment" as const },
+  };
+  const ref = await f.backend.background.start({ id: "d" }, scope, {
+    command: "fixture",
+    timeoutMs: 1000,
+    maxOutputBytes: 4,
+    signal,
+    taskId: "task",
+    outputPath: join(f.roots.tmp, "retained.out"),
+    retainUntilMs: Date.now() + 60000,
+  });
+  const reads = f.ceilingReads(),
+    launches = f.launched.length;
+  f.setCeiling({ fullAccess: false, restrictedDeniedReadRoots: [f.roots.tmp] });
+  expect(
+    await f.backend.background.readOutput({ id: "d" }, ref, { offset: 0, maxBytes: 0, signal }),
+  ).toMatchObject({ totalBytes: 0, nextOffset: 0 });
+  expect(f.ceilingReads()).toBe(reads);
+  expect(f.launched).toHaveLength(launches);
+  await expect(
+    f.backend.background.readOutput({ id: "other" }, ref, { offset: 0, maxBytes: 0, signal }),
+  ).rejects.toThrow(/handle/);
+  await expect(
+    f.backend.background.readOutput(
+      { id: "d" },
+      { ...ref, executionId: "wrong" },
+      { offset: 0, maxBytes: 0, signal },
+    ),
+  ).rejects.toThrow(/reference/);
+  await f.backend.background.stop({ id: "d" }, ref, { graceMs: 0, signal });
+});
+
+it("restricted artifact creation preserves implicit write denies before any owned helper launch", async () => {
+  const { vi } = await import("vitest");
+  const policy = await import("../src/policy.js");
+  const { access, mkdir } = await import("node:fs/promises");
+  const f = await fixture();
+  const denied = join(f.roots.tmp, "owned-denied");
+  await mkdir(denied);
+  const spy = vi.spyOn(policy, "implicitWritePaths").mockReturnValue([denied]);
+  try {
+    const args = {
+      command: "fixture",
+      timeoutMs: 1000,
+      maxOutputBytes: 4,
+      signal,
+      taskId: "task",
+      outputPath: join(denied, "artifact.out"),
+      retainUntilMs: Date.now() + 60000,
+    };
+    await expect(
+      f.backend
+        .forExecution({
+          operationId: f.scope.operationId,
+          orgNetwork: { kind: "open-public", hosts: [] },
+        })
+        .background.start({ id: "d" }, f.scope, args),
+    ).rejects.toThrow(/protected|denied/);
+    expect(f.launched).toHaveLength(0);
+    await expect(access(args.outputPath)).rejects.toThrow();
+    const ref = await f.backend.background.start(
+      { id: "d" },
+      {
+        ...f.scope,
+        operationId: "full-artifact",
+        profile: "full-access",
+        filesystem: { kind: "device" },
+        network: { kind: "environment" },
+      },
+      args,
+    );
+    await f.backend.background.stop({ id: "d" }, ref, { graceMs: 0, signal });
+    await access(args.outputPath);
+    expect(f.launched).toHaveLength(1);
+  } finally {
+    spy.mockRestore();
+  }
+});

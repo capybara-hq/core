@@ -19,7 +19,7 @@ import {
 } from "./sandbox-operation.js";
 export const STAGED_DEVICE_PROTOCOL_VERSION = 3;
 export type DeviceOperationV3 =
-  | DeviceOp
+  | Exclude<DeviceOp, "killTagged" | "killAll">
   | "prepareReadFile"
   | "prepareWriteFile"
   | "prepareStat"
@@ -29,9 +29,13 @@ export type DeviceOperationV3 =
   | "backgroundStart"
   | "backgroundStatus"
   | "backgroundTail"
+  | "backgroundReadOutput"
   | "backgroundStop"
   | "revokeOperation";
 export interface DeviceOwnerCeilingV3 {
+  readonly version: 2;
+  readonly sequence: number;
+  readonly restrictedProjectReach: "workspace" | "os-user";
   readonly revision: string;
   readonly fullAccess: boolean;
   readonly restrictedAllowedDomains: readonly string[];
@@ -40,7 +44,8 @@ export interface DeviceHelloV3 extends DeviceHello {
   protocol: 3;
   permissionSupport: SandboxPermissionSupport;
   ownerCeiling: DeviceOwnerCeilingV3;
-  instanceGeneration: string;
+  instanceGeneration: string | null;
+  transport: { maxFrameBytes: number };
   /** Absent until the program can attest actual installed runtime/helper/environment bytes. */
   runtimeIdentity?: {
     runtimeHash: string;
@@ -49,6 +54,19 @@ export interface DeviceHelloV3 extends DeviceHello {
     instanceGeneration: string;
   };
 }
+export interface KernelReadyV3 {
+  type: "ready";
+  connectionId: string;
+  maxFrameBytes: number;
+}
+export interface BackgroundReadOutputRequestV3 {
+  offset: number;
+  maxBytes: number;
+}
+export type BackgroundReadOutputResultV3 =
+  | { dataB64: string; offset: number; nextOffset: number; totalBytes: number }
+  | { unavailable: "lost" | "expired" };
+
 export interface KernelRequestV3 {
   type: "req";
   id: string;
@@ -69,6 +87,7 @@ export type DeviceResponseV3 =
     };
 export type DeviceFrameV3 =
   | DeviceHelloV3
+  | KernelReadyV3
   | KernelRequestV3
   | KernelCancel
   | DeviceResponseV3
@@ -119,7 +138,17 @@ function support(value: unknown): SandboxPermissionSupport {
 }
 function owner(value: unknown): DeviceOwnerCeilingV3 {
   const o = object(value);
-  keys(o, ["revision", "fullAccess", "restrictedAllowedDomains"]);
+  keys(o, [
+    "version",
+    "sequence",
+    "revision",
+    "fullAccess",
+    "restrictedProjectReach",
+    "restrictedAllowedDomains",
+  ]);
+  integer(o.sequence);
+  if (o.version !== 2 || !["workspace", "os-user"].includes(String(o.restrictedProjectReach)))
+    throw new DeviceProtocolError("Invalid owner ceiling report version or project reach");
   string(o.revision, 512);
   if (
     typeof o.fullAccess !== "boolean" ||
@@ -131,7 +160,7 @@ function owner(value: unknown): DeviceOwnerCeilingV3 {
   return o as unknown as DeviceOwnerCeilingV3;
 }
 const natives = ["exec", "readFile", "writeFile", "stat", "list", "scan"];
-const legacy = ["create", "killTagged", "killAll", "stop", "policy", "policyStatus"];
+const legacy = ["create", "stop", "policy", "policyStatus"];
 function request(o: Record<string, unknown>): KernelRequestV3 {
   keys(o, ["type", "id", "op", "args", "deadlineMs"]);
   const id = string(o.id),
@@ -141,18 +170,22 @@ function request(o: Record<string, unknown>): KernelRequestV3 {
   if (legacy.includes(op)) {
     const parsed = parseDeviceFrame(JSON.stringify(o), "kernel");
     if (parsed.type !== "req") throw new DeviceProtocolError("Expected request");
-    return freeze({ ...parsed, args: object(parsed.args) });
+    return freeze({ ...parsed, op: op as DeviceOperationV3, args: object(parsed.args) });
   }
   if (op === "revokeOperation") {
     keys(a, ["ref"]);
     a.ref = parseSandboxOperationRef(a.ref);
-  } else if (["backgroundStatus", "backgroundTail", "backgroundStop"].includes(op)) {
+  } else if (
+    ["backgroundStatus", "backgroundTail", "backgroundReadOutput", "backgroundStop"].includes(op)
+  ) {
     keys(a, [
       "ref",
+      ...(op === "backgroundReadOutput" ? ["offset", "maxBytes"] : []),
       ...(op === "backgroundTail" ? ["maxBytes"] : op === "backgroundStop" ? ["graceMs"] : []),
     ]);
     a.ref = parseSandboxExecutionRef(a.ref);
-    if (op === "backgroundTail") integer(a.maxBytes, 0, 65536);
+    if (op === "backgroundTail" || op === "backgroundReadOutput") integer(a.maxBytes, 0, 65536);
+    if (op === "backgroundReadOutput") integer(a.offset);
     if (op === "backgroundStop") integer(a.graceMs, 0, 60000);
   } else {
     const preparation = op.startsWith("prepare"),
@@ -215,7 +248,18 @@ function request(o: Record<string, unknown>): KernelRequestV3 {
   return freeze({ type: "req", id, op: op as DeviceOperationV3, args: a, deadlineMs });
 }
 /** Strict scope-bearing frames; active parseDeviceFrame still speaks v2. */
-export function parseDeviceFrameV3(raw: string, from: "device" | "kernel"): DeviceFrameV3 {
+export function parseDeviceFrameV3(
+  raw: string,
+  from: "device" | "kernel",
+  maxFrameBytes?: number,
+): DeviceFrameV3 {
+  if (
+    maxFrameBytes !== undefined &&
+    new TextEncoder().encode(raw).byteLength > integer(maxFrameBytes, 1)
+  )
+    throw new DeviceProtocolError(
+      "Frame exceeds negotiated capacity; check device and deployment frame limits",
+    );
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -223,6 +267,15 @@ export function parseDeviceFrameV3(raw: string, from: "device" | "kernel"): Devi
     throw new DeviceProtocolError("Frame is not valid JSON");
   }
   const o = object(parsed);
+  if (o.type === "ready") {
+    if (from !== "kernel") throw new DeviceProtocolError("Ready must come from kernel");
+    keys(o, ["type", "connectionId", "maxFrameBytes"]);
+    return freeze({
+      type: "ready",
+      connectionId: string(o.connectionId),
+      maxFrameBytes: integer(o.maxFrameBytes, 1024),
+    });
+  }
   if (o.type === "req") {
     if (from !== "kernel") throw new DeviceProtocolError("Request must come from kernel");
     return request(o);
@@ -230,6 +283,19 @@ export function parseDeviceFrameV3(raw: string, from: "device" | "kernel"): Devi
   if (o.type === "hello") {
     if (from !== "device" || o.protocol !== 3)
       throw new DeviceProtocolError("Expected protocol 3 hello");
+    const transport = object(o.transport);
+    keys(transport, ["maxFrameBytes"]);
+    const maxFrameBytes = integer(transport.maxFrameBytes, 1024);
+    const permissionSupport = support(o.permissionSupport);
+    if (
+      o.instanceGeneration === null &&
+      (o.runtimeIdentity !== undefined ||
+        permissionSupport.restricted !== null ||
+        permissionSupport.fullAccess ||
+        permissionSupport.background ||
+        !permissionSupport.unavailableReason)
+    )
+      throw new DeviceProtocolError("Unbound hello cannot advertise runtime capability");
     const base = parseDeviceFrame(raw, from);
     if (base.type !== "hello") throw new DeviceProtocolError("Expected hello");
     let runtimeIdentity: DeviceHelloV3["runtimeIdentity"];
@@ -247,9 +313,10 @@ export function parseDeviceFrameV3(raw: string, from: "device" | "kernel"): Devi
     return freeze({
       ...base,
       protocol: 3,
-      permissionSupport: support(o.permissionSupport),
+      permissionSupport,
+      transport: { maxFrameBytes },
       ownerCeiling: owner(o.ownerCeiling),
-      instanceGeneration: string(o.instanceGeneration),
+      instanceGeneration: o.instanceGeneration === null ? null : string(o.instanceGeneration),
       ...(runtimeIdentity && { runtimeIdentity }),
     });
   }
@@ -279,7 +346,43 @@ export function parseDeviceFrameV3(raw: string, from: "device" | "kernel"): Devi
     throw new DeviceProtocolError("Expected staged frame");
   return freeze(base);
 }
-export function parseOperationResultV3(op: DeviceOperationV3, result: unknown): unknown {
+export function parseOperationResultV3(
+  op: DeviceOperationV3,
+  result: unknown,
+  request?: BackgroundReadOutputRequestV3,
+): unknown {
+  if (op === "backgroundReadOutput") {
+    if (!request)
+      throw new DeviceProtocolError("Output validation requires the exact request bounds");
+    const offset = integer(request.offset),
+      maxBytes = integer(request.maxBytes, 0, 65536);
+    const o = object(result);
+    if ("unavailable" in o) {
+      keys(o, ["unavailable"]);
+      if (o.unavailable !== "lost" && o.unavailable !== "expired")
+        throw new DeviceProtocolError("Invalid output outcome");
+      return freeze(o) as BackgroundReadOutputResultV3;
+    }
+    keys(o, ["dataB64", "offset", "nextOffset", "totalBytes"]);
+    const total = integer(o.totalBytes),
+      next = integer(o.nextOffset);
+    if (
+      integer(o.offset) !== offset ||
+      typeof o.dataB64 !== "string" ||
+      o.dataB64.length > 87384 ||
+      !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(o.dataB64)
+    )
+      throw new DeviceProtocolError("Invalid output range or base64");
+    const decoded = atob(o.dataB64);
+    if (
+      btoa(decoded) !== o.dataB64 ||
+      decoded.length !== Math.min(maxBytes, Math.max(total - offset, 0)) ||
+      !Number.isSafeInteger(offset + decoded.length) ||
+      next !== offset + decoded.length
+    )
+      throw new DeviceProtocolError("Inconsistent output range; retry from the same offset");
+    return freeze(o) as BackgroundReadOutputResultV3;
+  }
   if (op === "backgroundStart") return parseSandboxExecutionRef(result);
   if (op === "backgroundStatus") {
     const o = object(result);

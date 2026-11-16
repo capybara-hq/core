@@ -545,14 +545,30 @@ export async function serveOperationV3(
     if (parsed.op === "revokeOperation") {
       await backend.revokeOperation(handle, sdk.parseSandboxOperationRef(a.ref), signal);
       result = null;
-    } else if (["backgroundStatus", "backgroundTail", "backgroundStop"].includes(parsed.op)) {
+    } else if (
+      ["backgroundStatus", "backgroundTail", "backgroundReadOutput", "backgroundStop"].includes(
+        parsed.op,
+      )
+    ) {
       const ref = sdk.parseSandboxExecutionRef(a.ref);
       result =
         parsed.op === "backgroundStatus"
           ? await backend.background.status(handle, ref, signal)
-          : parsed.op === "backgroundTail"
-            ? await backend.background.tail(handle, ref, { maxBytes: a.maxBytes as number, signal })
-            : await backend.background.stop(handle, ref, { graceMs: a.graceMs as number, signal });
+          : parsed.op === "backgroundReadOutput"
+            ? await backend.background.readOutput(handle, ref, {
+                offset: a.offset as number,
+                maxBytes: a.maxBytes as number,
+                signal,
+              })
+            : parsed.op === "backgroundTail"
+              ? await backend.background.tail(handle, ref, {
+                  maxBytes: a.maxBytes as number,
+                  signal,
+                })
+              : await backend.background.stop(handle, ref, {
+                  graceMs: a.graceMs as number,
+                  signal,
+                });
     } else {
       const prep = parsed.op.startsWith("prepare"),
         browse = parsed.op.startsWith("browse");
@@ -623,13 +639,25 @@ export async function serveOperationV3(
     )
       result = {
         dataB64: Buffer.from(result.data).toString("base64"),
-        truncated: "truncated" in result && result.truncated,
+        ...(parsed.op === "backgroundReadOutput"
+          ? {
+              offset: (result as unknown as { offset: number }).offset,
+              nextOffset: (result as unknown as { nextOffset: number }).nextOffset,
+              totalBytes: (result as unknown as { totalBytes: number }).totalBytes,
+            }
+          : { truncated: "truncated" in result && result.truncated }),
       };
     return {
       type: "res",
       id: request.id,
       ok: true,
-      result: sdk.parseOperationResultV3(parsed.op, result),
+      result: sdk.parseOperationResultV3(
+        parsed.op,
+        result,
+        parsed.op === "backgroundReadOutput"
+          ? { offset: a.offset as number, maxBytes: a.maxBytes as number }
+          : undefined,
+      ),
     };
   } catch (error) {
     const kind = sdk.isSandboxScopeDeniedError(error)

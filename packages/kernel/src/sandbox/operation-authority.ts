@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  type DeviceExecGrants,
   type PermissionProfile,
   parseSandboxBrowseScope,
   parseSandboxOperationScope,
@@ -19,6 +20,7 @@ import {
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { NetworkGrants } from "../local-devices/network-grants.js";
 import { coversHost } from "./modes.js";
+import { isExecutionMethod, parseStartingExecutionGrants } from "./operation-authority-types.js";
 import { PermissionAuthorityEpochStore } from "./permission-authority-epochs.js";
 import { PermissionAuthorityLock } from "./permission-authority-lock.js";
 import { PermissionCallGrants } from "./permission-call-grants.js";
@@ -138,19 +140,6 @@ export class SandboxOperationAuthority {
       tag: operationId,
     });
   }
-  /** Server-owned approval provenance, persisted with admission rather than inferred from scope hosts. */
-  async grantedHosts(ctx: SandboxUseContext): Promise<string[]> {
-    if (!ctx.actor.runId) return [];
-    return [
-      ...((
-        await this.grants.forExec({
-          orgId: ctx.orgId,
-          deviceId: ctx.deviceId,
-          runId: ctx.actor.runId,
-        })
-      )?.hosts ?? []),
-    ];
-  }
   async subjectFor(ctx: SandboxUseContext) {
     const root = await this.profiles.readOwnedRoot(
       ctx.orgId,
@@ -218,7 +207,10 @@ export class SandboxOperationAuthority {
     call: PermissionCallRef,
     signal: AbortSignal,
   ) {
-    const f = await this.snapshot(ctx, call, signal);
+    let networkGrant: DeviceExecGrants | undefined;
+    const f = await this.snapshot(ctx, call, signal, (grant) => {
+      networkGrant = grant;
+    });
     const started = await this.db
       .selectFrom("conversation_events")
       .select("payload")
@@ -287,17 +279,26 @@ export class SandboxOperationAuthority {
       ],
       baseHosts: [...f.baseHosts, ...(grant?.expansion.hosts ?? [])],
     });
-    return {
-      scope,
-      permissionGrantId: grant?.id ?? null,
-      grantedHosts:
-        operation === "exec"
-          ? [
-              ...new Set([...(await this.grantedHosts(ctx)), ...(grant?.expansion.hosts ?? [])]),
-            ].sort()
-          : [],
-    };
+    const hosts = isExecutionMethod(operation)
+      ? [...new Set([...(networkGrant?.hosts ?? []), ...(grant?.expansion.hosts ?? [])])].sort()
+      : [];
+    const executionGrants = isExecutionMethod(operation)
+      ? parseStartingExecutionGrants({
+          version: 1,
+          grants: hosts.length
+            ? {
+                hosts,
+                // The accepted per-call addition takes source precedence over the run/task envelope.
+                source: grant?.expansion.hosts.length
+                  ? { kind: "run", id: call.runId, accountId: ctx.actor.accountId }
+                  : networkGrant?.source,
+              }
+            : null,
+        })
+      : null;
+    return { scope, permissionGrantId: grant?.id ?? null, grantedHosts: hosts, executionGrants };
   }
+
   private scopeOf(
     ctx: SandboxUseContext,
     operation: SandboxAuthorityOperation,
@@ -323,7 +324,7 @@ export class SandboxOperationAuthority {
       workingRoot: f.workingRoot,
       readRoots: f.baseReadDirectories,
       writeRoots: f.baseWriteDirectories,
-      allowedHosts: operation === "exec" || operation === "backgroundStart" ? f.baseHosts : [],
+      allowedHosts: isExecutionMethod(operation) ? f.baseHosts : [],
       fullAccessCeiling: f.fullAccessCeiling,
       fullConsent: f.fullConsent,
     });
@@ -333,6 +334,7 @@ export class SandboxOperationAuthority {
     ctx: SandboxUseContext,
     call: PermissionCallRef,
     signal: AbortSignal,
+    captureGrant?: (grant: DeviceExecGrants | undefined) => void,
   ): Promise<PermissionReviewSnapshot> {
     signal.throwIfAborted();
     if (ctx.actor.runId && call.runId !== ctx.actor.runId)
@@ -416,6 +418,14 @@ export class SandboxOperationAuthority {
           grant?.hosts.includes(host)) &&
         (policy.network.kind === "open-public" ||
           policy.network.hosts.some((pattern) => coversHost(pattern, host))),
+    );
+    captureGrant?.(
+      grant
+        ? {
+            hosts: grant.hosts.filter((host) => allowedHosts.includes(host)).sort(),
+            source: { ...grant.source },
+          }
+        : undefined,
     );
     const vector = await this.epochs.readLocked(subject);
     signal.throwIfAborted();

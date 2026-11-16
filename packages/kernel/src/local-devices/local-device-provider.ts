@@ -7,7 +7,9 @@ import type {
   SandboxRoots,
 } from "@capybara-hq/plugin-sdk";
 import {
+  type BackgroundReadOutputResultV3,
   type DeviceOperationV3,
+  parseDeviceFrameV3,
   parseOperationResultV3,
   parseSandboxBrowseScope,
   parseSandboxOperationScope,
@@ -114,7 +116,11 @@ export class LocalDeviceProvider implements SandboxProvider {
       deviceId: string,
       op: DeviceOperationV3,
       args: Record<string, unknown>,
-      opts: { deadlineMs: number; signal: AbortSignal },
+      opts: {
+        deadlineMs: number;
+        signal: AbortSignal;
+        connection?: { connectionId: string; maxFrameBytes: number };
+      },
     ): Promise<unknown>;
     permissionSupport(deviceId: string, signal: AbortSignal): Promise<SandboxPermissionSupport>;
   }): Required<
@@ -181,6 +187,8 @@ export class LocalDeviceProvider implements SandboxProvider {
     const execArgs = async (
       deviceId: string,
       scope: import("@capybara-hq/plugin-sdk").SandboxOperationScope,
+      method: "exec" | "backgroundStart",
+      input: unknown,
     ) => {
       const orgId = await this.targets.orgOf(deviceId);
       if (orgId === null) throw deviceNotFound();
@@ -189,28 +197,29 @@ export class LocalDeviceProvider implements SandboxProvider {
         { orgId, deviceId },
         { policy, source: "local" },
       );
-      const runId = scope.actor.runId;
-      let grants =
-        runId === undefined
-          ? undefined
-          : grantsWithin(await this.grants.forExec({ orgId, deviceId, runId }), limits);
-      const callGrant = await this.callGrants?.forExecution(scope.operationId, deviceId);
-      if (callGrant) {
-        const hosts = [...new Set([...(grants?.hosts ?? []), ...callGrant.hosts])].sort();
-        if (hosts.length > 100)
-          throw new Error("The combined explicit host grant exceeds 100 hosts");
-        const bounded = grantsWithin({ hosts, source: callGrant.source }, limits);
-        if (callGrant.hosts.some((host) => !bounded?.hosts.includes(host)))
-          throw new Error("Current organization limits refuse the call's explicit hosts");
-        grants = bounded;
-      }
+      if (!this.callGrants)
+        throw new Error(
+          "Admitted execution authority is unavailable; check the device operation configuration",
+        );
+      const original = await this.callGrants.forExecution(
+        scope.operationId,
+        deviceId,
+        method,
+        scope,
+        input,
+      );
+      const grants = grantsWithin(original, limits);
+      if (original?.hosts.some((host) => !grants?.hosts.includes(host)))
+        throw new Error(
+          "Current organization limits refuse the admitted explicit hosts; review the operation again",
+        );
       return { limits, ...(grants === undefined ? {} : { grants }) };
     };
     const background: SandboxBackground = {
       start: async (h, input, args) => {
         const scope = parseSandboxOperationScope(input);
-        const authority = await execArgs(h.id, scope);
         const { signal, ...rest } = args;
+        const authority = await execArgs(h.id, scope, "backgroundStart", rest);
         signal.throwIfAborted();
         return parseOperationResultV3(
           "backgroundStart",
@@ -232,6 +241,44 @@ export class LocalDeviceProvider implements SandboxProvider {
             { deadlineMs: OP_DEADLINE_MS, signal },
           ),
         ) as Awaited<ReturnType<SandboxBackground["status"]>>,
+      readOutput: async (h, ref, opts) => {
+        opts.signal.throwIfAborted();
+        parseDeviceFrameV3(
+          JSON.stringify({
+            type: "req",
+            id: "validate",
+            op: "backgroundReadOutput",
+            args: { ref, offset: opts.offset, maxBytes: opts.maxBytes },
+            deadlineMs: OP_DEADLINE_MS,
+          }),
+          "kernel",
+        );
+        // liveness first (R27): a deleted or revoked device keeps its typed error
+        const connection = await this.relay.connection(h.id);
+        const capacity = Math.min(65536, maxReadBytes(connection.maxFrameBytes));
+        const request = { ref, offset: opts.offset, maxBytes: Math.min(opts.maxBytes, capacity) };
+        const result = parseOperationResultV3(
+          "backgroundReadOutput",
+          await transport.call(h.id, "backgroundReadOutput", request, {
+            deadlineMs: OP_DEADLINE_MS,
+            signal: opts.signal,
+            connection,
+          }),
+          request,
+        ) as BackgroundReadOutputResultV3;
+        if ("unavailable" in result) return result;
+        // A zero-capacity probe can establish EOF, but never reports unread bytes as EOF.
+        if (opts.maxBytes > 0 && capacity === 0 && result.totalBytes > opts.offset)
+          throw new Error(
+            "Managed output cannot fit the negotiated transport capacity; increase device and deployment frame limits and retry the same offset",
+          );
+        return {
+          data: bytesOf(result.dataB64),
+          offset: result.offset,
+          nextOffset: result.nextOffset,
+          totalBytes: result.totalBytes,
+        };
+      },
       tail: async (h, ref, opts) => {
         const r = parseOperationResultV3(
           "backgroundTail",
@@ -263,8 +310,8 @@ export class LocalDeviceProvider implements SandboxProvider {
         return {
           ...methods,
           exec: async (args) => {
-            const authority = await execArgs(h.id, scope);
             const { signal: callSignal, ...rest } = args;
+            const authority = await execArgs(h.id, scope, "exec", rest);
             const combined = AbortSignal.any([signal, callSignal]);
             combined.throwIfAborted();
             return parseOperationResultV3(

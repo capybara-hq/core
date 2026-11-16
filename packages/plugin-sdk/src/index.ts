@@ -14,11 +14,14 @@ export * from "./define-extension.js";
 export * from "./device-protocol.js";
 // Development staging: removed with the coordinated device protocol v3 activation.
 export {
+  type BackgroundReadOutputRequestV3,
+  type BackgroundReadOutputResultV3,
   type DeviceFrameV3,
   type DeviceHelloV3,
   type DeviceOperationV3,
   type DeviceOwnerCeilingV3,
   type DeviceResponseV3,
+  type KernelReadyV3,
   type KernelRequestV3,
   parseDeviceFrameV3,
   parseOperationResultV3,

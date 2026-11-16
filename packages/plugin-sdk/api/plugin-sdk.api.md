@@ -159,6 +159,22 @@ export type AvailableHook = (typeof HOOKS_AVAILABLE)[number];
 export const BACKGROUND_LAUNCH_LINE = "# capybara: background task launch";
 
 // @public
+export interface BackgroundReadOutputRequestV3 {
+    maxBytes: number;
+    offset: number;
+}
+
+// @public
+export type BackgroundReadOutputResultV3 = {
+    dataB64: string;
+    offset: number;
+    nextOffset: number;
+    totalBytes: number;
+} | {
+    unavailable: "lost" | "expired";
+};
+
+// @public
 export const BOOTSTRAP_MANIFEST_SCHEMA_VERSION = 1;
 
 // @public
@@ -807,7 +823,7 @@ export type DeviceFeature = "networkReport" | "policyOp" | "policyOpId" | "mode"
 export type DeviceFrame = DeviceHello | DeviceRes | DevicePolicyChanged | KernelReq | KernelCancel;
 
 // @public
-export type DeviceFrameV3 = DeviceHelloV3 | KernelRequestV3 | KernelCancel | DeviceResponseV3 | {
+export type DeviceFrameV3 = DeviceHelloV3 | KernelReadyV3 | KernelRequestV3 | KernelCancel | DeviceResponseV3 | {
     type: "policy";
     policy?: unknown;
 };
@@ -830,7 +846,7 @@ export interface DeviceHello {
 
 // @public
 export interface DeviceHelloV3 extends DeviceHello {
-    instanceGeneration: string;
+    instanceGeneration: string | null;
     ownerCeiling: DeviceOwnerCeilingV3;
     permissionSupport: SandboxPermissionSupport;
     protocol: 3;
@@ -839,6 +855,9 @@ export interface DeviceHelloV3 extends DeviceHello {
         helperHash: string;
         imageFingerprint: string;
         instanceGeneration: string;
+    };
+    transport: {
+        maxFrameBytes: number;
     };
 }
 
@@ -879,7 +898,7 @@ export interface DeviceLocalPolicySummary {
 export type DeviceOp = "create" | "exec" | "readFile" | "writeFile" | "stat" | "killTagged" | "killAll" | "stop" | "policy" | "policyStatus" | "list" | "scan";
 
 // @public
-export type DeviceOperationV3 = DeviceOp | "prepareReadFile" | "prepareWriteFile" | "prepareStat" | "browseStat" | "browseList" | "browseScan" | "backgroundStart" | "backgroundStatus" | "backgroundTail" | "backgroundStop" | "revokeOperation";
+export type DeviceOperationV3 = Exclude<DeviceOp, "killTagged" | "killAll"> | "prepareReadFile" | "prepareWriteFile" | "prepareStat" | "browseStat" | "browseList" | "browseScan" | "backgroundStart" | "backgroundStatus" | "backgroundTail" | "backgroundReadOutput" | "backgroundStop" | "revokeOperation";
 
 // @public
 export interface DeviceOpResults {
@@ -901,7 +920,10 @@ export interface DeviceOpResults {
 export interface DeviceOwnerCeilingV3 {
     readonly fullAccess: boolean;
     readonly restrictedAllowedDomains: readonly string[];
+    readonly restrictedProjectReach: "workspace" | "os-user";
     readonly revision: string;
+    readonly sequence: number;
+    readonly version: 2;
 }
 
 // @public
@@ -1866,6 +1888,13 @@ export interface KernelCancel {
 }
 
 // @public
+export interface KernelReadyV3 {
+    connectionId: string;
+    maxFrameBytes: number;
+    type: "ready";
+}
+
+// @public
 export interface KernelReq {
     args: unknown;
     deadlineMs: number;
@@ -2405,7 +2434,7 @@ export function parseConnectorTemplateFile(json: unknown): ConnectorTemplateFile
 export function parseDeviceFrame(raw: string, from: "device" | "kernel"): DeviceFrame;
 
 // @public
-export function parseDeviceFrameV3(raw: string, from: "device" | "kernel"): DeviceFrameV3;
+export function parseDeviceFrameV3(raw: string, from: "device" | "kernel", maxFrameBytes?: number): DeviceFrameV3;
 
 // @public
 export interface ParsedSetupGuide {
@@ -2464,7 +2493,7 @@ export function parseMarketplaceManifest(json: unknown, opts?: MarketplaceParseO
 };
 
 // @public
-export function parseOperationResultV3(op: DeviceOperationV3, result: unknown): unknown;
+export function parseOperationResultV3(op: DeviceOperationV3, result: unknown, request?: BackgroundReadOutputRequestV3): unknown;
 
 // @public
 export function parseOpResult<Op extends DeviceOp>(op: Op, result: unknown): DeviceOpResults[Op];
@@ -2858,6 +2887,18 @@ export interface SandboxActor {
 
 // @public
 export interface SandboxBackground {
+    readOutput(h: SandboxHandle, ref: SandboxExecutionRef, opts: {
+        offset: number;
+        maxBytes: number;
+        signal: AbortSignal;
+    }): Promise<{
+        data: Uint8Array;
+        offset: number;
+        nextOffset: number;
+        totalBytes: number;
+    } | {
+        unavailable: "lost" | "expired";
+    }>;
     start(h: SandboxHandle, scope: SandboxOperationScope, args: SandboxExecOptions & {
         taskId: string;
         outputPath: string;

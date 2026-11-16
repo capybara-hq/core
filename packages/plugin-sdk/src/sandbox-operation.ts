@@ -247,6 +247,31 @@ export interface SandboxBackground {
     ref: SandboxExecutionRef,
     opts: { maxBytes: number; signal: AbortSignal },
   ): Promise<{ data: Uint8Array; truncated: boolean } | { unavailable: "lost" | "expired" }>;
+  /**
+   * Read retained raw merged-output bytes by exact reference, without a caller path, new scope,
+   * exec, provisioning or resume. Validate before I/O: offset is a nonnegative safe integer;
+   * maxBytes is an integer in [0, 65_536], including zero for a metadata-only probe. Invalid
+   * bounds throw SandboxScopeDeniedError. The byte budget includes any caller-requested overlap.
+   *
+   * totalBytes is one committed append-only prefix snapshot pinned at read admission. Return
+   * exactly min(maxBytes, max(totalBytes - offset, 0)) bytes starting at the requested offset,
+   * without UTF-8 trimming or decoding; retry short reads or report lost. nextOffset equals
+   * offset + data.byteLength. At/past the snapshot end, return empty data with unchanged offset.
+   * Reads are non-destructive and repeatable; concurrent appends cannot change returned bytes
+   * or this snapshot. Safe-integer position overflow fails collection rather than rounding.
+   *
+   * Missing/untrustworthy retained storage returns lost; a known expired record returns expired.
+   * Exact-ref/device/generation mismatches remain scope-denied errors; aborts propagate.
+   * Unlike tail, terminal reads retain every line. Current task access checks still apply.
+   */
+  readOutput(
+    h: SandboxHandle,
+    ref: SandboxExecutionRef,
+    opts: { offset: number; maxBytes: number; signal: AbortSignal },
+  ): Promise<
+    | { data: Uint8Array; offset: number; nextOffset: number; totalBytes: number }
+    | { unavailable: "lost" | "expired" }
+  >;
   /** Persist pending cancellation while unreachable; apply it before an explicit resume can run work. */
   stop(
     h: SandboxHandle,
