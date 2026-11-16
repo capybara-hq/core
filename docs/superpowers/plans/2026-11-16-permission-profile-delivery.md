@@ -593,6 +593,18 @@ Task 8's background callers and SID retirement are integrated and verified.
   in `packages/kernel/test/container-tests.json`.
 - [ ] Review this boundary alone and commit `feat(kernel): enforce fresh authority on sandbox operations`.
 
+### Task 6c: Explicit startup permission configuration activation
+
+**Requirements:** The independently reviewed [activation design](../specs/2026-11-16-permission-config-activation-design.md)
+and [exact implementation plan](2026-11-16-permission-config-activation.md) bind accepted Task 6b
+publisher semantics and the private bounded startup transaction port. Complete all named consent,
+CAS, mixed-source, cancellation, commit-uncertainty and real-PG evidence gates there before Task 8 activation.
+
+**Ownership:** CLI/startup options, lifecycle publication checkpoint, permission-config-publication,
+and the narrow TransactionHost startup-only port belong to 6c. Task 7 consumes existing fences and
+lower ceiling writers without editing those files. Root integrates shared test membership lists.
+No live startup/configuration change is part of source implementation.
+
 ### Task 7: Profile-aware policy and pending approval races
 
 **Files:** Modify `packages/kernel/src/tools/policy.ts`, `pipeline.ts`, `approvals.service.ts`,
