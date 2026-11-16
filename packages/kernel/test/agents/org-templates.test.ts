@@ -762,36 +762,6 @@ describe("org agent templates", () => {
     ).toEqual([409, "catalog.not_owned"]);
   });
 
-  it("reads a stored version without selectedSkills, a field the format no longer has", async () => {
-    const id = randomUUID();
-    await db
-      .insertInto("agent_templates")
-      .values({ id, org_id: orgA, name: "old", plugin_name: "crm", current_version: 1 })
-      .execute();
-    await db
-      .insertInto("agent_template_versions")
-      .values({
-        template_id: id,
-        version: 1,
-        definition: JSON.stringify({
-          name: "old",
-          description: "Old.",
-          instructions: "O.",
-          skills: ["report"],
-          selectedSkills: ["charts"],
-        }),
-      })
-      .execute();
-    const res = await mem({ method: "GET", url: `/api/v1/orgs/${orgA}/agent-templates/${id}` });
-    expect(res.statusCode, res.body).toBe(200);
-    expect(res.json().template.definition).toEqual({
-      name: "old",
-      description: "Old.",
-      instructions: "O.",
-      skills: ["report"],
-    });
-  });
-
   it("an unshared template is removed by its owner", async () => {
     const agentId = await simpleAgent(orgA);
     const id = (await saveAs(boss, orgA, agentId, "lead")).json().template.id as string;

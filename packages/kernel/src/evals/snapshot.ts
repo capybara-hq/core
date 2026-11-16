@@ -237,8 +237,7 @@ export async function takeSnapshot(
 
 /**
  * Reads a stored snapshot (`eval_cases.snapshot`): each version's definition goes through
- * `normalizeStoredDefinition` (an enabled tool list reads as nothing turned off).
- * Other fields as they are.
+ * `normalizeStoredDefinition` (missing turned-off lists read as empty). Other fields as they are.
  */
 export function readSnapshot(raw: unknown): CaseSnapshot {
   const s = raw as CaseSnapshot;

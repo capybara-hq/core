@@ -148,16 +148,14 @@ describe("agent definition tools (tools default-on spec §2)", () => {
     expect(res.statusCode, res.body).toBe(201);
     const { agent } = res.json() as AgentRes;
     expect(agent.definition.disabledTools).toEqual([]);
-    // a version stored before toolPolicies, and one from before tools were on by default
+    // a stored version without either list reads as nothing turned off
     await sql`UPDATE capybara.agent_versions
-      SET definition = (definition - 'toolPolicies' - 'disabledTools')
-        || '{"tools":[{"kind":"builtin","name":"AskUserQuestion"}]}'::jsonb
+      SET definition = definition - 'toolPolicies' - 'disabledTools'
       WHERE agent_id = ${agent.id}`.execute(raw);
     const got = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/agents/${agent.id}` });
     expect(got.statusCode).toBe(200);
     const read = (got.json() as AgentRes).agent.definition;
     expect(read.disabledTools).toEqual([]);
-    expect("tools" in read).toBe(false);
   });
 
   it("a request carrying the old tools list or a sub-agent filter is refused", async () => {
@@ -282,48 +280,10 @@ describe("agent definition tools (tools default-on spec §2)", () => {
     expect(detailPaths(patched)).toEqual(["toolPolicies.mcp__docs__nope"]);
   });
 
-  it("a stored policy for a removed builtin (SkillWrite) does not block saving and is dropped", async () => {
-    const res = await createAgent({ toolPolicies: { AskUserQuestion: "ask" } });
-    expect(res.statusCode, res.body).toBe(201);
-    const { agent } = res.json() as AgentRes;
-    // a version saved while SkillWrite existed
-    await sql`UPDATE capybara.agent_versions
-      SET definition = jsonb_set(definition, '{toolPolicies}',
-        '{"AskUserQuestion":"ask","SkillWrite":"ask"}'::jsonb)
-      WHERE agent_id = ${agent.id}`.execute(raw);
-    const got = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/agents/${agent.id}` });
-    const stored = (got.json() as AgentRes).agent.definition;
-    expect(stored.toolPolicies).toEqual({ AskUserQuestion: "ask", SkillWrite: "ask" });
-
-    // the web sends the whole definition back
-    const patched = await req({
-      method: "PATCH",
-      url: `/api/v1/orgs/${orgId}/agents/${agent.id}`,
-      payload: { definition: { ...stored, description: "edited" } },
-    });
-    expect(patched.statusCode, patched.body).toBe(200);
-    expect((patched.json() as AgentRes).agent.definition.toolPolicies).toEqual({
-      AskUserQuestion: "ask",
-    });
-
-    // a definition copied from elsewhere (a template) carrying it saves too
-    const created = await createAgent({
-      toolPolicies: { SkillWrite: "deny" },
-      subagents: {
-        inline: [
-          {
-            name: "helper",
-            description: "Helps",
-            instructions: "Help.",
-            toolPolicies: { SkillWrite: "ask" },
-          },
-        ],
-      },
-    });
-    expect(created.statusCode, created.body).toBe(201);
-    const def = (created.json() as AgentRes).agent.definition;
-    expect(def.toolPolicies).toEqual({});
-    expect(def.subagents?.inline?.[0]?.toolPolicies ?? {}).toEqual({});
+  it("a policy for a builtin that does not exist (SkillWrite) is refused like any unknown key", async () => {
+    const created = await createAgent({ toolPolicies: { SkillWrite: "deny" } });
+    expect(created.statusCode, created.body).toBe(400);
+    expect(detailPaths(created)).toEqual(["toolPolicies.SkillWrite"]);
   });
 });
 

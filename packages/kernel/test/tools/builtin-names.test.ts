@@ -13,7 +13,6 @@ import {
   BUILTIN_TOOL_KINDS,
   BUILTIN_TOOL_NAMES,
   CHILD_REMOVED_TOOLS,
-  isRemovedBuiltinKey,
   R3_FIXED_ASK_TOOL_KEYS,
   SANDBOX_ASK_TOOL_NAMES,
   SANDBOX_TOOL_NAMES,
@@ -271,20 +270,5 @@ describe("the compaction line for invoked skills", () => {
     expect(invokedSkillsText(["brainstorm", "fix-issue"])).toBe(
       "Skills invoked earlier in this conversation: brainstorm, fix-issue. Call Skill with a name to read its instructions again.",
     );
-  });
-});
-
-describe("isRemovedBuiltinKey", () => {
-  it("is true only for a bare builtin-shaped key that names no current builtin", () => {
-    expect(isRemovedBuiltinKey("SkillWrite")).toBe(true);
-    for (const name of Object.values(BUILTIN)) expect(isRemovedBuiltinKey(name), name).toBe(false);
-    for (const key of [
-      "mcp__docs__search",
-      "plugin__todo__write",
-      "Platform:skills.share",
-      "sandbox_bash",
-    ]) {
-      expect(isRemovedBuiltinKey(key), key).toBe(false);
-    }
   });
 });

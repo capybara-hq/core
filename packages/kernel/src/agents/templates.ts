@@ -129,23 +129,9 @@ async function ownedPlatformIds(
   return new Set(rows.map((r) => r.id));
 }
 
-/**
- * A stored template definition as the current format reads it: `selectedSkills` (removed with
- * skills on by default, spec §6.2) is dropped. Migration 0116 removed it from org-made versions;
- * versions written from a plugin package keep it as the package wrote it, so every read drops it.
- */
-export function storedTemplate(definition: unknown): AgentTemplate {
-  if (definition === null || typeof definition !== "object" || Array.isArray(definition)) {
-    return definition as AgentTemplate;
-  }
-  if (!("selectedSkills" in definition)) return definition as AgentTemplate;
-  const { selectedSkills: _s, ...rest } = definition as Record<string, unknown>;
-  return rest as unknown as AgentTemplate;
-}
-
 /** Stored rows as {@link TemplateRow}s. */
 function normalized(rows: readonly RawRow[]): TemplateRow[] {
-  return rows.map(({ definition, ...r }) => ({ ...r, template: storedTemplate(definition) }));
+  return rows.map(({ definition, ...r }) => ({ ...r, template: definition as AgentTemplate }));
 }
 
 const orgRaw = (r: Awaited<ReturnType<ReturnType<typeof baseQuery>["execute"]>>[number]) =>

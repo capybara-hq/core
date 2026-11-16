@@ -1,7 +1,6 @@
 import { type ModelParameter, validateParams } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 import { AgentAttributionSchema } from "../attribution/platform-attribution.js";
-import { isRemovedBuiltinKey } from "../tools/builtin-names.js";
 import { InstructionFilesSchema } from "./instruction-files.js";
 
 /** 模型引用：供应商插件名 + 模型 id。 */
@@ -367,66 +366,13 @@ export type AgentDefinition = z.infer<typeof AgentDefinitionSchema>;
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
-/** The fields {@link withoutRemovedBuiltinPolicies} reads. */
-interface AgentDefinitionLike {
-  toolPolicies?: Record<string, string> | undefined;
-  subagents?:
-    | { inline?: readonly { toolPolicies?: Record<string, string> | undefined }[] | undefined }
-    | undefined;
-}
-
 /**
- * `definition` without the `toolPolicies` keys (its own and its inline sub-agents') of builtins
- * that no longer exist ({@link isRemovedBuiltinKey}): applied to a definition being saved, so a
- * key left over from a removed builtin never blocks the save. Returns the same object when
- * nothing is dropped.
- */
-export function withoutRemovedBuiltinPolicies<T extends AgentDefinitionLike>(definition: T): T {
-  type Policies = Record<string, string> | undefined;
-  const strip = (p: Policies): Policies => {
-    if (p === undefined || !Object.keys(p).some(isRemovedBuiltinKey)) return p;
-    return Object.fromEntries(Object.entries(p).filter(([k]) => !isRemovedBuiltinKey(k)));
-  };
-  let next: T = definition;
-  const policies = strip(definition.toolPolicies);
-  if (policies !== definition.toolPolicies) next = { ...next, toolPolicies: policies };
-  const inline = definition.subagents?.inline;
-  if (inline !== undefined) {
-    const stripped = inline.map((t) => {
-      const p = strip(t.toolPolicies);
-      return p === t.toolPolicies ? t : { ...t, toolPolicies: p };
-    });
-    if (stripped.some((t, i) => t !== inline[i])) {
-      next = { ...next, subagents: { ...definition.subagents, inline: stripped } };
-    }
-  }
-  return next;
-}
-
-/**
- * A definition read from the database or from history (not parsed by zod): a definition from
- * before tools were on by default (an enabled `tools` list, history only: the
- * migration rewrote stored versions) reads as nothing turned off, which is what the migration
- * writes (tools default-on spec §2, §3). Likewise a definition from before skills were on by
- * default (`skills.orgSkills` / `skills.pinned`) reads as no skill turned off (skills default-on
- * spec §4; migration 0116 rewrote stored versions). Other fields are kept; without old forms the
- * same object is returned.
+ * A definition read from the database or from a log (not parsed by zod): `disabledTools` and
+ * `disabledSkills` default to empty lists (nothing turned off). Other fields are kept.
  */
 export function normalizeStoredDefinition(def: unknown): AgentDefinition {
   let d = def as Record<string, unknown>;
-  if ("tools" in d) {
-    const { tools: _enabled, ...rest } = d;
-    d = { ...rest, disabledTools: Array.isArray(d.disabledTools) ? d.disabledTools : [] };
-  } else if (!Array.isArray(d.disabledTools)) {
-    d = { ...d, disabledTools: [] };
-  }
-  // before skills were on by default (skills default-on spec §4, §5): selected and pinned skills
-  // read as nothing turned off, which is what migration 0116 writes
-  if (isRecord(d.skills) && ("orgSkills" in d.skills || "pinned" in d.skills)) {
-    const { orgSkills: _o, pinned: _p, ...keep } = d.skills;
-    const { skills: _s, ...rest } = d;
-    d = Object.keys(keep).length > 0 ? { ...rest, skills: keep } : rest;
-  }
+  if (!Array.isArray(d.disabledTools)) d = { ...d, disabledTools: [] };
   if (!Array.isArray(d.disabledSkills)) d = { ...d, disabledSkills: [] };
   // an attribution mode other than inherit / custom / off (stored data is not re-validated) reads
   // as inherit, the value the kernel applies and the agent page shows (spec 2026-11-14)

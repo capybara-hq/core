@@ -284,8 +284,6 @@ describe("creating an agent from a template", () => {
           plugin__nope__write: "deny",
         },
         skills: ["pdf", "manual", "missing-skill"],
-        // a stored field from before skills were on by default: read as absent
-        ...({ selectedSkills: ["sheets"] } as Partial<AgentTemplate>),
         connectors: [
           { template: "none", policies: { x: "ask" } },
           {

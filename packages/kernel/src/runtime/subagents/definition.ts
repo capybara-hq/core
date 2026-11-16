@@ -457,12 +457,8 @@ export async function effectiveDefinition(
  * the run and its replay read it from the log.
  */
 export interface FollowUpNarrowing {
-  /** Absent in logs from before tools were on by default (no tool narrowing then). */
-  disabledTools?: DisabledToolRef[] | undefined;
-  /** Absent in logs from before skills were on by default (skills default-on spec §6.1). */
-  disabledSkills?: DisabledSkillRef[] | undefined;
-  /** Older logs only: the frozen org skills intersected with the current ones. */
-  skills?: { orgSkills: string[]; pinned?: string[] | undefined } | undefined;
+  disabledTools: DisabledToolRef[];
+  disabledSkills: DisabledSkillRef[];
 }
 
 /**
@@ -488,10 +484,7 @@ export function narrowFollowUp(
   };
 }
 
-/**
- * The definition a child run uses: the frozen one with its trigger's follow-up narrowing. A
- * narrowing logged before tools (or skills) were on by default narrows nothing of that kind.
- */
+/** The definition a child run uses: the frozen one with its trigger's follow-up narrowing. */
 export function childRunDefinition(
   frozen: AgentDefinition,
   narrowed: FollowUpNarrowing | undefined,
@@ -499,7 +492,7 @@ export function childRunDefinition(
   if (narrowed === undefined) return frozen;
   return {
     ...frozen,
-    ...(Array.isArray(narrowed.disabledTools) && { disabledTools: narrowed.disabledTools }),
-    ...(Array.isArray(narrowed.disabledSkills) && { disabledSkills: narrowed.disabledSkills }),
+    disabledTools: narrowed.disabledTools,
+    disabledSkills: narrowed.disabledSkills,
   };
 }

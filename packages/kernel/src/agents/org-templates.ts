@@ -31,7 +31,6 @@ import {
   skillVersionsById,
   usableSkillVersions,
 } from "../skills/usable.js";
-import { isRemovedBuiltinKey } from "../tools/builtin-names.js";
 import { canonicalJson } from "../tools/canonical-json.js";
 import { ToolRegistry } from "../tools/registry.js";
 import { AgentLookup, type AgentView } from "./agent-lookup.js";
@@ -46,7 +45,6 @@ import {
   type OwnTemplate,
   putTemplateVersionIn,
   readOwnTemplate,
-  storedTemplate,
   type TemplateRow,
   templateTypeOf,
   templateViewOf,
@@ -396,8 +394,6 @@ export async function templateFromAgent(
     // a template only tightens: an agent's `allow` (a connector tool's, decision 2026-11-09)
     // is not carried into it
     if (v === "allow") continue;
-    // a removed builtin's policy left in a stored definition is not carried
-    if (isRemovedBuiltinKey(k)) continue;
     const parsed = parseToolKey(k);
     if (parsed !== null && parsed.kind !== "connector" && TOOL_KEY_RE.test(k)) {
       toolPolicies[k] = v;
@@ -1077,7 +1073,7 @@ export class OrgAgentTemplates {
       name: own.name,
       plugin: null,
       version: row.current_version,
-      template: storedTemplate(row.definition),
+      template: row.definition as AgentTemplate,
       sourceFormat: row.source_format,
       catalogItemId: null,
       catalogVersion: null,

@@ -965,9 +965,5 @@ describe("follow-up narrowing (final review I1)", () => {
     expect(run).toMatchObject({ instructions: "frozen", disabledTools: off });
     expect(run.disabledSkills).toEqual(skillsOff);
     expect(run.skills).toEqual({ writePolicy: "ask" });
-    // a narrowing logged before tools and skills were on by default narrows nothing of them
-    const old = childRunDefinition(frozen, { skills: { orgSkills: [] } });
-    expect(old.disabledTools).toEqual(frozen.disabledTools);
-    expect(old.disabledSkills).toEqual([]);
   });
 });

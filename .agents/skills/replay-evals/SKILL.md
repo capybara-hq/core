@@ -218,8 +218,7 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   `subagent_dispatches`; navigation only, shown on the case detail). `caseBase` uses the logged definition (model included), never
   `definitions`; a child step therefore never gets `definition_missing` or `pinned_changed`. For a follow-up's run the
   snapshot's definition carries that run's narrowing (`user_message.dispatch.narrowed` on its task message: the union of the frozen
-  and the current version's `disabledTools` / `disabledSkills` at the restart by `SendMessage`; older logs hold the intersected
-  `skills.orgSkills`, or were narrowed at the `resume`), as the run itself used. A child case offers the sub-agent message tools as its recorded requests did (a fork invocation's child has none).
+  and the current version's `disabledTools` / `disabledSkills` at the restart by `SendMessage`), as the run itself used. A child case offers the sub-agent message tools as its recorded requests did (a fork invocation's child has none).
 - **Child requests** render the logged preamble and instructions (`build.ts` reads `subagent_started`), also under a candidate.
   `subagent_changed` (`reconstruct.ts` `subagentChanged`, pure): a candidate whose effective definition differs from the logged one in
   instructions, turned-off skills (canonical `disabledSkills`) or tools: the same version with an instruction override; another version of the case's agent (an org agent's
