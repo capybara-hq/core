@@ -51,6 +51,12 @@ const state = async () => ({
     .orderBy("id")
     .execute(),
   outbox: await db.selectFrom("outbox").selectAll().orderBy("id").execute(),
+  roots: await db
+    .selectFrom("conversations")
+    .select(["id", "org_id", "permission_profile", "permission_consent", "permission_revision"])
+    .where("parent_conversation_id", "is", null)
+    .orderBy("id")
+    .execute(),
   intents: await db
     .selectFrom("sandbox_operation_intents")
     .selectAll()
@@ -283,6 +289,7 @@ it("full-scope-a-b-a-does-not-resurrect-consent", async () => {
 
 async function mixedIntents(full: Awaited<ReturnType<typeof consent>>) {
   return {
+    rootConversationId: full.conversationId,
     full: await admittedIntent(full),
     network: await admittedIntent(await consent(), true),
     read: await admittedIntent(await consent(), true, "readFile"),
@@ -323,14 +330,49 @@ function assertMixedEffects(
   const oldOutboxIds = new Set(before.outbox.map((row) => row.id));
   expect(after.outbox.filter((row) => oldOutboxIds.has(row.id))).toEqual(before.outbox);
   const added = after.outbox.filter((row) => !oldOutboxIds.has(row.id));
-  expect(added.map((row) => row.job_id).sort()).toEqual(
-    revoked.map((id) => `sandbox-operation-revoke-${id}`).sort(),
+  const root = before.roots.find((row) => row.id === intents.rootConversationId);
+  if (!root) throw new Error("Missing Full root fixture");
+  expect(root.permission_profile).toBe("full-access");
+  const revision = root.permission_revision + 1;
+  expect(after.roots).toEqual(
+    before.roots.map((row) =>
+      row.id === root.id
+        ? {
+            ...row,
+            permission_profile: "approve-for-me",
+            permission_consent: null,
+            permission_revision: revision,
+          }
+        : row,
+    ),
   );
-  for (const row of added) {
-    expect(row.queue).toBe("cap-kernel-maintenance");
-    expect(row.job_name).toBe("sandbox-operation-revoke");
-    expect(row.data).toEqual({ operationId: row.job_id.replace("sandbox-operation-revoke-", "") });
-  }
+  const expectedJobs = [
+    ...revoked.map((operationId) => ({
+      job_id: `sandbox-operation-revoke-${operationId}`,
+      queue: "cap-kernel-maintenance",
+      job_name: "sandbox-operation-revoke",
+      data: { operationId },
+      org_id: null,
+    })),
+    {
+      job_id: `permission-recheck-${root.id}-${revision}`,
+      queue: "cap-kernel-maintenance",
+      job_name: "permission-approval-recheck",
+      data: { orgId: root.org_id, rootConversationId: root.id, revision },
+      org_id: root.org_id,
+    },
+  ];
+  expect(
+    added
+      .map(({ job_id, queue, job_name, data, org_id }) => ({
+        job_id,
+        queue,
+        job_name,
+        data,
+        org_id,
+      }))
+      .sort((a, b) => a.job_id.localeCompare(b.job_id)),
+  ).toEqual(expectedJobs.sort((a, b) => a.job_id.localeCompare(b.job_id)));
 }
 
 it("mixed-hot-restart-payload-keeps-effective-network", async () => {

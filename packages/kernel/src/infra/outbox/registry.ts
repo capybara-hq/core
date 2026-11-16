@@ -24,6 +24,13 @@ export interface OutboxJobSpec {
  * name without one does not type-check as an `OutboxJobName` (`add` does not check it at runtime).
  */
 export const OUTBOX_JOBS = {
+  "permission-approval-recheck": {
+    queue: "cap-kernel-maintenance",
+    idempotent:
+      "Reads the current revision and resumes only waiting runs without another pending wait; queued runs are unchanged.",
+    processedIn: "packages/kernel/src/runtime/maintenance.ts",
+    opts: { attempts: 5, backoff: { type: "exponential", delay: 5000 }, removeOnComplete: true },
+  },
   "sandbox-operation-reconcile": {
     queue: "cap-kernel-maintenance",
     idempotent:

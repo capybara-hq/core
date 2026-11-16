@@ -18,12 +18,13 @@ import {
   type SandboxPermissionSupport,
   type SandboxPreparation,
 } from "@capybara-hq/plugin-sdk";
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import { projectsUnsupported } from "../devices/errors.js";
 import { ApiError } from "../errors.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import { PermissionCallGrants } from "../sandbox/permission-call-grants.js";
 import { deviceNotFound, SandboxService } from "../sandbox/sandbox.service.js";
 import { grantsWithin, NetworkGrants, relayer } from "./network-grants.js";
 import { deviceOffline, LocalDeviceRelay } from "./relay.js";
@@ -104,6 +105,7 @@ export class LocalDeviceProvider implements SandboxProvider {
     @Inject(NetworkGrants)
     private readonly grants: Pick<NetworkGrants, "forExec" | "reportedMode">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
+    @Optional() @Inject(PermissionCallGrants) private readonly callGrants?: PermissionCallGrants,
   ) {}
 
   /** Dormant v3 adapter. It is not installed on the active v2 registered provider. */
@@ -188,10 +190,20 @@ export class LocalDeviceProvider implements SandboxProvider {
         { policy, source: "local" },
       );
       const runId = scope.actor.runId;
-      const grants =
+      let grants =
         runId === undefined
           ? undefined
           : grantsWithin(await this.grants.forExec({ orgId, deviceId, runId }), limits);
+      const callGrant = await this.callGrants?.forExecution(scope.operationId, deviceId);
+      if (callGrant) {
+        const hosts = [...new Set([...(grants?.hosts ?? []), ...callGrant.hosts])].sort();
+        if (hosts.length > 100)
+          throw new Error("The combined explicit host grant exceeds 100 hosts");
+        const bounded = grantsWithin({ hosts, source: callGrant.source }, limits);
+        if (callGrant.hosts.some((host) => !bounded?.hosts.includes(host)))
+          throw new Error("Current organization limits refuse the call's explicit hosts");
+        grants = bounded;
+      }
       return { limits, ...(grants === undefined ? {} : { grants }) };
     };
     const background: SandboxBackground = {

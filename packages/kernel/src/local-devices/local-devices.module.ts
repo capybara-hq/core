@@ -1,4 +1,5 @@
 import { Inject, Module, type OnModuleInit } from "@nestjs/common";
+import { PermissionCallGrantsModule } from "../sandbox/permission-call-grants.module.js";
 import { LOCAL_PROVIDER, SandboxProviders } from "../sandbox/providers.js";
 import { SandboxProviderRegistryModule } from "../sandbox/providers.module.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
@@ -19,7 +20,12 @@ import { DeviceTargets } from "./targets.js";
  * (the socket itself is held by the gateway role).
  */
 @Module({
-  imports: [SandboxModule, SandboxProviderRegistryModule, NetworkGrantsModule],
+  imports: [
+    PermissionCallGrantsModule,
+    SandboxModule,
+    SandboxProviderRegistryModule,
+    NetworkGrantsModule,
+  ],
   providers: [
     DeviceTargets,
     LocalDeviceRelay,

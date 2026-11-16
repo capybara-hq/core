@@ -4,7 +4,9 @@ import type { RouteSchemas } from "../platform/route-schemas.js";
 /** `GET /approvals?status=`: absent lists every status. */
 export const ApprovalsListQuerySchema = z
   .object({
-    status: z.enum(["pending", "approved", "denied", "expired", "cancelled", "skipped"]).optional(),
+    status: z
+      .enum(["pending", "approved", "denied", "expired", "cancelled", "skipped", "superseded"])
+      .optional(),
   })
   .strict();
 

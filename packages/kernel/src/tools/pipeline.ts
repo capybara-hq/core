@@ -35,7 +35,10 @@ import { audit } from "../identity/audit.js";
 import { sha256Hex } from "../identity/hash.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { TransactionHost } from "../infra/database/transaction-host.js";
+import {
+  TransactionHost,
+  withTransactionFencePrelude,
+} from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import { DevicePolicyService } from "../local-devices/device-policy.service.js";
@@ -60,11 +63,17 @@ import { type MessageOutcome, SubagentMessages } from "../runtime/subagents/mess
 import { pairStoppedForks } from "../runtime/subagents/skill-fork.js";
 import { SubagentsService } from "../runtime/subagents/subagents.service.js";
 import { orgHostOutsideCeiling } from "../sandbox/modes.js";
+import { SandboxOperationAuthority } from "../sandbox/operation-authority.js";
+import { PermissionAuthorityLock } from "../sandbox/permission-authority-lock.js";
+import { PermissionCallGrants } from "../sandbox/permission-call-grants.js";
+import type { PermissionCandidate } from "../sandbox/permission-call-types.js";
+import { permissionScopeHash } from "../sandbox/permission-facts.js";
 import {
   type CommandReview,
   isSessionGrantableRule,
   type ReviewVerdict,
 } from "../sandbox/review/index.js";
+import { buildPermissionCandidate } from "../sandbox/review/permission-candidate.js";
 import { CommandReviewService } from "../sandbox/review/review.service.js";
 import {
   appendMissingGrant,
@@ -372,8 +381,24 @@ type ToolCard = { plugin: string; view: string; key?: string };
 /** Optional provider: the pipeline's {@link ToolPipelineHooks} (tests). */
 export const TOOL_PIPELINE_HOOKS = Symbol("TOOL_PIPELINE_HOOKS");
 
+/** Review usage and hooks retain the same tree ancestry on both review routes. */
+function reviewParentOf(parent: ToolStepContext["parent"]) {
+  return parent === undefined
+    ? {}
+    : {
+        parentRunId: parent.runId,
+        ...(parent.budgetRunId !== undefined && { budgetRunId: parent.budgetRunId }),
+        parent: {
+          conversationId: parent.conversationId,
+          runId: parent.runId,
+          callId: parent.callId,
+        },
+      };
+}
+
 /** What the pipeline calls through (the sub-agent dispatch is read at call time). */
 interface PipelineDeps {
+  readonly permissionOperations?: ReadonlySet<string>;
   /** The kernel-schema handle of the current context (its transaction, else the pool). */
   readonly db: KernelSchemaDb;
   readonly eventLog: EventLog;
@@ -798,6 +823,15 @@ export class ToolPipeline {
     @Optional()
     @Inject(ConversationDevices)
     devices?: Pick<ConversationDevices, "reviewFacts">,
+    @Optional()
+    @Inject(SandboxOperationAuthority)
+    private readonly permissionAuthority?: SandboxOperationAuthority,
+    @Optional()
+    @Inject(PermissionCallGrants)
+    private readonly permissionGrants?: PermissionCallGrants,
+    @Optional()
+    @Inject(PermissionAuthorityLock)
+    private readonly permissionLocks?: PermissionAuthorityLock,
   ) {
     this.deps = {
       get db() {
@@ -1364,7 +1398,20 @@ export class ToolPipeline {
         type: "tool_call_started",
         runId: ctx.runId,
         idemKey: idem.started(ctx.runId, call.id, attempt),
-        payload: { step: ctx.step, callId: call.id, toolKey: tool.key, specHash: tool.specHash },
+        payload: {
+          step: ctx.step,
+          callId: call.id,
+          toolKey: tool.key,
+          specHash: tool.specHash,
+          ...(this.operationScoped(tool)
+            ? {
+                permissionInput: {
+                  callInputHash: permissionScopeHash(call.input),
+                  resolvedInputHash: permissionScopeHash(input),
+                },
+              }
+            : {}),
+        },
       },
     ]);
     const t0 = Date.now();
@@ -1578,13 +1625,17 @@ export class ToolPipeline {
     tool: ResolvedTool,
     input: unknown,
   ): Promise<ReviewOutcome> {
+    if (this.operationScoped(tool)) {
+      const scoped = await this.reviewPermissionCall(ctx, call, tool, input);
+      if (scoped) return scoped;
+    }
     const review = this.deps.review;
     const devices = this.deps.devices;
     if (review === undefined || devices === undefined) return { kind: "continue" };
     if (!REVIEWED_TOOL_KEYS.has(tool.key)) return { kind: "continue" };
     const asked = await this.deps.approvals.commandForCall(ctx.runId, call.id);
     const rootConversationId = ctx.parent?.rootConversationId ?? ctx.conversationId;
-    if (asked !== null) {
+    if (asked !== null && asked.status !== "superseded") {
       const settled = this.settledCommandAsk(asked, tool.key);
       // an approved call runs in the root it was reviewed against only while the device still runs
       // in the mode recorded with the ask; otherwise the tool decides its working root afresh. A
@@ -1636,15 +1687,7 @@ export class ToolPipeline {
       step: ctx.step,
       callId: call.id,
       signal: ctx.signal,
-      ...(ctx.parent !== undefined && {
-        parentRunId: ctx.parent.runId,
-        ...(ctx.parent.budgetRunId !== undefined && { budgetRunId: ctx.parent.budgetRunId }),
-        parent: {
-          conversationId: ctx.parent.conversationId,
-          runId: ctx.parent.runId,
-          callId: ctx.parent.callId,
-        },
-      }),
+      ...reviewParentOf(ctx.parent),
       agentId: ctx.agentId,
       agentVersion: ctx.agentVersion,
       ...(ctx.conversationKind !== undefined && { conversationKind: ctx.conversationKind }),
@@ -1721,6 +1764,259 @@ export class ToolPipeline {
     return { kind: "wait", wait: approvalWait(ask) };
   }
 
+  private operationScoped(tool: ResolvedTool): boolean {
+    return tool.source.kind === "builtin" && this.deps.permissionOperations?.has(tool.key) === true;
+  }
+  /** This branch is unreachable for production legacy handlers until the caller cutover. */
+  private async reviewPermissionCall(
+    ctx: ToolStepContext,
+    call: ToolCall,
+    tool: ResolvedTool,
+    input: unknown,
+  ): Promise<ReviewOutcome | null> {
+    if (
+      !this.permissionAuthority ||
+      !this.permissionGrants ||
+      !this.permissionLocks ||
+      !this.deps.devices ||
+      !this.deps.review
+    )
+      return null;
+    const permissionLocks = this.permissionLocks;
+    const previous = await this.deps.approvals.commandForCall(ctx.runId, call.id);
+    // A settled refusal belongs to this call, not to a replaceable permission revision.
+    if (previous && !["pending", "approved", "superseded"].includes(previous.status))
+      return this.settledCommandAsk(previous, tool.key);
+    const device = await this.deps.devices.reviewFacts(
+      ctx.orgId,
+      ctx.parent?.rootConversationId ?? ctx.conversationId,
+      ctx.conversationId,
+    );
+    if (!device) return null;
+    const use = {
+      orgId: ctx.orgId,
+      deviceId: device.deviceId,
+      holderConversationId: ctx.conversationId,
+      actor: { accountId: ctx.accountId, conversationId: ctx.conversationId, runId: ctx.runId },
+    };
+    const facts = await this.permissionAuthority.previewCall(
+      use,
+      { runId: ctx.runId, callId: call.id },
+      ctx.signal,
+    );
+    if (facts.availability.state !== "supported" || facts.unattended) return null;
+    if (tool.key === "Bash" && textField(input, "command").length > COMMAND_ASK_MAX_CHARS)
+      return {
+        kind: "result",
+        content: commandTooLongText(textField(input, "command").length),
+        review: denyRecord("rule", null, "The command exceeds the review limit"),
+      };
+    const built =
+      facts.profile === "full-access"
+        ? { kind: "in-scope" as const }
+        : buildPermissionCandidate(
+            {
+              toolKey: tool.key,
+              specHash: tool.specHash,
+              rawInput: call.input,
+              validatedInput: input,
+            },
+            facts,
+          );
+    if (built.kind === "unsupported")
+      return {
+        kind: "result",
+        content: built.message,
+        review: denyRecord("rule", null, built.message),
+      };
+    const candidate = built.kind === "proposal" ? built.candidate : undefined;
+    if (
+      previous &&
+      previous.status !== "superseded" &&
+      candidate &&
+      previous.command?.permissionCandidate?.candidateHash === candidate.candidateHash
+    ) {
+      if (previous.status !== "approved") return this.settledCommandAsk(previous, tool.key);
+      const grant = await withTransactionFencePrelude(
+        () =>
+          permissionLocks.acquire(
+            {
+              orgId: facts.orgId,
+              deviceId: facts.deviceId,
+              rootConversationId: facts.rootConversationId,
+            },
+            { kind: "admit" },
+          ),
+        () => this.findPermissionGrant(candidate),
+      );
+      if (grant) return this.settledCommandAsk(previous, tool.key);
+    }
+    if (candidate) {
+      const existingGrant = await withTransactionFencePrelude(
+        () =>
+          permissionLocks.acquire(
+            {
+              orgId: facts.orgId,
+              deviceId: facts.deviceId,
+              rootConversationId: facts.rootConversationId,
+            },
+            { kind: "admit" },
+          ),
+        () => this.findPermissionGrant(candidate),
+      );
+      if (existingGrant) {
+        if (
+          permissionScopeHash(existingGrant.expansion) !==
+          permissionScopeHash(candidate.permissionScope)
+        )
+          return {
+            kind: "result",
+            content:
+              "This call already has different permission evidence; submit a new call with the intended directory scope.",
+            review: denyRecord("rule", null, "Conflicting permission evidence"),
+          };
+        return {
+          kind: "continue",
+          workingRoot: carriedRoot(device),
+          review: {
+            decision: "allow",
+            by: "classifier",
+            rule: null,
+            reason: "The exact current call already has approved permission evidence.",
+            profile: facts.profile,
+            profileRevision: facts.profileRevision,
+            scopeRevision: facts.scopeRevision,
+            decisionSource: "review-model",
+          },
+        };
+      }
+    }
+    const verdict = await this.deps.review.review({
+      orgId: ctx.orgId,
+      conversationId: facts.rootConversationId,
+      runId: ctx.runId,
+      accountId: ctx.accountId,
+      toolKey: tool.key,
+      input,
+      mode: device.mode,
+      workspace: facts.workingRoot,
+      home: device.home,
+      deviceHome: device.deviceHome,
+      attended: true,
+      step: ctx.step,
+      callId: call.id,
+      signal: ctx.signal,
+      ...reviewParentOf(ctx.parent),
+      agentId: ctx.agentId,
+      agentVersion: ctx.agentVersion,
+      ...(ctx.conversationKind ? { conversationKind: ctx.conversationKind } : {}),
+      permissionProfile: facts.profile,
+      ...(candidate ? { permissionCandidate: candidate } : {}),
+    });
+    if (candidate && facts.profile === "approve-for-me") {
+      await withTransactionFencePrelude(
+        () =>
+          permissionLocks.acquire(
+            {
+              orgId: facts.orgId,
+              deviceId: facts.deviceId,
+              rootConversationId: facts.rootConversationId,
+            },
+            { kind: "admit" },
+          ),
+        () => this.recordPermissionReview(candidate, verdict),
+      );
+    }
+    const provenance = {
+      profile: facts.profile,
+      profileRevision: facts.profileRevision,
+      scopeRevision: facts.scopeRevision,
+    };
+    if (verdict.decision === "deny")
+      return {
+        kind: "result",
+        content: commandDeniedText(verdict.reason, reviewKindOf(tool.key)),
+        review: { ...denyRecord(verdict.by, verdict.rule, verdict.reason), ...provenance },
+      };
+    if (verdict.decision === "allow")
+      return {
+        kind: "continue",
+        workingRoot: carriedRoot(device),
+        review: {
+          ...allowRecord(verdict),
+          ...provenance,
+          decisionSource:
+            facts.profile === "full-access" ? "full-access" : candidate ? "review-model" : "scope",
+        },
+      };
+    if (!candidate)
+      return {
+        kind: "result",
+        content:
+          "Current permission review could not decide; retry with an explicit bounded directory or host.",
+        review: denyRecord(verdict.by, verdict.rule, verdict.reason),
+      };
+    const ask = await this.deps.approvals.requestCommand({
+      orgId: ctx.orgId,
+      conversationId: ctx.conversationId,
+      runId: ctx.runId,
+      step: ctx.step,
+      callId: call.id,
+      requestedFor: ctx.accountId,
+      scopes: ["once"],
+      detail: {
+        deviceId: device.deviceId,
+        deviceName: device.deviceName,
+        mode: device.mode,
+        kind: reviewKindOf(tool.key),
+        command: tool.key === "Bash" ? textField(input, "command") : tool.key,
+        rule: verdict.rule,
+        reason: verdict.reason,
+        workingRoot: facts.workingRoot,
+        permissionCandidate: candidate,
+        permissionScope: candidate.permissionScope,
+        candidateHash: candidate.candidateHash,
+        ...(candidate.targetPath
+          ? { targetPath: candidate.targetPath, path: candidate.targetPath }
+          : {}),
+      },
+    });
+    return { kind: "wait", wait: approvalWait(ask) };
+  }
+  @Transactional()
+  private findPermissionGrant(candidate: PermissionCandidate) {
+    if (!this.permissionGrants) throw new Error("Permission grants are unavailable");
+    return this.permissionGrants.findForAdmission(candidate.binding);
+  }
+  @Transactional()
+  private async recordPermissionReview(
+    candidate: PermissionCandidate,
+    verdict: { decision: "allow" | "ask" | "deny"; reason: string },
+  ): Promise<void> {
+    if (!this.permissionGrants) throw new Error("Permission grants are unavailable");
+    await this.permissionGrants.assertCurrent(candidate.binding);
+    const events = await this.deps.eventLog.appendIn(candidate.binding.conversationId, [
+      {
+        type: "permission_reviewed",
+        runId: candidate.binding.runId,
+        payload: {
+          ...candidate,
+          outcome: verdict.decision,
+          reason: verdict.reason,
+          decisionSource: "review-model",
+        },
+      },
+    ]);
+    const event = events[0];
+    if (!event) throw new Error("The review event was not recorded");
+    if (verdict.decision === "allow")
+      await this.permissionGrants.issueLocked(candidate, {
+        source: "review-model",
+        reviewEventSeq: event.seq,
+        decidedBy: null,
+      });
+  }
+
   /** The outcome of a call whose `command` approval was already asked (a resume). */
   private settledCommandAsk(ask: ApprovalRecord, toolKey: string): ReviewOutcome {
     const kind = reviewKindOf(toolKey);
@@ -1752,7 +2048,16 @@ export class ToolPipeline {
    * command the SHA-256 of the text the ask holds in full, so an audit can match record and text.
    */
   private personAllowRecord(ask: ApprovalRecord): ReviewRecord {
+    const binding = ask.command?.permissionCandidate?.binding;
     return {
+      ...(binding
+        ? {
+            profile: binding.profile,
+            profileRevision: binding.profileRevision,
+            scopeRevision: binding.scopeRevision,
+            decisionSource: "human" as const,
+          }
+        : {}),
       decision: "allow",
       by: "person",
       rule: ask.command?.rule ?? null,

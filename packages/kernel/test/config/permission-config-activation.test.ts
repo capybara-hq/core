@@ -17,6 +17,7 @@ import { createLogger } from "../../src/log.js";
 import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
 import { PermissionAuthorityEpochStore } from "../../src/sandbox/permission-authority-epochs.js";
 import { PermissionAuthorityLock } from "../../src/sandbox/permission-authority-lock.js";
+import { PermissionCallGrants } from "../../src/sandbox/permission-call-grants.js";
 import { PermissionCeilingWrites } from "../../src/sandbox/permission-ceiling-writes.js";
 import {
   PermissionConfigPublication,
@@ -142,6 +143,7 @@ function readers(cfg = config(), env: NodeJS.ProcessEnv = {}) {
     k.app.get(PermissionCeilingWrites),
   );
   const authority = new SandboxOperationAuthority(
+    k.app.get(PermissionCallGrants),
     publication,
     db,
     k.app.get(TransactionHost),

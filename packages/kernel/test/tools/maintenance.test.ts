@@ -173,6 +173,7 @@ describe("MaintenanceProcessor (the one consumer)", () => {
     const calls: unknown[][] = [];
     const warned: unknown[][] = [];
     const processor = new MaintenanceProcessor(
+      { recheck: async (data) => void calls.push(["permission-recheck", data]) },
       {
         processTimeout: async (job, token) => void calls.push(["wait", job.data, token]),
         childFinished: async (id) => {

@@ -25,7 +25,38 @@ type TsNullable = ColumnType<Date | null, Date | string | null | undefined, Date
 type Json<T = Record<string, unknown>> = ColumnType<T, string | undefined, string>;
 
 /** Durable operation admission and outcomes; retained independently of conversation deletion. */
+export interface PermissionCallGrantsTable {
+  id: string;
+  org_id: string;
+  root_conversation_id: string;
+  conversation_id: string;
+  device_id: string;
+  account_id: string;
+  run_id: string;
+  call_id: string;
+  tool_key: string;
+  spec_hash: string;
+  call_input_hash: string;
+  resolved_input_hash: string;
+  profile: import("@capybara-hq/plugin-sdk").PermissionProfile;
+  profile_revision: number;
+  scope_revision: string;
+  authority_revision: string;
+  binding_hash: string;
+  expansion: Json<import("../sandbox/permission-call-types.js").PermissionExpansion>;
+  expansion_hash: string;
+  candidate_hash: string;
+  target_path: string | null;
+  scope_kind: "directories-and-hosts";
+  source: "human" | "review-model";
+  approval_id: string | null;
+  review_event_seq: number | null;
+  decided_by: string | null;
+  created_at: Ts;
+}
+
 export interface SandboxOperationIntentsTable {
+  permission_grant_id: Generated<string | null>;
   operation_id: string;
   org_id: string;
   account_id: string;
@@ -661,7 +692,11 @@ export interface ApprovalsTable {
   input: Json<unknown>;
   requested_for: string | null;
   approver_role: string | null;
-  status: Generated<"pending" | "approved" | "denied" | "expired" | "cancelled" | "skipped">;
+  status: Generated<
+    "pending" | "approved" | "denied" | "expired" | "cancelled" | "skipped" | "superseded"
+  >;
+  superseded_revision: Generated<number | null>;
+  superseded_reason: Generated<string | null>;
   scope: "once" | "session" | "always" | null;
   decided_by: string | null;
   decided_at: TsNullable;
@@ -1564,6 +1599,7 @@ export interface KernelDatabase {
   tool_grants: ToolGrantsTable;
   conversation_tool_grants: ConversationToolGrantsTable;
   approvals: ApprovalsTable;
+  permission_call_grants: PermissionCallGrantsTable;
   questions: QuestionsTable;
   tool_outputs: ToolOutputsTable;
   tool_specs: ToolSpecsTable;

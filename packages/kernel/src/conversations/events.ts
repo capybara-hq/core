@@ -85,8 +85,40 @@ export const COMMAND_ASK_MAX_CHARS = 32 * 1024;
  * `commandHash` is the SHA-256 of the command text the approval holds in full, so an audit can
  * match a record to what ran.
  */
+export const PermissionExpansionSchema = z
+  .object({
+    readDirectories: z.array(z.string().max(4096)).max(64),
+    writeDirectories: z.array(z.string().max(4096)).max(64),
+    hosts: z.array(z.string().max(253)).max(100),
+  })
+  .strict();
+export const PermissionCallBindingSchema = z
+  .object({
+    orgId: z.string(),
+    rootConversationId: z.string(),
+    conversationId: z.string(),
+    deviceId: z.string(),
+    accountId: z.string(),
+    runId: z.string(),
+    callId: z.string(),
+    toolKey: z.string(),
+    specHash: z.string(),
+    callInputHash: z.string(),
+    resolvedInputHash: z.string(),
+    profile: z.enum(["request-approval", "approve-for-me", "full-access"]),
+    profileRevision: z.number().int().nonnegative(),
+    scopeRevision: z.string(),
+    authorityRevision: z.string(),
+  })
+  .strict();
 const ReviewRecordSchema = z
   .object({
+    profile: z.enum(["request-approval", "approve-for-me", "full-access"]).optional(),
+    profileRevision: z.number().int().nonnegative().optional(),
+    scopeRevision: z.string().optional(),
+    decisionSource: z
+      .enum(["scope", "human", "review-model", "full-access", "task-grant"])
+      .optional(),
     decision: z.enum(["allow", "deny"]),
     by: z.enum(["rule", "classifier", "person"]),
     rule: z.string().nullable(),
@@ -102,6 +134,9 @@ const ReviewRecordSchema = z
 /** The display-only `approval_requested.command` facts of a `command` ask (auto mode spec §5.4). */
 export const CommandAskSchema = z
   .object({
+    permissionScope: PermissionExpansionSchema.optional(),
+    targetPath: z.string().max(4096).optional(),
+    candidateHash: z.string().optional(),
     /** A shell command or a file write. */
     kind: z.enum(["command", "write"]),
     /** The command text, or the tool key of the write. */
@@ -415,11 +450,25 @@ const LoggedAgentDefinition = AgentDefinitionSchema.extend({
  */
 export const ConversationEventSchema = z.discriminatedUnion("type", [
   ev(
+    "permission_reviewed",
+    z.object({
+      binding: PermissionCallBindingSchema,
+      permissionScope: PermissionExpansionSchema,
+      targetPath: z.string().max(4096).optional(),
+      scopeKind: z.literal("directories-and-hosts"),
+      candidateHash: z.string(),
+      outcome: z.enum(["allow", "ask", "deny"]),
+      reason: z.string(),
+      decisionSource: z.literal("review-model"),
+    }),
+  ),
+  ev(
     "permission_profile_changed",
     z.object({
       oldProfile: z.enum(["request-approval", "approve-for-me", "full-access"]),
       newProfile: z.enum(["request-approval", "approve-for-me", "full-access"]),
-      actorAccountId: z.string(),
+      actorAccountId: z.string().nullable(),
+      reason: z.enum(["user", "authority-changed"]).optional(),
       deviceId: z.string().nullable(),
       scopeRevision: z.string().nullable(),
       revision: z.number().int().nonnegative(),
@@ -841,7 +890,15 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
   /** 工具调用开始执行之前写入（续跑时「有开始无结果」的调用记为结果未知，不再执行）。 */
   ev(
     "tool_call_started",
-    z.object({ step: count, callId: z.string(), toolKey: z.string(), specHash: z.string() }),
+    z.object({
+      step: count,
+      callId: z.string(),
+      toolKey: z.string(),
+      specHash: z.string(),
+      permissionInput: z
+        .object({ callInputHash: z.string(), resolvedInputHash: z.string() })
+        .optional(),
+    }),
   ),
   /**
    * 工具调用的结果（模型看到的文本）。构建请求时还原为紧随该步 assistant 消息的 user 消息中的
@@ -951,7 +1008,8 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
     z.object({
       approvalId: z.string(),
       callId: z.string(),
-      decision: z.enum(["approved", "denied", "expired", "cancelled", "skipped"]),
+      decision: z.enum(["approved", "denied", "expired", "cancelled", "skipped", "superseded"]),
+      revision: z.number().int().nonnegative().optional(),
       scope: z.enum(["once", "session", "always"]).optional(),
       byAccountId: z.string().nullable(),
       /**

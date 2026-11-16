@@ -20,7 +20,11 @@ import {
   type HeldProvider,
 } from "./held-operations.js";
 import { SandboxOperationAuthority } from "./operation-authority.js";
-import { type OperationInvocation, SandboxOperationIntents } from "./operation-intents.js";
+import {
+  type OperationInvocation,
+  PermissionAdmissionStale,
+  SandboxOperationIntents,
+} from "./operation-intents.js";
 import { PermissionInstanceWrites } from "./permission-instance-writes.js";
 
 export type { HeldProvider } from "./held-operations.js";
@@ -1281,26 +1285,34 @@ export class SandboxService {
           const identity = { ...invocation, ordinal: ordinal++ };
           sig.throwIfAborted();
           await this.register(env, e.lease.token);
-          const pending = await runOutsideTransaction(() =>
-            this.operationIntents.pending(
-              ctx,
-              identity,
-              {
-                provider: p.plugin,
-                providerVersion: p.version ?? "internal-v2",
-                generation: String(e.createdAt),
-              },
-              method,
-              input,
-              e.lease.token,
-              sig,
-            ),
-          );
+          const refreshPending = () =>
+            runOutsideTransaction(() =>
+              this.operationIntents.pending(
+                ctx,
+                identity,
+                {
+                  provider: p.plugin,
+                  providerVersion: p.version ?? "internal-v2",
+                  generation: String(e.createdAt),
+                },
+                method,
+                input,
+                e.lease.token,
+                sig,
+              ),
+            );
+          const pending = await refreshPending();
           if (pending.state === "completed")
             return (await this.operationIntents.result(pending)) as Awaited<
               ReturnType<typeof invoke>
             >;
-          await runOutsideTransaction(() => this.operationIntents.admit(ctx, identity));
+          try {
+            await runOutsideTransaction(() => this.operationIntents.admit(ctx, identity));
+          } catch (error) {
+            if (!(error instanceof PermissionAdmissionStale)) throw error;
+            await refreshPending();
+            await runOutsideTransaction(() => this.operationIntents.admit(ctx, identity));
+          }
           const admitted = ["dispatching", "started-or-unknown"].includes(pending.state)
             ? await runOutsideTransaction(() =>
                 this.operationIntents.claimReconciliation(

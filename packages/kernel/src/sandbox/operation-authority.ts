@@ -8,17 +8,24 @@ import {
   type SandboxOperationScope,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
+import { sql } from "kysely";
 import { PermissionProfileStore } from "../conversations/permission-profile-store.js";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { TransactionHost } from "../infra/database/transaction-host.js";
+import {
+  TransactionHost,
+  withTransactionFencePrelude,
+} from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { NetworkGrants } from "../local-devices/network-grants.js";
 import { coversHost } from "./modes.js";
 import { PermissionAuthorityEpochStore } from "./permission-authority-epochs.js";
 import { PermissionAuthorityLock } from "./permission-authority-lock.js";
+import { PermissionCallGrants } from "./permission-call-grants.js";
+import type { PermissionCallRef, PermissionReviewSnapshot } from "./permission-call-types.js";
 import { PermissionConfigPublication } from "./permission-config-publication.js";
 import { PermissionFacts, permissionScopeHash } from "./permission-facts.js";
+import { normalizePermissionExpansion } from "./review/permission-candidate.js";
 import type { SandboxUseContext } from "./use-context.js";
 export type SandboxAuthorityOperation =
   | "exec"
@@ -82,6 +89,7 @@ export function intersectPermissionScope(f: PermissionScopeFacts): SandboxOperat
 @Injectable()
 export class SandboxOperationAuthority {
   constructor(
+    @Inject(PermissionCallGrants) private readonly callGrants: PermissionCallGrants,
     @Inject(PermissionConfigPublication) private readonly publication: PermissionConfigPublication,
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
@@ -143,19 +151,192 @@ export class SandboxOperationAuthority {
       )?.hosts ?? []),
     ];
   }
+  async subjectFor(ctx: SandboxUseContext) {
+    const root = await this.profiles.readOwnedRoot(
+      ctx.orgId,
+      ctx.holderConversationId,
+      ctx.actor.accountId,
+    );
+    return { orgId: ctx.orgId, deviceId: ctx.deviceId, rootConversationId: root.id };
+  }
+  async previewCall(
+    ctx: SandboxUseContext,
+    call: PermissionCallRef,
+    signal: AbortSignal,
+  ): Promise<PermissionReviewSnapshot> {
+    const subject = await this.subjectFor(ctx);
+    return withTransactionFencePrelude(
+      () => this.locks.acquire(subject, { kind: "admit" }),
+      () => this.previewLocked(ctx, call, signal),
+    );
+  }
+  @Transactional()
+  private async previewLocked(
+    ctx: SandboxUseContext,
+    call: PermissionCallRef,
+    signal: AbortSignal,
+  ): Promise<PermissionReviewSnapshot> {
+    const snapshot = await this.snapshot(ctx, call, signal);
+    const messages = await this.db
+      .selectFrom("conversation_events")
+      .select("payload")
+      .where("conversation_id", "=", ctx.holderConversationId)
+      .where("run_id", "=", call.runId)
+      .where("type", "=", "assistant_message")
+      .execute();
+    if (
+      !messages.some(
+        (row) =>
+          Array.isArray((row.payload as { content?: unknown }).content) &&
+          (row.payload as { content: unknown[] }).content.some(
+            (v: unknown) =>
+              v !== null &&
+              typeof v === "object" &&
+              "type" in v &&
+              v.type === "tool_call" &&
+              "id" in v &&
+              v.id === call.callId,
+          ),
+      )
+    )
+      throw new ApiError("forbidden", "The permission review has no recorded tool call");
+    return snapshot;
+  }
   @Transactional()
   async resolve(
     ctx: SandboxUseContext,
     operation: SandboxAuthorityOperation,
     signal: AbortSignal,
   ): Promise<SandboxOperationScope> {
-    signal.throwIfAborted();
+    const f = await this.snapshot(ctx, { runId: ctx.actor.runId ?? "", callId: "" }, signal);
+    return this.scopeOf(ctx, operation, f);
+  }
+  @Transactional()
+  async resolveInvocation(
+    ctx: SandboxUseContext,
+    operation: SandboxAuthorityOperation,
+    call: PermissionCallRef,
+    signal: AbortSignal,
+  ) {
+    const f = await this.snapshot(ctx, call, signal);
+    const started = await this.db
+      .selectFrom("conversation_events")
+      .select("payload")
+      .where("conversation_id", "=", ctx.holderConversationId)
+      .where("run_id", "=", call.runId)
+      .where("type", "=", "tool_call_started")
+      .where(sql<string>`payload->>'callId'`, "=", call.callId)
+      .executeTakeFirst();
+    if (!started) throw new ApiError("forbidden", "The operation has no canonical started call");
+    const payload = started.payload as {
+      toolKey?: string;
+      specHash?: string;
+      permissionInput?: { callInputHash: string; resolvedInputHash: string };
+    };
+    const {
+      orgId,
+      rootConversationId,
+      conversationId,
+      deviceId,
+      accountId,
+      runId,
+      callId,
+      profile,
+      profileRevision,
+      scopeRevision,
+      authorityRevision,
+    } = f;
+    const grant =
+      payload.toolKey && payload.specHash && payload.permissionInput
+        ? await this.callGrants.findForAdmission({
+            orgId,
+            rootConversationId,
+            conversationId,
+            deviceId,
+            accountId,
+            runId,
+            callId,
+            profile,
+            profileRevision,
+            scopeRevision,
+            authorityRevision,
+            toolKey: payload.toolKey,
+            specHash: payload.specHash,
+            ...payload.permissionInput,
+          })
+        : null;
+    if (grant) {
+      normalizePermissionExpansion(grant.expansion, f);
+      if (
+        (!f.fullAccessCeiling &&
+          (grant.expansion.readDirectories.length || grant.expansion.writeDirectories.length)) ||
+        grant.expansion.hosts.some(
+          (host) =>
+            f.policy.network.kind !== "open-public" &&
+            !f.policy.network.hosts.some((pattern) => coversHost(pattern, host)),
+        )
+      )
+        throw new ApiError("forbidden", "Permission expansion exceeds the current ceiling");
+    }
+    const scope = this.scopeOf(ctx, operation, {
+      ...f,
+      baseReadDirectories: [...f.baseReadDirectories, ...(grant?.expansion.readDirectories ?? [])],
+      baseWriteDirectories: [
+        ...f.baseWriteDirectories,
+        ...(grant?.expansion.writeDirectories ?? []),
+      ],
+      baseHosts: [...f.baseHosts, ...(grant?.expansion.hosts ?? [])],
+    });
+    return {
+      scope,
+      permissionGrantId: grant?.id ?? null,
+      grantedHosts:
+        operation === "exec"
+          ? [
+              ...new Set([...(await this.grantedHosts(ctx)), ...(grant?.expansion.hosts ?? [])]),
+            ].sort()
+          : [],
+    };
+  }
+  private scopeOf(
+    ctx: SandboxUseContext,
+    operation: SandboxAuthorityOperation,
+    f: PermissionReviewSnapshot,
+  ): SandboxOperationScope {
     if (
       !["exec", "readFile", "writeFile", "stat", "list", "scan", "backgroundStart"].includes(
         operation,
       )
     )
       throw new ApiError("forbidden", "Unknown sandbox operation");
+    const operationId = randomUUID();
+    return intersectPermissionScope({
+      operationId,
+      admitBeforeMs: Date.now() + 30000,
+      deviceId: ctx.deviceId,
+      rootConversationId: f.rootConversationId,
+      profileRevision: f.profileRevision,
+      ceilingRevision: f.authorityRevision,
+      profile: f.profile,
+      actor: ctx.actor,
+      tag: operationId,
+      workingRoot: f.workingRoot,
+      readRoots: f.baseReadDirectories,
+      writeRoots: f.baseWriteDirectories,
+      allowedHosts: operation === "exec" || operation === "backgroundStart" ? f.baseHosts : [],
+      fullAccessCeiling: f.fullAccessCeiling,
+      fullConsent: f.fullConsent,
+    });
+  }
+  @Transactional({ propagation: "mandatory" })
+  private async snapshot(
+    ctx: SandboxUseContext,
+    call: PermissionCallRef,
+    signal: AbortSignal,
+  ): Promise<PermissionReviewSnapshot> {
+    signal.throwIfAborted();
+    if (ctx.actor.runId && call.runId !== ctx.actor.runId)
+      throw new ApiError("forbidden", "Permission call does not match its run");
     if (ctx.actor.conversationId !== ctx.holderConversationId)
       throw new ApiError("forbidden", "Operation actor does not match its conversation");
     const initial = await this.profiles.readOwnedRoot(
@@ -202,6 +383,11 @@ export class SandboxOperationAuthority {
       unattended ||= run.scheduled_task_run_id !== null;
     }
     const { policy, owner } = await this.facts.readDevice(ctx.orgId, ctx.deviceId);
+    const device = await this.db
+      .selectFrom("devices")
+      .select("source")
+      .where("id", "=", ctx.deviceId)
+      .executeTakeFirstOrThrow();
     const working = await this.facts.readWorkingFacts({
       orgId: ctx.orgId,
       rootConversationId: view.rootConversationId,
@@ -233,24 +419,33 @@ export class SandboxOperationAuthority {
     );
     const vector = await this.epochs.readLocked(subject);
     signal.throwIfAborted();
-    const operationId = randomUUID();
-    return intersectPermissionScope({
-      operationId,
-      admitBeforeMs: Date.now() + 30_000,
-      deviceId: ctx.deviceId,
+    if (!view.scopeRevision)
+      throw new ApiError("forbidden", "Device permission scope is unavailable");
+    return {
+      orgId: ctx.orgId,
       rootConversationId: view.rootConversationId,
-      profileRevision: view.revision,
-      ceilingRevision: permissionScopeHash({ scopeRevision: view.scopeRevision, vector }),
+      conversationId: ctx.holderConversationId,
+      deviceId: ctx.deviceId,
+      accountId: ctx.actor.accountId,
+      runId: call.runId,
+      callId: call.callId,
       profile: unattended ? "request-approval" : view.profile,
-      actor: ctx.actor,
-      tag: operationId,
+      profileRevision: view.revision,
+      scopeRevision: view.scopeRevision,
+      authorityRevision: permissionScopeHash({ scopeRevision: view.scopeRevision, vector }),
       workingRoot,
-      readRoots: [workingRoot],
-      writeRoots: [workingRoot],
-      allowedHosts,
+      baseReadDirectories: [workingRoot],
+      baseWriteDirectories: [workingRoot],
+      baseHosts: allowedHosts,
       fullAccessCeiling: view.fullAccessCeiling,
       fullConsent:
         view.profile === "full-access" && view.consentScope?.scopeRevision === view.scopeRevision,
-    });
+      unattended,
+      availability: view.availability,
+      policy:
+        device.source === "local"
+          ? { ...policy, network: { kind: "allowlist", hosts: policy.localAllowedDomains } }
+          : policy,
+    };
   }
 }

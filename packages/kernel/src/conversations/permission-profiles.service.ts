@@ -3,11 +3,15 @@ import { DeviceAccess } from "../devices/access.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { TransactionHost } from "../infra/database/transaction-host.js";
+import {
+  TransactionHost,
+  withTransactionFencePrelude,
+} from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { PermissionAuthorityEpochStore } from "../sandbox/permission-authority-epochs.js";
 import { PermissionAuthorityLock } from "../sandbox/permission-authority-lock.js";
 import { PermissionFacts } from "../sandbox/permission-facts.js";
+import { PermissionTransitions } from "../sandbox/permission-transitions.js";
 import { EventLog } from "./event-log.js";
 import type { ConversationEvent } from "./events.js";
 import { PermissionProfileStore } from "./permission-profile-store.js";
@@ -15,6 +19,7 @@ import type { PermissionSelection } from "./permission-profiles.schemas.js";
 @Injectable()
 export class PermissionProfilesService {
   constructor(
+    @Inject(PermissionTransitions) private readonly transitions: PermissionTransitions,
     @Inject(PermissionFacts) private readonly facts: PermissionFacts,
     @Inject(PermissionProfileStore) private readonly store: PermissionProfileStore,
     @Inject(KernelDb) private readonly db: KernelDb,
@@ -103,12 +108,35 @@ export class PermissionProfilesService {
       );
     return { deviceId, scopeRevision: preview.scopeRevision };
   }
-  @Transactional()
   async set(
     orgId: string,
     id: string,
     accountId: string,
     body: PermissionSelection & { expectedRevision: number },
+  ) {
+    const row = await this.store.own(orgId, id, accountId);
+    const subject = {
+      orgId,
+      rootConversationId: id,
+      ...(row.device_id ? { deviceId: row.device_id } : {}),
+    };
+    return withTransactionFencePrelude(
+      () => this.locks.acquire(subject, { kind: "write", level: "root" }),
+      () =>
+        this.setLocked(orgId, id, accountId, body, {
+          deviceId: row.device_id,
+          projectName: row.project_name,
+          projectPath: row.project_path,
+        }),
+    );
+  }
+  @Transactional()
+  private async setLocked(
+    orgId: string,
+    id: string,
+    accountId: string,
+    body: PermissionSelection & { expectedRevision: number },
+    binding: { deviceId: string | null; projectName: string | null; projectPath: string | null },
   ) {
     let row = await this.store.own(orgId, id, accountId);
     if (row.parent_conversation_id || row.kind !== "chat" || row.scheduled_task_id)
@@ -116,17 +144,11 @@ export class PermissionProfilesService {
         "forbidden",
         "Only interactive root conversations have editable permissions",
       );
-    const binding = {
-      deviceId: row.device_id,
-      projectName: row.project_name,
-      projectPath: row.project_path,
-    };
     const subject = {
       orgId,
       rootConversationId: id,
       ...(binding.deviceId ? { deviceId: binding.deviceId } : {}),
     };
-    await this.locks.acquire(subject, { kind: "write", level: "root" });
     row = await this.store.own(orgId, id, accountId);
     // A binding writer may have won before root-write. Retry from a fresh subject instead of
     // validating another device under the old locks or acquiring a device lock after the root.
@@ -158,22 +180,20 @@ export class PermissionProfilesService {
       })
       .where("id", "=", id)
       .execute();
-    const detail = {
-      oldProfile: row.permission_profile,
-      newProfile: body.profile,
-      actorAccountId: accountId,
-      deviceId: row.device_id,
-      scopeRevision: consent?.scopeRevision ?? null,
-      revision,
-    };
-    await this.events.appendIn(id, [{ type: "permission_profile_changed", payload: detail }]);
-    await audit(this.db.db, {
-      orgId,
-      actorAccountId: accountId,
-      action: "conversation.permission_profile_changed",
-      target: id,
-      detail,
-    });
+    await this.transitions.recordLocked(
+      {
+        orgId,
+        rootConversationId: id,
+        oldProfile: row.permission_profile,
+        newProfile: body.profile,
+        actorAccountId: accountId,
+        deviceId: row.device_id,
+        scopeRevision: consent?.scopeRevision ?? null,
+        revision,
+        reason: "user",
+      },
+      { subject, level: "root" },
+    );
     return { revision };
   }
 }

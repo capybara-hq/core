@@ -1,9 +1,11 @@
 // biome-ignore-all lint/suspicious/noExplicitAny: test handles over an untyped Kysely
+import { EventLog } from "../../src/conversations/event-log.js";
 import { XactLock } from "../../src/infra/database/xact-lock.js";
 import { PermissionAuthorityEpochStore } from "../../src/sandbox/permission-authority-epochs.js";
 import { PermissionAuthorityLock } from "../../src/sandbox/permission-authority-lock.js";
 import { PermissionCeilingWrites } from "../../src/sandbox/permission-ceiling-writes.js";
 import { PermissionInstanceWrites } from "../../src/sandbox/permission-instance-writes.js";
+import { PermissionTransitions } from "../../src/sandbox/permission-transitions.js";
 /**
  * The identity / orgs / admin providers over a test's own Kysely, for tests without a running
  * kernel (unit tests that need a few providers). Every service built for
@@ -314,7 +316,10 @@ export function ceilingWritesOver(
   h: Pick<DatabaseHandles, "db" | "txHost">,
 ): PermissionCeilingWrites {
   const lock = new PermissionAuthorityLock(h.db, h.txHost, new XactLock(h.db, h.txHost));
+  const outbox = new OutboxService(h.txHost, h.db, quiet, async () => {});
+  const events = new EventLog(h.db, { publish: async () => {} }, quiet, outbox, h.txHost);
   return new PermissionCeilingWrites(
+    new PermissionTransitions(h.db, h.txHost, lock, events, outbox),
     h.db,
     h.txHost,
     lock,
