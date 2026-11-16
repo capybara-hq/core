@@ -2959,7 +2959,7 @@ export interface SandboxOperationScope extends SandboxOperationRef {
 }
 
 // @public
-export interface SandboxPermissionCapabilities {
+export interface SandboxPermissionSupport {
     readonly background: boolean;
     readonly fullAccess: boolean;
     readonly restricted: {
@@ -3036,7 +3036,7 @@ export interface SandboxProvider {
         truncated: boolean;
     } | null>;
     operation?(h: SandboxHandle, scope: SandboxOperationScope, signal: AbortSignal): Promise<SandboxOperation>;
-    permissionCapabilities?(h: SandboxHandle, signal: AbortSignal): Promise<SandboxPermissionCapabilities>;
+    permissionSupport?(h: SandboxHandle, signal: AbortSignal): Promise<SandboxPermissionSupport>;
     prepare?(h: SandboxHandle, scope: SandboxPreparationScope, signal: AbortSignal): Promise<SandboxPreparation>;
     readFile(h: SandboxHandle, path: string, opts: {
         maxBytes: number;
