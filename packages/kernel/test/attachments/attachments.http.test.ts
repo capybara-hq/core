@@ -59,6 +59,9 @@ const PDF = Buffer.from(
   ].join("\n"),
 );
 const TEXT = Buffer.from("name,qty\napple,3\n");
+const XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+/** 一个最小化的 xlsx：签名列表之外的类型只要求开头没有 NUL 字节。 */
+const XLSX_BYTES = Buffer.from("PK\u0003\u0004spreadsheet,1,2\n");
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -252,6 +255,24 @@ describe("上传 → finalize → 发消息 → 模型请求", () => {
     ).toBeGreaterThanOrEqual(3600);
   });
 
+  it("an xlsx becomes a file block with its size and never carries bytes", async () => {
+    const convId = await conversationWith("see-1");
+    const id = await ready(owner, "电商工行.xlsx", XLSX, XLSX_BYTES);
+    const res = await post(owner, convId, { text: "按分行汇总", files: [id] });
+    expect(res.statusCode, res.body).toBe(202);
+    await waitForTerminal(db, convId);
+    const user = (await eventsOf(db, convId)).find((e) => e.type === "user_message");
+    expect(user?.payload.content[1]).toEqual({
+      type: "file",
+      mediaType: XLSX,
+      source: { kind: "ref", attachmentId: id },
+      name: "电商工行.xlsx",
+      size: XLSX_BYTES.length,
+    });
+    // the log and the request carry no bytes of it
+    expect(JSON.stringify(await eventsOf(db, convId))).not.toContain(XLSX_BYTES.toString("base64"));
+  });
+
   it("不支持图片 / 文档的模型只收到文字占位，请求里没有字节；文本文件内联", async () => {
     const convId = await conversationWith("blind-1");
     const img = await ready(owner, "cat.png", "image/png", PNG);
@@ -348,6 +369,11 @@ describe("校验", () => {
         "text/plain",
         "text/markdown",
         "text/csv",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "application/zip",
+        "application/json",
       ],
       maxBytes: 20_971_520,
       imageMaxBytes: 5_242_880,
@@ -367,10 +393,11 @@ describe("校验", () => {
 
   it("类型不在允许列表 → 415；超出大小 → 413；名字非法 → 400", async () => {
     const url = `/api/v1/orgs/${orgId}/attachments`;
+    // The older binary formats are not in the default accept list; a deployment may add them.
     const bad = await owner({
       method: "POST",
       url,
-      payload: { name: "a.zip", contentType: "application/zip", size: 10 },
+      payload: { name: "a.xls", contentType: "application/vnd.ms-excel", size: 10 },
     });
     expect(bad.statusCode).toBe(415);
     expect(bad.json().error.code).toBe("attachment.type_not_allowed");
@@ -549,6 +576,7 @@ describe("只有附件的消息", () => {
         mediaType: "image/png",
         source: { kind: "ref", attachmentId: img },
         name: "cat.png",
+        size: PNG.length,
       },
     ]);
     const blocks = userBlocks(agentRequests()[0] as ModelRequest);

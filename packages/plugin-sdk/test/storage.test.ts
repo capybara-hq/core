@@ -39,7 +39,15 @@ describe("object-store@1", () => {
 
   it("ObjectStore 的方法", () => {
     expectTypeOf<keyof ObjectStore>().toEqualTypeOf<
-      "put" | "get" | "head" | "delete" | "deletePrefix" | "list" | "presignGet" | "presignPut"
+      | "put"
+      | "get"
+      | "head"
+      | "delete"
+      | "deletePrefix"
+      | "list"
+      | "presignGet"
+      | "presignPut"
+      | "uri"
     >();
   });
 
@@ -56,8 +64,9 @@ type WithOrg<T> = {
 };
 
 describe("ctx.storage", () => {
-  it("ExtensionStorage 与 ObjectStore 同形，每个方法多一个打头的 orgId", () => {
-    expectTypeOf<ExtensionStorage>().toEqualTypeOf<WithOrg<ObjectStore>>();
+  // `uri` stays the kernel's business: an extension's storage has no unsigned object identifier.
+  it("ExtensionStorage 与 ObjectStore 同形（除可选的 uri），每个方法多一个打头的 orgId", () => {
+    expectTypeOf<ExtensionStorage>().toEqualTypeOf<WithOrg<Omit<ObjectStore, "uri">>>();
     expectTypeOf<ExtensionContext["storage"]>().toEqualTypeOf<ExtensionStorage>();
   });
 

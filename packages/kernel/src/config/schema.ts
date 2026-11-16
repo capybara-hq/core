@@ -47,6 +47,33 @@ export const ACCESS_TOKEN_TTL_MAX_SECONDS = 3600;
 export const REQUEST_MEDIA_BYTES_MAX = 25_165_824;
 
 /**
+ * The content types accepted for chat attachments by default: the model's media types, plus the
+ * office and archive formats people hand an agent to process with code (the model only gets a
+ * reference to those). Deployments extend or narrow the list in `attachments.allowedTypes`.
+ */
+export const DEFAULT_ATTACHMENT_TYPES = [
+  ...IMAGE_MEDIA_TYPES,
+  ...DOCUMENT_MEDIA_TYPES,
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/zip",
+  "application/json",
+] as const;
+
+/**
+ * A chat attachment content type: a lower-case `type/subtype` (RFC 6838 restricted names), with no
+ * parameters and no whitespace.
+ */
+const contentType = () =>
+  z
+    .string()
+    .regex(
+      /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/,
+      "must be a lower-case content type (type/subtype, no parameters)",
+    );
+
+/**
  * The default host list of the allowlist (`sandbox.limits.allowHosts`): the common package
  * registries and source hosts (git clone, archive downloads, raw files, release assets). It is the
  * default cloud network of an organization on allowlist and the allowlist of sandbox mode. Debian's
@@ -1184,10 +1211,15 @@ export const KernelConfigSchema = z.object({
           }),
         ),
       allowedTypes: z
-        .array(z.enum([...IMAGE_MEDIA_TYPES, ...DOCUMENT_MEDIA_TYPES]))
+        .array(contentType())
         .min(1)
-        .default([...IMAGE_MEDIA_TYPES, ...DOCUMENT_MEDIA_TYPES])
-        .meta(meta({ description: "Content types accepted for chat attachments" })),
+        .default([...DEFAULT_ATTACHMENT_TYPES])
+        .meta(
+          meta({
+            description:
+              "Content types accepted for chat attachments (lower-case type/subtype, no parameters)",
+          }),
+        ),
       maxPerMessage: z
         .number()
         .int()

@@ -138,8 +138,20 @@ export const isValidArtifactName = (name: string): boolean =>
   ArtifactNameSchema.safeParse(name).success;
 
 /**
- * 日志里的内容块：plugin-sdk 的 `ContentBlock`，但 image / document 的 `source` 只能是 `ref`
- * （写入时用这个 schema 校验，带 `base64` 的块被拒绝）。
+ * A `file` block's media type: any non-empty `type/subtype` with no whitespace or control
+ * characters, the rule of plugin-sdk's `validateMediaBlock`.
+ */
+const FileMediaTypeSchema = z
+  .string()
+  .regex(/^[^/\s]+\/[^/\s]+$/, "mediaType must be a non-empty type/subtype string")
+  .refine((s) => !hasControlChars(s), "mediaType must not contain control characters");
+
+/** `size` on a media block: display metadata (the UI chip, the reference line), never sent. */
+const MediaBlockSizeSchema = z.number().int().nonnegative().optional();
+
+/**
+ * A content block as the log carries it: plugin-sdk's `ContentBlock`, but the source of an image,
+ * document or file block may only be a `ref` (blocks written with a `base64` source are rejected).
  */
 export const ContentBlockSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text"), text: z.string(), opaque: ProviderOpaqueSchema.optional() }),
@@ -166,16 +178,25 @@ export const ContentBlockSchema = z.discriminatedUnion("type", [
     mediaType: z.enum(IMAGE_MEDIA_TYPES),
     source: RefMediaSourceSchema,
     name: MediaNameSchema.optional(),
+    size: MediaBlockSizeSchema,
   }),
   z.object({
     type: z.literal("document"),
     mediaType: z.enum(DOCUMENT_MEDIA_TYPES),
     source: RefMediaSourceSchema,
     name: MediaNameSchema.optional(),
+    size: MediaBlockSizeSchema,
+  }),
+  z.object({
+    type: z.literal("file"),
+    mediaType: FileMediaTypeSchema,
+    source: RefMediaSourceSchema,
+    name: MediaNameSchema.optional(),
+    size: MediaBlockSizeSchema,
   }),
 ]);
 
-type MediaBlock = Extract<ContentBlock, { type: "image" | "document" }>;
+type MediaBlock = Extract<ContentBlock, { type: "image" | "document" | "file" }>;
 /**
  * 日志形状的内容块：与 plugin-sdk 的 `ContentBlock` 相同，只是媒体块的 `source` 收窄为 `ref`。
  * 它是 `ContentBlock` 的子类型，所以从日志读出的块可直接当 `ContentBlock` 用（请求构建时再解析 ref）。

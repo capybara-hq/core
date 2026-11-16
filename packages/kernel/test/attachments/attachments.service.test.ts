@@ -7,6 +7,7 @@ import {
   sniffMatches,
 } from "../../src/conversations/attachments.service.js";
 import { ATTACHMENT_CLEANUP_SCHEDULER_ID } from "../../src/conversations/job-ids.js";
+import { isImageContentType, isMediaContentType } from "../../src/conversations/media-types.js";
 import { RETIRED_SCHEDULER_IDS } from "../../src/runtime/retired-schedulers.js";
 import { PrefixedStorage } from "../../src/storage/storage.service.js";
 import { attachmentsFor } from "../helpers/conversations.js";
@@ -16,6 +17,8 @@ const config = KernelConfigSchema.parse({
   redis: { url: "redis://x" },
   masterKey: Buffer.alloc(32, 7).toString("base64"),
 });
+
+const XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 describe("AttachmentsService", () => {
   it("没有对象存储提供方：上传、finalize、下载都是 storage.unavailable（503）", async () => {
@@ -60,6 +63,11 @@ describe("AttachmentsService", () => {
         "text/plain",
         "text/markdown",
         "text/csv",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "application/zip",
+        "application/json",
       ],
       maxBytes: 20_971_520,
       imageMaxBytes: 5_242_880,
@@ -120,7 +128,22 @@ describe("AttachmentsService", () => {
     expect(at(25_165_825)).toBe(false);
   });
 
-  it("默认配置：20 MiB、8 种类型、每条消息 10 个、24 小时、单次请求 20 MiB 媒体", () => {
+  it("allowedTypes 只收小写的 type/subtype，不带参数", () => {
+    const base = {
+      db: { url: "postgres://x" },
+      redis: { url: "redis://x" },
+      masterKey: Buffer.alloc(32, 7).toString("base64"),
+    };
+    const ok = (allowedTypes: string[]) =>
+      KernelConfigSchema.safeParse({ ...base, attachments: { allowedTypes } }).success;
+    expect(ok(["application/json", "text/plain"])).toBe(true);
+    expect(ok(["Application/JSON"])).toBe(false);
+    expect(ok(["text/plain; charset=utf-8"])).toBe(false);
+    expect(ok(["image"])).toBe(false);
+    expect(ok([])).toBe(false);
+  });
+
+  it("默认配置：20 MiB、13 种类型、每条消息 10 个、24 小时、单次请求 20 MiB 媒体", () => {
     expect(config.attachments).toEqual({
       maxBytes: 20_971_520,
       allowedTypes: [
@@ -132,6 +155,11 @@ describe("AttachmentsService", () => {
         "text/plain",
         "text/markdown",
         "text/csv",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "application/zip",
+        "application/json",
       ],
       maxPerMessage: 10,
       unboundTtlHours: 24,
@@ -167,6 +195,27 @@ describe("类型核对", () => {
     expect(sniffMatches("application/pdf", s("<html>"))).toBe(false);
     expect(sniffMatches("text/plain", s("hello"))).toBe(true);
     expect(sniffMatches("text/csv", b(0x61, 0x00, 0x62))).toBe(false);
+    // OOXML 文件是 zip：压缩后的字节通常含 NUL，但签名仍须相符
+    expect(sniffMatches(XLSX, b(0x50, 0x4b, 0x03, 0x04, 0x00, 0x01))).toBe(true);
+    expect(sniffMatches(XLSX, s("not a zip"))).toBe(false);
+    expect(sniffMatches("application/json", s('{"a":1}'))).toBe(true);
+    expect(sniffMatches("application/json", b(0x7b, 0x00, 0x7d))).toBe(false);
+    // 其他可配置的类型没有可核对的签名
+    expect(sniffMatches("application/x-custom", b(0x00, 0x01))).toBe(true);
+  });
+});
+
+describe("媒体类型", () => {
+  it("图片走 image 块，PDF 与文本走 document 块，其余为 file 块", () => {
+    expect(isImageContentType("image/png")).toBe(true);
+    expect(isImageContentType("application/pdf")).toBe(false);
+    expect(isMediaContentType("image/webp")).toBe(true);
+    expect(isMediaContentType("application/pdf")).toBe(true);
+    expect(isMediaContentType("text/csv")).toBe(true);
+    expect(isMediaContentType("application/zip")).toBe(false);
+    expect(
+      isMediaContentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+    ).toBe(false);
   });
 });
 
