@@ -9,12 +9,12 @@ import { createDb } from "../../src/db/pool.js";
 import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 
 /**
- * 0137_plugin_install_status_no_upgrading.sql: an `upgrading` plugin install becomes `installed`,
+ * 0138_plugin_install_status_no_upgrading.sql: an `upgrading` plugin install becomes `installed`,
  * every per-org upgrade journal is cleared, and the status CHECK no longer allows `upgrading`.
- * Migrates to the migration before it, seeds one install per status, then runs 0137 (and again by
+ * Migrates to the migration before it, seeds one install per status, then runs 0138 (and again by
  * hand: idempotent).
  */
-const FILE = "0137_plugin_install_status_no_upgrading.sql";
+const FILE = "0138_plugin_install_status_no_upgrading.sql";
 const ID = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const ITEM = ID(1);
 const JOURNAL = JSON.stringify({ id: "u1", from: "1.0.0", to: "1.1.0", startedAt: "x", done: [] });
@@ -82,7 +82,7 @@ afterAll(async () => {
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
 });
 
-describe("0137 plugin install status without upgrading", () => {
+describe("0138 plugin install status without upgrading", () => {
   it("an upgrading install becomes installed; the other statuses stay; every journal is cleared", async () => {
     expect(await installs()).toEqual([
       { org_id: "o1", status: "installing", upgrade: null },
@@ -102,8 +102,28 @@ describe("0137 plugin install status without upgrading", () => {
   });
 
   it("is idempotent", async () => {
-    const before = await installs();
+    // its own rows, one per allowed status, each in its own org (one live install per org and
+    // item); the journal of the installed one is cleared once
+    const own = ["installing", "installed", "failed", "uninstalling"].map((status, i) => ({
+      org: `o${10 + i}`,
+      status,
+    }));
+    for (const [i, { org, status }] of own.entries()) {
+      await sql`insert into capybara.orgs (id, slug, name) values (${org}, ${org}, ${org})`.execute(
+        db,
+      );
+      await insertInstall(20 + i, org, status, status === "installed" ? JOURNAL : null);
+    }
+    const rows = async () =>
+      (
+        await sql<{ status: string; upgrade: unknown }>`select status, upgrade
+          from capybara.plugin_installs where org_id in ('o10', 'o11', 'o12', 'o13')
+          order by org_id`.execute(db)
+      ).rows;
     await runFile();
-    expect(await installs()).toEqual(before);
+    const once = await rows();
+    expect(once).toEqual(own.map(({ status }) => ({ status, upgrade: null })));
+    await runFile();
+    expect(await rows()).toEqual(once);
   });
 });

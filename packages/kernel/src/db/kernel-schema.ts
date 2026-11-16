@@ -2102,7 +2102,7 @@ export interface CatalogOrgGrantsTable {
   granted_at: Generated<Date>;
 }
 
-/** 0049 / 0137: the states of a plugin install (`LIVE_INSTALL_STATUSES` are the live ones). */
+/** 0049 / 0138: the states of a plugin install (`LIVE_INSTALL_STATUSES` are the live ones). */
 export type PluginInstallStatus = "installing" | "installed" | "failed" | "uninstalling";
 
 /** 0037: a plugin's install in an org. */
@@ -2111,13 +2111,13 @@ export interface PluginInstallsTable {
   org_id: string;
   item_id: string;
   version: string;
-  /** 0137 dropped 0049's `upgrading` (no per-org upgrade since ruling F2). */
+  /** 0138 dropped 0049's `upgrading` (no per-org upgrade since ruling F2). */
   status: PluginInstallStatus;
   installed_by: string | null;
   installed_at: Generated<Date>;
   error: ColumnType<unknown, string | null | undefined, string | null>;
   /**
-   * 0049: the journal of a per-org upgrade. Unused since 0137 (no code reads or writes it, every
+   * 0049: the journal of a per-org upgrade. Unused since 0138 (no code reads or writes it, every
    * row null); kept for the replicas of the previous release, dropped by a later migration.
    */
   upgrade: ColumnType<unknown, string | null | undefined, string | null>;
