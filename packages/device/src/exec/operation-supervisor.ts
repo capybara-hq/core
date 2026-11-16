@@ -147,6 +147,8 @@ export class MacOperationSupervisor {
   // Stop ownership outlives worker completion until the cancellation attempt settles.
   private cancellations = new Map<string, Promise<SandboxStopResult>>();
   private faultOwners = new Map<string, Live>();
+  private controlWrites = new Map<string, Promise<void>>();
+  private dirtyControls = new Set<string>();
   private outputReads = new Map<string, Set<Promise<unknown>>>();
   private spools = new Map<string, ManagedOutputSpool>();
   private queue: Promise<unknown> = Promise.resolve();
@@ -316,22 +318,27 @@ export class MacOperationSupervisor {
       syncPath(file);
       syncPath(this.options.stateDir);
       entry.revoked = true;
-      entry.stop = { outcome: control.stop };
+      entry.stop = {
+        outcome:
+          entry.stop?.outcome === "stopped" || control.stop === "stopped"
+            ? "stopped"
+            : "cancel-pending",
+      };
       if (control.fault && entry.output) {
         entry.output.state = "fault";
         entry.state = "unknown";
         delete entry.result;
       }
-      if (entry.output) entry.output.interruptedCancellation = control.stop !== "stopped";
+      if (entry.output) entry.output.interruptedCancellation = entry.stop?.outcome !== "stopped";
     } catch {
       this.journalBlocked = true;
       entry.revoked = true;
       entry.state = "unknown";
       delete entry.result;
-      entry.stop = { outcome: "cancel-pending" };
+      if (entry.stop?.outcome !== "stopped") entry.stop = { outcome: "cancel-pending" };
       if (entry.output) {
         if (entry.output.state !== "fault") entry.output.state = "uncertain";
-        entry.output.interruptedCancellation = true;
+        entry.output.interruptedCancellation = entry.stop?.outcome !== "stopped";
       }
     }
   }
@@ -649,14 +656,13 @@ export class MacOperationSupervisor {
               if (entry.output) this.collectorFault(entry, live, error);
               appendTail(decoders.stdout.end());
               appendTail(decoders.stderr.end());
-              await this.serial(() => {
-                entry.state = "unknown";
-                this.persist();
-              }).catch((persistenceError) => {
-                // Keep an output failure's original phase; a later journal error cannot
-                // turn final-decision uncertainty into a physical collector fault.
-                if (!entry.output) throw persistenceError;
-              });
+              // The fault path schedules background persistence after failure credit and
+              // cancellation dispatch. A prompt worker rejection must not reintroduce IO here.
+              if (!entry.output)
+                await this.serial(() => {
+                  entry.state = "unknown";
+                  this.persist();
+                });
               reject(error);
             },
           )
@@ -776,41 +782,65 @@ export class MacOperationSupervisor {
     delete entry.result;
     entry.revoked = true;
     if (entry.stop?.outcome !== "stopped") entry.stop = { outcome: "cancel-pending" };
-    // The prelaunch collecting marker remains the durable fallback. New disk failure cannot
-    // gate exact cancellation, and this function never waits for append/worker completion.
-    try {
-      this.persistControl(entry);
-    } catch {}
-    void this.serial(() => this.persist()).catch(() => {});
+    // Latch exact ownership before doing any new storage work. The next event-loop turn
+    // lets the rejected output callback release its failure credit before dispatching cancel.
     if (entry.stop.outcome !== "stopped") this.faultOwners.set(entry.ref.operationId, live);
-    if (
-      !live.worker ||
-      this.cancellations.has(entry.ref.operationId) ||
-      entry.stop.outcome === "stopped"
-    )
-      return;
-    const worker = live.worker;
-    const attempt = new Promise<void>((resolve) => setImmediate(resolve))
-      .then(async (): Promise<SandboxStopResult> => {
+    if (!live.worker) return;
+    if (!this.cancellations.has(entry.ref.operationId) && entry.stop.outcome !== "stopped") {
+      const worker = live.worker;
+      const attempt = new Promise<void>((resolve) => setImmediate(resolve))
+        .then(async (): Promise<SandboxStopResult> => {
+          try {
+            await worker.cancel("Managed output collection failed", 0);
+          } catch {
+            return { outcome: "cancel-pending" };
+          }
+          entry.stop = { outcome: "stopped" };
+          if (entry.output) entry.output.interruptedCancellation = false;
+          this.faultOwners.delete(entry.ref.operationId);
+          this.options.onLiveChanged?.(this.live.size > 0 || this.faultOwners.size > 0);
+          this.scheduleControl(entry);
+          return entry.stop;
+        })
+        .finally(() => {
+          this.cancellations.delete(entry.ref.operationId);
+        });
+      this.cancellations.set(entry.ref.operationId, attempt);
+    }
+    // Register after cancel's dispatch turn. Neither this write nor its journal fallback
+    // is awaited by append, failure credit or cancellation; a failed write remains retryable.
+    this.scheduleControl(entry);
+  }
+  private scheduleControl(entry: Entry): void {
+    const id = entry.ref.operationId;
+    const previous = this.controlWrites.get(id) ?? Promise.resolve();
+    const writing = previous
+      .then(() => new Promise<void>((resolve) => setImmediate(resolve)))
+      .then(async () => {
+        let saved = false;
         try {
-          await worker.cancel("Managed output collection failed", 0);
-        } catch {
-          return { outcome: "cancel-pending" };
+          await this.options.outputBarrier?.("control-persist");
+          try {
+            this.persistControl(entry);
+            saved = true;
+          } catch {}
+          // Independent attempts: failed sidecar replacement must not suppress a possible
+          // durable stopped/fault journal update, nor may a blocked journal suppress control.
+          await this.serial(() => {
+            this.persist();
+            saved = true;
+          }).catch(() => {});
+          await this.options.outputBarrier?.("control-persisted");
+        } finally {
+          if (saved) this.dirtyControls.delete(id);
+          else this.dirtyControls.add(id);
         }
-        entry.stop = { outcome: "stopped" };
-        if (entry.output) entry.output.interruptedCancellation = false;
-        this.faultOwners.delete(entry.ref.operationId);
-        this.options.onLiveChanged?.(this.live.size > 0 || this.faultOwners.size > 0);
-        try {
-          this.persistControl(entry);
-        } catch {}
-        await this.serial(() => this.persist()).catch(() => {});
-        return entry.stop;
       })
+      .catch(() => {})
       .finally(() => {
-        this.cancellations.delete(entry.ref.operationId);
+        if (this.controlWrites.get(id) === writing) this.controlWrites.delete(id);
       });
-    this.cancellations.set(entry.ref.operationId, attempt);
+    this.controlWrites.set(id, writing);
   }
   private async retained(
     entry: Entry,
@@ -926,9 +956,13 @@ export class MacOperationSupervisor {
   }
   async settled(id: string): Promise<void> {
     const live = this.live.get(id);
-    await live?.completion;
-    await live?.finished;
-    await this.queue;
+    try {
+      await live?.completion;
+    } finally {
+      await live?.finished;
+      await this.queue;
+      while (this.controlWrites.has(id)) await this.controlWrites.get(id);
+    }
   }
   async status(ref: SandboxExecutionRef, signal: AbortSignal): Promise<SandboxExecutionStatus> {
     signal.throwIfAborted();
@@ -1022,7 +1056,10 @@ export class MacOperationSupervisor {
     const e = this.validate(ref);
     if (!e) return { outcome: "lost" };
     if (e.output?.state === "fault" || e.output?.state === "uncertain" || e.output?.unavailable) {
-      if (e.stop?.outcome === "stopped") return e.stop;
+      if (e.stop?.outcome === "stopped") {
+        if (this.dirtyControls.has(e.ref.operationId)) this.scheduleControl(e);
+        return e.stop;
+      }
       const live = this.live.get(ref.operationId) ?? this.faultOwners.get(ref.operationId);
       if (live) this.collectorFault(e, live);
       return { outcome: "cancel-pending" };
@@ -1051,13 +1088,17 @@ export class MacOperationSupervisor {
           timedOut: e.result.timedOut,
         };
         outcome = e.stop;
-        this.persist();
+        if (!this.journalBlocked) this.persist();
         return;
       }
       e.revoked = true;
       e.stop = { outcome: "cancel-pending" };
       this.persistControl(e);
-      this.persist();
+      // Independent intent is durable. Shared publication cannot veto cancellation of
+      // an already-owned worker, including when another execution's commit is uncertain.
+      try {
+        this.persist();
+      } catch {}
       const live = this.live.get(ref.operationId);
       if (!live) return;
       // Claim inside the journal queue before invoking cancellation or observing completion.
@@ -1081,10 +1122,10 @@ export class MacOperationSupervisor {
               this.options.onLiveChanged?.(this.live.size > 0 || this.faultOwners.size > 0);
               try {
                 this.persistControl(e);
+              } catch {}
+              try {
                 this.persist();
-              } catch (error) {
-                if (e.output?.state !== "fault" && e.output?.state !== "uncertain") throw error;
-              }
+              } catch {}
             }
           });
           return e.stop ?? { outcome: "cancel-pending" };
@@ -1158,7 +1199,7 @@ export class MacOperationSupervisor {
       )
         continue;
       if (e.output?.state === "fault" || e.output?.state === "uncertain" || e.output?.unavailable)
-        await this.serial(() => this.persist()).catch(() => {});
+        this.scheduleControl(e);
       if (e.stop?.outcome === "cancel-pending") await this.stop(e.ref, { graceMs: 0, signal });
       else if (e.request && !e.revoked && e.state !== "completed" && !allowed(e.request))
         await this.revokeOperation(

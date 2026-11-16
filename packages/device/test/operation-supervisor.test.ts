@@ -785,3 +785,34 @@ it.each([1, 2001])(
     }
   },
 );
+
+it.each(["stale", "invalid"])(
+  "a %s pending control cannot erase a durably stopped journal outcome",
+  async (kind) => {
+    const f = await fixture();
+    const ref = await f.supervisor.start(request(f.stateDir), "hash", 2000, signal);
+    expect(await f.supervisor.stop(ref, { graceMs: 0, signal })).toEqual({ outcome: "stopped" });
+    const { writeFile } = await import("node:fs/promises");
+    const control = (await readdir(f.stateDir)).find((name) =>
+      name.startsWith("operation-control-"),
+    );
+    if (!control) throw Error("Missing owned cancellation record");
+    await writeFile(
+      join(f.stateDir, control),
+      kind === "invalid"
+        ? "{"
+        : JSON.stringify({ version: 1, ref, revoked: true, fault: false, stop: "cancel-pending" }),
+    );
+    for (let i = 0; i < 2; i++) {
+      const recovered = new MacOperationSupervisor({
+        stateDir: f.stateDir,
+        deviceId: "d",
+        instanceGeneration: "g",
+        now: () => 1,
+      });
+      expect(await recovered.stop(ref, { graceMs: 0, signal })).toEqual({ outcome: "stopped" });
+      await recovered.settled(ref.operationId);
+    }
+    expect(f.cancelled()).toBe(1);
+  },
+);

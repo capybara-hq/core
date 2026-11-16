@@ -1262,3 +1262,372 @@ it("coherent hashes cannot authorize a successor that erases a prior operation t
     ),
   ).rejects.toThrow();
 });
+
+it("fault publication starts only after append failure acknowledgment and owned cancel dispatch", async () => {
+  let failed = false,
+    acknowledged = false;
+  const observations: { acknowledged: boolean; cancellations: number }[] = [];
+  const f = await fixture({
+    outputBarrier: async (name) => {
+      if (failed && name === "spool-write") throw Error("sink failure");
+    },
+    beforePersist: () => {
+      if (failed) observations.push({ acknowledged, cancellations: f.cancels() });
+    },
+  });
+  const ref = await f.start();
+  failed = true;
+  await f.emit(Buffer.from("failed")).catch(() => {
+    acknowledged = true;
+  });
+  await f.cancelled;
+  await f.supervisor.settled("op");
+  expect(observations.length).toBeGreaterThan(0);
+  expect(
+    observations.every(
+      (observation) => observation.acknowledged && observation.cancellations === 1,
+    ),
+  ).toBe(true);
+  expect(await f.supervisor.stop(ref, { graceMs: 0, signal })).toEqual({ outcome: "stopped" });
+});
+
+it.each(["stop", "revoke"])(
+  "%s dispatches a quiet live owner while another execution's journal decision is uncertain",
+  async (action) => {
+    const workers = new Map<
+      string,
+      { emit: NonNullable<MacWorkerRequest["onOutput"]>; finish: () => void; cancels: number }
+    >();
+    const f = await fixture({
+      start: async (request) => {
+        await request.beforeLaunch();
+        await request.onLaunch({ pid: 123, token: request.scope.operationId });
+        let finish!: () => void;
+        const completion = new Promise<typeof result>((resolve) => {
+          finish = () => resolve(result);
+        });
+        const owned = { emit: request.onOutput ?? (() => {}), finish, cancels: 0 };
+        workers.set(request.scope.operationId, owned);
+        return {
+          ready: Promise.resolve(),
+          completion,
+          cancel: async () => {
+            owned.cancels++;
+            owned.finish();
+          },
+        };
+      },
+    });
+    const a = await f.start();
+    const b = await f.supervisor.start(
+      {
+        ...f.request,
+        scope: { ...f.request.scope, operationId: "quiet" },
+        managedOutput: { artifactRoot: f.root, outputPath: join(f.root, "quiet.out") },
+      },
+      "quiet",
+      2000,
+      signal,
+    );
+    cleanups.push(async () => {
+      for (const worker of workers.values()) worker.finish();
+      await f.supervisor.settled("quiet").catch(() => {});
+    });
+    const paths = journalPaths(f.root);
+    const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
+    let failed = false;
+    const rename = vi.spyOn(fs, "renameSync").mockImplementation((from, to) => {
+      actual.renameSync(from, to);
+      if (String(to) === paths.decision && !failed) {
+        failed = true;
+        throw Error("uncertain A decision");
+      }
+    });
+    try {
+      await expect(workers.get("op")?.emit(Buffer.from("A"), "stdout")).rejects.toThrow();
+    } finally {
+      rename.mockRestore();
+    }
+    const evidence = [paths.file, paths.predecessor, paths.decision].map((path) =>
+      fs.readFileSync(path, "utf8"),
+    );
+    if (action === "stop")
+      expect(await f.supervisor.stop(b, { graceMs: 0, signal })).toEqual({ outcome: "stopped" });
+    else
+      await f.supervisor.revokeOperation(
+        { operationId: b.operationId, admitBeforeMs: 1000 },
+        signal,
+      );
+    await f.supervisor.settled("quiet").catch(() => {});
+    await f.supervisor.settled("op").catch(() => {});
+    expect(workers.get("quiet")?.cancels).toBe(1);
+    expect(await f.supervisor.stop(b, { graceMs: 0, signal })).toEqual({ outcome: "stopped" });
+    expect(
+      [paths.file, paths.predecessor, paths.decision].map((path) => fs.readFileSync(path, "utf8")),
+    ).toEqual(evidence);
+    await expect(
+      f.supervisor.start(
+        { ...f.request, scope: { ...f.request.scope, operationId: "new" } },
+        "new",
+        2000,
+        signal,
+      ),
+    ).rejects.toThrow();
+    const recovered = recover(f.root);
+    expect(await recovered.stop(b, { graceMs: 0, signal })).toEqual({ outcome: "stopped" });
+    expect(await recovered.status(a, signal)).toEqual({ state: "lost" });
+  },
+);
+
+it("failed stopped-sidecar replacement preserves the newer stopped journal through repeated recovery", async () => {
+  const pendingPublished = gate(),
+    releaseCancel = gate();
+  let fault = false,
+    failStopped = false,
+    rejected = 0;
+  const f = await fixture({
+    outputBarrier: async (name) => {
+      if (fault && name === "spool-write") throw Error("sink failure");
+      if (fault && name === "control-persisted") pendingPublished.release();
+    },
+  });
+  const ref = await f.start();
+  f.holdCancel(releaseCancel.promise);
+  const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
+  const rename = vi.spyOn(fs, "renameSync").mockImplementation((from, to) => {
+    if (
+      failStopped &&
+      String(to).includes("operation-control-") &&
+      String(to).endsWith(".json") &&
+      JSON.parse(fs.readFileSync(from, "utf8")).stop === "stopped"
+    ) {
+      rejected++;
+      throw Error("only stopped sidecar replacement failed");
+    }
+    actual.renameSync(from, to);
+  });
+  try {
+    fault = true;
+    await expect(f.emit(Buffer.from("bad"))).rejects.toThrow("sink failure");
+    await f.cancelled;
+    await pendingPublished.promise;
+    const control = fs.readdirSync(f.root).find((name) => name.startsWith("operation-control-"));
+    if (!control) throw Error("Missing pending control");
+    expect(JSON.parse(fs.readFileSync(join(f.root, control), "utf8")).stop).toBe("cancel-pending");
+    failStopped = true;
+    releaseCancel.release();
+    await f.supervisor.settled("op");
+    expect(rejected).toBeGreaterThan(0);
+    expect(JSON.parse(fs.readFileSync(join(f.root, control), "utf8")).stop).toBe("cancel-pending");
+    expect(JSON.parse(fs.readFileSync(journalPaths(f.root).file, "utf8")).entries[0]).toMatchObject(
+      { stop: { outcome: "stopped" }, output: { state: "fault", interruptedCancellation: false } },
+    );
+    for (let i = 0; i < 2; i++) {
+      const recovered = recover(f.root);
+      expect(await recovered.stop(ref, { graceMs: 0, signal })).toEqual({ outcome: "stopped" });
+      expect(await recovered.status(ref, signal)).toEqual({ state: "lost" });
+    }
+  } finally {
+    rename.mockRestore();
+  }
+});
+
+it("paused control publication leaves append failure credit and owned cancellation already released", async () => {
+  const publicationEntered = gate(),
+    releasePublication = gate();
+  let fault = false,
+    failureAck = false,
+    writes = 0;
+  const f = await fixture({
+    beforePersist: () => {
+      if (fault) writes++;
+    },
+    outputBarrier: async (name) => {
+      if (fault && name === "spool-write") throw Error("owned sink failure");
+      if (fault && name === "control-persist") {
+        publicationEntered.release();
+        await releasePublication.promise;
+      }
+    },
+  });
+  const ref = await f.start();
+  fault = true;
+  const append = f.emit(Buffer.from("bad")).then(
+    () => {
+      throw Error("Unexpected success credit");
+    },
+    () => {
+      failureAck = true;
+    },
+  );
+  await publicationEntered.promise;
+  expect(failureAck).toBe(true);
+  expect(f.cancels()).toBe(1);
+  expect(writes).toBe(0);
+  expect(await f.supervisor.stop(ref, { graceMs: 0, signal })).toEqual({ outcome: "stopped" });
+  expect(await f.supervisor.status(ref, signal)).toEqual({ state: "lost" });
+  releasePublication.release();
+  await append;
+  await f.supervisor.settled("op");
+  expect(writes).toBeGreaterThan(0);
+});
+
+it("prompt worker rejection cannot publish fault state before failure credit and cancellation dispatch", async () => {
+  let failureAck = false,
+    cancels = 0,
+    fault = false;
+  let emit!: (bytes: Buffer) => Promise<void>;
+  const observations: boolean[] = [];
+  const f = await fixture({
+    beforePersist: () => {
+      if (fault) observations.push(failureAck && cancels === 1);
+    },
+    outputBarrier: async (name) => {
+      if (fault && name === "spool-write") throw Error("sink failure");
+    },
+    start: async (request) => {
+      await request.beforeLaunch();
+      await request.onLaunch({ pid: 123, token: "owned-prompt-rejection" });
+      let reject!: (error: unknown) => void;
+      const completion = new Promise<never>((_resolve, fail) => {
+        reject = fail;
+      });
+      emit = async (bytes) => {
+        try {
+          await request.onOutput?.(bytes, "stdout");
+        } catch (error) {
+          failureAck = true;
+          reject(error);
+          throw error;
+        }
+      };
+      return {
+        ready: Promise.resolve(),
+        completion,
+        cancel: async () => {
+          cancels++;
+        },
+      };
+    },
+  });
+  await f.start();
+  fault = true;
+  await expect(emit(Buffer.from("bad"))).rejects.toThrow("sink failure");
+  await f.supervisor.settled("op").catch(() => {});
+  expect(cancels).toBe(1);
+  expect(observations.length).toBeGreaterThan(0);
+  expect(observations.every(Boolean)).toBe(true);
+});
+
+it("failed deferred control publication retries independently after owned termination", async () => {
+  let fault = false,
+    rejectWrites = false;
+  const f = await fixture({
+    beforePersist: () => {
+      if (rejectWrites) throw Error("all new persistence failed");
+    },
+    outputBarrier: async (name) => {
+      if (fault && name === "spool-write") throw Error("sink failure");
+    },
+  });
+  const ref = await f.start();
+  fault = true;
+  rejectWrites = true;
+  await expect(f.emit(Buffer.from("bad"))).rejects.toThrow();
+  await f.cancelled;
+  await f.supervisor.settled("op");
+  expect(fs.readdirSync(f.root).some((name) => name.startsWith("operation-control-"))).toBe(false);
+  rejectWrites = false;
+  expect(await f.supervisor.stop(ref, { graceMs: 0, signal })).toEqual({ outcome: "stopped" });
+  await f.supervisor.settled("op");
+  const recovered = recover(f.root);
+  expect(await recovered.status(ref, signal)).toEqual({ state: "lost" });
+  expect(await recovered.stop(ref, { graceMs: 0, signal })).toEqual({ outcome: "stopped" });
+  expect(f.cancels()).toBe(1);
+});
+
+it.runIf(process.platform === "darwin").each(["stop", "revoke"])(
+  "actual macOS %s terminates quiet B while A's final journal commit is uncertain",
+  async (action) => {
+    const appendEntered = gate(),
+      releaseAppend = gate(),
+      quietCancelled = gate();
+    let pauseAppend = true;
+    const f = await fixture({
+      start: startMacOperationWorker,
+      outputBarrier: async (name) => {
+        if (pauseAppend && name === "spool-write") {
+          appendEntered.release();
+          await releaseAppend.promise;
+        }
+      },
+    });
+    if (f.request.kind !== "exec") throw Error("Expected exec");
+    f.request.args = {
+      ...f.request.args,
+      command: `/usr/bin/python3 -I -c ${shellQuote("import os,signal;os.write(1,b'A');signal.pause()")}`,
+    };
+    const a = await f.start();
+    await appendEntered.promise;
+    const b = await f.supervisor.start(
+      {
+        ...f.request,
+        scope: { ...f.request.scope, operationId: "quiet-mac" },
+        managedOutput: { artifactRoot: f.root, outputPath: join(f.root, "quiet-mac.out") },
+        args: {
+          ...f.request.args,
+          command: `/usr/bin/python3 -I -c ${shellQuote("import signal;signal.pause()")}`,
+        },
+        onControl: (event) => {
+          if (event === "cancelled") quietCancelled.release();
+        },
+      },
+      "quiet-mac",
+      2000,
+      signal,
+    );
+    const paths = journalPaths(f.root);
+    const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
+    let failed = false;
+    const rename = vi.spyOn(fs, "renameSync").mockImplementation((from, to) => {
+      actual.renameSync(from, to);
+      if (String(to) === paths.decision && !failed) {
+        failed = true;
+        throw Error("uncertain A decision");
+      }
+    });
+    try {
+      pauseAppend = false;
+      releaseAppend.release();
+      await f.supervisor.settled("op").catch(() => {});
+      expect(failed).toBe(true);
+      const evidence = [paths.file, paths.predecessor, paths.decision].map((path) =>
+        fs.readFileSync(path, "utf8"),
+      );
+      expect(await f.supervisor.status(b, signal)).toEqual({ state: "running" });
+      if (action === "stop")
+        expect(await f.supervisor.stop(b, { graceMs: 0, signal })).toEqual({ outcome: "stopped" });
+      else
+        await f.supervisor.revokeOperation(
+          { operationId: b.operationId, admitBeforeMs: 1000 },
+          signal,
+        );
+      await quietCancelled.promise;
+      await f.supervisor.settled("quiet-mac").catch(() => {});
+      expect(await f.supervisor.stop(b, { graceMs: 0, signal })).toEqual({ outcome: "stopped" });
+      expect(
+        [paths.file, paths.predecessor, paths.decision].map((path) =>
+          fs.readFileSync(path, "utf8"),
+        ),
+      ).toEqual(evidence);
+      const recovered = recover(f.root);
+      expect(await recovered.stop(b, { graceMs: 0, signal })).toEqual({ outcome: "stopped" });
+      expect(await recovered.status(a, signal)).toEqual({ state: "lost" });
+    } finally {
+      rename.mockRestore();
+      releaseAppend.release();
+      await f.supervisor.stop(b, { graceMs: 0, signal }).catch(() => {});
+      await f.supervisor.settled("quiet-mac").catch(() => {});
+    }
+  },
+);
