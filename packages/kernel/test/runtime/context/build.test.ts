@@ -27,7 +27,6 @@ describe("buildModelRequest", () => {
     expect(request.tools).toEqual([]);
     expect(request.maxOutputTokens).toBe(MODEL.maxOutputTokens);
     expect(request.messages).toEqual([{ role: "user", content: [{ type: "text", text: "hi" }] }]);
-    expect(request.effort).toBeUndefined();
     expect(request.params).toEqual({});
   });
 
@@ -40,7 +39,6 @@ describe("buildModelRequest", () => {
     const params = { effort: "high", "model-fake.style": "shout" };
     const { request, meta } = buildModelRequest({ ...input, params });
     expect(request.params).toEqual(params);
-    expect(request.effort).toBeUndefined();
     expect(meta.params).toEqual(params);
     expect(request.params).not.toBe(params);
     expect(buildModelRequest(input).request.params).toEqual({});

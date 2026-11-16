@@ -5,8 +5,7 @@ import {
   type ModelInfo,
   type ModelParameter,
   type ModelProvider,
-  type ModelProviderV1,
-  type ModelRequestV1,
+  type ModelRequest,
   type ModelStreamEvent,
   validateMediaBlock,
 } from "@capybara-hq/plugin-sdk";
@@ -33,7 +32,7 @@ const usage = (cacheRead: number) => ({
 function makeProvider(
   mkAbort: () => Error = () => new ModelError("aborted", "aborted"),
   parameters: ModelParameter[] = [],
-): ModelProvider & ModelProviderV1 {
+): ModelProvider {
   const seen = new Set<string>();
   return {
     async embed(req: EmbedRequest) {
@@ -57,7 +56,6 @@ function makeProvider(
             reasoning: false,
             caching: false,
             midConversationSystem: false,
-            effort: false,
           },
           parameters: [],
         },
@@ -72,14 +70,13 @@ function makeProvider(
             reasoning: true,
             caching: true,
             midConversationSystem: true,
-            effort: false,
           },
           parameters,
         },
       ];
     },
     async *stream(
-      req: ModelRequestV1,
+      req: ModelRequest,
       opts: { signal: AbortSignal },
     ): AsyncGenerator<ModelStreamEvent> {
       const aborted = mkAbort;
@@ -115,6 +112,7 @@ function makeProvider(
 }
 
 describeModelProviderConformance("in-memory", async () => ({
+  plugin: "in-memory",
   provider: makeProvider(),
   model: "m",
   expect: { thinking: true, caching: true, embedding: { model: "e", dimensions: 8 } },
@@ -127,6 +125,7 @@ class ForeignModelError extends Error {
 }
 
 describeModelProviderConformance("in-memory (duplicate sdk copy)", async () => ({
+  plugin: "in-memory",
   provider: makeProvider(() => new ForeignModelError("aborted")),
   model: "m",
   expect: { thinking: false, caching: false },
@@ -149,8 +148,7 @@ const PARAMS: ModelParameter[] = [
   },
 ];
 
-describeModelProviderConformance("in-memory @2", async () => ({
-  contract: 2,
+describeModelProviderConformance("in-memory with parameters", async () => ({
   plugin: "in-memory",
   provider: makeProvider(undefined, PARAMS),
   model: "m",
@@ -159,7 +157,7 @@ describeModelProviderConformance("in-memory @2", async () => ({
 }));
 
 /**
- * 声明 vision / documents 的 `@2` 供应商：只有收到合法的样本媒体块时才答出期望的词，
+ * 声明 vision / documents 的供应商：只有收到合法的样本媒体块时才答出期望的词，
  * 证明媒体用例会跑、并把样本按契约形状发给插件。
  */
 function makeMediaProvider(): ModelProvider {
@@ -207,8 +205,7 @@ function makeMediaProvider(): ModelProvider {
   };
 }
 
-describeModelProviderConformance("in-memory @2 with media", async () => ({
-  contract: 2,
+describeModelProviderConformance("in-memory with media", async () => ({
   plugin: "in-memory",
   provider: makeMediaProvider(),
   model: "m",

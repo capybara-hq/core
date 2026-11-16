@@ -2016,9 +2016,6 @@ export function mergeThemeSchemes(theme: Pick<ThemeFile, "schemes">): Partial<Re
 export function missingInboundModeFields(schema: JsonSchema, mode: ChannelInboundMode, has: (field: string) => boolean): string[];
 
 // @public
-export const MODEL_PROVIDER_EXTENSION_POINT = "model-provider@1";
-
-// @public
 export const MODEL_PROVIDER_EXTENSION_POINT_V2 = "model-provider@2";
 
 // @public
@@ -2071,7 +2068,6 @@ export interface ModelInfo {
         caching: boolean;
         midConversationSystem: boolean;
         documents?: boolean;
-        effort?: boolean;
     };
     contextWindow: number;
     description?: LocalizedName | string;
@@ -2085,13 +2081,6 @@ export interface ModelInfo {
     retiresAt?: string;
     streamIdleTimeoutMs?: number;
 }
-
-// @public
-export type ModelInfoV1 = Omit<ModelInfo, "parameters" | "capabilities"> & {
-    capabilities: Omit<ModelInfo["capabilities"], "effort"> & {
-        effort: boolean;
-    };
-};
 
 // @public
 export type ModelKind = "chat" | "embedding" | "rerank" | "image_generation" | "video_generation" | "speech_to_text" | "text_to_speech";
@@ -2141,17 +2130,7 @@ export interface ModelProvider {
 }
 
 // @public
-export interface ModelProviderV1 {
-    listModels(): Promise<ModelInfoV1[]>;
-    stream(req: ModelRequestV1, opts: {
-        signal: AbortSignal;
-    }): AsyncIterable<ModelStreamEvent>;
-}
-
-// @public
 export interface ModelRequest {
-    // @deprecated
-    effort?: Effort;
     maxOutputTokens: number;
     messages: ModelMessage[];
     model: string;
@@ -2167,9 +2146,6 @@ export interface ModelRequest {
 
 // @public
 export type ModelRequestHookPayload = ModelCallRequestHookPayload | EmbeddingRequestHookPayload;
-
-// @public
-export type ModelRequestV1 = Omit<ModelRequest, "params" | "toolChoice">;
 
 // @public
 export interface ModelResponseHookPayload extends HookScope {

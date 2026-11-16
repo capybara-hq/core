@@ -1,12 +1,10 @@
 /**
  * The vendor-neutral model contract; native protocols stay inside each vendor plugin.
- * The current contract is `model-provider@2` (`ModelProvider` / `ModelInfo` / `ModelRequest`,
- * parameters declared by the plugin per model,
- * see `model-params.ts`); the old contract `model-provider@1` (`ModelProviderV1` etc.) stays
- * supported by the kernel through an adapter layer.
+ * The contract is `model-provider@2` (`ModelProvider` / `ModelInfo` / `ModelRequest`, parameters
+ * declared by the plugin per model, see `model-params.ts`).
  */
 import type { ModelCallPurpose } from "./hooks.js";
-import type { Effort, ModelParameter, ParamValue } from "./model-params.js";
+import type { ModelParameter, ParamValue } from "./model-params.js";
 import type { LocalizedName } from "./plugin-package.js";
 
 /** What a model does. Absent on a `ModelInfo` means `chat`. */
@@ -60,12 +58,6 @@ export interface ModelInfo {
      * and never sends the bytes to it.
      */
     documents?: boolean;
-    /**
-     * @deprecated For `model-provider@1`: whether `ModelRequestV1.effort` is supported. `@2`
-     * plugins leave it unset and instead declare an `effort` knob in
-     * `parameters`; the kernel's `@1` adapter derives `parameters` from it.
-     */
-    effort?: boolean;
   };
   /**
    * Stream idle watchdog threshold; reasoning models should use a longer one. When unset the kernel
@@ -73,19 +65,11 @@ export interface ModelInfo {
    */
   streamIdleTimeoutMs?: number;
   /**
-   * The parameters this model supports (required for `@2`, may be an empty array; must pass
-   * `assertValidDeclarations`).
+   * The parameters this model supports (may be an empty array; must pass
+   * `assertValidDeclarations`). Effort is the standard `effort` knob declared here.
    */
   parameters: ModelParameter[];
 }
-
-/**
- * Model info for `model-provider@1`: no `parameters`; effort support is expressed by
- * `capabilities.effort`.
- */
-export type ModelInfoV1 = Omit<ModelInfo, "parameters" | "capabilities"> & {
-  capabilities: Omit<ModelInfo["capabilities"], "effort"> & { effort: boolean };
-};
 
 /**
  * Vendor-private data: replayed only to the same vendor (e.g. Anthropic thinking block signatures,
@@ -281,12 +265,10 @@ export interface ModelRequest {
   toolChoice?: "auto" | "none";
   maxOutputTokens: number;
   /**
-   * `@2`: the parameters of this call (already processed against the model's `parameters`), mapped
-   * to the native request by the plugin.
+   * The parameters of this call (already processed against the model's `parameters`), mapped to the
+   * native request by the plugin.
    */
   params: Record<string, ParamValue>;
-  /** @deprecated For `model-provider@1`; `@2` plugins read `params.effort`. */
-  effort?: Effort;
   /**
    * What this call is for, when the kernel says so: `"compaction"` for a conversation summary call.
    * Absent on ordinary step calls. Informational (a scripted test model keys on it); real providers
@@ -294,9 +276,6 @@ export interface ModelRequest {
    */
   purpose?: ModelCallPurpose;
 }
-
-/** The `model-provider@1` request: has no `params` or `toolChoice`. */
-export type ModelRequestV1 = Omit<ModelRequest, "params" | "toolChoice">;
 
 export type StopReason = "end_turn" | "tool_use" | "max_tokens" | "refusal" | "other";
 
@@ -467,15 +446,5 @@ export interface ModelProvider {
   embed?(req: EmbedRequest, opts: { signal: AbortSignal } & ModelCallOptions): Promise<EmbedResult>;
 }
 
-/**
- * The `model-provider@1` implementation (old contract, connected by the kernel through an adapter
- * layer: effort is derived from `capabilities.effort`).
- */
-export interface ModelProviderV1 {
-  listModels(): Promise<ModelInfoV1[]>;
-  /** The event sequence must end with exactly one message_complete; throw ModelError on error. */
-  stream(req: ModelRequestV1, opts: { signal: AbortSignal }): AsyncIterable<ModelStreamEvent>;
-}
-
-export const MODEL_PROVIDER_EXTENSION_POINT = "model-provider@1";
+/** The model provider extension point (the only version since `@1` was removed before 0.1.0). */
 export const MODEL_PROVIDER_EXTENSION_POINT_V2 = "model-provider@2";

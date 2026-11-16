@@ -86,7 +86,6 @@ describe("tools 节点（LangGraphLoop + 执行管线）", () => {
       reasoning: false,
       caching: false,
       midConversationSystem: true,
-      effort: false,
     },
     parameters: [],
   };

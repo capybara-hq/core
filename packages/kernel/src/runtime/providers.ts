@@ -1,8 +1,6 @@
 import { createHash } from "node:crypto";
 import {
   assertValidDeclarations,
-  EFFORT_VALUES,
-  type Effort,
   type EmbedRequest,
   type EmbedResult,
   type ExtensionManifest,
@@ -11,13 +9,9 @@ import {
   type ModelCallOptions,
   type ModelEmbeddingInfo,
   type ModelInfo,
-  type ModelInfoV1,
   type ModelKind,
-  type ModelParameter,
   type ModelProvider,
-  type ModelProviderV1,
   type ModelRequest,
-  type ModelRequestV1,
   type ModelStreamEvent,
   parseExtensionPoint,
 } from "@capybara-hq/plugin-sdk";
@@ -62,9 +56,7 @@ const DROPPED_WARN_TTL_SECONDS = 24 * 3600;
 const MODELS_CACHE_FORMAT = 2;
 
 /**
- * The model list's cache key (`@Cacheable` stores it as `cache:<key>`). It carries the provider's
- * contract major: after a plugin moves from `@1` to `@2` it never reads the list written through
- * the `@1` adapter (both are `@2`-shaped, the shape cannot tell them apart). It also carries the
+ * The model list's cache key (`@Cacheable` stores it as `cache:<key>`). It carries the
  * plugin version and the digest of the effective config the list was read with (see
  * {@link ProviderRegistry}): after an upgrade (the parameter declarations may have changed) or a
  * config change (models added or removed) every replica validates the new list at once instead of
@@ -74,10 +66,10 @@ const MODELS_CACHE_FORMAT = 2;
  * it caches bumps it, so during a rolling upgrade it never reads a list an older kernel wrote.
  */
 const modelsKey = (p: ProviderEntry, hash: string | undefined) =>
-  `capk:models:${p.plugin}:v${p.major}:f${MODELS_CACHE_FORMAT}:${p.version ?? "-"}:${hash ?? "-"}`;
+  `capk:models:${p.plugin}:f${MODELS_CACHE_FORMAT}:${p.version ?? "-"}:${hash ?? "-"}`;
 /** 列表视图的失败标记（{@link LIST_FAILURE_TTL_SECONDS}），与模型列表同样按版本与配置摘要区分。 */
 const listFailedKey = (p: ProviderEntry, hash: string | undefined) =>
-  `capk:models-failed:${p.plugin}:v${p.major}:${p.version ?? "-"}:${hash ?? "-"}`;
+  `capk:models-failed:${p.plugin}:${p.version ?? "-"}:${hash ?? "-"}`;
 const droppedKey = (plugin: string, hash: string | undefined, model: string) =>
   `capk:models-dropped:${plugin}:${hash ?? "-"}:${model}`;
 
@@ -94,7 +86,6 @@ const copyHash = (orgId: string, schema: z.ZodTypeAny | undefined, config: unkno
 
 interface ProviderEntry {
   plugin: string;
-  major: 1 | 2;
   impl: ModelProvider;
   version?: string | undefined;
   /** The platform config's digest (`deploymentConfigHash`), shared by every following org. */
@@ -232,52 +223,7 @@ type Target =
   | { ok: false; reason: "org_configured" | "needs_config" | "not_enabled" };
 
 /**
- * `@1` 适配层为 `capabilities.effort` 为真的模型补的 effort 旋钮：五档，不给默认值
- * （各家 API 的默认值不同；给了默认值会让未设置 effort 的 agent 每次都静默发送它）。
- */
-const V1_EFFORT_KNOB: ModelParameter = {
-  key: "effort",
-  standard: "effort",
-  schema: { type: "string", enum: [...EFFORT_VALUES] },
-  label: { zh: "思考深度", en: "Effort" },
-};
-
-/**
- * 把 `model-provider@1` 实现包成 `@2`：
- * - `listModels`：`parameters` 由 `capabilities.effort` 推导（为真时只有 effort 旋钮，否则为空）；
- *   an `@1` model is always a chat model: `kind` and `embedding` are dropped (an `@1` provider has
- *   no `embed`); the per-call options are not passed (an `@1` provider reads `ctx.config`);
- * - `stream`：`params.effort` 映射为 `req.effort`，其余参数丢弃（`@1` 没有对应字段）；
- *   没有 `params.effort` 时保留请求自带的 `effort`；only the signal is passed.
- */
-export function adaptModelProviderV1(impl: ModelProviderV1): ModelProvider {
-  return {
-    async listModels() {
-      const models = await impl.listModels();
-      return models.map(
-        ({ kind: _kind, embedding: _embedding, ...m }: ModelInfoV1): ModelInfo => ({
-          ...m,
-          parameters: m.capabilities.effort ? [structuredClone(V1_EFFORT_KNOB)] : [],
-        }),
-      );
-    },
-    stream(req, opts) {
-      // `@1` 没有 toolChoice：不传（旧插件按自己的默认处理）
-      const { params, toolChoice: _toolChoice, ...rest } = req;
-      const out: ModelRequestV1 = rest;
-      const effort = params?.effort;
-      if (typeof effort === "string" && (EFFORT_VALUES as readonly string[]).includes(effort)) {
-        out.effort = effort as Effort;
-      }
-      return impl.stream(out, { signal: opts.signal });
-    },
-  };
-}
-
-/**
- * 模型供应商注册表：供应商即提供 `model-provider` 能力的插件（以插件名为供应商名）。
- * 同时支持 `model-provider@1`（经 {@link adaptModelProviderV1} 适配）与 `@2`；
- * 同一插件两者都提供时用 `@2`。
+ * 模型供应商注册表：供应商即提供 `model-provider@2` 的插件（以插件名为供应商名）。
  *
  * Org-bound (spec B §5.5, A §6): every list and call is made for an org with the provider's
  * effective config there (`EffectiveConfigs.get`), passed as `{ orgId, config }`. A provider is on
@@ -292,7 +238,7 @@ export function adaptModelProviderV1(impl: ModelProviderV1): ModelProvider {
  * provider stays usable. Only `chat` and `embedding` models resolve.
  *
  * Each list (`@2`-shaped) is cached in Redis (`@Cacheable`, key
- * `cache:capk:models:<provider>:v<major>:<plugin version>:<config digest>`, 600 s), never in
+ * `cache:capk:models:<provider>:f<format>:<plugin version>:<config digest>`, 600 s), never in
  * process memory: every replica shares it. The digest is the platform config's for every org that
  * follows the platform (one shared list), and a per-org digest for an org's own copy.
  */
@@ -354,38 +300,26 @@ export class ProviderRegistry {
     return { state: notEnabled.length > 0 ? "not_enabled" : "none", notEnabled };
   }
 
-  /** 每个插件取一个实现（`@2` 优先），按插件首次出现的顺序；不支持的主版本记 warn 后忽略。 */
+  /** One implementation per plugin, in the order plugins first appear; another major is ignored. */
   private providers(): ProviderEntry[] {
-    const chosen = new Map<
-      string,
-      { major: 1 | 2; impl: unknown; version: string | undefined; configHash: string | undefined }
-    >();
+    const chosen = new Map<string, ProviderEntry>();
     for (const p of this.host.list(CAPABILITY)) {
-      const { major } = parseExtensionPoint(p.capability);
-      if (major !== 1 && major !== 2) {
+      if (parseExtensionPoint(p.capability).major !== 2) {
         this.log?.warn("unsupported model-provider major version; ignored", {
           provider: p.plugin,
           capability: p.capability,
         });
         continue;
       }
-      const prev = chosen.get(p.plugin);
-      if (!prev || major > prev.major) {
-        chosen.set(p.plugin, {
-          major,
-          impl: p.impl,
-          version: p.version,
-          configHash: p.configHash,
-        });
-      }
+      if (chosen.has(p.plugin)) continue;
+      chosen.set(p.plugin, {
+        plugin: p.plugin,
+        impl: p.impl as ModelProvider,
+        version: p.version,
+        configHash: p.configHash,
+      });
     }
-    return [...chosen].map(([plugin, { major, impl, version, configHash }]) => ({
-      plugin,
-      major,
-      version,
-      configHash,
-      impl: major === 2 ? (impl as ModelProvider) : adaptModelProviderV1(impl as ModelProviderV1),
-    }));
+    return [...chosen.values()];
   }
 
   /**
@@ -412,9 +346,6 @@ export class ProviderRegistry {
     if (!on.has(p.plugin)) return { ok: false, reason: "not_enabled" };
     const eff = await this.effective.get(orgId, p.plugin);
     if (!eff.ok) return { ok: false, reason: "needs_config" };
-    // an `@1` provider ignores the per-call options (it reads `ctx.config`): the org's own copy
-    // could not be honoured, its calls would go out with the platform's config
-    if (eff.source === "copy" && p.major === 1) return { ok: false, reason: "needs_config" };
     return {
       ok: true,
       call: { orgId, config: eff.config },

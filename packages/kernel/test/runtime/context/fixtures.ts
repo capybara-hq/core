@@ -37,7 +37,6 @@ export const MODEL: ModelInfo = {
     reasoning: true,
     caching: true,
     midConversationSystem: true,
-    effort: true,
   },
   parameters: [],
 };

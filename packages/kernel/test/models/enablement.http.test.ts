@@ -31,8 +31,8 @@ import {
  * admin). A disabled model leaves the org's model list, agent save and the switch plan refuse it,
  * a run whose model was disabled after the agent was saved falls back (or ends
  * `run.model_unavailable`), and the write lists the agents and purposes still pointing at it.
- * Chat callers never resolve an embedding model. An `@1` provider is not usable in an org with its
- * own config copy, and a copy's list failure does not mark the platform's list as failed.
+ * Chat callers never resolve an embedding model. A copy's list failure does not mark the platform's
+ * list as failed.
  */
 
 const fixture = (name: string) =>
@@ -41,7 +41,7 @@ const fixture = (name: string) =>
 const FAKE_1 = { provider: "model-fake", model: "fake-1" };
 const FAKE_2 = { provider: "model-fake", model: "fake-2" };
 const FAKE_EMBED = { provider: "model-fake", model: "fake-embed" };
-const PLUGINS = ["model-fake", "model-v1-copy", "model-copy-fail"];
+const PLUGINS = ["model-fake", "model-copy-fail"];
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -66,12 +66,7 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "worker"],
-        extensions: [
-          MODEL_FAKE,
-          MODEL_FAKE_B,
-          fixture("model-v1-copy"),
-          fixture("model-copy-fail"),
-        ],
+        extensions: [MODEL_FAKE, MODEL_FAKE_B, fixture("model-copy-fail")],
         extensionConfig: {
           "model-fake": {
             models: [
@@ -524,24 +519,6 @@ describe("runs and the switch plan", () => {
     expect(failed.payload.error.code).toBe("run.model_unavailable");
   });
 
-  it("a run whose model's provider is not configured in the org ends run.model_unavailable", async () => {
-    const id = await agentId(owner, org1, "V1", { provider: "model-v1-copy", model: "v1-a" });
-    // the org keeps its own copy: an @1 provider cannot honour it, so it needs configuration here
-    await ok(owner, "PUT", `/api/v1/orgs/${org1}/extensions/model-v1-copy/overrides`, {
-      values: { label: "mine" },
-    });
-    const conv = await createConv(owner, org1, id);
-    await ok(owner, "POST", `/api/v1/orgs/${org1}/conversations/${conv}/messages`, {
-      text: "echo:hello",
-    });
-    await waitForTerminal(db, conv, 1, 20_000);
-    const failed = ofType(await eventsOf(db, conv), "run_failed")[0] as Extract<
-      Ev,
-      { type: "run_failed" }
-    >;
-    expect(failed.payload.error.code).toBe("run.model_unavailable");
-  });
-
   it("the switch plan refuses a disabled model and an embedding model", async () => {
     const id = await agentId(owner, org1, "Switch", FAKE_1);
     const conv = await createConv(owner, org1, id);
@@ -636,23 +613,6 @@ describe("a provider is on only in orgs that enabled it", () => {
 });
 
 describe("org config copies", () => {
-  it("an @1 provider is absent in an org with its own copy and resolves to agent.model_unavailable there", async () => {
-    await ok(owner, "PUT", `/api/v1/orgs/${org1}/extensions/model-v1-copy/overrides`, {
-      values: { label: "mine" },
-    });
-    const registry = k.app.get(ProviderRegistry);
-    const v1 = { provider: "model-v1-copy", model: "v1-a" };
-    expect((await registry.list(org1)).map((p) => p.provider)).not.toContain("model-v1-copy");
-    expect(await codeOf(registry.resolve(org1, v1))).toBe("agent.model_unavailable");
-    // org 2 follows the platform: the @1 provider is usable there
-    expect(
-      (await registry.list(org2))
-        .find((p) => p.provider === "model-v1-copy")
-        ?.models.map((m) => m.id),
-    ).toEqual(["v1-a"]);
-    expect((await registry.resolve(org2, v1)).info.id).toBe("v1-a");
-  });
-
   it("a copy's list failure does not mark the platform's (or a following org's) list as failed", async () => {
     await ok(owner, "PUT", `/api/v1/orgs/${org1}/extensions/model-copy-fail/overrides`, {
       values: { fail: true },
@@ -666,7 +626,7 @@ describe("org config copies", () => {
       .get(ExtensionRegistry)
       .list("model-provider")
       .find((p) => p.plugin === "model-copy-fail");
-    const platformMarker = `capk:models-failed:model-copy-fail:v2:${entry?.version}:${entry?.configHash}`;
+    const platformMarker = `capk:models-failed:model-copy-fail:${entry?.version}:${entry?.configHash}`;
     const markers = await redis.keys("capk:models-failed:model-copy-fail:*");
     expect(markers).toHaveLength(1);
     expect(markers).not.toContain(platformMarker);

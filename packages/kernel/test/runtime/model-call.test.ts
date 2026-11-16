@@ -75,7 +75,6 @@ const stubInfo = (id: string, extra: Partial<ModelInfo> = {}): ModelInfo => ({
     reasoning: false,
     caching: false,
     midConversationSystem: true,
-    effort: false,
   },
   parameters: [],
   ...extra,
