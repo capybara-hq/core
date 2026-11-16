@@ -284,8 +284,7 @@ describe("phase B acceptance: superpowers from a git marketplace", () => {
 
     const first = sent[0];
     const system = first?.system[0]?.text ?? "";
-    // nothing is pinned: using-superpowers is listed in the catalog and loaded with Skill
-    expect(system).not.toContain("<pinned_skill");
+    // using-superpowers is listed in the catalog and loaded with Skill
     expect(system).toContain("- using-superpowers:");
     expect(system).toContain(CLAUDE_CODE_TOOL_MAP);
 

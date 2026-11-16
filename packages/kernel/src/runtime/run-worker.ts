@@ -185,7 +185,7 @@ export class RunWorker {
     @Inject(TitleQueue) private readonly titles: Pick<TitleQueue, "maybeEnqueue">,
     /** Resolves a switched-to model at run start (fallback when it is gone; UI refresh B). */
     @Inject(ProviderRegistry) private readonly models: Pick<ProviderRegistry, "resolve">,
-    /** Run start's skills catalog snapshot (reads the pinned skills' bodies, phase B). */
+    /** Run start's skills catalog snapshot. */
     @Inject(SkillsCatalogService)
     private readonly skillsCatalog: Pick<SkillsCatalogService, "record">,
     /** Run start's run context (run context spec §5): who the agent is, the day, the person. */

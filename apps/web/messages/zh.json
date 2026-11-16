@@ -3551,7 +3551,6 @@
       "tools_changed": "工具定义有变化",
       "tool_spec_missing": "缺少记录的工具定义",
       "definition_missing": "缺少智能体版本定义",
-      "pinned_changed": "这一步带有置顶技能，候选已不再置顶技能",
       "params_changed": "模型参数有变化",
       "media_missing": "附件已不可用",
       "media_changed": "附件有变化",

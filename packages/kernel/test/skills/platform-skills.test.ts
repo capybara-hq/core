@@ -367,8 +367,6 @@ describe("skills from platform components", () => {
         plugin: "kit",
       },
     ]);
-    // nothing is pinned (skills default-on spec §8)
-    expect(snaps[0]?.payload.pinned).toBeUndefined();
 
     // the qualified name still resolves
     const q = await call(conv, "Skill", { skill: "kit:alpha" }, 2);
@@ -856,8 +854,6 @@ describe("skills of builtin plugins", () => {
         plugin: "core",
       },
     ]);
-    // listed only, never pinned
-    expect(snaps[0]?.payload.pinned).toBeUndefined();
 
     const menu = await owner({
       method: "GET",

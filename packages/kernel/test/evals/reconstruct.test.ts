@@ -453,13 +453,6 @@ async function snapshotOf(convId: string, runId?: string): Promise<CaseSnapshot>
 
 const reset = () => capture.reset();
 
-/**
- * A definition's pins from before skills were on by default (skills default-on spec §4): no
- * longer in the type, still in old definitions.
- */
-const oldPins = (pinned: string[]) =>
-  ({ orgSkills: [], pinned }) as unknown as NonNullable<AgentDefinition["skills"]>;
-
 describe("reconstructRequest：基线零漂移", () => {
   it("多步工具、ToolSearch 加载、审批续跑、技能目录快照与变更、提醒、跨运行插话、工具不可用", async () => {
     reset();
@@ -1401,9 +1394,8 @@ describe("reconstructRequest：基线零漂移", () => {
     await expectZeroDrift(conv, snap);
   });
 
-  it("a skill version change mid-conversation, a claude-code skill with the tool map, and a compaction: nothing pinned, zero drift and equal to what the provider received", async () => {
+  it("a skill version change mid-conversation, a claude-code skill with the tool map, and a compaction: zero drift and equal to what the provider received", async () => {
     reset();
-    // pinning is gone (skills default-on spec §8)
     const rules = await seedSkill("house-rules", "Always answer in haiku.");
     const brain = await seedSkill("brainstorming", "Brainstorm first.", undefined, {
       format: "claude-code",
@@ -1430,14 +1422,12 @@ describe("reconstructRequest：基线零漂移", () => {
       (e): e is Extract<ConversationEvent, { type: "skills_catalog" }> =>
         e.type === "skills_catalog",
     );
-    expect(snaps.map((e) => e.payload.pinned)).toEqual([undefined, undefined]);
     expect(
       snaps.map((e) => e.payload.skills.find((x) => x.name === "house-rules")?.version),
     ).toEqual([1, 2]);
     expect(snaps.every((e) => e.payload.toolMap === CLAUDE_CODE_TOOL_MAP)).toBe(true);
     expect(events.some((e) => e.type === "compaction_summary")).toBe(true);
     const first = sent[0] as ModelRequest;
-    expect(first.system[0]?.text).not.toContain("<pinned_skill");
     expect(first.system[0]?.text).toContain(CLAUDE_CODE_TOOL_MAP);
     const loaded = events.find((e) => e.type === "tool_result");
     expect(loaded?.type === "tool_result" && loaded.payload.isError).toBe(false);
@@ -1450,7 +1440,6 @@ describe("reconstructRequest：基线零漂移", () => {
       return at < 0 ? [] : [t.slice(at).split("\n\n")[0] as string];
     });
     expect(updatedLists.some((l) => l.includes("- house-rules:"))).toBe(true);
-    expect(texts.some((t) => t.includes("Pinned skill"))).toBe(false);
     await expectZeroDrift(conv, await snapshotOf(conv));
   });
 
@@ -2564,84 +2553,6 @@ describe("reconstructRequest：漂移原因", () => {
       expect((err as ApiError).code, field).toBe("eval.recording_unsupported");
       expect((err as ApiError).message, field).toContain(field);
     }
-  });
-
-  it("pinned_changed: a non-baseline call whose snapshot in effect pinned skills, whatever the candidate", () => {
-    const def = snap.definitions["1"];
-    if (!def) throw new Error("definition missing");
-    // a recorded snapshot with one pinned skill, ahead of every other event
-    const withPinned = (pinned: boolean) => {
-      const s = clone();
-      const first = s.events[0] as (typeof s.events)[number];
-      const skill = { id: "p1", name: "p", description: "P.", version: 1, source: "src/p1" };
-      s.events.unshift({
-        ...first,
-        seq: first.seq - 1,
-        type: "skills_catalog",
-        payload: { skills: [skill], ...(pinned && { pinned: [{ ...skill, body: "Pinned." }] }) },
-      });
-      return s;
-    };
-    // the baseline never reports it
-    expect(reconstructRequest(withPinned(true), seq, { model: info }).drift).not.toContain(
-      "pinned_changed",
-    );
-    // no candidate pins any more: params-only, instructions-only, another version alike
-    const paramsOnly = reconstructRequest(withPinned(true), seq, {
-      model: info,
-      params: { effort: "high" },
-    });
-    expect(paramsOnly.drift).toContain("pinned_changed");
-    const instructions = reconstructRequest(withPinned(true), seq, {
-      model: info,
-      definition: { ...def, instructions: "Be terse." },
-    });
-    expect(instructions.drift).toContain("pinned_changed");
-    // the request still renders the recorded pinned body (a step replay never reads storage)
-    expect(instructions.request.system[0]?.text).toContain("Pinned.");
-    // a snapshot without pins: nothing, even when the candidate's raw definition carries old pins
-    const unpinned = reconstructRequest(withPinned(false), seq, {
-      model: info,
-      definition: { ...def, skills: oldPins(["p1"]) },
-    });
-    expect(unpinned.drift).not.toContain("pinned_changed");
-  });
-
-  it("pinned_changed follows the snapshot in effect at the call: a later unpinned snapshot ends it", () => {
-    const def = snap.definitions["1"];
-    if (!def) throw new Error("definition missing");
-    const s = clone();
-    const first = s.events[0] as (typeof s.events)[number];
-    const skill = { id: "p1", name: "p", description: "P.", version: 1, source: "src/p1" };
-    // pinned at first, then a snapshot without pins (the "Pinned skills removed" notice) before
-    // the call
-    s.events.unshift(
-      {
-        ...first,
-        seq: first.seq - 1,
-        type: "skills_catalog",
-        payload: { skills: [skill], pinned: [{ ...skill, body: "Pinned." }] },
-      },
-      { ...first, seq: first.seq - 0.5, type: "skills_catalog", payload: { skills: [skill] } },
-    );
-    const out = reconstructRequest(s, seq, { model: info, params: { effort: "high" } });
-    expect(out.drift).not.toContain("pinned_changed");
-  });
-
-  it("definition_missing: no pinned_changed, even under a pinned snapshot", () => {
-    const s = clone();
-    const first = s.events[0] as (typeof s.events)[number];
-    const skill = { id: "p1", name: "p", description: "P.", version: 1, source: "src/p1" };
-    s.events.unshift({
-      ...first,
-      seq: first.seq - 1,
-      type: "skills_catalog",
-      payload: { skills: [skill], pinned: [{ ...skill, body: "Pinned." }] },
-    });
-    s.definitions = {};
-    const missing = reconstructRequest(s, seq, { model: info, params: { effort: "high" } });
-    expect(missing.drift).toContain("definition_missing");
-    expect(missing.drift).not.toContain("pinned_changed");
   });
 
   it("a candidate model replacing the run's model switch -> model_switched (never for a baseline)", () => {

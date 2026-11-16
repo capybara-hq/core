@@ -462,9 +462,8 @@ describe("phase C acceptance: superpowers subagent-driven-development", () => {
       expect(system).toHaveLength(1);
       expect(system[0]?.startsWith(`${BEHAVIOR_RULES}\n\n${SUBAGENT_PREAMBLE}\n\n`)).toBe(true);
       if (p.type === "general-purpose") {
-        // a copy of the parent: its instructions, no pinned skills
+        // a copy of the parent: its instructions
         expect(system[0]).toContain(`${SUBAGENT_PREAMBLE}\n\n${INSTRUCTIONS}`);
-        expect(system[0]).not.toContain("<pinned_skill");
       } else {
         expect(reviewerBody?.type).toBe(p.type);
         expect(system[0]).toContain("You are a Senior Code Reviewer");

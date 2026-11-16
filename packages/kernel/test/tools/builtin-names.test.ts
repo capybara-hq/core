@@ -212,27 +212,21 @@ describe("system texts naming builtins (tool naming spec §10)", () => {
   });
   const skill = { id: "s1", name: "alpha", description: "Alpha.", version: 1, source: "skills/a/" };
 
-  /** A log with a system catalog, a later snapshot with a new skill, and pinned skills. */
+  /** A log with a system catalog and a later snapshot with a new skill. */
   function log(): ConversationEvent[] {
     const l = new Log();
     l.user("hi");
     l.runStarted();
     l.add({
       type: "skills_catalog",
-      payload: {
-        skills: [skill],
-        pinned: [{ id: "s1", name: "alpha", version: 1, source: "skills/a/", body: "Pinned." }],
-      },
+      payload: { skills: [skill] },
     });
     l.modelCall(1);
     l.assistant("ok");
     l.user("again");
     l.add({
       type: "skills_catalog",
-      payload: {
-        skills: [skill, { ...skill, id: "s2", name: "beta" }],
-        pinned: [{ id: "s1", name: "alpha", version: 1, source: "skills/a/", body: "Pinned." }],
-      },
+      payload: { skills: [skill, { ...skill, id: "s2", name: "beta" }] },
     });
     return l.events;
   }
@@ -255,7 +249,6 @@ describe("system texts naming builtins (tool naming spec §10)", () => {
   it("a request with the new builtins renders the new names", () => {
     const text = texts(build([tool("Skill"), tool("ToolSearch"), tool("mcp__docs__search")]));
     expect(text).toContain(SKILL_TEXTS.skillsCatalogHeader);
-    expect(text).toContain(SKILL_TEXTS.pinnedSkillsHeader);
     expect(text).toContain(SKILL_TEXTS.newSkills);
     expect(text).toContain(CATALOG_HEADER);
     expect(text).toContain("call Skill with");

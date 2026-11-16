@@ -829,7 +829,7 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     if (project) messages.push({ role: "system", content: projectRootText(project) });
     // 被摘要覆盖的变更提醒不再发送：摘要时生效的目录与 system 里的不同 → 紧随摘要补上完整的当前目录
     const covered = skillSnaps.filter((e) => e.seq <= after).at(-1);
-    // (phase B: plus the current pinned skills and tool-name map when they differ from system's)
+    // (phase B: plus the tool-name map when it differs from system's)
     if (covered && covered !== systemSkills) {
       const text = snapshotCurrentText(systemSkills?.payload, covered.payload);
       if (text !== "") messages.push({ role: "system", content: text });

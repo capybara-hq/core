@@ -866,28 +866,6 @@ describe("candidates on child cases (batch 13 review I1, m1)", () => {
     ]);
   });
 
-  it("a logged child definition that pinned skills is a sub-agent change for any candidate", async () => {
-    const child = await fourthChild();
-    const info = await modelInfo();
-    const call = ofType(toEvents(child.snap), "model_call").at(-1) as Ev<"model_call">;
-    const s = structuredClone(child.snap);
-    const ev = s.events.find((e) => e.type === "subagent_started") as { payload: unknown };
-    const started = ev.payload as EventPayload<"subagent_started">;
-    // a child dispatched before skills were on by default (skills default-on spec §9)
-    started.definition = {
-      ...started.definition,
-      skills: { orgSkills: [], pinned: ["sk-1"] },
-    } as typeof started.definition;
-    expect(reconstructRequest(s, call.seq, { model: info }).drift).toEqual([]);
-    const logged = s.subagent?.definition as ReturnType<typeof normalizeStoredDefinition>;
-    expect(
-      reconstructRequest(s, call.seq, { model: info, params: { effort: "high" } }).drift,
-    ).toEqual(["subagent_changed"]);
-    expect(
-      subagentCaseChanged(s, { changed: true, definition: logged, agentVersion: s.agentVersion }),
-    ).toBe(true);
-  });
-
   it("the same version with other turned-off skills is a sub-agent change", async () => {
     const child = await fourthChild();
     const info = await modelInfo();

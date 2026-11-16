@@ -41,20 +41,6 @@ import { AGENT_TOOL } from "../tools/builtin-names.js";
 import { canonicalJson } from "./recorded-tools.js";
 import { type CaseSnapshot, toEvents } from "./snapshot.js";
 
-/**
- * Does a definition from before skills were on by default pin skills? Read raw: the normalizer
- * drops `skills.pinned` (skills default-on spec §4, §9).
- */
-const pinsSkills = (d: unknown): boolean => {
-  const skills =
-    typeof d === "object" && d !== null ? (d as { skills?: unknown }).skills : undefined;
-  const pinned =
-    typeof skills === "object" && skills !== null
-      ? (skills as { pinned?: unknown }).pinned
-      : undefined;
-  return Array.isArray(pinned) && pinned.length > 0;
-};
-
 /** `R` when the caller did not resolve the org's settings (the built-in platform default). */
 const DEFAULT_RESERVE_TOKENS = COMPACTION_SETTINGS.parse({}).reserveTokens;
 
@@ -84,15 +70,10 @@ function samePlan(a: FitPlan | null | undefined, b: FitPlan | undefined): boolea
  * - `system_hash` / `tools_changed`（只在基线判定）：system 指纹、工具序列（tools 与 catalog）与记录不同；
  * - `tool_spec_missing`：快照里缺某个工具定义（从请求里去掉）；
  * - `definition_missing`：快照里缺该 agent 版本的定义（用空指令）；
- * - `pinned_changed` (phase B, never for a baseline, not with `definition_missing`): the
- *   `skills_catalog` snapshot in effect at the call pinned skills (`pinned` non-empty). No candidate
- *   can pin any more (skills default-on spec §9), so any candidate differs from such a call; the
- *   request still renders the recorded pinned bodies (Decision 1);
  * - `subagent_changed` (phase C, never for a baseline): a sub-agent's (child) case with a candidate
  *   whose effective definition differs from the one frozen in its `subagent_started` (see
  *   {@link subagentChanged}); the request still renders the logged definition and preamble. A child
- *   case never consults `definitions` (no `definition_missing`) and has no `pinned_changed` (a
- *   logged child definition that pinned counts as `subagent_changed`);
+ *   case never consults `definitions` (no `definition_missing`);
  * - `params_changed`：没给候选参数时，记录的参数按所用模型的声明清洗后有键被丢弃或值变了（换了模型或模型声明变了）；
  * - `media_missing`：某附件记录里不是「不再可用」，还原时却取不到；
  * - `media_changed`（只在基线判定）：其余任何媒体结果与记录不同（按附件 id 比 outcome 与 etag：预算省略、
@@ -108,11 +89,6 @@ export type DriftReason =
   | "tools_changed"
   | "tool_spec_missing"
   | "definition_missing"
-  /**
-   * The call rendered pinned skills (phase B), which no candidate has any more (skills default-on
-   * spec §9).
-   */
-  | "pinned_changed"
   /** A child case's candidate has another effective definition than the logged one (phase C). */
   | "subagent_changed"
   | "params_changed"
@@ -137,7 +113,6 @@ const DRIFT_ORDER: readonly DriftReason[] = [
   "tools_changed",
   "tool_spec_missing",
   "definition_missing",
-  "pinned_changed",
   "subagent_changed",
   "params_changed",
   "model_switched",
@@ -316,17 +291,6 @@ export function reconstructRequest(
       instructions: "",
       model: { provider: call.payload.provider, model: call.payload.model },
     });
-  }
-
-  // pinned_changed (skills default-on spec §9): the snapshot in effect at the call pinned skills,
-  // and no candidate pins any more (the migration rewrote the stored versions without pins). The
-  // stub of definition_missing is no candidate, so it is skipped then; a child reports a logged
-  // pin as subagent_changed instead.
-  if (!baseline && started === undefined && !drift.has("definition_missing")) {
-    const snap = inputEvents(all, call)
-      .filter((e) => e.type === "skills_catalog")
-      .at(-1) as Extract<ConversationEvent, { type: "skills_catalog" }> | undefined;
-    if ((snap?.payload.pinned ?? []).length > 0) drift.add("pinned_changed");
   }
 
   // 工具：按记录的顺序从快照取定义；取不到的从请求里去掉（基线与候选一样）
@@ -534,8 +498,7 @@ const parentSide = (d: AgentDefinition, started: SubagentStarted): string =>
  * Does a candidate change what a sub-agent (child) case would run (`subagent_changed`, spec
  * §15.1)? Pure, from the snapshot alone, comparing the model-visible parts of the effective
  * definition (instructions, turned-off skills, tools) with the logged one (`logged`, from its
- * `subagent_started`). A logged definition that pinned skills (`started.definition`, read raw)
- * differs from every candidate: none pins any more (skills default-on spec §9).
+ * `subagent_started`).
  * - the same agent version (`sameVersion`): the candidate is the logged definition with
  *   overrides (instructions, model, params), compared field by field;
  * - another version of the case's agent: for an org agent child (`source: "agent"`) that agent's
@@ -561,7 +524,6 @@ export function subagentChanged(
   /** The parent's definition at the case's version (the snapshot's), for template children. */
   original?: AgentDefinition,
 ): boolean {
-  if (pinsSkills(started.definition)) return true;
   const keepAgent = hasAgent(logged);
   const childTools = (d: AgentDefinition) => childToolsOf(d, keepAgent);
   const differs = (instructions: string, skills: string | null, tools: string | null): boolean =>

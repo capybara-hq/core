@@ -822,7 +822,7 @@ describe("整轮回放", () => {
     expect((await readFakeSandboxOps(root)).length).toBe(sandboxBefore);
   });
 
-  it("the run's skills snapshot is copied with pinned and toolMap unchanged (phase B)", async () => {
+  it("the run's skills snapshot is copied with toolMap unchanged (phase B)", async () => {
     const setId = await createSet();
     const conv = await createConv(admin, orgId, agentId);
     const catalog: EventPayload<"skills_catalog"> = {
@@ -836,20 +836,17 @@ describe("整轮回放", () => {
           plugin: "superpowers",
         },
       ],
-      pinned: [
-        { id: "s1", version: 2, name: "brainstorming", source: "skills/x/", body: "Pinned body." },
-      ],
       toolMap: "Some skills name Claude Code tools.",
     };
     await seedRun(
       conv,
-      "pinned-copy",
+      "map-copy",
       'tool:plugin__tools-count__count:{"n":1}',
       [{ name: "plugin__tools-count__count", input: { n: 1 }, content: "recorded count" }],
       undefined,
       catalog,
     );
-    await addCase(setId, conv, "pinned-copy");
+    await addCase(setId, conv, "map-copy");
     const run = await startRun(setId, {});
     expect((await finished(run.id)).status).toBe("completed");
     const [r] = await results(run.id);
