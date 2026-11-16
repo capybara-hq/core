@@ -313,10 +313,11 @@ otherwise.
   When Redis is unreachable the stop takes the whole budget: queue connections that cannot close are
   abandoned rather than holding the exit.
 - **Unhandled errors.** `capybara start` logs an unhandled promise rejection or uncaught exception
-  and keeps running, but a swallowed fatal event makes `/readyz` answer 503 until the process is
-  replaced (`/healthz` stays 200); it exits 1 only after more than 5 of them within 60 s, so the orchestrator
-  restarts a process that keeps failing. Before, it exited on the first one. Every other `capybara`
-  command still exits 1 on the first.
+  without crashing on the spot: `/readyz` answers 503 at once (`/healthz` stays 200), the process
+  runs the same graceful stop as on SIGTERM (drain within the 30 s budget) and exits 1, so any
+  restart policy (Kubernetes, `restart: unless-stopped` in compose) starts a clean process.
+  Readiness alone would restart nothing. More than 5 of them within 60 s exit 1 at once. Every other
+  `capybara` command still exits 1 on the first.
 - **Redis outages and leases.** Conversation runs, IM long connections, sandbox commands and org
   quota slots hold Redis leases renewed every third of their TTL. A holder whose renewals keep
   failing gives up one renewal period before the key could expire (two thirds of the TTL after its
@@ -871,7 +872,8 @@ this:
   `/login` on port 3000 for `web`. Give the kernel pods a `startupProbe` on `/healthz` with a
   generous failure threshold (minutes, not seconds): a pod that finds pending migrations doesn't listen
   until they finish, and a liveness probe must not kill it halfway. A swallowed fatal event (an
-  unhandled rejection) makes `/readyz` answer 503 until the process is replaced; `/healthz` stays 200.
+  unhandled rejection) makes `/readyz` answer 503, then the process stops gracefully and exits 1, and
+  the pod's restart policy starts it again; `/healthz` stays 200.
 - **Secrets:** pass `CAPYBARA_MASTER_KEY`, the database URL and extension credentials from Kubernetes
   Secrets as environment variables
   (`CAPYBARA_EXTENSION_CONFIG__<PLUGIN_UPPER_SNAKE>__<FIELD>` for extension deployment config).

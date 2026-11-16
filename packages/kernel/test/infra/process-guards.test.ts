@@ -1,12 +1,18 @@
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { processFault, resetProcessFault } from "../../src/infra/health/process-fault.js";
+import {
+  onProcessFault,
+  processFault,
+  resetProcessFault,
+} from "../../src/infra/health/process-fault.js";
 import {
   GUARD_CIRCUIT_LIMIT,
   GUARD_CIRCUIT_WINDOW_MS,
   GUARD_LOG_MARKER,
   installProcessGuards,
 } from "../../src/infra/lifecycle/process-guards.js";
+import { handleShutdownSignals } from "../../src/infra/lifecycle/shutdown-signals.js";
+import { createLogger } from "../../src/log.js";
 
 /** A clock, a logger, an exit recorder and an event source in place of the process. */
 function setup() {
@@ -144,5 +150,58 @@ describe("process guards", () => {
     proc.emit("unhandledRejection", new Error("later"));
     expect(records[0]?.fields).toMatchObject({ severity: "fatal", kind: "uncaughtException" });
     expect(processFault()).toEqual({ kind: "uncaughtException" });
+  });
+
+  it("a swallowed fatal event runs the graceful stop once and exits 1 (the restart policy replaces the process)", async () => {
+    const { proc } = setup();
+    const signals = new EventEmitter();
+    const exits: number[] = [];
+    const lines: Record<string, unknown>[] = [];
+    let release!: () => void;
+    const drained = new Promise<void>((r) => {
+      release = r;
+    });
+    const close = vi.fn(() => drained);
+    const handle = handleShutdownSignals(
+      close,
+      createLogger("info", { write: (l) => lines.push(JSON.parse(l)) }),
+      { signals, exit: (c) => exits.push(c), faults: onProcessFault },
+    );
+    proc.emit("unhandledRejection", new Error("boom"));
+    proc.emit("uncaughtException", new Error("again"));
+    // the stop began (readiness 503 comes from the fault and the stop) and waits for the drain
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(exits).toEqual([]);
+    expect(
+      lines.some(
+        (l) => l.msg === "fatal event swallowed; shutting down so the process is replaced",
+      ),
+    ).toBe(true);
+    release();
+    await handle.exiting();
+    expect(exits).toEqual([1]);
+    expect(signals.listenerCount("SIGTERM")).toBe(0);
+  });
+
+  it("a fault before the handlers are installed stops at once; without `faults` nothing stops", async () => {
+    const { proc } = setup();
+    proc.emit("unhandledRejection", new Error("early"));
+    const plain = vi.fn(async () => {});
+    const off = handleShutdownSignals(plain, createLogger("error", { write: () => {} }), {
+      signals: new EventEmitter(),
+      exit: () => {},
+    });
+    expect(plain).not.toHaveBeenCalled();
+    off.dispose();
+    const exits: number[] = [];
+    const close = vi.fn(async () => {});
+    const handle = handleShutdownSignals(close, createLogger("error", { write: () => {} }), {
+      signals: new EventEmitter(),
+      exit: (c) => exits.push(c),
+      faults: onProcessFault,
+    });
+    await handle.exiting();
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(exits).toEqual([1]);
   });
 });

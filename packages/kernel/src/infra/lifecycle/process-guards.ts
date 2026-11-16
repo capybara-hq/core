@@ -4,7 +4,8 @@ import { markProcessFaulted } from "../health/process-fault.js";
 
 /**
  * Process-level guards for `capybara start`: an unhandled rejection or an uncaught exception is
- * logged and the process keeps running, unless they come in bursts.
+ * logged and does not kill the process at once: it stops gracefully instead (see below), unless
+ * the events come in bursts.
  *
  * Node's default for an async failure nobody handles is to kill the process. That default assumes
  * the program state is corrupt, which holds for errors thrown by business logic, but the ones seen
@@ -21,8 +22,10 @@ import { markProcessFaulted } from "../health/process-fault.js";
  * first fails through an uncaught event and afterwards only through caught errors (500s) keeps the
  * process alive but broken, which used to self-heal through a crash and a restart. To keep that
  * self-healing, every swallowed fatal event marks the process faulted (`markProcessFaulted`):
- * `/readyz` answers 503 from then on so the orchestrator replaces the replica, while `/healthz`
- * (liveness) is unchanged. The record carries `severity: "fatal"` (the logger has no fatal level).
+ * `/readyz` answers 503 from then on, and `capybara start` runs its graceful stop (the bounded
+ * drain of a SIGTERM) and exits with 1, so any restart policy starts a clean process (readiness
+ * alone restarts nothing). `/healthz` (liveness) is unchanged. The record carries
+ * `severity: "fatal"` (the logger has no fatal level).
  *
  * Every line of the recorder is wrapped: a handler that throws while the process handles a fatal
  * event would defeat the guard. Records go through the kernel logger (pino, redacted) with

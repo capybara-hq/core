@@ -45,7 +45,8 @@ export class HealthController {
       return { ok: false, stopping: true };
     };
     if (this.shutdown.isShuttingDown()) return stopping();
-    // A swallowed fatal event: not ready, so the orchestrator replaces this replica (liveness stays)
+    // A swallowed fatal event: not ready while `capybara start` stops gracefully and exits 1
+    // (liveness stays)
     const faulted = processFault();
     if (faulted !== undefined) {
       reply.code(503);

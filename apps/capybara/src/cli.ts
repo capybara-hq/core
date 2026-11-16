@@ -164,8 +164,9 @@ export async function main(
 
 /**
  * The process-wide handlers: `capybara start` (a long-running kernel) gets the process guards (an
- * unhandled rejection or uncaught exception is logged through the kernel logger; more than 5 within
- * 60 s exit with 1); every other command is short-lived and exits with 1 on the first one.
+ * unhandled rejection or uncaught exception is logged through the kernel logger and starts the
+ * graceful stop that exits with 1, see `runStart`; more than 5 within 60 s exit with 1 at once);
+ * every other command is short-lived and exits with 1 on the first one.
  */
 function installFatalHandlers(command: string, log: KernelLogger): (log: KernelLogger) => void {
   if (command === "start") {
