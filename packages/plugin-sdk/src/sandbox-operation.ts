@@ -136,7 +136,7 @@ export interface SandboxOperationScope extends SandboxOperationRef {
 }
 
 /** Runtime support, not consent. Restricted support requires all four claims together. */
-export interface SandboxPermissionCapabilities {
+export interface SandboxPermissionSupport {
   readonly version: 1;
   readonly restricted: {
     readonly filesystem: true;

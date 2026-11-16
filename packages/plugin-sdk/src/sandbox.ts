@@ -16,7 +16,7 @@ import type {
   SandboxOperation,
   SandboxOperationRef,
   SandboxOperationScope,
-  SandboxPermissionCapabilities,
+  SandboxPermissionSupport,
   SandboxPreparation,
   SandboxPreparationScope,
 } from "./sandbox-operation.js";
@@ -226,10 +226,7 @@ export const SANDBOX_TAG_RE = /^[a-z0-9-]{1,64}$/;
  */
 export interface SandboxProvider {
   /** Runtime permission support for this instance; does not grant consent or provision an instance. */
-  permissionCapabilities?(
-    h: SandboxHandle,
-    signal: AbortSignal,
-  ): Promise<SandboxPermissionCapabilities>;
+  permissionSupport?(h: SandboxHandle, signal: AbortSignal): Promise<SandboxPermissionSupport>;
   /**
    * Fresh immutable grant for one actual method invocation. Lightweight until a method is called;
    * never cache grants on the handle or fall back to raw methods when unsupported.
