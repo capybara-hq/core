@@ -45,7 +45,7 @@ import {
   usageTokens,
 } from "./budget.js";
 import { RecordedToolPipeline, recordedCalls } from "./recorded-tools.js";
-import type { CaseSnapshot, SnapshotEvent } from "./snapshot.js";
+import { type CaseSnapshot, type SnapshotEvent, toEvents } from "./snapshot.js";
 import type { ResolvedCandidate } from "./step-replay.js";
 
 /**
@@ -408,15 +408,15 @@ export async function deleteEvalConversation(
 }
 
 /**
- * 原运行每步开始时吸收到的位置（第一次尝试的 `absorbedUpToSeq`；较早的事件没有时取该 model_call 的 seq）。
+ * Where each step of the original run had taken in absorbable events (its first attempt's
+ * `absorbedUpToSeq`).
  */
 function absorbedByStep(s: CaseSnapshot): Map<number, number> {
   const out = new Map<number, number>();
-  for (const e of s.events) {
+  for (const e of toEvents(s)) {
     if (e.runId !== s.runId || e.type !== "model_call") continue;
-    const p = e.payload as { step: number; request?: { absorbedUpToSeq?: number } };
-    if (out.has(p.step)) continue;
-    out.set(p.step, p.request?.absorbedUpToSeq ?? e.seq);
+    if (out.has(e.payload.step)) continue;
+    out.set(e.payload.step, e.payload.request.absorbedUpToSeq);
   }
   return out;
 }

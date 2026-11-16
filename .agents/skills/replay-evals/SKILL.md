@@ -48,10 +48,11 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   classifier call fires `model.request` / `model.response` with purpose `review` and writes a `usage` event with
   the same purpose — neither is model-visible, so neither needs a `DriftReason`.
 - **`tools_changed`** (tool naming spec §9.1): written before a step's request when its resolved tool set differs from the
-  previous request's (last `model_call` `tools` + `catalog`, plus later `tools_changed`; a call with `toolsOmitted`, whose
-  model has no tool support, is skipped); never before a conversation's first request. `model_call.request.toolsOmitted` is
-  recorded by `assembleModelRequest`, never inferred from the reminder text, and is not model-visible. Rendered as a system message at its position, dropped once a summary covers it. In the log, so no `DriftReason`
-  (the `tools_changed` DriftReason is a different thing: a baseline whose rebuilt tool sequence differs from the record).
+  previous request's (last `model_call` `tools` + `catalog`, plus later `tools_changed`; a call with `toolsOmitted`, whose model
+  has no tool support, is skipped); never before a conversation's first request. `model_call.request.toolsOmitted` is recorded by
+  `assembleModelRequest`, never inferred from the reminder text, and is not model-visible. Rendered as a system message at its
+  position, dropped once a summary covers it. In the log, so no `DriftReason` (the `tools_changed` DriftReason is a different
+  thing: a baseline whose rebuilt tool sequence differs from the record).
 - **`device_paths`** (devices spec §13.1, ruling R22): the first sandbox tool call of every conversation
   (cloud included, default roots included) appends `device_paths { roots }` to the calling conversation, and a later
   call appends it again whenever the held instance's roots differ from the latest recorded ones (back to the defaults,
@@ -144,11 +145,11 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   `DriftReason`. A step replay renders the recorded catalog whatever the candidate's `disabledSkills` say.
 - **Catalog budget** (spec §7): the cut is decided when the snapshot is written (`skills[].nameOnly`, from
   `skills.catalogBudgetChars` at that run start), so rendering stays a pure function of the snapshot and needs no `DriftReason`; a
-  later budget never changes an old request. A snapshot without `nameOnly` renders byte for byte as before. `sameSkills` compares `nameOnly`, so an entry crossing the budget writes a new snapshot
-  and shows in the "Updated skills" notice at the next run start.
-  Ranking: the agent's own and the org skills it shared, builtin, the org's own, then plugin skills. `skills.catalog_over_budget`
-  (info) is logged at every run start while the catalog is over budget, whether or not a new snapshot is written.
-  Zero-drift case: "a catalog budget change between runs" in `reconstruct.test.ts`; unit tests in
+  later budget never changes an old request. A snapshot without `nameOnly` renders byte for byte as before. `sameSkills` compares
+  `nameOnly`, so an entry crossing the budget writes a new snapshot and shows in the "Updated skills" notice at the next run
+  start. Ranking: the agent's own and the org skills it shared, builtin, the org's own, then plugin skills.
+  `skills.catalog_over_budget` (info) is logged at every run start while the catalog is over budget, whether or not a new snapshot
+  is written. Zero-drift case: "a catalog budget change between runs" in `reconstruct.test.ts`; unit tests in
   `test/runtime/context/skills-budget.test.ts`.
 - **Nothing is pinned**: run start reads no bodies, the `skills_catalog` schema has no `pinned` and request building renders no
   pinned skills (maintainer ruling 2026-11-16: a release-candidate snapshot's `pinned` is ignored; there is no `pinned_changed`).
@@ -209,16 +210,17 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   snapshot's definition carries that run's narrowing (`user_message.dispatch.narrowed` on its task message: the union of the frozen
   and the current version's `disabledTools` / `disabledSkills` at the restart by `SendMessage`), as the run itself used. A child case offers the sub-agent message tools as its recorded requests did (a fork invocation's child has none).
 - **Child requests** render the logged preamble and instructions (`build.ts` reads `subagent_started`), also under a candidate.
-  `subagent_changed` (`reconstruct.ts` `subagentChanged`, pure): a candidate whose effective definition differs from the logged one in
-  instructions, turned-off skills (canonical `disabledSkills`) or tools: the same version with an instruction override; another version of the case's agent (an org agent's
-  next version; for templates the parent's version: `general` takes its instructions and tools, `inline` its template of that name, gone =
-  changed); a plugin template's current version (`ReconstructOptions.subagentTemplate`, read by the worker; removed = version 0). Model
-  and params are separate candidate axes. Template narrowing that needs the database is not recomputed; instead, from the
-  snapshot alone, an `inline` child compares its whole template between the case's version and the candidate's, and a `general` /
-  `plugin` child also compares the parent's turned-off tools, canonical `disabledSkills` and roster entry (`subagents.general`, the
-  selected template), and an `inline` child the parent's side as well; any difference counts. Not compared: the candidate's `subagents` block as the child's own roster, and whether it offers `Agent`
-  (that follows the child's depth: `keepAgent` comes only from the logged child); a nesting child's dispatches are its recorded
-  `Agent` results.
+  `subagent_changed` (`reconstruct.ts` `subagentChanged`, pure): a candidate whose effective definition differs from the logged
+  one in instructions, turned-off skills (canonical `disabledSkills`) or tools: the same version with an instruction override;
+  another version of the case's agent (an org agent's next version; for templates the parent's version: `general` takes its
+  instructions and tools, `inline` its template of that name, gone = changed); a plugin template's current version
+  (`ReconstructOptions.subagentTemplate`, read by the worker; removed = version 0). Model and params are separate candidate axes.
+  Template narrowing that needs the database is not recomputed; instead, from the snapshot alone, an `inline` child compares its
+  whole template between the case's version and the candidate's, and a `general` / `plugin` child also compares the parent's
+  turned-off tools, canonical `disabledSkills` and roster entry (`subagents.general`, the selected template), and an `inline`
+  child the parent's side as well; any difference counts. Not compared: the candidate's `subagents` block as the child's own
+  roster, and whether it offers `Agent` (that follows the child's depth: `keepAgent` comes only from the logged child); a nesting
+  child's dispatches are its recorded `Agent` results.
 - **Candidates on a child case** (`resolveCandidate` with the sub-agent's source): the request always renders the logged definition
   (preamble and instructions from `subagent_started`); only the candidate's **model and params** change it. A candidate's
   **instructions are not applied** to a child's request: they only flag `subagent_changed` (so an instructions-only eval run over
@@ -376,9 +378,10 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
 ## Tests
 
 - Unit / HTTP: `packages/kernel/test/evals/` (`reconstruct`, `step-replay`, `run-replay`, `runs`, `judge`, `diff`, `sets.*`,
-  `trajectory.*`), `packages/kernel/test/runtime/tool-map-render.test.ts` (map texts) and `packages/kernel/test/catalog/claude-superpowers.e2e.test.ts`.
-  To compare reconstructed requests with real ones, install `captureProviderRequests()` (`test/helpers/provider-capture.ts`) before the kernel starts. For a deterministic judge verdict, map the `eval` purpose to a fake model extension in the test (such as `judge-gate` in
-  `m6-segment1.dual.test.ts`).
+  `trajectory.*`), `packages/kernel/test/runtime/tool-map-render.test.ts` (map texts) and
+  `packages/kernel/test/catalog/claude-superpowers.e2e.test.ts`. To compare reconstructed requests with real ones, install
+  `captureProviderRequests()` (`test/helpers/provider-capture.ts`) before the kernel starts. For a deterministic judge verdict,
+  map the `eval` purpose to a fake model extension in the test (such as `judge-gate` in `m6-segment1.dual.test.ts`).
 - Dual-replica: `runs.dual.test.ts` (org concurrency 1 / 2, `capped` after the limit and the bound on overshoot), `m6-segment1.dual.test.ts` (conversation -> trajectory ->
   eval set -> killing a replica mid step replay -> full-run over the limit -> labeling).
 - Always run vitest from the repo root (`pnpm exec vitest run <path>`): the root config carries the `@capybara-hq/source` condition that dual-replica tests need to load extensions from source.
