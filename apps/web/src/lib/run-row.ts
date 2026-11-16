@@ -23,13 +23,14 @@ export function canViewTrajectory(me: RunRowViewer, agentOwnerId: string | undef
 }
 
 /**
- * Where the row's 去配置模型服务 leads, or null when the reader can act on neither page: the super
- * admin's `/admin/models` (the platform's model services and their config), else the org admin's
- * `/settings/models` (the services on in the org, their org config, the org's models).
+ * Where the row's 去配置模型服务 leads, or null when the reader can act on neither page, by the
+ * setup checklist's rule: an org admin (a super admin too) goes to `/settings/models` (the services
+ * on in the org, their org config, the org's models), a super admin who is not one of the org's
+ * admins to `/admin/models` (the platform's model services and their config).
  */
 export function configureModelsHref(me: RunRowViewer): string | null {
-  if (me.account.isSuperAdmin) return "/admin/models";
-  return roleAtLeast(myRole(me), "admin") ? "/settings/models" : null;
+  if (roleAtLeast(myRole(me), "admin")) return "/settings/models";
+  return me.account.isSuperAdmin ? "/admin/models" : null;
 }
 
 /**

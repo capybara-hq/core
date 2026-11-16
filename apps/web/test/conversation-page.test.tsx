@@ -1899,7 +1899,7 @@ describe("run rows (spec §6.16.23)", () => {
     ).toBe("/trajectories/c1");
     expect(
       within(region).getByRole("link", { name: en.chat.run.configureModels }).getAttribute("href"),
-    ).toBe("/admin/models");
+    ).toBe("/settings/models");
     // no duplicate: the failure is the row, never a divider too
     expect(document.querySelector("[data-entry='divider']")).toBeNull();
   });

@@ -3657,9 +3657,7 @@
         "enable": "Turn on",
         "enableLabel": "Turn on {plugin} for this organization",
         "configure": "Configure",
-        "configureLabel": "Configure {plugin}",
-        "enabledToast": "\"{plugin}\" is on for this organization.",
-        "notOffered": "Not offered to this organization"
+        "configureLabel": "Configure {plugin}"
       }
     },
     "evalUnmapped": "No model is set for the eval judge, so evals cannot use a judge.",

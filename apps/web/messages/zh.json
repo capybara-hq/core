@@ -3645,9 +3645,7 @@
         "enable": "启用",
         "enableLabel": "在本组织启用 {plugin}",
         "configure": "配置",
-        "configureLabel": "配置 {plugin}",
-        "enabledToast": "已在本组织启用「{plugin}」。",
-        "notOffered": "未向本组织开放"
+        "configureLabel": "配置 {plugin}"
       }
     },
     "evalUnmapped": "还没有给评测评委配模型：评测不能开评委。",

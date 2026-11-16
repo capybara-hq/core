@@ -220,7 +220,9 @@ describe("the opt-in provider case, end to end in the web app", () => {
         ]),
       ),
     );
-    expect(await screen.findByText(`"Anthropic models" is on for this organization.`)).toBeTruthy();
+    expect(
+      await screen.findByText(en.extensions.enabledToast.replace("{plugin}", "Anthropic models")),
+    ).toBeTruthy();
   });
 });
 

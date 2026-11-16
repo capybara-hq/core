@@ -28,7 +28,7 @@ describe("run row role gating (the kernel's rules)", () => {
 
   it("the model-service fix entry: the models page the reader can act on, for a model setup error", () => {
     expect(configureModelsHref(me("member", { superAdmin: true }))).toBe("/admin/models");
-    expect(configureModelsHref(me("owner", { superAdmin: true }))).toBe("/admin/models");
+    expect(configureModelsHref(me("owner", { superAdmin: true }))).toBe("/settings/models");
     expect(configureModelsHref(me("owner"))).toBe("/settings/models");
     expect(configureModelsHref(me("admin"))).toBe("/settings/models");
     expect(configureModelsHref(me("member"))).toBeNull();

@@ -293,6 +293,7 @@ function orgRoutes(state: "following" | "copy", extra: Record<string, (c: Call) 
             configurable: false,
             provides: ["model-provider@2"],
             overrideState: state,
+            needsConfig: false,
           },
         ],
       }),
