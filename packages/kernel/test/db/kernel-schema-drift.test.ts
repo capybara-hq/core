@@ -17,13 +17,29 @@ import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
  */
 
 interface DeclaredColumn {
-  /** `undefined` when the declared type does not show nullability (an unknown alias). */
-  nullable: boolean | undefined;
+  /** The select type includes null. */
+  nullable: boolean | "unknown";
+}
+
+/** Drops a `//` comment from a line unless the `//` sits inside a string literal. */
+function stripLineComment(line: string): string {
+  let quote = "";
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i] as string;
+    if (quote) {
+      if (c === "\\") i++;
+      else if (c === quote) quote = "";
+    } else if (c === '"' || c === "'" || c === "`") quote = c;
+    else if (c === "/" && line[i + 1] === "/") return line.slice(0, i);
+  }
+  return line;
 }
 
 const SOURCE = readFileSync(new URL("../../src/db/kernel-schema.ts", import.meta.url), "utf8")
   .replace(/\/\*[\s\S]*?\*\//g, "")
-  .replace(/^\s*\/\/.*$/gm, "");
+  .split("\n")
+  .map(stripLineComment)
+  .join("\n");
 
 /** The members' text of `interface <name> [extends A, B] {`, parents' members included. */
 function interfaceBody(name: string): string {
@@ -66,36 +82,102 @@ function splitTop(text: string, sep: string): string[] {
   return out;
 }
 
-/** Whether a type expression is nullable, or undefined when the alias hides it. */
-function nullability(type: string): boolean | undefined {
-  const t = type.trim();
-  const wrapper = /^(Generated|ColumnType|Json)<([\s\S]*)>$/.exec(t);
-  if (wrapper) {
-    const first = splitTop(wrapper[2] as string, ",")[0] as string;
-    return nullability(first);
+/** The schema file's own `type X<P> = body;` aliases (and its imported names, known non-null). */
+const ALIASES = new Map<string, { params: string[]; body: string }>();
+for (const m of SOURCE.matchAll(
+  /^(?:export )?type (\w+)(?:<(.*?)>(?=\s*=\s))?\s*=\s*([\s\S]*?);\s*$/gm,
+)) {
+  const params = splitTop(m[2] ?? "", ",")
+    .map((p) => p.trim().split(/\s*=\s*|\s+extends\s+/)[0] as string)
+    .filter(Boolean);
+  ALIASES.set(m[1] as string, { params, body: m[3] as string });
+}
+const KNOWN_PLAIN = new Set([
+  "string",
+  "number",
+  "boolean",
+  "bigint",
+  "Date",
+  "Buffer",
+  "Uint8Array",
+  "unknown",
+]);
+for (const m of SOURCE.matchAll(/^import type \{([^}]*)\}/gm))
+  for (const n of (m[1] as string).split(","))
+    KNOWN_PLAIN.add(
+      n
+        .trim()
+        .split(/\s+as\s+/)
+        .pop() as string,
+    );
+for (const m of SOURCE.matchAll(/^export (?:interface|type) (\w+)/gm))
+  KNOWN_PLAIN.add(m[1] as string);
+
+/** Columns whose nullability could not be derived: reported, and the test requires none. */
+const unclassified: string[] = [];
+
+/** Whether a type expression is nullable (the select type; aliases and generics resolved). */
+function nullability(type: string, where: string): boolean | "unknown" {
+  const t = type.trim().replace(/^\|\s*/, "");
+  const ref = /^(\w+)(?:<([\s\S]*)>)?$/.exec(t);
+  if (ref) {
+    const [, name, rawArgs] = ref as unknown as [string, string, string | undefined];
+    const args = rawArgs === undefined ? [] : splitTop(rawArgs, ",").map((a) => a.trim());
+    if (name === "Generated" || name === "ColumnType") return nullability(args[0] ?? "", where);
+    if (name === "Array" || name === "Record" || name === "Partial" || name === "Readonly")
+      return false;
+    const alias = ALIASES.get(name);
+    if (alias) {
+      let body = alias.body;
+      alias.params.forEach((p, i) => {
+        body = body.replace(new RegExp(`\\b${p}\\b`, "g"), args[i] ?? "unknown");
+      });
+      return nullability(body, where);
+    }
   }
-  if (t === "Ts" || t === "Int8" || t === "Bytea") return false;
-  if (t === "TsNullable") return true;
   const parts = splitTop(t, "|").map((p) => p.trim());
-  if (parts.includes("null")) return true;
-  // A plain alias or generic we cannot see through: only compare when it is clearly a known shape.
-  return parts.every((p) => /^(string|number|boolean|bigint|Date|Buffer|"[^"]*"|\d+)$/.test(p))
-    ? false
-    : undefined;
+  if (parts.length > 1)
+    return parts.some((p) => p === "null" || (p !== t && nullability(p, where)));
+  // `unknown` makes no nullability claim (jsonb columns): compatible with either.
+  if (t === "unknown") return "unknown";
+  if (t === "null") return true;
+  if (ref) {
+    if (KNOWN_PLAIN.has(ref[1] as string)) return false;
+    unclassified.push(`${where}: ${t}`);
+    return false;
+  }
+  // string / number literal, object literal, array, tuple, function: never null by themselves.
+  if (/^(["'`\d{[(]|.*\[\]$)/.test(t)) return false;
+  unclassified.push(`${where}: ${t}`);
+  return false;
 }
 
 function declaredTables(): Map<string, Map<string, DeclaredColumn>> {
   const tables = new Map<string, Map<string, DeclaredColumn>>();
+  const duplicates: string[] = [];
   for (const member of splitTop(interfaceBody("KernelDatabase"), ";")) {
     const m = /^\s*(\w+)\s*:\s*(\w+)\s*$/.exec(member);
-    if (!m) continue;
-    const columns = new Map<string, DeclaredColumn>();
-    for (const col of splitTop(interfaceBody(m[2] as string), ";")) {
-      const c = /^\s*(\w+)\??\s*:\s*([\s\S]+)$/.exec(col);
-      if (c) columns.set(c[1] as string, { nullable: nullability(c[2] as string) });
+    if (!m) {
+      if (member.trim()) throw new Error(`KernelDatabase member not understood: ${member.trim()}`);
+      continue;
     }
+    if (tables.has(m[1] as string)) duplicates.push(m[1] as string);
+    const columns = new Map<string, DeclaredColumn>();
+    const members = splitTop(interfaceBody(m[2] as string), ";").filter((c) => c.trim());
+    for (const col of members) {
+      const c = /^\s*(\w+)\??\s*:\s*([\s\S]+)$/.exec(col);
+      if (!c) throw new Error(`${m[2]}: member not understood: ${col.trim()}`);
+      if (columns.has(c[1] as string)) duplicates.push(`${m[1]}.${c[1]}`);
+      columns.set(c[1] as string, {
+        nullable: nullability(c[2] as string, `${m[1]}.${c[1]}`),
+      });
+    }
+    // Every member is parsed as a column (a dropped member would hide drift).
+    if (columns.size + duplicates.filter((d) => d.startsWith(`${m[1]}.`)).length !== members.length)
+      throw new Error(`${m[2]}: parsed ${columns.size} columns from ${members.length} members`);
     tables.set(m[1] as string, columns);
   }
+  expect(duplicates, "duplicate keys in kernel-schema.ts").toEqual([]);
   return tables;
 }
 
@@ -141,7 +223,7 @@ describe("kernel-schema.ts matches the migrated database", () => {
       for (const [name, isNullable] of real) {
         const d = declared.get(name);
         if (!d) problems.push(`${table}.${name}: in the database, not in kernel-schema.ts`);
-        else if (d.nullable !== undefined && d.nullable !== isNullable)
+        else if (d.nullable !== "unknown" && d.nullable !== isNullable)
           problems.push(
             `${table}.${name}: database ${isNullable ? "nullable" : "not null"}, declared ${d.nullable ? "nullable" : "not null"}`,
           );
@@ -150,5 +232,7 @@ describe("kernel-schema.ts matches the migrated database", () => {
         if (!real.has(name)) problems.push(`${table}.${name}: declared, not in the database`);
     }
     expect(problems).toEqual([]);
+    // No column escapes the nullability comparison (no allowlist needed today).
+    expect(unclassified).toEqual([]);
   });
 });
