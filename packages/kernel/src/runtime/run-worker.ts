@@ -66,8 +66,10 @@ const FOLLOW_UP_MIN_WAIT_MS = 250;
 /** 读插话的分页大小。 */
 const READ_PAGE = 500;
 /**
- * 任务结束后的 ensureRun 失败时的重试间隔（首次之外再试 3 次）。用进程内定时器：这是本进程刚完成的任务的
- * 后续处理，由 close() 跟踪并限时；全部失败也不会让会话永远卡住——`run-orphan-check` 会修复（SSE 与读事件不会再调用 ensureRun）。这里只是缩短常见瞬时失败的恢复时间。
+ * Retry delays when the post-run ensureRun fails (3 retries after the first try). In-process timers:
+ * this is follow-up work for a job this process just finished, tracked and time-bounded by close().
+ * If every try fails the conversation is not stuck: the `run-orphan-check` repairs it (SSE and reads
+ * no longer call ensureRun). The ladder only shortens recovery from common transient failures.
  */
 const ENSURE_RETRY_DELAYS_MS = [200, 1000, 3000] as const;
 
