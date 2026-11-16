@@ -1532,8 +1532,8 @@
         "askAdmin": "No model is available yet. Super admins deploy and configure model services under Admin → Models.",
         "action": "Set up",
         "waiting": "Waiting for a super admin",
-        "enableDescription": "The platform has model services, but this organization has not turned one on. Turn one on under Settings → Models so agents can answer.",
-        "askOrgAdmin": "The platform has model services. You can use them once an org admin turns one on for this organization.",
+        "enableDescription": "The platform offers model services, but none is ready in this organization yet. Turn one on or finish its configuration under Settings → Models so agents can answer.",
+        "askOrgAdmin": "The platform offers model services. You can use them once an org admin turns one on or configures it for this organization.",
         "enableAction": "Turn on"
       },
       "agent": {
@@ -3655,7 +3655,7 @@
       "providers": {
         "title": "Model services",
         "description": "This organization's models come from the model services turned on here. A service the platform deploys works here once this organization turns it on.",
-        "notEnabled": "This organization has not turned on a model service yet. Turn one on below so agents can answer.",
+        "orgFixable": "No model service is ready in this organization yet. Turn one on or finish its configuration below so agents can answer.",
         "enable": "Turn on",
         "enableLabel": "Turn on {plugin} for this organization",
         "configure": "Configure",
@@ -5564,7 +5564,7 @@
     "model": {
       "needsDeploymentAdmin": "A super admin needs to set up a model service",
       "waitingForAdmin": "Waiting for an admin to set up a model",
-      "waitingForOrgAdmin": "Waiting for an org admin to turn on a model service"
+      "waitingForOrgAdmin": "Waiting for an org admin to set up a model service"
     },
     "agent": {
       "needsModel": "Set up a model first",

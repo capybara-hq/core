@@ -1991,7 +1991,8 @@ describe("/plugins/[itemId]/enable (WizardPage)", () => {
     params.current = { itemId: ID };
     const t = en.catalog.org.install;
     const calls = stubApi({
-      [`GET ${ORG}/readiness`]: () => json(200, { modelProvider: "ready", agents: 1 }),
+      [`GET ${ORG}/readiness`]: () =>
+        json(200, { modelProvider: "ready", orgFixableProviders: [], agents: 1 }),
       [`GET ${ORG}/catalog/${ID}`]: () =>
         json(200, {
           item: orgItem({ name: "crm" }),
@@ -2085,7 +2086,8 @@ describe("/plugins/[itemId]: this org's installs (org admins)", () => {
       const a = msgs[locale].catalog.plugins;
       let gone = false;
       const calls = stubApi({
-        [`GET ${ORG}/readiness`]: () => json(200, { modelProvider: "ready", agents: 1 }),
+        [`GET ${ORG}/readiness`]: () =>
+          json(200, { modelProvider: "ready", orgFixableProviders: [], agents: 1 }),
         [`GET ${ORG}/plugin-installs`]: () =>
           json(200, { installs: gone ? [] : [{ ...INSTALL, status: "failed" }, DEP_INSTALL] }),
         [`DELETE ${ORG}/plugin-installs/i1`]: () => {

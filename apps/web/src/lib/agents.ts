@@ -463,14 +463,15 @@ const base = (orgId: string) => `/api/v1/orgs/${encodeURIComponent(orgId)}`;
 
 /**
  * Whether the org can run (`GET /orgs/:id/readiness`): a loaded model-provider extension enabled
- * in the org (never a vendor call) and the number of agents the caller can see. `not_enabled`:
- * deployed providers (`notEnabledProviders`) wait for an org admin to enable one on
- * `/settings/models` (the setup checklist's model step leads there, `modelConfigHref`).
+ * in the org (never a vendor call) and the number of agents the caller can see. `org_fixable`:
+ * providers the platform offers this org (`orgFixableProviders`) wait for an org admin to switch
+ * one on or fill its org config on `/settings/models` (the setup checklist's model step leads
+ * there, `modelConfigHref`); `none`: only the super admin can help.
  */
 export interface OrgReadiness {
-  modelProvider: "ready" | "not_enabled" | "none";
-  /** The deployed providers the org has not enabled. */
-  notEnabledProviders: string[];
+  modelProvider: "ready" | "org_fixable" | "none";
+  /** With `org_fixable`: the providers an org admin can make usable, and what each waits for. */
+  orgFixableProviders: { provider: string; reason: "not_enabled" | "needs_config" }[];
   agents: number;
 }
 

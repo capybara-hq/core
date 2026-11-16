@@ -16,16 +16,16 @@ vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
 // Task 14 of the 2026-11-16 design review: one place to set up a model. The setup checklist, the
 // run row's fix entry and the models pages lead to /admin/models (super admins: deploy and configure
-// a model service) and /settings/models (org admins: turn a deployed one on in the org). Model
-// providers are opt-in per org: readiness `not_enabled` while the platform has one this org has not
-// switched on.
+// a model service) and /settings/models (org admins: turn a deployed one on in the org, or fill its
+// config). Model providers are opt-in per org: readiness `org_fixable` while the platform offers one
+// this org has not switched on (or that waits for the org's config).
 
 const NOT_ENABLED: OrgReadiness = {
-  modelProvider: "not_enabled",
-  notEnabledProviders: ["anthropic"],
+  modelProvider: "org_fixable",
+  orgFixableProviders: [{ provider: "anthropic", reason: "not_enabled" }],
   agents: 0,
 };
-const MODEL_READY: OrgReadiness = { modelProvider: "ready", notEnabledProviders: [], agents: 0 };
+const MODEL_READY: OrgReadiness = { modelProvider: "ready", orgFixableProviders: [], agents: 0 };
 
 const orgAdmin: Me = {
   ...ME,
@@ -158,7 +158,7 @@ describe("the opt-in provider case, end to end in the web app", () => {
     // the step page in the setup frame: the warn line and the service with "Turn on"
     resetNavigation("/settings/models");
     renderFrame(shellOf(orgAdmin, { readiness: NOT_ENABLED }), <OrgModelsView />);
-    expect(await screen.findByText(zh.models.org.providers.notEnabled)).toBeTruthy();
+    expect(await screen.findByText(zh.models.org.providers.orgFixable)).toBeTruthy();
     const services = await screen.findByRole("list", { name: zh.models.org.providers.title });
     // only the model services: the search extension is not a row
     expect(within(services).queryByText("web-search-x")).toBeNull();
@@ -184,7 +184,7 @@ describe("the opt-in provider case, end to end in the web app", () => {
     await vi.waitFor(() => expect(sidebarModel()?.getAttribute("data-state")).toBe("done"));
     expect(gets(calls, "/api/v1/orgs/o1/readiness")).toBeGreaterThan(0);
     await vi.waitFor(() =>
-      expect(screen.queryByText(zh.models.org.providers.notEnabled)).toBeNull(),
+      expect(screen.queryByText(zh.models.org.providers.orgFixable)).toBeNull(),
     );
     const onRow = within(
       within(screen.getByRole("list", { name: zh.models.org.providers.title }))
@@ -233,7 +233,7 @@ describe("setup steps for the model by role", () => {
       .getByText(zh.setupLayout.steps.model)
       .closest("li") as HTMLElement;
 
-  it("not_enabled: a member waits for an org admin, with no link", () => {
+  it("org_fixable: a member waits for an org admin, with no link", () => {
     renderFrame(shellOf(member, { readiness: NOT_ENABLED }));
     const step = modelStep();
     expect(within(step).queryByRole("link")).toBeNull();
@@ -241,13 +241,13 @@ describe("setup steps for the model by role", () => {
     expect(within(step).getByText(zh.chat.setup.model.askOrgAdmin)).toBeTruthy();
   });
 
-  it("not_enabled: a super admin who owns the org turns it on in the org, not in the admin console", () => {
+  it("org_fixable: a super admin who owns the org turns it on in the org, not in the admin console", () => {
     renderFrame(shellOf(ME, { readiness: NOT_ENABLED }));
     const link = within(modelStep()).getByRole("link", { name: zh.chat.setup.model.enableAction });
     expect(link.getAttribute("href")).toBe("/settings/models");
   });
 
-  it("not_enabled: a super admin who is a plain member waits like a member", () => {
+  it("org_fixable: a super admin who is a plain member waits like a member", () => {
     renderFrame(
       shellOf(
         { ...member, account: { ...member.account, isSuperAdmin: true } },
@@ -262,7 +262,7 @@ describe("setup steps for the model by role", () => {
 
   it("none: the super admin deploys one on /admin/models; an org admin waits for a super admin", () => {
     renderFrame(
-      shellOf(ME, { readiness: { modelProvider: "none", notEnabledProviders: [], agents: 0 } }),
+      shellOf(ME, { readiness: { modelProvider: "none", orgFixableProviders: [], agents: 0 } }),
     );
     const link = within(modelStep()).getByRole("link", { name: zh.chat.setup.model.action });
     expect(link.getAttribute("href")).toBe("/admin/models");
@@ -270,7 +270,7 @@ describe("setup steps for the model by role", () => {
     cleanup();
     renderFrame(
       shellOf(orgAdmin, {
-        readiness: { modelProvider: "none", notEnabledProviders: [], agents: 0 },
+        readiness: { modelProvider: "none", orgFixableProviders: [], agents: 0 },
       }),
     );
     expect(within(modelStep()).queryByRole("link")).toBeNull();
@@ -322,12 +322,12 @@ describe("/settings/models: 模型服务", () => {
   it("a service the platform cannot run: its state, no action for an org admin", async () => {
     orgKernel([anthropic({ available: false, reason: "needs_deployment_config" })], {
       modelProvider: "none",
-      notEnabledProviders: [],
+      orgFixableProviders: [],
       agents: 0,
     });
     await renderRouteWithCache("/settings/models", lastStubRoutes(), {
       me: orgAdmin,
-      readiness: { modelProvider: "none", notEnabledProviders: [], agents: 0 },
+      readiness: { modelProvider: "none", orgFixableProviders: [], agents: 0 },
     });
     const services = await screen.findByRole("list", { name: en.models.org.providers.title });
     const row = within(services).getByText("Anthropic models").closest("li") as HTMLElement;
@@ -340,8 +340,8 @@ describe("/settings/models: 模型服务", () => {
       ),
     ).toBeTruthy();
     expect(within(row).queryByRole("button")).toBeNull();
-    // the warn line is for not_enabled only
-    expect(screen.queryByText(en.models.org.providers.notEnabled)).toBeNull();
+    // the warn line is for org_fixable only
+    expect(screen.queryByText(en.models.org.providers.orgFixable)).toBeNull();
   });
 
   it.each([
@@ -350,10 +350,10 @@ describe("/settings/models: 模型服务", () => {
   ] as const)(
     "no model service on the platform: %s gets the deploy link: %s",
     async (_who, me, link) => {
-      orgKernel([SEARCH], { modelProvider: "none", notEnabledProviders: [], agents: 0 });
+      orgKernel([SEARCH], { modelProvider: "none", orgFixableProviders: [], agents: 0 });
       await renderRouteWithCache("/settings/models", lastStubRoutes(), {
         me,
-        readiness: { modelProvider: "none", notEnabledProviders: [], agents: 0 },
+        readiness: { modelProvider: "none", orgFixableProviders: [], agents: 0 },
       });
       expect(await screen.findByText(en.models.org.noProviders)).toBeTruthy();
       const to = screen.queryByRole("link", { name: en.models.org.toAdminModels });

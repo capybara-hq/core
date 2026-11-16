@@ -272,8 +272,8 @@ describe("the setup sidebar's steps per role (web-SSR spec §4)", () => {
 
   it("providers deployed but none on in the org: org admins turn one on, members wait for them", () => {
     const notEnabled = {
-      modelProvider: "not_enabled" as const,
-      notEnabledProviders: ["anthropic"],
+      modelProvider: "org_fixable" as const,
+      orgFixableProviders: [{ provider: "anthropic", reason: "not_enabled" as const }],
       agents: 0,
     };
     renderFrame(shellOf(as("admin"), { readiness: notEnabled }));

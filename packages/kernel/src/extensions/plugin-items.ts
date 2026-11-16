@@ -1,6 +1,5 @@
 import { type PluginScope, visibleTo } from "../catalog/scope.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
-import { requiredExtensions } from "./enabled.js";
 
 /** The catalog item (the plugin) an extension ships in. */
 export interface ExtensionPluginItem {
@@ -67,8 +66,8 @@ export function itemsVisible(
 }
 
 /**
- * Whether the org's extension list shows an extension, the one rule the list
- * (`OrgExtensionConfigs.list`) and the model-provider readiness share: a required bootstrap plugin
+ * Whether the org's extension list shows an extension (`OrgExtensionConfigs.list`, which the org
+ * readiness reads for the model providers an org admin can fix): a required bootstrap plugin
  * always; else under its catalog items' scope, and, while it is off in the org, only when none of
  * its items is disabled (nothing can newly enable it then, Ruling M-5; one already on stays).
  */
@@ -89,26 +88,4 @@ export async function scopeListedFor(db: KernelSchemaDb, orgId: string): Promise
     .where("org_id", "=", orgId)
     .execute();
   return new Set(rows.map((r) => r.item_id));
-}
-
-/**
- * The extensions of `names`, off in `orgId`, that its extension list shows ({@link offeredToOrg}
- * with `enabled` false): the ones an org admin can switch on there. Plain reads.
- */
-export async function offeredWhileOff(
-  db: KernelSchemaDb,
-  orgId: string,
-  names: readonly string[],
-): Promise<Set<string>> {
-  if (names.length === 0) return new Set();
-  const [required, items, listed] = await Promise.all([
-    requiredExtensions(db),
-    pluginItemsOf(db, names),
-    scopeListedFor(db, orgId),
-  ]);
-  return new Set(
-    names.filter((n) =>
-      offeredToOrg({ required: required.has(n), enabled: false, items: items.get(n), listed }),
-    ),
-  );
 }

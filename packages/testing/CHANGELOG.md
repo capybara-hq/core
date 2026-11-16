@@ -1,5 +1,27 @@
 # @capybara-hq/testing
 
+## 0.1.0-rc.20
+
+### Minor Changes
+
+- 5408b24: Export an immutable, hashed Python 3 native-file helper source bundle and a fixture-owned ordinary
+  native API conformance harness. The helper preserves read/write/stat/list/scan semantics using
+  supplied pinned root descriptors. Each conformance invocation receives a fresh operation.
+  
+  These exports establish portable native API compatibility only. They do not declare restricted
+  runtime support or provide a Linux launcher, network broker, or full permission conformance suite.
+
+### Patch Changes
+
+- Updated dependencies [c412cf3]
+- Updated dependencies [5408b24]
+- Updated dependencies [fb9afe0]
+- Updated dependencies [5408b24]
+- Updated dependencies [5408b24]
+  - @capybara-hq/kernel@0.1.0-rc.35
+  - @capybara-hq/plugin-sdk@0.1.0-rc.25
+  - @capybara-hq/plugin-tools@0.1.0-rc.15
+
 ## 0.1.0-rc.19
 
 ### Patch Changes

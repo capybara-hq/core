@@ -11,7 +11,7 @@ export default async function OrgModelsPage({
   searchParams,
 }: {
   searchParams?: Promise<{ tab?: string | string[]; provider?: string | string[] }>;
-} = {}) {
+}) {
   const sp = await searchParams;
   const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
   return <OrgModels tab={parseModelsTab(first(sp?.tab))} provider={first(sp?.provider) ?? ""} />;

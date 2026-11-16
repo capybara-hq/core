@@ -1532,8 +1532,8 @@
         "askAdmin": "还没有可用的模型。模型服务由超级管理员在「管理 → 模型」里部署和配置。",
         "action": "去配置",
         "waiting": "等待超级管理员配置",
-        "enableDescription": "平台已部署模型服务，但本组织还没有启用。在「设置 → 模型」里启用一个，智能体才能回答。",
-        "askOrgAdmin": "平台已部署模型服务，组织管理员在本组织启用后就能使用。",
+        "enableDescription": "平台提供了模型服务，但本组织还没有可用的。在「设置 → 模型」里启用一个或补全它的配置，智能体才能回答。",
+        "askOrgAdmin": "平台提供了模型服务，组织管理员在本组织启用或配置好后就能使用。",
         "enableAction": "去启用"
       },
       "agent": {
@@ -3643,7 +3643,7 @@
       "providers": {
         "title": "模型服务",
         "description": "本组织的模型来自这里启用的模型服务。平台部署的服务要在本组织启用后才能使用。",
-        "notEnabled": "本组织还没有启用模型服务。启用下面的一个服务，智能体才能回答。",
+        "orgFixable": "本组织还没有可用的模型服务。启用下面的一个服务或补全它的配置，智能体才能回答。",
         "enable": "启用",
         "enableLabel": "在本组织启用 {plugin}",
         "configure": "配置",
@@ -5552,7 +5552,7 @@
     "model": {
       "needsDeploymentAdmin": "需要超级管理员配置模型服务",
       "waitingForAdmin": "等待管理员配置模型",
-      "waitingForOrgAdmin": "等待组织管理员启用模型服务"
+      "waitingForOrgAdmin": "等待组织管理员配置模型服务"
     },
     "agent": {
       "needsModel": "先配置模型",

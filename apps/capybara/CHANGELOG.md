@@ -1,5 +1,21 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.36
+
+### Patch Changes
+
+- ae01833: Keep IM binding confirmation and cancel disabled until their browser handlers are ready after sign-in.
+- fb9afe0: Carry current mode ceilings on local stat and readFile requests so project context loads before
+  any command and reads cannot inherit a stale wider command decision. Device protocol v2 requires
+  a matching kernel and device upgrade; existing credentials and device files remain valid.
+- 50eaf97: Use Webpack in the development web server to avoid repeated Turbopack HMR reloads.
+  Preserve design cascade layers when expanding stylesheet imports for Webpack development.
+  Make the HTTP login notice conditional on sign-in problems because the browser origin does not
+  reveal the server's cookie settings.
+- Updated dependencies [c412cf3]
+- Updated dependencies [fb9afe0]
+  - @capybara-hq/kernel@0.1.0-rc.35
+
 ## 0.1.0-rc.35
 
 ### Patch Changes

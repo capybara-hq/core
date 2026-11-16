@@ -147,7 +147,7 @@ const SETUP_REFRESH_MS = 30_000;
 /** Stands in for readiness when there is no org (the setup steps are then not drawn). */
 const NO_ORG_READINESS: OrgReadiness = {
   modelProvider: "ready",
-  notEnabledProviders: [],
+  orgFixableProviders: [],
   agents: 1,
 };
 
