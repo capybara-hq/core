@@ -607,6 +607,10 @@ No live startup/configuration change is part of source implementation.
 
 ### Task 7: Profile-aware policy and pending approval races
 
+**Detailed requirements:** [Call-grant design](../specs/2026-11-16-permission-call-grants-and-approvals-design.md)
+and [exact implementation plan](2026-11-16-permission-policy-and-approvals.md). Their accepted
+source binding, candidate, immutable grant, continuation and race obligations are mandatory.
+
 **Files:** Modify `packages/kernel/src/tools/policy.ts`, `pipeline.ts`, `approvals.service.ts`,
 `approvals.schemas.ts`, `sandbox/review/review.service.ts`, `review/types.ts`, `review/rules.ts`,
 `conversations/events.ts`, `infra/outbox/registry.ts`; create
