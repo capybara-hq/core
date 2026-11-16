@@ -9,7 +9,7 @@ export default async function SetupPage({
   searchParams,
 }: {
   searchParams?: Promise<{ error?: string | string[] }>;
-} = {}) {
+}) {
   const { error } = (await searchParams) ?? {};
   const code =
     typeof error === "string" && /^[a-z][a-z0-9_.]{0,63}$/.test(error) ? error : undefined;

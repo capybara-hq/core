@@ -518,3 +518,32 @@ it("distinguishes unsupported permissions from denied scopes", () => {
   );
   expect(isSandboxPermissionUnsupportedError(new SandboxScopeDeniedError("Denied."))).toBe(false);
 });
+
+it("requires exact-reference positional raw-byte reads without path or scope arguments", () => {
+  type Read = SandboxBackground["readOutput"];
+  expectTypeOf<Parameters<Read>[0]>().toEqualTypeOf<Parameters<SandboxBackground["tail"]>[0]>();
+  expectTypeOf<Parameters<Read>[1]>().toEqualTypeOf<Parameters<SandboxBackground["tail"]>[1]>();
+  expectTypeOf<Parameters<Read>[2]>().toEqualTypeOf<{
+    offset: number;
+    maxBytes: number;
+    signal: AbortSignal;
+  }>();
+  expectTypeOf<Awaited<ReturnType<Read>>>().toEqualTypeOf<
+    | { data: Uint8Array; offset: number; nextOffset: number; totalBytes: number }
+    | { unavailable: "lost" | "expired" }
+  >();
+  const options: Parameters<Read>[2] = {
+    offset: 0,
+    maxBytes: 0,
+    signal: new AbortController().signal,
+  };
+  // @ts-expect-error Output controls cannot accept a caller-selected path.
+  const pathOptions: Parameters<Read>[2] = { ...options, path: "/other/output" };
+  // @ts-expect-error Retained output does not consume a new operation grant.
+  const scopeOptions: Parameters<Read>[2] = { ...options, scope: operationScope() };
+  type Success = Extract<Awaited<ReturnType<Read>>, { data: Uint8Array }>;
+  // @ts-expect-error A successful byte slice requires its exact offset and committed snapshot length.
+  const incomplete: Success = { data: new Uint8Array(), nextOffset: 0 };
+  expect(options.maxBytes).toBe(0);
+  void [pathOptions, scopeOptions, incomplete];
+});

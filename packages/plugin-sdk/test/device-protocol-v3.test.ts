@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEVICE_PROTOCOL_VERSION } from "../src/device-protocol.js";
-import { parseDeviceFrameV3 } from "../src/device-protocol-v3.js";
+import { parseDeviceFrameV3, parseOperationResultV3 } from "../src/device-protocol-v3.js";
 
 const scope = {
   operationId: "op",
@@ -110,6 +110,7 @@ it("keeps absent runtime identity unprobed and refuses incomplete or mismatched 
   const hello = {
     type: "hello",
     protocol: 3,
+    transport: { maxFrameBytes: 69632 },
     programVersion: "test-1",
     os: "darwin",
     arch: "arm64",
@@ -117,7 +118,14 @@ it("keeps absent runtime identity unprobed and refuses incomplete or mismatched 
     roots: { workspace: "/work", skills: "/skills", tmp: "/tmp" },
     sessionIsolation: false,
     permissionSupport: { version: 1, restricted: null, fullAccess: false, background: false },
-    ownerCeiling: { revision: "r", fullAccess: false, restrictedAllowedDomains: [] },
+    ownerCeiling: {
+      version: 2,
+      sequence: 0,
+      restrictedProjectReach: "workspace",
+      revision: "r",
+      fullAccess: false,
+      restrictedAllowedDomains: [],
+    },
     instanceGeneration: "g",
   };
   expect(parseDeviceFrameV3(JSON.stringify(hello), "device").type).toBe("hello");
@@ -137,5 +145,138 @@ it("keeps absent runtime identity unprobed and refuses incomplete or mismatched 
   ])
     expect(() =>
       parseDeviceFrameV3(JSON.stringify({ ...hello, runtimeIdentity: bad }), "device"),
+    ).toThrow();
+});
+
+const outputRef = { instanceId: "d", instanceGeneration: "g", operationId: "o", executionId: "e" };
+it("accepts positional managed output and rejects unknown request authority", () => {
+  expect(
+    parseDeviceFrameV3(
+      frame("backgroundReadOutput", { ref: outputRef, offset: 70000, maxBytes: 3072 }),
+      "kernel",
+    ).type,
+  ).toBe("req");
+  for (const extra of [{ path: "/tmp/output" }, { scope }, { grants: {} }, { actor: {} }])
+    expect(() =>
+      parseDeviceFrameV3(
+        frame("backgroundReadOutput", { ref: outputRef, offset: 0, maxBytes: 1, ...extra }),
+        "kernel",
+      ),
+    ).toThrow();
+  for (const bad of [
+    { offset: -1 },
+    { offset: Number.MAX_SAFE_INTEGER + 1 },
+    { maxBytes: 65537 },
+    { maxBytes: 1.5 },
+    { ref: { ...outputRef, path: "/tmp" } },
+  ])
+    expect(() =>
+      parseDeviceFrameV3(
+        frame("backgroundReadOutput", { ref: outputRef, offset: 0, maxBytes: 1, ...bad }),
+        "kernel",
+      ),
+    ).toThrow();
+});
+it("validates exact canonical output range metadata against the request", () => {
+  const request = { offset: 10, maxBytes: 1 };
+  const good = { dataB64: "YQ==", offset: 10, nextOffset: 11, totalBytes: 11 };
+  expect(parseOperationResultV3("backgroundReadOutput", good, request)).toEqual(good);
+  for (const bad of [
+    { dataB64: "YR==" },
+    { dataB64: "YQ" },
+    { offset: 9 },
+    { nextOffset: 12 },
+    { totalBytes: 10 },
+    { extra: true },
+    { dataB64: "", nextOffset: 10 },
+  ])
+    expect(() =>
+      parseOperationResultV3("backgroundReadOutput", { ...good, ...bad }, request),
+    ).toThrow();
+  expect(
+    parseOperationResultV3(
+      "backgroundReadOutput",
+      { dataB64: "", offset: 20, nextOffset: 20, totalBytes: 11 },
+      { offset: 20, maxBytes: 1 },
+    ),
+  ).toEqual({ dataB64: "", offset: 20, nextOffset: 20, totalBytes: 11 });
+  expect(
+    parseOperationResultV3("backgroundReadOutput", { unavailable: "expired" }, request),
+  ).toEqual({ unavailable: "expired" });
+});
+
+it("strict ready capacity and frame bounds never admit pre-negotiation data", () => {
+  const ready = { type: "ready", connectionId: "c", maxFrameBytes: 69632 };
+  expect(parseDeviceFrameV3(JSON.stringify(ready), "kernel", 69632)).toEqual(ready);
+  for (const extra of [
+    { maxFrameBytes: 0 },
+    { maxFrameBytes: 1023 },
+    { maxFrameBytes: Number.MAX_SAFE_INTEGER + 1 },
+    { maxFrameBytes: 1.5 },
+    { connectionId: "" },
+    { unexpected: true },
+  ])
+    expect(() => parseDeviceFrameV3(JSON.stringify({ ...ready, ...extra }), "kernel")).toThrow();
+  expect(() => parseDeviceFrameV3(JSON.stringify(ready), "device")).toThrow();
+  expect(() => parseDeviceFrameV3(" ".repeat(69633), "kernel", 69632)).toThrow(
+    "negotiated capacity",
+  );
+  for (const op of ["killAll", "killTagged"])
+    expect(() =>
+      parseDeviceFrameV3(frame(op, op === "killAll" ? {} : { tags: ["old"] }), "kernel"),
+    ).toThrow();
+});
+it("canonical unbound hello remains unprobed and owner reports require independent reach", () => {
+  const hello = {
+    type: "hello",
+    protocol: 3,
+    programVersion: "fixture",
+    os: "darwin",
+    arch: "arm64",
+    mode: "os",
+    roots: { workspace: "/w", skills: "/s", tmp: "/t" },
+    sessionIsolation: false,
+    transport: { maxFrameBytes: 69632 },
+    instanceGeneration: null,
+    permissionSupport: {
+      version: 1,
+      restricted: null,
+      fullAccess: false,
+      background: false,
+      unavailableReason: "Awaiting instance binding",
+    },
+    ownerCeiling: {
+      version: 2,
+      sequence: 1,
+      revision: "r",
+      fullAccess: false,
+      restrictedProjectReach: "os-user",
+      restrictedAllowedDomains: [],
+    },
+  };
+  expect(parseDeviceFrameV3(JSON.stringify(hello), "device")).toMatchObject({
+    instanceGeneration: null,
+  });
+  expect(() =>
+    parseDeviceFrameV3(
+      JSON.stringify({
+        ...hello,
+        permissionSupport: { ...hello.permissionSupport, fullAccess: true },
+      }),
+      "device",
+    ),
+  ).toThrow();
+  for (const extra of [
+    { sequence: -1 },
+    { sequence: 0.1 },
+    { version: 1 },
+    { restrictedProjectReach: "all" },
+    { unknown: true },
+  ])
+    expect(() =>
+      parseDeviceFrameV3(
+        JSON.stringify({ ...hello, ownerCeiling: { ...hello.ownerCeiling, ...extra } }),
+        "device",
+      ),
     ).toThrow();
 });

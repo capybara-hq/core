@@ -1,10 +1,13 @@
 import { randomUUID } from "node:crypto";
 import {
   DEVICE_PROTOCOL_VERSION,
+  type DeviceFrameV3,
   type DeviceRes,
+  type DeviceResponseV3,
   type ExtensionContext,
   type KernelCancel,
   type KernelReq,
+  type KernelRequestV3,
   parseDeviceFrame,
   parseDeviceFrameV3,
 } from "@capybara-hq/plugin-sdk";
@@ -25,6 +28,7 @@ import {
   deviceRevokedTopic,
   deviceTakenKey,
   deviceTakeoverTopic,
+  deviceTransportKey,
 } from "./keys.js";
 import { type MachineIdentity, MachinesService } from "./machines.js";
 import { LIST_TTL_MARGIN_MS } from "./relay.js";
@@ -139,7 +143,24 @@ class DeviceConnection {
     private readonly socket: WebSocket,
     readonly identity: MachineIdentity,
     private readonly credential: string,
+    private readonly staged = false,
   ) {}
+
+  private effectiveCap: number | undefined;
+  private ready = false;
+  private async publishCapacity(): Promise<void> {
+    if (!this.staged || this.effectiveCap === undefined || this.state !== "holding") return;
+    if (this.gw.maxFrameBytes() < this.effectiveCap) {
+      await this.close(DEVICE_CLOSE.protocol, "Frame capacity changed; reconnect");
+      return;
+    }
+    await this.gw.redis.set(
+      deviceTransportKey(this.deviceId, this.token),
+      JSON.stringify(this.effectiveCap),
+      "PX",
+      Math.max(this.gw.leaseTtlMs(), this.gw.pingIntervalMs * 3),
+    );
+  }
 
   get deviceId(): string {
     return this.identity.deviceId;
@@ -176,9 +197,17 @@ class DeviceConnection {
   }
 
   private async onFrame(text: string): Promise<void> {
-    let frame: ReturnType<typeof parseDeviceFrame>;
+    let frame: ReturnType<typeof parseDeviceFrame> | DeviceFrameV3;
     try {
-      frame = parseDeviceFrame(text, "device");
+      frame = this.staged
+        ? parseDeviceFrameV3(text, "device", this.effectiveCap ?? this.gw.maxFrameBytes())
+        : parseDeviceFrame(text, "device");
+      if (
+        this.staged &&
+        this.effectiveCap !== undefined &&
+        this.gw.maxFrameBytes() < this.effectiveCap
+      )
+        throw new Error("Frame capacity changed; reconnect");
     } catch (e) {
       this.gw.log.warn("device sent an invalid frame", {
         deviceId: this.deviceId,
@@ -192,9 +221,23 @@ class DeviceConnection {
         this.close(DEVICE_CLOSE.protocol, "hello sent twice");
         return;
       }
-      if (frame.protocol !== DEVICE_PROTOCOL_VERSION) {
+      if (frame.protocol !== (this.staged ? 3 : DEVICE_PROTOCOL_VERSION)) {
         this.close(DEVICE_CLOSE.protocol, "unsupported protocol");
         return;
+      }
+      if (this.staged) {
+        if (!("transport" in frame)) {
+          this.close(DEVICE_CLOSE.protocol, "Expected staged hello");
+          return;
+        }
+        this.effectiveCap = Math.min(
+          (frame as import("@capybara-hq/plugin-sdk").DeviceHelloV3).transport.maxFrameBytes,
+          this.gw.maxFrameBytes(),
+        );
+        if (this.effectiveCap < 1024 || Buffer.byteLength(text) > this.effectiveCap) {
+          this.close(DEVICE_CLOSE.protocol, "Check frame limits: hello cannot fit");
+          return;
+        }
       }
       clearTimeout(this.helloTimer);
       this.state = "claiming";
@@ -222,7 +265,11 @@ class DeviceConnection {
       this.recorded = this.recorded.then(async () => {
         if (this.state === "closed") return;
         try {
-          await this.gw.machines.recordPolicy(this.identity.machineId, frame.policy, rawPolicy);
+          await this.gw.machines.recordPolicy(
+            this.identity.machineId,
+            frame.policy as import("@capybara-hq/plugin-sdk").DeviceLocalPolicySummary | undefined,
+            rawPolicy,
+          );
         } catch (e) {
           this.gw.log.warn("could not record a device policy change", {
             deviceId: this.deviceId,
@@ -233,7 +280,7 @@ class DeviceConnection {
       await this.recorded;
       return;
     }
-    if (frame.type !== "res" || this.state === "hello") {
+    if (frame.type !== "res" || this.state === "hello" || (this.staged && !this.ready)) {
       this.close(DEVICE_CLOSE.protocol, "hello expected");
       return;
     }
@@ -246,7 +293,7 @@ class DeviceConnection {
    * Stores one result and announces it (the relay's wire, relay.ts), only for a request taken for
    * this device (ruling R20); anything else is dropped.
    */
-  private async store(res: DeviceRes): Promise<void> {
+  private async store(res: DeviceRes | DeviceResponseV3): Promise<void> {
     try {
       const stored = await this.gw.redis.eval(
         ACCEPT,
@@ -254,7 +301,11 @@ class DeviceConnection {
         deviceTakenKey(res.id),
         deviceResKey(res.id),
         this.deviceId,
-        JSON.stringify(res),
+        JSON.stringify(
+          this.staged
+            ? { ...res, connectionId: this.token, maxFrameBytes: this.effectiveCap }
+            : res,
+        ),
       );
       if (Number(stored) !== 1) {
         this.gw.log.warn("dropping a device result for a request not taken for its device", {
@@ -262,7 +313,10 @@ class DeviceConnection {
         });
         return;
       }
-      await this.gw.bus.publish(deviceResTopic(res.id), res);
+      await this.gw.bus.publish(
+        deviceResTopic(res.id),
+        this.staged ? { ...res, connectionId: this.token, maxFrameBytes: this.effectiveCap } : res,
+      );
     } catch (e) {
       this.gw.log.warn("could not store a device result", {
         deviceId: this.deviceId,
@@ -331,6 +385,19 @@ class DeviceConnection {
         deviceId: env,
         machineId: this.identity.machineId,
       });
+      if (this.staged) {
+        const raw = JSON.stringify({
+          type: "ready",
+          connectionId: this.token,
+          maxFrameBytes: this.effectiveCap,
+        });
+        if (this.effectiveCap === undefined || Buffer.byteLength(raw) > this.effectiveCap)
+          throw new Error("Check frame limits: ready cannot fit");
+        parseDeviceFrameV3(raw, "kernel", this.effectiveCap);
+        this.socket.send(raw);
+        this.ready = true;
+        await this.publishCapacity();
+      }
       // what was queued while nobody held the machine
       this.drain();
       return true;
@@ -365,7 +432,15 @@ class DeviceConnection {
 
   private async drainOnce(): Promise<void> {
     const key = deviceReqKey(this.deviceId);
-    while (this.state === "holding") {
+    while (this.state === "holding" && (!this.staged || this.ready)) {
+      if (
+        this.staged &&
+        this.effectiveCap !== undefined &&
+        this.gw.maxFrameBytes() < this.effectiveCap
+      ) {
+        await this.close(DEVICE_CLOSE.protocol, "Frame capacity changed; reconnect");
+        return;
+      }
       // no lease fencing needed: the pop is atomic, so each frame reaches one connection only, and
       // a holder that lost its lease still talks to the device's own machine (or puts it back)
       const raw = (await this.gw.redis.eval(
@@ -378,9 +453,32 @@ class DeviceConnection {
         String(LIST_TTL_MARGIN_MS),
       )) as string | null;
       if (raw === null) return;
-      let frame: KernelReq | KernelCancel;
+      let frame: KernelReq | KernelRequestV3 | KernelCancel;
+      let wire = raw;
       try {
-        frame = parseDeviceFrame(raw, "kernel") as KernelReq | KernelCancel;
+        if (this.staged) {
+          const { connectionId, maxFrameBytes, ...request } = JSON.parse(raw) as Record<
+            string,
+            unknown
+          >;
+          if (connectionId !== this.token || maxFrameBytes !== this.effectiveCap) {
+            if (request.type === "req" && typeof request.id === "string")
+              await this.store({
+                type: "res",
+                id: request.id,
+                ok: false,
+                error: {
+                  kind: "error",
+                  message: "Connection capacity changed; retry from the same offset",
+                },
+              });
+            continue;
+          }
+          wire = JSON.stringify(request);
+          frame = parseDeviceFrameV3(wire, "kernel", this.effectiveCap) as
+            | KernelRequestV3
+            | KernelCancel;
+        } else frame = parseDeviceFrame(raw, "kernel") as KernelReq | KernelCancel;
       } catch (e) {
         this.gw.log.warn("dropping an invalid device request", {
           deviceId: this.deviceId,
@@ -395,7 +493,10 @@ class DeviceConnection {
         await this.gw.redis.eval(PUT_BACK, 1, key, raw, String(ttlMs));
         return;
       }
-      if (frame.type === "req" && Buffer.byteLength(raw) > this.gw.maxFrameBytes()) {
+      if (
+        frame.type === "req" &&
+        Buffer.byteLength(wire) > (this.effectiveCap ?? this.gw.maxFrameBytes())
+      ) {
         await this.store({
           type: "res",
           id: frame.id,
@@ -407,7 +508,7 @@ class DeviceConnection {
         });
         continue;
       }
-      this.socket.send(raw);
+      this.socket.send(wire);
     }
   }
 
@@ -430,7 +531,13 @@ class DeviceConnection {
     this.missedPongs++;
     this.socket.ping();
     // a backstop for a lost nudge (the bus delivers at most once)
-    if (this.state === "holding") this.drain();
+    if (this.state === "holding") {
+      if (this.staged)
+        void this.publishCapacity().catch(() =>
+          this.close(DEVICE_CLOSE.internal, "Capacity publication failed; reconnect"),
+        );
+      this.drain();
+    }
     if (this.state === "holding" && Date.now() - this.lastAuth >= REAUTH_EVERY_MS) {
       this.lastAuth = Date.now();
       void this.reauthenticate();
@@ -480,11 +587,13 @@ class DeviceConnection {
   shutdown(): Promise<void> {
     if (this.released) return this.released;
     this.state = "closed";
+    this.ready = false;
     clearTimeout(this.helloTimer);
     clearTimeout(this.pingTimer);
     const lease = this.lease;
     this.released = (async () => {
       try {
+        if (this.staged) await this.gw.redis.del(deviceTransportKey(this.deviceId, this.token));
         if (lease) {
           if (lease.lost.aborted) lease.abandon();
           else await lease.release();
@@ -568,6 +677,26 @@ export class LocalDeviceGateway {
     const conn = new DeviceConnection(this, socket, identity, credential);
     this.connections.add(conn);
     conn.start();
+  }
+
+  /** Dormant authenticated seam; the production HTTP route never calls this until full cutover. */
+  async acceptStaged(socket: WebSocket, credential: string): Promise<void> {
+    socket.pause();
+    try {
+      const identity = await this.authenticate(credential);
+      if (!identity || this.stopping || socket.readyState !== socket.OPEN) {
+        socket.close(DEVICE_CLOSE.revoked, "Reconnect with a current credential");
+        return;
+      }
+      const conn = new DeviceConnection(this, socket, identity, credential, true);
+      this.connections.add(conn);
+      conn.start();
+    } catch (error) {
+      this.log.warn("could not authenticate staged device connection", { error: errMsg(error) });
+      socket.close(DEVICE_CLOSE.internal, "Authentication unavailable; reconnect");
+    } finally {
+      socket.resume();
+    }
   }
 
   /**

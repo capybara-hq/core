@@ -14,7 +14,7 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
 import type { ExecutionClaim } from "../runtime/run-execution.js";
-import type { NativeMethod } from "./held-operations.js";
+import type { SandboxAuthorityOperation } from "./operation-authority.js";
 import { SandboxOperationAuthority } from "./operation-authority.js";
 import {
   describeOperationPayload,
@@ -136,7 +136,7 @@ export class SandboxOperationIntents {
     ctx: SandboxUseContext,
     invocation: OperationInvocation,
     instance: OperationInstance,
-    method: NativeMethod,
+    method: SandboxAuthorityOperation,
     input: unknown,
     holderTag: string,
     signal: AbortSignal,
@@ -170,6 +170,7 @@ export class SandboxOperationIntents {
       scope: resolved,
       permissionGrantId,
       grantedHosts,
+      executionGrants,
     } = await this.authority.resolveInvocation(
       ctx,
       method,
@@ -213,7 +214,13 @@ export class SandboxOperationIntents {
         input_hash: hash,
         permission_grant_id: permissionGrantId,
         granted_hosts: JSON.stringify(grantedHosts),
-        admission_hash: permissionScopeHash({ method, inputDigest: described.digest, scope }),
+        execution_grants: executionGrants === null ? null : JSON.stringify(executionGrants),
+        admission_hash: permissionScopeHash({
+          method,
+          inputDigest: described.digest,
+          scope,
+          executionGrants,
+        }),
         input: payload,
         scope: JSON.stringify(scope),
         epochs: JSON.stringify(vector),
@@ -235,7 +242,13 @@ export class SandboxOperationIntents {
           scope: JSON.stringify(scope),
           permission_grant_id: permissionGrantId,
           granted_hosts: JSON.stringify(grantedHosts),
-          admission_hash: permissionScopeHash({ method, inputDigest: described.digest, scope }),
+          execution_grants: executionGrants === null ? null : JSON.stringify(executionGrants),
+          admission_hash: permissionScopeHash({
+            method,
+            inputDigest: described.digest,
+            scope,
+            executionGrants,
+          }),
           epochs: JSON.stringify(vector),
           deadline: new Date(deadline),
           retain_until: new Date(deadline + 86_400_000),
@@ -336,7 +349,7 @@ export class SandboxOperationIntents {
     r: OperationIntent,
     ctx: SandboxUseContext,
     instance: OperationInstance,
-    method: NativeMethod,
+    method: SandboxAuthorityOperation,
     hash: string,
   ): void {
     if (
@@ -396,6 +409,7 @@ export class SandboxOperationIntents {
       scope: fresh,
       permissionGrantId,
       grantedHosts,
+      executionGrants,
     } = await this.authority.resolveInvocation(
       ctx,
       r.method,
@@ -404,6 +418,7 @@ export class SandboxOperationIntents {
     );
     if (
       permissionGrantId !== r.permission_grant_id ||
+      permissionScopeHash(executionGrants) !== permissionScopeHash(r.execution_grants) ||
       permissionScopeHash(grantedHosts) !== permissionScopeHash(r.granted_hosts) ||
       permissionScopeHash(fresh.filesystem) !==
         permissionScopeHash(parseSandboxOperationScope(r.scope).filesystem) ||
@@ -528,7 +543,7 @@ export class SandboxOperationIntents {
     ctx: SandboxUseContext,
     invocation: OperationInvocation,
     instance: OperationInstance,
-    method: NativeMethod,
+    method: SandboxAuthorityOperation,
     input: unknown,
     holderTag: string,
   ): Promise<OperationIntent> {

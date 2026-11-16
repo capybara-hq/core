@@ -1,6 +1,10 @@
 import type { DeviceFeature, SandboxRoots } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
+import type { Redis } from "ioredis";
 import { KernelDb } from "../infra/database/kernel-db.js";
+import { LockService } from "../infra/lock/lock.service.js";
+import { REDIS } from "../infra/tokens.js";
+import { deviceLeaseKey, deviceTransportKey } from "./keys.js";
 import { deviceFeaturesOf } from "./policy-summary.js";
 
 /**
@@ -24,7 +28,28 @@ export const sameRoots = (a: SandboxRoots, b: SandboxRoots): boolean =>
  */
 @Injectable()
 export class DeviceTargets {
-  constructor(@Inject(KernelDb) private readonly db: KernelDb) {}
+  constructor(
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(REDIS) private readonly redis: Redis,
+    @Inject(LockService) private readonly locks: Pick<LockService, "holderOf">,
+  ) {}
+
+  /** Read capacity only under its exact authenticated gateway lease, never current config. */
+  async transport(deviceId: string): Promise<{ connectionId: string; maxFrameBytes: number }> {
+    const connectionId = await this.locks.holderOf(deviceLeaseKey(deviceId));
+    if (!connectionId)
+      throw new Error("Device transport is offline; reconnect and retry the same offset");
+    const raw = await this.redis.get(deviceTransportKey(deviceId, connectionId));
+    const cap: unknown = raw === null ? null : JSON.parse(raw);
+    if (
+      typeof cap !== "number" ||
+      !Number.isSafeInteger(cap) ||
+      cap < 1024 ||
+      (await this.locks.holderOf(deviceLeaseKey(deviceId))) !== connectionId
+    )
+      throw new Error("Device transport is not ready; reconnect and retry the same offset");
+    return { connectionId, maxFrameBytes: cap };
+  }
 
   async state(deviceId: string): Promise<DeviceTargetState> {
     const row = await this.db

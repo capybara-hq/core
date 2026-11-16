@@ -36,8 +36,16 @@ interface Common {
   authority?: LocalExecAuthority;
   beforeLaunch: () => Promise<void>;
   onLaunch: (identity: TrustedLaunchIdentity) => Promise<void>;
-  onOutput?: (bytes: Buffer, stream?: "stdout" | "stderr") => void;
+  onOutput?: (bytes: Buffer, stream?: "stdout" | "stderr") => void | Promise<void>;
+  /** Trusted background-only artifact configuration; never decoded from command text. */
+  managedOutput?: { outputPath: string; artifactRoot: string };
   onDiagnostic?: (text: string) => void;
+  onOutputFlow?: (info: {
+    frameBytes: number;
+    bufferedBytes: number;
+    producerLimit: number;
+  }) => void;
+  onControl?: (event: "cancelled" | "process-exit") => void;
   onRuntimeReady?: (info: { pid: number; proxyUrl: string }) => Promise<void>;
 }
 export type MacWorkerRequest = Common &
@@ -72,16 +80,31 @@ import {spawn} from 'node:child_process';
 import {randomUUID} from 'node:crypto';
 let manager,initialized=false,wrapped=false,closing=false,full=false,child,childClosed,timer,timedOut=false,killed=false;
 const owned=new Map(),signaled=new Set();
+let credit,sequence=0,outputFailed=false,outputDone=Promise.resolve();
+async function collect(stream){
+ try{for await(const chunk of stream){
+  for(let offset=0;offset<chunk.length;offset+=65536){
+   if(outputFailed)continue;
+   const data=chunk.subarray(offset,offset+65536);const seq=sequence++;
+   const bufferedBytes=chunk.length+stream.readableLength;if(bufferedBytes>262144)throw Error('Managed producer buffer exceeded bound');
+   send({event:'output-flow',frameBytes:data.length,bufferedBytes,producerLimit:262144});
+   await new Promise((resolve,reject)=>{credit={seq,resolve,reject};send({event:'output',stream:'stdout',seq,data:data.toString('base64')});});
+  }
+ }}catch(error){const alreadyFailed=outputFailed;outputFailed=true;stream.resume();if(!alreadyFailed)send({event:'error',message:'Managed producer failed'});}
+}
 const send=value=>{if(process.connected)process.send(value,()=>{});};
 function signalOwned(signal='SIGKILL'){for(const pid of owned.keys()){if(signaled.has(pid))continue;try{process.kill(-pid,signal);if(signal==='SIGKILL')signaled.add(pid);}catch(error){if(error.code==='ESRCH')signaled.add(pid);else throw error;}}}
 async function stop(){
  if(closing)return;closing=true;
+ if(credit){outputFailed=true;const pending=credit;credit=undefined;pending.reject(Error('Owned output channel closed'));child?.stdout.resume();}
  try{signalOwned();}catch(error){closing=false;send({event:'error',message:'Owned cancellation remains pending: '+error.code});return;}
  await childClosed;owned.clear();await manager?.reset();process.disconnect?.();
 }
 process.on('disconnect',stop);process.on('SIGTERM',stop);
 process.on('message',async message=>{try{
- if(message.type==='init'){
+ if(message.type==='output-ack'){
+  if(credit && credit.seq===message.seq){const pending=credit;credit=undefined;if(message.ok)pending.resolve();else{outputFailed=true;pending.reject(Error('Managed sink failed'));child?.stdout.resume();}}
+ }else if(message.type==='init'){
   if(initialized)throw Error('Worker initialization is immutable');initialized=true;full=message.full;
   if(!full){({SandboxManager:manager}=await import(pathToFileURL(message.runtime)));const deps=manager.checkDependencies();if(!manager.isSupportedPlatform()||deps.errors?.length)throw Error('Unsupported macOS sandbox runtime');await manager.initialize(message.config,undefined,false);}
   send({event:'ready',proxyUrl:full?'':'http://srt:'+manager.getProxyAuthToken()+'@127.0.0.1:'+manager.getProxyPort()});
@@ -93,10 +116,13 @@ process.on('message',async message=>{try{
   child=spawn('/bin/bash',['-c',message.script],{cwd:message.cwd,env:message.env,detached:true,stdio:['ignore','pipe','pipe']});
   const identity={pid:child.pid,token:randomUUID()};if(!identity.pid)throw Error('Missing trusted launch identity');
   owned.set(identity.pid,identity.token);
-  childClosed=new Promise(resolve=>child.once('close',code=>{clearTimeout(timer);send({event:'completed',code,timedOut,killed});resolve();}));
+  childClosed=new Promise(resolve=>child.once('close',async code=>{clearTimeout(timer);await outputDone;send({event:'completed',code,timedOut,killed,outputFailed});resolve();}));
   child.once('error',error=>send({event:'error',message:String(error)}));
-  child.once('exit',()=>{try{signalOwned();}catch(error){send({event:'error',message:'Owned group cleanup pending: '+error.code});}});
-  for(const stream of ['stdout','stderr'])child[stream].on('data',bytes=>{child[stream].pause();if(!process.connected){child[stream].resume();return;}process.send({event:'output',stream,data:bytes.toString('base64')},()=>child[stream].resume());});
+  child.once('exit',code=>{send({event:'process-exit',code,timedOut,killed});try{signalOwned();}catch(error){send({event:'error',message:'Owned group cleanup pending: '+error.code});}});
+  if(message.managed){
+    if(child.stdout.readableHighWaterMark>65536)throw Error('Unbounded managed producer buffer');
+    outputDone=collect(child.stdout);let diagnosticBytes=0;child.stderr.on('data',bytes=>{diagnosticBytes+=bytes.length;if(diagnosticBytes<=65536)send({event:'diagnostic',text:bytes.toString()});});
+  }else for(const stream of ['stdout','stderr'])child[stream].on('data',bytes=>{child[stream].pause();if(!process.connected){child[stream].resume();return;}process.send({event:'output',stream,data:bytes.toString('base64')},()=>child[stream].resume());});
   timer=setTimeout(()=>{timedOut=true;try{signalOwned();}catch(error){send({event:'error',message:'Owned timeout cancellation pending: '+error.code});}},message.timeoutMs);
   send({event:'launched',...identity});
  }else if(message.type==='cancel'){
@@ -441,7 +467,7 @@ export async function startMacOperationWorker(
         .map(([key, value]) => `export ${key}=${shellQuote(value)}`)
         .join("; ");
       const script = await wrap(
-        `${!request.grant.full && exports ? `${exports}; ` : ""}exec /bin/bash -c ${shellQuote(args.command)}`,
+        `${!request.grant.full && exports ? `${exports}; ` : ""}exec /bin/bash -c ${shellQuote(args.command)}${request.managedOutput ? " 2>&1" : ""}`,
       );
       await request.beforeLaunch();
       controller.signal.throwIfAborted();
@@ -452,12 +478,59 @@ export async function startMacOperationWorker(
       const completed = message(worker, "completed");
       void launched.catch(() => {});
       void completed.catch(() => {});
+      let outputPending: Promise<void> | undefined;
+      let outputFault: unknown;
       const onOutput = (message: unknown) => {
-        const item = message as { event: string; stream: "stdout" | "stderr"; data: string };
+        const item = message as {
+          event: string;
+          stream: "stdout" | "stderr";
+          data: string;
+          seq: number;
+          text: string;
+          frameBytes: number;
+          bufferedBytes: number;
+          producerLimit: number;
+        };
+        if (item.event === "output-flow") {
+          request.onOutputFlow?.(item);
+          return;
+        }
+        if (item.event === "cancelled" || item.event === "process-exit") {
+          request.onControl?.(item.event);
+          return;
+        }
+        if (item.event === "diagnostic") {
+          request.onDiagnostic?.(item.text);
+          return;
+        }
         if (item.event !== "output") return;
         const bytes = Buffer.from(item.data, "base64");
-        cap.push(item.stream, bytes);
-        request.onOutput?.(bytes, item.stream);
+        if (!request.managedOutput) {
+          cap.push(item.stream, bytes);
+          void request.onOutput?.(bytes, item.stream);
+          return;
+        }
+        const ack = (ok: boolean) => {
+          if (worker.connected) worker.send({ type: "output-ack", seq: item.seq, ok });
+        };
+        if (outputPending || bytes.length > 65536 || outputFault) {
+          outputFault = Error("Managed output credit violation");
+          ack(false);
+          return;
+        }
+        cap.push("stdout", bytes);
+        outputPending = Promise.resolve()
+          .then(() => request.onOutput?.(bytes, "stdout"))
+          .then(
+            () => ack(true),
+            (error) => {
+              outputFault = error;
+              ack(false);
+            },
+          )
+          .finally(() => {
+            outputPending = undefined;
+          });
       };
       worker.on("message", onOutput);
       execStarted = true;
@@ -467,6 +540,7 @@ export async function startMacOperationWorker(
         cwd: args.cwd,
         env: request.grant.full ? { ...process.env, ...args.env } : outerEnv,
         timeoutMs: args.timeoutMs,
+        managed: request.managedOutput !== undefined,
       });
       try {
         const identity = await launched;
@@ -474,7 +548,10 @@ export async function startMacOperationWorker(
         await request.onLaunch(registered);
         readyResolve();
         const result = await completed;
+        await outputPending;
         execCompleted = true;
+        if (outputFault || result.outputFailed)
+          throw outputFault ?? Error("Managed output stream failed");
         return {
           exitCode: result.killed || result.timedOut ? null : (result.code as number | null),
           stdout: cap.text("stdout"),

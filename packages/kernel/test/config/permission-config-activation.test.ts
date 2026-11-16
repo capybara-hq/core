@@ -12,8 +12,10 @@ import { KernelConfigService } from "../../src/infra/config/kernel-config.servic
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { OutboxDispatcher } from "../../src/infra/outbox/outbox.dispatcher.js";
+import { MachinesService } from "../../src/local-devices/machines.js";
 import { NetworkGrants } from "../../src/local-devices/network-grants.js";
 import { createLogger } from "../../src/log.js";
+import { OrgSettingsService } from "../../src/orgs/settings.service.js";
 import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
 import { PermissionAuthorityEpochStore } from "../../src/sandbox/permission-authority-epochs.js";
 import { PermissionAuthorityLock } from "../../src/sandbox/permission-authority-lock.js";
@@ -418,14 +420,18 @@ it("shutdown-after-commit-dispatch-lost-ack resolves by idempotent authoritative
   }
 });
 
-async function intent(f: Awaited<ReturnType<typeof consentFixture>>, restricted = false) {
+async function intent(
+  f: Awaited<ReturnType<typeof consentFixture>>,
+  restricted = false,
+  method: "exec" | "backgroundStart" = "exec",
+) {
   if (restricted)
     await db
       .updateTable("conversations")
       .set({ permission_profile: "approve-for-me", permission_consent: null })
       .where("id", "=", f.conversationId)
       .execute();
-  const scope = await f.a.authority.resolve(f.ctx, "exec", new AbortController().signal);
+  const scope = await f.a.authority.resolve(f.ctx, method, new AbortController().signal);
   await db
     .insertInto("sandbox_operation_intents")
     .values({
@@ -438,7 +444,7 @@ async function intent(f: Awaited<ReturnType<typeof consentFixture>>, restricted 
       run_id: null,
       call_id: null,
       ordinal: 0,
-      method: "exec",
+      method,
       input_hash: "a".repeat(64),
       admission_hash: "b".repeat(64),
       input: "{}",
@@ -455,52 +461,55 @@ async function intent(f: Awaited<ReturnType<typeof consentFixture>>, restricted 
     .execute();
   return scope.operationId;
 }
-it("restricted activation revokes only affected intents with one epoch and durable outbox", async () => {
-  const full = await consentFixture(),
-    restricted = await consentFixture();
-  const fullId = await intent(full),
-    restrictedId = await intent(restricted, true);
-  const epoch = await db
-    .selectFrom("permission_authority_epochs")
-    .selectAll()
-    .where("kind", "=", "platform")
-    .executeTakeFirstOrThrow();
-  await publisher(config("allowed", ["b.example"])).initialize({
-    activation: { expectedActiveHash: permissionConfigFingerprint(config()) },
-  });
-  const after = await db
-    .selectFrom("permission_authority_epochs")
-    .selectAll()
-    .where("kind", "=", "platform")
-    .executeTakeFirstOrThrow();
-  expect(after.revision).toBe(epoch.revision + 1);
-  expect(after.full_revision).toBe(epoch.full_revision);
-  expect(
-    (
+it.each(["exec", "backgroundStart"] as const)(
+  "restricted activation revokes only affected %s intents with one epoch and durable outbox",
+  async (method) => {
+    const full = await consentFixture(),
+      restricted = await consentFixture();
+    const fullId = await intent(full, false, method),
+      restrictedId = await intent(restricted, true, method);
+    const epoch = await db
+      .selectFrom("permission_authority_epochs")
+      .selectAll()
+      .where("kind", "=", "platform")
+      .executeTakeFirstOrThrow();
+    await publisher(config("allowed", ["b.example"])).initialize({
+      activation: { expectedActiveHash: permissionConfigFingerprint(config()) },
+    });
+    const after = await db
+      .selectFrom("permission_authority_epochs")
+      .selectAll()
+      .where("kind", "=", "platform")
+      .executeTakeFirstOrThrow();
+    expect(after.revision).toBe(epoch.revision + 1);
+    expect(after.full_revision).toBe(epoch.full_revision);
+    expect(
+      (
+        await db
+          .selectFrom("sandbox_operation_intents")
+          .select("state")
+          .where("operation_id", "=", fullId)
+          .executeTakeFirstOrThrow()
+      ).state,
+    ).toBe("admitted");
+    expect(
+      (
+        await db
+          .selectFrom("sandbox_operation_intents")
+          .select("state")
+          .where("operation_id", "=", restrictedId)
+          .executeTakeFirstOrThrow()
+      ).state,
+    ).toBe("revoked");
+    expect(
       await db
-        .selectFrom("sandbox_operation_intents")
-        .select("state")
-        .where("operation_id", "=", fullId)
-        .executeTakeFirstOrThrow()
-    ).state,
-  ).toBe("admitted");
-  expect(
-    (
-      await db
-        .selectFrom("sandbox_operation_intents")
-        .select("state")
-        .where("operation_id", "=", restrictedId)
-        .executeTakeFirstOrThrow()
-    ).state,
-  ).toBe("revoked");
-  expect(
-    await db
-      .selectFrom("outbox")
-      .select("job_id")
-      .where("job_id", "=", `sandbox-operation-revoke-${restrictedId}`)
-      .execute(),
-  ).toHaveLength(1);
-});
+        .selectFrom("outbox")
+        .select("job_id")
+        .where("job_id", "=", `sandbox-operation-revoke-${restrictedId}`)
+        .execute(),
+    ).toHaveLength(1);
+  },
+);
 it.each(["before-outbox", "before-commit"])(
   "activation fault %s rolls back publication, epochs and revokes",
   async (phase) => {
@@ -584,3 +593,64 @@ it("already aborted startup leaves an absent or matching publication untouched",
     expect(await snapshot()).toEqual(before);
   }
 });
+
+it.each(["exec", "backgroundStart"] as const)(
+  "actual org writer narrows restricted %s authority while preserving Full",
+  async (method) => {
+    const f = await consentFixture();
+    const fullId = await intent(f, false, method);
+    const restrictedId = await intent(f, true, method);
+    await k.app
+      .get(OrgSettingsService)
+      .update(
+        f.orgId,
+        { cloudNetwork: { mode: "allowlist", excludedHosts: ["a.example"], extraHosts: [] } },
+        f.accountId,
+      );
+    const rows = await db
+      .selectFrom("sandbox_operation_intents")
+      .select(["operation_id", "state"])
+      .where("operation_id", "in", [fullId, restrictedId])
+      .execute();
+    expect(rows.find((r) => r.operation_id === fullId)?.state).toBe("admitted");
+    expect(rows.find((r) => r.operation_id === restrictedId)?.state).toBe("revoked");
+  },
+);
+
+it.each(["exec", "backgroundStart"] as const)(
+  "actual owner writer narrows %s baseline but preserves recorded additions and Full",
+  async (method) => {
+    const f = await consentFixture();
+    const fullId = await intent(f, false, method);
+    const revokedId = await intent(f, true, method);
+    const grantedId = await intent(f, true, method);
+    await db
+      .updateTable("sandbox_operation_intents")
+      .set({ granted_hosts: JSON.stringify(["a.example"]) })
+      .where("operation_id", "=", grantedId)
+      .execute();
+    const machine = await db
+      .insertInto("device_machines")
+      .values({
+        org_id: f.orgId,
+        device_id: f.deviceId,
+        account_id: f.accountId,
+        credential_hash: randomUUID(),
+        name: "fixture",
+        os: "darwin",
+        arch: "arm64",
+        local_policy: JSON.stringify({ mode: "auto", allowedDomains: ["a.example"] }),
+      })
+      .returning("id")
+      .executeTakeFirstOrThrow();
+    await k.app.get(MachinesService).recordPolicy(machine.id, { mode: "auto", allowedDomains: [] });
+    const rows = await db
+      .selectFrom("sandbox_operation_intents")
+      .select(["operation_id", "state"])
+      .where("operation_id", "in", [fullId, revokedId, grantedId])
+      .execute();
+    expect(rows.find((r) => r.operation_id === fullId)?.state).toBe("admitted");
+    expect(rows.find((r) => r.operation_id === grantedId)?.state).toBe("admitted");
+    expect(rows.find((r) => r.operation_id === revokedId)?.state).toBe("revoked");
+  },
+);

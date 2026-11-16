@@ -88,6 +88,7 @@ let orgOfEnv: string | null;
 let maxFrameBytes: number;
 /** What `NetworkGrants.forExec` answers, and the calls it got. */
 let runGrants: DeviceExecGrants | undefined;
+let admittedGrants: DeviceExecGrants | undefined;
 let grantCalls: { orgId: string; runId: string; deviceId: string }[];
 /** What the machine's exec answers. */
 let execResult: Record<string, unknown>;
@@ -100,6 +101,7 @@ beforeEach(() => {
   orgOfEnv = "org-1";
   maxFrameBytes = 16 * 1024 * 1024;
   runGrants = undefined;
+  admittedGrants = undefined;
   grantCalls = [];
   execResult = EXEC_RESULT;
 });
@@ -171,6 +173,7 @@ beforeAll(async () => {
   provider = new LocalDeviceProvider(
     relay,
     {
+      transport: async () => ({ connectionId: "test", maxFrameBytes }),
       orgOf: async () => orgOfEnv,
       machineRoots: async () => machineRoots,
       machineFeatures: async () => machineFeatures,
@@ -199,6 +202,9 @@ beforeAll(async () => {
       reportedMode: async () => reportedMode,
     } as Pick<NetworkGrants, "forExec" | "reportedMode">,
     log,
+    {
+      forExecution: async () => admittedGrants,
+    } as unknown as import("../../src/sandbox/permission-call-grants.js").PermissionCallGrants,
   );
 });
 afterAll(async () => {
@@ -745,43 +751,73 @@ describe("LocalDeviceProvider: modes (auto mode spec §4.2, §4.3)", () => {
   });
 });
 
-it("staged exec reads authenticated grants again at each invocation, including a resumed operation", async () => {
-  const sent: Record<string, unknown>[] = [];
-  const staged = provider.stagedOperations({
-    call: async (_device, _op, args) => {
-      sent.push(args);
-      return { exitCode: 0, stdout: "", stderr: "", truncated: false, timedOut: false };
-    },
-    permissionSupport: async () => ({
-      version: 1,
-      restricted: null,
-      fullAccess: false,
-      background: false,
-    }),
-  });
-  const signal = new AbortController().signal;
-  const scope = {
-    operationId: "operation",
-    admitBeforeMs: Date.now() + 30000,
-    deviceId: "device",
-    rootConversationId: "root",
-    profileRevision: 1,
-    ceilingRevision: "c",
-    profile: "approve-for-me" as const,
-    actor: { accountId: "owner", conversationId: "root", runId: "run" },
-    tag: "operation",
-    filesystem: { kind: "scoped" as const, readRoots: ["/work"], writeRoots: ["/work"] },
-    network: { kind: "allowlist" as const, hosts: ["example.com"] },
-  };
-  const operation = await staged.operation({ id: "device" }, scope, signal);
-  runGrants = { hosts: ["example.com"], source: { kind: "run", id: "run", accountId: "owner" } };
-  await operation.exec({ command: "true", timeoutMs: 100, maxOutputBytes: 100, signal });
-  runGrants = undefined;
-  await operation.exec({ command: "true", timeoutMs: 100, maxOutputBytes: 100, signal });
-  expect(sent[0]?.grants).toEqual({
-    hosts: ["example.com"],
-    source: { kind: "run", id: "run", accountId: "owner" },
-  });
-  expect(sent[1]?.grants).toBeUndefined();
-  expect(grantCalls).toHaveLength(2);
-});
+it.each(["exec", "backgroundStart"] as const)(
+  "staged %s reuses recorded grants on a consumed retry without reading current run grants",
+  async (method) => {
+    const sent: Record<string, unknown>[] = [];
+    const staged = provider.stagedOperations({
+      call: async (_device, op, args) => {
+        sent.push(args);
+        if (op === "backgroundStart")
+          return {
+            instanceId: "device",
+            instanceGeneration: "g",
+            operationId: "operation",
+            executionId: "execution",
+          };
+        return { exitCode: 0, stdout: "", stderr: "", truncated: false, timedOut: false };
+      },
+      permissionSupport: async () => ({
+        version: 1,
+        restricted: null,
+        fullAccess: false,
+        background: false,
+      }),
+    });
+    const signal = new AbortController().signal;
+    const scope = {
+      operationId: "operation",
+      admitBeforeMs: Date.now() + 30000,
+      deviceId: "device",
+      rootConversationId: "root",
+      profileRevision: 1,
+      ceilingRevision: "c",
+      profile: "approve-for-me" as const,
+      actor: { accountId: "owner", conversationId: "root", runId: "run" },
+      tag: "operation",
+      filesystem: { kind: "scoped" as const, readRoots: ["/work"], writeRoots: ["/work"] },
+      network: { kind: "allowlist" as const, hosts: ["example.com"] },
+    };
+    const operation = await staged.operation({ id: "device" }, scope, signal);
+    admittedGrants = {
+      hosts: ["example.com"],
+      source: { kind: "run", id: "run", accountId: "owner" },
+    };
+    const invoke = () =>
+      method === "exec"
+        ? operation.exec({ command: "true", timeoutMs: 100, maxOutputBytes: 100, signal })
+        : staged.background.start({ id: "device" }, scope, {
+            command: "true",
+            timeoutMs: 100,
+            maxOutputBytes: 100,
+            signal,
+            taskId: "task",
+            outputPath: "/work/task.out",
+            retainUntilMs: scope.admitBeforeMs + 1000,
+          });
+    await invoke();
+    runGrants = undefined;
+    await invoke();
+    expect(sent[0]?.grants).toEqual({
+      hosts: ["example.com"],
+      source: { kind: "run", id: "run", accountId: "owner" },
+    });
+    expect(sent[1]?.grants).toEqual(sent[0]?.grants);
+    expect(grantCalls).toHaveLength(0);
+    orgSettings = {
+      cloudNetwork: { mode: "allowlist", excludedHosts: ["example.com"], extraHosts: [] },
+    };
+    await expect(invoke()).rejects.toThrow("Current organization limits refuse");
+    expect(sent).toHaveLength(2);
+  },
+);

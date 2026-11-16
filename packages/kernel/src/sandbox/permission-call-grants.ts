@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
-import type { DeviceExecGrants } from "@capybara-hq/plugin-sdk";
+import {
+  type DeviceExecGrants,
+  SandboxOperationOutcomeUnknownError,
+  type SandboxOperationScope,
+} from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Selectable } from "kysely";
 import { PermissionProfileStore } from "../conversations/permission-profile-store.js";
@@ -9,6 +13,8 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { coversHost } from "./modes.js";
+import { isExecutionMethod, parseStartingExecutionGrants } from "./operation-authority-types.js";
+import { describeOperationPayload } from "./operation-payloads.js";
 import { PermissionAuthorityEpochStore } from "./permission-authority-epochs.js";
 import { PermissionAuthorityLock } from "./permission-authority-lock.js";
 import type {
@@ -331,7 +337,13 @@ export class PermissionCallGrants {
     return { id: row.id, expansion: row.expansion };
   }
   /** Starting authority belongs to this admitted exec, never to another call or native method. */
-  async forExecution(operationId: string, deviceId: string): Promise<DeviceExecGrants | undefined> {
+  async forExecution(
+    operationId: string,
+    deviceId: string,
+    method: "exec" | "backgroundStart",
+    scope: SandboxOperationScope,
+    input: unknown,
+  ): Promise<DeviceExecGrants | undefined> {
     const intent = await this.db
       .selectFrom("sandbox_operation_intents")
       .selectAll()
@@ -343,15 +355,43 @@ export class PermissionCallGrants {
       !["admitted", "dispatching", "started-or-unknown"].includes(intent.state)
     )
       throw new ApiError("forbidden", "The operation has no current admitted execution identity");
-    if (intent.method !== "exec" || !intent.permission_grant_id) return undefined;
+    if (
+      !isExecutionMethod(intent.method) ||
+      intent.method !== method ||
+      permissionScopeHash(scope) !== permissionScopeHash(intent.scope)
+    )
+      throw new ApiError(
+        "forbidden",
+        "The execution does not match its exact admitted method and scope",
+      );
+    if (intent.execution_grants === null || intent.execution_grants === undefined) {
+      const message =
+        "Starting grant provenance is unavailable; check the original operation before retrying";
+      if (intent.state === "admitted") throw new ApiError("forbidden", message);
+      throw new SandboxOperationOutcomeUnknownError(message);
+    }
+    const metadata = parseStartingExecutionGrants(intent.execution_grants);
+    const inputDigest = describeOperationPayload(input).digest;
+    if (
+      intent.input_hash !== permissionScopeHash({ method, inputDigest }) ||
+      intent.admission_hash !==
+        permissionScopeHash({ method, inputDigest, scope, executionGrants: metadata }) ||
+      permissionScopeHash(metadata.grants?.hosts ?? []) !==
+        permissionScopeHash(intent.granted_hosts)
+    )
+      throw new ApiError(
+        "forbidden",
+        "Starting grants or input do not match the exact admitted execution",
+      );
+    if (!intent.permission_grant_id) return metadata.grants ?? undefined;
     const grant = await this.db
       .selectFrom("permission_call_grants")
       .selectAll()
       .where("id", "=", intent.permission_grant_id)
       .executeTakeFirstOrThrow();
-    const scope = intent.scope;
+    const admittedScope = intent.scope;
     if (
-      !("profileRevision" in scope) ||
+      !("profileRevision" in admittedScope) ||
       grant.device_id !== deviceId ||
       grant.org_id !== intent.org_id ||
       grant.account_id !== intent.account_id ||
@@ -359,18 +399,23 @@ export class PermissionCallGrants {
       grant.call_id !== intent.call_id ||
       grant.conversation_id !== intent.conversation_id ||
       grant.root_conversation_id !== intent.root_conversation_id ||
-      grant.profile_revision !== scope.profileRevision ||
-      grant.authority_revision !== scope.ceilingRevision ||
+      grant.profile_revision !== admittedScope.profileRevision ||
+      grant.authority_revision !== admittedScope.ceilingRevision ||
       grant.expansion.hosts.some((host) => !intent.granted_hosts.includes(host))
     )
       throw new ApiError(
         "forbidden",
         "The operation's explicit host evidence does not match its admitted call",
       );
-    if (!grant.expansion.hosts.length) return undefined;
-    return {
-      hosts: [...grant.expansion.hosts],
-      source: { kind: "run", id: grant.run_id, accountId: grant.account_id },
-    };
+    if (
+      grant.expansion.hosts.length &&
+      permissionScopeHash(metadata.grants?.source) !==
+        permissionScopeHash({ kind: "run", id: grant.run_id, accountId: grant.account_id })
+    )
+      throw new ApiError(
+        "forbidden",
+        "Starting grant source does not match the admitted call evidence",
+      );
+    return metadata.grants ?? undefined;
   }
 }

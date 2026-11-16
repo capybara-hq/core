@@ -9,6 +9,7 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { CloudNetworkSettingSchema, invalidCloudNetwork } from "../orgs/cloud-network-setting.js";
 import { coversHost, orgEffectiveHosts } from "./modes.js";
+import { isExecutionMethod } from "./operation-authority-types.js";
 import { needsFullCeiling, PermissionCeilingWrites } from "./permission-ceiling-writes.js";
 import { readStoredDevicesAutoMode, resolveDevicesAutoMode } from "./platform-auto-mode.js";
 
@@ -255,7 +256,11 @@ export class PermissionConfigPublication {
               before.egress !== "none" &&
               next.egress === "none")
           );
-        if (row.method !== "exec" || !("network" in scope) || scope.network.kind !== "allowlist")
+        if (
+          !isExecutionMethod(row.method) ||
+          !("network" in scope) ||
+          scope.network.kind !== "allowlist"
+        )
           return false;
         const hosts = orgEffectiveHosts(next, settings.get(row.org_id));
         return scope.network.hosts.some(

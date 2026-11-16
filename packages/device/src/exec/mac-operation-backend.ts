@@ -15,6 +15,7 @@ import {
   SandboxScopeDeniedError,
   validateSandboxPathShape,
 } from "@capybara-hq/plugin-sdk";
+import { implicitWritePaths } from "../policy.js";
 import type { NativeHelperRequest, NativeHelperResult } from "./native-helper-client.js";
 import { MacOperationSupervisor } from "./operation-supervisor.js";
 import {
@@ -92,6 +93,7 @@ export async function createMacOperationBackend(
     stateDir: options.stateDir,
     deviceId: options.deviceId,
     instanceGeneration: options.instanceGeneration,
+    pythonPath: options.pythonPath,
     ...(dependencies.now ? { now: dependencies.now } : {}),
     ...(dependencies.startWorker ? { start: dependencies.startWorker } : {}),
     onLiveChanged: (live) => {
@@ -186,7 +188,19 @@ export async function createMacOperationBackend(
         throw new SandboxScopeDeniedError("Invalid execution bounds");
       if (args.cwd) boundedPath(args.cwd, grant);
     }
-    if (background) boundedPath(background.outputPath, grant, true);
+    if (background) {
+      boundedPath(background.outputPath, grant, true);
+      const canonical = (path: string) => path.replace(/^\/(tmp|var|etc)(?=\/|$)/, "/private/$1");
+      if (
+        !grant.full &&
+        implicitWritePaths().some((root) =>
+          within(canonical(background.outputPath), canonical(root)),
+        )
+      )
+        throw new SandboxScopeDeniedError(
+          "Background artifact target is protected by the restricted write policy",
+        );
+    }
     const common = {
       scope,
       grant,
@@ -214,6 +228,18 @@ export async function createMacOperationBackend(
           ...common,
           kind: "exec",
           scope: scope as SandboxOperationScope,
+          ...(background
+            ? {
+                managedOutput: {
+                  outputPath: background.outputPath,
+                  artifactRoot: grant.full
+                    ? "/"
+                    : ([...grant.writeRoots]
+                        .filter((root) => within(background.outputPath, root))
+                        .sort((a, b) => b.length - a.length)[0] as string),
+                },
+              }
+            : {}),
           args: {
             ...(args as Omit<Parameters<SandboxOperation["exec"]>[0], "signal">),
             cwd: args?.cwd ?? options.roots.workspace,
@@ -311,6 +337,10 @@ export async function createMacOperationBackend(
     status: async (h, ref, signal) => {
       checkHandle(h);
       return supervisor.status(ref, signal);
+    },
+    readOutput: async (h, ref, opts) => {
+      checkHandle(h);
+      return supervisor.readOutput(ref, opts);
     },
     tail: async (h, ref, opts) => {
       checkHandle(h);

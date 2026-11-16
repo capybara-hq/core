@@ -128,6 +128,7 @@ export const stagedHello = (
 ): import("@capybara-hq/plugin-sdk").DeviceHelloV3 => ({
   ...HELLO,
   protocol: 3,
+  transport: { maxFrameBytes: 69632 },
   permissionSupport: {
     version: 1,
     restricted: null,
@@ -135,7 +136,14 @@ export const stagedHello = (
     background: false,
     unavailableReason: "No per-instance enforcement proof",
   },
-  ownerCeiling: { revision: "test-owner-1", fullAccess: false, restrictedAllowedDomains: [] },
+  ownerCeiling: {
+    version: 2,
+    sequence: 0,
+    restrictedProjectReach: "workspace",
+    revision: "test-owner-1",
+    fullAccess: false,
+    restrictedAllowedDomains: [],
+  },
   instanceGeneration: identity?.instanceGeneration ?? "test-instance-1",
   ...(identity && { runtimeIdentity: identity }),
 });

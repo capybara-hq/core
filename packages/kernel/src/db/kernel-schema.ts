@@ -66,7 +66,12 @@ export interface SandboxOperationIntentsTable {
   run_id: string | null;
   call_id: string | null;
   ordinal: number;
-  method: "exec" | "readFile" | "writeFile" | "stat" | "list" | "scan";
+  method: "exec" | "backgroundStart" | "readFile" | "writeFile" | "stat" | "list" | "scan";
+  execution_grants: ColumnType<
+    import("../sandbox/operation-authority-types.js").StartingExecutionGrants | null,
+    string | null | undefined,
+    string | null
+  >;
   input_hash: string;
   admission_hash: string;
   granted_hosts: Json<string[]>;

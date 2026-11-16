@@ -112,6 +112,8 @@ export interface DeviceCallOptions {
   deadlineMs: number;
   /** The caller's signal: aborting gives the request up and rejects. */
   signal: AbortSignal;
+  /** Internal authenticated lease/capacity fence; never part of caller operation arguments. */
+  connection?: { connectionId: string; maxFrameBytes: number };
 }
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -146,7 +148,7 @@ export class LocalDeviceRelay {
     @Inject(LockService) private readonly locks: Pick<LockService, "holderOf">,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
-    @Inject(DeviceTargets) private readonly targets: Pick<DeviceTargets, "state">,
+    @Inject(DeviceTargets) private readonly targets: Pick<DeviceTargets, "state" | "transport">,
   ) {}
 
   /** Whether a gateway replica holds the machine's connection now. */
@@ -200,13 +202,20 @@ export class LocalDeviceRelay {
   }
   private async callWithCodec(
     deviceId: string,
-    op: DeviceOperationV3,
+    op: DeviceOperationV3 | DeviceOp,
     args: unknown,
     opts: DeviceCallOptions,
     staged: boolean,
   ): Promise<unknown> {
     const { signal } = opts;
     signal.throwIfAborted();
+    const connection = staged ? await this.targets.transport(deviceId) : undefined;
+    if (
+      opts.connection &&
+      (connection?.connectionId !== opts.connection.connectionId ||
+        connection?.maxFrameBytes !== opts.connection.maxFrameBytes)
+    )
+      throw new DeviceProtocolError("Connection capacity changed; retry from the same offset");
     if (!(await this.holderLive(deviceId))) {
       throw this.goneError(await this.targetState(deviceId)) ?? deviceOffline();
     }
@@ -216,7 +225,9 @@ export class LocalDeviceRelay {
     const deadlineMs = Math.max(1, Math.ceil(opts.deadlineMs));
     const graceMs = this.graceMs();
     const listTtlMs = graceMs + deadlineMs + LIST_TTL_MARGIN_MS;
-    const reqJson = JSON.stringify({ type: "req", id, op, args, deadlineMs });
+    const frame = { type: "req", id, op, args, deadlineMs };
+    if (connection) parseDeviceFrameV3(JSON.stringify(frame), "kernel", connection.maxFrameBytes);
+    const reqJson = JSON.stringify({ ...frame, ...connection });
 
     let settle!: (r: Outcome) => void;
     const outcome = new Promise<Outcome>((resolve) => {
@@ -228,7 +239,7 @@ export class LocalDeviceRelay {
       };
     });
     const onStored = (raw: string | null) => {
-      if (raw !== null) settle(this.parseRes(raw, id, staged));
+      if (raw !== null) settle(this.parseRes(raw, id, staged, connection));
     };
     const onAbort = () => settle({ error: ABORTED });
 
@@ -256,6 +267,20 @@ export class LocalDeviceRelay {
         try {
           // a stalled Redis must not hold the give-up back: no answer in time means "unknown"
           const live = await this.leaseCheck(deviceId);
+          if (connection && live === true) {
+            const current = await this.targets.transport(deviceId);
+            if (
+              current.connectionId !== connection.connectionId ||
+              current.maxFrameBytes !== connection.maxFrameBytes
+            ) {
+              settle({
+                error: new DeviceProtocolError(
+                  "Connection capacity changed; retry from the same offset",
+                ),
+              });
+              return;
+            }
+          }
           if (live === true && capped) {
             capped = false;
             giveUpAt = fullGiveUpAt;
@@ -296,16 +321,32 @@ export class LocalDeviceRelay {
       stopped = true;
       clearTimeout(timer);
       if ("res" in r) {
+        if (connection) {
+          const current = await this.targets.transport(deviceId);
+          if (
+            current.connectionId !== connection.connectionId ||
+            current.maxFrameBytes !== connection.maxFrameBytes
+          )
+            throw new DeviceProtocolError(
+              "Connection capacity changed; retry from the same offset",
+            );
+        }
         await this.quietly("delete the result", deviceId, () => this.redis.del(deviceResKey(id)));
         return staged && r.res.ok
-          ? parseOperationResultV3(op, r.res.result)
+          ? parseOperationResultV3(
+              op as DeviceOperationV3,
+              r.res.result,
+              op === "backgroundReadOutput"
+                ? (args as { offset: number; maxBytes: number })
+                : undefined,
+            )
           : this.resultOf(op as DeviceOp, r.res);
       }
       if (r.error instanceof Error) {
         // a bad answer: drop it, give the request up, report the protocol error
         await this.quietly("delete the result", deviceId, () => this.redis.del(deviceResKey(id)));
       }
-      await this.giveUp(deviceId, id, reqJson, listTtlMs);
+      await this.giveUp(deviceId, id, reqJson, listTtlMs, connection);
       if (r.error === ABORTED) throw signal.reason;
       if (r.error === GRACE_EXPIRED) throw deviceOffline();
       throw r.error;
@@ -388,8 +429,9 @@ export class LocalDeviceRelay {
     id: string,
     reqJson: string,
     ttlMs: number,
+    connection?: { connectionId: string; maxFrameBytes: number },
   ): Promise<void> {
-    const cancel = JSON.stringify({ type: "cancel", id } satisfies KernelCancel);
+    const cancel = JSON.stringify({ type: "cancel", id, ...connection });
     await this.quietly("give the request up", deviceId, async () => {
       const queued = await this.redis.eval(
         GIVE_UP,
@@ -413,9 +455,30 @@ export class LocalDeviceRelay {
   }
 
   /** A stored / published `res` frame for request `id`, or the protocol error it carries. */
-  private parseRes(raw: string, id: string, staged = false): Outcome {
+  private parseRes(
+    raw: string,
+    id: string,
+    staged = false,
+    connection?: { connectionId: string; maxFrameBytes: number },
+  ): Outcome {
     try {
-      const f = staged ? parseDeviceFrameV3(raw, "device") : parseDeviceFrame(raw, "device");
+      let wire = raw;
+      if (staged) {
+        const { connectionId, maxFrameBytes, ...frame } = JSON.parse(raw) as Record<
+          string,
+          unknown
+        >;
+        if (
+          !connection ||
+          connectionId !== connection.connectionId ||
+          maxFrameBytes !== connection.maxFrameBytes
+        )
+          throw new DeviceProtocolError("Connection capacity changed; retry from the same offset");
+        wire = JSON.stringify(frame);
+      }
+      const f = staged
+        ? parseDeviceFrameV3(wire, "device", connection?.maxFrameBytes)
+        : parseDeviceFrame(wire, "device");
       if (f.type !== "res" || f.id !== id) {
         return { error: new DeviceProtocolError("the connected machine sent an unexpected frame") };
       }

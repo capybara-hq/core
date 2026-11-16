@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
@@ -5,6 +6,7 @@ import { EventLog } from "../../src/conversations/event-log.js";
 import { createDb } from "../../src/db/pool.js";
 import { OUTBOX_DISPATCH_FAILS } from "../../src/infra/outbox/outbox.dispatcher.js";
 import { createLogger } from "../../src/log.js";
+import { describeOperationPayload } from "../../src/sandbox/operation-payloads.js";
 import { truncateTables } from "../helpers/db.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
 import { permissionFixture } from "../helpers/permission-policy.js";
@@ -320,3 +322,134 @@ it("exact binding is required for expansion and exact evidence retries are immut
     await expect(grants.findForAdmission(binding)).rejects.toThrow("Permissions changed");
   });
 });
+
+it.each(["exec", "backgroundStart"] as const)(
+  "%s dispatch validates exact admitted input and original source across consumed retries",
+  async (method) => {
+    const f = await fixture();
+    const service = k.app.get(PermissionCallGrants);
+    const operationId = randomUUID();
+    const scope = {
+      operationId,
+      admitBeforeMs: Date.now() + 30000,
+      deviceId: f.deviceId,
+      rootConversationId: f.conversationId,
+      profileRevision: 1,
+      ceilingRevision: "authority",
+      profile: "approve-for-me" as const,
+      actor: { accountId: f.accountId, conversationId: f.conversationId, runId: f.runId },
+      tag: operationId,
+      filesystem: { kind: "scoped" as const, readRoots: ["/work"], writeRoots: ["/work"] },
+      network: { kind: "allowlist" as const, hosts: ["registry.npmjs.org"] },
+    };
+    const input = {
+      command: "curl https://registry.npmjs.org",
+      timeoutMs: 100,
+      maxOutputBytes: 100,
+    };
+    const inputDigest = describeOperationPayload(input).digest;
+    const original = {
+      hosts: ["registry.npmjs.org"],
+      source: { kind: "task" as const, id: "original-task", accountId: "original-decider" },
+    };
+    const executionGrants = { version: 1 as const, grants: original };
+    await f.db
+      .insertInto("sandbox_operation_intents")
+      .values({
+        operation_id: operationId,
+        org_id: f.orgId,
+        account_id: f.accountId,
+        device_id: f.deviceId,
+        root_conversation_id: f.conversationId,
+        conversation_id: f.conversationId,
+        run_id: f.runId,
+        call_id: "transport-proof",
+        ordinal: 0,
+        method,
+        input_hash: permissionScopeHash({ method, inputDigest }),
+        admission_hash: permissionScopeHash({ method, inputDigest, scope, executionGrants }),
+        granted_hosts: JSON.stringify(original.hosts),
+        execution_grants: JSON.stringify(executionGrants),
+        input: JSON.stringify(input),
+        scope: JSON.stringify(scope),
+        epochs: JSON.stringify({ platform: 0, org: 0, device: 0, root: 0 }),
+        provider: "@local",
+        provider_version: "test",
+        instance_generation: "g",
+        deadline: new Date(Date.now() + 30000),
+        retain_until: new Date(Date.now() + 60000),
+        execution_id: f.claim.executionId,
+        state: "dispatching",
+      })
+      .execute();
+    const dispatch = () => service.forExecution(operationId, f.deviceId, method, scope, input);
+    expect(await dispatch()).toEqual(original);
+    await f.db
+      .updateTable("sandbox_operation_intents")
+      .set({ state: "started-or-unknown" })
+      .where("operation_id", "=", operationId)
+      .execute();
+    expect(await dispatch()).toEqual(original);
+    await expect(
+      service.forExecution(operationId, f.deviceId, method, scope, {
+        ...input,
+        command: "different",
+      }),
+    ).rejects.toThrow("exact admitted execution");
+    await expect(
+      service.forExecution(
+        operationId,
+        f.deviceId,
+        method,
+        { ...scope, profileRevision: 2 },
+        input,
+      ),
+    ).rejects.toThrow("exact admitted method and scope");
+    await f.db
+      .updateTable("sandbox_operation_intents")
+      .set({
+        execution_grants: JSON.stringify({
+          version: 1,
+          grants: { ...original, source: { ...original.source, id: "forged" } },
+        }),
+      })
+      .where("operation_id", "=", operationId)
+      .execute();
+    await expect(dispatch()).rejects.toThrow("exact admitted execution");
+    const noGrant = { version: 1, grants: null };
+    await f.db
+      .updateTable("sandbox_operation_intents")
+      .set({
+        execution_grants: JSON.stringify(noGrant),
+        granted_hosts: "[]",
+        admission_hash: permissionScopeHash({
+          method,
+          inputDigest,
+          scope,
+          executionGrants: noGrant,
+        }),
+      })
+      .where("operation_id", "=", operationId)
+      .execute();
+    expect(await dispatch()).toBeUndefined();
+    await expect(
+      f.db
+        .updateTable("sandbox_operation_intents")
+        .set({ method: "stat" })
+        .where("operation_id", "=", operationId)
+        .execute(),
+    ).rejects.toThrow("execution_grants_check");
+    await f.db
+      .updateTable("sandbox_operation_intents")
+      .set({ execution_grants: null })
+      .where("operation_id", "=", operationId)
+      .execute();
+    await expect(dispatch()).rejects.toThrow("provenance is unavailable");
+    await f.db
+      .updateTable("sandbox_operation_intents")
+      .set({ state: "revoked" })
+      .where("operation_id", "=", operationId)
+      .execute();
+    await expect(dispatch()).rejects.toThrow("no current admitted execution identity");
+  },
+);

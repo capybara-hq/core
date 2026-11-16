@@ -10,7 +10,7 @@ export default async function AgentsPage({
   searchParams,
 }: {
   searchParams?: Promise<{ tab?: string | string[] }>;
-} = {}) {
+}) {
   const raw = (await searchParams)?.tab;
   return <AgentsView tab={parseAgentsTab(Array.isArray(raw) ? raw[0] : raw)} />;
 }
