@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import {
   type DeviceHelloV3,
+  DeviceProtocolError,
   isSandboxScopeDeniedError,
   type KernelReadyV3,
   parseDeviceFrameV3,
@@ -19,7 +20,7 @@ import { LockService } from "../../src/infra/lock/lock.service.js";
 import { deviceLeaseKey, deviceReqKey } from "../../src/local-devices/keys.js";
 import { LocalDeviceGateway } from "../../src/local-devices/local-device-gateway.js";
 import { LocalDeviceProvider } from "../../src/local-devices/local-device-provider.js";
-import { LocalDeviceRelay } from "../../src/local-devices/relay.js";
+import { DeviceRequestNotSentError, LocalDeviceRelay } from "../../src/local-devices/relay.js";
 import { type DeviceTargetState, DeviceTargets } from "../../src/local-devices/targets.js";
 import { createLogger } from "../../src/log.js";
 
@@ -408,6 +409,11 @@ it("a reconnect changes the exact capacity and fences requests of the old connec
   const status = await stale("backgroundStatus");
   expect(status.message).toContain("connection changed");
   expect(status.message).not.toContain("offset");
+  // only operations held under an operation identity get the typed not-sent refusal
+  for (const e of [read, status]) {
+    expect(e).toBeInstanceOf(DeviceProtocolError);
+    expect(e).not.toBeInstanceOf(DeviceRequestNotSentError);
+  }
   expect(await f.read(0, 65536)).toMatchObject({ nextOffset: 768 });
 });
 it("aborting an in-flight read cancels only that request and the task keeps running", async () => {
