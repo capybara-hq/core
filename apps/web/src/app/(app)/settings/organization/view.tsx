@@ -19,6 +19,7 @@ import { useState } from "react";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { ExtensionSlot } from "../../../../components/extension-ui/ExtensionSlot";
 import { NoAccess } from "../../../../components/NoAccess";
+import { OrgNetworkSection } from "../../../../components/OrgNetworkAllowances";
 import { CompactionSection } from "../../../../components/settings/CompactionSection";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
@@ -331,6 +332,7 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
           setDraft((d) => ({ ...d, compaction: { ...(d.compaction ?? {}), ...p } }))
         }
       />
+      {manage ? <OrgNetworkSection orgId={orgId} /> : null}
       {manage ? <ExtensionSlot slot="org.settings.section" args={{ orgId }} /> : null}
       {myRole(me) === "owner" ? <DeleteOrg orgId={orgId} /> : null}
     </SettingsPage>

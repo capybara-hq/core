@@ -92,6 +92,7 @@ const ROUTES: Routes = {
       effectiveNetwork: { mode: "open", hosts: [] },
     }),
   [`GET ${O}/ui/contributions`]: () => json(200, { items: [] }),
+  [`GET ${O}/network-allowances`]: () => json(200, { allowances: [] }),
   [`GET ${O}/members`]: () => json(200, { members: MEMBERS }),
   [`GET ${O}/invitations`]: () => json(200, { invitations: [INVITATION] }),
   [`GET ${O}/model-purposes`]: () => json(200, { purposes: [] }),

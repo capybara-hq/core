@@ -29,6 +29,7 @@ import {
   listPendingPlugins,
 } from "../catalog";
 import { getAdminModels, listAdminPurposes } from "../models";
+import { listAdminOrgNetworkAllowances } from "../org-network";
 import { defineQuery } from "./define";
 import { keys } from "./keys";
 
@@ -338,5 +339,13 @@ export const marketplaceEntriesQuery = (sourceId: string, q: string) =>
         ...(sourceId !== "" && { sourceId }),
         ...(q !== "" && { q }),
       }),
+    freshness: "deployment",
+  });
+
+/** One org's internal endpoints for the super admin (the 内部端点 Sheet on `/admin/orgs`). */
+export const adminOrgNetworkAllowancesQuery = (orgId: string) =>
+  defineQuery({
+    key: d().adminOrgNetworkAllowances(orgId),
+    fn: () => listAdminOrgNetworkAllowances(orgId),
     freshness: "deployment",
   });

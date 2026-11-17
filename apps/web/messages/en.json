@@ -2605,6 +2605,24 @@
       "label": "Default time zone"
     }
   },
+  "orgNetwork": {
+    "title": "Internal endpoints",
+    "sectionHelp": "Internal hosts a super admin has allowed this organization's extension requests to reach. Only a super admin can change the list.",
+    "sheetTitle": "Internal endpoints of {name}",
+    "help": "Extension requests may not reach private or internal addresses. List the internal hosts this organization's extensions are allowed to call. Loopback and cloud metadata addresses are always refused.",
+    "field": "Internal endpoint",
+    "fieldHelp": "A hostname (mcp.internal), a wildcard (*.corp.example), an origin (http://mcp.internal:8080) or an address range (10.1.0.0/16).",
+    "add": "Allow",
+    "added": "Added {time}",
+    "added_toast": "Internal endpoint allowed",
+    "removed": "Internal endpoint removed",
+    "remove": "Remove",
+    "removeLabel": "Remove {entry}",
+    "listLabel": "Internal endpoints",
+    "empty": "No internal endpoints are allowed.",
+    "loadFailed": "The internal endpoints could not be read.",
+    "retry": "Retry"
+  },
   "compaction": {
     "title": "Conversation compaction",
     "description": "Long conversations are summarized before they fill the model's context window, so a long-running conversation keeps going with the recent turns in full.",
@@ -4277,7 +4295,8 @@
         "emptyDefault": "Empty fields use the deployment default.",
         "placeholder": "Deployment default {value}",
         "unlimited": "No limit"
-      }
+      },
+      "internalEndpoints": "Internal endpoints"
     },
     "settings": {
       "title": "Deployment settings",

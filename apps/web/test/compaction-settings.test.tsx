@@ -67,6 +67,7 @@ const orgRoutes = (settings: Record<string, unknown>) =>
         effectiveNetwork: { mode: "open", hosts: [] },
       }),
     "GET /api/v1/orgs/o1/ui/contributions": () => json(200, { items: [] }),
+    "GET /api/v1/orgs/o1/network-allowances": () => json(200, { allowances: [] }),
     "PATCH /api/v1/orgs/o1/settings": (c: Call) =>
       json(200, {
         settings: bodyOf(c),

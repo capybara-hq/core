@@ -148,6 +148,7 @@ describe("删除组织 (组织设置 · 通用)", () => {
     stubApi({
       [`GET ${O}/settings`]: () => json(200, { settings: { toolSearch: "on", locale: "en" } }),
       [`GET ${O}/ui/contributions`]: () => json(200, { items: [] }),
+      [`GET ${O}/network-allowances`]: () => json(200, { allowances: [] }),
       [`DELETE ${O}`]: () => noContent(),
     });
   for (const role of ["member", "admin", "owner"] as const) {
@@ -206,6 +207,7 @@ describe("删除组织 errors", () => {
     stubApi({
       [`GET ${O}/settings`]: () => json(200, { settings: { toolSearch: "on", locale: "en" } }),
       [`GET ${O}/ui/contributions`]: () => json(200, { items: [] }),
+      [`GET ${O}/network-allowances`]: () => json(200, { allowances: [] }),
       [`DELETE ${O}`]: () =>
         json(403, { error: { code: "forbidden", message: "Insufficient organization role" } }),
     });
@@ -268,6 +270,7 @@ describe("服务令牌", () => {
     stubApi({
       [`GET ${O}/settings`]: () => json(200, { settings: { toolSearch: "on", locale: "en" } }),
       [`GET ${O}/ui/contributions`]: () => json(200, { items: [] }),
+      [`GET ${O}/network-allowances`]: () => json(200, { allowances: [] }),
     });
     await renderRouteWithCache("/settings/organization", lastStubRoutes(), {
       locale: "zh",
