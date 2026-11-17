@@ -110,6 +110,8 @@ export class SandboxOperationAuthority {
     signal.throwIfAborted();
     await this.locks.acquire({ orgId: ctx.orgId, deviceId: ctx.deviceId }, { kind: "admit" });
     await this.publication.assertCurrent();
+    await this.facts.assertCloudReconciled(ctx.orgId, ctx.deviceId);
+    await this.facts.assertOwnerReportUsable(ctx.orgId, ctx.deviceId);
     const member = await this.db
       .selectFrom("memberships as m")
       .innerJoin("accounts as a", "a.id", "m.account_id")
@@ -136,7 +138,7 @@ export class SandboxOperationAuthority {
       accountId: ctx.accountId,
       admitBeforeMs: Date.now() + 30000,
       ceilingRevision: permissionScopeHash(vector),
-      readRoots: scope.mode === "auto" ? ["/"] : [scope.workspace],
+      readRoots: scope.reach === "os-user" ? ["/"] : [scope.workspace],
       tag: operationId,
     });
   }
@@ -260,7 +262,7 @@ export class SandboxOperationAuthority {
     if (grant) {
       normalizePermissionExpansion(grant.expansion, f);
       if (
-        (!f.fullAccessCeiling &&
+        (!f.broadProjectReach &&
           (grant.expansion.readDirectories.length || grant.expansion.writeDirectories.length)) ||
         grant.expansion.hosts.some(
           (host) =>
@@ -354,6 +356,8 @@ export class SandboxOperationAuthority {
     };
     await this.locks.acquire(subject, { kind: "admit" });
     await this.publication.assertCurrent();
+    await this.facts.assertCloudReconciled(ctx.orgId, ctx.deviceId);
+    await this.facts.assertOwnerReportUsable(ctx.orgId, ctx.deviceId);
     const root = await this.profiles.readOwnedRoot(
       ctx.orgId,
       ctx.holderConversationId,
@@ -448,6 +452,7 @@ export class SandboxOperationAuthority {
       baseWriteDirectories: [workingRoot],
       baseHosts: allowedHosts,
       fullAccessCeiling: view.fullAccessCeiling,
+      broadProjectReach: view.broadProjectReach,
       fullConsent:
         view.profile === "full-access" && view.consentScope?.scopeRevision === view.scopeRevision,
       unattended,

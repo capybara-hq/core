@@ -10,7 +10,7 @@ import { SwitchingExecutor } from "../src/exec/switch.js";
 import { DeviceOpError, type Executor } from "../src/exec/types.js";
 import { PolicyStore } from "../src/policy-store.js";
 import { type OpContext, runOp, serveOp } from "../src/server-ops.js";
-import { DEFAULT_POLICY, type SandboxMode, writePolicy } from "../src/state.js";
+import { DEFAULT_POLICY, ownerCeilingOfMode, type SandboxMode, writePolicy } from "../src/state.js";
 import { execArgs, FakeExecutor } from "./fake-kernel.js";
 
 /**
@@ -58,7 +58,8 @@ let ex: SwitchingExecutor;
 let store: PolicyStore;
 const signal = new AbortController().signal;
 
-const setMode = (mode: SandboxMode) => writePolicy(state, { ...DEFAULT_POLICY, mode });
+const setMode = (mode: SandboxMode) =>
+  writePolicy(state, { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode(mode) });
 const req = (op: KernelReq["op"], args: unknown): KernelReq => ({
   type: "req",
   id: "q",

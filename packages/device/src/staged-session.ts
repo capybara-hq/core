@@ -6,9 +6,10 @@ import {
   type SandboxHandle,
 } from "@capybara-hq/plugin-sdk";
 import type WebSocket from "ws";
+import type { InstanceBinder } from "./exec/instance-binding.js";
 import type { MacOperationBackend } from "./exec/mac-operation-backend.js";
 import { DrainPendingError } from "./exec/operation-supervisor.js";
-import { serveOperationV3 } from "./server-ops.js";
+import { type StagedOwnerPolicy, serveOperationV3 } from "./server-ops.js";
 import type { Credential } from "./state.js";
 
 /**
@@ -123,6 +124,13 @@ export function serveStagedSession(
   backend: MacOperationBackend,
   handle: SandboxHandle,
   state: StagedSessionState = createStagedSessionState({ graceMs: 0 }),
+  /**
+   * The post-commit binder (B4). With one, operations go to the generation it bound (none while
+   * unbound) and `bindInstance` is served; without one, the fixed backend serves a bound hello.
+   */
+  binder?: InstanceBinder,
+  /** Serves `policy` / `policyStatus` with owner reports (B2); without it they are unsupported. */
+  owner?: StagedOwnerPolicy,
 ): { ready: () => KernelReadyV3 | undefined } {
   const hello: DeviceHelloV3 = {
     ...report,
@@ -199,7 +207,16 @@ export function serveStagedSession(
       }
       if (frame.type !== "req") throw new Error("Expected request or cancellation");
       // per-request problems get a typed answer; the socket and its other requests carry on
-      if (hello.instanceGeneration === null) {
+      const target =
+        // lifecycle and owner policy controls are served while unbound too
+        frame.op === "bindInstance" || frame.op === "policy" || frame.op === "policyStatus"
+          ? { backend, handle }
+          : binder
+            ? binder.current()
+            : hello.instanceGeneration === null
+              ? undefined
+              : { backend, handle };
+      if (!target) {
         refuse(
           frame.id,
           "unsupported",
@@ -220,7 +237,7 @@ export function serveStagedSession(
         () => ctl.abort(new Error("Request deadline elapsed; retry the request")),
         frame.deadlineMs,
       );
-      const done = serveOperationV3(backend, handle, frame, ctl.signal)
+      const done = serveOperationV3(target.backend, target.handle, frame, ctl.signal, binder, owner)
         .then((res) => {
           if (ctl.signal.aborted) return;
           deliver(res);

@@ -420,6 +420,7 @@ describe("project knowledge at run start", () => {
         scopeFor: async () => ({
           source: "local" as const,
           mode: "auto" as const,
+          reach: "os-user" as const,
           workspace: "/Users/u/capybara-device/d/workspace",
           home: "/Users/u",
           supported: true,
@@ -613,7 +614,7 @@ describe("project knowledge at run start", () => {
       .executeTakeFirstOrThrow();
     await db
       .updateTable("orgs")
-      .set({ settings: JSON.stringify({ ...(settings as object), autoMode: "off" }) })
+      .set({ settings: JSON.stringify({ ...(settings as object), fullAccess: "off" }) })
       .where("id", "=", orgId)
       .execute();
     let roots: ProjectRootEvent[];

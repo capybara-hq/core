@@ -175,6 +175,24 @@ export type BackgroundReadOutputResultV3 = {
 };
 
 // @public
+export interface BindInstanceRequestV3 {
+    bindingId: string;
+    expectedPreviousGeneration: string | null;
+    instanceGeneration: string;
+    instanceId: string;
+}
+
+// @public
+export interface BindInstanceResultV3 {
+    bindingId: string;
+    instanceGeneration: string;
+    instanceId: string;
+    ownerCeiling: DeviceOwnerCeilingV3;
+    permissionSupport: SandboxPermissionSupport;
+    runtimeIdentity: DeviceRuntimeIdentityV3;
+}
+
+// @public
 export const BOOTSTRAP_MANIFEST_SCHEMA_VERSION = 1;
 
 // @public
@@ -823,10 +841,7 @@ export type DeviceFeature = "networkReport" | "policyOp" | "policyOpId" | "mode"
 export type DeviceFrame = DeviceHello | DeviceRes | DevicePolicyChanged | KernelReq | KernelCancel;
 
 // @public
-export type DeviceFrameV3 = DeviceHelloV3 | KernelReadyV3 | KernelRequestV3 | KernelCancel | DeviceResponseV3 | {
-    type: "policy";
-    policy?: unknown;
-};
+export type DeviceFrameV3 = DeviceHelloV3 | KernelReadyV3 | KernelRequestV3 | KernelCancel | DeviceResponseV3 | DevicePolicyChangedV3;
 
 // @public
 export interface DeviceHello {
@@ -850,12 +865,7 @@ export interface DeviceHelloV3 extends DeviceHello {
     ownerCeiling: DeviceOwnerCeilingV3;
     permissionSupport: SandboxPermissionSupport;
     protocol: 3;
-    runtimeIdentity?: {
-        runtimeHash: string;
-        helperHash: string;
-        imageFingerprint: string;
-        instanceGeneration: string;
-    };
+    runtimeIdentity?: DeviceRuntimeIdentityV3;
     transport: {
         maxFrameBytes: number;
     };
@@ -898,7 +908,7 @@ export interface DeviceLocalPolicySummary {
 export type DeviceOp = "create" | "exec" | "readFile" | "writeFile" | "stat" | "killTagged" | "killAll" | "stop" | "policy" | "policyStatus" | "list" | "scan";
 
 // @public
-export type DeviceOperationV3 = Exclude<DeviceOp, "killTagged" | "killAll"> | "prepareReadFile" | "prepareWriteFile" | "prepareStat" | "browseStat" | "browseList" | "browseScan" | "backgroundStart" | "backgroundStatus" | "backgroundTail" | "backgroundReadOutput" | "backgroundStop" | "revokeOperation";
+export type DeviceOperationV3 = Exclude<DeviceOp, "killTagged" | "killAll"> | "prepareReadFile" | "prepareWriteFile" | "prepareStat" | "browseStat" | "browseList" | "browseScan" | "backgroundStart" | "backgroundStatus" | "backgroundTail" | "backgroundReadOutput" | "backgroundStop" | "revokeOperation" | "bindInstance";
 
 // @public
 export interface DeviceOpResults {
@@ -914,6 +924,12 @@ export interface DeviceOpResults {
     stat: DeviceStatResult;
     stop: null;
     writeFile: DeviceWriteFileResult;
+}
+
+// @public
+export interface DeviceOwnerCeilingNarrowingV3 {
+    readonly fullAccess?: false;
+    readonly restrictedProjectReach?: "workspace";
 }
 
 // @public
@@ -941,7 +957,19 @@ export interface DevicePolicyArgs {
 }
 
 // @public
+export interface DevicePolicyArgsV3 extends DevicePolicyArgs {
+    ownerCeiling?: DeviceOwnerCeilingNarrowingV3;
+}
+
+// @public
 export interface DevicePolicyChanged {
+    policy?: DeviceLocalPolicySummary;
+    type: "policy";
+}
+
+// @public
+export interface DevicePolicyChangedV3 {
+    ownerCeiling: DeviceOwnerCeilingV3;
     policy?: DeviceLocalPolicySummary;
     type: "policy";
 }
@@ -961,6 +989,12 @@ export interface DevicePolicyResult {
 }
 
 // @public
+export interface DevicePolicyResultV3 {
+    ownerCeiling: DeviceOwnerCeilingV3;
+    policy: DeviceLocalPolicySummary;
+}
+
+// @public
 export interface DevicePolicyStatus {
     message?: string;
     outcome: DevicePolicyOpOutcome | "unknown";
@@ -970,6 +1004,11 @@ export interface DevicePolicyStatus {
 // @public
 export interface DevicePolicyStatusArgs {
     opId: string;
+}
+
+// @public
+export interface DevicePolicyStatusV3 extends DevicePolicyStatus {
+    ownerCeiling?: DeviceOwnerCeilingV3;
 }
 
 // @public
@@ -1027,6 +1066,14 @@ export type DeviceResponseV3 = Exclude<DeviceRes, {
         message: string;
     };
 };
+
+// @public
+export interface DeviceRuntimeIdentityV3 {
+    helperHash: string;
+    imageFingerprint: string;
+    instanceGeneration: string;
+    runtimeHash: string;
+}
 
 // @public
 export interface DeviceScanArgs {
@@ -2493,10 +2540,13 @@ export function parseMarketplaceManifest(json: unknown, opts?: MarketplaceParseO
 };
 
 // @public
-export function parseOperationResultV3(op: DeviceOperationV3, result: unknown, request?: BackgroundReadOutputRequestV3): unknown;
+export function parseOperationResultV3(op: DeviceOperationV3, result: unknown, request?: BackgroundReadOutputRequestV3 | BindInstanceRequestV3): unknown;
 
 // @public
 export function parseOpResult<Op extends DeviceOp>(op: Op, result: unknown): DeviceOpResults[Op];
+
+// @public
+export function parseOwnerCeilingReportV3(value: unknown): DeviceOwnerCeilingV3;
 
 // @public
 export function parsePluginManifest(json: unknown): PluginManifest | {

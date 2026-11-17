@@ -11,10 +11,11 @@ import {
   type OrgSettings,
   OrgSettingsPatchSchema,
   type OrgSettingsService,
+  orgSettingsView,
   parseOrgSettings,
 } from "../../src/orgs/settings.service.js";
 import { orgAllowedDomains } from "../../src/sandbox/modes.js";
-import { DEVICES_AUTO_MODE_SETTING } from "../../src/sandbox/platform-auto-mode.js";
+import { DEVICES_FULL_ACCESS_SETTING } from "../../src/sandbox/platform-full-access.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor, orgSettingsFor, orgsFor } from "../helpers/identity.js";
 
@@ -34,34 +35,34 @@ const LIMITS = {
 
 /** The deployment side of {@link orgAllowedDomains}: the org's list, else this one. */
 const DEPLOYMENT = {
-  autoMode: "allowed" as const,
+  fullAccess: "allowed" as const,
   limits: { egress: LIMITS.egress, allowHosts: LIMITS.allowHosts, orgHosts: LIMITS.orgHosts },
 };
 
-/** A config holder: the startup config's `devices.autoMode` (unset here unless the test says so). */
+/** A config holder: the startup config's `devices.fullAccess` (unset here unless the test says so). */
 const settingsWith = (
   opts: {
     egress?: "none" | "allowlist";
     allowHosts?: string[];
     orgHosts?: "extend" | "within";
-    autoMode?: "allowed" | "off";
+    fullAccess?: "allowed" | "off";
   } = {},
 ): OrgSettingsService => {
-  const { autoMode: _a, ...limits } = opts;
+  const { fullAccess: _a, ...limits } = opts;
   const cfg = {
     sandbox: { limits: { ...LIMITS, ...limits } },
-    devices: { autoMode: opts.autoMode },
+    devices: { fullAccess: opts.fullAccess },
     attribution: {},
     http: { publicUrl: undefined },
   };
   return orgSettingsFor(db, () => cfg);
 };
 
-/** The platform's stored auto-mode switch (as the admin console writes it). */
+/** The platform's stored Full switch (as the admin console writes it). */
 const storePlatformMode = (mode: unknown) =>
   db
     .insertInto("deployment_settings")
-    .values({ key: DEVICES_AUTO_MODE_SETTING, value: JSON.stringify(mode) })
+    .values({ key: DEVICES_FULL_ACCESS_SETTING, value: JSON.stringify(mode) })
     .execute();
 
 const codeOf = async (p: Promise<unknown>) => {
@@ -103,63 +104,104 @@ beforeEach(async () => {
   orgId = org.id;
 });
 
-describe("org autoMode", () => {
+describe("org fullAccess (B1)", () => {
   it("absent follows the platform; a person may set it; null clears it", async () => {
     const s = settingsWith();
-    expect((await s.get(orgId)).autoMode).toBeUndefined();
-    expect(await s.update(orgId, { autoMode: "allowed" }, accountId)).toMatchObject({
-      autoMode: "allowed",
+    expect((await s.get(orgId)).fullAccess).toBeUndefined();
+    expect(await s.update(orgId, { fullAccess: "allowed" }, accountId)).toMatchObject({
+      fullAccess: "allowed",
     });
-    expect((await s.get(orgId)).autoMode).toBe("allowed");
-    expect(await s.update(orgId, { autoMode: null }, accountId)).not.toHaveProperty("autoMode");
-    expect(await s.update(orgId, { autoMode: "off" }, accountId)).toMatchObject({
-      autoMode: "off",
+    expect((await s.get(orgId)).fullAccess).toBe("allowed");
+    expect(await s.update(orgId, { fullAccess: null }, accountId)).not.toHaveProperty("fullAccess");
+    expect(await s.update(orgId, { fullAccess: "off" }, accountId)).toMatchObject({
+      fullAccess: "off",
     });
   });
 
-  it("allowed while the platform is off is refused for a person too", async () => {
-    await storePlatformMode({ mode: "off" });
+  it("the old name autoMode is still accepted and stored as fullAccess, never with it", async () => {
     const s = settingsWith();
+    expect(await s.update(orgId, { autoMode: "off" }, accountId)).toMatchObject({
+      fullAccess: "off",
+    });
+    const stored = async () =>
+      (
+        await db
+          .selectFrom("orgs")
+          .select("settings")
+          .where("id", "=", orgId)
+          .executeTakeFirstOrThrow()
+      ).settings as Record<string, unknown>;
+    expect(await stored()).toMatchObject({ fullAccess: "off" });
+    expect(await stored()).not.toHaveProperty("autoMode");
+    expect(await s.update(orgId, { autoMode: null }, accountId)).not.toHaveProperty("fullAccess");
+    expect(OrgSettingsPatchSchema.safeParse({ autoMode: "off", fullAccess: "off" }).success).toBe(
+      false,
+    );
+    // the answer mirrors fullAccess under the old name until the old readers go
+    expect(orgSettingsView(parseOrgSettings({ fullAccess: "off" }))).toMatchObject({
+      fullAccess: "off",
+      autoMode: "off",
+    });
+    expect(orgSettingsView(parseOrgSettings({}))).not.toHaveProperty("autoMode");
+  });
+
+  it("allowed while the platform is off is refused for a person too", async () => {
+    await storePlatformMode({ permission: "off" });
+    const s = settingsWith();
+    expect(await codeOf(s.update(orgId, { fullAccess: "allowed" }, accountId))).toBe(
+      "org.auto_mode_not_allowed",
+    );
     expect(await codeOf(s.update(orgId, { autoMode: "allowed" }, accountId))).toBe(
       "org.auto_mode_not_allowed",
     );
     // off is the only value left, and clearing it is fine (it follows the platform's off)
-    expect(await s.update(orgId, { autoMode: "off" }, accountId)).toMatchObject({
-      autoMode: "off",
+    expect(await s.update(orgId, { fullAccess: "off" }, accountId)).toMatchObject({
+      fullAccess: "off",
     });
-    expect(await s.update(orgId, { autoMode: null }, accountId)).not.toHaveProperty("autoMode");
+    expect(await s.update(orgId, { fullAccess: null }, accountId)).not.toHaveProperty("fullAccess");
   });
 
-  it("an invalid stored platform mode reads as off (fail closed)", async () => {
-    await storePlatformMode({ mode: "maybe" });
+  it("a configured platform value wins over the stored one", async () => {
+    await storePlatformMode({ permission: "allowed" });
+    const s = settingsWith({ fullAccess: "off" });
+    expect((await s.deployment()).fullAccess).toEqual({ permission: "off", source: "file" });
+    expect(await codeOf(s.update(orgId, { fullAccess: "allowed" }, accountId))).toBe(
+      "org.auto_mode_not_allowed",
+    );
+  });
+
+  it("an invalid stored platform value reads as off (fail closed)", async () => {
+    await storePlatformMode({ permission: "maybe" });
     const s = settingsWith();
+    expect((await s.deployment()).fullAccess).toEqual({ permission: "off", source: "db" });
     expect((await s.deployment()).autoMode).toEqual({ mode: "off", source: "db" });
-    expect(await codeOf(s.update(orgId, { autoMode: "allowed" }, accountId))).toBe(
+    expect(await codeOf(s.update(orgId, { fullAccess: "allowed" }, accountId))).toBe(
       "org.auto_mode_not_allowed",
     );
   });
 
   it("a stored org value this version cannot read reads as off, never allowed", () => {
-    expect(parseOrgSettings({ autoMode: "maybe" }).autoMode).toBe("off");
-    expect(parseOrgSettings({ autoMode: null }).autoMode).toBe("off");
-    expect(parseOrgSettings({}).autoMode).toBeUndefined();
+    expect(parseOrgSettings({ fullAccess: "maybe" }).fullAccess).toBe("off");
+    expect(parseOrgSettings({ fullAccess: null }).fullAccess).toBe("off");
+    expect(parseOrgSettings({}).fullAccess).toBeUndefined();
+    // until 8.6 the old stored key is read too and the narrower wins (fail closed)
+    expect(parseOrgSettings({ autoMode: "allowed" }).fullAccess).toBeUndefined();
+    expect(parseOrgSettings({ autoMode: "off", fullAccess: "allowed" }).fullAccess).toBe("off");
+    expect(parseOrgSettings({ autoMode: "maybe" }).fullAccess).toBe("off");
   });
 
-  it("the Platform tool / an API token may turn auto mode off, never on", async () => {
+  it("the Platform tool / an API token may turn Full off, never allow it", async () => {
     const s = settingsWith();
     expect(
       await codeOf(
-        s.update(orgId, { autoMode: "off" }, accountId, "tok", undefined, { onlyNarrows: true }),
+        s.update(orgId, { fullAccess: "off" }, accountId, "tok", undefined, { onlyNarrows: true }),
       ),
     ).toBeUndefined();
-    expect(
-      await codeOf(
-        s.update(orgId, { autoMode: "allowed" }, accountId, "tok", undefined, {
-          onlyNarrows: true,
-        }),
-      ),
-    ).toBe("org.auto_mode_not_allowed");
-    expect((await s.get(orgId)).autoMode).toBe("off");
+    for (const patch of [{ fullAccess: "allowed" as const }, { autoMode: "allowed" as const }])
+      expect(
+        await codeOf(s.update(orgId, patch, accountId, "tok", undefined, { onlyNarrows: true })),
+      ).toBe("org.auto_mode_not_allowed");
+    expect((await s.get(orgId)).fullAccess).toBe("off");
   });
 });
 
@@ -386,10 +428,11 @@ describe("org cloudNetwork", () => {
     });
   });
 
-  it("deployment() carries the platform's auto mode and the default cloud network", async () => {
-    await storePlatformMode({ mode: "off" });
+  it("deployment() carries the platform's Full switch and the default cloud network", async () => {
+    await storePlatformMode({ permission: "off" });
     const s = settingsWith();
     expect(await s.deployment()).toEqual({
+      fullAccess: { permission: "off", source: "db" },
       autoMode: { mode: "off", source: "db" },
       cloudNetwork: { allowHosts: LIMITS.allowHosts, orgHosts: "extend", off: false },
       attribution: {
@@ -426,13 +469,13 @@ describe("org settings audit", () => {
       .where("id", "=", orgId)
       .execute();
     const s = settingsWith();
-    const saved: OrgSettings = await s.update(orgId, { autoMode: "off" }, accountId);
-    expect(saved).toMatchObject({ autoMode: "off" });
+    const saved: OrgSettings = await s.update(orgId, { fullAccess: "off" }, accountId);
+    expect(saved).toMatchObject({ fullAccess: "off" });
     const row = await db
       .selectFrom("orgs")
       .select("settings")
       .where("id", "=", orgId)
       .executeTakeFirstOrThrow();
-    expect(row.settings).toMatchObject({ autoMode: "off", futureKey: { enabled: true } });
+    expect(row.settings).toMatchObject({ fullAccess: "off", futureKey: { enabled: true } });
   });
 });

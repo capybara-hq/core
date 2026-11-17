@@ -14,8 +14,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { PolicyStore } from "../src/policy-store.js";
 import {
   DEFAULT_POLICY,
+  ownerCeilingOfMode,
   type Policy,
   policyLockPath,
+  policyMode,
   policyPath,
   readPolicy,
   withPolicyLock,
@@ -41,7 +43,7 @@ describe("PolicyStore", () => {
     writeFileSync(policyPath(dir), JSON.stringify({ tier: "open" }));
     const store = new PolicyStore(dir);
     expect(store.legacy).toBe(true);
-    expect(store.current().mode).toBe("auto");
+    expect(policyMode(store.current())).toBe("auto");
     const first = store.current();
     expect(store.current()).toBe(first);
     writePolicy(dir, withDomains(["a.com"]));
@@ -86,30 +88,36 @@ describe("PolicyStore", () => {
   });
 
   it("an invalid mode keeps the last good policy: a broken file never turns auto on", () => {
-    writePolicy(dir, { ...withDomains(["a.com"]), mode: "sandbox" });
+    writePolicy(dir, { ...withDomains(["a.com"]), ownerCeiling: ownerCeilingOfMode("sandbox") });
     const errors: string[] = [];
     const store = new PolicyStore(dir, { err: (l) => errors.push(l) });
-    expect(store.current().mode).toBe("sandbox");
+    expect(policyMode(store.current())).toBe("sandbox");
     writeFileSync(policyPath(dir), JSON.stringify({ mode: "maybe" }));
-    expect(store.current()).toMatchObject({ mode: "sandbox", allowedDomains: ["a.com"] });
+    expect(store.current()).toMatchObject({
+      ownerCeiling: ownerCeilingOfMode("sandbox"),
+      allowedDomains: ["a.com"],
+    });
     expect(errors[0]).toMatch(/mode must be "auto" or "sandbox"/);
   });
 
   it("an invalid file keeps the mode the last good policy had", () => {
-    writePolicy(dir, { ...withDomains(["a.com"]), mode: "auto" });
+    writePolicy(dir, { ...withDomains(["a.com"]), ownerCeiling: ownerCeilingOfMode("auto") });
     const errors: string[] = [];
     const store = new PolicyStore(dir, { err: (l) => errors.push(l) });
-    expect(store.current().mode).toBe("auto");
+    expect(policyMode(store.current())).toBe("auto");
     writeFileSync(policyPath(dir), "{nope");
     const kept = store.current();
-    expect(kept).toMatchObject({ mode: "auto", allowedDomains: ["a.com"] });
+    expect(kept).toMatchObject({
+      ownerCeiling: ownerCeilingOfMode("auto"),
+      allowedDomains: ["a.com"],
+    });
     // the same object until the file changes (readers tell reloads by identity)
     expect(store.current()).toBe(kept);
     expect(errors).toHaveLength(1);
     expect(errors[0]).toMatch(/keeping the last valid policy/);
     // a fixed file applies as written
-    writePolicy(dir, { ...withDomains(["a.com"]), mode: "sandbox" });
-    expect(store.current().mode).toBe("sandbox");
+    writePolicy(dir, { ...withDomains(["a.com"]), ownerCeiling: ownerCeilingOfMode("sandbox") });
+    expect(policyMode(store.current())).toBe("sandbox");
   });
 
   it("a bad version reported once is reported again when it comes back later", () => {

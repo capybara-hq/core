@@ -1,0 +1,271 @@
+import { Inject, Injectable } from "@nestjs/common";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
+import { readOrgSettings } from "../orgs/settings.service.js";
+import { SandboxLeases } from "./leases.js";
+import {
+  type AppliedLimits,
+  cloudChosenMode,
+  cloudSnapshotOf,
+  coversHost,
+  type DeviceNetwork,
+  effectiveDevicePolicy,
+  normalizeNetwork,
+  readDeploymentDevicePolicy,
+  readInstanceLimits,
+  sameAppliedExactly,
+} from "./modes.js";
+import { isExecutionMethod } from "./operation-authority-types.js";
+import { PermissionAuthorityLock } from "./permission-authority-lock.js";
+import { needsFullCeiling, PermissionCeilingWrites } from "./permission-ceiling-writes.js";
+import { PermissionConfigPublication } from "./permission-config-publication.js";
+import { PermissionFacts } from "./permission-facts.js";
+
+/**
+ * What a snapshot or reconciliation found: `unprobed` (no instance or file system yet: the next
+ * create applies the desired limits exactly), `bound` (the recorded applied limits are exactly
+ * the desired ones), `reconcile-required` (unknown, stale, wider or pending: no admission until a
+ * lifecycle action establishes them; `action` names it), `existing` (already snapshotted, kept),
+ * `skipped` (not a live cloud device).
+ */
+export type CloudSnapshotState =
+  | "unprobed"
+  | "bound"
+  | "reconcile-required"
+  | "existing"
+  | "skipped";
+export interface CloudSnapshotOutcome {
+  state: CloudSnapshotState;
+  /** The lifecycle action that establishes the exact limits when they are required. */
+  action?: "reset-files";
+}
+
+/** How long the writer waits for the device's exclusive lifecycle lease (running commands). */
+const LEASE_WAIT_MS = 120_000;
+
+/**
+ * The B1 cloud per-device authority writer: replaces the old daily mode of a cloud device by an
+ * explicit owner Full ceiling and outer network, computed from the device's OLD effective
+ * authority (platform switch with its configured / stored precedence, the org's switch and cloud
+ * network, the device's narrowing switch, `egress: none`), narrowed by what its instance is known
+ * to run, never widened. Each device: the exclusive lifecycle lease outside the transaction, then
+ * the device authority write lock (platform -> org -> device order) before the row locks. Written
+ * once: a snapshot is never recomputed (a later false stays explicit after a widening). A device
+ * whose applied limits are not exactly the desired ones keeps a durable marker that blocks
+ * admission ({@link PermissionFacts.assertCloudReconciled}) until {@link reconcile} finds them
+ * established; the only action that establishes them without a provider-specific update is a
+ * file reset, after which the next create applies them exactly.
+ */
+@Injectable()
+export class CloudPermissionSnapshots {
+  constructor(
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+    @Inject(SandboxLeases) private readonly leases: SandboxLeases,
+    @Inject(PermissionAuthorityLock) private readonly locks: PermissionAuthorityLock,
+    @Inject(KernelConfigService)
+    private readonly config: Pick<KernelConfigService, "get" | "fieldSource">,
+    @Inject(PermissionFacts) private readonly facts: PermissionFacts,
+    @Inject(PermissionConfigPublication)
+    private readonly publication: Pick<PermissionConfigPublication, "assertCurrent">,
+    @Inject(PermissionCeilingWrites)
+    private readonly ceilings: Pick<PermissionCeilingWrites, "publishLocked">,
+  ) {}
+
+  /** Snapshots one device under its exclusive lifecycle lease. */
+  async snapshot(
+    orgId: string,
+    deviceId: string,
+    signal: AbortSignal = AbortSignal.timeout(LEASE_WAIT_MS),
+  ): Promise<CloudSnapshotOutcome> {
+    return this.underLease(deviceId, signal, () => this.snapshotLocked(orgId, deviceId));
+  }
+
+  /** Re-checks a device carrying the marker; clears it once its limits are established. */
+  async reconcile(
+    orgId: string,
+    deviceId: string,
+    signal: AbortSignal = AbortSignal.timeout(LEASE_WAIT_MS),
+  ): Promise<CloudSnapshotOutcome> {
+    return this.underLease(deviceId, signal, () => this.reconcileLocked(orgId, deviceId));
+  }
+
+  /** {@link reconcile} by device id alone (after a file reset); nothing for an unknown device. */
+  async reconcileDevice(deviceId: string): Promise<CloudSnapshotOutcome> {
+    const row = await this.db
+      .selectFrom("devices")
+      .select(["org_id", "permission_reconcile_required"])
+      .where("id", "=", deviceId)
+      .executeTakeFirst();
+    if (!row?.permission_reconcile_required) return { state: "existing" };
+    return this.reconcile(row.org_id, deviceId);
+  }
+
+  private async underLease(
+    deviceId: string,
+    signal: AbortSignal,
+    fn: () => Promise<CloudSnapshotOutcome>,
+  ): Promise<CloudSnapshotOutcome> {
+    // the lease is a distributed lock: taken outside the transaction, released after the commit
+    const lease = await this.leases.acquireExclusive(deviceId, signal, undefined, {
+      intent: true,
+    });
+    try {
+      return await this.txHost.run(fn, { propagation: "requires_new" });
+    } finally {
+      await lease.release();
+    }
+  }
+
+  @Transactional({ propagation: "mandatory" })
+  private async snapshotLocked(orgId: string, deviceId: string): Promise<CloudSnapshotOutcome> {
+    const device = await this.lockedDevice(orgId, deviceId);
+    if (device === undefined) return { state: "skipped" };
+    if (device.owner_full_access !== null) return { state: "existing" };
+    // under the platform shared lock: proves this replica reads the converted (current) inputs
+    await this.publication.assertCurrent();
+    const [deployment, settings] = await Promise.all([
+      readDeploymentDevicePolicy(this.db.db, this.config),
+      readOrgSettings(this.db.db, orgId),
+    ]);
+    // the OLD algorithm on the old inputs: the snapshot columns are still empty here
+    const old = effectiveDevicePolicy(deployment, settings, cloudChosenMode(device));
+    const instance = await this.lockedInstance(deviceId);
+    const rec = instance === null ? null : readInstanceLimits(instance.instance_limits);
+    // what the instance really runs narrows the snapshot even when a newer value is pending
+    const known = rec?.applied ?? null;
+    const snap = cloudSnapshotOf(old, known);
+    const desired = this.desired(snap.fullAccess, snap.outerNetwork);
+    const state: CloudSnapshotState =
+      instance === null
+        ? "unprobed"
+        : rec?.unapplied === null && sameAppliedExactly(known, desired)
+          ? "bound"
+          : "reconcile-required";
+    await this.db
+      .updateTable("devices")
+      .set({
+        owner_full_access: snap.fullAccess,
+        outer_network: JSON.stringify(snap.outerNetwork),
+        permission_migration: JSON.stringify({
+          from: "auto-mode",
+          old: { mode: old.mode, network: old.network },
+          instance:
+            instance === null ? null : { generation: instance.generation, applied: known, state },
+        }),
+        permission_reconcile_required: state === "reconcile-required",
+      })
+      .where("id", "=", deviceId)
+      .execute();
+    // A snapshot narrowed by what the instance really runs changes the device's authority: it
+    // goes through the device ceiling writer (epoch, Full consent, exact revocation) in this
+    // transaction, under the device write lock already held.
+    const fullNarrowed = old.mode === "auto" && !snap.fullAccess;
+    const networkNarrowed =
+      JSON.stringify(normalizeNetwork(old.network)) !== JSON.stringify(snap.outerNetwork);
+    if (fullNarrowed || networkNarrowed) {
+      const outer = snap.outerNetwork;
+      await this.ceilings.publishLocked(
+        { orgId, deviceId },
+        "device",
+        (scope, row) => {
+          if (needsFullCeiling(scope)) return !snap.fullAccess;
+          if (outer.kind !== "allowlist" || !("network" in scope) || !isExecutionMethod(row.method))
+            return false;
+          // an execution outside any allowlist (environment networking) is wider than the outer
+          // allowlist; `none` is narrower; an allowlist must be covered host by host
+          if (scope.network.kind === "environment") return true;
+          if (scope.network.kind !== "allowlist") return false;
+          return scope.network.hosts.some((h) => !outer.hosts.some((p) => coversHost(p, h)));
+        },
+        fullNarrowed,
+      );
+    }
+    return state === "reconcile-required" ? { state, action: "reset-files" } : { state };
+  }
+
+  @Transactional({ propagation: "mandatory" })
+  private async reconcileLocked(orgId: string, deviceId: string): Promise<CloudSnapshotOutcome> {
+    const device = await this.lockedDevice(orgId, deviceId);
+    if (device === undefined) return { state: "skipped" };
+    if (!device.permission_reconcile_required) return { state: "existing" };
+    const instance = await this.lockedInstance(deviceId);
+    let state: CloudSnapshotState = "unprobed";
+    if (instance !== null) {
+      // what the instance must run with now: the snapshot as the current effective policy
+      const policy = await this.facts.devicePolicy({ orgId, deviceId });
+      const known = this.appliedOf(instance);
+      state =
+        known !== null && sameAppliedExactly(known, { mode: policy.mode, network: policy.network })
+          ? "bound"
+          : "reconcile-required";
+    }
+    if (state !== "reconcile-required")
+      await this.db
+        .updateTable("devices")
+        .set({ permission_reconcile_required: false })
+        .where("id", "=", deviceId)
+        .execute();
+    return state === "reconcile-required" ? { state, action: "reset-files" } : { state };
+  }
+
+  private desired(fullAccess: boolean, outer: DeviceNetwork): AppliedLimits {
+    return { mode: fullAccess ? "auto" : "sandbox", network: outer };
+  }
+
+  /** The device row under the device authority write lock, or undefined (not a live cloud one). */
+  private async lockedDevice(orgId: string, deviceId: string) {
+    const exists = await this.db
+      .selectFrom("devices")
+      .select("org_id")
+      .where("id", "=", deviceId)
+      .where("org_id", "=", orgId)
+      .executeTakeFirst();
+    if (exists === undefined) return undefined;
+    await this.locks.acquire({ orgId, deviceId }, { kind: "write", level: "device" });
+    const device = await this.db
+      .selectFrom("devices")
+      .select([
+        "source",
+        "mode",
+        "owner_full_access",
+        "permission_reconcile_required",
+        "deleted_at",
+      ])
+      .where("id", "=", deviceId)
+      .where("org_id", "=", orgId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (device === undefined || device.deleted_at !== null || device.source !== "cloud")
+      return undefined;
+    return device;
+  }
+
+  /**
+   * The device's instance row when an instance or a file system exists (their limits are in
+   * force); null when neither does (the next create applies the desired limits exactly).
+   */
+  private async lockedInstance(deviceId: string) {
+    const row = await this.db
+      .selectFrom("device_instances")
+      .select(["handle", "status", "fs_status", "instance_limits", "generation"])
+      .where("device_id", "=", deviceId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (row === undefined) return null;
+    // a create that may have acted (creating, even without a handle yet) or any file system left
+    // counts: its limits are not established
+    const live =
+      row.status === "creating" ||
+      (row.handle !== null && (row.status === "running" || row.status === "suspended"));
+    return live || row.fs_status !== "none" ? row : null;
+  }
+
+  /** The exactly known applied limits; null when unknown or a newer value awaits a reset. */
+  private appliedOf(row: { instance_limits: unknown }): AppliedLimits | null {
+    const rec = readInstanceLimits(row.instance_limits);
+    return rec.unapplied !== null ? null : rec.applied;
+  }
+}

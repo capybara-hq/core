@@ -40,17 +40,54 @@ export interface Credential {
  */
 export type SandboxMode = "auto" | "sandbox";
 
+/** How far restricted (non-Full) operations and project browsing may reach on this machine. */
+export type RestrictedProjectReach = "workspace" | "os-user";
+
+/**
+ * The owner's own ceiling for this machine (permission runtime cutover B2): whether Full access may
+ * be granted at all, and how far restricted operations reach, independently of each other. Only the
+ * owner widens it on the machine (`capybara-device ceiling set`); the deployment may only narrow.
+ */
+export interface OwnerCeilingPolicy {
+  fullAccess: boolean;
+  restrictedProjectReach: RestrictedProjectReach;
+}
+
+/** The persisted local policy format (`version: 2`). */
+export const POLICY_VERSION = 2;
+
 /** Local limits the person sets for this machine. */
 export interface Policy {
   allowedDomains: string[];
   allowCredentials: string[];
   cpu: number | null;
   memoryMb: number | null;
-  /**
-   * The mode the owner chose for this machine. The kernel's `limits.mode` can only narrow it: a
-   * sandbox-mode machine never runs auto because the organization allows it.
-   */
-  mode: SandboxMode;
+  /** The owner ceiling. The kernel's `limits.mode` and the org ceiling only narrow it. */
+  ownerCeiling: OwnerCeilingPolicy;
+}
+
+/** The exact old `mode: auto` ceiling. */
+export const FULL_OWNER_CEILING: OwnerCeilingPolicy = Object.freeze({
+  fullAccess: true,
+  restrictedProjectReach: "os-user",
+});
+/** The exact old `mode: sandbox` ceiling. */
+export const SANDBOX_OWNER_CEILING: OwnerCeilingPolicy = Object.freeze({
+  fullAccess: false,
+  restrictedProjectReach: "workspace",
+});
+
+/** The owner ceiling an old `mode` translates to exactly. */
+export function ownerCeilingOfMode(mode: SandboxMode): OwnerCeilingPolicy {
+  return { ...(mode === "auto" ? FULL_OWNER_CEILING : SANDBOX_OWNER_CEILING) };
+}
+
+/**
+ * The protocol 2 mode of a policy: `auto` exactly when the owner allows Full access. Protocol 2
+ * has no separate project reach (its auto mode runs as the owner anyway).
+ */
+export function policyMode(p: Pick<Policy, "ownerCeiling">): SandboxMode {
+  return p.ownerCeiling.fullAccess ? "auto" : "sandbox";
 }
 
 const DEFAULT_RECONNECT_GRACE_SECONDS = 120;
@@ -61,7 +98,8 @@ export const DEFAULT_POLICY: Policy = {
   allowCredentials: [],
   cpu: null,
   memoryMb: null,
-  mode: "auto",
+  // The protocol 2 default (old auto); new setup defaults to the sandbox ceiling at activation.
+  ownerCeiling: { ...FULL_OWNER_CEILING },
 };
 
 type Env = Record<string, string | undefined>;
@@ -156,13 +194,14 @@ const isStringList = (v: unknown): v is string[] =>
 const isCeiling = (v: unknown): v is number | null =>
   v === null || (typeof v === "number" && Number.isFinite(v) && v > 0);
 
-const POLICY_KEYS: readonly string[] = Object.keys(DEFAULT_POLICY);
+const POLICY_KEYS: readonly string[] = ["version", ...Object.keys(DEFAULT_POLICY)];
 /**
  * Keys of older policy files: ignored on read and dropped on the next write. `tier` / `isolation` /
  * `localhost` / `remoteGrants` are the auto-mode migration (spec §4.4): a file without `mode` runs
  * in auto when it asked for no sandbox, else in sandbox.
  */
 const LEGACY_POLICY_KEYS: readonly string[] = [
+  "mode",
   "network",
   "allowLocalBinding",
   "allowUnixSockets",
@@ -185,9 +224,9 @@ export interface PolicyFile {
   /** The file's keys this version does not know (legacy keys excluded). */
   extra: Record<string, unknown>;
   /**
-   * The file was written before auto mode (it has no `mode`): the mode was derived from its legacy
-   * keys and the file is rewritten in the new vocabulary at the next change (worth a notice at
-   * start).
+   * The file is in an old format (no `version: 2`): its owner ceiling was translated exactly from
+   * its `mode` (or, before `mode`, its legacy keys). {@link convertPolicyFile} rewrites it; so does
+   * the next change.
    */
   legacy: boolean;
 }
@@ -199,7 +238,11 @@ export interface PolicyFile {
 export function readPolicyFile(dir: string): PolicyFile {
   const file = policyPath(dir);
   if (!existsSync(file)) {
-    return { policy: { ...DEFAULT_POLICY }, extra: {}, legacy: false };
+    return {
+      policy: { ...DEFAULT_POLICY, ownerCeiling: { ...DEFAULT_POLICY.ownerCeiling } },
+      extra: {},
+      legacy: false,
+    };
   }
   let raw: unknown;
   try {
@@ -213,21 +256,45 @@ export function readPolicyFile(dir: string): PolicyFile {
   const o = raw as Record<string, unknown>;
   const bad = (key: string, want: string): Error =>
     new Error(`${file} is invalid: ${key} must be ${want} (fix or delete the file)`);
-  // Lenient read (spec §4.4): no `mode` means an older file; `isolation: none` or `tier: open`
-  // asked for no sandbox, so it becomes auto, anything else sandbox.
-  const legacy = o.mode === undefined;
-  const rawMode: unknown = legacy
-    ? o.isolation === "none" || o.tier === "open"
-      ? "auto"
-      : "sandbox"
-    : o.mode;
-  if (!isMode(rawMode)) throw bad("mode", '"auto" or "sandbox"');
+  let ownerCeiling: OwnerCeilingPolicy;
+  const legacy = o.version === undefined;
+  if (legacy) {
+    // Old format: `mode` exactly (auto -> Full + os-user reach, sandbox -> neither); before
+    // `mode`, `isolation: none` or `tier: open` asked for no sandbox (spec §4.4).
+    const rawMode: unknown =
+      o.mode === undefined
+        ? o.isolation === "none" || o.tier === "open"
+          ? "auto"
+          : "sandbox"
+        : o.mode;
+    if (!isMode(rawMode)) throw bad("mode", '"auto" or "sandbox"');
+    ownerCeiling = ownerCeilingOfMode(rawMode);
+  } else {
+    if (o.version !== POLICY_VERSION) throw bad("version", String(POLICY_VERSION));
+    if (o.mode !== undefined) throw bad("mode", "absent in version 2 (use ownerCeiling)");
+    const c = o.ownerCeiling;
+    if (typeof c !== "object" || c === null || Array.isArray(c)) {
+      throw bad("ownerCeiling", "an object");
+    }
+    const r = c as Record<string, unknown>;
+    if (Object.keys(r).some((k) => k !== "fullAccess" && k !== "restrictedProjectReach")) {
+      throw bad("ownerCeiling", "only fullAccess and restrictedProjectReach");
+    }
+    if (typeof r.fullAccess !== "boolean") throw bad("ownerCeiling.fullAccess", "a boolean");
+    if (r.restrictedProjectReach !== "workspace" && r.restrictedProjectReach !== "os-user") {
+      throw bad("ownerCeiling.restrictedProjectReach", '"workspace" or "os-user"');
+    }
+    ownerCeiling = {
+      fullAccess: r.fullAccess,
+      restrictedProjectReach: r.restrictedProjectReach,
+    };
+  }
   const policy: Policy = {
     allowedDomains: o.allowedDomains === undefined ? [] : (o.allowedDomains as string[]),
     allowCredentials: o.allowCredentials === undefined ? [] : (o.allowCredentials as string[]),
     cpu: o.cpu === undefined ? null : (o.cpu as number | null),
     memoryMb: o.memoryMb === undefined ? null : (o.memoryMb as number | null),
-    mode: rawMode,
+    ownerCeiling,
   };
   if (!isStringList(policy.allowedDomains)) throw bad("allowedDomains", "a list of strings");
   if (!isStringList(policy.allowCredentials)) throw bad("allowCredentials", "a list of strings");
@@ -249,7 +316,36 @@ export function writePolicy(
   const kept = Object.fromEntries(
     Object.entries(extra).filter(([k]) => !LEGACY_POLICY_KEYS.includes(k)),
   );
-  writePrivate(policyPath(dir), `${JSON.stringify({ ...kept, ...policy }, null, 2)}\n`);
+  const { allowedDomains, allowCredentials, cpu, memoryMb, ownerCeiling } = policy;
+  const body = {
+    ...kept,
+    version: POLICY_VERSION,
+    allowedDomains,
+    allowCredentials,
+    cpu,
+    memoryMb,
+    ownerCeiling: {
+      fullAccess: ownerCeiling.fullAccess,
+      restrictedProjectReach: ownerCeiling.restrictedProjectReach,
+    },
+  };
+  writePrivate(policyPath(dir), `${JSON.stringify(body, null, 2)}\n`);
+}
+
+/**
+ * The one-time explicit conversion of policy.json to version 2, under the policy lock and atomic:
+ * an old `mode` translates exactly (never wider), domains, resources and unknown keys are kept.
+ * `absent`: no file (nothing written); `current`: already version 2. Throws, writing nothing, on a
+ * malformed file.
+ */
+export function convertPolicyFile(dir: string): "absent" | "current" | "converted" {
+  return withPolicyLock(dir, () => {
+    if (!existsSync(policyPath(dir))) return "absent";
+    const { policy, extra, legacy } = readPolicyFile(dir);
+    if (!legacy) return "current";
+    writePolicy(dir, policy, extra);
+    return "converted";
+  });
 }
 
 /** A lock file older than this is left over by a crashed process and is taken over. */

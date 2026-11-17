@@ -717,6 +717,7 @@ it.each(["allow", "ask", "deny", "malformed", "request"] as const)(
       baseHosts: [],
       workingRoot: WORKSPACE,
       fullAccessCeiling: true,
+      broadProjectReach: true,
       fullConsent: false,
       unattended: false,
       availability: { state: "supported" },

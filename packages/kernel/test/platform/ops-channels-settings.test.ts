@@ -273,7 +273,7 @@ describe("org settings", () => {
         ok: false,
         code: "org.auto_mode_not_allowed",
         message: expect.stringMatching(
-          /^Turning auto mode on needs a person in the organization settings\./,
+          /^Allowing Full permission needs a person in the organization settings\./,
         ),
       });
       await expect(run("org-settings.update", input)).rejects.toThrow(/needs a person/);

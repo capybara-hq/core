@@ -1173,6 +1173,18 @@ export interface DevicesTable {
   demoted_from_provider: ColumnType<string | null, string | null | undefined, string | null>;
   /** 0131: a cloud device's narrowing switch (`sandbox`); null follows the platform and the org. */
   mode: ColumnType<"sandbox" | null, "sandbox" | null | undefined, "sandbox" | null>;
+  /** 0145: a cloud device's owner Full ceiling (B1 snapshot); null: not snapshotted yet. */
+  owner_full_access: ColumnType<boolean | null, boolean | null | undefined, boolean | null>;
+  /** 0145: a cloud device's outer network (B1 snapshot); null: not snapshotted yet. */
+  outer_network: ColumnType<
+    import("../sandbox/modes.js").DeviceNetwork | null,
+    string | null | undefined,
+    string | null
+  >;
+  /** 0145: the provenance of the B1 snapshot. */
+  permission_migration: ColumnType<unknown, string | null | undefined, string | null>;
+  /** 0145: the applied limits must be established before any operation is admitted. */
+  permission_reconcile_required: ColumnType<boolean, boolean | undefined, boolean>;
   created_at: Ts;
   updated_at: Ts;
   deleted_at: TsNullable;
@@ -1264,6 +1276,8 @@ export interface DeviceMachinesTable {
   pending_policy_ops: ColumnType<unknown, string | undefined, string>;
   /** 0133: the owner's home directory the program reported in its hello; null when not reported. */
   home: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0147: the authenticated owner report (`StoredOwnerReport`, B2); null before any. */
+  owner_report: ColumnType<unknown | null, string | null | undefined, string | null>;
 }
 
 /** 0133: a device's projects (project root design §4.1), written only by the kernel. */
@@ -1620,6 +1634,30 @@ export interface KernelDatabase {
     identity_hash: string;
     report: Json<import("@capybara-hq/plugin-sdk").SandboxPermissionSupport>;
     observed_at: Ts;
+  };
+  /** Migration 0146: per-device generation high-water mark; outlives instance rows. */
+  device_generation_high_water: {
+    device_id: string;
+    /** bigint: read as a decimal string. */
+    high_water_ms: ColumnType<string, string | number, string | number>;
+    updated_at: Ts;
+  };
+  /** Migration 0146: post-commit binding of a local instance generation. */
+  device_instance_bindings: {
+    device_id: string;
+    instance_generation: string;
+    binding_id: string;
+    provider: string;
+    previous_generation: string | null;
+    status: "awaiting-device" | "installed";
+    machine_id: string | null;
+    runtime_identity: ColumnType<
+      import("../sandbox/permission-runtime-reports.js").PermissionRuntimeIdentity | null,
+      string | null | undefined,
+      string | null
+    >;
+    created_at: Ts;
+    installed_at: TsNullable;
   };
   sandbox_operation_intents: SandboxOperationIntentsTable;
   sandbox_operation_payload_chunks: {

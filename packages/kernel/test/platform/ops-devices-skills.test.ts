@@ -203,7 +203,10 @@ describe("devices", () => {
     for (const mode of [null, "sandbox", "auto"]) {
       expect(rename.safeParse({ deviceId, name: "X", mode }).success).toBe(false);
     }
-    expect(op("devices.rename").omits).toEqual(["mode"]);
+    // B2: nor its owner ceiling (session-only)
+    for (const ownerCeiling of [{ fullAccess: true }, { fullAccess: false }])
+      expect(rename.safeParse({ deviceId, name: "X", ownerCeiling }).success).toBe(false);
+    expect(op("devices.rename").omits).toEqual(["mode", "ownerCeiling", "confirmWidening"]);
   });
 
   it("creates and renames with a card naming the objects, lists and reads, and audits the agent", async () => {

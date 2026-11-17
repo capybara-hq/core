@@ -40,7 +40,7 @@ export interface NativeHelperLaunch {
 const NATIVE_FILES_SOURCE =
   SANDBOX_RUNTIME_SOURCE.files.find((file) => file.name === "native-files.py")?.source ?? "";
 
-const PRELUDE = String.raw`
+export const PRELUDE = String.raw`
 import os,json,sys,errno
 expected=json.loads(sys.argv[2])
 actual=[[os.fstat(fd).st_dev,os.fstat(fd).st_ino] for fd in range(4,4+len(expected))]

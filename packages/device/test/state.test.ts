@@ -14,6 +14,8 @@ import {
   type Credential,
   credentialPath,
   DEFAULT_POLICY,
+  ownerCeilingOfMode,
+  policyMode,
   readCredential,
   readPolicy,
   readPolicyFile,
@@ -108,22 +110,23 @@ describe("state", () => {
       allowCredentials: [],
       cpu: null,
       memoryMb: null,
-      mode: "auto",
+      ownerCeiling: { fullAccess: true, restrictedProjectReach: "os-user" },
     });
     writePolicy(dir, {
       allowedDomains: ["a.test"],
       allowCredentials: [],
       cpu: 2,
       memoryMb: null,
-      mode: "sandbox",
+      ownerCeiling: { fullAccess: false, restrictedProjectReach: "os-user" },
     });
     expect(readPolicy(dir)).toEqual({
       allowedDomains: ["a.test"],
       allowCredentials: [],
       cpu: 2,
       memoryMb: null,
-      mode: "sandbox",
+      ownerCeiling: { fullAccess: false, restrictedProjectReach: "os-user" },
     });
+    expect(readPolicyFile(dir).legacy).toBe(false);
   });
 
   it("migrates a legacy policy file to a mode, once", () => {
@@ -141,13 +144,15 @@ describe("state", () => {
     for (const [body, mode] of table) {
       writeFileSync(file, JSON.stringify(body));
       const got = readPolicyFile(dir);
-      expect(got.policy.mode, JSON.stringify(body)).toBe(mode);
+      expect(policyMode(got.policy), JSON.stringify(body)).toBe(mode);
       expect(got.legacy, JSON.stringify(body)).toBe(true);
     }
+    // a file with `mode` is the old format too: it translates exactly and is converted later
     writeFileSync(file, JSON.stringify({ mode: "sandbox" }));
-    expect(readPolicyFile(dir).legacy).toBe(false);
+    expect(readPolicyFile(dir).legacy).toBe(true);
+    expect(policyMode(readPolicyFile(dir).policy)).toBe("sandbox");
     writeFileSync(file, JSON.stringify({ mode: "auto" }));
-    expect(readPolicyFile(dir).policy.mode).toBe("auto");
+    expect(policyMode(readPolicyFile(dir).policy)).toBe("auto");
   });
 
   it("drops the legacy keys at the next write and keeps unknown ones", () => {
@@ -167,7 +172,11 @@ describe("state", () => {
       }),
     );
     const got = readPolicyFile(dir);
-    expect(got.policy).toEqual({ ...DEFAULT_POLICY, allowedDomains: ["a.test"], mode: "auto" });
+    expect(got.policy).toEqual({
+      ...DEFAULT_POLICY,
+      allowedDomains: ["a.test"],
+      ownerCeiling: ownerCeilingOfMode("auto"),
+    });
     expect(got.extra).toEqual({ future: 1 });
     writePolicy(dir, got.policy, { ...got.extra, tier: "open", isolation: "none" });
     const written = JSON.parse(readFileSync(file, "utf8"));
@@ -186,7 +195,10 @@ describe("state", () => {
     expect(readPolicyFile(dir).legacy).toBe(false);
     // a legacy value of any type is ignored, never an error
     writeFileSync(file, JSON.stringify({ network: 42, tier: 7 }));
-    expect(readPolicy(dir)).toEqual({ ...DEFAULT_POLICY, mode: "sandbox" });
+    expect(readPolicy(dir)).toEqual({
+      ...DEFAULT_POLICY,
+      ownerCeiling: ownerCeilingOfMode("sandbox"),
+    });
   });
 
   it("readPolicy names the file on bad JSON and on wrong field types", () => {
@@ -209,6 +221,10 @@ describe("state", () => {
     writeFileSync(file, "[]");
     expect(() => readPolicy(dir)).toThrow(/policy\.json is invalid: expected a JSON object/);
     writeFileSync(file, JSON.stringify({ cpu: 1.5, extra: true }));
-    expect(readPolicy(dir)).toEqual({ ...DEFAULT_POLICY, cpu: 1.5, mode: "sandbox" });
+    expect(readPolicy(dir)).toEqual({
+      ...DEFAULT_POLICY,
+      cpu: 1.5,
+      ownerCeiling: ownerCeilingOfMode("sandbox"),
+    });
   });
 });

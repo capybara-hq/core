@@ -65,7 +65,7 @@ const ROOTS = {
 };
 /** The deployment's switch and network (auto allowed, the allowlist unless a test changes it). */
 const DEPLOYMENT: DeploymentDevicePolicy = {
-  autoMode: "allowed",
+  fullAccess: "allowed",
   limits: { egress: "allowlist", allowHosts: ["example.com"], orgHosts: "extend" },
 };
 /** The limits every local exec carries by default: the allowed mode and the sandbox allowlist. */
@@ -338,7 +338,7 @@ describe("LocalDeviceProvider", () => {
       const handle = { id: h.deviceId, roots: ROOTS, limits: LIMITS };
       await provider.stat(handle, ROOTS.workspace, signal());
       expect((h.frames.at(-1) as KernelReq).args).toMatchObject({ limits: { mode: "auto" } });
-      orgSettings = { autoMode: "off" };
+      orgSettings = { fullAccess: "off" };
       await provider.readFile(handle, "/nope", { maxBytes: 10, signal: signal() });
       expect((h.frames.at(-1) as KernelReq).args).toMatchObject({ limits: { mode: "sandbox" } });
     } finally {
@@ -683,7 +683,7 @@ describe("LocalDeviceProvider: modes (auto mode spec §4.2, §4.3)", () => {
   it("carries `mode: allowedMode` and the org's sandbox allowlist, even when the ceiling is auto", async () => {
     expect((await execOnce(attended)).args?.limits).toEqual(DEV_LIMITS);
     // the org allows only sandbox mode
-    orgSettings = { autoMode: "off" };
+    orgSettings = { fullAccess: "off" };
     expect((await execOnce(attended)).args?.limits).toMatchObject({
       mode: "sandbox",
       network: { kind: "allowlist", hosts: ["example.com"] },
@@ -706,13 +706,13 @@ describe("LocalDeviceProvider: modes (auto mode spec §4.2, §4.3)", () => {
 
   it("a scheduled run gets the same mode: no separate grant caps it", async () => {
     expect((await execOnce(scheduled)).args?.limits).toEqual(DEV_LIMITS);
-    orgSettings = { autoMode: "off" };
+    orgSettings = { fullAccess: "off" };
     expect((await execOnce(scheduled)).args?.limits).toMatchObject({ mode: "sandbox" });
   });
 
   it("refuses a machine that reports auto mode while the org allows only sandbox, at every exec", async () => {
     reportedMode = "sandbox";
-    orgSettings = { autoMode: "off" };
+    orgSettings = { fullAccess: "off" };
     expect((await execOnce(attended)).args?.limits).toMatchObject({ mode: "sandbox" });
     // the owner switches the machine to auto mode; the next exec is refused
     reportedMode = "auto";
@@ -733,7 +733,7 @@ describe("LocalDeviceProvider: modes (auto mode spec §4.2, §4.3)", () => {
   });
 
   it("serves a fresh login in an auto-forbidden org and refuses an explicit auto policy", async () => {
-    orgSettings = { autoMode: "off" };
+    orgSettings = { fullAccess: "off" };
     // `capybara-device login` writes `mode: "sandbox"` for a new device in this org, so the hello
     // reports sandbox and the gate serves the exec (packages/device/test/login.test.ts).
     reportedMode = "sandbox";

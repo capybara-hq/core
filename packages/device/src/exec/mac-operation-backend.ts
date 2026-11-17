@@ -52,6 +52,13 @@ export type MacOperationBackend = Required<
     beginDrain(): void;
     ownership(): SupervisorOwnership;
     settle(signal: AbortSignal): Promise<void>;
+    /** Unsettled work of generations other than `generation` (default: this backend's). */
+    retirementObligations(generation?: string): number;
+    /**
+     * Supersedes this backend (B4): its supervisor gives the journal up and every later call is
+     * refused. Throws while it still owns work.
+     */
+    dispose(): void;
   };
 };
 /** Trusted construction dependencies; never decoded from a command, scope or wire message. */
@@ -73,7 +80,12 @@ export async function createMacOperationBackend(
     platform === "darwin" &&
     dependencies.restrictedSupported === true &&
     dependencies.startWorker !== undefined;
+  let disposed = false;
   const checkHandle = (h: SandboxHandle) => {
+    if (disposed)
+      throw new SandboxPermissionUnsupportedError(
+        "This instance generation was superseded; retry on the current binding",
+      );
     if (h.id !== options.deviceId || (h.roots && digest(h.roots) !== digest(options.roots)))
       throw new SandboxScopeDeniedError("Device handle does not match this backend");
   };
@@ -405,6 +417,14 @@ export async function createMacOperationBackend(
       beginDrain: () => supervisor.beginDrain(),
       ownership: () => supervisor.ownership(),
       settle: (signal) => supervisor.settle(signal),
+      retirementObligations: (generation) =>
+        supervisor.retirementObligations(generation ?? options.instanceGeneration),
+      dispose: () => {
+        supervisor.close();
+        disposed = true;
+        stopWatch?.();
+        stopWatch = undefined;
+      },
     },
     forExecution: (authority) => {
       const fixed = freezeAuthority(authority);

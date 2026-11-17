@@ -45,7 +45,12 @@ const isInside = (path: string, dir: string): boolean =>
  */
 export function workingRootOf(
   project: WorkingProject | null | undefined,
-  device: { mode: SandboxMode; workspace: string; home?: string | null },
+  device: {
+    mode: SandboxMode;
+    workspace: string;
+    home?: string | null;
+    reach?: "workspace" | "os-user" | undefined;
+  },
 ): string {
   if (project == null || project.unavailable) return device.workspace;
   const root =
@@ -53,7 +58,10 @@ export function workingRootOf(
       ? project.root.slice(0, -1)
       : project.root;
   if (validateSandboxPathShape(root).length > 0) return device.workspace;
-  if (device.mode !== "auto" && !isInside(root, device.workspace)) return device.workspace;
+  // B2: a root outside the workspace needs the wider restricted reach (`reach`, given apart from
+  // the Full mode); without it, the protocol 2 encoding (`mode: auto` was that reach)
+  const wide = device.reach !== undefined ? device.reach === "os-user" : device.mode === "auto";
+  if (!wide && !isInside(root, device.workspace)) return device.workspace;
   if (aboveHome(root, device.home)) return device.workspace;
   return root;
 }

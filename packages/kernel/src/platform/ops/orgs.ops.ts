@@ -163,6 +163,7 @@ export class OrgsOperations implements OnModuleInit {
           "uiTheme",
           "uiArrangement",
           "clientExtensions",
+          "devicesFullAccess",
           "devicesAutoMode",
           "attribution",
           "compaction",

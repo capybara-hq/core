@@ -1,7 +1,10 @@
 /** Development staging only. Task 8 replaces v2 and removes this module and its staged names together. */
 import {
   type DeviceHello,
+  type DeviceLocalPolicySummary,
   type DeviceOp,
+  type DevicePolicyArgs,
+  type DevicePolicyStatus,
   DeviceProtocolError,
   type DeviceRes,
   type KernelCancel,
@@ -31,7 +34,8 @@ export type DeviceOperationV3 =
   | "backgroundTail"
   | "backgroundReadOutput"
   | "backgroundStop"
-  | "revokeOperation";
+  | "revokeOperation"
+  | "bindInstance";
 export interface DeviceOwnerCeilingV3 {
   readonly version: 2;
   readonly sequence: number;
@@ -40,6 +44,33 @@ export interface DeviceOwnerCeilingV3 {
   readonly fullAccess: boolean;
   readonly restrictedAllowedDomains: readonly string[];
 }
+/**
+ * The only owner-ceiling change the kernel may ask of a machine (B2): narrowing. Widening is decided
+ * on the machine by its owner (`capybara-device ceiling set`), never over the wire.
+ */
+export interface DeviceOwnerCeilingNarrowingV3 {
+  readonly fullAccess?: false;
+  readonly restrictedProjectReach?: "workspace";
+}
+/** A staged `policy` op: the protocol 2 change plus an optional owner-ceiling narrowing. */
+export interface DevicePolicyArgsV3 extends DevicePolicyArgs {
+  ownerCeiling?: DeviceOwnerCeilingNarrowingV3;
+}
+/** A staged `policy` answer: the policy as written and the owner report issued for it. */
+export interface DevicePolicyResultV3 {
+  policy: DeviceLocalPolicySummary;
+  ownerCeiling: DeviceOwnerCeilingV3;
+}
+/** A staged `policyStatus` answer: an `applied` outcome carries the current owner report. */
+export interface DevicePolicyStatusV3 extends DevicePolicyStatus {
+  ownerCeiling?: DeviceOwnerCeilingV3;
+}
+/** The device pushed a policy change: the owner report for the newly observed revision. */
+export interface DevicePolicyChangedV3 {
+  type: "policy";
+  policy?: DeviceLocalPolicySummary;
+  ownerCeiling: DeviceOwnerCeilingV3;
+}
 export interface DeviceHelloV3 extends DeviceHello {
   protocol: 3;
   permissionSupport: SandboxPermissionSupport;
@@ -47,12 +78,32 @@ export interface DeviceHelloV3 extends DeviceHello {
   instanceGeneration: string | null;
   transport: { maxFrameBytes: number };
   /** Absent until the program can attest actual installed runtime/helper/environment bytes. */
-  runtimeIdentity?: {
-    runtimeHash: string;
-    helperHash: string;
-    imageFingerprint: string;
-    instanceGeneration: string;
-  };
+  runtimeIdentity?: DeviceRuntimeIdentityV3;
+}
+/** A verified installed runtime/helper/environment identity bound to one instance generation. */
+export interface DeviceRuntimeIdentityV3 {
+  runtimeHash: string;
+  helperHash: string;
+  imageFingerprint: string;
+  instanceGeneration: string;
+}
+/**
+ * Private lifecycle request (permission runtime cutover B4): binds the kernel's committed instance
+ * generation to the device after commit. It carries no path, policy or manifest.
+ */
+export interface BindInstanceRequestV3 {
+  instanceId: string;
+  instanceGeneration: string;
+  bindingId: string;
+  expectedPreviousGeneration: string | null;
+}
+export interface BindInstanceResultV3 {
+  instanceId: string;
+  instanceGeneration: string;
+  bindingId: string;
+  runtimeIdentity: DeviceRuntimeIdentityV3;
+  permissionSupport: SandboxPermissionSupport;
+  ownerCeiling: DeviceOwnerCeilingV3;
 }
 export interface KernelReadyV3 {
   type: "ready";
@@ -91,7 +142,7 @@ export type DeviceFrameV3 =
   | KernelRequestV3
   | KernelCancel
   | DeviceResponseV3
-  | { type: "policy"; policy?: unknown };
+  | DevicePolicyChangedV3;
 const object = (value: unknown): Record<string, unknown> => {
   if (!value || typeof value !== "object" || Array.isArray(value))
     throw new DeviceProtocolError("Expected an object");
@@ -136,6 +187,20 @@ function support(value: unknown): SandboxPermissionSupport {
   if (o.unavailableReason !== undefined) string(o.unavailableReason, 4096);
   return o as unknown as SandboxPermissionSupport;
 }
+/** Strictly parses one authenticated owner-ceiling report (B2); throws {@link DeviceProtocolError}. */
+export function parseOwnerCeilingReportV3(value: unknown): DeviceOwnerCeilingV3 {
+  return freeze(structuredClone(owner(value)));
+}
+function narrowing(value: unknown): DeviceOwnerCeilingNarrowingV3 {
+  const o = object(value);
+  keys(o, ["fullAccess", "restrictedProjectReach"]);
+  if (
+    (o.fullAccess !== undefined && o.fullAccess !== false) ||
+    (o.restrictedProjectReach !== undefined && o.restrictedProjectReach !== "workspace")
+  )
+    throw new DeviceProtocolError("The deployment may only narrow the owner ceiling");
+  return o as DeviceOwnerCeilingNarrowingV3;
+}
 function owner(value: unknown): DeviceOwnerCeilingV3 {
   const o = object(value);
   keys(o, [
@@ -159,6 +224,34 @@ function owner(value: unknown): DeviceOwnerCeilingV3 {
     throw new DeviceProtocolError("Invalid owner ceiling");
   return o as unknown as DeviceOwnerCeilingV3;
 }
+const GENERATION = /^[0-9]{1,16}$/;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+function generation(value: unknown): string {
+  if (typeof value !== "string" || !GENERATION.test(value))
+    throw new DeviceProtocolError("Expected an instance generation");
+  return value;
+}
+function bindRequest(a: Record<string, unknown>): BindInstanceRequestV3 {
+  string(a.instanceId);
+  generation(a.instanceGeneration);
+  if (typeof a.bindingId !== "string" || !UUID.test(a.bindingId))
+    throw new DeviceProtocolError("Expected a binding id");
+  if (a.expectedPreviousGeneration !== null) {
+    generation(a.expectedPreviousGeneration);
+    if (BigInt(a.expectedPreviousGeneration as string) >= BigInt(a.instanceGeneration as string))
+      throw new DeviceProtocolError("Previous generation must precede the bound generation");
+  }
+  return a as unknown as BindInstanceRequestV3;
+}
+function identity(value: unknown): DeviceRuntimeIdentityV3 {
+  const o = object(value);
+  keys(o, ["runtimeHash", "helperHash", "imageFingerprint", "instanceGeneration"]);
+  for (const key of ["runtimeHash", "helperHash", "imageFingerprint"])
+    if (typeof o[key] !== "string" || !/^[a-f0-9]{64}$/.test(o[key] as string))
+      throw new DeviceProtocolError("Incomplete runtime identity");
+  string(o.instanceGeneration);
+  return o as unknown as DeviceRuntimeIdentityV3;
+}
 const natives = ["exec", "readFile", "writeFile", "stat", "list", "scan"];
 const legacy = ["create", "stop", "policy", "policyStatus"];
 function request(o: Record<string, unknown>): KernelRequestV3 {
@@ -168,11 +261,15 @@ function request(o: Record<string, unknown>): KernelRequestV3 {
     a = object(o.args),
     deadlineMs = integer(o.deadlineMs, 1);
   if (legacy.includes(op)) {
+    if (op === "policy" && a.ownerCeiling !== undefined) narrowing(a.ownerCeiling);
     const parsed = parseDeviceFrame(JSON.stringify(o), "kernel");
     if (parsed.type !== "req") throw new DeviceProtocolError("Expected request");
     return freeze({ ...parsed, op: op as DeviceOperationV3, args: object(parsed.args) });
   }
-  if (op === "revokeOperation") {
+  if (op === "bindInstance") {
+    keys(a, ["instanceId", "instanceGeneration", "bindingId", "expectedPreviousGeneration"]);
+    bindRequest(a);
+  } else if (op === "revokeOperation") {
     keys(a, ["ref"]);
     a.ref = parseSandboxOperationRef(a.ref);
   } else if (
@@ -300,15 +397,9 @@ export function parseDeviceFrameV3(
     if (base.type !== "hello") throw new DeviceProtocolError("Expected hello");
     let runtimeIdentity: DeviceHelloV3["runtimeIdentity"];
     if (o.runtimeIdentity !== undefined) {
-      const identity = object(o.runtimeIdentity);
-      keys(identity, ["runtimeHash", "helperHash", "imageFingerprint", "instanceGeneration"]);
-      for (const key of ["runtimeHash", "helperHash", "imageFingerprint"]) {
-        if (typeof identity[key] !== "string" || !/^[a-f0-9]{64}$/.test(identity[key] as string))
-          throw new DeviceProtocolError("Incomplete runtime identity");
-      }
-      if (string(identity.instanceGeneration) !== string(o.instanceGeneration))
+      runtimeIdentity = identity(o.runtimeIdentity);
+      if (runtimeIdentity.instanceGeneration !== string(o.instanceGeneration))
         throw new DeviceProtocolError("Runtime identity generation mismatch");
-      runtimeIdentity = identity as unknown as NonNullable<DeviceHelloV3["runtimeIdentity"]>;
     }
     return freeze({
       ...base,
@@ -319,6 +410,13 @@ export function parseDeviceFrameV3(
       instanceGeneration: o.instanceGeneration === null ? null : string(o.instanceGeneration),
       ...(runtimeIdentity && { runtimeIdentity }),
     });
+  }
+  if (o.type === "policy") {
+    if (from !== "device") throw new DeviceProtocolError("Policy must come from device");
+    keys(o, ["type", "policy", "ownerCeiling"]);
+    const base = parseDeviceFrame(JSON.stringify({ type: "policy", policy: o.policy }), from);
+    if (base.type !== "policy") throw new DeviceProtocolError("Expected policy");
+    return freeze({ ...base, ownerCeiling: owner(o.ownerCeiling) });
   }
   if (o.type === "res" && o.ok === false) {
     if (from !== "device") throw new DeviceProtocolError("Response must come from device");
@@ -342,17 +440,46 @@ export function parseDeviceFrameV3(
     });
   }
   const base = parseDeviceFrame(raw, from);
-  if (base.type === "hello" || base.type === "req")
+  if (base.type === "hello" || base.type === "req" || base.type === "policy")
     throw new DeviceProtocolError("Expected staged frame");
   return freeze(base);
 }
 export function parseOperationResultV3(
   op: DeviceOperationV3,
   result: unknown,
-  request?: BackgroundReadOutputRequestV3,
+  request?: BackgroundReadOutputRequestV3 | BindInstanceRequestV3,
 ): unknown {
+  if (op === "bindInstance") {
+    if (!request || !("bindingId" in request))
+      throw new DeviceProtocolError("Binding validation requires the exact request");
+    const o = object(result);
+    keys(o, [
+      "instanceId",
+      "instanceGeneration",
+      "bindingId",
+      "runtimeIdentity",
+      "permissionSupport",
+      "ownerCeiling",
+    ]);
+    const runtimeIdentity = identity(o.runtimeIdentity);
+    if (
+      o.instanceId !== request.instanceId ||
+      o.instanceGeneration !== request.instanceGeneration ||
+      o.bindingId !== request.bindingId ||
+      runtimeIdentity.instanceGeneration !== request.instanceGeneration
+    )
+      throw new DeviceProtocolError("Binding answer belongs to another instance generation");
+    return freeze({
+      instanceId: request.instanceId,
+      instanceGeneration: request.instanceGeneration,
+      bindingId: request.bindingId,
+      runtimeIdentity,
+      permissionSupport: support(o.permissionSupport),
+      ownerCeiling: owner(o.ownerCeiling),
+    } satisfies BindInstanceResultV3);
+  }
   if (op === "backgroundReadOutput") {
-    if (!request)
+    if (!request || !("offset" in request))
       throw new DeviceProtocolError("Output validation requires the exact request bounds");
     const offset = integer(request.offset),
       maxBytes = integer(request.maxBytes, 0, 65536);
@@ -417,6 +544,24 @@ export function parseOperationResultV3(
     )
       throw new DeviceProtocolError("Invalid stopped execution status");
     return freeze(o);
+  }
+  if (op === "policy") {
+    const o = object(result);
+    keys(o, ["policy", "ownerCeiling"]);
+    return freeze({
+      ...parseOpResult("policy", { policy: o.policy }),
+      ownerCeiling: owner(o.ownerCeiling),
+    } satisfies DevicePolicyResultV3);
+  }
+  if (op === "policyStatus") {
+    const o = object(result);
+    keys(o, ["outcome", "policy", "message", "ownerCeiling"]);
+    const { ownerCeiling, ...rest } = o;
+    const status: DevicePolicyStatusV3 = parseOpResult("policyStatus", rest);
+    if (status.outcome === "applied" && ownerCeiling === undefined)
+      throw new DeviceProtocolError("An applied policy status carries the owner report");
+    if (ownerCeiling !== undefined) status.ownerCeiling = owner(ownerCeiling);
+    return freeze(status);
   }
   if (op === "revokeOperation") {
     if (result !== null) throw new DeviceProtocolError("Revoke result must be null");

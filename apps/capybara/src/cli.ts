@@ -11,6 +11,7 @@ import { type Command, parseCli, USAGE, UsageError } from "./args.js";
 import { type PasswordInput, runAdminCreate } from "./commands/admin-create.js";
 import { runAdminGrant } from "./commands/admin-grant.js";
 import { runBootstrap } from "./commands/bootstrap.js";
+import { runConfigMigratePermissions } from "./commands/config.js";
 import {
   runExtensionsApprove,
   runExtensionsInstall,
@@ -144,6 +145,8 @@ export async function main(
       return runExtensionsState({ name: cmd.name, action: cmd.action }, log, env, io);
     case "plugins-list":
       return runPluginsList(log, env, io);
+    case "config-migrate-permissions":
+      return runConfigMigratePermissions({ input: cmd.input, output: cmd.output }, env, io);
     case "plugins-import":
       return runPluginsImport({ target: cmd.target, yes: cmd.yes }, log, env, io);
     case "start":

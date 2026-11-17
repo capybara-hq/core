@@ -18,6 +18,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { effectiveMode } from "../policy.js";
 import type { Policy, SandboxMode } from "../state.js";
+import { policyMode } from "../state.js";
 import { finishScan } from "./listing.js";
 import { EXEC_MARKER } from "./procs.js";
 import {
@@ -395,7 +396,7 @@ export class DockerExecutor implements Executor {
    * `effectiveMode(policy, limits)`.
    */
   private modeNow(policy: Policy = this.opts.policy()): SandboxMode {
-    if (policy.mode === "sandbox" || this.lastLimits === undefined) return "sandbox";
+    if (policyMode(policy) === "sandbox" || this.lastLimits === undefined) return "sandbox";
     if (Date.now() - this.lastLimitsAt > FILE_OPS_DECISION_TTL_MS) return "sandbox";
     return effectiveMode(policy, this.lastLimits);
   }

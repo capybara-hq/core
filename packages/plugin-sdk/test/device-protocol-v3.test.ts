@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { DEVICE_PROTOCOL_VERSION } from "../src/device-protocol.js";
-import { parseDeviceFrameV3, parseOperationResultV3 } from "../src/device-protocol-v3.js";
+import { DEVICE_PROTOCOL_VERSION, DeviceProtocolError } from "../src/device-protocol.js";
+import {
+  parseDeviceFrameV3,
+  parseOperationResultV3,
+  parseOwnerCeilingReportV3,
+} from "../src/device-protocol-v3.js";
 
 const scope = {
   operationId: "op",
@@ -279,4 +283,165 @@ it("canonical unbound hello remains unprobed and owner reports require independe
         "device",
       ),
     ).toThrow();
+});
+describe("bindInstance (B4 post-commit binding)", () => {
+  const request = {
+    instanceId: "device-1",
+    instanceGeneration: "1700000000001",
+    bindingId: "6f1e0a52-8f5b-4d5e-9a1c-1f0e2d3c4b5a",
+    expectedPreviousGeneration: "1700000000000",
+  };
+  const identity = {
+    runtimeHash: "a".repeat(64),
+    helperHash: "b".repeat(64),
+    imageFingerprint: "c".repeat(64),
+    instanceGeneration: request.instanceGeneration,
+  };
+  const answer = {
+    instanceId: request.instanceId,
+    instanceGeneration: request.instanceGeneration,
+    bindingId: request.bindingId,
+    runtimeIdentity: identity,
+    permissionSupport: {
+      version: 1,
+      restricted: null,
+      fullAccess: true,
+      background: true,
+      unavailableReason: "restricted proof pending",
+    },
+    ownerCeiling: {
+      version: 2,
+      sequence: 3,
+      revision: "r",
+      fullAccess: true,
+      restrictedProjectReach: "workspace",
+      restrictedAllowedDomains: [],
+    },
+  };
+  it("accepts exactly the committed identifiers and refuses paths, manifests and policies", () => {
+    const parsed = parseDeviceFrameV3(frame("bindInstance", request), "kernel");
+    expect(parsed).toMatchObject({ type: "req", op: "bindInstance", args: request });
+    expect(
+      parseDeviceFrameV3(
+        frame("bindInstance", { ...request, expectedPreviousGeneration: null }),
+        "kernel",
+      ).type,
+    ).toBe("req");
+    for (const extra of [
+      { manifestPath: "/tmp/m.json" },
+      { policy: {} },
+      { runtimeIdentity: identity },
+      { scope },
+    ])
+      expect(() =>
+        parseDeviceFrameV3(frame("bindInstance", { ...request, ...extra }), "kernel"),
+      ).toThrow("Unknown field");
+    for (const bad of [
+      { instanceGeneration: "now" },
+      { instanceGeneration: "17000000000000000" },
+      { bindingId: "not-a-uuid" },
+      { expectedPreviousGeneration: request.instanceGeneration },
+      { expectedPreviousGeneration: "1800000000000" },
+      { instanceId: "" },
+    ])
+      expect(() =>
+        parseDeviceFrameV3(frame("bindInstance", { ...request, ...bad }), "kernel"),
+      ).toThrow();
+  });
+  it("binds the answer to the exact request; a delayed or foreign answer is refused", () => {
+    expect(parseOperationResultV3("bindInstance", answer, request)).toEqual(answer);
+    expect(() => parseOperationResultV3("bindInstance", answer)).toThrow("exact request");
+    for (const wrong of [
+      { bindingId: "0f1e0a52-8f5b-4d5e-9a1c-1f0e2d3c4b5a" },
+      { instanceGeneration: "1700000000000" },
+      { instanceId: "device-2" },
+      { runtimeIdentity: { ...identity, instanceGeneration: "1700000000000" } },
+      { runtimeIdentity: { ...identity, helperHash: "B".repeat(64) } },
+      { extra: true },
+    ])
+      expect(() =>
+        parseOperationResultV3("bindInstance", { ...answer, ...wrong }, request),
+      ).toThrow();
+    const { runtimeIdentity: _, ...withoutIdentity } = answer;
+    expect(() => parseOperationResultV3("bindInstance", withoutIdentity, request)).toThrow(
+      "Expected an object",
+    );
+  });
+});
+
+describe("owner reports (B2)", () => {
+  const report = {
+    version: 2,
+    revision: "r1",
+    sequence: 3,
+    fullAccess: false,
+    restrictedProjectReach: "os-user",
+    restrictedAllowedDomains: ["*.example.com"],
+  };
+  it("parses one strict report and refuses extra fields, bad reach or sequence", () => {
+    expect(parseOwnerCeilingReportV3(report)).toEqual(report);
+    for (const bad of [
+      { ...report, mode: "auto" },
+      { ...report, restrictedProjectReach: "home" },
+      { ...report, sequence: -1 },
+      { ...report, sequence: 1.5 },
+      { ...report, version: 1 },
+      { ...report, fullAccess: "true" },
+    ])
+      expect(() => parseOwnerCeilingReportV3(bad)).toThrow(DeviceProtocolError);
+  });
+  it("carries the report in policy frames, policy answers and applied statuses", () => {
+    const frame = parseDeviceFrameV3(
+      JSON.stringify({
+        type: "policy",
+        policy: { mode: "sandbox", allowedDomains: [] },
+        ownerCeiling: report,
+      }),
+      "device",
+    );
+    expect(frame).toMatchObject({ type: "policy", ownerCeiling: report });
+    expect(() =>
+      parseDeviceFrameV3(JSON.stringify({ type: "policy", policy: undefined }), "device"),
+    ).toThrow(DeviceProtocolError);
+    expect(
+      parseOperationResultV3("policy", {
+        policy: { mode: "sandbox", allowedDomains: [] },
+        ownerCeiling: report,
+      }),
+    ).toMatchObject({ ownerCeiling: report });
+    expect(() =>
+      parseOperationResultV3("policy", { policy: { mode: "sandbox", allowedDomains: [] } }),
+    ).toThrow(DeviceProtocolError);
+    expect(() => parseOperationResultV3("policyStatus", { outcome: "applied" })).toThrow(
+      DeviceProtocolError,
+    );
+    expect(
+      parseOperationResultV3("policyStatus", { outcome: "applied", ownerCeiling: report }),
+    ).toMatchObject({ outcome: "applied", ownerCeiling: report });
+    expect(parseOperationResultV3("policyStatus", { outcome: "unknown" })).toEqual({
+      outcome: "unknown",
+    });
+  });
+  it("lets the deployment only narrow the owner ceiling in a policy op", () => {
+    const req = (ownerCeiling: unknown) =>
+      JSON.stringify({
+        type: "req",
+        id: "1",
+        op: "policy",
+        deadlineMs: 1000,
+        args: {
+          opId: "op",
+          source: { accountId: "a", accountName: "A", via: "web" },
+          ownerCeiling,
+        },
+      });
+    expect(parseDeviceFrameV3(req({ fullAccess: false }), "kernel")).toMatchObject({
+      op: "policy",
+    });
+    expect(
+      parseDeviceFrameV3(req({ restrictedProjectReach: "workspace" }), "kernel"),
+    ).toMatchObject({ op: "policy" });
+    for (const bad of [{ fullAccess: true }, { restrictedProjectReach: "os-user" }, { x: 1 }])
+      expect(() => parseDeviceFrameV3(req(bad), "kernel")).toThrow(DeviceProtocolError);
+  });
 });

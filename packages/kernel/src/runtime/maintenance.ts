@@ -1,5 +1,5 @@
 import { getQueueToken, OnWorkerEvent, WorkerHost } from "@nestjs/bullmq";
-import { Inject, Injectable, Module } from "@nestjs/common";
+import { Inject, Injectable, Module, Optional } from "@nestjs/common";
 import type { Job, Queue, Worker } from "bullmq";
 import { BackgroundModule } from "../background/background.module.js";
 import { BG_WAKE_JOB, type BgWakeJobData } from "../background/wake-rules.js";
@@ -20,6 +20,7 @@ import type { KernelLogger } from "../log.js";
 import { DIRECTORY_SYNC_JOB, DirectorySync, type SyncJobData } from "../orgs/directory-sync.js";
 import { Offboarding, RUN_STOP_JOB, type RunStopJobData } from "../orgs/offboarding.js";
 import { OrgsModule } from "../orgs/orgs.module.js";
+import { CloudPermissionSnapshots } from "../sandbox/cloud-permission-snapshot.js";
 import {
   runSandboxDestroyFor,
   runSandboxResetFiles,
@@ -107,6 +108,9 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
     private readonly operations: Pick<SandboxOperationReconcileJob, "reconcile" | "revoke">,
     @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME))
     private readonly queue: Pick<Queue, "removeJobScheduler">,
+    @Optional()
+    @Inject(CloudPermissionSnapshots)
+    private readonly snapshots?: Pick<CloudPermissionSnapshots, "reconcileDevice">,
   ) {
     super();
   }
@@ -150,7 +154,7 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
         await runSandboxDestroyFor(this.sandbox, this.log, job);
         return;
       case SANDBOX_RESET_FILES_JOB:
-        await runSandboxResetFiles(this.sandbox, job);
+        await runSandboxResetFiles(this.sandbox, job, this.snapshots);
         return;
       case DRIFT_CONNECTOR_JOB: {
         const { orgId, connectorId, trigger } = job.data as DriftConnectorJobData;

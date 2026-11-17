@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import { parseCommandLine, USAGE, UsageError } from "./args.js";
+import { ceilingCommand } from "./commands/ceiling.js";
 import { drain, drainAndWait } from "./commands/drain.js";
 import { login } from "./commands/login.js";
 import { logout } from "./commands/logout.js";
@@ -36,6 +37,8 @@ export interface CliEnv {
   sandboxAvailable?: () => { ok: true } | { ok: false; reason: string };
   /** Asks one question on the terminal and resolves the answer (default: node:readline). */
   ask?: (question: string) => Promise<string>;
+  /** Test seam for `ceiling set`: runs between its read and its locked write. */
+  beforeCeilingWrite?: () => void;
 }
 
 /** Asks one question on the process's terminal. */
@@ -177,6 +180,15 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
         err,
         ...(io.sandboxAvailable && { sandboxAvailable: io.sandboxAvailable }),
         ...((io.stdinIsTTY ?? process.stdin.isTTY === true) && { ask: io.ask ?? askOnTerminal }),
+      });
+    case "ceiling":
+      return ceilingCommand(cmd, {
+        stateDir: dir,
+        home,
+        out,
+        err,
+        ...((io.stdinIsTTY ?? process.stdin.isTTY === true) && { ask: io.ask ?? askOnTerminal }),
+        ...(io.beforeCeilingWrite && { beforeWrite: io.beforeCeilingWrite }),
       });
     case "service":
       return serviceCommand(cmd.action, {

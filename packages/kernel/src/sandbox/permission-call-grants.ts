@@ -168,7 +168,7 @@ export class PermissionCallGrants {
         ? { kind: "allowlist", hosts: policy.localAllowedDomains }
         : policy.network;
     if (
-      (!view.fullAccessCeiling &&
+      (!view.broadProjectReach &&
         (candidate.permissionScope.readDirectories.length ||
           candidate.permissionScope.writeDirectories.length)) ||
       candidate.permissionScope.hosts.some(

@@ -4,10 +4,12 @@ import { LOCAL_PROVIDER, SandboxProviders } from "../sandbox/providers.js";
 import { SandboxProviderRegistryModule } from "../sandbox/providers.module.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
 import { DevicePolicyService } from "./device-policy.service.js";
+import { LocalInstanceBindings } from "./instance-bindings.js";
 import { LocalDeviceProvider } from "./local-device-provider.js";
 import { MachinesService } from "./machines.js";
 import { NetworkGrants } from "./network-grants.js";
 import { NetworkGrantsModule } from "./network-grants.module.js";
+import { OwnerReports } from "./owner-reports.js";
 import { LocalDeviceRelay } from "./relay.js";
 import { DeviceTargets } from "./targets.js";
 
@@ -32,6 +34,8 @@ import { DeviceTargets } from "./targets.js";
     LocalDeviceProvider,
     MachinesService,
     DevicePolicyService,
+    LocalInstanceBindings,
+    OwnerReports,
   ],
   exports: [
     NetworkGrantsModule,
@@ -39,6 +43,8 @@ import { DeviceTargets } from "./targets.js";
     LocalDeviceProvider,
     MachinesService,
     DevicePolicyService,
+    LocalInstanceBindings,
+    OwnerReports,
   ],
 })
 export class LocalDevicesModule implements OnModuleInit {

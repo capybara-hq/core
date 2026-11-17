@@ -402,19 +402,19 @@ export function sandboxConfigWarnings(
     if (pc?.refuseOpenNetwork === true) {
       out.push({
         level: "warn",
-        message: `extensionConfig."${providerPlugin}".refuseOpenNetwork is true: the ${providerPlugin} plugin refuses cloud devices on the open public network, which every device in auto mode and every sandbox-mode device of an organization whose cloudNetwork is open (the default) uses; set refuseOpenNetwork to false, or turn auto mode off (devices.autoMode) and have every organization switch its cloudNetwork to the allowlist`,
+        message: `extensionConfig."${providerPlugin}".refuseOpenNetwork is true: the ${providerPlugin} plugin refuses cloud devices on the open public network, which every device in auto mode and every sandbox-mode device of an organization whose cloudNetwork is open (the default) uses; set refuseOpenNetwork to false, or turn Full permission off (devices.fullAccess) and have every organization switch its cloudNetwork to the allowlist`,
       });
     }
   }
   if (
     cfg.sandbox.limits.orgHosts === "within" &&
     cfg.sandbox.limits.egress !== "none" &&
-    cfg.devices?.autoMode !== "off"
+    cfg.devices?.fullAccess !== "off"
   ) {
     out.push({
       level: "warn",
       message:
-        "sandbox.limits.orgHosts is within but devices.autoMode is not off: the platform allowlist limits sandbox mode only; devices in auto mode (the default) still reach the open public network. Set devices.autoMode to off (or turn auto mode off in the admin console) for a hard ceiling",
+        "sandbox.limits.orgHosts is within but devices.fullAccess is not off: the platform allowlist limits restricted execution only; devices on Full permission (allowed by default) still reach the open public network. Set devices.fullAccess to off (or turn Full permission off in the admin console) for a hard ceiling",
     });
   }
   const run = cfg.runtime.maxRunSeconds;
@@ -2373,7 +2373,7 @@ export class SandboxService {
             status: "running",
             handle: JSON.stringify(handle),
             had_instance: true,
-            created_at: sql<Date>`now()`,
+            // created_at is the generation commitHandle allocates (never a reused millisecond)
             running_since: sql<Date>`now()`,
             last_used_at: sql<Date>`now()`,
             ...(!atFileSystem && { instance_limits: record }),

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { intersectOperation, readStrictOwnerCeiling } from "../src/exec/operation-types.js";
 import { osRoots } from "../src/exec/shared.js";
-import { DEFAULT_POLICY, writePolicy } from "../src/state.js";
+import { DEFAULT_POLICY, ownerCeilingOfMode, writePolicy } from "../src/state.js";
 
 const dirs: string[] = [];
 afterEach(async () => {
@@ -92,7 +92,10 @@ describe("independent owner ceiling", () => {
     s.filesystem.readRoots = [join(f.dir, "project")];
     const a = { operationId: "op", orgNetwork: { kind: "open-public" as const, hosts: [] } };
     expect(intersectOperation(s, await f.read(), a).readRoots).toContain(join(f.dir, "project"));
-    writePolicy(join(f.dir, "state"), { ...DEFAULT_POLICY, mode: "sandbox" });
+    writePolicy(join(f.dir, "state"), {
+      ...DEFAULT_POLICY,
+      ownerCeiling: ownerCeilingOfMode("sandbox"),
+    });
     const narrowed = await f.read();
     expect(() => intersectOperation(s, narrowed, a)).toThrow();
   });
@@ -105,7 +108,10 @@ describe("independent owner ceiling", () => {
       network: { kind: "environment" as const },
     };
     expect(intersectOperation(s, await f.read()).full).toBe(true);
-    writePolicy(join(f.dir, "state"), { ...DEFAULT_POLICY, mode: "sandbox" });
+    writePolicy(join(f.dir, "state"), {
+      ...DEFAULT_POLICY,
+      ownerCeiling: ownerCeilingOfMode("sandbox"),
+    });
     const narrowed = await f.read();
     expect(() => intersectOperation(s, narrowed)).toThrow();
   });

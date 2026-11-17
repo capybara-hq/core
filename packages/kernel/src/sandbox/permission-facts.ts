@@ -21,9 +21,12 @@ import { aboveHome, type WorkingProject } from "../devices/working-root.js";
 import { ApiError } from "../errors.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { deviceFeaturesOf, localModeOf, localPolicyOf } from "../local-devices/policy-summary.js";
+import { ownerFactsOf, ownerModeOf } from "../local-devices/owner-report.js";
+import { deviceFeaturesOf } from "../local-devices/policy-summary.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
 import {
+  cloudChosenMode,
+  type DeviceNetwork,
   type EffectiveDevicePolicy,
   effectiveDevicePolicy,
   readDeploymentDevicePolicy,
@@ -81,15 +84,26 @@ export class PermissionFacts {
       this.devicePolicy({ orgId, deviceId }),
       this.db
         .selectFrom("device_machines")
-        .select(["local_policy", "roots", "home"])
+        .select(["local_policy", "owner_report", "roots", "home"])
         .where("device_id", "=", deviceId)
         .where("org_id", "=", orgId)
         .where("revoked_at", "is", null)
         .executeTakeFirst(),
     ]);
+    const facts = machine ? ownerFactsOf(machine) : null;
     return {
       policy,
-      owner: machine ? localPolicyOf(machine.local_policy) : null,
+      // the owner's authenticated facts (B2), or its protocol 2 summary translated exactly; null
+      // when the machine reported nothing readable
+      owner:
+        facts === null || facts.state === "missing"
+          ? null
+          : {
+              state: facts.state,
+              fullAccess: facts.fullAccess,
+              restrictedProjectReach: facts.restrictedProjectReach,
+              allowedDomains: facts.restrictedAllowedDomains,
+            },
       roots: machine?.roots ?? null,
       home: machine?.home ?? null,
     };
@@ -108,12 +122,54 @@ export class PermissionFacts {
     );
   }
   async devicePolicy(device: { orgId: string; deviceId?: string }): Promise<EffectiveDevicePolicy> {
-    const [deployment, settings, mode] = await Promise.all([
+    const [deployment, settings, chosen] = await Promise.all([
       readDeploymentDevicePolicy(this.db.db, this.config),
       readOrgSettings(this.db.db, device.orgId),
-      device.deviceId === undefined ? null : this.deviceChosenMode(device.orgId, device.deviceId),
+      device.deviceId === undefined
+        ? { mode: null, outer: null }
+        : this.deviceChosenMode(device.orgId, device.deviceId),
     ]);
-    return effectiveDevicePolicy(deployment, settings, mode);
+    return effectiveDevicePolicy(deployment, settings, chosen.mode, chosen.outer);
+  }
+
+  /**
+   * Refuses admission on a cloud device whose B1 snapshot found applied limits it could not
+   * establish exactly (unknown, stale, wider or pending a reset): only a lifecycle action that
+   * establishes them clears the marker (`CloudPermissionSnapshots.reconcile`). Read under the
+   * caller's device authority lock, which the snapshot writer takes for writing.
+   */
+  async assertCloudReconciled(orgId: string, deviceId: string): Promise<void> {
+    const row = await this.db
+      .selectFrom("devices")
+      .select("permission_reconcile_required")
+      .where("id", "=", deviceId)
+      .where("org_id", "=", orgId)
+      .executeTakeFirst();
+    if (row?.permission_reconcile_required)
+      throw new ApiError(
+        "device.permission_reconcile_required",
+        "This device's sandbox limits must be established again before it runs anything; reset the device's files to apply them",
+      );
+  }
+
+  /**
+   * Refuses new authority on a local device whose machine regressed its owner report sequence on
+   * a new connection or sent conflicting reports (B2): only a valid current report or a new
+   * login clears it. Late deliveries of older reports are ignored, never blocking.
+   */
+  async assertOwnerReportUsable(orgId: string, deviceId: string): Promise<void> {
+    const row = await this.db
+      .selectFrom("device_machines")
+      .select(["owner_report", "local_policy"])
+      .where("device_id", "=", deviceId)
+      .where("org_id", "=", orgId)
+      .where("revoked_at", "is", null)
+      .executeTakeFirst();
+    if (row && ownerFactsOf(row).state === "blocked")
+      throw new ApiError(
+        "device.owner_report_stale",
+        "This device's machine reported an owner ceiling older than the one it reported before (its owner report sequence was lost or reset); run capybara-device login again on that machine to reset it",
+      );
   }
 
   /**
@@ -125,20 +181,29 @@ export class PermissionFacts {
   private async deviceChosenMode(
     orgId: string,
     deviceId: string,
-  ): Promise<EffectiveDevicePolicy["mode"] | null> {
+  ): Promise<{ mode: EffectiveDevicePolicy["mode"] | null; outer: DeviceNetwork | null }> {
     const row = await this.db
       .selectFrom("devices as e")
       .leftJoin("device_machines as m", (j) =>
         j.onRef("m.device_id", "=", "e.id").on("m.revoked_at", "is", null),
       )
-      .select(["e.source", "e.mode", "m.features", "m.local_policy"])
+      .select([
+        "e.source",
+        "e.mode",
+        "e.owner_full_access",
+        "e.outer_network",
+        "m.features",
+        "m.local_policy",
+        "m.owner_report",
+      ])
       .where("e.id", "=", deviceId)
       .where("e.org_id", "=", orgId)
       .where("e.deleted_at", "is", null)
       .executeTakeFirst();
-    if (row === undefined) return null;
-    if (row.source === "local") return localModeOf(row.features, row.local_policy);
-    return row.mode === "sandbox" ? "sandbox" : null;
+    if (row === undefined) return { mode: null, outer: null };
+    if (row.source === "local") return { mode: ownerModeOf(row), outer: null };
+    // a cloud device: its B1 owner ceiling and outer network once snapshotted
+    return { mode: cloudChosenMode(row), outer: row.outer_network };
   }
 
   async readWorkingFacts({
@@ -236,6 +301,7 @@ export class PermissionFacts {
         "e.provider",
         "m.features",
         "m.local_policy",
+        "m.owner_report",
         "m.home",
         sql<string | null>`m.roots->>'workspace'`.as("machine_workspace"),
         "i.handle",
@@ -252,11 +318,20 @@ export class PermissionFacts {
     // still has, on purpose (projects are offered for what the device will read; no effect today)
     const { mode, allowedMode } = await this.devicePolicy({ orgId, deviceId });
     if (row.source === "local") {
+      const owner = ownerFactsOf(row);
       return {
         source: "local",
         mode,
+        // B2: restricted reach follows the owner's reach, independent of its Full permission, and
+        // only within a platform and org that allow the wider device ceiling
+        reach:
+          allowedMode === "auto" && owner.restrictedProjectReach === "os-user"
+            ? "os-user"
+            : "workspace",
+        // protocol 2 only: an owner auto machine under an org that forbids it is not read unasked
+        // (its wire reads unsandboxed); an authenticated report bounds browsing by scope instead
         widerThanAllowed:
-          allowedMode === "sandbox" && localModeOf(row.features, row.local_policy) === "auto",
+          owner.state !== "report" && allowedMode === "sandbox" && ownerModeOf(row) === "auto",
         workspace: row.machine_workspace ?? DEFAULT_SANDBOX_ROOTS.workspace,
         home: row.home,
         supported: deviceFeaturesOf(row.features).includes("projects"),
@@ -267,6 +342,8 @@ export class PermissionFacts {
     return {
       source: "cloud",
       mode,
+      // cloud projects stay within their provisioned files
+      reach: "workspace",
       widerThanAllowed: false,
       workspace: handle === null ? DEFAULT_SANDBOX_ROOTS.workspace : rootsOf(handle).workspace,
       home: null,
@@ -303,7 +380,7 @@ export class PermissionFacts {
   }
 
   async scope(orgId: string, deviceId: string, projectPath: string | null, project: string | null) {
-    const { policy, roots: ownerRoots } = await this.readDevice(orgId, deviceId);
+    const { policy, owner, roots: ownerRoots } = await this.readDevice(orgId, deviceId);
     const device = await this.db
       .selectFrom("devices")
       .select(["provider", "source"])
@@ -372,6 +449,13 @@ export class PermissionFacts {
       scopeRevision,
       availability,
       fullAccessCeiling: policy.mode === "auto" && policy.allowedMode === "auto",
+      // B2: broad restricted reach (directories outside the working root) is the owner's reach
+      // within the platform and org device ceiling, never the owner's Full permission; a cloud
+      // device keeps its previous rule (its Full ceiling over its own files)
+      broadProjectReach:
+        device?.source === "local"
+          ? policy.allowedMode === "auto" && owner?.restrictedProjectReach === "os-user"
+          : policy.mode === "auto" && policy.allowedMode === "auto",
     };
   }
   async preview(orgId: string, accountId: string, deviceId: string, project?: string) {
@@ -419,6 +503,7 @@ export class PermissionFacts {
         reason: unavailableReason,
       },
       fullAccessCeiling: preview?.fullAccessCeiling ?? false,
+      broadProjectReach: preview?.broadProjectReach ?? false,
       startingWorkNotice: notice,
     };
   }

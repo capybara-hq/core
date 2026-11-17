@@ -21,19 +21,29 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
-import { needsFullCeiling, PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
 import {
-  applyDevicesAutoModePatch,
-  DEVICES_AUTO_MODE_DEFAULT,
+  localMachineRoots,
+  needsWiderDeviceCeiling,
+  PermissionCeilingWrites,
+} from "../sandbox/permission-ceiling-writes.js";
+import {
+  applyDevicesFullAccessPatch,
   DEVICES_AUTO_MODE_PATCH,
-  DEVICES_AUTO_MODE_SETTING,
-  type DevicesAutoMode,
-  type DevicesAutoModePatch,
-  type DevicesAutoModeStored,
+  DEVICES_FULL_ACCESS_DEFAULT,
+  DEVICES_FULL_ACCESS_PATCH,
+  DEVICES_FULL_ACCESS_SETTING,
   type DevicesAutoModeView,
-  readDevicesAutoMode,
-  readStoredDevicesAutoMode,
-} from "../sandbox/platform-auto-mode.js";
+  type DevicesFullAccessPatch,
+  type DevicesFullAccessStored,
+  type DevicesFullAccessView,
+  type FullAccessPermission,
+  fullAccessPatchOfLegacy,
+  LEGACY_DEVICES_AUTO_MODE_SETTING,
+  legacyAutoModeView,
+  legacyDevicesAutoModeStored,
+  readDevicesFullAccess,
+  readStoredDevicesFullAccess,
+} from "../sandbox/platform-full-access.js";
 import { assertPlatformDefaultEligible, lockThemeShared } from "../themes/theme-state.js";
 import {
   mergeArrangement,
@@ -273,6 +283,8 @@ const DEFAULTS: DeploymentSettings = DEPLOYMENT_SETTINGS.parse({});
  * attribution defaults with their sources the same way.
  */
 export type DeploymentSettingsView = DeploymentSettings & {
+  devicesFullAccess: DevicesFullAccessView;
+  /** The same switch under its old public name, until the old public readers are removed. */
   devicesAutoMode: DevicesAutoModeView;
   attribution: PlatformAttributionView;
 };
@@ -280,7 +292,7 @@ export type DeploymentSettingsView = DeploymentSettings & {
 const autoModeWidenRefused = (): ApiError =>
   new ApiError(
     "deployment.auto_mode_not_allowed",
-    "Turning auto mode on at the platform level (devicesAutoMode) needs a super admin in the admin console; an API token or the Platform tool may only turn it off.",
+    "Allowing Full permission at the platform level (devicesFullAccess) needs a super admin in the admin console; an API token or the Platform tool may only turn it off.",
   );
 
 /**
@@ -329,10 +341,15 @@ export const DEPLOYMENT_SETTINGS_PATCH = z
       })
       .optional(),
     /**
-     * The platform's auto-mode switch (auto mode spec §4.3, P-D9): `mode` replaced, null clears it
-     * (back to the default, allowed). A value set in the startup config is read-only (409
+     * The platform's Full permission switch (B1): `permission` replaced, null clears it (back to
+     * the default, allowed). A value set in the startup config is read-only (409
      * `deployment.setting_readonly`); an API token or the Platform tool may only turn it off (400
      * `deployment.auto_mode_not_allowed`).
+     */
+    devicesFullAccess: DEVICES_FULL_ACCESS_PATCH.optional(),
+    /**
+     * The old name of `devicesFullAccess` (`{ mode }`), still accepted with the same values; never
+     * together with it.
      */
     devicesAutoMode: DEVICES_AUTO_MODE_PATCH.optional(),
     /**
@@ -535,6 +552,25 @@ function mergeByOrg<T>(
   return merged;
 }
 
+/**
+ * A patch with the old `devicesAutoMode` moved to `devicesFullAccess`; both together is a
+ * validation error (never pick one silently).
+ */
+export function normalizeDeploymentSettingsPatch(
+  patch: DeploymentSettingsPatch,
+): DeploymentSettingsPatch {
+  if (patch.devicesAutoMode === undefined) return patch;
+  if (patch.devicesFullAccess !== undefined)
+    throw new ApiError("validation_failed", "Invalid deployment settings", [
+      {
+        path: "devicesAutoMode",
+        message: "give devicesFullAccess only: devicesAutoMode is its old name",
+      },
+    ]);
+  const { devicesAutoMode, ...rest } = patch;
+  return { ...rest, devicesFullAccess: fullAccessPatchOfLegacy(devicesAutoMode) };
+}
+
 /** Deployment settings: one row per key, defaults for missing keys. */
 @Injectable()
 export class SettingsService {
@@ -543,22 +579,23 @@ export class SettingsService {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(SuperAdminLock) private readonly adminLock: SuperAdminLock,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
-    /** The startup config's `devices.autoMode`, which wins over the stored choice. */
+    /** The startup config's `devices.fullAccess`, which wins over the stored choice. */
     @Inject(KernelConfigService)
     private readonly config: Pick<KernelConfigService, "get" | "fieldSource">,
     @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
   ) {}
 
-  /** The settings with the platform's auto-mode switch and attribution defaults in effect. */
+  /** The settings with the platform's Full switch and attribution defaults in effect. */
   async view(): Promise<DeploymentSettingsView> {
-    const [settings, devicesAutoMode, attribution] = await Promise.all([
+    const [settings, devicesFullAccess, attribution] = await Promise.all([
       this.get(),
-      readDevicesAutoMode(this.db.db, this.config, this.log),
+      readDevicesFullAccess(this.db.db, this.config, this.log),
       readStoredPlatformAttribution(this.db.db, this.log),
     ]);
     return {
       ...settings,
-      devicesAutoMode,
+      devicesFullAccess,
+      devicesAutoMode: legacyAutoModeView(devicesFullAccess),
       attribution: this.attributionView(attribution),
     };
   }
@@ -575,30 +612,30 @@ export class SettingsService {
   }
 
   /**
-   * The refusals of a `devicesAutoMode` change: a value set in the startup config
+   * The refusals of a `devicesFullAccess` change: a value set in the startup config
    * (`deployment.setting_readonly`) and, with `onlyNarrows` (an API token, the Platform tool),
-   * turning auto mode on where it is off (`deployment.auto_mode_not_allowed`). Returns the next
-   * stored choice and the effective switch before it.
+   * allowing Full where it is off (`deployment.auto_mode_not_allowed`). Returns the next stored
+   * choice and the effective switch before it.
    */
-  async checkDevicesAutoMode(
-    patch: DevicesAutoModePatch,
+  async checkDevicesFullAccess(
+    patch: DevicesFullAccessPatch,
     opts: { onlyNarrows?: boolean } = {},
-  ): Promise<{ next: DevicesAutoModeStored; before: DevicesAutoModeView }> {
-    const source = this.config.fieldSource("devices.autoMode");
+  ): Promise<{ next: DevicesFullAccessStored; before: DevicesFullAccessView }> {
+    const source = this.config.fieldSource("devices.fullAccess");
     if (source !== undefined) {
       throw new ApiError(
         "deployment.setting_readonly",
-        "The platform's auto-mode switch is set in the startup config (file, Nacos or environment) and is read-only here",
-        [{ path: "devicesAutoMode.mode", source }],
+        "The platform's Full permission switch is set in the startup config (file, Nacos or environment) and is read-only here",
+        [{ path: "devicesFullAccess.permission", source }],
       );
     }
-    const before = await readDevicesAutoMode(this.db.db, this.config, this.log);
-    const next = applyDevicesAutoModePatch(
-      await readStoredDevicesAutoMode(this.db.db, this.log),
+    const before = await readDevicesFullAccess(this.db.db, this.config, this.log);
+    const next = applyDevicesFullAccessPatch(
+      await readStoredDevicesFullAccess(this.db.db, this.log),
       patch,
     );
-    const after = next.mode ?? DEVICES_AUTO_MODE_DEFAULT;
-    if (opts.onlyNarrows && before.mode === "off" && after === DEVICES_AUTO_MODE_DEFAULT) {
+    const after = next.permission ?? DEVICES_FULL_ACCESS_DEFAULT;
+    if (opts.onlyNarrows && before.permission === "off" && after === DEVICES_FULL_ACCESS_DEFAULT) {
       throw autoModeWidenRefused();
     }
     return { next, before };
@@ -653,7 +690,7 @@ export class SettingsService {
 
   /**
    * Updates settings under the super admin lock, re-checking the actor (else `forbidden`).
-   * `onlyNarrows` (an API token, the Platform tool): `devicesAutoMode` may only turn auto mode off.
+   * `onlyNarrows` (an API token, the Platform tool): `devicesFullAccess` may only turn Full off.
    */
   async update(
     patch: DeploymentSettingsPatch,
@@ -671,7 +708,13 @@ export class SettingsService {
         check.error.issues.map((i) => ({ path: i.path.join("."), message: i.message })),
       );
     }
-    await this.write(check.data, actorAccountId, actorTokenId, auditDetail, opts);
+    await this.write(
+      normalizeDeploymentSettingsPatch(check.data),
+      actorAccountId,
+      actorTokenId,
+      auditDetail,
+      opts,
+    );
     return this.view();
   }
 
@@ -684,7 +727,7 @@ export class SettingsService {
     opts: { onlyNarrows?: boolean },
   ): Promise<void> {
     await this.adminLock.lockAndAuthorize(actorAccountId);
-    if (patch.devicesAutoMode !== undefined) await this.ceilings.lock({}, "platform");
+    if (patch.devicesFullAccess !== undefined) await this.ceilings.lock({}, "platform");
     // The super admin lock serializes every settings write: the current overrides are read
     // and merged under it, so no concurrent change is lost
     const next: Partial<DeploymentSettings> = {};
@@ -757,21 +800,38 @@ export class SettingsService {
         next.subagentLimitOverrides = mergeByOrg(current.subagentLimitOverrides, subagentPatch);
       }
     }
-    // the platform's auto-mode switch: checked against the stored choice under the lock; the
-    // stored shape keeps `mode` optional, so clearing it (null) writes `{}` back to the default
-    let autoModeChange: { before: DevicesAutoModeView; after: DevicesAutoMode } | undefined;
+    // the platform's Full switch: checked against the stored choice under the lock; the stored
+    // shape keeps `permission` optional, so clearing it (null) writes `{}` back to the default
+    let fullAccessChange:
+      | { before: DevicesFullAccessView; after: FullAccessPermission }
+      | undefined;
     const writes: [string, unknown][] = Object.entries(next);
-    if (patch.devicesAutoMode !== undefined) {
-      const r = await this.checkDevicesAutoMode(patch.devicesAutoMode, opts);
-      autoModeChange = { before: r.before, after: r.next.mode ?? DEVICES_AUTO_MODE_DEFAULT };
-      writes.push([DEVICES_AUTO_MODE_SETTING, r.next]);
-      if (autoModeChange.before.mode !== autoModeChange.after)
+    if (patch.devicesFullAccess !== undefined) {
+      const r = await this.checkDevicesFullAccess(patch.devicesFullAccess, opts);
+      fullAccessChange = {
+        before: r.before,
+        after: r.next.permission ?? DEVICES_FULL_ACCESS_DEFAULT,
+      };
+      writes.push([DEVICES_FULL_ACCESS_SETTING, r.next]);
+      // until 8.6: an unconverted (or re-written by an old replica) old key is kept in step, so
+      // neither side reads a value the super admin did not choose
+      if (await legacyDevicesAutoModeStored(this.db.db))
+        writes.push([
+          LEGACY_DEVICES_AUTO_MODE_SETTING,
+          r.next.permission === undefined ? {} : { mode: r.next.permission },
+        ]);
+      if (fullAccessChange.before.permission !== fullAccessChange.after) {
+        const machineRoots =
+          fullAccessChange.after === "off" ? await localMachineRoots(this.db.db) : null;
         await this.ceilings.publishLocked(
           {},
           "platform",
-          autoModeChange.after === "off" ? needsFullCeiling : false,
+          machineRoots === null
+            ? false
+            : (scope, row) => needsWiderDeviceCeiling(scope, machineRoots.get(row.device_id)),
           true,
         );
+      }
     }
     // the platform's attribution defaults: a field set in the startup config is read-only
     if (patch.attribution !== undefined) {
@@ -796,7 +856,7 @@ export class SettingsService {
       action: "deployment.settings.updated",
       detail: {
         ...patch,
-        ...(autoModeChange !== undefined && { devicesAutoModeEffective: autoModeChange }),
+        ...(fullAccessChange !== undefined && { devicesFullAccessEffective: fullAccessChange }),
         ...auditDetail,
       },
     });

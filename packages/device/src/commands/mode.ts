@@ -1,7 +1,13 @@
 import type { Command } from "../args.js";
 import { SANDBOX_INSTALL_HINT, sandboxUnavailableSwitchRefusal } from "../exec/sandbox-messages.js";
 import { PolicyStore } from "../policy-store.js";
-import { policyPath, readCredential, type SandboxMode } from "../state.js";
+import {
+  ownerCeilingOfMode,
+  policyMode,
+  policyPath,
+  readCredential,
+  type SandboxMode,
+} from "../state.js";
 
 /**
  * Shown once before auto mode is turned on, and once at login in an organization that allows it
@@ -126,7 +132,7 @@ export async function modeCommand(
   }
   const mode: SandboxMode | undefined = cmd.mode;
   if (mode === undefined) {
-    const now = store.current().mode;
+    const now = policyMode(store.current());
     out(`Mode: ${now}.`);
     out(
       now === "auto"
@@ -162,7 +168,7 @@ export async function modeCommand(
     }
   }
   try {
-    next = store.update((p) => ({ ...p, mode })).mode;
+    next = policyMode(store.update((p) => ({ ...p, ownerCeiling: ownerCeilingOfMode(mode) })));
   } catch (e) {
     err(`Cannot change ${policyPath(stateDir)}: ${(e as Error).message}`);
     return 1;
@@ -172,6 +178,12 @@ export async function modeCommand(
       ? "This machine's local policy is now auto mode (from the next command); the deployment's " +
           "ceiling still applies."
       : "This machine's local policy is now sandbox mode (from the next command).",
+  );
+  // the mode sets both owner ceiling fields at once (M2): say so, reach included
+  out(
+    next === "auto"
+      ? "Owner ceiling: Full access allowed, project reach: os-user (see capybara-device ceiling)."
+      : "Owner ceiling: Full access denied, project reach: workspace (see capybara-device ceiling).",
   );
   return 0;
 }

@@ -27,6 +27,7 @@ export type Command =
   | { command: "extensions-state"; name: string; action: "enable" | "disable" | "uninstall" }
   | { command: "plugins-list" }
   | { command: "plugins-import"; target: string; yes: boolean }
+  | { command: "config-migrate-permissions"; input: string; output: string }
   | { command: "help" };
 
 export const USAGE = `Usage:
@@ -85,6 +86,17 @@ export const USAGE = `Usage:
                                                git: reads a folder of an https repository (or
                                                owner/repo on GitHub) at a branch, tag or commit,
                                                under the marketplaces.* network rules
+  capybara config migrate-permissions --in <file> --out <file>
+                                               Convert a config file (or a Nacos data id's
+                                               content saved to a file) to the new permission
+                                               keys (devices.autoMode -> devices.fullAccess),
+                                               keeping every other key and comment; writes a
+                                               new --out file and names the environment
+                                               variables to rename. Publish a Nacos result
+                                               through your reviewed config change. YAML or
+                                               JSON only (a properties-format Nacos data id is
+                                               not converted), and a key reached through a YAML
+                                               alias or merge key is not renamed
   capybara help                                Show this help
 
 Every command first loads .env from the working directory when it exists (variables already set
@@ -133,6 +145,35 @@ export function parseCli(argv: string[]): Command {
   const activation = activatePermissionConfig === undefined ? {} : { activatePermissionConfig };
   if (command === undefined || command === "help" || v.help) {
     return { command: "help" };
+  }
+  if (command !== "config") {
+    for (const opt of ["in", "out"] as const) {
+      if (v[opt] !== undefined)
+        throw new UsageError(`--${opt} is only valid for config migrate-permissions`);
+    }
+  }
+  if (command === "config") {
+    const [sub, ...extra] = rest;
+    if (sub !== "migrate-permissions")
+      throw new UsageError(
+        sub === undefined
+          ? "missing config command (expected migrate-permissions)"
+          : `unknown config command "${sub}"`,
+      );
+    if (extra.length > 0) throw new UsageError(`unexpected argument "${extra[0]}"`);
+    for (const opt of ["role", "yes", "dir", "manifest", ...ADMIN_CREATE_OPTIONS] as const) {
+      if (v[opt] !== undefined) throw new UsageError(`--${opt} is not valid for config`);
+    }
+    for (const opt of ["in", "out"] as const) {
+      const value = v[opt];
+      if (value === undefined || value.trim() === "")
+        throw new UsageError(`config migrate-permissions needs --${opt} <file>`);
+    }
+    return {
+      command: "config-migrate-permissions",
+      input: v.in as string,
+      output: v.out as string,
+    };
   }
   if (command !== "extensions" && command !== "plugins" && v.yes !== undefined) {
     throw new UsageError(
@@ -296,6 +337,8 @@ function parse(argv: string[]) {
       yes: { type: "boolean", short: "y" },
       dir: { type: "string" },
       manifest: { type: "string" },
+      in: { type: "string" },
+      out: { type: "string" },
       help: { type: "boolean", short: "h" },
     },
   });

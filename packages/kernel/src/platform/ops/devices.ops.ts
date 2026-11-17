@@ -326,8 +326,9 @@ export class DevicesOperations implements OnModuleInit {
         authz: { orgAction: "agents.use" },
         mirrors: ["PATCH /api/v1/orgs/:orgId/devices/:id"],
         renames: { deviceId: "id" },
-        // a person changes their own machine's mode; enabling auto mode happens on the machine
-        omits: ["mode"],
+        // a person changes their own device's mode or owner ceiling in a web session; widening a
+        // machine's ceiling happens on the machine (B2)
+        omits: ["mode", "ownerCeiling", "confirmWidening"],
         confirm: "personal",
         errors: [
           {

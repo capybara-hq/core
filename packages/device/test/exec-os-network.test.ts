@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { DeviceExecArgs, SandboxLimits } from "@capybara-hq/plugin-sdk";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SwitchingExecutor } from "../src/exec/switch.js";
-import { DEFAULT_POLICY, type Policy } from "../src/state.js";
+import { DEFAULT_POLICY, ownerCeilingOfMode, type Policy } from "../src/state.js";
 import { FakeExecutor } from "./fake-kernel.js";
 
 // A stand-in for sandbox-runtime: commands run unsandboxed, the test controls the violations.
@@ -321,7 +321,7 @@ describe("OsExecutor network explanations (mocked runtime)", () => {
     expect(init.network).not.toHaveProperty("allowLocalBinding");
     expect(init.network).not.toHaveProperty("allowUnixSockets");
     // A policy change does not change the sandbox's filesystem or local permissions.
-    policy = { ...policy, mode: "sandbox", allowedDomains: ["a.com"] };
+    policy = { ...policy, ownerCeiling: ownerCeilingOfMode("sandbox"), allowedDomains: ["a.com"] };
     await ex.exec(execArgs("true"), never);
     expect(sbx.updateConfig).not.toHaveBeenCalled();
     await ex.dispose();
@@ -390,7 +390,7 @@ describe("OsExecutor network explanations (mocked runtime)", () => {
       });
       // Auto mode still runs commands and file operations on the host, and never silently
       // falls back for a sandbox ceiling.
-      policy = { ...policy, mode: "auto" };
+      policy = { ...policy, ownerCeiling: ownerCeilingOfMode("auto") };
       const host = new FakeExecutor();
       host.files.set("/f", Buffer.from("host"));
       const sw = new SwitchingExecutor(ex, host, () => policy);
