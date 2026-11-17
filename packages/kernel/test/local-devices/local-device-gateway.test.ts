@@ -327,7 +327,21 @@ describe("boot identity evidence for local legacy retirement", () => {
     expect(await states(d.deviceId)).toEqual([{ state: "quarantined", resolution: null }]);
   });
 
-  it("an unauthenticated connection, a revoked machine's late hello and another machine credential are no evidence", async () => {
+  /** A re-login on the device: a new machine credential, the previous one revoked. */
+  const relogin = (d: { deviceId: string; accountId: string }) =>
+    txHost.run(() =>
+      machines.issue({
+        orgId,
+        deviceId: d.deviceId,
+        accountId: d.accountId,
+        name: "box",
+        os: "linux",
+        arch: "x64",
+        programVersion: "0.1.0",
+      }),
+    );
+
+  it("an unauthenticated connection, a revoked machine's late hello and a replayed boot are no evidence", async () => {
     await resetRetirement();
     const d = await bootDevice();
     await hello(d.credential, d.machineId, B1);
@@ -343,17 +357,7 @@ describe("boot identity evidence for local legacy retirement", () => {
 
     // a re-login revokes the first machine; its old credential cannot connect any more and a late
     // hello of its older connection is not recorded
-    const second = await txHost.run(() =>
-      machines.issue({
-        orgId,
-        deviceId: d.deviceId,
-        accountId: d.accountId,
-        name: "box",
-        os: "linux",
-        arch: "x64",
-        programVersion: "0.1.0",
-      }),
-    );
+    const second = await relogin(d);
     expect(
       await refusal(url, {
         Authorization: `Bearer ${d.credential}`,
@@ -362,11 +366,35 @@ describe("boot identity evidence for local legacy retirement", () => {
     ).toMatchObject({ status: 401 });
     await machines.recordHello(d.machineId, { ...HELLO, bootId: B2 });
     expect(await machineBoot(d.machineId)).toBe(B1);
+    expect(await states(d.deviceId)).toEqual([{ state: unresolved, resolution: null }]);
 
-    // the new machine credential reports another boot: not the machine the obligation names
+    // a boot the device had reported before the obligation's, replayed through the new credential
+    await sql`INSERT INTO capybara.device_machine_boots (machine_id, boot_id, seq)
+      VALUES (${d.machineId}, ${B3}, 0)`.execute(raw);
     await hello(second.credential, second.machineId, B3);
     expect(await states(d.deviceId)).toEqual([{ state: unresolved, resolution: null }]);
     expect(await k.app.get(LegacyRetirementStore).hasUnresolved(d.deviceId)).toBe(true);
+  });
+
+  it("a re-login on the same computer is no restart; a re-login after a restart is", async () => {
+    await resetRetirement();
+    const d = await bootDevice();
+    await hello(d.credential, d.machineId, B1);
+    await obligation(d.deviceId);
+
+    // a new credential reporting the same boot: the same computer, not restarted
+    const second = await relogin(d);
+    await hello(second.credential, second.machineId, B1);
+    expect(await states(d.deviceId)).toEqual([{ state: unresolved, resolution: null }]);
+    await expect(use(d.deviceId, d.accountId)).rejects.toMatchObject({
+      code: "device.restart_required",
+    });
+
+    // the evidence is the OS instance, not the credential: another re-login after a restart
+    const third = await relogin(d);
+    await hello(third.credential, third.machineId, B2);
+    expect(await states(d.deviceId)).toEqual([{ state: "resolved", resolution: "host-rebooted" }]);
+    expect(await k.app.get(SandboxService).retireLegacy(d.deviceId)).toBe("clear");
   });
 });
 

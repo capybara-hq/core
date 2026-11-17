@@ -147,8 +147,8 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   whole by its provider (never resumed or `killAll`ed; files kept) and the confirmed destruction recorded in
   `device_instance_destructions`; a local, replaced-without-record or unknown one is quarantined (`device.unavailable`). A local
   destroy, a service restart, a new generation, a timeout or a SID never clears one; a local one records the boot identity
-  (`bootId`, from authenticated hellos) its machine last reported and resolves `host-rebooted` once that same machine reports
-  a later boot (`device.restart_required` until then; none recorded: never). `ifRunning` (polls, stops) is not gated.
+  (`bootId`, from authenticated hellos) its machine last reported and resolves `host-rebooted` once any current machine of the
+  device reports another, not earlier, boot (the OS instance is the evidence, not the credential) (`device.restart_required` until then; none recorded: never). `ifRunning` (polls, stops) is not gated.
 
 ### Limits, modes and networks (`SandboxLimits`)
 

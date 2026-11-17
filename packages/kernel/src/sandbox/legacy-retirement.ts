@@ -416,7 +416,7 @@ export class LegacyRetirementStore {
    * claimed the device, inside its transaction with the machine row locked. A boot first seen for
    * the machine becomes its current one; the current one again is a reconnect; one seen before a
    * later one (stale, replayed) changes nothing. A new or current boot then settles the device's
-   * local obligations recorded under an earlier boot of that machine ({@link settleRebooted}).
+   * local obligations recorded under another boot of the computer ({@link settleRebooted}).
    */
   async recordBoot(machineId: string, bootId: unknown): Promise<BootReport> {
     if (!isDeviceBootId(bootId)) return "ignored";
@@ -448,10 +448,13 @@ export class LegacyRetirementStore {
   }
 
   /**
-   * Resolves (`host-rebooted`) every unresolved local obligation of the device whose recorded boot
-   * its machine has since replaced with a later one: that host restarted, so no process of the
-   * earlier boot can exist. An obligation without a recorded boot never resolves here. Returns how
-   * many resolved.
+   * Resolves (`host-rebooted`) every unresolved local obligation of the device for which a current
+   * (non-revoked) machine of the device has recorded a boot other than the obligation's: the
+   * evidence is the OS instance, not the credential, so a re-login on the same computer reporting
+   * the same boot changes nothing, and one after a restart (or any later boot) resolves it. A boot
+   * that some machine of the device had already reported when the obligation's boot was first
+   * seen is an older boot, never evidence (a replay through another credential). An obligation
+   * without a recorded boot never resolves here. Returns how many resolved.
    */
   async settleRebooted(deviceId: string): Promise<number> {
     const r = await this.db
@@ -469,15 +472,36 @@ export class LegacyRetirementStore {
       .where(({ exists, selectFrom }) =>
         exists(
           selectFrom("device_machines as m")
-            .innerJoin("device_machine_boots as cur", (j) =>
-              j.onRef("cur.machine_id", "=", "m.id").onRef("cur.boot_id", "=", "m.boot_id"),
-            )
-            .innerJoin("device_machine_boots as old", (j) =>
-              j.onRef("old.machine_id", "=", "m.id").onRef("old.boot_id", "=", "o.boot_id"),
-            )
             .select("m.id")
-            .whereRef("m.id", "=", "o.boot_machine_id")
-            .whereRef("cur.seq", ">", "old.seq"),
+            .whereRef("m.device_id", "=", "o.device_id")
+            .where("m.revoked_at", "is", null)
+            .where("m.boot_id", "is not", null)
+            .whereRef("m.boot_id", "<>", "o.boot_id")
+            // not a boot the device's machines had already reported by the obligation's boot
+            .where((inner) =>
+              inner.not(
+                inner.exists(
+                  inner
+                    .selectFrom("device_machine_boots as seen")
+                    .innerJoin("device_machines as sm", "sm.id", "seen.machine_id")
+                    .select("seen.boot_id")
+                    .whereRef("sm.device_id", "=", "o.device_id")
+                    .whereRef("seen.boot_id", "=", "m.boot_id")
+                    .where((e) =>
+                      e(
+                        "seen.seq",
+                        "<=",
+                        e
+                          .selectFrom("device_machine_boots as ob")
+                          .innerJoin("device_machines as om", "om.id", "ob.machine_id")
+                          .select((f) => f.fn.min("ob.seq").as("first"))
+                          .whereRef("om.device_id", "=", "o.device_id")
+                          .whereRef("ob.boot_id", "=", "o.boot_id"),
+                      ),
+                    ),
+                ),
+              ),
+            ),
         ),
       )
       .executeTakeFirst();
