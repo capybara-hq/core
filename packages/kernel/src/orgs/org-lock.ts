@@ -29,12 +29,16 @@ export interface LockedOrg {
  * `FOR UPDATE`: org deletion's `deleted_at` update is a no-key update too.
  *
  * The global lock order: the org admission lock ({@link lockForRemoval}; the run fence's shared
- * admission, `RunExecution`) → this org row lock (also the run fence's exclusive admission) → the
- * permission authority locks (`PermissionAuthorityLock`: platform, org, device, root; a run's
- * ordered prelude takes them inside its fence, `withTransactionFencePrelude`) → the root
- * conversation → the conversation. A writer that locks several conversation or run rows of
- * one tree locks the tree's root conversation first. A transaction the run fence admitted shared
- * takes none of these org-level locks (each method throws in one, `assertNotSharedAdmission`).
+ * admission, `RunExecution`) → this org row lock (also the run fence's exclusive admission) → a
+ * membership row → a device row (`DevicesService.lockOwn`, the device project writes, the cloud
+ * permission snapshot) → the super admin advisory lock (`SuperAdminLock`) → the permission
+ * authority locks (`PermissionAuthorityLock`: platform, org, device, root; inside a run's fence
+ * an ordered prelude takes them and the locks before them, `withOrderedLocks` /
+ * `withTransactionFencePrelude`) → the root conversation → the conversation (then what a writer
+ * locks under its conversation: an approval, a run, a machine row). A writer that locks several
+ * conversation or run rows of one tree locks the tree's root conversation first. A transaction
+ * the run fence admitted shared takes none of these org-level locks (each method throws in one,
+ * `assertNotSharedAdmission`).
  */
 @Injectable()
 export class OrgLock {

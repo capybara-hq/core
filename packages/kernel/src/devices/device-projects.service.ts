@@ -15,7 +15,7 @@ import { sql } from "kysely";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { TransactionHost } from "../infra/database/transaction-host.js";
+import { TransactionHost, withOrderedLocks } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { projectsUnsupported } from "../local-devices/local-device-provider.js";
 import { POLICY_REFUSAL_PREFIX } from "../local-devices/relay.js";
@@ -280,7 +280,22 @@ export class DeviceProjectsService {
         return { path, name };
       },
     );
-    return this.insert(orgId, accountId, deviceId, resolved, actorTokenId, auditDetail);
+    return withOrderedLocks(
+      () => this.lockSubject(orgId, accountId, deviceId),
+      () => this.insert(orgId, accountId, deviceId, resolved, actorTokenId, auditDetail),
+    );
+  }
+
+  /**
+   * The owner's live device row, then its permission authority lock: the ordered prelude of the
+   * project writes (`withOrderedLocks`), so inside a run's fence (the Platform tool's
+   * `devices.add-project` / `devices.remove-project`) they follow the org row and precede the
+   * conversation rows. The writes name both again (already held: a re-check).
+   */
+  @Transactional({ propagation: "mandatory" })
+  private async lockSubject(orgId: string, accountId: string, deviceId: string): Promise<void> {
+    await this.lockOwn(orgId, accountId, deviceId);
+    await this.ceilings.lock({ orgId, deviceId }, "device");
   }
 
   /** The insert of {@link add}: the owner's live device locked, the count and the name checked. */
@@ -321,7 +336,6 @@ export class DeviceProjectsService {
   }
 
   /** Removes a project of the owner's device; removing one that is not there succeeds. */
-  @Transactional()
   async remove(
     orgId: string,
     accountId: string,
@@ -329,6 +343,21 @@ export class DeviceProjectsService {
     name: string,
     actorTokenId?: string,
     auditDetail?: Record<string, unknown>,
+  ): Promise<void> {
+    await withOrderedLocks(
+      () => this.lockSubject(orgId, accountId, deviceId),
+      () => this.removeIn(orgId, accountId, deviceId, name, actorTokenId, auditDetail),
+    );
+  }
+
+  @Transactional()
+  private async removeIn(
+    orgId: string,
+    accountId: string,
+    deviceId: string,
+    name: string,
+    actorTokenId: string | undefined,
+    auditDetail: Record<string, unknown> | undefined,
   ): Promise<void> {
     await this.lockOwn(orgId, accountId, deviceId);
     await this.ceilings.lock({ orgId, deviceId }, "device");

@@ -18,7 +18,7 @@ import {
 } from "../identity/settings.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { TransactionHost } from "../infra/database/transaction-host.js";
+import { TransactionHost, withOrderedLocks } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
@@ -669,7 +669,24 @@ export class OrgSettingsService {
   ): Promise<OrgSettingsView> {
     const patch = normalizeOrgSettingsPatch(input);
     await this.check(patch);
-    return this.updateIn(orgId, patch, actorAccountId, actorTokenId, auditDetail, opts);
+    // the org row, then (for a Full or cloud network change) the org's permission authority lock:
+    // the ordered prelude, so inside a run's fence (the Platform tool's `org-settings.update`) they
+    // precede the conversation rows; the patch decides the lock, so nothing can change it
+    return withOrderedLocks(
+      () => this.lockFor(orgId, patch, actorAccountId),
+      () => this.updateIn(orgId, patch, actorAccountId, actorTokenId, auditDetail, opts),
+    );
+  }
+
+  @Transactional({ propagation: "mandatory" })
+  private async lockFor(
+    orgId: string,
+    patch: OrgSettingsPatch,
+    actorAccountId: string,
+  ): Promise<void> {
+    await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "org.update");
+    if (patch.fullAccess !== undefined || patch.cloudNetwork !== undefined)
+      await this.ceilings.lock({ orgId }, "org");
   }
 
   /**
@@ -712,9 +729,8 @@ export class OrgSettingsService {
     auditDetail: Record<string, unknown> | undefined,
     opts: { onlyNarrows?: boolean } | undefined,
   ): Promise<OrgSettingsView> {
-    await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "org.update");
-    if (patch.fullAccess !== undefined || patch.cloudNetwork !== undefined)
-      await this.ceilings.lock({ orgId }, "org");
+    // held since the prelude (`lockFor`); naming them again re-checks the actor's role
+    await this.lockFor(orgId, patch, actorAccountId);
     const row = await this.db
       .selectFrom("orgs")
       .select("settings")

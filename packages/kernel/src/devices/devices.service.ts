@@ -11,7 +11,11 @@ import { ExtensionDisplayNames } from "../extensions/display-name.js";
 import { audit } from "../identity/audit.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { assertNotSharedAdmission, TransactionHost } from "../infra/database/transaction-host.js";
+import {
+  assertNotSharedAdmission,
+  TransactionHost,
+  withOrderedLocks,
+} from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { LockService } from "../infra/lock/lock.service.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
@@ -865,8 +869,11 @@ export class DevicesService {
    * sandbox tools then fail with `device.not_found`. A local device's machine is
    * revoked in the same transaction; after the commit it is told `stop { reason: "deleted" }`
    * (while connected) and its connection is closed.
+   *
+   * The membership, the device row and the device's permission authority lock are the
+   * transaction's ordered prelude (`withOrderedLocks`): inside a run's fence (the Platform tool's
+   * `devices.delete`) they follow the org row and precede the conversation rows.
    */
-  @Transactional()
   async remove(
     orgId: string,
     accountId: string,
@@ -874,6 +881,28 @@ export class DevicesService {
     actorTokenId?: string,
     auditDetail?: Record<string, unknown>,
   ): Promise<void> {
+    await withOrderedLocks(
+      () => this.lockRemovalSubject(orgId, accountId, id),
+      () => this.removeIn(orgId, accountId, id, actorTokenId, auditDetail),
+    );
+  }
+
+  /** The prelude of {@link remove}: the membership, the device row, the device's write lock. */
+  @Transactional({ propagation: "mandatory" })
+  private async lockRemovalSubject(orgId: string, accountId: string, id: string): Promise<void> {
+    await this.lockOwn(orgId, accountId, id);
+    await this.ceilings.lock({ orgId, deviceId: id }, "device");
+  }
+
+  @Transactional()
+  private async removeIn(
+    orgId: string,
+    accountId: string,
+    id: string,
+    actorTokenId: string | undefined,
+    auditDetail: Record<string, unknown> | undefined,
+  ): Promise<void> {
+    // held since the prelude (the row and the lock are the same; naming them again re-checks)
     const before = await this.lockOwn(orgId, accountId, id);
     await this.ceilings.lock({ orgId, deviceId: id }, "device");
     await this.ceilings.publishLocked({ orgId, deviceId: id }, "device", true, true);

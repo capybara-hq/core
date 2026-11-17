@@ -74,10 +74,12 @@ export function hasTransactionFence(): boolean {
 /**
  * Install once before opening a transaction: the ordered authority (the permission authority
  * locks) runs inside the inherited run fence, after its org row and before its conversation rows.
- * The global lock order (`OrgLock`): org admission -> org row -> permission authority locks
- * (platform, org, device, root) -> root conversation -> conversation. Offboarding and the org
- * writers hold the org row when they take an org permission lock exclusively, so a prelude that
- * took its shared permission locks before the fence's org row could deadlock with them.
+ * The global lock order (`OrgLock`): org admission -> org row -> membership -> device row -> super
+ * admin lock -> permission authority locks (platform, org, device, root) -> root conversation ->
+ * conversation; a prelude may take the locks before the permission locks too. Offboarding and
+ * the org writers hold the org row when they take an org permission lock exclusively, so a
+ * prelude that took its shared permission locks before the fence's org row could deadlock with
+ * them.
  * Existing transactions are rejected because their row locks cannot be retroactively reordered.
  * The inherited fence remains intact; this does not expose an unfenced callback or dispatch API.
  */
@@ -110,6 +112,33 @@ export function withTransactionFencePrelude<T>(
     if (!ran) throw new Error("The inherited fence did not run the ordered authority prelude");
     return mode || "exclusive";
   }, fn);
+}
+
+/**
+ * A writer whose permission authority locks (with the locks it takes before them: its org row, a
+ * membership, its device row, the super admin lock) are its `prelude`, and whose writes are `fn`,
+ * which opens at most one transaction. With no transaction open, {@link withTransactionFencePrelude}:
+ * inside a run's fence (a Platform operation in a tool step) the prelude runs after the fence's org
+ * row and before its conversation rows; with no fence (an HTTP request) it runs first in the
+ * transaction `fn` opens, the order the writer always had. Joining a caller's transaction the
+ * prelude runs inline at once: the caller owns that transaction's order, and a fenced caller's new
+ * permission lock is refused (`PermissionAuthorityLock`). `fn` re-checks under the locks what the
+ * prelude read without them, and may name the same, already held, locks again.
+ *
+ * With no fence the transaction is still admitted by the prelude's own fence: its body runs as a
+ * fenced transaction (`admission` exclusive, `inFencedTransaction()` true), so
+ * `OrgLock.lockForRemoval` refuses there and the permission lock guard applies to it: every
+ * permission lock its body needs belongs in the prelude.
+ */
+export async function withOrderedLocks<T>(
+  prelude: () => Promise<void>,
+  fn: () => Promise<T>,
+): Promise<T> {
+  if (liveStore()) {
+    await prelude();
+    return fn();
+  }
+  return withTransactionFencePrelude(prelude, fn);
 }
 
 export type Propagation = "required" | "requires_new" | "mandatory";
