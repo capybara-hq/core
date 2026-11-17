@@ -12,9 +12,14 @@ export type ContentBlock =
   | { type: "thinking"; text: string }
   | { type: "tool_call"; id: string; name: string; input: unknown }
   | { type: "tool_result"; callId: string; content: string; isError: boolean }
-  /** 上传的附件（只出现在 user 消息里）：日志里只有引用，字节经 download 取。 */
-  | { type: "image"; mediaType: string; source: MediaSource; name?: string }
-  | { type: "document"; mediaType: string; source: MediaSource; name?: string };
+  /**
+   * An uploaded attachment (only in user messages): the log holds a reference, the bytes come by
+   * download. `size` (bytes) is display metadata for the chip; it never follows the block to a model.
+   */
+  | { type: "image"; mediaType: string; source: MediaSource; name?: string; size?: number }
+  | { type: "document"; mediaType: string; source: MediaSource; name?: string; size?: number }
+  /** An attachment the model only gets a reference to (an xlsx, say), same rules as the others. */
+  | { type: "file"; mediaType: string; source: MediaSource; name?: string; size?: number };
 
 /** 媒体块的来源：日志里只会是 `ref`（字节不进日志）。 */
 export type MediaSource = { kind: "ref"; attachmentId: string } | { kind: "base64"; data: string };

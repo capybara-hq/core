@@ -1,5 +1,23 @@
 # @capybara-hq/design
 
+## 0.2.0-rc.11
+
+### Patch Changes
+
+- 6f7f0dc: The image zoom says so when the image cannot be loaded, with a retry (a session refresh, then the
+  attachment URL with its retry token); a new source clears the failure, and the retry disappears once
+  the one reload has been used.
+
+## 0.2.0-rc.10
+
+### Patch Changes
+
+- 31b5355: Clicking an image attachment zooms in the page with a download action instead of opening a tab.
+- 9d98a0e: Keep a running tool row's elapsed time on one line (§6.16.9): beside a long description, such as a
+  command review's reason, the label now yields with its ellipsis and 「6 秒」 is no longer squeezed
+  into one character per line. The live timer is a status like the waiting word beside it: `flex:
+  none`, `nowrap`.
+
 ## 0.2.0-rc.9
 
 ### Patch Changes

@@ -9,7 +9,6 @@ import {
   type SandboxToolDeps,
   sandboxBaseTimeoutMs,
   searchTimeoutMs,
-  syncMarkerMatcher,
   unavailableWhenNoSandbox,
   withNotices,
 } from "./common.js";
@@ -105,14 +104,12 @@ export function sandboxGlobTool(deps: SandboxToolDeps): BuiltinTool {
         names.pop();
         if (r.truncated) names.pop();
         const base = dir === "/" ? "" : dir;
-        const isMarker = syncMarkerMatcher(s.roots);
         return (
           names
             .filter((l) => l.startsWith("./"))
             .map((l) => l.slice(2))
             .filter((rel) => matches(rel))
             .map((rel) => `${base}/${rel}`)
-            .filter((abs) => !isMarker(abs))
             .sort()
             // 文件名里的换行显示为 `\n`（与 Grep 一致），一行一个文件
             .map((abs) => abs.replace(/\n/g, "\\n"))

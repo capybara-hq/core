@@ -1,5 +1,42 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.41
+
+### Patch Changes
+
+- 3385a6d: Chat attachments accept mainstream office documents, archives and source files by extension
+  (`attachments.allowedExtensions`, about ninety defaults), because their content types disagree between
+  browsers and systems — an `html`, `py`, `ts` or legacy `doc` file could not be attached before. The
+  composer's picker offers the extensions and the refusal names them beside the media types.
+
+## 0.1.0-rc.40
+
+No changes in this release.
+
+## 0.1.0-rc.39
+
+### Patch Changes
+
+- 28e692b: Bootstrap pins follow the plugins repository at `05d00a9`: `object-store-s3` 0.1.0-rc.9 → 0.1.0-rc.10
+  (it now reports its objects' unsigned URI, so the attachments-on-demand reference reads
+  `s3://<bucket>/…`) and `todo` 0.1.0-rc.10 → 0.1.0-rc.11. The compose files' sandbox build contexts
+  move to the same commit.
+
+## 0.1.0-rc.38
+
+No changes in this release.
+
+## 0.1.0-rc.37
+
+### Patch Changes
+
+- d9636b0: Setup checklist: when the platform offers a model provider the org can switch on or configure
+  (the preinstalled providers are opt-in per org), org admins and super admins go to the org's
+  extensions page (model tab) instead of being told to wait for a super admin; readiness gains
+  `orgCanAddModel`.
+- Updated dependencies [d9636b0]
+  - @capybara-hq/kernel@0.1.0-rc.36
+
 ## 0.1.0-rc.36
 
 ### Patch Changes

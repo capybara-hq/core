@@ -1,5 +1,14 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.36
+
+### Patch Changes
+
+- d9636b0: Setup checklist: when the platform offers a model provider the org can switch on or configure
+  (the preinstalled providers are opt-in per org), org admins and super admins go to the org's
+  extensions page (model tab) instead of being told to wait for a super admin; readiness gains
+  `orgCanAddModel`.
+
 ## 0.1.0-rc.35
 
 ### Patch Changes

@@ -11,6 +11,7 @@ import {
   sanitizeParams,
   type UsageReportPayload,
   validateEmbedResult,
+  validateMediaBlock,
   validateParams,
 } from "../src/index.js";
 
@@ -399,5 +400,61 @@ describe("model platform types", () => {
       occurredAt: "2026-11-07T00:00:00Z",
     };
     expect(u.purpose).toBe("embedding");
+  });
+});
+
+describe("attachment blocks", () => {
+  it("accepts a file block with any content type and a display size", () => {
+    const b = {
+      type: "file" as const,
+      mediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      source: { kind: "base64" as const, data: "AAAA" },
+      name: "电商工行.xlsx",
+      size: 1_258_291,
+    };
+    expect(validateMediaBlock(b)).toEqual([]);
+    // a media block carries the same display size
+    expect(
+      validateMediaBlock({
+        type: "image",
+        mediaType: "image/png",
+        source: { kind: "base64", data: "AA==" },
+        size: 2,
+      }),
+    ).toEqual([]);
+    // a file block still validates its name and source
+    expect(validateMediaBlock({ ...b, name: "\u0001" })).toContain(
+      "file name must not contain control characters",
+    );
+  });
+
+  it("validates the file media type and the display size", () => {
+    const b = {
+      type: "file",
+      mediaType: "application/zip",
+      source: { kind: "base64", data: "AAAA" },
+    };
+    for (const mediaType of [
+      "",
+      "application",
+      "/zip",
+      "application/",
+      "application/zip extra",
+      "application/zip\u0000",
+    ]) {
+      expect(validateMediaBlock({ ...b, mediaType }).join(), JSON.stringify(mediaType)).toMatch(
+        /mediaType/,
+      );
+    }
+    for (const size of [-1, 1.5, Number.NaN, "2"]) {
+      expect(validateMediaBlock({ ...b, size }).join(), String(size)).toMatch(
+        /size must be a non-negative integer/,
+      );
+    }
+    expect(validateMediaBlock({ ...b, size: 0 })).toEqual([]);
+    // an unknown block type still fails, and now lists the fourth kind
+    expect(validateMediaBlock({ type: "text", text: "x" })).toContain(
+      'block type must be "image", "document" or "file"',
+    );
   });
 });

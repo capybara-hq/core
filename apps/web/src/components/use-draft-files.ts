@@ -237,7 +237,9 @@ export function useDraftFiles(orgId: string, initial: readonly DraftFile[] = [])
           other: formatBytes(limits.maxBytes),
         });
       case "attachment.type_not_allowed":
-        return t("fileTypeNotAllowed", { types: typeList(limits.types) });
+        return t("fileTypeNotAllowed", {
+          types: typeList(limits.types, (count) => t("fileTypeMore", { count })),
+        });
       default:
         return errorMessage(f.error);
     }

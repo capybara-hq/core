@@ -81,12 +81,14 @@ import { toolLabel, toolLabelOfKey, toolLabelText } from "./tool-label";
 export type ApprovalDecision = Extract<ConversationEvent, { type: "approval_decided" }>["payload"];
 export type QuestionOutcome = Extract<ConversationEvent, { type: "question_answered" }>["payload"];
 
-/** A file uploaded with a user message (an image / document reference block). */
+/** A file uploaded with a user message (an image / document / file reference block). */
 export interface MessageFile {
   attachmentId: string;
-  kind: "image" | "document";
+  kind: "image" | "document" | "file";
   mediaType: string;
   name: string;
+  /** Bytes, when the block carries it (display metadata for the chip; never sent to the model). */
+  size?: number;
 }
 
 /** A file the agent delivered (`artifact_created`). */
@@ -449,16 +451,17 @@ const joinText = (blocks: { type: string; text?: string }[], type: "text" | "thi
     .map((b) => b.text ?? "")
     .join("");
 
-/** user_message image / document reference blocks (`base64` never reaches the log). */
+/** user_message image / document / file reference blocks (`base64` never reaches the log). */
 export function messageFiles(content: ContentBlock[]): MessageFile[] {
   return content.flatMap((b): MessageFile[] =>
-    (b.type === "image" || b.type === "document") && b.source.kind === "ref"
+    (b.type === "image" || b.type === "document" || b.type === "file") && b.source.kind === "ref"
       ? [
           {
             attachmentId: b.source.attachmentId,
             kind: b.type,
             mediaType: b.mediaType,
             name: b.name ?? b.source.attachmentId,
+            ...(b.size !== undefined ? { size: b.size } : {}),
           },
         ]
       : [],

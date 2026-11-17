@@ -62,6 +62,13 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   transcript. In the log: no `DriftReason`; old logs have none and rebuild byte for byte. Full-run replay:
   `recordedCalls` marks every recorded call from the step where one was logged onward (`devicePaths`), and
   `RecordedToolPipeline` appends it before a matched call's result when the eval conversation's latest differs.
+- **Attachments** (attachments-on-demand spec `docs/superpowers/specs/2026-11-17-attachments-on-demand-design.md` §5.2):
+  the log holds `image` / `document` / `file` blocks with a `ref` source, its name and its size; the request names the
+  model's content and the attachment's `MediaInfo` (size, PDF pages, etag, the unsigned `uri`) supplies the rest.
+  A `file` attachment, and a text attachment above `TEXT_INLINE_MAX_CHARS` (8 000), render as one reference line
+  (`attachmentReferenceText`, with the object URI and `FetchAttachment`) — never bytes, never a truncated inline,
+  recorded as outcome `reference`. No new model-visible input is logged, so no `DriftReason`. Case in
+  `reconstruct.test.ts` ("a text attachment over the inline cap …").
 - **A question skipped by a message** (reply-while-question spec §12): the skipped result is a logged `tool_result`,
   the message a logged `user_message` taken in at the recorded `absorbedUpToSeq`; `question_answered` (outcome
   `skipped`, `skippedBySeq`) is not model-visible. No `DriftReason`; full-run replay returns the recorded skipped

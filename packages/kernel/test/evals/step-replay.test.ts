@@ -287,7 +287,12 @@ describe("replayStep", () => {
     const media: MediaSourceDeps = {
       async info(o, c, ids) {
         calls.push({ fn: "info", orgId: o, conversationId: c, ids });
-        return new Map(ids.map((id) => [id, { size: 4, pages: null, etag: "e1" }]));
+        return new Map(
+          ids.map((id) => [
+            id,
+            { size: 4, pages: null, etag: "e1", uri: `capybara://attachments/${id}` },
+          ]),
+        );
       },
       async fetch(o, c, ids) {
         calls.push({ fn: "fetch", orgId: o, conversationId: c, ids });

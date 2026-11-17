@@ -117,16 +117,26 @@ export type ContentBlock =
   | { type: "tool_call"; id: string; name: string; input: unknown; opaque?: ProviderOpaque }
   | { type: "tool_result"; callId: string; content: string; isError: boolean }
   /**
-   * Image (appears only in user messages). When the model does not support `vision` the kernel
-   * substitutes a text placeholder, so the plugin need not gate it;
-   * an old plugin that does not know this block skips it.
+   * An image (only in user messages). When the model has no `vision` the kernel sends an English
+   * placeholder instead; a plugin need not check. An older plugin that does not know this block
+   * skips it. `size` is display metadata (the UI chip, the reference line) and is never sent.
    */
-  | { type: "image"; mediaType: ImageMediaType; source: MediaSource; name?: string }
+  | { type: "image"; mediaType: ImageMediaType; source: MediaSource; name?: string; size?: number }
+  /** A document (only in user messages), gated by `capabilities.documents`; same rules as image. */
+  | {
+      type: "document";
+      mediaType: DocumentMediaType;
+      source: MediaSource;
+      name?: string;
+      size?: number;
+    }
   /**
-   * Document (appears only in user messages), gated by `capabilities.documents`, same rules as
-   * image.
+   * An attachment whose content the model cannot read (an xlsx, say): the kernel replaces it with
+   * text carrying an unsigned object reference before the request, so a provider **never** receives
+   * this block. `mediaType` is any non-empty `type/subtype`; `size` is display metadata (the UI
+   * chip, the reference line) and is never sent.
    */
-  | { type: "document"; mediaType: DocumentMediaType; source: MediaSource; name?: string };
+  | { type: "file"; mediaType: string; source: MediaSource; name?: string; size?: number };
 
 const B64_RE = /^[A-Za-z0-9+/]*={0,2}$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -169,26 +179,40 @@ export function hasControlChars(s: string): boolean {
 export function isAttachmentId(s: unknown): s is string {
   return typeof s === "string" && UUID_RE.test(s);
 }
-const MEDIA: Record<string, { types: readonly string[]; limit: number }> = {
+/** Any non-empty `type/subtype` (a `file` block's `mediaType`). */
+const MEDIA_TYPE_RE = /^[^/\s]+\/[^/\s]+$/;
+const MEDIA: Record<string, { types: readonly string[]; limit: number; anyType?: boolean }> = {
   image: { types: IMAGE_MEDIA_TYPES, limit: MEDIA_LIMITS.imageBytes },
   document: { types: DOCUMENT_MEDIA_TYPES, limit: MEDIA_LIMITS.documentBytes },
+  // A file the model cannot read: the kernel resolves it to text before the request, so no media
+  // type list applies. The byte ceiling is the one attachments already have.
+  file: { types: [], limit: MEDIA_LIMITS.documentBytes, anyType: true },
 };
 
 /**
- * Validates an image / document block and returns the list of errors (empty means valid): the type
- * is in the list; `base64` is standard, padded base64
- * without whitespace, and does not exceed {@link MEDIA_LIMITS} once decoded; the `attachmentId` of
- * `ref` is a UUID; `name`, if present, must be a string,
- * at most {@link MEDIA_NAME_MAX_CHARS} characters, and contain no control characters.
+ * Validates an image / document / file block, returning a list of errors (empty means valid): the
+ * media type is in the block kind's list (`file` accepts any non-empty `type/subtype`); `base64` is
+ * standard, padded, whitespace-free base64 that decodes to at most {@link MEDIA_LIMITS}; a `ref`'s
+ * `attachmentId` is a UUID; `name`, when present, is a string of at most
+ * {@link MEDIA_NAME_MAX_CHARS} characters with no control characters; `size`, when present, is a
+ * non-negative integer (display metadata, never sent by a plugin).
  */
 export function validateMediaBlock(b: unknown): string[] {
   if (typeof b !== "object" || b === null || Array.isArray(b)) return ["block must be an object"];
   const o = b as Record<string, unknown>;
   const spec =
     typeof o.type === "string" && Object.hasOwn(MEDIA, o.type) ? MEDIA[o.type] : undefined;
-  if (!spec) return ['block type must be "image" or "document"'];
+  if (!spec) return ['block type must be "image", "document" or "file"'];
   const errs: string[] = [];
-  if (typeof o.mediaType !== "string" || !spec.types.includes(o.mediaType)) {
+  if (spec.anyType) {
+    if (
+      typeof o.mediaType !== "string" ||
+      !MEDIA_TYPE_RE.test(o.mediaType) ||
+      hasControlChars(o.mediaType)
+    ) {
+      errs.push(`${o.type} mediaType must be a non-empty type/subtype string`);
+    }
+  } else if (typeof o.mediaType !== "string" || !spec.types.includes(o.mediaType)) {
     errs.push(`${o.type} mediaType must be one of ${spec.types.join(", ")}`);
   }
   if (o.name !== undefined) {
@@ -198,6 +222,12 @@ export function validateMediaBlock(b: unknown): string[] {
     } else if (hasControlChars(o.name)) {
       errs.push(`${o.type} name must not contain control characters`);
     }
+  }
+  if (
+    o.size !== undefined &&
+    (typeof o.size !== "number" || !Number.isInteger(o.size) || o.size < 0)
+  ) {
+    errs.push(`${o.type} size must be a non-negative integer`);
   }
   const src = o.source;
   if (typeof src !== "object" || src === null) {

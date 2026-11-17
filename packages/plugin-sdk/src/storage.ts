@@ -72,6 +72,13 @@ export interface ObjectStore {
     key: string,
     opts: { contentType: string; maxSize: number; ttlSeconds: number },
   ): Promise<PresignedUpload>;
+  /**
+   * The canonical URI of a key in this store: unsigned, stable, no credentials
+   * (`s3://bucket/key`). This is an identifier, never a presigned URL: it may be recorded in an
+   * event log and shown to a model, so it must stay valid and carry no secret. Optional: a store
+   * with no notion of URIs leaves it out and the kernel falls back to its own reference.
+   */
+  uri?(key: string): string;
 }
 
 /** Options of a presigned download. */

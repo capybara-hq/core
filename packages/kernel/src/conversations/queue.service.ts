@@ -204,8 +204,15 @@ export class ConversationQueue {
     if (Number(n) >= QUEUE_MAX_ITEMS) throw queueFull();
     const blocks = await this.conversations.bindIn(orgId, conversationId, accountId, files);
     const fileMeta: QueuedFile[] = blocks.flatMap((b) =>
-      (b.type === "image" || b.type === "document") && b.source.kind === "ref"
-        ? [{ attachmentId: b.source.attachmentId, name: b.name ?? "", mediaType: b.mediaType }]
+      (b.type === "image" || b.type === "document" || b.type === "file") && b.source.kind === "ref"
+        ? [
+            {
+              attachmentId: b.source.attachmentId,
+              name: b.name ?? "",
+              mediaType: b.mediaType,
+              ...(b.size !== undefined && { size: b.size }),
+            },
+          ]
         : [],
     );
     const row = await t

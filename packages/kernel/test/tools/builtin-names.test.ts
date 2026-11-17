@@ -103,7 +103,7 @@ describe("builtin names", () => {
     expect(BUILTIN_TOOL_NAMES).toHaveLength(Object.values(BUILTIN).length);
   });
 
-  it("the sandbox lists name the nine sandbox tools, Deliver and the task tools included", () => {
+  it("the sandbox lists name the sandbox tools, Deliver, FetchAttachment and the task tools included", () => {
     expect([...SANDBOX_TOOL_NAMES]).toEqual([
       "Bash",
       "Read",
@@ -112,6 +112,7 @@ describe("builtin names", () => {
       "Glob",
       "Grep",
       "Deliver",
+      "FetchAttachment",
       "TaskOutput",
       "TaskStop",
       "TaskList",

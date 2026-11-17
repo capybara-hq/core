@@ -167,13 +167,21 @@ export interface MediaInfo {
   pages: number | null;
   /** finalize 时记下的对象 etag（记进 `model_call` 的媒体结果，便于核对还原）；提供方不给为 null / 缺省。 */
   etag?: string | null;
+  /**
+   * 对象在此存储里的无签名引用（`s3://<bucket>/<key>`，见 `ObjectStore.uri`）：写进引用行，让模型能把
+   * 文件交给 `FetchAttachment`。存储没有 URI 概念时是 `capybara://attachments/<id>`。
+   */
+  uri: string;
 }
 
-/** `text/*` 附件（内联文本与 base64 文档两种方式都一样）的最大字符数（UTF-16 码元，超出截断并注明）。 */
-export const TEXT_INLINE_MAX_CHARS = 50_000;
 /**
- * `text/*` 附件最多取的字节数：UTF-8 里一个 UTF-16 码元最多 3 字节，取这么多一定够凑满
- * {@link TEXT_INLINE_MAX_CHARS}。更后面的字节不取（按范围读），预算也只按封顶后的大小计。
+ * `text/*` 附件内联（或作为文本文档发出）的最大字符数（UTF-16 码元）：再长就只给引用行，绝不截断
+ * （§5.2：要么整篇给，要么给引用、由设备里的文件提供）。
+ */
+export const TEXT_INLINE_MAX_CHARS = 8_000;
+/**
+ * `text/*` 附件最多取的字节数：UTF-8 里一个 UTF-16 码元最多 3 字节，取这么多一定够判断
+ * {@link TEXT_INLINE_MAX_CHARS}。更长的文本不取（它是引用行），见 {@link planMedia}。
  */
 export const TEXT_FETCH_MAX_BYTES = TEXT_INLINE_MAX_CHARS * 3;
 /** 单次请求最多的图片数（常见供应商的上限）：只保留最新的，更早的换成占位。 */
@@ -199,20 +207,28 @@ export function pdfTokens(size: number, pages: number | null): number {
 
 /** 日志里（按 zod 推导的形状）的内容块。 */
 type LogBlock = EventPayload<"user_message">["content"][number];
-type LogMedia = Extract<LogBlock, { type: "image" | "document" }>;
+type LogMedia = Extract<LogBlock, { type: "image" | "document" | "file" }>;
 
 const isText = (mediaType: string) => mediaType.startsWith("text/");
 
-/** 该模型对这个媒体块的处理：发字节（`bytes`）、内联文本（`inline`）、只给占位（`placeholder`）。 */
-function mediaMode(b: LogMedia, model: ModelInfo): "bytes" | "inline" | "placeholder" {
+/**
+ * 该模型对这个媒体块的处理：发字节（`bytes`）、内联文本（`inline`）、只给占位（`placeholder`）、
+ * 只给引用行（`reference`，`file` 块一律如此：内容模型读不了，工具按需把文件取进设备）。
+ */
+function mediaMode(
+  b: LogMedia,
+  model: ModelInfo,
+): "bytes" | "inline" | "placeholder" | "reference" {
+  if (b.type === "file") return "reference";
   if (b.type === "image") return model.capabilities.vision ? "bytes" : "placeholder";
   if (model.capabilities.documents === true) return "bytes";
   return isText(b.mediaType) ? "inline" : "placeholder";
 }
 
 /**
- * 最近摘要之后、会进请求的消息里，该模型需要字节的媒体块（按 seq 与块顺序）；也包括随摘要再次发送的
- * 用户消息（摘要的 `openingSeqs`，{@link summaryOpeners}）。
+ * 最近摘要之后、会进请求的消息里，该模型需要其附件行（大小、页数、无签名引用）的媒体块（按 seq 与块顺序），
+ * 也包括随摘要再次发送的用户消息（摘要的 `openingSeqs`，{@link summaryOpeners}）。`file` 块只在其中取行信息，
+ * 从不取字节（见 {@link planMedia}）。
  */
 function mediaBlocks(events: readonly ConversationEvent[], model: ModelInfo): LogMedia[] {
   const sorted = [...events].sort((a, b) => a.seq - b.seq);
@@ -224,9 +240,8 @@ function mediaBlocks(events: readonly ConversationEvent[], model: ModelInfo): Lo
     if (e.seq <= after && !openers.has(e)) continue;
     if (e.type !== "user_message" && e.type !== "assistant_message") continue;
     for (const b of e.payload.content) {
-      if ((b.type === "image" || b.type === "document") && mediaMode(b, model) !== "placeholder") {
-        out.push(b);
-      }
+      if (b.type !== "image" && b.type !== "document" && b.type !== "file") continue;
+      if (mediaMode(b, model) !== "placeholder") out.push(b);
     }
   }
   return out;
@@ -244,8 +259,9 @@ export function excludedMedia(events: readonly ConversationEvent[]): Set<string>
 }
 
 /**
- * 该模型需要的附件 id（去重、按出现顺序），调用方据此查行信息（{@link MediaInfo}）。
+ * 该模型需要其附件行的附件 id（去重、按出现顺序），调用方据此查行信息（{@link MediaInfo}）。
  * 模型不支持的图片 / PDF、被 `media_excluded` 排除的不在其中——只发占位，行与字节都不取。
+ * `file` 块在结果里（引用行要行里的大小与 URI），但从不取字节。
  */
 export function mediaRefs(events: readonly ConversationEvent[], model: ModelInfo): string[] {
   const excluded = excludedMedia(events);
@@ -262,7 +278,10 @@ export function mediaRefs(events: readonly ConversationEvent[], model: ModelInfo
 export interface MediaPlan {
   /** 要取字节的附件 id（从新到旧）。 */
   fetch: string[];
-  /** 只取开头若干字节的附件（`text/*` 超过 {@link TEXT_FETCH_MAX_BYTES}）：id → 字节数。 */
+  /**
+   * 只取开头若干字节的附件（`text/*` 超过 {@link TEXT_FETCH_MAX_BYTES}）：id → 字节数。
+   * 现在总是空：超过取字节上限的文本不再取（它是引用行，§5.2），上限之内的取整份。
+   */
   caps: Map<string, number>;
   /** 为控制请求大小而省略（预算）。 */
   dropped: Set<string>;
@@ -277,10 +296,12 @@ export interface MediaPlan {
 /**
  * 单次请求的媒体计划（Ruling M6 / M8），只取决于日志、模型能力与行信息，是确定的：
  * - 被 `media_excluded` 排除的：不取、不计；
+ * - `file` 块（模型只看到引用行）：不取、不计（行信息照常查）；
+ * - `text/*` 超过 {@link TEXT_FETCH_MAX_BYTES}：不取（它就是引用行，§5.2）——上限之内的取整份，
+ *   解码后超过 {@link TEXT_INLINE_MAX_CHARS} 的在 {@link resolveMedia} 里也变成引用行；
  * - PDF 页数超过 {@link MAX_PDF_PAGES}：不取、不计；
  * - 从最新的媒体往前：图片最多保留 {@link MAX_IMAGES_PER_REQUEST} 张，更早的图片省略（不影响其他媒体）；
- * - 预算：按行里的**声明大小**（`text/*` 按封顶后的大小 `min(size, TEXT_FETCH_MAX_BYTES)`）累计，
- *   第一次超出 `budgetBytes` 起，该附件及更早的全部省略；
+ * - 预算：按行里的**声明大小**累计，第一次超出 `budgetBytes` 起，该附件及更早的全部省略；
  * - 同一附件只算一次（按最后一次出现的位置算新旧）；没有行的不计（它们是「不再可用」）。
  *
  * 已知取舍（接受）：新的媒体把较早的媒体挤成占位时，请求里**较早位置**的内容随之改变，这一处之后的提示词缓存
@@ -316,6 +337,10 @@ export function planMedia(
     if (plan.excluded.has(id)) continue;
     const row = info.get(id);
     if (!row) continue;
+    // 引用行：模型要行里的信息，但从不取字节，也不占预算
+    if (b.type === "file") continue;
+    // 超过取字节上限的文本不取：它的引用行不需要字节
+    if (isText(b.mediaType) && row.size > TEXT_FETCH_MAX_BYTES) continue;
     if (b.mediaType === "application/pdf" && row.pages !== null && row.pages > MAX_PDF_PAGES) {
       plan.tooManyPages.add(id);
       continue;
@@ -324,12 +349,9 @@ export function planMedia(
       plan.tooManyImages.add(id);
       continue;
     }
-    const capped = isText(b.mediaType) && row.size > TEXT_FETCH_MAX_BYTES;
-    const size = capped ? TEXT_FETCH_MAX_BYTES : row.size;
-    if (!over && total + size <= budgetBytes) {
-      total += size;
+    if (!over && total + row.size <= budgetBytes) {
+      total += row.size;
       plan.fetch.push(id);
-      if (capped) plan.caps.set(id, TEXT_FETCH_MAX_BYTES);
       if (b.type === "image") images++;
     } else {
       over = true;
@@ -361,6 +383,53 @@ export const mediaTooManyPagesText = (name: string): string =>
 /** 被供应商拒绝、此后不再发送的附件（模型可见，英文）。 */
 export const mediaRejectedText = (name: string): string =>
   `[Attachment ${quoted(name)} was rejected by the model provider.]`;
+
+/**
+ * The usual file extension per content type: the label of a `file` block logged without a name (every
+ * accepted type, so the reference line always names something a person could recognise).
+ */
+const FILE_EXTENSIONS: Readonly<Record<string, string>> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/gif": "gif",
+  "image/webp": "webp",
+  "application/pdf": "pdf",
+  "text/plain": "txt",
+  "text/markdown": "md",
+  "text/csv": "csv",
+  "application/json": "json",
+  "application/zip": "zip",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+};
+
+/** The name a reference line shows: the block's own, else one from its media type (`file.xlsx`). */
+function referenceName(b: LogMedia): string {
+  if (b.name !== undefined) return b.name;
+  const extension = FILE_EXTENSIONS[b.mediaType];
+  return extension === undefined ? "file" : `file.${extension}`;
+}
+
+/**
+ * A reference line (model-facing English, one text block, §5.2): the file's name and media type, its
+ * size, the unsigned object URI, and how to get the bytes — `FetchAttachment` copies the file into the
+ * device. A text attachment above the inline threshold says why it was not inlined, so the model does
+ * not wonder whether it was truncated. Never a presigned URL: `uri` is unsigned and stable.
+ */
+export const attachmentReferenceText = (input: {
+  name: string;
+  mediaType: string;
+  size: number;
+  uri: string;
+  /** The content is text the model could read: it was not inlined because it is too long. */
+  text?: boolean;
+}): string => {
+  const why = input.text
+    ? `${input.size} bytes of text; not sent inline. The file is available in the device on request.`
+    : `${input.size} bytes — this model cannot read its content.`;
+  return `[Attached file ${quoted(input.name)} (${input.mediaType}), ${why} Unsigned object reference: ${input.uri}. Use FetchAttachment with the file name or this reference to copy it into the device.]`;
+};
 
 function placeholder(b: LogMedia, name: string): string {
   if (b.type === "image") {
@@ -423,11 +492,12 @@ export type MediaOutcome = MediaOutcomeEntry["outcome"];
 
 /**
  * 把日志里的媒体引用换成发给模型的内容（不改日志，结果只取决于日志、模型能力、行信息与字节）：
+ * - `file` 块（以及超过 {@link TEXT_INLINE_MAX_CHARS} 的文本）：一行引用（{@link attachmentReferenceText}），
+ *   **绝不带字节**——要么整篇给，要么给引用、由设备里取来的文件提供（§5.2）；
  * - 模型不支持（图片看 `vision`，文档看 `documents`）：图片 / PDF 换成英文占位，**绝不带字节**；
  * - 被 `media_excluded` 排除 →「被供应商拒绝」占位；没有行 →「不再可用」；PDF 页数过多 →「页数太多」；
  *   图片太多或超出预算 →「省略」；取不到字节 →「不再可用」；字节超过 `MEDIA_LIMITS` →「太大」；
- * - `text/*`：两种方式都封顶为 {@link TEXT_INLINE_MAX_CHARS} 个字符并注明截断——不支持 documents 时内联为文本，
- *   支持时作为 base64 文档（截断时文档内容是截断后的文本加注明）；
+ * - `text/*` 在上限之内：不支持 documents 时内联为文本，支持时作为 base64 文档；
  * - 其余 → `base64` 块。
  * 插件永远收不到 `ref`。返回块、发出的媒体块的估算 token 数（图片 {@link IMAGE_TOKENS}，PDF 见 {@link pdfTokens}，
  * 文本文档按发出的字节数 ÷ 3）与每个块的处理结果。
@@ -445,7 +515,7 @@ export function resolveMedia(
   const outcomes: { attachmentId: string; outcome: MediaOutcome }[] = [];
   let tokens = 0;
   for (const b of content) {
-    if (b.type !== "image" && b.type !== "document") {
+    if (b.type !== "image" && b.type !== "document" && b.type !== "file") {
       out.push(b as ContentBlock);
       continue;
     }
@@ -455,7 +525,22 @@ export function resolveMedia(
       out.push({ type: "text", text: t });
       outcomes.push({ attachmentId: id, outcome });
     };
+    /** The reference line for this block and its row (`asText`: text that was not inlined). */
+    const reference = (row: MediaInfo, asText = false): string =>
+      attachmentReferenceText({
+        name: referenceName(b),
+        mediaType: b.mediaType,
+        size: row.size,
+        uri: row.uri,
+        text: asText,
+      });
     const mode = mediaMode(b, model);
+    if (b.type === "file") {
+      // a file block: its bytes stay in the object store, the model gets the reference (never a `ref`)
+      const row = ctx.info?.get(id);
+      text(row ? reference(row) : mediaUnavailableText(name), row ? "reference" : "unavailable");
+      continue;
+    }
     if (mode === "placeholder") {
       text(placeholder(b, name), "placeholder_unsupported");
       continue;
@@ -468,6 +553,11 @@ export function resolveMedia(
     const row = ctx.info?.get(id);
     if (!row) {
       text(mediaUnavailableText(name), "unavailable");
+      continue;
+    }
+    // `text/*` over the fetch cap is never fetched: its size alone says it is the reference (§5.2)
+    if (isText(b.mediaType) && row.size > TEXT_FETCH_MAX_BYTES) {
+      text(reference(row, true), "reference");
       continue;
     }
     if (plan.tooManyPages.has(id)) {
@@ -487,16 +577,18 @@ export function resolveMedia(
       text(mediaUnavailableText(name), "unavailable");
       continue;
     }
-    let data = got.data;
+    const data = got.data;
     if (isText(b.mediaType)) {
       const capped = capText(got.data, row.size);
-      if (mode === "inline") {
-        const body = capped.note === null ? capped.text : `${capped.text}\n${capped.note}`;
-        text(`[Attached file ${quoted(name)} (${b.mediaType})]\n${body}`, "inline");
+      // over the inline threshold (or the row's declared size lied): the reference, never a
+      // truncated body (§5.2)
+      if (capped.note !== null) {
+        text(reference(row, true), "reference");
         continue;
       }
-      if (capped.note !== null) {
-        data = new TextEncoder().encode(`${capped.text}\n${capped.note}`);
+      if (mode === "inline") {
+        text(`[Attached file ${quoted(name)} (${b.mediaType})]\n${capped.text}`, "inline");
+        continue;
       }
     }
     const limit = b.type === "image" ? MEDIA_LIMITS.imageBytes : MEDIA_LIMITS.documentBytes;
@@ -615,7 +707,10 @@ export function buildModelRequest(input: BuildModelRequestInput): {
   const mediaOutcomes = new Map<string, MediaOutcomeEntry>();
   /** 日志内容块 → 请求内容块：媒体引用按模型能力解析（见 {@link resolveMedia}）。 */
   const blocksOf = (content: readonly LogBlock[]): ContentBlock[] => {
-    if (!content.some((b) => b.type === "image" || b.type === "document")) return asBlocks(content);
+    const media = content.some(
+      (b) => b.type === "image" || b.type === "document" || b.type === "file",
+    );
+    if (!media) return asBlocks(content);
     const r = resolveMedia(content, model, mediaCtx);
     mediaTokens += r.tokens;
     for (const o of r.outcomes) {

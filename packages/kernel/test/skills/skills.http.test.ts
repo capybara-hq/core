@@ -313,13 +313,13 @@ describe("上传技能包", () => {
       payload: { name: "big.zip", size: 50 * 1024 * 1024 + 1 },
     });
     expect(big.statusCode).toBe(400);
-    // 对话附件接口不接受 zip
-    const zipChat = await admin({
+    // the chat attachment endpoint refuses a type outside attachments.allowedTypes (zip is one now)
+    const exe = await admin({
       method: "POST",
       url: `/api/v1/orgs/${orgId}/attachments`,
-      payload: { name: "a.zip", contentType: "application/zip", size: 3 },
+      payload: { name: "a.exe", contentType: "application/x-msdownload", size: 3 },
     });
-    expect(zipChat.statusCode).toBe(415);
+    expect(exe.statusCode).toBe(415);
   });
 });
 

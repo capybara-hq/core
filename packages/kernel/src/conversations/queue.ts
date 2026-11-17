@@ -78,6 +78,8 @@ export interface QueuedFile {
   attachmentId: string;
   name: string;
   mediaType: string;
+  /** The attachment's size in bytes when the block carries it (the chip shows it). */
+  size?: number;
 }
 
 /** A queued message's fields (leftover items; tests seed them through the service). */

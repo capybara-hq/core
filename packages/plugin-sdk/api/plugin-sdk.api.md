@@ -687,25 +687,37 @@ export type ContentBlock =
     isError: boolean;
 }
 /**
-* Image (appears only in user messages). When the model does not support `vision` the kernel
-* substitutes a text placeholder, so the plugin need not gate it;
-* an old plugin that does not know this block skips it.
+* An image (only in user messages). When the model has no `vision` the kernel sends an English
+* placeholder instead; a plugin need not check. An older plugin that does not know this block
+* skips it. `size` is display metadata (the UI chip, the reference line) and is never sent.
 */
 | {
     type: "image";
     mediaType: ImageMediaType;
     source: MediaSource_2;
     name?: string;
+    size?: number;
 }
-/**
-* Document (appears only in user messages), gated by `capabilities.documents`, same rules as
-* image.
-*/
+/** A document (only in user messages), gated by `capabilities.documents`; same rules as image. */
 | {
     type: "document";
     mediaType: DocumentMediaType;
     source: MediaSource_2;
     name?: string;
+    size?: number;
+}
+/**
+* An attachment whose content the model cannot read (an xlsx, say): the kernel replaces it with
+* text carrying an unsigned object reference before the request, so a provider **never** receives
+* this block. `mediaType` is any non-empty `type/subtype`; `size` is display metadata (the UI
+* chip, the reference line) and is never sent.
+*/
+| {
+    type: "file";
+    mediaType: string;
+    source: MediaSource_2;
+    name?: string;
+    size?: number;
 };
 
 // @public
@@ -1570,6 +1582,8 @@ export type HookContentBlock = Exclude<ContentBlock, {
     type: "image";
 } | {
     type: "document";
+} | {
+    type: "file";
 }> | HookMediaPlaceholder;
 
 // @public
@@ -1577,7 +1591,7 @@ export type HookHandler<K extends AvailableHook> = (payload: HookPayloads[K], si
 
 // @public
 export interface HookMediaPlaceholder {
-    kind: "image" | "document";
+    kind: "image" | "document" | "file";
     mediaType: string;
     size: number;
     type: "media_omitted";
@@ -2257,6 +2271,7 @@ export interface ObjectStore {
         size?: number;
         signal?: AbortSignal;
     }): Promise<ObjectHead>;
+    uri?(key: string): string;
 }
 
 // @public
@@ -3108,7 +3123,7 @@ export function sanitizeThemeSvg(bytes: Uint8Array): {
 };
 
 // @public
-export const SDK_VERSION = "0.1.0-rc.25";
+export const SDK_VERSION = "0.1.0-rc.26";
 
 // @public
 export function secret<T extends z.ZodTypeAny>(schema: T): T;
