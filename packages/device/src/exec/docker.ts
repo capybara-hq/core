@@ -19,6 +19,7 @@ import {
 import { effectiveMode } from "../policy.js";
 import type { Policy, SandboxMode } from "../state.js";
 import { policyMode } from "../state.js";
+import { linuxRuntimeBundle } from "./linux-runtime.js";
 import { finishScan } from "./listing.js";
 import { EXEC_MARKER } from "./procs.js";
 import {
@@ -59,6 +60,12 @@ export function containerUser(
 }
 
 const SPEC_LABEL = "capybara.device.spec";
+
+/**
+ * Where the operation agent and the SDK's Linux runtime are staged in the container: a root-owned
+ * tmpfs (mode 755) the container user cannot write, filled through `docker exec -u 0`.
+ */
+export const OPERATION_RUNTIME_DIR = "/opt/capybara-runtime";
 
 /** A file operation in the container that takes longer than this is killed. */
 const FILE_OP_TIMEOUT_S = 30;
@@ -113,6 +120,58 @@ function docker(
       resolvePromise({ code, stdout: Buffer.concat(out), stderr: Buffer.concat(err) });
     });
   });
+}
+
+/**
+ * Writes the operation runtime as root into the container's runtime tmpfs and checks every digest
+ * there; anything else is an error and nothing runs from it.
+ */
+export async function stageContainerRuntime(name: string): Promise<void> {
+  const bundle = linuxRuntimeBundle();
+  for (const file of bundle.files) {
+    const r = await docker(
+      [
+        "exec",
+        "-i",
+        "-u",
+        "0",
+        name,
+        "/bin/sh",
+        "-c",
+        `umask 022 && cat > ${OPERATION_RUNTIME_DIR}/${file.name}.tmp && mv -f ${OPERATION_RUNTIME_DIR}/${file.name}.tmp ${OPERATION_RUNTIME_DIR}/${file.name}`,
+      ],
+      { input: Buffer.from(file.source), timeoutMs: 30_000 },
+    );
+    if (r.code !== 0)
+      throw new DeviceOpError(
+        "error",
+        `staging the operation runtime failed: ${r.stderr.toString("utf8").trim().slice(0, 300)}`,
+      );
+  }
+  const check = await docker(
+    [
+      "exec",
+      "-u",
+      "0",
+      name,
+      "/bin/sh",
+      "-c",
+      `cd ${OPERATION_RUNTIME_DIR} && sha256sum ${bundle.files.map((f) => f.name).join(" ")}`,
+    ],
+    { timeoutMs: 30_000 },
+  );
+  const seen = new Map(
+    check.stdout
+      .toString("utf8")
+      .trim()
+      .split("\n")
+      .map((line) => {
+        const [hash, name] = line.trim().split(/\s+/);
+        return [name, hash] as const;
+      }),
+  );
+  if (check.code !== 0 || bundle.files.some((f) => seen.get(f.name) !== f.sha256))
+    throw new DeviceOpError("error", "the staged operation runtime does not match its digests");
 }
 
 /** Whether the docker CLI can reach a daemon, and why not. */
@@ -350,6 +409,8 @@ export class DockerExecutor implements Executor {
   private lastLimitsAt = 0;
   /** The spec hash of the container in use (set when it is created or reused). */
   private spec: string | undefined;
+  /** The operation runtime is staged in the container in use. */
+  private runtimeStaged = false;
 
   constructor(private readonly opts: DockerExecutorOptions) {
     const dir = resolve(opts.dir);
@@ -417,6 +478,8 @@ export class DockerExecutor implements Executor {
       String(PIDS_LIMIT),
       "--workdir",
       ROOTS.workspace,
+      "--tmpfs",
+      `${OPERATION_RUNTIME_DIR}:mode=755`,
       "--label",
       `capybara.device.id=${this.opts.deviceId}`,
       ...this.wanted().flatMap((m) => [
@@ -466,6 +529,7 @@ export class DockerExecutor implements Executor {
    */
   private async ensureContainer(opts: { anySpec?: boolean } = {}): Promise<void> {
     if (this.ready) return;
+    this.runtimeStaged = false;
     if (!existsSync(this.dir)) {
       throw new DeviceOpError("error", "the device directory is gone");
     }
@@ -629,6 +693,43 @@ export class DockerExecutor implements Executor {
   private release(): void {
     this.inflight--;
     this.pump();
+  }
+
+  /**
+   * The container for one permission operation (protocol 3): running on its default bridge (Full
+   * access is the container user's own network; restricted operations are mediated by the
+   * launcher), with the operation runtime staged root-owned and verified. The caller holds the
+   * container (it is not recreated) until it calls `release`, once.
+   */
+  async operationContainer(
+    signal: AbortSignal,
+  ): Promise<{ name: string; user: string; release: () => void }> {
+    await this.acquire(true, signal);
+    try {
+      await this.serial(async () => {
+        if (!this.runtimeStaged) {
+          await this.stageOperationRuntime();
+          this.runtimeStaged = true;
+        }
+      });
+    } catch (error) {
+      this.release();
+      throw error;
+    }
+    let released = false;
+    return {
+      name: this.name,
+      user: containerUser(),
+      release: () => {
+        if (released) return;
+        released = true;
+        this.release();
+      },
+    };
+  }
+
+  private async stageOperationRuntime(): Promise<void> {
+    await stageContainerRuntime(this.name);
   }
 
   /** A docker-level failure that means the container vanished: the next call recreates it. */

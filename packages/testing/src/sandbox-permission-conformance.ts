@@ -70,6 +70,13 @@ export interface SandboxPermissionFixture {
      */
     readonly access: "direct" | "proxy";
   };
+  /**
+   * Set to "refused" when the provider refuses a restricted filesystem with the `environment`
+   * network by policy (a local device whose owner ceiling ties the environment network to Full
+   * access). The harness then proves that refusal (a scope denial, nothing run) where it would
+   * otherwise probe a restricted operation on the environment network. Default: "supported".
+   */
+  readonly restrictedEnvironment?: "supported" | "refused";
   /** The provider's own runtime report; the harness never infers support from a fixture. */
   support(): Promise<SandboxPermissionSupport>;
   /** A fresh operation (new operation ID) for the grant, through the provider's factory. */
@@ -598,10 +605,18 @@ export async function runSandboxPermissionConformance(
       await fixture.seed([
         { path: at(root, "srv-link.sock"), kind: "symlink", target: at(sibling, "srv.sock") },
       ]);
+      if (fixture.restrictedEnvironment === "refused") {
+        // the policy refusal is the result: a typed scope denial before anything runs
+        await denied(
+          exec(restricted({ kind: "environment" }), `printf ran > ${quote(at(root, "env-ran"))}`),
+          "a restricted environment-network operation must be refused by policy",
+        );
+        assert.equal(await fixture.inspect.readFile(at(root, "env-ran")), null);
+      }
       for (const network of [
         { kind: "none" } as const,
         allowlisted,
-        { kind: "environment" } as const,
+        ...(fixture.restrictedEnvironment === "refused" ? [] : [{ kind: "environment" } as const]),
       ]) {
         const probe = await exec(
           restricted(network),

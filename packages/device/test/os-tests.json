@@ -5,6 +5,8 @@
   "exec-os-network.test.ts",
   "exec-os.test.ts",
   "fs-helper.test.ts",
+  "linux-operation-backend.test.ts",
+  "linux-operation-worker.test.ts",
   "mac-operation-backend.test.ts",
   "native-helper-client.test.ts",
   "operation-supervisor.test.ts",
