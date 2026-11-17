@@ -546,6 +546,11 @@ type ReviewOutcome =
       commandAsk?: ApprovalRecord;
       /** The working root the review judged the call against: the tool runs there. */
       workingRoot?: string | undefined;
+      /**
+       * The root the review judged the call against, always (the workspace in free mode too; B-18):
+       * the managed route refuses as stale when the held device context names another root.
+       */
+      reviewedAgainst?: string | undefined;
     }
   /** The run waits on the call's `command` approval. */
   | { kind: "wait"; wait: WaitingFor }
@@ -1201,7 +1206,7 @@ export class ToolPipeline {
       return fail(reviewed.content, outKey);
     }
     review = reviewed.review;
-    const reviewedWorkingRoot = reviewed.workingRoot;
+    const reviewedRoots = { workingRoot: reviewed.workingRoot, against: reviewed.reviewedAgainst };
     if (reviewed.commandAsk !== undefined)
       authorization = approvalAuthorization(reviewed.commandAsk);
 
@@ -1385,7 +1390,7 @@ export class ToolPipeline {
       call.id,
       resume,
       resolved.tools,
-      reviewedWorkingRoot,
+      reviewedRoots,
     );
     const durationMs = Date.now() - t0;
     await this.deps.hooks?.afterExecute?.(ctx.runId, call.id);
@@ -1611,6 +1616,7 @@ export class ToolPipeline {
           now.mode !== asked.command?.mode ||
           carriedRoot({ workspace: now.workspace, workingRoot: settled.workingRoot }) === undefined
         ) {
+          // the root the person approved stays the one judged (B-18): only the carried root goes
           return { ...settled, workingRoot: undefined };
         }
       }
@@ -1656,7 +1662,12 @@ export class ToolPipeline {
       ...(ctx.conversationKind !== undefined && { conversationKind: ctx.conversationKind }),
     });
     if (verdict.decision === "allow") {
-      return { kind: "continue", review: allowRecord(verdict), workingRoot: carriedRoot(facts) };
+      return {
+        kind: "continue",
+        review: allowRecord(verdict),
+        workingRoot: carriedRoot(facts),
+        reviewedAgainst: facts.workingRoot,
+      };
     }
     if (verdict.decision === "deny") {
       return {
@@ -1841,6 +1852,7 @@ export class ToolPipeline {
         return {
           kind: "continue",
           workingRoot: carriedRoot(device),
+          reviewedAgainst: facts.workingRoot,
           review: {
             decision: "allow",
             by: "classifier",
@@ -1905,6 +1917,7 @@ export class ToolPipeline {
       return {
         kind: "continue",
         workingRoot: carriedRoot(device),
+        reviewedAgainst: facts.workingRoot,
         review: {
           ...allowRecord(verdict),
           ...provenance,
@@ -1991,6 +2004,7 @@ export class ToolPipeline {
         commandAsk: ask,
         review: this.personAllowRecord(ask),
         workingRoot: ask.command?.workingRoot,
+        reviewedAgainst: ask.command?.workingRoot,
       };
     }
     if (ask.status === "denied") {
@@ -2256,8 +2270,10 @@ export class ToolPipeline {
     callId: string,
     resume?: ToolResume,
     stepTools?: readonly ResolvedTool[],
-    reviewedWorkingRoot?: string,
+    reviewed?: { workingRoot?: string | undefined; against?: string | undefined },
   ): Promise<ExecOutcome> {
+    const reviewedWorkingRoot = reviewed?.workingRoot;
+    const reviewedAgainstRoot = reviewed?.against;
     if (tool.source.kind === "connector") {
       return this.executeConnector(tool, tool.source, input, ctx, resume);
     }
@@ -2285,6 +2301,9 @@ export class ToolPipeline {
       // a reviewed call runs in the working root its review judged (project root spec §4.3)
       ...(tool.source.kind === "builtin" &&
         reviewedWorkingRoot !== undefined && { reviewedWorkingRoot }),
+      // and the root it was judged against, workspace included (B-18, the managed route)
+      ...(tool.source.kind === "builtin" &&
+        reviewedAgainstRoot !== undefined && { reviewedAgainstRoot }),
       // a sub-agent works in its root conversation's sandbox (spec §10.1, at every depth)
       ...(tool.source.kind === "builtin" &&
         ctx.parent !== undefined && { sandboxConversationId: ctx.parent.rootConversationId }),

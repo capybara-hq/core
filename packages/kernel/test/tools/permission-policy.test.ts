@@ -12,6 +12,7 @@ import { createDb } from "../../src/db/pool.js";
 import { createLogger } from "../../src/log.js";
 import { ModelPurposesService } from "../../src/models/purposes.js";
 import { RunExecution } from "../../src/runtime/run-execution.js";
+import { SCOPE_DENIED_TOOL_TEXT } from "../../src/tools/builtins/sandbox/common.js";
 import { ToolPipeline } from "../../src/tools/pipeline.js";
 import { ToolRegistry } from "../../src/tools/registry.js";
 import { truncateTables } from "../helpers/db.js";
@@ -273,7 +274,9 @@ it("expired and stale pending invocation refuses before refresh", async () => {
   );
   expect(calls).toHaveBeenCalledTimes(1);
   expect(f.effects()).toBe(0);
-  expect(f.failures.map(String).join(" ")).toContain("deadline elapsed");
+  // the model gets the fixed scope text; the refusal's own reason is only logged
+  expect(f.failures.map((e) => (e as Error).message)).toEqual([SCOPE_DENIED_TOOL_TEXT]);
+  expect(f.warned.map(String).join(" ")).toContain("deadline elapsed");
 });
 it("legacy production route cannot skip review", async () => {
   const f = await fixture("Bash", { command: "python -c 'print(123)'" });

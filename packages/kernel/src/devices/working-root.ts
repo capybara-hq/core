@@ -67,6 +67,15 @@ export function workingRootOf(
 }
 
 /**
+ * A root in the one form two roots are compared in (B-18): POSIX-normalized (`.` and doubled `/`
+ * segments dropped) and without a trailing slash, `/` itself kept.
+ */
+export function canonicalRoot(root: string): string {
+  const n = posix.normalize(root);
+  return n.length > 1 && n.endsWith("/") ? n.slice(0, -1) : n;
+}
+
+/**
  * A file-tool path as the command review judged it, for the person approving it: a relative path
  * joined to the working root and normalized; an absolute or `~` path as given.
  */

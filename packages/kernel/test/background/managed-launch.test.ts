@@ -923,7 +923,11 @@ describe("managed background launch identity", () => {
     const r = await f.outcome(f.run({ command: "npm run dev" }));
     expect(r.ok).toBe(false);
     expect((r as { error: unknown }).error).toBeInstanceOf(ToolError);
-    expect(String((r as { error: unknown }).error)).toMatch(/symbolic link/);
+    // the kernel's reason, never the provider's words
+    expect(String((r as { error: unknown }).error)).toMatch(
+      /outside what this conversation may use/,
+    );
+    expect(String((r as { error: unknown }).error)).not.toMatch(/symbolic link/);
     expect(f.provider.launched.size).toBe(0);
     expect(f.provider.calls).toHaveLength(1);
     expect(await f.task()).toMatchObject({ status: "failed", launch_state: "terminal" });
