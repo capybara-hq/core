@@ -10,9 +10,21 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { checkPluginState, type Finding } from "../src/check/plugin-state.js";
 import { bypassFixture } from "./bypass-fixture.js";
+
+const bundleBuilds = vi.hoisted(() => ({ count: 0 }));
+vi.mock("../src/pack/pack.js", async (orig) => {
+  const mod = await orig<typeof import("../src/pack/pack.js")>();
+  return {
+    ...mod,
+    serverBundleInputs: (...args: Parameters<typeof mod.serverBundleInputs>) => {
+      bundleBuilds.count++;
+      return mod.serverBundleInputs(...args);
+    },
+  };
+});
 
 const fixture = (name: string) => fileURLToPath(new URL(`../fixtures/${name}`, import.meta.url));
 
@@ -290,6 +302,14 @@ describe("embed UI directories are browser code", () => {
 
   it("skips ui-src/ and ui/ at the plugin root", async () => {
     expect(await rel(plugin(["ui-src/app/main.ts", "ui/app.js"]))).toEqual([]);
+  });
+
+  it("builds the server bundle only for a plugin with a ui/ or ui-src/ directory", async () => {
+    bundleBuilds.count = 0;
+    await rel(plugin([]));
+    expect(bundleBuilds.count).toBe(0);
+    await rel(plugin(["ui/app.js"]));
+    expect(bundleBuilds.count).toBe(1);
   });
 
   it("still checks a deeper src/ui and the server entry", async () => {

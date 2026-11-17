@@ -1,5 +1,5 @@
-import { realpathSync } from "node:fs";
-import { relative, sep } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
+import { join, relative, sep } from "node:path";
 import { serverBundleInputs } from "../pack/pack.js";
 import { browserOnlyModules } from "./client-modules.js";
 import {
@@ -185,7 +185,10 @@ export async function checkPluginState(pluginDirs: string[]): Promise<Finding[]>
   const findings: Finding[] = [];
   for (const dir of pluginDirs) {
     const browser = await browserOnlyModules(dir);
-    const server = await serverBundleInputs(dir);
+    // The server bundle only decides which embed UI files to skip, so build it only when the
+    // plugin has such a directory.
+    const hasEmbedUi = [...EMBED_UI_DIRS].some((d) => existsSync(join(dir, d)));
+    const server = hasEmbedUi ? await serverBundleInputs(dir) : undefined;
     for (const { file, isTest } of listSourceFiles(dir)) {
       if (isTest) continue;
       if (
