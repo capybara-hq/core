@@ -11,7 +11,6 @@ import {
   type Device,
   type DeviceList,
   deviceChoiceShown,
-  deviceModeMark,
   deviceState,
 } from "../../lib/devices";
 import { extensionLabel } from "../../lib/extension-label";
@@ -264,11 +263,6 @@ export function useDeviceChoice(orgId: string, list: DeviceList | undefined): De
     offered.some((p) => p.name === pickedProject.name)
       ? pickedProject.name
       : undefined;
-  // 自动 (warn) / 沙箱, or a cloud device's 开放（挡内网） (warn) / 白名单, after the tag
-  const markOf = (e: Device) => {
-    const mark = deviceModeMark(e);
-    return { badge: te(`mark.${mark.kind}`), badgeTone: mark.tone };
-  };
   const tagOf = (e: Device) => {
     const state = deviceState(e);
     if (state === "unavailable" || state === "filesLost" || state === "offline")
@@ -289,8 +283,8 @@ export function useDeviceChoice(orgId: string, list: DeviceList | undefined): De
             id: e.id,
             label: nameOf(e),
             checked: e.id === id,
+            // no daily mode mark: the conversation's permission picker says what may run
             ...tagOf(e),
-            ...markOf(e),
           })),
         },
         ...(id !== undefined && offered.length > 0

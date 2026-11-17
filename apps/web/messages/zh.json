@@ -355,13 +355,13 @@
       "policy_refused": "这台设备不接受平台的这次修改，请在机器上修改。",
       "policy_unsupported": "这台设备不支持从平台修改网络设置，请在机器上升级设备程序。",
       "auto_mode_not_allowed": "该设备的机器以自动模式运行，但你的组织不允许自动模式。请在那台机器上运行 capybara-device mode sandbox 切换到沙箱模式。",
-      "mode_on_device": "该设备的模式保存在它所连接的机器上：请在设备页面切换到沙箱模式，或在那台机器上运行 capybara-device mode sandbox。",
+      "mode_on_device": "该设备的访问上限保存在它所连接的电脑上：请在设备页面收窄，或在那台电脑上运行 capybara-device ceiling set。",
       "mode_requires_session": "设备的模式只能由其所有者在设备页面修改，不能用 API 令牌修改。",
       "project_name_invalid": "该项目名称不可用：请使用 1-64 个字符，不能是 . 或 ..，不含 / 或控制字符，首尾不留空格。",
       "project_name_taken": "这台设备上已有同名项目，请换一个名称。",
       "project_limit_reached": "这台设备的项目已达 100 个上限，请先移除一个再添加。",
-      "project_outside_mode": "该目录不在设备当前模式可读的范围内。沙箱模式下只有工作区内的目录可以作为项目。",
-      "project_home_unknown": "自动模式下，项目路径相对于你的主目录，但这台机器还没有报告主目录。请在机器上更新 capybara-device 并重新连接。",
+      "project_outside_mode": "该目录超出了该设备的项目范围。项目范围为工作区时，只有工作区内的目录可以作为项目；电脑的所有者可以在电脑上放宽范围。",
+      "project_home_unknown": "项目范围为这台电脑的用户时，项目路径相对于你的主目录，但这台电脑还没有报告主目录。请在电脑上更新 capybara-device 并重新连接。",
       "project_path_missing": "设备上不存在该目录，请检查路径。",
       "project_path_too_broad": "这个目录包含主目录（或其他人的文件），范围太大。请选择项目自己的目录，或主目录及其下的目录。",
       "project_path_unreadable": "该路径是文件或在设备上无法读取，请选择一个可读的目录。",
@@ -371,7 +371,8 @@
       "permission_reconcile_required": "该设备的权限上限尚未确认。请在设备页面重置该设备的文件后再试。",
       "owner_report_stale": "这台电脑发来的权限报告已过期，新的工作已暂停。请在电脑上重新运行 capybara-device login。",
       "owner_ceiling_confirmation_required": "为该设备开启完全访问需要你确认。请确认后再试。",
-      "full_access_not_allowed": "平台、你的组织或该设备的提供方不允许该设备使用完全访问。"
+      "full_access_not_allowed": "平台、你的组织或该设备的提供方不允许该设备使用完全访问。",
+      "restart_required": "旧版本启动的后台任务可能仍在这台电脑上运行。请重启这台电脑以完成升级，然后再试。"
     },
     "device_sign_in": {
       "authorization_pending": "还未确认连接，请在网页上确认后稍候。",
@@ -1695,12 +1696,6 @@
       "online": "在线",
       "offline": "离线"
     },
-    "mark": {
-      "auto": "自动",
-      "sandbox": "沙箱",
-      "open": "开放（挡内网）",
-      "allowlist": "白名单"
-    },
     "networkKind": {
       "open-public": "开放（挡内网）",
       "allowlist": "白名单"
@@ -1764,56 +1759,63 @@
       "deleteDangerDefault": "删除 {name} 会同时删除它的文件并结束其中的进程，且无法恢复。下次需要时会新建一个空的设备。",
       "deleteDangerLocal": "删除 {name} 会断开它的机器，且无法恢复。机器上的文件会保留。"
     },
-    "mode": {
-      "description": {
-        "auto": "以你的身份在本机运行，命令都会经过审查。",
-        "sandbox": "在沙箱里运行，只能访问工作区和允许的域名。"
+    "ceiling": {
+      "title": "访问上限",
+      "sectionLocal": "智能体在这台电脑上最多能做什么。只有电脑的所有者能在电脑上放宽，这里只能收窄。",
+      "sectionCloud": "智能体在这台云端设备上最多能做什么。会话的完全访问不会超出它。",
+      "fullAccess": "完全访问",
+      "full": {
+        "available": "可用",
+        "owner": "此设备已关闭",
+        "platform": "平台或组织不允许",
+        "unconfirmed": "电脑报告上限之前不可用"
       },
-      "cloudDescription": {
-        "auto": "在容器里运行，可以访问公网，内网地址被挡住。"
+      "reach": "项目范围",
+      "reachValue": {
+        "workspace": "仅设备的工作区",
+        "os-user": "这台电脑的用户能读取的位置"
       },
-      "name": {
-        "auto": "自动",
-        "sandbox": "沙箱"
+      "reported": "报告时间",
+      "notice": {
+        "noMachine": "还没有连接电脑。请在电脑上运行 capybara-device login 连接它。",
+        "blocked": "这台电脑发来的权限报告已过期，新的工作已暂停。请在电脑上重新运行 capybara-device login。",
+        "missing": "这台电脑还没有报告它的上限，所以完全访问不可用。请在电脑上更新 capybara-device 并重新连接。",
+        "legacy": "这台电脑运行的是旧版 capybara-device，它的上限按旧设置读取。更新 capybara-device 后可以分别设置完全访问和项目范围。",
+        "stale": "这是电脑最近一次报告的情况：它已离线，或报告不是最新的。",
+        "migrating": "该设备的权限尚未迁移。现在可以关闭完全访问；开启要等迁移完成。"
       },
-      "commandHint": "在机器上切换模式：",
-      "changedSandbox": "已切换到沙箱模式。",
+      "mark": {
+        "full": "可完全访问",
+        "restricted": "受限"
+      },
+      "widenLocal": "只有电脑的所有者能在电脑上放宽：",
+      "turnOffFull": "关闭完全访问",
+      "limitReach": "仅限工作区",
+      "allowFull": "允许完全访问",
+      "fullOff": "此设备的完全访问已关闭。",
+      "fullOn": "此设备已允许完全访问。",
+      "reachLimited": "项目范围已限制为工作区。",
+      "legacyNarrowNote": "在这个旧版 capybara-device 上，这也会把项目范围限制为工作区。",
+      "cannotNarrow": {
+        "offline": "这台电脑已离线，无法在这里收窄。请在电脑上运行下面的命令。",
+        "upgrade": "这台电脑上的 capybara-device 不能接收平台的修改。请更新它，或在电脑上运行下面的命令。"
+      },
       "pendingNextUse": "下次使用时生效，文件保留。",
-      "lockedSandbox": "未开放自动模式，云端设备运行沙箱。",
-      "unavailable": "未开放自动模式",
-      "autoOnMachine": "只能在这台机器上切换。",
-      "noMachine": "连接机器后才能在这里切换模式。",
-      "offline": "这台设备离线；在机器上运行下面的命令即可切换。",
-      "upgrade": "这台机器上的设备程序不支持从平台修改模式。请在机器上升级 capybara-device。",
-      "pendingFilesReset": "重置文件后生效。",
-      "title": "运行模式",
-      "cloudSandboxNetwork": {
-        "open": "在容器里运行。组织的云设备网络是开放的，所以仍能访问公网，内网地址仍被挡住。",
-        "allowlist": "{count, plural, =0 {在容器里运行；组织白名单为空，不能访问外部域名。} other {在容器里运行，只能访问组织白名单里的 # 个域名。}}"
-      },
-      "section": {
-        "local": "模式保存在机器上：在这里切到沙箱会发送给机器。",
-        "cloud": "切换在设备下次使用时生效，文件保留。"
-      },
-      "changedAuto": "已切回自动模式。",
+      "pendingFilesReset": "重建文件后生效。",
       "confirm": {
         "title": {
-          "sandbox": "切换到沙箱模式？",
-          "auto": "切回自动模式？"
+          "widen": "允许此设备完全访问？",
+          "narrow": "关闭此设备的完全访问？"
         },
-        "network": {
-          "open": "组织的云设备网络是开放的，所以沙箱模式下这台设备仍能访问公网（内网地址仍被挡住）；只有组织管理员把网络改为白名单才会收窄。",
-          "allowlist": "{count, plural, =0 {沙箱模式下组织白名单为空，这台设备不能访问外部域名。} other {沙箱模式下这台设备只能访问组织白名单里的 # 个域名。}}",
-          "auto": "自动模式下这台设备可以访问任意公网地址，内网地址仍被挡住，每条命令仍会经过审查。"
+        "effect": {
+          "widen": "之后这台设备上的会话可以选择完全访问：命令在它的环境里运行，不再逐次确认。每个会话都需要重新确认完全访问。",
+          "narrow": "这台设备上以完全访问运行的工作会停止，它的会话不能再选择完全访问。"
         },
-        "processes": "下次使用时生效：设备的实例可能会重启，正在运行的命令和进程会结束；文件保留。",
-        "back": {
-          "sandbox": "之后可以随时在这里切回自动。",
-          "auto": "之后可以随时在这里再切到沙箱。"
-        },
+        "network": "设备的网络不变。",
+        "nextUse": "下次使用时生效：设备的实例可能重启，正在运行的命令会结束。文件保留。",
         "submit": {
-          "sandbox": "切换到沙箱",
-          "auto": "切回自动"
+          "widen": "允许完全访问",
+          "narrow": "关闭完全访问"
         },
         "cancel": "取消"
       }
@@ -1822,8 +1824,8 @@
       "title": "最近的修改",
       "add": "添加 {hosts}",
       "remove": "移除 {hosts}",
-      "mode": "模式改为{mode}",
-      "modeFrom": "模式从{from}改为{to}",
+      "fullAllowed": "已允许完全访问",
+      "fullOff": "已关闭完全访问",
       "none": "没有改动",
       "unknownBy": "未知账号",
       "via": {
@@ -1870,8 +1872,8 @@
         "platform": "由平台设置。"
       },
       "cloudEmpty": "没有允许的域名。",
-      "overviewNote": "命令只能访问这些域名。",
-      "description": "命令只能访问这些域名；改动会发送到这台机器。",
+      "overviewNote": "受限的工作只能访问这些域名。",
+      "description": "受限的工作只能访问这些域名；修改会发送到这台电脑。",
       "addTitle": "添加域名",
       "addField": "域名",
       "cancel": "取消"
@@ -1891,10 +1893,10 @@
       "overviewEmpty": "还没有项目",
       "empty": "还没有项目",
       "manage": "管理项目",
-      "hidden": "另有 {count} 个项目不在当前模式可读的范围内，已隐藏。切回原来的模式即可看到。",
+      "hidden": "另有 {count} 个项目超出该设备的项目范围，已隐藏。它们仍然保留，所有者在电脑上放宽范围后会再次显示。",
       "unsupportedLocal": "这台机器上的 capybara-device 不支持项目。请在机器上更新 capybara-device 并重新连接，然后再添加。",
       "unsupportedCloud": "这台云端设备的沙箱提供方不支持项目。它的会话照常工作，只是不绑定项目。",
-      "homeUnknown": "自动模式下，项目路径相对于你的主目录，但这台机器还没有报告主目录。请在机器上更新 capybara-device 并重新连接。",
+      "homeUnknown": "项目范围为这台电脑的用户时，项目路径相对于你的主目录，但这台电脑还没有报告主目录。请在电脑上更新 capybara-device 并重新连接。",
       "add": "添加项目",
       "addTitle": "添加项目",
       "pathLabel": "目录",
@@ -3136,7 +3138,7 @@
     "newDevice": "新建设备",
     "name": "新设备名称",
     "noOrg": "你还没有加入任何组织，无法连接机器。",
-    "disclosure": "确认后，你和你的智能体可以在这台机器上运行命令。命令输出和智能体读到的文件内容会进入对话并发送给模型。随时可以在设备页断开，或在这台机器上运行 capybara-device stop。",
+    "disclosure": "确认后，你和你的智能体可以在这台机器上运行命令。命令输出和智能体读到的文件内容会进入对话并发送给模型。随时可以在设备页断开，或在这台机器上运行 capybara-device stop。确认不会开启完全访问：只有机器的所有者能在机器上开启（capybara-device ceiling set）。",
     "confirm": "确认连接",
     "deny": "拒绝",
     "doneTitle": "已连接",

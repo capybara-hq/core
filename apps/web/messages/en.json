@@ -355,13 +355,13 @@
       "policy_refused": "This device does not accept this change from the platform. Change it on the machine.",
       "policy_unsupported": "This device can't change its network settings from the platform. Upgrade the device program on the machine.",
       "auto_mode_not_allowed": "This device's machine runs in auto mode, which your organization does not allow. Run capybara-device mode sandbox on that machine to switch it to sandbox mode.",
-      "mode_on_device": "This device's mode is kept on its connected machine: switch to sandbox mode from the device page, or run capybara-device mode sandbox there.",
+      "mode_on_device": "This device's owner ceiling is kept on its connected computer: narrow it from the device page, or run capybara-device ceiling set on that computer.",
       "mode_requires_session": "A device's mode is changed by its owner on the device page, not with an API token.",
       "project_name_invalid": "This project name is not allowed: use 1-64 characters, not . or .., without / or control characters, and without spaces at either end.",
       "project_name_taken": "This device already has a project with this name. Choose another name.",
       "project_limit_reached": "This device has reached its limit of 100 projects. Remove one to add another.",
-      "project_outside_mode": "This directory is outside what the device can read in its current mode. In sandbox mode only the workspace can be a project.",
-      "project_home_unknown": "In auto mode a project's path is relative to your home directory, which this machine has not reported. Update capybara-device on the machine and reconnect it.",
+      "project_outside_mode": "This directory is outside this device's project reach. With the workspace reach only the workspace can hold a project; the computer's owner widens the reach on the computer.",
+      "project_home_unknown": "With the project reach of this computer's user, a project's path is relative to your home directory, which this computer has not reported. Update capybara-device on the computer and reconnect it.",
       "project_path_missing": "This directory does not exist on the device. Check the path.",
       "project_path_too_broad": "This directory holds your home directory (or other people's files), which is too broad. Pick the project's own directory, your home or a directory below it.",
       "project_path_unreadable": "This path is a file or cannot be read on the device. Choose a readable directory.",
@@ -371,7 +371,8 @@
       "permission_reconcile_required": "This device's permission limits have not been confirmed yet. Reset the device's files on the devices page, then try again.",
       "owner_report_stale": "This computer sent an outdated permission report, so new work is paused. Run capybara-device login again on the computer.",
       "owner_ceiling_confirmation_required": "Giving this device Full access needs your confirmation. Confirm the change and try again.",
-      "full_access_not_allowed": "Full access is not allowed for this device by your platform, your organization or its provider."
+      "full_access_not_allowed": "Full access is not allowed for this device by your platform, your organization or its provider.",
+      "restart_required": "Background work started by an earlier version may still be running on this computer. Restart this computer to finish the upgrade, then try again."
     },
     "device_sign_in": {
       "authorization_pending": "The connection is not confirmed yet. Confirm it on the web page and wait a moment.",
@@ -1707,12 +1708,6 @@
       "online": "Online",
       "offline": "Offline"
     },
-    "mark": {
-      "auto": "Auto",
-      "sandbox": "Sandbox",
-      "open": "Open (private networks blocked)",
-      "allowlist": "Allowlist"
-    },
     "networkKind": {
       "open-public": "Open (private networks blocked)",
       "allowlist": "Allowlist"
@@ -1776,56 +1771,63 @@
       "deleteDangerDefault": "Deleting {name} also deletes its files and ends its processes, with no way back. A new empty device is created the next time one is needed.",
       "deleteDangerLocal": "Deleting {name} disconnects its machine, with no way back. The files on the machine stay."
     },
-    "mode": {
-      "description": {
-        "auto": "Runs on this machine as you; each command is reviewed.",
-        "sandbox": "Runs in a sandbox; reaches the workspace and allowed hosts only."
+    "ceiling": {
+      "title": "Access ceiling",
+      "sectionLocal": "The most an agent may do on this computer. Only its owner widens it, on the computer; here it can only be narrowed.",
+      "sectionCloud": "The most an agent may do on this cloud device. A conversation's Full access never goes beyond it.",
+      "fullAccess": "Full access",
+      "full": {
+        "available": "Available",
+        "owner": "Off on this device",
+        "platform": "Not allowed by the platform or the organization",
+        "unconfirmed": "Unavailable until the computer reports its ceiling"
       },
-      "cloudDescription": {
-        "auto": "Runs in the container and can reach public addresses; private networks are blocked."
+      "reach": "Project reach",
+      "reachValue": {
+        "workspace": "The device's workspace only",
+        "os-user": "Whatever this computer's user can read"
       },
-      "name": {
-        "auto": "Auto",
-        "sandbox": "Sandbox"
+      "reported": "Reported",
+      "notice": {
+        "noMachine": "No computer is connected. Run capybara-device login on the computer to connect it.",
+        "blocked": "This computer sent an outdated permission report, so new work is paused. Run capybara-device login again on the computer.",
+        "missing": "This computer has not reported its ceiling, so Full access is unavailable. Update capybara-device on the computer and reconnect it.",
+        "legacy": "This computer runs an older capybara-device, so its ceiling is read from its old setting. Update capybara-device to set Full access and project reach separately.",
+        "stale": "These are the facts the computer last reported: it is offline or its report is not current.",
+        "migrating": "This device's permissions have not been migrated yet. Full access can be turned off now; allowing it waits for the migration."
       },
-      "commandHint": "Switch it on the machine:",
-      "changedSandbox": "The device is in sandbox mode.",
+      "mark": {
+        "full": "Full access available",
+        "restricted": "Restricted"
+      },
+      "widenLocal": "Only the computer's owner widens it, on the computer:",
+      "turnOffFull": "Turn off Full access",
+      "limitReach": "Limit to the workspace",
+      "allowFull": "Allow Full access",
+      "fullOff": "Full access is off on this device.",
+      "fullOn": "Full access is allowed on this device.",
+      "reachLimited": "Project reach is limited to the workspace.",
+      "legacyNarrowNote": "On this older capybara-device it also limits project reach to the workspace.",
+      "cannotNarrow": {
+        "offline": "This computer is offline, so it can't be narrowed from here. Run the command below on the computer.",
+        "upgrade": "The capybara-device on this computer can't take changes from the platform. Update it, or run the command below on the computer."
+      },
       "pendingNextUse": "Takes effect at the next use; files are kept.",
-      "lockedSandbox": "Auto mode is not enabled, so cloud devices run in sandbox mode.",
-      "unavailable": "Auto mode is not enabled",
-      "autoOnMachine": "It can only be switched on at the machine.",
-      "noMachine": "Connect a machine to switch its mode here.",
-      "offline": "This device is offline; run the command below on the machine to switch its mode.",
-      "upgrade": "The device program on this machine can't change its mode from the platform. Upgrade capybara-device on the machine.",
       "pendingFilesReset": "Takes effect after the files are reset.",
-      "title": "Run mode",
-      "cloudSandboxNetwork": {
-        "open": "Runs in the container. The organization's cloud network is open, so it still reaches public addresses; private networks stay blocked.",
-        "allowlist": "Runs in the container and reaches only the organization's allowlist: {count, plural, =0 {no host} one {# host} other {# hosts}}."
-      },
-      "section": {
-        "local": "The machine keeps its mode: a switch to sandbox here is sent to it.",
-        "cloud": "A switch takes effect at the device's next use; its files are kept."
-      },
-      "changedAuto": "The device is back in auto mode.",
       "confirm": {
         "title": {
-          "sandbox": "Switch to sandbox mode?",
-          "auto": "Switch back to auto mode?"
+          "widen": "Allow Full access on this device?",
+          "narrow": "Turn off Full access on this device?"
         },
-        "network": {
-          "open": "The organization's cloud network is open, so in sandbox mode this device still reaches public addresses (private networks stay blocked). Only an org admin switching the network to an allowlist narrows it.",
-          "allowlist": "In sandbox mode this device reaches only the organization's allowlist: {count, plural, =0 {no host at all} one {# host} other {# hosts}}.",
-          "auto": "In auto mode this device reaches any public address; private networks stay blocked, and every command is still reviewed."
+        "effect": {
+          "widen": "Conversations on this device can then choose Full access: commands run in its environment without asking each time. Each conversation needs a new Full access confirmation.",
+          "narrow": "Work running with Full access on this device stops, and its conversations can no longer choose Full access."
         },
-        "processes": "It takes effect at the next use: the device's instance may restart, which ends its running commands and processes. Its files are kept.",
-        "back": {
-          "sandbox": "You can switch back to auto here at any time.",
-          "auto": "You can switch to sandbox again here at any time."
-        },
+        "network": "The device's network does not change.",
+        "nextUse": "It takes effect at the next use: the device's instance may restart, which ends its running commands. Its files are kept.",
         "submit": {
-          "sandbox": "Switch to sandbox",
-          "auto": "Switch to auto"
+          "widen": "Allow Full access",
+          "narrow": "Turn off Full access"
         },
         "cancel": "Cancel"
       }
@@ -1834,8 +1836,8 @@
       "title": "Recent changes",
       "add": "Added {hosts}",
       "remove": "Removed {hosts}",
-      "mode": "Mode set to {mode}",
-      "modeFrom": "Mode changed from {from} to {to}",
+      "fullAllowed": "Full access allowed",
+      "fullOff": "Full access turned off",
       "none": "No change",
       "unknownBy": "Unknown account",
       "via": {
@@ -1882,8 +1884,8 @@
         "platform": "The platform sets this."
       },
       "cloudEmpty": "No domains are allowed.",
-      "overviewNote": "Commands reach these hosts only.",
-      "description": "Commands reach these hosts only; changes are sent to this machine.",
+      "overviewNote": "Restricted work reaches these hosts only.",
+      "description": "Restricted work reaches these hosts only; changes are sent to this computer.",
       "addTitle": "Add a host",
       "addField": "Host",
       "cancel": "Cancel"
@@ -1903,10 +1905,10 @@
       "overviewEmpty": "No projects yet",
       "empty": "No projects yet",
       "manage": "Manage projects",
-      "hidden": "{count, plural, one {# more project is} other {# more projects are}} outside what the current mode can read, so hidden. Switch the mode back to see them.",
+      "hidden": "{count, plural, one {# more project is} other {# more projects are}} outside this device's project reach, so hidden. They are kept and show again if the owner widens the reach on the computer.",
       "unsupportedLocal": "This machine's capybara-device does not support projects. Update capybara-device on the machine and reconnect it to add one.",
       "unsupportedCloud": "This cloud device's sandbox provider does not support projects. Its conversations work as usual, without one.",
-      "homeUnknown": "In auto mode a project's path is relative to your home directory, which this machine has not reported. Update capybara-device on the machine and reconnect it.",
+      "homeUnknown": "With the project reach of this computer's user, a project's path is relative to your home directory, which this computer has not reported. Update capybara-device on the computer and reconnect it.",
       "add": "Add project",
       "addTitle": "Add project",
       "pathLabel": "Directory",
@@ -3148,7 +3150,7 @@
     "newDevice": "New device",
     "name": "New device name",
     "noOrg": "You are not in an organization yet, so you cannot connect a machine.",
-    "disclosure": "Once you confirm, you and your agents can run commands on this machine. Command output and the file contents your agents read become part of conversations and are sent to models. Disconnect any time on the device's page, or run capybara-device stop on this machine.",
+    "disclosure": "Once you confirm, you and your agents can run commands on this machine. Command output and the file contents your agents read become part of conversations and are sent to models. Disconnect any time on the device's page, or run capybara-device stop on this machine. Confirming does not allow Full access: only the machine's owner allows it, on the machine (capybara-device ceiling set).",
     "confirm": "Connect",
     "deny": "Deny",
     "doneTitle": "Connected",
