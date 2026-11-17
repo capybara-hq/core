@@ -17,8 +17,11 @@ export const isInternalProvider = (name: string): boolean => name.startsWith("@"
  * Present only on the staged v3 registration of a kernel-internal provider; protocol 2 has none.
  */
 export interface SandboxInstanceBinder {
-  /** Whether the device's current instance generation has an installed binding. */
-  installed(deviceId: string): Promise<boolean>;
+  /**
+   * The binding committed for the device's current instance generation: installed, still awaiting
+   * the device, or null when none was committed (an instance from before the staged path).
+   */
+  status(deviceId: string): Promise<"installed" | "awaiting-device" | null>;
   /**
    * Sends the committed binding (the same binding id on every retry) and installs the verified
    * answer; refuses while a legacy retirement obligation is open. Never inside a transaction.

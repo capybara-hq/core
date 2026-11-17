@@ -946,6 +946,9 @@ export class SandboxService {
       // admission there; only exact-ref managed drains go on (I1)
       if (!instance.exactRef && (await this.retirement.hasUnresolved(env)))
         throw retirementPending();
+      // staged owner browse never reaches an instance whose binding is not installed (B-8): the
+      // device admits nothing there, and only a use's exclusive holder binds it
+      if (use && !(await this.bound(p, env))) return { kind: "not_running", status: row.status };
       // the instance this check saw: its handle plus `created_at` (never `generation`, which
       // every lease bumps)
       const want: Instance = { handle: row.handle, createdAt: row.created_at.getTime() };
@@ -1695,7 +1698,7 @@ export class SandboxService {
         if (
           !(await this.retirement.hasUnresolved(env)) &&
           ready(row) &&
-          (!p.binder || (await p.binder.installed(env)))
+          (await this.bound(p, env))
         ) {
           const lease = await this.leases.tryShared(env, this.cap, token);
           if (lease) {
@@ -1727,6 +1730,11 @@ export class SandboxService {
       if (intent) await this.clearIntent(env, token);
       throw err;
     }
+  }
+
+  /** No binder (protocol 2), or the current generation's binding is installed (B-8). */
+  private async bound(p: SandboxProviderEntry, env: string): Promise<boolean> {
+    return !p.binder || (await p.binder.status(env)) === "installed";
   }
 
   private async clearIntent(env: string, token: string): Promise<void> {
@@ -1803,7 +1811,7 @@ export class SandboxService {
         return null;
       }
       if (check !== "none") await this.facts.assertCloudReconciled(ctx.orgId, env);
-      if (check === "use" && p.binder && !(await p.binder.installed(env))) {
+      if (check === "use" && !(await this.bound(p, env))) {
         await lease.release();
         return null;
       }
@@ -1854,17 +1862,19 @@ export class SandboxService {
       // no create, resume, rebuild, limits change, retirement destroy or kill (B-11)
       await this.facts.assertCloudReconciled(ctx.orgId, env);
       const s = await this.ensure(ctx, p, lease, sig, gone);
-      // staged path (B-8): create → commit → legacy gate (ensure) → bind → installed → downgrade.
-      // The binder sends the committed binding id again on every retry, refuses while a legacy
-      // obligation is open and runs outside any transaction; a failure releases the lease.
-      const binder = p.binder;
-      if (binder) await runOutsideTransaction(() => binder.bind(env, sig));
       const dead = await this.claim(env);
       if (s.resumed) await this.killLeftovers(env, s.handle, p, sig, dead);
       else if (!s.info.fresh) await this.killTagged(env, s.handle, p, dead, signal, lease);
       if (s.resumed || s.info.fresh) {
         await this.killPendingTasks(env, s.handle, s.createdAt, p, lease.token, ctx.actor, sig);
       }
+      // staged path (B-8): create → commit → legacy gate (ensure) → cleanup → bind → installed →
+      // downgrade. The cleanup a resume or create owes runs first: a retry after a failed bind
+      // finds the instance running and would not owe it again. The binder sends the committed
+      // binding id again on every retry, refuses while a legacy obligation is open and runs
+      // outside any transaction; a failure releases the lease.
+      const binder = p.binder;
+      if (binder) await runOutsideTransaction(() => binder.bind(env, sig));
       const shared = await lease.downgrade();
       await this.register(env, shared.token);
       return {
@@ -2709,6 +2719,21 @@ export class SandboxService {
     const createdAt = row.created_at.getTime();
     const fsResets = row.fs_resets;
     if (handle && isInstance(row, gone) && row.status === "running") {
+      const created = await this.create(ctx, p, held, row, fence, signal, want);
+      return { ...created, fsResets, info: { fresh: true, restarted: true }, fence };
+    }
+    // the staged path's activation (B-8): an instance committed before the binder existed has no
+    // binding for its generation and never can get one; past the retirement gate above, a new
+    // generation is created (and committed with its binding) in its place
+    if (
+      handle &&
+      p.binder &&
+      (row.status === "running" || row.status === "suspended") &&
+      (await p.binder.status(id)) === null
+    ) {
+      this.log.info("instance without a committed binding; creating a bound generation", {
+        deviceId: id,
+      });
       const created = await this.create(ctx, p, held, row, fence, signal, want);
       return { ...created, fsResets, info: { fresh: true, restarted: true }, fence };
     }

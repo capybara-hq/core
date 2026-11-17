@@ -99,6 +99,8 @@ const marked = (deviceId: string, on = true) =>
     .where("id", "=", deviceId)
     .execute();
 const RECONCILE = { code: "device.permission_reconcile_required" };
+/** A local machine's quarantined earlier incarnation that never reported a boot (8.5). */
+const LEGACY = { name: "RetirementPendingError", code: "device.replace_required" };
 
 async function cloudDevice() {
   const seed = await seedConversation(raw);
@@ -194,6 +196,22 @@ describe("the permission_reconcile_required marker refuses every acquire path (B
     expect(fn).not.toHaveBeenCalled();
     expect(await ops()).toEqual(before);
   });
+
+  it("an exact-ref drain still reaches the instance of a marked device", async () => {
+    const f = await cloudDevice();
+    const sandbox = k.app.get(SandboxService);
+    await sandbox.withSandbox(f.ctx, async () => "created", signal());
+    await marked(f.deviceId);
+    const instance = await sandbox.currentInstance(f.deviceId);
+    if (!instance) throw new Error("expected the running instance");
+    const drained = await sandbox.ifRunning(
+      f.deviceId,
+      { createdAt: instance.createdAt, exactRef: true },
+      async () => "stopped",
+      signal(),
+    );
+    expect(drained).toEqual({ kind: "ran", value: "stopped" });
+  });
 });
 
 // ---- B-8: post-commit binding on the staged path
@@ -248,6 +266,14 @@ function fakeLocal(events: string[]): SandboxProvider {
     async writeFile() {},
     async stat() {
       return null;
+    },
+    async browse() {
+      events.push("browse");
+      return {
+        stat: async () => null,
+        list: async () => [],
+        scan: async () => [],
+      };
     },
   } as unknown as SandboxProvider;
 }
@@ -414,10 +440,80 @@ describe("the exclusive holder binds before it downgrades (B-8, staged path)", (
       .execute();
     device.lose = false;
     const fn = vi.fn(async () => "ran");
-    await expect(sandbox.withSandbox(f.ctx, fn, signal())).rejects.toThrow();
+    await expect(sandbox.withSandbox(f.ctx, fn, signal())).rejects.toMatchObject(LEGACY);
     expect(fn).not.toHaveBeenCalled();
     expect(device.sent).toHaveLength(1);
     expect(await f.bindings()).toMatchObject([{ status: "awaiting-device" }]);
+  });
+
+  it("owner browse fails closed while the instance's binding is not installed", async () => {
+    const f = await localDevice();
+    const device = deviceAnswers(f.events);
+    const sandbox = k.app.get(SandboxService);
+    device.lose = true;
+    await expect(sandbox.withSandbox(f.ctx, async () => "ran", signal())).rejects.toThrow("lost");
+    vi.spyOn(k.app.get(SandboxOperationAuthority), "resolveBrowse").mockResolvedValue(
+      {} as SandboxBrowseScope,
+    );
+    const fn = vi.fn(async (p: { stat(path: string, s: AbortSignal): Promise<unknown> }) =>
+      p.stat("/Users/owner/capybara", signal()),
+    );
+    await expect(
+      sandbox.withBrowse({ ...f.ctx, accountId: f.accountId }, fn, signal()),
+    ).rejects.toMatchObject({
+      name: "SandboxPermissionUnsupportedError",
+      message: "The device instance is not running",
+    });
+    expect(fn).not.toHaveBeenCalled();
+    expect(f.events).not.toContain("browse");
+    expect(device.sent).toHaveLength(1);
+  });
+
+  it("a running local instance from before the binder gets a new generation and binds", async () => {
+    const f = await localDevice();
+    const device = deviceAnswers(f.events);
+    // the activation path: an instance committed under protocol 2 has no binding
+    await db()
+      .insertInto("device_instances")
+      .values({
+        device_id: f.deviceId,
+        org_id: f.orgId,
+        provider: LOCAL_PROVIDER,
+        status: "running",
+        fs_status: "ready",
+        fs_handle: JSON.stringify({ id: `cap-device-${f.deviceId}` }),
+        handle: JSON.stringify({ id: f.deviceId, roots: ROOTS }),
+        had_instance: true,
+      })
+      .execute();
+    const sandbox = k.app.get(SandboxService);
+    expect(await sandbox.withSandbox(f.ctx, async () => "ran", signal())).toBe("ran");
+    expect(f.events).toEqual(["create", "bindInstance", "downgrade"]);
+    const rows = await f.bindings();
+    expect(rows).toMatchObject([{ status: "installed" }]);
+    expect(device.sent.map((s) => s.bindingId)).toEqual([rows[0]?.binding_id]);
+  });
+
+  it("a bind lost after a resume never skips the resume cleanup on the retry", async () => {
+    const f = await localDevice();
+    const device = deviceAnswers(f.events);
+    const sandbox = k.app.get(SandboxService);
+    device.lose = true;
+    await expect(sandbox.withSandbox(f.ctx, async () => "ran", signal())).rejects.toThrow("lost");
+    await db()
+      .updateTable("device_instances")
+      .set({ status: "suspended" })
+      .where("device_id", "=", f.deviceId)
+      .execute();
+    f.events.length = 0;
+    // the resume succeeds, the bind answer is lost again
+    await expect(sandbox.withSandbox(f.ctx, async () => "ran", signal())).rejects.toThrow("lost");
+    device.lose = false;
+    expect(await sandbox.withSandbox(f.ctx, async () => "ran", signal())).toBe("ran");
+    expect(f.events.filter((e) => e === "resume")).toHaveLength(1);
+    // the processes a resume may bring back were killed exactly once, before any bind
+    expect(f.events.filter((e) => e === "killAll")).toHaveLength(1);
+    expect(f.events.indexOf("killAll")).toBeLessThan(f.events.indexOf("bindInstance"));
   });
 
   it("protocol 2 (no binder) never binds and keeps its behaviour", async () => {
