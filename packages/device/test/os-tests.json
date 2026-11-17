@@ -8,6 +8,7 @@
   "linux-operation-backend.test.ts",
   "linux-operation-worker.test.ts",
   "mac-operation-backend.test.ts",
+  "mac-self-check.test.ts",
   "mac-write-denies.test.ts",
   "native-helper-client.test.ts",
   "operation-supervisor.test.ts",

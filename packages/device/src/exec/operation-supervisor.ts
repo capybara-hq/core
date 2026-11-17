@@ -1312,6 +1312,31 @@ export class MacOperationSupervisor {
     return outcome;
   }
 
+  /**
+   * Exact-stops every operation this supervisor owns live (a live or faulted worker), each by its
+   * recorded ref, never a PID or marker scan; `backgroundOnly` limits it to background tasks
+   * (entries with managed output). Resolves with each outcome once its attempt settled; a failed
+   * attempt reports `cancel-pending` and stays owned (and journaled as pending).
+   */
+  async stopOwned(opts: {
+    backgroundOnly: boolean;
+    graceMs: number;
+    signal: AbortSignal;
+  }): Promise<SandboxStopResult[]> {
+    const targets: Entry[] = [];
+    for (const id of new Set([...this.live.keys(), ...this.faultOwners.keys()])) {
+      const entry = this.entries.get(id);
+      if (entry && (!opts.backgroundOnly || entry.output !== undefined || this.spools.has(id)))
+        targets.push(entry);
+    }
+    return Promise.all(
+      targets.map((entry) =>
+        this.stop(entry.ref, { graceMs: opts.graceMs, signal: opts.signal }).catch(
+          (): SandboxStopResult => ({ outcome: "cancel-pending" }),
+        ),
+      ),
+    );
+  }
   async revokeOperation(ref: SandboxOperationRef, signal: AbortSignal): Promise<void> {
     ref = parseSandboxOperationRef(ref);
     signal.throwIfAborted();
