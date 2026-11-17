@@ -678,6 +678,42 @@ export async function runSandboxPermissionConformance(
       (await native(restricted())).writeFile(at(root, "bare2/HEAD"), bytes, signal),
       "native write of a bare-repository HEAD",
     );
+    // No repository can be forged inside git's own allowlisted subtrees, and hook managers
+    // files stay out of reach.
+    const forged = await exec(
+      restricted(),
+      [
+        "cd repo/.git",
+        "mkdir -p objects/zz/.git/objects objects/zz/.git/refs",
+        "printf 'ref: refs/heads/main' > objects/zz/.git/HEAD",
+        "printf x > objects/zz/.git/config",
+        "mkdir -p objects/yy/objects objects/yy/refs; printf 'ref: refs/heads/main' > objects/yy/HEAD",
+        "mkdir -p logs/objects; printf ../.. > logs/commondir",
+        "mkdir -p refs/remotes/o/objects",
+        "cd ../..",
+        "mkdir -p .husky .lefthook .githooks .config",
+        "printf x > .husky/pre-commit; printf x > .pre-commit-config.yaml; printf x > lefthook.yml",
+        "printf x > .lefthook/x; printf x > .githooks/pre-commit; printf x > .config/lefthook.yml",
+        "true",
+      ].join("; "),
+    );
+    assert.equal(forged.exitCode, 0, `the forged-repository probe must run: ${forged.stderr}`);
+    for (const path of [
+      "repo/.git/objects/zz/.git/HEAD",
+      "repo/.git/objects/zz/.git/config",
+      "repo/.git/objects/yy/HEAD",
+      "repo/.git/logs/objects",
+      "repo/.git/logs/commondir",
+      "repo/.git/refs/remotes/o/objects",
+      ".husky/pre-commit",
+      ".pre-commit-config.yaml",
+      "lefthook.yml",
+      ".lefthook/x",
+      ".githooks/pre-commit",
+      ".config/lefthook.yml",
+    ])
+      assert.equal(await fixture.inspect.mode(at(root, path)), null, `mandatory deny: ${path}`);
+
     if (support.fullAccess) {
       // ordinary git work in a restricted repository keeps working under these rules
       await exec(

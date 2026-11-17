@@ -276,13 +276,24 @@ The package includes a private macOS operation backend for the forthcoming permi
 protocol. The current CLI, wire version 2, hello and dispatch still use the existing executors.
 The staged factory does not advertise restricted support: actual adapter acceptance and the
 coordinated policy-writer, background and protocol integration gates remain open. Linux and local
-Docker restricted operation support also remain unavailable; there is no Full fallback.
+Docker hosts get their own backends on the SDK's restricted Linux runtime (Landlock plus a seccomp
+broker), reported unavailable wherever that runtime's probe fails; there is no Full fallback.
 
 Each restricted operation has its own immutable sandbox-runtime process and proxy lifetime.
 Native methods use the SDK's hash-checked Python helper and pinned directory descriptors, with a
 private descriptor-identity handshake before dispatch. Full uses the existing OS user directly.
 Execution grants arrive separately over authenticated transport; scope hosts cannot manufacture
 an owner allowance. Strict fresh owner-policy reads fail closed on missing or malformed policy.
+
+Restricted operations follow one write policy on every platform (`sandbox-write-denies.ts` in
+the SDK): no shell, git-global, direnv, npm, editor, agent or hook-manager configuration; inside
+any `.git` only git's ordinary internals; no bare-repository lookalike; no `.git` moved away.
+As defence in depth, owners are advised to run
+
+    git config --global safe.bareRepository explicit
+
+so git never treats a directory a command prepared (for example inside `.git`) as a repository
+unless it is named with `--git-dir`. capybara-device never changes the user's git configuration.
 
 The private supervisor consumes operation IDs durably before launch, records trusted child
 identities, bounds output tails to 65,536 bytes and preserves cancellation and unknown outcomes.

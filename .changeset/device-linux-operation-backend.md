@@ -15,4 +15,7 @@ retained output and exact cancellation share the macOS supervisor; cancellation 
 pidfds too, an abort escalates like a cancel, and a lost agent's recorded session (SID and start
 time) is reaped, also by the next device process. Restricted support is the launcher's own probe:
 an unsupported kernel, ABI, architecture or Python below 3.9 fails closed. A local-Docker device
-runs the same agent in its container. The macOS worker now applies the same shared deny list.
+runs the same agent in its container. The macOS worker now enforces the same write policy through ordered Seatbelt regex rules (the
+pnpm patch of `@anthropic-ai/sandbox-runtime` accepts `writeRegexRules`): case-insensitive denies,
+the gitdir allowlist, no bare-repository `HEAD`, no forged repository and no `.git` moved away.
+The README recommends `git config --global safe.bareRepository explicit` as defence in depth.

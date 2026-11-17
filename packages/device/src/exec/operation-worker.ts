@@ -15,6 +15,7 @@ import {
   SandboxScopeDeniedError,
 } from "@capybara-hq/plugin-sdk";
 import { implicitWritePaths } from "../policy.js";
+import { macWriteRegexRules } from "./mac-write-policy.js";
 import {
   type NativeHelperRequest,
   type NativeHelperResult,
@@ -424,6 +425,11 @@ export async function startMacOperationWorker(
                 ? mandatoryDenyPatterns("")
                 : writeRoots.flatMap((r) => mandatoryDenyPatterns(r))),
             ],
+            // the shared policy exactly (case-insensitive, gitdir allowlist, HEAD rules), as
+            // ordered regex rules the patched runtime appends last (mac-write-policy.ts)
+            writeRegexRules: establishmentRoots.length
+              ? macWriteRegexRules("")
+              : writeRoots.flatMap((r) => macWriteRegexRules(r)),
           },
           network: {
             allowedDomains: [...request.grant.hosts],

@@ -20,13 +20,19 @@
  *    except within the same protected directory; a directory is not moved under a protected name
  *    from outside it; no non-directory becomes `.git` (a `gitdir:` pointer).
  *
- * Names are compared after Unicode NFKC normalization and case folding. Known limitations: a
+ * 5. Inside an allowlisted subtree nothing can make a repository: no `.git`, no `HEAD` except
+ *    where git keeps one (`logs/HEAD`, `refs/remotes/<r>/HEAD`, …), and no `objects`, `commondir`
+ *    or `gitdir` beside such a `HEAD`.
+ *
+ * Names are compared after Unicode NFKC normalization and full case folding
+ * ({@link sandboxFoldName}, identical to Python's `casefold`). Known limitations: a
  * restricted command cannot `git init`, add a submodule or worktree, or create a bare repository;
  * continuing an operation it started (`git rebase --continue`) runs the todo list it wrote, like
  * any script it wrote; files that tools execute by convention without configuration (for example
- * `package.json` scripts) are not covered. The macOS runtime's glob patterns cannot express the
- * gitdir allowlist, the `HEAD` rule or moving a nested repository's `.git` away; it denies
- * {@link SANDBOX_GIT_DENIED_INTERNALS} at any depth instead.
+ * `package.json` scripts) are not covered; a forged rebase or cherry-pick in progress is possible
+ * (its state directories are writable for git's own use) and continuing it runs its `exec` lines.
+ * The macOS worker expresses this policy as ordered Seatbelt regex rules
+ * (`packages/device/src/exec/mac-write-policy.ts`).
  */
 export const SANDBOX_MANDATORY_WRITE_DENIES: readonly (readonly string[])[] = Object.freeze(
   [
@@ -45,6 +51,45 @@ export const SANDBOX_MANDATORY_WRITE_DENIES: readonly (readonly string[])[] = Ob
     [".idea"],
     [".claude", "commands"],
     [".claude", "agents"],
+    // hook managers: hooks git runs (through a manager) from files in the working tree
+    [".husky"],
+    [".huskyrc"],
+    [".huskyrc.json"],
+    [".huskyrc.js"],
+    ["husky.config.js"],
+    [".pre-commit-config.yaml"],
+    [".pre-commit-config.yml"],
+    ["lefthook.yml"],
+    ["lefthook.yaml"],
+    ["lefthook.json"],
+    ["lefthook.toml"],
+    [".lefthook.yml"],
+    [".lefthook.yaml"],
+    [".lefthook.json"],
+    [".lefthook.toml"],
+    ["lefthook-local.yml"],
+    ["lefthook-local.yaml"],
+    ["lefthook-local.json"],
+    ["lefthook-local.toml"],
+    [".lefthook-local.yml"],
+    [".lefthook-local.yaml"],
+    [".lefthook-local.json"],
+    [".lefthook-local.toml"],
+    [".lefthook"],
+    [".lefthook-local"],
+    [".config", "lefthook.yml"],
+    [".config", "lefthook.yaml"],
+    [".config", "lefthook.json"],
+    [".config", "lefthook.toml"],
+    [".overcommit.yml"],
+    [".simple-git-hooks.json"],
+    [".simple-git-hooks.js"],
+    [".simple-git-hooks.cjs"],
+    ["simple-git-hooks.json"],
+    ["simple-git-hooks.js"],
+    ["simple-git-hooks.cjs"],
+    // the conventional core.hooksPath directory a repository's existing config may name
+    [".githooks"],
   ].map((entry) => Object.freeze(entry)),
 );
 
@@ -114,17 +159,357 @@ export const SANDBOX_PROTECTED_PATH_NAMES: readonly string[] = Object.freeze([
   ...new Set(SANDBOX_MANDATORY_WRITE_DENIES.map((entry) => entry[0] as string)),
 ]);
 
-const fold = (name: string) => name.normalize("NFKC").toLowerCase();
+/**
+ * Python's `str.casefold` where it differs from `toLowerCase` (full case folding, Unicode 15.1),
+ * so both implementations fold identically: `ß`→`ss`, `ſ`→`s`, final sigma, Cherokee, ….
+ */
+const CASEFOLD_DIFF: Readonly<Record<number, string>> = Object.freeze({
+  181: "\u03bc",
+  223: "ss",
+  329: "\u02bcn",
+  383: "s",
+  496: "j\u030c",
+  837: "\u03b9",
+  912: "\u03b9\u0308\u0301",
+  944: "\u03c5\u0308\u0301",
+  962: "\u03c3",
+  976: "\u03b2",
+  977: "\u03b8",
+  981: "\u03c6",
+  982: "\u03c0",
+  1008: "\u03ba",
+  1009: "\u03c1",
+  1013: "\u03b5",
+  1415: "\u0565\u0582",
+  5024: "\u13a0",
+  5025: "\u13a1",
+  5026: "\u13a2",
+  5027: "\u13a3",
+  5028: "\u13a4",
+  5029: "\u13a5",
+  5030: "\u13a6",
+  5031: "\u13a7",
+  5032: "\u13a8",
+  5033: "\u13a9",
+  5034: "\u13aa",
+  5035: "\u13ab",
+  5036: "\u13ac",
+  5037: "\u13ad",
+  5038: "\u13ae",
+  5039: "\u13af",
+  5040: "\u13b0",
+  5041: "\u13b1",
+  5042: "\u13b2",
+  5043: "\u13b3",
+  5044: "\u13b4",
+  5045: "\u13b5",
+  5046: "\u13b6",
+  5047: "\u13b7",
+  5048: "\u13b8",
+  5049: "\u13b9",
+  5050: "\u13ba",
+  5051: "\u13bb",
+  5052: "\u13bc",
+  5053: "\u13bd",
+  5054: "\u13be",
+  5055: "\u13bf",
+  5056: "\u13c0",
+  5057: "\u13c1",
+  5058: "\u13c2",
+  5059: "\u13c3",
+  5060: "\u13c4",
+  5061: "\u13c5",
+  5062: "\u13c6",
+  5063: "\u13c7",
+  5064: "\u13c8",
+  5065: "\u13c9",
+  5066: "\u13ca",
+  5067: "\u13cb",
+  5068: "\u13cc",
+  5069: "\u13cd",
+  5070: "\u13ce",
+  5071: "\u13cf",
+  5072: "\u13d0",
+  5073: "\u13d1",
+  5074: "\u13d2",
+  5075: "\u13d3",
+  5076: "\u13d4",
+  5077: "\u13d5",
+  5078: "\u13d6",
+  5079: "\u13d7",
+  5080: "\u13d8",
+  5081: "\u13d9",
+  5082: "\u13da",
+  5083: "\u13db",
+  5084: "\u13dc",
+  5085: "\u13dd",
+  5086: "\u13de",
+  5087: "\u13df",
+  5088: "\u13e0",
+  5089: "\u13e1",
+  5090: "\u13e2",
+  5091: "\u13e3",
+  5092: "\u13e4",
+  5093: "\u13e5",
+  5094: "\u13e6",
+  5095: "\u13e7",
+  5096: "\u13e8",
+  5097: "\u13e9",
+  5098: "\u13ea",
+  5099: "\u13eb",
+  5100: "\u13ec",
+  5101: "\u13ed",
+  5102: "\u13ee",
+  5103: "\u13ef",
+  5104: "\u13f0",
+  5105: "\u13f1",
+  5106: "\u13f2",
+  5107: "\u13f3",
+  5108: "\u13f4",
+  5109: "\u13f5",
+  5112: "\u13f0",
+  5113: "\u13f1",
+  5114: "\u13f2",
+  5115: "\u13f3",
+  5116: "\u13f4",
+  5117: "\u13f5",
+  7296: "\u0432",
+  7297: "\u0434",
+  7298: "\u043e",
+  7299: "\u0441",
+  7300: "\u0442",
+  7301: "\u0442",
+  7302: "\u044a",
+  7303: "\u0463",
+  7304: "\ua64b",
+  7830: "h\u0331",
+  7831: "t\u0308",
+  7832: "w\u030a",
+  7833: "y\u030a",
+  7834: "a\u02be",
+  7835: "\u1e61",
+  7838: "ss",
+  8016: "\u03c5\u0313",
+  8018: "\u03c5\u0313\u0300",
+  8020: "\u03c5\u0313\u0301",
+  8022: "\u03c5\u0313\u0342",
+  8064: "\u1f00\u03b9",
+  8065: "\u1f01\u03b9",
+  8066: "\u1f02\u03b9",
+  8067: "\u1f03\u03b9",
+  8068: "\u1f04\u03b9",
+  8069: "\u1f05\u03b9",
+  8070: "\u1f06\u03b9",
+  8071: "\u1f07\u03b9",
+  8072: "\u1f00\u03b9",
+  8073: "\u1f01\u03b9",
+  8074: "\u1f02\u03b9",
+  8075: "\u1f03\u03b9",
+  8076: "\u1f04\u03b9",
+  8077: "\u1f05\u03b9",
+  8078: "\u1f06\u03b9",
+  8079: "\u1f07\u03b9",
+  8080: "\u1f20\u03b9",
+  8081: "\u1f21\u03b9",
+  8082: "\u1f22\u03b9",
+  8083: "\u1f23\u03b9",
+  8084: "\u1f24\u03b9",
+  8085: "\u1f25\u03b9",
+  8086: "\u1f26\u03b9",
+  8087: "\u1f27\u03b9",
+  8088: "\u1f20\u03b9",
+  8089: "\u1f21\u03b9",
+  8090: "\u1f22\u03b9",
+  8091: "\u1f23\u03b9",
+  8092: "\u1f24\u03b9",
+  8093: "\u1f25\u03b9",
+  8094: "\u1f26\u03b9",
+  8095: "\u1f27\u03b9",
+  8096: "\u1f60\u03b9",
+  8097: "\u1f61\u03b9",
+  8098: "\u1f62\u03b9",
+  8099: "\u1f63\u03b9",
+  8100: "\u1f64\u03b9",
+  8101: "\u1f65\u03b9",
+  8102: "\u1f66\u03b9",
+  8103: "\u1f67\u03b9",
+  8104: "\u1f60\u03b9",
+  8105: "\u1f61\u03b9",
+  8106: "\u1f62\u03b9",
+  8107: "\u1f63\u03b9",
+  8108: "\u1f64\u03b9",
+  8109: "\u1f65\u03b9",
+  8110: "\u1f66\u03b9",
+  8111: "\u1f67\u03b9",
+  8114: "\u1f70\u03b9",
+  8115: "\u03b1\u03b9",
+  8116: "\u03ac\u03b9",
+  8118: "\u03b1\u0342",
+  8119: "\u03b1\u0342\u03b9",
+  8124: "\u03b1\u03b9",
+  8126: "\u03b9",
+  8130: "\u1f74\u03b9",
+  8131: "\u03b7\u03b9",
+  8132: "\u03ae\u03b9",
+  8134: "\u03b7\u0342",
+  8135: "\u03b7\u0342\u03b9",
+  8140: "\u03b7\u03b9",
+  8146: "\u03b9\u0308\u0300",
+  8147: "\u03b9\u0308\u0301",
+  8150: "\u03b9\u0342",
+  8151: "\u03b9\u0308\u0342",
+  8162: "\u03c5\u0308\u0300",
+  8163: "\u03c5\u0308\u0301",
+  8164: "\u03c1\u0313",
+  8166: "\u03c5\u0342",
+  8167: "\u03c5\u0308\u0342",
+  8178: "\u1f7c\u03b9",
+  8179: "\u03c9\u03b9",
+  8180: "\u03ce\u03b9",
+  8182: "\u03c9\u0342",
+  8183: "\u03c9\u0342\u03b9",
+  8188: "\u03c9\u03b9",
+  43888: "\u13a0",
+  43889: "\u13a1",
+  43890: "\u13a2",
+  43891: "\u13a3",
+  43892: "\u13a4",
+  43893: "\u13a5",
+  43894: "\u13a6",
+  43895: "\u13a7",
+  43896: "\u13a8",
+  43897: "\u13a9",
+  43898: "\u13aa",
+  43899: "\u13ab",
+  43900: "\u13ac",
+  43901: "\u13ad",
+  43902: "\u13ae",
+  43903: "\u13af",
+  43904: "\u13b0",
+  43905: "\u13b1",
+  43906: "\u13b2",
+  43907: "\u13b3",
+  43908: "\u13b4",
+  43909: "\u13b5",
+  43910: "\u13b6",
+  43911: "\u13b7",
+  43912: "\u13b8",
+  43913: "\u13b9",
+  43914: "\u13ba",
+  43915: "\u13bb",
+  43916: "\u13bc",
+  43917: "\u13bd",
+  43918: "\u13be",
+  43919: "\u13bf",
+  43920: "\u13c0",
+  43921: "\u13c1",
+  43922: "\u13c2",
+  43923: "\u13c3",
+  43924: "\u13c4",
+  43925: "\u13c5",
+  43926: "\u13c6",
+  43927: "\u13c7",
+  43928: "\u13c8",
+  43929: "\u13c9",
+  43930: "\u13ca",
+  43931: "\u13cb",
+  43932: "\u13cc",
+  43933: "\u13cd",
+  43934: "\u13ce",
+  43935: "\u13cf",
+  43936: "\u13d0",
+  43937: "\u13d1",
+  43938: "\u13d2",
+  43939: "\u13d3",
+  43940: "\u13d4",
+  43941: "\u13d5",
+  43942: "\u13d6",
+  43943: "\u13d7",
+  43944: "\u13d8",
+  43945: "\u13d9",
+  43946: "\u13da",
+  43947: "\u13db",
+  43948: "\u13dc",
+  43949: "\u13dd",
+  43950: "\u13de",
+  43951: "\u13df",
+  43952: "\u13e0",
+  43953: "\u13e1",
+  43954: "\u13e2",
+  43955: "\u13e3",
+  43956: "\u13e4",
+  43957: "\u13e5",
+  43958: "\u13e6",
+  43959: "\u13e7",
+  43960: "\u13e8",
+  43961: "\u13e9",
+  43962: "\u13ea",
+  43963: "\u13eb",
+  43964: "\u13ec",
+  43965: "\u13ed",
+  43966: "\u13ee",
+  43967: "\u13ef",
+  64256: "ff",
+  64257: "fi",
+  64258: "fl",
+  64259: "ffi",
+  64260: "ffl",
+  64261: "st",
+  64262: "st",
+  64275: "\u0574\u0576",
+  64276: "\u0574\u0565",
+  64277: "\u0574\u056b",
+  64278: "\u057e\u0576",
+  64279: "\u0574\u056d",
+} as Record<number, string>);
+
+/** NFKC, then full case folding: the same as Python's `normalize("NFKC", s).casefold()`. */
+export function sandboxFoldName(name: string): string {
+  let out = "";
+  for (const ch of name.normalize("NFKC"))
+    out += CASEFOLD_DIFF[ch.codePointAt(0) as number] ?? ch.toLowerCase();
+  return out;
+}
+const fold = sandboxFoldName;
 const parts = (path: string) =>
   path
     .split("/")
     .filter((part) => part !== "")
     .map(fold);
 
+/**
+ * Whether `prefix` (below the allowlisted directory `head`) is a directory where git itself keeps
+ * a `HEAD`: `logs/HEAD`, `logs/refs/remotes/<r>/HEAD`, `refs/remotes/<r>/HEAD`, `sequencer/head`.
+ */
+function holdsHead(head: string, prefix: readonly string[]): boolean {
+  if (head === "logs")
+    return (
+      prefix.length === 0 ||
+      (prefix.length === 3 && prefix[0] === "refs" && prefix[1] === "remotes")
+    );
+  if (head === "refs") return prefix.length === 2 && prefix[0] === "remotes";
+  return head === "sequencer" && prefix.length === 0;
+}
+
+/**
+ * Inside an allowlisted subtree no repository can be forged: no `.git` component, no `HEAD`
+ * except where git keeps one, and next to such a `HEAD` no `objects`, `commondir` or `gitdir`
+ * (what git needs beside a `HEAD` to take a directory for a gitdir).
+ */
+function subtreeAllowed(head: string, rest: readonly string[]): boolean {
+  return rest.every((name, k) => {
+    if (name === ".git") return false;
+    if (name === "head") return k === rest.length - 1 && holdsHead(head, rest.slice(0, k));
+    if (["objects", "commondir", "gitdir"].includes(name))
+      return !holdsHead(head, rest.slice(0, k));
+    return true;
+  });
+}
+
 function gitInternalAllowed(rel: readonly string[]): boolean {
   if (rel.length === 0) return true;
   const head = rel[0] as string;
-  if (SANDBOX_GIT_ALLOWED_DIRECTORIES.includes(head)) return true;
+  if (SANDBOX_GIT_ALLOWED_DIRECTORIES.includes(head)) return subtreeAllowed(head, rel.slice(1));
   if ((head === "modules" || head === "worktrees") && rel.length > 1) {
     const rest = rel.slice(1);
     if (head === "worktrees") return gitInternalAllowed(rest.slice(1));
@@ -191,12 +576,31 @@ def _fold_parts(path):
     return [_unicodedata.normalize("NFKC", p).casefold() for p in path.split("/") if p]
 
 
+def _holds_head(head, prefix):
+    if head == "logs":
+        return not prefix or (len(prefix) == 3 and prefix[0] == "refs" and prefix[1] == "remotes")
+    if head == "refs":
+        return len(prefix) == 2 and prefix[0] == "remotes"
+    return head == "sequencer" and not prefix
+
+
+def _subtree_allowed(head, rest):
+    for k, name in enumerate(rest):
+        if name == ".git":
+            return False
+        if name == "head" and not (k == len(rest) - 1 and _holds_head(head, rest[:k])):
+            return False
+        if name in ("objects", "commondir", "gitdir") and _holds_head(head, rest[:k]):
+            return False
+    return True
+
+
 def _git_internal_allowed(rel):
     if not rel:
         return True
     head = rel[0]
     if head in GIT_ALLOWED_DIRECTORIES:
-        return True
+        return _subtree_allowed(head, rel[1:])
     if head in ("modules", "worktrees") and len(rel) > 1:
         rest = rel[1:]
         if head == "worktrees":
