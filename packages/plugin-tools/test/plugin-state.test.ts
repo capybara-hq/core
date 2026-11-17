@@ -277,6 +277,8 @@ describe("embed UI directories are browser code", () => {
       join(d, "package.json"),
       JSON.stringify({ name: "embed", version: "0.0.0", private: true, type: "module" }),
     );
+    mkdirSync(join(d, "src"), { recursive: true });
+    writeFileSync(join(d, "src/index.ts"), "export default {};\n");
     for (const f of files) {
       mkdirSync(join(d, f, ".."), { recursive: true });
       writeFileSync(join(d, f), CODE);
@@ -293,5 +295,27 @@ describe("embed UI directories are browser code", () => {
   it("still checks a deeper src/ui and the server entry", async () => {
     const d = plugin(["ui-src/app/main.ts", "ui/app.js", "src/ui/helper.ts", "src/index.ts"]);
     expect(await rel(d)).toEqual(["src/index.ts", "src/ui/helper.ts"]);
+  });
+
+  it("checks a file under ui/ or ui-src/ that the server bundle reaches", async () => {
+    for (const dirName of ["ui", "ui-src"]) {
+      const d = plugin([`${dirName}/state.ts`, `${dirName}/unreached.ts`]);
+      mkdirSync(join(d, "src"), { recursive: true });
+      writeFileSync(
+        join(d, "src/index.ts"),
+        `import "../${dirName}/state.js";\nexport default {};\n`,
+      );
+      expect(await rel(d)).toEqual([`${dirName}/state.ts`]);
+    }
+  });
+
+  it("checks every file when the server build fails", async () => {
+    const d = plugin(["ui/app.js"]);
+    mkdirSync(join(d, "src"), { recursive: true });
+    writeFileSync(
+      join(d, "src/index.ts"),
+      'import x from "not-an-installed-package";\nexport default { x };\n',
+    );
+    expect(await rel(d)).toEqual(["ui/app.js"]);
   });
 });

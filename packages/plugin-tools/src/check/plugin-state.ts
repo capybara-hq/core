@@ -1,5 +1,6 @@
 import { realpathSync } from "node:fs";
 import { relative, sep } from "node:path";
+import { serverBundleInputs } from "../pack/pack.js";
 import { browserOnlyModules } from "./client-modules.js";
 import {
   collectImports,
@@ -19,7 +20,8 @@ const TIMERS = new Set(["setTimeout", "setInterval", "setImmediate"]);
 const TIMER_MODULES = new Set(["timers", "node:timers", "timers/promises", "node:timers/promises"]);
 const STATE_CTORS = new Set(["Map", "Set", "WeakMap", "WeakSet"]);
 // Plugin-root directories that hold an embed app (source and build output): browser code that runs
-// in one sandboxed iframe document, never in the kernel process.
+// in one sandboxed iframe document, never in the kernel process. Such a file is skipped only when
+// the server bundle does not reach it.
 const EMBED_UI_DIRS = new Set(["ui", "ui-src"]);
 const MARKER = "capybara:allow-module-state";
 
@@ -168,7 +170,9 @@ function timerFindings(f: ParsedFile): Finding[] {
  * belongs to one document, not to a replica. A module in the server bundle, or reached by neither
  * entry, is checked as server code; when the server build fails, every module is checked.
  * Embed UI: files under the plugin-root `ui/` and `ui-src/` directories (a prebuilt embed app and
- * its source) are browser code and are not scanned; a deeper `src/ui/` is still server code.
+ * its source) are browser code and are neither parsed nor scanned, unless the server bundle (the
+ * packer's esbuild metafile of `src/index.ts`) reaches them; then they are checked like any server
+ * file. When that build cannot run, every file is checked. A deeper `src/ui/` is always server code.
  * 扫描范围：插件目录下所有源码，node_modules 任何深度都跳过；dist 与 test/tests/__tests__ 只在插件根跳过
  * （更深处同名目录照常扫描，否则 `src/test/impl.ts` 就能绕过）；*.test.* / *.spec.* 不扫。
  *
@@ -181,9 +185,16 @@ export async function checkPluginState(pluginDirs: string[]): Promise<Finding[]>
   const findings: Finding[] = [];
   for (const dir of pluginDirs) {
     const browser = await browserOnlyModules(dir);
+    const server = await serverBundleInputs(dir);
     for (const { file, isTest } of listSourceFiles(dir)) {
       if (isTest) continue;
-      if (EMBED_UI_DIRS.has(relative(dir, file).split(sep)[0] ?? "")) continue;
+      if (
+        server !== undefined &&
+        EMBED_UI_DIRS.has(relative(dir, file).split(sep)[0] ?? "") &&
+        !server.has(realpathSync(file))
+      ) {
+        continue;
+      }
       const parsed = parseFile(file);
       if (isParseError(parsed)) {
         findings.push(parsed);
