@@ -10,7 +10,10 @@ import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ConversationDevices } from "../../src/devices/conversation-devices.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
-import { TransactionHost } from "../../src/infra/database/transaction-host.js";
+import {
+  runOutsideTransaction,
+  TransactionHost,
+} from "../../src/infra/database/transaction-host.js";
 import { createLogger } from "../../src/log.js";
 import { MembersService } from "../../src/orgs/members.service.js";
 import {
@@ -512,8 +515,11 @@ describe("managed device context writer in the real common.ts route", () => {
     await expect
       .poll(async () =>
         Number(
-          (await sql<{ n: string }>`select count(*) n from pg_locks where not granted`.execute(raw))
-            .rows[0]?.n,
+          (
+            await sql<{ n: string }>`select count(*) n from pg_locks l
+              join pg_stat_activity a on a.pid = l.pid
+              where not l.granted and a.datname = current_database()`.execute(raw)
+          ).rows[0]?.n,
         ),
       )
       .toBeGreaterThan(0);
@@ -522,6 +528,26 @@ describe("managed device context writer in the real common.ts route", () => {
     expect(a.status === "rejected" ? String(a.reason) : "fulfilled").toBe("fulfilled");
     expect(b.status === "rejected" ? String(b.reason) : "fulfilled").toBe("fulfilled");
     expect(await managedPaths(f)).toHaveLength(1);
+  });
+
+  it("refuses a claimed call without the run's inherited fence (its org row would follow the authority locks)", async () => {
+    const f = await seed();
+    const err = await failure(
+      k.app.get(RunExecution).withClaim(
+        f.claim,
+        () => true,
+        () =>
+          // the claim stays in context, the fence does not
+          runOutsideTransaction(() =>
+            inSandboxOperations(depsOf(), ctxOf(f), async () => {
+              order.push("callback");
+            }),
+          ),
+      ),
+    );
+    expect((err as ToolError).message).toBe(MANAGED_DEVICE_CONTEXT_FAILED_TEXT);
+    expect(order).toEqual([]);
+    expect(await managedPaths(f)).toEqual([]);
   });
 
   it("a missing writer on the activated route fails before entering, preparation or the callback", async () => {

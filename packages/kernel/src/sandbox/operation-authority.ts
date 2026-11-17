@@ -418,6 +418,9 @@ export class SandboxOperationAuthority {
       rootConversationId: initial.id,
     };
     await this.locks.acquire(subject, { kind: "admit" });
+    // the recorded context's actor predicate: a disabled or removed actor is refused alike (B-19)
+    if (!(await this.isActiveMember(ctx.orgId, ctx.actor.accountId)))
+      throw new ApiError("forbidden", "This run's actor is no longer authorized");
     await this.publication.assertCurrent();
     await this.facts.assertCloudReconciled(ctx.orgId, ctx.deviceId);
     await this.facts.assertOwnerReportUsable(ctx.orgId, ctx.deviceId);

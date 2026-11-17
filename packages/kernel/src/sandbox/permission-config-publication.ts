@@ -20,6 +20,7 @@ import {
 } from "./permission-ceiling-writes.js";
 import {
   convertStoredPermissionKeys,
+  lockOrgsWithStoredPermissionKeys,
   readStoredDevicesFullAccess,
   resolveDevicesFullAccess,
 } from "./platform-full-access.js";
@@ -183,6 +184,8 @@ export class PermissionConfigPublication {
     projection: PermissionConfigProjection,
     activation?: Readonly<{ expectedActiveHash: string }>,
   ): Promise<PermissionConfigInitialization> {
+    // the org rows a key conversion writes, before the platform lock (org row -> permission locks)
+    await lockOrgsWithStoredPermissionKeys(this.db.db);
     await this.ceilings.lock({}, "platform");
     const candidateHash = permissionProjectionFingerprint(projection);
     const row = await this.db
@@ -233,6 +236,7 @@ export class PermissionConfigPublication {
   /** CAS publication precedes exposing the new local config. Same-next replicas converge idempotently. */
   @Transactional({ propagation: "requires_new" })
   async publish(before: KernelConfig, next: KernelConfig): Promise<void> {
+    await lockOrgsWithStoredPermissionKeys(this.db.db);
     await this.ceilings.lock({}, "platform");
     try {
       await this.publishLocked(

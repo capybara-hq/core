@@ -63,6 +63,15 @@ export function withTransactionFence<T>(fence: TransactionFence, fn: () => Promi
 }
 
 /**
+ * Whether a fence is installed in this context (a claimed run's `RunExecution.withClaim`). A writer
+ * whose transaction must hold the org row before its permission authority locks requires it: only
+ * an inherited fence runs the ordered prelude after the org row.
+ */
+export function hasTransactionFence(): boolean {
+  return fences.getStore() !== undefined;
+}
+
+/**
  * Install once before opening a transaction: the ordered authority (the permission authority
  * locks) runs inside the inherited run fence, after its org row and before its conversation rows.
  * The global lock order (`OrgLock`): org admission -> org row -> permission authority locks

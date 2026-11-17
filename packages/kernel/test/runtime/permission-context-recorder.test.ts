@@ -351,16 +351,18 @@ describe("recorded permission context recorder", () => {
       ),
     ).toBe(PERMISSION_CONTEXT_RUN_ERRORS.invalid.code);
     // the claim identity without its fence (left through runOutsideTransaction) after the claim was
-    // replaced: the recorder's own execution id comparison still refuses to write
+    // replaced: refused before any lock (the fence is required), nothing written
     const replaced = await seedContext(k, raw);
     await k.app.get(RunExecution).claim(replaced.rootId, replaced.runId, randomUUID());
-    await expect(
-      k.app.get(RunExecution).withClaim(
-        replaced.claim,
-        () => true,
-        () => runOutsideTransaction(() => recorder.record(inputOf(replaced), signal())),
+    expect(
+      await runErrorCode(
+        k.app.get(RunExecution).withClaim(
+          replaced.claim,
+          () => true,
+          () => runOutsideTransaction(() => recorder.record(inputOf(replaced), signal())),
+        ),
       ),
-    ).rejects.toBeInstanceOf(ExecutionRevoked);
+    ).toEqual(expect.any(String));
     expect(await contexts(raw, replaced.rootId)).toEqual([]);
     await f.db
       .updateTable("conversations")
@@ -401,6 +403,27 @@ describe("recorded permission context recorder", () => {
       ),
     ).toBe(PERMISSION_CONTEXT_RUN_ERRORS.invalid.code);
     expect(await contexts(raw, child)).toEqual([]);
+  });
+
+  it("refuses a claimed record without the run's inherited fence and appends nothing", async () => {
+    const f = await seedContext(k, raw);
+    const error = await k.app
+      .get(RunExecution)
+      .withClaim(
+        f.claim,
+        () => true,
+        () =>
+          // the claim stays in context, the fence does not
+          runOutsideTransaction(() =>
+            k.app.get(PermissionContextRecorder).record(inputOf(f), signal()),
+          ),
+      )
+      .then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+    expect(error).toBeInstanceOf(RunError);
+    expect(await contexts(raw, f.rootId)).toEqual([]);
   });
 
   it("a replaced claim, an ended or deleted run and an abort append nothing and keep their identity", async () => {
@@ -837,6 +860,25 @@ describe("permission context projection", () => {
     ["local applied, suspended", { status: "suspended" }, null, "supported"],
     ["local without a runtime report", { report: null }, null, "unprobed"],
     ["local restricted on a Full-only runtime", { report: "full-only" }, null, "unsupported"],
+    [
+      "local whose provider is no longer available",
+      {},
+      async (f) => {
+        await f.db
+          .updateTable("devices")
+          .set({ provider: "@no-such-provider" })
+          .where("id", "=", f.deviceId)
+          .execute();
+      },
+      "unsupported",
+    ],
+    // the unproved environment precedes the capability report in both readers
+    [
+      "local restricted on a Full-only runtime without a binding",
+      { report: "full-only", binding: "none" },
+      null,
+      "unprobed",
+    ],
     ["local desired but unapplied: binding awaiting", { binding: "awaiting" }, null, "unprobed"],
     ["local desired but unapplied: no binding", { binding: "none" }, null, "unprobed"],
     [
@@ -915,6 +957,41 @@ describe("permission context projection", () => {
     if (payload.availability.state === "supported" || exception)
       expect(admission).toEqual({ admitted: true });
     else expect(admission).toEqual({ refused: payload.availability.reason });
+  });
+
+  it.each([
+    ["removed from the org", "membership"],
+    ["disabled", "account"],
+  ] as const)("an actor %s gets no context and no admission, with one reason", async (_n, what) => {
+    const f = await seedContext(k, raw);
+    if (what === "membership")
+      await f.db
+        .deleteFrom("memberships")
+        .where("org_id", "=", f.orgId)
+        .where("account_id", "=", f.accountId)
+        .execute();
+    else
+      await f.db
+        .updateTable("accounts")
+        .set({ status: "disabled" })
+        .where("id", "=", f.accountId)
+        .execute();
+    // the context is no-send (no event); admission refuses on the same first predicate (the
+    // owned root of an active member, `readOwnedRoot`), and its actor check backs it under the locks
+    expect(await runErrorCode(record(f))).toEqual(expect.any(String));
+    expect(await contexts(raw, f.rootId)).toEqual([]);
+    await expect(
+      k.app.get(SandboxOperationAuthority).resolve(
+        {
+          orgId: f.orgId,
+          deviceId: f.deviceId,
+          holderConversationId: f.rootId,
+          actor: { accountId: f.accountId, conversationId: f.rootId, runId: f.runId },
+        },
+        "exec",
+        signal(),
+      ),
+    ).rejects.toMatchObject({ code: "conversation.not_found" });
   });
 
   it("scheduled roots, children and wakes evaluate Request approval with the actual task grants", async () => {
