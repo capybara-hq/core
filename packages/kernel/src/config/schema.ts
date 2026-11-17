@@ -620,6 +620,15 @@ export const KernelConfigSchema = z.strictObject({
     .prefault({} as never),
   net: z
     .strictObject({
+      allowInsecureLoopback: z
+        .boolean()
+        .default(false)
+        .meta(
+          meta({
+            description:
+              "Testing only: let extensions' ctx.net.fetch reach plain http URLs on loopback addresses (fake servers in test stacks). Never set it in production",
+          }),
+        ),
       httpsProxy: z
         .string()
         .superRefine((value, ctx) => {

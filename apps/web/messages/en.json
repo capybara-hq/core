@@ -131,7 +131,8 @@
       "owner_required": "Only an org owner can do this.",
       "creation_disabled": "Creating organizations is turned off on this deployment.",
       "slug_taken": "This slug is already used by another organization.",
-      "auto_mode_not_allowed": "The platform does not allow auto mode."
+      "auto_mode_not_allowed": "The platform does not allow auto mode.",
+      "network_allowance_invalid": "The internal endpoint is not valid: use a hostname, a *.domain wildcard, an IP address or CIDR, or an origin such as http://host:8080. Link-local addresses are never allowed."
     },
     "setup": {
       "already_completed": "Setup has already been completed.",

@@ -37,6 +37,8 @@ export const ERROR_CODES = {
   "org.sandbox_egress_not_allowed": 400,
   /** The org asked for auto mode where the platform turned it off, or widened it through a token. */
   "org.auto_mode_not_allowed": 400,
+  /** An org network allowance entry that is malformed, names a link-local address, or is over the cap. */
+  "org.network_allowance_invalid": 400,
   /** A deployment setting set in the startup config (file, Nacos or env): read-only in the admin console. */
   "deployment.setting_readonly": 409,
   /** Turning the platform's auto mode on through an API token or the Platform tool (only off). */
