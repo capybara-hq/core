@@ -125,6 +125,18 @@ const EXTRA_INPUTS: { match: (f: string) => boolean; dirs: string[] }[] = [
 ];
 
 /**
+ * Tests-only workspace edges, followed one step and never transitively: the dependent's own tests
+ * run when the dependency changes, but nothing built on the dependent does (its build, images and
+ * e2e never load the dependency). The kernel's cross-side tests drive the device program's sources
+ * (`@capybara-hq/device` is a kernel devDependency for that alone, docs/architecture.md).
+ */
+const TESTS_ONLY_EDGES: { dependent: string; dependency: string }[] = [
+  { dependent: "packages/kernel", dependency: "packages/device" },
+];
+const isTestsOnlyEdge = (dependent: string, dependency: string) =>
+  TESTS_ONLY_EDGES.some((e) => e.dependent === dependent && e.dependency === dependency);
+
+/**
  * tools/checks' tests read across the repo (every plugin, kernel migrations, web messages) in ways a
  * static scan can't follow, and they take seconds, so they join every PR that runs tests.
  */
@@ -266,18 +278,20 @@ export function planFromFiles(files: string[], ws: Workspace): Plan {
   for (const p of ws.packages) {
     for (const dep of p.deps) {
       const d = byName.get(dep);
-      if (d !== undefined) dependents.set(d.dir, [...(dependents.get(d.dir) ?? []), p.dir]);
+      if (d !== undefined && !isTestsOnlyEdge(p.dir, d.dir))
+        dependents.set(d.dir, [...(dependents.get(d.dir) ?? []), p.dir]);
     }
   }
   const depsOf = (dir: string): string[] =>
     (byDir.get(dir)?.deps ?? []).flatMap((n) => {
       const d = byName.get(n);
-      return d === undefined ? [] : [d.dir];
+      return d === undefined || isTestsOnlyEdge(dir, d.dir) ? [] : [d.dir];
     });
 
   // Tests: changed packages, their dependents, and packages whose tests load an affected plugin.
   const affected = closure(changed, (d) => dependents.get(d) ?? []);
   const tested = new Set(affected);
+  for (const e of TESTS_ONLY_EDGES) if (affected.has(e.dependency)) tested.add(e.dependent);
   for (const [root, plugins] of Object.entries(ws.testPlugins)) {
     if (!root.endsWith("/test")) continue;
     if (plugins.some((name) => affected.has(`plugins/${name}`))) tested.add(root.slice(0, -5));

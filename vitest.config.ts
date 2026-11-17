@@ -37,6 +37,14 @@ const testingContainerTests = (
     readFileSync(new URL("./packages/testing/test/container-tests.json", import.meta.url), "utf8"),
   ) as string[]
 ).map((p) => `packages/testing/test/${p}`);
+// Device tests that drive the real OS: sandbox-exec workers, the native helper, real HTTP from
+// sandboxed commands, and the pnpm pack + npm install of the published package. Checked-in list;
+// the project runs after the parallel projects (groupOrder) so this load never competes with them.
+const deviceOsTests = (
+  JSON.parse(
+    readFileSync(new URL("./packages/device/test/os-tests.json", import.meta.url), "utf8"),
+  ) as string[]
+).map((p) => `packages/device/test/${p}`);
 
 export default defineConfig({
   resolve: { conditions },
@@ -64,11 +72,24 @@ export default defineConfig({
             "packages/plugin-client/**",
             "packages/kernel/test/**",
             ...testingContainerTests,
+            ...deviceOsTests,
             "**/node_modules/**",
           ],
           // One PostgreSQL + one Valkey per run, handed to workers via env vars: startTestPostgres()
           // creates a database per file on it. CAPYBARA_TEST_NO_SHARED=1 restores per-file containers.
           globalSetup: ["packages/testing/src/global-setup.ts"],
+        },
+      },
+      // Device real-OS tests: real processes, so an upper bound sized to the category (like
+      // kernel-container), run after the other projects in this run.
+      {
+        extends: true,
+        test: {
+          name: "device-os",
+          include: deviceOsTests,
+          testTimeout: 60_000,
+          hookTimeout: 300_000,
+          sequence: { groupOrder: 1 },
         },
       },
       // Kernel unit tests: pure functions, so no database, no HTTP server, no queue, no app and no
