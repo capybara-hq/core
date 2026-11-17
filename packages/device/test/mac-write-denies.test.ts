@@ -252,3 +252,32 @@ it.runIf(process.platform === "darwin")(
     expect(existsSync(join(project, ".git/modules/sub/HEAD"))).toBe(true);
   },
 );
+
+// The modules and worktrees directories (of the top-level gitdir and of a submodule's) cannot be
+// renamed out either: moved out they would carry gitdirs whose configuration is then writable.
+it.runIf(process.platform === "darwin")(
+  "no modules or worktrees directory moves out of a gitdir",
+  async () => {
+    const project = join(root, "containers");
+    git(root, "init", "-q", "-b", "main", project);
+    for (const dir of [
+      ".git/modules/sub/modules/inner",
+      ".git/modules/sub/worktrees/w",
+      ".git/worktrees/w",
+    ])
+      await mkdir(join(project, dir), { recursive: true });
+    const result = await restrictedRun(
+      project,
+      [
+        "mkdir -p src",
+        "mv .git/modules/sub/modules src/a",
+        "mv .git/modules/sub/worktrees src/b",
+        "mv .git/modules src/c",
+        "mv .git/worktrees src/d",
+        "true",
+      ].join("; "),
+    );
+    for (const path of ["src/a", "src/b", "src/c", "src/d"])
+      expect(existsSync(join(project, path)), `${path}: ${result.stderr}`).toBe(false);
+  },
+);

@@ -198,6 +198,12 @@ export function macWriteRegexRules(root: string): MacWriteRegexRule[] {
         ci("sequencer"),
       ].join("|")})$`,
     },
+    // nor do the modules and worktrees directories that hold gitdirs (top level and nested)
+    {
+      action: "deny",
+      operations: ["file-write-unlink"],
+      regex: `${git}${nested}/(${ci("modules")}|${ci("worktrees")})$`,
+    },
     {
       action: "deny",
       operations: ["file-write-unlink", "file-write-create"],
