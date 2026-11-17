@@ -898,6 +898,9 @@ button.cb-property-row {
   min-height: 0;
 }
 .cb-conv-center {
+  /* The thread centers on this column (100cqw), the composer's box, not on its own scroll area. */
+  container-type: inline-size;
+  --cb-conv-thread-pad: var(--cb-layout-gutter);
   display: flex;
   flex: 1;
   flex-direction: column;
@@ -910,8 +913,8 @@ button.cb-property-row {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--cb-space-4) var(--cb-layout-gutter);
-  /* A classic (non-overlay) scrollbar's gutter on both sides: the centered thread keeps the
+  padding: var(--cb-space-4) var(--cb-conv-thread-pad);
+  /* A classic (non-overlay) scrollbar's gutter on both sides: the centered empty state keeps the
      composer's center line whether or not the thread scrolls (the composer is outside it). */
   scrollbar-gutter: stable both-edges;
 }
@@ -925,6 +928,10 @@ button.cb-property-row {
 .cb-conv-scroll:not([data-center="true"]) {
   display: flex;
   flex-direction: column-reverse;
+  /* WebKit (Safari) puts the start-side gutter of "both-edges" on the end side once a reversed
+     column overflows, shifting the thread a whole scrollbar left of the composer. The end-side
+     gutter alone is laid out alike everywhere; the thread centers on the column instead (below). */
+  scrollbar-gutter: stable;
   /* A short fade at both scroll edges (spec §5.4): a line cut under the title bar or above the
      composer fades out instead of ending mid-line. The fade is the thread's padding high, so a
      thread at rest (its first or last line inside the padding's edge) is never dimmed. */
@@ -953,13 +960,14 @@ button.cb-property-row {
   max-width: var(--cb-layout-chat);
   margin: 0 auto;
 }
-/* In the reversed column: as wide as before (auto side margins would shrink a flex item), and the
-   bottom auto margin keeps a short thread at the top while an overflowing one starts at the
-   bottom (auto margins take no negative free space). */
-.cb-conv-scroll > .cb-conv-thread {
+/* In the reversed column: the bottom auto margin keeps a short thread at the top while an
+   overflowing one starts at the bottom (auto margins take no negative free space). The thread is
+   centered on the middle column (100cqw), where the composer is centered, so a classic scrollbar
+   on the end side never moves it; it stretches to the content box when the column is narrower. */
+.cb-conv-scroll:not([data-center="true"]) > .cb-conv-thread {
   flex: none;
-  width: 100%;
-  margin-bottom: auto;
+  margin: 0 0 auto;
+  margin-inline-start: max(0px, (100cqw - var(--cb-layout-chat)) / 2 - var(--cb-conv-thread-pad));
 }
 .cb-conv-composer {
   flex: none;
@@ -1049,8 +1057,8 @@ button.cb-property-row {
   .cb-conv-main {
     min-width: 0;
   }
-  .cb-conv-scroll {
-    padding-inline: var(--cb-space-4);
+  .cb-conv-center {
+    --cb-conv-thread-pad: var(--cb-space-4);
   }
   .cb-conv-composer {
     padding-inline: var(--cb-space-4);
