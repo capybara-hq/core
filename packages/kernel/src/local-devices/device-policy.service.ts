@@ -377,6 +377,11 @@ export class DevicePolicyService {
       .where("id", "=", ref.machineId)
       .executeTakeFirst();
     if (!subject) return null;
+    // a caller that locked the machine's device first ({@link lockMachineDevice}, before the rows
+    // its transaction locks later) must have locked this one: a machine that moved since is retried
+    const held = currentStore()?.permissionLocks;
+    if (held?.size && !held.has(`permission-authority-device-${subject.device_id}`))
+      throw new ApiError("conflict", "The machine's device changed; retry");
     await this.ceilings.lock({ orgId: subject.org_id, deviceId: subject.device_id }, "device");
     const row = await this.db
       .selectFrom("device_machines")
@@ -503,6 +508,24 @@ export class DevicePolicyService {
   resolveDelayMs(): number {
     const graceMs = this.config.get().devices.local.reconnectGraceSeconds * 1000;
     return POLICY_DEADLINE_MS + graceMs + LIST_TTL_MARGIN_MS + 5_000;
+  }
+
+  /**
+   * The ordered prelude of a transaction that records an op's outcome ({@link settleIn}) after it
+   * locked other rows (a network ask's conversation, its approval, its run): the permission
+   * authority lock of the machine's device, read without a lock first. The global order puts it
+   * before every conversation row (`withOrderedLocks`); {@link settleIn} re-reads the machine
+   * under it. A machine that is gone locks nothing (its settle is a no-op).
+   */
+  @Transactional({ propagation: "mandatory" })
+  async lockMachineDevice(machineId: string): Promise<void> {
+    const subject = await this.db
+      .selectFrom("device_machines")
+      .select(["org_id", "device_id"])
+      .where("id", "=", machineId)
+      .executeTakeFirst();
+    if (!subject) return;
+    await this.ceilings.lock({ orgId: subject.org_id, deviceId: subject.device_id }, "device");
   }
 
   /** {@link settleIn} in its own transaction (the {@link apply} path). */

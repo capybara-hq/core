@@ -31,6 +31,7 @@ import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import {
   TransactionHost,
+  withOrderedLocks,
   withTransactionFencePrelude,
 } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
@@ -552,7 +553,10 @@ export class ApprovalsService {
      * its outcome with the decision.
      */
     @Inject(DevicePolicyService)
-    private readonly policies: Pick<DevicePolicyService, "begin" | "send" | "settleIn" | "summary">,
+    private readonly policies: Pick<
+      DevicePolicyService,
+      "begin" | "send" | "settleIn" | "summary" | "lockMachineDevice"
+    >,
     /** One decision of a network ask at a time, across replicas (the op is sent before the transaction). */
     @Inject(LockService) readonly lockService: LockService,
     /** A trial run's 「这次允许」 becomes a task grant only within the org's egress. */
@@ -1413,7 +1417,7 @@ export class ApprovalsService {
           ? // the device's owner takes no remote grants: nothing is allowed, not even this run
             { wanted: granted, granted: [], outcome: "refused", fallback: "refused", via }
           : { wanted: granted, granted, outcome: "once_fallback", fallback: "offline", via };
-    const settled = await this.settleNetworkOp(orgId, ask.id, accountId, body, network, {
+    const settled = await this.settleNetworkOpOrdered(orgId, ask.id, accountId, body, network, {
       machineId: intent.machineId,
       opId: intent.opId,
       result: sent.result,
@@ -1462,6 +1466,25 @@ export class ApprovalsService {
     result: PolicyOpResult,
   ): Promise<void> {
     await this.policies.settleIn(op, result);
+  }
+
+  /**
+   * {@link settleNetworkOp} with the device's permission authority lock as its ordered prelude
+   * (`DevicePolicyService.lockMachineDevice`): the global order puts it before the ask's
+   * conversation row, as a fenced device writer of the same tree takes it (device project writes).
+   */
+  private settleNetworkOpOrdered(
+    orgId: string,
+    id: string,
+    accountId: string,
+    body: DecisionInput,
+    network: NetworkDecision,
+    op: { machineId: string; opId: string; result: PolicyOpResult },
+  ): ReturnType<ApprovalsService["settleNetworkOp"]> {
+    return withOrderedLocks(
+      () => this.policies.lockMachineDevice(op.machineId),
+      () => this.settleNetworkOp(orgId, id, accountId, body, network, op),
+    );
   }
 
   /**
@@ -1562,7 +1585,8 @@ export class ApprovalsService {
    * late) and the ask left pending with `applied_undecided`. Not applied (refused, never received,
    * interrupted) or still unknown → the op's outcome recorded and the ask left pending with the
    * reason (`detail.attempt`) and an `approval_updated` event so the card shows it: no person is
-   * there to fall back to a run grant (D2).
+   * there to fall back to a run grant (D2). The caller locked the machine's device first
+   * (`DevicePolicyService.lockMachineDevice`, before the ask's conversation row).
    */
   @Transactional({ propagation: "mandatory" })
   async settleFromResolver(

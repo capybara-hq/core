@@ -882,12 +882,16 @@ export class DevicesService {
     auditDetail?: Record<string, unknown>,
   ): Promise<void> {
     await withOrderedLocks(
-      async () => {
-        await this.lockOwn(orgId, accountId, id);
-        await this.ceilings.lock({ orgId, deviceId: id }, "device");
-      },
+      () => this.lockRemovalSubject(orgId, accountId, id),
       () => this.removeIn(orgId, accountId, id, actorTokenId, auditDetail),
     );
+  }
+
+  /** The prelude of {@link remove}: the membership, the device row, the device's write lock. */
+  @Transactional({ propagation: "mandatory" })
+  private async lockRemovalSubject(orgId: string, accountId: string, id: string): Promise<void> {
+    await this.lockOwn(orgId, accountId, id);
+    await this.ceilings.lock({ orgId, deviceId: id }, "device");
   }
 
   @Transactional()
