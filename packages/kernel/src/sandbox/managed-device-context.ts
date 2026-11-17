@@ -11,6 +11,7 @@ import { ApiError } from "../errors.js";
 import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import {
+  hasTransactionFence,
   TransactionHost,
   withTransactionFencePrelude,
 } from "../infra/database/transaction-host.js";
@@ -159,6 +160,10 @@ export class ManagedDeviceContextRecorder {
         throw new ManagedWriterRefused("Managed device context requires this run's claim");
       if (this.txHost.current())
         throw new ManagedWriterRefused("Managed device context is recorded outside a transaction");
+      // the run fence takes the org row before the prelude's authority locks; without it the
+      // append's org row would follow them (inverting the global lock order)
+      if (!hasTransactionFence())
+        throw new ManagedWriterRefused("Managed device context requires the run's inherited fence");
       const subject = await this.discover(input, held, claim.rootId);
       await withTransactionFencePrelude(
         () => this.locks.acquire(subject, { kind: "admit" }),

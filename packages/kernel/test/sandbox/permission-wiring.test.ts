@@ -465,7 +465,10 @@ import {
   SandboxScopeDeniedError,
 } from "@capybara-hq/plugin-sdk";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
-import { TransactionHost } from "../../src/infra/database/transaction-host.js";
+import {
+  runOutsideTransaction,
+  TransactionHost,
+} from "../../src/infra/database/transaction-host.js";
 import { type ExecutionClaim, RunExecution } from "../../src/runtime/run-execution.js";
 import { SandboxLeases } from "../../src/sandbox/leases.js";
 import { SandboxOperationIntents } from "../../src/sandbox/operation-intents.js";
@@ -609,21 +612,24 @@ it("retains the caller lease and signal, and refreshes scope inside the same hel
         async (h, p, _info, signal) => {
           expect(await k.app.get(SandboxLeases).tryExclusive(f.deviceId)).toBeNull();
           await p.stat(h, "/work/a", signal);
-          await k.app.get(TransactionHost).run(async () => {
-            await k.app
-              .get(PermissionAuthorityLock)
-              .acquire(
-                { orgId: f.orgId, deviceId: f.deviceId, rootConversationId: f.root.id },
-                { kind: "write", level: "root" },
-              );
-            await k.app.get(PermissionAuthorityEpochStore).bumpLocked("root", f.root.id, 0);
-            await k.app
-              .get(KernelDb)
-              .updateTable("conversations")
-              .set({ permission_profile: "request-approval", permission_revision: 1 })
-              .where("id", "=", f.root.id)
-              .execute();
-          });
+          // a profile writer is its own unfenced transaction (an HTTP request), not this run's
+          await runOutsideTransaction(() =>
+            k.app.get(TransactionHost).run(async () => {
+              await k.app
+                .get(PermissionAuthorityLock)
+                .acquire(
+                  { orgId: f.orgId, deviceId: f.deviceId, rootConversationId: f.root.id },
+                  { kind: "write", level: "root" },
+                );
+              await k.app.get(PermissionAuthorityEpochStore).bumpLocked("root", f.root.id, 0);
+              await k.app
+                .get(KernelDb)
+                .updateTable("conversations")
+                .set({ permission_profile: "request-approval", permission_revision: 1 })
+                .where("id", "=", f.root.id)
+                .execute();
+            }),
+          );
           await p.stat(h, "/work/b", signal);
           controller.abort(new Error("caller ended"));
           expect(signal.aborted).toBe(true);

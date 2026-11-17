@@ -3,7 +3,11 @@ import { sql } from "kysely";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { createDb } from "../../src/db/pool.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
-import { TransactionHost } from "../../src/infra/database/transaction-host.js";
+import {
+  TransactionHost,
+  withTransactionFence,
+  withTransactionFencePrelude,
+} from "../../src/infra/database/transaction-host.js";
 import { XactLock } from "../../src/infra/database/xact-lock.js";
 import { createLogger } from "../../src/log.js";
 import { PermissionAuthorityEpochStore } from "../../src/sandbox/permission-authority-epochs.js";
@@ -154,6 +158,36 @@ it("ordinary reads take shared locks only, require fixed-order whole-subject acq
     ),
   ).rejects.toThrow("Conversation not found");
   await expect(epochs.readLocked(subject)).rejects.toThrow("mandatory");
+});
+
+it("inside a fenced transaction authority locks are taken only in the ordered prelude", async () => {
+  // a fence that admitted the transaction (its conversation rows are held): no new authority lock
+  await expect(
+    withTransactionFence(
+      async () => "exclusive",
+      () => host.run(() => lock.acquire(subject, { kind: "admit" })),
+    ),
+  ).rejects.toThrow("only in its ordered prelude");
+  // the prelude takes them inside the fence; the body may name the same, already held, subject
+  await withTransactionFence(
+    async ({ prelude }) => {
+      await prelude?.();
+      return "exclusive";
+    },
+    () =>
+      withTransactionFencePrelude(
+        () => lock.acquire(subject, { kind: "admit" }),
+        () => host.run(() => lock.acquire(subject, { kind: "admit" })),
+      ),
+  );
+  // an unfenced transaction keeps its ordinary acquisition
+  await host.run(() => lock.acquire(subject, { kind: "admit" }));
+  // known follow-up: a ceiling writer inside a fenced transaction (a Platform operation in a tool
+  // step) still locks after the fence; flip this when those writers take a prelude
+  await withTransactionFence(
+    async () => "exclusive",
+    () => host.run(() => lock.acquire(subject, { kind: "write", level: "root" })),
+  );
 });
 
 function deferred<T = void>(): { promise: Promise<T>; resolve: (value: T) => void } {

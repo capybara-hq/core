@@ -7,6 +7,7 @@ import { ApiError } from "../errors.js";
 import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import {
+  hasTransactionFence,
   TransactionHost,
   withTransactionFencePrelude,
 } from "../infra/database/transaction-host.js";
@@ -112,6 +113,10 @@ export class PermissionContextRecorder {
         throw new RecorderRefused("A permission context requires this run's execution claim");
       if (this.txHost.current())
         throw new RecorderRefused("A permission context is recorded outside any transaction");
+      // the run fence takes the org row before the prelude's authority locks; without it the
+      // append's org row would follow them (inverting the global lock order)
+      if (!hasTransactionFence())
+        throw new RecorderRefused("A permission context requires the run's inherited fence");
       for (let attempt = 0; ; attempt++) {
         signal.throwIfAborted();
         try {
