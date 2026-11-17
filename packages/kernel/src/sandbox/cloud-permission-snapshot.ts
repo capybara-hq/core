@@ -172,13 +172,12 @@ export class CloudPermissionSnapshots {
         "device",
         (scope, row) => {
           if (needsFullCeiling(scope)) return !snap.fullAccess;
-          if (
-            outer.kind !== "allowlist" ||
-            !("network" in scope) ||
-            !isExecutionMethod(row.method) ||
-            scope.network.kind !== "allowlist"
-          )
+          if (outer.kind !== "allowlist" || !("network" in scope) || !isExecutionMethod(row.method))
             return false;
+          // an execution outside any allowlist (environment networking) is wider than the outer
+          // allowlist; `none` is narrower; an allowlist must be covered host by host
+          if (scope.network.kind === "environment") return true;
+          if (scope.network.kind !== "allowlist") return false;
           return scope.network.hosts.some((h) => !outer.hosts.some((p) => coversHost(p, h)));
         },
         fullNarrowed,

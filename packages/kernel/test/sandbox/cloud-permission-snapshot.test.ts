@@ -181,7 +181,7 @@ async function fixture(
       })
       .where("id", "=", conversationId)
       .execute();
-  return { orgId, deviceId, accountId, device, admit, root, fullRoot };
+  return { orgId, deviceId, accountId, conversationId, ctx, device, admit, root, fullRoot };
 }
 const snapshots = () => k.app.get(CloudPermissionSnapshots);
 const policy = (f: { orgId: string; deviceId: string }) =>
@@ -387,4 +387,57 @@ it("refuses to snapshot on a replica whose permission configuration is not curre
       .set({ fingerprint: row.fingerprint })
       .execute();
   }
+});
+
+it("a snapshot narrowed to an allowlist revokes execution scopes outside any allowlist", async () => {
+  const f = await fixture({
+    instance: { mode: "auto", network: { kind: "allowlist", hosts: ["a.example"] } },
+  });
+  const scope = await k.app
+    .get(SandboxOperationAuthority)
+    .resolve(f.ctx, "exec", new AbortController().signal);
+  const insert = async (network: unknown) => {
+    const operationId = randomUUID();
+    await db
+      .insertInto("sandbox_operation_intents")
+      .values({
+        operation_id: operationId,
+        org_id: f.orgId,
+        account_id: f.accountId,
+        device_id: f.deviceId,
+        root_conversation_id: f.conversationId,
+        conversation_id: f.conversationId,
+        run_id: null,
+        call_id: null,
+        ordinal: 0,
+        method: "exec",
+        input_hash: "a".repeat(64),
+        admission_hash: "b".repeat(64),
+        input: "{}",
+        scope: JSON.stringify({ ...scope, operationId, network }),
+        epochs: JSON.stringify({ platform: 0, org: 0, device: 0, root: 0 }),
+        provider: PROVIDER,
+        provider_version: "test",
+        instance_generation: "test",
+        deadline: new Date(Date.now() + 30_000),
+        retain_until: new Date(Date.now() + 60_000),
+        state: "admitted",
+        execution_id: randomUUID(),
+      })
+      .execute();
+    return operationId;
+  };
+  const environment = await insert({ kind: "environment" });
+  const covered = await insert({ kind: "allowlist", hosts: ["a.example"] });
+  const none = await insert({ kind: "none" });
+  expect(await snapshots().snapshot(f.orgId, f.deviceId)).toMatchObject({ state: "bound" });
+  const states = await db
+    .selectFrom("sandbox_operation_intents")
+    .select(["operation_id", "state"])
+    .where("operation_id", "in", [environment, covered, none])
+    .execute();
+  const of = (id: string) => states.find((r) => r.operation_id === id)?.state;
+  expect(of(environment)).toBe("revoked");
+  expect(of(covered)).toBe("admitted");
+  expect(of(none)).toBe("admitted");
 });

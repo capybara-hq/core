@@ -656,18 +656,11 @@ export class OrgSettingsService {
     }
     // Until 8.6 a stored old `autoMode` is never dropped: an unconverted key (or one an old
     // replica wrote again) is carried in step with `fullAccess`, since old replicas still read it.
-    // A write that does not choose the value refuses two stored values that differ.
+    // A write that does not choose the value stores what every reader already sees: the narrower
+    // of the two (never refused, never wider).
     const legacy = "autoMode" in stored;
-    if (legacy && patch.fullAccess === undefined) {
-      const raw = stored.fullAccess;
-      const old = narrowedOrgFullAccess(undefined, stored.autoMode);
-      if (raw !== undefined && raw !== old)
-        throw new ApiError(
-          "org.settings_conflict",
-          "This organization stores two different Full permission values (fullAccess and its old name autoMode); set fullAccess to choose one",
-        );
-      after.fullAccess = old;
-    }
+    if (legacy && patch.fullAccess === undefined)
+      after.fullAccess = narrowedOrgFullAccess(before.fullAccess, stored.autoMode);
     if (after.fullAccess === undefined) delete after.fullAccess;
     if (after.cloudNetwork === undefined) delete after.cloudNetwork;
     if (after.wakeOnBackgroundTask === undefined) delete after.wakeOnBackgroundTask;

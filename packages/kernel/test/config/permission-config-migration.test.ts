@@ -349,15 +349,28 @@ describe("the window before conversion and stale-replica writes (fail closed unt
     expect(await setting("devicesFullAccess")).toEqual({ permission: "allowed" });
   });
 
-  it("an org whose stored old and new values differ refuses a write that does not choose", async () => {
+  it("a divergent stored pair resolves to the narrower value; no write is refused", async () => {
     await publishV1(v1());
     const a = await org({ autoMode: "off", fullAccess: "allowed" });
     await publisher(changed()).initialize();
     expect((await readOrgSettings(db.db, a.id)).fullAccess).toBe("off");
-    await expect(
-      k.app.get(OrgSettingsService).update(a.id, { locale: "zh" }, a.accountId),
-    ).rejects.toMatchObject({ code: "org.settings_conflict" });
-    expect(await a.settings()).toEqual({ autoMode: "off", fullAccess: "allowed" });
+    await k.app.get(OrgSettingsService).update(a.id, { locale: "zh" }, a.accountId);
+    expect(await a.settings()).toMatchObject({ autoMode: "off", fullAccess: "off", locale: "zh" });
+  });
+
+  it("an agreeing stored pair never blocks a write that leaves fullAccess alone", async () => {
+    await publishV1(v1());
+    const a = await org({ autoMode: "allowed", fullAccess: "allowed" });
+    await publisher(changed()).initialize();
+    const settings = k.app.get(OrgSettingsService);
+    await settings.update(a.id, { locale: "zh" }, a.accountId);
+    await settings.update(a.id, { cloudNetwork: { mode: "allowlist" } }, a.accountId);
+    expect(await a.settings()).toMatchObject({
+      autoMode: "allowed",
+      fullAccess: "allowed",
+      locale: "zh",
+      cloudNetwork: { mode: "allowlist" },
+    });
   });
 
   it("stale-replica legacy writes after conversion still narrow", async () => {
