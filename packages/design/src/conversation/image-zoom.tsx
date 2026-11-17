@@ -1,9 +1,10 @@
-import { type JSX, useId } from "react";
+import { type JSX, useId, useState } from "react";
 import { Button } from "../controls/button";
 import { isSafeAttachmentHref } from "../display/attachments";
 import { Icon } from "../icons/icon";
 import { Dialog } from "../overlays/dialog";
 import { useDesignT } from "../provider";
+import { LoadFailed } from "./file-preview";
 
 /**
  * The in-page zoom of an image attachment (spec §5.6): clicking a thumbnail shows the image over the
@@ -19,6 +20,7 @@ export function ImageZoom({
   name,
   size,
   onDownload,
+  onRetry,
 }: {
   open: boolean;
   onOpenChange(open: boolean): void;
@@ -28,9 +30,18 @@ export function ImageZoom({
   /** Formatted size (the caller formats the attachment's bytes). */
   size?: string;
   onDownload(): void;
+  /**
+   * The image failed to load and the caller can reload it (a session refresh, then the same URL with
+   * its retry token — a new `src` clears the failure). Absent: the failure stands, without a retry.
+   */
+  onRetry?(): void;
 }): JSX.Element {
   const t = useDesignT();
   const captionId = useId();
+  // The source that failed, if that is the current one: a new source is a new attempt, so the
+  // failure clears without an effect watching `src`.
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const failed = failedSrc === src;
   return (
     <Dialog
       open={open}
@@ -46,8 +57,15 @@ export function ImageZoom({
       }
     >
       <div className="cb-image-zoom" data-part="image-zoom">
-        {isSafeAttachmentHref(src) ? (
-          <img src={src} alt={name} referrerPolicy="no-referrer" />
+        {failed ? (
+          <LoadFailed name={name} {...(onRetry ? { onRetry } : {})} />
+        ) : isSafeAttachmentHref(src) ? (
+          <img
+            src={src}
+            alt={name}
+            referrerPolicy="no-referrer"
+            onError={() => setFailedSrc(src)}
+          />
         ) : null}
       </div>
       <div className="cb-image-zoom-caption" id={captionId} data-part="image-zoom-caption">

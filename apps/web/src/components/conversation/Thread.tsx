@@ -729,6 +729,9 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
                   if (zoomed !== undefined)
                     openDownload(attachmentDownloadUrl(orgId, zoomed.attachmentId));
                 }}
+                {...(zoomed !== undefined && !retried.has(zoomed.attachmentId)
+                  ? { onRetry: () => onImageError(zoomed.attachmentId) }
+                  : {})}
               />
             ) : null}
           </>
