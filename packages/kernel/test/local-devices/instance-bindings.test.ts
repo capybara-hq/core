@@ -444,3 +444,32 @@ it("a replacement with a changed environment resets Full consent; the same one k
   expect((await f.binding(g3))?.status).toBe("installed");
   expect((await f.fullRevision()).full_revision).toBe(base.full_revision + 1);
 });
+
+it("a new machine credential is never asked to confirm another machine's binding", async () => {
+  const f = await localDevice();
+  const bindings = k.app.get(LocalInstanceBindings);
+  await f.create();
+  deviceAnswers();
+  await bindings.bind(f.deviceId, AbortSignal.timeout(5000));
+  await f.db
+    .updateTable("device_machines")
+    .set({ revoked_at: new Date() })
+    .where("id", "=", f.machineId)
+    .execute();
+  await f.db
+    .insertInto("device_machines")
+    .values({
+      org_id: f.orgId,
+      device_id: f.deviceId,
+      account_id: f.accountId,
+      credential_hash: randomUUID(),
+      name: "Laptop",
+      os: "linux",
+      arch: "x64",
+      program_version: "0.1.0",
+      roots: JSON.stringify(ROOTS),
+    })
+    .execute();
+  const g = await f.create();
+  expect((await f.binding(g))?.previous_generation).toBeNull();
+});

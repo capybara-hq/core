@@ -534,6 +534,7 @@ export async function serveOperationV3(
   handle: import("@capybara-hq/plugin-sdk").SandboxHandle,
   request: import("@capybara-hq/plugin-sdk").KernelRequestV3,
   signal: AbortSignal,
+  binder?: Pick<import("./exec/instance-binding.js").InstanceBinder, "bind">,
 ): Promise<import("@capybara-hq/plugin-sdk").DeviceResponseV3> {
   const sdk = await import("@capybara-hq/plugin-sdk");
   try {
@@ -542,6 +543,20 @@ export async function serveOperationV3(
     const a = parsed.args;
     signal.throwIfAborted();
     let result: unknown;
+    if (parsed.op === "bindInstance") {
+      // the private post-commit lifecycle binding (B4); never an implicit side effect of an operation
+      if (!binder)
+        throw new sdk.SandboxPermissionUnsupportedError(
+          "This program cannot bind instances; update capybara-device",
+        );
+      const bind = a as unknown as import("@capybara-hq/plugin-sdk").BindInstanceRequestV3;
+      return {
+        type: "res",
+        id: request.id,
+        ok: true,
+        result: sdk.parseOperationResultV3("bindInstance", await binder.bind(bind, signal), bind),
+      };
+    }
     if (parsed.op === "revokeOperation") {
       await backend.revokeOperation(handle, sdk.parseSandboxOperationRef(a.ref), signal);
       result = null;

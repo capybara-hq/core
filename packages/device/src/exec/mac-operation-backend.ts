@@ -52,6 +52,8 @@ export type MacOperationBackend = Required<
     beginDrain(): void;
     ownership(): SupervisorOwnership;
     settle(signal: AbortSignal): Promise<void>;
+    /** Unsettled work of other instance generations (see the supervisor). */
+    retirementObligations(): number;
   };
 };
 /** Trusted construction dependencies; never decoded from a command, scope or wire message. */
@@ -405,6 +407,7 @@ export async function createMacOperationBackend(
       beginDrain: () => supervisor.beginDrain(),
       ownership: () => supervisor.ownership(),
       settle: (signal) => supervisor.settle(signal),
+      retirementObligations: () => supervisor.retirementObligations(options.instanceGeneration),
     },
     forExecution: (authority) => {
       const fixed = freezeAuthority(authority);

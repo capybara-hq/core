@@ -173,13 +173,22 @@ export class PermissionInstanceWrites {
     return high;
   }
 
-  /** The committed binding the coordinator sends; the previous one is the last installed. */
+  /** The committed binding the coordinator sends; the previous one is the machine's last installed. */
   private async awaitDevice(deviceId: string, instanceGeneration: string): Promise<void> {
+    // the previous binding the device itself acknowledged: only the current machine's (a new
+    // machine credential never inherits, and can never be asked to confirm, another's binding)
+    const machine = await this.db
+      .selectFrom("device_machines")
+      .select("id")
+      .where("device_id", "=", deviceId)
+      .where("revoked_at", "is", null)
+      .executeTakeFirst();
     const previous = await this.db
       .selectFrom("device_instance_bindings")
       .select("instance_generation")
       .where("device_id", "=", deviceId)
       .where("status", "=", "installed")
+      .where("machine_id", "=", machine?.id ?? null)
       .orderBy(sql`instance_generation::bigint`, "desc")
       .limit(1)
       .executeTakeFirst();
