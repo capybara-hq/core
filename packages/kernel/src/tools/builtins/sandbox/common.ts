@@ -501,6 +501,24 @@ function legacyPreparationSession(s: SandboxSession): PreparationSession {
  * spec §4.3): the kernel's refusal text plus what the model can do.
  */
 const AUTO_MODE_TOOL_TEXT = `${AUTO_MODE_NOT_ALLOWED_TEXT} Ask the user to switch it on the machine, or to start a new conversation on another device.`;
+/**
+ * A refused Full access (B-13): the organization or the platform does not allow it where this
+ * device runs with it. The kernel's own message is never shown (it may name settings).
+ */
+export const FULL_ACCESS_NOT_ALLOWED_TOOL_TEXT =
+  "This device runs with Full access, which your organization or the platform does not allow, so nothing ran. Ask the user to switch the device to sandbox mode (on a local device: run `capybara-device mode sandbox` on its machine), or to start a new conversation on another device.";
+/**
+ * The full-access refusal codes a tool call can meet: the renamed ones (W5-P3b) and the old
+ * organization and platform names until that rename lands; `device.auto_mode_not_allowed` keeps
+ * its machine text ({@link AUTO_MODE_TOOL_TEXT}).
+ */
+const FULL_ACCESS_NOT_ALLOWED_CODES: ReadonlySet<string> = new Set([
+  "device.full_access_not_allowed",
+  "org.full_access_not_allowed",
+  "deployment.full_access_not_allowed",
+  "org.auto_mode_not_allowed",
+  "deployment.auto_mode_not_allowed",
+]);
 
 /**
  * Sandbox service errors → actionable text for the model; anything else is returned unchanged
@@ -549,6 +567,8 @@ export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefine
     if (e.code === "device.offline") return new ToolError(DEVICE_OFFLINE_TEXT);
     if (e.code === "device.program_outdated") return new ToolError(DEVICE_OUTDATED_TEXT);
     if (e.code === "device.auto_mode_not_allowed") return new ToolError(AUTO_MODE_TOOL_TEXT);
+    if (FULL_ACCESS_NOT_ALLOWED_CODES.has(e.code))
+      return new ToolError(FULL_ACCESS_NOT_ALLOWED_TOOL_TEXT);
     if (e.code === "device.permission_reconcile_required") {
       return new ToolError(RECONCILE_REQUIRED_TEXT, { kind: "unavailable" });
     }
@@ -587,6 +607,21 @@ export async function inSandbox<T>(
 ): Promise<{ value: T; notices: string[] }> {
   return inSandboxWith(deps, ctx, fn, false);
 }
+/**
+ * The device entry of every builtin tool (B-17): once the one activation gate is on (the managed
+ * writer required, {@link SandboxToolDeps.managedDeviceContextRequired}) the managed operation
+ * route ({@link inSandboxOperations}: the marked device paths recorded before the callback, every
+ * provider call a managed operation); otherwise the legacy route ({@link inSandbox}), unchanged.
+ */
+export async function inToolSandbox<T>(
+  deps: SandboxToolDeps,
+  ctx: BuiltinCallContext,
+  fn: (s: SandboxSession) => Promise<T>,
+): Promise<{ value: T; notices: string[] }> {
+  return deps.managedDeviceContextRequired
+    ? inSandboxOperations(deps, ctx, fn)
+    : inSandbox(deps, ctx, fn);
+}
 export async function inSandboxOperations<T>(
   deps: SandboxToolDeps,
   ctx: BuiltinCallContext,
@@ -599,7 +634,11 @@ export async function inSandboxOperations<T>(
 ): Promise<{ value: T; notices: string[] }> {
   return inSandboxWith(deps, ctx, fn, true, stage);
 }
-/** Trusted copy callbacks only receive preparation's three methods. */
+/**
+ * Trusted copy callbacks only receive preparation's three methods. Once the activation gate is on
+ * the copy is a trusted preparation on the managed route ({@link inSandboxOperationPreparation},
+ * scoped to `roots`, after the marked device paths); otherwise the protocol-2 binding.
+ */
 export async function inSandboxPreparation<T>(
   deps: SandboxToolDeps,
   ctx: BuiltinCallContext,
@@ -607,11 +646,11 @@ export async function inSandboxPreparation<T>(
   roots: (roots: SandboxRoots) => readonly string[],
   fn: (s: PreparationSession) => Promise<T>,
 ): Promise<{ value: T; notices: string[] }> {
-  void purpose;
-  void roots;
+  if (deps.managedDeviceContextRequired)
+    return inSandboxOperationPreparation(deps, ctx, purpose, roots, fn);
   return inSandbox(deps, ctx, (s) => fn(legacyPreparationSession(s)));
 }
-/** Dormant replacement for the trusted-copy entry; Task8 removes the protocol-2 binding above. */
+/** The trusted-copy entry on the managed route ({@link inSandboxPreparation} once activated). */
 export async function inSandboxOperationPreparation<T>(
   deps: SandboxToolDeps,
   ctx: BuiltinCallContext,
@@ -680,6 +719,10 @@ async function inSandboxWith<T>(
                 if (managed) {
                   // no installed binding to describe the held instance: unavailable, not stale
                   if (!info.contextEvidence) throw new ManagedDeviceContextUnavailable();
+                  // B-18: the review judged the call against its working root; held evidence of
+                  // another root is stale, refused before anything is recorded or run
+                  if (reviewed !== undefined && reviewed !== info.contextEvidence.workingRoot)
+                    throw new ManagedDeviceContextStale();
                   await recordManagedDevicePaths(
                     { managedDeviceContext: managed },
                     ctx,
@@ -720,10 +763,11 @@ async function inSandboxWith<T>(
           mode,
           h,
           roots: info.roots,
-          // a managed call runs in the working root its device context recorded (admission's)
+          // a managed call runs in the working root its device context recorded (admission's),
+          // which a reviewed call's root equals (checked before the callback, B-18)
           workingRoot:
-            reviewed ??
             (managed ? info.contextEvidence?.workingRoot : undefined) ??
+            reviewed ??
             sessionWorkingRoot(working, mode, info.roots.workspace, reach),
           p,
           signal,

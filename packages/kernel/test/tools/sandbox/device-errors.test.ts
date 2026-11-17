@@ -47,6 +47,26 @@ describe("sandbox tool errors", () => {
     expect(message(mapped)).not.toContain("internal detail");
   });
 
+  // B-13: the old auto-mode codes and their full-access renames (W5-P3b) are actionable English
+  // tool errors, never the kernel's own message; the old device code keeps the machine's text
+  it.each([
+    "device.auto_mode_not_allowed",
+    "device.full_access_not_allowed",
+    "org.auto_mode_not_allowed",
+    "org.full_access_not_allowed",
+    "deployment.auto_mode_not_allowed",
+    "deployment.full_access_not_allowed",
+  ])("a refused Full access (%s) is an actionable tool error", (code) => {
+    // biome-ignore lint/suspicious/noExplicitAny: the renamed codes are registered by W5-P3b
+    const mapped = mapSandboxError(new ApiError(code as any, "internal detail"), undefined);
+    expect(mapped).toBeInstanceOf(ToolError);
+    if (code !== "device.auto_mode_not_allowed") expect(message(mapped)).toMatch(/Full access/);
+    expect(message(mapped)).toMatch(/capybara-device mode sandbox/);
+    expect(message(mapped)).toMatch(/another device/);
+    expect(message(mapped)).not.toContain("internal detail");
+    expect(message(mapped)).not.toMatch(/environment/i);
+  });
+
   it("an instance binding that cannot complete is an actionable device error", () => {
     const mapped = mapSandboxError(new InstanceBindingError("No committed binding"), undefined);
     expect(mapped).toBeInstanceOf(ToolError);

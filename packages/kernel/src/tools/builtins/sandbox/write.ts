@@ -6,7 +6,7 @@ import {
   checkToolWritable,
   clip,
   display,
-  inSandbox,
+  inToolSandbox,
   looksBinary,
   type SandboxToolDeps,
   sandboxBaseTimeoutMs,
@@ -80,7 +80,7 @@ export function sandboxWriteTool(deps: SandboxToolDeps): BuiltinTool {
       checkFilePathShape((input as WriteInput).file_path);
       let path = "";
       // a read-before-write refusal is the guard working: a result with the guard view
-      const ran = await inSandbox(deps, ctx, (s) => {
+      const ran = await inToolSandbox(deps, ctx, (s) => {
         const { deviceId, h, p, signal } = s;
         path = checkToolWritable((input as WriteInput).file_path, s);
         // stat, read the previous content, write: one holder at a time per file
