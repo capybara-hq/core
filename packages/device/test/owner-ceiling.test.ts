@@ -1,4 +1,13 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type KernelRequestV3, parseOwnerCeilingReportV3 } from "@capybara-hq/plugin-sdk";
@@ -399,5 +408,29 @@ describe("staged policy op with owner reports", () => {
     }
     expect(readPolicyFile(state).policy.ownerCeiling).toEqual(SANDBOX_OWNER_CEILING);
     expect(calls).toEqual([]);
+  });
+});
+
+describe("owner-denied paths in canonical form", () => {
+  it("denies a symlinked home's secrets and a symlinked ~/.aws by their real paths too", async () => {
+    const real = join(root, "real-home");
+    mkdirSync(join(real, ".ssh"), { recursive: true });
+    const awsData = join(root, "aws-data");
+    mkdirSync(awsData);
+    symlinkSync(real, join(root, "home"));
+    symlinkSync(awsData, join(real, ".aws"));
+    writePolicy(state, DEFAULT_POLICY);
+    const denied = (await strict()).restrictedDeniedReadRoots;
+    const canonicalRoot = realpathSync(root);
+    for (const path of [
+      join(root, "home", ".ssh"),
+      join(canonicalRoot, "real-home", ".ssh"),
+      join(canonicalRoot, "aws-data"),
+      // a secret path that does not exist yet: its real parent plus the missing name
+      join(canonicalRoot, "real-home", ".kube"),
+      // the device's own state directory, by its real path (runtime files live under it)
+      realpathSync(state),
+    ])
+      expect(denied).toContain(path);
   });
 });

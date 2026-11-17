@@ -153,19 +153,7 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
     );
     const support = await backend.permissionSupport({ id: envId }, live);
     expect(support).toMatchObject({ fullAccess: true, background: true });
-    const owner = execFileSync(
-      "docker",
-      [
-        "exec",
-        containerName(envId),
-        "stat",
-        "-c",
-        "%U %a",
-        "/opt/capybara-runtime/device-agent.py",
-      ],
-      { encoding: "utf8" },
-    );
-    expect(owner.trim()).toBe("root 644");
+
     const scope = (full: boolean, n: number) => ({
       operationId: `op-${n}`,
       admitBeforeMs: Date.now() + 60_000,
@@ -233,12 +221,7 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
       expect(support.unavailableReason).toMatch(/Landlock rules do not hold|is unavailable/);
     else {
       // restricted: only its granted root, through the launcher
-      const r = await run(
-        false,
-        2,
-        "echo r > inside.txt; cat inside.txt; ls -la; echo pwn > /tmp/outside.txt; true",
-      );
-      console.log(JSON.stringify(r));
+      const r = await run(false, 2, "echo r > inside.txt; echo pwn > /tmp/outside.txt; true");
       expect(r.exitCode).toBe(0);
       expect(readFileSync(join(dir, "workspace", "proj", "inside.txt"), "utf8")).toBe("r\n");
       expect(existsSync(join(dir, "tmp", "outside.txt"))).toBe(false);

@@ -1,8 +1,10 @@
 /**
- * The trusted Linux operation agent of capybara-device (`device-agent.py`), staged with the SDK's
- * `linux-sandbox.py` and `native-files.py` and verified with them. One agent process runs one
- * operation; it never decides authority: every request carries a grant the device already
- * intersected with its owner ceiling.
+ * The trusted Linux operation agent of capybara-device, run as `python3 -I -c <source>` (never from
+ * a file another process could change). One agent process runs one operation; it never decides
+ * authority: every request carries a grant the device already intersected with its owner ceiling.
+ * The request also carries the SDK's `linux-sandbox.py` and `native-files.py` with their digests;
+ * the agent seals each into a memfd, checks the digest of the sealed bytes, and runs them only from
+ * those descriptors, so the checked bytes are the bytes that run.
  *
  * Transport: one JSON request line on stdin, then control lines (`{"op":"cancel","graceMs":n}`);
  * end of stdin means the device was lost and cancels at once. JSON event lines on stdout:
@@ -18,18 +20,35 @@
  * - native: the SDK native helper on pinned descriptors (descriptor-relative, no-follow), in this
  *   process; a missing write root is established component by component without following links.
  * - probe / reap: the launcher's own probe, and reaping a recorded session after a lost supervisor.
+ *
+ * Signals go to a session member through a pidfd; where pidfds are unavailable (an old kernel or a
+ * seccomp profile) the member's session and start time are checked again right before kill().
  */
 export const LINUX_DEVICE_AGENT: string = String.raw`import ctypes
 import sys
 
+SELF_PROTECTION = None
 if sys.platform.startswith("linux"):
     # Non-dumpable first: a same-uid process cannot ptrace this agent or read its descriptors.
-    ctypes.CDLL(None, use_errno=True).prctl(4, 0, 0, 0, 0)
+    if ctypes.CDLL(None, use_errno=True).prctl(4, 0, 0, 0, 0) != 0:
+        SELF_PROTECTION = "The operation agent could not make itself non-dumpable"
+    else:
+        try:
+            with open("/proc/self/status") as handle:
+                for line in handle:
+                    if line.startswith("TracerPid:") and int(line.split()[1]) != 0:
+                        SELF_PROTECTION = "The operation agent was traced"
+        except (OSError, ValueError):
+            SELF_PROTECTION = "The operation agent could not confirm that it is not traced"
 
 import base64
 import errno
+import fcntl
 import hashlib
+import hmac
+import importlib.machinery
 import importlib.util
+import ipaddress
 import json
 import os
 import select
@@ -40,10 +59,8 @@ import subprocess
 import threading
 import time
 
-RUNTIME = os.path.dirname(os.path.abspath(__file__))
-LAUNCHER = os.path.join(RUNTIME, "linux-sandbox.py")
-NATIVE = os.path.join(RUNTIME, "native-files.py")
 CHUNK = 65536
+RUNTIME_FILES = ("linux-sandbox.py", "native-files.py")
 NR_PIDFD_OPEN = 434
 NR_PIDFD_SEND_SIGNAL = 424
 PROXY_KEYS = ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy",
@@ -68,33 +85,43 @@ def send(event):
             view = view[os.write(1, view):]
 
 
-def verify_runtime(expected):
-    """The staged SDK bytes must be the ones the device verified (owner-only or root-owned)."""
-    owners = (0, os.getuid())
-    info = os.lstat(RUNTIME)
-    if not stat.S_ISDIR(info.st_mode) or info.st_uid not in owners or info.st_mode & 0o022:
-        raise Refused("UNAVAILABLE", "The runtime directory is writable by others")
-    for name in ("linux-sandbox.py", "native-files.py"):
-        path = os.path.join(RUNTIME, name)
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+def sealed_runtime(request):
+    """The SDK runtime files sealed into memfds (no write, grow, shrink or further seals), each
+    checked against the digest the device verified. Returns {name: descriptor}."""
+    fds = {}
+    try:
+        for name in RUNTIME_FILES:
+            source = request["runtime"][name].encode()
+            fd = os.memfd_create(name, os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING)
+            fds[name] = fd
+            view = memoryview(source)
+            while view:
+                view = view[os.write(fd, view):]
+            fcntl.fcntl(fd, fcntl.F_ADD_SEALS, fcntl.F_SEAL_SEAL | fcntl.F_SEAL_SHRINK
+                        | fcntl.F_SEAL_GROW | fcntl.F_SEAL_WRITE)
+            if hashlib.sha256(os.pread(fd, len(source) + 1, 0)).hexdigest() != \
+                    request["expect"].get(name):
+                raise Refused("UNAVAILABLE", "The runtime does not match its digest")
+    except Refused:
+        close_fds(fds.values())
+        raise
+    except (OSError, AttributeError, KeyError, TypeError):
+        close_fds(fds.values())
+        raise Refused("UNAVAILABLE", "The runtime could not be sealed for launch")
+    return fds
+
+
+def close_fds(fds):
+    for fd in list(fds):
         try:
-            info = os.fstat(fd)
-            if not stat.S_ISREG(info.st_mode) or info.st_uid not in owners or info.st_mode & 0o022:
-                raise Refused("UNAVAILABLE", "A staged runtime file is writable by others")
-            digest = hashlib.sha256()
-            while True:
-                chunk = os.read(fd, CHUNK)
-                if not chunk:
-                    break
-                digest.update(chunk)
-        finally:
             os.close(fd)
-        if digest.hexdigest() != expected.get(name):
-            raise Refused("UNAVAILABLE", "The staged runtime does not match its digest")
+        except OSError:
+            pass
 
 
-def load(path, name):
-    spec = importlib.util.spec_from_file_location(name, path)
+def load_sealed(fd, name):
+    path = "/proc/self/fd/%d" % fd
+    spec = importlib.util.spec_from_loader(name, importlib.machinery.SourceFileLoader(name, path))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -112,8 +139,29 @@ def start_time(pid):
     return int(stat_fields(pid)[19])
 
 
+def signal_member(pid, sid, started, signum, leader_reused):
+    """Signals one session member, pinned by a pidfd where the kernel offers one; otherwise its
+    session and start time are checked again immediately before kill()."""
+    handle = libc.syscall(ctypes.c_long(NR_PIDFD_OPEN), ctypes.c_long(pid), ctypes.c_long(0))
+    try:
+        fields = stat_fields(pid)
+        if int(fields[3]) != sid or int(fields[19]) < started or fields[0] in ("Z", "X") \
+                or leader_reused():
+            return False
+        if handle >= 0:
+            return libc.syscall(ctypes.c_long(NR_PIDFD_SEND_SIGNAL), ctypes.c_long(handle),
+                                ctypes.c_long(signum), None, ctypes.c_long(0)) == 0
+        os.kill(pid, signum)
+        return True
+    except OSError:
+        return False
+    finally:
+        if handle >= 0:
+            os.close(handle)
+
+
 def signal_session(session, signum):
-    """Signals every live member of a recorded closed session, each pinned by a pidfd first.
+    """Signals every live member of a recorded closed session.
 
     A member is signalled only while it is still in the session, started no earlier than the
     leader, and the leader's PID is not held by another process; a PID reuse can only skip one."""
@@ -137,42 +185,18 @@ def signal_session(session, signum):
             continue
         if int(fields[3]) != sid or fields[0] in ("Z", "X"):
             continue
-        try:
-            handle = libc.syscall(ctypes.c_long(NR_PIDFD_OPEN), ctypes.c_long(pid), ctypes.c_long(0))
-        except OSError:
-            continue
-        if handle < 0:
-            continue
-        try:
-            fields = stat_fields(pid)
-            if int(fields[3]) == sid and int(fields[19]) >= started and not leader_reused():
-                if libc.syscall(ctypes.c_long(NR_PIDFD_SEND_SIGNAL), ctypes.c_long(handle),
-                                ctypes.c_long(signum), None, ctypes.c_long(0)) == 0:
-                    count += 1
-        except OSError:
-            pass
-        finally:
-            os.close(handle)
+        if signal_member(pid, sid, started, signum, leader_reused):
+            count += 1
     return count
 
 
 def kill_session(session):
-    """SIGKILLs a Full command's session until no live member is left."""
+    """SIGKILLs a closed session until no live member is left."""
     for _ in range(10000):
         if signal_session(session, signal.SIGKILL) == 0:
             return
         time.sleep(0.005)
-
-
-def reap(session):
-    """SIGKILLs a closed session until it is empty (the launcher's own reap)."""
-    done = subprocess.run([sys.executable, "-I", LAUNCHER, "reap"],
-                          input=json.dumps({"sid": session["sid"], "start": session["start"]}).encode(),
-                          capture_output=True, env=LAUNCHER_ENV)
-    try:
-        return json.loads(done.stdout)["killed"]
-    except (ValueError, KeyError, TypeError):
-        raise Refused("UNAVAILABLE", "Reaping the recorded session failed")
+    raise Refused("UNAVAILABLE", "The owned session could not be ended")
 
 
 # ---- pinned roots -------------------------------------------------------------------------
@@ -307,10 +331,17 @@ def split_target(target, default_port):
 class Forwarder:
     """A loopback HTTP proxy owned by one operation: CONNECT and absolute http:// requests for the
     operation's allowlisted names are tunnelled; every other name is refused without connecting.
-    The launcher's broker grants the restricted command this endpoint and nothing else."""
+    The launcher's broker grants the restricted command this endpoint and nothing else. Clients
+    authenticate with the operation's token; CONNECT reaches ports 80 and 443 only; names that
+    resolve to loopback, link-local, private or unique-local addresses are refused."""
 
-    def __init__(self, hosts):
+    def __init__(self, hosts, allow_private=False):
         self.hosts = hosts
+        self.allow_private = allow_private
+        # Only this operation knows the token: another local process cannot use the proxy.
+        self.token = os.urandom(16).hex()
+        self.authorization = "Basic " + base64.b64encode(
+            ("capybara:" + self.token).encode()).decode()
         self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server.bind(("127.0.0.1", 0))
         self.server.listen(64)
@@ -357,9 +388,22 @@ class Forwarder:
             head, _, body = head.partition(b"\r\n\r\n")
             lines = head.split(b"\r\n")
             method, target, version = (lines[0].decode("latin-1").split(" ") + ["", "", ""])[:3]
+            supplied = ""
+            for line in lines[1:]:
+                key, _, value = line.decode("latin-1").partition(":")
+                if key.strip().lower() == "proxy-authorization":
+                    supplied = value.strip()
+            if not hmac.compare_digest(supplied, self.authorization):
+                client.sendall(b"HTTP/1.1 407 Proxy Authentication Required\r\n"
+                               b"Proxy-Authenticate: Basic realm=\"capybara\"\r\n"
+                               b"Content-Length: 0\r\nConnection: close\r\n\r\n")
+                client.close()
+                return
             rewritten = None
             if method == "CONNECT":
                 host, port = split_target(target, 443)
+                if port not in (80, 443):
+                    host = None
             elif target.startswith("http://"):
                 authority, _, path = target[7:].partition("/")
                 host, port = split_target(authority, 80)
@@ -375,7 +419,7 @@ class Forwarder:
                 client.close()
                 return
             try:
-                up = socket.create_connection((host, port), 30)
+                up = self.connect(host, port)
             except OSError:
                 client.sendall(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n"
                                b"Connection: close\r\n\r\n")
@@ -395,6 +439,26 @@ class Forwarder:
                 client.close()
             except OSError:
                 pass
+
+    def connect(self, host, port):
+        """Connects to a vetted address of host (never resolved again, so never rebound)."""
+        for family, kind, proto, _, address in socket.getaddrinfo(host, port, 0,
+                                                                  socket.SOCK_STREAM):
+            ip = ipaddress.ip_address(address[0].split("%")[0])
+            if getattr(ip, "ipv4_mapped", None):
+                ip = ip.ipv4_mapped
+            if not self.allow_private and (ip.is_loopback or ip.is_link_local or ip.is_private
+                                           or ip.is_unspecified or ip.is_multicast
+                                           or ip.is_reserved):
+                continue
+            sock = socket.socket(family, kind, proto)
+            try:
+                sock.settimeout(30)
+                sock.connect(address)
+                return sock
+            except OSError:
+                sock.close()
+        raise OSError(errno.EHOSTUNREACH, "No permitted address")
 
     def close(self):
         try:
@@ -477,39 +541,22 @@ def run_full(request, control):
     """Full access: the OS user's ordinary authority, no restricted filters, in a session of its
     own that the agent ends when the command exits, is cancelled or times out."""
     env = validated_env(request["env"])
-    out_r, out_w = os.pipe()
-    err_r, err_w = os.pipe()
-    sync_r, sync_w = os.pipe()
     if control.cancel is not None:
         raise Refused("CANCELLED", "Cancelled before launch")
-    pid = os.fork()
-    if pid == 0:
-        try:
-            os.setsid()
-            # The session exists before the agent reports it: cancellation can always reach it.
-            os.write(sync_w, b"s")
-            for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGPIPE):
-                signal.signal(signum, signal.SIG_DFL)
-            null = os.open("/dev/null", os.O_RDONLY)
-            os.dup2(null, 0)
-            os.dup2(out_w, 1)
-            os.dup2(err_w, 2)
-            os.closerange(3, 65536)
-            os.chdir(request["cwd"])
-            os.execve("/bin/bash", ["/bin/bash", "-c", request["command"]], env)
-        except BaseException as error:
-            try:
-                os.write(2, ("capybara-device: Full launch failed: %s\n" % error).encode())
-            finally:
-                os._exit(127)
-    os.close(out_w)
-    os.close(err_w)
-    os.close(sync_w)
-    os.read(sync_r, 1)
-    os.close(sync_r)
+    try:
+        # the child is a session leader before Popen returns (setsid runs before exec)
+        process = subprocess.Popen(["/bin/bash", "-c", request["command"]], cwd=request["cwd"],
+                                   env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, start_new_session=True)
+    except OSError as error:
+        send({"event": "output", "stream": 2, "data": base64.b64encode(
+            ("capybara-device: Full launch failed: %s\n" % error.strerror).encode()).decode()})
+        send({"event": "exit", "exitCode": 127, "timedOut": False, "cancelled": False})
+        return
+    pid = process.pid
     session = {"sid": pid, "start": start_time(pid)}
     send({"event": "launched", "pid": os.getpid(), "session": session})
-    threads = start_copies((1, out_r), (2, err_r))
+    threads = start_copies((1, process.stdout.fileno()), (2, process.stderr.fileno()))
     state = {"timedOut": False, "cancelled": False}
 
     def cancel(grace):
@@ -524,34 +571,38 @@ def run_full(request, control):
     control.handlers.append(cancel)
     if control.cancel is not None:
         cancel(control.cancel)
-    exited = threading.Event()
-    result = {}
-
-    def wait():
-        result["status"] = os.waitpid(pid, 0)[1]
-        exited.set()
-    threading.Thread(target=wait, daemon=True).start()
-    if not exited.wait(request["timeoutMs"] / 1000):
+    try:
+        code = process.wait(request["timeoutMs"] / 1000)
+    except subprocess.TimeoutExpired:
         state["timedOut"] = True
         kill_session(session)
-        exited.wait()
-    status = result["status"]
+        code = process.wait()
     # The leader exited: whatever it left in its session ends with it.
     kill_session(session)
-    join_copies(threads, [out_r, err_r], 0.2)
-    code = os.waitstatus_to_exitcode(status)
+    join_copies(threads, [], 0.2)
     killed = state["timedOut"] or state["cancelled"]
     send({"event": "exit", "exitCode": None if killed or code < 0 else code,
           "timedOut": state["timedOut"], "cancelled": state["cancelled"]})
 
 
+PRCTL = libc.prctl  # resolved before any fork
+
+
 def pdeathsig():
-    # The launcher cancels (ending its whole tree) when this agent is lost.
-    libc.prctl(1, signal.SIGTERM, 0, 0, 0)
+    # The launcher cancels (ending its whole tree) when this agent is lost. Runs between fork and
+    # exec: one prepared foreign call, no allocation, no lock.
+    PRCTL(1, 15, 0, 0, 0)  # PR_SET_PDEATHSIG, SIGTERM
 
 
 def run_restricted(request, control):
-    verify_runtime(request["expect"])
+    runtime = sealed_runtime(request)
+    try:
+        return run_sealed(request, control, runtime)
+    finally:
+        close_fds(runtime.values())
+
+
+def run_sealed(request, control, runtime):
     env = dict(validated_env(request["env"]))
     for key in PROXY_KEYS:
         env.pop(key, None)
@@ -564,8 +615,8 @@ def run_restricted(request, control):
         if network.get("kind") != "allowlist" or not network.get("hosts"):
             launcher_network = {"kind": "none"}
         else:
-            forwarder = Forwarder(list(network["hosts"]))
-            proxy = "http://127.0.0.1:%d" % forwarder.port
+            forwarder = Forwarder(list(network["hosts"]), request.get("allowPrivate") is True)
+            proxy = "http://capybara:%s@127.0.0.1:%d" % (forwarder.token, forwarder.port)
             for key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY",
                         "all_proxy"):
                 env[key] = proxy
@@ -576,15 +627,17 @@ def run_restricted(request, control):
         body = {"mode": "exec", "roots": {"read": read, "write": write},
                 "network": launcher_network, "reportFd": report_w, "env": env,
                 "cwd": request["cwd"], "argv": ["/bin/bash", "-c", request["command"]],
-                "timeoutMs": request["timeoutMs"]}
+                "timeoutMs": request["timeoutMs"], "nativeFd": runtime["native-files.py"]}
         if control.cancel is not None:
             os.close(report_r)
             os.close(report_w)
             raise Refused("CANCELLED", "Cancelled before launch")
         try:
             launcher = subprocess.Popen(
-                [sys.executable, "-I", LAUNCHER], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE, pass_fds=[report_w] + [e["fd"] for e in read + write],
+                [sys.executable, "-I", "/proc/self/fd/%d" % runtime["linux-sandbox.py"]],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                pass_fds=[report_w, runtime["linux-sandbox.py"], runtime["native-files.py"]]
+                + [e["fd"] for e in read + write],
                 env=LAUNCHER_ENV, preexec_fn=pdeathsig)
         finally:
             os.close(report_w)
@@ -661,7 +714,7 @@ def supervise(launcher, report_r, body, request, control):
     session = state["session"]
     if session is not None:
         # Whatever happened to the launcher, nothing it owned outlives it.
-        reap(session)
+        kill_session(session)
     join_copies(threads, [], 2)
     if state["refused"] is not None and state["session"] is None:
         raise Refused(state["refused"].get("code", "INVALID_REQUEST"),
@@ -679,7 +732,11 @@ def supervise(launcher, report_r, body, request, control):
 # ---- native -------------------------------------------------------------------------------
 
 def run_native(request):
-    native = load(NATIVE, "capybara_native_files")
+    runtime = sealed_runtime(request)
+    try:
+        native = load_sealed(runtime["native-files.py"], "capybara_native_files")
+    finally:
+        close_fds(runtime.values())
     body = request["native"]
     pinned = []
     try:
@@ -697,8 +754,10 @@ def run_native(request):
                 # The permitted root does not exist yet, so neither does anything below it.
                 send({"event": "native", "response": {"result": [] if body["method"] == "scan" else None}})
                 return
+            # restricted native writes honour the mandatory write denies (as the broker does)
             roots = {"read": [{"path": e["path"], "fd": e["fd"]} for e in read],
-                     "write": [{"path": e["path"], "fd": e["fd"]} for e in write]}
+                     "write": [{"path": e["path"], "fd": e["fd"]} for e in write],
+                     "denyWrites": True}
         denied = [d for d in request.get("denied", []) if isinstance(d, str)]
 
         class Bounded(native.NativeFiles):
@@ -724,15 +783,36 @@ def run_native(request):
         close_pinned(pinned)
 
 
+def native_watch():
+    """Native work has no command tree: a cancel or a lost device ends the agent itself."""
+    for line in sys.stdin:
+        try:
+            if json.loads(line).get("op") == "cancel":
+                break
+        except ValueError:
+            continue
+    os._exit(130)
+
+
 def main():
     try:
+        # first: the agent's exact identity, so a lost client's agent can be ended precisely
+        send({"event": "agent", "pid": os.getpid(), "start": start_time(os.getpid())})
         line = sys.stdin.readline()
         request = json.loads(line)
         op = request.get("op")
+        if sys.version_info < (3, 9):
+            raise Refused("UNAVAILABLE", "The operation agent needs Python 3.9 or later")
+        if SELF_PROTECTION:
+            raise Refused("UNAVAILABLE", SELF_PROTECTION)
         if op == "probe":
-            verify_runtime(request["expect"])
-            done = subprocess.run([sys.executable, "-I", LAUNCHER, "probe"], capture_output=True,
-                                  env=LAUNCHER_ENV)
+            runtime = sealed_runtime(request)
+            try:
+                fd = runtime["linux-sandbox.py"]
+                done = subprocess.run([sys.executable, "-I", "/proc/self/fd/%d" % fd, "probe"],
+                                      capture_output=True, env=LAUNCHER_ENV, pass_fds=[fd])
+            finally:
+                close_fds(runtime.values())
             try:
                 result = json.loads(done.stdout)
             except ValueError:
@@ -740,7 +820,6 @@ def main():
             send({"event": "probe", "result": result})
             return 0
         if op == "reap":
-            verify_runtime(request["expect"])
             session = request["session"]
             if request.get("requireLeader"):
                 # Another device process recorded this session: act only while its leader is
@@ -752,10 +831,12 @@ def main():
                 if not alive:
                     send({"event": "reaped", "killed": 0})
                     return 0
-            send({"event": "reaped", "killed": reap(session)})
+            killed = signal_session(session, signal.SIGKILL)
+            kill_session(session)
+            send({"event": "reaped", "killed": killed})
             return 0
         if op == "native":
-            verify_runtime(request["expect"])
+            threading.Thread(target=native_watch, daemon=True).start()
             run_native(request)
             return 0
         if op == "exec":

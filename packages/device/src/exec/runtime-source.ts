@@ -76,62 +76,6 @@ export async function stagePrivateSource(
   }
   return path;
 }
-/**
- * Stages a set of bundled, hash-checked files together in their own private, content-addressed
- * directory of the state directory (`operation-runtime/<prefix>-<digest>`), and checks every file
- * again (owner, mode, bytes) on each call. Returns the directory.
- */
-export async function stagePrivateBundle(
-  stateDir: string,
-  prefix: string,
-  files: readonly { name: string; source: string }[],
-): Promise<string> {
-  const { dir: base, uid } = await privateRuntimeDir(stateDir);
-  const digest = createHash("sha256")
-    .update(JSON.stringify(files.map((f) => [f.name, f.source])))
-    .digest("hex");
-  const dir = join(base, `${prefix}-${digest.slice(0, 32)}`);
-  await mkdir(dir, { mode: 0o700 }).catch((e: NodeJS.ErrnoException) => {
-    if (e.code !== "EEXIST") throw e;
-  });
-  const info = await lstat(dir);
-  if (info.isSymbolicLink() || !info.isDirectory() || (info.mode & 0o077) !== 0 || info.uid !== uid)
-    throw new Error("Unsafe runtime bundle directory");
-  for (const { name, source } of files) {
-    if (!/^[\w.-]+$/.test(name)) throw new Error("Invalid runtime bundle file name");
-    const path = join(dir, name);
-    let file: FileHandle | undefined;
-    try {
-      file = await open(
-        path,
-        constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
-        0o400,
-      );
-      await file.writeFile(source);
-      await file.sync();
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
-    } finally {
-      await file?.close();
-    }
-    const checked = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-    try {
-      const s = await checked.stat();
-      if (
-        !s.isFile() ||
-        s.uid !== uid ||
-        (s.mode & 0o077) !== 0 ||
-        createHash("sha256")
-          .update(await checked.readFile())
-          .digest("hex") !== createHash("sha256").update(source).digest("hex")
-      )
-        throw new Error("Runtime bundle file identity mismatch");
-    } finally {
-      await checked.close();
-    }
-  }
-  return dir;
-}
 export async function stageRuntimeSource(stateDir: string): Promise<string> {
   // Bundle 2 added the Linux launcher next to the native helper; this device stages only the helper.
   if (SANDBOX_RUNTIME_SOURCE.version !== 2) throw new Error("Unsupported runtime bundle");

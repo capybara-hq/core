@@ -8,6 +8,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import {
   type AgentEvent,
+  agentLine,
   type LinuxAgentTransport,
   type RecordedSession,
   reapLinuxSession,
@@ -44,6 +45,11 @@ export interface LinuxWorkerOptions {
   acquireRuntime?: (runtimeHash: string | undefined) => Promise<{ release(): void }>;
   /** How long an agent may take to end what it owns after a cancel (default 15 s). */
   cancelSettleMs?: number;
+  /**
+   * Test seam (trusted construction only): let the allowlist proxy reach loopback and private
+   * addresses, as a conformance fixture's local endpoints need.
+   */
+  allowPrivateProxyTargets?: boolean;
 }
 
 function refusal(event: AgentEvent): Error {
@@ -132,6 +138,7 @@ export function linuxOperationWorker(
               hosts: [...request.grant.hosts],
             },
             // background output is one merged stream; its stderr is the launcher's diagnostics
+            ...(options.allowPrivateProxyTargets ? { allowPrivate: true } : {}),
             command: request.managedOutput
               ? `exec /bin/bash -c ${shellQuote(args.command)} 2>&1`
               : args.command,
@@ -142,7 +149,7 @@ export function linuxOperationWorker(
         }
         await request.beforeLaunch();
         controller.signal.throwIfAborted();
-        const agent = await options.transport.spawn();
+        const agent = await options.transport.spawn(controller.signal);
         child = agent;
         closed = new Promise<void>((resolve, reject) => {
           agent.once("error", reject);
@@ -151,7 +158,7 @@ export function linuxOperationWorker(
         void closed.catch(() => {});
         agent.stdin?.on("error", () => {});
         // stdin stays open: it carries cancellation, and its end tells the agent we were lost
-        agent.stdin?.write(`${JSON.stringify({ ...body, expect: options.transport.expect })}\n`);
+        agent.stdin?.write(agentLine(options.transport, body));
         let diagnosticBytes = 0;
         agent.stderr?.on("data", (b: Buffer) => {
           diagnosticBytes += b.length;
@@ -286,20 +293,10 @@ export function linuxOperationWorker(
       }
     })();
     void completion.catch(() => {});
-    function abort() {
-      if (finished) return;
-      cancelled = true;
-      controller.abort(signal.reason);
-      // native work has no command tree: the agent itself is what an abort ends
-      if (request.kind === "native") child?.kill("SIGKILL");
-      else sendCancel(0);
-    }
-    signal.addEventListener("abort", abort, { once: true });
-    if (signal.aborted) abort();
     const cancelAttempt = createCancellationAttempt(async (graceMs) => {
       if (finished) return;
       cancelled = true;
-      controller.abort("Owned cancellation");
+      if (!controller.signal.aborted) controller.abort("Owned cancellation");
       if (child) {
         sendCancel(graceMs);
         let timer: NodeJS.Timeout | undefined;
@@ -324,6 +321,17 @@ export function linuxOperationWorker(
       }
       await completion.catch(() => {});
     });
+    // An abort escalates like a cancel: the agent ends what it owns, or it is killed and its
+    // recorded session reaped.
+    function abort() {
+      if (finished) return;
+      controller.abort(signal.reason);
+      void cancelAttempt(0).catch((error) =>
+        request.onDiagnostic?.(`Owned cancellation remains pending: ${(error as Error).message}`),
+      );
+    }
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
     return {
       ready,
       completion,

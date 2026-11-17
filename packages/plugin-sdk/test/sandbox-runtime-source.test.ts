@@ -202,6 +202,19 @@ for machine in ("aarch64", "x86_64"):
             "fchmodat": call("fchmodat"),
             "tiocsti": call("ioctl", 0, 0x5412),
             "io_uring": call("io_uring_setup"),
+            "open-read": call("openat", 0, 0, 0),
+            "open-write": call("openat", 0, 0, 1),
+            "open-create": call("openat", 0, 0, 0o100),
+            "open-tmpfile": call("openat", 0, 0, 0o20200000),
+            "openat2": call("openat2"),
+            "mkdirat": call("mkdirat"),
+            "unlinkat": call("unlinkat"),
+            "renameat2": call("renameat2"),
+            "linkat": call("linkat"),
+            "symlinkat": call("symlinkat"),
+            "truncate": call("truncate"),
+            "native-open-write": action(run(module.build_filter(table, mediated, False), audit,
+                                            nr["openat"], (0, 0, 1, 0, 0, 0))),
         }
 print(json.dumps(out))
 `) as Record<string, Record<string, string>>;
@@ -221,7 +234,8 @@ print(json.dumps(out))
       inet: "notify",
       packet: "EAFNOSUPPORT",
       connect: "notify",
-      bind: mediated ? "notify" : "allow",
+      // brokered: a pathname UNIX bind creates a file, so the broker makes it
+      bind: "notify",
       listen: "notify",
       fastopen: mediated ? "EACCES" : "allow",
       keyctl: "EPERM",
@@ -237,6 +251,20 @@ print(json.dumps(out))
       fchmodat: "notify",
       tiocsti: "EPERM",
       io_uring: "ENOSYS",
+      // every filesystem write goes through the broker; read-only opens stay direct
+      "open-read": "allow",
+      "open-write": "notify",
+      "open-create": "notify",
+      "open-tmpfile": "notify",
+      openat2: "ENOSYS",
+      mkdirat: "notify",
+      unlinkat: "notify",
+      renameat2: "notify",
+      linkat: "notify",
+      symlinkat: "notify",
+      truncate: "notify",
+      // native mode (not brokered): the trusted helper writes itself under Landlock
+      "native-open-write": "allow",
     });
     for (const machine of ["aarch64", "x86_64"]) {
       expect(verdicts[`${machine}/mediated`]).toEqual(expected(true));

@@ -88,7 +88,7 @@ async function fakeTransport(behaviour: string) {
   let spawned = 0;
   const transport: LinuxAgentTransport = {
     kind: "host",
-    expect: { "linux-sandbox.py": "x", "native-files.py": "y" },
+    bundle: { runtime: {}, expect: { "linux-sandbox.py": "x", "native-files.py": "y" } },
     spawn: async () => {
       spawned++;
       return spawn(process.execPath, ["-e", FAKE_AGENT], {

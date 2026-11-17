@@ -1953,6 +1953,9 @@ export function isSandboxScopeDeniedError(e: unknown): e is SandboxScopeDeniedEr
 export function isSandboxScopeValidationError(e: unknown): e is SandboxScopeValidationError;
 
 // @public
+export function isSandboxWriteDenied(path: string): boolean;
+
+// @public
 export function isSecret(schema: z.ZodTypeAny): boolean;
 
 // @public
@@ -2945,6 +2948,12 @@ export type RouteCaller = {
 
 // @public
 export const SANDBOX_EXTENSION_POINT = "sandbox@2";
+
+// @public
+export const SANDBOX_MANDATORY_WRITE_DENIES: readonly (readonly string[])[];
+
+// @public
+export const SANDBOX_PROTECTED_PATH_NAMES: readonly string[];
 
 // @public
 export const SANDBOX_ROOTS: readonly ["/workspace", "/skills", "/tmp"];

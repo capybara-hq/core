@@ -5,6 +5,7 @@ import { type FileHandle, open, realpath, stat } from "node:fs/promises";
 import { basename, dirname } from "node:path";
 import {
   type ExecResult,
+  SANDBOX_MANDATORY_WRITE_DENIES,
   type SandboxBrowseScope,
   type SandboxExecOptions,
   type SandboxOperationScope,
@@ -90,6 +91,20 @@ export function createCancellationAttempt(
       });
     return pending;
   };
+}
+/**
+ * Sandbox-runtime write-deny globs for one write root (or, with "", anywhere): every
+ * {@link SANDBOX_MANDATORY_WRITE_DENIES} entry at the root and at any depth, and beneath it.
+ */
+export function mandatoryDenyPatterns(root: string): string[] {
+  return SANDBOX_MANDATORY_WRITE_DENIES.flatMap((entry) => {
+    const name = entry.join("/");
+    return [
+      ...(root ? [`${root}/${name}`, `${root}/${name}/**`] : []),
+      `${root}/**/${name}`,
+      `${root}/**/${name}/**`,
+    ];
+  });
 }
 /** The JVM proxy agent the sandbox runtime points sandboxed JVMs at, inside its package. */
 export const JAVA_PROXY_AGENT_JAR = "vendor/java-proxy-agent/srt-proxy-agent.jar";
@@ -391,14 +406,10 @@ export async function startMacOperationWorker(
               // Per-root deny entries pin every ancestor against creation in SRT.
               // The fixed helper has no rename API; retain global Git content denies
               // while it establishes a missing root without those ancestor pins.
+              // the mandatory write denies shared with the Linux broker (one SDK source)
               ...(establishmentRoots.length
-                ? ["/**/.git/config", "/**/.git/hooks/**"]
-                : writeRoots.flatMap((r) => [
-                    `${r}/.git/config`,
-                    `${r}/**/.git/config`,
-                    `${r}/.git/hooks/**`,
-                    `${r}/**/.git/hooks/**`,
-                  ])),
+                ? mandatoryDenyPatterns("")
+                : writeRoots.flatMap((r) => mandatoryDenyPatterns(r))),
             ],
           },
           network: {
