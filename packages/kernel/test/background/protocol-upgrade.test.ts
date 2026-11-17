@@ -886,7 +886,9 @@ describe("the cutover operator surface (B-26)", () => {
     // an old, unfenced replica that keeps writing legacy rows during every pass
     const spy = vi.spyOn(retirement, "scan").mockResolvedValue({ added: 1 });
     try {
-      await expect(retirement.freeze("operator")).rejects.toThrow(/did not settle/);
+      await expect(retirement.freeze("operator")).rejects.toThrow(
+        /did not settle.*kept appearing/s,
+      );
     } finally {
       spy.mockRestore();
     }
@@ -908,6 +910,32 @@ describe("the cutover operator surface (B-26)", () => {
     await expect(retirement.assertCutoverBarrier()).rejects.toThrow(/enumerat/);
   });
 
+  it("an unsettled rerun after a settled freeze closes the barrier again and clears the stale date", async () => {
+    const dev = await seedDevice(raw, seed.orgId, seed.accountId);
+    await legacyRow(dev, { sid: null });
+    await retirement.freeze("operator");
+    await expect(retirement.assertCutoverBarrier()).resolves.toBeUndefined();
+    const spy = vi.spyOn(retirement, "scan").mockResolvedValue({ added: 1 });
+    try {
+      await expect(retirement.freeze("operator")).rejects.toThrow(/did not settle/);
+    } finally {
+      spy.mockRestore();
+    }
+    await expect(retirement.assertCutoverBarrier()).rejects.toThrow(/enumerat/);
+    expect((await retirement.report()).freezeEnumeratedAt).toBeNull();
+  });
+
+  it("an unmarked legacy row started after the enumeration closes the barrier until the freeze reruns", async () => {
+    const dev = await seedDevice(raw, seed.orgId, seed.accountId);
+    await retirement.freeze("operator");
+    await expect(retirement.assertCutoverBarrier()).resolves.toBeUndefined();
+    // an old, unfenced replica starts a legacy task after the enumeration completed
+    await legacyRow(dev, { sid: null });
+    await expect(retirement.assertCutoverBarrier()).rejects.toThrow(/after the freeze/);
+    await retirement.freeze("operator");
+    await expect(retirement.assertCutoverBarrier()).resolves.toBeUndefined();
+  });
+
   it("the report shows the freeze, fenced reservations and rows only an unfenced replica writes", async () => {
     const dev = await seedDevice(raw, seed.orgId, seed.accountId);
     // reserved by fenced code and never admitted: the freeze refuses its dispatch
@@ -922,7 +950,12 @@ describe("the cutover operator surface (B-26)", () => {
       frozenAt: null,
       freezeEnumeratedAt: null,
       fencedReservations: 1,
-      unfencedWriters: { sinceMigration: 1, afterFreeze: 0, latestAt: expect.any(Date) },
+      unfencedWriters: {
+        sinceMigration: 1,
+        afterFreeze: 0,
+        recent: 1,
+        latestAt: expect.any(Date),
+      },
     });
     await retirement.freeze("operator");
     await legacyRow(dev, { status: "lost", killPending: true });

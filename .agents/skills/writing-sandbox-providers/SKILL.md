@@ -179,9 +179,11 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   - **`ifRunning`.** It refuses legacy SID polls, stops and reads and staged browse on such a device (`RetirementPendingError`).
     Only exact-ref managed drains pass `exactRef: true`.
   - **Freeze state.** `freeze()` returns once its own enumeration settled (`scanUntilStable`) and records `enumerated_at`
-    (migration 0158); a run whose enumeration keeps finding rows (an old replica still writing) throws
-    `LegacyFreezeUnsettledError`, leaving the freeze published but not enumerated. `assertCutoverBarrier()` (the cutover
-    barrier) refuses before the freeze and until `enumerated_at` is set; rerunning the freeze completes it.
+    (migration 0158); a run whose enumeration keeps finding new legacy or revoked rows throws
+    `LegacyFreezeUnsettledError` and clears `enumerated_at`, leaving the freeze published but not enumerated.
+    `assertCutoverBarrier()` (the cutover barrier) refuses before the freeze, while `enumerated_at` is NULL, and while an
+    unmarked legacy row (`legacy_dispatch = 'unknown'`) started after `enumerated_at` exists (both stamped by the database
+    clock); rerunning the freeze once the old replica is stopped opens it.
   - **Cutover runbook** (`capybara permissions cutover …`, `apps/capybara/src/commands/permissions.ts`; kernel side
     `infra/cli/permission-cutover.ts`; `--json` on each). `report` and `freeze` use PostgreSQL only; `snapshot` needs
     Redis (the lifecycle leases).
@@ -191,9 +193,11 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
        `cloudUnknown` (cloud devices whose legacy rows name no incarnation; it reads the task rows and never empties by
        itself: `prevHandle` / `noInstance` devices will answer `recreate_required`, `currentUnconfirmed` ones clear on
        first use through `destroyByName` while their row's provider is loaded, unflagged ones clear on first use). Wait
-       until both are empty or accepted. Old replicas are detected where possible: live replicas (presence, Redis) on
-       another version, and `unfencedWriters` (legacy rows without the dispatch marker started after migration 0157,
-       and how many after the freeze: only a replica without the 8.5 code writes them). Replica presence reads `unknown`
+       until both are empty or accepted. Old replicas are detected where possible: live replicas (presence, Redis) whose
+       kernel version differs from the CLI's (an old replica, or the CLI is the different build; builds of one version
+       are not told apart), and `unfencedWriters` (legacy rows without the dispatch marker started after migration
+       0157; how many after the freeze, after its enumeration and in the last 15 minutes by the database clock: only a
+       replica without the 8.5 code writes them; `latestAt` never resets, so act on `recent` / `afterFreeze`). Replica presence reads `unknown`
        when Redis does not answer; an old replica that never starts a legacy task is not detectable, so step 1 still
        applies.
     3. Convert the config (`capybara config migrate-permissions`) and start it with `--activate-permission-config`.
@@ -207,8 +211,10 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
        crash or a failed device (lease wait) leaves that device without a snapshot for the next run, never half written
        or published twice. A narrowing goes through the device ceiling writer (epoch, Full consent reset, exact
        revocation). Devices whose applied limits are not established keep `permission_reconcile_required` (listed)
-       until a file reset reconciles them. Exit 1 while any device failed or is pending.
-    6. R2, gated on `retired` (below).
+       until a file reset reconciles them. Exit 1 while any device failed or is pending. Ctrl-C stops between devices
+       (the device in flight commits or rolls back whole); `--lease-wait-ms` bounds each device's lease wait.
+    6. Right before R2, run `snapshot` again until `pending` is 0: cloud devices created after step 5 start with
+       `owner_full_access` NULL. Then R2, gated on `retired` (below).
   - **Release gate.** It passes on `retired`. With `abandoned > 0` it also needs the operator to acknowledge: "N old incarnations
     were abandoned with their devices; legacy processes may still run on those computers; no device can reuse them".
 

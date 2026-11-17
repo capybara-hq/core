@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  type CloudSnapshotProgress,
   createDb,
   createLogger,
   KERNEL_MIGRATIONS_DIR,
@@ -13,6 +14,7 @@ import {
 } from "@capybara-hq/kernel";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { formatReport, LIST_LIMIT, runPermissionsCutover } from "../src/commands/permissions.js";
 import { cleanEnv, runCliInProcess } from "./support/cli.js";
 
 /**
@@ -155,7 +157,7 @@ describe("capybara permissions cutover", () => {
       },
       snapshot: { cloudDevices: 1, pending: 1, reconcileRequired: [] },
     });
-  }, 60_000);
+  });
 
   it("report in human form names the waits and the next step", async () => {
     const r = await runCliInProcess(["permissions", "cutover", "report"], env({ redis: false }));
@@ -165,7 +167,7 @@ describe("capybara permissions cutover", () => {
     expect(r.stdout).toContain(`Local devices without a boot identity: 1`);
     expect(r.stdout).toContain(localDevice);
     expect(r.stdout).toContain("Next:");
-  }, 60_000);
+  });
 
   it("snapshot refuses while legacy admission is open (no freeze)", async () => {
     const r = await runCliInProcess(["permissions", "cutover", "snapshot"], env());
@@ -177,7 +179,7 @@ describe("capybara permissions cutover", () => {
       .where("id", "=", cloudDevice)
       .executeTakeFirstOrThrow();
     expect(row.owner_full_access).toBeNull();
-  }, 60_000);
+  });
 
   it("freeze runs without Redis, enumerates before it returns and is idempotent", async () => {
     const r = await runCliInProcess(
@@ -198,7 +200,7 @@ describe("capybara permissions cutover", () => {
     expect(again.code, again.stderr).toBe(0);
     expect(again.stdout).toContain("Legacy freeze: published");
     expect(again.stdout).toContain(`enumerated 0 new members`);
-  }, 60_000);
+  });
 
   it("snapshot snapshots every cloud device after the freeze; a rerun publishes nothing", async () => {
     const r = await runCliInProcess(["permissions", "cutover", "snapshot", "--json"], env());
@@ -213,11 +215,49 @@ describe("capybara permissions cutover", () => {
     expect(rerun.code, rerun.stderr).toBe(0);
     expect(rerun.stdout).toContain("Snapshotted 0 cloud device(s)");
     expect(rerun.stdout).toContain("pending 0");
-  }, 60_000);
+  });
+
+  it("snapshot stops when interrupted and says a rerun resumes", async () => {
+    const out: string[] = [];
+    const err: string[] = [];
+    const sink = (to: string[]) =>
+      ({ write: (chunk: string) => to.push(chunk) > 0 }) as unknown as NodeJS.WritableStream;
+    const code = await runPermissionsCutover(
+      { action: "snapshot", json: false, leaseWaitMs: 1_000, signal: AbortSignal.abort() },
+      createLogger("error", { write: () => {} }),
+      env(),
+      { stdout: sink(out), stderr: sink(err) },
+    );
+    expect(code).toBe(1);
+    expect(err.join("")).toContain("interrupted");
+    expect(err.join("")).toContain("run it again to resume");
+  });
+
+  it("the human-readable lists show the first entries and a count; --json keeps all", async () => {
+    const r = await runCliInProcess(
+      ["permissions", "cutover", "report", "--json"],
+      env({ redis: false }),
+    );
+    const report = JSON.parse(r.stdout);
+    const ids = Array.from({ length: LIST_LIMIT + 3 }, (_, i) => `dev-${i}`);
+    const snapshot: CloudSnapshotProgress = {
+      cloudDevices: ids.length,
+      pending: 0,
+      reconcileRequired: ids,
+    };
+    const text = formatReport({ ...report, snapshot });
+    expect(text).toContain(`dev-${LIST_LIMIT - 1}`);
+    expect(text).not.toContain(`dev-${LIST_LIMIT} `);
+    expect(text).toContain("... and 3 more (--json lists all)");
+  });
 
   it("rejects an unknown cutover action and --json elsewhere (usage error)", async () => {
     expect((await runCliInProcess(["permissions", "cutover", "thaw"], env())).code).toBe(2);
     expect((await runCliInProcess(["permissions", "freeze"], env())).code).toBe(2);
     expect((await runCliInProcess(["migrate", "--json"], env())).code).toBe(2);
-  }, 60_000);
+    const wait = (extra: string[]) =>
+      runCliInProcess(["permissions", "cutover", ...extra], env()).then((x) => x.code);
+    expect(await wait(["report", "--lease-wait-ms", "100"])).toBe(2);
+    expect(await wait(["snapshot", "--lease-wait-ms", "soon"])).toBe(2);
+  });
 });

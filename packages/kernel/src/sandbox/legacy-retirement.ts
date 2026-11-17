@@ -106,16 +106,16 @@ export class CutoverBarrierError extends Error {
 }
 
 /**
- * The freeze is published, but its enumeration kept finding new rows for every pass: a replica
- * without the freeze code is probably still writing legacy rows. The freeze stays published (it
+ * The freeze is published, but its enumeration kept finding new rows for every pass (legacy rows,
+ * for example of a replica without the freeze code, or revoked managed starts). The freeze stays published (it
  * is never undone) and is not marked enumerated; stop that replica and run the freeze again.
  */
 export class LegacyFreezeUnsettledError extends Error {
   constructor(passes: number, added: number) {
     super(
       `The legacy-launch freeze is published, but its enumeration did not settle after ${passes} ` +
-        `passes (${added} new members): a replica without the freeze code may still be writing ` +
-        "legacy rows. Stop every old replica, then run the freeze again",
+        `passes (${added} new members): new legacy or revoked rows kept appearing. Stop every ` +
+        "old replica, then run the freeze again",
     );
     this.name = "LegacyFreezeUnsettledError";
   }
@@ -123,6 +123,9 @@ export class LegacyFreezeUnsettledError extends Error {
 
 /** The passes of the freeze's own enumeration before it is called unsettled. */
 const FREEZE_SCAN_PASSES = 5;
+
+/** What the report counts as a recent unmarked legacy row (database clock). */
+const RECENT = "15 minutes";
 
 /** The migration that added the legacy dispatch marker: rows after it without one are unfenced. */
 const MARKER_MIGRATION = "0157_legacy_retirement.sql";
@@ -156,11 +159,18 @@ export interface LegacyRetirementReport {
   /**
    * Evidence of replicas without the 8.5 code (they are not fenced by the freeze): legacy rows
    * without the dispatch marker (`legacy_dispatch = 'unknown'`) started after migration 0157 was
-   * applied (only such a replica writes them), how many of those started after the freeze, and
-   * the latest one's start. Nonzero `afterFreeze` (or a recent `latestAt`): an old replica still
-   * runs; stop it. Rows of an old replica that never starts a legacy task are not detectable here.
+   * applied (only such a replica writes them); how many of those started after the freeze, after
+   * its enumeration (the barrier refuses then) and in the last 15 minutes by the database clock;
+   * and the latest one's start. Nonzero `afterFreeze` or `recent`: an old replica still runs; stop
+   * it. Rows of an old replica that never starts a legacy task are not detectable here.
    */
-  unfencedWriters: { sinceMigration: number; afterFreeze: number; latestAt: Date | null };
+  unfencedWriters: {
+    sinceMigration: number;
+    afterFreeze: number;
+    afterEnumeration: number;
+    recent: number;
+    latestAt: Date | null;
+  };
   open: number;
   quarantined: number;
   resolved: number;
@@ -305,12 +315,15 @@ export class LegacyRetirementStore {
     // enumerated before the freeze returns: no use may run between it and the first scan (the
     // gate also scans each device it serves, so a worker that never runs bypasses nothing)
     const scan = await this.scanUntilStable(FREEZE_SCAN_PASSES);
-    if (!scan.stable) throw new LegacyFreezeUnsettledError(FREEZE_SCAN_PASSES, scan.added);
+    // A separate write after the scan (whose passes commit member by member): the mark only says
+    // a whole enumeration completed stable; an unsettled run clears an earlier mark, so the
+    // barrier never trusts an enumeration older than what this run found still moving.
     await this.db
       .updateTable("legacy_launch_freeze")
-      .set({ enumerated_at: sql<Date>`now()` })
+      .set({ enumerated_at: scan.stable ? sql<Date>`now()` : null })
       .where("id", "=", FREEZE_ID)
       .execute();
+    if (!scan.stable) throw new LegacyFreezeUnsettledError(FREEZE_SCAN_PASSES, scan.added);
     return { frozenAt, added: scan.added, stable: true };
   }
 
@@ -325,9 +338,10 @@ export class LegacyRetirementStore {
   }
 
   /**
-   * The cutover barrier (B-10): legacy admission is closed (the freeze is published) and the
-   * freeze's own enumeration completed. Throws {@link CutoverBarrierError} otherwise. The freeze is
-   * never undone, so a check before work that depends on it holds for the rest of that work.
+   * The cutover barrier (B-10): legacy admission is closed (the freeze is published), the
+   * freeze's own enumeration completed, and no unmarked legacy row (only an old, unfenced replica
+   * writes one) started after that enumeration. Throws {@link CutoverBarrierError} otherwise. The
+   * freeze is never undone; a later legacy row is still enumerated by the gate before any use.
    */
   async assertCutoverBarrier(): Promise<void> {
     const state = await this.freezeState();
@@ -340,6 +354,13 @@ export class LegacyRetirementStore {
       throw new CutoverBarrierError(
         "The legacy-launch freeze is published but its enumeration never completed: " +
           "run capybara permissions cutover freeze again",
+      );
+    const unfenced = await this.unfencedWriters(state);
+    if (unfenced.afterEnumeration > 0)
+      throw new CutoverBarrierError(
+        `${unfenced.afterEnumeration} unmarked legacy row(s) started after the freeze's ` +
+          "enumeration: an old, unfenced replica still runs. Stop it, then run capybara " +
+          "permissions cutover freeze again",
       );
   }
 
@@ -1009,20 +1030,25 @@ export class LegacyRetirementStore {
    * only a replica without the 8.5 code writes them (see {@link LegacyRetirementReport}).
    */
   private async unfencedWriters(
-    frozenAt: Date | null,
+    state: LegacyFreezeState,
   ): Promise<LegacyRetirementReport["unfencedWriters"]> {
     // the migrator's own bookkeeping (schema `capybara`, `migrate()`): when 0157 was applied
     const applied = await sql<{ applied_at: Date }>`SELECT applied_at FROM capybara._migrations
       WHERE name = ${MARKER_MIGRATION}`.execute(this.db.db);
     const since = applied.rows[0]?.applied_at;
-    if (since === undefined) return { sinceMigration: 0, afterFreeze: 0, latestAt: null };
+    if (since === undefined)
+      return { sinceMigration: 0, afterFreeze: 0, afterEnumeration: 0, recent: 0, latestAt: null };
+    const after = (at: Date | null) => sql`CASE WHEN started_at > ${at}::timestamptz THEN 1 END`;
     const row = await this.db
       .selectFrom("background_tasks")
       .select((eb) => [
         eb.fn.countAll<string>().as("n"),
+        eb.fn.count<string>(after(state.frozenAt)).as("after"),
+        eb.fn.count<string>(after(state.enumeratedAt)).as("afterEnumeration"),
+        // by the database clock, the one that stamped started_at
         eb.fn
-          .count<string>(sql`CASE WHEN started_at > ${frozenAt ?? null}::timestamptz THEN 1 END`)
-          .as("after"),
+          .count<string>(sql`CASE WHEN started_at > now() - ${RECENT}::interval THEN 1 END`)
+          .as("recent"),
         eb.fn.max("started_at").as("latest"),
       ])
       .where("launch_state", "=", "legacy")
@@ -1032,6 +1058,8 @@ export class LegacyRetirementStore {
     return {
       sinceMigration: Number(row.n),
       afterFreeze: Number(row.after),
+      afterEnumeration: Number(row.afterEnumeration),
+      recent: Number(row.recent),
       latestAt: (row.latest as Date | null) ?? null,
     };
   }
@@ -1048,7 +1076,7 @@ export class LegacyRetirementStore {
       .where("sid", "is", null)
       .where("legacy_dispatch", "=", "reserved")
       .executeTakeFirstOrThrow();
-    const unfenced = await this.unfencedWriters(freeze.frozenAt);
+    const unfenced = await this.unfencedWriters(freeze);
     const counts = await this.db
       .selectFrom("device_retirement_obligations")
       .select(["state", (eb) => eb.fn.countAll<string>().as("n")])

@@ -34,6 +34,8 @@ export type Command =
       action: (typeof CUTOVER_ACTIONS)[number];
       /** Print JSON instead of the human-readable form. */
       json: boolean;
+      /** `snapshot` only: how long to wait for each device's lifecycle lease (ms). */
+      leaseWaitMs?: number;
     }
   | { command: "help" };
 
@@ -125,12 +127,16 @@ export const USAGE = `Usage:
                                                returning; a re-run completes an interrupted
                                                enumeration. PostgreSQL only. Stop every old
                                                replica first
-  capybara permissions cutover snapshot [--json]
+  capybara permissions cutover snapshot [--json] [--lease-wait-ms <ms>]
                                                Snapshot every cloud device's permission authority
                                                under its lifecycle lease (needs Redis); refuses
                                                before the freeze or when this config is not the
                                                published one; a re-run publishes nothing and
-                                               resumes an interrupted run
+                                               resumes an interrupted run (Ctrl-C stops between
+                                               devices); --lease-wait-ms bounds the wait for
+                                               each device's lease (default 120000). Run it
+                                               again right before R2: new cloud devices start
+                                               without a snapshot
   capybara help                                Show this help
 
 Every command first loads .env from the working directory when it exists (variables already set
@@ -182,6 +188,8 @@ export function parseCli(argv: string[]): Command {
   }
   if (command !== "permissions" && v.json !== undefined)
     throw new UsageError("--json is only valid for permissions cutover");
+  if (command !== "permissions" && v["lease-wait-ms"] !== undefined)
+    throw new UsageError("--lease-wait-ms is only valid for permissions cutover snapshot");
   if (command === "permissions") {
     const [group, action, ...extra] = rest;
     if (group !== "cutover")
@@ -208,10 +216,16 @@ export function parseCli(argv: string[]): Command {
     ] as const) {
       if (v[opt] !== undefined) throw new UsageError(`--${opt} is not valid for permissions`);
     }
+    const wait = v["lease-wait-ms"];
+    if (wait !== undefined && action !== "snapshot")
+      throw new UsageError("--lease-wait-ms is only valid for permissions cutover snapshot");
+    if (wait !== undefined && !/^[1-9][0-9]{0,8}$/.test(wait))
+      throw new UsageError("--lease-wait-ms needs a positive number of milliseconds");
     return {
       command: "permissions-cutover",
       action: action as (typeof CUTOVER_ACTIONS)[number],
       json: v.json === true,
+      ...(wait !== undefined && { leaseWaitMs: Number(wait) }),
     };
   }
   if (command !== "config") {
@@ -419,6 +433,7 @@ function parse(argv: string[]) {
       in: { type: "string" },
       out: { type: "string" },
       json: { type: "boolean" },
+      "lease-wait-ms": { type: "string" },
       help: { type: "boolean", short: "h" },
     },
   });
