@@ -571,6 +571,28 @@ describe("uploaded attachments (file preview: attachments join the conversation'
     }
     const ok = await owner({ method: "GET", url: `${filesUrl(conv)}/${intact}/content` });
     expect(ok.body).toBe("same");
+
+    // the download route (the byte path of the panel, embed and viewer) refuses them too
+    const download = (id: string) =>
+      owner({ method: "GET", url: `/api/v1/orgs/${orgId}/attachments/${id}/download` });
+    for (const id of [swapped, resized]) {
+      const r = await download(id);
+      expect(r.statusCode, id).toBe(404);
+      expect(errCode(r)).toBe("attachment.not_found");
+    }
+    expect((await download(intact)).statusCode).toBe(302);
+  });
+
+  it("a text attachment larger than the read range is truncated, not removed", async () => {
+    const conv = await sandboxConversation();
+    const big = Buffer.alloc(1024 * 1024 + 4096, "a");
+    const id = await attachRow(conv, "big.txt", big, "text/plain", { etag: true });
+    const listed = (await listFiles(conv)).files.find((f) => f.id === id);
+    expect(listed?.status).toBe("available");
+    const r = await owner({ method: "GET", url: `${filesUrl(conv)}/${id}/content` });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.headers["x-content-truncated"]).toBe("true");
+    expect(r.body.length).toBe(1024 * 1024);
   });
 
   it("only this conversation's ready chat uploads in this org: everything else is not found", async () => {

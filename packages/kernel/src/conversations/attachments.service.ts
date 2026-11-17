@@ -411,7 +411,15 @@ export class AttachmentsService {
     this.storage.assertAvailable();
     const row = await this.db
       .selectFrom("attachments")
-      .select(["account_id", "conversation_id", "name", "content_type", "object_key", "etag"])
+      .select([
+        "account_id",
+        "conversation_id",
+        "name",
+        "content_type",
+        "object_key",
+        "size",
+        "etag",
+      ])
       .where("id", "=", id)
       .where("org_id", "=", orgId)
       .where("status", "=", "ready")
@@ -425,7 +433,7 @@ export class AttachmentsService {
     if (!allowed) throw notFound();
     const store = this.storage.kernel(orgId);
     const head = await store.head(row.object_key);
-    if (!head || !this.sameContent(row.etag, head.etag, { orgId, attachmentId: id })) {
+    if (!this.storedMatches({ id, size: Number(row.size), etag: row.etag }, head, { orgId })) {
       throw notFound();
     }
     const inline = isImageContentType(row.content_type) || row.content_type === "application/pdf";
