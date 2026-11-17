@@ -7,35 +7,124 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import type WebSocket from "ws";
 import { currentBootId } from "./boot-id.js";
-import type { InstanceBinder } from "./exec/instance-binding.js";
+import { credentialIdentity, type InstanceBinder } from "./exec/instance-binding.js";
 import type { MacOperationBackend } from "./exec/mac-operation-backend.js";
 import { DrainPendingError } from "./exec/operation-supervisor.js";
 import { type StagedOwnerPolicy, serveOperationV3 } from "./server-ops.js";
 import type { Credential } from "./state.js";
 
+/** Held answers a session keeps at most while no socket is ready; the oldest is dropped first. */
+export const MAX_HELD_ANSWERS = 64;
+
 /**
  * What a staged (protocol 3) program keeps across its sockets, like protocol 2's connection
  * (`client.ts`): the running operations and the answers produced while no socket was ready.
+ * One state belongs to one machine credential ({@link StagedSessionStates}); it never serves
+ * another credential's sockets.
  */
 export interface StagedSessionState {
   readonly graceMs: number;
+  /** {@link stagedSessionIdentity} of the credential this state serves; undefined only in tests. */
+  readonly identity: string | undefined;
+  /** At most this many answers are held while no socket is ready. */
+  readonly maxPending: number;
+  readonly now: () => number;
   readonly running: Map<string, { op: string; ctl: AbortController; done: Promise<void> }>;
   /** Set by {@link drainStagedSession}; never cleared in this process (a drained device is not reused). */
   draining: boolean;
+  /** Set when a credential change replaced this state: it holds nothing and serves no socket. */
+  discarded: boolean;
+  /** Closes each socket this state serves; a discard closes them all. */
+  readonly sockets: Set<() => void>;
   /** Answers waiting for the next ready socket, with their expiry. */
   readonly pending: Map<string, { res: DeviceResponseV3; expires: number }>;
   /** Delivers on the current ready socket; undefined while none is ready. */
   current: ((res: DeviceResponseV3) => void) | undefined;
 }
 
-export function createStagedSessionState(opts: { graceMs: number }): StagedSessionState {
+/**
+ * `graceMs` is required: production passes the credential's `reconnectGraceSeconds * 1000`
+ * ({@link StagedSessionStates}); 0 holds nothing and must be asked for explicitly.
+ */
+export function createStagedSessionState(opts: {
+  graceMs: number;
+  identity?: string;
+  maxPending?: number;
+  now?: () => number;
+}): StagedSessionState {
+  if (!Number.isSafeInteger(opts?.graceMs) || opts.graceMs < 0)
+    throw new Error("Pass the reconnect grace in milliseconds (a non-negative integer)");
+  const maxPending = opts.maxPending ?? MAX_HELD_ANSWERS;
+  if (!Number.isSafeInteger(maxPending) || maxPending < 1)
+    throw new Error("Pass a positive held-answer limit");
   return {
     graceMs: opts.graceMs,
+    identity: opts.identity,
+    maxPending,
+    now: opts.now ?? Date.now,
     running: new Map(),
     pending: new Map(),
     current: undefined,
     draining: false,
+    discarded: false,
+    sockets: new Set(),
   };
+}
+
+/** The credential fields a staged session is keyed by, plus its reconnect grace. */
+export type StagedSessionCredential = Pick<
+  Credential,
+  "url" | "orgId" | "deviceId" | "credential" | "reconnectGraceSeconds"
+>;
+
+/** The machine and credential a session state belongs to (never the secret itself). */
+export const stagedSessionIdentity = (
+  cred: Omit<StagedSessionCredential, "reconnectGraceSeconds">,
+) => JSON.stringify([cred.url, cred.orgId, cred.deviceId, credentialIdentity(cred.credential)]);
+
+/**
+ * The program's session states, one per machine credential (8.1 rereview N2): the same credential
+ * gets the same state across reconnects; a different one discards the old state, its held
+ * answers included, so no answer produced for one credential reaches another's socket.
+ */
+export class StagedSessionStates {
+  private state: StagedSessionState | undefined;
+
+  for(cred: StagedSessionCredential): StagedSessionState {
+    const identity = stagedSessionIdentity(cred);
+    if (this.state && this.state.identity === identity) return this.state;
+    if (this.state) discardStagedSessionState(this.state);
+    this.state = createStagedSessionState({
+      graceMs: cred.reconnectGraceSeconds * 1000,
+      identity,
+    });
+    return this.state;
+  }
+}
+
+function discardStagedSessionState(state: StagedSessionState): void {
+  state.discarded = true;
+  state.pending.clear();
+  state.current = undefined;
+  for (const close of [...state.sockets]) close();
+  state.sockets.clear();
+}
+
+/**
+ * Holds an answer for the next ready socket: expired entries are swept first, and the oldest
+ * entries are dropped beyond the limit, so a device that never reconnects stays bounded.
+ */
+function holdAnswer(state: StagedSessionState, res: DeviceResponseV3): void {
+  if (state.graceMs <= 0 || state.discarded) return;
+  const now = state.now();
+  for (const [id, p] of state.pending) if (p.expires <= now) state.pending.delete(id);
+  state.pending.delete(res.id);
+  while (state.pending.size >= state.maxPending) {
+    const oldest = state.pending.keys().next();
+    if (oldest.done) break;
+    state.pending.delete(oldest.value);
+  }
+  state.pending.set(res.id, { res, expires: now + state.graceMs });
 }
 
 /**
@@ -46,13 +135,15 @@ export function createStagedSessionState(opts: { graceMs: number }): StagedSessi
 const CONNECTION_FENCED = new Set(["backgroundReadOutput"]);
 
 /**
- * Admissions a draining session refuses here: only instance creation, which no supervisor owns.
+ * Admissions a draining session refuses here: instance creation, which no supervisor owns, and a
+ * new instance binding, since a drained session never takes on a new generation (8.4 B4 M9); a
+ * retried bindInstance is refused too, and a drained session is never reused.
  * Execution, background starts and native, preparation and browsing operations all reach the
  * supervisor, whose admission refuses only fresh operations while draining: a retry of an admitted
  * id (an answer lost on a socket blip) still recovers. Exact status, read, tail, stop, revoke and
  * policy reconciliation are always served.
  */
-const REFUSED_WHILE_DRAINING = new Set(["create"]);
+const REFUSED_WHILE_DRAINING = new Set(["create", "bindInstance"]);
 
 export type StagedDrainReport =
   | { drained: true }
@@ -124,7 +215,8 @@ export function serveStagedSession(
   credential: Pick<Credential, "maxFrameBytes">,
   backend: MacOperationBackend,
   handle: SandboxHandle,
-  state: StagedSessionState = createStagedSessionState({ graceMs: 0 }),
+  /** Required: from {@link StagedSessionStates}, so the grace and the credential are explicit. */
+  state: StagedSessionState,
   /**
    * The post-commit binder (B4). With one, operations go to the generation it bound (none while
    * unbound) and `bindInstance` is served; without one, the fixed backend serves a bound hello.
@@ -133,6 +225,8 @@ export function serveStagedSession(
   /** Serves `policy` / `policyStatus` with owner reports (B2); without it they are unsupported. */
   owner?: StagedOwnerPolicy,
 ): { ready: () => KernelReadyV3 | undefined } {
+  if (!state || state.discarded)
+    throw new Error("Serve the session with the current credential's session state");
   const bootId = report.bootId ?? currentBootId();
   const hello: DeviceHelloV3 = {
     ...report,
@@ -173,16 +267,23 @@ export function serveStagedSession(
       fail(error);
     }
   };
-  const hold = (res: DeviceResponseV3) => {
-    if (state.graceMs > 0) state.pending.set(res.id, { res, expires: Date.now() + state.graceMs });
-  };
+  // fitted to this socket's own limit, so a held answer is bounded in bytes as well as in count
+  const hold = (res: DeviceResponseV3) =>
+    holdAnswer(state, fit(res, hello.transport.maxFrameBytes));
   const deliver = (res: DeviceResponseV3) => {
     if (state.current) state.current(res);
     else hold(res);
   };
   const refuse = (id: string, kind: "unsupported" | "error", message: string) =>
     deliverHere({ type: "res", id, ok: false, error: { kind, message } });
+  const credentialChanged = () => socket.close(4401, "Credential changed; reconnect");
+  state.sockets.add(credentialChanged);
   socket.on("message", (data, binary) => {
+    // a socket opened before its credential's state was discarded admits nothing more
+    if (state.discarded) {
+      credentialChanged();
+      return;
+    }
     try {
       if (binary) throw new Error("Use JSON text frames");
       const frame = parseDeviceFrameV3(
@@ -196,7 +297,7 @@ export function serveStagedSession(
         ready = frame;
         state.current = deliverHere;
         // answers produced while no socket was ready, within the grace
-        const now = Date.now();
+        const now = state.now();
         for (const [id, p] of [...state.pending]) {
           state.pending.delete(id);
           if (p.expires > now) deliverHere(p.res);
@@ -257,6 +358,7 @@ export function serveStagedSession(
     }
   });
   socket.on("close", () => {
+    state.sockets.delete(credentialChanged);
     ready = undefined;
     if (state.current === deliverHere) state.current = undefined;
     for (const { op, ctl } of state.running.values())
