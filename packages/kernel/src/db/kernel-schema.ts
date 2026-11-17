@@ -187,6 +187,16 @@ export interface OrgToolSwitchesTable {
   updated_at: Ts;
 }
 
+/** 0145: an internal endpoint a super admin lets the org's extension requests reach. */
+export interface OrgNetworkAllowancesTable {
+  id: string;
+  org_id: string;
+  /** A hostname, `*.domain`, IP, CIDR or origin `http(s)://host[:port]`, normalized. */
+  entry: string;
+  created_by: string | null;
+  created_at: Ts;
+}
+
 export interface AuditEventsTable {
   id: Generated<string>;
   at: Ts;
@@ -1463,6 +1473,7 @@ export interface KernelDatabase {
   extension_org_configs: ExtensionOrgConfigsTable;
   extension_org_overrides: ExtensionOrgOverridesTable;
   org_tool_switches: OrgToolSwitchesTable;
+  org_network_allowances: OrgNetworkAllowancesTable;
   audit_events: AuditEventsTable;
   secrets: SecretsTable;
   agents: AgentsTable;

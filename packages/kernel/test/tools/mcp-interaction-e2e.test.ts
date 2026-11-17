@@ -180,7 +180,7 @@ beforeAll(async () => {
       {
         extensions: [MODEL_FAKE, CONNECTOR],
         extensionPermissions: { autoApprove: true },
-        extensionConfig: { "fake-connector": { allowInsecureLoopback: true } },
+        extensionConfig: { "fake-connector": {} },
         roles: ["api", "worker"],
         // 足够长：断言「为问用户而中止」立即结束，而不是等满工具超时
         tools: { timeoutMs: 30_000 },

@@ -279,6 +279,8 @@ export const keys = {
       members: (): readonly unknown[] => [...all, "members"],
       /** The org's settings (with the deployment's defaults and the sandbox limits). */
       orgSettings: (): readonly unknown[] => [...all, "orgSettings"],
+      /** The internal endpoints a super admin allowed the org's extension requests (org admins read). */
+      networkAllowances: (): readonly unknown[] => [...all, "networkAllowances"],
       /** The themes on in the org, the viewer's resolved theme and the org's theme setting. */
       themes: (): readonly unknown[] => [...all, "themes"],
       /** The org's invitations (admins). */
@@ -523,6 +525,12 @@ export const keys = {
       adminAccounts: (after = ""): readonly unknown[] => [...all, "adminAccounts", after],
       /** The deployment's orgs. */
       adminOrgs: (): readonly unknown[] => [...all, "adminOrgs"],
+      /** One org's internal endpoints, as the super admin manages them. */
+      adminOrgNetworkAllowances: (orgId: string): readonly unknown[] => [
+        ...all,
+        "adminOrgNetworkAllowances",
+        orgId,
+      ],
       /** The members of one org (the admin agent owner transfer). */
       adminOrgMembers: (orgId: string): readonly unknown[] => [...all, "adminOrgMembers", orgId],
       /** Every page of every org's agents under every filter (an invalidation prefix). */

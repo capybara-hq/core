@@ -58,6 +58,8 @@ async function startKernel(c: RunnerConfig): Promise<void> {
     extensionPermissions: { autoApprove: true },
     // The official marketplace is on by default and on the internet: tests turn it on explicitly.
     marketplaces: { official: { enabled: false } },
+    // Fake servers run on loopback: ctx.net may reach them
+    net: { allowInsecureLoopback: true },
     log: { level: "error" },
   };
   const config = KernelConfigSchema.parse(deepMerge(base, c.overrides));

@@ -22,6 +22,7 @@ import { oweDeviceDestroy } from "../sandbox/jobs.js";
 import { ApprovalsService } from "../tools/approvals.service.js";
 import { Credentials } from "../tools/credentials.js";
 import { QuestionsService } from "../tools/questions.service.js";
+import { OrgLock } from "./org-lock.js";
 import type { OrgRole } from "./roles.js";
 
 /** 离职原因：管理员移出、本人离开、通讯录同步判定离职。 */
@@ -123,6 +124,7 @@ export class Offboarding {
     @Inject(LifecycleHooks)
     private readonly lifecycle: Pick<LifecycleHooks, "recordIn">,
     @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
+    @Inject(OrgLock) private readonly orgLock: Pick<OrgLock, "lockForRemoval">,
   ) {}
 
   /**
@@ -154,6 +156,9 @@ export class Offboarding {
     reason: OffboardReason,
     actor: { actorAccountId?: string; actorTokenId?: string } = {},
   ): Promise<OffboardResult> {
+    // the org admission lock exclusively (the callers take it first, before the org row; a no-op
+    // then): it waits for the run writes the fence admitted shared and keeps new ones out
+    await this.orgLock.lockForRemoval(orgId);
     const deleted = await this.db
       .deleteFrom("memberships")
       .where("org_id", "=", orgId)

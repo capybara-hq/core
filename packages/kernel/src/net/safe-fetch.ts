@@ -3,6 +3,7 @@ import { isIP } from "node:net";
 import { Agent, fetch as undiciFetch } from "undici";
 import { bypassesProxy, proxyAgent } from "./proxy.js";
 import {
+  hostEntryExempts,
   isLoopbackHost,
   type LookupFn,
   NetDeniedError,
@@ -23,7 +24,8 @@ import {
  *   `noProxy` tunnels through the proxy (`proxy.ts`) instead: the host is not resolved locally
  *   (the proxy resolves it and owns SSRF protection for the resolved address), but an IP-literal
  *   host is still checked against the private ranges and `allowPrivateHosts`;
- * - redirects are never followed: a 3xx (other than 304) is {@link NetDeniedError} `net.redirect`;
+ * - redirects are never followed: a 3xx (other than 304) is {@link NetDeniedError} `net.redirect`,
+ *   or, with `redirects: "return"`, returned to the caller as is (its body unread);
  * - with `maxBytes`, a declared or streamed body over the limit is {@link NetBodyTooLargeError}.
  */
 
@@ -98,6 +100,8 @@ export async function safeFetch(
   opts: {
     lookup?: LookupFn;
     maxBytes?: number;
+    /** A 3xx response (other than 304): `refuse` (default) rejects with `net.redirect`, `return` returns it. */
+    redirects?: "refuse" | "return";
     /** Tests only: wraps the pinned dispatcher (defaults to {@link pinnedAgent}). */
     dispatcherFor?: (ips: string[]) => Agent;
     /** Tests only: builds the proxy dispatcher (defaults to {@link proxyAgent}). */
@@ -116,7 +120,15 @@ export async function safeFetch(
     ((policy.allowInsecureLoopback && isLoopbackHost(host)) ||
       policy.trustedOrigins.some((o) => originOf(o) === target.origin));
   if (target.protocol !== "https:" && !insecureOk) {
-    throw new NetDeniedError("net.insecure_url", host, `The URL must use https (${host}).`);
+    // an extension request to a host the org allows only as a host entry (https only): name the
+    // origin entry that would allow plain http
+    const hint =
+      policy.extension !== undefined &&
+      target.protocol === "http:" &&
+      hostEntryExempts(host, policy)
+        ? ` ${host} is allowed for the organization over https only; to allow plain http, ask a super admin to allow the origin ${target.origin}.`
+        : "";
+    throw new NetDeniedError("net.insecure_url", host, `The URL must use https (${host}).${hint}`);
   }
   const proxy = policy.proxy;
   const proxied =
@@ -159,7 +171,12 @@ export async function safeFetch(
   }
   // close() waits for the in-flight request (the body still being read) before it closes
   void agent.close().catch(() => {});
-  if (res.status >= 300 && res.status < 400 && res.status !== 304) {
+  if (
+    res.status >= 300 &&
+    res.status < 400 &&
+    res.status !== 304 &&
+    (opts.redirects ?? "refuse") === "refuse"
+  ) {
     await res.body?.cancel().catch(() => {});
     throw new NetDeniedError(
       "net.redirect",

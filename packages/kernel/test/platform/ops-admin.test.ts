@@ -173,6 +173,9 @@ describe("registration and who may call", () => {
       "admin.connectors-list",
       "admin.health",
       "admin.org-members",
+      "admin.org-network-allowance-add",
+      "admin.org-network-allowance-remove",
+      "admin.org-network-allowances",
       "admin.outbox-discard",
       "admin.outbox-list-dead",
       "admin.outbox-retry",
@@ -196,6 +199,7 @@ describe("registration and who may call", () => {
       "orgs.get",
       "orgs.list",
       "orgs.members",
+      "orgs.network-allowances",
       "orgs.set-limits",
       "orgs.update",
     ]);

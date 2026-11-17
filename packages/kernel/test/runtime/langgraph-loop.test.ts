@@ -31,6 +31,7 @@ import { COMPACTION_SETTINGS } from "../../src/runtime/compaction-settings.servi
 import { LangGraphLoop, type LoopDeps } from "../../src/runtime/langgraph-loop.js";
 import type { LoopContext } from "../../src/runtime/loop.js";
 import type { StreamSink } from "../../src/runtime/model-call.js";
+import { inExclusiveAdmission } from "../../src/runtime/run-execution.js";
 import { runJobId } from "../../src/runtime/run-queue.js";
 import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
@@ -301,6 +302,61 @@ describe("LangGraphLoop", () => {
     ]);
     // wrap-up 请求没有工具
     expect(calls[2]?.tools).toEqual([]);
+  });
+
+  it("runs the tool step and a skill fork's dispatch with exclusive admission, the model step without", async () => {
+    script = (n) =>
+      n === 1 ? { text: "", stopReason: "tool_use" } : { text: "done", stopReason: "end_turn" };
+    const seen: [string, boolean][] = [];
+    const wrapped: LoopDeps = {
+      ...deps,
+      toolPipeline: {
+        runStep: (c) => {
+          seen.push(["tools", inExclusiveAdmission()]);
+          return deps.toolPipeline.runStep(c);
+        },
+      },
+    };
+    await say("go");
+    await new LangGraphLoop(saver, wrapped, {
+      afterModelStep: async () => {
+        seen.push(["model", inExclusiveAdmission()]);
+      },
+    }).run(loopCtx());
+    expect(seen).toEqual([
+      ["model", false],
+      ["tools", true],
+      ["model", false],
+    ]);
+
+    // a fork invocation absorbed at step 1 is dispatched before any model call
+    runId = randomUUID();
+    const seq = await say("fork");
+    const forkSeen: boolean[] = [];
+    const forked: LoopDeps = {
+      ...deps,
+      skillForks: {
+        advance: async () => {
+          forkSeen.push(inExclusiveAdmission());
+          return { kind: "end" };
+        },
+      } as unknown as NonNullable<LoopDeps["skillForks"]>,
+    };
+    const out = await new LangGraphLoop(saver, forked).run(
+      loopCtx({
+        async pendingAbsorbable(afterSeq) {
+          const evs = await eventLog.readAfter(conversationId, afterSeq, 1000);
+          return evs
+            .filter((e) => e.type === "user_message" && e.seq === seq)
+            .map((e) => ({
+              ...e,
+              payload: { ...e.payload, skill: { mode: "fork", name: "s" } },
+            })) as unknown as Awaited<ReturnType<LoopContext["pendingAbsorbable"]>>;
+        },
+      }),
+    );
+    expect(out).toEqual({ kind: "completed", consumedUpToSeq: seq });
+    expect(forkSeen).toEqual([true]);
   });
 
   it("停机信号：在 prepare 处返回 interrupted，checkpoint 停在下一步之前；续跑从那里继续", async () => {

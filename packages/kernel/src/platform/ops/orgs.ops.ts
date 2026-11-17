@@ -3,13 +3,16 @@ import { z } from "zod";
 import { OrgAuditListQuery } from "../../admin/audit.schemas.js";
 import { AuditLogService } from "../../admin/audit-log.service.js";
 import { limitDefaults } from "../../admin/limit-defaults.js";
+import { NetworkAllowanceBody, NetworkAllowanceParams } from "../../admin/org-network.schemas.js";
+import { OrgNetworkAdmin } from "../../admin/org-network.service.js";
 import { ApiError } from "../../errors.js";
 import { AccountsService } from "../../identity/accounts.js";
 import { DEPLOYMENT_SETTINGS_PATCH, SettingsService } from "../../identity/settings.js";
 import { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import { MembersService } from "../../orgs/members.service.js";
-import { OrgUpdateBody } from "../../orgs/orgs.schemas.js";
+import { OrgNetworkAllowances } from "../../orgs/network-allowances.service.js";
+import { networkAllowanceView, OrgUpdateBody } from "../../orgs/orgs.schemas.js";
 import { type Org, OrgsService } from "../../orgs/orgs.service.js";
 import { defineOperation, type OperationContext } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
@@ -55,6 +58,8 @@ export class OrgsOperations implements OnModuleInit {
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
     @Inject(KernelDb) private readonly kdb: KernelDb,
     @Inject(AuditLogService) private readonly audit: AuditLogService,
+    @Inject(OrgNetworkAdmin) private readonly networkAdmin: OrgNetworkAdmin,
+    @Inject(OrgNetworkAllowances) private readonly allowances: OrgNetworkAllowances,
   ) {}
 
   private async org(orgId: string): Promise<Org> {
@@ -67,6 +72,18 @@ export class OrgsOperations implements OnModuleInit {
   private async actor(ctx: OperationContext) {
     const a = await this.accounts.get(ctx.actorAccountId);
     if (!a) throw new ApiError("forbidden", "Your account no longer exists");
+    return a;
+  }
+
+  /** The org's allowance `id` (for a card and the remove precheck); none → the remove's 404. */
+  private async allowance(orgId: string, id: string) {
+    const a = (await this.networkAdmin.list(orgId)).find((x) => x.id === id);
+    if (!a) {
+      throw new ApiError(
+        "org.network_allowance_not_found",
+        "The organization has no such internal endpoint allowance",
+      );
+    }
     return a;
   }
 
@@ -220,6 +237,128 @@ export class OrgsOperations implements OnModuleInit {
             limitDefaults: limitDefaults(this.config),
           };
         },
+      }),
+      defineOperation({
+        id: "admin.org-network-allowances",
+        description:
+          "List an org's internal endpoint allowances (super admin): the hosts, wildcards, IPs or CIDRs and origins the org's extension requests may reach although they resolve to private or loopback addresses, oldest first, each with its id, entry and when it was added. Add one with admin.org-network-allowance-add, remove one with admin.org-network-allowance-remove.",
+        input: z.object({ orgId: OrgId }).strict(),
+        example: { orgId: "00000000-0000-4000-8000-000000000000" },
+        authz: { superAdmin: true },
+        mirrors: ["GET /api/v1/admin/orgs/:orgId/network-allowances"],
+        extras: ["orgId"],
+        confirm: "read",
+        errors: [
+          {
+            code: "org.not_found",
+            next: "Look the org up with orgs.list and pass its id.",
+          },
+        ],
+        run: async (input) => ({
+          allowances: (await this.networkAdmin.list(input.orgId)).map(networkAllowanceView),
+        }),
+      }),
+      defineOperation({
+        id: "admin.org-network-allowance-add",
+        description:
+          "Let an org's extension requests reach an internal endpoint (super admin): entry is a hostname or *.domain wildcard (https, any port), an IP address or CIDR such as 10.1.0.0/16 (IP-literal URLs only), or an origin such as http://mcp.internal:8080 (exactly that scheme, host and port; plain http allowed). Link-local (cloud metadata), loopback and unspecified addresses are never allowed. Only a person widens: through this tool the add is always refused, and the super admin adds the endpoint in the admin console on the web; listing and removing work here.",
+        input: NetworkAllowanceBody.extend({ orgId: OrgId }).strict(),
+        example: {
+          orgId: "00000000-0000-4000-8000-000000000000",
+          entry: "http://mcp.internal:8080",
+        },
+        authz: { superAdmin: true },
+        mirrors: ["POST /api/v1/admin/orgs/:orgId/network-allowances"],
+        extras: ["orgId"],
+        confirm: "platform",
+        errors: [
+          {
+            code: "org.not_found",
+            next: "Look the org up with orgs.list and pass its id.",
+          },
+          {
+            code: "org.network_allowance_widen_not_allowed",
+            next: "Add the internal endpoint yourself on the org's page in the admin console on the web.",
+          },
+        ],
+        precheck: (i) => precheckBy(() => this.networkAdmin.checkAdd(i.orgId, i.entry, true)),
+        summary: async (i) => {
+          const name = await orElse(async () => named((await this.org(i.orgId)).name), i.orgId);
+          const entry = named(i.entry.trim());
+          return {
+            zh: `允许组织「${name}」的扩展请求访问内部端点 ${entry}`,
+            en: `Let the extension requests of org "${name}" reach the internal endpoint ${entry}`,
+          };
+        },
+        run: async (input, ctx) => ({
+          allowance: networkAllowanceView(
+            await this.networkAdmin.add(
+              input.orgId,
+              input.entry,
+              { accountId: ctx.actorAccountId },
+              true,
+              viaAgent("admin.org-network-allowance-add", ctx),
+            ),
+          ),
+        }),
+      }),
+      defineOperation({
+        id: "admin.org-network-allowance-remove",
+        description:
+          "Remove one of an org's internal endpoint allowances (super admin) by its id (admin.org-network-allowances): the org's extension requests to that endpoint are refused from the next request on. The org's audit log records it.",
+        input: NetworkAllowanceParams.extend({ orgId: OrgId }).strict(),
+        example: {
+          orgId: "00000000-0000-4000-8000-000000000000",
+          id: "00000000-0000-4000-8000-000000000001",
+        },
+        authz: { superAdmin: true },
+        mirrors: ["DELETE /api/v1/admin/orgs/:orgId/network-allowances/:id"],
+        extras: ["orgId"],
+        confirm: "platform",
+        errors: [
+          {
+            code: "org.not_found",
+            next: "Look the org up with orgs.list and pass its id.",
+          },
+          {
+            code: "org.network_allowance_not_found",
+            next: "List the org's allowances again with admin.org-network-allowances and pass one of their ids.",
+          },
+        ],
+        precheck: (i) => precheckBy(() => this.allowance(i.orgId, i.id)),
+        summary: async (i) => {
+          const name = await orElse(async () => named((await this.org(i.orgId)).name), i.orgId);
+          const entry = await orElse(
+            async () => named((await this.allowance(i.orgId, i.id)).entry),
+            i.id,
+          );
+          return {
+            zh: `移除组织「${name}」的内部端点 ${entry}，该组织的扩展请求将无法再访问它`,
+            en: `Remove the internal endpoint ${entry} of org "${name}"; the org's extension requests can no longer reach it`,
+          };
+        },
+        run: async (input, ctx) => {
+          await this.networkAdmin.remove(
+            input.orgId,
+            input.id,
+            { accountId: ctx.actorAccountId },
+            viaAgent("admin.org-network-allowance-remove", ctx),
+          );
+          return { id: input.id, removed: true };
+        },
+      }),
+      defineOperation({
+        id: "orgs.network-allowances",
+        description:
+          "Read this conversation's org's internal endpoint allowances (org admins, read-only): the hosts, wildcards, IPs or CIDRs and origins a super admin lets the org's extension requests reach although they resolve to private or loopback addresses. An extension request to an internal endpoint not listed is refused; only a super admin can add one.",
+        input: z.object({}).strict(),
+        example: {},
+        authz: { orgAction: "org.update" },
+        mirrors: ["GET /api/v1/orgs/:orgId/network-allowances"],
+        confirm: "read",
+        run: async (_input, ctx) => ({
+          allowances: (await this.allowances.list(ctx.orgId)).map(networkAllowanceView),
+        }),
       }),
       defineOperation({
         id: "orgs.current",

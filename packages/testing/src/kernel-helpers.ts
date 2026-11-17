@@ -50,7 +50,8 @@ export async function waitFor<T>(
 
 /**
  * A kernel config for tests: the given PG / Redis, a fixed master key, an ephemeral HTTP port,
- * auto-approved extension permissions, short run-lock timings and the official marketplace off
+ * auto-approved extension permissions, `net.allowInsecureLoopback` (fake servers on loopback),
+ * short run-lock timings and the official marketplace off
  * (it is on by default and its address is on the internet). `overrides` are top-level config keys
  * and win; `runtime` is merged into the defaults, and `marketplaces` too, so other marketplace
  * settings keep the official one off unless `marketplaces.official` turns it on.
@@ -75,6 +76,8 @@ export function testKernelConfig(
       ...marketplaces,
       official: { enabled: false, ...marketplaces?.official },
     },
+    // Fake servers run on loopback: ctx.net may reach them (a test overrides `net` to assert refusals)
+    net: { allowInsecureLoopback: true },
     ...rest,
   });
 }

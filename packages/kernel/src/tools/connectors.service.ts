@@ -711,6 +711,7 @@ export class ConnectorsService {
     let listed: { specs: unknown; resources: boolean } | undefined;
     if (auth.type !== "oauth_code") {
       listed = await this.drift.listTools(
+        orgId,
         input.connector,
         endpoint,
         async () => {
@@ -721,7 +722,7 @@ export class ConnectorsService {
           if (!secret) throw new CredentialMissing(id, auth.ownership);
           return this.credentials.injectionFor(id, auth, secret);
         },
-        { orgId, slug },
+        { slug },
       );
     }
 
@@ -1092,7 +1093,11 @@ export class ConnectorsService {
     let inspection: Awaited<ReturnType<NonNullable<typeof connector.inspect>>> | undefined;
     if (connector.inspect) {
       try {
-        inspection = await connector.inspect({ endpoint, signal: AbortSignal.timeout(timeoutMs) });
+        inspection = await connector.inspect({
+          endpoint,
+          signal: AbortSignal.timeout(timeoutMs),
+          orgId,
+        });
       } catch (e) {
         const message =
           e instanceof ToolError
@@ -1116,8 +1121,7 @@ export class ConnectorsService {
     let tools: ToolPreview[] | null = null;
     let issues: ToolIssue[] = [];
     if (inject) {
-      const listed = await this.drift.listTools(input.connector, endpoint, inject, {
-        orgId,
+      const listed = await this.drift.listTools(orgId, input.connector, endpoint, inject, {
         preview: true,
       });
       const snap = snapshot(slug, listed.specs, listed.resources);
@@ -1792,10 +1796,11 @@ export class ConnectorsService {
     const app = await this.row(this.db, orgId, connectorId);
     const auth = app.auth as unknown as ConnectorAuth;
     const { specs, resources } = await this.drift.listTools(
+      orgId,
       app.connector,
       app.endpoint,
       () => this.credentials.injection(orgId, connectorId, auth, actorAccountId),
-      { orgId, connectorId },
+      { connectorId },
       (last) => this.credentials.onUnauthorized(orgId, connectorId, auth, actorAccountId, last),
     );
     const { rows, issues } = snapshot(app.slug, specs, resources);

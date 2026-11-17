@@ -82,7 +82,7 @@ export function accountsFor(db: Kysely<any>): AccountsService {
 
 export function orgLockFor(db: Kysely<any>): OrgLock {
   const h = handlesFor(db);
-  return new OrgLock(h.db, h.txHost);
+  return new OrgLock(h.db, h.xactLock, h.txHost);
 }
 
 export function adminLockFor(db: Kysely<any>): SuperAdminLock {
@@ -223,6 +223,7 @@ export function testOffboarding(
     // no worker here: lifecycle hook deliveries are covered by test/extensions/lifecycle-hooks*
     { recordIn: async () => [] },
     (opts.log ?? quiet) as KernelLogger,
+    orgLockFor(db),
   );
 }
 

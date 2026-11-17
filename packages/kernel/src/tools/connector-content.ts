@@ -195,6 +195,7 @@ export class ConnectorContent {
           await this.credentials.onUnauthorized(orgId, app.id, auth, accountId, stale);
         },
         signal: AbortSignal.timeout(timeoutMs),
+        orgId,
       });
       return redactDeep(await work(session), redact()) as T;
     } catch (e) {

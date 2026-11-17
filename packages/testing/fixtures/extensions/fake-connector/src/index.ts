@@ -7,6 +7,7 @@ import {
   type ConnectorSession,
   defineExtension,
   type ElicitationRequest,
+  type ExtensionNet,
   type Logger,
   type PromptInfo,
   type ToolContent,
@@ -33,8 +34,10 @@ import { z } from "zod";
  * `kind` names another): a deliberately small MCP client
  * (Streamable HTTP) meant for `startFakeMcpServer` from `@capybara-hq/testing`. It covers the
  * kernel side of the connector contract, not MCP edge cases:
- * - `endpointSchema`: `{ url, headers? }`, https or (with `allowInsecureLoopback`, default on)
- *   loopback http; credential headers are rejected;
+ * - `endpointSchema`: `{ url, headers? }`, https or loopback http (the kernel's `ctx.net` decides
+ *   what is reachable: test kernels set `net.allowInsecureLoopback`); credential headers are
+ *   rejected;
+ * - every request goes through `ctx.net.fetch` with the session's `orgId`;
  * - `auth()` before every request, one `onUnauthorized()` + retry on 401, redirects not followed;
  *   a 5xx answer's body is logged as the warning `fake-connector request failed` (the kernel
  *   redacts credentials in extension logs);
@@ -65,8 +68,6 @@ const CLIENT_INFO = { name: "capybara-fake-connector", version: "0.1.0" };
 const REQUEST_TIMEOUT_MS = 3_600_000;
 
 const DeploymentConfig = z.object({
-  /** Accept http://127.0.0.1 / localhost / [::1] endpoints (on by default: this is a test fake). */
-  allowInsecureLoopback: z.boolean().default(true),
   /** The auth hint `inspect` reports behind a 401. */
   inspectAuth: z.enum(["bearer", "api_key"]).default("bearer"),
   /**
@@ -83,13 +84,14 @@ const DeploymentConfig = z.object({
 /** The `_meta` key of a remote tool that names the remote tool serving it (its route). */
 export const FAKE_ROUTE_META = "fake/route";
 
-const isLoopbackHttp = (u: URL): boolean =>
-  u.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(u.hostname);
-
-const urlAllowed = (raw: string, loopback: boolean): boolean => {
+/**
+ * http or https; whether the target is reachable is `ctx.net`'s call at request time (http only for
+ * an org-allowed `http://host:port` origin, or loopback under `net.allowInsecureLoopback`).
+ */
+const urlAllowed = (raw: string): boolean => {
   try {
     const u = new URL(raw);
-    return u.protocol === "https:" || (loopback && isLoopbackHttp(u));
+    return u.protocol === "https:" || u.protocol === "http:";
   } catch {
     return true; // z.url() reports the format error
   }
@@ -99,11 +101,11 @@ const isCredentialHeader = (name: string): boolean =>
   ["authorization", "proxy-authorization", "cookie"].includes(name.toLowerCase());
 
 /** The endpoint: the server URL and optional non-secret fixed headers. */
-export function fakeEndpointSchema(allowInsecureLoopback: boolean) {
+export function fakeEndpointSchema() {
   return z
     .object({
-      url: z.url().refine((v) => urlAllowed(v, allowInsecureLoopback), {
-        message: "URL must use https (plain http only for loopback hosts)",
+      url: z.url().refine(urlAllowed, {
+        message: "URL must use http or https",
       }),
       /** Free-form text the connector ignores (large-endpoint tests). */
       notesText: z.string().optional(),
@@ -174,6 +176,8 @@ async function guarded<T>(work: () => Promise<T>): Promise<T> {
 
 /** A fetch that injects `auth()` before every request and retries once after `onUnauthorized()`. */
 function authedFetch(
+  net: ExtensionNet,
+  orgId: string,
   endpoint: Endpoint,
   auth: ConnectorOpenArgs["auth"] | undefined,
   onUnauthorized: ConnectorOpenArgs["onUnauthorized"] | undefined,
@@ -190,7 +194,11 @@ function authedFetch(
       for (const [k, v] of Object.entries(endpoint.headers)) if (!headers.has(k)) headers.set(k, v);
       for (const [k, v] of Object.entries(inj.headers)) headers.set(k, v);
       const s = init?.signal ? AbortSignal.any([init.signal, signal]) : signal;
-      return fetch(url, { ...init, headers, signal: s, redirect: "manual" });
+      return net.fetch(
+        url.toString(),
+        { ...init, headers, signal: s, redirect: "manual" },
+        { orgId },
+      );
     };
     const noRedirect = async (r: Response) => {
       if (r.status >= 300 && r.status < 400) {
@@ -275,11 +283,20 @@ async function connect(
 }
 
 async function openSession(
+  net: ExtensionNet,
   endpoint: Endpoint,
   args: ConnectorOpenArgs,
   log?: Logger,
 ): Promise<ConnectorSession> {
-  const fetchImpl = authedFetch(endpoint, args.auth, args.onUnauthorized, args.signal, log);
+  const fetchImpl = authedFetch(
+    net,
+    args.orgId,
+    endpoint,
+    args.auth,
+    args.onUnauthorized,
+    args.signal,
+    log,
+  );
   const { client, transport } = await connect(endpoint, fetchImpl, args);
   const opts = (signal: AbortSignal = args.signal) => ({ signal, timeout: REQUEST_TIMEOUT_MS });
   const session: ConnectorSession = {
@@ -412,12 +429,14 @@ const authHint = (kind: InspectAuth): AuthHint =>
 
 /** Install preview without credentials: 401 -> the configured auth hint; otherwise the tools as operations. */
 async function inspect(
+  net: ExtensionNet,
+  orgId: string,
   endpoint: Endpoint,
   signal: AbortSignal,
   hint: InspectAuth,
 ): Promise<ConnectorInspection> {
   let unauthorized = false;
-  const probe = authedFetch(endpoint, undefined, undefined, signal);
+  const probe = authedFetch(net, orgId, endpoint, undefined, undefined, signal);
   const fetchImpl = async (input: string | URL, init?: RequestInit) => {
     const r = await probe(input, init);
     if (r.status === 401) unauthorized = true;
@@ -447,17 +466,18 @@ async function inspect(
 
 /** Creates the fake connector (exported for unit tests that call it without a kernel). */
 export function createFakeConnector(
-  allowInsecureLoopback: boolean,
+  net: ExtensionNet,
   inspectAuth: InspectAuth = "bearer",
   kind = "fake",
   log?: Logger,
 ): Connector {
-  const schema = fakeEndpointSchema(allowInsecureLoopback);
+  const schema = fakeEndpointSchema();
   return {
     kind,
     endpointSchema: schema,
-    open: (args) => openSession(schema.parse(args.endpoint), args, log),
-    inspect: ({ endpoint, signal }) => inspect(schema.parse(endpoint), signal, inspectAuth),
+    open: (args) => openSession(net, schema.parse(args.endpoint), args, log),
+    inspect: ({ endpoint, signal, orgId }) =>
+      inspect(net, orgId, schema.parse(endpoint), signal, inspectAuth),
   };
 }
 
@@ -468,10 +488,10 @@ export default defineExtension({
   provides: [CONNECTOR_EXTENSION_POINT],
   config: { deployment: DeploymentConfig },
   setup(ctx) {
-    const { allowInsecureLoopback, inspectAuth, kind } = DeploymentConfig.parse(ctx.config ?? {});
+    const { inspectAuth, kind } = DeploymentConfig.parse(ctx.config ?? {});
     ctx.provide(
       CONNECTOR_EXTENSION_POINT,
-      createFakeConnector(allowInsecureLoopback, inspectAuth, kind, ctx.log),
+      createFakeConnector(ctx.net, inspectAuth, kind, ctx.log),
     );
   },
 });

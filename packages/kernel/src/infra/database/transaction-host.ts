@@ -17,18 +17,34 @@ interface TransactionStore {
   hooks: AfterCommitHook[];
   /** Set once the transaction settled: continuations that outlive it must not use it. */
   done: boolean;
+  /**
+   * How a fence admitted it (`withTransactionFence`), once the fence ran; undefined when no fence
+   * admitted it (no fence in context, or read only).
+   */
+  admission?: AdmissionMode;
 }
 
 /** One store for the process: `afterCommit` (a free function) reads it without a host instance. */
 const storage = new AsyncLocalStorage<TransactionStore>();
 
-/** A caller's execution authority, checked inside every new transaction before domain writes. */
-const fences = new AsyncLocalStorage<() => Promise<void>>();
+/** How a fence admits the transaction it runs in ({@link TransactionOptions.admission}). */
+export interface FenceAdmission {
+  /** The transaction asked for shared admission (`admission: "shared"`). */
+  shared: boolean;
+}
 
-export function withTransactionFence<T>(
-  fence: () => Promise<void>,
-  fn: () => Promise<T>,
-): Promise<T> {
+/** The mode a fence admitted a transaction in (a fence returning nothing admits exclusively). */
+export type AdmissionMode = "shared" | "exclusive";
+
+/** A fence: checks the caller's authority, takes its admission locks and says in which mode. */
+export type TransactionFence = (
+  admission: FenceAdmission,
+) => Promise<AdmissionMode | undefined | void>;
+
+/** A caller's execution authority, checked inside every new transaction before domain writes. */
+const fences = new AsyncLocalStorage<TransactionFence>();
+
+export function withTransactionFence<T>(fence: TransactionFence, fn: () => Promise<T>): Promise<T> {
   return fences.run(fence, fn);
 }
 
@@ -46,6 +62,14 @@ export interface TransactionOptions {
   isolationLevel?: IsolationLevel;
   /** Access mode of a transaction this call opens (ignored when it joins one). */
   accessMode?: AccessMode;
+  /**
+   * How the caller's fence (`withTransactionFence`) admits a transaction this call opens (ignored
+   * when it joins one, or with no fence in context). Default: the fence's exclusive admission.
+   * `shared`: the run loop's own hot-path writes (event appends, checkpoints, the suspend), which
+   * the run fence admits under a shared lock so the runs of one org write in parallel
+   * (`RunExecution`); a fence may still admit it exclusively (inside a tool step).
+   */
+  admission?: "shared";
 }
 
 /** Logger for hook failures outside a transaction; set by `TransactionHost`, console until then. */
@@ -76,6 +100,26 @@ export function queueAfterCommit(fn: AfterCommitHook): void {
 function liveStore(): TransactionStore | undefined {
   const store = storage.getStore();
   return store && !store.done ? store : undefined;
+}
+
+/** Whether the live transaction in context was admitted by a fence (a claimed run's write). */
+export function inFencedTransaction(): boolean {
+  return liveStore()?.admission !== undefined;
+}
+
+/**
+ * Throws when the live transaction in context was admitted shared by the run fence
+ * (`RunExecution`): such a transaction holds conversation rows without the org row, so taking an
+ * org-level lock (`what`: the org row, a membership, an advisory lock) would invert the global lock
+ * order org admission → org row → conversations. Called by every org-level lock.
+ */
+export function assertNotSharedAdmission(what: string): void {
+  if (liveStore()?.admission === "shared") {
+    throw new Error(
+      `${what} inside a transaction the run fence admitted shared: hot-path writes take no ` +
+        'org-level lock (open it without admission: "shared")',
+    );
+  }
 }
 
 /** The transaction store in the current async context (used by `afterCommit`). */
@@ -127,6 +171,15 @@ export class TransactionHost {
       return fn();
     }
     if (propagation === "required" && this.current()) return fn();
+    if (
+      opts.admission === "shared" &&
+      opts.isolationLevel !== undefined &&
+      opts.isolationLevel !== "read committed"
+    ) {
+      // shared admission reads the org row unlocked after the advisory lock: only a fresh
+      // statement snapshot (READ COMMITTED) sees a deletion that committed while it waited
+      throw new Error('admission: "shared" needs READ COMMITTED isolation');
+    }
     const hooks: AfterCommitHook[] = [];
     let store: TransactionStore | undefined;
     let result: T;
@@ -136,11 +189,15 @@ export class TransactionHost {
         builder = builder.setIsolationLevel(opts.isolationLevel);
       if (opts.accessMode !== undefined) builder = builder.setAccessMode(opts.accessMode);
       result = await builder.execute((trx) => {
-        store = { pool: this.pool, trx, hooks, done: false };
-        return storage.run(store, async () => {
+        const fence = opts.accessMode === "read only" ? undefined : fences.getStore();
+        const own: TransactionStore = { pool: this.pool, trx, hooks, done: false };
+        store = own;
+        return storage.run(own, async () => {
           // PostgreSQL forbids row locks in a read-only snapshot and enforces that it cannot
           // mutate. Every later mutation or external dispatch still enters a writable fence.
-          if (opts.accessMode !== "read only") await fences.getStore()?.();
+          if (fence) {
+            own.admission = (await fence({ shared: opts.admission === "shared" })) || "exclusive";
+          }
           return fn();
         });
       });

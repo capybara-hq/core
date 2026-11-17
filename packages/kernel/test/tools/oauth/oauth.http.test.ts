@@ -70,7 +70,7 @@ beforeAll(async () => {
       {
         extensions: [MODEL_FAKE, CONNECTOR],
         extensionPermissions: { autoApprove: true },
-        extensionConfig: { "fake-connector": { allowInsecureLoopback: true } },
+        extensionConfig: { "fake-connector": {} },
         roles: ["api", "worker"],
         http: { port: 0, publicUrl: PUBLIC_URL },
         auth: { cookieSecure: false },
@@ -822,7 +822,7 @@ describe("http.publicUrl 未配置", () => {
         {
           extensions: [MODEL_FAKE, CONNECTOR],
           extensionPermissions: { autoApprove: true },
-          extensionConfig: { "fake-connector": { allowInsecureLoopback: true } },
+          extensionConfig: { "fake-connector": {} },
           roles: ["api"],
           tools: { oauthAllowInsecureLoopback: true },
         },
