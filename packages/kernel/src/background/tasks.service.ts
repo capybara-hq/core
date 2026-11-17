@@ -6,7 +6,7 @@ import {
   rootsOf,
   ToolError,
 } from "@capybara-hq/plugin-sdk";
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import { ConversationAccess } from "../conversations/access.js";
 import { EventLog } from "../conversations/event-log.js";
 import { conversationTree } from "../conversations/tree.js";
@@ -15,7 +15,8 @@ import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { rootConversationOf } from "../runtime/subagents/child.js";
-import { SandboxService } from "../sandbox/sandbox.service.js";
+import { PERMISSION_CONTEXT_ACTIVATION } from "../sandbox/permission-context-types.js";
+import { retirementPending, SandboxService } from "../sandbox/sandbox.service.js";
 import { UUID_RE } from "../ui/registry.js";
 import { finishedEventKey } from "./finish.js";
 import { TASK_ID_RE, TASKS_DIR } from "./launch.js";
@@ -30,7 +31,7 @@ import {
   ManagedOutputCapacityError,
   ManagedOutputUnavailableError,
 } from "./managed-output.js";
-import { actingAs } from "./session.js";
+import { actingAs, legacyBackgroundAllowed } from "./session.js";
 import { BackgroundTaskStopper } from "./stop.js";
 import {
   type BackgroundTaskRow,
@@ -127,6 +128,11 @@ export class BackgroundTasks {
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(ConversationDevices)
     private readonly devices: Pick<ConversationDevices, "forTool">,
+    /**
+     * The paired activation gate: once on, a legacy (SID) task is never read or stopped by a raw
+     * exec (the retirement gate owns it); a managed task always goes by its exact ref.
+     */
+    @Optional() @Inject(PERMISSION_CONTEXT_ACTIVATION) private readonly activation?: boolean,
   ) {}
 
   /**
@@ -200,6 +206,13 @@ export class BackgroundTasks {
     auditDetail?: Record<string, unknown>,
   ): Promise<BackgroundTaskView> {
     const task = await this.owned(orgId, conversationId, accountId, taskId);
+    // once activated a running legacy task is the retirement gate's: no SID signal is sent
+    if (
+      !isManagedTask(task) &&
+      task.status === "running" &&
+      !legacyBackgroundAllowed(this.activation)
+    )
+      throw retirementPending();
     const after = await this.stopper.stop(task, "person");
     await audit(this.db.db, {
       actorAccountId: accountId,
@@ -283,6 +296,10 @@ export class BackgroundTasks {
     tail: number,
   ): Promise<LiveRead> {
     if (isManagedTask(task)) return this.readManaged(orgId, task, tail);
+    // once activated a legacy task's output is never read by a raw exec: a finished one still
+    // answers with its finish summary
+    if (!legacyBackgroundAllowed(this.activation))
+      return { kind: "unavailable", reason: "read_failed" };
     if (task.sid === null || task.sandboxCreatedAt === null || task.deviceId === null) {
       // a reservation the launch has not finished, or a launch that failed
       return {
@@ -304,7 +321,7 @@ export class BackgroundTasks {
         task.deviceId,
         { createdAt },
         async (p, h, signal) => {
-          const res = await actingAs(p, actor).exec(h, {
+          const res = await actingAs(p, actor, this.activation).exec(h, {
             command: tailScript(task.id, tail),
             cwd: rootsOf(h).workspace,
             timeoutMs: OUTPUT_READ_TIMEOUT_MS,

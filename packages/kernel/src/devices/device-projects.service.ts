@@ -4,13 +4,15 @@ import {
   isDeviceProjectName,
   isFileSystemGoneError,
   isSandboxGoneError,
+  isSandboxScopeDeniedError,
   MAX_DEVICE_SCAN_RESULTS,
+  type SandboxBrowse,
   type SandboxHandle,
   type SandboxProvider,
   ToolError,
   validateSandboxPathShape,
 } from "@capybara-hq/plugin-sdk";
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import { sql } from "kysely";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
@@ -21,6 +23,10 @@ import { projectsUnsupported } from "../local-devices/local-device-provider.js";
 import { POLICY_REFUSAL_PREFIX } from "../local-devices/relay.js";
 import type { SandboxMode } from "../sandbox/modes.js";
 import { PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
+import {
+  PERMISSION_CONTEXT_ACTIVATION,
+  permissionContextActive,
+} from "../sandbox/permission-context-types.js";
 import { PermissionFacts } from "../sandbox/permission-facts.js";
 import { deviceNotFound, type HeldProvider, SandboxService } from "../sandbox/sandbox.service.js";
 import { SandboxProviderUnreachableError } from "../sandbox/unreachable.js";
@@ -48,9 +54,65 @@ export const MAX_DEVICE_PROJECTS = 100;
 
 /**
  * The holder name the projects service enters a device's sandbox under (`SandboxService`
- * `withSandbox`): it only lists directories, never runs a command, so no conversation holds it.
+ * `withSandbox`) while the activation gate is off: it only lists directories, never runs a
+ * command, so no conversation holds it. Once the gate is on the owner browse route has no holder.
  */
 const PROJECTS_HOLDER = "device-projects";
+
+/**
+ * What the projects service asks a device: list, scan and stat, never file contents. While the
+ * activation gate is off, the held provider of a raw use (the protocol 2 read mode on each list /
+ * scan); once it is on, the owner browse scope (`SandboxService.withBrowse`: owner-authenticated,
+ * no conversation, no Full consent, its roots from the owner's browsing ceiling).
+ */
+interface ProjectReader {
+  /** The workspace root: the held instance's (raw route), the last known one (owner browse). */
+  workspace: string;
+  /** The owner browse route: a scope denial there is the device refusing the path. */
+  browse: boolean;
+  list?: (
+    path: string,
+    limit: number,
+    signal: AbortSignal,
+  ) => ReturnType<NonNullable<SandboxBrowse["list"]>>;
+  scan?: (base: string, signal: AbortSignal) => ReturnType<NonNullable<SandboxBrowse["scan"]>>;
+  stat: (path: string, signal: AbortSignal) => ReturnType<SandboxBrowse["stat"]>;
+}
+
+/** The raw route's reader over a held provider (gate off): the protocol 2 calls, unchanged. */
+function heldReader(
+  scope: DeviceProjectScope,
+  h: SandboxHandle,
+  p: HeldProvider,
+  workspace: string,
+): ProjectReader {
+  const list = p.list;
+  const scan = p.scan;
+  return {
+    workspace,
+    browse: false,
+    ...(list !== undefined && {
+      list: (path: string, limit: number, signal: AbortSignal) =>
+        list.call(p, h, path, { limit, limits: { mode: readModeOf(scope) }, signal }),
+    }),
+    ...(scan !== undefined && {
+      scan: (base: string, signal: AbortSignal) =>
+        scan.call(p, h, base, { limits: { mode: readModeOf(scope) }, signal }),
+    }),
+    stat: (path, signal) => p.stat(h, path, signal),
+  };
+}
+
+/** The owner browse route's reader (gate on): the browse scope's stat / list / scan only. */
+function browseReader(b: SandboxBrowse, workspace: string): ProjectReader {
+  return {
+    workspace,
+    browse: true,
+    list: (path, limit, signal) => b.list(path, { limit, signal }),
+    scan: (base, signal) => b.scan(base, { signal }),
+    stat: (path, signal) => b.stat(path, signal),
+  };
+}
 
 /** A project as the web and the Platform tool see it. */
 export interface DeviceProjectView {
@@ -111,7 +173,7 @@ export class DeviceProjectsService {
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(SandboxService)
-    private readonly sandbox: Pick<SandboxService, "withSandbox">,
+    private readonly sandbox: Pick<SandboxService, "withSandbox" | "withBrowse">,
     @Inject(DeviceAccess) private readonly access: Pick<DeviceAccess, "usable">,
     @Inject(PermissionFacts)
     private readonly facts: Pick<
@@ -119,6 +181,8 @@ export class DeviceProjectsService {
       "resolveProjectForBinding" | "projectMatches" | "projectScope"
     >,
     @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
+    /** The paired activation gate: once on, every device read is an owner browse. */
+    @Optional() @Inject(PERMISSION_CONTEXT_ACTIVATION) private readonly activation?: boolean,
   ) {}
 
   /** The projects the device's current mode can read; see {@link DeviceProjectList}. */
@@ -161,13 +225,14 @@ export class DeviceProjectsService {
       return { candidates: [], mode: scope.mode, base: baseOf(scope), supported: false };
     }
     if (baseOf(scope) === null) throw homeUnknown();
-    return this.onDevice(orgId, accountId, deviceId, signal, async (h, p, workspace, sig) => {
+    return this.onDevice(orgId, accountId, deviceId, scope, signal, async (r, sig) => {
+      const workspace = r.workspace;
       const base = baseOf(scope, workspace) as string;
-      const scan = p.scan;
+      const scan = r.scan;
       if (scan === undefined) throw projectsUnsupported(false);
       let found: { path: string; suggestedName: string }[];
       try {
-        found = await scan.call(p, h, base, { limits: { mode: readModeOf(scope) }, signal: sig });
+        found = await scan(base, sig);
       } catch (e) {
         // the base is the device's own workspace or home: a refusal there is not the person's path
         throw passThrough(e) ?? unavailable(e);
@@ -259,22 +324,19 @@ export class DeviceProjectsService {
       orgId,
       accountId,
       deviceId,
+      scope,
       signal,
-      async (h, p, workspace, sig) => {
-        const path = resolve(scope, workspace, input.path);
+      async (r, sig) => {
+        const path = resolve(scope, r.workspace, input.path);
         const name = input.name ?? posix.basename(path);
         if (!isDeviceProjectName(name)) throw nameInvalid(name);
-        const list = p.list;
+        const list = r.list;
         if (list === undefined) throw projectsUnsupported(false);
         let answer: Awaited<ReturnType<NonNullable<SandboxProvider["list"]>>>;
         try {
-          answer = await list.call(p, h, path, {
-            limit: 1,
-            limits: { mode: readModeOf(scope) },
-            signal: sig,
-          });
+          answer = await list(path, 1, sig);
         } catch (e) {
-          throw await listFailure(e, p, h, path, scope.mode, sig);
+          throw await listFailure(e, r, path, scope.mode, sig);
         }
         if (answer === null) throw pathMissing(path);
         return { path, name };
@@ -447,19 +509,29 @@ export class DeviceProjectsService {
   }
 
   /**
-   * Runs `fn` on the device (`SandboxService.withSandbox`: its instance made or resumed as for a
-   * tool call) with the workspace root its instance reports. Kernel refusals (offline, files lost,
-   * busy, unavailable) stay as they are; anything else becomes a readable
+   * Runs `fn` on the device with a {@link ProjectReader}. While the activation gate is off:
+   * `SandboxService.withSandbox` (its instance made or resumed as for a tool call) with the
+   * workspace root its instance reports. Once it is on: the owner browse
+   * (`SandboxService.withBrowse`, as the device's owner, on the instance that runs: never made or
+   * resumed) with the last known workspace. Kernel refusals (offline, files lost, busy,
+   * unavailable) stay as they are; anything else becomes a readable
    * `device.projects_unavailable`, never a 500.
    */
   private async onDevice<T>(
     orgId: string,
     accountId: string,
     deviceId: string,
+    scope: DeviceProjectScope,
     signal: AbortSignal,
-    fn: (h: SandboxHandle, p: HeldProvider, workspace: string, signal: AbortSignal) => Promise<T>,
+    fn: (reader: ProjectReader, signal: AbortSignal) => Promise<T>,
   ): Promise<T> {
     try {
+      if (permissionContextActive(this.activation))
+        return await this.sandbox.withBrowse(
+          { orgId, deviceId, accountId },
+          (b, sig) => fn(browseReader(b, scope.workspace), sig),
+          signal,
+        );
       return await this.sandbox.withSandbox(
         {
           orgId,
@@ -467,7 +539,7 @@ export class DeviceProjectsService {
           holderConversationId: PROJECTS_HOLDER,
           actor: { accountId, conversationId: PROJECTS_HOLDER },
         },
-        (h, p, info, sig) => fn(h, p, info.roots.workspace, sig),
+        (h, p, info, sig) => fn(heldReader(scope, h, p, info.roots.workspace), sig),
         signal,
       );
     } catch (e) {
@@ -577,8 +649,7 @@ const pathMissing = (path: string): ApiError =>
  */
 async function listFailure(
   e: unknown,
-  p: HeldProvider,
-  h: SandboxHandle,
+  r: ProjectReader,
   path: string,
   mode: SandboxMode,
   signal: AbortSignal,
@@ -586,7 +657,11 @@ async function listFailure(
   const passed = passThrough(e);
   if (passed !== undefined) return passed;
   const why = e instanceof ToolError ? ` (${clipped(e.message)})` : "";
-  if (e instanceof ToolError && e.message.startsWith(POLICY_REFUSAL_PREFIX)) {
+  // the owner browse scope refusing the path is the device refusing it (gate on only)
+  if (
+    (e instanceof ToolError && e.message.startsWith(POLICY_REFUSAL_PREFIX)) ||
+    (r.browse && isSandboxScopeDeniedError(e))
+  ) {
     return new ApiError(
       "device.project_outside_mode",
       `The device refused ${clipped(path)} in ${mode} mode${why}`,
@@ -594,7 +669,7 @@ async function listFailure(
   }
   let st: { size: number; isDir: boolean } | null;
   try {
-    st = await p.stat(h, path, signal);
+    st = await r.stat(path, signal);
   } catch (e2) {
     return passThrough(e2) ?? unavailable(e);
   }
