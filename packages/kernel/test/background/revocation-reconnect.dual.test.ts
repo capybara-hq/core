@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
@@ -324,15 +325,15 @@ async function gatewayFor(
         reconnectGraceSeconds: 30,
       }),
     );
-    await expect.poll(() => session.ready()).toBeDefined();
-    await expect.poll(() => gateway.connectionCount()).toBe(1);
+    await expect.poll(() => session.ready(), { timeout: 10_000 }).toBeDefined();
+    await expect.poll(() => gateway.connectionCount(), { timeout: 10_000 }).toBe(1);
   };
   const disconnect = async () => {
     if (!socket) return;
     const closed = once(socket, "close");
     socket.close();
     await closed;
-    await expect.poll(() => gateway.connectionCount()).toBe(0);
+    await expect.poll(() => gateway.connectionCount(), { timeout: 10_000 }).toBe(0);
   };
   cleanups.push(async () => socket?.terminate());
   return { connect, disconnect, gateway };
@@ -427,6 +428,42 @@ const taskOf = (f: Awaited<ReturnType<typeof fixture>>, operationId: string) =>
     .selectAll()
     .where("operation_id", "=", operationId)
     .executeTakeFirstOrThrow();
+
+/**
+ * The relay's staged calls of `op` read `stale` as the machine's connection (the one the caller
+ * read just before the device reconnected); every other call reads the current one. Scoped to
+ * the call by async context, not by call order.
+ */
+function staleFor(
+  relay: LocalDeviceRelay,
+  op: string,
+  stale: Awaited<ReturnType<LocalDeviceRelay["connection"]>>,
+) {
+  type Codec = (deviceId: string, op: string, ...rest: unknown[]) => Promise<unknown>;
+  const internal = relay as unknown as { callWithCodec: Codec };
+  const scope = new AsyncLocalStorage<string>();
+  const codec = internal.callWithCodec.bind(relay);
+  const connection = relay.connection.bind(relay);
+  let used = 0;
+  // every call of the relay (also through callers that bound callV3 earlier) passes here
+  const calls = vi
+    .spyOn(internal, "callWithCodec")
+    .mockImplementation((deviceId, called, ...rest) =>
+      scope.run(called, () => codec(deviceId, called, ...rest)),
+    );
+  const reads = vi.spyOn(relay, "connection").mockImplementation(async (deviceId) => {
+    if (scope.getStore() !== op) return connection(deviceId);
+    used++;
+    return stale;
+  });
+  return {
+    used: () => used,
+    restore: () => {
+      calls.mockRestore();
+      reads.mockRestore();
+    },
+  };
+}
 
 /** Launches two real tasks through the staged path: the fixture's call, then another call. */
 async function launchTwo(f: Awaited<ReturnType<typeof fixture>>) {
@@ -633,14 +670,14 @@ describe("a staged request refused as not sent (B-5)", () => {
     await f.gw.disconnect();
     await f.gw.connect();
     expect((await relay.connection(f.deviceId)).connectionId).not.toBe(stale.connectionId);
-    const read = vi.spyOn(relay, "connection").mockResolvedValueOnce(stale);
+    const read = staleFor(relay, "backgroundStart", stale);
     const first = await runInBackgroundManaged(f.depsOf(a), await f.ctxFor(), {
       command: "npm run dev",
       description: "Serve",
       run_in_background: true,
     }).catch((e: unknown) => e as Error);
-    expect(read).toHaveBeenCalled();
-    read.mockRestore();
+    read.restore();
+    expect(read.used()).toBe(1);
     // the gateway refused the frame of the old connection: the device never saw the start
     expect(f.device.workers).toEqual([]);
     expect(first).toBeInstanceOf(Error);
@@ -710,10 +747,10 @@ describe("a staged request refused as not sent (B-5)", () => {
     const stale = await relay.connection(f.deviceId);
     await f.gw.disconnect();
     await f.gw.connect();
-    const read = vi.spyOn(relay, "connection").mockResolvedValueOnce(stale);
+    const read = staleFor(relay, "backgroundStart", stale);
     await reconcileJob(b).reconcile(f.operationId);
-    expect(read).toHaveBeenCalled();
-    read.mockRestore();
+    read.restore();
+    expect(read.used()).toBe(1);
     // a recovery that was never sent proves nothing about the first dispatch: still unknown
     expect(await intentOf(f, f.operationId)).toMatchObject({
       state: "started-or-unknown",

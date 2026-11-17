@@ -414,6 +414,24 @@ it("a reconnect changes the exact capacity and fences requests of the old connec
     expect(e).toBeInstanceOf(DeviceProtocolError);
     expect(e).not.toBeInstanceOf(DeviceRequestNotSentError);
   }
+  // a held operation fenced to a replaced connection is refused before it is queued: not sent
+  const revoke = await f.relay
+    .callV3(
+      f.handle.id,
+      "revokeOperation",
+      { ref: { operationId: "op", admitBeforeMs: Date.now() + 60_000 } },
+      { deadlineMs: 1000, signal: signal(), connection: old },
+    )
+    .then(
+      () => {
+        throw Error("expected the stale connection to be refused");
+      },
+      (e: unknown) => e as Error,
+    );
+  expect(revoke).toBeInstanceOf(DeviceRequestNotSentError);
+  expect(isSandboxScopeDeniedError(revoke)).toBe(true);
+  expect(revoke.message).toContain("connection changed before revokeOperation was sent");
+  expect(f.requested.mock.calls.map((c) => c[0])).not.toContain("revokeOperation");
   expect(await f.read(0, 65536)).toMatchObject({ nextOffset: 768 });
 });
 it("aborting an in-flight read cancels only that request and the task keeps running", async () => {

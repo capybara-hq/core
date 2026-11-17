@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import { Queue } from "bullmq";
+import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { PermissionProfilesService } from "../../src/conversations/permission-profiles.service.js";
@@ -12,7 +14,9 @@ import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { OutboxService } from "../../src/infra/outbox/outbox.service.js";
 import { MachinesService } from "../../src/local-devices/machines.js";
 import { createLogger } from "../../src/log.js";
+import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
 import { SandboxOperationIntents } from "../../src/sandbox/operation-intents.js";
+import { PermissionCeilingWrites } from "../../src/sandbox/permission-ceiling-writes.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { runInBackgroundManaged } from "../../src/tools/builtins/sandbox/bash.js";
 import { truncateTables } from "../helpers/db.js";
@@ -41,6 +45,8 @@ let raw: ReturnType<typeof createDb>;
 let owner: Account;
 let ownerLogin: string;
 let admin: Account;
+/** The maintenance queue as BullMQ holds it: a finished revoke job is gone (removeOnComplete). */
+let maintenance: Queue;
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
@@ -59,8 +65,12 @@ beforeAll(async () => {
     { env: {}, logger: createLogger("error", { write: () => {} }) },
   );
   raw = createDb(pgc.url, 4);
+  maintenance = new Queue(MAINTENANCE_QUEUE_NAME, {
+    connection: new Redis(rd.url, { maxRetriesPerRequest: null }),
+  });
 });
 afterAll(async () => {
+  await maintenance?.close();
   await k?.close();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
@@ -68,7 +78,7 @@ afterAll(async () => {
 beforeEach(async () => {
   await truncateTables(
     raw,
-    "capybara.accounts, capybara.orgs, capybara.audit_events, capybara.deployment_settings",
+    "capybara.accounts, capybara.orgs, capybara.audit_events, capybara.deployment_settings, capybara.outbox",
   );
   const accounts = accountsFor(kernelDb(raw));
   ownerLogin = `owner-${randomUUID().slice(0, 8)}`;
@@ -140,6 +150,33 @@ async function fullAccessFixture() {
 const platformFullOff = () =>
   k.app.get(SettingsService).update({ devicesFullAccess: { permission: "off" } }, admin.id);
 
+const revokeJobId = (operationId: string, suffix = "") =>
+  `sandbox-operation-revoke-${operationId}${suffix}`;
+
+/**
+ * Waits until the revoke job `jobId` has run: its outbox row was relayed (the job added), then
+ * the BullMQ job is gone (it completed: maintenance jobs are removed on completion).
+ */
+async function revokeJobRan(jobId: string): Promise<void> {
+  await drainOutbox(k.app, { jobId });
+  await waitFor(
+    async () => (await maintenance.getJob(jobId)) == null,
+    30_000,
+    `the revoke job ${jobId} ran`,
+  );
+}
+
+/** Adds one more delivery of the revoke of `operationId` under `jobId` (committed at once). */
+const redeliver = (operationId: string, jobId: string) =>
+  k.app.get(TransactionHost).run(() =>
+    k.app.get(OutboxService).add({
+      queue: "cap-kernel-maintenance",
+      name: "sandbox-operation-revoke",
+      jobId,
+      data: { operationId },
+    }),
+  );
+
 it("a platform Full-off write reaches the exact backgroundStop through the outbox and the worker", async () => {
   const f = await fullAccessFixture();
   await runInBackgroundManaged(f.depsOf(k), await f.ctxFor(), {
@@ -180,27 +217,17 @@ it("a platform Full-off write reaches the exact backgroundStop through the outbo
   });
 
   // the relay hands it to the maintenance queue; only the worker's revoke acknowledges it
-  await drainOutbox(k.app, { jobName: "sandbox-operation-revoke" });
-  await waitFor(
-    async () => (await f.intent()).revoke_acknowledged,
-    30_000,
-    "the worker's exact revoke",
-  );
+  await revokeJobRan(revokeJobId(f.operationId));
+  expect(await f.intent()).toMatchObject({ revoke_acknowledged: true });
   expect(f.provider.calls.stop).toEqual([{ graceMs: 5000 }]);
   expect(f.provider.only()).toMatchObject({ ref, cancelled: true });
   expect(await f.taskRow()).toMatchObject({ status: "stopped", launch_state: "terminal" });
   expect(await f.finishedEvents()).toHaveLength(1);
 
-  // the same revoke delivered again (same job id) is harmless: no second stop, no second finish
-  await k.app.get(TransactionHost).run(() =>
-    k.app.get(OutboxService).add({
-      queue: "cap-kernel-maintenance",
-      name: "sandbox-operation-revoke",
-      jobId: `sandbox-operation-revoke-${f.operationId}`,
-      data: { operationId: f.operationId },
-    }),
-  );
-  await drainOutbox(k.app, { jobName: "sandbox-operation-revoke" });
+  // the same revoke delivered again (same job id) is harmless once it has run: no second stop,
+  // no second finish
+  await redeliver(f.operationId, revokeJobId(f.operationId));
+  await revokeJobRan(revokeJobId(f.operationId));
   expect(f.provider.calls.stop).toHaveLength(1);
   expect(await f.finishedEvents()).toHaveLength(1);
   expect(await f.intent()).toMatchObject({ state: "revoked", revoke_acknowledged: true });
@@ -226,28 +253,21 @@ it("a revocation that arrives before the start is acknowledged stops it by its r
   await platformFullOff();
   // dispatched but unacknowledged: revoked with an unknown outcome, the exact revoke owed
   expect(await f.intent()).toMatchObject({ state: "revoked", outcome_unknown: true });
-  await drainOutbox(k.app, { jobName: "sandbox-operation-revoke" });
-  // no ref yet: nothing to stop by ref, so no backgroundStop has been sent
+  await revokeJobRan(revokeJobId(f.operationId));
+  // the worker applied the operation's tombstone; with no ref yet no backgroundStop was sent
+  expect(await f.intent()).toMatchObject({ state: "revoked", revoke_acknowledged: true });
   expect(f.provider.calls.stop).toEqual([]);
 
   // the start returns: its ref joins the owed cancellation, which the worker applies exactly
   release.resolve();
   await expect(launch).rejects.toThrow(/is being stopped/);
   expect(f.provider.calls.start).toBe(1);
-  await drainOutbox(k.app, { jobName: "sandbox-operation-revoke" });
-  await waitFor(
-    async () => (await f.taskRow()).launch_state === "terminal",
-    30_000,
-    "the exact stop of the late-acknowledged start",
-  );
+  // the acknowledgement owes the exact revoke of the attached ref under its own job
+  await revokeJobRan(revokeJobId(f.operationId, "-ack"));
   expect(f.provider.calls.stop).toEqual([{ graceMs: 5000 }]);
   expect(f.provider.only().cancelled).toBe(true);
-  expect(await f.taskRow()).toMatchObject({ status: "stopped" });
-  await waitFor(
-    async () => (await f.intent()).revoke_acknowledged,
-    30_000,
-    "the revocation acknowledged",
-  );
+  expect(await f.taskRow()).toMatchObject({ status: "stopped", launch_state: "terminal" });
+  expect(await f.intent()).toMatchObject({ revoke_acknowledged: true });
   expect(f.provider.executions.size).toBe(1);
 });
 
@@ -274,12 +294,8 @@ it("Full-off revokes only Full work: a restricted sibling keeps its grant and ke
   await platformFullOff();
   expect((await f.intent(await opOf(fullTask))).state).toBe("revoked");
   expect((await f.intent(await opOf(restrictedTask))).state).toBe("background-running");
-  await drainOutbox(k.app, { jobName: "sandbox-operation-revoke" });
-  await waitFor(
-    async () => (await f.intent(await opOf(fullTask))).revoke_acknowledged,
-    30_000,
-    "the worker's exact revoke of the Full task",
-  );
+  await revokeJobRan(revokeJobId(await opOf(fullTask)));
+  expect(await f.intent(await opOf(fullTask))).toMatchObject({ revoke_acknowledged: true });
   expect(f.provider.calls.stop).toEqual([{ graceMs: 5000 }]);
   expect(f.provider.executions.get(await opOf(fullTask))?.cancelled).toBe(true);
   expect(f.provider.executions.get(await opOf(restrictedTask))?.cancelled).toBeUndefined();
@@ -316,42 +332,65 @@ it("a revocation that lands before the start is dispatched: the start is never s
   expect(f.provider.calls.start).toBe(0);
   // nothing was dispatched: a definite outcome, and the operation's tombstone is still applied
   expect(await f.intent()).toMatchObject({ state: "revoked", outcome_unknown: false });
-  await drainOutbox(k.app, { jobName: "sandbox-operation-revoke" });
-  await waitFor(
-    async () => (await f.intent()).revoke_acknowledged,
-    30_000,
-    "the worker's operation revoke",
-  );
+  await revokeJobRan(revokeJobId(f.operationId));
+  expect(await f.intent()).toMatchObject({ revoke_acknowledged: true });
   expect(f.provider.calls.stop).toEqual([]);
   expect(f.provider.executions.size).toBe(0);
   expect(await f.taskRow()).toMatchObject({ launch_state: "terminal" });
 });
 
-it("two deliveries of the revoke at once stop the task exactly once", async () => {
+it("two deliveries of the revoke running at once stop the task exactly once", async () => {
   const f = await fullAccessFixture();
   await runInBackgroundManaged(f.depsOf(k), await f.ctxFor(), {
     command: "npm run dev",
     description: "Serve",
     run_in_background: true,
   });
+  // the first delivery to reach the device is held there until the other one has run
+  const entered = barrier();
+  const release = barrier();
+  const stop = f.provider.impl.background?.stop.bind(f.provider.impl.background);
+  if (!stop || !f.provider.impl.background) throw new Error("no background stop");
+  let reached = 0;
+  f.provider.impl.background.stop = async (...args: Parameters<typeof stop>) => {
+    reached++;
+    entered.resolve();
+    await release.promise;
+    return stop(...args);
+  };
+  const jobs = [revokeJobId(f.operationId), revokeJobId(f.operationId, "-again")];
   await k.app.get(TransactionHost).run(async () => {
     await platformFullOff();
-    // a second copy of the same obligation under another job id (a redelivery or deferral)
+    // a second copy of the same obligation under another job id (a redelivery)
     await k.app.get(OutboxService).add({
       queue: "cap-kernel-maintenance",
       name: "sandbox-operation-revoke",
-      jobId: `sandbox-operation-revoke-${f.operationId}-again`,
+      jobId: jobs[1] as string,
       data: { operationId: f.operationId },
     });
   });
-  await drainOutbox(k.app, { jobName: "sandbox-operation-revoke" });
+  for (const id of jobs) await drainOutbox(k.app, { jobId: id });
+  await entered.promise;
+  // one delivery holds the stop on the device; the other runs to its end meanwhile (it finds the
+  // stop claimed and keeps the revocation owed, a later attempt deferred)
   await waitFor(
-    async () => (await f.intent()).revoke_acknowledged,
+    async () => {
+      // a second stop reaching the device ends the wait too, and fails below
+      if (reached > 1) return true;
+      const left = await Promise.all(jobs.map((id) => maintenance.getJob(id)));
+      return left.filter((j) => j != null).length === 1;
+    },
     30_000,
-    "the worker's exact revoke",
+    "the second delivery ran while the first holds the stop",
   );
+  expect(reached).toBe(1);
+  release.resolve();
+  for (const id of jobs)
+    await waitFor(async () => (await maintenance.getJob(id)) == null, 30_000, `${id} ran`);
+  expect(reached).toBe(1);
   expect(f.provider.calls.stop).toHaveLength(1);
   expect(await f.finishedEvents()).toHaveLength(1);
+  expect(await f.intent()).toMatchObject({ revoke_acknowledged: true });
   expect(await f.taskRow()).toMatchObject({ status: "stopped", launch_state: "terminal" });
 });
 
@@ -363,25 +402,22 @@ it("turning Full off again writes no new revocation", async () => {
     run_in_background: true,
   });
   await platformFullOff();
-  await drainOutbox(k.app, { jobName: "sandbox-operation-revoke" });
-  await waitFor(
-    async () => (await f.intent()).revoke_acknowledged,
-    30_000,
-    "the worker's exact revoke",
-  );
+  await revokeJobRan(revokeJobId(f.operationId));
+  expect(await f.intent()).toMatchObject({ revoke_acknowledged: true });
   const before = await f.intent();
+  const publish = vi.spyOn(k.app.get(PermissionCeilingWrites), "publishLocked");
+  const queued = vi.spyOn(k.app.get(OutboxService), "add");
   await platformFullOff();
-  expect(
-    await f.db
-      .selectFrom("outbox")
-      .select("id")
-      .where("job_name", "=", "sandbox-operation-revoke")
-      .execute(),
-  ).toEqual([]);
+  // no publication and no revoke job: the stored choice did not change
+  expect(publish).not.toHaveBeenCalled();
+  expect(queued.mock.calls.filter(([job]) => job.name === "sandbox-operation-revoke")).toEqual([]);
+  publish.mockRestore();
+  queued.mockRestore();
   expect(await f.intent()).toMatchObject({
     state: "revoked",
     revoke_acknowledged: true,
     reconcile_attempt: before.reconcile_attempt,
+    updated_at: before.updated_at,
   });
   expect(f.provider.calls.stop).toHaveLength(1);
 });
