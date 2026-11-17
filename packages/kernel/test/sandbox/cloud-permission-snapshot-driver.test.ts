@@ -303,3 +303,17 @@ it("resumes after a crash mid-run without publishing a device twice", async () =
   expect(await second?.epoch()).toBe(1);
   expect(await second?.root()).toBe("approve-for-me");
 });
+
+it("an unsettled freeze rerun after a settled one refuses the snapshot again", async () => {
+  const f = await fixture();
+  const spy = vi.spyOn(retirement(), "scan").mockResolvedValue({ added: 1 });
+  try {
+    await expect(retirement().freeze("operator")).rejects.toThrow(/did not settle/);
+  } finally {
+    spy.mockRestore();
+  }
+  await expect(snapshots().snapshotAll()).rejects.toThrow(/enumerat/);
+  expect((await f.device()).owner_full_access).toBeNull();
+  await retirement().freeze("operator");
+  expect((await snapshots().snapshotAll()).results.map((r) => r.deviceId)).toEqual([f.deviceId]);
+});

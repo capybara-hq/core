@@ -154,7 +154,16 @@ export async function main(
     case "secrets-rewrap":
       return runSecretsRewrap(log, env, io);
     case "permissions-cutover":
-      return runPermissionsCutover({ action: cmd.action, json: cmd.json }, log, env, io);
+      return runPermissionsCutover(
+        {
+          action: cmd.action,
+          json: cmd.json,
+          ...(cmd.leaseWaitMs !== undefined && { leaseWaitMs: cmd.leaseWaitMs }),
+        },
+        log,
+        env,
+        io,
+      );
     case "start":
       if (envFile !== undefined) log.info("loaded env file", { path: envFile });
       return runStart(
