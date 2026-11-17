@@ -362,7 +362,11 @@
       "project_path_unreadable": "This path is a file or cannot be read on the device. Choose a readable directory.",
       "project_not_found": "This device has no project with this name.",
       "projects_unsupported": "This device does not support projects.",
-      "projects_unavailable": "The device could not be asked about this directory right now. Try again in a moment."
+      "projects_unavailable": "The device could not be asked about this directory right now. Try again in a moment.",
+      "permission_reconcile_required": "This device's permission limits have not been confirmed yet. Reset the device's files on the devices page, then try again.",
+      "owner_report_stale": "This computer sent an outdated permission report, so new work is paused. Run capybara-device login again on the computer.",
+      "owner_ceiling_confirmation_required": "Giving this device Full access needs your confirmation. Confirm the change and try again.",
+      "full_access_not_allowed": "Full access is not allowed for this device by your platform, your organization or its provider."
     },
     "device_sign_in": {
       "authorization_pending": "The connection is not confirmed yet. Confirm it on the web page and wait a moment.",
