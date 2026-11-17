@@ -480,26 +480,14 @@ export class SandboxOperationAuthority {
     holderConversationId: string;
     runId: string | undefined;
   }) {
-    const { orgId, deviceId, root } = input;
+    const { orgId, deviceId } = input;
     const { policy, owner } = await this.facts.readDevice(orgId, deviceId);
     const device = await this.db
       .selectFrom("devices")
       .select("source")
       .where("id", "=", deviceId)
       .executeTakeFirstOrThrow();
-    const working = await this.facts.readWorkingFacts({
-      orgId,
-      rootConversationId: root.id,
-      holderConversationId: input.holderConversationId,
-      deviceId,
-    });
-    if (
-      root.project_name &&
-      root.project_path &&
-      !(await this.facts.projectMatches(deviceId, root.project_name, root.project_path))
-    )
-      throw new ApiError("conflict", "The conversation project binding changed");
-    const workingRoot = root.project_path ?? working.workspace;
+    const workingRoot = await this.workingRootOf(input);
     const grant = input.runId
       ? await this.grants.forExec({ orgId, deviceId, runId: input.runId })
       : undefined;
@@ -513,6 +501,53 @@ export class SandboxOperationAuthority {
           policy.network.hosts.some((pattern) => coversHost(pattern, host))),
     );
     return { policy, device, workingRoot, grant, allowedHosts };
+  }
+
+  /**
+   * The working root of the base authority (B1): the validated project binding, else the recorded
+   * or reported workspace. Admission, the recorded permission context and the managed device
+   * context evidence all resolve it here, so none of them can name a wider root than admission.
+   */
+  private async workingRootOf(input: {
+    orgId: string;
+    deviceId: string;
+    root: PermissionRoot;
+    holderConversationId: string;
+  }): Promise<string> {
+    const { orgId, deviceId, root } = input;
+    const working = await this.facts.readWorkingFacts({
+      orgId,
+      rootConversationId: root.id,
+      holderConversationId: input.holderConversationId,
+      deviceId,
+    });
+    if (
+      root.project_name &&
+      root.project_path &&
+      !(await this.facts.projectMatches(deviceId, root.project_name, root.project_path))
+    )
+      throw new ApiError("conflict", "The conversation project binding changed");
+    return root.project_path ?? working.workspace;
+  }
+
+  /**
+   * The base working root of the calling conversation's tree on `deviceId` (see
+   * {@link workingRootOf}): read without locks as a managed operation's held evidence, and again
+   * under the complete authority subject by the managed device context writer, which compares the
+   * two. Throws `conflict` when the project binding no longer matches the device.
+   */
+  async workingRootFor(input: {
+    orgId: string;
+    deviceId: string;
+    conversationId: string;
+  }): Promise<string> {
+    const root = await this.profiles.readRoot(input.orgId, input.conversationId);
+    return this.workingRootOf({
+      orgId: input.orgId,
+      deviceId: input.deviceId,
+      root,
+      holderConversationId: input.conversationId,
+    });
   }
 
   /**

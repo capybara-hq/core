@@ -98,6 +98,7 @@ import {
   readInstanceLimits,
   sameApplied,
 } from "./modes.js";
+import type { HeldDeviceContextEvidence } from "./permission-context-types.js";
 import { PermissionFacts } from "./permission-facts.js";
 import {
   isInternalProvider,
@@ -186,10 +187,17 @@ export interface SandboxUseInfo {
    * them (environments spec §13.1; a connected machine's real paths).
    */
   roots: SandboxRoots;
+  /**
+   * Kernel-private: what this managed entry holds for the device's model-facing context (the
+   * entered provider, the held instance id and generation, its installed binding, its roots and the
+   * base working root), present only when the invocation asked for it and the held instance has
+   * an installed binding. Never an SDK field, never read from model or tool input.
+   */
+  contextEvidence?: HeldDeviceContextEvidence;
 }
 
 /** {@link SandboxUseInfo} before the roots are read from the handle. */
-type EnteredInfo = Omit<SandboxUseInfo, "roots">;
+type EnteredInfo = Omit<SandboxUseInfo, "roots" | "contextEvidence">;
 
 export type { SandboxProviderEntry } from "./providers.js";
 
@@ -591,6 +599,8 @@ export interface SandboxStaging {
   ): Promise<T>;
 }
 export type OperationSessionInvocation = Omit<OperationInvocation, "ordinal"> & {
+  /** Read the held {@link SandboxUseInfo.contextEvidence} once after entry (managed route). */
+  contextEvidence?: true;
   beforeUser?: (
     staging: SandboxStaging,
     info: SandboxUseInfo,
@@ -1551,7 +1561,14 @@ export class SandboxService {
       : createLegacyHeldProvider(p.impl, e.lease.token, ctx.actor, () =>
           this.register(env, e.lease.token),
         );
-    const info = { ...e.info, roots: rootsOf(e.handle) };
+    const contextEvidence = invocation?.contextEvidence
+      ? await this.heldContextEvidence(ctx, p, e)
+      : undefined;
+    const info: SandboxUseInfo = {
+      ...e.info,
+      roots: rootsOf(e.handle),
+      ...(contextEvidence && { contextEvidence }),
+    };
     if (invocation?.beforeUser)
       await invocation.beforeUser(
         {
@@ -1561,7 +1578,53 @@ export class SandboxService {
         info,
         sig,
       );
-    return fn(e.handle, impl, { ...e.info, roots: rootsOf(e.handle) }, sig);
+    return fn(e.handle, impl, info, sig);
+  }
+
+  /**
+   * The held evidence of a managed entry (B3), read once under the shared lease the holder already
+   * has: the entered provider, the held handle's id and its generation (the row's `created_at`
+   * milliseconds), the installed binding of exactly that generation and provider, the handle's
+   * roots and the base working root admission resolves. Undefined without an installed binding or
+   * with a project binding that no longer matches: the managed writer then refuses the call. The
+   * writer validates every field again under the authority locks.
+   */
+  private async heldContextEvidence(
+    ctx: SandboxUseContext,
+    p: SandboxProviderEntry,
+    e: Entered,
+  ): Promise<HeldDeviceContextEvidence | undefined> {
+    const instanceGeneration = String(e.createdAt);
+    const binding = await this.db
+      .selectFrom("device_instance_bindings")
+      .select("binding_id")
+      .where("device_id", "=", ctx.deviceId)
+      .where("instance_generation", "=", instanceGeneration)
+      .where("provider", "=", p.plugin)
+      .where("status", "=", "installed")
+      .executeTakeFirst();
+    if (!binding) return undefined;
+    let workingRoot: string;
+    try {
+      workingRoot = await this.authority.workingRootFor({
+        orgId: ctx.orgId,
+        deviceId: ctx.deviceId,
+        conversationId: ctx.holderConversationId,
+      });
+    } catch (error) {
+      if (error instanceof ApiError) return undefined;
+      throw error;
+    }
+    const roots = rootsOf(e.handle);
+    return {
+      deviceId: ctx.deviceId,
+      provider: p.plugin,
+      instanceId: e.handle.id,
+      instanceGeneration,
+      bindingId: binding.binding_id,
+      roots: { workspace: roots.workspace, skills: roots.skills, tmp: roots.tmp },
+      workingRoot,
+    };
   }
 
   /**

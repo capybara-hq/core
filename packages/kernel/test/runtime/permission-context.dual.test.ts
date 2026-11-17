@@ -9,7 +9,9 @@ import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { createLogger } from "../../src/log.js";
 import { ExecutionRevoked, RunExecution } from "../../src/runtime/run-execution.js";
+import { ManagedDeviceContextRecorder } from "../../src/sandbox/managed-device-context.js";
 import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
+import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { PermissionTransitions } from "../../src/sandbox/permission-transitions.js";
 import { truncateTables } from "../helpers/db.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
@@ -18,6 +20,7 @@ import {
   type ContextFixture,
   contexts,
   inputOf,
+  ROOTS,
   recordUnder,
   seedContext,
   spyProvider,
@@ -213,5 +216,52 @@ describe("permission context across replicas", () => {
     await writer;
     await expect(recorder).rejects.toBeInstanceOf(ExecutionRevoked);
     expect(await contexts(raw, f.rootId)).toEqual([]);
+  });
+
+  it("two replicas' managed device writers racing from one predecessor append exactly one marked event", async () => {
+    const f = await seedContext(a, raw);
+    // the evidence both entries hold for the same installed instance
+    const held = {
+      deviceId: f.deviceId,
+      provider: "@local",
+      instanceId: f.deviceId,
+      instanceGeneration: f.generation,
+      bindingId: f.bindingId,
+      roots: ROOTS,
+      workingRoot: "/work",
+    };
+    const writeOn = (k: TestKernel) =>
+      k.app.get(RunExecution).withClaim(
+        f.claim,
+        () => true,
+        () =>
+          k.app
+            .get(ManagedDeviceContextRecorder)
+            .record(inputOf(f), held, new AbortController().signal),
+      );
+    // replica a holds its open transaction after its comparison, before its latest-event read
+    const entered = gate(),
+      release = gate();
+    const facts = a.app.get(PermissionFacts);
+    const read = facts.readAppliedEnvironmentLocked.bind(facts);
+    vi.spyOn(facts, "readAppliedEnvironmentLocked").mockImplementationOnce(async (input) => {
+      const applied = await read(input);
+      entered.open();
+      await release.promise;
+      return applied;
+    });
+    const first = writeOn(a);
+    await entered.promise;
+    const second = writeOn(b);
+    await lockWaiter();
+    release.open();
+    await Promise.all([first, second]);
+    const rows = await sql<{ idem_key: string; payload: { permissionContextVersion?: number } }>`
+      SELECT idem_key, payload FROM capybara.conversation_events
+      WHERE conversation_id = ${f.rootId} AND type = 'device_paths'`.execute(raw);
+    expect(rows.rows).toHaveLength(1);
+    expect(rows.rows[0]?.payload.permissionContextVersion).toBe(1);
+    expect(rows.rows[0]?.idem_key.endsWith(":0")).toBe(true);
+    for (const p of providers) expect(p.calls).toEqual([]);
   });
 });

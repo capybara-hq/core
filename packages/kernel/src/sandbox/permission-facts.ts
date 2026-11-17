@@ -606,6 +606,7 @@ export class PermissionFacts {
       return null;
     return {
       location: "local",
+      provider: instance.provider,
       instanceId: instance.handle.id,
       instanceGeneration,
       bindingId: binding.binding_id,

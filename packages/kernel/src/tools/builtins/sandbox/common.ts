@@ -32,7 +32,15 @@ import { AUTO_MODE_NOT_ALLOWED_TEXT } from "../../../local-devices/local-device-
 import { type DeviceModeLevel, devicePathsChange } from "../../../runtime/context/device-paths.js";
 import { SandboxPathBusyError } from "../../../sandbox/leases.js";
 import type { LegacyRetirementStore } from "../../../sandbox/legacy-retirement.js";
+import {
+  MANAGED_DEVICE_CONTEXT_FAILED_TEXT,
+  MANAGED_DEVICE_CONTEXT_STALE_TEXT,
+  ManagedDeviceContextFailed,
+  type ManagedDeviceContextPort,
+  ManagedDeviceContextStale,
+} from "../../../sandbox/managed-device-context.js";
 import type { SandboxMode } from "../../../sandbox/modes.js";
+import type { HeldDeviceContextEvidence } from "../../../sandbox/permission-context-types.js";
 import {
   type HeldProvider,
   SandboxLockLostError,
@@ -106,6 +114,17 @@ export interface SandboxToolDeps {
   config: Pick<KernelConfigService, "get">;
   /** Where a mapped provider failure keeps its raw error (warn); absent in test stubs. */
   log?: Pick<Logger, "warn">;
+  /**
+   * The managed device context writer (permission context replay spec B3): on the managed route it
+   * records the marked device paths before any preparation or user callback, instead of the legacy
+   * `device_paths` writer. Absent while dormant (the legacy writer stays on unactivated routes).
+   */
+  managedDeviceContext?: ManagedDeviceContextPort;
+  /**
+   * The paired activation (`PERMISSION_CONTEXT_ACTIVATION`): the managed route then requires
+   * {@link managedDeviceContext} and refuses before entering without it.
+   */
+  managedDeviceContextRequired?: boolean;
 }
 
 /**
@@ -614,6 +633,10 @@ const AUTO_MODE_TOOL_TEXT = `${AUTO_MODE_NOT_ALLOWED_TEXT} Ask the user to switc
  * `ToolError`).
  */
 export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefined): unknown {
+  if (e instanceof ManagedDeviceContextStale)
+    return new ToolError(MANAGED_DEVICE_CONTEXT_STALE_TEXT, { kind: "unavailable" });
+  if (e instanceof ManagedDeviceContextFailed)
+    return new ToolError(MANAGED_DEVICE_CONTEXT_FAILED_TEXT, { kind: "unavailable" });
   if (e instanceof SandboxProviderUnreachableError) {
     log?.warn("sandbox provider unreachable", { failure: e.failure, err: e.cause });
     if (e.failure === "connect") {
@@ -725,6 +748,9 @@ async function inSandboxWith<T>(
   },
 ): Promise<{ value: T; notices: string[] }> {
   try {
+    // an activated managed route never runs without its writer: refused before entering, so no
+    // preparation or user callback can run unrecorded (and no legacy device_paths is written)
+    const managed = operations ? managedWriter(deps) : undefined;
     const deviceId = await deps.devices.forTool(ctx.orgId, sandboxConversationOf(ctx));
     // the mode once per call: the path checks follow it and the device_paths event records it;
     // the working facts (workspace, home, project snapshot) are read as the review reads them
@@ -754,7 +780,18 @@ async function inSandboxWith<T>(
               claim,
               callId: ctx.callId,
               deadlineMs: Math.min(ctx.runDeadline ?? Infinity, Date.now() + 30000),
+              ...(managed && { contextEvidence: true as const }),
               beforeUser: async (staging, info, sig) => {
+                // the held instance's device paths, recorded before any preparation or user callback
+                if (managed) {
+                  if (!info.contextEvidence) throw new ManagedDeviceContextStale();
+                  await recordManagedDevicePaths(
+                    { managedDeviceContext: managed },
+                    ctx,
+                    info.contextEvidence,
+                    sig,
+                  );
+                }
                 prepared = await staging.prepare(
                   "attachments",
                   [attachmentsDir(info.roots, sandboxConversationOf(ctx))],
@@ -794,11 +831,16 @@ async function inSandboxWith<T>(
           mode,
           h,
           roots: info.roots,
-          workingRoot: reviewed ?? sessionWorkingRoot(working, mode, info.roots.workspace, reach),
+          // a managed call runs in the working root its device context recorded (admission's)
+          workingRoot:
+            reviewed ??
+            (managed ? info.contextEvidence?.workingRoot : undefined) ??
+            sessionWorkingRoot(working, mode, info.roots.workspace, reach),
           p,
           signal,
         };
-        await recordDevicePaths(deps, ctx, info.roots, level ?? null);
+        // the legacy writer only on unactivated routes: a managed call recorded before preparation
+        if (!managed) await recordDevicePaths(deps, ctx, info.roots, level ?? null);
         const notices: string[] = [];
         if (info.filesReset) notices.push(sandboxFilesResetNotice(info.roots));
         else if (info.restarted) notices.push(SANDBOX_RESTARTED_NOTICE);
@@ -816,6 +858,40 @@ async function inSandboxWith<T>(
   } catch (e) {
     throw mapSandboxError(e, deps.log);
   }
+}
+
+/**
+ * The managed writer of an operations route: the injected one, or none while dormant. Once the
+ * paired activation requires it, a missing writer refuses the call before anything is entered.
+ */
+function managedWriter(deps: SandboxToolDeps): ManagedDeviceContextPort | undefined {
+  if (deps.managedDeviceContext) return deps.managedDeviceContext;
+  if (deps.managedDeviceContextRequired) throw new ManagedDeviceContextFailed("refused");
+  return undefined;
+}
+
+/**
+ * Records the managed device paths of the held instance `held` into the calling conversation (a
+ * sub-agent: its own log) for this call's run and actor: a thin delegator to the managed writer,
+ * which owns the transaction and all validation (permission context replay spec B3).
+ */
+export async function recordManagedDevicePaths(
+  deps: { managedDeviceContext: ManagedDeviceContextPort },
+  ctx: BuiltinCallContext,
+  held: Readonly<HeldDeviceContextEvidence>,
+  signal: AbortSignal,
+): Promise<void> {
+  if (ctx.runId === undefined) throw new ManagedDeviceContextFailed("refused");
+  await deps.managedDeviceContext.record(
+    {
+      orgId: ctx.orgId,
+      conversationId: ctx.conversationId,
+      runId: ctx.runId,
+      accountId: ctx.accountId,
+    },
+    held,
+    signal,
+  );
 }
 
 /**

@@ -22,6 +22,11 @@ import type { HookRunner } from "../../runtime/hook-calls.js";
 import { conversationTimeZone, RUN_CONTEXT_CLOCK } from "../../runtime/run-context.service.js";
 import { StepLog } from "../../runtime/step-log.js";
 import { LegacyRetirementStore } from "../../sandbox/legacy-retirement.js";
+import { ManagedDeviceContextRecorder } from "../../sandbox/managed-device-context.js";
+import {
+  PERMISSION_CONTEXT_ACTIVATION,
+  permissionContextActive,
+} from "../../sandbox/permission-context-types.js";
 import { SandboxService } from "../../sandbox/sandbox.service.js";
 import { ScheduledTaskStore } from "../../schedules/store.js";
 import { StorageService } from "../../storage/storage.service.js";
@@ -50,6 +55,8 @@ import { extractAnswer, WebPages, webTools } from "./web/index.js";
 @Injectable()
 export class BuiltinTools {
   private readonly tools: readonly BuiltinTool[];
+  /** What the builtin sandbox tools run with (the managed writer only once activated). */
+  readonly sandboxDeps: SandboxToolDeps;
 
   constructor(
     @Inject(KernelDb) db: KernelDb,
@@ -82,8 +89,13 @@ export class BuiltinTools {
     /** The task service, bound by `SchedulesModule` at start (a registration port: no cycle). */
     @Inject(ScheduleToolsPort) schedulePort: ScheduleToolsPort,
     /** The clock `CurrentTime` reads (the run context's clock seam; `Date.now` by default). */
+    /** The managed sandbox route's device context writer (permission context replay spec B3). */
+    @Inject(ManagedDeviceContextRecorder) managedDeviceContext: ManagedDeviceContextRecorder,
     @Optional() @Inject(RUN_CONTEXT_CLOCK) now?: () => number,
+    /** The paired activation gate (one switch with the runtime's request boundary). */
+    @Optional() @Inject(PERMISSION_CONTEXT_ACTIVATION) activation?: boolean,
   ) {
+    const managedActive = permissionContextActive(activation);
     const sandboxDeps: SandboxToolDeps = {
       sandbox,
       devices,
@@ -100,7 +112,14 @@ export class BuiltinTools {
       eventLog,
       config,
       log,
+      // dormant: the managed route keeps the legacy writer until the paired activation turns the
+      // gate on; then the managed writer is required on every managed operation
+      ...(managedActive && {
+        managedDeviceContext,
+        managedDeviceContextRequired: true,
+      }),
     };
+    this.sandboxDeps = sandboxDeps;
     this.tools = [
       askUserTool({ config }),
       readToolOutputTool({ outputs, config }),

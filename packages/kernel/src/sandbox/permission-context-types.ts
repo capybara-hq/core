@@ -38,6 +38,8 @@ export type AppliedOuterNetwork = NonNullable<PermissionContextV1["scope"]>["out
  */
 export interface AppliedEnvironment {
   location: "local" | "cloud";
+  /** The provider of the installed instance (its row and its installed binding agree). */
+  provider: string;
   instanceId: string;
   instanceGeneration: string;
   bindingId: string;
