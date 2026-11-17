@@ -370,7 +370,8 @@
       "project_not_found": "This device has no project with this name.",
       "projects_unsupported": "This device does not support projects.",
       "projects_unavailable": "The device could not be asked about this directory right now. Try again in a moment.",
-      "permission_reconcile_required": "This device's permission limits have not been confirmed yet. Reset the device's files on the devices page, then try again.",
+      "permission_reconcile_required": "This device's sandbox limits must be established again before it runs anything. Rebuild its files on its device page, then try again.",
+      "permission_not_migrated": "This device's permissions have not been migrated yet, so its Full access ceiling can't be set now. Turning Full access off still works; try allowing it again once the migration has run. Rebuilding the files does not change this.",
       "owner_report_stale": "This computer sent an outdated permission report, so new work is paused. Run capybara-device login again on the computer.",
       "owner_ceiling_confirmation_required": "Giving this device Full access needs your confirmation. Confirm the change and try again.",
       "full_access_not_allowed": "Full access is not allowed for this device by your platform, your organization or its provider.",
@@ -1751,6 +1752,7 @@
     "detail": {
       "demotedNote": "This was your personal device before the platform changed its sandbox provider. When the platform switches back to {provider}, it becomes your default device again, with its files.",
       "filesLostNote": "The files of this device are gone at the provider. Rebuild the files to use it again.",
+      "reconcileNote": "This device's sandbox limits must be established again before it runs anything. Rebuild its files to apply them; the workspace is wiped.",
       "localFilesLostNote": "The files directory of this local device is gone from the machine. On the machine, run capybara-device logout, then capybara-device login into this device to recreate the directory.",
       "rename": "Rename",
       "renameTitle": "Rename device",
@@ -1833,11 +1835,9 @@
           "narrow": "Work running with Full access on this device stops now, and its conversations can no longer choose Full access."
         },
         "network": {
-          "widen": "The device's network then reaches public addresses, with private networks blocked, never beyond what the cloud administrator provisioned for it.",
-          "narrowOpen": "The organization's cloud network is open, so the device still reaches public addresses, with private networks blocked, never beyond what the cloud administrator provisioned for it.",
-          "narrowAllowlist": "The device's network then becomes the organization's cloud allowlist: it reaches only {hosts}, never beyond what it reaches now.",
-          "narrowNone": "The organization's cloud allowlist is empty, so the device then reaches no network host.",
-          "narrowOrg": "The device's network then follows the organization's cloud network, never beyond what it reaches now."
+          "open": "The device then reaches public addresses, with private networks blocked.",
+          "allowlist": "The device then reaches only {hosts}.",
+          "none": "The device then reaches no network host."
         },
         "nextUse": "Its instance takes the new limits and network at its next use and may restart then, which ends its running commands. Its files are kept.",
         "submit": {
@@ -1846,8 +1846,7 @@
         },
         "cancel": "Cancel"
       },
-      "cloudForbidden": "The platform or the organization does not allow Full access, so it is already off on this device.",
-      "notMigrated": "This device's permissions have not been migrated yet, so its Full access ceiling can't be set from here now. Try again once the migration has run; resetting the files does not change this."
+      "cloudForbidden": "The platform or the organization does not allow Full access, so it is already off on this device."
     },
     "recent": {
       "title": "Recent changes",
@@ -1865,6 +1864,10 @@
       "outcome": {
         "unknown": "Not confirmed by the machine",
         "failed": "Did not take effect"
+      },
+      "reach": {
+        "workspace": "Project reach limited to the workspace",
+        "os-user": "Project reach widened to the computer user's files"
       }
     },
     "machine": {

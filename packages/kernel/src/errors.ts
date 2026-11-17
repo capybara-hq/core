@@ -394,6 +394,11 @@ export const ERROR_CODES = {
    * is admitted until a lifecycle action (a file reset) establishes them.
    */
   "device.permission_reconcile_required": 409,
+  /**
+   * B1: a cloud device's owner ceiling PATCH before its snapshot exists (not migrated yet); the old
+   * sandbox switch still narrows it. A file reset does not change this.
+   */
+  "device.permission_not_migrated": 409,
   "device.owner_report_stale": 409,
   /** A local device's old instance may still run legacy work until the computer restarts (8.5). */
   "device.restart_required": 503,

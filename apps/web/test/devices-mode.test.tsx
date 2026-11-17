@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import { CEILING_COMMAND } from "../src/components/DeviceModeSection";
+import { RESET_POLL_DEADLINE_MS, RESET_POLL_MS, resetPollInterval } from "../src/lib/devices";
 import { keys } from "../src/lib/query/keys";
 import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
@@ -59,6 +60,8 @@ const cloudMode = (over: Record<string, unknown> = {}) => ({
   network: { kind: "open-public", hosts: [], source: "org" },
   local: null,
   sandboxNetwork: { kind: "open-public", hosts: [] },
+  fullNetwork: { kind: "open-public", hosts: [] },
+  outerNetwork: { kind: "open-public", hosts: [] },
   pendingNextUse: false,
   pendingFilesReset: false,
   recent: [],
@@ -71,6 +74,8 @@ const localMode = (over: Record<string, unknown> = {}) => ({
   network: { kind: "allowlist", hosts: [], source: "platform" },
   local: { reported: "auto", allowedDomains: [] },
   sandboxNetwork: null,
+  fullNetwork: null,
+  outerNetwork: null,
   pendingNextUse: false,
   pendingFilesReset: false,
   recent: [],
@@ -83,6 +88,7 @@ const report = (over: Record<string, unknown> = {}) => ({
   revision: "r1",
   sequence: 3,
   fullAccess: true,
+  effectiveFullAccess: true,
   restrictedProjectReach: "os-user",
   restrictedAllowedDomains: [],
   observedAt: T,
@@ -90,11 +96,12 @@ const report = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 /** A migrated cloud device's explicit Full ceiling. */
-const cloudCeiling = (fullAccess = true) => ({
+const cloudCeiling = (fullAccess = true, effectiveFullAccess = fullAccess) => ({
   state: "cloud",
   revision: null,
   sequence: null,
   fullAccess,
+  effectiveFullAccess,
   restrictedProjectReach: "workspace",
   restrictedAllowedDomains: [],
   observedAt: null,
@@ -119,6 +126,7 @@ const cloud = (over: Record<string, unknown> = {}) => ({
   limits: LIMITS,
   mode: cloudMode(),
   ownerCeiling: cloudCeiling(),
+  reconcileRequired: false,
   createdAt: T,
   ...over,
 });
@@ -143,6 +151,7 @@ const local = (over: Record<string, unknown> = {}, modeOver: Record<string, unkn
   limits: { ...LIMITS, mode: "sandbox", network: { kind: "allowlist", hosts: [] } },
   mode: localMode(modeOver),
   ownerCeiling: report(),
+  reconcileRequired: false,
   createdAt: T,
   ...over,
 });
@@ -423,7 +432,7 @@ describe("a cloud device's owner ceiling", () => {
     await user.click(await screen.findByRole("button", { name: C.turnOffFull }));
     const dialog = await screen.findByRole("dialog", { name: C.confirm.title.narrow });
     expect(within(dialog).getByText(C.confirm.effect.narrow)).toBeTruthy();
-    expect(within(dialog).getByText(C.confirm.network.narrowOpen)).toBeTruthy();
+    expect(within(dialog).getByText(C.confirm.network.open)).toBeTruthy();
     expect(within(dialog).getByText(C.confirm.nextUse)).toBeTruthy();
     // Full work stops now: nothing in the dialog defers that to the next use
     expect(dialog.textContent).toMatch(/stops now/);
@@ -448,7 +457,7 @@ describe("a cloud device's owner ceiling", () => {
     await user.click(await screen.findByRole("button", { name: C.allowFull }));
     const dialog = await screen.findByRole("dialog", { name: C.confirm.title.widen });
     expect(within(dialog).getByText(C.confirm.effect.widen)).toBeTruthy();
-    expect(within(dialog).getByText(C.confirm.network.widen)).toBeTruthy();
+    expect(within(dialog).getByText(C.confirm.network.open)).toBeTruthy();
     expect(dialog.textContent).not.toMatch(/network does not change/i);
     expect(calls.some((c) => c.method === "PATCH")).toBe(false);
     await user.click(within(dialog).getByRole("button", { name: C.confirm.submit.widen }));
@@ -471,7 +480,7 @@ describe("a cloud device's owner ceiling", () => {
     expect(calls.every((c) => c.method === "GET")).toBe(true);
   });
 
-  it("turning Full access off names the organization's allowlist the device then reaches", async () => {
+  it("turning Full access off names exactly the hosts the device then reaches", async () => {
     const hosts = ["files.example.com", "*.slack.com"];
     stubApi(detail(cloud({ mode: cloudMode({ sandboxNetwork: { kind: "allowlist", hosts } }) })));
     await renderDetail({ locale: "zh" });
@@ -483,7 +492,7 @@ describe("a cloud device's owner ceiling", () => {
     });
     expect(
       within(dialog).getByText(
-        zh.devices.ceiling.confirm.network.narrowAllowlist.replace("{hosts}", hosts.join(", ")),
+        zh.devices.ceiling.confirm.network.allowlist.replace("{hosts}", hosts.join(", ")),
       ),
     ).toBeTruthy();
     expect(dialog.textContent).not.toContain("网络不变");
@@ -498,10 +507,10 @@ describe("a cloud device's owner ceiling", () => {
     const user = await openSettings();
     await user.click(await screen.findByRole("button", { name: C.turnOffFull }));
     const dialog = await screen.findByRole("dialog", { name: C.confirm.title.narrow });
-    expect(within(dialog).getByText(C.confirm.network.narrowNone)).toBeTruthy();
+    expect(within(dialog).getByText(C.confirm.network.none)).toBeTruthy();
   });
 
-  it("allowing Full access says it reaches public addresses, never beyond what was provisioned", async () => {
+  it("allowing Full access names the network it then reaches within the device's outer network", async () => {
     stubApi(
       detail(
         cloud({
@@ -510,6 +519,8 @@ describe("a cloud device's owner ceiling", () => {
             mode: "sandbox",
             network: { kind: "allowlist", hosts: ["files.example.com"], source: "org" },
             sandboxNetwork: { kind: "allowlist", hosts: ["files.example.com"] },
+            fullNetwork: { kind: "allowlist", hosts: ["files.example.com", "a.test"] },
+            outerNetwork: { kind: "allowlist", hosts: ["files.example.com", "a.test"] },
           }),
         }),
       ),
@@ -518,10 +529,37 @@ describe("a cloud device's owner ceiling", () => {
     const user = await openSettings();
     await user.click(await screen.findByRole("button", { name: C.allowFull }));
     const dialog = await screen.findByRole("dialog", { name: C.confirm.title.widen });
-    const line = within(dialog).getByText(C.confirm.network.widen);
-    expect(line.textContent).toMatch(/public addresses/);
-    expect(line.textContent).toMatch(/private networks/);
-    expect(line.textContent).toMatch(/provisioned/);
+    expect(
+      within(dialog).getByText(
+        C.confirm.network.allowlist.replace("{hosts}", "files.example.com, a.test"),
+      ),
+    ).toBeTruthy();
+    // the exact network, not the conservative wording
+    expect(dialog.textContent).not.toMatch(/provisioned|never beyond/);
+  });
+
+  it("the effective owner Full access decides: an old switch is off on the device, not the platform's", async () => {
+    stubApi(
+      detail(
+        cloud({
+          ownerCeiling: cloudCeiling(true, false),
+          mode: cloudMode({ mode: "sandbox", allowedMode: "sandbox", allowedBy: null }),
+        }),
+      ),
+    );
+    await renderDetail();
+    await openSettings();
+    await ceilingSection();
+    expect(factRow(C.fullAccess)?.textContent).toContain(C.full.owner);
+    expect(screen.queryByRole("button", { name: C.turnOffFull })).toBeNull();
+    expect(screen.queryByRole("button", { name: C.allowFull })).toBeNull();
+  });
+
+  it("a device whose limits must be established again says so up front and offers 重建文件", async () => {
+    stubApi(detail(cloud({ reconcileRequired: true })));
+    await renderDetail();
+    expect(await screen.findByText(E.detail.reconcileNote)).toBeTruthy();
+    expect(screen.getByRole("button", { name: E.detail.resetFiles })).toBeTruthy();
   });
 
   it("offers no narrowing while the platform or the org already keeps Full access off", async () => {
@@ -544,7 +582,10 @@ describe("a cloud device's owner ceiling", () => {
 
   it("offers no narrowing while its old sandbox switch already keeps Full access off", async () => {
     stubApi(
-      detail(cloud({ ownerCeiling: cloudCeiling(true), mode: cloudMode({ mode: "sandbox" }) })),
+      // the kernel reports the switch in the effective owner allowance
+      detail(
+        cloud({ ownerCeiling: cloudCeiling(true, false), mode: cloudMode({ mode: "sandbox" }) }),
+      ),
     );
     await renderDetail();
     await openSettings();
@@ -611,14 +652,15 @@ describe("a cloud device's owner ceiling", () => {
   it("a refusal because the device is not migrated yet explains that, offering no file rebuild", async () => {
     stubApi({
       ...detail(cloud()),
-      [`PATCH ${BASE}/e1`]: failWith(409, "device.permission_reconcile_required"),
+      [`PATCH ${BASE}/e1`]: failWith(409, "device.permission_not_migrated"),
     });
     await renderDetail();
     const user = await openSettings();
     await user.click(await screen.findByRole("button", { name: C.turnOffFull }));
     const dialog = await screen.findByRole("dialog", { name: C.confirm.title.narrow });
     await user.click(within(dialog).getByRole("button", { name: C.confirm.submit.narrow }));
-    expect(await screen.findByText(C.notMigrated)).toBeTruthy();
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain(en.errors.device.permission_not_migrated);
     // a file reset does not migrate a device: the page neither offers it nor says to do it
     expect(screen.queryByText(en.errors.device.permission_reconcile_required)).toBeNull();
     expect(screen.queryByRole("button", { name: E.detail.resetFiles })).toBeNull();
@@ -745,6 +787,7 @@ describe("the recent changes", () => {
     add: [],
     remove: [],
     mode: null,
+    ceiling: null,
     by: "Ada",
     via: "web",
     outcome: "applied",
@@ -803,6 +846,94 @@ describe("the recent changes", () => {
     expect(meta).toContain(E.recent.via.device);
     expect(meta).not.toContain(E.recent.unknownBy);
     expect(meta).not.toContain("Ada");
+  });
+});
+
+describe("polling after a file reset", () => {
+  const at = 1_000_000;
+  const state = (over: Record<string, unknown> = {}) => ({
+    filesLost: false,
+    reconcileRequired: false,
+    mode: { pendingFilesReset: false },
+    ...over,
+  });
+
+  it("polls while a reset is pending and stops once nothing waits for it", () => {
+    expect(resetPollInterval(state({ filesLost: true }), at, at + 1)).toBe(RESET_POLL_MS);
+    expect(resetPollInterval(state({ reconcileRequired: true }), at, at + 1)).toBe(RESET_POLL_MS);
+    expect(resetPollInterval(state({ mode: { pendingFilesReset: true } }), at, at + 1)).toBe(
+      RESET_POLL_MS,
+    );
+    expect(resetPollInterval(state(), at, at + 1)).toBe(false);
+    // no reset requested: never polls
+    expect(resetPollInterval(state({ filesLost: true }), null, at)).toBe(false);
+    expect(resetPollInterval(undefined, at, at)).toBe(false);
+  });
+
+  it("never polls forever: a marker that stays set stops polling at the deadline", () => {
+    const marked = state({ reconcileRequired: true });
+    expect(resetPollInterval(marked, at, at + RESET_POLL_DEADLINE_MS - 1)).toBe(RESET_POLL_MS);
+    expect(resetPollInterval(marked, at, at + RESET_POLL_DEADLINE_MS)).toBe(false);
+  });
+});
+
+describe("ceiling changes in the recent changes", () => {
+  const ceiling = (from: Record<string, unknown>, to: Record<string, unknown>, via = "web") => ({
+    at: T,
+    kind: "ceiling",
+    add: [],
+    remove: [],
+    mode: null,
+    ceiling: { from, to },
+    by: via === "device" ? null : "Ada",
+    via,
+    outcome: "applied",
+  });
+
+  it("a cloud Full change and a machine's reach change each read as what changed", async () => {
+    stubApi(
+      detail(
+        cloud({
+          mode: cloudMode({
+            recent: [
+              ceiling({ fullAccess: true }, { fullAccess: false }),
+              ceiling(
+                { fullAccess: false, restrictedProjectReach: "os-user" },
+                { fullAccess: false, restrictedProjectReach: "workspace" },
+                "device",
+              ),
+            ],
+          }),
+        }),
+      ),
+    );
+    await renderDetail();
+    const list = await screen.findByRole("list", { name: E.recent.title });
+    expect(within(list).getByText(E.recent.fullOff)).toBeTruthy();
+    expect(within(list).getByText(E.recent.reach.workspace)).toBeTruthy();
+    expect(within(list).queryByText(E.recent.none)).toBeNull();
+  });
+
+  it("zh labels a widened reach and allowed Full access", async () => {
+    stubApi(
+      detail(
+        cloud({
+          mode: cloudMode({
+            recent: [
+              ceiling(
+                { fullAccess: false, restrictedProjectReach: "workspace" },
+                { fullAccess: true, restrictedProjectReach: "os-user" },
+                "device",
+              ),
+            ],
+          }),
+        }),
+      ),
+    );
+    await renderDetail({ locale: "zh" });
+    const list = await screen.findByRole("list", { name: zh.devices.recent.title });
+    expect(list.textContent).toContain(zh.devices.recent.fullAllowed);
+    expect(list.textContent).toContain(zh.devices.recent.reach["os-user"]);
   });
 });
 
