@@ -37,7 +37,7 @@ import { useRouter } from "../../../../i18n/navigation";
 import {
   type Device,
   deleteDevice,
-  deviceModeMark,
+  deviceCeilingMark,
   deviceState,
   isDeviceName,
   renameDevice,
@@ -55,13 +55,13 @@ import NotFound from "../../not-found";
 
 /**
  * `/devices/[id]`: one device (DetailPage, one centred column). Its head is the `DeviceNameplate`
- * band — name, origin, status light and mode mark on the left, program version, last seen and
- * creation time on the right — the page's one bright element, and the page's title: the PageHeader
- * is title-less, so the name is said once (`titleHidden`). Everything below is quiet and dense:
- * the cloud facts (提供方, 资源 and 网络, each said once), the files and suspension notes, the
- * `DeviceModeSection` (the compact 自动 / 沙箱 scale, its network section in sandbox mode only, and
- * the recent changes), and for a local device its machine block (系统 and 断开这台机器). A local
- * device's name is the machine's, and its mode is the nameplate's mark, so neither is repeated.
+ * band — name, origin, status light and the ceiling mark (Full access available or restricted) on
+ * the left, program version, last seen and creation time on the right — the page's one bright
+ * element, and the page's title: the PageHeader is title-less, so the name is said once
+ * (`titleHidden`). Everything below is quiet and dense: the owner ceiling (read only on 概览, with
+ * the narrowing the kernel allows on 设置; no daily mode), the cloud facts (提供方, 资源 and 网络,
+ * each said once), the files and suspension notes, the recent changes, and for a local device its
+ * allowlist and machine block (系统 and 断开这台机器).
  * 重命名, 重建文件 (only when its files are lost, behind a confirmation; a job, so the page then
  * polls until the files are back) and 删除 (typing its name; the files are deleted with it, a
  * destructive item of the ⋯ menu; deleting 个人设备 says a new empty one is created the next time
@@ -174,7 +174,7 @@ function Detail({
         : state === "online"
           ? "online"
           : "offline";
-  const mark = deviceModeMark(e);
+  const mark = deviceCeilingMark(e);
   return (
     <>
       <DetailPage
@@ -213,7 +213,7 @@ function Detail({
             version={local ? (e.machine?.programVersion ?? null) : null}
             lastSeen={local ? (e.machine?.lastSeenAt ?? null) : (e.instance?.lastUsedAt ?? null)}
             created={e.createdAt}
-            badge={<Badge tone={mark.tone}>{t(`mark.${mark.kind}`)}</Badge>}
+            badge={<Badge>{t(`ceiling.mark.${mark}`)}</Badge>}
             labels={{
               origin: { cloud: t("source.cloud"), local: t("source.local") },
               state: { [npState]: t(`state.${state}`) },

@@ -1257,7 +1257,7 @@ describe("the conversation page's server gate", () => {
 });
 
 describe("the properties panel's device mark", () => {
-  it("a local auto-mode device carries the quiet 自动 mark in warn", async () => {
+  it("the device carries its neutral ceiling mark, never a daily mode", async () => {
     const mode = {
       mode: "auto",
       allowedMode: "auto",
@@ -1273,6 +1273,16 @@ describe("the properties panel's device mark", () => {
       provider: "@local",
       online: true,
       mode,
+      ownerCeiling: {
+        state: "report",
+        revision: "r1",
+        sequence: 1,
+        fullAccess: true,
+        restrictedProjectReach: "os-user",
+        restrictedAllowedDomains: [],
+        observedAt: "2026-11-07T08:00:00.000Z",
+        stale: false,
+      },
     });
     api({
       [`GET ${BASE}`]: () => json(200, CONV("c1", { deviceId: "e1" })),
@@ -1287,8 +1297,8 @@ describe("the properties panel's device mark", () => {
       if (b === null) throw new Error("no mark yet");
       return b;
     });
-    expect(badge.textContent).toBe(en.devices.mark.auto);
-    expect(badge.getAttribute("data-tone")).toBe("warn");
+    expect(badge.textContent).toBe(en.devices.ceiling.mark.full);
+    expect(badge.getAttribute("data-tone")).toBe("default");
     window.history.replaceState(null, "", "/");
   });
 });

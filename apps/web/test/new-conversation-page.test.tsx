@@ -506,7 +506,7 @@ describe("the device picker (environments design §4.1)", () => {
     expect(online.textContent).toContain(en.devices.state.online);
   });
 
-  it("the picker marks 自动 (warn) and 沙箱 (quiet) local devices", async () => {
+  it("the picker draws no daily auto / sandbox mark on local devices", async () => {
     resetNavigation("/");
     const mode = (m: string, allowed = "auto") => ({
       mode: m,
@@ -531,11 +531,12 @@ describe("the device picker (environments design §4.1)", () => {
     await user.click(picker() as HTMLElement);
     const open = await screen.findByRole("menuitemradio", { name: /Laptop/ });
     const mark = (item: HTMLElement) => item.querySelector(".cb-badge");
-    expect(mark(open)?.textContent).toBe(en.devices.mark.auto);
-    expect(mark(open)?.getAttribute("data-tone")).toBe("warn");
-    const quiet = mark(screen.getByRole("menuitemradio", { name: /Server/ }));
-    expect(quiet?.textContent).toBe(en.devices.mark.sandbox);
-    expect(quiet?.getAttribute("data-tone")).toBe("default");
+    // the conversation's permission picker says what may run; the location picker names places
+    expect(mark(open)).toBeNull();
+    expect(mark(screen.getByRole("menuitemradio", { name: /Server/ }))).toBeNull();
+    for (const item of screen.getAllByRole("menuitemradio")) {
+      expect(item.textContent).not.toMatch(/\b(Auto|Sandbox)\b/);
+    }
   });
 
   it("without a cloud sandbox the picker still lists the local devices", async () => {
