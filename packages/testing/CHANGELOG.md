@@ -1,5 +1,26 @@
 # @capybara-hq/testing
 
+## 0.1.0-rc.23
+
+### Patch Changes
+
+- c7534e0: The core connector fixtures (`fake-connector`, `fake-openapi`) request through `ctx.net.fetch`
+  with the call's `orgId` and no longer take an `allowInsecureLoopback` deployment config: test
+  kernels set the kernel's `net.allowInsecureLoopback` instead (`testKernelConfig` and the replica
+  runner do). The `net.*` config descriptions state that the switch lifts every loopback refusal and
+  that an org's allowed internal https hosts must be listed in `net.noProxy` when `net.httpsProxy` is
+  set.
+  Their endpoint schemas accept http and https; `ctx.net` decides reachability at request time.
+- Updated dependencies [c7534e0]
+- Updated dependencies [23f7d29]
+- Updated dependencies [b55e386]
+- Updated dependencies [ac345b2]
+- Updated dependencies [9d7f620]
+- Updated dependencies [9c0d52e]
+  - @capybara-hq/kernel@0.1.0-rc.38
+  - @capybara-hq/plugin-sdk@0.1.0-rc.29
+  - @capybara-hq/plugin-tools@0.1.0-rc.16
+
 ## 0.1.0-rc.22
 
 ### Patch Changes
