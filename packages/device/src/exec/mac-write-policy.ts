@@ -1,3 +1,5 @@
+import { realpathSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import {
   SANDBOX_GIT_ALLOWED_DIRECTORIES,
   SANDBOX_GIT_ALLOWED_FILES,
@@ -83,8 +85,41 @@ function chunked(
  * (where git itself creates arbitrarily named entries) keeps its contents. git's
  * `safe.bareRepository=explicit` (recommended to owners) refuses such a directory as a repository.
  */
+/**
+ * The spellings Seatbelt may see for a write root: as given, its real path in on-disk form
+ * (links resolved, case and Unicode normalization as stored; for a root not created yet, its
+ * nearest existing ancestor's), and the `/private` form of `/tmp`, `/var` and `/etc`. A root with
+ * a control character is refused (fail closed).
+ */
+export function macWriteRootSpellings(root: string): string[] {
+  if ([...root].some((ch) => (ch.codePointAt(0) as number) < 0x20 || ch === "\u007f"))
+    throw new Error("A write root with a control character cannot be expressed as a policy");
+  const spellings = new Set([root, root.replace(/^\/(tmp|var|etc)(?=\/|$)/, "/private/$1")]);
+  let anchor = root;
+  const missing: string[] = [];
+  for (;;) {
+    try {
+      spellings.add(join(realpathSync.native(anchor), ...missing));
+      break;
+    } catch {
+      if (anchor === dirname(anchor)) break;
+      missing.unshift(basename(anchor));
+      anchor = dirname(anchor);
+    }
+  }
+  // case-insensitive regexes: spellings that differ only in case are one
+  const seen = new Set<string>();
+  return [...spellings].filter((spelling) => {
+    const key = spelling.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 export function macWriteRegexRules(root: string): MacWriteRegexRule[] {
-  const escaped = root.replace(META, "\\$&");
+  // the root's letters in either case too: Seatbelt matches the on-disk spelling (APFS folds case)
+  const escaped = ci(root);
   const anywhere = `^${escaped}/(.*/)?`;
   const git = `${anywhere}${ci(".git")}`;
   const nested = `(/${ci("modules")}/.+|/${ci("worktrees")}/[^/]+)?`;
@@ -121,6 +156,28 @@ export function macWriteRegexRules(root: string): MacWriteRegexRule[] {
     allow(`${git}${nested}/${ci("logs")}(/${ci("refs")}/${ci("remotes")}/[^/]+)?/${head}$`),
     allow(`${git}${nested}/${ci("refs")}/${ci("remotes")}/[^/]+/${head}$`),
     allow(`${git}${nested}/${ci("sequencer")}/${head}$`),
+    // a directory that holds (or may hold) a HEAD git keeps never leaves .git (Seatbelt checks
+    // file-write-unlink on a rename's source): moved out it would become a bare-repository
+    // lookalike; restricted git therefore cannot remove these directories either
+    {
+      action: "deny",
+      operations: ["file-write-unlink"],
+      regex: `${git}${nested}/(${[
+        ci("logs"),
+        `${ci("logs")}/${ci("refs")}`,
+        `${ci("logs")}/${ci("refs")}/${ci("remotes")}`,
+        `${ci("logs")}/${ci("refs")}/${ci("remotes")}/[^/]+`,
+        ci("refs"),
+        `${ci("refs")}/${ci("remotes")}`,
+        `${ci("refs")}/${ci("remotes")}/[^/]+`,
+        ci("sequencer"),
+      ].join("|")})$`,
+    },
+    {
+      action: "deny",
+      operations: ["file-write-unlink"],
+      regex: `${git}/(${ci("modules")}/.+|${ci("worktrees")}/[^/]+)$`,
+    },
     {
       action: "deny",
       operations: ["file-write-unlink", "file-write-create"],
