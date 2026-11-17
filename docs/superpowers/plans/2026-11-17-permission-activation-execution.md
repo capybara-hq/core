@@ -169,7 +169,8 @@ Each W5 task is reviewed alone. Exports become obsolete only once a grep finds n
 ## 4. Cutover runbook (production order)
 
 1. Release R1 (protocol 2, dormant). Operators upgrade the kernel and the devices. Stop every old kernel replica before
-   the first new one starts, because B1 settings writes are not fenced.
+   the first new one starts, because B1 settings writes are not fenced. Drain the old workers as well: an old retirement
+   worker does not reopen an `exact-cancelled` obligation (B-22) and could acknowledge a revoked start added after it.
 2. `capybara permissions cutover report`: wait until `localWithoutBoot` and `cloudUnknown` are empty, or accept that
    those devices will answer `replace_required` / `recreate_required`.
 3. `capybara config migrate-permissions` for file and Nacos, then rename the env variables. Start the new config with
@@ -178,7 +179,9 @@ Each W5 task is reviewed alone. Exports become obsolete only once a grep finds n
 5. `capybara permissions cutover snapshot`. Cloud devices go through the lifecycle lease. Unreconciled devices keep
    `permission_reconcile_required`.
 6. Deploy R2: the paired core and device v3 release. The kernel rejects v2 devices, which must update. Gate the release
-   on `retired`, with the operator acknowledging any `abandoned > 0`.
+   on `retired`, with the operator acknowledging any `abandoned > 0`. Stop and drain every previous-release
+   replica (workers included) before the first R2 worker runs, as in step 1: only workers that reopen `exact-cancelled`
+   obligations may settle retirement members.
 7. Dogfood acceptance on the maintainer's Mac (handoff): three profiles, a background `pnpm test`, then a replay eval.
 
 ## 5. Plugins repo and release order

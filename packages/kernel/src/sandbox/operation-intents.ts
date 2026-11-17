@@ -27,6 +27,7 @@ import {
 import { PermissionAuthorityEpochStore } from "./permission-authority-epochs.js";
 import { type AuthoritySubject, PermissionAuthorityLock } from "./permission-authority-lock.js";
 import { permissionScopeHash } from "./permission-facts.js";
+import { DeviceRequestNotSentError } from "./request-not-sent.js";
 import type { SandboxUseContext } from "./use-context.js";
 
 export class PermissionAdmissionStale extends Error {}
@@ -77,6 +78,16 @@ export function operationIdFor(
     .update(JSON.stringify([i.claim.runId, i.callId, i.ordinal]))
     .digest("hex");
 }
+/**
+ * A definite pre-effect failure recorded as an operation's result: `denied` and `unsupported`
+ * refusals, and `not_sent` (the request was refused before it was sent, its connection changed:
+ * `DeviceRequestNotSentError`), which is never an unknown outcome either.
+ */
+export type OperationFailureKind = "denied" | "unsupported" | "not_sent";
+export interface OperationFailure {
+  kind: OperationFailureKind;
+  message: string;
+}
 export function operationResult(value: unknown): unknown {
   if (value && typeof value === "object" && "$expired" in value)
     throw new SandboxOperationOutcomeUnknownError(
@@ -85,6 +96,7 @@ export function operationResult(value: unknown): unknown {
   if (value && typeof value === "object" && "$failure" in value) {
     const f = (value as { $failure: { kind: string; message: string } }).$failure;
     if (f.kind === "denied") throw new SandboxScopeDeniedError(f.message);
+    if (f.kind === "not_sent") throw new DeviceRequestNotSentError(f.message);
     if (f.kind === "unsupported") throw new SandboxPermissionUnsupportedError(f.message);
   }
   return hydrateOperationBytes(value);
@@ -811,7 +823,7 @@ export class SandboxOperationIntents {
   async refusePreDispatch(
     ctx: SandboxUseContext,
     invocation: OperationInvocation,
-    failure: { kind: "denied" | "unsupported"; message: string },
+    failure: OperationFailure,
   ): Promise<void> {
     const id = operationIdFor(invocation),
       initial = await this.read(id);
@@ -834,7 +846,7 @@ export class SandboxOperationIntents {
   async settleBackgroundRefusal(
     id: string,
     executionId: string,
-    failure: { kind: "denied" | "unsupported"; message: string },
+    failure: OperationFailure,
   ): Promise<void> {
     const initial = await this.read(id);
     await this.locks.acquire(subjectOf(initial), { kind: "admit" });
@@ -850,7 +862,7 @@ export class SandboxOperationIntents {
   }
   private async settleFailureLocked(
     r: OperationIntent,
-    failure: { kind: "denied" | "unsupported"; message: string },
+    failure: OperationFailure,
     from: "pending" | "dispatched",
   ): Promise<void> {
     const payload = await this.payloads.save(r.operation_id, "result", { $failure: failure });

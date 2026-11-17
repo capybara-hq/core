@@ -577,3 +577,40 @@ describe("scheduled runs use the effective mode like any use", () => {
     expect(row.missing_grants).toEqual([]);
   });
 });
+
+describe("the lifecycle reconcile sweep (B-12)", () => {
+  it("visits every marked device across ticks: a stuck first page never starves the rest", async () => {
+    provider = fake({ updateMode: "updated" });
+    const tried: string[] = [];
+    const s = sandboxServiceFor({
+      db,
+      redis,
+      provider: () => ({ plugin: "sandbox-fake", impl: provider }),
+      config: () => config,
+      log,
+      lockPollMs: 20,
+      snapshots: {
+        reconcileHeld: async (_org, id) => {
+          tried.push(id);
+          // stuck: the marker stays and no target applies
+          return { state: "reconcile-required", action: "reset-files" };
+        },
+      },
+    });
+    const ids: string[] = [];
+    for (let i = 0; i < 12; i++) {
+      const id = await seedDevice(raw, orgId);
+      ids.push(id);
+      await sql`UPDATE capybara.devices SET permission_reconcile_required = true
+        WHERE id = ${id}`.execute(raw);
+      await sql`INSERT INTO capybara.device_instances (device_id, org_id, provider, status, handle,
+          fs_status, fs_handle)
+        VALUES (${id}, ${orgId}, 'sandbox-fake', 'running', ${JSON.stringify({ id: `fake-${i}` })}::jsonb,
+          'ready', ${JSON.stringify({ id: `fs-${i}` })}::jsonb)`.execute(raw);
+    }
+    await s.reconcileMarked();
+    expect(tried).toHaveLength(10);
+    await s.reconcileMarked();
+    expect([...new Set(tried)].sort()).toEqual([...ids].sort());
+  });
+});

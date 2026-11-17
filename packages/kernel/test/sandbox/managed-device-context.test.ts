@@ -2,7 +2,12 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_SANDBOX_ROOTS, type SandboxProvider, ToolError } from "@capybara-hq/plugin-sdk";
+import {
+  DEFAULT_SANDBOX_ROOTS,
+  type SandboxProvider,
+  type SandboxRoots,
+  ToolError,
+} from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -17,6 +22,10 @@ import {
   runOutsideTransaction,
   TransactionHost,
 } from "../../src/infra/database/transaction-host.js";
+import {
+  DeviceRequestNotSentError,
+  isDeviceRequestNotSent,
+} from "../../src/local-devices/relay.js";
 import { createLogger } from "../../src/log.js";
 import { MembersService } from "../../src/orgs/members.service.js";
 import {
@@ -35,6 +44,7 @@ import {
   ManagedDeviceContextRecorder,
 } from "../../src/sandbox/managed-device-context.js";
 import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
+import { SandboxOperationIntents } from "../../src/sandbox/operation-intents.js";
 import { PermissionAuthorityLock } from "../../src/sandbox/permission-authority-lock.js";
 import { PermissionConfigPublication } from "../../src/sandbox/permission-config-publication.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
@@ -47,6 +57,8 @@ import { SandboxProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { managedSandboxDeps } from "../../src/tools/builtins/builtin-tools.js";
 import {
+  attachmentsDir,
+  attachmentsRoot,
   inSandbox,
   inSandboxOperations,
   type SandboxSession,
@@ -56,6 +68,7 @@ import type { BuiltinCallContext } from "../../src/tools/registry.js";
 import {
   createFakeSandbox,
   fakeOperationFacade,
+  readFakeSandboxLimits,
   readFakeSandboxOps,
 } from "../fixtures/plugins/sandbox-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
@@ -271,10 +284,21 @@ async function managedPaths(f: Fixture): Promise<{ seq: number; payload: Managed
 }
 
 /** A managed call through the real `common.ts` route under the run's real claim fence. */
+/** The default trusted preparation stage: a stat under the skills root. */
+const SKILLS_STAGE: Preparation = {
+  purpose: "skills",
+  roots: (r) => [r.skills],
+  run: async ({ p, roots, signal }) => {
+    await p.stat(`${roots.skills}/probe`, signal);
+  },
+};
+type Preparation = NonNullable<Parameters<typeof inSandboxOperations>[3]>;
+
 async function call(
   f: Fixture,
   deps: SandboxToolDeps = depsOf(),
   claim: ExecutionClaim = f.claim,
+  stage: Preparation = SKILLS_STAGE,
 ): Promise<SandboxSession> {
   const { value } = await k.app.get(RunExecution).withClaim(
     claim,
@@ -288,13 +312,7 @@ async function call(
           return s;
         },
         // a trusted preparation stage: the provider's prepare runs before the user callback
-        {
-          purpose: "skills",
-          roots: (r) => [r.skills],
-          run: async ({ p, roots, signal }) => {
-            await p.stat(`${roots.skills}/probe`, signal);
-          },
-        },
+        stage,
       ),
   );
   return value;
@@ -989,5 +1007,211 @@ describe("cloud installed evidence in the real lifecycle", () => {
     expect((err as ToolError).message).toBe(MANAGED_DEVICE_CONTEXT_UNAVAILABLE_TEXT);
     expect(await availability(f, "v1")).toBe("unprobed");
     expect(await admission(f)).not.toBe("admitted");
+  });
+
+  /**
+   * B-12: a device carrying the reconcile marker on a provider that can `update`: the lifecycle
+   * reconcile applies the target under the exclusive lease, never wider than the instance runs.
+   */
+  const mark = (f: Fixture, device: { fullAccess: boolean; outer: unknown }, limits: unknown) =>
+    Promise.all([
+      f.db
+        .updateTable("devices")
+        .set({
+          owner_full_access: device.fullAccess,
+          outer_network: JSON.stringify(device.outer),
+          permission_reconcile_required: true,
+        })
+        .where("id", "=", f.deviceId)
+        .execute(),
+      f.db
+        .updateTable("device_instances")
+        .set({ instance_limits: JSON.stringify(limits) })
+        .where("device_id", "=", f.deviceId)
+        .execute(),
+    ]);
+  const updates = async (f: Fixture) => {
+    const row = await f.db
+      .selectFrom("device_instances")
+      .select("handle")
+      .where("device_id", "=", f.deviceId)
+      .executeTakeFirstOrThrow();
+    return (await readFakeSandboxLimits(root))
+      .filter((e) => e.op === "update" && e.id === row.handle?.id)
+      .map((e) => ({ mode: e.limits.mode, network: e.limits.network }));
+  };
+  const reconcileMarked = (f: Fixture) =>
+    k.app.get(SandboxService).reconcileLimits(f.deviceId, AbortSignal.timeout(30_000));
+  const marked = async (f: Fixture) =>
+    (
+      await f.db
+        .selectFrom("devices")
+        .select("permission_reconcile_required")
+        .where("id", "=", f.deviceId)
+        .executeTakeFirstOrThrow()
+    ).permission_reconcile_required;
+
+  it("B-12: a provider update re-reconciles a marked device under the lifecycle lease and clears the marker", async () => {
+    register("v1", { updateMode: "updated" });
+    const f = await seedCloud();
+    await call(f);
+    // the snapshot found the instance wider (open) than the outer allowlist it recorded
+    await mark(
+      f,
+      { fullAccess: true, outer: { kind: "allowlist", hosts: ["a.example"] } },
+      { mode: "auto", network: { kind: "open-public", hosts: [] } },
+    );
+    expect(await admission(f)).toMatch(/established again/);
+    expect(await reconcileMarked(f)).toMatchObject({ state: "bound" });
+    expect(await updates(f)).toEqual([
+      { mode: "auto", network: { kind: "allowlist", hosts: ["a.example"] } },
+    ]);
+    expect(await marked(f)).toBe(false);
+    expect(await appliedLimits(f)).toMatchObject({
+      mode: "auto",
+      network: { kind: "allowlist", hosts: ["a.example"] },
+    });
+    // the running instance's evidence is recorded again for its new limits
+    expect(await admission(f)).toBe("admitted");
+  });
+
+  it("B-12: the provider update never widens: a narrower known dimension stays narrow", async () => {
+    register("v1", { updateMode: "updated" });
+    const f = await seedCloud();
+    await call(f);
+    // recorded applied: sandbox on one host, with a wider value pending a reset
+    await mark(
+      f,
+      { fullAccess: true, outer: { kind: "open-public", hosts: [] } },
+      {
+        mode: "sandbox",
+        network: { kind: "allowlist", hosts: ["a.example"] },
+        unapplied: { mode: "auto", network: { kind: "open-public", hosts: [] } },
+      },
+    );
+    expect(await reconcileMarked(f)).toMatchObject({ state: "bound" });
+    expect(await updates(f)).toEqual([
+      { mode: "sandbox", network: { kind: "allowlist", hosts: ["a.example"] } },
+    ]);
+    expect(
+      await f.db
+        .selectFrom("devices")
+        .select(["owner_full_access", "outer_network", "permission_reconcile_required"])
+        .where("id", "=", f.deviceId)
+        .executeTakeFirstOrThrow(),
+    ).toEqual({
+      owner_full_access: false,
+      outer_network: { kind: "allowlist", hosts: ["a.example"] },
+      permission_reconcile_required: false,
+    });
+  });
+
+  it("B-12: a provider without update keeps the marker and names the file reset", async () => {
+    const f = await seedCloud();
+    await call(f);
+    await mark(
+      f,
+      { fullAccess: true, outer: { kind: "allowlist", hosts: ["a.example"] } },
+      { mode: "auto", network: { kind: "open-public", hosts: [] } },
+    );
+    expect(await reconcileMarked(f)).toMatchObject({
+      state: "reconcile-required",
+      action: "reset-files",
+    });
+    expect(await updates(f)).toEqual([]);
+    expect(await marked(f)).toBe(true);
+  });
+
+  it("attachment preparation accepts exactly the call's attachmentsDir and refuses any other directory", async () => {
+    const f = await seedCloud();
+    const own = (r: SandboxRoots) => attachmentsDir(r, f.conversationId);
+    const write = (dir: (r: SandboxRoots) => string): Preparation => ({
+      purpose: "attachments",
+      roots: (r) => [dir(r)],
+      run: async ({ p, roots, signal }) => {
+        await p.writeFile(`${dir(roots)}/a.txt`, new TextEncoder().encode("hi"), signal);
+      },
+    });
+    // the directory FetchAttachment writes to: the copy is admitted
+    await call(f, depsOf(), f.claim, write(own));
+    // the full conversation id (the old scheme), a sibling and the parent are outside it
+    for (const other of [
+      (r: SandboxRoots) => `${r.workspace}/attachments/${f.conversationId}`,
+      (r: SandboxRoots) => `${own(r)}x`,
+      (r: SandboxRoots) => attachmentsRoot(r),
+      (r: SandboxRoots) => attachmentsDir(r, randomUUID()),
+    ]) {
+      const err = await failure(call(f, depsOf(), f.claim, write(other)));
+      expect(String((err as Error).message)).toMatch(/trusted|outside|denied|refused/i);
+    }
+  });
+
+  it("a request refused as not sent is recorded as a definite not_sent failure, never an unknown outcome", async () => {
+    register("v1");
+    const base = k.app.get(SandboxProviders).forName(CLOUD);
+    if (!base) throw new Error("expected the cloud provider");
+    const f = await seedCloud();
+    await call(f);
+    // the device's connection changed before the stat was sent
+    k.app.get(SandboxProviders).register({
+      ...base,
+      impl: {
+        ...base.impl,
+        async operation() {
+          const notSent = async (): Promise<never> => {
+            throw new DeviceRequestNotSentError("connection changed before stat was sent");
+          };
+          return { exec: notSent, readFile: notSent, writeFile: notSent, stat: notSent };
+        },
+      },
+    });
+    // the canonical started call the operation's admission reads
+    const callCtx = ctxOf(f);
+    const conv = await f.db
+      .selectFrom("conversations")
+      .select("last_seq")
+      .where("id", "=", f.conversationId)
+      .executeTakeFirstOrThrow();
+    const seq = Number(conv.last_seq) + 1;
+    await f.db
+      .insertInto("conversation_events")
+      .values({
+        conversation_id: f.conversationId,
+        run_id: f.runId,
+        seq,
+        type: "tool_call_started",
+        payload: JSON.stringify({ callId: callCtx.callId, toolKey: "Read" }),
+      })
+      .execute();
+    await f.db
+      .updateTable("conversations")
+      .set({ last_seq: seq })
+      .where("id", "=", f.conversationId)
+      .execute();
+    const err = await failure(
+      k.app.get(RunExecution).withClaim(
+        f.claim,
+        () => true,
+        () =>
+          inSandboxOperations(depsOf(), callCtx, async (s) =>
+            s.p.stat(s.h, `${s.roots.workspace}/probe`, s.signal),
+          ),
+      ),
+    );
+    expect(isDeviceRequestNotSent(err)).toBe(true);
+    const intents = k.app.get(SandboxOperationIntents);
+    const row = await f.db
+      .selectFrom("sandbox_operation_intents")
+      .selectAll()
+      .where("device_id", "=", f.deviceId)
+      .where("method", "=", "stat")
+      .executeTakeFirstOrThrow();
+    expect(row).toMatchObject({ state: "completed", outcome_unknown: false });
+    // the recorded result replays as the same typed not-sent refusal, not a plain denial
+    const replayed = await intents.result(row).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(isDeviceRequestNotSent(replayed)).toBe(true);
   });
 });

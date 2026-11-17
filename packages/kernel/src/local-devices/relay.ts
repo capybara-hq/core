@@ -28,6 +28,7 @@ import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { LockService } from "../infra/lock/lock.service.js";
 import { KERNEL_BUS, KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import { DeviceRequestNotSentError, isDeviceRequestNotSent } from "../sandbox/request-not-sent.js";
 import { deviceNotFound } from "../sandbox/sandbox.service.js";
 import {
   deviceLeaseKey,
@@ -71,16 +72,7 @@ export const connectionChangedMessage = (op: string): string =>
     ? "The machine's connection changed during the read; retry the read from the same offset"
     : `The machine's connection changed before ${op} was sent; retry the operation`;
 
-/**
- * A staged request refused because the machine's connection changed before it was sent: the frame
- * never reached the machine, so this request ran nothing. Typed as a scope refusal, a pre-effect
- * failure the operation path records as definite, never as an unknown outcome. It says nothing
- * about an earlier request of the same operation, so a recovery tells it apart ({@link
- * isDeviceRequestNotSent}).
- */
-export class DeviceRequestNotSentError extends SandboxScopeDeniedError {
-  readonly notSent = true as const;
-}
+export { DeviceRequestNotSentError, isDeviceRequestNotSent };
 
 /**
  * The operations held under a stable operation identity (native, preparation and browsing
@@ -94,10 +86,6 @@ const heldOperation = (op: string): boolean =>
   /^(?:exec|readFile|writeFile|stat|list|scan|prepare(?:ReadFile|WriteFile|Stat)|browse(?:Stat|List|Scan))$/.test(
     op,
   );
-
-/** Recognizes {@link DeviceRequestNotSentError} by its tag. */
-export const isDeviceRequestNotSent = (e: unknown): e is DeviceRequestNotSentError =>
-  e instanceof SandboxScopeDeniedError && (e as { notSent?: unknown }).notSent === true;
 
 /**
  * Whether a staged operation's result is fenced to the connection its request was sent on.
