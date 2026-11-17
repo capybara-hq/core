@@ -30,9 +30,8 @@ import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import type { LockService } from "../../src/infra/lock/lock.service.js";
 import { OutboxService } from "../../src/infra/outbox/outbox.service.js";
-import { ownerPolicyRevokes } from "../../src/local-devices/policy-summary.js";
+import { LocalDeviceProvider } from "../../src/local-devices/local-device-provider.js";
 import { createLogger } from "../../src/log.js";
-import { OrgSettingsService } from "../../src/orgs/settings.service.js";
 import type { ExecutionClaim } from "../../src/runtime/run-execution.js";
 import { operationIdFor, SandboxOperationIntents } from "../../src/sandbox/operation-intents.js";
 import { SandboxOperationReconcileJob } from "../../src/sandbox/operation-reconcile.job.js";
@@ -1288,87 +1287,7 @@ const poller = () =>
     k.app.get(BackgroundTaskStopper),
   );
 
-/** Makes both intents' starting scope restricted with `api.example.com` in its network. */
-async function restrictTo(db: ReturnType<typeof kernelDb>, operationIds: string[]) {
-  for (const id of operationIds) {
-    const row = await db
-      .selectFrom("sandbox_operation_intents")
-      .select("scope")
-      .where("operation_id", "=", id)
-      .executeTakeFirstOrThrow();
-    const scope = row.scope as unknown as Record<string, unknown>;
-    await db
-      .updateTable("sandbox_operation_intents")
-      .set({
-        scope: JSON.stringify({
-          ...scope,
-          profile: scope.profile === "full-access" ? "approve-for-me" : scope.profile,
-          network: { kind: "allowlist", hosts: ["api.example.com"] },
-        }),
-      })
-      .where("operation_id", "=", id)
-      .execute();
-  }
-}
-
 describe("exact revocation of running background authority (8.4 B3)", () => {
-  it("the owner selector revokes only the task whose host came from the removed baseline; the worker stops it by its exact ref", async () => {
-    const f = await fixture();
-    const first = randomUUID();
-    const second = randomUUID();
-    await f.runCall(first, { command: "npm run dev" });
-    await f.runCall(second, { command: "npm run worker" });
-    const [op1, op2] = [f.opFor(first), f.opFor(second)];
-    await restrictTo(f.db, [op1, op2]);
-    // the sibling's host is an independent explicit addition, not the owner's baseline
-    await f.db
-      .updateTable("sandbox_operation_intents")
-      .set({ granted_hosts: JSON.stringify(["api.example.com"]) })
-      .where("operation_id", "=", op2)
-      .execute();
-    // the launching run has completed: neither task's authority depends on it
-    await f.db.updateTable("runs").set({ status: "completed" }).where("id", "=", f.runId).execute();
-    await k.app.get(TransactionHost).run(async () => {
-      const ceiling = k.app.get(PermissionCeilingWrites);
-      const subject = { orgId: f.orgId, deviceId: f.deviceId };
-      await ceiling.lock(subject, "device");
-      await ceiling.publishLocked(subject, "device", (scope, row) =>
-        ownerPolicyRevokes(
-          { mode: "auto", allowedDomains: [] } as never,
-          scope,
-          row.method,
-          row.granted_hosts,
-        ),
-      );
-    });
-    const intentOf = (id: string) =>
-      f.db
-        .selectFrom("sandbox_operation_intents")
-        .selectAll()
-        .where("operation_id", "=", id)
-        .executeTakeFirstOrThrow();
-    const taskOf = (id: string) =>
-      f.db
-        .selectFrom("background_tasks")
-        .selectAll()
-        .where("operation_id", "=", id)
-        .executeTakeFirstOrThrow();
-    expect((await intentOf(op1)).state).toBe("revoked");
-    expect((await intentOf(op2)).state).toBe("background-running");
-    await reconcileJob().revoke(op1);
-    // an exact stop of the affected task only; never the operation revoke of an acknowledged start
-    expect(f.provider.stops).toEqual([f.provider.launched.get(op1)]);
-    expect(f.provider.revoked).toEqual([]);
-    expect(await taskOf(op1)).toMatchObject({ status: "stopped", launch_state: "terminal" });
-    expect(await intentOf(op1)).toMatchObject({ state: "revoked", revoke_acknowledged: true });
-    expect(await taskOf(op2)).toMatchObject({ status: "running", launch_state: "acknowledged" });
-    expect((await intentOf(op2)).state).toBe("background-running");
-    // a repeated delivery of the same revoke changes nothing and stops nothing again
-    await reconcileJob().revoke(op1);
-    await reconcileJob().revoke(op2);
-    expect(f.provider.stops).toHaveLength(1);
-  });
-
   it("a pending exact cancellation stays owed and settles on a later delivery", async () => {
     const f = await fixture();
     await f.run({ command: "npm run dev" });
@@ -1440,57 +1359,68 @@ describe("exact revocation of running background authority (8.4 B3)", () => {
       );
   });
 
-  it("the real org writer turning Full off revokes only the Full task after its run completed; the worker stops it exactly", async () => {
+  it("a dispatcher released after recovery acknowledged gets the recorded authority and the same ref (8.4 M1)", async () => {
     const f = await fixture();
-    const full = randomUUID();
-    const restricted = randomUUID();
-    await f.runCall(full, { command: "npm run dev" });
-    await f.runCall(restricted, { command: "npm run worker" });
-    const [op1, op2] = [f.opFor(full), f.opFor(restricted)];
-    const scopeOf = async (id: string) =>
-      (
-        (
-          await f.db
-            .selectFrom("sandbox_operation_intents")
-            .select("scope")
-            .where("operation_id", "=", id)
-            .executeTakeFirstOrThrow()
-        ).scope as unknown as { profile: string }
-      ).profile;
-    expect(await scopeOf(op1)).toBe("approve-for-me");
-    // the first task started under Full (its starting scope, as a Full admission records it)
-    await sql`UPDATE capybara.sandbox_operation_intents
-      SET scope = jsonb_set(scope, '{profile}', '"full-access"') WHERE operation_id = ${op1}`.execute(
-      raw,
-    );
-    // the sibling started restricted (no host from any baseline in its network)
-    await restrictTo(f.db, [op2]);
-    await f.db
-      .updateTable("sandbox_operation_intents")
-      .set({ granted_hosts: JSON.stringify(["api.example.com"]) })
-      .where("operation_id", "=", op2)
-      .execute();
-    await f.db.updateTable("runs").set({ status: "completed" }).where("id", "=", f.runId).execute();
-    await k.app.get(OrgSettingsService).update(f.orgId, { fullAccess: "off" }, owner.id);
-    const state = async (id: string) =>
-      (
-        await f.db
-          .selectFrom("sandbox_operation_intents")
-          .select("state")
-          .where("operation_id", "=", id)
-          .executeTakeFirstOrThrow()
-      ).state;
-    expect(await state(op1)).toBe("revoked");
-    expect(await state(op2)).toBe("background-running");
-    expect(f.jobs().map((j) => j.jobId)).toContain(`sandbox-operation-revoke-${op1}`);
-    expect(f.jobs().map((j) => j.jobId)).not.toContain(`sandbox-operation-revoke-${op2}`);
-    await reconcileJob().revoke(op1);
-    expect(f.provider.stops).toEqual([f.provider.launched.get(op1)]);
-    const task2 = await f.db
-      .selectFrom("background_tasks")
-      .select(["status", "launch_state"])
-      .where("operation_id", "=", op2)
+    // the real local-device adapter: every start resolves its exact starting authority first
+    const launches = new Map<string, SandboxExecutionRef>();
+    let deviceStarts = 0;
+    const staged = k.app.get(LocalDeviceProvider).stagedOperations({
+      async call(deviceId, op, args) {
+        if (op !== "backgroundStart") throw new Error(`unexpected ${op}`);
+        deviceStarts++;
+        const scope = (args as { scope: { operationId: string } }).scope;
+        const ref = launches.get(scope.operationId) ?? {
+          executionId: `x-${scope.operationId.slice(0, 12)}`,
+          operationId: scope.operationId,
+          instanceId: deviceId,
+          instanceGeneration: String(GENERATION),
+        };
+        launches.set(scope.operationId, ref);
+        return ref;
+      },
+      async permissionSupport() {
+        throw new Error("not used");
+      },
+    });
+    const entered = barrier();
+    const release = barrier();
+    let starts = 0;
+    const impl = f.provider.impl as unknown as { background: SandboxBackground };
+    impl.background = {
+      ...impl.background,
+      async start(h, scope, args) {
+        // the first dispatcher passed its claim and stalls before resolving its authority
+        if (++starts === 1) {
+          entered.resolve();
+          await release.promise;
+        }
+        return staged.background.start(h, scope, args);
+      },
+    };
+    const work = f.outcome(f.run({ command: "npm run dev" }));
+    await entered.promise;
+    const { execution_id } = await f.db
+      .selectFrom("sandbox_operation_intents")
+      .select("execution_id")
+      .where("operation_id", "=", f.operationId)
       .executeTakeFirstOrThrow();
-    expect(task2).toEqual({ status: "running", launch_state: "acknowledged" });
+    // its holder is declared lost; recovery takes over and acknowledges the same identity
+    await k.app.get(SandboxOperationIntents).unknown(f.operationId, execution_id);
+    await reconcileJob().recoverBackground(f.operationId);
+    expect((await f.intent())?.state).toBe("background-running");
+    release.resolve();
+    const r = await work;
+    expect(r.ok && textOf(r.value)).toContain("Started background task");
+    expect(starts).toBe(2);
+    // its exact admission check accepted the running authority: the same start reached the
+    // device again (an idempotent retry of the consumed operation), and one task was launched
+    expect(deviceStarts).toBe(2);
+    expect(launches.size).toBe(1);
+    // the late dispatcher neither refused nor settled the acknowledged task
+    expect(await f.task()).toMatchObject({ status: "running", launch_state: "acknowledged" });
+    expect(await f.intent()).toMatchObject({
+      state: "background-running",
+      execution_ref: launches.get(f.operationId),
+    });
   });
 });

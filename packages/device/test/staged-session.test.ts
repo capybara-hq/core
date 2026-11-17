@@ -63,6 +63,13 @@ async function fixture(negotiate = true, bound = true) {
         await r.beforeLaunch();
         await r.onLaunch({ pid: 123, token: "owned-fixture-worker" });
         launched();
+        // a native operation completes at once; the background task runs until finish()
+        if (r.kind === "native")
+          return {
+            ready: Promise.resolve(),
+            completion: Promise.resolve(null),
+            cancel: async () => {},
+          };
         emit = r.onOutput;
         return {
           ready: Promise.resolve(),
@@ -421,20 +428,14 @@ it("graceful drain after the start RPC ended refuses new admissions, serves exac
   void drain.then(() => {
     done = true;
   });
-  const browse = await f.request("browseStat", {
-    scope: {
-      operationId: "browse-1",
-      admitBeforeMs: 1000,
-      deviceId: "d",
-      accountId: "a",
-      ceilingRevision: "c",
-      readRoots: [f.roots.workspace],
-      tag: "browse-1",
-    },
-    path: f.roots.workspace,
+  // a fresh admission is refused by the supervisor (pre-effect, typed)
+  const fresh = await f.request("writeFile", {
+    scope: writeScope("write-fresh"),
+    path: join(f.roots.workspace, "fresh.txt"),
+    dataB64: "",
   }).response;
-  expect(browse).toMatchObject({ ok: false, error: { kind: "unsupported" } });
-  expect(!browse.ok && browse.error.message).toMatch(/draining/);
+  expect(fresh).toMatchObject({ ok: false, error: { kind: "unsupported" } });
+  expect(!fresh.ok && fresh.error.message).toMatch(/draining/);
   const status = await f.request("backgroundStatus", { ref: f.ref }).response;
   expect(status).toMatchObject({ ok: true, result: { state: "running" } });
   // the acknowledged task keeps the drain open; its start RPC ended long ago and is not killed
@@ -458,4 +459,78 @@ it("a drain timeout reports the pending owners and the session stays draining", 
   const stop = await f.request("backgroundStop", { ref: f.ref, graceMs: 0 }).response;
   expect(stop).toMatchObject({ ok: true, result: { outcome: "stopped" } });
   expect(f.state.draining).toBe(true);
+});
+
+const writeScope = (operationId: string) => ({
+  operationId,
+  admitBeforeMs: 1000,
+  deviceId: "d",
+  rootConversationId: "r",
+  profileRevision: 1,
+  ceilingRevision: "c",
+  profile: "full-access" as const,
+  actor: { accountId: "a", conversationId: "r" },
+  tag: operationId,
+  filesystem: { kind: "device" as const },
+  network: { kind: "environment" as const },
+});
+
+it("a journaled native write whose answer was lost is recovered by its retry during drain (review I1)", async () => {
+  const f = await fixture();
+  const args = {
+    scope: writeScope("write-1"),
+    path: join(f.roots.workspace, "a.txt"),
+    dataB64: Buffer.from("x").toString("base64"),
+  };
+  // the device ran and journalled it; the kernel never received this answer
+  expect(await f.request("writeFile", args).response).toMatchObject({ ok: true });
+  const launches = f.launched.mock.calls.length;
+  void drainStagedSession(f.state, f.backend, new AbortController().signal);
+  // the kernel's same-identity retry is recovery, not a new admission
+  expect(await f.request("writeFile", args).response).toMatchObject({ ok: true });
+  expect(f.launched.mock.calls.length).toBe(launches);
+  const fresh = await f.request("writeFile", { ...args, scope: writeScope("write-2") }).response;
+  expect(fresh).toMatchObject({ ok: false, error: { kind: "unsupported" } });
+  expect(f.launched.mock.calls.length).toBe(launches);
+  f.finish();
+});
+
+it("a request still in flight when the owned work settles keeps the drain open, not pending (review I2)", async () => {
+  const f = await fixture();
+  const status = f.backend.background.status.bind(f.backend.background);
+  let entered!: () => void;
+  const inStatus = new Promise<void>((r) => {
+    entered = r;
+  });
+  let release!: () => void;
+  const released = new Promise<void>((r) => {
+    release = r;
+  });
+  vi.spyOn(f.backend.background, "status").mockImplementation(async (h, ref, signal) => {
+    entered();
+    await released;
+    return status(h, ref, signal);
+  });
+  const drain = drainStagedSession(f.state, f.backend, new AbortController().signal);
+  let report: unknown;
+  void drain.then((r) => {
+    report = r;
+  });
+  const answer = f.request("backgroundStatus", { ref: f.ref }).response;
+  await inStatus;
+  f.finish();
+  // the backend's ownership settles while the status request is still in flight
+  await vi.waitFor(() =>
+    expect(f.backend.lifecycle.ownership()).toEqual({
+      workers: 0,
+      cancellations: 0,
+      collectors: 0,
+      persistence: 0,
+    }),
+  );
+  for (let i = 0; i < 5; i++) await new Promise<void>((r) => setImmediate(r));
+  expect(report).toBeUndefined();
+  release();
+  expect(await answer).toMatchObject({ ok: true });
+  expect(await drain).toEqual({ drained: true });
 });
