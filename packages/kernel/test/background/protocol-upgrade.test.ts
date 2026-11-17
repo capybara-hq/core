@@ -1090,8 +1090,25 @@ describe("a suspended cloud instance with a revoked managed start (B-22)", () =>
       expect(await obligations(dev)).toMatchObject([
         { state: "resolved", resolution: "provider-destroyed", attempts: 1 },
       ]);
+      // never resumed into the revoked work
+      expect(calls.some((c) => c.includes(" resume "))).toBe(false);
     },
   );
+
+  it("a use that fails after the gate resumed the instance suspends it again and the row stays suspended", async () => {
+    const { s, dev, first, revoked } = await suspendedWithRevoked();
+    // the files are lost: the use refuses after the gate's exact cancel, before `running`
+    await sql`UPDATE capybara.device_instances SET fs_status = 'lost'
+      WHERE device_id = ${dev}`.execute(raw);
+    await expect(use(s, dev)).rejects.toMatchObject({ code: "device.files_lost" });
+    expect(calls).toEqual([
+      `cloud stop ${revoked} ${first.id}`,
+      `cloud resume ${first.id}`,
+      `cloud stop ${revoked} ${first.id}`,
+      `cloud suspend ${first.id}`,
+    ]);
+    expect((await instance(dev)).status).toBe("suspended");
+  });
 
   it("a member added while the cancel runs is never resolved unstopped: the instance is destroyed instead", async () => {
     const { s, dev, first, g, revoked } = await suspendedWithRevoked();
@@ -1133,6 +1150,19 @@ describe("a suspended cloud instance with a revoked managed start (B-22)", () =>
       VALUES (${o?.id}, 'revoked-start', ${late})`.execute(raw);
     // never settled (acknowledged unstopped) while it waits
     expect((await retirement.unsettledMembers(100)).map((m) => m.refId)).not.toContain(late);
+    expect(await retirement.hasUnresolved(dev)).toBe(true);
+    await retirement.scan(dev);
+    expect(await obligations(dev)).toMatchObject([{ state: "open", resolution: null }]);
+  });
+
+  it("a revoked-start member whose intent row is missing counts as never stopped (fail closed)", async () => {
+    const { s, dev } = await suspendedWithRevoked();
+    expect(await s.retireLegacy(dev)).toBe("clear");
+    const [o] = await obligations(dev);
+    const ghost = randomUUID();
+    await sql`INSERT INTO capybara.device_retirement_members (obligation_id, kind, ref_id)
+      VALUES (${o?.id}, 'revoked-start', ${ghost})`.execute(raw);
+    expect((await retirement.unsettledMembers(100)).map((m) => m.refId)).not.toContain(ghost);
     expect(await retirement.hasUnresolved(dev)).toBe(true);
     await retirement.scan(dev);
     expect(await obligations(dev)).toMatchObject([{ state: "open", resolution: null }]);
