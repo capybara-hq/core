@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { type KernelReq, parseOperationResultV3 } from "@capybara-hq/plugin-sdk";
+import type { KernelReq } from "@capybara-hq/plugin-sdk";
 import { startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
@@ -13,7 +13,7 @@ import { LocalDeviceGateway } from "../../src/local-devices/local-device-gateway
 import { LocalDeviceRelay } from "../../src/local-devices/relay.js";
 import { DeviceTargets } from "../../src/local-devices/targets.js";
 import { createLogger } from "../../src/log.js";
-import { bindAnswer, FakeMachineV3, fakeMachineFor, HELLO_V3 } from "./fake-machine-v3.js";
+import { FakeMachineV3, fakeMachineFor, HELLO_V3 } from "./fake-machine-v3.js";
 
 /**
  * The staged fake machine (permission activation B-28) against the real gateway's `acceptStaged`:
@@ -115,7 +115,7 @@ it("hello overrides carry v2-only fields (features, policy) on a staged hello", 
   });
 });
 
-it("answers a bindInstance on the wire with evidence the SDK validator accepts", async () => {
+it("answers a bindInstance with evidence the relay validates against the request", async () => {
   const f = await fixture();
   const machine = new FakeMachineV3(f.url, f.credential);
   cleanups.push(async () => machine.close());
@@ -127,18 +127,15 @@ it("answers a bindInstance on the wire with evidence the SDK validator accepts",
     bindingId: randomUUID(),
     expectedPreviousGeneration: null,
   };
-  // The relay's own result check does not pass the bind request on (kernel gap, reported by
-  // W3-R), so the call is expected to reject there; the machine's answer is checked here.
-  await f.relay
-    .callV3(f.deviceId, "bindInstance", args, { deadlineMs: 6000, signal: signal() })
-    .catch(() => {});
+  const result = await f.relay.callV3(f.deviceId, "bindInstance", args, {
+    deadlineMs: 6000,
+    signal: signal(),
+  });
   const sent = (await machine.next(
     (r) => r.type === "req" && String(r.op) === "bindInstance",
   )) as KernelReq;
   expect(sent.args).toEqual(args);
-  expect(
-    parseOperationResultV3("bindInstance", (bindAnswer(sent) as { result: unknown }).result, args),
-  ).toMatchObject({
+  expect(result).toMatchObject({
     instanceGeneration: "1700000000000",
     bindingId: args.bindingId,
     permissionSupport: { fullAccess: true, background: true },

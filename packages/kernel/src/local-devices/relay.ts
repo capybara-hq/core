@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  type BindInstanceRequestV3,
   DEVICE_PROTOCOL_VERSION,
   type DeviceOp,
   type DeviceOperationV3,
@@ -460,7 +461,9 @@ export class LocalDeviceRelay {
               r.res.result,
               op === "backgroundReadOutput"
                 ? (args as { offset: number; maxBytes: number })
-                : undefined,
+                : op === "bindInstance"
+                  ? (args as BindInstanceRequestV3)
+                  : undefined,
             )
           : this.resultOf(op as DeviceOp, r.res);
       }
