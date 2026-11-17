@@ -3,6 +3,7 @@ import type { ExtensionPointRef } from "./extension-point.js";
 import type { AvailableHook, HookHandler, HookOptions } from "./hooks.js";
 import type { RouteCaller } from "./http-access.js";
 import type { ModelEmbeddingInfo, ModelKind } from "./model.js";
+import type { ExtensionNet } from "./net.js";
 import type { SetupCheckDefinition } from "./setup-check.js";
 import type { ObjectHead, PresignedUpload, PresignGetOptions } from "./storage.js";
 import type { ToolHandler, ToolSpec } from "./tool.js";
@@ -155,6 +156,11 @@ export interface ExtensionContext {
   storage: ExtensionStorage;
   /** Models by purpose (requires `permissions.models`, see {@link ExtensionModels}). */
   models: ExtensionModels;
+  /**
+   * Guarded HTTP for URLs a person supplied (see {@link ExtensionNet}): a connector endpoint or an
+   * org-overridable base URL goes through `ctx.net.fetch`, never the global `fetch`.
+   */
+  net: ExtensionNet;
   /** A Kysely instance already switched to this plugin's schema (withSchema). */
   // biome-ignore lint/suspicious/noExplicitAny: the plugin brings its own table structure, which the kernel cannot know statically
   db: Kysely<any>;

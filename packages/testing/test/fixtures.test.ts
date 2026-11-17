@@ -331,6 +331,7 @@ describe("loaded by path in a kernel", () => {
       auth: o.auth ?? (async () => ({ headers: {} })),
       onUnauthorized: o.onUnauthorized ?? (async () => {}),
       signal: new AbortController().signal,
+      orgId: "org-test",
       ...(o.onToolsChanged !== undefined && { onToolsChanged: o.onToolsChanged }),
       ...(o.onElicit !== undefined && { onElicit: o.onElicit }),
     });
@@ -1072,6 +1073,7 @@ describe("fake-openapi (connector kind openapi)", () => {
       auth: async () => ({ headers: { "X-API-Key": KEY } }),
       onUnauthorized: async () => {},
       signal,
+      orgId: "org-test",
     });
 
   it("is kind openapi; the endpoint is a spec URL (https or loopback http) and optional operations", () => {

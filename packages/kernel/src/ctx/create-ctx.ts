@@ -611,6 +611,13 @@ export function createExtensionContext(
       },
     },
     extensionPoints,
+    // Placeholder until ctx.net is wired on safeFetch with the org allowances (plugin safe fetch
+    // plan, task 3): refuses every request rather than reaching the network unguarded.
+    net: {
+      async fetch() {
+        throw new Error(`plugin ${name}: ctx.net.fetch is not available in this kernel yet`);
+      },
+    },
     bus: {
       publish: bus.publish,
       async subscribe(topic, handler) {
