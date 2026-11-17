@@ -1,4 +1,4 @@
-import { type ChildProcess, fork, spawn } from "node:child_process";
+import { type ChildProcess, fork, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { type FileHandle, open, realpath, stat } from "node:fs/promises";
@@ -119,6 +119,77 @@ export function mandatoryDenyPatterns(root: string): string[] {
       ...(root ? [`${root}/.git/**/${name}`, `${root}/.git/**/${name}/**`] : []),
     ]),
   ];
+}
+/**
+ * Removes empty git sequencer directories (`.git/sequencer`, and those of the gitdirs below
+ * `.git/modules`) under each write root, descriptor-relative and never following a link, after a
+ * restricted command ended. Anything not empty, missing or not a directory is left alone.
+ */
+const REMOVE_EMPTY_SEQUENCERS = String.raw`
+import json, os, stat, sys
+FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+budget = [4000]
+def rmdir(fd, name):
+    try:
+        os.rmdir(name, dir_fd=fd)
+    except OSError:
+        pass
+def walk(fd, depth):
+    rmdir(fd, "sequencer")
+    if depth > 8:
+        return
+    for entry in list(os.scandir(fd)):
+        budget[0] -= 1
+        if budget[0] < 0 or entry.name in ("objects", "refs", "logs", "sequencer"):
+            continue
+        if not entry.is_dir(follow_symlinks=False):
+            continue
+        try:
+            child = os.open(entry.name, FLAGS, dir_fd=fd)
+        except OSError:
+            continue
+        try:
+            walk(child, depth + 1)
+        finally:
+            os.close(child)
+for root in json.loads(sys.argv[1]):
+    try:
+        top = os.open(root, FLAGS)
+    except OSError:
+        continue
+    try:
+        git = os.open(".git", FLAGS, dir_fd=top)
+    except OSError:
+        os.close(top)
+        continue
+    try:
+        rmdir(git, "sequencer")
+        try:
+            modules = os.open("modules", FLAGS, dir_fd=git)
+        except OSError:
+            modules = None
+        if modules is not None:
+            try:
+                walk(modules, 0)
+            finally:
+                os.close(modules)
+    finally:
+        os.close(git)
+        os.close(top)
+`;
+function removeEmptySequencers(
+  roots: readonly string[],
+  pythonPath: string,
+  onDiagnostic?: (text: string) => void,
+): void {
+  const done = spawnSync(pythonPath, ["-I", "-c", REMOVE_EMPTY_SEQUENCERS, JSON.stringify(roots)], {
+    stdio: ["ignore", "ignore", "pipe"],
+    timeout: 30_000,
+  });
+  if (done.status !== 0)
+    onDiagnostic?.(
+      `Removing empty git sequencer directories failed: ${String(done.stderr).slice(0, 300)}`,
+    );
 }
 /** The JVM proxy agent the sandbox runtime points sandboxed JVMs at, inside its package. */
 export const JAVA_PROXY_AGENT_JAR = "vendor/java-proxy-agent/srt-proxy-agent.jar";
@@ -647,6 +718,10 @@ export async function startMacOperationWorker(
           await ended;
         } else if (worker.exitCode === null) worker.kill("SIGTERM");
       }
+      // the sandbox keeps git's sequencer directory (it may hold a kept HEAD) from being removed
+      // by the command; once the command is gone, the trusted worker removes it where empty
+      if (request.kind === "exec" && !request.grant.full && execStarted)
+        removeEmptySequencers(request.grant.writeRoots, request.pythonPath, request.onDiagnostic);
     }
   })();
   void completion.catch(() => {});

@@ -56,6 +56,8 @@ const DENIED = [
   "/w/.config/lefthook.yml",
   "/w/.githooks/pre-commit",
   "/w/.huskyrc",
+  "/w/.git/index.stash.x",
+  "/w/.git/index.stash.",
   "/w/.baſhrc",
   "/w/.ﬁx/../.bashrc",
 ];
@@ -83,6 +85,10 @@ const ALLOWED = [
   "/w/.git/sequencer/head",
   "/w/.git/modules/sub/logs/HEAD",
   "/w/.config/other.yml",
+  "/w/.git/index.stash.12345",
+  "/w/.git/index.stash.12345.lock",
+  "/w/.git/packed-refs.new",
+  "/w/.git/MERGE_AUTOSTASH",
 ];
 /** Names whose folding differs between toLowerCase and full case folding (and NFKC). */
 const FOLDS = ["Straße", "ſ", "\u212A", "ΣΑΣ", "ς", "ǰ", "ŉ", "ᏸ", "Ꭰ", "ﬃ", "ＡＢＣ", "İ"];

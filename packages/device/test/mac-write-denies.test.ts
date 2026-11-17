@@ -191,3 +191,64 @@ it.runIf(process.platform === "darwin")(
     }
   },
 );
+
+// git keeps working under restricted on macOS: inside a submodule (its gitdir lives in
+// .git/modules/<name>), consecutive multi-commit cherry-pick and revert ranges (the sequencer),
+// and stash, pack-refs and gc.
+it.runIf(process.platform === "darwin")(
+  "submodules, sequencer ranges, stash, pack-refs and gc work under restricted",
+  async () => {
+    const upstream = join(root, "upstream");
+    git(root, "init", "-q", "-b", "main", upstream);
+    git(upstream, "commit", "-q", "--allow-empty", "-m", "sub-init");
+    const project = join(root, "super");
+    git(root, "init", "-q", "-b", "main", project);
+    git(project, "commit", "-q", "--allow-empty", "-m", "init");
+    git(project, "-c", "protocol.file.allow=always", "submodule", "add", "-q", upstream, "sub");
+    git(project, "commit", "-q", "-m", "add sub");
+    const result = await restrictedRun(
+      project,
+      [
+        "set -e",
+        'g() { git -c user.name=t -c user.email=t@t -c gc.auto=0 "$@"; }',
+        // inside the submodule: commit, branch, rebase
+        "cd sub",
+        "printf x > x && g add x && g commit -qm x && g checkout -qb side",
+        "printf y > y && g add y && g commit -qm y && g checkout -q main",
+        "printf z > z && g add z && g commit -qm z && g checkout -q side && g rebase -q main",
+        "g log --oneline | wc -l | tr -d ' ' > ../sub-commits",
+        "test ! -e ../.git/modules/sub/index.lock",
+        "cd ..",
+        "g checkout -qb picks",
+        "for n in 1 2 3; do printf $n > p$n && g add p$n && g commit -qm p$n; done",
+        "g checkout -q main",
+        // stash, pack-refs, gc
+        "printf s >> notes.txt && g add notes.txt && g commit -qm local",
+        "printf s >> notes.txt && g stash -q && g stash pop -q && g commit -qam s",
+        "g pack-refs --all && g gc -q",
+        "g log --oneline | wc -l | tr -d ' ' > commits",
+        "set +e",
+        // the submodule's gitdir still cannot leave .git
+        "mkdir -p src; mv .git/modules/sub src/m 2>/dev/null; true",
+      ].join("\n"),
+    );
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(readFileSync(join(project, "sub-commits"), "utf8").trim(), result.stderr).toBe("4");
+    // two consecutive multi-commit ranges and a revert range, each its own restricted command:
+    // git cannot remove .git/sequencer itself (it reports so), the worker removes it afterwards
+    const g = "git -c user.name=t -c user.email=t@t";
+    for (const command of [
+      `${g} cherry-pick picks~3..picks~1 >/dev/null 2>&1; true`,
+      `${g} cherry-pick picks~1..picks >/dev/null 2>&1; true`,
+      `${g} revert --no-edit HEAD~2..HEAD >/dev/null 2>&1; true`,
+    ]) {
+      await restrictedRun(project, command);
+      expect(existsSync(join(project, ".git/sequencer")), command).toBe(false);
+    }
+    const commits = await restrictedRun(project, "git log --oneline | wc -l | tr -d ' '");
+    // init, add sub, notes, the stash commit, three picks, two reverts
+    expect(commits.stdout.trim(), commits.stderr).toBe("9");
+    expect(existsSync(join(project, "src/m"))).toBe(false);
+    expect(existsSync(join(project, ".git/modules/sub/HEAD"))).toBe(true);
+  },
+);
