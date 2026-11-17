@@ -1,6 +1,7 @@
 import {
   isSandboxPermissionUnsupportedError,
   isSandboxScopeDeniedError,
+  parseSandboxExecutionRef,
   parseSandboxOperationScope,
   type SandboxExecutionRef,
   SandboxOperationOutcomeUnknownError,
@@ -8,6 +9,9 @@ import {
   type SandboxProvider,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
+import { MANAGED_STOP_GRACE_MS, ManagedInstanceMismatchError } from "../background/managed.js";
+import { BackgroundTaskStopper } from "../background/stop.js";
+import { BackgroundTaskStore } from "../background/store.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { checkManagedStart, type ManagedStartArgs } from "./held-operations.js";
 import { type OperationIntent, SandboxOperationIntents } from "./operation-intents.js";
@@ -21,6 +25,9 @@ export class SandboxOperationReconcileJob {
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(SandboxProviders) private readonly providers: SandboxProviders,
     @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "ifRunning">,
+    @Inject(BackgroundTaskStore)
+    private readonly tasks: Pick<BackgroundTaskStore, "byOperation" | "settleOwedCancel">,
+    @Inject(BackgroundTaskStopper) private readonly stopper: Pick<BackgroundTaskStopper, "stop">,
   ) {}
   async reconcile(operationId: string): Promise<void> {
     await this.intents.expirePayload(operationId);
@@ -144,6 +151,12 @@ export class SandboxOperationReconcileJob {
   private async revokeOnce(operationId: string): Promise<void> {
     const row = await this.intents.read(operationId);
     if (row.state !== "revoked" || row.revoke_acknowledged) return;
+    // a launched background start is cancelled by its exact ref, never by the operation revoke;
+    // one revoked before its ref is known keeps the exact operation revoke below
+    if (row.method === "backgroundStart" && row.execution_ref !== null) {
+      await this.revokeBackground(row);
+      return;
+    }
     const instance = await this.db
       .selectFrom("device_instances")
       .select(["provider", "handle", "created_at"])
@@ -169,5 +182,54 @@ export class SandboxOperationReconcileJob {
       AbortSignal.timeout(30_000),
     );
     await this.intents.acknowledgeRevocation(operationId);
+  }
+  /**
+   * The exact cancellation a revoked background start owes (design B3): the task's own stop by its
+   * exact ref with the five-second grace, which settles and reports the task; the revocation is
+   * acknowledged only on verified settlement (a stop or an exit). A pending cancellation, an
+   * unreachable or replaced instance and lost supervision keep it owed. The intent alone carries
+   * the obligation: a finished-lost task or a task row removed with its conversation is still
+   * stopped by the intent's recorded ref on the recorded instance generation, never by a PID, a
+   * tag or a newer instance.
+   */
+  private async revokeBackground(row: OperationIntent): Promise<void> {
+    const owed = (why: string) =>
+      new SandboxOperationOutcomeUnknownError(`${why}; the exact cancellation remains owed`);
+    const ref = parseSandboxExecutionRef(row.execution_ref);
+    const task = await this.tasks.byOperation(row.operation_id);
+    if (task?.status === "running") {
+      const after = await this.stopper.stop(task, "revoked", AbortSignal.timeout(30_000));
+      if (after.status === "running") throw owed("The task's stop is pending or claimed elsewhere");
+      if (after.launchState === "terminal") {
+        await this.intents.acknowledgeRevocation(row.operation_id);
+        return;
+      }
+    } else if (task?.launchState === "terminal") {
+      await this.intents.acknowledgeRevocation(row.operation_id);
+      return;
+    }
+    const generation = Number(row.instance_generation);
+    if (
+      !Number.isSafeInteger(generation) ||
+      ref.operationId !== row.operation_id ||
+      ref.instanceGeneration !== row.instance_generation
+    )
+      throw owed("The recorded execution reference does not match its start");
+    const r = await this.sandbox.ifRunning(
+      row.device_id,
+      { createdAt: new Date(generation) },
+      async (p, h, signal) => {
+        if (h.id !== ref.instanceId) throw new ManagedInstanceMismatchError();
+        if (!p.background)
+          throw new SandboxPermissionUnsupportedError("Managed background tasks are unavailable");
+        return p.background.stop(h, ref, { graceMs: MANAGED_STOP_GRACE_MS, signal });
+      },
+      AbortSignal.timeout(30_000),
+    );
+    if (r.kind !== "ran") throw owed("The recorded instance is not running");
+    if (r.value.outcome !== "stopped" && r.value.outcome !== "already-exited")
+      throw owed(`The device answered ${r.value.outcome}`);
+    if (task) await this.tasks.settleOwedCancel(task.id);
+    await this.intents.acknowledgeRevocation(row.operation_id);
   }
 }

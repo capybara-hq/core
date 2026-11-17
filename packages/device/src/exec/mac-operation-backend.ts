@@ -17,7 +17,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { implicitWritePaths } from "../policy.js";
 import type { NativeHelperRequest, NativeHelperResult } from "./native-helper-client.js";
-import { MacOperationSupervisor } from "./operation-supervisor.js";
+import { MacOperationSupervisor, type SupervisorOwnership } from "./operation-supervisor.js";
 import {
   checkRoots,
   type DeviceOwnerCeiling,
@@ -47,6 +47,12 @@ export type MacOperationBackend = Required<
     authority: LocalExecAuthority,
   ): Pick<MacOperationBackend, "operation" | "background">;
   reconcileOwnerCeiling(signal: AbortSignal): Promise<void>;
+  /** The owner lifecycle: graceful drain over what the supervisor owns (never a PID scan). */
+  lifecycle: {
+    beginDrain(): void;
+    ownership(): SupervisorOwnership;
+    settle(signal: AbortSignal): Promise<void>;
+  };
 };
 /** Trusted construction dependencies; never decoded from a command, scope or wire message. */
 export interface MacBackendDependencies {
@@ -394,6 +400,11 @@ export async function createMacOperationBackend(
     revokeOperation: async (h, ref, signal) => {
       checkHandle(h);
       return supervisor.revokeOperation(ref, signal);
+    },
+    lifecycle: {
+      beginDrain: () => supervisor.beginDrain(),
+      ownership: () => supervisor.ownership(),
+      settle: (signal) => supervisor.settle(signal),
     },
     forExecution: (authority) => {
       const fixed = freezeAuthority(authority);

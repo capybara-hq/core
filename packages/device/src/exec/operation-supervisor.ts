@@ -20,6 +20,7 @@ import {
   type SandboxExecutionStatus,
   SandboxOperationOutcomeUnknownError,
   type SandboxOperationRef,
+  SandboxPermissionUnsupportedError,
   SandboxScopeDeniedError,
   type SandboxStopResult,
 } from "@capybara-hq/plugin-sdk";
@@ -104,6 +105,24 @@ interface Decision {
   }[];
 }
 class JournalCommitUncertainError extends Error {}
+/** What a supervisor still owns: work that a drain must see settle before it disconnects. */
+export interface SupervisorOwnership {
+  /** Live workers, including acknowledged background tasks whose start RPC already answered. */
+  workers: number;
+  /** Exact cancellations whose attempt has not settled. */
+  cancellations: number;
+  /** Output collectors (spools) still open, and output reads in flight. */
+  collectors: number;
+  /** Deferred control/journal persistence not yet written. */
+  persistence: number;
+}
+/** A drain gave up before everything it owns settled; the supervisor stays draining. */
+export class DrainPendingError extends Error {
+  override name = "DrainPendingError";
+  constructor(readonly pending: SupervisorOwnership) {
+    super("The device still owns running work; it stays draining and is not reusable");
+  }
+}
 function syncPath(path: string): void {
   const fd = openSync(path, "r");
   try {
@@ -158,6 +177,7 @@ export class MacOperationSupervisor {
   private journalBlocked = false;
   private verifiedJournal = JSON.stringify({ version: 1, entries: [] });
   private now: () => number;
+  private draining = false;
   constructor(private readonly options: SupervisorOptions) {
     this.now = options.now ?? Date.now;
     this.file = join(options.stateDir, `operation-journal-${digest(options.deviceId)}.json`);
@@ -505,6 +525,11 @@ export class MacOperationSupervisor {
           );
         return { entry: previous, fresh: false };
       }
+      // a draining device admits nothing new; retries of admitted ids above stay recoverable
+      if (this.draining)
+        throw new SandboxPermissionUnsupportedError(
+          "The device is draining; retry the operation after it reconnects",
+        );
       const deadline =
         "admitBeforeMs" in request.scope ? request.scope.admitBeforeMs : this.now() + 60000;
       if (deadline <= this.now()) throw new SandboxScopeDeniedError("Operation admission expired");
@@ -672,7 +697,7 @@ export class MacOperationSupervisor {
             await spool?.close();
             signal.removeEventListener("abort", abort);
             this.live.delete(entry.ref.operationId);
-            this.options.onLiveChanged?.(this.live.size > 0 || this.faultOwners.size > 0);
+            this.notifyOwned();
           })
           .catch((error) => {
             if (entry.output) this.collectorFault(entry, live, error);
@@ -698,7 +723,7 @@ export class MacOperationSupervisor {
         });
         reject(error);
         this.live.delete(entry.ref.operationId);
-        this.options.onLiveChanged?.(this.live.size > 0 || this.faultOwners.size > 0);
+        this.notifyOwned();
         throw error;
       }
     })();
@@ -798,14 +823,16 @@ export class MacOperationSupervisor {
           entry.stop = { outcome: "stopped" };
           if (entry.output) entry.output.interruptedCancellation = false;
           this.faultOwners.delete(entry.ref.operationId);
-          this.options.onLiveChanged?.(this.live.size > 0 || this.faultOwners.size > 0);
+          this.notifyOwned();
           this.scheduleControl(entry);
           return entry.stop;
         })
         .finally(() => {
           this.cancellations.delete(entry.ref.operationId);
+          this.notifyOwned();
         });
       this.cancellations.set(entry.ref.operationId, attempt);
+      this.notifyOwned();
     }
     // Register after cancel's dispatch turn. Neither this write nor its journal fallback
     // is awaited by append, failure credit or cancellation; a failed write remains retryable.
@@ -952,6 +979,79 @@ export class MacOperationSupervisor {
       );
     } finally {
       await spool.close();
+    }
+  }
+  /**
+   * The owner watcher runs while anything is owned: a live worker, a faulted collector's owner or
+   * an exact cancellation still settling (an idle socket or a disconnect does not end it).
+   */
+  private notifyOwned(): void {
+    this.options.onLiveChanged?.(
+      this.live.size > 0 || this.faultOwners.size > 0 || this.cancellations.size > 0,
+    );
+  }
+  ownership(): SupervisorOwnership {
+    let reads = 0;
+    for (const readers of this.outputReads.values()) reads += readers.size;
+    return {
+      workers: new Set([...this.live.keys(), ...this.faultOwners.keys()]).size,
+      cancellations: this.cancellations.size,
+      collectors: this.spools.size + reads,
+      persistence: this.controlWrites.size + this.dirtyControls.size,
+    };
+  }
+  /** Starts a graceful drain: no new admission from now on, for the rest of this process. */
+  beginDrain(): void {
+    this.draining = true;
+  }
+  get isDraining(): boolean {
+    return this.draining;
+  }
+  /**
+   * Waits until nothing is owned: acknowledged workers (whatever happened to their start RPC),
+   * collectors, pending exact cancellations and deferred persistence. Status, reads, tails, stops
+   * and reconciliation keep working meanwhile. When `signal` aborts first it throws
+   * {@link DrainPendingError} with what is still owned; it never declares a drain from an empty
+   * request table. A control write that keeps failing stays owned (dirty) until it succeeds.
+   */
+  async settle(signal: AbortSignal): Promise<void> {
+    const aborted = new Promise<void>((resolve) => {
+      if (signal.aborted) resolve();
+      else signal.addEventListener("abort", () => resolve(), { once: true });
+    });
+    const empty = (o: SupervisorOwnership) =>
+      o.workers + o.cancellations + o.collectors + o.persistence === 0;
+    const retried = new Set<string>();
+    while (!empty(this.ownership())) {
+      if (signal.aborted) throw new DrainPendingError(this.ownership());
+      // a dirty control with no write in flight is retried once per drain; one that fails again
+      // stays owned until the drain gives up (no write loop)
+      for (const id of this.dirtyControls) {
+        const entry = this.entries.get(id);
+        if (entry && !this.controlWrites.has(id) && !retried.has(id)) {
+          retried.add(id);
+          this.scheduleControl(entry);
+        }
+      }
+      const waits: Promise<unknown>[] = [this.queue.catch(() => {})];
+      const o = this.ownership();
+      // only failed persistence is left: nothing to wait for but the drain's end
+      if (
+        o.workers + o.cancellations + o.collectors === 0 &&
+        this.controlWrites.size === 0 &&
+        this.outputReads.size === 0
+      )
+        waits.push(aborted);
+      for (const live of [...this.live.values(), ...this.faultOwners.values()])
+        waits.push(
+          live.completion.catch(() => {}),
+          live.finished?.catch(() => {}) ?? live.completion,
+        );
+      waits.push(...this.cancellations.values(), ...this.controlWrites.values());
+      for (const readers of this.outputReads.values()) waits.push(...readers);
+      await Promise.race([Promise.allSettled(waits), aborted]);
+      // let finally() handlers that release ownership run before checking again
+      await new Promise<void>((resolve) => setImmediate(resolve));
     }
   }
   async settled(id: string): Promise<void> {
@@ -1119,7 +1219,7 @@ export class MacOperationSupervisor {
               e.stop = { outcome: "stopped" };
               if (e.output) e.output.interruptedCancellation = false;
               this.faultOwners.delete(ref.operationId);
-              this.options.onLiveChanged?.(this.live.size > 0 || this.faultOwners.size > 0);
+              this.notifyOwned();
               try {
                 this.persistControl(e);
               } catch {}
@@ -1133,6 +1233,7 @@ export class MacOperationSupervisor {
         .finally(async () => {
           await this.serial(() => {
             this.cancellations.delete(ref.operationId);
+            this.notifyOwned();
             if (
               e.stop?.outcome === "cancel-pending" &&
               e.output?.state !== "fault" &&
@@ -1151,6 +1252,7 @@ export class MacOperationSupervisor {
           });
         });
       this.cancellations.set(ref.operationId, attempt);
+      this.notifyOwned();
       outcome = attempt;
     });
     return outcome;

@@ -15,6 +15,8 @@ import {
   type MockInstance,
   vi,
 } from "vitest";
+import { BackgroundTaskStopper } from "../../src/background/stop.js";
+import { BackgroundTaskStore } from "../../src/background/store.js";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { ConversationsModule } from "../../src/conversations/conversations.module.js";
 import { PermissionProfileStore } from "../../src/conversations/permission-profile-store.js";
@@ -687,6 +689,8 @@ it("revocation before launch acknowledgement keeps the effect cancelled and the 
     k.app.get(KernelDb),
     k.app.get(SandboxProviders),
     k.app.get(SandboxService),
+    k.app.get(BackgroundTaskStore),
+    k.app.get(BackgroundTaskStopper),
   );
   await job.revoke(row.operation_id);
   expect(await verdict).toBeInstanceOf(SandboxScopeDeniedError);
@@ -849,6 +853,8 @@ it("a stale execution claim cannot dispatch and disconnected revocation remains 
     k.app.get(KernelDb),
     k.app.get(SandboxProviders),
     k.app.get(SandboxService),
+    k.app.get(BackgroundTaskStore),
+    k.app.get(BackgroundTaskStopper),
   ).revoke(row.operation_id);
   const updated = await intents.read(row.operation_id);
   expect(updated.revoke_acknowledged).toBe(false);
@@ -1063,6 +1069,8 @@ it("expired payloads keep their consumed identity and cannot repeat an effect", 
     k.app.get(KernelDb),
     k.app.get(SandboxProviders),
     k.app.get(SandboxService),
+    k.app.get(BackgroundTaskStore),
+    k.app.get(BackgroundTaskStopper),
   );
   await job.reconcile(row.operation_id);
   expect((await intents.read(row.operation_id)).result).toEqual(row.result);
@@ -1392,6 +1400,8 @@ it("native binary write/read above the old inline cap survives duplicate lookup"
     k.app.get(KernelDb),
     k.app.get(SandboxProviders),
     k.app.get(SandboxService),
+    k.app.get(BackgroundTaskStore),
+    k.app.get(BackgroundTaskStopper),
   );
   for (const record of records) await job.reconcile(record.operation_id);
   expect(

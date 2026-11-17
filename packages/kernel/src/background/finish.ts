@@ -7,6 +7,7 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KernelEvents } from "../infra/events/kernel-events.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { oweEnsureRun } from "../runtime/run-jobs.js";
+import { OPERATION_REVOKE } from "../sandbox/operation-intents.js";
 import { taskOutputFile } from "./launch.js";
 import { LAST_LINES_MAX_CHARS } from "./session.js";
 import { type BackgroundTaskRow, BackgroundTaskStore, isManagedTask } from "./store.js";
@@ -95,6 +96,26 @@ export class BackgroundTaskFinisher {
         .where("operation_id", "=", task.operationId)
         .where("state", "=", "background-running")
         .execute();
+    // A lost end (supervision lost, instance gone or replaced) is no proof the process is gone:
+    // its running authority is retired and the exact cancellation is owed to the revoke worker,
+    // which acknowledges it only on a verified stop (an unresolvable one waits for retirement).
+    if (managed === "cancel-pending" && task.operationId !== null) {
+      const retired = await this.db
+        .updateTable("sandbox_operation_intents")
+        .set({ state: "revoked", outcome_unknown: true, updated_at: new Date() })
+        .where("operation_id", "=", task.operationId)
+        .where("state", "=", "background-running")
+        .returning("operation_id")
+        .executeTakeFirst();
+      if (retired)
+        await this.outbox.add({
+          queue: "cap-kernel-maintenance",
+          name: OPERATION_REVOKE,
+          jobId: `${OPERATION_REVOKE}-${retired.operation_id}`,
+          data: { operationId: retired.operation_id },
+          orgId: task.orgId,
+        });
+    }
     const [event] = await this.eventLog.appendIn(task.conversationId, [
       {
         type: "background_task_finished",

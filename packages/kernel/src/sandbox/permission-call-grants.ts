@@ -352,7 +352,12 @@ export class PermissionCallGrants {
     if (
       !intent ||
       intent.device_id !== deviceId ||
-      !["admitted", "dispatching", "started-or-unknown"].includes(intent.state)
+      !(
+        ["admitted", "dispatching", "started-or-unknown"].includes(intent.state) ||
+        // an acknowledged start keeps its starting authority while it runs: a retried start of
+        // the same operation (the provider returns the same ref) reuses it, never a new envelope
+        (intent.state === "background-running" && intent.method === "backgroundStart")
+      )
     )
       throw new ApiError("forbidden", "The operation has no current admitted execution identity");
     if (
