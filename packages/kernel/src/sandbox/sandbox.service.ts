@@ -469,6 +469,16 @@ export const restartRequired = (): ApiError =>
     "Background work started by an earlier version may still be running on this computer. Restart this computer to finish the upgrade, then try again.",
   );
 /**
+ * A cloud device's earlier instance may still run legacy work and no evidence the kernel can get
+ * will ever cover it (an incarnation replaced without a recorded confirmed destruction, or an
+ * unknown one it cannot clear) (503, 8.5): the owner deletes the device and creates it again.
+ */
+export const recreateRequired = (): ApiError =>
+  new RetirementPendingError(
+    "device.recreate_required",
+    "Background work started by an earlier version may still be running on an earlier instance of this device, and that instance can no longer be verified as destroyed. Delete this device and create it again.",
+  );
+/**
  * A local machine's old instance may still run legacy work, and the computer never reported a
  * boot identity, so not even a restart can prove it ended (503, 8.5): the owner replaces the
  * device. A deleted device's obligations never block a new one.
@@ -617,6 +627,7 @@ export class SandboxService {
       | "settleRebooted"
       | "scanUntilStable"
       | "frozen"
+      | "frozenAt"
       | "quarantine"
       | "noteFailure"
       | "resolveDestroyed"
@@ -2088,23 +2099,76 @@ export class SandboxService {
     const open = await this.retirement.unresolved(id);
     let now = row;
     // every obligation is tried (one that stays never hides another that can resolve); the
-    // device is refused at the end while any stays: a restart is asked for only when a restart
-    // of that computer is what resolves every one left
+    // device is refused at the end while any stays, with the answer that tells what would help:
+    // a failed or impossible destroy now → unavailable (a retry may succeed); a cloud incarnation
+    // no evidence can ever cover → recreate the device; a local one whose computer never reported
+    // a boot → replace the device; else only a restart of the computer is missing
     let pending = false;
-    // which answer: any cloud or failed one → unavailable; else a local one whose computer never
-    // reported a boot → replace the device; else only a restart is missing
-    let otherPending = false;
+    let failed = false;
+    let cloudPermanent = false;
     let unknownBoot = false;
+    const isLive = (r: Row | undefined): r is Row & { handle: SandboxHandle } =>
+      r !== undefined &&
+      r.handle !== null &&
+      (r.status === "running" || r.status === "suspended" || r.status === "creating");
+    /**
+     * Destroys the live incarnation of `now` whole with its own provider (never resumed or
+     * killAll'ed, files kept), records the confirmed destruction and marks the row destroyed.
+     */
+    const destroyLive = async (
+      o: { id: string },
+      live: Row & { handle: SandboxHandle },
+    ): Promise<boolean> => {
+      const provider = live.provider ?? "unknown";
+      const impl = isCloudProvider(provider) ? this.providers.forName(provider)?.impl : undefined;
+      if (!impl) {
+        await this.retirement.noteFailure(o.id, `provider ${provider} is not loaded`);
+        return false;
+      }
+      try {
+        // bounded (M5): a hung provider never holds the lease or the worker's tick
+        await impl.destroy(
+          live.handle,
+          AbortSignal.any([
+            opSignal(held),
+            AbortSignal.timeout(SWEEP_OP_TIMEOUT_MS),
+            ...(signal ? [signal] : []),
+          ]),
+        );
+      } catch (err) {
+        if (held.signal.aborted || signal?.aborted) throw err;
+        await this.retirement.noteFailure(o.id, err);
+        this.log.warn("cannot destroy an instance that may run legacy work; device unavailable", {
+          deviceId: id,
+          err,
+        });
+        return false;
+      }
+      if (!(await held.renew())) throw new SandboxLockLostError(id);
+      await this.retirement.recordDestruction(id, provider, String(live.created_at.getTime()));
+      if (fence)
+        await this.fenced(held, id, fence, {
+          status: "destroyed",
+          destroyed_at: sql<Date>`now()`,
+          running_since: null,
+          suspended_at: null,
+          sweep_failed_at: null,
+        });
+      this.log.info("instance that may run legacy work destroyed", { deviceId: id });
+      now = await this.db
+        .selectFrom("device_instances")
+        .selectAll()
+        .where("device_id", "=", id)
+        .executeTakeFirst();
+      return true;
+    };
     for (const o of open) {
       const gen = o.instanceGeneration;
+      const local = isInternalProvider(o.provider);
       const current =
-        now !== undefined &&
-        now.handle !== null &&
-        (now.status === "running" || now.status === "suspended" || now.status === "creating") &&
-        now.provider === o.provider &&
-        String(now.created_at.getTime()) === gen;
-      if (current && now?.handle) {
-        if (isInternalProvider(o.provider)) {
+        isLive(now) && now.provider === o.provider && String(now.created_at.getTime()) === gen;
+      if (current && isLive(now)) {
+        if (local) {
           await this.retirement.quarantine(
             o.id,
             o.bootId === null
@@ -2115,51 +2179,11 @@ export class SandboxService {
           pending = true;
           continue;
         }
-        const impl = this.providers.forName(o.provider)?.impl;
-        if (!impl) {
-          await this.retirement.noteFailure(o.id, `provider ${o.provider} is not loaded`);
+        if (await destroyLive(o, now)) await this.retirement.resolveDestroyed(o.id);
+        else {
           pending = true;
-          otherPending = true;
-          continue;
+          failed = true;
         }
-        try {
-          // bounded (M5): a hung provider never holds the lease or the worker's tick
-          await impl.destroy(
-            now.handle,
-            AbortSignal.any([
-              opSignal(held),
-              AbortSignal.timeout(SWEEP_OP_TIMEOUT_MS),
-              ...(signal ? [signal] : []),
-            ]),
-          );
-        } catch (err) {
-          if (held.signal.aborted || signal?.aborted) throw err;
-          await this.retirement.noteFailure(o.id, err);
-          this.log.warn("cannot destroy an instance that may run legacy work; device unavailable", {
-            deviceId: id,
-            err,
-          });
-          pending = true;
-          otherPending = true;
-          continue;
-        }
-        if (!(await held.renew())) throw new SandboxLockLostError(id);
-        await this.retirement.recordDestruction(id, o.provider, gen);
-        if (fence)
-          await this.fenced(held, id, fence, {
-            status: "destroyed",
-            destroyed_at: sql<Date>`now()`,
-            running_since: null,
-            suspended_at: null,
-            sweep_failed_at: null,
-          });
-        await this.retirement.resolveDestroyed(o.id);
-        this.log.info("instance that may run legacy work destroyed", { deviceId: id });
-        now = await this.db
-          .selectFrom("device_instances")
-          .selectAll()
-          .where("device_id", "=", id)
-          .executeTakeFirst();
         continue;
       }
       // the existing whole-instance destroy left the row `destroyed` on exactly this incarnation
@@ -2175,28 +2199,71 @@ export class SandboxService {
         await this.retirement.resolveDestroyed(o.id);
         continue;
       }
-      // a kernel-internal (local machine) provider; `unknown` is not one
-      const local = isInternalProvider(o.provider);
+      if (!local && (gen === "unknown" || o.provider === "unknown")) {
+        // R1-I1 (b): a cloud incarnation the kernel cannot name. Every incarnation the device had
+        // stopped being current through a kernel destroy, a provider `gone` or a kept
+        // `prev_handle`; so once the device's current incarnation is destroyed with
+        // confirmation, nothing earlier is kept (`prev_handle`) and the obligation was recorded
+        // under the freeze (no dispatch after it), no instance of the device can run legacy work
+        const frozenAt = await this.retirement.frozenAt();
+        const reason =
+          frozenAt === null || o.createdAt < frozenAt
+            ? "an unknown cloud incarnation recorded before the freeze"
+            : now === undefined
+              ? "an unknown cloud incarnation and no instance record to destroy"
+              : now.prev_handle !== null
+                ? "an unknown cloud incarnation while an earlier provider's instance may still exist"
+                : null;
+        if (reason === null && now !== undefined) {
+          if (isLive(now)) {
+            if (await destroyLive(o, now)) await this.retirement.resolveDestroyed(o.id);
+            else {
+              pending = true;
+              failed = true;
+            }
+            continue;
+          }
+          if (
+            now.status === "destroyed" &&
+            now.provider !== null &&
+            (await this.retirement.destructionRecorded(
+              id,
+              now.provider,
+              String(now.created_at.getTime()),
+            ))
+          ) {
+            await this.retirement.resolveDestroyed(o.id);
+            continue;
+          }
+        }
+        await this.retirement.quarantine(
+          o.id,
+          reason ?? "an unknown cloud incarnation and no confirmed destruction of the current one",
+        );
+        cloudPermanent = true;
+        pending = true;
+        continue;
+      }
       await this.retirement.quarantine(
         o.id,
         local
           ? o.bootId === null
             ? "local instance: no boot identity was reported, so no restart can prove its legacy work ended"
             : "local instance: waiting for a restart of the computer (a later boot identity)"
-          : gen === "unknown"
-            ? "the instance a possibly dispatched legacy launch ran in is unknown"
-            : "the old instance was replaced without a recorded confirmed destruction",
+          : "the old instance was replaced without a recorded confirmed destruction",
       );
-      if (!local) otherPending = true;
+      if (!local) cloudPermanent = true;
       else if (o.bootId === null) unknownBoot = true;
       pending = true;
     }
     if (pending)
-      throw otherPending
+      throw failed
         ? retirementPending()
-        : unknownBoot
-          ? replaceRequired()
-          : restartRequired();
+        : cloudPermanent
+          ? recreateRequired()
+          : unknownBoot
+            ? replaceRequired()
+            : restartRequired();
     return now;
   }
 

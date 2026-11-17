@@ -175,6 +175,8 @@ const members = async () =>
       .execute()
   ).map((m) => `${m.kind} ${m.ref_id}`);
 const unavailable = { code: "device.unavailable" };
+/** A cloud incarnation no evidence can cover: recreate the device. */
+const recreate = { code: "device.recreate_required" };
 /** A local device whose computer never reported a boot identity: replace it. */
 const replace = { code: "device.replace_required" };
 
@@ -292,10 +294,10 @@ describe("enumeration under the legacy-launch freeze", () => {
     ]);
   });
 
-  it("the gate enumerates on its own: a row written after the freeze (no worker scan) refuses use and keeps its kill mark", async () => {
+  it("the gate enumerates on its own: a row written after the freeze (no worker scan) is retired before use and keeps its kill mark", async () => {
     const s = service();
     const dev = await seedDevice(raw, seed.orgId, seed.accountId);
-    await use(s, dev);
+    const old = await use(s, dev);
     const g = (await instance(dev)).created_at;
     await retirement.freeze("test");
     // an old, unfenced replica's row of an earlier incarnation, after the freeze's own scan
@@ -307,8 +309,10 @@ describe("enumeration under the legacy-launch freeze", () => {
     expect(await obligations(dev)).toEqual([]);
     expect(await retirement.hasUnresolved(dev)).toBe(true);
     calls = [];
-    await expect(use(s, dev)).rejects.toMatchObject(unavailable);
-    expect(calls).toEqual([]);
+    // its incarnation names no provider (unknown): under the freeze the current incarnation is
+    // destroyed with confirmation before anything runs, then a fresh one is made (R1-I1)
+    const fresh = await use(s, dev);
+    expect(calls).toEqual([`cloud destroy ${old.id}`, `cloud create ${fresh.id}`]);
     expect(await members()).toEqual([`legacy-task ${late}`]);
     expect((await tasks.get(late))?.killPending).toBe(true);
   });
@@ -475,7 +479,7 @@ describe("the retirement gate", () => {
     await sql`UPDATE capybara.device_instances SET created_at = created_at + interval '5 seconds'
       WHERE device_id = ${dev}`.execute(raw);
     calls = [];
-    await expect(use(s, dev)).rejects.toMatchObject(unavailable);
+    await expect(use(s, dev)).rejects.toMatchObject(recreate);
     expect(calls).toEqual([]);
     expect(await obligations(dev)).toMatchObject([
       { state: "quarantined", reason: expect.stringMatching(/replaced/) },
@@ -485,6 +489,163 @@ describe("the retirement gate", () => {
     expect((await use(s, dev)).id).toBe(old.id);
     expect(calls).toEqual([]);
     expect(await obligations(dev)).toMatchObject([{ state: "resolved" }]);
+  });
+});
+
+/** The worker's job over this file's store and service. */
+const jobFor = (s: SandboxService) =>
+  new RetireLegacyTasksJob(
+    retirement,
+    s,
+    {
+      acknowledgeRevocation: async (id: string) => {
+        await sql`UPDATE capybara.sandbox_operation_intents SET revoke_acknowledged = true
+          WHERE operation_id = ${id} AND state = 'revoked'`.execute(raw);
+      },
+    } as Pick<SandboxOperationIntents, "acknowledgeRevocation"> as SandboxOperationIntents,
+    tasks,
+    {} as never,
+    {} as never,
+    { info() {}, warn() {} } as never,
+  );
+
+describe("cloud incarnations the kernel cannot name (R1-I1)", () => {
+  it("resolve once the current incarnation is destroyed with confirmation under the freeze", async () => {
+    const s = service();
+    const dev = await seedDevice(raw, seed.orgId, seed.accountId);
+    const old = await use(s, dev);
+    const g = (await instance(dev)).created_at;
+    // a historical reservation that may have dispatched somewhere: (unknown, unknown)
+    await legacyRow(dev, { sid: null, status: "failed" });
+    expect((await retirement.report()).cloudUnknown).toEqual([
+      { deviceId: dev, prevHandle: false, noInstance: false },
+    ]);
+    await retirement.freeze("test");
+    expect(await obligations(dev)).toMatchObject([
+      { provider: "unknown", instance_generation: "unknown", state: "open" },
+    ]);
+    calls = [];
+    const fresh = await use(s, dev);
+    expect(calls).toEqual([`cloud destroy ${old.id}`, `cloud create ${fresh.id}`]);
+    expect(await obligations(dev)).toMatchObject([
+      { state: "resolved", resolution: "provider-destroyed" },
+    ]);
+    expect(await db.selectFrom("device_instance_destructions").selectAll().execute()).toMatchObject(
+      [{ device_id: dev, provider: "sandbox-fake", instance_generation: String(g.getTime()) }],
+    );
+  });
+
+  it("stay blocked while an earlier provider's instance may exist", async () => {
+    const s = service();
+    const dev = await seedDevice(raw, seed.orgId, seed.accountId);
+    const old = await use(s, dev);
+    await sql`UPDATE capybara.device_instances SET prev_provider = 'old-fake',
+      prev_handle = handle WHERE device_id = ${dev}`.execute(raw);
+    await legacyRow(dev, { sid: null, status: "failed" });
+    expect((await retirement.report()).cloudUnknown).toEqual([
+      { deviceId: dev, prevHandle: true, noInstance: false },
+    ]);
+    await retirement.freeze("test");
+    calls = [];
+    await expect(use(s, dev)).rejects.toMatchObject(recreate);
+    expect(calls).toEqual([]);
+    expect(await obligations(dev)).toMatchObject([
+      { state: "quarantined", reason: expect.stringMatching(/earlier provider/) },
+    ]);
+    expect(old.id).toBeDefined();
+  });
+
+  it("stay blocked when recorded before the freeze", async () => {
+    const s = service();
+    const dev = await seedDevice(raw, seed.orgId, seed.accountId);
+    await use(s, dev);
+    // a revoked start with an unreadable generation is enumerated before any freeze
+    await revokedStart(dev, "sandbox-fake", "not-a-generation");
+    await retirement.scanUntilStable();
+    expect(await obligations(dev)).toMatchObject([{ instance_generation: "unknown" }]);
+    await retirement.freeze("test");
+    calls = [];
+    await expect(use(s, dev)).rejects.toMatchObject(recreate);
+    expect(calls).toEqual([]);
+    expect(await obligations(dev)).toMatchObject([
+      { state: "quarantined", reason: expect.stringMatching(/before the freeze/) },
+    ]);
+  });
+
+  it("stay blocked without an instance record to destroy", async () => {
+    const s = service();
+    const dev = await seedDevice(raw, seed.orgId, seed.accountId);
+    await legacyRow(dev, { sid: null, status: "failed" });
+    expect((await retirement.report()).cloudUnknown).toEqual([
+      { deviceId: dev, prevHandle: false, noInstance: true },
+    ]);
+    await retirement.freeze("test");
+    expect(await s.retireLegacy(dev)).toBe("unavailable");
+    calls = [];
+    await expect(use(s, dev)).rejects.toMatchObject(recreate);
+    expect(calls).toEqual([]);
+  });
+
+  it("a failed destroy keeps them open and answers unavailable (a retry may succeed)", async () => {
+    const s = service();
+    const dev = await seedDevice(raw, seed.orgId, seed.accountId);
+    await use(s, dev);
+    await legacyRow(dev, { sid: null, status: "failed" });
+    await retirement.freeze("test");
+    destroyFails = true;
+    await expect(use(s, dev)).rejects.toMatchObject(unavailable);
+    expect(await obligations(dev)).toMatchObject([{ state: "open", resolution: null }]);
+  });
+});
+
+describe("obligations of deleted devices", () => {
+  it("are abandoned, never resolved, and kept out of `retired` but not out of `cleanRetirement`", async () => {
+    const s = service();
+    const dev = await seedDevice(raw, seed.orgId, seed.accountId, "local");
+    await use(s, dev);
+    const task = await legacyRow(dev, {
+      status: "lost",
+      createdAt: (await instance(dev)).created_at,
+      killPending: true,
+    });
+    await retirement.freeze("test");
+    await sql`UPDATE capybara.devices SET deleted_at = now() WHERE id = ${dev}`.execute(raw);
+    const r = await jobFor(s).runOnce();
+    expect(r.abandoned).toBe(1);
+    expect(await obligations(dev)).toMatchObject([{ state: "abandoned", resolution: null }]);
+    // abandonment is no evidence: the member stays unsettled, its kill mark kept
+    expect((await tasks.get(task))?.killPending).toBe(true);
+    expect(await retirement.report()).toMatchObject({
+      frozen: true,
+      open: 0,
+      quarantined: 0,
+      unsettledMembers: 0,
+      abandoned: 1,
+      abandonedMembers: 1,
+      retired: true,
+      cleanRetirement: false,
+      abandonedList: [{ deviceId: dev, provider: LOCAL_PROVIDER, local: true, bootKnown: false }],
+    });
+    // a later tick changes nothing
+    expect((await jobFor(s).runOnce()).abandoned).toBe(0);
+    expect(await obligations(dev)).toMatchObject([{ state: "abandoned" }]);
+  });
+
+  it("a deleted cloud device whose incarnation's destruction is recorded resolves as provider-destroyed", async () => {
+    const s = service();
+    const dev = await seedDevice(raw, seed.orgId, seed.accountId);
+    await use(s, dev);
+    await legacyRow(dev, { createdAt: (await instance(dev)).created_at });
+    await retirement.freeze("test");
+    // the device's deletion destroys its instance with the provider (recorded) and its files
+    await s.destroyDevice(dev);
+    await sql`UPDATE capybara.devices SET deleted_at = now() WHERE id = ${dev}`.execute(raw);
+    const r = await jobFor(s).runOnce();
+    expect(r.abandoned).toBe(0);
+    expect(await obligations(dev)).toMatchObject([
+      { state: "resolved", resolution: "provider-destroyed" },
+    ]);
+    expect(await retirement.report()).toMatchObject({ abandoned: 0, cleanRetirement: true });
   });
 });
 
@@ -522,7 +683,7 @@ describe("revoked managed starts on an incarnation that no longer runs (8.4 hand
     await s.destroyInactive(new Date(Date.now() + 365 * DAY));
     // the next use would create a new generation: the gate enumerates the device itself first
     // (no worker scan), resolves the destroyed one and refuses for the stale one
-    await expect(use(s, dev)).rejects.toMatchObject(unavailable);
+    await expect(use(s, dev)).rejects.toMatchObject(recreate);
     expect(await acknowledged(destroyed)).toBe(false);
 
     const r = await job(s).runOnce();
@@ -535,7 +696,7 @@ describe("revoked managed starts on an incarnation that no longer runs (8.4 hand
         [false, "quarantined"],
       ]),
     );
-    await expect(use(s, dev)).rejects.toMatchObject(unavailable);
+    await expect(use(s, dev)).rejects.toMatchObject(recreate);
   });
 
   it("the worker destroys a cloud incarnation with legacy work, then settles its members", async () => {

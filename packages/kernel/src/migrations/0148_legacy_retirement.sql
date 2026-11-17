@@ -35,6 +35,8 @@ ALTER TABLE background_tasks ADD CONSTRAINT background_tasks_legacy_dispatch_gen
 -- trusted way to establish termination exists (a local machine, a replaced or unknown
 -- incarnation without recorded destruction): the device stays unavailable; 'resolved': the
 -- provider confirmed the incarnation destroyed. A quarantined device is not retired.
+-- 'abandoned': the device was deleted while the obligation was unresolved; no device can reuse the
+-- incarnation (device ids are never reused), but it is no evidence that its processes ended.
 CREATE TABLE IF NOT EXISTS device_retirement_obligations (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   device_id text NOT NULL,
@@ -42,7 +44,8 @@ CREATE TABLE IF NOT EXISTS device_retirement_obligations (
   provider text NOT NULL CHECK (length(provider) BETWEEN 1 AND 200),
   instance_generation text NOT NULL
     CHECK (instance_generation = 'unknown' OR instance_generation ~ '^[0-9]{1,16}$'),
-  state text NOT NULL DEFAULT 'open' CHECK (state IN ('open', 'quarantined', 'resolved')),
+  state text NOT NULL DEFAULT 'open'
+    CHECK (state IN ('open', 'quarantined', 'resolved', 'abandoned')),
   resolution text CHECK (resolution IS NULL OR resolution IN ('provider-destroyed', 'host-rebooted')),
   -- a local incarnation: the machine and its OS boot identity current when the obligation was
   -- recorded; NULL boot_id (none reported) never resolves by itself
@@ -54,11 +57,13 @@ CREATE TABLE IF NOT EXISTS device_retirement_obligations (
   last_error text,
   created_at timestamptz NOT NULL DEFAULT now(),
   resolved_at timestamptz,
+  abandoned_at timestamptz,
+  CHECK ((state = 'abandoned') = (abandoned_at IS NOT NULL)),
   CHECK ((state = 'resolved') = (resolution IS NOT NULL AND resolved_at IS NOT NULL)),
   UNIQUE (device_id, provider, instance_generation)
 );
 CREATE INDEX IF NOT EXISTS device_retirement_obligations_unresolved_idx
-  ON device_retirement_obligations (device_id) WHERE state <> 'resolved';
+  ON device_retirement_obligations (device_id) WHERE state IN ('open', 'quarantined');
 
 -- What put an obligation there: a legacy task row (by task id) or a revoked managed background
 -- start whose recorded generation no longer runs (by operation id). Kept apart from the task and

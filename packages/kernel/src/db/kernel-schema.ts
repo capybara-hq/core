@@ -1684,10 +1684,12 @@ export interface KernelDatabase {
     provider: string;
     instance_generation: string;
     state: ColumnType<
-      "open" | "quarantined" | "resolved",
-      "open" | "quarantined" | "resolved" | undefined,
-      "open" | "quarantined" | "resolved"
+      "open" | "quarantined" | "resolved" | "abandoned",
+      "open" | "quarantined" | "resolved" | "abandoned" | undefined,
+      "open" | "quarantined" | "resolved" | "abandoned"
     >;
+    /** When the obligation was abandoned with its deleted device (never evidence). */
+    abandoned_at: TsNullable;
     resolution: ColumnType<
       "provider-destroyed" | "host-rebooted" | null,
       "provider-destroyed" | "host-rebooted" | null | undefined,

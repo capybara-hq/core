@@ -15,3 +15,7 @@ The freeze enumerates before it returns and the gate enumerates each device it s
 depends on the worker; once frozen, lost-task kills by SID stop and their marks are kept. Legacy
 polls, stops and reads by SID and staged browsing are refused on a device under an obligation (exact
 managed drains go on). A launch records the exact incarnation its dispatch was admitted for.
+A cloud obligation that names no incarnation resolves once the device's current instance is
+destroyed with confirmation (no earlier provider's instance kept, recorded under the freeze); one no
+evidence can cover answers `device.recreate_required`. Obligations of deleted devices become
+`abandoned` (reported apart; `cleanRetirement` requires none).

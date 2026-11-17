@@ -33,6 +33,8 @@ export interface RetireLegacyResult {
   busy: number;
   /** Members whose own records were settled. */
   settled: number;
+  /** Obligations abandoned with their deleted devices this tick. */
+  abandoned: number;
 }
 
 /**
@@ -57,7 +59,7 @@ export class RetireLegacyTasksJob {
     @Inject(LegacyRetirementStore)
     private readonly retirement: Pick<
       LegacyRetirementStore,
-      "scanUntilStable" | "due" | "unsettledMembers" | "markSettled"
+      "scanUntilStable" | "due" | "unsettledMembers" | "markSettled" | "abandonDeleted"
     >,
     @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "retireLegacy">,
     @Inject(SandboxOperationIntents)
@@ -75,7 +77,7 @@ export class RetireLegacyTasksJob {
   @LockedInterval(RETIRE_LEGACY_TASKS_JOB, () => PERIOD_MS, { ttl: TICK_TTL_MS })
   async tick(signal?: AbortSignal): Promise<void> {
     const r = await this.runOnce(signal);
-    if (r.added + r.cleared + r.unavailable + r.settled > 0)
+    if (r.added + r.cleared + r.unavailable + r.settled + r.abandoned > 0)
       this.log.info("legacy retirement tick", { ...r });
   }
 
@@ -87,8 +89,12 @@ export class RetireLegacyTasksJob {
       unavailable: 0,
       busy: 0,
       settled: 0,
+      abandoned: 0,
     };
     result.added = (await this.retirement.scanUntilStable()).added;
+    // obligations of deleted devices: resolved by a recorded confirmed destroy, else abandoned
+    // (never evidence; no device can reuse them)
+    result.abandoned = (await this.retirement.abandonDeleted()).abandoned;
     for (const deviceId of await this.retirement.due(RETIRE_DEVICES_PER_TICK)) {
       if (signal?.aborted) return result;
       try {

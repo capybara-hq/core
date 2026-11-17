@@ -48,11 +48,13 @@ export interface RetirementObligation {
   provider: string;
   /** The exact instance generation (epoch ms as decimal text), or `unknown`. */
   instanceGeneration: string;
-  state: "open" | "quarantined" | "resolved";
+  state: "open" | "quarantined" | "resolved" | "abandoned";
   reason: string | null;
   attempts: number;
   /** A local incarnation's boot identity when recorded; null: none (never resolves by itself). */
   bootId: string | null;
+  /** When it was recorded (a cloud `unknown` one resolves only if recorded after the freeze). */
+  createdAt: Date;
 }
 
 /** {@link LegacyRetirementStore.recordBoot}'s answer. */
@@ -83,8 +85,33 @@ export interface LegacyRetirementReport {
   resolved: number;
   /** Members of resolved obligations whose own records are not settled yet. */
   unsettledMembers: number;
-  /** True only with the freeze published and every obligation resolved and settled. */
+  /**
+   * True only with the freeze published and every obligation not abandoned resolved and settled.
+   * Abandoned ones are excluded: see {@link cleanRetirement}.
+   */
   retired: boolean;
+  /** {@link retired} with no abandoned obligation either. */
+  cleanRetirement: boolean;
+  /** Obligations abandoned with their deleted devices: never evidence the processes ended. */
+  abandoned: number;
+  /** Members of abandoned obligations (left unsettled; not in {@link unsettledMembers}). */
+  abandonedMembers: number;
+  abandonedList: {
+    deviceId: string;
+    provider: string;
+    instanceGeneration: string;
+    local: boolean;
+    bootKnown: boolean;
+    abandonedAt: Date;
+  }[];
+  /**
+   * The cloud pre-check (before the freeze, too): cloud devices with legacy rows whose incarnation
+   * or provider is unknown. After the freeze such an obligation resolves only once the device's
+   * current incarnation is destroyed with confirmation and it keeps no earlier provider's instance
+   * (`prevHandle`) and it has an instance record (`noInstance`); a device with either must be
+   * deleted and created again (`device.recreate_required`).
+   */
+  cloudUnknown: { deviceId: string; prevHandle: boolean; noInstance: boolean }[];
   /**
    * The cutover pre-check (before the freeze, too): local devices with legacy rows whose processes
    * may still exist and whose current machine has no recorded boot identity. Their obligations
@@ -117,16 +144,45 @@ export const isCloudProvider = (provider: string): boolean =>
 /** The epoch millisecond of `d` as recorded generation text. */
 const generationOf = (d: Date): string => String(d.getTime());
 
+/**
+ * The incarnation a legacy row's obligation is keyed by: the one it started in, else the one its
+ * dispatch was admitted for; a historical reservation without either is `unknown`, never the
+ * instance current now (I2). Its own provider: local `@local`, else the admitted one, else the
+ * instance row's only when it is that incarnation, else `unknown` (M6).
+ */
+function legacyKey(r: {
+  sandbox_created_at: Date | string | null;
+  legacy_dispatch_generation: string | null;
+  legacy_dispatch_provider: string | null;
+  source: string | null;
+  instance_provider: string | null;
+  instance_created_at: Date | null;
+}): { provider: string; generation: string } {
+  const generation =
+    r.sandbox_created_at !== null
+      ? generationOf(new Date(r.sandbox_created_at))
+      : (r.legacy_dispatch_generation ?? "unknown");
+  const current =
+    r.instance_created_at !== null && generationOf(r.instance_created_at) === generation;
+  const provider =
+    r.source === "local"
+      ? LOCAL_PROVIDER
+      : (r.legacy_dispatch_provider ??
+        (current && r.instance_provider ? r.instance_provider : "unknown"));
+  return { provider, generation };
+}
+
 const toObligation = (r: {
   id: string;
   device_id: string;
   org_id: string;
   provider: string;
   instance_generation: string;
-  state: "open" | "quarantined" | "resolved";
+  state: "open" | "quarantined" | "resolved" | "abandoned";
   reason: string | null;
   attempts: number;
   boot_id: string | null;
+  created_at: Date;
 }): RetirementObligation => ({
   id: r.id,
   deviceId: r.device_id,
@@ -137,6 +193,7 @@ const toObligation = (r: {
   reason: r.reason,
   attempts: r.attempts,
   bootId: r.boot_id,
+  createdAt: r.created_at,
 });
 
 @Injectable()
@@ -174,6 +231,50 @@ export class LegacyRetirementStore {
       .where("id", "=", FREEZE_ID)
       .executeTakeFirstOrThrow();
     return row.frozen_at;
+  }
+
+  /** When the freeze was published; null before. */
+  async frozenAt(): Promise<Date | null> {
+    const row = await this.db
+      .selectFrom("legacy_launch_freeze")
+      .select("frozen_at")
+      .where("id", "=", FREEZE_ID)
+      .executeTakeFirst();
+    return row?.frozen_at ?? null;
+  }
+
+  /**
+   * The worker's sweep of obligations whose device is gone (its row missing or `deleted_at` set):
+   * a cloud one whose exact incarnation has a recorded confirmed destruction resolves
+   * `provider-destroyed`; every other one becomes `abandoned`. Device ids are never reused, so no
+   * device can acquire that incarnation again, but abandonment is no evidence that its processes
+   * ended (they may still run on that computer); its members stay unsettled. Returns the counts.
+   */
+  async abandonDeleted(): Promise<{ resolved: number; abandoned: number }> {
+    const rows = await this.db
+      .selectFrom("device_retirement_obligations as o")
+      .leftJoin("devices as d", "d.id", "o.device_id")
+      .select(["o.id", "o.device_id", "o.provider", "o.instance_generation"])
+      .where("o.state", "in", ["open", "quarantined"])
+      .where((eb) => eb.or([eb("d.id", "is", null), eb("d.deleted_at", "is not", null)]))
+      .execute();
+    let resolved = 0,
+      abandoned = 0;
+    for (const r of rows) {
+      if (await this.destructionRecorded(r.device_id, r.provider, r.instance_generation)) {
+        await this.resolveDestroyed(r.id);
+        resolved++;
+        continue;
+      }
+      const u = await this.db
+        .updateTable("device_retirement_obligations")
+        .set({ state: "abandoned", abandoned_at: sql<Date>`now()` })
+        .where("id", "=", r.id)
+        .where("state", "in", ["open", "quarantined"])
+        .executeTakeFirst();
+      abandoned += Number(u.numUpdatedRows);
+    }
+    return { resolved, abandoned };
   }
 
   async frozen(): Promise<boolean> {
@@ -297,20 +398,7 @@ export class LegacyRetirementStore {
     let added = 0;
     for (const r of rows) {
       const deviceId = r.device_id as string;
-      // the exact incarnation: the one it started in, else the one its dispatch was admitted for;
-      // a historical reservation without either is `unknown`, never the instance current now (I2)
-      const generation =
-        r.sandbox_created_at !== null
-          ? generationOf(new Date(r.sandbox_created_at))
-          : (r.legacy_dispatch_generation ?? "unknown");
-      const current =
-        r.instance_created_at !== null && generationOf(r.instance_created_at) === generation;
-      // its own provider: the instance row's only when it is that incarnation (M6)
-      const provider =
-        r.source === "local"
-          ? LOCAL_PROVIDER
-          : (r.legacy_dispatch_provider ??
-            (current && r.instance_provider ? r.instance_provider : "unknown"));
+      const { provider, generation } = legacyKey(r);
       if (await this.addMember(deviceId, r.org_id, provider, generation, "legacy-task", r.id))
         added++;
     }
@@ -525,7 +613,7 @@ export class LegacyRetirementStore {
         last_error: null,
       })
       .where("o.device_id", "=", deviceId)
-      .where("o.state", "<>", "resolved")
+      .where("o.state", "in", ["open", "quarantined"])
       .where("o.provider", "like", "@%")
       .where("o.boot_id", "is not", null)
       .where(({ exists, selectFrom }) =>
@@ -581,9 +669,10 @@ export class LegacyRetirementStore {
         "reason",
         "attempts",
         "boot_id",
+        "created_at",
       ])
       .where("device_id", "=", deviceId)
-      .where("state", "<>", "resolved")
+      .where("state", "in", ["open", "quarantined"])
       .orderBy("created_at", "asc")
       .orderBy("id", "asc")
       .execute();
@@ -600,7 +689,7 @@ export class LegacyRetirementStore {
       .selectFrom("device_retirement_obligations")
       .select("id")
       .where("device_id", "=", deviceId)
-      .where("state", "<>", "resolved")
+      .where("state", "in", ["open", "quarantined"])
       .limit(1)
       .executeTakeFirst();
     if (row !== undefined) return true;
@@ -626,7 +715,7 @@ export class LegacyRetirementStore {
         last_attempt_at: sql<Date>`now()`,
       }))
       .where("id", "=", id)
-      .where("state", "<>", "resolved")
+      .where("state", "in", ["open", "quarantined"])
       .execute();
   }
 
@@ -641,7 +730,7 @@ export class LegacyRetirementStore {
         last_error: text.slice(0, 1000),
       }))
       .where("id", "=", id)
-      .where("state", "<>", "resolved")
+      .where("state", "in", ["open", "quarantined"])
       .execute();
   }
 
@@ -656,7 +745,7 @@ export class LegacyRetirementStore {
         last_error: null,
       })
       .where("id", "=", id)
-      .where("state", "<>", "resolved")
+      .where("state", "in", ["open", "quarantined"])
       .execute();
   }
 
@@ -700,7 +789,7 @@ export class LegacyRetirementStore {
     const rows = await this.db
       .selectFrom("device_retirement_obligations")
       .select("device_id")
-      .where("state", "<>", "resolved")
+      .where("state", "in", ["open", "quarantined"])
       .where(
         sql<boolean>`(last_attempt_at IS NULL OR last_attempt_at <
           now() - LEAST(3600, 30 * power(2, LEAST(attempts, 7))) * interval '1 second')`,
@@ -756,7 +845,7 @@ export class LegacyRetirementStore {
     const unresolved = await this.db
       .selectFrom("device_retirement_obligations")
       .select(["device_id", "provider", "instance_generation", "state", "reason", "boot_id"])
-      .where("state", "<>", "resolved")
+      .where("state", "in", ["open", "quarantined"])
       .orderBy("created_at", "asc")
       .execute();
     const withoutBoot = await this.db
@@ -781,16 +870,77 @@ export class LegacyRetirementStore {
       .where((eb) => eb.or([eb("m.id", "is", null), eb("m.boot_id", "is", null)]))
       .orderBy("t.device_id")
       .execute();
+    const abandonedRows = await this.db
+      .selectFrom("device_retirement_obligations")
+      .select(["device_id", "provider", "instance_generation", "boot_id", "abandoned_at"])
+      .where("state", "=", "abandoned")
+      .orderBy("abandoned_at", "asc")
+      .execute();
+    const abandonedMembers = await this.db
+      .selectFrom("device_retirement_members as m")
+      .innerJoin("device_retirement_obligations as o", "o.id", "m.obligation_id")
+      .select((eb) => eb.fn.countAll<string>().as("n"))
+      .where("o.state", "=", "abandoned")
+      .executeTakeFirstOrThrow();
+    const cloudCandidates = await this.db
+      .selectFrom("background_tasks as t")
+      .innerJoin("devices as d", "d.id", "t.device_id")
+      .leftJoin("device_instances as i", "i.device_id", "t.device_id")
+      .select([
+        "t.device_id",
+        "t.sandbox_created_at",
+        "t.legacy_dispatch_generation",
+        "t.legacy_dispatch_provider",
+        "i.provider as instance_provider",
+        "i.created_at as instance_created_at",
+        "i.prev_handle",
+      ])
+      .where("d.source", "=", "cloud")
+      .where("d.deleted_at", "is", null)
+      .where("t.launch_state", "=", "legacy")
+      .where(sql<boolean>`(t.status = 'running' OR t.kill_pending OR t.sid IS NULL)`)
+      .where(
+        sql<boolean>`(
+          (t.status = 'running' AND (t.sid IS NOT NULL OR t.legacy_dispatch <> 'reserved'))
+          OR t.kill_pending
+          OR (t.sid IS NULL AND t.legacy_dispatch <> 'reserved')
+        )`,
+      )
+      .orderBy("t.device_id")
+      .execute();
+    const cloudUnknown = new Map<string, { prevHandle: boolean; noInstance: boolean }>();
+    for (const r of cloudCandidates) {
+      const key = legacyKey({ ...r, source: "cloud" });
+      if (key.generation === "unknown" || key.provider === "unknown")
+        cloudUnknown.set(r.device_id as string, {
+          prevHandle: r.prev_handle !== null,
+          noInstance: r.instance_created_at === null,
+        });
+    }
     const open = n("open"),
       quarantined = n("quarantined"),
+      abandoned = n("abandoned"),
       unsettledMembers = Number(unsettled.n);
+    const retired = frozen && open === 0 && quarantined === 0 && unsettledMembers === 0;
     return {
       frozen,
       open,
       quarantined,
       resolved: n("resolved"),
       unsettledMembers,
-      retired: frozen && open === 0 && quarantined === 0 && unsettledMembers === 0,
+      retired,
+      cleanRetirement: retired && abandoned === 0,
+      abandoned,
+      abandonedMembers: Number(abandonedMembers.n),
+      abandonedList: abandonedRows.map((r) => ({
+        deviceId: r.device_id,
+        provider: r.provider,
+        instanceGeneration: r.instance_generation,
+        local: isInternalProvider(r.provider),
+        bootKnown: r.boot_id !== null,
+        abandonedAt: r.abandoned_at as Date,
+      })),
+      cloudUnknown: [...cloudUnknown].map(([deviceId, flags]) => ({ deviceId, ...flags })),
       localWithoutBoot: withoutBoot.map((r) => ({
         deviceId: r.device_id as string,
         machineId: r.machine_id,

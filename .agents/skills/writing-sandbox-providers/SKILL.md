@@ -151,7 +151,13 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
     `RetireLegacyTasksJob` is retryable and bounded; the gate never depends on it.
   - **Retirement.** The current cloud incarnation is destroyed whole by its provider (never resumed or `killAll`ed; files kept),
     and the confirmed destruction is recorded in `device_instance_destructions`. `retire()` and `destroyRow` record theirs too.
-    Other cloud or `unknown` incarnations are quarantined (`device.unavailable`).
+    A cloud incarnation the kernel cannot name (`unknown` provider or generation) resolves only once the device's current
+    incarnation is destroyed with confirmation (the gate destroys a live one), the row keeps no `prev_handle`, and the
+    obligation was recorded after the freeze. Any other non-current cloud incarnation without a recorded destruction is
+    quarantined for good (`device.recreate_required`). A failed or impossible destroy stays retryable (`device.unavailable`).
+  - **Deleted devices.** The worker resolves an obligation of a missing or deleted device by a recorded confirmed destruction,
+    else moves it to `abandoned`. That is never evidence: its members stay unsettled. `report()` keeps it out of `retired` and
+    counts it in `abandoned` / `abandonedMembers`; `cleanRetirement` also requires none.
   - **Local machines.** A local obligation keeps the boot identity (`bootId`, from authenticated hellos; a hello without one clears
     it) that the device's machine last reported. It resolves `host-rebooted` once any current machine of the device reports
     another, not earlier, boot: the OS instance is the evidence, not the credential. Until then the device answers
@@ -162,7 +168,10 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   - **`ifRunning`.** It refuses legacy SID polls, stops and reads and staged browse on such a device (`RetirementPendingError`).
     Only exact-ref managed drains pass `exactRef: true`.
   - **Cutover order.** Ship the device build that reports `bootId` first. Wait until `report().localWithoutBoot` (local devices with
-    legacy rows whose machine has no recorded boot) is empty or accepted. Then publish the freeze.
+    legacy rows whose machine has no recorded boot) and `report().cloudUnknown` (cloud devices whose legacy rows name no
+    incarnation; `prevHandle` / `noInstance` ones need recreating) are empty or accepted. Then publish the freeze.
+  - **Release gate.** It passes on `retired`. With `abandoned > 0` it also needs the operator to acknowledge: "N old incarnations
+    were abandoned with their devices; legacy processes may still run on those computers; no device can reuse them".
 
 ### Limits, modes and networks (`SandboxLimits`)
 

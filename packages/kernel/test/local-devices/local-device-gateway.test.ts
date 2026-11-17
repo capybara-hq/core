@@ -579,12 +579,19 @@ describe("GET /device/connect", () => {
     });
     expect(r).toEqual(EXEC_RESULT);
     expect(machine.frames[0]).toMatchObject({ type: "req", op: "exec", args: execArgs });
-    // the hello was recorded
-    const row = await db
-      .selectFrom("device_machines")
-      .select(["mode", "last_seen_at"])
-      .where("id", "=", m.machineId)
-      .executeTakeFirstOrThrow();
+    // the hello was recorded: the claim (and so `held`) comes before the record, so wait for
+    // what only the record writes (roots) instead of reading at once
+    const row = await waitFor(
+      async () =>
+        db
+          .selectFrom("device_machines")
+          .select(["mode", "last_seen_at"])
+          .where("id", "=", m.machineId)
+          .where("roots", "is not", null)
+          .executeTakeFirst(),
+      10_000,
+      "hello recorded",
+    );
     expect(row.mode).toBe("os");
     expect(row.last_seen_at).not.toBeNull();
     machine.close();
