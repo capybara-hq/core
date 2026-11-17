@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { BlockList, isIP } from "node:net";
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Module } from "@nestjs/common";
 import { publicSuffixWildcard } from "../devices/public-suffix.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
@@ -20,8 +20,8 @@ import { normalizeHost, parseCidr, privateHostEntryProblem } from "../net/public
  *   not a known public suffix);
  * - an IP address or a CIDR (IP-literal URL hosts only, within `MIN_CIDR_PREFIX`);
  * - an origin `http(s)://host[:port]`: exactly that scheme, host and port, plain http included.
- * Link-local (cloud metadata), loopback and unspecified addresses are never allowed (`localhost`
- * names included), nor IPv6 forms that embed an IPv4 address, so entries naming them are refused.
+ * Link-local and cloud metadata addresses (`100.100.100.200`, `fd00:ec2::254`), loopback and
+ * unspecified addresses are never allowed (`localhost` names included), nor IPv6 forms that embed an IPv4 address, so entries naming them are refused.
  */
 
 /** The most entries one org may hold. */
@@ -39,9 +39,11 @@ type Cidr = [string, number, "ipv4" | "ipv6"];
 /**
  * Ranges no entry may overlap, with the reason. Only ranges of the entry's own family are compared
  * (Node's `BlockList` matches v4-mapped addresses across families, which would refuse every IPv4
- * entry against `::ffff:0:0/96`).
+ * entry against `::ffff:0:0/96`). `inside` ranges (single metadata addresses inside private ranges)
+ * refuse only entries within them: a CIDR such as `fd00::/16` stays valid, and the runtime check
+ * (`net/public-address.ts`) refuses the metadata address itself whatever the entries.
  */
-const REFUSED_RANGES: readonly { cidr: Cidr; reason: string }[] = [
+const REFUSED_RANGES: readonly { cidr: Cidr; reason: string; inside?: true }[] = [
   ...(
     [
       ["169.254.0.0", 16, "ipv4"],
@@ -50,6 +52,16 @@ const REFUSED_RANGES: readonly { cidr: Cidr; reason: string }[] = [
   ).map((cidr) => ({
     cidr,
     reason: "link-local addresses (including cloud metadata) are never allowed",
+  })),
+  ...(
+    [
+      ["100.100.100.200", 32, "ipv4"], // Alibaba Cloud
+      ["fd00:ec2::254", 128, "ipv6"], // AWS IMDS over IPv6
+    ] as Cidr[]
+  ).map((cidr) => ({
+    cidr,
+    reason: "cloud metadata endpoints are never allowed",
+    inside: true as const,
   })),
   ...(
     [
@@ -88,9 +100,17 @@ function overlaps([a, ap, af]: Cidr, [b, bp, bf]: Cidr): boolean {
   return ra.check(b, bf) || rb.check(a, af);
 }
 
+/** Whether `inner` lies within `outer` (one family). */
+function within(inner: Cidr, outer: Cidr): boolean {
+  return overlaps(inner, outer) && inner[1] >= outer[1];
+}
+
 /** The reason an IP or CIDR (as a CIDR) touches a refused range, or null. */
 function refusedRangeProblem(cidr: Cidr): string | null {
-  return REFUSED_RANGES.find((r) => overlaps(cidr, r.cidr))?.reason ?? null;
+  return (
+    REFUSED_RANGES.find((r) => (r.inside ? within(cidr, r.cidr) : overlaps(cidr, r.cidr)))
+      ?.reason ?? null
+  );
 }
 
 const asCidr = (ip: string): Cidr =>
@@ -355,3 +375,11 @@ function toAllowance(row: {
 }): OrgNetworkAllowance {
   return { id: row.id, entry: row.entry, createdAt: row.created_at, createdBy: row.created_by };
 }
+
+/**
+ * {@link OrgNetworkAllowances} alone (its only dependencies are the global database providers), so
+ * the extension host (`ctx.net`) can read the allowances without importing the orgs domain, which
+ * itself imports the extensions domain.
+ */
+@Module({ providers: [OrgNetworkAllowances], exports: [OrgNetworkAllowances] })
+export class OrgNetworkAllowancesModule {}

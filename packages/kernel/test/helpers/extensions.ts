@@ -23,6 +23,7 @@ import type { KernelConfigService } from "../../src/infra/config/kernel-config.s
 import { KernelEvents } from "../../src/infra/events/kernel-events.js";
 import type { LockService } from "../../src/infra/lock/lock.service.js";
 import type { KernelLogger } from "../../src/log.js";
+import { OrgNetworkAllowances } from "../../src/orgs/network-allowances.service.js";
 import type { StorageService } from "../../src/storage/storage.service.js";
 import { EmbedTokens } from "../../src/ui/embed-token.js";
 import { handlesFor, orgLockFor } from "./identity.js";
@@ -92,6 +93,7 @@ export function testHost(
         reloadSetupTimeoutSeconds: (opts.reloadSetupTimeoutMs?.() ?? 60_000) / 1000,
       },
       hooks: { timeoutMs: opts.hookTimeoutMs?.() ?? 5_000 },
+      net: { allowInsecureLoopback: false, noProxy: [] },
     }),
   } as unknown as KernelConfigService;
   const installs = {
@@ -139,6 +141,7 @@ export function testHost(
     { get: effectiveConfig },
     // no ctx.models broker in a hand-built host: ctx.models calls reject
     undefined as never,
+    new OrgNetworkAllowances(h.db, h.txHost),
   );
 }
 

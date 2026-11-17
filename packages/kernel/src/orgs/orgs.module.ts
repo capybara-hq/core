@@ -13,7 +13,7 @@ import { ToolsModule } from "../tools/tools.module.js";
 import { DirectorySync } from "./directory-sync.js";
 import { InvitationsService } from "./invitations.service.js";
 import { MembersService } from "./members.service.js";
-import { OrgNetworkAllowances } from "./network-allowances.service.js";
+import { OrgNetworkAllowancesModule } from "./network-allowances.service.js";
 import { Offboarding } from "./offboarding.js";
 import { OrgLockModule } from "./org-lock.js";
 import { OrgsService } from "./orgs.service.js";
@@ -46,15 +46,9 @@ import { OrgSettingsModule } from "./settings.service.js";
     CatalogModule,
     // the producer side of directory-sync jobs (the maintenance processor consumes them)
     QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
+    OrgNetworkAllowancesModule,
   ],
-  providers: [
-    OrgsService,
-    MembersService,
-    InvitationsService,
-    Offboarding,
-    DirectorySync,
-    OrgNetworkAllowances,
-  ],
+  providers: [OrgsService, MembersService, InvitationsService, Offboarding, DirectorySync],
   exports: [
     OrgLockModule,
     OrgSettingsModule,
@@ -63,7 +57,7 @@ import { OrgSettingsModule } from "./settings.service.js";
     InvitationsService,
     Offboarding,
     DirectorySync,
-    OrgNetworkAllowances,
+    OrgNetworkAllowancesModule,
   ],
 })
 export class OrgsModule {}

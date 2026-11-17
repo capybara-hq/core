@@ -23,7 +23,8 @@ import {
  *   `noProxy` tunnels through the proxy (`proxy.ts`) instead: the host is not resolved locally
  *   (the proxy resolves it and owns SSRF protection for the resolved address), but an IP-literal
  *   host is still checked against the private ranges and `allowPrivateHosts`;
- * - redirects are never followed: a 3xx (other than 304) is {@link NetDeniedError} `net.redirect`;
+ * - redirects are never followed: a 3xx (other than 304) is {@link NetDeniedError} `net.redirect`,
+ *   or, with `redirects: "return"`, returned to the caller as is (its body unread);
  * - with `maxBytes`, a declared or streamed body over the limit is {@link NetBodyTooLargeError}.
  */
 
@@ -98,6 +99,8 @@ export async function safeFetch(
   opts: {
     lookup?: LookupFn;
     maxBytes?: number;
+    /** A 3xx response (other than 304): `refuse` (default) rejects with `net.redirect`, `return` returns it. */
+    redirects?: "refuse" | "return";
     /** Tests only: wraps the pinned dispatcher (defaults to {@link pinnedAgent}). */
     dispatcherFor?: (ips: string[]) => Agent;
     /** Tests only: builds the proxy dispatcher (defaults to {@link proxyAgent}). */
@@ -159,7 +162,12 @@ export async function safeFetch(
   }
   // close() waits for the in-flight request (the body still being read) before it closes
   void agent.close().catch(() => {});
-  if (res.status >= 300 && res.status < 400 && res.status !== 304) {
+  if (
+    res.status >= 300 &&
+    res.status < 400 &&
+    res.status !== 304 &&
+    (opts.redirects ?? "refuse") === "refuse"
+  ) {
     await res.body?.cancel().catch(() => {});
     throw new NetDeniedError(
       "net.redirect",

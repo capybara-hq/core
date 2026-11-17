@@ -80,6 +80,9 @@ describe("allowanceEntryProblem", () => {
     "10.1.2.3",
     "10.0.0.0/8",
     "fd00::/16",
+    // a range around a metadata address stays valid: the runtime refuses the address itself
+    "100.64.0.0/10",
+    "fd00:ec2::/32",
     "fd00::1",
     "[fd00::1]",
     "http://mcp.internal:8080",
@@ -105,6 +108,12 @@ describe("allowanceEntryProblem", () => {
     ["169.254.0.0/16", /link-local/],
     ["169.0.0.0/8", /link-local/],
     ["fe80::1", /link-local/],
+    // cloud metadata endpoints outside link-local
+    ["100.100.100.200", /metadata/],
+    ["100.100.100.200/32", /metadata/],
+    ["https://100.100.100.200", /metadata/],
+    ["fd00:ec2::254", /metadata/],
+    ["http://[fd00:ec2::254]:80", /metadata/],
     ["10.0.0.0/4", /too broad/],
     ["*.10.0.0.1", /wildcard/],
     ["*", /wildcard/],

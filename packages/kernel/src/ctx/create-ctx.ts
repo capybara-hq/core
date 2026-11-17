@@ -63,6 +63,7 @@ import {
 import { type BusSubscriber, createBus } from "./bus.js";
 import { createKv } from "./kv.js";
 import { createLock } from "./lock.js";
+import { createExtensionNet, type ExtensionNetServices } from "./net.js";
 import { createQueue } from "./queue.js";
 import { createSecrets, type Keyring } from "./secrets.js";
 
@@ -86,6 +87,11 @@ export interface KernelDeps {
    * test): `ctx.models` calls reject.
    */
   models?: Pick<ModelEmbeddings, "embed" | "describe">;
+  /**
+   * What `ctx.net` reads per call: the kernel config (`net.*`) and the org network allowances.
+   * Absent (a ctx built alone in a test): `ctx.net.fetch` rejects every request.
+   */
+  net?: ExtensionNetServices;
   /**
    * The host's hook registry: `ctx.models.embed` fires `model.request` through it (spec B §5.4).
    * A required key, so no builder leaves policy hooks out by omission (fail closed by
@@ -374,7 +380,8 @@ export class LiveConfig {
  * registered routes, provided extension points and a close function.
  * `deploymentConfig` may be a {@link LiveConfig} (shared by the instance, replaceable in place);
  * otherwise a fixed value is wrapped.
- * - Granted automatically: `kv`, `lock`, `bus`, `queue`, `log`, `db`, `config`, `provide`;
+ * - Granted automatically: `kv`, `lock`, `bus`, `queue`, `log`, `db`, `config`, `provide`, `net`
+ *   (through `deps.net`, see `ctx/net.ts`);
  * - `secrets` only with `permissions.secrets`, `storage` only with `permissions.storage`, `models`
  *   only with `permissions.models` (and only its `embedding` purposes, through `deps.models`); `http.route`
  *   only the method + path declared in `permissions.http` (the record carries the declared access and
@@ -611,13 +618,15 @@ export function createExtensionContext(
       },
     },
     extensionPoints,
-    // Placeholder until ctx.net is wired on safeFetch with the org allowances (plugin safe fetch
-    // plan, task 3): refuses every request rather than reaching the network unguarded.
-    net: {
-      async fetch() {
-        throw new Error(`plugin ${name}: ctx.net.fetch is not available in this kernel yet`);
-      },
-    },
+    // the kernel's guarded client for person-supplied URLs, no permission needed; without the
+    // services (a ctx built alone in a test) it refuses rather than reaching the network unguarded
+    net: deps.net
+      ? createExtensionNet({ ...deps.net, log: deps.log, plugin: name, signal: lifecycle.signal })
+      : {
+          async fetch() {
+            throw new Error(`plugin ${name}: ctx.net is not available`);
+          },
+        },
     bus: {
       publish: bus.publish,
       async subscribe(topic, handler) {
