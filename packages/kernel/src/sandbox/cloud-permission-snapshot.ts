@@ -9,13 +9,18 @@ import {
   type AppliedLimits,
   cloudChosenMode,
   cloudSnapshotOf,
+  coversHost,
   type DeviceNetwork,
   effectiveDevicePolicy,
+  normalizeNetwork,
   readDeploymentDevicePolicy,
   readInstanceLimits,
   sameAppliedExactly,
 } from "./modes.js";
+import { isExecutionMethod } from "./operation-authority-types.js";
 import { PermissionAuthorityLock } from "./permission-authority-lock.js";
+import { needsFullCeiling, PermissionCeilingWrites } from "./permission-ceiling-writes.js";
+import { PermissionConfigPublication } from "./permission-config-publication.js";
 import { PermissionFacts } from "./permission-facts.js";
 
 /**
@@ -63,6 +68,10 @@ export class CloudPermissionSnapshots {
     @Inject(KernelConfigService)
     private readonly config: Pick<KernelConfigService, "get" | "fieldSource">,
     @Inject(PermissionFacts) private readonly facts: PermissionFacts,
+    @Inject(PermissionConfigPublication)
+    private readonly publication: Pick<PermissionConfigPublication, "assertCurrent">,
+    @Inject(PermissionCeilingWrites)
+    private readonly ceilings: Pick<PermissionCeilingWrites, "publishLocked">,
   ) {}
 
   /** Snapshots one device under its exclusive lifecycle lease. */
@@ -115,6 +124,8 @@ export class CloudPermissionSnapshots {
     const device = await this.lockedDevice(orgId, deviceId);
     if (device === undefined) return { state: "skipped" };
     if (device.owner_full_access !== null) return { state: "existing" };
+    // under the platform shared lock: proves this replica reads the converted (current) inputs
+    await this.publication.assertCurrent();
     const [deployment, settings] = await Promise.all([
       readDeploymentDevicePolicy(this.db.db, this.config),
       readOrgSettings(this.db.db, orgId),
@@ -148,6 +159,31 @@ export class CloudPermissionSnapshots {
       })
       .where("id", "=", deviceId)
       .execute();
+    // A snapshot narrowed by what the instance really runs changes the device's authority: it
+    // goes through the device ceiling writer (epoch, Full consent, exact revocation) in this
+    // transaction, under the device write lock already held.
+    const fullNarrowed = old.mode === "auto" && !snap.fullAccess;
+    const networkNarrowed =
+      JSON.stringify(normalizeNetwork(old.network)) !== JSON.stringify(snap.outerNetwork);
+    if (fullNarrowed || networkNarrowed) {
+      const outer = snap.outerNetwork;
+      await this.ceilings.publishLocked(
+        { orgId, deviceId },
+        "device",
+        (scope, row) => {
+          if (needsFullCeiling(scope)) return !snap.fullAccess;
+          if (
+            outer.kind !== "allowlist" ||
+            !("network" in scope) ||
+            !isExecutionMethod(row.method) ||
+            scope.network.kind !== "allowlist"
+          )
+            return false;
+          return scope.network.hosts.some((h) => !outer.hosts.some((p) => coversHost(p, h)));
+        },
+        fullNarrowed,
+      );
+    }
     return state === "reconcile-required" ? { state, action: "reset-files" } : { state };
   }
 
@@ -220,10 +256,12 @@ export class CloudPermissionSnapshots {
       .forUpdate()
       .executeTakeFirst();
     if (row === undefined) return null;
+    // a create that may have acted (creating, even without a handle yet) or any file system left
+    // counts: its limits are not established
     const live =
-      row.handle !== null &&
-      (row.status === "running" || row.status === "suspended" || row.status === "creating");
-    return live || row.fs_status === "ready" ? row : null;
+      row.status === "creating" ||
+      (row.handle !== null && (row.status === "running" || row.status === "suspended"));
+    return live || row.fs_status !== "none" ? row : null;
   }
 
   /** The exactly known applied limits; null when unknown or a newer value awaits a reset. */

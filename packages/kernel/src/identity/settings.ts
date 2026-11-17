@@ -34,7 +34,9 @@ import {
   type DevicesFullAccessView,
   type FullAccessPermission,
   fullAccessPatchOfLegacy,
+  LEGACY_DEVICES_AUTO_MODE_SETTING,
   legacyAutoModeView,
+  legacyDevicesAutoModeStored,
   readDevicesFullAccess,
   readStoredDevicesFullAccess,
 } from "../sandbox/platform-full-access.js";
@@ -807,6 +809,13 @@ export class SettingsService {
         after: r.next.permission ?? DEVICES_FULL_ACCESS_DEFAULT,
       };
       writes.push([DEVICES_FULL_ACCESS_SETTING, r.next]);
+      // until 8.6: an unconverted (or re-written by an old replica) old key is kept in step, so
+      // neither side reads a value the super admin did not choose
+      if (await legacyDevicesAutoModeStored(this.db.db))
+        writes.push([
+          LEGACY_DEVICES_AUTO_MODE_SETTING,
+          r.next.permission === undefined ? {} : { mode: r.next.permission },
+        ]);
       if (fullAccessChange.before.permission !== fullAccessChange.after)
         await this.ceilings.publishLocked(
           {},

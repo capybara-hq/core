@@ -184,8 +184,10 @@ describe("org fullAccess (B1)", () => {
     expect(parseOrgSettings({ fullAccess: "maybe" }).fullAccess).toBe("off");
     expect(parseOrgSettings({ fullAccess: null }).fullAccess).toBe("off");
     expect(parseOrgSettings({}).fullAccess).toBeUndefined();
-    // the old stored key is converted once by the publication; it is not read
+    // until 8.6 the old stored key is read too and the narrower wins (fail closed)
     expect(parseOrgSettings({ autoMode: "allowed" }).fullAccess).toBeUndefined();
+    expect(parseOrgSettings({ autoMode: "off", fullAccess: "allowed" }).fullAccess).toBe("off");
+    expect(parseOrgSettings({ autoMode: "maybe" }).fullAccess).toBe("off");
   });
 
   it("the Platform tool / an API token may turn Full off, never allow it", async () => {

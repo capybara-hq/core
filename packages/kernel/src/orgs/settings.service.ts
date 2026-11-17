@@ -36,6 +36,7 @@ import {
   type DevicesFullAccessView,
   type FullAccessPermission,
   legacyAutoModeView,
+  narrowedOrgFullAccess,
   readDevicesFullAccess,
 } from "../sandbox/platform-full-access.js";
 import { assertThemeOnIn } from "../themes/theme-state.js";
@@ -347,9 +348,17 @@ const sameSettings = (a: OrgSettings, b: OrgSettings): boolean =>
 const asObject = (v: unknown): Record<string, unknown> =>
   v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
 
-/** 把存储的 jsonb 解析为设置（宽松，见 {@link OrgSettingsSchema}）。 */
+/**
+ * 把存储的 jsonb 解析为设置（宽松，见 {@link OrgSettingsSchema}）。Until 8.6 `fullAccess` is read
+ * over both keys, the narrower of it and the old `autoMode` ({@link narrowedOrgFullAccess}).
+ */
 export function parseOrgSettings(raw: unknown): OrgSettings {
-  return OrgSettingsSchema.parse(asObject(raw));
+  const stored = asObject(raw);
+  const settings = OrgSettingsSchema.parse(stored);
+  const fullAccess = narrowedOrgFullAccess(settings.fullAccess, stored.autoMode);
+  if (fullAccess === undefined) delete settings.fullAccess;
+  else settings.fullAccess = fullAccess;
+  return settings;
 }
 
 /** 读组织设置（每次实时读 PG，多副本下改动立即生效）；组织不存在或已删除按默认值。 */
@@ -645,6 +654,20 @@ export class OrgSettingsService {
       after.uiArrangement = mergeArrangement(before.uiArrangement, arrangementPatch);
       if (Object.keys(after.uiArrangement).length === 0) delete after.uiArrangement;
     }
+    // Until 8.6 a stored old `autoMode` is never dropped: an unconverted key (or one an old
+    // replica wrote again) is carried in step with `fullAccess`, since old replicas still read it.
+    // A write that does not choose the value refuses two stored values that differ.
+    const legacy = "autoMode" in stored;
+    if (legacy && patch.fullAccess === undefined) {
+      const raw = stored.fullAccess;
+      const old = narrowedOrgFullAccess(undefined, stored.autoMode);
+      if (raw !== undefined && raw !== old)
+        throw new ApiError(
+          "org.settings_conflict",
+          "This organization stores two different Full permission values (fullAccess and its old name autoMode); set fullAccess to choose one",
+        );
+      after.fullAccess = old;
+    }
     if (after.fullAccess === undefined) delete after.fullAccess;
     if (after.cloudNetwork === undefined) delete after.cloudNetwork;
     if (after.wakeOnBackgroundTask === undefined) delete after.wakeOnBackgroundTask;
@@ -679,7 +702,13 @@ export class OrgSettingsService {
     } = stored;
     await this.db
       .updateTable("orgs")
-      .set({ settings: JSON.stringify({ ...rest, ...after }) })
+      .set({
+        settings: JSON.stringify({
+          ...rest,
+          ...after,
+          ...(legacy && after.fullAccess !== undefined && { autoMode: after.fullAccess }),
+        }),
+      })
       .where("id", "=", orgId)
       .execute();
     await audit(this.db.db, {

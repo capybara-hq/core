@@ -130,17 +130,61 @@ export function resolveDevicesFullAccess(
   return { permission: DEVICES_FULL_ACCESS_DEFAULT, source: "default" };
 }
 
-/** The stored choice, read live (in the caller's transaction when there is one). */
+/**
+ * The narrower of two stored choices: `off` when either says off; otherwise an explicit value
+ * beats an absent one only when it is narrower, so two non-off choices read as `a`.
+ */
+export const narrowerStoredFullAccess = (
+  a: DevicesFullAccessStored,
+  b: DevicesFullAccessStored,
+): DevicesFullAccessStored =>
+  a.permission === "off" || b.permission === "off" ? { permission: "off" } : a;
+
+/**
+ * The stored choice, read live (in the caller's transaction when there is one). Until the old
+ * public inputs are removed (8.6) it reads both keys and takes the narrower (fail closed): before
+ * the publication converts them, or after an old replica wrote its own key again, a stored
+ * `devicesAutoMode` off is never lost.
+ */
 export async function readStoredDevicesFullAccess(
   db: KernelSchemaDb,
   log?: Pick<KernelLogger, "warn">,
 ): Promise<DevicesFullAccessStored> {
+  const rows = await db
+    .selectFrom("deployment_settings")
+    .select(["key", "value"])
+    .where("key", "in", [DEVICES_FULL_ACCESS_SETTING, LEGACY_DEVICES_AUTO_MODE_SETTING])
+    .execute();
+  const current = rows.find((r) => r.key === DEVICES_FULL_ACCESS_SETTING);
+  const legacy = rows.find((r) => r.key === LEGACY_DEVICES_AUTO_MODE_SETTING);
+  const stored = parseStoredDevicesFullAccess(current?.value, log);
+  return legacy === undefined
+    ? stored
+    : narrowerStoredFullAccess(stored, parseLegacyStoredDevicesAutoMode(legacy.value, log));
+}
+
+/** Whether the old key is still stored (a write then keeps it in step for old replicas). */
+export async function legacyDevicesAutoModeStored(db: KernelSchemaDb): Promise<boolean> {
   const row = await db
     .selectFrom("deployment_settings")
-    .select("value")
-    .where("key", "=", DEVICES_FULL_ACCESS_SETTING)
+    .select("key")
+    .where("key", "=", LEGACY_DEVICES_AUTO_MODE_SETTING)
     .executeTakeFirst();
-  return parseStoredDevicesFullAccess(row?.value, log);
+  return row !== undefined;
+}
+
+/**
+ * The org's stored Full switch read over both keys until 8.6 (fail closed): `fullAccess` and the
+ * old `autoMode` (an invalid old value reads as off); the narrower wins, an absent old key leaves
+ * `fullAccess` as it is.
+ */
+export function narrowedOrgFullAccess(
+  fullAccess: FullAccessPermission | undefined,
+  rawLegacy: unknown,
+): FullAccessPermission | undefined {
+  if (rawLegacy === undefined) return fullAccess;
+  const legacy = Permission.safeParse(rawLegacy);
+  return fullAccess === "off" || !legacy.success || legacy.data === "off" ? "off" : fullAccess;
 }
 
 /**

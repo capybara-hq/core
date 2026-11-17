@@ -251,20 +251,15 @@ export function cloudSnapshotOf(
 }
 
 /**
- * The mode a cloud device chose: its B1 owner ceiling once snapshotted (false narrows to sandbox,
- * true follows the platform and the org), else its old narrowing switch.
+ * The mode a cloud device chose: the narrower of its old narrowing switch and its B1 owner
+ * ceiling (false narrows to sandbox, true or not snapshotted follows the platform and the org). An
+ * explicit sandbox switch (an old replica's write included) is never overridden.
  */
 export const cloudChosenMode = (row: {
   mode: "sandbox" | null;
   owner_full_access: boolean | null;
 }): SandboxMode | null =>
-  row.owner_full_access === false
-    ? "sandbox"
-    : row.owner_full_access === true
-      ? null
-      : row.mode === "sandbox"
-        ? "sandbox"
-        : null;
+  row.mode === "sandbox" || row.owner_full_access === false ? "sandbox" : null;
 
 /**
  * What decides whether a running cloud instance must change (auto mode spec §4.2): its mode and

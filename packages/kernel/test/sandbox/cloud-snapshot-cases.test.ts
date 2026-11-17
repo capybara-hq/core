@@ -80,7 +80,9 @@ describe("the snapshot as a later ceiling", () => {
     expect(effectiveDevicePolicy(platform(), { fullAccess: "allowed" }, chosen).mode).toBe(
       "sandbox",
     );
-    expect(cloudChosenMode({ mode: "sandbox", owner_full_access: true })).toBeNull();
+    // an explicit sandbox switch (an old replica's PATCH included) is never overridden
+    expect(cloudChosenMode({ mode: "sandbox", owner_full_access: true })).toBe("sandbox");
+    expect(cloudChosenMode({ mode: null, owner_full_access: true })).toBeNull();
     expect(cloudChosenMode({ mode: "sandbox", owner_full_access: null })).toBe("sandbox");
   });
   it("the outer network caps a later widening; a later narrowing still applies", () => {
