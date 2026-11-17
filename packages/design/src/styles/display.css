@@ -887,6 +887,21 @@
   min-width: 0;
   overflow-wrap: anywhere;
 }
+/* An item with an open target is a link button that reads as the list's text: start-aligned
+   when it wraps, the item's status color and weight, underlined only on hover / keyboard focus.
+   conversation.css (`.cb-link-btn`) loads later in the same layer, hence the extra specificity. */
+.cb-tasklist-item > .cb-tasklist-text.cb-link-btn {
+  display: block;
+  color: inherit;
+  font-weight: inherit;
+  text-align: start;
+  text-decoration: none;
+}
+.cb-tasklist-item > .cb-tasklist-text.cb-link-btn:hover,
+.cb-tasklist-item > .cb-tasklist-text.cb-link-btn:focus-visible {
+  color: inherit;
+  text-decoration-line: underline;
+}
 .cb-tasklist-item[data-status="in_progress"] {
   background: var(--cb-accent-tint);
   box-shadow: inset 2px 0 0 var(--cb-accent);
