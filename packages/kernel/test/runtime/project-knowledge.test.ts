@@ -420,6 +420,7 @@ describe("project knowledge at run start", () => {
         scopeFor: async () => ({
           source: "local" as const,
           mode: "auto" as const,
+          reach: "os-user" as const,
           workspace: "/Users/u/capybara-device/d/workspace",
           home: "/Users/u",
           supported: true,

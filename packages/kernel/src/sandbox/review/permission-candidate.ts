@@ -121,7 +121,7 @@ export function buildPermissionCandidate(
       facts,
     );
     if (
-      (!facts.fullAccessCeiling && (reads.length || writes.length)) ||
+      (!facts.broadProjectReach && (reads.length || writes.length)) ||
       hosts.some(
         (host) =>
           facts.policy.network.kind !== "open-public" &&

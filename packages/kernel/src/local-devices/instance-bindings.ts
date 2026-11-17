@@ -16,6 +16,7 @@ import {
 } from "../sandbox/permission-runtime-reports.js";
 import { LOCAL_PROVIDER } from "../sandbox/providers.js";
 import { OP_DEADLINE_MS } from "./local-device-provider.js";
+import { OwnerReports } from "./owner-reports.js";
 import { LocalDeviceRelay } from "./relay.js";
 
 /** The committed binding of a local instance generation, as the coordinator sends it. */
@@ -50,6 +51,7 @@ export class LocalInstanceBindings {
     private readonly relay: Pick<LocalDeviceRelay, "callV3" | "connection">,
     @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
     @Inject(PermissionRuntimeReports) private readonly reports: PermissionRuntimeReports,
+    @Inject(OwnerReports) private readonly owners: Pick<OwnerReports, "recordLocked">,
   ) {}
 
   /** The binding committed for the device's current local instance, or null (no allocation). */
@@ -178,6 +180,12 @@ export class LocalInstanceBindings {
     if (!machine.program_version)
       throw new InstanceBindingError("The machine has not reported its program version");
     if (binding.status === "installed") return;
+    // B2: the answer's authenticated owner report enters the common owner writer; a stale or
+    // conflicting one blocks new authority there without failing the installation
+    await this.owners.recordLocked(machineId, answer.ownerCeiling, {
+      connectionId: null,
+      via: "bind",
+    });
     const previous = request.expectedPreviousGeneration
       ? await this.db
           .selectFrom("device_instance_bindings")

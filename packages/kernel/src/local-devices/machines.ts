@@ -6,7 +6,11 @@ import type {
   DeviceStopArgs,
   ExtensionContext,
 } from "@capybara-hq/plugin-sdk";
-import { type DeviceHelloV3, parseDeviceFrameV3 } from "@capybara-hq/plugin-sdk";
+import {
+  type DeviceHelloV3,
+  type DeviceOwnerCeilingV3,
+  parseDeviceFrameV3,
+} from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { audit } from "../identity/audit.js";
@@ -28,6 +32,7 @@ import {
 import { LOCAL_PROVIDER } from "../sandbox/providers.js";
 import { deviceNotFound } from "../sandbox/sandbox.service.js";
 import { deviceRevokedTopic } from "./keys.js";
+import { OwnerReports } from "./owner-reports.js";
 import { DEVICE_OP_RESOLVE_JOB, deviceOpReportedJobId } from "./policy-op-jobs.js";
 import {
   deviceFeaturesOf,
@@ -106,6 +111,7 @@ export class MachinesService {
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
     @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
     @Inject(PermissionRuntimeReports) private readonly reports: PermissionRuntimeReports,
+    @Inject(OwnerReports) private readonly owners: OwnerReports,
   ) {}
 
   /**
@@ -240,6 +246,8 @@ export class MachinesService {
     machineId: string,
     hello: DeviceHello,
     rawPolicy: unknown = hello.policy,
+    /** A v3 hello's authenticated owner report (B2): it, not the summary, decides publication. */
+    owner?: { report: DeviceOwnerCeilingV3; connectionId: string | null },
   ): Promise<void> {
     const subject = await this.db
       .selectFrom("device_machines")
@@ -299,7 +307,16 @@ export class MachinesService {
     // jsonb returns keys in its own order: compare roots canonically, or every reconnect would
     // look like a changed reach and reset Full consent (B4 consent stability)
     const rootsChanged = canonicalRoots(self.roots) !== canonicalRoots(hello.roots);
-    if (rootsChanged || JSON.stringify(localPolicyOf(self.local_policy)) !== JSON.stringify(policy))
+    if (owner !== undefined)
+      await this.owners.recordLocked(machineId, owner.report, {
+        connectionId: owner.connectionId,
+        via: "hello",
+        rootsChanged,
+      });
+    else if (
+      rootsChanged ||
+      JSON.stringify(localPolicyOf(self.local_policy)) !== JSON.stringify(policy)
+    )
       await this.ceilings.publishLocked(
         { orgId: self.org_id, deviceId: self.device_id },
         "device",
@@ -386,10 +403,17 @@ export class MachinesService {
 
   /** Dormant authenticated hello adapter; the active gateway still accepts only protocol 2. */
   @Transactional()
-  async recordHelloV3(machineId: string, hello: DeviceHelloV3): Promise<void> {
+  async recordHelloV3(
+    machineId: string,
+    hello: DeviceHelloV3,
+    connectionId: string | null = null,
+  ): Promise<void> {
     const parsed = parseDeviceFrameV3(JSON.stringify(hello), "device");
     if (parsed.type !== "hello") throw new Error("Expected a validated operation hello");
-    await this.recordHello(machineId, parsed);
+    await this.recordHello(machineId, parsed, parsed.policy, {
+      report: parsed.ownerCeiling,
+      connectionId,
+    });
     const machine = await this.db
       .selectFrom("device_machines")
       .select(["org_id", "device_id"])
@@ -499,6 +523,44 @@ export class MachinesService {
       .where("id", "=", machineId)
       .where("revoked_at", "is", null)
       .execute();
+  }
+
+  /**
+   * A staged (v3) `policy` frame (B2): the summary is kept for the device page like protocol 2's,
+   * while the authenticated owner report alone decides what changed ({@link OwnerReports}).
+   */
+  @Transactional()
+  async recordPolicyV3(
+    machineId: string,
+    frame: unknown,
+    connectionId: string | null = null,
+  ): Promise<void> {
+    const parsed = parseDeviceFrameV3(JSON.stringify(frame), "device");
+    if (parsed.type !== "policy") throw new Error("Expected a validated policy frame");
+    const subject = await this.db
+      .selectFrom("device_machines")
+      .select(["org_id", "device_id", "account_id", "local_policy", "pending_policy_ops"])
+      .where("id", "=", machineId)
+      .where("revoked_at", "is", null)
+      .executeTakeFirst();
+    if (!subject) return;
+    await this.ceilings.lock({ orgId: subject.org_id, deviceId: subject.device_id }, "device");
+    const policy = await this.reportedPolicy(
+      machineId,
+      { ...subject, device_id: subject.device_id },
+      parsed.policy,
+      parsed.policy,
+    );
+    await this.db
+      .updateTable("device_machines")
+      .set({ local_policy: jsonOrNull(policy), last_seen_at: sql<Date>`now()` })
+      .where("id", "=", machineId)
+      .where("revoked_at", "is", null)
+      .execute();
+    await this.owners.recordLocked(machineId, parsed.ownerCeiling, {
+      connectionId,
+      via: "policy",
+    });
   }
 
   /**

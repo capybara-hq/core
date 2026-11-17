@@ -33,6 +33,7 @@ import {
   nameInvalid,
   nameTaken,
   outsideMode,
+  readModeOf,
   tooBroad,
   withinMode,
 } from "./project-rules.js";
@@ -40,7 +41,7 @@ import {
 // it anyway (project root §4.3), so both use the one rule; the home itself may be one
 import { aboveHome } from "./working-root.js";
 
-export { type DeviceProjectScope, withinMode } from "./project-rules.js";
+export { type DeviceProjectScope, readModeOf, withinMode } from "./project-rules.js";
 
 /** The most projects one device keeps (project root §4.1). */
 export const MAX_DEVICE_PROJECTS = 100;
@@ -166,7 +167,7 @@ export class DeviceProjectsService {
       if (scan === undefined) throw projectsUnsupported(false);
       let found: { path: string; suggestedName: string }[];
       try {
-        found = await scan.call(p, h, base, { limits: { mode: scope.mode }, signal: sig });
+        found = await scan.call(p, h, base, { limits: { mode: readModeOf(scope) }, signal: sig });
       } catch (e) {
         // the base is the device's own workspace or home: a refusal there is not the person's path
         throw passThrough(e) ?? unavailable(e);
@@ -269,7 +270,7 @@ export class DeviceProjectsService {
         try {
           answer = await list.call(p, h, path, {
             limit: 1,
-            limits: { mode: scope.mode },
+            limits: { mode: readModeOf(scope) },
             signal: sig,
           });
         } catch (e) {

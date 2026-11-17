@@ -178,14 +178,8 @@ function deviceAnswers(identity?: (generation: string) => ReturnType<typeof iden
       bindingId: args.bindingId as string,
       runtimeIdentity: identity ? identity(g) : identityFor(g),
       permissionSupport: support,
-      ownerCeiling: {
-        version: 2,
-        sequence: 1,
-        revision: "owner-1",
-        fullAccess: true,
-        restrictedProjectReach: "workspace",
-        restrictedAllowedDomains: [],
-      },
+      // the same owner report the hello carried (B2 records it; a real change would publish)
+      ownerCeiling: stagedHello().ownerCeiling,
     } satisfies Omit<BindInstanceResultV3, "permissionSupport"> & { permissionSupport: unknown };
   });
   return sent;
@@ -319,14 +313,8 @@ it("a delayed answer for a replaced generation cannot populate the replacement",
       ...committedOld.request,
       runtimeIdentity: identityFor(old),
       permissionSupport: support,
-      ownerCeiling: {
-        version: 2,
-        sequence: 1,
-        revision: "owner-1",
-        fullAccess: true,
-        restrictedProjectReach: "workspace",
-        restrictedAllowedDomains: [],
-      },
+      // the same owner report the hello carried (B2 records it; a real change would publish)
+      ownerCeiling: stagedHello().ownerCeiling,
     }),
   ).rejects.toThrow("replaced");
   expect((await f.binding(old))?.status).toBe("awaiting-device");

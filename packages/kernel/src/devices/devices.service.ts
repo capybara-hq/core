@@ -18,7 +18,8 @@ import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { DevicePolicyService } from "../local-devices/device-policy.service.js";
 import { deviceLeaseKey } from "../local-devices/keys.js";
 import { MachinesService } from "../local-devices/machines.js";
-import { deviceFeaturesOf, localModeOf, localPolicyOf } from "../local-devices/policy-summary.js";
+import { ownerFactsOf, ownerModeOf } from "../local-devices/owner-report.js";
+import { deviceFeaturesOf, localPolicyOf } from "../local-devices/policy-summary.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
 import type { DeviceModeLevel } from "../runtime/context/device-paths.js";
 import { oweDeviceDestroy, SandboxJobs } from "../sandbox/jobs.js";
@@ -33,7 +34,11 @@ import {
   readDeploymentDevicePolicy,
   type SandboxMode,
 } from "../sandbox/modes.js";
-import { needsFullCeiling, PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
+import {
+  needsFullCeiling,
+  PermissionCeilingWrites,
+  requiresFullExecution,
+} from "../sandbox/permission-ceiling-writes.js";
 import { isInternalProvider, LOCAL_PROVIDER, SandboxProviders } from "../sandbox/providers.js";
 import { deviceNotFound, SandboxService } from "../sandbox/sandbox.service.js";
 import {
@@ -85,6 +90,14 @@ export interface DeviceView {
   } | null;
   /** Its mode and network (auto mode spec §4.3). */
   mode: DeviceModeView;
+  /**
+   * The device owner's ceiling as last reported (B2, read only): a local device's authenticated
+   * owner report (`state: "report"`), a stale or conflicting report (`blocked`), only a protocol
+   * 2 summary (`legacy`, translated exactly) or nothing (`missing`); a cloud device's explicit
+   * Full ceiling once snapshotted. `stale` is true while the machine is offline or the report is
+   * not current: last-known facts, never authority. null for a cloud device not snapshotted yet.
+   */
+  ownerCeiling: DeviceOwnerCeilingView | null;
   sessionIsolation: boolean;
   /** Its file system is gone at the provider; reset the files to use it again. */
   filesLost: boolean;
@@ -95,6 +108,19 @@ export interface DeviceView {
    */
   limits: SandboxLimits;
   createdAt: string;
+}
+
+/** {@link DeviceView.ownerCeiling}. */
+export interface DeviceOwnerCeilingView {
+  state: "report" | "blocked" | "legacy" | "missing" | "cloud";
+  revision: string | null;
+  sequence: number | null;
+  fullAccess: boolean;
+  /** Restricted project reach; a cloud device stays within its provisioned files (`workspace`). */
+  restrictedProjectReach: "workspace" | "os-user";
+  restrictedAllowedDomains: string[];
+  observedAt: string | null;
+  stale: boolean;
 }
 
 /**
@@ -171,6 +197,10 @@ export interface DevicePolicyChange {
   remove?: string[] | undefined;
   /** Switch the sandbox back on; auto mode is turned on only on the machine. */
   mode?: "sandbox" | undefined;
+  /** B2: narrow the owner ceiling (never widen; the schema refuses true and os-user). */
+  ownerCeiling?:
+    | { fullAccess?: false | undefined; restrictedProjectReach?: "workspace" | undefined }
+    | undefined;
 }
 
 /** What `PATCH /devices/:id` changes. */
@@ -183,6 +213,12 @@ export interface DevicePatch {
    * A local device refuses it here (`device.mode_on_device`, its mode is its machine's).
    */
   mode?: "sandbox" | null;
+  /**
+   * B2: a cloud device's explicit Full ceiling. Narrowing applies; widening needs
+   * `confirmWidening` and stays bounded by the platform, the org and the outer network.
+   */
+  ownerCeiling?: { fullAccess: boolean };
+  confirmWidening?: true;
 }
 
 /** The machine connected to a local device, as its owner sees it. */
@@ -553,8 +589,86 @@ export class DevicesService {
         }
       }
     }
+    if (patch.ownerCeiling !== undefined)
+      await this.cloudOwnerCeilingLocked(orgId, accountId, id, before, patch, actorTokenId);
     if (patch.name !== undefined) {
       await this.renameLocked(orgId, accountId, id, before, patch.name, actorTokenId, undefined);
+    }
+  }
+
+  /**
+   * B2 cloud owner ceiling (`PATCH ownerCeiling: {fullAccess}`), under the device authority
+   * writer: a cloud device's explicit Full ceiling. Narrowing applies at once and revokes only Full
+   * work; widening needs the person's explicit confirmation in a web session, is refused while
+   * the platform or the org does not allow Full access, never touches the outer network, and
+   * resets Full consent (conversations need fresh consent). A local device's ceiling is its
+   * machine's (`device.mode_on_device`).
+   */
+  private async cloudOwnerCeilingLocked(
+    orgId: string,
+    accountId: string,
+    id: string,
+    before: { source: string },
+    patch: DevicePatch,
+    actorTokenId: string | undefined,
+  ): Promise<void> {
+    const want = (patch.ownerCeiling as { fullAccess: boolean }).fullAccess;
+    await this.ceilings.lock({ orgId, deviceId: id }, "device");
+    if (before.source !== "cloud")
+      throw new ApiError(
+        "device.mode_on_device",
+        "This device's owner ceiling is kept on its connected machine: narrow it from the device page or run capybara-device ceiling set there.",
+      );
+    const row = await this.db
+      .selectFrom("devices")
+      .select(["owner_full_access", "mode"])
+      .where("id", "=", id)
+      .executeTakeFirstOrThrow();
+    const current = cloudChosenMode(row) !== "sandbox";
+    if (want === current && row.owner_full_access !== null) return;
+    if (want && !current) {
+      if (patch.confirmWidening !== true)
+        throw new ApiError(
+          "device.owner_ceiling_confirmation_required",
+          "Widening a device's Full access ceiling needs explicit confirmation; conversations then need fresh Full consent",
+        );
+      const policy = await this.sandbox.devicePolicy({ orgId, deviceId: id });
+      if (policy.allowedMode !== "auto")
+        throw new ApiError(
+          "device.full_access_not_allowed",
+          "The platform or the organization does not allow Full access, so this device's ceiling cannot be widened",
+        );
+    }
+    await this.db
+      .updateTable("devices")
+      .set({
+        owner_full_access: want,
+        // the old sandbox switch no longer decides once the explicit ceiling is set
+        ...(want && { mode: null }),
+        updated_at: sql<Date>`now()`,
+      })
+      .where("id", "=", id)
+      .execute();
+    if (want !== current) {
+      await this.ceilings.publishLocked(
+        { orgId, deviceId: id },
+        "device",
+        want ? false : requiresFullExecution,
+        true,
+      );
+      await audit(this.db.db, {
+        actorAccountId: accountId,
+        ...(actorTokenId !== undefined && { actorTokenId }),
+        orgId,
+        action: "device.owner_ceiling_changed",
+        target: id,
+        detail: {
+          from: { fullAccess: current },
+          to: { fullAccess: want },
+          by: accountId,
+          via: "web",
+        },
+      });
     }
   }
 
@@ -578,6 +692,7 @@ export class DevicesService {
         "e.outer_network",
         "m.features",
         "m.local_policy",
+        "m.owner_report",
       ])
       .where("e.id", "=", deviceId)
       .where("e.org_id", "=", orgId)
@@ -591,7 +706,7 @@ export class DevicesService {
     // a local device's mode is derived fail-closed; a cloud device's switch (or its B1 owner
     // ceiling and outer network once snapshotted) only narrows it
     const chosen: SandboxMode | null =
-      row.source === "local" ? localModeOf(row.features, row.local_policy) : cloudChosenMode(row);
+      row.source === "local" ? ownerModeOf(row) : cloudChosenMode(row);
     const policy = effectiveDevicePolicy(
       deployment,
       settings,
@@ -730,6 +845,7 @@ export class DevicesService {
         ...(change.add !== undefined && { add: change.add }),
         ...(change.remove !== undefined && { remove: change.remove }),
         ...(change.mode !== undefined && { mode: change.mode }),
+        ...(change.ownerCeiling !== undefined && { ownerCeiling: narrowOnly(change.ownerCeiling) }),
       },
       source: { accountId: account.id, accountName: account.displayName, via: "web" },
     });
@@ -1080,6 +1196,7 @@ export class DevicesService {
         "m.session_isolation as machine_session_isolation",
         "m.features as machine_features",
         "m.local_policy as machine_local_policy",
+        "m.owner_report as machine_owner_report",
         "i.provider as instance_provider",
         "i.fs_status",
         "i.handle",
@@ -1134,7 +1251,11 @@ export class DevicesService {
     /** The mode the device chose: its machine's report (local) or its switch (cloud: sandbox, or null to follow the org). */
     const chosenOf = (r: (typeof all)[number]): SandboxMode | null =>
       r.source === "local"
-        ? localModeOf(r.machine_features, r.machine_local_policy)
+        ? ownerModeOf({
+            features: r.machine_features,
+            local_policy: r.machine_local_policy,
+            owner_report: r.machine_owner_report,
+          })
         : cloudChosenMode(r);
     const policyOf = (r: (typeof all)[number]): EffectiveDevicePolicy =>
       effectiveDevicePolicy(
@@ -1227,6 +1348,7 @@ export class DevicesService {
           this.config.get().sandbox.limits.egress === "none",
         ),
         // a local device's machine decides it; cloud devices have none in phase 2
+        ownerCeiling: ownerCeilingViewOf(r, online.get(r.id) ?? false),
         sessionIsolation: r.machine_session_isolation ?? false,
         filesLost: r.fs_status === "lost",
         instance: live
@@ -1487,5 +1609,67 @@ export function deviceModeViewOf(
       : null,
     sandboxNetwork: local ? null : { kind: sandboxNetwork.kind, hosts: [...sandboxNetwork.hosts] },
     ...rest,
+  };
+}
+
+/** The read-only owner ceiling view of a listed device row (B2). */
+function ownerCeilingViewOf(
+  r: {
+    source: "cloud" | "local";
+    machine_id: string | null;
+    machine_local_policy: unknown;
+    machine_owner_report: unknown;
+    owner_full_access: boolean | null;
+  },
+  online: boolean,
+): DeviceOwnerCeilingView | null {
+  if (r.source === "cloud")
+    return r.owner_full_access === null
+      ? null
+      : {
+          state: "cloud",
+          revision: null,
+          sequence: null,
+          fullAccess: r.owner_full_access,
+          restrictedProjectReach: "workspace",
+          restrictedAllowedDomains: [],
+          observedAt: null,
+          stale: false,
+        };
+  if (r.machine_id === null) return null;
+  const f = ownerFactsOf({
+    owner_report: r.machine_owner_report,
+    local_policy: r.machine_local_policy,
+  });
+  return {
+    state: f.state,
+    revision: f.revision,
+    sequence: f.sequence,
+    fullAccess: f.fullAccess,
+    restrictedProjectReach: f.restrictedProjectReach,
+    restrictedAllowedDomains: f.restrictedAllowedDomains,
+    observedAt: f.observedAt,
+    stale: !online || f.state !== "report",
+  };
+}
+
+/** The owner ceiling narrowing the web may send (B2): anything wider is refused, never sent. */
+function narrowOnly(c: { fullAccess?: unknown; restrictedProjectReach?: unknown }): {
+  fullAccess?: false;
+  restrictedProjectReach?: "workspace";
+} {
+  if (
+    (c.fullAccess !== undefined && c.fullAccess !== false) ||
+    (c.restrictedProjectReach !== undefined && c.restrictedProjectReach !== "workspace")
+  )
+    throw new ApiError(
+      "validation_failed",
+      "The device page can only narrow a machine's owner ceiling; widen it on the machine with capybara-device ceiling set",
+    );
+  return {
+    ...(c.fullAccess === false && { fullAccess: false as const }),
+    ...(c.restrictedProjectReach === "workspace" && {
+      restrictedProjectReach: "workspace" as const,
+    }),
   };
 }

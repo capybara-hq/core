@@ -10,7 +10,7 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { budgetRunOf } from "../runtime/subagents/limits.js";
 import { coversHost, type SandboxMode } from "../sandbox/modes.js";
 import { taskGrantsRunOf } from "../schedules/unattended.js";
-import { localModeOf } from "./policy-summary.js";
+import { ownerModeOf } from "./owner-report.js";
 
 /** The most hosts one exec's grants carry (the device protocol's limit). */
 export const MAX_GRANT_HOSTS = 100;
@@ -226,12 +226,12 @@ export class NetworkGrants {
   async reportedMode(deviceId: string): Promise<SandboxMode | null> {
     const row = await this.db
       .selectFrom("device_machines")
-      .select(["local_policy", "features"])
+      .select(["local_policy", "features", "owner_report"])
       .where("device_id", "=", deviceId)
       .where("revoked_at", "is", null)
       .executeTakeFirst();
     if (row === undefined) return null;
-    return localModeOf(row.features, row.local_policy);
+    return ownerModeOf(row);
   }
 
   /** The runs of the tree whose budget run is `root`. */

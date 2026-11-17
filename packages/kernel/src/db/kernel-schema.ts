@@ -1276,6 +1276,8 @@ export interface DeviceMachinesTable {
   pending_policy_ops: ColumnType<unknown, string | undefined, string>;
   /** 0133: the owner's home directory the program reported in its hello; null when not reported. */
   home: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0147: the authenticated owner report (`StoredOwnerReport`, B2); null before any. */
+  owner_report: ColumnType<unknown | null, string | null | undefined, string | null>;
 }
 
 /** 0133: a device's projects (project root design §4.1), written only by the kernel. */

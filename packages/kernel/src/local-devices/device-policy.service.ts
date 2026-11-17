@@ -3,6 +3,7 @@ import {
   type DeviceFeature,
   type DeviceLocalPolicySummary,
   type DevicePolicyArgs,
+  type DevicePolicyArgsV3,
   type DevicePolicyStatus,
   ToolError,
   validateAllowHost,
@@ -22,6 +23,8 @@ import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
 import { deviceNotFound } from "../sandbox/sandbox.service.js";
 import { MachinesService } from "./machines.js";
+import { ownerFactsOf } from "./owner-report.js";
+import { OwnerReports } from "./owner-reports.js";
 import { DEVICE_OP_RESOLVE_JOB, deviceOpResolveJobId } from "./policy-op-jobs.js";
 import {
   localPolicyOf,
@@ -41,7 +44,7 @@ const STATUS_DEADLINE_MS = 10_000;
 export const UNKNOWN_OP_MS = 24 * 3_600_000;
 
 /** A policy change as callers ask for it: the op id and the source are added here. */
-type PolicyChange = Omit<DevicePolicyArgs, "source" | "opId">;
+type PolicyChange = Omit<DevicePolicyArgsV3, "source" | "opId">;
 
 /** The prefix the relay puts before a machine's `policy`-kind refusal. */
 const REFUSED_PREFIX = "Refused by the machine's local policy: ";
@@ -77,7 +80,12 @@ export interface PolicyIntent {
  * (the machine never got it and never will), `unknown` (no answer).
  */
 export type PolicyOpResult =
-  | { outcome: "applied"; policy?: DeviceLocalPolicySummary }
+  | {
+      outcome: "applied";
+      policy?: DeviceLocalPolicySummary;
+      /** A staged (v3) answer's owner report: recorded before the outcome is accepted (B2). */
+      ownerCeiling?: unknown;
+    }
   | { outcome: "refused"; message: string }
   | { outcome: "not_received" }
   | { outcome: "interrupted" }
@@ -97,6 +105,8 @@ const INTERRUPTED_MESSAGE =
 /** The longest text of the machine's own error the caller is told (as its op log keeps it). */
 const MAX_MACHINE_MESSAGE = 500;
 const NOT_RECEIVED_MESSAGE = "The device's machine never received the policy change.";
+const OWNER_CEILING_UNSUPPORTED_MESSAGE =
+  "The device's capybara-device program cannot narrow its owner ceiling from the platform. Update capybara-device on the machine, or run capybara-device ceiling set there.";
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -129,6 +139,7 @@ export class DevicePolicyService {
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
     @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
+    @Inject(OwnerReports) private readonly owners: Pick<OwnerReports, "recordLocked">,
     @Optional()
     @Inject(DEVICE_POLICY_AFTER_CALL)
     private readonly afterCall: (opId: string) => void = () => {},
@@ -193,6 +204,23 @@ export class DevicePolicyService {
     if (machine === null) return { outcome: offline() };
     // only a program that logs op outcomes under their ids can tell what became of a lost answer
     if (!machine.features.includes("policyOpId")) return { outcome: unsupported() };
+    // B2: an owner-ceiling narrowing needs a program that reports authenticated owner facts;
+    // protocol 2 cannot express it (its `mode: sandbox` narrows both at once)
+    if (input.change.ownerCeiling !== undefined) {
+      const row = await this.db
+        .selectFrom("device_machines")
+        .select(["owner_report", "local_policy"])
+        .where("id", "=", machine.id)
+        .executeTakeFirst();
+      if (!row || ownerFactsOf(row).state !== "report")
+        return {
+          outcome: {
+            applied: false,
+            reason: "unsupported",
+            message: OWNER_CEILING_UNSUPPORTED_MESSAGE,
+          },
+        };
+    }
     // not connected: nothing is sent (a queued op would wait for a reconnect nobody watches)
     if (!(await this.relay.holderLive(input.deviceId))) return { outcome: offline() };
     const opId = randomUUID();
@@ -345,6 +373,18 @@ export class DevicePolicyService {
         detail: { ...changeDetail(op), ...extra },
       });
 
+    // B2: an applied answer carrying an owner report is accepted only once that report is
+    // committed by the common owner writer; an out-of-order report leaves the op unknown
+    let v3Report = false;
+    if (result.outcome === "applied" && result.ownerCeiling !== undefined) {
+      const recorded = await this.owners.recordLocked(ref.machineId, result.ownerCeiling, {
+        connectionId: null,
+        via: "policy-result",
+      });
+      if (recorded === "stale" || recorded === "conflict" || recorded === "revoked")
+        result = { outcome: "unknown" };
+      else v3Report = true;
+    }
     if (result.outcome === "unknown") {
       // a hello reported the op meanwhile (its job records it), or it is unknown already
       if (op.reported !== undefined || op.status === "unknown")
@@ -378,6 +418,7 @@ export class DevicePolicyService {
       .where("id", "=", ref.machineId)
       .execute();
     if (
+      !v3Report &&
       policy !== undefined &&
       live &&
       JSON.stringify(policy) !== JSON.stringify(localPolicyOf(row.local_policy))

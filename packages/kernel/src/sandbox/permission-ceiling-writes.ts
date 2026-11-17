@@ -180,6 +180,19 @@ export class PermissionCeilingWrites {
     );
   }
 }
-/** Full and owner browsing outside the restricted workspace require the independent Full ceiling. */
+/** Full execution: a Full-profile operation (B2: decided by Full permission alone). */
+export const requiresFullExecution = (scope: SandboxOperationScope | SandboxBrowseScope): boolean =>
+  "profile" in scope && scope.profile === "full-access";
+/**
+ * Broad project reach: owner browsing outside the restricted workspace (B2: decided by the reach
+ * and the platform/org device ceiling, never by the owner's Full permission).
+ */
+export const requiresBroadProjectReach = (
+  scope: SandboxOperationScope | SandboxBrowseScope,
+): boolean => !("profile" in scope) && scope.readRoots.includes("/");
+/**
+ * What a platform or org Full ceiling turning off takes away: Full execution and, as before, the
+ * wider device ceiling restricted reach depended on.
+ */
 export const needsFullCeiling = (scope: SandboxOperationScope | SandboxBrowseScope): boolean =>
-  "profile" in scope ? scope.profile === "full-access" : scope.readRoots.includes("/");
+  requiresFullExecution(scope) || requiresBroadProjectReach(scope);

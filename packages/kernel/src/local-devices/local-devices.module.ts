@@ -9,6 +9,7 @@ import { LocalDeviceProvider } from "./local-device-provider.js";
 import { MachinesService } from "./machines.js";
 import { NetworkGrants } from "./network-grants.js";
 import { NetworkGrantsModule } from "./network-grants.module.js";
+import { OwnerReports } from "./owner-reports.js";
 import { LocalDeviceRelay } from "./relay.js";
 import { DeviceTargets } from "./targets.js";
 
@@ -34,6 +35,7 @@ import { DeviceTargets } from "./targets.js";
     MachinesService,
     DevicePolicyService,
     LocalInstanceBindings,
+    OwnerReports,
   ],
   exports: [
     NetworkGrantsModule,
@@ -42,6 +44,7 @@ import { DeviceTargets } from "./targets.js";
     MachinesService,
     DevicePolicyService,
     LocalInstanceBindings,
+    OwnerReports,
   ],
 })
 export class LocalDevicesModule implements OnModuleInit {
