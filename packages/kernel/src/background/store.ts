@@ -65,7 +65,7 @@ export interface BackgroundTaskRow {
   readOffset: number;
   /** When a stop claimed the task ({@link BackgroundTaskStore.claimStop}); null otherwise. */
   stoppingAt: Date | null;
-  /** `legacy` for SID-launched rows; a managed launch's durable state otherwise (0153). */
+  /** `legacy` for SID-launched rows; a managed launch's durable state otherwise (0152). */
   launchState: BackgroundLaunchState;
   /** A managed task's stable start operation (null for legacy rows). */
   operationId: string | null;
@@ -81,7 +81,7 @@ export interface BackgroundTaskRow {
   instanceGeneration: string | null;
   /** When a managed task's cancellation was asked for (a stop or a revocation). */
   cancelRequestedAt: Date | null;
-  /** Who asked for it by a stop (0154); null for a revocation's cancellation or none. */
+  /** Who asked for it by a stop (0153); null for a revocation's cancellation or none. */
   cancelRequestedBy: CancelRequester | null;
 }
 

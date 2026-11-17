@@ -95,7 +95,7 @@ export interface SandboxOperationIntentsTable {
     | "completed"
     | "revoked"
   >;
-  /** 0153: the exact typed start result of an acknowledged backgroundStart. */
+  /** 0152: the exact typed start result of an acknowledged backgroundStart. */
   execution_ref: ColumnType<
     import("@capybara-hq/plugin-sdk").SandboxExecutionRef | null,
     string | null | undefined,
@@ -1061,7 +1061,7 @@ export interface BackgroundTasksTable {
   stopping_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
   /** 0088, renamed in 0105: the device the task runs in. */
   device_id: ColumnType<string | null, string | null | undefined, string | null>;
-  /** 0153: the durable launch state of a managed task; `legacy` for SID rows. */
+  /** 0152: the durable launch state of a managed task; `legacy` for SID rows. */
   launch_state: ColumnType<
     BackgroundLaunchState,
     BackgroundLaunchState | undefined,
@@ -1095,13 +1095,13 @@ export interface BackgroundTasksTable {
     Date | string | null | undefined,
     Date | string | null
   >;
-  /** 0154: when an exact stop of a managed task was last attempted (fair owed-stop order). */
+  /** 0153: when an exact stop of a managed task was last attempted (fair owed-stop order). */
   cancel_attempted_at: ColumnType<
     Date | null,
     Date | string | null | undefined,
     Date | string | null
   >;
-  /** 0154: who asked for a managed task's cancellation (its finish keeps their wake rule). */
+  /** 0153: who asked for a managed task's cancellation (its finish keeps their wake rule). */
   cancel_requested_by: ColumnType<
     "tool" | "person" | "conversation_deleted" | "subagent_end" | null,
     "tool" | "person" | "conversation_deleted" | "subagent_end" | null | undefined,
@@ -1118,7 +1118,7 @@ export interface BackgroundTasksTable {
   >;
 }
 
-/** 0153: see the migration for the meaning of each state. */
+/** 0152: see the migration for the meaning of each state. */
 export type BackgroundLaunchState =
   | "legacy"
   | "pending"
@@ -1182,17 +1182,17 @@ export interface DevicesTable {
   demoted_from_provider: ColumnType<string | null, string | null | undefined, string | null>;
   /** 0131: a cloud device's narrowing switch (`sandbox`); null follows the platform and the org. */
   mode: ColumnType<"sandbox" | null, "sandbox" | null | undefined, "sandbox" | null>;
-  /** 0155: a cloud device's owner Full ceiling (B1 snapshot); null: not snapshotted yet. */
+  /** 0154: a cloud device's owner Full ceiling (B1 snapshot); null: not snapshotted yet. */
   owner_full_access: ColumnType<boolean | null, boolean | null | undefined, boolean | null>;
-  /** 0155: a cloud device's outer network (B1 snapshot); null: not snapshotted yet. */
+  /** 0154: a cloud device's outer network (B1 snapshot); null: not snapshotted yet. */
   outer_network: ColumnType<
     import("../sandbox/modes.js").DeviceNetwork | null,
     string | null | undefined,
     string | null
   >;
-  /** 0155: the provenance of the B1 snapshot. */
+  /** 0154: the provenance of the B1 snapshot. */
   permission_migration: ColumnType<unknown, string | null | undefined, string | null>;
-  /** 0155: the applied limits must be established before any operation is admitted. */
+  /** 0154: the applied limits must be established before any operation is admitted. */
   permission_reconcile_required: ColumnType<boolean, boolean | undefined, boolean>;
   created_at: Ts;
   updated_at: Ts;
@@ -1287,7 +1287,7 @@ export interface DeviceMachinesTable {
   pending_policy_ops: ColumnType<unknown, string | undefined, string>;
   /** 0133: the owner's home directory the program reported in its hello; null when not reported. */
   home: ColumnType<string | null, string | null | undefined, string | null>;
-  /** 0157: the authenticated owner report (`StoredOwnerReport`, B2); null before any. */
+  /** 0156: the authenticated owner report (`StoredOwnerReport`, B2); null before any. */
   owner_report: ColumnType<unknown | null, string | null | undefined, string | null>;
 }
 
@@ -1654,14 +1654,14 @@ export interface KernelDatabase {
     report: Json<import("@capybara-hq/plugin-sdk").SandboxPermissionSupport>;
     observed_at: Ts;
   };
-  /** Migration 0156: per-device generation high-water mark; outlives instance rows. */
+  /** Migration 0155: per-device generation high-water mark; outlives instance rows. */
   device_generation_high_water: {
     device_id: string;
     /** bigint: read as a decimal string. */
     high_water_ms: ColumnType<string, string | number, string | number>;
     updated_at: Ts;
   };
-  /** Migration 0156: post-commit binding of a local instance generation. */
+  /** Migration 0155: post-commit binding of a local instance generation. */
   device_instance_bindings: {
     device_id: string;
     instance_generation: string;

@@ -380,9 +380,9 @@ describe("Conversation permission profiles", () => {
       .where("device_id", "=", deviceId)
       .execute();
     for (const migration of [
-      "0147_permission_authority_epochs.sql",
-      "0148_conversation_permission_profiles.sql",
-      "0149_first_message_request_hash.sql",
+      "0146_permission_authority_epochs.sql",
+      "0147_conversation_permission_profiles.sql",
+      "0148_first_message_request_hash.sql",
     ]) {
       const source = await readFile(
         new URL(`../../src/migrations/${migration}`, import.meta.url),
