@@ -6,7 +6,7 @@ import {
   checkToolPath,
   clip,
   display,
-  inSandbox,
+  inToolSandbox,
   looksBinary,
   resolveToolPath,
   type SandboxToolDeps,
@@ -113,7 +113,7 @@ export function sandboxReadTool(deps: SandboxToolDeps): BuiltinTool {
       const { offset = 1, limit = DEFAULT_LIMIT } = input as ReadInput;
       checkFilePathShape((input as ReadInput).file_path);
       let path = "";
-      const { value, notices } = await inSandbox(deps, ctx, async (s) => {
+      const { value, notices } = await inToolSandbox(deps, ctx, async (s) => {
         const { h, p, signal } = s;
         path = checkToolPath(resolveToolPath((input as ReadInput).file_path, s), s, "file_path");
         const st = await p.stat(h, path, signal);

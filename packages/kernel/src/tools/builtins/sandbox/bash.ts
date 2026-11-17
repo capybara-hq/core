@@ -21,6 +21,7 @@ import {
 import { KILL_SESSION_TIMEOUT_MS, killSession, SID_RE } from "../../../background/session.js";
 import type { BackgroundTaskRow } from "../../../background/store.js";
 import { runOutsideTransaction } from "../../../infra/database/transaction-host.js";
+import { isDeviceRequestNotSent } from "../../../local-devices/relay.js";
 import { operationIdFor } from "../../../sandbox/operation-intents.js";
 import type { BuiltinCallContext, BuiltinResult, BuiltinTool } from "../../registry.js";
 import {
@@ -28,6 +29,7 @@ import {
   display,
   inSandbox,
   inSandboxOperations,
+  inToolSandbox,
   mapSandboxError,
   noSandboxError,
   runBudgetNote,
@@ -459,8 +461,9 @@ type ManagedLaunch =
   | { kind: "refused"; task: BackgroundTaskRow; why: string };
 
 /**
- * Dormant managed `Bash` background launch (permission runtime cutover phase 8.2): not wired to
- * the tool until the paired activation (8.6); the protocol-2 launch above stays the active path.
+ * Managed `Bash` background launch (permission runtime cutover phase 8.2): the tool's background
+ * path once the one activation gate is on (B-17); while it is off the protocol-2 launch above
+ * stays the active path.
  *
  * Inside the held operation session it reserves the task (or, for a retry of the same run call,
  * reuses the reservation it persisted before: the same task id, artifact, deadline and
@@ -553,11 +556,11 @@ export async function runInBackgroundManaged(
         signal: s.signal,
       });
     } catch (e) {
-      const why = e instanceof Error ? e.message : String(e);
+      // kernel-written text only: the provider's message is logged, never shown to the model
+      const why = launchRefusedWhy(e);
+      deps.log?.warn("managed background start failed", { taskId: task.id, err: e });
       // a reservation that never dispatched is settled; a dispatched one never is here
-      if (
-        await failManagedPreEffect(task.id, `launch refused: ${clip(why, 500)}`, claim.executionId)
-      ) {
+      if (await failManagedPreEffect(task.id, `launch refused: ${why}`, claim.executionId)) {
         return {
           kind: "refused",
           task: (await background.get(task.id)) ?? task,
@@ -567,6 +570,9 @@ export async function runInBackgroundManaged(
       const now = (await background.get(task.id)) ?? task;
       if (now.launchState === "dispatched" && !isRefusal(e))
         return { kind: "unknown", task: now } satisfies ManagedLaunch;
+      // a dispatched start the provider refused was settled with it: the kernel's reason
+      if (now.launchState === "terminal" && isRefusal(e))
+        return { kind: "refused", task: now, why } satisfies ManagedLaunch;
       return { kind: "launched", task: now } satisfies ManagedLaunch;
     }
     return {
@@ -597,9 +603,11 @@ export async function runInBackgroundManaged(
     task.executionRef !== null &&
     (task.launchState === "acknowledged" || task.status !== "running");
   if (!started && (launch.kind === "refused" || task.launchState === "terminal")) {
-    const why = launch.kind === "refused" ? launch.why : (task.lostReason ?? "it was stopped");
+    // the recorded reason may hold a provider's words: the model gets kernel text only
+    const why =
+      launch.kind === "refused" ? launch.why : "it was stopped or refused before it started";
     throw new ToolError(
-      `The background task was not started: ${clip(why, 500).replace(/\.$/, "")}. Nothing runs; fix the cause, or call Bash without run_in_background.`,
+      `The background task was not started: ${why}. Nothing runs; fix the cause, or call Bash without run_in_background.`,
     );
   }
   if (!started && task.launchState === "cancel-pending" && task.executionRef !== null) {
@@ -640,6 +648,17 @@ export async function runInBackgroundManaged(
   };
 }
 
+/** Why a managed start was refused, in the kernel's own words (never the provider's message). */
+function launchRefusedWhy(e: unknown): string {
+  if (isDeviceRequestNotSent(e))
+    return "the device's machine reconnected before the start was sent; retry the call";
+  if (isSandboxScopeDeniedError(e))
+    return "the command or its output file is outside what this conversation may use on the device; choose a working directory this conversation may write to";
+  if (isSandboxPermissionUnsupportedError(e))
+    return "this device cannot run background tasks with this conversation's permissions; ask the user to choose another permission profile or device";
+  return "the device refused the start";
+}
+
 /** A typed refusal: the provider or admission proved the start had no effect. */
 const isRefusal = (e: unknown): boolean =>
   !isSandboxOperationOutcomeUnknownError(e) &&
@@ -675,7 +694,11 @@ export function sandboxBashTool(deps: SandboxToolDeps): BuiltinTool {
     },
     async run(input, ctx) {
       if ((input as BashInput).run_in_background === true) {
-        return runInBackground(deps, ctx, input as BashInput);
+        // once the activation gate is on, only the managed launch (B-17): the legacy launch
+        // would refuse before entering
+        return deps.managedDeviceContextRequired
+          ? runInBackgroundManaged(deps, ctx, input as BashInput)
+          : runInBackground(deps, ctx, input as BashInput);
       }
       const { command, description } = input as BashInput;
       const max = deps.config.get().sandbox.limits.maxCommandSeconds;
@@ -688,7 +711,7 @@ export function sandboxBashTool(deps: SandboxToolDeps): BuiltinTool {
       let workspace = DEFAULT_SANDBOX_ROOTS.workspace;
       // the device the command ran on (a refused network host is asked about there)
       let deviceId = "";
-      const { value: r, notices } = await inSandbox(deps, ctx, (s) => {
+      const { value: r, notices } = await inToolSandbox(deps, ctx, (s) => {
         const left = Math.floor(runTimeLeftMs(ctx.runDeadline) / 1000) * 1000;
         ms = Math.max(1000, Math.min(askedMs, left));
         workspace = s.roots.workspace;

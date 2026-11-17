@@ -106,6 +106,8 @@ export async function permissionFixture(
   let effects = 0;
   let nativeMethods: ("stat" | "readFile" | "writeFile")[] | undefined;
   const failures: unknown[] = [];
+  /** The raw errors the tool's error mapping logged (a typed refusal's own message stays here). */
+  const warned: unknown[] = [];
   const scopes: SandboxOperationScope[] = [];
   let effectHook: ((scope: SandboxOperationScope, method: string) => Promise<void>) | undefined;
   const provider = {
@@ -222,6 +224,7 @@ export async function permissionFixture(
             },
           },
           storage: { available: () => false } as never,
+          log: { warn: (_message, fields) => warned.push((fields as { err?: unknown })?.err) },
         },
         ctx,
         async (s) => {
@@ -316,5 +319,6 @@ export async function permissionFixture(
     effects: () => effects,
     scopes,
     failures,
+    warned,
   };
 }

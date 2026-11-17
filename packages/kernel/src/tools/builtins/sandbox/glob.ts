@@ -5,7 +5,7 @@ import {
   checkToolPath,
   clip,
   display,
-  inSandbox,
+  inToolSandbox,
   type SandboxToolDeps,
   sandboxBaseTimeoutMs,
   searchTimeoutMs,
@@ -85,7 +85,7 @@ export function sandboxGlobTool(deps: SandboxToolDeps): BuiltinTool {
       const given = (input as GlobInput).path;
       if (given !== undefined) checkPathShape(given);
       let dir = "";
-      const { value: files, notices } = await inSandbox(deps, ctx, async (s) => {
+      const { value: files, notices } = await inToolSandbox(deps, ctx, async (s) => {
         const { h, p, signal } = s;
         // default: the working root (a bound project's root, else the workspace)
         dir = checkToolPath((input as GlobInput).path ?? s.workingRoot, s);

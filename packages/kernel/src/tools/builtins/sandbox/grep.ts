@@ -5,7 +5,7 @@ import {
   checkToolPath,
   clip,
   display,
-  inSandbox,
+  inToolSandbox,
   type SandboxToolDeps,
   sandboxBaseTimeoutMs,
   searchTimeoutMs,
@@ -200,7 +200,7 @@ export function sandboxGrepTool(deps: SandboxToolDeps): BuiltinTool {
       const numbered = g["-n"] ?? true;
       if (g.path !== undefined) checkPathShape(g.path);
       let path = "";
-      const { value, notices } = await inSandbox(deps, ctx, async (s) => {
+      const { value, notices } = await inToolSandbox(deps, ctx, async (s) => {
         const { h, p, signal } = s;
         // default: the working root (a bound project's root, else the workspace)
         path = checkToolPath(g.path ?? s.workingRoot, s);
