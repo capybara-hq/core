@@ -382,6 +382,11 @@ export const ERROR_CODES = {
    */
   "device.auto_mode_not_allowed": 403,
   /**
+   * B1: a cloud device's snapshot found applied limits it could not establish exactly; no operation
+   * is admitted until a lifecycle action (a file reset) establishes them.
+   */
+  "device.permission_reconcile_required": 409,
+  /**
    * A device's mode is not a stored setting: a local device's mode lives on its machine
    * (`capybara-device mode` or the device page's policy op), and a cloud device has none to choose.
    */

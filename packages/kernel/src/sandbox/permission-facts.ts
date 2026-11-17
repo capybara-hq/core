@@ -24,6 +24,8 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { deviceFeaturesOf, localModeOf, localPolicyOf } from "../local-devices/policy-summary.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
 import {
+  cloudChosenMode,
+  type DeviceNetwork,
   type EffectiveDevicePolicy,
   effectiveDevicePolicy,
   readDeploymentDevicePolicy,
@@ -108,12 +110,34 @@ export class PermissionFacts {
     );
   }
   async devicePolicy(device: { orgId: string; deviceId?: string }): Promise<EffectiveDevicePolicy> {
-    const [deployment, settings, mode] = await Promise.all([
+    const [deployment, settings, chosen] = await Promise.all([
       readDeploymentDevicePolicy(this.db.db, this.config),
       readOrgSettings(this.db.db, device.orgId),
-      device.deviceId === undefined ? null : this.deviceChosenMode(device.orgId, device.deviceId),
+      device.deviceId === undefined
+        ? { mode: null, outer: null }
+        : this.deviceChosenMode(device.orgId, device.deviceId),
     ]);
-    return effectiveDevicePolicy(deployment, settings, mode);
+    return effectiveDevicePolicy(deployment, settings, chosen.mode, chosen.outer);
+  }
+
+  /**
+   * Refuses admission on a cloud device whose B1 snapshot found applied limits it could not
+   * establish exactly (unknown, stale, wider or pending a reset): only a lifecycle action that
+   * establishes them clears the marker (`CloudPermissionSnapshots.reconcile`). Read under the
+   * caller's device authority lock, which the snapshot writer takes for writing.
+   */
+  async assertCloudReconciled(orgId: string, deviceId: string): Promise<void> {
+    const row = await this.db
+      .selectFrom("devices")
+      .select("permission_reconcile_required")
+      .where("id", "=", deviceId)
+      .where("org_id", "=", orgId)
+      .executeTakeFirst();
+    if (row?.permission_reconcile_required)
+      throw new ApiError(
+        "device.permission_reconcile_required",
+        "This device's sandbox limits must be established again before it runs anything; reset the device's files to apply them",
+      );
   }
 
   /**
@@ -125,20 +149,29 @@ export class PermissionFacts {
   private async deviceChosenMode(
     orgId: string,
     deviceId: string,
-  ): Promise<EffectiveDevicePolicy["mode"] | null> {
+  ): Promise<{ mode: EffectiveDevicePolicy["mode"] | null; outer: DeviceNetwork | null }> {
     const row = await this.db
       .selectFrom("devices as e")
       .leftJoin("device_machines as m", (j) =>
         j.onRef("m.device_id", "=", "e.id").on("m.revoked_at", "is", null),
       )
-      .select(["e.source", "e.mode", "m.features", "m.local_policy"])
+      .select([
+        "e.source",
+        "e.mode",
+        "e.owner_full_access",
+        "e.outer_network",
+        "m.features",
+        "m.local_policy",
+      ])
       .where("e.id", "=", deviceId)
       .where("e.org_id", "=", orgId)
       .where("e.deleted_at", "is", null)
       .executeTakeFirst();
-    if (row === undefined) return null;
-    if (row.source === "local") return localModeOf(row.features, row.local_policy);
-    return row.mode === "sandbox" ? "sandbox" : null;
+    if (row === undefined) return { mode: null, outer: null };
+    if (row.source === "local")
+      return { mode: localModeOf(row.features, row.local_policy), outer: null };
+    // a cloud device: its B1 owner ceiling and outer network once snapshotted
+    return { mode: cloudChosenMode(row), outer: row.outer_network };
   }
 
   async readWorkingFacts({

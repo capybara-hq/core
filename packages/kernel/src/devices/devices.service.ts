@@ -23,6 +23,7 @@ import { readOrgSettings } from "../orgs/settings.service.js";
 import type { DeviceModeLevel } from "../runtime/context/device-paths.js";
 import { oweDeviceDestroy, SandboxJobs } from "../sandbox/jobs.js";
 import {
+  cloudChosenMode,
   type DeviceNetwork,
   deviceNetwork,
   type EffectiveDevicePolicy,
@@ -524,6 +525,15 @@ export class DevicesService {
           .set({ mode: patch.mode, updated_at: sql<Date>`now()` })
           .where("id", "=", id)
           .execute();
+        // B1: once snapshotted, the owner ceiling decides; sandbox narrows it, while clearing the
+        // old switch never widens it (only a deliberate owner widening does)
+        if (patch.mode === "sandbox")
+          await this.db
+            .updateTable("devices")
+            .set({ owner_full_access: false })
+            .where("id", "=", id)
+            .where("owner_full_access", "=", true)
+            .execute();
         const to = (await this.sandbox.devicePolicy({ orgId, deviceId: id })).mode;
         await this.ceilings.publishLocked(
           { orgId, deviceId: id },
@@ -561,7 +571,14 @@ export class DevicesService {
       .leftJoin("device_machines as m", (j) =>
         j.onRef("m.device_id", "=", "e.id").on("m.revoked_at", "is", null),
       )
-      .select(["e.source", "e.mode", "m.features", "m.local_policy"])
+      .select([
+        "e.source",
+        "e.mode",
+        "e.owner_full_access",
+        "e.outer_network",
+        "m.features",
+        "m.local_policy",
+      ])
       .where("e.id", "=", deviceId)
       .where("e.org_id", "=", orgId)
       .where("e.deleted_at", "is", null)
@@ -571,10 +588,16 @@ export class DevicesService {
       readDeploymentDevicePolicy(this.db.db, this.config),
       readOrgSettings(this.db.db, orgId),
     ]);
-    // a local device's mode is derived fail-closed; a cloud device's switch only narrows it
+    // a local device's mode is derived fail-closed; a cloud device's switch (or its B1 owner
+    // ceiling and outer network once snapshotted) only narrows it
     const chosen: SandboxMode | null =
-      row.source === "local" ? localModeOf(row.features, row.local_policy) : (row.mode ?? null);
-    const policy = effectiveDevicePolicy(deployment, settings, chosen);
+      row.source === "local" ? localModeOf(row.features, row.local_policy) : cloudChosenMode(row);
+    const policy = effectiveDevicePolicy(
+      deployment,
+      settings,
+      chosen,
+      row.source === "local" ? null : row.outer_network,
+    );
     let mode = policy.mode;
     let network: DeviceNetwork =
       row.source === "local"
@@ -1045,6 +1068,8 @@ export class DevicesService {
         "e.provider",
         "e.demoted_from_provider",
         "e.mode",
+        "e.owner_full_access",
+        "e.outer_network",
         "e.created_at",
         "m.id as machine_id",
         "m.name as machine_name",
@@ -1108,9 +1133,16 @@ export class DevicesService {
       r.source === "local" ? localPolicyOf(r.machine_local_policy) : null;
     /** The mode the device chose: its machine's report (local) or its switch (cloud: sandbox, or null to follow the org). */
     const chosenOf = (r: (typeof all)[number]): SandboxMode | null =>
-      r.source === "local" ? localModeOf(r.machine_features, r.machine_local_policy) : r.mode;
+      r.source === "local"
+        ? localModeOf(r.machine_features, r.machine_local_policy)
+        : cloudChosenMode(r);
     const policyOf = (r: (typeof all)[number]): EffectiveDevicePolicy =>
-      effectiveDevicePolicy(deployment, settings, chosenOf(r));
+      effectiveDevicePolicy(
+        deployment,
+        settings,
+        chosenOf(r),
+        r.source === "local" ? null : r.outer_network,
+      );
     const sandboxNetwork = deviceNetwork(deployment, settings, "sandbox");
     // each device's limits and its instance's pending change
     const perDevice = new Map(

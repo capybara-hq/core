@@ -91,6 +91,7 @@
   "runtime/project-knowledge-read.test.ts",
   "runtime/skill-fork.test.ts",
   "runtime/stream.test.ts",
+  "sandbox/cloud-snapshot-cases.test.ts",
   "sandbox/instance.test.ts",
   "sandbox/lifecycle.test.ts",
   "sandbox/operation-authority.test.ts",

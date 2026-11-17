@@ -7,6 +7,7 @@ import { LockedCron } from "../infra/schedule/locked-cron.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
+import type { CloudPermissionSnapshots } from "./cloud-permission-snapshot.js";
 import { SandboxService } from "./sandbox.service.js";
 
 /** The idle suspension sweep (every minute, once per tick across replicas). */
@@ -101,10 +102,13 @@ export class SandboxJobs {
 export async function runSandboxResetFiles(
   sandbox: Pick<SandboxService, "resetFileSystem">,
   job: Pick<Job, "data">,
+  /** B1: a reset establishes the device's exact limits; clears its reconciliation marker. */
+  snapshots?: Pick<CloudPermissionSnapshots, "reconcileDevice">,
 ): Promise<void> {
   const id = (job.data as { deviceId?: unknown }).deviceId;
   if (typeof id !== "string") return;
   await sandbox.resetFileSystem(id);
+  await snapshots?.reconcileDevice(id);
 }
 
 /**

@@ -162,6 +162,8 @@ export function effectiveDevicePolicy(
   deployment: DeploymentDevicePolicy,
   org: OrgDeviceSettings,
   deviceMode: SandboxMode | null,
+  /** A cloud device's B1 outer network snapshot: the network never goes beyond it. */
+  outer: DeviceNetwork | null = null,
 ): EffectiveDevicePolicy {
   const allowedMode = allowedDeviceMode(deployment.fullAccess, org.fullAccess);
   const mode: SandboxMode = allowedMode === "sandbox" ? "sandbox" : (deviceMode ?? "auto");
@@ -181,10 +183,88 @@ export function effectiveDevicePolicy(
     mode,
     allowedMode,
     modeSource,
-    network: deviceNetwork(deployment, org, mode),
+    network:
+      outer === null
+        ? deviceNetwork(deployment, org, mode)
+        : intersectNetworks(deviceNetwork(deployment, org, mode), outer),
     localAllowedDomains: orgAllowedDomains(deployment, org),
   };
 }
+
+/** A network with its hosts lowercased, sorted and deduplicated (`open-public` carries none). */
+export const normalizeNetwork = (n: DeviceNetwork): DeviceNetwork =>
+  n.kind === "open-public"
+    ? { kind: "open-public", hosts: [] }
+    : { kind: "allowlist", hosts: [...new Set(n.hosts.map((h) => h.toLowerCase()))].sort() };
+
+/**
+ * The narrower of two networks (B1): the open public network is no limit; two allowlists keep the
+ * hosts (or wildcards) of each that the other covers. Never wider than either.
+ */
+export function intersectNetworks(a: DeviceNetwork, b: DeviceNetwork): DeviceNetwork {
+  if (a.kind === "open-public") return normalizeNetwork(b);
+  if (b.kind === "open-public") return normalizeNetwork(a);
+  const x = normalizeNetwork(a).hosts;
+  const y = normalizeNetwork(b).hosts;
+  return normalizeNetwork({
+    kind: "allowlist",
+    hosts: [
+      ...x.filter((h) => y.some((p) => coversHost(p, h))),
+      ...y.filter((h) => x.some((p) => coversHost(p, h))),
+    ],
+  });
+}
+
+/** Whether `a` and `b` are the same mode, network kind and host set (null is never the same). */
+export const sameAppliedExactly = (
+  a: AppliedLimits | null | undefined,
+  b: AppliedLimits,
+): boolean =>
+  a != null &&
+  a.mode === b.mode &&
+  JSON.stringify(normalizeNetwork(a.network)) === JSON.stringify(normalizeNetwork(b.network));
+
+/** A cloud device's B1 per-device authority: its owner Full ceiling and its outer network. */
+export interface CloudOwnerSnapshot {
+  fullAccess: boolean;
+  outerNetwork: DeviceNetwork;
+}
+
+/**
+ * The B1 snapshot of a cloud device from its old effective policy (computed by the old algorithm,
+ * `egress: none` included): Full where the old mode was auto, the old effective network as the
+ * outer boundary. Known applied limits narrow it by intersection, never widen it: an instance that
+ * really ran stricter keeps that boundary (`applied` null: unknown, nothing to intersect).
+ */
+export function cloudSnapshotOf(
+  old: Pick<EffectiveDevicePolicy, "mode" | "network">,
+  applied: AppliedLimits | null = null,
+): CloudOwnerSnapshot {
+  const fullAccess = old.mode === "auto" && (applied === null || applied.mode === "auto");
+  return {
+    fullAccess,
+    outerNetwork:
+      applied === null
+        ? normalizeNetwork(old.network)
+        : intersectNetworks(old.network, applied.network),
+  };
+}
+
+/**
+ * The mode a cloud device chose: its B1 owner ceiling once snapshotted (false narrows to sandbox,
+ * true follows the platform and the org), else its old narrowing switch.
+ */
+export const cloudChosenMode = (row: {
+  mode: "sandbox" | null;
+  owner_full_access: boolean | null;
+}): SandboxMode | null =>
+  row.owner_full_access === false
+    ? "sandbox"
+    : row.owner_full_access === true
+      ? null
+      : row.mode === "sandbox"
+        ? "sandbox"
+        : null;
 
 /**
  * What decides whether a running cloud instance must change (auto mode spec §4.2): its mode and
