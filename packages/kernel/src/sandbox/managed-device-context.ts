@@ -104,11 +104,13 @@ type Subject = { orgId: string; deviceId: string; rootConversationId: string };
  * root) into the calling conversation's log, or nothing when the latest one already equals it.
  *
  * One record attempt discovers the root without locks, then opens exactly one transaction whose
- * fence prelude takes the complete authority subject (platform, org, device, root) before the
- * inherited run fence. Inside it: the publication is current, the claim, run and actor are this
- * call's, and the held evidence equals the device's current installed environment (provider,
- * instance id, generation, installed binding, roots; `PermissionFacts.readAppliedEnvironmentLocked`,
- * the reader the recorded permission context uses) and admission's working root. Any difference is
+ * fence prelude takes the complete authority subject (platform, org, device, root) inside the
+ * inherited run fence, after its org row and before its conversation rows. Inside it: the
+ * publication is current, the claim, run and actor are this call's (the actor still an active
+ * member, the recorded context's predicate), and the held evidence equals the device's current
+ * installed environment (provider, instance id, generation, installed binding, roots;
+ * `PermissionFacts.readAppliedEnvironmentLocked`, the reader the recorded permission context and
+ * admission use) and admission's working root. Any difference is
  * {@link ManagedDeviceContextStale}: no rediscovery, no provisioning, no whole-handler retry. The
  * bus hint follows the commit and is lossy. A lower event writer, not a permission context
  * publisher; dormant until the paired activation passes it to `common.ts`.
@@ -128,7 +130,10 @@ export class ManagedDeviceContextRecorder {
     @Inject(PermissionFacts)
     private readonly facts: Pick<PermissionFacts, "readAppliedEnvironmentLocked">,
     @Inject(SandboxOperationAuthority)
-    private readonly authority: Pick<SandboxOperationAuthority, "workingRootFor">,
+    private readonly authority: Pick<
+      SandboxOperationAuthority,
+      "workingRootFor" | "isActiveMember"
+    >,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
   ) {}
 
@@ -271,7 +276,11 @@ export class ManagedDeviceContextRecorder {
       run.execution_id !== claim.executionId
     )
       throw new ExecutionRevoked();
-    if (run.trigger_account_id !== input.accountId)
+    // the actor's identity and its liveness, with the recorded permission context's predicate
+    if (
+      run.trigger_account_id !== input.accountId ||
+      !(await this.authority.isActiveMember(input.orgId, input.accountId))
+    )
       throw new ApiError("forbidden", "This run's actor is no longer authorized");
     // every comparison under the complete authority subject, before the latest event is read
     const root = await this.profiles.readRoot(input.orgId, input.conversationId);

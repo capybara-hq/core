@@ -12,16 +12,14 @@ import { kernelDb } from "../../src/db/kernel-schema.js";
 import type { createDb } from "../../src/db/pool.js";
 import { ConversationDevices } from "../../src/devices/conversation-devices.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
-import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { assistantIdemKey } from "../../src/runtime/model-call.js";
 import type { ExecutionClaim } from "../../src/runtime/run-execution.js";
-import { PermissionAuthorityLock } from "../../src/sandbox/permission-authority-lock.js";
-import { PermissionRuntimeReports } from "../../src/sandbox/permission-runtime-reports.js";
 import { SandboxProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { inSandboxOperations } from "../../src/tools/builtins/sandbox/common.js";
 import { ToolPipeline, type ToolStepContext } from "../../src/tools/pipeline.js";
 import { type ResolvedTool, specHash, ToolRegistry } from "../../src/tools/registry.js";
+import { seedInstalledEvidence } from "../helpers/installed-evidence.js";
 import type { TestKernel } from "../helpers/runs.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
 
@@ -187,23 +185,14 @@ export async function permissionFixture(
   Object.assign((k.app.get(ToolPipeline) as unknown as { deps: object }).deps, {
     permissionOperations: new Set(staged ? [toolKey] : []),
   });
-  await k.app.get(TransactionHost).run(async () => {
-    await k.app
-      .get(PermissionAuthorityLock)
-      .acquire({ orgId: seed.orgId, deviceId }, { kind: "write", level: "device" });
-    if (!provider.permissionSupport) throw new Error("Missing staged support");
-    await k.app.get(PermissionRuntimeReports).record(
-      deviceId,
-      "@permission-policy-test",
-      "test-1",
-      {
-        runtimeHash: "a".repeat(64),
-        helperHash: "b".repeat(64),
-        imageFingerprint: "c".repeat(64),
-        instanceGeneration: "1700000000000",
-      },
-      await provider.permissionSupport({ id: deviceId }, new AbortController().signal),
-    );
+  if (!provider.permissionSupport) throw new Error("Missing staged support");
+  // the runtime report, committed roots and installed binding admission proves (B-16)
+  await seedInstalledEvidence(k, raw, {
+    orgId: seed.orgId,
+    deviceId,
+    provider: "@permission-policy-test",
+    version: "test-1",
+    report: await provider.permissionSupport({ id: deviceId }, new AbortController().signal),
   });
   const install = (replica: TestKernel) => {
     replica.app

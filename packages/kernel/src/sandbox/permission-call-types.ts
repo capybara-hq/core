@@ -50,6 +50,11 @@ export type PermissionReviewSnapshot = Readonly<
     unattended: boolean;
     fullConsent: boolean;
     availability: { state: string; reason?: string };
+    /**
+     * The reason admission refuses this device (B-16): the recorded permission context withholds
+     * its scope for the same state. Null or absent when admission may proceed.
+     */
+    admissionRefusal?: string | null;
     policy: EffectiveDevicePolicy;
   }
 >;

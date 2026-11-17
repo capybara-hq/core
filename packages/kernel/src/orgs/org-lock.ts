@@ -30,7 +30,9 @@ export interface LockedOrg {
  *
  * The global lock order: the org admission lock ({@link lockForRemoval}; the run fence's shared
  * admission, `RunExecution`) → this org row lock (also the run fence's exclusive admission) → the
- * root conversation → the conversation. A writer that locks several conversation or run rows of
+ * permission authority locks (`PermissionAuthorityLock`: platform, org, device, root; a run's
+ * ordered prelude takes them inside its fence, `withTransactionFencePrelude`) → the root
+ * conversation → the conversation. A writer that locks several conversation or run rows of
  * one tree locks the tree's root conversation first. A transaction the run fence admitted shared
  * takes none of these org-level locks (each method throws in one, `assertNotSharedAdmission`).
  */
