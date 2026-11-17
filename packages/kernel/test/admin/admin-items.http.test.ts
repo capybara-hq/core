@@ -14,7 +14,7 @@ import { accountsFor, apiTokensFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createAgent,
-  createOrg,
+  createOrgWithProviders,
   enableConnectorExtensions,
   PW,
   type Req,
@@ -81,8 +81,8 @@ beforeAll(async () => {
   root = await session(k, "root");
   owner = await session(k, "owner");
   const bOwner = await session(k, "bowner");
-  orgA = await createOrg(owner, "Acme");
-  orgB = await createOrg(bOwner, "Beta");
+  orgA = await createOrgWithProviders(k, owner, "Acme");
+  orgB = await createOrgWithProviders(k, bOwner, "Beta");
   await enableConnectorExtensions(k, orgA);
   await enableConnectorExtensions(k, orgB);
   serviceToken = (

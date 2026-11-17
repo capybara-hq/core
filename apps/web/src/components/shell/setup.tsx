@@ -16,6 +16,7 @@ import {
 import { useTranslations } from "next-intl";
 import { createContext, type ReactNode, useContext } from "react";
 import { type OrgReadiness, setupReady } from "../../lib/agents";
+import { type ModelConfigViewer, modelConfigHref, modelConfigViewer } from "../../lib/model-config";
 import { canUpdateOrg } from "../../lib/org-settings";
 import type { Me } from "../../lib/session";
 import { setupRouteOf, under } from "../../lib/setup-routes";
@@ -56,34 +57,55 @@ function setupRoleOf(me: Me): SetupRole {
   return navLevelOf(me) === "member" ? "member" : "guest";
 }
 
+/** Why the model step waits (`setupLayout.model.*`). */
+type ModelWait = "needsDeploymentAdmin" | "waitingForAdmin" | "waitingForOrgAdmin";
+
+/**
+ * The model step and where it is fixed ({@link modelConfigHref}, the run row's rule too):
+ * `/admin/models` while only the platform can help (super admins), `/settings/models` while the org
+ * can fix it itself (`org_fixable`: a provider the platform offers is off here or waits for the
+ * org's config; org admins, a super admin who is not one of them waits like a member). A done step
+ * links to the viewer's own models page, if any.
+ */
+function modelStep(
+  r: OrgReadiness,
+  v: ModelConfigViewer,
+  t: (key: "steps.model" | `model.${ModelWait}`) => string,
+): SetupStep {
+  const base = { id: "model", label: t("steps.model") };
+  const own = v.superAdmin ? "/admin/models" : v.orgAdmin ? "/settings/models" : undefined;
+  if (r.modelProvider === "ready")
+    return { ...base, state: "done", ...(own !== undefined ? { href: own } : {}) };
+  const fixable = r.modelProvider === "org_fixable";
+  const href = modelConfigHref(fixable ? "org_fixable" : "platform", v);
+  if (href !== null) return { ...base, state: "todo", href };
+  return {
+    ...base,
+    state: "waiting",
+    reason: t(
+      fixable
+        ? "model.waitingForOrgAdmin"
+        : v.orgAdmin
+          ? "model.needsDeploymentAdmin"
+          : "model.waitingForAdmin",
+    ),
+  };
+}
+
 /**
  * The setup sidebar's steps (web-SSR spec §4), by what the viewer may do (cosmetic; the kernel
- * decides). The model is deployment-wide: a super admin configures it in the admin console,
- * everyone else waits (an org admin for a deployment admin). The agent: members and up create it
- * once a model exists, guests wait for an admin. Then the optional steps: org admins invite
- * members, connect a channel and install plugins; members connect their own accounts.
+ * decides). The model: when only the platform can help, a super admin deploys and configures a
+ * provider on `/admin/models` and everyone else waits (an org admin for a super admin); when the
+ * platform offers one the org can switch on or configure (`org_fixable`), the org's admins do it
+ * on `/settings/models` and the others wait for them. The agent: members and up create it once a
+ * model exists, guests wait for an admin. Then the optional steps: org admins invite members,
+ * connect a channel and install plugins; members connect their own accounts.
  */
 export function useSetupSteps(me: Me, r: OrgReadiness): SetupStep[] {
   const t = useTranslations("setupLayout");
-  const role = setupRoleOf(me);
   const hasModel = r.modelProvider === "ready";
   const canCreateAgent = navLevelOf(me) !== "guest";
-  const model: SetupStep = hasModel
-    ? {
-        id: "model",
-        label: t("steps.model"),
-        state: "done",
-        ...(role === "superAdmin" ? { href: "/admin/extensions" } : {}),
-      }
-    : role === "superAdmin"
-      ? { id: "model", label: t("steps.model"), state: "todo", href: "/admin/extensions" }
-      : {
-          id: "model",
-          label: t("steps.model"),
-          state: "waiting",
-          reason:
-            role === "orgAdmin" ? t("model.needsDeploymentAdmin") : t("model.waitingForAdmin"),
-        };
+  const model = modelStep(r, modelConfigViewer(me), t);
   const agent: SetupStep =
     r.agents > 0
       ? {
@@ -166,12 +188,22 @@ export function SetupHome({
   const required = all.filter((s) => !s.optional);
   const optional = all.filter((s) => s.optional);
   const superAdmin = setupRoleOf(me) === "superAdmin";
+  // The platform offers a provider the org can switch on or configure: that is the org admins'
+  // work (Settings → Models), never the super admins' deployment work.
+  const fixable = readiness.modelProvider === "org_fixable";
+  const toSwitchOn = readiness.orgFixableProviders.some((p) => p.reason === "not_enabled");
   const description: Record<string, string> = {
-    model: superAdmin ? t("chat.setup.model.description") : t("chat.setup.model.askAdmin"),
+    model: fixable
+      ? canUpdateOrg(me)
+        ? t("chat.setup.model.enableDescription")
+        : t("chat.setup.model.askOrgAdmin")
+      : superAdmin
+        ? t("chat.setup.model.description")
+        : t("chat.setup.model.askAdmin"),
     agent: t("chat.setup.agent.description"),
   };
   const actionLabel: Record<string, string> = {
-    model: t("chat.setup.model.action"),
+    model: toSwitchOn ? t("chat.setup.model.enableAction") : t("chat.setup.model.action"),
     agent: t("chat.setup.agent.action"),
   };
   const actionOf = (s: SetupStep): ReactNode => {
@@ -200,8 +232,8 @@ export function SetupHome({
       ...(action === undefined ? {} : { action }),
     };
   });
-  // Nothing this viewer can do now: an org admin waits for a deployment admin's model, anyone else
-  // for an org admin.
+  // Nothing this viewer can do now: an org admin waits for a super admin's model service, anyone
+  // else for an org admin.
   const blocked = required.some((s) => s.state === "todo")
     ? null
     : required.some((s) => s.id === "model" && s.state === "waiting") && canUpdateOrg(me)

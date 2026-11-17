@@ -38,7 +38,7 @@ import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createAgent,
-  createOrg,
+  createOrgWithProviders,
   PW,
   type Req,
   runConfig,
@@ -121,7 +121,7 @@ beforeAll(async () => {
   });
   ownerId = o.id;
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   agentId = await createAgent(owner, orgId);
   for (const plugin of ["fake-im", "chan-mini"]) {
     const res = await owner({

@@ -32,6 +32,7 @@ import { MODEL_FAKE } from "../../helpers/model-plugins.js";
 import {
   createConv,
   createOrg,
+  enableExtensions,
   eventsOf,
   PW,
   postMessage,
@@ -188,6 +189,7 @@ beforeEach(async () => {
 
 async function setup(req: Req): Promise<void> {
   orgId = await createOrg(req);
+  await enableExtensions(raw, orgId, "model-fake", "model-script");
   const res = await req({
     method: "POST",
     url: `/api/v1/orgs/${orgId}/agents`,

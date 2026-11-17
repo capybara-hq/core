@@ -837,7 +837,7 @@ function UpdatePreview({ preview }: { preview: PlatformUpdatePreview }) {
 }
 
 /**
- * A prominent error (e.g. `marketplace.integrity_mismatch`, `catalog.legacy_format`): the error row
+ * A prominent error (e.g. `marketplace.integrity_mismatch`, `catalog.invalid_manifest`): the error row
  * in a danger card.
  */
 function ProminentError({ problem }: { problem: Problem }) {

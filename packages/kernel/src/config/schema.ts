@@ -47,6 +47,155 @@ export const ACCESS_TOKEN_TTL_MAX_SECONDS = 3600;
 export const REQUEST_MEDIA_BYTES_MAX = 25_165_824;
 
 /**
+ * The content types accepted for chat attachments by default: the model's media types, plus the
+ * office and archive formats people hand an agent to process with code (the model only gets a
+ * reference to those). Deployments extend or narrow the list in `attachments.allowedTypes`.
+ */
+export const DEFAULT_ATTACHMENT_TYPES = [
+  ...IMAGE_MEDIA_TYPES,
+  ...DOCUMENT_MEDIA_TYPES,
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/zip",
+  "application/json",
+] as const;
+
+/**
+ * The default file extensions a chat attachment may carry (lower case, no dot). Source files and
+ * office documents arrive with content types that disagree across browsers and operating systems
+ * (`text/x-python`, `application/x-python`, `application/octet-stream`; a `.ts` can come as
+ * `video/mp2t`), so the extension is the reliable half of the accept rule. Executables are
+ * deliberately absent.
+ */
+export const DEFAULT_ATTACHMENT_EXTENSIONS = [
+  // office documents
+  "doc",
+  "docx",
+  "xls",
+  "xlsx",
+  "ppt",
+  "pptx",
+  "odt",
+  "ods",
+  "odp",
+  "rtf",
+  // archives
+  "zip",
+  "tar",
+  "gz",
+  "tgz",
+  "bz2",
+  "xz",
+  "7z",
+  // documents and text
+  "txt",
+  "md",
+  "markdown",
+  "rst",
+  "tex",
+  "adoc",
+  "csv",
+  "tsv",
+  "html",
+  "htm",
+  "xhtml",
+  "xml",
+  "xsd",
+  "xsl",
+  "svg",
+  "css",
+  "scss",
+  "sass",
+  "less",
+  // data and configuration
+  "json",
+  "jsonl",
+  "yaml",
+  "yml",
+  "toml",
+  "ini",
+  "cfg",
+  "conf",
+  "env",
+  "properties",
+  "sql",
+  // source code
+  "py",
+  "pyi",
+  "ipynb",
+  "js",
+  "mjs",
+  "cjs",
+  "jsx",
+  "ts",
+  "mts",
+  "cts",
+  "tsx",
+  "vue",
+  "svelte",
+  "java",
+  "kt",
+  "kts",
+  "scala",
+  "groovy",
+  "gradle",
+  "go",
+  "rs",
+  "c",
+  "h",
+  "cc",
+  "cpp",
+  "cxx",
+  "hpp",
+  "cs",
+  "fs",
+  "vb",
+  "rb",
+  "php",
+  "pl",
+  "swift",
+  "lua",
+  "r",
+  "jl",
+  "dart",
+  "ex",
+  "exs",
+  "erl",
+  "hs",
+  "clj",
+  "cljs",
+  "sh",
+  "bash",
+  "zsh",
+  "fish",
+  "ps1",
+  "bat",
+  "cmd",
+  "diff",
+  "patch",
+  "log",
+  "graphql",
+  "gql",
+  "proto",
+  "tf",
+  "tfvars",
+  "mk",
+] as const;
+
+/**
+ * A chat attachment content type: a lower-case `type/subtype` (RFC 6838 restricted names), with no
+ * parameters and no whitespace.
+ */
+const contentType = () =>
+  z
+    .string()
+    .regex(
+      /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/,
+      "must be a lower-case content type (type/subtype, no parameters)",
+    );
+
+/**
  * The default host list of the allowlist (`sandbox.limits.allowHosts`): the common package
  * registries and source hosts (git clone, archive downloads, raw files, release assets). It is the
  * default cloud network of an organization on allowlist and the allowlist of sandbox mode. Debian's
@@ -178,9 +327,9 @@ export function trustProxyEntryProblem(entry: string): string | undefined {
   return undefined;
 }
 
-export const KernelConfigSchema = z.object({
+export const KernelConfigSchema = z.strictObject({
   db: z
-    .object({
+    .strictObject({
       url: z
         .string()
         .min(1)
@@ -211,7 +360,7 @@ export const KernelConfigSchema = z.object({
     })
     .prefault({} as never),
   redis: z
-    .object({
+    .strictObject({
       url: z
         .string()
         .min(1)
@@ -234,7 +383,7 @@ export const KernelConfigSchema = z.object({
     .default({})
     .meta(meta({ description: "Deployment-level config keyed by extension name" })),
   extensionHost: z
-    .object({
+    .strictObject({
       dir: z
         .string()
         .min(1)
@@ -303,7 +452,7 @@ export const KernelConfigSchema = z.object({
     })
     .prefault({} as never),
   packages: z
-    .object({
+    .strictObject({
       npmRegistry: z
         .url()
         .default("https://registry.npmjs.org")
@@ -333,7 +482,7 @@ export const KernelConfigSchema = z.object({
     })
     .prefault({} as never),
   bootstrap: z
-    .object({
+    .strictObject({
       dir: z
         .string()
         .min(1)
@@ -347,7 +496,7 @@ export const KernelConfigSchema = z.object({
     })
     .prefault({} as never),
   catalog: z
-    .object({
+    .strictObject({
       staleInstallMinutes: z
         .number()
         .int()
@@ -362,9 +511,9 @@ export const KernelConfigSchema = z.object({
     })
     .prefault({} as never),
   marketplaces: z
-    .object({
+    .strictObject({
       official: z
-        .object({
+        .strictObject({
           enabled: z
             .boolean()
             .default(true)
@@ -470,7 +619,7 @@ export const KernelConfigSchema = z.object({
     })
     .prefault({} as never),
   net: z
-    .object({
+    .strictObject({
       httpsProxy: z
         .string()
         .superRefine((value, ctx) => {
@@ -507,7 +656,7 @@ export const KernelConfigSchema = z.object({
     })
     .prefault({} as never),
   extensionPermissions: z
-    .object({
+    .strictObject({
       autoApprove: z
         .boolean()
         .default(false)
@@ -520,7 +669,7 @@ export const KernelConfigSchema = z.object({
     })
     .default({ autoApprove: false }),
   http: z
-    .object({
+    .strictObject({
       port: z
         .number()
         .int()
@@ -620,7 +769,7 @@ export const KernelConfigSchema = z.object({
       }),
     ),
   auth: z
-    .object({
+    .strictObject({
       accessTokenTtlSeconds: z
         .number()
         .int()
@@ -699,7 +848,7 @@ export const KernelConfigSchema = z.object({
       trustedIdentitySources: [],
     }),
   runtime: z
-    .object({
+    .strictObject({
       maxSteps: z
         .number()
         .int()
@@ -832,7 +981,7 @@ export const KernelConfigSchema = z.object({
       sseRecheckMs: 60000,
     }),
   tools: z
-    .object({
+    .strictObject({
       timeoutMs: z
         .number()
         .int()
@@ -946,7 +1095,7 @@ export const KernelConfigSchema = z.object({
           }),
         ),
       git: z
-        .object({
+        .strictObject({
           enabled: z
             .boolean()
             .default(true)
@@ -1053,7 +1202,7 @@ export const KernelConfigSchema = z.object({
       },
     }),
   channels: z
-    .object({
+    .strictObject({
       leaseTtlMs: z
         .number()
         .int()
@@ -1156,7 +1305,7 @@ export const KernelConfigSchema = z.object({
       webhookMaxBodyBytes: 1_048_576,
     }),
   storage: z
-    .object({
+    .strictObject({
       purgeDeletedOrgsAfterDays: z
         .number()
         .int()
@@ -1171,7 +1320,7 @@ export const KernelConfigSchema = z.object({
     })
     .default({ purgeDeletedOrgsAfterDays: 30 }),
   attachments: z
-    .object({
+    .strictObject({
       maxBytes: z
         .number()
         .int()
@@ -1184,10 +1333,24 @@ export const KernelConfigSchema = z.object({
           }),
         ),
       allowedTypes: z
-        .array(z.enum([...IMAGE_MEDIA_TYPES, ...DOCUMENT_MEDIA_TYPES]))
+        .array(contentType())
         .min(1)
-        .default([...IMAGE_MEDIA_TYPES, ...DOCUMENT_MEDIA_TYPES])
-        .meta(meta({ description: "Content types accepted for chat attachments" })),
+        .default([...DEFAULT_ATTACHMENT_TYPES])
+        .meta(
+          meta({
+            description:
+              "Content types accepted for chat attachments (lower-case type/subtype, no parameters)",
+          }),
+        ),
+      allowedExtensions: z
+        .array(z.string().regex(/^[a-z0-9]{1,12}$/, "must be a lower-case extension without a dot"))
+        .default([...DEFAULT_ATTACHMENT_EXTENSIONS])
+        .meta(
+          meta({
+            description:
+              "File extensions accepted for chat attachments in addition to allowedTypes (lower case, no dot): office documents, archives and source files, whose content types differ between browsers and systems",
+          }),
+        ),
       maxPerMessage: z
         .number()
         .int()
@@ -1229,7 +1392,7 @@ export const KernelConfigSchema = z.object({
     })
     .prefault({} as never),
   subagents: z
-    .object({
+    .strictObject({
       maxDepth: z
         .number()
         .int()
@@ -1285,7 +1448,7 @@ export const KernelConfigSchema = z.object({
     })
     .prefault({} as never),
   skills: z
-    .object({
+    .strictObject({
       catalogBudgetChars: z
         .number()
         .int()
@@ -1302,7 +1465,7 @@ export const KernelConfigSchema = z.object({
     })
     .prefault({} as never),
   attribution: z
-    .object({
+    .strictObject({
       commit: z
         .string()
         .max(500)
@@ -1340,9 +1503,9 @@ export const KernelConfigSchema = z.object({
     })
     .prefault({} as never),
   web: z
-    .object({
+    .strictObject({
       search: z
-        .object({
+        .strictObject({
           maxResults: z
             .number()
             .int()
@@ -1359,7 +1522,7 @@ export const KernelConfigSchema = z.object({
         })
         .prefault({} as never),
       fetch: z
-        .object({
+        .strictObject({
           maxPageChars: z
             .number()
             .int()
@@ -1413,7 +1576,7 @@ export const KernelConfigSchema = z.object({
     })
     .prefault({} as never),
   schedules: z
-    .object({
+    .strictObject({
       minIntervalFloorMinutes: z
         .number()
         .int()
@@ -1465,7 +1628,7 @@ export const KernelConfigSchema = z.object({
     })
     .prefault({} as never),
   sandbox: z
-    .object({
+    .strictObject({
       image: z
         .string()
         .min(1)
@@ -1511,7 +1674,7 @@ export const KernelConfigSchema = z.object({
           }),
         ),
       background: z
-        .object({
+        .strictObject({
           maxTasks: z
             .number()
             .int()
@@ -1554,7 +1717,7 @@ export const KernelConfigSchema = z.object({
        * purpose `review` no classifier runs and an unsure command is asked about.
        */
       review: z
-        .object({
+        .strictObject({
           timeoutMs: z
             .number()
             .int()
@@ -1582,7 +1745,7 @@ export const KernelConfigSchema = z.object({
         })
         .prefault({} as never),
       limits: z
-        .object({
+        .strictObject({
           cpu: z
             .number()
             .positive()
@@ -1703,7 +1866,7 @@ export const KernelConfigSchema = z.object({
     })
     .prefault({} as never),
   devices: z
-    .object({
+    .strictObject({
       /**
        * The platform's Full permission switch (permission runtime cutover B1): whether a device's
        * owner ceiling may allow Full permission. Also a deployment setting the super admin changes
@@ -1736,7 +1899,7 @@ export const KernelConfigSchema = z.object({
           }),
         ),
       local: z
-        .object({
+        .strictObject({
           reconnectGraceSeconds: z
             .number()
             .int()
@@ -1798,7 +1961,7 @@ export const KernelConfigSchema = z.object({
     })
     .prefault({} as never),
   evals: z
-    .object({
+    .strictObject({
       orgConcurrency: z
         .number()
         .int()
@@ -1876,7 +2039,7 @@ export const KernelConfigSchema = z.object({
     })
     .prefault({} as never),
   models: z
-    .object({
+    .strictObject({
       listTimeoutMs: z
         .number()
         .int()
@@ -1906,7 +2069,7 @@ export const KernelConfigSchema = z.object({
     })
     .prefault({} as never),
   hooks: z
-    .object({
+    .strictObject({
       timeoutMs: z
         .number()
         .int()
@@ -1933,7 +2096,7 @@ export const KernelConfigSchema = z.object({
     })
     .prefault({} as never),
   log: z
-    .object({
+    .strictObject({
       level: z
         .enum(LOG_LEVELS)
         .default("info")
@@ -1948,7 +2111,7 @@ export const KernelConfigSchema = z.object({
           }),
         ),
       loki: z
-        .object({
+        .strictObject({
           url: z
             .url({ protocol: /^https?$/ })
             .optional()

@@ -8,7 +8,7 @@ import { allowedAlwaysNote, allowedOnceNote } from "../../src/tools/network-asks
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { eventsOf, PW, waitFor } from "../helpers/runs.js";
+import { enableExtensions, eventsOf, PW, waitFor } from "../helpers/runs.js";
 import { FakeMachine, HELLO } from "../local-devices/fake-machine.js";
 
 /**
@@ -84,6 +84,7 @@ describe("network ask (dual replica)", () => {
       ).toBe(200);
       const org = await call(0, "POST", "/api/v1/orgs", { name: "Acme" });
       const orgId = (org.json.org as { id: string }).id;
+      await enableExtensions(raw, orgId, "model-fake");
       const a = await call(0, "POST", "/api/v1/device/authorize", {
         name: "box",
         os: "linux",

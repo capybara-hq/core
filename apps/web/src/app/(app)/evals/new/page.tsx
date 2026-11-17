@@ -9,7 +9,7 @@ export default async function NewEvalSetPage({
   searchParams,
 }: {
   searchParams?: Promise<{ agentId?: string | string[] }>;
-} = {}) {
+}) {
   const raw = (await searchParams)?.agentId;
   const wanted = Array.isArray(raw) ? raw[0] : raw;
   return <NewEvalSet wanted={wanted ?? ""} />;

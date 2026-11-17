@@ -30,7 +30,7 @@ import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -109,7 +109,7 @@ beforeEach(async () => {
   const accounts = accountsFor(db);
   ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "O" })).id;
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
 });
 
 const skillMd = (name: string, body: string, description = `Use for ${name} work.`) =>
@@ -736,7 +736,7 @@ describe("Skill handler", () => {
   });
 });
 
-describe("phase B snapshot: plugins and the Claude tool map; nothing is pinned any more", () => {
+describe("phase B snapshot: plugins and the Claude tool map", () => {
   it("a catalog skill from a plugin carries plugin; an uploaded one does not", async () => {
     const brain = await seedSkill({
       name: "brainstorming",
@@ -755,72 +755,10 @@ describe("phase B snapshot: plugins and the Claude tool map; nothing is pinned a
       ["brainstorming", "superpowers"],
       ["notes", undefined],
     ]);
-    expect(snap?.payload.pinned).toBeUndefined();
     expect(snap?.payload.toolMap).toBeUndefined();
   });
 
-  it("a conversation whose latest snapshot has pins gets one without them at its next run, and the request says they were removed (skills default-on spec §8)", async () => {
-    const a = await seedSkill({
-      name: "alpha",
-      files: { "SKILL.md": skillMd("alpha", "A body.") },
-    });
-    const agentId = await createSkillAgent([a.id]);
-    const conv = await createConv(owner, orgId, agentId);
-    await say(conv, 1);
-    // rewrite the snapshot as a kernel that pinned alpha wrote it
-    const [snap] = await catalogs(conv);
-    expect(snap?.payload.pinned).toBeUndefined();
-    const old = {
-      ...snap?.payload,
-      pinned: [{ id: a.id, version: 1, name: "alpha", source: a.prefix, body: "A body." }],
-    };
-    await db
-      .updateTable("conversation_events")
-      .set({ payload: JSON.stringify(old) })
-      .where("conversation_id", "=", conv)
-      .where("seq", "=", String(snap?.seq))
-      .execute();
-    await say(conv, 2);
-    const snaps = await catalogs(conv);
-    expect(snaps).toHaveLength(2);
-    expect(snaps[1]?.payload).toEqual({ skills: snap?.payload.skills });
-
-    // the request, rebuilt from the log, carries the existing removal notice; alpha is still in
-    // the catalog, so the model can load it with Skill
-    const def = (
-      await db
-        .selectFrom("agent_versions")
-        .select("definition")
-        .where("agent_id", "=", agentId)
-        .executeTakeFirstOrThrow()
-    ).definition as unknown as AgentDefinition;
-    const events = await eventsOf(db, conv);
-    const last = events
-      .filter(
-        (e): e is Extract<ConversationEvent, { type: "model_call" }> => e.type === "model_call",
-      )
-      .at(-1);
-    if (!last) throw new Error("no model_call");
-    const rebuilt = buildModelRequest({
-      events: events.filter((e) => e.seq <= last.payload.request.toSeq),
-      agent: def,
-      agentVersion: 1,
-      model: MODEL,
-      step: last.payload.step,
-    });
-    expect(rebuilt.meta.systemHash).toBe(last.payload.request.systemHash);
-    const notices = rebuilt.request.messages.flatMap((m) =>
-      m.role === "system" ? [m.content as string] : [],
-    );
-    expect(
-      notices.some((t) =>
-        t.includes("Pinned skills removed (their pinned instructions no longer apply): alpha"),
-      ),
-    ).toBe(true);
-    expect(rebuilt.request.system[0]?.text).toContain("- alpha: Use for alpha work.");
-  });
-
-  it("an old snapshot without plugin / pinned / toolMap and unchanged skills: no new event (Review Focus 1)", async () => {
+  it("an old snapshot without plugin / toolMap and unchanged skills: no new event (Review Focus 1)", async () => {
     const brain = await seedSkill({
       name: "brainstorming",
       plugin: "superpowers",

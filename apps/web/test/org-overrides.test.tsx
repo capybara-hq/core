@@ -39,6 +39,7 @@ const BAILIAN = {
       entries: [{ value: "model-provider@2", sensitive: false }],
     },
   ],
+  provides: ["model-provider@2"],
   orgConfigSchema: null,
   overrideState: "following",
   needsConfig: false,

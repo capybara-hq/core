@@ -10,7 +10,7 @@ import { testMembers } from "../helpers/members.js";
 import {
   createAgent,
   createConv,
-  createOrg,
+  createOrgWithProviders,
   PW,
   postMessage,
   type Req,
@@ -61,7 +61,7 @@ beforeEach(async () => {
   adminId = await mk("admin");
   const aliceId = await mk("alice");
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   await testMembers(db).add(orgId, adminId, "admin", ownerId);
   await testMembers(db).add(orgId, aliceId, "member", ownerId);
   admin = await session(k, "admin");
@@ -211,7 +211,7 @@ describe("人工标注", () => {
       expect(res.statusCode).toBe(404);
       expect(errCode(res)).toBe("eval.result_not_found");
     }
-    const other = await createOrg(owner, "Other");
+    const other = await createOrgWithProviders(k, owner, "Other");
     const cross = await owner({
       method: "PUT",
       url: labelUrl(id, other),

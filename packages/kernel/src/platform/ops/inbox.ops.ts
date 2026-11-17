@@ -194,6 +194,16 @@ function platformRow(i: PlatformInboxItem) {
         next: "Open the plugin in the admin console to see the error and retry.",
       };
     }
+    case "extension_disabled": {
+      const d = i.disabled;
+      return {
+        ...base,
+        name: d.item.name,
+        state: "disabled",
+        summary: `Plugin ${d.item.name} is on by its scope, but its extension ${d.extension.name} ${d.extension.version} is disabled on the deployment, so it is installed in no org that lacks it.`,
+        next: "Enable the extension in the admin console (or disable another provider of its single-provider extension point first); the enable syncs the plugin's scope.",
+      };
+    }
     case "ownership_transferred":
       return {
         ...base,
@@ -325,7 +335,7 @@ export class InboxOperations implements OnModuleInit {
       defineOperation({
         id: "inbox.platform-list",
         description:
-          "List the platform inbox (super admin), newest first, one compact row each (type, what, state, summary, next step): orgs' requests to the platform, plugins waiting for a permission confirmation, this org's uploads waiting for you, failed scope syncs and ownership notices. Only the newest 100 items are read (truncated: more wait); listed is how many of them are shown, otherOrgItems how many are items of plugins other orgs own (only counted). total counts everything waiting on the platform, other orgs' items included, as the admin console does; byType splits total by type (everything waiting, not the listed page). Nothing is decided here: requests and confirmations are done in the admin console. Pages by 50: pass the returned next as params.cursor.",
+          "List the platform inbox (super admin), newest first, one compact row each (type, what, state, summary, next step): orgs' requests to the platform, plugins waiting for a permission confirmation, this org's uploads waiting for you, failed scope syncs, plugins on by scope whose extension is disabled, and ownership notices. Only the newest 100 items are read (truncated: more wait); listed is how many of them are shown, otherOrgItems how many are items of plugins other orgs own (only counted). total counts everything waiting on the platform, other orgs' items included, as the admin console does; byType splits total by type (everything waiting, not the listed page). Nothing is decided here: requests and confirmations are done in the admin console. Pages by 50: pass the returned next as params.cursor.",
         input: z.object({ cursor: Cursor.optional() }).strict(),
         example: {},
         authz: { superAdmin: true },
@@ -339,7 +349,9 @@ export class InboxOperations implements OnModuleInit {
               ? [i.item.id]
               : i.type === "scope_sync_failed"
                 ? [i.failure.item.id]
-                : [],
+                : i.type === "extension_disabled"
+                  ? [i.disabled.item.id]
+                  : [],
           );
           const owners = await this.owners(itemIds);
           const theirs = (itemId: string) => {
@@ -351,7 +363,8 @@ export class InboxOperations implements OnModuleInit {
               !(
                 ((i.type === "org_upload_pending" || i.type === "permission_confirmation") &&
                   theirs(i.item.id)) ||
-                (i.type === "scope_sync_failed" && theirs(i.failure.item.id))
+                (i.type === "scope_sync_failed" && theirs(i.failure.item.id)) ||
+                (i.type === "extension_disabled" && theirs(i.disabled.item.id))
               ),
           );
           const page = pageOf(shown.map(platformRow), startOf(input.cursor), 50);

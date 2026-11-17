@@ -10,7 +10,7 @@ export default async function AdminExtensionsPage({
   searchParams,
 }: {
   searchParams?: Promise<{ tab?: string | string[] }>;
-} = {}) {
+}) {
   const raw = (await searchParams)?.tab;
   return <AdminExtensions tab={parseExtensionTab(Array.isArray(raw) ? raw[0] : raw)} />;
 }

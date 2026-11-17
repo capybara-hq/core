@@ -249,6 +249,12 @@ function rowOf(
         trailing: null,
         description: `${t("sync.label")} · ${item.failure.org.name} · ${t(`sync.op.${item.failure.op}`)}`,
       };
+    case "extension_disabled":
+      return {
+        title: displayNameOf(item.disabled.item, locale),
+        trailing: versionLabel(item.disabled.extension.version),
+        description: t("extensionDisabled.label"),
+      };
     case "org_upload_pending":
       return {
         title: displayNameOf(item.item, locale),
@@ -273,6 +279,8 @@ function titleOf(item: PlatformInboxItem, t: Translate, locale: string): string 
       return `${t("permission.label")} · ${displayNameOf(item.item, locale)}`;
     case "scope_sync_failed":
       return `${t("sync.label")} · ${displayNameOf(item.failure.item, locale)}`;
+    case "extension_disabled":
+      return `${t("extensionDisabled.label")} · ${displayNameOf(item.disabled.item, locale)}`;
     case "org_upload_pending":
       return t("orgUpload.title", {
         org: ownerOrgOf(item.item)?.name ?? "",
@@ -385,6 +393,29 @@ function detailOf(
                 <Text variant="prose">{f.message}</Text>
               </Stack>
             </Stack>
+          </Card>
+        ),
+      };
+    }
+    case "extension_disabled": {
+      const d = item.disabled;
+      return {
+        inspector: (
+          <KeyValue
+            keyWidth="10ch"
+            rows={[
+              { k: t("plugin"), v: d.item.name },
+              { k: t("extensionDisabled.version"), v: versionLabel(d.extension.version) },
+              { k: t("extensionDisabled.since"), v: <DateTime value={d.since} /> },
+            ]}
+          />
+        ),
+        content: (
+          <Card
+            title={titleOf(item, t, locale)}
+            actions={<StatusMark status="waiting" label={t("waiting")} />}
+          >
+            <Text variant="prose">{t("extensionDisabled.hint")}</Text>
           </Card>
         ),
       };

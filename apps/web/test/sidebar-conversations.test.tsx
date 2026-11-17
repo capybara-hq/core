@@ -33,11 +33,14 @@ const conv = (id: string, agentId: string, title: string | null = null) => ({
   orgId: "o1",
   agentId,
   title,
+  titleSource: null,
+  deviceId: null,
+  activity: null as "running" | "waiting" | null,
   lastSeq: 1,
   createdAt: "2026-10-20T06:32:00.000Z",
   updatedAt: "2026-10-20T06:32:00.000Z",
 });
-type Row = ReturnType<typeof conv> & { activity?: "running" | "waiting" | null };
+type Row = ReturnType<typeof conv>;
 type Avatar = ConversationGroupsPage["groups"][number]["agent"]["profile"]["avatar"];
 const group = (
   agentId: string,

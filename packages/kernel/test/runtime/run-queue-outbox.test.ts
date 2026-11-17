@@ -14,7 +14,6 @@ import {
   OUTBOX_DISPATCH_FAILS,
   OutboxDispatcher,
 } from "../../src/infra/outbox/outbox.dispatcher.js";
-import { OUTBOX_STRICT_CONFLICTS } from "../../src/infra/outbox/outbox.service.js";
 import { ConversationLock } from "../../src/runtime/conversation-lock.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
 import {
@@ -35,7 +34,7 @@ import {
   consumedSeq,
   createAgent,
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -58,10 +57,9 @@ import {
  *
  * The same kernel serves "Sending a message" (§6): every transaction that may start a run after its
  * commit owes an `ensure-run` job on the maintenance queue (`ensure-run-<conv>-<seq>`, 30 s later),
- * and the caller still calls `ensureRun` right after the commit. Three seams steer it:
+ * and the caller still calls `ensureRun` right after the commit. Two seams steer it:
  * `ENSURE_RUN_FAILS` makes that direct call throw (the process died before it, or Redis was
- * unreachable), `OUTBOX_DISPATCH_FAILS` keeps its fast path from delivering anything, and
- * `OUTBOX_STRICT_CONFLICTS` (on) throws on a reused job id with other data.
+ * unreachable), `OUTBOX_DISPATCH_FAILS` keeps its fast path from delivering anything.
  * The backstop tests assert the row (its `run_at` about 30 s ahead on the database's clock) and
  * deliver it without waiting 30 s: `run_at` and `next_attempt_at` are set to `now()` in SQL and the
  * relay's pass adds the job. A worker kernel (no seams) started only after that runs the
@@ -92,7 +90,6 @@ beforeAll(async () => {
     overrides: [
       { provide: OUTBOX_DISPATCH_FAILS, useValue: () => failing },
       { provide: ENSURE_RUN_FAILS, useValue: () => ensureFails },
-      { provide: OUTBOX_STRICT_CONFLICTS, useValue: true },
     ],
   });
   raw = createDb(pgc.url, 5);
@@ -130,7 +127,7 @@ afterEach(async () => {
 });
 
 async function setup() {
-  const orgId = await createOrg(req);
+  const orgId = await createOrgWithProviders(api, req);
   const agentId = await createAgent(req, orgId);
   const convId = await createConv(req, orgId, agentId);
   return { orgId, agentId, convId };
@@ -538,7 +535,7 @@ describe("the ensure-run backstop", () => {
   });
 
   it("with Redis unreachable the send returns 201 and the run starts after Redis returns", async () => {
-    const orgId = await createOrg(req);
+    const orgId = await createOrgWithProviders(api, req);
     const agentId = await createAgent(req, orgId);
     // Redis is down: the direct ensureRun throws and the fast path delivers nothing
     ensureFails = true;

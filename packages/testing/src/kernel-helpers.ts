@@ -249,6 +249,39 @@ export async function createOrg(req: KernelRequest, name = "Acme"): Promise<stri
 }
 
 /**
+ * Switches on in `orgId`, through the org's extension switch (`PUT
+ * /api/v1/orgs/:orgId/extensions/:name`; `req` is an org admin), every model provider the kernel
+ * loaded that is not on there yet, and returns their names. A model provider is on only in the
+ * orgs that enabled it (like every other extension), so a test that saves or runs an agent in a
+ * new org calls this first; `only` limits it to those providers.
+ */
+export async function enableModelProviders(
+  req: KernelRequest,
+  orgId: string,
+  only?: readonly string[],
+): Promise<string[]> {
+  const list = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` });
+  expectStatus(list, 200, "list the org's extensions");
+  const { extensions } = list.json() as {
+    extensions: { plugin: string; enabled: boolean; available: boolean; provides: string[] }[];
+  };
+  const enabled: string[] = [];
+  for (const e of extensions) {
+    if (e.enabled || !e.available) continue;
+    if (!e.provides.some((p) => p.startsWith("model-provider@"))) continue;
+    if (only !== undefined && !only.includes(e.plugin)) continue;
+    const on = await req({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgId}/extensions/${encodeURIComponent(e.plugin)}`,
+      payload: { enabled: true },
+    });
+    expectStatus(on, 200, `enable ${e.plugin}`);
+    enabled.push(e.plugin);
+  }
+  return enabled;
+}
+
+/**
  * A new account joins the org through an invitation (created by `owner`, accepted with `login`
  * and {@link TEST_PASSWORD}); returns the account id and its signed-in request function.
  */

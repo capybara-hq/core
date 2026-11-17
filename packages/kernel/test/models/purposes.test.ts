@@ -18,7 +18,7 @@ import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
-  createOrg,
+  createOrgWithProviders,
   PW,
   type Req,
   runConfig,
@@ -106,7 +106,7 @@ beforeEach(async () => {
   const aliceId = await mk("alice");
   ent = await session(k, "ent");
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   await testMembers(db).add(orgId, adminId, "admin", ownerId);
   await testMembers(db).add(orgId, aliceId, "member", ownerId);
   admin = await session(k, "admin");
@@ -383,7 +383,7 @@ describe("kinds and disabled models (spec B §5.3)", () => {
 
   it("a default disabled in an org makes the purpose unconfigured there only", async () => {
     await put(ent, adminUrl("title"), FAKE_1);
-    const other = await createOrg(owner, "Other");
+    const other = await createOrgWithProviders(k, owner, "Other");
     const purposes = k.app.get(ModelPurposesService);
     expect((await disable(admin, orgDisabledUrl(), { disable: ["fake-1"] })).statusCode).toBe(200);
     await expect(purposes.resolve(orgId, "title")).rejects.toMatchObject({
@@ -412,7 +412,7 @@ describe("a target the org cannot use", () => {
   it("a default missing from the org's own provider list is unconfigured there only", async () => {
     const FAKE_1 = { model: { provider: "model-fake", model: "fake-1" }, params: {} };
     await put(ent, adminUrl("title"), FAKE_1);
-    const other = await createOrg(owner, "Other");
+    const other = await createOrgWithProviders(k, owner, "Other");
     const purposes = k.app.get(ModelPurposesService);
     // the org keeps its own copy of model-fake's config, whose list has no fake-1
     for (const [url, payload] of [

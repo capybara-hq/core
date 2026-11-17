@@ -23,7 +23,7 @@ import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -90,7 +90,7 @@ beforeAll(async () => {
   );
   await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   await enableProbe(true);
   const res = await owner({
     method: "POST",

@@ -1,6 +1,7 @@
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
+import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { OutboxDeadService } from "../../src/admin/outbox-dead.service.js";
 import type { AdminAttention, AdminOverviewStats } from "../../src/admin/overview.service.js";
@@ -43,6 +44,7 @@ let queue: Queue;
 let root: Req;
 let owner: Req;
 let rootId: string;
+let ownerId: string;
 let orgId: string;
 
 beforeAll(async () => {
@@ -69,6 +71,7 @@ beforeAll(async () => {
     password: PW,
     displayName: "Owner",
   });
+  ownerId = ownerAccount.id;
   orgId = (
     await orgsFor(db, settingsFor(db), apiTokensFor(db)).create({ name: "Acme" }, ownerAccount)
   ).id;
@@ -164,6 +167,70 @@ describe("dead outbox rows", () => {
       await root({ method: "GET", url: "/api/v1/admin/overview/attention" })
     ).json() as AdminAttention;
     expect(a.outbox).toEqual([]);
+  });
+
+  it("the list pages by (dead_at, id): ties and microseconds neither repeat nor skip a row", async () => {
+    const tie = new Date(Date.now() - 3_600_000);
+    const ids = [
+      await deadRow("p-1", { deadAt: tie }),
+      await deadRow("p-2", { deadAt: tie }),
+      await deadRow("p-3", { deadAt: tie }),
+      await deadRow("p-4"),
+      await deadRow("p-5"),
+    ];
+    // two rows that differ below the millisecond a JS Date keeps
+    await db
+      .updateTable("outbox")
+      .set({ dead_at: sql<Date>`'2026-01-01 00:00:00.000100+00'::timestamptz` })
+      .where("job_id", "=", "p-4")
+      .execute();
+    await db
+      .updateTable("outbox")
+      .set({ dead_at: sql<Date>`'2026-01-01 00:00:00.000200+00'::timestamptz` })
+      .where("job_id", "=", "p-5")
+      .execute();
+    const seen: string[] = [];
+    let after: string | undefined;
+    let pages = 0;
+    do {
+      const url = `/api/v1/admin/outbox/dead?limit=2${after === undefined ? "" : `&after=${after}`}`;
+      const res = await root({ method: "GET", url });
+      expect(res.statusCode, res.body).toBe(200);
+      const page = res.json() as { items: { id: string }[]; next: string | null };
+      seen.push(...page.items.map((i) => i.id));
+      after = page.next ?? undefined;
+      pages++;
+    } while (after !== undefined && pages < 10);
+    expect(pages).toBe(3);
+    // (dead_at, id) order: the 2026 rows first (microseconds apart), then the tied rows by id
+    expect(seen).toEqual([ids[3], ids[4], ids[0], ids[1], ids[2]]);
+    // the last page has no next, a page that exactly fits ends there too
+    const all = (
+      await root({ method: "GET", url: "/api/v1/admin/outbox/dead?limit=5" })
+    ).json() as { items: unknown[]; next: string | null };
+    expect(all.items).toHaveLength(5);
+    expect(all.next).toBeNull();
+  });
+
+  it("a malformed after cursor is a 400", async () => {
+    const r = await root({ method: "GET", url: "/api/v1/admin/outbox/dead?after=not-a-cursor" });
+    expect(r.statusCode, r.body).toBe(400);
+  });
+
+  it("retry and discard re-check the actor under the super admin lock", async () => {
+    const id = await deadRow("lock-1");
+    const service = k.app.get(OutboxDeadService);
+    await expect(service.retry(id, { accountId: ownerId })).rejects.toMatchObject({
+      code: "forbidden",
+    });
+    await expect(service.discard(id, { accountId: ownerId })).rejects.toMatchObject({
+      code: "forbidden",
+    });
+    // nothing changed
+    expect(
+      await db.selectFrom("outbox").select(["id", "dead_at"]).where("id", "=", id).execute(),
+    ).toEqual([{ id: expect.anything(), dead_at: expect.any(Date) }]);
+    expect(await auditOf("outbox.retried")).toEqual([]);
   });
 
   it("retry makes it due again and the relay delivers it", async () => {

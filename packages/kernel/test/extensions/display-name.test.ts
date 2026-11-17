@@ -15,7 +15,14 @@ import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { pluginTgz } from "../helpers/plugin-packages.js";
-import { createOrg, PW, type Req, session, startKernel, type TestKernel } from "../helpers/runs.js";
+import {
+  createOrgWithProviders,
+  PW,
+  type Req,
+  session,
+  startKernel,
+  type TestKernel,
+} from "../helpers/runs.js";
 
 const FAKE_MODEL = { zh: "模拟模型", en: "Fake model" };
 const MIGRATION = "0066_extension_display_name.sql";
@@ -129,7 +136,7 @@ describe("extension display names", () => {
       ),
     );
     admin = await session(k, "root");
-    orgId = await createOrg(admin);
+    orgId = await createOrgWithProviders(k, admin);
   });
 
   afterAll(async () => {

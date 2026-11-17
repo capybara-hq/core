@@ -76,9 +76,7 @@ function componentsOf(section: unknown): ManifestComponent[] {
   if (!isObj(manifest) || !Array.isArray(manifest.ui)) return [];
   if (validateUiContributions(manifest.ui, manifest.permissions).length > 0) return [];
   return resolveUiSlots(manifest.ui as UiContribution[])
-    .resolved.filter(
-      (r) => r.contribution.kind === "component" && r.contribution.aliasOf === undefined,
-    )
+    .resolved.filter((r) => r.contribution.kind === "component")
     .map((r) => ({ id: r.contribution.id, slot: r.slot }));
 }
 

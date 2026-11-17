@@ -55,6 +55,8 @@ const summary = (over: Record<string, unknown> = {}) => ({
   endpoint: { url: "http://127.0.0.1:9/mcp" },
   auth: { type: "none" },
   status: "active",
+  git: null,
+  gitPushPolicy: "ask",
   createdAt: T,
   updatedAt: T,
   ...over,
@@ -517,6 +519,56 @@ describe("/connectors: a card per connector and per template of a plugin on in t
     );
     expect(await screen.findByText(P.saved)).toBeTruthy();
   });
+
+  it.each(LOCALES)(
+    "权限: Git 推送 shows the org default and the viewer's repositories; 清除 saves null (%s)",
+    async (locale) => {
+      const m = msgs[locale];
+      const P = m.connectors.permissions;
+      const personal = summary({ id: "c-gh", name: "GitHub", auth: OAUTH });
+      const NAME = "git_push:github.com/acme/app";
+      const calls = stubApi({
+        "GET /api/v1/orgs/o1/connectors": () => json(200, { connectors: [personal] }),
+        "GET /api/v1/orgs/o1/connectors/c-gh": () =>
+          json(200, {
+            connector: {
+              ...detail(),
+              ...personal,
+              credential: { ownership: "personal", status: "connected" },
+            },
+          }),
+        [COMPONENTS]: () => json(200, { components: [] }),
+        "GET /api/v1/orgs/o1/connectors/c-gh/tool-policies/me": () =>
+          json(200, {
+            tools: [],
+            gitPush: {
+              orgDefault: "ask",
+              grants: [{ name: NAME, host: "github.com", repo: "acme/app", policy: "allow" }],
+            },
+          }),
+        "PUT /api/v1/orgs/o1/connectors/c-gh/tool-policies/me": () =>
+          json(200, { tools: [], gitPush: { orgDefault: "ask", grants: [] } }),
+      });
+      await renderList({ locale });
+      const user = userEvent.setup();
+      await user.click(
+        within(await cardOf("GitHub", m.connectors.title)).getByRole("button", {
+          name: m.connectors.cards.permissions,
+        }),
+      );
+      const sheet = await screen.findByRole("dialog");
+      expect(await within(sheet).findByText(P.gitPush.hint.replace("{label}", P.ask))).toBeTruthy();
+      const list = within(sheet).getByRole("list", { name: P.gitPush.title });
+      expect(within(list).getByText("github.com/acme/app")).toBeTruthy();
+      expect(within(list).getByText(P.allow)).toBeTruthy();
+      await user.click(within(list).getByRole("button", { name: P.gitPush.clear }));
+      expect(within(list).getByText(P.gitPush.clearing)).toBeTruthy();
+      await user.click(within(sheet).getByRole("button", { name: P.save }));
+      await vi.waitFor(() =>
+        expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({ tools: { [NAME]: null } }),
+      );
+    },
+  );
 
   it("?tab=settings (a card's 修改配置) opens the connector's 设置 tab", async () => {
     resetNavigation("/connectors/app1");
@@ -1420,6 +1472,97 @@ describe("connector mutations update the cache", () => {
       "PATCH /api/v1/orgs/o1/connectors/app1",
     ]);
     expect(listState(client)).toBe(true);
+  });
+
+  it("Git 推送: an org admin picks the default; the answer replaces the cached connector", async () => {
+    const GIT = { hosts: [{ host: "github.com", username: "x-access-token" }] };
+    const calls = stubApi({
+      "GET /api/v1/orgs/o1/connectors/app1": () =>
+        json(200, { connector: detail({ git: GIT, gitPushPolicy: "ask" }) }),
+      "PUT /api/v1/orgs/o1/connectors/app1/git-push-policy": (c) =>
+        json(200, {
+          connector: detail({ git: GIT, gitPushPolicy: (bodyOf(c) as { policy: string }).policy }),
+        }),
+    });
+    const { client } = await renderDetail();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: en.connectors.detail.tabs.settings }));
+    // a shared credential: Ask asks every time (only a personal credential's member may always
+    // allow a repository)
+    expect(
+      screen.getByText(en.connectors.gitPush.hintShared.replace("{hosts}", "github.com")),
+    ).toBeTruthy();
+    const select = screen.getByRole("combobox", {
+      name: new RegExp(`^${en.connectors.gitPush.label}`),
+    });
+    await pickOption(select, "deny", user);
+    const card = select.closest<HTMLElement>('[data-part="card"]') ?? document.body;
+    await user.click(within(card).getByRole("button", { name: en.connectors.settings.save }));
+    await vi.waitFor(() =>
+      expect(
+        (client.getQueryData(["org", "o1", "connector", "app1"]) as { gitPushPolicy: string })
+          .gitPushPolicy,
+      ).toBe("deny"),
+    );
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      "PUT /api/v1/orgs/o1/connectors/app1/git-push-policy",
+    ]);
+    expect(bodyOf(calls[0])).toEqual({ policy: "deny" });
+  });
+
+  it("Git 推送: the select follows a saved value that changes while the tab is open", async () => {
+    const GIT = { hosts: [{ host: "github.com", username: "x-access-token" }] };
+    stubApi({
+      "GET /api/v1/orgs/o1/connectors/app1": () =>
+        json(200, { connector: detail({ git: GIT, gitPushPolicy: "ask" }) }),
+    });
+    const { client } = await renderDetail();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: en.connectors.detail.tabs.settings }));
+    const select = () =>
+      screen.getByRole("combobox", { name: new RegExp(`^${en.connectors.gitPush.label}`) });
+    expect(select().textContent).toContain(en.connectors.policy.ask);
+    act(() => {
+      client.setQueryData(["org", "o1", "connector", "app1"], {
+        ...detail({ git: GIT, gitPushPolicy: "deny" }),
+      });
+    });
+    await vi.waitFor(() => expect(select().textContent).toContain(en.connectors.policy.deny));
+  });
+
+  it("Git 推送: members read the default; a connector without git hosts has no such card", async () => {
+    const GIT = { hosts: [{ host: "github.com", username: "x-access-token" }] };
+    stubApi({
+      "GET /api/v1/orgs/o1/connectors/app1": () =>
+        json(200, {
+          connector: detail({
+            git: GIT,
+            gitPushPolicy: "allow",
+            auth: { type: "bearer", ownership: "personal" },
+          }),
+        }),
+    });
+    await renderDetail({ me: MEMBER });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: en.connectors.detail.tabs.settings }));
+    // personal credentials: each member may always allow a repository
+    expect(
+      screen.getByText(en.connectors.gitPush.hint.replace("{hosts}", "github.com")),
+    ).toBeTruthy();
+    const select = screen.getByRole("combobox", {
+      name: new RegExp(`^${en.connectors.gitPush.label}`),
+    });
+    expect(select).toHaveProperty("disabled", true);
+    expect(select.textContent).toContain(en.connectors.policy.allow);
+    cleanup();
+    stubApi({
+      "GET /api/v1/orgs/o1/connectors/app1": () => json(200, { connector: detail() }),
+    });
+    await renderDetail();
+    await userEvent
+      .setup()
+      .click(screen.getByRole("tab", { name: en.connectors.detail.tabs.settings }));
+    expect(screen.queryByText(en.connectors.gitPush.title)).toBeNull();
   });
 
   it("deleting a connector invalidates connectors and forgets it once the page is left", async () => {

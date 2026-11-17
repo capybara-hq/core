@@ -20,7 +20,7 @@ import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { lifePkg } from "../helpers/plugin-packages.js";
-import { eventsOf, PW, waitFor } from "../helpers/runs.js";
+import { enableExtensions, eventsOf, PW, waitFor } from "../helpers/runs.js";
 
 /**
  * 插件免重启生命周期的双副本验收（T14，C16）：两个独立进程的副本共享 PG / Redis 与插件目录；
@@ -213,6 +213,7 @@ describe("插件生命周期双副本验收", () => {
     );
     const org = await ok(0, "POST", "/api/v1/orgs", { name: "Acme" });
     orgId = (org.org as { id: string }).id;
+    await enableExtensions(raw, orgId, "model-fake");
     await ok(1, "PUT", `/api/v1/orgs/${orgId}/extensions/life`, { enabled: true });
     const ag = await ok(0, "POST", `/api/v1/orgs/${orgId}/agents`, {
       definition: {

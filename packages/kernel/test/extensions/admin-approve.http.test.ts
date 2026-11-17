@@ -11,7 +11,6 @@ import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { PLUGINS_CHANGED_TOPIC } from "../../src/extensions/admin-view.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
-import { ExtensionLifecycle } from "../../src/extensions/lifecycle.js";
 import { permissionSetOfPackage, readExtensionPackage } from "../../src/extensions/package.js";
 import { reviewHash } from "../../src/extensions/permission-view.js";
 import { ReplicaStatusStore } from "../../src/extensions/sources.js";
@@ -21,7 +20,7 @@ import { truncateTables } from "../helpers/db.js";
 import { blobsFor } from "../helpers/extensions.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { bootstrapFixture, legacyTgz, packFake, pluginTgz } from "../helpers/plugin-packages.js";
+import { bootstrapFixture, packFake, pluginTgz } from "../helpers/plugin-packages.js";
 import {
   PW,
   type Req,
@@ -487,79 +486,5 @@ describe("插件列表与网页批准权限", () => {
     const res = await approve("demo-broken", { sha256: sha(bytes), reviewHash: b.reviewHash });
     expect(res.statusCode).toBe(409);
     expect(res.json().error.code).toBe("extension.package_unavailable");
-  });
-
-  it("a stored package in the pre-0.1.0 format (installed directly, bypassing ingest): listed as legacy_format with the message, details still readable, approval 422 extension.legacy_format, reconcile records the failure and keeps going", async () => {
-    const bytes = await legacyTgz({ name: "demo-legacy" });
-    // what an M7 box left behind: the old capybara section in the row, the old tgz as the blob
-    await db
-      .insertInto("extension_packages")
-      .values({
-        sha256: sha(bytes),
-        name: "demo-legacy",
-        package_name: "@test/plugin-demo-legacy",
-        version: "1.0.0",
-        size: bytes.byteLength,
-        section: JSON.stringify({
-          kind: "plugin",
-          entry: "dist/index.mjs",
-          sdk: "^0.1.0-rc.0",
-          manifest: {
-            name: "demo-legacy",
-            version: "1.0.0",
-            sdk: "^0.1.0-rc.0",
-            provides: [],
-            requires: [],
-            optional: [],
-            permissions: {},
-            config: { deployment: [], org: [] },
-          },
-        }),
-        blob_store: "pg",
-        source: "file",
-        source_ref: "upload",
-        uploaded_by: null,
-      })
-      .execute();
-    await db
-      .insertInto("extension_blobs")
-      .values({ sha256: sha(bytes), bytes: Buffer.from(bytes) })
-      .execute();
-    await db
-      .insertInto("extension_installs")
-      .values({
-        name: "demo-legacy",
-        sha256: sha(bytes),
-        version: "1.0.0",
-        source: "file",
-        desired_state: "enabled",
-      })
-      .execute();
-    const LEGACY =
-      "uses the pre-0.1.0 package format (capybara section / app.yaml); repack it as a plugin with .capybara-plugin/plugin.json (pnpm pack-plugin)";
-
-    const b = (await list()).get("demo-legacy") as View & { error?: string };
-    expect(b).toMatchObject({ source: "install", status: "legacy_format", permissions: [] });
-    expect(b.error).toBe(`Package @test/plugin-demo-legacy ${LEGACY}`);
-    const got = await admin({ method: "GET", url: "/api/v1/admin/extensions/demo-legacy" });
-    expect(got.statusCode, got.body).toBe(200);
-    expect(got.json()).toMatchObject({ status: "legacy_format", removable: true });
-    const res = await approve("demo-legacy", { sha256: sha(bytes), reviewHash: b.reviewHash });
-    expect(res.statusCode).toBe(422);
-    expect(res.json().error.code).toBe("extension.legacy_format");
-    expect(res.json().error.message).toContain(LEGACY);
-
-    await k.app.get(ExtensionLifecycle).reconcile("test");
-    const row = await db
-      .selectFrom("extension_replica_status")
-      .select(["state", "reason", "detail"])
-      .where("plugin", "=", "demo-legacy")
-      .executeTakeFirstOrThrow();
-    expect(row).toMatchObject({ state: "failed", reason: "sync_failed" });
-    expect(row.detail).toContain(LEGACY);
-    expect(k.app.get(ExtensionHost).current("demo-legacy")).toBeUndefined();
-    // the rest keeps loading
-    expect(k.app.get(ExtensionHost).current("demo-pkg")?.sha256).toBe(demoHash);
-    expect((await list()).get("demo-legacy")?.status).toBe("legacy_format");
   });
 });

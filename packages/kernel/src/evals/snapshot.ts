@@ -160,7 +160,7 @@ export async function takeSnapshot(
       versions.add((e.payload as { agentVersion: number }).agentVersion);
     } else if (e.type === "model_call") {
       const req = (e.payload as ModelCallEvent["payload"]).request;
-      for (const t of [...(req.tools ?? []), ...(req.catalog ?? [])]) hashes.add(t.specHash);
+      for (const t of [...req.tools, ...(req.catalog ?? [])]) hashes.add(t.specHash);
     }
   }
 
@@ -173,7 +173,7 @@ export async function takeSnapshot(
     .orderBy("version")
     .execute();
   for (const r of defRows) {
-    definitions[String(r.version)] = snapshotDefinition(r.definition);
+    definitions[String(r.version)] = normalizeStoredDefinition(r.definition);
   }
 
   const toolSpecs: Record<string, ToolSpec> = {};
@@ -236,28 +236,14 @@ export async function takeSnapshot(
 }
 
 /**
- * A definition as a snapshot holds it: normalized (`normalizeStoredDefinition`), and one from
- * before tools were on by default keeps its enabled list next to it: rc tool keys are read by its
- * extension refs (`legacyScopeOf`); the runtime ignores it (tools default-on spec §2).
- */
-function snapshotDefinition(d: unknown): AgentDefinition {
-  const enabled = (d as { tools?: unknown } | null)?.tools;
-  return {
-    ...normalizeStoredDefinition(d),
-    ...(Array.isArray(enabled) && { tools: enabled }),
-  } as AgentDefinition;
-}
-
-/**
  * Reads a stored snapshot (`eval_cases.snapshot`): each version's definition goes through
- * `normalizeStoredDefinition` (rc tool keys, and an enabled tool list read as nothing turned off).
- * Other fields as they are.
+ * `normalizeStoredDefinition` (missing turned-off lists read as empty). Other fields as they are.
  */
 export function readSnapshot(raw: unknown): CaseSnapshot {
   const s = raw as CaseSnapshot;
   const definitions: Record<string, AgentDefinition> = {};
   for (const [v, d] of Object.entries(s.definitions ?? {})) {
-    definitions[v] = snapshotDefinition(d);
+    definitions[v] = normalizeStoredDefinition(d);
   }
   return {
     ...s,

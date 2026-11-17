@@ -6,7 +6,6 @@ import { checkTerms, REFERENCE_EXEMPT_PATHS } from "../src/terms.js";
 
 const fixture = (name: string) =>
   fileURLToPath(new URL(`../fixtures/terms/${name}`, import.meta.url));
-const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
 
 /** 1-based line of the first line containing `needle`. */
 function lineOf(file: string, needle: string): number {
@@ -83,12 +82,10 @@ describe("checkTerms", () => {
     ]);
     expect(hits[0]?.message).toContain('"sandbox_bash"');
     expect(hits[0]?.message).toContain("Bash");
-    // the frozen map, the legacy text rewriter, recordings, historical specs, synced skills,
-    // and release history (changelogs, changesets archived by `changeset version`)
+    // historical specs, synced skills, and release history (changelogs, changesets archived by
+    // `changeset version`)
     const exempt = checkTerms(root).filter((x) =>
-      /legacy-keys|legacy-text|fixtures\/pre-tool-rename|superpowers|skills\/onboarding|CHANGELOG\.md|\.changeset\/pre\//.test(
-        x.file,
-      ),
+      /superpowers|skills\/onboarding|CHANGELOG\.md|\.changeset\/pre\//.test(x.file),
     );
     expect(exempt).toEqual([]);
     // `agent` alone never matches
@@ -110,16 +107,6 @@ describe("checkTerms", () => {
     expect(exempt).toEqual([]);
   });
 
-  it("the legacy-format detector may name the old formats, and nothing else old", () => {
-    const root = fixture("violations");
-    const tgz = join(root, "packages/kernel/src/packages/tgz.ts");
-    expect(
-      checkTerms(root)
-        .filter((x) => x.file === tgz)
-        .map((x) => x.line),
-    ).toEqual([lineOf(tgz, "definePlugin")]);
-  });
-
   it("an exempt path is not searched, and is reported once its exemption is gone", () => {
     const root = fixture("violations");
     const migration = join(root, "packages/kernel/src/migrations/0040_applied.sql");
@@ -137,9 +124,5 @@ describe("checkTerms", () => {
     } finally {
       if (removed) REFERENCE_EXEMPT_PATHS.splice(i, 0, removed);
     }
-  });
-
-  it("the repository uses no old term", () => {
-    expect(checkTerms(repoRoot)).toEqual([]);
   });
 });

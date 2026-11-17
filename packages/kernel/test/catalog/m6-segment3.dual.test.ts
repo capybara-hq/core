@@ -1,10 +1,7 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-import type { ModelInfo, ModelRequest } from "@capybara-hq/plugin-sdk";
 import {
   createDualReplicaHarness,
   type FakeMarketplace,
@@ -26,16 +23,6 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { casePlans } from "../../src/evals/plan.js";
-import { reconstructRequest } from "../../src/evals/reconstruct.js";
-import { caseBase, type EvalResultView, type EvalRunView } from "../../src/evals/runs.service.js";
-import { caseTitle } from "../../src/evals/sets.service.js";
-import {
-  type CaseSnapshot,
-  readSnapshot,
-  replayableCalls,
-  toEvents,
-} from "../../src/evals/snapshot.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -74,9 +61,7 @@ import { bundlePlugin, mcpTemplate, SVG_ICON, skillPlugin, templatePlugin } from
  * 4. Policy and requests: the template item is needs_approval, a member request -> org admin
  *    approval (moved up) -> install possible only after super admin approval; a member requests
  *    a skill, installed after approval; with `customConnectors: deny` a custom connector gets 403;
- * 5. Rename regression: T22's `pre-rename` fixture replays a single step with drift []; a
- *    single-step eval with it as the case shows no drift; an old agent version saved with
- *    `{kind:"app"}` runs on both replicas;
+ * 5. Rename regression: an old agent version saved with `{kind:"app"}` runs on both replicas;
  * 6. Platform update across replicas (spec §7, plugin scope phase 2 Task 7): a declarative plugin
  *    (a skill and a connector template) installed at 1.0.0 on B is updated to 2.0.0 for the whole
  *    deployment through A; B then shows the install at 2.0.0, the skill's new content (`Skill` in a
@@ -92,14 +77,6 @@ let bootstrap: Awaited<ReturnType<typeof bootstrapFixture>>;
 const CONNECTOR = fakeExtensionEntry("fake-connector");
 const MCP_TOKEN = "tok-seg3";
 const sri = (b: Uint8Array) => `sha512-${createHash("sha512").update(b).digest("base64")}`;
-
-type Fixture = { model: ModelInfo; snapshot: CaseSnapshot; requests: ModelRequest[] };
-const fixture = JSON.parse(
-  readFileSync(
-    fileURLToPath(new URL("../evals/fixtures/pre-rename/mcp-conversation.json", import.meta.url)),
-    "utf8",
-  ),
-) as Fixture;
 
 type Json = Record<string, unknown>;
 type User = "root" | "boss" | "mem";
@@ -573,6 +550,7 @@ describe("M6 第三段双副本验收（平台目录）", () => {
     // 组织：root 是所有者，boss 组织管理员，mem 成员；fake-dep-provider 在本组织启用（之后应用会引用它）
     const org = await ok("root", 0, "POST", "/api/v1/orgs", { name: "Acme" });
     orgId = (org.org as { id: string }).id;
+    await enableExtensions(raw, orgId, "model-fake");
     base = `/api/v1/orgs/${orgId}`;
     await testMembers(db).add(orgId, ids.boss, "admin", ids.root);
     await testMembers(db).add(orgId, ids.mem, "member", ids.root);
@@ -659,6 +637,7 @@ describe("M6 第三段双副本验收（平台目录）", () => {
       .select("plugin")
       .where("org_id", "=", orgId)
       .where("enabled", "=", true)
+      .where("plugin", "!=", "model-fake")
       .orderBy("plugin")
       .execute();
     expect(enabled.map((r) => r.plugin)).toEqual([
@@ -745,6 +724,7 @@ describe("M6 第三段双副本验收（平台目录）", () => {
       .select("plugin")
       .where("org_id", "=", orgId)
       .where("enabled", "=", true)
+      .where("plugin", "!=", "model-fake")
       .execute();
     expect(enabled.map((r) => r.plugin).sort()).toEqual(["fake-connector", "fake-dep-provider"]);
     const listed = (await ok("boss", 1, "GET", `${base}/skills`)).skills as { id: string }[];
@@ -839,70 +819,7 @@ describe("M6 第三段双副本验收（平台目录）", () => {
     }
   });
 
-  it("5. 改名回归：pre-rename 夹具单步还原无 drift、单步评测无 drift 标记、旧形 agent 版本两边都能运行", async () => {
-    // 当前代码上的单步还原
-    const calls = toEvents(fixture.snapshot).filter(
-      (e): e is Extract<ConversationEvent, { type: "model_call" }> => e.type === "model_call",
-    );
-    expect(calls.length).toBeGreaterThan(0);
-    for (const [i, c] of calls.entries()) {
-      const out = reconstructRequest(fixture.snapshot, c.seq, { model: fixture.model });
-      expect(out.drift, `model_call seq ${c.seq}`).toEqual([]);
-      expect(out.request, `model_call seq ${c.seq}`).toEqual(fixture.requests[i]);
-    }
-
-    // 以夹具为用例的单步评测运行（用例写入没有「从快照导入」的 HTTP 入口：按 sets.service 的同样算法直接写库）
-    const set = await ok("boss", 0, "POST", `${base}/eval-sets`, {
-      agentId,
-      name: "Rename regression",
-    });
-    const setId = (set.set as { id: string }).id;
-    const snapshot = readSnapshot(structuredClone(fixture.snapshot));
-    const json = JSON.stringify(fixture.snapshot);
-    const plans = casePlans(snapshot);
-    const cb = await caseBase(db, snapshot);
-    await db
-      .insertInto("eval_cases")
-      .values({
-        set_id: setId,
-        org_id: orgId,
-        source_conversation_id: snapshot.conversationId,
-        source_run_id: snapshot.runId,
-        agent_version: snapshot.agentVersion,
-        title: caseTitle(snapshot),
-        snapshot: json,
-        snapshot_bytes: Buffer.byteLength(json),
-        replayable_steps: replayableCalls(snapshot).length,
-        plan_step: JSON.stringify(plans.step),
-        plan_run: JSON.stringify(plans.run),
-        base_model: cb ? JSON.stringify(cb.definition.model) : null,
-        added_by: ids.boss,
-      })
-      .execute();
-    const started = await ok("boss", 1, "POST", `${base}/eval-sets/${setId}/runs`, {
-      mode: "step",
-      candidate: { model: { provider: "model-fake", model: "fake-1" } },
-    });
-    const runId = (started.run as EvalRunView).id;
-    const done = await waitFor(
-      async () => {
-        const v = (await ok("boss", 0, "GET", `${base}/eval-runs/${runId}`)).run as EvalRunView;
-        return v.status === "queued" || v.status === "running" ? null : v;
-      },
-      60_000,
-      "step eval run finished",
-      200,
-    );
-    expect(done).toMatchObject({ status: "completed", error: null, casesDone: 1 });
-    const results = (
-      (await ok("boss", 1, "GET", `${base}/eval-runs/${runId}/results?limit=200`)) as {
-        results: EvalResultView[];
-      }
-    ).results;
-    expect(results).toHaveLength(replayableCalls(snapshot).length);
-    expect(results.map((r) => [r.status, r.drift])).toEqual(results.map(() => ["done", []]));
-    expect(done.summary).toMatchObject({ drifted: 0 });
-
+  it("5. rename regression: an old agent version saved with {kind:'app'} runs on both replicas", async () => {
     // 以 {kind:"app"} 保存的旧 agent 版本：直接把旧形写回库（改名前存的版本），两个副本都能运行
     // The docs connector was switched off with its plugin in step 3: switch the plugin back on so
     // the agent has the connector tool again (the install takes the disabled connector back)

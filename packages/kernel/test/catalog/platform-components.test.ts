@@ -2,16 +2,15 @@ import { createHash } from "node:crypto";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { CatalogScopeService } from "../../src/catalog/catalog-scope.service.js";
+import { LIVE_INSTALL_STATUSES } from "../../src/catalog/install-status.js";
 import { PlatformComponents } from "../../src/catalog/platform-components.js";
 import type { PlatformUpdatePreview } from "../../src/catalog/plugin-upgrade.js";
 import {
   PLUGIN_SCOPE_QUEUE,
   PluginScopeSync,
-  SCOPE_BACKSTOP_JOB,
+  SCOPE_CHUNK_JOB,
   SCOPE_ITEM_JOB,
   SCOPE_ORG_JOB,
-  scopeBackstopJobId,
-  scopeItemJobId,
   scopeOrgJobId,
 } from "../../src/catalog/scope-sync.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
@@ -31,7 +30,6 @@ import {
   seedPlugin,
   setScope,
   startOrgEnv,
-  TEST_SCOPE_BACKSTOP_DELAY_MS,
 } from "./org-env.js";
 import { bundlePlugin, mcpTemplate, skillFiles, skillPlugin } from "./packages.js";
 import { syncPlatformComponents } from "./platform-sync.js";
@@ -49,9 +47,9 @@ import { syncPlatformComponents } from "./platform-sync.js";
  *   update preview of the staged version are confirmed together; nothing is written before that
  *   confirm, and an update failing after the import leaves the platform where it was with the
  *   version imported, saying so;
- * - transactional outbox spec §8.1 (catalog rows): a scope change, a new org and an ownership
- *   transfer owe the plugin scope sync in their own transaction; a confirmation's commit owes a
- *   delayed backstop (ruling R24). The fast path is disabled for the scope queue
+ * - transactional outbox spec §8.1 (catalog rows): a scope change, a new org, an ownership
+ *   transfer, an import's commit and an extension's deploy owe the plugin scope sync in their own
+ *   transaction. The fast path is disabled for the scope queue
  *   (`OUTBOX_DISPATCH_FAILS`, while `failing` is set), so what converges the orgs got there
  *   through an owed row an explicit relay pass delivered.
  */
@@ -208,9 +206,8 @@ const owed = () =>
     .execute();
 
 /**
- * Lets the scope queue's adds succeed, runs one relay pass over the owed rows, each due now (a
- * backstop's `runAt` brought forward), and waits until every row is delivered (a concurrent pass
- * may hold some: {@link drainOutbox}).
+ * Lets the scope queue's adds succeed, runs one relay pass over the owed rows, each due now, and
+ * waits until every row is delivered (a concurrent pass may hold some: {@link drainOutbox}).
  */
 async function relay(): Promise<void> {
   failing = false;
@@ -228,7 +225,7 @@ async function liveOrgs(itemId: string): Promise<string[]> {
     .selectFrom("plugin_installs")
     .select("org_id")
     .where("item_id", "=", itemId)
-    .where("status", "in", ["installing", "installed", "upgrading"])
+    .where("status", "in", [...LIVE_INSTALL_STATUSES])
     .execute();
   return rows.map((r) => r.org_id).sort();
 }
@@ -242,14 +239,9 @@ async function liveOrgIds(): Promise<string[]> {
   return rows.map((r) => r.id).sort();
 }
 
-const scopeVersion = async (itemId: string) =>
-  (
-    await env.db
-      .selectFrom("catalog_items")
-      .select("scope_version")
-      .where("id", "=", itemId)
-      .executeTakeFirstOrThrow()
-  ).scope_version;
+/** An item job id of `itemId` (one per owing transaction: its id is not known here). */
+const itemJobId = (itemId: string) =>
+  expect.stringMatching(new RegExp(`^scope-item-${itemId}-x\\d+$`));
 
 /** Uploads and confirms a skills-only package in the org (installed at once); returns its id. */
 async function uploaded(req: Req, orgId: string, bytes: Uint8Array): Promise<string> {
@@ -549,11 +541,11 @@ describe("plugin scope syncs are owed (transactional outbox §8.1)", () => {
       payload: { scope: "all", scopeHash: (p.json() as { scopeHash: string }).scopeHash },
     });
     expect(r.statusCode, r.body).toBe(200);
-    // committed with the scope: one owed item job for the new scope version, nothing installed
+    // committed with the scope: one owed item job for that transaction, nothing installed
     expect(await owed()).toEqual([
       {
         job_name: SCOPE_ITEM_JOB,
-        job_id: scopeItemJobId(itemId, await scopeVersion(itemId)),
+        job_id: itemJobId(itemId),
         data: { kind: "item", itemId },
         org_id: null,
       },
@@ -636,11 +628,10 @@ describe("plugin scope syncs are owed (transactional outbox §8.1)", () => {
       payload: { previewHash: (p.json() as { previewHash: string }).previewHash },
     });
     expect(d.statusCode, d.body).toBe(204);
-    // (the upload's backstop may still be owed too: only the transfer's job is checked)
     expect((await owed()).filter((r) => r.job_name === SCOPE_ITEM_JOB)).toEqual([
       {
         job_name: SCOPE_ITEM_JOB,
-        job_id: scopeItemJobId(itemId, await scopeVersion(itemId)),
+        job_id: itemJobId(itemId),
         data: { kind: "item", itemId },
         org_id: null,
       },
@@ -656,93 +647,129 @@ describe("plugin scope syncs are owed (transactional outbox §8.1)", () => {
     expect(await owed()).toEqual([]);
   });
 
-  it("a crash between an import's commit and its post-deploy add: the backstop converges the orgs", async () => {
-    // the confirm's process dies after the deploy, before it owes the immediate sync
-    const svc = env.k.app.get(CatalogScopeService) as unknown as {
-      oweSync: (itemId: string) => Promise<void>;
-    };
-    const oweSync = svc.oweSync;
-    svc.oweSync = async () => {};
+  it("an import's commit owes the sync when it deploys no extension: the orgs converge", async () => {
     failing = true;
-    let itemId: string;
-    try {
-      const p = await env.root({
-        method: "POST",
-        url: "/api/v1/admin/catalog/import/file",
-        headers: { "content-type": "application/octet-stream" },
-        payload: Buffer.from(await skillPlugin("owed-backstop")),
-      });
-      expect(p.statusCode, p.body).toBe(200);
-      const c = await env.root({
-        method: "POST",
-        url: `/api/v1/admin/catalog/imports/${p.json().stagingId}/confirm`,
-        payload: { reviewHash: p.json().review.reviewHash, scope: "all" },
-      });
-      expect(c.statusCode, c.body).toBe(201);
-      itemId = (c.json() as { item: { id: string } }).item.id;
-    } finally {
-      svc.oweSync = oweSync;
-    }
-    // only the backstop the commit owed, due five minutes on; nothing installed
+    const p = await env.root({
+      method: "POST",
+      url: "/api/v1/admin/catalog/import/file",
+      headers: { "content-type": "application/octet-stream" },
+      payload: Buffer.from(await skillPlugin("owed-import")),
+    });
+    expect(p.statusCode, p.body).toBe(200);
+    const c = await env.root({
+      method: "POST",
+      url: `/api/v1/admin/catalog/imports/${p.json().stagingId}/confirm`,
+      payload: { reviewHash: p.json().review.reviewHash, scope: "all" },
+    });
+    expect(c.statusCode, c.body).toBe(201);
+    const itemId = (c.json() as { item: { id: string } }).item.id;
+    // owed by the confirm's commit, due now; nothing installed while adds fail
     expect(await owed()).toEqual([
       {
-        job_name: SCOPE_BACKSTOP_JOB,
-        job_id: scopeBackstopJobId(itemId, await scopeVersion(itemId)),
-        data: { kind: "item", itemId, backstop: true },
+        job_name: SCOPE_ITEM_JOB,
+        job_id: itemJobId(itemId),
+        data: { kind: "item", itemId },
         org_id: null,
       },
     ]);
-    const row = await env.db
-      .selectFrom("outbox")
-      .select(["run_at", "created_at"])
-      .where("queue", "=", PLUGIN_SCOPE_QUEUE)
-      .executeTakeFirstOrThrow();
-    expect(
-      new Date(row.run_at as Date).getTime() - new Date(row.created_at).getTime(),
-    ).toBeGreaterThan(TEST_SCOPE_BACKSTOP_DELAY_MS - 60_000);
     expect(await liveOrgs(itemId)).toEqual([]);
-    // its time comes: the orgs converge
     await relay();
     const all = await liveOrgIds();
     await waitFor(
       async () => (await liveOrgs(itemId)).join() === all.join(),
       30_000,
-      "installed in every org by the backstop",
+      "installed in every org",
     );
     expect(await owed()).toEqual([]);
   });
 
-  it("a backstop whose extension is not deployed throws for a BullMQ retry and records no failure", async () => {
-    // retried with backoff, bounded by its attempts
-    expect(outboxJobOptions(SCOPE_BACKSTOP_JOB)).toMatchObject({ attempts: 5 });
+  it("an extension's enable owes its plugin's sync, not the import's commit: one job, the orgs converge", async () => {
+    failing = true;
+    const p = await env.root({
+      method: "POST",
+      url: "/api/v1/admin/catalog/import/file",
+      headers: { "content-type": "application/octet-stream" },
+      payload: Buffer.from(
+        await lifePkg({ name: "owed-ext", version: "1.0.0", skills: ["owed-ext-notes"] }),
+      ),
+    });
+    expect(p.statusCode, p.body).toBe(200);
+    const c = await env.root({
+      method: "POST",
+      url: `/api/v1/admin/catalog/imports/${p.json().stagingId}/confirm`,
+      payload: { reviewHash: p.json().review.reviewHash, scope: "all" },
+    });
+    expect(c.statusCode, c.body).toBe(201);
+    expect((c.json() as { deploy: { result: string } }).deploy.result).toBe("enabled");
+    const itemId = (c.json() as { item: { id: string } }).item.id;
+    // the commit (before the deploy) owed nothing; the enable's transaction owed the one job
+    const enabled = await env.db
+      .selectFrom("audit_events")
+      .select("id")
+      .where("action", "=", "extension.enabled")
+      .where("target", "=", "owed-ext")
+      .execute();
+    expect(enabled).toHaveLength(1);
+    expect(await owed()).toEqual([
+      {
+        job_name: SCOPE_ITEM_JOB,
+        job_id: itemJobId(itemId),
+        data: { kind: "item", itemId },
+        org_id: null,
+      },
+    ]);
+    await relay();
+    const all = await liveOrgIds();
+    await waitFor(
+      async () => (await liveOrgs(itemId)).join() === all.join(),
+      30_000,
+      "installed in every org once loaded",
+    );
+    expect(await owed()).toEqual([]);
+  });
+
+  it("an item job fans out one chunk job per chunk of orgs, all owed in one transaction", async () => {
     const itemId = await seedPlugin(env, {
-      name: "owed-ghost",
-      extension: true,
-      skills: [],
+      name: "owed-chunks",
+      skills: ["owed-chunks-skill"],
       templates: false,
     });
     await setScope(env, itemId, "all");
+    failing = true;
+    // the item job (as the worker runs it): its chunk rows wait while adds fail
+    const jobId = `scope-item-${itemId}-x1`;
     const sync = env.k.app.get(PluginScopeSync);
-    await expect(sync.process({ kind: "item", itemId, backstop: true })).rejects.toThrow(
-      /not enabled on the deployment yet/,
-    );
-    expect(await liveOrgs(itemId)).toEqual([]);
-    expect(
-      await env.db
-        .selectFrom("plugin_scope_sync_failures")
-        .select("code")
-        .where("item_id", "=", itemId)
-        .execute(),
-    ).toEqual([]);
-    // an extension loaded here (config-declared: no install record) passes the check
-    const loaded = await seedPlugin(env, {
-      name: "fake-tools-ui",
-      extension: true,
-      skills: [],
-      templates: false,
+    await sync.process({ kind: "item", itemId }, { jobId, finalAttempt: false });
+    // redelivered: the same chunk ids, deduped
+    await sync.process({ kind: "item", itemId }, { jobId, finalAttempt: false });
+    const all = await liveOrgIds();
+    const chunks = await owed();
+    // two orgs per chunk in these tests, every live org in exactly one chunk, ids after the item's
+    expect(chunks.length).toBe(Math.ceil(all.length / 2));
+    expect(all.length).toBeGreaterThan(2);
+    expect(chunks.flatMap((r) => (r.data as { orgIds: string[] }).orgIds).sort()).toEqual(all);
+    chunks.forEach((r, n) => {
+      expect(r.job_name).toBe(SCOPE_CHUNK_JOB);
+      expect(r.job_id).toBe(`${jobId}-c${n}`);
+      expect(r.data).toMatchObject({ kind: "chunk", itemId });
     });
-    await expect(
-      sync.process({ kind: "item", itemId: loaded, backstop: true }),
-    ).resolves.toBeUndefined();
+    expect(await liveOrgs(itemId)).toEqual([]);
+    await relay();
+    await waitFor(
+      async () => (await liveOrgs(itemId)).join() === all.join(),
+      30_000,
+      "installed in every org by the chunks",
+    );
+  });
+
+  it("the scope jobs share one BullMQ retry policy", () => {
+    for (const name of [SCOPE_ITEM_JOB, SCOPE_CHUNK_JOB, SCOPE_ORG_JOB]) {
+      expect(outboxJobOptions(name)).toMatchObject({
+        attempts: 7,
+        backoff: { type: "exponential", delay: 5_000 },
+        removeOnComplete: true,
+        removeOnFail: true,
+      });
+    }
   });
 });

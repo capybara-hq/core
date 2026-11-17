@@ -24,7 +24,7 @@ import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -78,7 +78,7 @@ beforeAll(async () => {
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   const res = await owner({
     method: "POST",
     url: `/api/v1/orgs/${orgId}/agents`,
@@ -333,7 +333,7 @@ describe("conversations bound to devices", () => {
 
   it("create with one's own device of another org is not_found", async () => {
     const m = await member();
-    const otherOrg = await createOrg(owner, `Other ${randomUUID().slice(0, 6)}`);
+    const otherOrg = await createOrgWithProviders(k, owner, `Other ${randomUUID().slice(0, 6)}`);
     await testMembers(db).add(otherOrg, m.id, "member", ownerId);
     const res = await m.req({
       method: "POST",

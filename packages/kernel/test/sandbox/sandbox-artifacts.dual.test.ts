@@ -38,7 +38,7 @@ import {
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
+import { enableExtensions, eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
 import { sandboxServiceFor } from "../helpers/sandbox.js";
 
 /**
@@ -48,8 +48,8 @@ import { sandboxServiceFor } from "../helpers/sandbox.js";
  * provider); everything goes through HTTP:
  *
  * 1. a presigned direct upload of an attachment (CSV) -> finalize;
- * 2. a message with the attachment; the agent processes /workspace/attachments with `Bash`
- *    (first use creates the sandbox);
+ * 2. a message with the attachment; `FetchAttachment` copies it into the device (first use
+ *    creates the sandbox), then `Bash` processes the copy;
  * 3. `Deliver` delivers an output -> `artifact_created` -> the download route redirects to
  *    a presigned URL with the same content;
  * 4. the replica running a `Bash` call (a command longer than the lease TTL) is killed ->
@@ -86,7 +86,7 @@ const groupAlive = (pgid: number): boolean => {
   }
 };
 
-const SANDBOX_TOOLS = ["Bash", "Read", "Deliver"];
+const SANDBOX_TOOLS = ["Bash", "Read", "Deliver", "FetchAttachment"];
 const CSV = "fruit,qty\napple,3\npear,5\nplum,7\n";
 const TOTAL = "total=15";
 
@@ -173,6 +173,7 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
     const org = await at(1, "POST", "/api/v1/orgs", { name: "Acme" });
     expect(org.status, JSON.stringify(org.json)).toBe(201);
     base = `/api/v1/orgs/${(org.json.org as { id: string }).id}`;
+    await enableExtensions(raw, (org.json.org as { id: string }).id, "model-fake");
   });
 
   afterAll(async () => {
@@ -296,28 +297,36 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
     expect(await shownState(0, convPath)).toBeNull();
     const envId = await envOf(convId);
 
-    // ---- 2. Bash 处理附件（首次使用：创建沙箱，附件同步到 /workspace/attachments） ----
+    // ---- 2. FetchAttachment 按需复制附件（首次使用：创建沙箱），Bash 再处理它 ----
+    await send(0, convId, "FetchAttachment", { file: "fruit.csv" });
+    const r2 = await finished(convId, 2);
+    expect(r2.result.isError, r2.result.content).toBe(false);
+    expect(r2.result.content.startsWith(SANDBOX_STARTED_NOTICE)).toBe(true);
+    expect(r2.result.content).toContain(
+      `${attachmentsDir(DEFAULT_SANDBOX_ROOTS, convId)}/fruit.csv`,
+    );
+    expect(await shownState(1, convPath)).toBe("running");
+    const c2 = await instanceOf(convId);
+    expect(c2.state).toBe("running");
+    const row2 = await sandboxRow(convId);
+
     await send(0, convId, "Bash", {
       description: "Test step",
       command:
         "mkdir -p /workspace/out && awk -F, 'NR>1{s+=$2} END{print \"total=\" s}' " +
         `${attachmentsDir(DEFAULT_SANDBOX_ROOTS, convId)}/fruit.csv | tee /workspace/out/summary.txt`,
     });
-    const r2 = await finished(convId, 2);
-    expect(r2.result.isError, r2.result.content).toBe(false);
-    expect(r2.result.content.startsWith(SANDBOX_STARTED_NOTICE)).toBe(true);
-    expect(r2.result.content).toContain(TOTAL);
-    expect(await shownState(1, convPath)).toBe("running");
-    const c2 = await instanceOf(convId);
-    expect(c2.state).toBe("running");
-    const row2 = await sandboxRow(convId);
+    const r2b = await finished(convId, 3);
+    expect(r2b.result.isError, r2b.result.content).toBe(false);
+    expect(r2b.result.content).not.toContain(SANDBOX_STARTED_NOTICE);
+    expect(r2b.result.content).toContain(TOTAL);
 
     // ---- 3. 交付产物 → artifact_created → 下载 ----
     await send(1, convId, "Deliver", {
       file_path: "/workspace/out/summary.txt",
       name: "summary.txt",
     });
-    const r3 = await finished(convId, 3);
+    const r3 = await finished(convId, 4);
     expect(r3.result.isError, r3.result.content).toBe(false);
     expect(r3.result.content).toMatch(/^Delivered summary\.txt \(9 bytes, text\/plain\)/);
     const [art] = ofType(r3.evs, "artifact_created");
@@ -372,7 +381,7 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
     await h.kill(victimIndex);
 
     // 存活副本接手：这次调用结果未知（不重复执行），模型收尾
-    const r4 = await finished(convId, 4, 60_000);
+    const r4 = await finished(convId, 5, 60_000);
     expect(r4.evs[0]?.runId).toBe(run.id);
     expect(r4.result).toMatchObject({
       toolKey: "Bash",
@@ -387,7 +396,7 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
       description: "Test step",
       command: "cat /workspace/out/summary.txt && ls /workspace",
     });
-    const r4b = await finished(convId, 5, 150_000);
+    const r4b = await finished(convId, 6, 150_000);
     const reuseMs = Date.now() - killedAt;
     expect(r4b.result.isError, r4b.result.content).toBe(false);
     expect(r4b.result.content).not.toContain(SANDBOX_STARTED_NOTICE);
@@ -411,7 +420,7 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
       description: "Test step",
       command: "echo after-ttl",
     });
-    const r4c = await finished(convId, 6, 60_000);
+    const r4c = await finished(convId, 7, 60_000);
     expect(r4c.result.isError, r4c.result.content).toBe(false);
     // killed by the takeover (the sleep cannot end on its own); the dead group may take a moment
     // to be reaped
@@ -455,7 +464,7 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
     expect((await instanceOf(convId)).state).toBe("suspended");
 
     await send(survivor, convId, "Read", { file_path: "/workspace/out/summary.txt" });
-    const r5 = await finished(convId, 7);
+    const r5 = await finished(convId, 8);
     expect(r5.result.isError, r5.result.content).toBe(false);
     expect(r5.result.content).not.toContain(SANDBOX_STARTED_NOTICE);
     expect(r5.result.content).not.toContain(SANDBOX_RESTARTED_NOTICE);

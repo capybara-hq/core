@@ -68,6 +68,7 @@ import {
   switchOf,
   themeIdClashes,
 } from "./component-state.js";
+import { LIVE_INSTALL_STATUSES } from "./install-status.js";
 import { CatalogItemLock } from "./locks.js";
 import { itemPendingError, itemRemovedError } from "./ownership.js";
 import { PlanStale, PlatformComponents, type PreparedSync } from "./platform-components.js";
@@ -925,13 +926,13 @@ export class PlatformPluginUpdater {
     }
 
     // One version for the deployment: every live org install of the plugin moves with it (one
-    // still installing too, and a legacy `upgrading` row; an install marked installed later
-    // records the platform version current at its commit, PluginInstaller.markInstalled)
+    // still installing too; an install marked installed later records the platform version
+    // current at its commit, PluginInstaller.markInstalled)
     await t
       .updateTable("plugin_installs")
       .set({ version: diff.to.version, error: null })
       .where("item_id", "=", itemId)
-      .where("status", "in", ["installing", "installed", "upgrading"])
+      .where("status", "in", [...LIVE_INSTALL_STATUSES])
       .execute();
     if (owner !== undefined || confirmPending !== undefined) {
       // An org's version becomes its latest once applied or confirmed (ruling P3-34)
@@ -1873,7 +1874,7 @@ export class PlatformPluginUpdater {
       .select("a.org_id")
       .distinct()
       .where("a.item_id", "=", itemId)
-      .where("a.status", "in", ["installing", "installed", "upgrading"])
+      .where("a.status", "in", [...LIVE_INSTALL_STATUSES])
       .where("o.deleted_at", "is", null)
       .orderBy("a.org_id")
       .execute();

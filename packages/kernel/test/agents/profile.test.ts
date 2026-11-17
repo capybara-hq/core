@@ -15,7 +15,7 @@ import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
-import { startKernel, type TestKernel } from "../helpers/runs.js";
+import { enableModelProviders, startKernel, type TestKernel } from "../helpers/runs.js";
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -91,6 +91,7 @@ async function setup(body: Record<string, unknown> = {}) {
   const req = await session("owner");
   const org = await req({ method: "POST", url: "/api/v1/orgs", payload: { name: "Acme" } });
   const orgId = (org.json() as { org: { id: string } }).org.id;
+  await enableModelProviders(k, orgId);
   const res = await req({
     method: "POST",
     url: `/api/v1/orgs/${orgId}/agents`,

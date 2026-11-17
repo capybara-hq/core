@@ -48,7 +48,10 @@ export type GitPushReason =
   | "org_deny"
   /** The member denied pushes to the repository for themselves. */
   | "member_deny"
-  /** The org forbids `git:push` (or the repository's key) in scheduled runs. */
+  /**
+   * The org forbids `git:push` (or the repository's key) in scheduled runs, or its forbidden list
+   * cannot be read (fails closed).
+   */
   | "forbidden"
   /** An unattended run in `fail` mode without a task grant: no one can be asked. */
   | "unattended"
@@ -153,7 +156,11 @@ export async function decideGitPush(
       ? input.unattended
       : await unattendedRunOf(db, config, input.orgId, input.runId);
   const rules = unattendedRules(unattended) ? unattended : null;
-  if (rules !== null && gitPushForbidden(rules.forbiddenTools, key)) {
+  // fail closed: an unreadable list forbids every push of an unattended run
+  if (
+    rules !== null &&
+    (rules.forbiddenToolsUnreadable === true || gitPushForbidden(rules.forbiddenTools, key))
+  ) {
     return { decision: "deny", reason: "forbidden", repo };
   }
   if (base.policy === "allow") return { decision: "allow", reason: base.reason, repo };

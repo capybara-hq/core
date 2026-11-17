@@ -7,7 +7,7 @@ import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
-  createOrg,
+  createOrgWithProviders,
   PW,
   type Req,
   runConfig,
@@ -59,8 +59,8 @@ beforeAll(async () => {
   root = await session(k, "root");
   boss = await session(k, "boss");
   mem = await session(k, "mem");
-  orgA = await createOrg(root, "A");
-  orgB = await createOrg(root, "B");
+  orgA = await createOrgWithProviders(k, root, "A");
+  orgB = await createOrgWithProviders(k, root, "B");
   await db
     .insertInto("memberships")
     .values([
@@ -762,36 +762,6 @@ describe("org agent templates", () => {
     ).toEqual([409, "catalog.not_owned"]);
   });
 
-  it("reads a stored version without selectedSkills, a field the format no longer has", async () => {
-    const id = randomUUID();
-    await db
-      .insertInto("agent_templates")
-      .values({ id, org_id: orgA, name: "old", plugin_name: "crm", current_version: 1 })
-      .execute();
-    await db
-      .insertInto("agent_template_versions")
-      .values({
-        template_id: id,
-        version: 1,
-        definition: JSON.stringify({
-          name: "old",
-          description: "Old.",
-          instructions: "O.",
-          skills: ["report"],
-          selectedSkills: ["charts"],
-        }),
-      })
-      .execute();
-    const res = await mem({ method: "GET", url: `/api/v1/orgs/${orgA}/agent-templates/${id}` });
-    expect(res.statusCode, res.body).toBe(200);
-    expect(res.json().template.definition).toEqual({
-      name: "old",
-      description: "Old.",
-      instructions: "O.",
-      skills: ["report"],
-    });
-  });
-
   it("an unshared template is removed by its owner", async () => {
     const agentId = await simpleAgent(orgA);
     const id = (await saveAs(boss, orgA, agentId, "lead")).json().template.id as string;
@@ -1251,7 +1221,7 @@ describe("org agent templates", () => {
   });
 
   it("deleting the owner org transfers its used promoted template and removes the unused one", async () => {
-    const orgC = await createOrg(root, "C");
+    const orgC = await createOrgWithProviders(k, root, "C");
     const used = await sharedLead(root, orgC, [orgC, orgB], "c-used");
     const unused = await sharedLead(root, orgC, [orgC, orgB], "c-unused");
     expect((await putScope(unused.pid, { scope: "named", orgs: [orgC] })).statusCode).toBe(200);

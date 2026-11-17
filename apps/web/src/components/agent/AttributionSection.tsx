@@ -208,7 +208,7 @@ function AttributionReadOnly({
   publicUrl,
 }: {
   platform: Platform;
-  /** Whether the deployment set `http.publicUrl`; absent from an older kernel (unknown). */
+  /** Whether the deployment set `http.publicUrl`; absent while the settings are not read (unknown). */
   publicUrl?: boolean | undefined;
 }) {
   const t = useTranslations("agents");

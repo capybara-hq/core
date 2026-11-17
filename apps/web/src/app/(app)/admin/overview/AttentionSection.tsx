@@ -16,12 +16,14 @@ import {
 import { type UseQueryResult, useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
+import { type CursorSlice, LoadMore, useCursorPages } from "../../../../components/cursor-pages";
 import {
   type AdminAttention,
   type AttentionExtension,
   type AttentionOutboxDead,
   type AttentionSource,
   discardOutboxDead,
+  type OutboxDeadPage,
   type OutboxDeadRow,
   retryOutboxDead,
 } from "../../../../lib/admin";
@@ -281,6 +283,12 @@ function AttentionGroups({
   });
 }
 
+/** A dead-row page's rows and cursor, for {@link useCursorPages}. */
+const outboxSlice = (p: OutboxDeadPage): CursorSlice<OutboxDeadRow> => ({
+  rows: p.items,
+  next: p.next,
+});
+
 /**
  * The dead outbox rows (transactional outbox spec §3.4): each with its job, queue and last error,
  * 重试 (queued again; dropped instead when the same job is owed already) and 丢弃 (after a
@@ -295,32 +303,40 @@ function OutboxDeadList({
 }: {
   label: string;
   summary: AttentionOutboxDead[];
-  dead: UseQueryResult<{ items: OutboxDeadRow[] }>;
+  dead: UseQueryResult<OutboxDeadPage>;
   t: T;
 }) {
   const errorMessage = useErrorMessage();
   const toast = useToast();
   const [discarding, setDiscarding] = useState<OutboxDeadRow | null>(null);
+  // Later pages belong to the first page they continue: a changed first page starts over, and a
+  // retry or discard drops them (the handled row may sit on one; the first page is read again)
+  const pages = useCursorPages(dead.data, adminOutboxDeadQuery, outboxSlice);
   const d = keys.deployment();
   const invalidates = () => [d.adminOverview(), d.platformAuditAll()];
   const retry = useAppMutation({
     fn: (id: string) => retryOutboxDead(id),
     invalidates,
-    onSuccess: (r) =>
-      toast.success(t(r.outcome === "retried" ? "outbox.retried" : "outbox.alreadyOwed")),
+    onSuccess: (r) => {
+      pages.reset();
+      toast.success(t(r.outcome === "retried" ? "outbox.retried" : "outbox.alreadyOwed"));
+    },
     onError: (e) => toast.error(errorMessage(e)),
   });
   const discard = useAppMutation({
     fn: (id: string) => discardOutboxDead(id),
     invalidates,
-    onSuccess: () => toast.success(t("outbox.discarded")),
+    onSuccess: () => {
+      pages.reset();
+      toast.success(t("outbox.discarded"));
+    },
     onError: (e) => toast.error(errorMessage(e)),
   });
   const busy = retry.isPending || discard.isPending;
   const rows: ItemListRow[] =
     dead.data === undefined
       ? summary.map((o) => ({ id: o.kind, title: t("outbox.count", { n: o.count }) }))
-      : dead.data.items.map((r) => ({
+      : pages.rows.map((r) => ({
           id: r.id,
           title: r.jobName,
           meta: [r.queue, r.lastError].filter((x) => x !== null && x !== "").join(" · "),
@@ -338,6 +354,7 @@ function OutboxDeadList({
   return (
     <>
       <ItemList label={label} rows={rows} />
+      <LoadMore pages={pages} label={t("outbox.loadMore")} />
       <Dialog
         open={discarding !== null}
         onOpenChange={(open) => {

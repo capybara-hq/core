@@ -19,6 +19,7 @@ import {
   TERMINAL_STATUSES,
   type TerminalStatus,
 } from "./run-jobs.js";
+import { isLive } from "./run-liveness.js";
 import { pairStoppedForks } from "./subagents/skill-fork.js";
 import { oweDeliverToParent, oweStopChildren } from "./subagents/tree-jobs.js";
 
@@ -154,7 +155,7 @@ export class RunFinish {
     // starts runs)
     if (
       conv?.org_live &&
-      conv.deleted_at === null &&
+      isLive(conv.deleted_at) &&
       (conv.kind === "chat" || conv.kind === "subagent")
     ) {
       await oweEnsureRun(this.outbox, a.conversationId, seq, conv.org_id);

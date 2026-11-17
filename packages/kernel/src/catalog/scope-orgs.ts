@@ -6,7 +6,7 @@ import { assertShareable, shareGate } from "./ownership.js";
 
 /**
  * Adds one org to a `named` item's list in the caller's transaction (the caller holds the item row
- * `FOR UPDATE`): bumps `scope_version` and audits `catalog.scope_changed` the way a scope change
+ * `FOR UPDATE`): audits `catalog.scope_changed` the way a scope change
  * does (`from` / `to` with the sorted lists; `requestId` when a request asked for it). Nothing is
  * written when the item is not `named` (or builtin) or the org is listed already. Returns whether
  * the list changed; the caller enqueues the item's scope sync after the commit. Adding an org other
@@ -48,7 +48,6 @@ export async function addScopeOrg(
   await db
     .updateTable("catalog_items")
     .set({
-      scope_version: sql<number>`scope_version + 1`,
       updated_at: sql<Date>`now()` as unknown as Date,
     })
     .where("id", "=", item.id)

@@ -9,9 +9,6 @@ import { scheduleHeader, senderTranscriptLabel } from "./run-context.js";
 import { estimateTokens } from "./tokens.js";
 import { toolsChangedText } from "./tool-changes.js";
 
-/** 压缩请求的标记：放在 system 中，便于识别（model-fake 据此返回摘要）。 */
-export const COMPACTION_MARKER = "CAPYBARA_COMPACTION";
-
 /**
  * The summary request's output cap when the caller gives none: the built-in default of the
  * `compaction.maxOutputTokens` setting (context compaction spec §4.8). The effective setting is
@@ -29,7 +26,6 @@ const MIN_SUMMARY_RATIO = 0.05;
  * with nine sections; only the `<summary>` is stored and sent again in later requests.
  */
 const COMPACTION_INSTRUCTION = [
-  COMPACTION_MARKER,
   "You are summarizing the earlier part of a conversation between people and an AI agent, so the agent can continue without the full history.",
   "If the transcript starts with an earlier summary, merge it into your summary.",
   "Write in the same language as the conversation.",
@@ -228,14 +224,14 @@ export function openingSeqs(
   );
   const upTo =
     first?.type === "model_call"
-      ? Math.min(first.payload.request.absorbedUpToSeq ?? first.seq, first.seq)
+      ? Math.min(first.payload.request.absorbedUpToSeq, first.seq)
       : absorbedUpToSeq;
   let floor = Number.NEGATIVE_INFINITY;
   for (const e of sorted) {
     if (e.seq >= start.seq) break;
     if (e.type === "assistant_message") floor = Math.max(floor, e.seq);
     else if (e.type === "model_call") {
-      floor = Math.max(floor, e.payload.request.absorbedUpToSeq ?? e.seq);
+      floor = Math.max(floor, e.payload.request.absorbedUpToSeq);
     }
   }
   return sorted
@@ -320,7 +316,7 @@ function transcriptLine(e: ConversationEvent): string | null {
       // scheduled tasks spec §12: the header the request shows, so the summary keeps the origin
       const schedule = e.payload.schedule;
       const text = schedule === undefined ? body : `${scheduleHeader(schedule)} ${body}`;
-      // run context spec §5: the sender as logged (older logs have none: unchanged)
+      // run context spec §5: the sender as logged (a sub-agent task has none: unchanged)
       const sender = e.payload.sender;
       return sender !== undefined
         ? `User (${senderTranscriptLabel(sender)}): ${text}`
@@ -352,8 +348,49 @@ function transcriptLine(e: ConversationEvent): string | null {
     // stale names should not be summarised as current
     case "tool_result":
       return `Tool result ${e.payload.toolKey}${e.payload.isError ? " (error)" : ""}: ${e.payload.content}`;
-    default:
+    // Every other event type is left out of the transcript: not model-visible, or re-rendered
+    // after the summary (build.ts). Adding an event type fails typecheck until it is listed.
+    case "model_call":
+    case "run_started":
+    case "usage":
+    case "device_paths":
+    case "project_root":
+    case "run_context":
+    case "plugin_context":
+    case "tool_call_started":
+    case "connection_required":
+    case "approval_requested":
+    case "approval_decided":
+    case "approval_updated":
+    case "question_asked":
+    case "question_answered":
+    case "media_excluded":
+    case "artifact_created":
+    case "skills_catalog":
+    case "hook_denied":
+    case "network_blocked":
+    case "device_code":
+    case "model_switched":
+    case "subagent_started":
+    case "subagent_dispatched":
+    case "subagent_waiting":
+    case "subagent_finished":
+    case "compaction_summary":
+    case "compaction_failed":
+    case "run_finished":
+    case "run_aborted":
+    case "run_failed":
+    // permission_context, like device_paths, follows the summary (the latest covered ones again,
+    // build.ts); the profile change and the review record are not model-visible
+    case "permission_context":
+    case "permission_profile_changed":
+    case "permission_reviewed":
       return null;
+    default: {
+      const unrendered: never = e;
+      void unrendered;
+      return null;
+    }
   }
 }
 
@@ -498,7 +535,7 @@ function splitLine(line: string, max: number): string[] {
 }
 
 /**
- * The summary request: the marked English instruction as the system prompt and the transcript as
+ * The summary request: the English instruction (request `purpose: "compaction"`) as the system prompt and the transcript as
  * the only user message. `maxOutputTokens` is the effective `compaction.maxOutputTokens` setting,
  * which the caller narrows to the model's own cap (context compaction spec §4.8); omitted, it is
  * the built-in default.
@@ -520,6 +557,7 @@ export function buildCompactionRequest(
     tools: [],
     maxOutputTokens,
     params: {},
+    purpose: "compaction",
   };
 }
 

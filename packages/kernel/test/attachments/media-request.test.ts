@@ -71,11 +71,25 @@ const media = (extra: [string, MediaBytes | null][] = []) =>
 const userContent = (messages: ModelMessage[]) =>
   messages.flatMap((m) => (m.role === "user" ? m.content : []));
 
-/** 行信息（声明大小、PDF 页数）：有字节的按字节数，null 的（对象已不在）给个大小；不在 map 里的没有行。 */
+/** 行信息（声明大小、PDF 页数、无签名引用）：有字节的按字节数，null 的（对象已不在）给个大小；不在 map 里的没有行。 */
 const infoOf = (m: Map<string, MediaBytes | null>) =>
   new Map<string, MediaInfo>(
-    [...m].map(([id, b]) => [id, { size: b?.data.byteLength ?? 1, pages: id === PDF ? 2 : null }]),
+    [...m].map(([id, b]) => [
+      id,
+      {
+        size: b?.data.byteLength ?? 1,
+        pages: id === PDF ? 2 : null,
+        uri: `capybara://attachments/${id}`,
+      },
+    ]),
   );
+
+/** A row's declared info for `planMedia` cases (the URI is not what those exercise). */
+const row = (size: number, pages: number | null = null): MediaInfo => ({
+  size,
+  pages,
+  uri: "capybara://attachments/test",
+});
 
 const build = (model: ModelInfo, log: Log, m = media(), budget?: number) =>
   buildModelRequest({
@@ -150,21 +164,21 @@ describe("buildModelRequest 解析媒体引用", () => {
     ]);
   });
 
-  it("文本内联超过上限时截断并注明", () => {
+  it("文本超过内联上限：换成引用行，绝不发送截断的正文", () => {
     const long = "x".repeat(TEXT_INLINE_MAX_CHARS + 10);
-    const { request } = build(
+    const { request, meta, mediaTokens } = build(
       BLIND,
       logWith([content[3] as LogContentBlock]),
       media([[TXT, { mediaType: "text/plain", data: bytes(long) }]]),
     );
     const [b] = userContent(request.messages);
-    expect(b?.type).toBe("text");
-    const text = b?.type === "text" ? b.text : "";
-    expect(text).toContain("x".repeat(TEXT_INLINE_MAX_CHARS));
-    expect(text).not.toContain("x".repeat(TEXT_INLINE_MAX_CHARS + 1));
-    expect(text).toContain(
-      `[Truncated: showing the first ${TEXT_INLINE_MAX_CHARS} characters of a ${TEXT_INLINE_MAX_CHARS + 10}-byte file.]`,
-    );
+    expect(b).toEqual({
+      type: "text",
+      text: `[Attached file "notes.txt" (text/plain), ${TEXT_INLINE_MAX_CHARS + 10} bytes of text; not sent inline. The file is available in the device on request. Unsigned object reference: capybara://attachments/${TXT}. Use FetchAttachment with the file name or this reference to copy it into the device.]`,
+    });
+    expect(JSON.stringify(request)).not.toContain("xxxx");
+    expect(mediaTokens).toBe(0);
+    expect(meta.media).toEqual([{ attachmentId: TXT, outcome: "reference" }]);
   });
 
   it("超过 MEDIA_LIMITS 的图片不发字节，换成占位", () => {
@@ -211,7 +225,7 @@ describe("mediaRefs / planMedia", () => {
         null,
       );
     }
-    const info = new Map<string, MediaInfo>(ids.map((id) => [id, { size: 100, pages: null }]));
+    const info = new Map<string, MediaInfo>(ids.map((id) => [id, row(100)]));
     const plan = planMedia(log.events, SEE, info, 250);
     expect(plan.fetch.sort()).toEqual(ids.slice(1).sort());
     expect([...plan.dropped]).toEqual([ids[0]]);
@@ -240,17 +254,23 @@ describe("占位与内联的细节", () => {
     });
   });
 
-  it("内联截断不切开代理对（按码点边界）", () => {
-    const text = `${"x".repeat(TEXT_INLINE_MAX_CHARS - 1)}\u{1F600}tail`;
-    const { request } = build(
-      BLIND,
-      logWith([content[3] as LogContentBlock]),
-      media([[TXT, { mediaType: "text/plain", data: bytes(text) }]]),
-    );
+  it("行里的声明大小说谎（声明小、实际更长）：仍是引用行，正文不上线", () => {
+    const text = `${"x".repeat(TEXT_INLINE_MAX_CHARS)}\u{1F600}tail`;
+    const { request } = buildModelRequest({
+      events: logWith([content[3] as LogContentBlock]).events,
+      agent: AGENT,
+      agentVersion: 1,
+      model: BLIND,
+      step: 0,
+      mediaInfo: new Map([[TXT, row(10)]]),
+      media: new Map([[TXT, { mediaType: "text/plain", data: bytes(text) }]]),
+    });
     const [b] = userContent(request.messages);
     const out = b?.type === "text" ? b.text : "";
+    expect(out).toContain("10 bytes of text; not sent inline.");
+    expect(out).not.toContain("[Truncated:");
+    expect(out).not.toContain("tail");
     expect(out).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
-    expect(out).toContain("[Truncated:");
   });
 });
 
@@ -308,7 +328,7 @@ function logOf(blocks: LogContentBlock[]): Log {
 
 const decode = (b64: string) => Buffer.from(b64, "base64").toString("utf8");
 
-describe("文本附件封顶（Ruling M8 / C1）", () => {
+describe("文本附件超限与 file 块：只取行信息，不取字节（§5.2）", () => {
   const BIG = 5 * 1024 * 1024;
   const csv = (n: number) => "a,b\n".repeat(Math.ceil(n / 4)).slice(0, n);
   const block: LogContentBlock = {
@@ -318,38 +338,39 @@ describe("文本附件封顶（Ruling M8 / C1）", () => {
     name: "big.csv",
   };
 
-  it("5 MB 的 CSV 发给 documents:true 模型：只取开头、截断并注明，不整个发出", () => {
-    const info = new Map<string, MediaInfo>([[TXT, { size: BIG, pages: null }]]);
+  it("5 MB 的 CSV：不取字节、不进预算，模型看到引用行", () => {
+    const info = new Map<string, MediaInfo>([[TXT, row(BIG)]]);
     const plan = planMedia(logOf([block]).events, SEE, info, 1_000_000);
-    // 预算按封顶后的大小计：5 MB 的文件放得进 1 MB 的预算；只取前 TEXT_FETCH_MAX_BYTES 字节
-    expect(plan.fetch).toEqual([TXT]);
-    expect(plan.caps.get(TXT)).toBe(TEXT_FETCH_MAX_BYTES);
-    expect(TEXT_FETCH_MAX_BYTES).toBeLessThan(1_000_000);
+    expect(plan.fetch).toEqual([]);
+    expect(plan.caps.size).toBe(0);
+    expect(plan.dropped.size).toBe(0);
 
-    const head = bytes(csv(TEXT_FETCH_MAX_BYTES));
-    const { request, mediaTokens } = buildModelRequest({
+    const { request, mediaTokens, meta } = buildModelRequest({
       events: logOf([block]).events,
       agent: AGENT,
       agentVersion: 1,
       model: SEE,
       step: 0,
       mediaInfo: info,
-      media: new Map([[TXT, { mediaType: "text/csv", data: head }]]),
+      media: new Map(),
       mediaBudgetBytes: 1_000_000,
     });
     const [b] = userContent(request.messages);
-    expect(b?.type).toBe("document");
-    const text = b?.type === "document" && b.source.kind === "base64" ? decode(b.source.data) : "";
-    expect(text.length).toBeLessThan(TEXT_INLINE_MAX_CHARS + 200);
-    expect(text.startsWith(csv(TEXT_INLINE_MAX_CHARS))).toBe(true);
-    expect(text).toContain(
-      `[Truncated: showing the first ${TEXT_INLINE_MAX_CHARS} characters of a ${BIG}-byte file.]`,
-    );
-    expect(mediaTokens).toBeLessThan(BIG / 30);
+    expect(b).toEqual({
+      type: "text",
+      text: `[Attached file "big.csv" (text/csv), ${BIG} bytes of text; not sent inline. The file is available in the device on request. Unsigned object reference: capybara://attachments/test. Use FetchAttachment with the file name or this reference to copy it into the device.]`,
+    });
+    expect(mediaTokens).toBe(0);
+    expect(meta.media).toEqual([{ attachmentId: TXT, outcome: "reference" }]);
   });
 
-  it("存储给了整个文件（没有按范围读）：同样封顶", () => {
-    const info = new Map<string, MediaInfo>([[TXT, { size: 200_000, pages: null }]]);
+  it("在取字节的上限之内但解码后超过内联上限：取到了也仍是引用行", () => {
+    // 20000 ASCII 字符（≤ TEXT_FETCH_MAX_BYTES 字节）解码后 20000 > TEXT_INLINE_MAX_CHARS
+    const size = 20_000;
+    expect(size).toBeLessThanOrEqual(TEXT_FETCH_MAX_BYTES);
+    expect(size).toBeGreaterThan(TEXT_INLINE_MAX_CHARS);
+    const info = new Map<string, MediaInfo>([[TXT, row(size)]]);
+    expect(planMedia(logOf([block]).events, SEE, info).fetch).toEqual([TXT]);
     const { request } = buildModelRequest({
       events: logOf([block]).events,
       agent: AGENT,
@@ -357,32 +378,49 @@ describe("文本附件封顶（Ruling M8 / C1）", () => {
       model: SEE,
       step: 0,
       mediaInfo: info,
-      media: new Map([[TXT, { mediaType: "text/csv", data: bytes(csv(200_000)) }]]),
+      media: new Map([[TXT, { mediaType: "text/csv", data: bytes(csv(size)) }]]),
     });
     const [b] = userContent(request.messages);
-    const text = b?.type === "document" && b.source.kind === "base64" ? decode(b.source.data) : "";
-    expect(text.length).toBeLessThan(TEXT_INLINE_MAX_CHARS + 200);
-    expect(text).toContain("[Truncated:");
+    const text = b?.type === "text" ? b.text : "";
+    expect(text).toContain(`, ${size} bytes of text; not sent inline.`);
+    expect(text).not.toContain("a,b");
   });
 
-  it("按范围读切在多字节字符中间：不出现替换字符", () => {
-    const info = new Map<string, MediaInfo>([[TXT, { size: 999_999, pages: null }]]);
-    // 「中」是 3 字节：截成 2 字节的尾巴
-    const head = bytes("中".repeat(10)).subarray(0, 29);
+  it("恰好 8000 字符、模型支持 documents：整篇作为文档发出，没有截断注明", () => {
+    const exact = csv(TEXT_INLINE_MAX_CHARS);
+    const info = new Map<string, MediaInfo>([[TXT, row(TEXT_INLINE_MAX_CHARS)]]);
     const { request } = buildModelRequest({
       events: logOf([block]).events,
       agent: AGENT,
       agentVersion: 1,
-      model: BLIND,
+      model: SEE,
       step: 0,
       mediaInfo: info,
-      media: new Map([[TXT, { mediaType: "text/csv", data: head }]]),
+      media: new Map([[TXT, { mediaType: "text/csv", data: bytes(exact) }]]),
     });
     const [b] = userContent(request.messages);
-    const text = b?.type === "text" ? b.text : "";
-    expect(text).not.toContain("�");
-    expect(text).toContain("中".repeat(9));
-    expect(text).toContain("[Truncated: showing the first 9 characters of a 999999-byte file.]");
+    expect(b?.type).toBe("document");
+    const sent = b?.type === "document" && b.source.kind === "base64" ? decode(b.source.data) : "";
+    expect(sent).toBe(exact);
+  });
+
+  it("file 块：要行信息（引用行要大小与 URI），从不取字节、不占预算", () => {
+    const file: LogContentBlock = {
+      type: "file",
+      mediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      source: ref(GONE),
+      name: "book.xlsx",
+      size: 10_000_000,
+    };
+    const log = logOf([file]);
+    // the row is needed for the reference line, so the ref is listed ...
+    expect(mediaRefs(log.events, SEE)).toEqual([GONE]);
+    // ... but nothing is ever fetched, and a budget far below its size drops nothing
+    const info = new Map<string, MediaInfo>([[GONE, row(10_000_000)]]);
+    const plan = planMedia(log.events, SEE, info, 10);
+    expect(plan.fetch).toEqual([]);
+    expect(plan.dropped.size).toBe(0);
+    expect(plan.caps.size).toBe(0);
   });
 });
 
@@ -399,7 +437,7 @@ describe("供应商限制（Ruling M8 / I1）", () => {
         }),
       ),
     );
-    const info = new Map<string, MediaInfo>(ids.map((id) => [id, { size: 10, pages: null }]));
+    const info = new Map<string, MediaInfo>(ids.map((id) => [id, row(10)]));
     const plan = planMedia(log.events, SEE, info);
     expect(plan.fetch).toHaveLength(MAX_IMAGES_PER_REQUEST);
     expect(plan.fetch).not.toContain(ids[0]);
@@ -439,7 +477,7 @@ describe("供应商限制（Ruling M8 / I1）", () => {
     const log = logOf([
       { type: "document", mediaType: "application/pdf", source: ref(PDF), name: "huge.pdf" },
     ]);
-    const info = new Map<string, MediaInfo>([[PDF, { size: 1000, pages: MAX_PDF_PAGES + 1 }]]);
+    const info = new Map<string, MediaInfo>([[PDF, row(1000, MAX_PDF_PAGES + 1)]]);
     expect(planMedia(log.events, SEE, info).fetch).toEqual([]);
     const { request, meta } = buildModelRequest({
       events: log.events,
@@ -455,7 +493,7 @@ describe("供应商限制（Ruling M8 / I1）", () => {
     ]);
     expect(meta.media).toEqual([{ attachmentId: PDF, outcome: "too_many_pages" }]);
     // 恰好 100 页照常发送
-    const ok = new Map<string, MediaInfo>([[PDF, { size: 1000, pages: MAX_PDF_PAGES }]]);
+    const ok = new Map<string, MediaInfo>([[PDF, row(1000, MAX_PDF_PAGES)]]);
     expect(planMedia(log.events, SEE, ok).fetch).toEqual([PDF]);
   });
 
@@ -493,9 +531,9 @@ describe("model_call 记录媒体结果（Ruling M8 / I2）", () => {
     );
     const m = media();
     const info = new Map<string, MediaInfo>([
-      [IMG, { size: PNG_BYTES.byteLength, pages: null, etag: "e-img" }],
-      [PDF, { size: PDF_BYTES.byteLength, pages: 2, etag: "e-pdf" }],
-      [TXT, { size: 11, pages: null, etag: null }],
+      [IMG, { ...row(PNG_BYTES.byteLength), etag: "e-img" }],
+      [PDF, { ...row(PDF_BYTES.byteLength, 2), etag: "e-pdf" }],
+      [TXT, { ...row(11), etag: null }],
     ]);
     const see = buildModelRequest({
       events: log.events,
@@ -539,7 +577,7 @@ describe("model_call 记录媒体结果（Ruling M8 / I2）", () => {
 describe("PDF token 估算（I3）", () => {
   it("数不到页数：按每 100 KB 一页估（最多 100 页），绝不按字节 / 3", () => {
     const size = 3 * 1024 * 1024;
-    const info = new Map<string, MediaInfo>([[PDF, { size, pages: null }]]);
+    const info = new Map<string, MediaInfo>([[PDF, row(size)]]);
     const log = logOf([
       { type: "document", mediaType: "application/pdf", source: ref(PDF), name: "scan.pdf" },
     ]);
@@ -556,7 +594,7 @@ describe("PDF token 估算（I3）", () => {
     expect(mediaTokens).toBeLessThanOrEqual(31 * PDF_PAGE_TOKENS);
     expect(mediaTokens).toBe(31 * PDF_PAGE_TOKENS);
     // 很大的 PDF 也最多按 100 页估
-    const huge = new Map<string, MediaInfo>([[PDF, { size: 20 * 1024 * 1024, pages: null }]]);
+    const huge = new Map<string, MediaInfo>([[PDF, row(20 * 1024 * 1024)]]);
     const r = buildModelRequest({
       events: log.events,
       agent: AGENT,

@@ -29,9 +29,9 @@ export interface SkillSummary {
   fork?: boolean;
   /**
    * Plugin scope phase 2: `platform` for a platform skill on in the org (not deletable or versioned
-   * by the org), `org` for the org's own (absent from older kernels: the org's own).
+   * by the org), `org` for the org's own.
    */
-  origin?: "org" | "platform";
+  origin: "org" | "platform";
   /** A platform skill's owner: the platform, or the org whose upload it came from (P3-1). */
   owner?: Owner;
   /**
@@ -46,9 +46,9 @@ export interface SkillSummary {
   builtin?: boolean;
   /**
    * Plugin scope phase 3: the org's own org-scope skill is 可共享 (the super admin may show or offer
-   * it to other orgs); false for platform skills and agents' skills (absent from older kernels).
+   * it to other orgs); false for platform skills and agents' skills.
    */
-  shareable?: boolean;
+  shareable: boolean;
   /** The agent's own skill list only: a share request of the skill waits for an org admin. */
   sharePending?: boolean;
   /**
@@ -79,8 +79,8 @@ export interface SkillVersion {
 }
 
 export interface SkillDetail extends SkillSummary {
-  /** How many of the org's agents turn the skill off (absent from older kernels). */
-  agentsOff?: number;
+  /** How many of the org's agents turn the skill off. */
+  agentsOff: number;
   /** 各版本，新的在前。 */
   versions: SkillVersion[];
   /** 当前版本 SKILL.md 的正文（已去掉 frontmatter）；太大或读不到时为 null。 */

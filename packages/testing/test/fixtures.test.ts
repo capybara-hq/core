@@ -1145,7 +1145,7 @@ describe("core fixtures", () => {
       for (const e of await readdir(dir, { withFileTypes: true })) {
         const full = join(dir, e.name);
         if (e.isDirectory()) {
-          if (e.name === "node_modules" || e.name === "ui-legacy-place") continue;
+          if (e.name === "node_modules" || e.name === "ui-todo-shape") continue;
           await walk(full);
         } else if (/\.ts$/.test(e.name)) {
           const text = await readFile(full, "utf8");

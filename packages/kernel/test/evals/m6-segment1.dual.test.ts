@@ -35,7 +35,7 @@ import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
+import { enableExtensions, eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
 
 /**
  * M6 第一段验收（双副本）：两个独立进程的内核副本（api / worker）共享 PG / Redis，加载 model-fake
@@ -168,6 +168,7 @@ describe("M6 第一段双副本验收（轨迹、评测集、单步 / 整轮回�
     const org = await at("boss", 0, "POST", "/api/v1/orgs", { name: "Acme" });
     expect(org.status, JSON.stringify(org.json)).toBe(201);
     const orgId = (org.json.org as { id: string }).id;
+    await enableExtensions(raw, orgId, "model-fake", "judge-gate");
     const base = `/api/v1/orgs/${orgId}`;
     await testMembers(db).add(orgId, ids.admin, "admin", ids.boss);
     await testMembers(db).add(orgId, ids.keeper, "member", ids.boss);

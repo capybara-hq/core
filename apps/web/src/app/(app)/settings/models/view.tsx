@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Button,
   EmptyState,
   ErrorDetail,
   FormSection,
@@ -10,9 +11,9 @@ import {
   Stack,
   Text,
 } from "@capybara-hq/design";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import {
   ModelCatalog,
@@ -21,11 +22,13 @@ import {
 } from "../../../../components/ModelCatalog";
 import { useModelDisabling } from "../../../../components/ModelDisabling";
 import { NoAccess } from "../../../../components/NoAccess";
+import { modelProvidersOf, OrgModelProviders } from "../../../../components/OrgModelProviders";
 import { usePurposeDrafts } from "../../../../components/PurposeEditor";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
 import type { ProviderModels } from "../../../../lib/agents";
 import { extensionLabel, labelLocale } from "../../../../lib/extension-label";
+import type { OrgExtension } from "../../../../lib/extensions";
 import {
   type AdminProvider,
   type ModelDisableChange,
@@ -37,7 +40,6 @@ import {
   selectedProvider,
 } from "../../../../lib/models";
 import { orgExtensionsQuery } from "../../../../lib/query/channels";
-import { retryOnMountOf } from "../../../../lib/query/client";
 import { allModelsQuery } from "../../../../lib/query/conversation";
 import { keys } from "../../../../lib/query/keys";
 import { useAppMutation } from "../../../../lib/query/mutation";
@@ -48,13 +50,17 @@ import { useUrlParam, useUrlTab } from "../../../../lib/url-tab";
 import NotFound from "../../not-found";
 
 /**
- * `/settings/models`：模型（组织管理员，SettingsPage），two tabs in the head, kept in the address:
- * - 模型 (the bare page): the org's catalog, the providers beside the open one's models
- *   (`?provider=<plugin>`, the first by default), one table per kind with the org's switches (an
- *   org admin turns off models among the ones the platform left on); under the provider's name how
- *   it is configured here with a link to its config; a provider that cannot list its models here
- *   shows its error in the detail;
- * - 用途默认 (`?tab=purposes`): each purpose shows the deployment default the super admins set and
+ * `/settings/models`: Models (org admins, SettingsPage), two tabs in the head, kept in the address:
+ * - Models (the bare page): the org admin's one place to set up a model service (the setup
+ *   checklist's model step leads here): Model services, every model service the platform offers
+ *   the org with "Turn on" and Configure inline (`OrgModelProviders`; a warn line while the org has turned none on);
+ *   then the org's catalog, the providers beside the open one's models (`?provider=<plugin>`, the
+ *   first by default), one table per kind with the org's switches (an org admin turns off models
+ *   among the ones the platform left on); under the provider's name how it is configured here
+ *   with Configure, which opens the same Sheet; a provider that cannot list its models here shows its
+ *   error in the detail. With no model service on the platform at all, the page empty state says a
+ *   super admin deploys one (with the link for a super admin only);
+ * - Purpose defaults (`?tab=purposes`): each purpose shows the deployment default the super admins set and
  *   the org may override it (a model and its params) or restore the default; `eval` without an
  *   effective mapping says the evals cannot use a judge (the eval wizard links here).
  * From the query cache (the layout prefetched it on a first load, for either tab): the org's
@@ -71,7 +77,14 @@ export default function OrgModelsView({
   const ws = useWorkspace({ min: "admin", setup: "step" });
   if (ws.kind === "pending" || ws.kind === "noOrg") return null;
   if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
-  return <OrgModels orgId={ws.orgId} initialTab={tab} initialProvider={provider} />;
+  return (
+    <OrgModels
+      orgId={ws.orgId}
+      superAdmin={ws.me.account.isSuperAdmin}
+      initialTab={tab}
+      initialProvider={provider}
+    />
+  );
 }
 
 /**
@@ -94,12 +107,17 @@ type Header = {
   activeTab: ModelsTab;
 };
 
+/** The Model services rows while they load: a name over its id and version. */
+const LOADING_PROVIDERS = [{ lines: 2 }, { lines: 2 }];
+
 function OrgModels({
   orgId,
+  superAdmin,
   initialTab,
   initialProvider,
 }: {
   orgId: string;
+  superAdmin: boolean;
   initialTab: ModelsTab;
   initialProvider: string;
 }) {
@@ -109,6 +127,7 @@ function OrgModels({
   const purposes = usePageQuery(orgPurposesQuery(orgId));
   const models = usePageQuery(allModelsQuery(orgId));
   const catalog = usePageQuery(modelsCatalogQuery(orgId));
+  const extensions = usePageQuery(orgExtensionsQuery(orgId));
   const [tab, setTab] = useUrlTab(initialTab, parseModelsTab, "models");
   const [provider, setProvider] = useUrlParam("provider", initialProvider, (r) => r ?? "", "");
   const header: Header = {
@@ -121,16 +140,25 @@ function OrgModels({
     })),
     activeTab: tab,
   };
-  if (purposes.kind === "notFound" || models.kind === "notFound" || catalog.kind === "notFound") {
-    return <NotFound />;
-  }
-  if (purposes.kind === "error") return <ErrorFrame reset={purposes.retry} />;
-  if (models.kind === "error") return <ErrorFrame reset={models.retry} />;
-  if (catalog.kind === "error") return <ErrorFrame reset={catalog.retry} />;
-  if (purposes.kind === "loading" || models.kind === "loading" || catalog.kind === "loading") {
+  const reads = [purposes, models, catalog, extensions] as const;
+  if (reads.some((r) => r.kind === "notFound")) return <NotFound />;
+  for (const r of reads) if (r.kind === "error") return <ErrorFrame reset={r.retry} />;
+  if (
+    purposes.kind !== "ready" ||
+    models.kind !== "ready" ||
+    catalog.kind !== "ready" ||
+    extensions.kind !== "ready"
+  ) {
     return tab === "models" ? (
-      // The picker's slot over the loading chat table (the provider names come with the data)
+      // the Model services rows, then the picker's slot over the loading chat table (the provider names
+      // come with the data)
       <SettingsPage header={header} nav={nav} activeNav="models">
+        <FormSection
+          id="providers"
+          title={t("org.providers.title")}
+          description={t("org.providers.description")}
+          loading={{ items: LOADING_PROVIDERS }}
+        />
         <ModelProvidersLoading
           picker
           columns={[
@@ -158,37 +186,45 @@ function OrgModels({
   return (
     <ModelsBody
       orgId={orgId}
+      superAdmin={superAdmin}
       header={header}
       provider={provider}
       onProvider={setProvider}
       purposes={purposes.data.purposes}
       providers={models.data.providers}
       catalog={catalog.data.providers}
+      extensions={extensions.data.extensions}
     />
   );
 }
 
 function ModelsBody({
   orgId,
+  superAdmin,
   header,
   provider,
   onProvider,
   purposes,
   providers,
   catalog,
+  extensions,
 }: {
   orgId: string;
+  superAdmin: boolean;
   header: Header;
   provider: string;
   onProvider(plugin: string): void;
   purposes: PurposeView[];
   providers: ProviderModels[];
   catalog: AdminProvider[];
+  extensions: OrgExtension[];
 }) {
   const t = useTranslations("models");
   const locale = useLocale();
   const nav = useOrgSettingsNav();
   const qc = useQueryClient();
+  // The model service whose Sheet is open (from its row or from Configure under the open provider)
+  const [sheet, setSheet] = useState<string | null>(null);
   const disabling = useModelDisabling({
     scope: { orgId },
     purposes,
@@ -235,19 +271,40 @@ function ModelsBody({
   const open = selectedProvider(catalog, provider);
   const nameOf = (p: AdminProvider) =>
     extensionLabel({ name: p.provider, displayName: p.displayName }, labelLocale(locale));
+  const services = modelProvidersOf(extensions);
+  if (services.length === 0 && open === undefined) {
+    // Nothing to turn on here: a super admin deploys a model service first (only they get the link)
+    return (
+      <SettingsPage header={header} nav={nav} activeNav="models">
+        <EmptyState
+          text={t("org.noProviders")}
+          {...(superAdmin
+            ? {
+                action: (
+                  <LinkButton href="/admin/models" variant="primary">
+                    {t("org.toAdminModels")}
+                  </LinkButton>
+                ),
+              }
+            : {})}
+        />
+      </SettingsPage>
+    );
+  }
+  const configurable = new Set(services.map((e) => e.plugin));
   return (
     <SettingsPage header={header} nav={nav} activeNav="models">
       {disabling.notice}
-      {open === undefined ? (
-        <EmptyState
-          text={t("org.noProviders")}
-          action={
-            <LinkButton href="/plugins" variant="primary">
-              {t("org.toPlugins")}
-            </LinkButton>
-          }
+      {services.length > 0 && (
+        <OrgModelProviders
+          orgId={orgId}
+          superAdmin={superAdmin}
+          providers={services}
+          open={sheet}
+          onOpen={setSheet}
         />
-      ) : (
+      )}
+      {open === undefined ? null : (
         <Stack gap={16}>
           <Text variant="prose" tone="muted">
             {t("catalog.orgDescription")}
@@ -256,8 +313,9 @@ function ModelsBody({
               a select above the detail picks the provider */}
           <OrgProvider
             key={open.plugin}
-            orgId={orgId}
             provider={open}
+            extension={extensions.find((e) => e.plugin === open.plugin)}
+            {...(configurable.has(open.plugin) ? { onConfigure: () => setSheet(open.plugin) } : {})}
             name={nameOf(open)}
             pending={disabling.pending}
             onChange={disabling.change}
@@ -282,33 +340,30 @@ function ModelsBody({
 
 /**
  * The open provider of the org's catalog: its models with the org's switches, and under its name
- * how it is configured here (跟随平台 / 本组织配置, from the extension's `overrideState`) with a
- * link to the extension's config. A provider that cannot list its models here shows its error
- * instead.
+ * how it is configured here ("Following the platform" / "This org's configuration", from the
+ * extension's `overrideState`) with Configure, which opens the model service's Sheet on this page. A provider that cannot list its models
+ * here shows its error instead.
  */
 function OrgProvider({
-  orgId,
   provider: p,
+  extension: ext,
   name,
   pending,
   onChange,
+  onConfigure,
   picker,
 }: {
-  orgId: string;
   provider: AdminProvider;
+  /** The provider's extension in the org (its config state). */
+  extension: OrgExtension | undefined;
   name: string;
   pending: boolean;
   picker: ReactNode;
   onChange(provider: string, change: ModelDisableChange): void;
+  /** Opens the provider's Sheet; absent when the org has nothing to configure on it. */
+  onConfigure?: () => void;
 }) {
   const t = useTranslations("models");
-  const extensionsQ = orgExtensionsQuery(orgId);
-  // The state line is a hint: a failed or slow read leaves it out, never blocks the models.
-  const extensions = useQuery({
-    ...extensionsQ,
-    retryOnMount: retryOnMountOf(extensionsQ.queryKey),
-  });
-  const ext = extensions.data?.extensions.find((e) => e.plugin === p.plugin);
   const state =
     ext?.overrideState === "following"
       ? t("catalog.following")
@@ -329,9 +384,11 @@ function OrgProvider({
             <Text variant="small" tone="muted">
               {state}
             </Text>
-            <LinkButton href="/extensions?tab=model" density="dense">
-              {t("catalog.configure")}
-            </LinkButton>
+            {onConfigure !== undefined && (
+              <Button density="dense" onClick={onConfigure}>
+                {t("catalog.configure")}
+              </Button>
+            )}
           </>
         ) : null}
       </Stack>

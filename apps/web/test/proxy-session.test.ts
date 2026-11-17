@@ -433,11 +433,9 @@ describe("proxy: forwarded headers", () => {
     expect(forwarded(signedIn, SESSION_STATE_HEADER)).toBeNull();
   });
 
-  it("the legacy locale prefix still redirects first", async () => {
+  it("a language prefix is no longer redirected", async () => {
     const res = await proxy(page("/en/agents?x=1"));
-    expect(res.status).toBe(308);
-    expect(res.headers.get("location")).toBe(`${WEB}/agents?x=1`);
-    expect(calls).toHaveLength(0);
+    expect(res.status).not.toBe(308);
   });
 });
 

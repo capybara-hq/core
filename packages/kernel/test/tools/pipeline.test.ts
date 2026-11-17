@@ -34,7 +34,6 @@ import { assistantIdemKey, modelCallIdemKey } from "../../src/runtime/model-call
 import type { Breaker } from "../../src/tools/breaker.js";
 import { notLoadedText, toolSearchTool } from "../../src/tools/builtins/tool-search.js";
 import { type ConnectorAuth, CredentialMissing } from "../../src/tools/credentials.js";
-import { legacyHint } from "../../src/tools/legacy-keys.js";
 import type { ToolOutputs } from "../../src/tools/outputs.js";
 import {
   type DecidePolicy,
@@ -1598,6 +1597,9 @@ describe("ToolSearch 模式", () => {
             summarySeq: null,
             systemHash: "x",
             reminderSeqs: [],
+            maxOutputTokens: 4096,
+            params: {},
+            absorbedUpToSeq: 1,
             tools: sent.map((t) => ({ key: t.key, specHash: t.specHash })),
             ...(catalog && {
               catalog: resolved
@@ -1808,168 +1810,5 @@ describe("plugin hooks (tool.preExecute)", () => {
     expect(f.runs).toEqual([]);
     expect(handlerCalls.echo).toHaveLength(1);
     expect(evs.some((e) => e.type === "hook_denied")).toBe(false);
-  });
-});
-
-describe("release-candidate tool keys", () => {
-  const builtin = (
-    key: string,
-    schema: Record<string, unknown> = { type: "object" },
-  ): ResolvedTool => {
-    const spec = pluginSpec(key, schema);
-    return {
-      key,
-      source: { kind: "builtin", name: key },
-      spec,
-      specHash: specHash(spec),
-      defaultPolicy: "allow",
-    };
-  };
-
-  /** The model_call of step 1 offering exactly `keys` (no catalog: not ToolSearch mode). */
-  async function modelCall(keys: string[]): Promise<void> {
-    await eventLog.append(seed.conversationId, [
-      {
-        type: "model_call",
-        runId,
-        idemKey: modelCallIdemKey(runId, 1, 1),
-        payload: {
-          step: 1,
-          attempt: 1,
-          provider: "stub",
-          model: "s-1",
-          fallback: false,
-          request: {
-            fromSeq: 1,
-            toSeq: 1,
-            summarySeq: null,
-            systemHash: "x",
-            reminderSeqs: [],
-            tools: keys.map((key) => ({ key, specHash: "h" })),
-          },
-        },
-      },
-    ]);
-  }
-
-  it("a legacy key the issuing request did not offer gets the unknown-tool text plus the hint", async () => {
-    resolved = [builtin("Bash")];
-    await modelCall(["Bash"]);
-    const evs = await runCalls([{ id: "c1", name: "sandbox_bash", input: { command: "ls" } }]);
-    const r = resultsOf(evs)[0];
-    expect(r).toMatchObject({ toolKey: "sandbox_bash", isError: true });
-    expect(r?.content).toContain(legacyHint("sandbox_bash"));
-    expect(startedOf(evs)).toEqual([]);
-  });
-
-  it("an in-flight legacy call (the request offered the old key) runs as the new tool and is logged under the old key", async () => {
-    const seen: unknown[] = [];
-    resolved = [builtin("Bash")];
-    builtinHandlers = {
-      Bash: async (input) => {
-        seen.push(input);
-        return { content: [{ type: "text", text: "ran" }] };
-      },
-    };
-    await modelCall(["sandbox_bash"]);
-    const evs = await runCalls([
-      { id: "c1", name: "sandbox_bash", input: { command: "ls", timeoutSeconds: 3 } },
-    ]);
-    expect(seen).toEqual([{ command: "ls", timeout: 3000 }]);
-    expect(resultsOf(evs)[0]).toMatchObject({
-      toolKey: "sandbox_bash",
-      isError: false,
-      content: "ran",
-    });
-    expect(startedOf(evs)[0]).toMatchObject({ toolKey: "Bash" });
-  });
-
-  it("an approval waiting before the upgrade resumes by call id: the call runs as Edit with the translated input", async () => {
-    await insertRun();
-    const seen: unknown[] = [];
-    const edit = { ...builtin("Edit"), defaultPolicy: "ask" as const };
-    resolved = [edit];
-    builtinHandlers = {
-      Edit: async (input) => {
-        seen.push(input);
-        return { content: [{ type: "text", text: "edited" }] };
-      },
-    };
-    await modelCall(["sandbox_edit"]);
-    await assistant([
-      { id: "c1", name: "sandbox_edit", input: { path: "/a", oldText: "x", newText: "y" } },
-    ]);
-    const first = await pipeline().runStep(stepCtx());
-    expect(first.kind).toBe("suspended");
-    const id = first.kind === "suspended" ? first.waitingFor.id : "";
-    await sql`UPDATE capybara.approvals SET status = 'approved' WHERE id = ${id}`.execute(raw);
-    expect(await pipeline().runStep(stepCtx())).toEqual({ kind: "done" });
-    expect(seen).toEqual([{ file_path: "/a", old_string: "x", new_string: "y" }]);
-    const evs = await eventsOf(db, seed.conversationId);
-    expect(resultsOf(evs)).toEqual([
-      expect.objectContaining({ toolKey: "sandbox_edit", isError: false, content: "edited" }),
-    ]);
-  });
-
-  it("an rc approval (old spec hash) approved after the upgrade runs the call once, without asking again", async () => {
-    await insertRun();
-    const seen: unknown[] = [];
-    resolved = [{ ...builtin("Bash"), defaultPolicy: "ask" as const }];
-    builtinHandlers = {
-      Bash: async (input) => {
-        seen.push(input);
-        return { content: [{ type: "text", text: "ran" }] };
-      },
-    };
-    await modelCall(["sandbox_bash"]);
-    await assistant([{ id: "c1", name: "sandbox_bash", input: { command: "ls" } }]);
-    const first = await pipeline().runStep(stepCtx());
-    expect(first.kind).toBe("suspended");
-    const id = first.kind === "suspended" ? first.waitingFor.id : "";
-    // the approval was created by the rc kernel: it carries the old definition's hash
-    await sql`UPDATE capybara.approvals SET status = 'approved', spec_hash = 'rc-spec-hash' WHERE id = ${id}`.execute(
-      raw,
-    );
-    expect(await pipeline().runStep(stepCtx())).toEqual({ kind: "done" });
-    expect(seen).toEqual([{ command: "ls" }]);
-    const evs = await eventsOf(db, seed.conversationId);
-    expect(resultsOf(evs)).toEqual([
-      expect.objectContaining({ toolKey: "sandbox_bash", isError: false, content: "ran" }),
-    ]);
-    const rows = await sql<{ n: number }>`
-      SELECT count(*)::int AS n FROM capybara.approvals WHERE call_id = 'c1'
-    `.execute(raw);
-    expect(rows.rows[0]?.n).toBe(1);
-  });
-
-  it("an in-flight old <x>__<tool> key runs as mcp__x__tool / plugin__x__tool when x is in only one scope", async () => {
-    await modelCall(["docs__read", "probe__echo"]);
-    const evs = await runCalls([
-      { id: "c1", name: "docs__read", input: {} },
-      { id: "c2", name: "probe__echo", input: { text: "hi" } },
-    ]);
-    const [r1, r2] = resultsOf(evs);
-    expect(r1).toMatchObject({ toolKey: "docs__read", isError: false, content: "called read" });
-    expect(r2).toMatchObject({ toolKey: "probe__echo", isError: false });
-    expect(handlerCalls.echo).toEqual([{ text: "hi" }]);
-    expect(startedOf(evs).map((p) => p.toolKey)).toEqual([
-      "mcp__docs__read",
-      "plugin__probe__echo",
-    ]);
-  });
-
-  it("an ambiguous or unknown owner gives the plain unknown-tool error, without a hint", async () => {
-    resolved = [...resolved, appTool("probe", connectorId, "echo")];
-    await modelCall(["probe__echo", "nope__x"]);
-    const evs = await runCalls([
-      { id: "c1", name: "probe__echo", input: { text: "hi" } },
-      { id: "c2", name: "nope__x", input: {} },
-    ]);
-    for (const r of resultsOf(evs)) {
-      expect(r.isError).toBe(true);
-      expect(r.content).toMatch(/^Unknown tool "/);
-      expect(r.content).not.toContain("no longer exists");
-    }
-    expect(handlerCalls.echo).toBeUndefined();
   });
 });

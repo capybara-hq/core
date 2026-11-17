@@ -34,7 +34,7 @@ import { anonymousGuestsFor } from "../helpers/channels.js";
 import { accountsFor, apiTokensFor, directorySyncFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
-  createOrg,
+  createOrgWithProviders,
   PW,
   type Req,
   runConfig,
@@ -105,7 +105,7 @@ let orgSeq = 0;
 /** 新建组织并启用 dir-mini（组织配置指向一份新的假通讯录）。 */
 async function setupOrg(): Promise<{ orgId: string; book: ReturnType<FakeChannelServer["book"]> }> {
   orgSeq++;
-  const orgId = await createOrg(ownerReq, `Dir ${orgSeq}`);
+  const orgId = await createOrgWithProviders(k, ownerReq, `Dir ${orgSeq}`);
   const book = fd.book(`o${orgSeq}`);
   const res = await ownerReq({
     method: "PUT",
@@ -358,7 +358,7 @@ describe("通讯录同步", () => {
     /** 由通讯录加入的 leaver：两个会话、一个个人令牌、本组织与另一组织的个人凭据、本组织与另一组织的 agent。 */
     async function leaverFixture(login: string) {
       const { orgId, book } = await setupOrg();
-      const otherOrgId = await createOrg(ownerReq, `Other ${login}`);
+      const otherOrgId = await createOrgWithProviders(k, ownerReq, `Other ${login}`);
       const leaver = await accounts.createLocal({ login, password: PW, displayName: "Leaver" });
       await linkIdentity(leaver.id, `ext-${login}`);
       book.members = [person(`ext-${login}`)];
@@ -740,7 +740,7 @@ describe("通讯录同步", () => {
 
       const rnf = await ownerReq({ method: "POST", url: path(orgId, "model-fake") });
       expect([rnf.statusCode, code(rnf)]).toEqual([404, "extension.not_found"]);
-      const other = await createOrg(ownerReq, "No dir");
+      const other = await createOrgWithProviders(k, ownerReq, "No dir");
       const rne = await ownerReq({ method: "POST", url: path(other) });
       expect([rne.statusCode, code(rne)]).toEqual([409, "extension.not_enabled"]);
       expect(book.requests).toEqual([]);
@@ -786,15 +786,16 @@ describe("通讯录同步", () => {
       payload: { enabled: false },
     });
     // 启用但已存配置不再满足 schema（如插件升级后）
-    const invalid = await createOrg(ownerReq, "Invalid cfg");
+    const invalid = await createOrgWithProviders(k, ownerReq, "Invalid cfg");
     await sql`INSERT INTO capybara.extension_org_configs (plugin, org_id, enabled, config)
       VALUES ('dir-mini', ${invalid}, true, '{}'::jsonb)`.execute(raw);
-    const unconfigured = await createOrg(ownerReq, "Unconfigured");
+    const unconfigured = await createOrgWithProviders(k, ownerReq, "Unconfigured");
     const deleted = await setupOrg();
     await sql`UPDATE capybara.orgs SET deleted_at = now() WHERE id = ${deleted.orgId}`.execute(raw);
     // 启用了不提供 directory@1 的插件
     await sql`INSERT INTO capybara.extension_org_configs (plugin, org_id, enabled)
-      VALUES ('model-fake', ${unconfigured}, true)`.execute(raw);
+      VALUES ('model-fake', ${unconfigured}, true)
+      ON CONFLICT (plugin, org_id) DO UPDATE SET enabled = true`.execute(raw);
 
     const first = await k.app.get(DirectorySync).scan();
     const mine = (orgId: string) => first.filter((t) => t.orgId === orgId);
@@ -1052,7 +1053,7 @@ describe("Ruling A28：directory.configured", () => {
   };
 
   it("未配置的通讯录：扫描不投递、同步静默跳过、changed 不投递任务、无审计", async () => {
-    const orgId = await createOrg(ownerReq, "Opt unconfigured");
+    const orgId = await createOrgWithProviders(k, ownerReq, "Opt unconfigured");
     await enableOpt(orgId, {});
     const targets = await k.app.get(DirectorySync).scan();
     expect(targets.filter((t) => t.orgId === orgId)).toEqual([]);
@@ -1069,7 +1070,7 @@ describe("Ruling A28：directory.configured", () => {
   });
 
   it("未配置时手动同步 409 directory.not_configured；配置后照常扫描与同步", async () => {
-    const orgId = await createOrg(ownerReq, "Opt manual");
+    const orgId = await createOrgWithProviders(k, ownerReq, "Opt manual");
     await enableOpt(orgId, {});
     const res = await ownerReq({
       method: "POST",

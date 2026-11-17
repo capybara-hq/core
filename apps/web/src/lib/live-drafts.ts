@@ -137,11 +137,8 @@ export class LiveDrafts {
       return;
     }
     if (d.delta === "draft") return;
-    // a delta without an offset (an older kernel): handed on as it is
-    if (d.offset === undefined) {
-      this.emit(d);
-      return;
-    }
+    // a text or thinking delta always carries its offset (the kernel's delta frame)
+    const offset = d.offset as number;
     const text = d.text ?? "";
     if (text === "") return;
     const ch: Channel = d.delta;
@@ -151,13 +148,13 @@ export class LiveDrafts {
       c.held.push(d);
       return;
     }
-    if (d.offset === 0 && c.value === "") {
+    if (offset === 0 && c.value === "") {
       // the channel starts over: it replaces what an earlier connection left of it, nothing else
       c.value = text;
       this.emit({ runId: d.runId, step: d.step, delta: "draft", [ch]: text, replace: true });
       return;
     }
-    const tail = append(c, d.offset, text);
+    const tail = append(c, offset, text);
     if (tail === null) {
       c.held.push(d);
       this.readAgain(d.runId, d.step, s);

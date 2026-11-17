@@ -16,7 +16,10 @@ import type { ConversationEvent } from "../../src/conversations/events.js";
 import { ConversationQueue } from "../../src/conversations/queue.service.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { OrgSettingsService } from "../../src/orgs/settings.service.js";
+import {
+  FORBIDDEN_TOOLS_UNREADABLE_ERROR,
+  OrgSettingsService,
+} from "../../src/orgs/settings.service.js";
 import { ScheduledTaskFirer } from "../../src/schedules/fire.js";
 import { SCHED_SCAN_JOB } from "../../src/schedules/job-ids.js";
 import { ScheduledTaskScanJob } from "../../src/schedules/scan.job.js";
@@ -30,6 +33,7 @@ import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
+  enableModelProviders,
   eventsOf,
   PW,
   postMessage,
@@ -95,6 +99,7 @@ beforeAll(async () => {
   owner = await session(k, "owner");
   const org = await owner({ method: "POST", url: "/api/v1/orgs", payload: { name: "Acme" } });
   orgId = (org.json() as { org: { id: string } }).org.id;
+  await enableModelProviders(k, orgId);
   await testMembers(db).add(orgId, bobId, "member", ownerId);
   const res = await owner({
     method: "POST",
@@ -678,6 +683,24 @@ describe("scanning and firing", () => {
       expect((await taskOf(t.id)).consecutiveFailures).toBe(0);
     } finally {
       await setSchedules({ pauseAfterFailures: 5 });
+    }
+  });
+
+  it("an unreadable forbidden tool list fails the run with an actionable error", async () => {
+    const t = await task();
+    await sql`UPDATE capybara.orgs SET settings = jsonb_set(settings, '{scheduledTasks}', '{"forbiddenTools": "Bash"}'::jsonb)
+      WHERE id = ${orgId}`.execute(raw);
+    try {
+      const r = await pendingRun(t);
+      await firer().fire(r.id);
+      expect(await runOf(r.id)).toMatchObject({
+        status: "failed",
+        error: FORBIDDEN_TOOLS_UNREADABLE_ERROR,
+      });
+      expect(await conversationsOf(t.id)).toEqual([]);
+      expect(await taskOf(t.id)).toMatchObject({ consecutiveFailures: 1 });
+    } finally {
+      await setSchedules({ forbiddenTools: [] });
     }
   });
 

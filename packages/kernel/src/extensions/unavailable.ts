@@ -51,7 +51,6 @@ export function unavailableReason(status: DeploymentExtensionStatus): ExtensionU
     case "conflict":
       return "conflict";
     case "failed":
-    case "legacy_format":
       return "failed";
     case "disabled":
       return "deployment_disabled";

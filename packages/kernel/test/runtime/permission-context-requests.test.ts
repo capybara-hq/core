@@ -7,7 +7,6 @@ import type { ConversationEvent, EventPayload } from "../../src/conversations/ev
 import { TITLE_PROMPT } from "../../src/conversations/titles.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { COMPACTION_MARKER } from "../../src/runtime/context/compaction.js";
 import { devicePathsText } from "../../src/runtime/context/device-paths.js";
 import { permissionContextText } from "../../src/runtime/context/permission-profile.js";
 import { PermissionContextRecorder } from "../../src/runtime/permission-context.service.js";
@@ -28,7 +27,7 @@ import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   gate,
   PW,
@@ -63,11 +62,9 @@ function installCapture(): void {
         async *stream(req, opts) {
           // agent-history requests only (no compaction, title, review or extraction call)
           if (
+            req.purpose !== "compaction" &&
             !req.system.some(
-              (s) =>
-                s.text.includes(COMPACTION_MARKER) ||
-                s.text === TITLE_PROMPT ||
-                s.text.startsWith(REVIEW_SYSTEM_PROMPT),
+              (s) => s.text === TITLE_PROMPT || s.text.startsWith(REVIEW_SYSTEM_PROMPT),
             )
           ) {
             sent.push(structuredClone(req));
@@ -113,7 +110,7 @@ beforeEach(async () => {
   await truncateTables(raw, "capybara.accounts, capybara.orgs");
   await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "Owner" });
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   const res = await owner({
     method: "POST",
     url: `/api/v1/orgs/${orgId}/agents`,

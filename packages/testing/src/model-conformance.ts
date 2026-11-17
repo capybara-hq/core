@@ -6,9 +6,7 @@ import {
   type ModelInfo,
   type ModelParameter,
   type ModelProvider,
-  type ModelProviderV1,
   type ModelRequest,
-  type ModelRequestV1,
   type ModelStreamEvent,
   type ParamValue,
   sanitizeParams,
@@ -32,19 +30,15 @@ interface TargetCommon {
 }
 
 /**
- * 被测供应商：`contract` 缺省为 1（`model-provider@1`）；`@2` 插件须给 `contract: 2` 与插件名
- * （用于校验厂商专有参数的键名前缀）。
+ * The provider under test (`model-provider@2`) and its plugin name (checks the key prefix of
+ * vendor-specific parameters).
  */
-export type ConformanceTarget = TargetCommon &
-  (
-    | { contract?: 1; provider: ModelProviderV1 }
-    | { contract: 2; plugin: string; provider: ModelProvider }
-  );
+export type ConformanceTarget = TargetCommon & { plugin: string; provider: ModelProvider };
 
 type Complete = Extract<ModelStreamEvent, { type: "message_complete" }>;
 
-/** 套件内部用的请求：`params` 只对 `@2` 生效（缺省 `{}`），`@1` 时不发送。 */
-type SuiteRequest = ModelRequestV1 & { params?: ModelRequest["params"] };
+/** The suite's request: `params` defaults to `{}`. */
+type SuiteRequest = Omit<ModelRequest, "params"> & { params?: ModelRequest["params"] };
 
 function streamOf(
   t: ConformanceTarget,
@@ -52,8 +46,7 @@ function streamOf(
   signal: AbortSignal,
 ): AsyncIterable<ModelStreamEvent> {
   const { params, ...rest } = req;
-  if (t.contract === 2) return t.provider.stream({ ...rest, params: params ?? {} }, { signal });
-  return t.provider.stream(rest, { signal });
+  return t.provider.stream({ ...rest, params: params ?? {} }, { signal });
 }
 
 /**
@@ -137,7 +130,7 @@ export const MEDIA_SAMPLES = {
 const textOf = (content: ContentBlock[]): string =>
   content.map((b) => (b.type === "text" ? b.text : "")).join("");
 
-/** model-provider 一致性套件（`@1` 与 `@2`）：每个供应商插件都应通过。 */
+/** The model-provider conformance suite (`@2`): every provider plugin should pass it. */
 export function describeModelProviderConformance(
   name: string,
   setup: () => Promise<ConformanceTarget>,
@@ -210,15 +203,13 @@ export function describeModelProviderConformance(
       expect(second.done.content.some((b) => b.type === "text")).toBe(true);
     });
 
-    /** 思考用例的参数：`@1` 发 `effort: "high"`；`@2` 见 {@link thinkingReplayParams}。 */
+    /** The thinking case's parameters, see {@link thinkingReplayParams}. */
     const thinkingOver = async (): Promise<Partial<SuiteRequest>> => {
-      if (t.contract !== 2) return { effort: "high" };
       const info = (await t.provider.listModels()).find((m) => m.id === t.model);
       return { params: thinkingReplayParams(info?.parameters ?? []) };
     };
 
-    it("declares valid parameters", async (ctx) => {
-      if (t.contract !== 2) return ctx.skip();
+    it("declares valid parameters", async () => {
       expect(checkDeclaredParameters(t.plugin, await t.provider.listModels())).toEqual([]);
     });
 
@@ -284,9 +275,8 @@ export function describeModelProviderConformance(
       expect(done.content.length).toBeGreaterThan(0);
     });
 
-    /** `@2` 模型的能力声明；`@1` 返回 null（媒体用例只对 `@2` 跑）。 */
+    /** The model's declared capabilities (null when it is not listed). */
     const caps = async (): Promise<ModelInfo["capabilities"] | null> => {
-      if (t.contract !== 2) return null;
       const info = (await t.provider.listModels()).find((m) => m.id === t.model);
       return info?.capabilities ?? null;
     };

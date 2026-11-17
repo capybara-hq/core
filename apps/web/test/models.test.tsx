@@ -118,6 +118,8 @@ function adminRoutes(extra: Record<string, (c: Call) => Response> = {}) {
   return stubApi({
     "GET /api/v1/admin/models": () => json(200, ADMIN_MODELS),
     "GET /api/v1/admin/model-purposes": () => json(200, { purposes: [evalView(), pluginView()] }),
+    "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
+    "GET /api/v1/admin/marketplaces/entries": () => json(200, { items: [] }),
     ...extra,
   });
 }
@@ -448,8 +450,8 @@ describe("one box is enough (acceptance item AB)", () => {
     const list = await screen.findByRole("table", { name: en.models.providers.label });
     const grid = list.closest('[data-columns="list-detail"]') as HTMLElement;
     expect(grid.getAttribute("data-divided")).toBe("true");
-    // no form card: the grid sits on the page ground
-    expect(document.querySelector('[data-part="form-card"]')).toBeNull();
+    // no form card around the grid: it sits on the page ground (Model services above is its own section)
+    expect(grid.closest('[data-part="form-card"]')).toBeNull();
     // one row per provider, the first open
     const rows = within(list).getAllByRole("row").slice(1);
     expect(rows.map((r) => r.getAttribute("data-row-key"))).toEqual(["alpha", "broken"]);
@@ -481,6 +483,8 @@ describe("one box is enough (acceptance item AB)", () => {
     stubApi({
       "GET /api/v1/admin/models": () => new Promise<Response>(() => {}),
       "GET /api/v1/admin/model-purposes": () => new Promise<Response>(() => {}),
+      "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
+      "GET /api/v1/admin/marketplaces/entries": () => json(200, { items: [] }),
     });
     await renderRouteEmptyCache("/admin/models", lastStubRoutes());
     const grid = await vi.waitFor(() => {

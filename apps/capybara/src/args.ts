@@ -28,6 +28,7 @@ export type Command =
   | { command: "plugins-list" }
   | { command: "plugins-import"; target: string; yes: boolean }
   | { command: "config-migrate-permissions"; input: string; output: string }
+  | { command: "secrets-rewrap" }
   | { command: "help" };
 
 export const USAGE = `Usage:
@@ -97,6 +98,11 @@ export const USAGE = `Usage:
                                                JSON only (a properties-format Nacos data id is
                                                not converted), and a key reached through a YAML
                                                alias or merge key is not renamed
+  capybara secrets rewrap                      After a master key rotation, rewrap every org data
+                                               key and pending initial password sealed with a
+                                               key in masterKeyPrevious with masterKey (in
+                                               batches; a re-run does nothing); prints counts,
+                                               never a key. See docs/deploy/README.md
   capybara help                                Show this help
 
 Every command first loads .env from the working directory when it exists (variables already set
@@ -243,6 +249,17 @@ export function parseCli(argv: string[]): Command {
       return { command: "extensions-install", target: name, yes: v.yes === true };
     if (sub === "approve") return { command: "extensions-approve", name, yes: v.yes === true };
     return { command: "extensions-state", name, action: sub as "enable" | "disable" | "uninstall" };
+  }
+  if (command === "secrets") {
+    const [sub, ...extra] = rest;
+    if (sub === undefined) throw new UsageError("missing secrets command (expected rewrap)");
+    if (sub !== "rewrap") throw new UsageError(`unknown secrets command "${sub}"`);
+    if (extra.length > 0) throw new UsageError(`unexpected argument "${extra[0]}"`);
+    if (v.role !== undefined) throw new UsageError("--role is only valid for start");
+    for (const opt of ADMIN_CREATE_OPTIONS) {
+      if (v[opt] !== undefined) throw new UsageError(`--${opt} is only valid for admin create`);
+    }
+    return { command: "secrets-rewrap" };
   }
   if (command === "admin") {
     const [sub, ...extra] = rest;

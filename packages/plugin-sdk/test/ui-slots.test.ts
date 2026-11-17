@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  PLACE_SLOTS,
   parseSlotRef,
   UI_ARRANGEABLE_SLOTS,
   UI_COMPONENT_SLOTS,
@@ -64,26 +63,9 @@ describe("ui slot catalog", () => {
     }
   });
 
-  it("every place maps to a catalog slot", () => {
-    for (const k of Object.keys(PLACE_SLOTS)) {
-      expect(uiSlot(PLACE_SLOTS[k as keyof typeof PLACE_SLOTS])).toBeDefined();
-    }
-  });
-
   it("file.preview is not arrangeable", () => {
     expect(UI_ARRANGEABLE_SLOTS).not.toContain("file.preview");
     expect(UI_ARRANGEABLE_SLOTS).toHaveLength(UI_SLOTS.length - 1);
-  });
-
-  it("PLACE_SLOTS maps each deprecated place to its slot", () => {
-    expect(PLACE_SLOTS).toEqual({
-      panel: "conversation.panel",
-      conversation: "conversation.panel",
-      section: "conversation.properties.section",
-      inline: "conversation.tool-result.card",
-      page: "org.page",
-      "file-preview": "file.preview",
-    });
   });
 
   it("UI_ARRANGEABLE_SLOTS lists every slot but file.preview, in catalog order", () => {

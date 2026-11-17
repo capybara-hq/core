@@ -65,6 +65,8 @@ const ADMIN_DEFAULTS: Routes = {
       templates: [],
       dependencies: [],
       skills: [],
+      agents: [],
+      missingTemplates: [],
     }),
 };
 const stubApi = (routes: Routes) =>
@@ -870,6 +872,7 @@ describe("/extensions: the switch follows the plugin", () => {
     config: null,
     secrets: [],
     permissions: [],
+    provides: [],
     orgConfigSchema: null,
     catalogItem: { itemId: ID, scope: "optional" },
     switchable: true,
@@ -1261,11 +1264,11 @@ describe("/admin/plugins/import (WizardPage)", () => {
     expect(within(zone).getByText("todo.tgz")).toBeTruthy();
   });
 
-  it("a pre-0.1.0 upload shows the legacy-format error prominently", async () => {
+  it("an upload without a plugin manifest shows the invalid-package error prominently", async () => {
     stubApi({
       "GET /api/v1/me": () => json(200, ME),
       "POST /api/v1/admin/catalog/import/file": () =>
-        json(422, { error: { code: "catalog.legacy_format", message: "x" } }),
+        json(422, { error: { code: "catalog.invalid_manifest", message: "x" } }),
     });
     await renderRouteWithCache(importPath(), lastStubRoutes());
     const user = userEvent.setup();
@@ -1275,7 +1278,7 @@ describe("/admin/plugins/import (WizardPage)", () => {
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     await user.upload(input, new File([new Uint8Array([1, 2, 3])], "old.tgz"));
     await user.click(screen.getByRole("button", { name: en.catalog.admin.review.fetch }));
-    expect(await screen.findByText(`${en.errors.catalog.legacy_format}`)).toBeTruthy();
+    expect(await screen.findByText(`${en.errors.catalog.invalid_manifest}`)).toBeTruthy();
   });
 });
 
@@ -1706,6 +1709,8 @@ describe("descriptions in the UI language (descriptionZh)", () => {
             templates: [],
             dependencies: [],
             skills: [],
+            agents: [],
+            missingTemplates: [],
           }),
         [`GET ${ORG}/plugin-installs`]: () => json(200, { installs: [] }),
         [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
@@ -1815,6 +1820,8 @@ describe("/plugins/[itemId]/enable (WizardPage)", () => {
             ],
             dependencies: [],
             skills: [],
+            agents: [],
+            missingTemplates: [],
           }),
         [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
         [`PUT ${ORG}/catalog/${ID}/switch`]: () =>
@@ -1867,6 +1874,8 @@ describe("/plugins/[itemId]/enable (WizardPage)", () => {
           ],
           dependencies: [],
           skills: [],
+          agents: [],
+          missingTemplates: [],
         }),
       [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
       [`PUT ${ORG}/catalog/${ID}/switch`]: () =>
@@ -1922,6 +1931,8 @@ describe("/plugins/[itemId]/enable (WizardPage)", () => {
           ],
           dependencies: [],
           skills: [],
+          agents: [],
+          missingTemplates: [],
         }),
       [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
       [`PUT ${ORG}/catalog/${ID}/switch`]: () =>
@@ -1980,7 +1991,8 @@ describe("/plugins/[itemId]/enable (WizardPage)", () => {
     params.current = { itemId: ID };
     const t = en.catalog.org.install;
     const calls = stubApi({
-      [`GET ${ORG}/readiness`]: () => json(200, { modelProvider: "ready", agents: 1 }),
+      [`GET ${ORG}/readiness`]: () =>
+        json(200, { modelProvider: "ready", orgFixableProviders: [], agents: 1 }),
       [`GET ${ORG}/catalog/${ID}`]: () =>
         json(200, {
           item: orgItem({ name: "crm" }),
@@ -1989,6 +2001,8 @@ describe("/plugins/[itemId]/enable (WizardPage)", () => {
           templates: [],
           dependencies: [],
           skills: [],
+          agents: [],
+          missingTemplates: [],
         }),
       [`GET ${ORG}/extensions`]: () =>
         json(200, {
@@ -2002,6 +2016,7 @@ describe("/plugins/[itemId]/enable (WizardPage)", () => {
               config: null,
               secrets: [],
               permissions: [],
+              provides: [],
               orgConfigSchema: {
                 type: "object",
                 properties: { region: { type: "string", title: "Region" } },
@@ -2071,7 +2086,8 @@ describe("/plugins/[itemId]: this org's installs (org admins)", () => {
       const a = msgs[locale].catalog.plugins;
       let gone = false;
       const calls = stubApi({
-        [`GET ${ORG}/readiness`]: () => json(200, { modelProvider: "ready", agents: 1 }),
+        [`GET ${ORG}/readiness`]: () =>
+          json(200, { modelProvider: "ready", orgFixableProviders: [], agents: 1 }),
         [`GET ${ORG}/plugin-installs`]: () =>
           json(200, { installs: gone ? [] : [{ ...INSTALL, status: "failed" }, DEP_INSTALL] }),
         [`DELETE ${ORG}/plugin-installs/i1`]: () => {
@@ -3149,6 +3165,7 @@ describe("/extensions: switching on refused by the plugin", () => {
                 config: null,
                 secrets: [],
                 permissions: [],
+                provides: [],
                 orgConfigSchema: null,
               },
             ],
@@ -3183,7 +3200,7 @@ describe("安装向导会问哪些连接器模板", () => {
       installTemplates([tpl("gh", false), tpl("pat", true), tpl("slack", true)]).map((t) => t.id),
     ).toEqual(["gh"]);
     expect(installTemplates([tpl("slack", true, true)]).map((t) => t.id)).toEqual(["slack"]);
-    // an older kernel without `on`: a default-off template is not asked for
+    // a default-off template that is not on is not asked for
     expect(installTemplates([tpl("pat", true)]).map((t) => t.id)).toEqual([]);
   });
 
@@ -3228,6 +3245,8 @@ describe("安装向导的默认 slug", () => {
           ],
           dependencies: [],
           skills: [],
+          agents: [],
+          missingTemplates: [],
         }),
       [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
     });
@@ -3776,6 +3795,8 @@ describe("phase A1: the org plugin page and skill conflicts", () => {
     templates: [],
     dependencies: [],
     skills: ["skills/notes", "skills/extra"],
+    agents: [],
+    missingTemplates: [],
   };
 
   it("plugin page: members read no installs", async () => {
@@ -4387,6 +4408,8 @@ describe("/plugins/[itemId]/enable renders on the server (web-SSR spec §6)", ()
     templates: [],
     dependencies: [],
     skills: ["skills/notes"],
+    agents: [],
+    missingTemplates: [],
   };
   const routes = {
     [`GET ${ORG}/catalog/${ID}`]: () => json(200, detail),
@@ -4460,6 +4483,8 @@ describe("/plugins and /plugins/[itemId] render on the server (web-SSR spec §6)
     templates: [],
     dependencies: [],
     skills: [],
+    agents: [],
+    missingTemplates: [],
   };
   const routes = {
     [`GET ${ORG}/catalog`]: () => json(200, { items: [orgItem()] }),

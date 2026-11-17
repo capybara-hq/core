@@ -386,11 +386,6 @@ export const PLATFORM_EXCLUSIONS: readonly {
       "Deprecated message queue the web no longer uses; leftover items drain until the table is dropped",
   },
   {
-    route: "POST /api/v1/orgs/:orgId/conversations/:id/queue",
-    category: "internal",
-    reason: "Deprecated alias of POST messages, which stays with the person",
-  },
-  {
     route: "POST /api/v1/orgs/:orgId/conversations/:id/queue/resume",
     category: "internal",
     reason:

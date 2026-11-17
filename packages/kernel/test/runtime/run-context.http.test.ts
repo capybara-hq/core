@@ -15,7 +15,7 @@ import { accountsFor } from "../helpers/identity.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   type Req,
@@ -75,7 +75,7 @@ beforeEach(async () => {
     await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "Wang Fang" })
   ).id;
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   const res = await owner({
     method: "POST",
     url: `/api/v1/orgs/${orgId}/agents`,
@@ -286,53 +286,6 @@ describe("run start", () => {
     const winner = written?.runId ?? runId;
     await service.record({ ...input, runId: winner, agent: { ...agent, name: "Other" } });
     expect(await contexts(conv)).toHaveLength(2);
-  });
-});
-
-describe("run start for a message that recorded no zone or language (older logs)", () => {
-  /** A conversation whose only message is an older one: no `timeZone`, no `locale`. */
-  async function oldConversation(): Promise<string> {
-    const conv = await createConv(owner, orgId, agentId);
-    await db
-      .insertInto("conversation_events")
-      .values({
-        conversation_id: conv,
-        seq: "1",
-        type: "user_message",
-        payload: JSON.stringify({
-          content: [{ type: "text", text: "old" }],
-          authorAccountId: ownerId,
-        }),
-      })
-      .execute();
-    await db.updateTable("conversations").set({ last_seq: "1" }).where("id", "=", conv).execute();
-    return conv;
-  }
-  const record = (conv: string) =>
-    k.app.get(RunContextService).record({
-      orgId,
-      conversationId: conv,
-      runId: randomUUID(),
-      triggerSeq: 1,
-      agent: { name: "Grant", instructions: "" } as AgentDefinition,
-    });
-
-  it("falls back to the author's zone and latest web language, then the org's", async () => {
-    const bare = await oldConversation();
-    await record(bare);
-    expect((await contexts(bare))[0]).toMatchObject({ timeZone: "UTC", locale: "en" });
-
-    const prefs = await owner({
-      method: "PUT",
-      url: "/api/v1/me/preferences",
-      payload: { timeZone: "Europe/Berlin" },
-    });
-    expect(prefs.statusCode, prefs.body).toBe(200);
-    const web = await createConv(owner, orgId, agentId);
-    await send(web, "echo:web", { timeZone: "Asia/Shanghai", locale: "zh" });
-    const conv = await oldConversation();
-    await record(conv);
-    expect((await contexts(conv))[0]).toMatchObject({ timeZone: "Europe/Berlin", locale: "zh" });
   });
 });
 

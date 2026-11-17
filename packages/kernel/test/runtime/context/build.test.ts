@@ -1,9 +1,17 @@
+import type { ModelRequest } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import {
   type ConversationEventBody,
   ConversationEventSchema,
+  type LogContentBlock,
 } from "../../../src/conversations/events.js";
-import { BEHAVIOR_RULES, buildModelRequest } from "../../../src/runtime/context/build.js";
+import {
+  BEHAVIOR_RULES,
+  buildModelRequest,
+  type MediaBytes,
+  type MediaInfo,
+  TEXT_INLINE_MAX_CHARS,
+} from "../../../src/runtime/context/build.js";
 import { AGENT, Log, MODEL } from "./fixtures.js";
 
 const build = (log: Log, step = 0) =>
@@ -27,7 +35,6 @@ describe("buildModelRequest", () => {
     expect(request.tools).toEqual([]);
     expect(request.maxOutputTokens).toBe(MODEL.maxOutputTokens);
     expect(request.messages).toEqual([{ role: "user", content: [{ type: "text", text: "hi" }] }]);
-    expect(request.effort).toBeUndefined();
     expect(request.params).toEqual({});
   });
 
@@ -40,7 +47,6 @@ describe("buildModelRequest", () => {
     const params = { effort: "high", "model-fake.style": "shout" };
     const { request, meta } = buildModelRequest({ ...input, params });
     expect(request.params).toEqual(params);
-    expect(request.effort).toBeUndefined();
     expect(meta.params).toEqual(params);
     expect(request.params).not.toBe(params);
     expect(buildModelRequest(input).request.params).toEqual({});
@@ -348,6 +354,122 @@ describe("buildModelRequest", () => {
     log.assistant("hello");
     const { meta } = build(log);
     expect(meta).toMatchObject({ fromSeq: 10, toSeq: 11, summarySeq: null, reminderSeqs: [] });
+  });
+
+  describe("attachments the model gets as a reference", () => {
+    const XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    const id = "11111111-2222-4333-8444-555555555555";
+    const URI = `s3://bucket/kernel/org-1/attachments/${id}`;
+    const body = new Uint8Array([0x50, 0x4b, 3, 4, 5, 6, 7]);
+
+    /** A one-message conversation: the blocks are the whole user message. */
+    const logWith = (blocks: LogContentBlock[]): Log => {
+      const log = new Log();
+      log.add(
+        { type: "user_message", payload: { content: blocks, authorAccountId: "acc-1" } },
+        null,
+      );
+      return log;
+    };
+    const fileBlock = (name?: string): LogContentBlock => ({
+      type: "file",
+      mediaType: XLSX,
+      source: { kind: "ref", attachmentId: id },
+      ...(name !== undefined && { name }),
+      size: 1_234_567,
+    });
+    const fileBuild = (
+      blocks: LogContentBlock[],
+      info: MediaInfo = { size: 1_234_567, pages: null, uri: URI },
+    ) =>
+      buildModelRequest({
+        events: logWith(blocks).events,
+        agent: AGENT,
+        agentVersion: 1,
+        model: MODEL,
+        step: 0,
+        mediaInfo: new Map([[id, info]]),
+        // the bytes exist: a file block must never send them
+        media: new Map<string, MediaBytes | null>([[id, { mediaType: XLSX, data: body }]]),
+      });
+    const texts = (request: ModelRequest): string[] =>
+      request.messages.flatMap((m) =>
+        typeof m.content === "string"
+          ? [m.content]
+          : m.content.flatMap((b) => (b.type === "text" ? [b.text] : [])),
+      );
+
+    it("a file block becomes one reference line and never carries bytes", () => {
+      const { request, meta, mediaTokens } = fileBuild([fileBlock("电商工行.xlsx")]);
+      expect(request.messages).toEqual([
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: `[Attached file "电商工行.xlsx" (${XLSX}), 1234567 bytes — this model cannot read its content. Unsigned object reference: ${URI}. Use FetchAttachment with the file name or this reference to copy it into the device.]`,
+            },
+          ],
+        },
+      ]);
+      expect(texts(request).join("\n")).toContain(`Unsigned object reference: ${URI}`);
+      expect(texts(request).join("\n")).toContain("Use FetchAttachment");
+      expect(mediaTokens).toBe(0);
+      // never the bytes, never a raw `file` block (a provider must not see one)
+      expect(JSON.stringify(request)).not.toContain(Buffer.from(body).toString("base64"));
+      expect(JSON.stringify(request)).not.toContain('"file"');
+      expect(meta.media).toEqual([{ attachmentId: id, outcome: "reference" }]);
+    });
+
+    it("a file block with no name is labelled by the extension of its media type", () => {
+      const { request } = fileBuild([fileBlock()]);
+      expect(texts(request)[0]).toContain('[Attached file "file.xlsx" (');
+    });
+
+    it("a file block whose row is gone is the unavailable placeholder, not a reference", () => {
+      const built = buildModelRequest({
+        events: logWith([fileBlock("gone.xlsx")]).events,
+        agent: AGENT,
+        agentVersion: 1,
+        model: MODEL,
+        step: 0,
+        mediaInfo: new Map(),
+      });
+      expect(texts(built.request)).toEqual(['[Attachment "gone.xlsx" is no longer available.]']);
+    });
+
+    it("a text attachment at the threshold is inlined whole; one character more is a reference", () => {
+      const block: LogContentBlock = {
+        type: "document",
+        mediaType: "text/markdown",
+        source: { kind: "ref", attachmentId: id },
+        name: "notes.md",
+      };
+      const textBuild = (text: string) =>
+        buildModelRequest({
+          events: logWith([block]).events,
+          agent: AGENT,
+          agentVersion: 1,
+          model: MODEL,
+          step: 0,
+          mediaInfo: new Map([[id, { size: text.length, pages: null, uri: URI }]]),
+          media: new Map<string, MediaBytes | null>([
+            [id, { mediaType: "text/markdown", data: new TextEncoder().encode(text) }],
+          ]),
+        });
+      const at = textBuild("a".repeat(TEXT_INLINE_MAX_CHARS));
+      expect(texts(at.request)).toEqual([
+        `[Attached file "notes.md" (text/markdown)]\n${"a".repeat(TEXT_INLINE_MAX_CHARS)}`,
+      ]);
+      expect(texts(at.request).join("")).not.toContain("[Truncated");
+
+      const over = textBuild("a".repeat(TEXT_INLINE_MAX_CHARS + 1));
+      expect(texts(over.request)).toEqual([
+        `[Attached file "notes.md" (text/markdown), ${TEXT_INLINE_MAX_CHARS + 1} bytes of text; not sent inline. The file is available in the device on request. Unsigned object reference: ${URI}. Use FetchAttachment with the file name or this reference to copy it into the device.]`,
+      ]);
+      expect(JSON.stringify(over.request)).not.toContain("aaaaaaaa");
+      expect(over.mediaTokens).toBe(0);
+    });
   });
 
   it("new subagent events are skipped by request building", () => {

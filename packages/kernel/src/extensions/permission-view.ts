@@ -286,9 +286,7 @@ export type DeploymentExtensionStatus =
   | "converging"
   | "failed"
   | "dependency"
-  | "conflict"
-  /** The stored package is in the pre-0.1.0 format: reinstall it from a repacked tgz. */
-  | "legacy_format";
+  | "conflict";
 
 /**
  * 需要超级管理员处理的状态（后台概览「需要处理的插件」）：待批准、待配置、失败、依赖缺失，以及副本不一致
@@ -424,7 +422,7 @@ export interface AdminExtensionView {
   };
   /**
    * Why the install record's package cannot be read (bytes missing or corrupt, over the current
-   * size limit; status failed), or the legacy-format message (status `legacy_format`); permissions
+   * size limit; status failed); permissions
    * are then empty.
    */
   error?: string;

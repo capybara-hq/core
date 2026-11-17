@@ -30,6 +30,7 @@ import type {
 } from "./catalog.service.js";
 import type { TranslationReport } from "./claude/report.js";
 import { gitLocationIdentity } from "./git-source.js";
+import { LIVE_INSTALL_STATUSES } from "./install-status.js";
 import {
   entryCompatible,
   entryContentChanged,
@@ -680,7 +681,7 @@ export async function countInstalls(
       "in",
       items.map((i) => i.id),
     )
-    .where("status", "in", ["installed", "upgrading"])
+    .where("status", "=", "installed")
     .execute();
   for (const r of installed) orgs.get(r.item_id)?.add(r.org_id);
   const withExtension = items.filter(
@@ -827,7 +828,6 @@ export async function itemConfirmations(
   }
   return out;
 }
-const LIVE_INSTALL = ["installing", "installed", "upgrading"] as const;
 
 /**
  * Per item: the orgs of its `named` list, the orgs it is on in (a live plugin install; every org for
@@ -877,7 +877,7 @@ export async function itemScopeFacts(
     .innerJoin("orgs as o", "o.id", "a.org_id")
     .select(["a.item_id", (eb) => eb.fn.count<string>("a.org_id").distinct().as("n")])
     .where("a.item_id", "in", ids)
-    .where("a.status", "in", [...LIVE_INSTALL])
+    .where("a.status", "in", [...LIVE_INSTALL_STATUSES])
     .where("o.deleted_at", "is", null)
     .groupBy("a.item_id")
     .execute();

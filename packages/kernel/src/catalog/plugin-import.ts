@@ -13,7 +13,7 @@ import {
   SKILL_ENTRY_FILE,
   type ThemeScheme,
 } from "@capybara-hq/plugin-sdk";
-import { Inject, Injectable, Optional } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
 import { type ExpressionBuilder, sql } from "kysely";
 import semver from "semver";
 import { ClientBuilds } from "../client/client-builds.service.js";
@@ -125,7 +125,7 @@ import {
 import { hasImportRequests, importRequestOf, resolveImportRequests } from "./request-rules.js";
 import { assertNameNotReserved } from "./reserved-names.js";
 import type { PluginScope } from "./scope.js";
-import { oweScopeItem, SCOPE_BACKSTOP_DELAY, SCOPE_BACKSTOP_DELAY_MS } from "./scope-jobs.js";
+import { oweScopeItem } from "./scope-jobs.js";
 import { addScopeOrg } from "./scope-orgs.js";
 import { maxSatisfying, satisfiesRange } from "./versions.js";
 
@@ -135,8 +135,7 @@ import { maxSatisfying, satisfiesRange } from "./versions.js";
  *
  * prepare: the tgz is always hostile input, and **nothing is written until every check passes**
  * (F-AD): `readPluginPackage` (plugin.json, package.json, listed / scanned skills and templates,
- * icons; a pre-0.1.0 tgz is `catalog.legacy_format`), the extension's module graph and migrations
- * (`readExtensionPackage`), the extension's deployment state (config-declared names are
+ * icons), the extension's module graph and migrations (`readExtensionPackage`), the extension's deployment state (config-declared names are
  * refused; name ownership; a downgrade to a version with unrun migrations is refused), each skill by
  * the skill package rules, each connector template against the connector loaded on this replica (or
  * statically when the connector is provided by the plugin's own extension or by a dependency), the
@@ -557,15 +556,12 @@ const mismatch = (what: string) =>
   );
 
 /**
- * The API error of a plugin package that cannot be read in a catalog path: the pre-0.1.0 format ->
- * `catalog.legacy_format`; undeclared client code -> `client.undeclared`; a failing theme (themes
- * spec §5) -> `theme.invalid` (details `[{ theme, errors }]`) or `theme.unreadable` (details
+ * The API error of a plugin package that cannot be read in a catalog path: undeclared client code
+ * -> `client.undeclared`; a failing theme (themes spec §5) -> `theme.invalid` (details `[{ theme, errors }]`) or `theme.unreadable` (details
  * `[{ theme, issues }]`, the failing pairs); anything else -> `catalog.invalid_manifest` (issues as
  * details).
  */
 export function catalogPackageError(e: PluginPackageError | ExtensionPackageError): ApiError {
-  const legacy = e.code === "catalog.legacy_format" || e.code === "extension.legacy_format";
-  if (legacy) return new ApiError("catalog.legacy_format", e.message, e.issues);
   if (e.code === "client.undeclared") return new ApiError("client.undeclared", e.message);
   if (e.code === "theme.invalid" || e.code === "theme.unreadable") {
     return themeApiError(e as PluginPackageError);
@@ -632,12 +628,8 @@ export class PluginImport {
     @Inject(PlatformComponents) private readonly platform: PlatformComponents,
     /** The client build of a dropped org upload's package is deleted with it. */
     @Inject(ClientBuilds) private readonly clientBuilds: ClientBuilds,
-    /** The scope sync's backstop, owed by the confirm's commit (ruling R24). */
+    /** The item's scope sync, owed by the confirm's commit when it deploys no extension. */
     @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
-    /** The backstop's delay (a test seam; default `SCOPE_BACKSTOP_DELAY_MS`). */
-    @Optional()
-    @Inject(SCOPE_BACKSTOP_DELAY)
-    private readonly backstopDelayMs: number = SCOPE_BACKSTOP_DELAY_MS,
   ) {
     this.files = storage;
   }
@@ -1250,7 +1242,7 @@ export class PluginImport {
    * extension's deploy result (a failed deploy is returned, not thrown). `scope` (default
    * `optional`) and `orgs` (only with `named`; each an existing org, else `validation_failed`) are
    * written when this confirm creates the item; a new version of an existing item keeps its scope.
-   * The caller enqueues the scope sync of the item after this returns.
+   * The commit owes the item's scope sync, or the extension's deploy does (see {@link commit}).
    *
    * An org upload (`opts.owner`, spec §14): only that org's staging; the actor re-checked as its
    * admin; `scope` / `orgs` are not taken: a new item is owned by the org, scope `named: [owner]`,
@@ -1283,6 +1275,14 @@ export class PluginImport {
        * `approval`.
        */
       deploy?: boolean;
+      /**
+       * A platform update of the item to this version follows the confirm (`PlatformImportUpdate`,
+       * an org's own version applied at once by `OrgPluginUploads`): the update owes the item's
+       * scope sync with its own commit, so this commit owes none. A sync owed here would run while
+       * the update moves the extension, converge the orgs to the old version, and turn the
+       * update's reviewed diff stale before its commit.
+       */
+      updateFollows?: boolean;
     },
     opts: ActorOpts & { owner?: ImportOwner } = {},
   ): Promise<PluginConfirmResult> {
@@ -1353,6 +1353,7 @@ export class PluginImport {
       stored,
       opts,
       prepared,
+      input.updateFollows === true,
     );
 
     const { now } = committed;
@@ -1468,6 +1469,8 @@ export class PluginImport {
     stored: ExtensionPackage | undefined,
     opts: ActorOpts,
     prepared: PreparedSync | undefined,
+    /** A platform update follows and owes the scope sync (see `confirm`'s `updateFollows`). */
+    updateFollows: boolean,
   ): Promise<{
     itemId: string;
     /** This confirm created the catalog item (a first import of the name). */
@@ -1728,19 +1731,19 @@ export class PluginImport {
         throw e;
       }
     }
-    // The commit owes the scope sync's backstop (ruling R24) when the item's scope turns it on by
-    // itself: the caller owes the immediate sync after the deploy, which a crash may lose
-    if (!pending) {
+    // The commit owes the item's scope sync when its scope turns it on by itself (`all` or
+    // `named`; an org's own item always), unless an extension is to be installed or upgraded: then
+    // its deploy owes it (`oweDeployedExtensionSync`), so no sync runs before it is enabled; or a
+    // platform update to this version follows: its commit owes it
+    const deploys = now !== undefined && now.action !== "keep";
+    if (!pending && !deploys && !updateFollows) {
       const item = await t
         .selectFrom("catalog_items")
         .select("scope")
         .where("id", "=", itemId)
         .executeTakeFirstOrThrow();
-      if (item.scope !== "optional") {
-        await oweScopeItem(this.outbox, t, itemId, {
-          backstop: true,
-          backstopDelayMs: this.backstopDelayMs,
-        });
+      if (item.scope !== "optional" || owner !== undefined) {
+        await oweScopeItem(this.outbox, t, itemId);
       }
     }
     return {

@@ -49,8 +49,10 @@ import {
   type ConnectorTool,
   canManageConnectors,
   deleteConnector,
+  ownershipOf,
   refreshConnector,
   reviewTool,
+  setGitPushPolicy,
   setOrgCredential,
   type ToolDefinition,
   type ToolPolicy,
@@ -243,7 +245,7 @@ function Connector({
       ) : tab === "credentials" ? (
         <CredentialsTab orgId={orgId} app={app} manage={manage} />
       ) : (
-        <SettingsTab orgId={orgId} app={app} manage={manage} update={update} />
+        <SettingsTab orgId={orgId} app={app} manage={manage} update={update} onSaved={saved} />
       )}
     </DetailPage>
   );
@@ -697,11 +699,13 @@ function SettingsTab({
   app,
   manage,
   update,
+  onSaved,
 }: {
   orgId: string;
   app: ConnectorDetail;
   manage: boolean;
   update: Update;
+  onSaved(next: ConnectorDetail): void;
 }) {
   const t = useTranslations("connectors");
   const router = useRouter();
@@ -768,6 +772,9 @@ function SettingsTab({
           )}
         </Stack>
       </Card>
+      {app.git !== null && (
+        <GitPushCard orgId={orgId} app={app} git={app.git} manage={manage} onSaved={onSaved} />
+      )}
       {manage && (
         <Card tone="danger" title={t("settings.dangerTitle")}>
           <Stack gap={12}>
@@ -801,6 +808,85 @@ function SettingsTab({
         }}
       />
     </Stack>
+  );
+}
+
+/**
+ * Git push (sandbox git credentials spec §7): the org's default for pushes through the connector's
+ * credential in sandboxes (Allow / Ask / Deny), read on every push. Org admins change it; others
+ * read it. A member's "Always allow" for a repository on a personal connector applies over Ask.
+ */
+function GitPushCard({
+  orgId,
+  app,
+  git,
+  manage,
+  onSaved,
+}: {
+  orgId: string;
+  app: ConnectorDetail;
+  /** The hosts its credential serves (the card shows only for a connector that has them). */
+  git: NonNullable<ConnectorDetail["git"]>;
+  manage: boolean;
+  onSaved(next: ConnectorDetail): void;
+}) {
+  const t = useTranslations("connectors");
+  const toast = useToast();
+  const errorMessage = useErrorMessage();
+  const saved = app.gitPushPolicy;
+  // The pick not yet saved (null: none); without one the select follows the saved value, so a
+  // change saved elsewhere (another tab, a refetch) shows at once.
+  const [draft, setDraft] = useState<ToolPolicy | null>(null);
+  const policy = draft ?? saved;
+  const set = useAppMutation({
+    fn: (p: ToolPolicy) => setGitPushPolicy(orgId, app.id, p),
+    invalidates: () => [keys.org(orgId).connectors()],
+    onSuccess: (r) => onSaved(r.connector),
+  });
+
+  async function save() {
+    try {
+      await set.mutateAsync(policy);
+      setDraft(null);
+      toast.success(t("settings.saved"));
+    } catch (e) {
+      toast.error(errorMessage(e));
+    }
+  }
+
+  return (
+    <Card title={t("gitPush.title")}>
+      <Stack gap={12}>
+        <Text variant="prose" tone="muted">
+          {t(ownershipOf(app.auth) === "personal" ? "gitPush.hint" : "gitPush.hintShared", {
+            hosts: git.hosts.map((h) => h.host).join(", "),
+          })}
+        </Text>
+        <Field label={t("gitPush.label")}>
+          <Select
+            value={policy}
+            disabled={!manage}
+            onChange={(e) => {
+              const next = e.target.value as ToolPolicy;
+              setDraft(next === saved ? null : next);
+            }}
+            options={POLICIES.map((p) => ({ value: p, label: t(`policy.${p}`) }))}
+          />
+        </Field>
+        {manage && (
+          <Stack direction="row">
+            <Button
+              variant="primary"
+              loading={set.isPending}
+              disabled={policy === saved}
+              onClick={() => void save()}
+            >
+              {t("settings.save")}
+            </Button>
+          </Stack>
+        )}
+      </Stack>
+    </Card>
   );
 }
 

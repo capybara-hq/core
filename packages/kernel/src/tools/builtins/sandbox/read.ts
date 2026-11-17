@@ -29,8 +29,9 @@ const SPEC: ToolSpec = {
   keyArgs: ["file_path"],
   description:
     "Read a text file from this conversation's sandbox, with line numbers. Use it to look at " +
-    "source code, data files, logs and files the user attached (under attachments/<conversation>/ in " +
-    "the workspace directory). Paths are absolute, under the workspace directory, the skills " +
+    "source code, data files, logs and files the user attached (not in the device until " +
+    "FetchAttachment copies one into the workspace's attachments directory). Paths are absolute, " +
+    "under the workspace directory, the skills " +
     "directory or the temporary files directory. Lines are numbered from 1; pass " +
     "offset and limit to read part of a long file. Binary files are not shown; use Bash " +
     "to inspect them. Do not use it to list directories; use Glob instead. Read a file before you " +

@@ -19,8 +19,7 @@ Kernel migrations are normally expand-only and forward compatible by one version
 version's code keeps working on the migrated schema, so old and new replicas can run side by side
 during a rolling update. When you skip versions, old replicas may run against a schema two or more
 versions ahead of them. In that case, stop them before migrating, or accept errors on them until they
-are replaced. A version note below says when a release breaks this rule and can't be rolled; the
-rename in 0.1.0 (migrations 0041 to 0043) is one.
+are replaced. A version note below says when a release breaks this rule and can't be rolled.
 
 Extension upgrades need no restart and are separate from kernel upgrades. Install the new version from
 the admin console or with `capybara extensions install`. See
@@ -101,69 +100,9 @@ Only `capybara migrate` checks the PostgreSQL version, though, so keep the Job.
 
 ## Version notes
 
-### Upgrading across 0027 / 0028 (index builds and table locks)
-
-Migrations `0027_model_prices.sql` and `0028_evals.sql` build indexes **non-concurrently inside the
-migration transaction**. `CONCURRENTLY` can't run inside a transaction, and every migration file is
-one.
-
-- **0027** builds:
-  - `conversation_events_run_idx`, a partial index on
-    `conversation_events (conversation_id, run_id, seq) WHERE run_id IS NOT NULL`;
-  - `conversations_agent_idx` on `conversations (org_id, agent_id, updated_at DESC)`.
-
-  A plain `CREATE INDEX` blocks **writes** to the table until it finishes. Reads continue. New
-  messages and agent runs stall until both indexes are built.
-- **0028** first runs `ALTER TABLE conversations ADD COLUMN kind … CHECK (…)` and `ADD COLUMN
-  eval_run_id … REFERENCES eval_runs`. Then it builds `conversations_org_kind_idx` on
-  `conversations (org_id, kind, updated_at DESC, id DESC)` and the partial
-  `conversations_eval_run_idx`.
-  - The `ALTER TABLE` takes an `ACCESS EXCLUSIVE` lock, and the transaction holds it until the
-    migration commits: through the CHECK and foreign-key validation scans and through both index
-    builds.
-  - So `conversations` is closed to **reads as well as writes** for the whole migration. Conversation
-    lists, conversation pages and every run stall until it commits.
-
-On deployments with large event logs, run the upgrade off-peak and estimate the duration from the
-table sizes first:
-
-```sql
-SELECT pg_size_pretty(pg_relation_size('capybara.conversation_events')) AS events,
-       pg_size_pretty(pg_relation_size('capybara.conversations')) AS conversations;
-```
-
-### Upgrading across 0040 (index build and table lock)
-
-Migration `0040_usage_report_sweep.sql` builds `conversation_events_usage_idx`, a partial index on
-`conversation_events (created_at) WHERE type = 'usage'`, **non-concurrently inside the migration
-transaction** (the same class of note as 0027 / 0028 above). A plain `CREATE INDEX` blocks
-**writes** to `conversation_events` until it finishes: new messages and agent runs stall, reads
-continue. It also creates the small `usage_report_sweep` table, which migration
-`0120_drop_usage_report_sweep.sql` drops again now that usage reports go through the transactional
-outbox. This only matters for deployments that ran `main` before 0.1.0 and have large event logs;
-run the upgrade off-peak and estimate from the size query above. New installs migrate an empty
-table.
-
-### Upgrading across 0119 to 0122 (transactional outbox): stop the old workers first
-
-Queued work goes through the transactional outbox (migration `0119_outbox.sql`, in 0.1.0-rc.25),
-and the jobs it replaced were removed with their tables and columns:
-
-- `0120_drop_usage_report_sweep.sql` (rc.25) drops `usage_report_sweep` (the usage report
-  sweeper's watermark) and the index `model_usage_unreported`;
-- `0121_drop_platform_migration_runs.sql` (rc.26) drops `platform_migration_runs` (the platform
-  components migration job) and the `skill_renamed` org notice kind;
-- `0122_drop_scheduled_task_runs_rechecked_at.sql` (rc.26) drops `scheduled_task_runs.rechecked_at`
-  (the scheduled task scan's repair).
-
-Replicas of an older version still run those jobs and fail against the dropped tables and columns,
-and their maintenance workers complete job names they don't know (`ensure-run`,
-`device-op-resolve`, …) without running them, so that work is lost. An upgrade across these
-migrations can't be rolled: **stop every old `worker` replica before running `capybara migrate`**
-(old `api` and `gateway` replicas may keep serving until they are replaced), then start the new
-version. Versions after 0.1.0-rc.26 fail a maintenance job they don't know instead, so BullMQ
-retries it and a newer replica can take it, but only within the job's attempts (a few seconds for
-most jobs): stopping old workers first still applies.
+Notes for upgrades that need more than the steps above. Before 0.1.0 Capybara keeps no
+compatibility layers for its earlier builds: the kernel reads only the current formats, and the
+migrations rewrite stored data once where they can.
 
 ### Upgrading across 0130 / 0131 (auto mode): stop the old replicas first
 
@@ -189,261 +128,6 @@ for the platform (`devices.autoMode: off`, or the admin console). Leftover `sand
 environment now stop the kernel at startup with an error naming `devices.autoMode` and
 `cloudNetwork`: remove them and set those instead.
 
-### 0.1.0: IM long connections move to the gateway role
-
-IM long connections (Slack Socket Mode, Lark long connection) now run **only on processes with the
-`gateway` role**. Before, they ran on `worker`.
-
-- `capybara start` without roles, and the all-in-one default, still include `gateway`.
-- If you set `CAPYBARA_ROLES` yourself (for example `api,worker` or `worker`), add `gateway` to at least
-  one process that can load your channel extensions, or channels stop receiving messages.
-- Outbound delivery and inbound processing still need `worker`.
-- At startup, a process with `worker` but not `gateway` logs an info line. A worker job warns every
-  minute while active channel connections have no live gateway replica. See
-  [Roles and scaling](README.md#roles-and-scaling).
-- New settings: `channels.shareSlack` (fair share across gateway replicas), and
-  `channels.webhookBaseUrl` / `channels.webhookMaxBodyBytes` (optional webhook inbound). Migration
-  0038 adds `inbound_mode` to channel connections. Existing connections stay on `long_connection`.
-- Migration 0039 lets a channel card be recorded before it is sent (`message_id` may be NULL while a
-  card is pending). Replicas older than 0.1.0 don't expect that: during a rolling update, an old
-  replica that handles the update of such a card fails and retries it until the event is skipped. To
-  avoid it, stop the old `worker` replicas before starting the new ones (or accept that a card update
-  may be lost while both versions run).
-
-### 0.1.0: extensions, plugins, catalog and marketplaces (renamed)
-
-This only matters for deployments that ran `main` before 0.1.0. The in-process code that used to be
-called a plugin is now an **extension**; a **plugin** is now the install unit (formerly an app
-bundle); the enterprise directory is the **catalog**; catalog sources are **marketplaces**. Migrations
-0041 to 0043 rename the tables and keep their rows. Rename these settings yourself, because the old
-names are ignored:
-
-- `plugins` / `CAPYBARA_PLUGINS` -> `extensions` / `CAPYBARA_EXTENSIONS`; `pluginConfig` /
-  `CAPYBARA_PLUGIN_CONFIG` -> `extensionConfig` / `CAPYBARA_EXTENSION_CONFIG`; `pluginHost.*` ->
-  `extensionHost.*`; `pluginPermissions.*` -> `extensionPermissions.*`.
-- `catalogs.*` -> `marketplaces.*`; `directory.staleInstallMinutes` -> `catalog.staleInstallMinutes`;
-  `directory.maxBundleBytes` is gone (see the package format note below: plugins no longer fetch
-  extension packages at import, so there is nothing to cap).
-- The CLI's `capybara plugins …` is now `capybara extensions …`; HTTP routes, error codes and audit
-  actions follow the new names (audit rows written before keep their old names). `capybara plugins`
-  now has `list` and `import`, which manage the catalog.
-
-**This step is not a rolling update.** Migrations 0041 to 0043 are not expand-only: they rename
-tables and rewrite CHECK values, and the kernel HTTP routes are renamed with them. Replicas of the
-earlier build fail right after the migration (their tables are gone), and an earlier `web` calls
-routes that no longer exist. So stop every replica of the earlier build (`api`, `worker`, `gateway`
-and `web`) before running `capybara migrate`, then start the new version. Redis and queue state carry
-over: job ids and bus topics are unchanged.
-
-### 0.1.0: the plugin package format
-
-This only matters for deployments that ran `main` before 0.1.0. Packages are now plugins: an npm-pack
-tgz with `.capybara-plugin/plugin.json` (at most one extension, skills, connector templates as
-`connectors/<id>.json`, dependencies on other plugins). Marketplaces publish `marketplace.json`
-instead of `index.json`. The earlier formats (a `capybara` section in `package.json`, and app
-bundles) are not read any more, and there is no converter:
-
-- **Catalog content is removed.** Migration 0044 deletes every catalog item and version, plugin
-  install record, catalog request and grant, staged import and marketplace entry, because they were
-  imported in the earlier format (marketplace entries come back at the next refresh, once the
-  marketplace publishes `marketplace.json`). It also drops the catalog policies and grants that restricted extensions, so admins re-import the plugins and set their policies again. Org skills, connectors and deployment extension installs
-  stay; they only lose their link to the removed catalog item. Files the earlier catalog stored under
-  `deployment/directory/` in object storage are left in place, unreferenced; delete them by hand if
-  you want the space back. Re-import the plugins you need, repacked.
-- **Installed extension packages need a repack.** An extension installed from an earlier-format
-  package stays installed, but no replica loads it: the admin console shows it as "Repack needed"
-  (`legacy_format`) with the reason, and approving it returns `extension.legacy_format`. Reinstall it
-  from a tgz repacked with `capybara-plugin pack` (same npm package, so its data, secrets, config and
-  approval carry over). `openai-compatible` and `object-store-s3` are bootstrap plugins and are
-  unaffected.
-- **Uploads in the earlier format are refused** with `catalog.legacy_format` or
-  `extension.legacy_format` and a message asking to repack the package. The catalog no longer
-  takes zip uploads of skills or connector templates; package them as a plugin (an org can still
-  upload a skill zip under Skills).
-- **Routes changed** (the web app follows): plugin import is `POST /api/v1/admin/catalog/import/file`
-  or `…/import/npm`, then `POST …/catalog/imports/:stagingId/confirm`; the `kind` parameters are gone;
-  an org install takes `{ version?, connectors?, extensionConfig? }`.
-
-Migrations 0044 and 0045 run as part of the same stop-and-migrate step as 0041 to 0043.
-
-### 0.1.0: the official marketplace is on by default
-
-`marketplaces.official.enabled` defaults to `true`: the kernel refreshes the official marketplace (the
-git repository `capybara-hq/plugins` on github.com) every `marketplaces.refreshIntervalMinutes`, and
-the admin console lists its plugins. A deployment without internet access sets
-`CAPYBARA_MARKETPLACES__OFFICIAL__ENABLED=false` (with `docker/compose.yaml`:
-`CAPYBARA_OFFICIAL_MARKETPLACE=false` in `.env`); its marketplaces page then shows offline mode.
-Custom marketplaces, npm installs and manual uploads are unaffected either way.
-
-The default `marketplaces.official.url` is now the git repository
-`https://github.com/capybara-hq/plugins.git` (it was a placeholder marketplace.json URL). A git
-marketplace has no mirrors: if you set `marketplaces.official.mirrors`, either also set
-`marketplaces.official.url` to a marketplace.json URL or remove the mirrors (point the URL at a mirror
-repository instead); otherwise the kernel refuses the config at start.
-
-### Git marketplaces, private addresses and plugin upgrades (migrations 0046 to 0049)
-
-Migrations 0046 to 0049 are expand-only, so this step rolls like any other:
-
-- 0046 adds the marketplace form (`http` / `git`), its ref, last commit and owner name, a `git`
-  source with `source_detail` and a content digest on catalog versions, and lets
-  `catalog_items.package_name` be NULL (a git plugin without `package.json`).
-- 0047 and 0048 record the branch head and the plugin directory's git tree of marketplace entries,
-  for "content changed at the same version".
-- 0049 adds the `upgrading` install status, the upgrade journal on `plugin_installs`, and
-  `template_id` / `dropped` on install components. It drops and re-adds the status CHECK of
-  `plugin_installs` in one transaction, a short lock on a small table.
-
-Versions imported before this step have no content digest or source detail. They are compared by
-integrity when both sides have one, and show no origin in the admin console. Connectors installed
-before 0049 have no `template_id`, so an org upgrade leaves them as they are; the upgrade preview
-says so.
-
-**Private addresses are now refused for every marketplace download.** Manifests, mirrors, archive
-sources and git repositories must resolve to public addresses, and the connection is pinned to the
-address that was checked. A marketplace or mirror that used to work on a private network (an internal
-GitLab, an artifact server) now fails its refresh or import with `marketplace.private_address`. Add
-its host to `marketplaces.allowPrivateHosts`:
-
-```bash
-CAPYBARA_MARKETPLACES__ALLOW_PRIVATE_HOSTS='["gitlab.corp.example","10.20.0.0/16"]'
-```
-
-List a host reached by an internal DNS name **by name**. IP addresses and CIDRs match only URLs that
-use an IP literal, never a DNS name that resolves into the range. Link-local and cloud metadata
-addresses are always refused. The `packages.npmRegistry` origin is trusted as configured and needs no
-entry. Redirects were already refused; they now fail with `marketplace.redirect`.
-
-New settings: `marketplaces.allowPrivateHosts` and `marketplaces.allowedHosts` (default `[]`,
-unrestricted: the hosts that marketplace entries may download git and archive sources from). See
-[docs/config.md](../config.md) and [Plugins and the catalog](README.md#plugins-and-the-catalog).
-
-### Bootstrap plugins replace the built-in extensions (migration 0050)
-
-`openai-compatible` and `object-store-s3` are no longer built into the CLI. They are bootstrap plugins:
-pinned in `packages/kernel/bootstrap.json` and installed by `capybara bootstrap` (since the next
-section, downloaded at that point rather than baked into the image), which compose's `init` runs after `migrate` (see
-[Bootstrap plugins](README.md#extensions)). Both are required: enabled in every organization and not
-disableable or uninstallable (409 `extension.required`, which replaces `extension.builtin`).
-
-Migration 0050:
-
-- adds the source `bootstrap` to extension packages, install records, permission snapshots and
-  catalog versions, the column `extension_installs.required`, and the table `bootstrap_runs` (one row
-  per manifest the bootstrap step completed);
-- deletes the replica status rows with source `builtin` and drops `builtin` from that table's CHECK.
-  Each replica rebuilds its rows on its next reconcile. A replica of the previous version can no
-  longer record the status of its built-in extensions (the CHECK refuses the row and it logs
-  `cannot write plugin replica status`; the extensions still load), so replace the old replicas
-  promptly after migrating.
-
-**Deployments that ran a development build before this step** (their built-in extensions had no
-install records) lose nothing: the first bootstrap run installs both plugins with source `bootstrap`
-under the names they already own. Their deployment config (startup config or the one saved in the
-admin console) still applies, organizations keep them enabled, and their data is kept. After the
-upgrade `capybara extensions list` shows them with source `bootstrap` and state `required`. The first
-release, 0.1.0, already ships with bootstrap, so a deployment that starts on 0.1.0 never had built-in
-extensions.
-
-**Rolling back** to an image with an older bootstrap manifest changes nothing: that manifest's run is
-already recorded as done, so the step doesn't run again (no downgrade, and a `required` flag a newer
-manifest cleared is not restored).
-
-**For contributors:** a change to a pinned plugin, to its dependencies (the lockfile) or to
-`packages/plugin-tools` changes the pack, so `pnpm check` fails with `bootstrap-stale`. Run
-`pnpm check:bootstrap --write` to rewrite the pinned version and integrity, and commit the result.
-`pnpm version-packages` (the Version Packages PR) does this itself after `changeset version`.
-
-New settings: `net.httpsProxy` and `net.noProxy` send marketplace, mirror, archive and git downloads
-through an HTTP(S) egress proxy (see [Plugins and the catalog](README.md#plugins-and-the-catalog)).
-They are unset by default; nothing changes for a deployment that doesn't set them.
-
-### Bootstrap plugins are downloaded at start, not baked into the image
-
-The kernel images no longer carry the bootstrap plugin packages (`/app/bootstrap` is empty, and the
-build arguments `NPM_REGISTRY` and `NODE_USE_ENV_PROXY` are gone). When the bootstrap step is not done
-for the manifest, `capybara bootstrap` (compose `init`) or `capybara start` downloads the pinned
-versions from `packages.npmRegistry` and checks them against their pinned sha512; once done, no start
-needs the network. An offline deployment mounts a directory holding the pinned tgz files (any file
-names, e.g. from `npm pack`) at `/app/bootstrap`, or points `CAPYBARA_PACKAGES__NPM_REGISTRY` at a
-mirror (see [Bootstrap plugins](README.md#extensions)). A deployment whose bootstrap run is already
-recorded is not affected until a new image raises a pin.
-
-`capybara start --bootstrap-dir` and `pnpm pack-bootstrap` are removed: the offline directory is the
-config key `bootstrap.dir` (`CAPYBARA_BOOTSTRAP__DIR`, default `bootstrap` relative to the working
-directory; the image sets `/app/bootstrap`), and `capybara bootstrap --dir <path>` still overrides it.
-From a source checkout, `pnpm capybara start` now installs the bootstrap plugins on its first start.
-
-### The bootstrap step needs Redis
-
-`capybara bootstrap` (the compose `init` service, a Kubernetes init Job) and a starting kernel now
-run the bootstrap step under the Redis lock `lock:bootstrap` instead of a PostgreSQL advisory lock,
-so the command needs `CAPYBARA_REDIS__URL` to reach Redis as well as PostgreSQL. The compose `init`
-service waits for valkey. During the rolling deploy that brings this change, an old replica and a
-new one do not exclude each other; a bootstrap step that both run at once records once per manifest
-and its writes are idempotent.
-
-### Moving config-declared extensions to install records
-
-Extensions listed in the startup config's `extensions` (`CAPYBARA_EXTENSIONS`) still load. Their source is
-`config`. But the admin console shows them read-only: they can't be installed, upgraded or disabled
-there, changing the list needs a restart, and installing an extension with the same name returns 409
-`extension.config_declared`. The kernel doesn't convert them automatically. To move one:
-
-1. Get a package of the **same npm package**: a version from npm, or `capybara-plugin pack <dir>`
-   (`pnpm pack-plugin plugins/<name>` in a core checkout) from a checkout. An extension name belongs to the npm package that first used it, and a different
-   package name is refused (`extension.name_conflict`).
-2. Remove it from `extensions` and do a rolling restart. The extension stops loading. Extensions that depend on
-   it unload too and show `dependency`, and they reload once it is back.
-   - Its deployment config in `extensionConfig` can stay and still applies. You can also move it to the
-     admin console.
-3. Install the package (admin console, or `capybara extensions install …`) and enable it. The extension
-   schema, secrets, org config and approval record carry over. If the new package asks for no
-   permissions beyond the approved ones, it loads right away.
-
-### pgvector in the compose image (migration 0123)
-
-The compose files now run `pgvector/pgvector:pg17` instead of `postgres:17`. It is the official
-PostgreSQL 17 image with the pgvector extension added, so it opens an existing `pgdata` volume as
-is: `docker compose pull && docker compose up -d` recreates the `postgres` container on the new
-image. Migration 0123 then creates the extension in `public` when the server offers it and none is
-installed yet.
-
-pgvector is recommended, not required. On a server without it, or when the migrating role may not
-create extensions, or a managed server's allow-list refuses it, 0123 only raises a notice and
-succeeds; plugins fall back (the memory plugin
-stores embeddings as `real[]` and ranks them in the plugin). To enable it later on a managed
-PostgreSQL, run `CREATE EXTENSION vector SCHEMA public` as a role allowed to: an extension in
-another schema is not visible to plugin schemas and counts as absent.
-
-### Egress proxy: `net.httpsProxy`, not `NODE_USE_ENV_PROXY`
-
-npm registry downloads (plugin packages, provenance, the bootstrap download) and OAuth requests
-(discovery, client registration, token endpoints) now go through the kernel's network rules
-(`packages/kernel/src/net`) like marketplace downloads, so Node's `NODE_USE_ENV_PROXY=1` /
-`HTTPS_PROXY` no longer route them. A deployment that relied on those variables sets
-`net.httpsProxy` (`CAPYBARA_NET__HTTPS_PROXY`) instead, and lists an internal https npm registry in
-`net.noProxy` (an `http://` registry is fetched directly). An OAuth or MCP endpoint, or a marketplace
-`tarball` URL, on a private or internal host is now refused unless `marketplaces.allowPrivateHosts`
-lists it.
-
-### Extension routes declare who may call them (re-approval needed)
-
-The kernel now authenticates every extension route before the handler runs. Each entry of an
-extension's `permissions.http` declares `access` (`public`, `embed`, `member` or `admin`) instead of
-`public?: boolean`; `member` and `admin` routes mount under `/plugins/<name>/orgs/:orgId<path>` and take
-only a personal API token (`Authorization: Bearer cap_pat_...`). See
-[.agents/skills/writing-extensions](../../.agents/skills/writing-extensions/SKILL.md).
-
-- **Re-approve every extension that declares routes.** The approved permission keys changed
-  (`permissions.http.<access>:<METHOD> <path>`), so after the upgrade such an extension waits for
-  `capybara extensions approve` (or the admin console), and its routes answer 503
-  `extension.unavailable` until then.
-- **Plugin authors** replace `public: true` with `access: "public"` and every other route with
-  `access: "embed"` (data routes of an embedded page, under `/ui/`), `"member"` or `"admin"`, and read
-  the caller from the handler's second argument. A plugin whose manifest has a route without `access`
-  is refused at import and by `capybara-plugin check`; the example plugins need a new release first.
-
 ### Org sandbox networks follow the platform (migration 0134)
 
 An organization's sandbox network no longer replaces the platform's `sandbox.limits.allowHosts`
@@ -465,3 +149,21 @@ hosts.
   other hosts or use the open cloud network in sandbox mode, and their admins cannot approve network
   requests for hosts outside it. Auto mode is not limited by it: set `devices.autoMode: off` as well
   for a hard ceiling (startup warns otherwise). The default `extend` keeps today's behaviour.
+
+### Moving config-declared extensions to install records
+
+Extensions listed in the startup config's `extensions` (`CAPYBARA_EXTENSIONS`) still load. Their source is
+`config`. But the admin console shows them read-only: they can't be installed, upgraded or disabled
+there, changing the list needs a restart, and installing an extension with the same name returns 409
+`extension.config_declared`. The kernel doesn't convert them automatically. To move one:
+
+1. Get a package of the **same npm package**: a version from npm, or `capybara-plugin pack <dir>`
+   (`pnpm pack-plugin plugins/<name>` in a core checkout) from a checkout. An extension name belongs to the npm package that first used it, and a different
+   package name is refused (`extension.name_conflict`).
+2. Remove it from `extensions` and do a rolling restart. The extension stops loading. Extensions that depend on
+   it unload too and show `dependency`, and they reload once it is back.
+   - Its deployment config in `extensionConfig` can stay and still applies. You can also move it to the
+     admin console.
+3. Install the package (admin console, or `capybara extensions install …`) and enable it. The extension
+   schema, secrets, org config and approval record carry over. If the new package asks for no
+   permissions beyond the approved ones, it loads right away.

@@ -46,13 +46,13 @@ const manifest = (ui: ExtensionManifest["permissions"]) =>
       ...(ui?.ui?.views ?? []).map((id) => ({
         id,
         title: { zh: id, en: id },
-        place: "conversation" as const,
+        slot: "conversation.panel" as const,
         kind: "view" as const,
       })),
       ...(ui?.ui?.embeds ?? []).map((id) => ({
         id,
         title: { zh: id, en: id },
-        place: "page" as const,
+        slot: "org.page" as const,
         kind: "embed" as const,
         path: "/ui/x",
       })),

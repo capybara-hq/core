@@ -15,10 +15,7 @@ import {
 } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  PLUGIN_STAGING_CLEANUP_JOB,
-  PLUGIN_STAGING_CLEANUP_SCHEDULER_ID,
-} from "../../src/catalog/job-ids.js";
+import { PLUGIN_STAGING_CLEANUP_JOB } from "../../src/catalog/job-ids.js";
 import { PluginImport } from "../../src/catalog/plugin-import.js";
 import type { KernelConfig } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
@@ -917,13 +914,13 @@ describe("confirm installs the extension and stores the scope", () => {
 describe("invalid plugins: nothing is written", () => {
   beforeEach(reset);
 
-  it("a pre-0.1.0 tgz (capybara section or app.yaml) is 422 catalog.legacy_format with the repack message", async () => {
+  it("an old-format tgz (capybara section or app.yaml) is the ordinary 422 catalog.invalid_manifest naming the expected manifest", async () => {
     for (const bytes of [await legacyTgz(), await legacyTgz({ appYaml: true })]) {
       const res = await prepareFile(admin, bytes);
       expect(res.statusCode, res.body).toBe(422);
-      expect(res.json().error.code).toBe("catalog.legacy_format");
+      expect(res.json().error.code).toBe("catalog.invalid_manifest");
       expect(res.json().error.message).toMatch(
-        /uses the pre-0\.1\.0 package format \(capybara section \/ app\.yaml\); repack it as a plugin with \.capybara-plugin\/plugin\.json \(pnpm pack-plugin\)/,
+        /\.capybara-plugin\/plugin\.json not found in the package.*capybara-plugin pack/,
       );
     }
     await nothingStored();
@@ -1248,7 +1245,6 @@ describe("staging cleanup (maintenance job app-staging-cleanup)", () => {
 
   it("the job name and scheduler id contain no colon", () => {
     expect(PLUGIN_STAGING_CLEANUP_JOB).toBe("app-staging-cleanup");
-    expect(PLUGIN_STAGING_CLEANUP_SCHEDULER_ID).not.toContain(":");
   });
 });
 

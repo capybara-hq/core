@@ -105,9 +105,7 @@ export interface DesiredExtension {
    */
   blobStore?: "object" | "pg";
   /**
-   * The reviewed extension section of the plugin (the migrations path is taken only from here). A
-   * row stored before 0.1.0 holds the old `capybara` section instead; its package is in the old
-   * format and fails to sync with `extension.legacy_format`.
+   * The reviewed extension section of the plugin (the migrations path is taken only from here).
    */
   section: PluginExtensionSection;
 }

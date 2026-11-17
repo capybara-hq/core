@@ -10,7 +10,7 @@ import { accountsFor } from "../helpers/identity.js";
 import {
   createAgent,
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -56,7 +56,7 @@ beforeAll(async () => {
   await accountsFor(dbA).createLocal({ login: "owner", password: PW, displayName: "O" });
   ownerA = await session(a, "owner");
   ownerB = await session(b, "owner");
-  orgId = await createOrg(ownerA);
+  orgId = await createOrgWithProviders(a, ownerA);
   agentId = await createAgent(ownerA, orgId);
 });
 afterAll(async () => {

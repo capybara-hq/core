@@ -65,24 +65,15 @@ export class WorkerRole {
    * Starts the queue consumers (after the extension load), then opens the schedules' start gate:
    * the cron and interval timers were armed at application bootstrap, but every tick before this
    * point skipped (decision R21 of the Nest kernel spec); the `@LockedInterval({ runOnStart })`
-   * jobs run now, in the background (once across replicas starting together). `checkpoint` throws
-   * when a stop began meanwhile.
+   * jobs run now, in the background (once across replicas starting together).
    */
-  async start(checkpoint: () => void): Promise<void> {
+  start(): void {
     // both run queues' @Processor workers (built with the run config, never autorun)
     this.runWorker.start([this.runsProcessor.worker, this.subagentRunsProcessor.worker]);
     this.runsStarted = true;
     this.evalWorker.start(this.evalsProcessor.worker);
     this.evalsStarted = true;
-    // The maintenance queue: remove the retired job schedulers (idempotent, harmless when several
-    // replicas do it), then start its one consumer. A failure is only logged and does not stop the
-    // start (like the workers' connection errors): any worker replica removes them on its next start.
-    try {
-      await this.maintenanceProcessor.removeRetiredSchedulers();
-    } catch (err) {
-      this.log.error("cannot register maintenance job schedulers", { err });
-    }
-    checkpoint();
+    // the maintenance queue's one consumer
     this.maintenanceProcessor.start();
     this.scopeProcessor.start();
     this.lifecycleProcessor.start();

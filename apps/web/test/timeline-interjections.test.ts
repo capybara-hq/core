@@ -32,7 +32,12 @@ const user = (seq: number, text: string, extra: Record<string, unknown> = {}) =>
 const runStarted = (seq: number, runId = "r1") =>
   ev(seq, "run_started", { agentVersion: 1, model: { provider: "p", model: "m" } }, runId);
 const modelCall = (seq: number, step: number, absorbedUpToSeq: number, runId = "r1") =>
-  ev(seq, "model_call", { step, provider: "p", model: "m", request: { absorbedUpToSeq } }, runId);
+  ev(
+    seq,
+    "model_call",
+    { step, provider: "p", model: "m", request: { absorbedUpToSeq, tools: [] } },
+    runId,
+  );
 const reply = (seq: number, step: number, text: string, runId = "r1") =>
   ev(
     seq,
@@ -201,13 +206,13 @@ describe("interjections (spec D4)", () => {
     expect(shape(timeline(events))).toEqual(["user:a", "run", "user:b", "prose:ok"]);
   });
 
-  it("a message sent while idle stays at its seq; older calls without the field took in all before them", () => {
+  it("a message sent while idle stays at its seq; each call took in all before it", () => {
     const events = [
       user(1, "a"),
       runStarted(2),
-      ev(3, "model_call", { step: 1, provider: "p", model: "m" }),
+      modelCall(3, 1, 2),
       user(4, "b"),
-      ev(5, "model_call", { step: 2, provider: "p", model: "m" }),
+      modelCall(5, 2, 4),
       reply(6, 2, "done"),
       finished(7, 4),
       user(8, "c"),

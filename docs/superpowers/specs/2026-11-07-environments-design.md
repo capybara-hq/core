@@ -387,11 +387,11 @@ isolated (「会话之间隔离进程」 / 「会话之间不隔离进程」), s
 Two kernel features assume one conversation owns the file system today. In an environment
 **(designer's call)**:
 
-- **Attachments** go to `/workspace/attachments/<conversation>/<name>` (`<conversation>` is the
-  first 12 hex digits of the root conversation's UUID, hyphens removed), instead of
-  `/workspace/attachments/<name>`
-  (`ATTACHMENTS_DIR`, `packages/kernel/src/tools/builtins/sandbox/common.ts`); the copy marker is
-  kept per conversation as today.
+- **Attachments** are copied on demand, one per call, by `FetchAttachment`
+  (`packages/kernel/src/tools/builtins/sandbox/fetch-attachment.ts`): it writes
+  `/workspace/attachments/<conversation>/<name>`, where `<conversation>` is the first 12 hex digits
+  of the root conversation's UUID, hyphens removed. No sandbox call copies or syncs them
+  (`attachmentsDir`, `packages/kernel/src/tools/builtins/sandbox/common.ts`).
 - **Skill files** go to `/skills/<name>@<digest12>/` (the first 12 hex digits of the sha256 of the
   version's manifest file list, sorted by path, as `path size sha256` lines), with markers at
   `/skills/.capybara/<name>@<digest12>.json` (`packages/kernel/src/tools/builtins/skill-load.ts`),

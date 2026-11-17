@@ -79,6 +79,8 @@ const detailOf = (item: Record<string, unknown>) => ({
   templates: [],
   dependencies: [],
   skills: ["skills/notes"],
+  agents: [],
+  missingTemplates: [],
 });
 
 const REVIEW = {

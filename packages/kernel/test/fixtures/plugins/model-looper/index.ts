@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import {
   defineExtension,
-  MODEL_PROVIDER_EXTENSION_POINT,
+  MODEL_PROVIDER_EXTENSION_POINT_V2,
   ModelError,
-  type ModelProviderV1,
-  type ModelRequestV1,
+  type ModelProvider,
+  type ModelRequest,
   type ModelStreamEvent,
 } from "@capybara-hq/plugin-sdk";
 
@@ -31,7 +31,7 @@ export function looperState(): LooperState {
   return g.__modelLooper;
 }
 
-function lastUserText(req: ModelRequestV1): string {
+function lastUserText(req: ModelRequest): string {
   for (let i = req.messages.length - 1; i >= 0; i--) {
     const m = req.messages[i];
     if (m?.role !== "user") continue;
@@ -65,9 +65,9 @@ export default defineExtension({
   name: "model-looper",
   version: "0.1.0",
   sdk: "^0.1.0-rc.0",
-  provides: [MODEL_PROVIDER_EXTENSION_POINT],
+  provides: [MODEL_PROVIDER_EXTENSION_POINT_V2],
   setup(ctx) {
-    const provider: ModelProviderV1 = {
+    const provider: ModelProvider = {
       async listModels() {
         return [
           {
@@ -81,8 +81,8 @@ export default defineExtension({
               reasoning: false,
               caching: false,
               midConversationSystem: true,
-              effort: false,
             },
+            parameters: [],
           },
         ];
       },
@@ -124,6 +124,6 @@ export default defineExtension({
         };
       },
     };
-    ctx.provide(MODEL_PROVIDER_EXTENSION_POINT, provider);
+    ctx.provide(MODEL_PROVIDER_EXTENSION_POINT_V2, provider);
   },
 });

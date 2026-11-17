@@ -1,4 +1,4 @@
-// Warning: the deprecated place.
+// Error: the retired place key names no slot.
 import { defineExtension } from "@capybara-hq/plugin-sdk";
 
 export default defineExtension({
@@ -7,7 +7,7 @@ export default defineExtension({
   sdk: "^0.1.0-rc.0",
   provides: [],
   ui: [
-    { id: "tasks", title: { zh: "任务", en: "Tasks" }, place: "conversation", kind: "view" },
+    { id: "tasks", title: { zh: "任务", en: "Tasks" }, place: "conversation", kind: "view" } as never,
   ],
   permissions: { ui: { views: ["tasks"] } },
   setup(ctx) {

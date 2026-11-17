@@ -28,7 +28,7 @@ import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   type Req,
@@ -44,9 +44,9 @@ import { onlySkills } from "../helpers/skills.js";
 import { openSse } from "../helpers/sse.js";
 
 /**
- * Phase D Task 9: a skill invocation can be queued (`POST …/queue` with `skill`). It is rendered
- * when queued, like queued `@` resources (UI refresh B decision 15), stored with its `skill`
- * record, and sent later as that text. At dispatch the kernel checks again that the skill is still
+ * Phase D Task 9: a leftover queued skill invocation (seeded through the service with `skill`; no
+ * route queues any more) is rendered when queued, like queued `@` resources (UI refresh B decision
+ * 15), stored with its `skill` record, and sent later as that text. At dispatch the kernel checks again that the skill is still
  * one of the agent's invocable skills; when it is not, the queue pauses with a reason.
  * One kernel, model-script (a barrier holds the first run), fake sandbox and SeaweedFS.
  */
@@ -159,7 +159,7 @@ beforeEach(async () => {
   });
   expect(login.statusCode, login.body).toBe(200);
   ownerCookie = () => jar.header() as string;
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
 });
 
 const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");

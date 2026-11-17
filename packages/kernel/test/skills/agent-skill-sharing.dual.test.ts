@@ -15,7 +15,7 @@ import { createDb } from "../../src/db/pool.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { PW } from "../helpers/runs.js";
+import { enableExtensions, PW } from "../helpers/runs.js";
 import { makeZip } from "./zip.js";
 
 /**
@@ -116,6 +116,7 @@ describe("agent skill sharing (dual replica)", () => {
     const org = await at("owner", 1, "POST", "/api/v1/orgs", { name: "Acme" });
     expect(org.status, JSON.stringify(org.json)).toBe(201);
     const orgId = (org.json.org as { id: string }).id;
+    await enableExtensions(raw, orgId, "model-fake");
     base = `/api/v1/orgs/${orgId}`;
     await testMembers(db).add(orgId, adminId, "admin", ownerId);
     await testMembers(db).add(orgId, memberId, "member", ownerId);

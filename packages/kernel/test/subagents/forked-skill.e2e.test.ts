@@ -36,7 +36,7 @@ import { captureProviderRequests } from "../helpers/provider-capture.js";
 import { withoutRunContext } from "../helpers/run-context.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   type Req,
@@ -165,7 +165,7 @@ beforeEach(async () => {
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
 });
 
 const seedForked = (name: string, body: string, agent?: string, files?: Record<string, string>) =>

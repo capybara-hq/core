@@ -250,7 +250,7 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
           tooltip: toolTooltip(tool),
           checked,
           // the org turned it off: no agent gets it, whatever this agent says
-          note: checked && tool.switchedOff === true ? t("form.extensionToolOffInOrg") : null,
+          note: checked && tool.switchedOff ? t("form.extensionToolOffInOrg") : null,
         };
       }),
       onCheck: (names, on) => setGroup("extensions", ext.plugin, listed, names, on),

@@ -239,12 +239,12 @@ function CatalogItemDetail({
         </ComponentSection>
         <ComponentSection
           title={tc("agentTemplates")}
-          count={detail.agents?.length ?? 0}
+          count={detail.agents.length}
           empty={tc("agentTemplatesNone")}
         >
           <ItemList
             label={tc("agentTemplates")}
-            rows={(detail.agents ?? []).map((a) => ({ id: a, title: agentTemplateNameOf(a) }))}
+            rows={detail.agents.map((a) => ({ id: a, title: agentTemplateNameOf(a) }))}
           />
         </ComponentSection>
         <ComponentSection

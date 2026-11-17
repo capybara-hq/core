@@ -603,6 +603,11 @@ export class TitleQueue {
     try {
       const attempt = await titleAttemptDue(this.kdb.db, conversationId);
       if (attempt === null) return;
+      // The previous attempt claims its number before calling the model, so a run completing
+      // while that call is in flight would see the next attempt due and pay for a second title
+      // call. Its job stays in the shared queue until it finishes (removeOnComplete/Fail): wait
+      // for it; if it fails, the next completed run enqueues the next attempt.
+      if (attempt > 0 && (await this.queue.getJob(titleJobId(conversationId, attempt - 1)))) return;
       await this.queue.add(
         JOB,
         { conversationId, attempt },

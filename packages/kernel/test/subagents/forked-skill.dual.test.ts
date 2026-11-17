@@ -27,7 +27,7 @@ import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   type Req,
@@ -156,7 +156,7 @@ beforeEach(async () => {
 
 /** An org with an agent that has one forked skill; returns the conversation. */
 async function setup(k: TestKernel, req: Req): Promise<{ orgId: string; conv: string }> {
-  const orgId = await createOrg(req);
+  const orgId = await createOrgWithProviders(k, req);
   const skill = await seedForkedSkill(
     { db, storage: k.app.get(StorageService), orgId, ownerId },
     "review",

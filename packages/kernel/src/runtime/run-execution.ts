@@ -3,6 +3,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost, withTransactionFence } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { isLive } from "./run-liveness.js";
 import { rootConversationOf } from "./subagents/child.js";
 
 export interface ExecutionClaim {
@@ -84,14 +85,14 @@ export class RunExecution {
       .where("id", "=", claim.orgId)
       .forNoKeyUpdate()
       .executeTakeFirst();
-    if (!org || org.deleted_at !== null) return false;
+    if (!org || !isLive(org.deleted_at)) return false;
     const root = await this.db
       .selectFrom("conversations")
       .select("deleted_at")
       .where("id", "=", claim.rootId)
       .forNoKeyUpdate()
       .executeTakeFirst();
-    if (!root || root.deleted_at !== null) return false;
+    if (!root || !isLive(root.deleted_at)) return false;
     if (claim.rootId === claim.conversationId) return true;
     const conv = await this.db
       .selectFrom("conversations")
@@ -100,6 +101,6 @@ export class RunExecution {
       .where("org_id", "=", claim.orgId)
       .forNoKeyUpdate()
       .executeTakeFirst();
-    return conv !== undefined && conv.deleted_at === null;
+    return conv !== undefined && isLive(conv.deleted_at);
   }
 }

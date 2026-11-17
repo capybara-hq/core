@@ -50,7 +50,7 @@ describe("the conversation page below 640", () => {
   });
 
   it("uses 16 px side gutters for the thread, the composer and the title bar", () => {
-    expect(decls(narrow, ".cb-conv-scroll")).toMatch(/padding-inline: var\(--cb-space-4\);/);
+    expect(decls(narrow, ".cb-conv-center")).toMatch(/--cb-conv-thread-pad: var\(--cb-space-4\);/);
     expect(decls(narrow, ".cb-conv-composer")).toMatch(/padding-inline: var\(--cb-space-4\);/);
     expect(decls(narrow, ".cb-title-bar")).toMatch(/padding-inline: var\(--cb-space-4\)/);
   });

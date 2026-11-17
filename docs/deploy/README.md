@@ -65,8 +65,8 @@ To fill `.env` by hand instead, run each `openssl` command above and paste its *
 `=` of the matching line.
 
 Without `CAPYBARA_MASTER_KEY`, encrypted secrets (extension, connector and channel credentials) can't be
-read. Keep a copy somewhere safe. To rotate it, see `masterKeyPrevious` in
-[docs/config.md](../config.md).
+read. Keep a copy somewhere safe. To rotate it, see
+[Rotating the master key](#rotating-the-master-key).
 
 Then start:
 
@@ -321,9 +321,11 @@ otherwise.
   When Redis is unreachable the stop takes the whole budget: queue connections that cannot close are
   abandoned rather than holding the exit.
 - **Unhandled errors.** `capybara start` logs an unhandled promise rejection or uncaught exception
-  and keeps running; it exits 1 only after more than 5 of them within 60 s, so the orchestrator
-  restarts a process that keeps failing. Before, it exited on the first one. Every other `capybara`
-  command still exits 1 on the first.
+  without crashing on the spot: `/readyz` answers 503 at once (`/healthz` stays 200), the process
+  runs the same graceful stop as on SIGTERM (drain within the 30 s budget) and exits 1, so any
+  restart policy (Kubernetes, `restart: unless-stopped` in compose) starts a clean process.
+  Readiness alone would restart nothing. More than 5 of them within 60 s exit 1 at once. Every other
+  `capybara` command still exits 1 on the first.
 - **Redis outages and leases.** Conversation runs, IM long connections, sandbox commands and org
   quota slots hold Redis leases renewed every third of their TTL. A holder whose renewals keep
   failing gives up one renewal period before the key could expire (two thirds of the TTL after its
@@ -575,7 +577,7 @@ other plugins) go through the catalog:
   The CLI loads no connector extensions, so a connector template is checked only statically there
   unless its connector comes with the plugin; orgs' installs check it against the loaded connector.
 - **Packages in the pre-0.1.0 format** are refused with a message asking to repack them with
-  `capybara-plugin pack` (`pnpm pack-plugin <dir>` in a core checkout; see [upgrade.md](upgrade.md)).
+  `capybara-plugin pack` (`pnpm pack-plugin <dir>` in a core checkout).
 
 ## IM channels: inbound modes
 
@@ -728,6 +730,67 @@ GitHub), or `docker build -t capybara-sandbox:latest https://github.com/capybara
 and `.../egress-proxy` for `capybara-sandbox-egress:latest`; then set `CAPYBARA_SANDBOX__IMAGE` and the
 extension's `egressProxyImage` to those tags.
 
+## Rotating the master key
+
+`masterKey` (`CAPYBARA_MASTER_KEY`) wraps one data key per org, which in turn encrypts that org's
+stored secrets (extension, connector and channel credentials, overridden config secrets); it also
+seals the one-time initial passwords waiting to be shown, and the kernel derives its signing keys
+(web access tokens, embed tokens) from it. `masterKeyPrevious` (`CAPYBARA_MASTER_KEY_PREVIOUS`, a
+JSON array of base64 keys) holds keys that are still read and verified but never used for new
+writes. Rotating replaces the key without re-encrypting any secret: only the data keys (and pending
+initial passwords) are rewrapped.
+
+Set both keys where the rest of the kernel config lives: in Nacos or the config file, or, with
+Docker Compose, `CAPYBARA_MASTER_KEY` in `.env` and `CAPYBARA_MASTER_KEY_PREVIOUS` in a
+[`compose.override.yaml`](#more-kernel-settings-composeoverrideyaml) for `init`, `api`, `worker`
+and `gateway` (an environment variable wins over Nacos and the file, so set each key in one place
+only):
+
+```yaml
+# docker/compose.override.yaml (single quotes keep the JSON intact)
+x-extra-env: &extra-env
+  CAPYBARA_MASTER_KEY_PREVIOUS: '["<key>"]'
+services:
+  init: { environment: *extra-env }
+  api: { environment: *extra-env }
+  worker: { environment: *extra-env }
+  gateway: { environment: *extra-env }
+```
+
+The master key is read at start, so each step below takes effect only after every replica has
+restarted with it. Without downtime, in this order:
+
+1. **Back up** the current key and the database. Generate the new key: `openssl rand -base64 32`.
+2. **Teach every replica the new key.** Keep `masterKey` unchanged and set
+   `masterKeyPrevious` = `["<new key>"]`; restart every replica.
+3. **Switch.** Set `masterKey` = the new key and `masterKeyPrevious` = `["<old key>"]`; restart
+   every replica. During this rolling restart both configs can read and verify what the other
+   writes and signs, because each one holds both keys.
+4. **Rewrap**, once no replica runs an older config (a replica whose current key is still the old
+   one keeps wrapping new data keys with it). From any one place with the new config:
+
+   ```bash
+   docker compose exec api node /app/bin/capybara.mjs secrets rewrap
+   ```
+
+   It first checks that the config holds every master key the database uses (otherwise it fails
+   before writing anything and names the org or account ids and key ids; add the missing key to
+   `masterKeyPrevious` and run it again). Then it rewraps every org data key and every unexpired
+   initial password still sealed with an old key, 500 rows per transaction, and prints the counts
+   (`rewrapped N org data key(s) and M initial password(s) to master key <id>`; the id is a hash
+   prefix, never the key). It needs only PostgreSQL. It is idempotent: a re-run, or a run after a
+   failure part way through, rewraps only what is left; a run that prints `0` and `0` confirms the
+   rewrap is complete. Expired initial passwords are not rewrapped: nobody can read them any more
+   and the hourly cleanup deletes them.
+5. **Remove the old key.** Wait at least `auth.accessTokenTtlSeconds` after step 3 finished (15
+   minutes by default; web sessions signed with the old key renew themselves), then clear
+   `masterKeyPrevious` and restart every replica. Keep the old key with the backups taken before
+   the rotation until they expire: restoring one needs it.
+
+Skipping step 2 (going straight to step 3) works too, but only with downtime or with errors during
+the rolling restart: until every replica has restarted, a replica still on the old config cannot
+read data keys the new ones create or verify the web sessions they sign, so those requests fail.
+
 ## Logs
 
 The kernel logs through [pino](https://getpino.io). Each record is one JSON object
@@ -816,7 +879,9 @@ this:
 - **Probes:** `/readyz` and `/healthz` on port 8080 (`CAPYBARA_HTTP__PORT`) for every kernel role, and
   `/login` on port 3000 for `web`. Give the kernel pods a `startupProbe` on `/healthz` with a
   generous failure threshold (minutes, not seconds): a pod that finds pending migrations doesn't listen
-  until they finish, and a liveness probe must not kill it halfway.
+  until they finish, and a liveness probe must not kill it halfway. A swallowed fatal event (an
+  unhandled rejection) makes `/readyz` answer 503, then the process stops gracefully and exits 1, and
+  the pod's restart policy starts it again; `/healthz` stays 200.
 - **Secrets:** pass `CAPYBARA_MASTER_KEY`, the database URL and extension credentials from Kubernetes
   Secrets as environment variables
   (`CAPYBARA_EXTENSION_CONFIG__<PLUGIN_UPPER_SNAKE>__<FIELD>` for extension deployment config).

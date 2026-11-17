@@ -1,4 +1,4 @@
-import { cpSync, mkdtempSync, rmSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -98,6 +98,28 @@ describe("checkAgentDocs", () => {
         ["agent-docs-missing", "setup.md"],
       ]);
       expect(f[0]?.message).toContain('topic "setup" has no file');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("requires an AGENTS.md rules section in specs dated from 2026-11-17, older specs exempt", () => {
+    const root = mkdtempSync(join(tmpdir(), "agent-docs-specs-"));
+    try {
+      cpSync(fixture("clean"), root, { recursive: true });
+      const specs = join(root, "docs/superpowers/specs");
+      mkdirSync(specs, { recursive: true });
+      writeFileSync(join(specs, "2026-11-16-old-design.md"), "# Old\n");
+      writeFileSync(join(specs, "2026-11-17-bad-design.md"), "# Bad\n\n## Goals\n");
+      writeFileSync(
+        join(specs, "2026-11-18-good-design.md"),
+        "# Good\n\n## AGENTS.md rules touched\n\nnone\n",
+      );
+      writeFileSync(join(specs, "README.md"), "notes\n");
+      const f = checkAgentDocs(root, { points, agentTemplateFields });
+      expect(f.map((x) => [x.rule, x.file.slice(specs.length + 1)])).toEqual([
+        ["agent-docs-missing", "2026-11-17-bad-design.md"],
+      ]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

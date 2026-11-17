@@ -26,7 +26,7 @@ import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor, apiTokensFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
-import { startKernel, type TestKernel } from "../helpers/runs.js";
+import { enableModelProviders, startKernel, type TestKernel } from "../helpers/runs.js";
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -94,7 +94,9 @@ async function createOrg(req: Req): Promise<string> {
     payload: { name: `Acme-${randomUUID()}` },
   });
   expect(res.statusCode).toBe(201);
-  return (res.json() as { org: { id: string } }).org.id;
+  const orgId = (res.json() as { org: { id: string } }).org.id;
+  await enableModelProviders(k, orgId);
+  return orgId;
 }
 
 async function memberSession(orgId: string, login: string, role: "admin" | "member" | "guest") {

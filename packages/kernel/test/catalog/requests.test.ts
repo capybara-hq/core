@@ -318,13 +318,6 @@ describe("access: org admin -> super admin", () => {
     // org admins cannot decide it
     expect((await decideOrg(env.boss, id, true)).statusCode).toBe(404);
     expect((await decideAdmin(env.boss, id, true)).statusCode).toBe(403);
-    const version = (
-      await env.db
-        .selectFrom("catalog_items")
-        .select("scope_version")
-        .where("id", "=", itemId)
-        .executeTakeFirstOrThrow()
-    ).scope_version;
     const ok = await decideAdmin(env.root, id, true);
     expect(ok.statusCode, ok.body).toBe(200);
     expect(ok.json().request.status).toBe("approved");
@@ -334,12 +327,6 @@ describe("access: org admin -> super admin", () => {
       .where("item_id", "=", itemId)
       .execute();
     expect(scopeOrgs).toEqual([{ org_id: env.orgId }]);
-    const after = await env.db
-      .selectFrom("catalog_items")
-      .select("scope_version")
-      .where("id", "=", itemId)
-      .executeTakeFirstOrThrow();
-    expect(after.scope_version).toBe(version + 1);
     expect(await auditActions(env)).toContain("catalog.scope_changed");
     await waitFor(
       async () =>

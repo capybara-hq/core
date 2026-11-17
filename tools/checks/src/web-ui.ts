@@ -1315,6 +1315,47 @@ function charIconMessageFindings(messagesDir: string): Finding[] {
   return out;
 }
 
+const OLDER_KERNEL_RULE = "web-ui-older-kernel";
+
+/** What names the older-kernel case: "older kernel", "older logs" or the zh 旧内核 (english-comments-ok: the zh phrase the rule matches). */
+const OLDER_KERNEL_RE = /older kernel|older logs|旧内核/i;
+
+/**
+ * Files whose older-kernel lines wait for another branch, with the reason (a path relative to
+ * `apps/web/src`).
+ */
+export const OLDER_KERNEL_PENDING: readonly { file: string; reason: string }[] = [
+  {
+    file: "lib/org-settings.ts",
+    reason:
+      "the sandbox settings fields are being reworked on the devices branch (design review 2026-11-16)",
+  },
+];
+
+/**
+ * The web is released with the kernel (no compatibility before 0.1.0): a branch, type or comment that
+ * handles "an older kernel" (or its "older logs") is dead code. A text scan, comments included.
+ */
+function olderKernelFindings(file: string, webSrcDir: string): Finding[] {
+  const rel = relative(webSrcDir, file).split(sep).join("/");
+  if (OLDER_KERNEL_PENDING.some((p) => p.file === rel)) return [];
+  const out: Finding[] = [];
+  readFileSync(file, "utf8")
+    .split("\n")
+    .forEach((text, i) => {
+      if (OLDER_KERNEL_RE.test(text)) {
+        out.push({
+          file,
+          line: i + 1,
+          rule: OLDER_KERNEL_RULE,
+          message:
+            "the web ships with its kernel: delete the older-kernel branch and make the field required (no compatibility before 0.1.0)",
+        });
+      }
+    });
+  return out;
+}
+
 function checkDesign(designSrcDir: string): Finding[] {
   const out: Finding[] = [];
   const tokens = join(designSrcDir, "styles", "tokens.css");
@@ -1356,6 +1397,7 @@ export function checkWebUi(
   const readers = kernelReaders(webSrcDir);
   for (const { file, isTest } of listSourceFiles(webSrcDir)) {
     findings.push(...checkWebFile(file, isTest, webSrcDir, readers));
+    findings.push(...olderKernelFindings(file, webSrcDir));
   }
   findings.push(...routeTableFindings(webSrcDir));
   for (const css of listCssFiles(webSrcDir)) {

@@ -1,3 +1,4 @@
+import type { AuditPage } from "./admin";
 import { apiFetch } from "./api";
 
 const org = (orgId: string) => `/api/v1/orgs/${encodeURIComponent(orgId)}`;
@@ -42,3 +43,12 @@ export const revokeServiceToken = (orgId: string, tokenId: string) =>
   apiFetch<void>(`${org(orgId)}/service-tokens/${encodeURIComponent(tokenId)}`, {
     method: "DELETE",
   });
+
+/**
+ * A page of the org's audit log (`org.update`, admins): the newest (`after` omitted) or the one
+ * after a cursor, 20 events each.
+ */
+export const listOrgAudit = (orgId: string, after?: string) =>
+  apiFetch<AuditPage>(
+    `${org(orgId)}/audit?limit=20${after === undefined ? "" : `&after=${encodeURIComponent(after)}`}`,
+  );

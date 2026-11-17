@@ -44,7 +44,7 @@ import { accountsFor } from "../helpers/identity.js";
 import {
   createAgent,
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -139,7 +139,7 @@ beforeEach(async () => {
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   const enabled = await owner({
     method: "PUT",
     url: `/api/v1/orgs/${orgId}/extensions/hooks-probe`,
@@ -769,10 +769,13 @@ import { ExtensionHost } from "../../src/extensions/host.js";
 import { RunExecution } from "../../src/runtime/run-execution.js";
 import { ToolPipeline } from "../../src/tools/pipeline.js";
 import { permissionFixture } from "../helpers/permission-policy.js";
+import { enableModelProviders } from "../helpers/runs.js";
 
 it("staged child classifier retains parent hooks and explicit budget accounting", async () => {
   const input = { file_path: "/outside/reports/report.txt" };
   const f = await permissionFixture(k, raw, "Write", input, true);
+  // a model provider is on only in the orgs that enabled it: the classifier's too
+  await enableModelProviders(k, f.orgId);
   const childId = randomUUID(),
     childRunId = randomUUID(),
     budgetRunId = randomUUID(),

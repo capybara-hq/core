@@ -62,7 +62,7 @@ const modelCall = (seq: number, absorbedUpToSeq: number) =>
     step: 1,
     provider: "model-fake",
     model: "fake-1",
-    request: { absorbedUpToSeq },
+    request: { absorbedUpToSeq, tools: [] },
   });
 
 /** The thread's entries in order: their kind, a bubble's text. */

@@ -6,6 +6,8 @@ import { type HookRunner, hookRequestOf, hookScope } from "../../src/runtime/hoo
 describe("hookRequestOf", () => {
   const png = Buffer.alloc(1000, 7).toString("base64");
   const pdf = Buffer.alloc(2, 1).toString("base64");
+  const xlsx = Buffer.alloc(4, 3).toString("base64");
+  const XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
   const request: ModelRequest = {
     model: "m",
     system: [{ text: "sys", cache: true }],
@@ -21,6 +23,12 @@ describe("hookRequestOf", () => {
             source: { kind: "base64", data: png },
           },
           { type: "document", mediaType: "application/pdf", source: { kind: "base64", data: pdf } },
+          {
+            type: "file",
+            mediaType: XLSX,
+            name: "secret-plan.xlsx",
+            source: { kind: "base64", data: xlsx },
+          },
         ],
       },
       { role: "assistant", content: [{ type: "text", text: "ok" }] },
@@ -31,7 +39,7 @@ describe("hookRequestOf", () => {
     params: {},
   };
 
-  it("replaces images and documents with placeholders (kind, mediaType, decoded size)", () => {
+  it("replaces images, documents and files with placeholders (kind, mediaType, decoded size)", () => {
     const out = hookRequestOf(request);
     expect(out.messages[0]).toEqual({
       role: "user",
@@ -39,15 +47,17 @@ describe("hookRequestOf", () => {
         { type: "text", text: "look" },
         { type: "media_omitted", kind: "image", mediaType: "image/png", size: 1000 },
         { type: "media_omitted", kind: "document", mediaType: "application/pdf", size: 2 },
+        { type: "media_omitted", kind: "file", mediaType: XLSX, size: 4 },
       ],
     });
     expect(out.messages.slice(1)).toEqual(request.messages.slice(1));
     expect(out.system).toBe(request.system);
     const json = JSON.stringify(out);
     expect(json).not.toContain(png);
-    expect(json).not.toContain("secret-plan.png");
+    expect(json).not.toContain(xlsx);
+    expect(json).not.toContain("secret-plan");
     // the request itself (sent to the provider and logged) is untouched
-    expect(request.messages[0]?.content).toHaveLength(3);
+    expect(request.messages[0]?.content).toHaveLength(4);
     expect(JSON.stringify(request)).toContain(png);
   });
 

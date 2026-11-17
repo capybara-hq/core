@@ -51,20 +51,6 @@ import { AGENT_TOOL } from "../tools/builtin-names.js";
 import { canonicalJson } from "./recorded-tools.js";
 import { type CaseSnapshot, toEvents } from "./snapshot.js";
 
-/**
- * Does a definition from before skills were on by default pin skills? Read raw: the normalizer
- * drops `skills.pinned` (skills default-on spec §4, §9).
- */
-const pinsSkills = (d: unknown): boolean => {
-  const skills =
-    typeof d === "object" && d !== null ? (d as { skills?: unknown }).skills : undefined;
-  const pinned =
-    typeof skills === "object" && skills !== null
-      ? (skills as { pinned?: unknown }).pinned
-      : undefined;
-  return Array.isArray(pinned) && pinned.length > 0;
-};
-
 /** `R` when the caller did not resolve the org's settings (the built-in platform default). */
 const DEFAULT_RESERVE_TOKENS = COMPACTION_SETTINGS.parse({}).reserveTokens;
 
@@ -94,17 +80,10 @@ function samePlan(a: FitPlan | null | undefined, b: FitPlan | undefined): boolea
  * - `system_hash` / `tools_changed`（只在基线判定）：system 指纹、工具序列（tools 与 catalog）与记录不同；
  * - `tool_spec_missing`：快照里缺某个工具定义（从请求里去掉）；
  * - `definition_missing`：快照里缺该 agent 版本的定义（用空指令）；
- * - `pinned_changed` (phase B, never for a baseline, not with `definition_missing`): the
- *   `skills_catalog` snapshot in effect at the call pinned skills (`pinned` non-empty). No candidate
- *   can pin any more (skills default-on spec §9), so any candidate differs from such a call; the
- *   request still renders the recorded pinned bodies (Decision 1);
  * - `subagent_changed` (phase C, never for a baseline): a sub-agent's (child) case with a candidate
  *   whose effective definition differs from the one frozen in its `subagent_started` (see
  *   {@link subagentChanged}); the request still renders the logged definition and preamble. A child
- *   case never consults `definitions` (no `definition_missing`) and has no `pinned_changed` (a
- *   logged child definition that pinned counts as `subagent_changed`);
- * - `legacy_event`：记录缺 `tools` / `params` / `absorbedUpToSeq` / `maxOutputTokens`，或还原出媒体而记录里没有
- *   `media` / `mediaBudgetBytes`（较早的事件）；
+ *   case never consults `definitions` (no `definition_missing`);
  * - `params_changed`：没给候选参数时，记录的参数按所用模型的声明清洗后有键被丢弃或值变了（换了模型或模型声明变了）；
  * - `media_missing`：某附件记录里不是「不再可用」，还原时却取不到；
  * - `media_changed`（只在基线判定）：其余任何媒体结果与记录不同（按附件 id 比 outcome 与 etag：预算省略、
@@ -120,16 +99,10 @@ export type DriftReason =
   | "tools_changed"
   | "tool_spec_missing"
   | "definition_missing"
-  /**
-   * The call rendered pinned skills (phase B), which no candidate has any more (skills default-on
-   * spec §9).
-   */
-  | "pinned_changed"
   /** A child case's candidate has another effective definition than the logged one (phase C). */
   | "subagent_changed"
   /** Original bounded permission contributions or their recorded locator/hash differ. */
   | "permission_profile_changed"
-  | "legacy_event"
   | "params_changed"
   /**
    * UI refresh B: a non-baseline reconstruction whose run used a person's mid-conversation model
@@ -152,10 +125,8 @@ const DRIFT_ORDER: readonly DriftReason[] = [
   "tools_changed",
   "tool_spec_missing",
   "definition_missing",
-  "pinned_changed",
   "subagent_changed",
   "permission_profile_changed",
-  "legacy_event",
   "params_changed",
   "model_switched",
   "media_missing",
@@ -176,7 +147,7 @@ export interface ReconstructOptions {
   /** 附件行信息与字节（调用方按 {@link snapshotMediaRefs} 取）；缺省表示都取不到。 */
   mediaInfo?: ReadonlyMap<string, MediaInfo>;
   media?: ReadonlyMap<string, MediaBytes | null>;
-  /** 单次请求的媒体字节预算；缺省用记录的 `mediaBudgetBytes`（较早的事件没有时不限）。 */
+  /** The request's media byte budget; defaults to the recorded `mediaBudgetBytes` (recorded only when the request had media). */
   mediaBudgetBytes?: number;
   /** The candidate's model (a non-baseline reconstruction): checked against the run's switch. */
   modelRef?: ModelRef;
@@ -305,15 +276,6 @@ export function reconstructRequest(
   const rec: Recorded = call.payload.request;
   const drift = new Set<DriftReason>(recordedPermissionContextDrift(all, call));
 
-  if (
-    rec.tools === undefined ||
-    rec.params === undefined ||
-    rec.absorbedUpToSeq === undefined ||
-    rec.maxOutputTokens === undefined
-  ) {
-    drift.add("legacy_event");
-  }
-
   const origVersion = recordedVersion(s, all, call);
   const version = opts.agentVersion ?? origVersion;
   const started = subagentStartedOf(all);
@@ -370,23 +332,12 @@ export function reconstructRequest(
     });
   }
 
-  // pinned_changed (skills default-on spec §9): the snapshot in effect at the call pinned skills,
-  // and no candidate pins any more (the migration rewrote the stored versions without pins). The
-  // stub of definition_missing is no candidate, so it is skipped then; a child reports a logged
-  // pin as subagent_changed instead.
-  if (!baseline && started === undefined && !drift.has("definition_missing")) {
-    const snap = inputEvents(all, call)
-      .filter((e) => e.type === "skills_catalog")
-      .at(-1) as Extract<ConversationEvent, { type: "skills_catalog" }> | undefined;
-    if ((snap?.payload.pinned ?? []).length > 0) drift.add("pinned_changed");
-  }
-
   // 工具：按记录的顺序从快照取定义；取不到的从请求里去掉（基线与候选一样）
   const tools: RequestTool[] = [];
   const seen = new Set<string>();
   const kept = (list: Recorded["tools"]) =>
-    (list ?? []).filter((t) => s.toolSpecs[t.specHash] !== undefined);
-  for (const t of [...(rec.tools ?? []), ...(rec.catalog ?? [])]) {
+    list.filter((t) => s.toolSpecs[t.specHash] !== undefined);
+  for (const t of [...rec.tools, ...(rec.catalog ?? [])]) {
     if (seen.has(t.key)) continue;
     seen.add(t.key);
     const spec = s.toolSpecs[t.specHash];
@@ -407,10 +358,11 @@ export function reconstructRequest(
 
   let params = opts.params;
   if (params === undefined) {
-    const recorded = rec.params ?? {};
-    const clean = sanitizeParams(opts.model.parameters, recorded);
+    const clean = sanitizeParams(opts.model.parameters, rec.params);
     params = clean.value;
-    if (clean.dropped.length > 0 || !sameParams(clean.value, recorded)) drift.add("params_changed");
+    if (clean.dropped.length > 0 || !sameParams(clean.value, rec.params)) {
+      drift.add("params_changed");
+    }
   }
   const budget = opts.mediaBudgetBytes ?? rec.mediaBudgetBytes;
 
@@ -420,7 +372,7 @@ export function reconstructRequest(
     agentVersion: version,
     model: opts.model,
     step: call.payload.step,
-    ...(rec.absorbedUpToSeq !== undefined && { absorbedUpToSeq: rec.absorbedUpToSeq }),
+    absorbedUpToSeq: rec.absorbedUpToSeq,
     params,
     tools,
     toolSearch: rec.catalog !== undefined,
@@ -428,13 +380,11 @@ export function reconstructRequest(
     ...(opts.mediaInfo !== undefined && { mediaInfo: opts.mediaInfo }),
     ...(opts.media !== undefined && { media: opts.media }),
     ...(budget !== undefined && { mediaBudgetBytes: budget }),
-    defaultMaxOutputTokens: rec.maxOutputTokens ?? opts.model.maxOutputTokens,
+    defaultMaxOutputTokens: rec.maxOutputTokens,
     // The baseline replays the recorded output cap as sent: the runtime may have clamped it below
     // the agent's `maxOutputTokens` knob (context compaction spec §4.3), and recomputing it from the
     // knob would replay a larger cap. A candidate below recomputes the clamp and the trim instead.
-    ...(baseline && rec.maxOutputTokens !== undefined
-      ? { recordedMaxOutputTokens: rec.maxOutputTokens }
-      : {}),
+    ...(baseline && { recordedMaxOutputTokens: rec.maxOutputTokens }),
     // the baseline replays the recorded trim (no reserve needed); a candidate below recomputes it
     ...(baseline && rec.fit !== undefined ? { fit: rec.fit } : {}),
   });
@@ -475,18 +425,14 @@ export function reconstructRequest(
     if (meta.systemHash !== rec.systemHash) drift.add("system_hash");
     // 与记录比较时排除快照里缺定义的工具（已记 tool_spec_missing）
     if (
-      rec.tools !== undefined &&
-      (!sameList(meta.tools, kept(rec.tools)) ||
-        !sameList(meta.catalog, rec.catalog === undefined ? undefined : kept(rec.catalog)))
+      !sameList(meta.tools, kept(rec.tools)) ||
+      !sameList(meta.catalog, rec.catalog === undefined ? undefined : kept(rec.catalog))
     ) {
       drift.add("tools_changed");
     }
   }
 
   // 媒体：按附件 id 与记录比较
-  if (meta.media !== undefined && (rec.media === undefined || rec.mediaBudgetBytes === undefined)) {
-    drift.add("legacy_event");
-  }
   const recordedMedia = new Map((rec.media ?? []).map((m) => [m.attachmentId, m]));
   for (const m of meta.media ?? []) {
     const was = recordedMedia.get(m.attachmentId);
@@ -494,15 +440,14 @@ export function reconstructRequest(
       drift.add("media_missing");
     } else if (
       baseline &&
-      rec.media !== undefined &&
       (was === undefined || was.outcome !== m.outcome || was.etag !== m.etag)
     ) {
       drift.add("media_changed");
     }
   }
-  if (baseline && rec.media !== undefined) {
+  if (baseline) {
     const now = new Set((meta.media ?? []).map((m) => m.attachmentId));
-    if (rec.media.some((m) => !now.has(m.attachmentId))) drift.add("media_changed");
+    if ((rec.media ?? []).some((m) => !now.has(m.attachmentId))) drift.add("media_changed");
   }
 
   return { request, meta, drift: DRIFT_ORDER.filter((r) => drift.has(r)), mediaTokens };
@@ -586,8 +531,7 @@ const parentSide = (d: AgentDefinition, started: SubagentStarted): string =>
  * Does a candidate change what a sub-agent (child) case would run (`subagent_changed`, spec
  * §15.1)? Pure, from the snapshot alone, comparing the model-visible parts of the effective
  * definition (instructions, turned-off skills, tools) with the logged one (`logged`, from its
- * `subagent_started`). A logged definition that pinned skills (`started.definition`, read raw)
- * differs from every candidate: none pins any more (skills default-on spec §9).
+ * `subagent_started`).
  * - the same agent version (`sameVersion`): the candidate is the logged definition with
  *   overrides (instructions, model, params), compared field by field;
  * - another version of the case's agent: for an org agent child (`source: "agent"`) that agent's
@@ -613,7 +557,6 @@ export function subagentChanged(
   /** The parent's definition at the case's version (the snapshot's), for template children. */
   original?: AgentDefinition,
 ): boolean {
-  if (pinsSkills(started.definition)) return true;
   const keepAgent = hasAgent(logged);
   const childTools = (d: AgentDefinition) => childToolsOf(d, keepAgent);
   const differs = (instructions: string, skills: string | null, tools: string | null): boolean =>

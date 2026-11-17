@@ -25,7 +25,7 @@ import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { drainOutbox } from "../helpers/outbox.js";
 import {
   createAgent,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -117,7 +117,7 @@ afterAll(async () => {
 
 /** 新组织（启用 chan-mini）+ agent + 一个连接，等长连接连上。 */
 async function setup(name: string): Promise<{ orgId: string; agentId: string; connId: string }> {
-  const orgId = await createOrg(owner, name);
+  const orgId = await createOrgWithProviders(a, owner, name);
   const agentId = await createAgent(owner, orgId);
   const en = await owner({
     method: "PUT",

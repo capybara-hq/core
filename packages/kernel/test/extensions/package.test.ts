@@ -128,8 +128,8 @@ async function rejects(bytes: Uint8Array, re: RegExp, opts = OPTS): Promise<stri
   return issues;
 }
 
-const LEGACY =
-  "uses the pre-0.1.0 package format (capybara section / app.yaml); repack it as a plugin with .capybara-plugin/plugin.json (pnpm pack-plugin)";
+const NO_MANIFEST =
+  ".capybara-plugin/plugin.json not found in the package: a plugin package carries its manifest at that path (build it with `capybara-plugin pack`)";
 
 const SKILL_MD =
   "---\nname: greet\ndescription: Greets the user. Use when the user says hello.\n---\n\nHi.\n";
@@ -234,7 +234,7 @@ describe("readExtensionPackage: the pre-0.1.0 format and plugins without an exte
     return err as ExtensionPackageError;
   };
 
-  it("a capybara section in package.json and no plugin.json -> extension.legacy_format", async () => {
+  it("a capybara section in package.json and no plugin.json -> extension.package_invalid naming the manifest path", async () => {
     const old = pkgJson({
       capybara: {
         kind: "plugin",
@@ -249,20 +249,19 @@ describe("readExtensionPackage: the pre-0.1.0 format and plugins without an exte
         { name: "package/dist/index.mjs", data: ENTRY },
       ]),
     );
-    expect(e.code).toBe("extension.legacy_format");
-    expect(e.issues).toEqual([`Package @acme/plugin-demo ${LEGACY}`]);
-    expect(e.message).toBe(`Package @acme/plugin-demo ${LEGACY}`);
+    expect(e.code).toBe("extension.package_invalid");
+    expect(e.issues).toEqual([NO_MANIFEST]);
   });
 
-  it("app.yaml and no plugin.json -> extension.legacy_format", async () => {
+  it("app.yaml and no plugin.json -> extension.package_invalid naming the manifest path", async () => {
     const e = await legacyCode(
       await tgz([
         { name: "package/package.json", data: pkgJson({ peerDependencies: undefined }) },
         { name: "package/app.yaml", data: "schemaVersion: 1\nname: demo\n" },
       ]),
     );
-    expect(e.code).toBe("extension.legacy_format");
-    expect(e.issues[0]).toContain(LEGACY);
+    expect(e.code).toBe("extension.package_invalid");
+    expect(e.issues[0]).toBe(NO_MANIFEST);
   });
 
   it("a plugin without an extension -> extension.no_extension", async () => {
@@ -332,7 +331,7 @@ describe("readPluginPackage", () => {
     expect(p.connectorTemplates.map((t) => t.id)).toEqual(["crm"]);
   });
 
-  it("a legacy tgz -> catalog.legacy_format", async () => {
+  it("an old-format tgz -> catalog.invalid_manifest naming the manifest path", async () => {
     const err = await readPluginPackage(
       await tgz([{ name: "package/package.json", data: pkgJson({ capybara: { kind: "skill" } }) }]),
       OPTS,
@@ -341,8 +340,8 @@ describe("readPluginPackage", () => {
       (e: unknown) => e,
     );
     expect(err).toBeInstanceOf(PluginPackageError);
-    expect((err as PluginPackageError).code).toBe("catalog.legacy_format");
-    expect((err as PluginPackageError).issues).toEqual([`Package @acme/plugin-demo ${LEGACY}`]);
+    expect((err as PluginPackageError).code).toBe("catalog.invalid_manifest");
+    expect((err as PluginPackageError).issues).toEqual([NO_MANIFEST]);
   });
 
   // Review Focus 2: plugin.json that lies about its content is refused, naming the path.
@@ -455,7 +454,7 @@ describe("readPluginPackage", () => {
     );
   });
 
-  it("an old app bundle with a broken package.json is still legacy (app.yaml is checked first)", async () => {
+  it("an old app bundle with a broken package.json is invalid", async () => {
     const err = await readPluginPackage(
       await tgz([
         { name: "package/package.json", data: "{not json" },
@@ -467,8 +466,7 @@ describe("readPluginPackage", () => {
       (e: unknown) => e,
     );
     expect(err).toBeInstanceOf(PluginPackageError);
-    expect((err as PluginPackageError).code).toBe("catalog.legacy_format");
-    expect((err as PluginPackageError).issues).toEqual([`The package ${LEGACY}`]);
+    expect((err as PluginPackageError).code).toBe("catalog.invalid_manifest");
   });
 
   it("icons must really be svg / png and at most 64KB (plugin and connector template icons)", async () => {

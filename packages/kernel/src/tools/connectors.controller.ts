@@ -16,11 +16,13 @@ import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import { can } from "../orgs/roles.js";
 import {
   ConnectorAccountPolicies,
+  type MemberGitPushView,
   type MemberToolPolicyView,
 } from "./connector-account-policies.js";
 import {
   ConnectorGuideAckSchema,
   CredentialValue,
+  GitPushPolicyBody,
   MemberToolPoliciesBody,
 } from "./connectors.schemas.js";
 import {
@@ -109,6 +111,14 @@ class MemberToolPoliciesDto extends createZodDto(
   MemberToolPoliciesBody,
   "MemberToolPoliciesBody",
 ) {}
+
+class GitPushPolicyDto extends createZodDto(GitPushPolicyBody, "ConnectorGitPushPolicyBody") {}
+
+/** The member's Permissions sheet: their tool policies and the git push part (null without git). */
+interface MemberPolicySheet {
+  tools: MemberToolPolicyView[];
+  gitPush: MemberGitPushView | null;
+}
 
 class ConnectorGuideAckBody extends createZodDto(
   ConnectorGuideAckSchema,
@@ -349,6 +359,31 @@ export class ConnectorsController {
     return { connector: await this.withGuide(org, view) };
   }
 
+  /**
+   * The org's default for git pushes through the connector's credential in sandboxes
+   * (`{ policy: "allow" | "ask" | "deny" }`, the virtual tool `git_push`) -> `{ connector }`. A
+   * connector without git hosts -> 400 on `policy`. An API token may only narrow it (400
+   * `connector.git_push_widen_not_allowed`).
+   */
+  @Put(":connectorId/git-push-policy")
+  @OrgAction("connectors.manage")
+  async setGitPushPolicy(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("connectorId") connectorId: string,
+    @ZBody(GitPushPolicyDto) body: z.infer<typeof GitPushPolicyBody>,
+  ): Promise<{ connector: ConnectorPage }> {
+    const p = requireUser(principal);
+    const view = await this.connectors.setGitPushPolicy(
+      org.orgId,
+      connectorId,
+      p.account.id,
+      body.policy,
+      { actorTokenId: patTokenId(p), onlyNarrows: patTokenId(p) !== undefined },
+    );
+    return { connector: await this.withGuide(org, view) };
+  }
+
   @Put(":connectorId/credentials/org")
   @HttpCode(204)
   @OrgAction("connectors.manage")
@@ -392,8 +427,9 @@ export class ConnectorsController {
   /**
    * The caller's own tool policies for their own connection of a personal-credential connector
    * (the card's 权限, decision 2026-11-09): each tool with the org default, the annotation default,
-   * the caller's setting and whether the org locked it. Only ever the caller's rows. A connector
-   * with one org credential -> 409 `connector.not_personal`.
+   * the caller's setting and whether the org locked it; `gitPush`: the org's default for pushes
+   * and the caller's standing push decisions per repository (null without git). Only ever the
+   * caller's rows. A connector with one org credential -> 409 `connector.not_personal`.
    */
   @Get(":connectorId/tool-policies/me")
   @OrgAction("connectors.use")
@@ -401,15 +437,27 @@ export class ConnectorsController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("connectorId") connectorId: string,
-  ): Promise<{ tools: MemberToolPolicyView[] }> {
+  ): Promise<MemberPolicySheet> {
     const p = requireUser(principal);
-    return { tools: await this.memberPolicies.read(org.orgId, connectorId, p.account.id) };
+    return this.sheet(org.orgId, connectorId, p.account.id);
+  }
+
+  private async sheet(
+    orgId: string,
+    connectorId: string,
+    accountId: string,
+  ): Promise<MemberPolicySheet> {
+    return {
+      tools: await this.memberPolicies.read(orgId, connectorId, accountId),
+      gitPush: await this.memberPolicies.gitPush(orgId, connectorId, accountId),
+    };
   }
 
   /**
    * Sets (`allow` / `ask` / `deny`) or clears (null) the caller's own policies for some tools:
    * `{ tools: { <name>: policy | null } }` -> the sheet again. Unknown tool -> 404
-   * `connector.tool_not_found`.
+   * `connector.tool_not_found`; a standing push decision `git_push:<host>/<owner>/<repo>` may only
+   * be cleared (null).
    */
   @Put(":connectorId/tool-policies/me")
   @OrgAction("connectors.use")
@@ -418,10 +466,10 @@ export class ConnectorsController {
     @CurrentOrg() org: OrgContext,
     @Param("connectorId") connectorId: string,
     @ZBody(MemberToolPoliciesDto) body: z.infer<typeof MemberToolPoliciesBody>,
-  ): Promise<{ tools: MemberToolPolicyView[] }> {
+  ): Promise<MemberPolicySheet> {
     const p = requireUser(principal);
     await this.memberPolicies.set(org.orgId, connectorId, p.account.id, body.tools, patTokenId(p));
-    return { tools: await this.memberPolicies.read(org.orgId, connectorId, p.account.id) };
+    return this.sheet(org.orgId, connectorId, p.account.id);
   }
 
   @Delete(":connectorId/credentials/me")

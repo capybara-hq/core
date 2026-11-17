@@ -190,6 +190,7 @@ export {
   createConversation,
   createLocalAccount,
   createOrg,
+  enableModelProviders,
   eventsOf,
   joinOrg,
   type KernelApp,

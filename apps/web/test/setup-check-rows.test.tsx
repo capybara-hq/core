@@ -68,6 +68,7 @@ const PLUGINS = [
         entries: [{ value: "channel@1", sensitive: false }],
       },
     ],
+    provides: ["channel@1"],
     orgConfigSchema: null,
   },
 ];

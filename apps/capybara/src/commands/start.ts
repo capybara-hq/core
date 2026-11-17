@@ -5,6 +5,7 @@ import {
   type KernelAppOptions,
   type KernelConfig,
   type KernelLogger,
+  onProcessFault,
   resolveConfig,
   selectConfigSource,
   startKernelApp,
@@ -17,7 +18,8 @@ import { bootstrapDirOf } from "./bootstrap.js";
  * `capybara start`: loads the config → `startKernelApp`, which builds the kernel application,
  * installs the SIGTERM / SIGINT handlers (the first signal stops gracefully, then exits; a second
  * one exits with 1 at once), runs the start sequence and listens. A signal during the start aborts
- * it at its next checkpoint.
+ * it at its next checkpoint. A fatal event the process guards swallowed runs the same graceful stop
+ * and exits with 1.
  * `--role` is injected as an environment override of `CAPYBARA_ROLES`, so it also holds when a
  * config hot reload merges the config again. `onLogger` receives the configured logger once it
  * exists (the process guards of the CLI log through it from then on).
@@ -68,6 +70,9 @@ export async function runStart(
   try {
     await startKernelApp(config, options, {
       signals,
+      // a swallowed fatal event stops the kernel gracefully and exits 1 (the restart policy
+      // replaces the process)
+      faults: onProcessFault,
       exit: (code) => {
         exited = true;
         exit(code);

@@ -21,6 +21,11 @@ import { childResult, finishedEvent } from "../../../src/runtime/subagents/child
 import { type DispatchDeps, dispatchSubagent } from "../../../src/runtime/subagents/dispatch.js";
 import { SubagentMessages } from "../../../src/runtime/subagents/messages.js";
 import { SUBAGENT_PREAMBLE } from "../../../src/runtime/subagents/preamble.js";
+import {
+  templateSkillUnreadableText,
+  templateSkillUnreadableWarning,
+} from "../../../src/runtime/subagents/template-skills.js";
+import { SkillInvoker } from "../../../src/skills/invoke.js";
 import { AGENT_REFUSALS, agentStartedText } from "../../../src/tools/builtins/agent.js";
 import {
   SEND_MESSAGE_REFUSALS,
@@ -37,7 +42,7 @@ import { MODEL_FAKE } from "../../helpers/model-plugins.js";
 import { captureProviderRequests } from "../../helpers/provider-capture.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -195,7 +200,7 @@ beforeEach(async () => {
   ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "O" })).id;
   otherId = (await accounts.createLocal({ login: "other", password: PW, displayName: "X" })).id;
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   await testMembers(db).add(orgId, otherId, "member", ownerId);
   const res = await owner({
     method: "POST",
@@ -615,15 +620,10 @@ describe("dispatch", () => {
     expect(post.statusCode, post.body).toBe(409);
     expect((post.json() as { error: { code: string } }).error.code).toBe("conversation.read_only");
     expect(ofType(await eventsOf(db, child), "user_message")).toHaveLength(1);
-    // UI refresh B's writes refuse a child too: rename, queue, a model switch with a message
+    // UI refresh B's writes refuse a child too: rename, a model switch with a message
     const base = `/api/v1/orgs/${orgId}/conversations/${child}`;
     const writes = [
       await owner({ method: "PATCH", url: base, payload: { title: "Renamed" } }),
-      await owner({
-        method: "POST",
-        url: `${base}/queue`,
-        payload: { text: "later", clientMessageId: randomUUID() },
-      }),
       await owner({
         method: "POST",
         url: `${base}/messages`,
@@ -723,6 +723,7 @@ describe("dispatch idempotency under the parent run lock", () => {
     eventLog: k.app.get(EventLog),
     purposes: k.app.get(ModelPurposesService),
     registry: k.app.get(ProviderRegistry),
+    invoker: k.app.get(SkillInvoker),
     config: { get: () => k.app.get(KernelConfigService).get() },
     // the child runs are not executed here
     owe: async () => true,
@@ -761,6 +762,87 @@ describe("dispatch idempotency under the parent run lock", () => {
     // found already dispatched owes nothing again: its child's job was owed with the first holder
     expect(owed).toHaveLength(2);
     expect(new Set(owed).size).toBe(2);
+  });
+
+  it("a template skill that cannot be read at dispatch (no object storage) becomes a load-it message and a warning; the dispatch goes on, a stopped run's does not", async () => {
+    const { ctx } = await parentRun();
+    const skillId = randomUUID();
+    await db
+      .insertInto("skills")
+      .values({
+        id: skillId,
+        org_id: orgId,
+        scope: "org",
+        name: "beta-notes",
+        description: "Use for beta notes.",
+        current_version: 1,
+        created_by: ownerId,
+      })
+      .execute();
+    await db
+      .insertInto("skill_versions")
+      .values({
+        skill_id: skillId,
+        version: 1,
+        manifest: JSON.stringify({
+          name: "beta-notes",
+          description: "Use for beta notes.",
+          files: [{ path: "SKILL.md", size: 10, sha256: "0".repeat(64) }],
+        }),
+        object_prefix: `skills/${skillId}/`,
+        created_by: ownerId,
+      })
+      .execute();
+    try {
+      const agent = {
+        ...ctx.agent,
+        subagents: {
+          inline: [
+            { name: "noter", description: "Notes.", instructions: "Note.", skills: [skillId] },
+          ],
+        },
+      };
+      const input = { description: "Notes", prompt: "take notes", subagent_type: "noter" };
+      // a stopped parent run reads no skill and dispatches nothing
+      const stopped = new AbortController();
+      stopped.abort();
+      const before = (await children(ctx.conversationId)).length;
+      expect(
+        await dispatchSubagent(deps(), {
+          ctx: { ...ctx, agent, signal: stopped.signal },
+          callId: "c-stopped",
+          input,
+        }),
+      ).toEqual({ kind: "refused", content: AGENT_REFUSALS.notAvailableHere });
+      expect(await children(ctx.conversationId)).toHaveLength(before);
+      const out = await dispatchSubagent(deps(), {
+        ctx: { ...ctx, agent },
+        callId: "c-skill",
+        input,
+      });
+      expect(out.kind).toBe("dispatched");
+      const child = (out as { childConversationId: string }).childConversationId;
+      const events = await eventsOf(db, child);
+      const started = ofType(events, "subagent_started")[0];
+      expect(started?.payload.preamble).toBe(SUBAGENT_PREAMBLE);
+      expect(started?.payload.warnings).toEqual([templateSkillUnreadableWarning("beta-notes")]);
+      const messages = ofType(events, "user_message");
+      expect(messages.map((m) => m.payload.content)).toEqual([
+        [{ type: "text", text: "take notes" }],
+        [{ type: "text", text: templateSkillUnreadableText("beta-notes") }],
+      ]);
+      // no record: nothing was rendered from the version; the display-only marker names the skill
+      expect(messages[1]?.payload.skill).toBeUndefined();
+      expect(messages[1]?.payload.templateSkillNotice).toEqual({ name: "beta-notes" });
+      expect(messages[1]?.payload.dispatch).toBeUndefined();
+    } finally {
+      // the other cases keep their catalogs
+      await db
+        .updateTable("skills")
+        .set({ deleted_at: new Date() })
+        .where("id", "=", skillId)
+        .execute();
+    }
   });
 
   it("a call dispatched before background Agent (no tool_result yet) is paired once, under its logged key", async () => {

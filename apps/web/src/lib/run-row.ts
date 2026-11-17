@@ -1,5 +1,6 @@
 import { formatDuration } from "@capybara-hq/design";
 import { myRole, roleAtLeast } from "./members";
+import { type ModelConfigCause, type ModelConfigViewer, modelConfigHref } from "./model-config";
 import type { RunData } from "./timeline";
 
 /** What the gates read of `GET /me` (the session's `me`). */
@@ -22,15 +23,26 @@ export function canViewTrajectory(me: RunRowViewer, agentOwnerId: string | undef
   );
 }
 
-/** Whether the row offers 去配置模型服务 (`/admin/extensions`): super admins only. */
-export const canConfigureModels = (me: RunRowViewer): boolean => me.account.isSuperAdmin;
+/**
+ * Failures a model service's setup causes, by where they are fixed ({@link modelConfigHref}): a
+ * model gone or not on in the org (`org_fixable`), failed credentials (`credentials`: the org's own
+ * copy or the platform's), a purpose without a model (`platform`).
+ */
+const MODEL_SETUP_ERRORS: Readonly<Record<string, ModelConfigCause>> = {
+  "run.model_unavailable": "org_fixable",
+  "model.auth": "credentials",
+  "model.unconfigured": "platform",
+};
+export const isModelSetupError = (code: string): boolean => MODEL_SETUP_ERRORS[code] !== undefined;
 
 /**
- * Failures a deployment's model service setup causes (credentials, a purpose without a model, a
- * model gone), which a super admin fixes in the extensions' config.
+ * Where a failed run's "Configure model services" leads for the error `code`, or null (not a model
+ * setup error, or a viewer who can act on neither page): the setup checklist's rule.
  */
-const MODEL_SETUP_ERRORS = new Set(["model.auth", "model.unconfigured", "run.model_unavailable"]);
-export const isModelSetupError = (code: string): boolean => MODEL_SETUP_ERRORS.has(code);
+export function configureModelsHref(v: ModelConfigViewer, code: string): string | null {
+  const cause = MODEL_SETUP_ERRORS[code];
+  return cause === undefined ? null : modelConfigHref(cause, v);
+}
 
 /** The parts after "运行": the model, the duration, the tokens (the unknown ones left out). */
 export function runParts(

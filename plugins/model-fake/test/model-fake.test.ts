@@ -305,7 +305,7 @@ describe("model-fake", () => {
     const c = complete(
       await run(
         mk(),
-        req(long, { system: [{ text: "CAPYBARA_COMPACTION\nSummarize.", cache: false }] }),
+        req(long, { system: [{ text: "Summarize.", cache: false }], purpose: "compaction" }),
       ),
     );
     expect(c.content).toEqual([{ type: "text", text: `Summary: ${"y".repeat(200)}` }]);

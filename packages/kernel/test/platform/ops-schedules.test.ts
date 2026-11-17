@@ -13,7 +13,7 @@ import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
-  createOrg,
+  createOrgWithProviders,
   PW,
   runConfig,
   session,
@@ -60,7 +60,7 @@ beforeEach(async () => {
   const ownerId = await mk("owner");
   aliceId = await mk("alice");
   bobId = await mk("bob");
-  orgId = await createOrg(await session(k, "owner"));
+  orgId = await createOrgWithProviders(k, await session(k, "owner"));
   await testMembers(db).add(orgId, aliceId, "member", ownerId);
   await testMembers(db).add(orgId, bobId, "member", ownerId);
   const r = await k.app.get(AgentsService).create(orgId, aliceId, {

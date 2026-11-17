@@ -29,7 +29,7 @@ import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -103,7 +103,7 @@ beforeAll(async () => {
     await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "Wang Fang" })
   ).id;
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   const res = await owner({
     method: "POST",
     url: `/api/v1/orgs/${orgId}/agents`,

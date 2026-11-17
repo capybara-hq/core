@@ -481,7 +481,7 @@ export function networkAskOf(
 /**
  * The exact reach a permission ask grants: from its detail once read, else from the log's
  * `approval_requested.command` (both carry the same untruncated arrays); undefined for an ask
- * without one (older logs, other kinds).
+ * without one (an auto-mode command ask, other kinds).
  */
 export function permissionScopeOf(
   item: Pick<ApprovalItem, "command">,

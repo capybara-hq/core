@@ -23,6 +23,7 @@ import { MODEL_FAKE } from "../../helpers/model-plugins.js";
 import {
   createConv,
   enableConnectorExtensions,
+  enableModelProviders,
   eventsOf,
   PW,
   postMessage,
@@ -98,6 +99,7 @@ beforeEach(async () => {
   const org = await call({ method: "POST", url: "/api/v1/orgs", payload: { name: "Acme" } });
   orgId = (org.json() as { org: { id: string } }).org.id;
   await enableConnectorExtensions(k, orgId);
+  await enableModelProviders(k, orgId);
 });
 
 afterEach(async () => {

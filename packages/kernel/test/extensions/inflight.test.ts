@@ -13,7 +13,7 @@ import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   type Req,
@@ -67,7 +67,7 @@ beforeAll(async () => {
     displayName: "O",
   });
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   for (const [plugin, config] of [
     ["everything", undefined],
     ["dir-mini", { url: "http://127.0.0.1:9/dir" }],

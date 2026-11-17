@@ -661,7 +661,7 @@ export class ChannelSupervisor {
   }
 }
 
-export { GATEWAY_CHECK_JOB, GATEWAY_CHECK_SCHEDULER_ID } from "./job-ids.js";
+export { GATEWAY_CHECK_JOB } from "./job-ids.js";
 /** The period of the gateway check (`@LockedCron` every minute). */
 export const GATEWAY_CHECK_EVERY_MS = 60_000;
 
@@ -670,8 +670,7 @@ export const GATEWAY_CHECK_EVERY_MS = 60_000;
  * {@link checkGatewayPresence}, every minute, once across replicas; a worker-role job
  * (`WorkerModule`), as the maintenance job it replaces was. Silent for one lease TTL after this
  * worker process built its providers (the gateways' first heartbeats; the old handler's grace also
- * started at the worker's kernel construction). Replaces the maintenance scheduler
- * `channel-gateway-check-every` (retired at worker start).
+ * started at the worker's kernel construction).
  */
 @Injectable()
 export class GatewayCheckJob {

@@ -19,7 +19,6 @@ import { ProviderRegistry } from "../runtime/providers.js";
 import { SkillChangesService } from "../skills/changes.service.js";
 import { assertDisabledSkills } from "../skills/skills.service.js";
 import { agentSkills } from "../skills/usable.js";
-import { legacyKeySaveText } from "../tools/legacy-keys.js";
 import { ToolRegistry } from "../tools/registry.js";
 import {
   AgentLookup,
@@ -39,7 +38,6 @@ import {
   paramIssues,
   SUBAGENT_NAME_RE,
   SUBAGENT_ROSTER_MAX,
-  withoutRemovedBuiltinPolicies,
 } from "./definition.js";
 import { type AgentDefinitionInput, deriveInstructions } from "./instruction-files.js";
 import { PendingConnectorRequests } from "./pending-connector-requests.js";
@@ -299,10 +297,7 @@ export async function assertSubagents(
     const base = `subagents.inline.${i}`;
     name(x.name, `${base}.name`);
     const tool = (key: string, path: string) => {
-      if (a.toolKeys.has(key)) return;
-      // an rc key names its current key(s) (tool naming spec §8.3)
-      const renamed = legacyKeySaveText(key, a.toolKeys);
-      add("tool_not_selected", path, key, renamed ?? undefined);
+      if (!a.toolKeys.has(key)) add("tool_not_selected", path, key);
     };
     for (const [j, key] of (x.tools ?? []).entries()) tool(key, `${base}.tools.${j}`);
     for (const [j, key] of (x.disallowedTools ?? []).entries()) {
@@ -423,11 +418,9 @@ export class AgentsService {
         continue;
       }
       if (!isToolPolicyKey(key, keys)) {
-        // an rc key (tool naming spec §8.3): saving writes current keys only, so name them
-        const renamed = legacyKeySaveText(key, keys);
         details.push({
           path: `toolPolicies.${key}`,
-          message: renamed ?? `"${key}" is not a tool of this agent`,
+          message: `"${key}" is not a tool of this agent`,
         });
       }
     }
@@ -567,8 +560,7 @@ export class AgentsService {
     actorTokenId: string | undefined,
     auditDetail: Record<string, unknown> | undefined,
   ): Promise<{ agent: AgentView; warnings: AgentWarning[]; role: OrgRole }> {
-    // a policy key of a removed builtin (e.g. copied from a template) is dropped, never refused
-    const given = withoutRemovedBuiltinPolicies(request.definition);
+    const given = request.definition;
     const input = {
       ...request,
       givenDisabledSkills: given.disabledSkills ?? [],
@@ -785,20 +777,15 @@ export class AgentsService {
     actorTokenId?: string,
     auditDetail?: Record<string, unknown>,
   ): Promise<{ agent: AgentView; warnings: AgentWarning[] }> {
-    // a policy key of a removed builtin (stored before it went) is dropped, never refused
-    const patch =
-      request.definition === undefined
-        ? request
-        : { ...request, definition: withoutRemovedBuiltinPolicies(request.definition) };
-    const warnings = patch.definition ? await this.checkModels(orgId, patch.definition) : [];
-    const toolKeys = patch.definition
-      ? await this.checkTools(orgId, patch.definition, await this.keptDisabled(orgId, agentId))
+    const warnings = request.definition ? await this.checkModels(orgId, request.definition) : [];
+    const toolKeys = request.definition
+      ? await this.checkTools(orgId, request.definition, await this.keptDisabled(orgId, agentId))
       : null;
     const agent = await this.updateIn(
       orgId,
       agentId,
       actorAccountId,
-      patch,
+      request,
       toolKeys,
       actorTokenId,
       auditDetail,

@@ -4,6 +4,7 @@ import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { QUEUE_MAX_ITEMS } from "../../src/conversations/queue.js";
+import { ConversationQueue } from "../../src/conversations/queue.service.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import {
@@ -20,7 +21,7 @@ import { testMembers } from "../helpers/members.js";
 import {
   createAgent,
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -81,7 +82,7 @@ beforeEach(async () => {
   });
   expect(login.statusCode).toBe(200);
   ownerCookie = () => jar.header() as string;
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   await testMembers(db).add(orgId, otherId, "member", ownerId);
   other = await session(k, "other");
   agentId = await createAgent(owner, orgId);
@@ -240,54 +241,6 @@ describe("queued messages", () => {
     expect(await userTexts(conv)).toEqual(["stall", "echo:b2", "echo:c"]);
   });
 
-  it("POST …/queue during a run is an interjection: logged at once, queues nothing, answers { event }", async () => {
-    const conv = await createConv(owner, orgId, agentId);
-    await postMessage(owner, orgId, conv, SLOW);
-    await runStatus(conv, "running");
-    const clientMessageId = randomUUID();
-    const post = () =>
-      owner({ method: "POST", url: base(conv), payload: { text: "echo:inter", clientMessageId } });
-    const r = await post();
-    expect(r.statusCode, r.body).toBe(202);
-    const out = r.json() as { event: ConversationEvent; item?: unknown };
-    expect(out.event.type).toBe("user_message");
-    expect(out.item).toBeUndefined();
-    expect(await userTexts(conv)).toEqual([SLOW, "echo:inter"]);
-    expect(await queueOf(conv)).toEqual({ items: [], paused: false });
-    // a retry with the same clientMessageId writes nothing more
-    const again = await post();
-    expect(again.statusCode, again.body).toBe(202);
-    expect((await userTexts(conv)).filter((t) => t === "echo:inter")).toHaveLength(1);
-    // the model takes it in at its next step (here: the next run's first step)
-    const seq = (await eventsOf(db, conv)).find(
-      (e) => e.type === "user_message" && JSON.stringify(e).includes("echo:inter"),
-    )?.seq as number;
-    await waitFor(
-      async () =>
-        (await eventsOf(db, conv)).some(
-          (e) =>
-            e.type === "model_call" &&
-            ((e.payload as { request?: { absorbedUpToSeq?: number } }).request?.absorbedUpToSeq ??
-              0) >= seq,
-        ),
-      30_000,
-      "a model call that took the interjection in",
-    );
-  });
-
-  it("POST …/queue on an idle conversation starts a run like a direct send", async () => {
-    const conv = await createConv(owner, orgId, agentId);
-    const r = await owner({
-      method: "POST",
-      url: base(conv),
-      payload: { text: "echo:idle", clientMessageId: randomUUID() },
-    });
-    expect(r.statusCode, r.body).toBe(202);
-    await waitForTerminal(db, conv, 1, 20_000);
-    expect(await userTexts(conv)).toEqual(["echo:idle"]);
-    expect((await queueOf(conv)).items).toEqual([]);
-  });
-
   it("send now turns an item into an interjection; the first item stays first", async () => {
     const conv = await createConv(owner, orgId, agentId);
     await postMessage(owner, orgId, conv, SLOW);
@@ -396,7 +349,6 @@ describe("queued messages", () => {
     const item = ((await (await enqueue(conv, "echo:mine")).json()) as { item: Item }).item;
     const calls = [
       { method: "GET" as const, url: base(conv) },
-      { method: "POST" as const, url: base(conv), payload: { text: "x", clientMessageId: "c" } },
       { method: "PATCH" as const, url: `${base(conv)}/${item.id}`, payload: { text: "x" } },
       { method: "DELETE" as const, url: `${base(conv)}/${item.id}` },
       { method: "POST" as const, url: `${base(conv)}/${item.id}/send` },
@@ -593,6 +545,37 @@ describe("offboarding and queue dispatch lock in the same order (final review m2
     const removed = await removing;
     expect(removed.statusCode, removed.body).toBeLessThan(300);
     expect(await queueRows(conv)).toEqual([]);
+  });
+});
+
+describe("queued files keep their chip metadata (attachments-on-demand)", () => {
+  it("a queued file attachment is listed with its size, file types included", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    const id = randomUUID();
+    const XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    await db
+      .insertInto("attachments")
+      .values({
+        id,
+        org_id: orgId,
+        account_id: ownerId,
+        name: "book.xlsx",
+        content_type: XLSX,
+        size: 1234,
+        object_key: `attachments/${id}`,
+        status: "ready",
+        etag: "e1",
+      })
+      .execute();
+    // the app's own queue (one transaction host with its conversations service)
+    const { item } = await k.app.get(ConversationQueue).add(orgId, conv, ownerId, {
+      text: "process this",
+      clientMessageId: "with-file",
+      files: [id],
+    });
+    expect(item?.files).toEqual([
+      { attachmentId: id, name: "book.xlsx", mediaType: XLSX, size: 1234 },
+    ]);
   });
 });
 

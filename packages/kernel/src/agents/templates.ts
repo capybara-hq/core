@@ -3,13 +3,11 @@ import type { AgentTemplate, AgentTemplateTier, Logger } from "@capybara-hq/plug
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { componentOn } from "../catalog/component-state.js";
+import { LIVE_INSTALL_STATUSES } from "../catalog/install-status.js";
 import { type Owner, ownerOf, ownersOf } from "../catalog/ownership.js";
 import type { KernelSchemaDb, SourceFormat } from "../db/kernel-schema.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { canonicalJson } from "../tools/canonical-json.js";
-import { loadLegacyScope } from "../tools/legacy-data.js";
-import type { LegacyScope } from "../tools/legacy-keys.js";
-import { needsLegacyScope, normalizeToolKeys } from "./definition.js";
 
 /**
  * Agent templates of an org (sub-agents spec §16): its own `agent_templates` (one live row per org,
@@ -75,9 +73,6 @@ export interface TemplateRow {
 export const templateTypeOf = (plugin: string | null, name: string): string =>
   plugin ? `${plugin}:${name}` : name;
 
-/** Plugin install statuses that make a plugin on in the org (phase 1, org catalog state). */
-const LIVE_INSTALL = ["installing", "installed", "upgrading"] as const;
-
 const baseQuery = (db: KernelSchemaDb, orgId: string) =>
   db
     .selectFrom("agent_templates as t")
@@ -134,36 +129,9 @@ async function ownedPlatformIds(
   return new Set(rows.map((r) => r.id));
 }
 
-/**
- * A stored template definition as the current format reads it: `selectedSkills` (removed with
- * skills on by default, spec §6.2) is dropped. Migration 0116 removed it from org-made versions;
- * versions written from a plugin package keep it as the package wrote it, so every read drops it.
- */
-export function storedTemplate(definition: unknown): AgentTemplate {
-  if (definition === null || typeof definition !== "object" || Array.isArray(definition)) {
-    return definition as AgentTemplate;
-  }
-  if (!("selectedSkills" in definition)) return definition as AgentTemplate;
-  const { selectedSkills: _s, ...rest } = definition as Record<string, unknown>;
-  return rest as unknown as AgentTemplate;
-}
-
-/**
- * Stored rows as {@link TemplateRow}s; tool keys read as current keys (tool naming spec §8.3): old
- * builtin names always, rc `<x>__<tool>` keys with the org's legacy scope, read once when needed.
- */
-async function normalized(
-  db: KernelSchemaDb,
-  orgId: string,
-  rows: readonly RawRow[],
-): Promise<TemplateRow[]> {
-  const scope: LegacyScope | undefined = rows.some((r) => needsLegacyScope(r.definition))
-    ? await loadLegacyScope(db, orgId)
-    : undefined;
-  return rows.map(({ definition, ...r }) => ({
-    ...r,
-    template: storedTemplate(normalizeToolKeys(definition, scope)),
-  }));
+/** Stored rows as {@link TemplateRow}s. */
+function normalized(rows: readonly RawRow[]): TemplateRow[] {
+  return rows.map(({ definition, ...r }) => ({ ...r, template: definition as AgentTemplate }));
 }
 
 const orgRaw = (r: Awaited<ReturnType<ReturnType<typeof baseQuery>["execute"]>>[number]) =>
@@ -216,7 +184,7 @@ async function platformRowsOn(
             .select("a.id")
             .whereRef("a.item_id", "=", "p.catalog_item_id")
             .where("a.org_id", "=", orgId)
-            .where("a.status", "in", [...LIVE_INSTALL]),
+            .where("a.status", "in", [...LIVE_INSTALL_STATUSES]),
         )
         .as("installed"),
       eb
@@ -532,11 +500,7 @@ export async function loadTemplates(
     const o = shadowRows.get(on.shadowed.get(id) ?? "");
     if (o) raw.push({ key: id, row: o });
   }
-  const done = await normalized(
-    db,
-    orgId,
-    raw.map((x) => x.row),
-  );
+  const done = normalized(raw.map((x) => x.row));
   return new Map(raw.map((x, i) => [x.key, done[i] as TemplateRow]));
 }
 
@@ -590,12 +554,12 @@ export async function usableTemplates(
           ).values(),
         ];
   const rows = [
-    ...(await normalized(db, orgId, [
+    ...normalized([
       ...own
         .filter((r) => r.platform_template_id === null || pinnedOn.has(r.platform_template_id))
         .map(orgRaw),
       ...(await platformOn(db, orgId, undefined, log)).rows.filter((p) => !promotedTo.has(p.id)),
-    ])),
+    ]),
     ...served,
   ];
   const key = (t: TemplateRow) => [t.plugin ?? "", t.name, t.id] as const;

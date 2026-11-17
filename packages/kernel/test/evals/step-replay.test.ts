@@ -22,7 +22,7 @@ import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createAgent,
   createConv,
-  createOrg,
+  createOrgWithProviders,
   PW,
   postMessage,
   type Req,
@@ -62,7 +62,7 @@ beforeAll(async () => {
   );
   await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "o" });
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   const agentId = await createAgent(owner, orgId);
   const convId = await createConv(owner, orgId, agentId);
   await postMessage(owner, orgId, convId, "echo:the answer is 42");
@@ -275,12 +275,24 @@ describe("replayStep", () => {
       mediaType: "image/png",
       source: { kind: "ref", attachmentId },
     });
+    // the current format records the request's media outcomes and budget with the call
+    const call = withImage.events.find((e) => e.seq === firstCall().seq);
+    if (!call) throw new Error("no model_call");
+    Object.assign((call.payload as { request: Record<string, unknown> }).request, {
+      media: [{ attachmentId, outcome: "bytes", etag: "e1" }],
+      mediaBudgetBytes: 20 * 1024 * 1024,
+    });
     const calls: { fn: string; orgId: string; conversationId: string; ids: readonly string[] }[] =
       [];
     const media: MediaSourceDeps = {
       async info(o, c, ids) {
         calls.push({ fn: "info", orgId: o, conversationId: c, ids });
-        return new Map(ids.map((id) => [id, { size: 4, pages: null, etag: "e1" }]));
+        return new Map(
+          ids.map((id) => [
+            id,
+            { size: 4, pages: null, etag: "e1", uri: `capybara://attachments/${id}` },
+          ]),
+        );
       },
       async fetch(o, c, ids) {
         calls.push({ fn: "fetch", orgId: o, conversationId: c, ids });

@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { KernelConfigSchema } from "../../src/config/schema.js";
+import { DEFAULT_ATTACHMENT_EXTENSIONS, KernelConfigSchema } from "../../src/config/schema.js";
 import {
   ATTACHMENT_DOWNLOAD_CACHE_SECONDS,
   ATTACHMENT_DOWNLOAD_TTL_SECONDS,
   normalizeContentType,
   sniffMatches,
 } from "../../src/conversations/attachments.service.js";
-import { ATTACHMENT_CLEANUP_SCHEDULER_ID } from "../../src/conversations/job-ids.js";
-import { RETIRED_SCHEDULER_IDS } from "../../src/runtime/retired-schedulers.js";
+import {
+  acceptedContent,
+  isImageContentType,
+  isMediaContentType,
+} from "../../src/conversations/media-types.js";
 import { PrefixedStorage } from "../../src/storage/storage.service.js";
 import { attachmentsFor } from "../helpers/conversations.js";
 
@@ -16,6 +19,8 @@ const config = KernelConfigSchema.parse({
   redis: { url: "redis://x" },
   masterKey: Buffer.alloc(32, 7).toString("base64"),
 });
+
+const XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 describe("AttachmentsService", () => {
   it("没有对象存储提供方：上传、finalize、下载都是 storage.unavailable（503）", async () => {
@@ -60,7 +65,13 @@ describe("AttachmentsService", () => {
         "text/plain",
         "text/markdown",
         "text/csv",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "application/zip",
+        "application/json",
       ],
+      extensions: [...DEFAULT_ATTACHMENT_EXTENSIONS],
       maxBytes: 20_971_520,
       imageMaxBytes: 5_242_880,
       maxPerMessage: 10,
@@ -76,12 +87,34 @@ describe("AttachmentsService", () => {
       }).limits(),
     ).toEqual({
       types: ["image/png"],
+      extensions: [...DEFAULT_ATTACHMENT_EXTENSIONS],
       maxBytes: 1000,
       imageMaxBytes: 1000,
       maxPerMessage: 3,
       requestMediaBytes: 4000,
       available: false,
     });
+  });
+
+  it("accepts a source file by extension whatever its declared content type says", () => {
+    const cfg = { allowedTypes: ["image/png"], allowedExtensions: ["py", "html", "docx"] };
+    expect(acceptedContent(cfg, "main.py", "application/octet-stream")).toBe(true);
+    expect(acceptedContent(cfg, "page.html", "text/html")).toBe(true);
+    expect(
+      acceptedContent(
+        cfg,
+        "续约.docx",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      ),
+    ).toBe(true);
+    // a type on the list needs no extension
+    expect(acceptedContent(cfg, "shot", "image/png")).toBe(true);
+    // the extension is case-insensitive; a bare or unknown name is not accepted by accident
+    expect(acceptedContent(cfg, "MAIN.PY", "text/plain")).toBe(true);
+    expect(acceptedContent(cfg, "a.exe", "application/x-msdownload")).toBe(false);
+    expect(acceptedContent(cfg, "noextension", "application/octet-stream")).toBe(false);
+    expect(acceptedContent(cfg, "trailing.", "application/octet-stream")).toBe(false);
+    expect(acceptedContent(cfg, "a.notanextension", "application/octet-stream")).toBe(false);
   });
 
   it("配置要求 maxBytes ≤ requestMediaBytes（单个附件总能放进一次请求）", () => {
@@ -120,7 +153,22 @@ describe("AttachmentsService", () => {
     expect(at(25_165_825)).toBe(false);
   });
 
-  it("默认配置：20 MiB、8 种类型、每条消息 10 个、24 小时、单次请求 20 MiB 媒体", () => {
+  it("allowedTypes 只收小写的 type/subtype，不带参数", () => {
+    const base = {
+      db: { url: "postgres://x" },
+      redis: { url: "redis://x" },
+      masterKey: Buffer.alloc(32, 7).toString("base64"),
+    };
+    const ok = (allowedTypes: string[]) =>
+      KernelConfigSchema.safeParse({ ...base, attachments: { allowedTypes } }).success;
+    expect(ok(["application/json", "text/plain"])).toBe(true);
+    expect(ok(["Application/JSON"])).toBe(false);
+    expect(ok(["text/plain; charset=utf-8"])).toBe(false);
+    expect(ok(["image"])).toBe(false);
+    expect(ok([])).toBe(false);
+  });
+
+  it("默认配置：20 MiB、13 种类型、每条消息 10 个、24 小时、单次请求 20 MiB 媒体", () => {
     expect(config.attachments).toEqual({
       maxBytes: 20_971_520,
       allowedTypes: [
@@ -132,7 +180,13 @@ describe("AttachmentsService", () => {
         "text/plain",
         "text/markdown",
         "text/csv",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "application/zip",
+        "application/json",
       ],
+      allowedExtensions: [...DEFAULT_ATTACHMENT_EXTENSIONS],
       maxPerMessage: 10,
       unboundTtlHours: 24,
       requestMediaBytes: 20_971_520,
@@ -167,11 +221,29 @@ describe("类型核对", () => {
     expect(sniffMatches("application/pdf", s("<html>"))).toBe(false);
     expect(sniffMatches("text/plain", s("hello"))).toBe(true);
     expect(sniffMatches("text/csv", b(0x61, 0x00, 0x62))).toBe(false);
+    // an OOXML file is a zip: compressed bytes usually contain NUL, the signature still has to match
+    expect(sniffMatches(XLSX, b(0x50, 0x4b, 0x03, 0x04, 0x00, 0x01))).toBe(true);
+    expect(sniffMatches(XLSX, s("not a zip"))).toBe(false);
+    // a mismatch is still refused in both directions
+    expect(sniffMatches(XLSX, b(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a))).toBe(false);
+    expect(sniffMatches("image/png", b(0x50, 0x4b, 0x03, 0x04))).toBe(false);
+    expect(sniffMatches("application/json", s('{"a":1}'))).toBe(true);
+    expect(sniffMatches("application/json", b(0x7b, 0x00, 0x7d))).toBe(false);
+    // a deployment-added type has no signature to check
+    expect(sniffMatches("application/x-custom", b(0x00, 0x01))).toBe(true);
   });
 });
 
-describe("attachment-cleanup", () => {
-  it("its old maintenance scheduler is retired (the job is an hourly @LockedCron)", () => {
-    expect(RETIRED_SCHEDULER_IDS).toContain(ATTACHMENT_CLEANUP_SCHEDULER_ID);
+describe("媒体类型", () => {
+  it("图片走 image 块，PDF 与文本走 document 块，其余为 file 块", () => {
+    expect(isImageContentType("image/png")).toBe(true);
+    expect(isImageContentType("application/pdf")).toBe(false);
+    expect(isMediaContentType("image/webp")).toBe(true);
+    expect(isMediaContentType("application/pdf")).toBe(true);
+    expect(isMediaContentType("text/csv")).toBe(true);
+    expect(isMediaContentType("application/zip")).toBe(false);
+    expect(
+      isMediaContentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+    ).toBe(false);
   });
 });

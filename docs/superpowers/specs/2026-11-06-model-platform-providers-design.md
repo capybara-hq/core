@@ -404,9 +404,11 @@ Rulings made while building the core part (they refine the sections above):
 - Model info is validated per model: an invalid entry is dropped, the rest of the list stays.
 - The list cache is per effective config: an org copy's key includes the org id (the config hash
   masks secrets), orgs following the platform share the platform's key.
-- Org-level provider disabling enforces only an explicit org switch-off; a provider with no switch
-  state stays usable (optional preinstalls keep working). The switch-off read is an uncached PG read
-  per resolve. Platform deployment-default purposes still refuse `org_configured` providers.
+- A provider is on in an org only when the org enabled it, like every other extension (the org's
+  switch on, or a required bootstrap plugin; design review 2026-11-16 replaced the earlier
+  "explicit switch-off only" ruling). A provider not enabled in the org offers no models there and
+  resolves to `agent.model_unavailable`. The read is an uncached PG read per resolve.
+  Platform deployment-default purposes still refuse `org_configured` providers.
 - When an agent's model no longer resolves (gone, disabled, provider not configured in the org) the
   ladder goes straight to the fallback model; without one the run ends `run.model_unavailable`.
   Titles, sub-agent tiers and `WebFetch` treat a mapped model that is gone as unmapped and fall back

@@ -230,6 +230,32 @@ describe("键校验", () => {
   });
 });
 
+describe("无签名的对象引用（ObjectStore.uri）", () => {
+  /** A store with the optional `uri` (spreading an instance would drop its prototype methods). */
+  class UridStore extends MemoryObjectStore {
+    uri(key: string): string {
+      return `s3://bucket/${key}`;
+    }
+  }
+
+  it("内核存储转发提供方的 uri，键带前缀并照常校验", () => {
+    const svc = new PrefixedStorage({ provider: () => new UridStore(), plugins: async () => [] });
+    expect(svc.kernel(ORG_A).uri?.("attachments/x")).toBe(
+      `s3://bucket/kernel/${ORG_A}/attachments/x`,
+    );
+    // the deploy-level store has its own prefix
+    expect(svc.deployment().uri?.("k")).toBe("s3://bucket/deployment/k");
+    // the key is validated like every other call (a key leaving the prefix never reaches the store)
+    expect(() => svc.kernel(ORG_A).uri?.("../x")).toThrow(StorageKeyError);
+  });
+
+  it("提供方没有 uri 时字段缺省：调用方退回 capybara://attachments/<id>", () => {
+    const { svc } = setup();
+    expect(svc.kernel(ORG_A).uri).toBeUndefined();
+    expect(svc.deployment().uri).toBeUndefined();
+  });
+});
+
 describe("deleteOrg", () => {
   it("删除 kernel/<org>/ 与每个插件的 plugins/<插件>/<org>/，别的组织不受影响", async () => {
     const { mem, svc } = setup(["aa", "bb", "gone"]);

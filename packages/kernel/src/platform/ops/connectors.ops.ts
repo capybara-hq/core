@@ -1,7 +1,7 @@
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
 import { ComponentScopeService } from "../../catalog/component-scope.service.js";
-import { ConnectorPathParams } from "../../tools/connectors.schemas.js";
+import { ConnectorPathParams, GitPushPolicyBody } from "../../tools/connectors.schemas.js";
 import {
   type ConnectorDetail,
   type ConnectorSummary,
@@ -15,6 +15,12 @@ import { Cursor, pageOf, startOf } from "./paging.js";
 import { named, orElse } from "./summary.js";
 
 const PAGE = 50;
+
+/** `connectors.set-git-push-policy`: the route's path param and body. */
+const SetGitPushPolicyInput = z
+  .object({ connectorId: ConnectorPathParams.shape.connectorId.max(100) })
+  .extend(GitPushPolicyBody.shape)
+  .strict();
 
 /**
  * A connector without anything secret: the auth method and who holds the credential (the org or
@@ -40,6 +46,8 @@ const summary = (c: ConnectorSummary) => ({
 /** A connector's detail: its tools (name, description, state, default policy) and your credential state. */
 const detail = (c: ConnectorDetail) => ({
   ...summary(c),
+  // the org's default for git pushes through its credential, when it serves git hosts
+  gitPushPolicy: c.git !== null ? c.gitPushPolicy : null,
   credential: c.credential,
   tools: c.tools.map((t) => ({
     name: t.name,
@@ -202,6 +210,58 @@ export class ConnectorsOperations implements OnModuleInit {
           );
           return { connector: detail(r.connector), issues: r.issues, changes: r.changes };
         },
+      }),
+      defineOperation<z.infer<typeof SetGitPushPolicyInput>>({
+        id: "connectors.set-git-push-policy",
+        description:
+          "Set the org's default for git pushes through a connector's credential in sandboxes (org admins): deny refuses every push, ask asks the person for each repository, allow pushes without asking. Through this tool it may only be tightened (allow to ask or deny, ask to deny); loosening needs a person on the connector's settings page. Only a connector that declares git hosts.",
+        input: SetGitPushPolicyInput,
+        example: { connectorId: "5d2e8f1a-0b3c-4d5e-8f9a-1b2c3d4e5f60", policy: "deny" },
+        authz: { orgAction: "connectors.manage" },
+        mirrors: ["PUT /api/v1/orgs/:orgId/connectors/:connectorId/git-push-policy"],
+        confirm: "org",
+        errors: [
+          { code: "connector.not_found", next: "Check the connector id with connectors.list." },
+          {
+            code: "connector.git_push_widen_not_allowed",
+            next: {
+              orgAdmin:
+                "Loosen the git push policy yourself on the connector's settings page on the web.",
+              member:
+                "Ask an org admin to loosen the git push policy on the connector's settings page on the web.",
+            },
+          },
+          {
+            code: "validation_failed",
+            next: "The connector declares no git hosts, so it has no git push policy; connectors.get shows gitPushPolicy null for such a connector.",
+          },
+        ],
+        precheck: (i, ctx) =>
+          precheckBy(() =>
+            this.connectors.checkGitPushPolicy(ctx.orgId, i.connectorId, i.policy, true),
+          ),
+        summary: async (i, ctx) => {
+          const n = await this.connectorName(ctx, i.connectorId);
+          const zh = { allow: "允许", ask: "需审批", deny: "禁止" }[i.policy];
+          return {
+            zh: `把连接器「${n}」的 git 推送默认策略设为「${zh}」`,
+            en: `Set the default git push policy of connector "${n}" to ${i.policy}`,
+          };
+        },
+        run: async (input, ctx) => ({
+          connector: detail(
+            await this.connectors.setGitPushPolicy(
+              ctx.orgId,
+              input.connectorId,
+              ctx.actorAccountId,
+              input.policy,
+              {
+                auditDetail: viaAgent("connectors.set-git-push-policy", ctx),
+                onlyNarrows: true,
+              },
+            ),
+          ),
+        }),
       }),
     ]);
   }

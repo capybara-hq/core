@@ -26,7 +26,7 @@ export interface AdminOverview {
 
 /**
  * Why an extension needs a look: `config` (missing deployment config while `pending_config`, else
- * invalid), `load_failed`, `approval`, `dependency`, `conflict`, `converging`, `legacy_format`.
+ * invalid), `load_failed`, `approval`, `dependency`, `conflict`, `converging`.
  */
 export type AttentionExtensionReason =
   | "config"
@@ -34,8 +34,7 @@ export type AttentionExtensionReason =
   | "approval"
   | "dependency"
   | "conflict"
-  | "converging"
-  | "legacy_format";
+  | "converging";
 
 /** What is wrong with a model provider: its model list failed, or no usable chat model. */
 export type AttentionProviderProblem = "list_failed" | "no_chat_model";
@@ -218,11 +217,11 @@ export interface AdminUsageWeek {
 }
 
 /**
- * One platform-level audit event (`GET /admin/audit`, org-less events only): who (null: the
- * kernel), whether through a personal token or their agent, the action and its target. Never the
- * event's detail.
+ * One audit event (`GET /admin/audit`: the platform's events; `GET /orgs/:orgId/audit`: an org's):
+ * who (null: the kernel), whether through a personal token or their agent, the action and its
+ * target. Never the event's detail.
  */
-export interface PlatformAuditEvent {
+export interface AuditEvent {
   id: string;
   at: string;
   actor: { id: string; name: string | null; email: string | null } | null;
@@ -232,9 +231,9 @@ export interface PlatformAuditEvent {
   target: string | null;
 }
 
-/** A page of platform audit events, newest first; `next` is the `after` of the next page. */
-export interface PlatformAuditPage {
-  events: PlatformAuditEvent[];
+/** A page of audit events, newest first; `next` is the `after` of the next page. */
+export interface AuditPage {
+  events: AuditEvent[];
   next: string | null;
 }
 
@@ -450,9 +449,17 @@ export interface OutboxDeadRow {
 /** What a retry did: due again, or discarded because the same job is owed already. */
 export type OutboxRetryOutcome = "retried" | "already_owed";
 
-/** The dead outbox rows, oldest first (at most 200). */
-export const listOutboxDead = () =>
-  apiFetch<{ items: OutboxDeadRow[] }>("/api/v1/admin/outbox/dead");
+/** A page of dead outbox rows, oldest first (at most 200); `next` is the `after` of the next page. */
+export interface OutboxDeadPage {
+  items: OutboxDeadRow[];
+  next: string | null;
+}
+
+/** The dead outbox rows, oldest first: the first page or the one after the cursor `after`. */
+export const listOutboxDead = (after?: string) =>
+  apiFetch<OutboxDeadPage>(
+    `/api/v1/admin/outbox/dead${after === undefined ? "" : `?after=${encodeURIComponent(after)}`}`,
+  );
 
 /** Queues a dead outbox row again (or drops it when the same job is owed already). */
 export const retryOutboxDead = (id: string) =>
@@ -477,7 +484,7 @@ export const getAdminUsage = (tz: string) =>
  * overview and `/admin/audit` share the first page (limit 20; the overview shows the first 10).
  */
 export const listPlatformAudit = (after?: string) =>
-  apiFetch<PlatformAuditPage>(
+  apiFetch<AuditPage>(
     `/api/v1/admin/audit?limit=20${after === undefined ? "" : `&after=${encodeURIComponent(after)}`}`,
   );
 

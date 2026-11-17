@@ -46,7 +46,7 @@ import { recordToolSpecs } from "./specs.js";
 
 import { DRIFT_CONNECTOR_JOB } from "./job-ids.js";
 
-export { DRIFT_CONNECTOR_JOB, DRIFT_SCAN_JOB, DRIFT_SCHEDULER_ID } from "./job-ids.js";
+export { DRIFT_CONNECTOR_JOB, DRIFT_SCAN_JOB } from "./job-ids.js";
 
 /**
  * list_changed 触发的检查：jobId 按连接器与分钟桶去重（同一分钟内多次通知只检查一次；connectorId 为 UUID，不含 `:`）。

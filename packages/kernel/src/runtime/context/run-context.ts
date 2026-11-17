@@ -138,8 +138,7 @@ export function runContextChange(prev: RunContext, next: RunContext): RunContext
   if (
     next.attribution !== undefined &&
     !sameAttribution(prev.attribution, next.attribution) &&
-    // an all-empty value writes nothing when there was nothing to turn off (absence means "none",
-    // so a conversation that never has an attribution stays as old logs are)
+    // an all-empty value writes nothing when there was nothing to turn off (absence means "none")
     (hasAttribution(next.attribution) || hasAttribution(prev.attribution))
   ) {
     out.attribution = next.attribution;

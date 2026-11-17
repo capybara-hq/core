@@ -243,6 +243,11 @@ describe("M2 双副本端到端验收", () => {
     const org = await viaHarness(admin, "POST", "/api/v1/orgs", { name: "Acme" });
     expect(org.status).toBe(201);
     const orgId = (org.json.org as { id: string }).id;
+    // a model provider is on only in the orgs that enabled it
+    const on = await viaHarness(admin, "PUT", `/api/v1/orgs/${orgId}/extensions/model-fake`, {
+      enabled: true,
+    });
+    expect(on.status, JSON.stringify(on.json)).toBe(200);
     const ag = await viaHarness(admin, "POST", `/api/v1/orgs/${orgId}/agents`, {
       definition: {
         name: "Helper",

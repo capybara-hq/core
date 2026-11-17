@@ -21,14 +21,11 @@ describe("UI slot findings", () => {
     expect(f[0]?.message).toContain("context, files, background");
   });
 
-  it("place is a warning that names the slot", async () => {
+  it("the retired place key is an error that asks for a slot", async () => {
     const f = await checkPluginPack([fixture("plugin-ui-place")]);
-    expect(f.map((x) => x.rule)).toEqual(["ui-place-deprecated"]);
-    expect(f[0]?.severity).toBe("warning");
-    expect(f[0]?.message).toBe(
-      'ui "tasks" uses place "conversation"; write slot: "conversation.panel"',
-    );
-    expect(errorsOf(f)).toEqual([]);
+    expect(f.map((x) => x.rule)).toEqual(["plugin-pack"]);
+    expect(f[0]?.message).toContain('ui "tasks" slot must be a slot reference');
+    expect(errorsOf(f)).toHaveLength(1);
   });
 
   it("a clean plugin has no findings", async () => {

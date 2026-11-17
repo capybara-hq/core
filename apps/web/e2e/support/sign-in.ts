@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { expect, type Page } from "@playwright/test";
+import { type APIRequestContext, expect, type Page } from "@playwright/test";
 import { HOME_URL, hydrated } from "./nav";
 
 /** 界面文案取自 zh 文案文件，避免与实现重复硬编码。 */
@@ -15,9 +15,21 @@ export const ORG_NAME = "Acme";
 const CSRF = { "X-Capybara-Csrf": "1" };
 
 /**
+ * Switches `model-fake` on in the org (`PUT …/extensions/model-fake`; idempotent). The e2e stack
+ * loads it, but a model provider is on only in the orgs that enabled it, so a new org has none.
+ */
+export async function enableModelFake(request: APIRequestContext, orgId: string): Promise<void> {
+  const r = await request.put(`/api/v1/orgs/${orgId}/extensions/model-fake`, {
+    headers: CSRF,
+    data: { enabled: true },
+  });
+  expect(r.status(), await r.text()).toBe(200);
+}
+
+/**
  * Makes sure the current org has an agent, so the workspace renders the shell instead of the
  * setup layout (web-order spec §3.8): creates a private model-fake agent "E2E agent" when the
- * readiness endpoint counts none. The deployment's model-fake provider is loaded by the e2e stack.
+ * readiness endpoint counts none. {@link signIn} has switched model-fake on in the org.
  */
 export async function ensureAgent(page: Page, orgId: string): Promise<void> {
   const r = await page.request.get(`/api/v1/orgs/${orgId}/readiness`);
@@ -62,7 +74,8 @@ async function enableFakeConnectors(page: Page, orgId: string): Promise<boolean>
  * Idempotent sign-in: the setup wizard when not set up yet (it creates the org Acme), else the login
  * page. A new session starts in the org last chosen (or the only one); when the org chooser covers
  * the app instead, open Acme there. With `org` (the default) it then waits until `/me` names the
- * current org, switches on the fake connector extensions ({@link enableFakeConnectors}) and, with
+ * current org, switches on model-fake ({@link enableModelFake}) and the fake connector extensions
+ * ({@link enableFakeConnectors}) and, with
  * `agent` (the default), makes sure an agent exists ({@link ensureAgent}) and that the shell (not the setup layout) is on screen. It returns once the page is hydrated
  * ({@link hydrated}). Normally the `setup` project
  * (`setup.spec.ts`) has already set up; a spec run alone sets up itself.
@@ -112,6 +125,7 @@ export async function signIn(
       return orgId;
     })
     .not.toBeNull();
+  await enableModelFake(page.request, orgId as unknown as string);
   // the page already read the org's connector kinds: a change reloads it below
   const changed = await enableFakeConnectors(page, orgId as unknown as string);
   if (!agent) {

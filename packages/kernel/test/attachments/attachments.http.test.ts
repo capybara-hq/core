@@ -10,6 +10,7 @@ import {
 } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { DEFAULT_ATTACHMENT_EXTENSIONS } from "../../src/config/schema.js";
 import { AttachmentsService } from "../../src/conversations/attachments.service.js";
 import { TITLE_PROMPT } from "../../src/conversations/titles.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
@@ -25,7 +26,7 @@ import { testMembers } from "../helpers/members.js";
 import {
   createAgent,
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   type Req,
@@ -59,6 +60,9 @@ const PDF = Buffer.from(
   ].join("\n"),
 );
 const TEXT = Buffer.from("name,qty\napple,3\n");
+const XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+/** A minimal xlsx: OOXML files are zip archives, so the sniffer checks the zip signature. */
+const XLSX_BYTES = Buffer.from("PK\u0003\u0004spreadsheet,1,2\n");
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -127,7 +131,7 @@ beforeEach(async () => {
   ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "Owner" })).id;
   otherId = (await accounts.createLocal({ login: "other", password: PW, displayName: "Other" })).id;
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   await testMembers(db).add(orgId, otherId, "member", ownerId);
   other = await session(k, "other");
 });
@@ -252,6 +256,25 @@ describe("上传 → finalize → 发消息 → 模型请求", () => {
     ).toBeGreaterThanOrEqual(3600);
   });
 
+  it("an xlsx becomes a file block with its size and never carries bytes", async () => {
+    const convId = await conversationWith("see-1");
+    const id = await ready(owner, "电商工行.xlsx", XLSX, XLSX_BYTES);
+    const res = await post(owner, convId, { text: "按分行汇总", files: [id] });
+    expect(res.statusCode, res.body).toBe(202);
+    await waitForTerminal(db, convId);
+    const user = (await eventsOf(db, convId)).find((e) => e.type === "user_message");
+    expect(user?.payload.content[1]).toEqual({
+      type: "file",
+      mediaType: XLSX,
+      source: { kind: "ref", attachmentId: id },
+      name: "电商工行.xlsx",
+      size: XLSX_BYTES.length,
+    });
+    // neither the log nor what the provider received carries the bytes
+    expect(JSON.stringify(await eventsOf(db, convId))).not.toContain(XLSX_BYTES.toString("base64"));
+    expect(JSON.stringify(agentRequests())).not.toContain(XLSX_BYTES.toString("base64"));
+  });
+
   it("不支持图片 / 文档的模型只收到文字占位，请求里没有字节；文本文件内联", async () => {
     const convId = await conversationWith("blind-1");
     const img = await ready(owner, "cat.png", "image/png", PNG);
@@ -348,7 +371,13 @@ describe("校验", () => {
         "text/plain",
         "text/markdown",
         "text/csv",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "application/zip",
+        "application/json",
       ],
+      extensions: [...DEFAULT_ATTACHMENT_EXTENSIONS],
       maxBytes: 20_971_520,
       imageMaxBytes: 5_242_880,
       maxPerMessage: 10,
@@ -357,7 +386,7 @@ describe("校验", () => {
     });
     const other2 = await other({ method: "GET", url: `/api/v1/orgs/${orgId}/attachments/limits` });
     expect(other2.statusCode).toBe(200);
-    const stranger = await createOrg(other, "Elsewhere");
+    const stranger = await createOrgWithProviders(k, other, "Elsewhere");
     const denied = await owner({
       method: "GET",
       url: `/api/v1/orgs/${stranger}/attachments/limits`,
@@ -367,10 +396,11 @@ describe("校验", () => {
 
   it("类型不在允许列表 → 415；超出大小 → 413；名字非法 → 400", async () => {
     const url = `/api/v1/orgs/${orgId}/attachments`;
+    // The older binary formats are not in the default accept list; a deployment may add them.
     const bad = await owner({
       method: "POST",
       url,
-      payload: { name: "a.zip", contentType: "application/zip", size: 10 },
+      payload: { name: "a.xls", contentType: "application/vnd.ms-excel", size: 10 },
     });
     expect(bad.statusCode).toBe(415);
     expect(bad.json().error.code).toBe("attachment.type_not_allowed");
@@ -549,6 +579,7 @@ describe("只有附件的消息", () => {
         mediaType: "image/png",
         source: { kind: "ref", attachmentId: img },
         name: "cat.png",
+        size: PNG.length,
       },
     ]);
     const blocks = userBlocks(agentRequests()[0] as ModelRequest);
@@ -569,14 +600,16 @@ describe("只有附件的消息", () => {
   });
 });
 
-describe("大文本附件（Ruling M8）", () => {
-  it("fetchMedia 按 caps 只取开头；模型收到截断并注明的文档；mediaInfo 带 etag", async () => {
+describe("大文本附件（§5.2：引用，不截断）", () => {
+  it("fetchMedia 按 caps 只取开头；超过内联上限的文本发给模型是引用行；mediaInfo 带 etag 与引用", async () => {
     const big = Buffer.from("a,b\n".repeat(50_000)); // 200 000 字节
     const id = await ready(owner, "big.csv", "text/csv", big);
     const convId = await conversationWith("see-1");
     expect((await post(owner, convId, { text: "read", files: [id] })).statusCode).toBe(202);
     await waitForTerminal(db, convId);
 
+    // the service still honours a byte cap (the runtime no longer asks for one: an over-cap text is
+    // a reference, never a truncated inline)
     const got = await k.app
       .get(AttachmentsService)
       .fetchMedia(orgId, convId, [id], new Map([[id, 1000]]));
@@ -584,16 +617,17 @@ describe("大文本附件（Ruling M8）", () => {
     const info = await k.app.get(AttachmentsService).mediaInfo(orgId, convId, [id]);
     expect(info.get(id)).toMatchObject({ size: big.length, pages: null });
     expect(typeof info.get(id)?.etag).toBe("string");
+    // the unsigned reference: the fake store has no `uri`, so the kernel's fallback
+    expect(info.get(id)?.uri).toBe(`capybara://attachments/${id}`);
 
-    const doc = userBlocks(agentRequests()[0] as ModelRequest).find((b) => b.type === "document");
-    const sent =
-      doc?.type === "document" && doc.source.kind === "base64"
-        ? Buffer.from(doc.source.data, "base64").toString("utf8")
-        : "";
-    expect(sent.length).toBeLessThan(50_200);
-    expect(sent).toContain(`characters of a ${big.length}-byte file.]`);
+    const blocks = userBlocks(agentRequests()[0] as ModelRequest);
+    expect(blocks.some((b) => b.type === "document")).toBe(false);
+    const line = blocks.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("\n");
+    expect(line).toContain(`bytes of text; not sent inline`);
+    expect(line).toContain(`Unsigned object reference: capybara://attachments/${id}`);
+    expect(line).not.toContain("a,b");
 
-    // 提供方不支持按范围读（给了整个对象）：同样只留开头
+    // a provider that ignores a range read: `fetchMedia` still keeps only the first bytes
     const real = k.app.get(ExtensionHost).list("object-store")[0]?.impl as ObjectStore;
     const noRange: ObjectStore = {
       ...real,
@@ -626,7 +660,7 @@ describe("openForConversation（沙箱同步用）", () => {
     // 别的会话、别的组织、不存在的 id → null
     const conv2 = await conversationWith("see-1");
     expect(await k.app.get(AttachmentsService).openForConversation(orgId, conv2, id)).toBeNull();
-    const org2 = await createOrg(owner, "Other org");
+    const org2 = await createOrgWithProviders(k, owner, "Other org");
     expect(await k.app.get(AttachmentsService).openForConversation(org2, convId, id)).toBeNull();
     expect(
       await k.app

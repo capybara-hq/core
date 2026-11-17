@@ -67,6 +67,7 @@ import {
   OAuthUnavailable,
   tokenRequest,
 } from "./oauth/tokens.js";
+import { stricter } from "./policy.js";
 import { policyFromAnnotations, type ToolPolicy, ToolRegistry } from "./registry.js";
 import { recordToolSpecs } from "./specs.js";
 
@@ -143,6 +144,11 @@ export interface ConnectorSummary {
    * admin); personal connectors with `git` always do and keep this false.
    */
   useForGit: boolean;
+  /**
+   * The org's default for pushes through this connector's credential (`connectors.git_push_policy`,
+   * the virtual tool `git_push`; sandbox git credentials spec §7); meaningful only with `git`.
+   */
+  gitPushPolicy: ToolPolicy;
   createdBy: string;
   createdAt: Date;
   updatedAt: Date;
@@ -295,6 +301,29 @@ const notFound = () => new ApiError("connector.not_found", "Connector not found"
 
 const fail = (path: string, message: string) =>
   new ApiError("validation_failed", "Request validation failed", [{ path, message }]);
+
+/**
+ * Whether a connector's default git push policy may become `policy` (pure): only a connector that
+ * declares git hosts has one (400 on `policy`); `onlyNarrows` (the Platform tool, API tokens) refuses
+ * a change that loosens it (`deny` -> `ask` -> `allow`) with `connector.git_push_widen_not_allowed`:
+ * only a person in a session loosens it, as the org's sandbox settings.
+ */
+function assertGitPushSettable(
+  gitHosts: readonly unknown[] | null,
+  before: ToolPolicy,
+  policy: ToolPolicy,
+  onlyNarrows: boolean,
+): void {
+  if (gitHosts === null || gitHosts.length === 0) {
+    throw fail("policy", "This connector declares no git hosts");
+  }
+  if (onlyNarrows && stricter(policy, before) !== policy) {
+    throw new ApiError(
+      "connector.git_push_widen_not_allowed",
+      "Loosening the connector's git push policy needs a person on the connector's settings page.",
+    );
+  }
+}
 
 const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
@@ -1171,6 +1200,7 @@ export class ConnectorsService {
       catalogItemId: r.catalog_item_id ?? null,
       git: r.git_hosts !== null && r.git_hosts.length > 0 ? { hosts: r.git_hosts } : null,
       useForGit: r.use_for_git,
+      gitPushPolicy: r.git_push_policy,
       createdBy: r.created_by,
       createdAt: r.created_at,
       updatedAt: r.updated_at,
@@ -1507,6 +1537,61 @@ export class ConnectorsService {
         ...(allowed.length > 0 && { allowedUnannotated: allowed }),
       },
     });
+    return this.detail(t, orgId, connectorId, actorAccountId);
+  }
+
+  /**
+   * The read-only checks of {@link setGitPushPolicy} (the Platform operation's precheck): the
+   * connector exists (`connector.not_found`) and declares git hosts (400 on `policy`); with
+   * `onlyNarrows`, the change does not loosen it ({@link assertGitPushSettable}).
+   */
+  async checkGitPushPolicy(
+    orgId: string,
+    connectorId: string,
+    policy: ToolPolicy,
+    onlyNarrows: boolean,
+  ): Promise<void> {
+    const app = await this.row(this.db, orgId, connectorId);
+    assertGitPushSettable(app.git_hosts, app.git_push_policy, policy, onlyNarrows);
+  }
+
+  /**
+   * Sets the org's default git push policy for the connector (sandbox git credentials spec §7, the
+   * virtual tool `git_push`; `connectors.manage`): read on every push by `decideGitPush`. Only a
+   * connector that declares git hosts (else 400 on `policy`). `onlyNarrows` (the Platform tool,
+   * API tokens): it may only tighten ({@link assertGitPushSettable}). Audits `connector.git_push_policy_changed`.
+   */
+  @Transactional()
+  async setGitPushPolicy(
+    orgId: string,
+    connectorId: string,
+    actorAccountId: string,
+    policy: ToolPolicy,
+    opts: {
+      actorTokenId?: string | undefined;
+      auditDetail?: Record<string, unknown> | undefined;
+      onlyNarrows?: boolean;
+    } = {},
+  ): Promise<ConnectorDetail> {
+    const t = this.db;
+    await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "connectors.manage");
+    const app = await this.row(t, orgId, connectorId, true);
+    assertGitPushSettable(app.git_hosts, app.git_push_policy, policy, opts.onlyNarrows === true);
+    if (policy !== app.git_push_policy) {
+      await t
+        .updateTable("connectors")
+        .set({ git_push_policy: policy, updated_at: sql`now()` })
+        .where("id", "=", connectorId)
+        .execute();
+      await audit(t, {
+        actorAccountId,
+        ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+        orgId,
+        action: "connector.git_push_policy_changed",
+        target: connectorId,
+        detail: { from: app.git_push_policy, to: policy, ...opts.auditDetail },
+      });
+    }
     return this.detail(t, orgId, connectorId, actorAccountId);
   }
 

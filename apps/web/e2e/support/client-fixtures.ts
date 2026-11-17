@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { type APIRequestContext, type Browser, expect, type Page } from "@playwright/test";
 import { CSRF } from "./chat";
 import { hydrated } from "./nav";
-import { signIn } from "./sign-in";
+import { enableModelFake, signIn } from "./sign-in";
 
 /**
  * The client extension fixtures of client-extensions.spec.ts (client extensions spec §14), set up
@@ -133,6 +133,7 @@ async function newOwner(
     const orgId = ((await org.json()) as { org: { id: string } }).org.id;
     const current = await api.put("/api/v1/me/current-org", { headers: CSRF, data: { orgId } });
     expect(current.status(), await current.text()).toBe(204);
+    await enableModelFake(api, orgId);
     const agent = await api.post(`/api/v1/orgs/${orgId}/agents`, {
       headers: CSRF,
       data: {

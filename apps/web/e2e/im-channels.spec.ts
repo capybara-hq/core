@@ -56,7 +56,7 @@ test.afterAll(async () => {
 
 const sentTo = (chatId: string) => im.sent.filter((s) => s.target.chatId === chatId);
 
-test("假渠道：启用插件 → 建渠道连接 → IM 里未绑定的人收到绑定链接 → 登录后确认绑定 → 对话", async ({
+test("IM binding: enable fake channel → create connection → sign in and confirm → conversation", async ({
   page,
   browser,
 }) => {
@@ -115,21 +115,49 @@ test("假渠道：启用插件 → 建渠道连接 → IM 里未绑定的人收�
   const bindUrl = String(card?.url);
   expect(bindUrl).toMatch(/\/bind\/cap_bind_/);
 
-  // 5. 没登录的浏览器打开链接 → 登录页（带回跳）→ 登录后回到确认页 → 确认绑定
+  // 5. A signed-out browser signs in and returns to the server-rendered binding page.
   const context = await browser.newContext({ locale: "zh-CN" });
   const visitor = await context.newPage();
   await visitor.goto(bindUrl);
   await expect(visitor).toHaveURL(/\/login\?returnTo=/);
   await visitor.getByLabel(zh.login.loginLabel).fill(LOGIN);
   await visitor.getByLabel(zh.login.passwordLabel).fill(PASSWORD);
-  await visitor.getByRole("button", { name: zh.login.submit, exact: true }).click();
-  await expect(visitor).toHaveURL(/\/bind\/cap_bind_/);
-  await expect(visitor.locator('[data-template="AuthPage"]')).toBeVisible();
-  // IM 身份没有显示名时以账号 ID 作标题
-  await expect(visitor.getByRole("heading", { name: "u-e2e" })).toBeVisible();
-  await expect(visitor.getByRole("note")).toContainText(zh.bind.warning);
-  await visitor.getByRole("button", { name: zh.bind.confirm }).click();
+  let releaseScripts!: () => void;
+  const scripts = new Promise<void>((resolve) => {
+    releaseScripts = resolve;
+  });
+  let confirmationPosts = 0;
+  visitor.on("request", (request) => {
+    if (request.method() === "POST" && new URL(request.url()).pathname.startsWith("/api/v1/bind/"))
+      confirmationPosts++;
+  });
+  // Hold the new document's scripts so SSR controls cannot race their client handlers.
+  await visitor.route("**/_next/static/**/*.js", async (route) => {
+    await scripts;
+    await route.continue();
+  });
+  const confirm = visitor.getByRole("button", { name: zh.bind.confirm });
+  const cancel = visitor.getByRole("button", { name: zh.bind.cancel });
+  try {
+    await visitor.getByRole("button", { name: zh.login.submit, exact: true }).click();
+    await expect(visitor).toHaveURL(/\/bind\/cap_bind_/);
+    await expect(visitor.locator('[data-template="AuthPage"]')).toBeVisible();
+    // Without an IM display name, the external account ID is the identity heading.
+    await expect(visitor.getByRole("heading", { name: "u-e2e" })).toBeVisible();
+    await expect(visitor.getByRole("note")).toContainText(zh.bind.warning);
+    await expect(confirm).toBeDisabled();
+    await expect(cancel).toBeDisabled();
+    expect(confirmationPosts).toBe(0);
+  } finally {
+    releaseScripts();
+    await visitor.unrouteAll({ behavior: "wait" });
+  }
+  await expect(confirm).toBeEnabled();
+  await expect(cancel).toBeEnabled();
+  expect(confirmationPosts).toBe(0);
+  await confirm.click();
   await expect(visitor.getByText(zh.bind.doneTitle)).toBeVisible();
+  expect(confirmationPosts).toBe(1);
 
   // 6. 已绑定：私聊得到 agent 的回复
   const before = sentTo("dm-u-e2e").length;

@@ -19,7 +19,7 @@ import { createDb } from "../../src/db/pool.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { eventsOf, PW, sleep, waitFor } from "../helpers/runs.js";
+import { enableExtensions, eventsOf, PW, sleep, waitFor } from "../helpers/runs.js";
 
 /**
  * Review Focus 3（双副本 + 杀副本）：出站投递进行中，负责投递的 worker 被 SIGKILL——
@@ -113,6 +113,7 @@ async function bootstrap(platform: FakeChannelServer, appId: string) {
   );
   const org = await call("POST", "/api/v1/orgs", { name: "Acme" });
   const orgId = (org.json.org as { id: string }).id;
+  await enableExtensions(raw, orgId, "model-fake");
   const base = `/api/v1/orgs/${orgId}`;
   for (const p of ["chan-mini", "mem-connector"]) {
     expect((await call("PUT", `${base}/extensions/${p}`, { enabled: true })).status).toBe(200);

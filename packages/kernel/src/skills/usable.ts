@@ -9,6 +9,7 @@
 import type { Logger, ObjectStore } from "@capybara-hq/plugin-sdk";
 import { type DisabledSkillRef, skillDisabled } from "../agents/definition.js";
 import { componentOn, platformBuiltin } from "../catalog/component-state.js";
+import { LIVE_INSTALL_STATUSES } from "../catalog/install-status.js";
 import type { KernelSchemaDb, SkillManifest, SourceFormat } from "../db/kernel-schema.js";
 
 /** The `source` prefix of a platform skill version in a snapshot or an invocation record. */
@@ -64,9 +65,6 @@ export interface SkillVersionRow extends UsableSkill {
   format: SourceFormat;
 }
 
-/** Plugin install statuses that make a plugin on in the org (phase 1, org catalog state). */
-const LIVE_INSTALL = ["installing", "installed", "upgrading"] as const;
-
 const byNameThenId = (a: UsableSkill, b: UsableSkill): number =>
   a.name < b.name ? -1 : a.name > b.name ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 
@@ -109,7 +107,7 @@ async function platformRowsOn(
             .select("a.id")
             .whereRef("a.item_id", "=", "p.catalog_item_id")
             .where("a.org_id", "=", orgId)
-            .where("a.status", "in", [...LIVE_INSTALL]),
+            .where("a.status", "in", [...LIVE_INSTALL_STATUSES]),
         )
         .as("installed"),
       eb

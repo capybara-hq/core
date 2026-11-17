@@ -21,6 +21,7 @@ import {
   seedPlugin,
   setDeployment,
   setScope,
+  settleScope,
   startOrgEnv,
 } from "../catalog/org-env.js";
 import { skillPlugin } from "../catalog/packages.js";
@@ -188,6 +189,8 @@ async function sharedWithB(orgId: string, itemId: string, skill: string): Promis
     .get(TransactionHost)
     .run(() => env.k.app.get(CatalogScopeService).enqueueSync(itemId));
   await waitFor(async () => (await usable(orgB)).includes(skill), 30_000, `${skill} usable in B`);
+  // nothing owed still runs (the confirm's sync under the old scope) behind a later preview
+  await settleScope(env, itemId);
 }
 
 /** An org skill of `orgId` made shareable and associated with org B (promoted); its platform id. */

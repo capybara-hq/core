@@ -14,7 +14,7 @@ import { createDb } from "../../src/db/pool.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { PW, waitFor } from "../helpers/runs.js";
+import { enableExtensions, PW, waitFor } from "../helpers/runs.js";
 import { openSse, type SseClient } from "../helpers/sse.js";
 
 /**
@@ -96,6 +96,7 @@ describe("嵌入应用（双副本）", () => {
 
     const org = await at(0, "POST", "/api/v1/orgs", { name: "Acme" });
     const orgId = (org.json.org as { id: string }).id;
+    await enableExtensions(raw, orgId, "model-fake");
     const base = `/api/v1/orgs/${orgId}`;
     const en = await at(1, "PUT", `${base}/extensions/fake-embed`, { enabled: true });
     expect(en.status, JSON.stringify(en.json)).toBe(200);
