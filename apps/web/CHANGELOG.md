@@ -1,5 +1,14 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.41
+
+### Patch Changes
+
+- 3385a6d: Chat attachments accept mainstream office documents, archives and source files by extension
+  (`attachments.allowedExtensions`, about ninety defaults), because their content types disagree between
+  browsers and systems — an `html`, `py`, `ts` or legacy `doc` file could not be attached before. The
+  composer's picker offers the extensions and the refusal names them beside the media types.
+
 ## 0.1.0-rc.40
 
 ### Patch Changes
