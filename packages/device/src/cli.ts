@@ -114,7 +114,14 @@ function defaultCreateStaged(stateDir: string, home: string) {
         deviceId: cred.deviceId,
         policy: () => store.current(),
       });
-      return createStagedDevice({ cred, stateDir, policy: store, home, container });
+      return createStagedDevice({
+        cred,
+        stateDir,
+        policy: store,
+        home,
+        container,
+        dispose: () => container.dispose(),
+      });
     }
     return createStagedDevice({ cred, stateDir, policy: store, home });
   };

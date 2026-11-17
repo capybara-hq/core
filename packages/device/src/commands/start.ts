@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { DEVICE_PROTOCOL_VERSION } from "@capybara-hq/plugin-sdk";
+import { DEVICE_PROTOCOL_VERSION, STAGED_DEVICE_PROTOCOL_VERSION } from "@capybara-hq/plugin-sdk";
 import { type Connection, connect } from "../client.js";
 import { CommandLog } from "../command-log.js";
 import { sandboxUnavailableMessage } from "../exec/sandbox-messages.js";
@@ -9,7 +9,7 @@ import { PolicyStore } from "../policy-store.js";
 import { hasLoginService } from "../service/installed.js";
 import { rotateServiceLog } from "../service/launchd.js";
 import { startedByServiceManager } from "../service/manager.js";
-import { connectStaged, STAGED_PROTOCOL } from "../staged-connect.js";
+import { connectStaged } from "../staged-connect.js";
 import type { StagedDevice } from "../staged-device.js";
 import { type Credential, convertPolicyFile, policyMode, readCredential } from "../state.js";
 import { PROGRAM_VERSION } from "../version.js";
@@ -74,7 +74,7 @@ export async function start(deps: StartDeps): Promise<number> {
     return 0;
   }
   // the staged (protocol 3) path is selected only by the protocol constant
-  const staged = (deps.protocol ?? DEVICE_PROTOCOL_VERSION) === STAGED_PROTOCOL;
+  const staged = (deps.protocol ?? DEVICE_PROTOCOL_VERSION) === STAGED_DEVICE_PROTOCOL_VERSION;
   if (staged ? deps.createStaged === undefined : deps.createExecutor === undefined) {
     err("capybara-device start: no execution backend is available in this build");
     return 1;
@@ -197,10 +197,15 @@ async function serveStaged(
     // the program stays unbound; a binding request reports the same problem to the deployment
     err(`The instance binding was not recovered: ${(e as Error).message}`);
   }
-  if (signals.stopRequested()) return 0;
+  if (signals.stopRequested()) {
+    // stopped before it connected: release what construction acquired (the Docker executor)
+    await device.dispose().catch((e: unknown) => err(`Cleanup failed: ${(e as Error).message}`));
+    return 0;
+  }
   const conn = (deps.connectStaged ?? connectStaged)(device, {
     err,
-    // a new login while running: the old credential's state is discarded (B-3)
+    // read before each reconnect only: a new login while running discards the old credential's
+    // state (B-3)
     credential: () => {
       try {
         return readCredential(stateDir);

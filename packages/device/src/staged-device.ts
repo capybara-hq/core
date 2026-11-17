@@ -35,8 +35,14 @@ import { PROGRAM_VERSION } from "./version.js";
 export const HOST_PYTHON = "/usr/bin/python3";
 /** How long a stopped operation gets to end on its own before it is killed (machine stop). */
 export const MACHINE_STOP_GRACE_MS = 2000;
-/** The longest the restricted self-check of one binding may take. */
-export const SELF_CHECK_TIMEOUT_MS = 60_000;
+/**
+ * The longest the restricted self-check of one binding may take. The kernel's bind deadline
+ * (`OP_DEADLINE_MS`, 30 s) covers verification (the installed-byte hash, about 1 to 3 s) and this
+ * check (about 2 to 4 s on a real worker), with room left for the answer.
+ */
+export const SELF_CHECK_TIMEOUT_MS = 12_000;
+/** A failed self-check is retried by a later report at most this often. */
+export const SELF_CHECK_RETRY_MS = 60_000;
 
 const UNBOUND_REASON =
   "The instance is not bound yet; the deployment binds it before running operations";
@@ -70,6 +76,7 @@ const IDLE_LIFECYCLE: MacOperationBackend["lifecycle"] = {
   settle: async () => {},
   retirementObligations: () => 0,
   stopOwned: async () => [],
+  blockersBesidesLiveBackground: () => 0,
   dispose: () => {},
 };
 
@@ -83,6 +90,12 @@ export interface StagedDeviceOptions {
   platform?: NodeJS.Platform;
   /** A docker-mode device lends its container to each operation (the Docker executor). */
   container?: OperationContainerHost;
+  /** Releases what construction acquired (the Docker executor); called by {@link StagedDevice.dispose}. */
+  dispose?: () => Promise<void>;
+  /**
+   * The host interpreter the trusted helpers run with (the output spool helper and the native
+   * helper, also for a docker-mode device's host-side skills preparation).
+   */
   pythonPath?: string;
   /**
    * Test seams (trusted construction only). Production verifies the installed program
@@ -94,6 +107,12 @@ export interface StagedDeviceOptions {
     options: { stageIn: string },
   ) => Promise<VerifiedRuntime>;
   selfCheck?: (input: MacSelfCheckInput, signal: AbortSignal) => Promise<string | null>;
+  /** How long after a failed self-check a report retries it (default {@link SELF_CHECK_RETRY_MS}). */
+  selfCheckRetryMs?: number;
+  /** The clock of the self-check retry interval (default: `Date.now`). */
+  selfCheckNow?: () => number;
+  /** The image id (`sha256:…`) the docker-mode device's running container was created from. */
+  containerImageDigest?: (containerName: string, signal: AbortSignal) => Promise<string>;
   startWorker?: (request: MacWorkerRequest, signal: AbortSignal) => Promise<MacWorkerHandle>;
   linux?: LinuxBackendDependencies;
   backendDependencies?: Pick<LinuxBackendDependencies, "now" | "watch">;
@@ -121,9 +140,21 @@ export interface StagedDevice {
   }): Promise<Omit<DeviceHelloV3, "transport">>;
   /** `create`: the roots of a new instance; the bound (now older) generation's tasks are dropped. */
   create(signal: AbortSignal): Promise<{ roots: SandboxRoots }>;
-  /** Machine stop: no new admission, then every owned operation is exact-stopped. */
-  cancelOwners(signal: AbortSignal): Promise<SandboxStopResult[]>;
+  /**
+   * Machine stop: no new admission, then every owned operation is exact-stopped; an attempt not
+   * settled when `signal` aborts reports `cancel-pending`.
+   */
+  cancelOwners(signal: AbortSignal): Promise<OwnedStop[]>;
+  /** Releases what construction acquired (a stop before the program connected). */
+  dispose(): Promise<void>;
 }
+
+/** One exact stop of an owned operation. */
+export type OwnedStop = { operationId: string; result: SandboxStopResult };
+
+/** The stops whose outcome is not confirmed (neither stopped nor already exited). */
+export const unconfirmedStops = (stops: readonly OwnedStop[]) =>
+  stops.filter((s) => s.result.outcome !== "stopped" && s.result.outcome !== "already-exited");
 
 /**
  * Builds a staged program's production parts (permission activation W3-M): the post-commit
@@ -147,8 +178,27 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
   const readOwnerCeiling = () =>
     readStrictOwnerCeiling({ stateDir, deviceId: cred.deviceId, dir: cred.dir, home });
 
+  const containerImage = async (): Promise<string> => {
+    const signal = AbortSignal.timeout(60_000);
+    const held = await (o.container as OperationContainerHost).operationContainer(signal);
+    try {
+      const digest = await (o.containerImageDigest ?? inspectContainerImage)(held.name, signal);
+      if (!/^sha256:[0-9a-f]{64}$/.test(digest))
+        throw new Error(`The device container's image id is not a sha256 digest: ${digest}`);
+      return digest;
+    } finally {
+      held.release();
+    }
+  };
+
   const verify = async () => {
-    const environment: EnvironmentInputs = { pythonPath, roots };
+    const environment: EnvironmentInputs = {
+      pythonPath,
+      roots,
+      // a docker-mode device runs in its container: the image it was created from is part of the
+      // attested environment, so a re-pulled tag is a changed runtime
+      ...(mode === "docker" && { providerImageDigest: await containerImage() }),
+    };
     // restricted workers launch only from the closure this verification stages and seals
     if (o.verifyRuntime) return o.verifyRuntime(environment, { stageIn: stateDir });
     const { verifyInstalledRuntime } = await import("./exec/runtime-manifest.js");
@@ -186,21 +236,24 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
     // it here (the binder verified the manifest just before building this backend)
     const startWorker =
       o.startWorker ?? (await import("./exec/operation-worker.js")).startMacOperationWorker;
-    const selfCheck =
-      o.selfCheck ?? (await import("./exec/mac-self-check.js")).macRestrictedSelfCheck;
-    const failure = await selfCheck(
-      { stateDir, pythonPath, runtimeHash, platform, startWorker },
-      AbortSignal.timeout(SELF_CHECK_TIMEOUT_MS),
+    const { createRestrictedProof, macRestrictedSelfCheck } = await import(
+      "./exec/mac-self-check.js"
     );
+    const selfCheck = o.selfCheck ?? macRestrictedSelfCheck;
+    // on the bind's critical path, bounded so verify + check stay inside the kernel's bind
+    // deadline; a failure is retried by a later report rather than kept for the generation
+    const proof = createRestrictedProof(
+      (signal) => selfCheck({ stateDir, pythonPath, runtimeHash, platform, startWorker }, signal),
+      {
+        timeoutMs: SELF_CHECK_TIMEOUT_MS,
+        retryMs: o.selfCheckRetryMs ?? SELF_CHECK_RETRY_MS,
+        ...(o.selfCheckNow && { now: o.selfCheckNow }),
+      },
+    );
+    await proof.attempt();
     return createHostOperationBackend(options, {
       platform,
-      mac: {
-        ...deps,
-        platform,
-        startWorker,
-        restrictedSupported: failure === null,
-        ...(failure !== null ? { unavailableReason: failure } : {}),
-      },
+      mac: { ...deps, platform, startWorker, restrictedSupported: true, restrictedProof: proof },
     });
   };
 
@@ -282,5 +335,21 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
         signal,
       });
     },
+    async dispose() {
+      await o.dispose?.();
+    },
   };
+}
+
+/** The image id the container was created from (`docker inspect`), never a mutable tag. */
+async function inspectContainerImage(name: string, signal: AbortSignal): Promise<string> {
+  const { execFile } = await import("node:child_process");
+  return new Promise((resolve, reject) => {
+    execFile(
+      "docker",
+      ["inspect", "--format", "{{.Image}}", name],
+      { signal, timeout: 30_000 },
+      (error, stdout) => (error ? reject(error) : resolve(String(stdout).trim())),
+    );
+  });
 }

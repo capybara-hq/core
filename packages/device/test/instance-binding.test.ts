@@ -61,6 +61,8 @@ async function fixture() {
   let verifyGate: Promise<void> | undefined;
   let verifying = false;
   let launchGate: Promise<void> | undefined;
+  // a worker whose cancellation never settles (a wedged process)
+  let hangCancel = false;
   const hold = () => {
     let release!: () => void;
     const gate = new Promise<void>((r) => {
@@ -108,13 +110,21 @@ async function fixture() {
               } as never);
           });
           finishers.push(finish);
-          return { ready: Promise.resolve(), completion, cancel: async () => finish() };
+          return {
+            ready: Promise.resolve(),
+            completion,
+            cancel: async () => {
+              if (hangCancel) await new Promise(() => {});
+              finish();
+            },
+          };
         },
       },
     );
   };
-  const binder = (opts: { credential?: string; deviceId?: string } = {}) =>
+  const binder = (opts: { credential?: string; deviceId?: string; dropTimeoutMs?: number } = {}) =>
     new InstanceBinder({
+      ...(opts.dropTimeoutMs !== undefined && { dropTimeoutMs: opts.dropTimeoutMs }),
       deviceId: opts.deviceId ?? "d",
       credentialIdentity: opts.credential ?? "credential-1",
       stateDir: root,
@@ -180,6 +190,9 @@ async function fixture() {
     created,
     attested,
     startExec,
+    hangCancel: () => {
+      hangCancel = true;
+    },
     finishers,
     startTask,
     setRuntime: (r: typeof verified) => {
@@ -347,7 +360,7 @@ describe("device binding", () => {
     if (!bound) throw new Error("expected binding");
     await vi.waitFor(() => expect(bound.backend.lifecycle.ownership().workers).toBe(2));
     const outcomes = await b.dropOlderGenerations(signal());
-    expect(outcomes.map((o) => o.outcome)).toEqual(["stopped"]);
+    expect(outcomes.map((o) => [o.operationId, o.result.outcome])).toEqual([["op-1", "stopped"]]);
     expect(
       (await bound.backend.background.stop(bound.handle, ref, { graceMs: 0, signal: signal() }))
         .outcome,
@@ -356,6 +369,40 @@ describe("device binding", () => {
     expect(bound.backend.lifecycle.ownership().workers).toBe(1);
     for (const finish of f.finishers) finish();
     await running;
+  });
+
+  it("a refused bind kills nothing: foreground work refuses before any task is stopped (M-1)", async () => {
+    const f = await fixture();
+    const b = f.binder();
+    await b.bind(request(G1, B1, null), signal());
+    const ref = await f.startTask(b, "op-1");
+    const running = f.startExec(b, "exec-1");
+    const bound = b.current();
+    if (!bound) throw new Error("expected binding");
+    await vi.waitFor(() => expect(bound.backend.lifecycle.ownership().workers).toBe(2));
+    await expect(b.bind(request(G2, B2, G1), signal())).rejects.toThrow("not settled");
+    // the background task still runs: nothing was stopped for a bind that was refused
+    expect(await bound.backend.background.status(bound.handle, ref, signal())).toMatchObject({
+      state: "running",
+    });
+    expect(bound.backend.lifecycle.ownership().workers).toBe(2);
+    for (const finish of f.finishers) finish();
+    await running;
+  });
+
+  it("a cancel that never settles is bounded: the bind is refused and the binder stays usable (M-1)", async () => {
+    const f = await fixture();
+    const b = f.binder({ dropTimeoutMs: 50 });
+    await b.bind(request(G1, B1, null), signal());
+    await f.startTask(b, "op-1");
+    f.hangCancel();
+    await expect(b.bind(request(G2, B2, G1), signal())).rejects.toThrow("not settled");
+    // the queue is not wedged: the next call is answered (and still refused: cancel-pending owns)
+    await expect(b.bind(request(G2, B2, G1), signal())).rejects.toThrow("not settled");
+    expect(b.current()?.binding.instanceGeneration).toBe(G1);
+    expect((await b.dropOlderGenerations(signal())).map((o) => o.result.outcome)).toEqual([
+      "cancel-pending",
+    ]);
   });
 
   it("a real replacement binds after the old work settled; old refs are refused", async () => {

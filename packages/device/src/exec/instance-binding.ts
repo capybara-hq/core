@@ -56,6 +56,8 @@ export interface InstanceBinderOptions {
   verify(): Promise<VerifiedRuntime>;
   /** The strict current owner report (B2 supplies its sequence sidecar). */
   ownerReport(): Promise<DeviceOwnerCeilingV3>;
+  /** Bound of one drop of older background tasks (default {@link DROP_TIMEOUT_MS}). */
+  dropTimeoutMs?: number;
 }
 export interface BoundInstance {
   binding: StoredBinding;
@@ -175,11 +177,21 @@ export class InstanceBinder {
    * become an older one, so its background tasks are exact-stopped by their refs (W3-M). Foreground
    * work and uncertain work of earlier processes are left to the retirement rules of {@link bind}.
    */
-  async dropOlderGenerations(signal: AbortSignal): Promise<SandboxStopResult[]> {
+  async dropOlderGenerations(signal: AbortSignal): Promise<OwnedStop[]> {
     return this.serial(async () => {
       signal.throwIfAborted();
-      return (await this.bound?.backend.lifecycle.stopOwned(dropOptions(signal))) ?? [];
+      return (await this.bound?.backend.lifecycle.stopOwned(this.dropOptions(signal))) ?? [];
     });
+  }
+
+  /** A drop is bounded: a cancel that never settles stays owned (cancel-pending) and blocks. */
+  private dropOptions(signal?: AbortSignal) {
+    const bound = AbortSignal.timeout(this.options.dropTimeoutMs ?? DROP_TIMEOUT_MS);
+    return {
+      backgroundOnly: true,
+      graceMs: DROP_GRACE_MS,
+      signal: signal ? AbortSignal.any([signal, bound]) : bound,
+    };
   }
 
   async bind(request: BindInstanceRequestV3, signal: AbortSignal): Promise<BindInstanceResultV3> {
@@ -269,10 +281,15 @@ export class InstanceBinder {
       );
     if (old) {
       old.backend.lifecycle.beginDrain();
-      if (old.binding.instanceGeneration !== next.instanceGeneration)
-        // the older generation's background tasks are dropped (exact-stopped by their refs);
-        // running foreground work and uncertain work still block below
-        await old.backend.lifecycle.stopOwned(dropOptions(new AbortController().signal));
+      if (old.binding.instanceGeneration !== next.instanceGeneration) {
+        // live foreground work and uncertain work refuse first, so a refused bind stops nothing;
+        // only then are the older generation's live background tasks exact-stopped (bounded)
+        const blockers = old.backend.lifecycle.blockersBesidesLiveBackground(
+          next.instanceGeneration,
+        );
+        if (blockers > 0) throw refuse(blockers);
+        await old.backend.lifecycle.stopOwned(this.dropOptions());
+      }
       let pending = unsettled(old.backend);
       if (pending > 0) throw refuse(pending);
       if (previous !== next) await writeStored(this.options.stateDir, next);
@@ -322,11 +339,9 @@ export class InstanceBinder {
 
 /** How long a dropped background task gets to end after its stop signal. */
 export const DROP_GRACE_MS = 2000;
-const dropOptions = (signal: AbortSignal) => ({
-  backgroundOnly: true,
-  graceMs: DROP_GRACE_MS,
-  signal,
-});
+/** The most a drop waits for its stops; what has not settled then stays owned and blocks. */
+export const DROP_TIMEOUT_MS = 10_000;
+type OwnedStop = { operationId: string; result: SandboxStopResult };
 
 const sameIdentity = (a: DeviceRuntimeIdentityV3, b: VerifiedRuntime) =>
   a.runtimeHash === b.runtimeHash &&
