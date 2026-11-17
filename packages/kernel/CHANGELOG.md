@@ -1,5 +1,21 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.39
+
+### Patch Changes
+
+- c14f7ff: Files a person sends with a message join the conversation's files: `GET …/conversations/:id/files`
+  lists them with the delivered files, newest first, marked `origin: "uploaded"` (each delivered file
+  is `origin: "delivered"`), and the content, previewer, preview and embed-token routes accept their
+  ids. Only ready chat uploads bound to that conversation in that org count, read under the
+  conversation's access as before. An attachment whose stored object no longer matches the size and
+  etag finalize recorded is `removed` and refused by the content, previewer, preview and embed-token
+  routes. Sending a message with files publishes `changed: files`. On the web, a sent file opens in
+  the right panel once listed (it downloads until then; images still zoom in the thread), its chip
+  has a download button, and uploaded files are marked 上传 / Uploaded in the file switchers.
+- Updated dependencies [d5d0e76]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.30
+
 ## 0.1.0-rc.38
 
 ### Minor Changes

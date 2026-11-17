@@ -1,5 +1,16 @@
 # @capybara-hq/design
 
+## 0.2.0-rc.13
+
+### Patch Changes
+
+- 11ec986: Checklist items with an open target read as the list's text again: start-aligned when they wrap,
+  in the item's status color and weight, underlined only on hover and keyboard focus.
+- ecc843e: Keep a code block's or a markdown table's classic scrollbar inside the block in Safari: WebKit did
+  not lay out flex ancestors again when the scrollbar appeared, so it hung over the next row (the
+  command approval card's buttons).
+- a6e5062: Keep a DataTable's classic sideways scrollbar inside the table in Safari, as for code blocks.
+
 ## 0.2.0-rc.12
 
 ### Patch Changes

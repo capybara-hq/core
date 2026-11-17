@@ -1,5 +1,12 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.30
+
+### Patch Changes
+
+- d5d0e76: Adds the `lightbox` theme token (the dimmed ground behind the image viewer), overridable by themes
+  like the other color tokens.
+
 ## 0.1.0-rc.29
 
 ### Minor Changes
