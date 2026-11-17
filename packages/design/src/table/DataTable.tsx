@@ -1,6 +1,7 @@
 import {
   Fragment,
   isValidElement,
+  type JSX,
   type KeyboardEvent,
   type MouseEvent,
   type ReactNode,
@@ -13,6 +14,7 @@ import { DensityContext } from "../controls/density";
 import { Select } from "../controls/select";
 import { Checkbox } from "../controls/toggles";
 import { Pagination } from "../display/pagination";
+import { useScrollbarRelayout } from "../display/scrollbar-relayout";
 import { Icon } from "../icons/icon";
 import { useInBox } from "../layout/box";
 import { Menu, menuActions } from "../overlays/menus";
@@ -333,7 +335,7 @@ export function DataTable<T>({
             <EmptyArea<T> kind={kind} error={error} empty={empty} noResults={noResults} />
           </>
         ) : (
-          <div className="cb-table-scroll">
+          <TableScroll>
             <table
               className="cb-table-el"
               {...ROLE.table}
@@ -467,10 +469,24 @@ export function DataTable<T>({
                 </tbody>
               </DensityContext>
             </table>
-          </div>
+          </TableScroll>
         )}
       </div>
       {pagination ? <Pagination {...pagination} /> : null}
+    </div>
+  );
+}
+
+/**
+ * The table's sideways (and capped vertical) scroller, kept sized to its scrollbar in WebKit
+ * ({@link useScrollbarRelayout}). Its own component: it mounts only once there are rows.
+ */
+function TableScroll({ children }: { children: ReactNode }): JSX.Element {
+  const ref = useRef<HTMLDivElement>(null);
+  useScrollbarRelayout(ref);
+  return (
+    <div className="cb-table-scroll" ref={ref}>
+      {children}
     </div>
   );
 }
