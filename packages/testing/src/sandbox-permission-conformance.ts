@@ -82,6 +82,15 @@ export interface SandboxPermissionFixture {
     mode(path: string): Promise<number | null>;
     /** The subset of `pids` still running on the device. */
     alive(pids: readonly number[]): Promise<number[]>;
+    /**
+     * Runs a Python 3 program (`python3 - ...args`, program on stdin) as the device user in a
+     * fresh process outside every operation and every restricted domain, standing in for another
+     * session's Full-access work, and returns its stdout. When present, the harness proves that
+     * such a process can neither ptrace nor read the memory or environment of the process that
+     * supervises a restricted command (its parent). Omit it only where no process outside an
+     * operation can run as the device user.
+     */
+    outside?(program: string, args: readonly string[]): Promise<string>;
   };
   /** Removes fixture-owned resources, including after an assertion failure. */
   dispose(): Promise<void>;
@@ -256,10 +265,60 @@ print("swaps=%d" % swaps)
 `;
 
 /**
+ * Run by a same-uid process outside every operation: tries `PTRACE_ATTACH` and opens `mem` and
+ * `environ` of a control child of its own (proving the probe sees real access) and of the target.
+ */
+const OUTSIDE_PROBE = `
+import ctypes, errno, json, os, signal, sys, time
+libc = ctypes.CDLL(None, use_errno=True)
+libc.ptrace.restype = ctypes.c_long
+libc.ptrace.argtypes = (ctypes.c_long, ctypes.c_long, ctypes.c_void_p, ctypes.c_void_p)
+PTRACE_ATTACH, PTRACE_DETACH, WALL = 16, 17, 0x40000000
+def name(code):
+    return errno.errorcode.get(code, str(code))
+def opened(pid, entry):
+    try:
+        fd = os.open("/proc/%d/%s" % (pid, entry), os.O_RDONLY)
+    except OSError as error:
+        return name(error.errno)
+    try:
+        if entry == "environ":
+            os.read(fd, 1)
+    finally:
+        os.close(fd)
+    return "ALLOWED"
+def attach(pid):
+    if libc.ptrace(PTRACE_ATTACH, pid, None, None) < 0:
+        return name(ctypes.get_errno())
+    # Undo at once (the attach stopped the target) so even a failing check leaves it running.
+    os.waitpid(pid, WALL)
+    libc.ptrace(PTRACE_DETACH, pid, None, None)
+    return "ALLOWED"
+def probe(pid):
+    return {"mem": opened(pid, "mem"), "environ": opened(pid, "environ"), "attach": attach(pid)}
+child = os.fork()
+if child == 0:
+    time.sleep(600)
+    os._exit(0)
+control = probe(child)
+os.kill(child, signal.SIGKILL)
+os.waitpid(child, 0)
+target = int(sys.argv[1])
+def identity(pid):
+    with open("/proc/%d/status" % pid) as handle:
+        uid = [int(line.split()[1]) for line in handle if line.startswith("Uid:")][0]
+    with open("/proc/%d/cmdline" % pid, "rb") as handle:
+        return {"uid": uid, "cmdline": handle.read().replace(b"\\0", b" ").decode().strip()}
+print(json.dumps({"uid": os.getuid(), "who": identity(target), "control": control,
+                  "target": probe(target)}))
+`;
+
+/**
  * Proves an actual provider's permission boundary on one shared device: positive controls, sibling,
  * symlink, protected-path and network denials, Full controls without restricted filters, both
  * overlap orders, component/root swaps and mutable syscall pointers during access, exact
- * cancellation and fresh narrowed scopes. Restricted network none/allowlist may bind and listen on
+ * cancellation, a supervisor closed to same-uid outsiders (when the fixture can run one) and fresh
+ * narrowed scopes. Restricted network none/allowlist may bind and listen on
  * loopback (127.0.0.1, ::1) only. Pathname UNIX services outside the roots stay unreachable under
  * every network kind, environment included. A provider that reports restricted unsupported must
  * refuse restricted operations (fail closed); nothing here substitutes a fixture flag for support.
@@ -726,6 +785,46 @@ export async function runSandboxPermissionConformance(
       assert.equal(chmods.exitCode, 0, `chmod race program must run: ${chmods.stderr}`);
       assert.notEqual(chmods.stdout.trim(), "ok=0", "in-root chmods must succeed");
       await siblingIntact("a flipped path must not chmod the sibling");
+    }
+
+    // The supervisor of a restricted command (its parent) is closed to a same-uid process outside
+    // the operation: no ptrace attach, no mem or environ, while the command itself runs normally.
+    if (fixture.inspect.outside) {
+      const held = exec(
+        restricted(),
+        `echo $PPID > supervisor-pid; printf r > ready-held; ` +
+          `until [ -e release-held ]; do sleep 0.01; done; printf ran > held.txt`,
+      );
+      await waitFor(at(root, "ready-held"), held);
+      const supervisor = Number(text(await fixture.inspect.readFile(at(root, "supervisor-pid"))));
+      let probed: string;
+      try {
+        probed = await fixture.inspect.outside(OUTSIDE_PROBE, [String(supervisor)]);
+      } finally {
+        await exec(restricted(), "touch release-held");
+      }
+      assert.equal((await held).exitCode, 0, "the supervised command runs normally");
+      assert.equal(text(await fixture.inspect.readFile(at(root, "held.txt"))), "ran");
+      const { uid, who, control, target } = JSON.parse(probed) as {
+        uid: number;
+        who: { uid: number; cmdline: string };
+        control: Record<string, string>;
+        target: Record<string, string>;
+      };
+      // Not vacuous: the target is a live process of the outsider's own uid.
+      assert.equal(who?.uid, uid, `the supervisor must run as the outsider's uid: ${probed}`);
+      assert.notEqual(who?.cmdline ?? "", "", `the supervisor must still be running: ${probed}`);
+      assert.equal(control?.mem, "ALLOWED", `the probe must read a same-uid control: ${probed}`);
+      assert.equal(
+        control?.environ,
+        "ALLOWED",
+        `the probe must read a same-uid control: ${probed}`,
+      );
+      assert.deepEqual(
+        target,
+        { mem: "EACCES", environ: "EACCES", attach: "EPERM" },
+        `a same-uid outsider must not ptrace or read the supervisor ${supervisor}: ${probed}`,
+      );
     }
 
     // Exact cancellation: detached descendants end; a sibling operation keeps running.

@@ -30,7 +30,7 @@ export const SANDBOX_RUNTIME_SOURCE: {
     Object.freeze({
       name: "linux-sandbox.py",
       source: LINUX_SANDBOX_SOURCE,
-      sha256: "f27ab699dbb5f7fc0ea9eb02cfa2257a405e5ccf3b8c3e011df29ab54bc3d599",
+      sha256: "746b70c1e4e93781eaa8c44641ece6c0b17aed6010712d76d3f3cfee043b1155",
     }),
   ]),
 });

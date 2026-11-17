@@ -542,6 +542,27 @@ attempt("clone3", lambda: raw(435, 0, 0))
         }
       });
 
+      it("a launcher left dumpable is open to a same-uid outsider", async (context) => {
+        requireSupport(context);
+        const runtime = stageMutant(
+          device,
+          "dumpable",
+          "SELF_PROTECTION = protect_self()\n",
+          "SELF_PROTECTION = None\n",
+        );
+        const mutant = new Agent(device, { runtime, candidateArch: true });
+        await mutant.ready;
+        try {
+          const fixture = await dockerPermissionFixture(device, mutant, async () => {});
+          // The outsider case is what fails, and it fails because the probe reads everything.
+          await expect(runSandboxPermissionConformance(fixture)).rejects.toThrow(
+            /a same-uid outsider must not ptrace.*"target": \{"mem": "ALLOWED", "environ": "ALLOWED", "attach": "ALLOWED"\}/,
+          );
+        } finally {
+          mutant.close();
+        }
+      });
+
       it("reopening the root pathname follows a swap into the sibling", async (context) => {
         requireSupport(context);
         const runtime = stageMutant(
