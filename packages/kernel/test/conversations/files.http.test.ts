@@ -406,19 +406,25 @@ async function attachRow(
   name: string,
   bytes: Buffer,
   contentType: string,
-  o: { org?: string; purpose?: AttachmentPurpose; status?: "pending" | "ready" } = {},
+  o: {
+    org?: string;
+    purpose?: AttachmentPurpose;
+    status?: "pending" | "ready";
+    /** Record the stored object's etag, as finalize does. */
+    etag?: boolean;
+  } = {},
 ): Promise<string> {
   const id = randomUUID();
   const org = o.org ?? orgId;
   const objectKey = `attachments/${id}`;
-  await k.app
-    .get(StorageService)
-    .kernel(org)
-    .put(objectKey, bytes, {
-      contentType,
-      size: bytes.byteLength,
-      signal: AbortSignal.timeout(10_000),
-    });
+  const store = k.app.get(StorageService).kernel(org);
+  await store.put(objectKey, bytes, {
+    contentType,
+    size: bytes.byteLength,
+    signal: AbortSignal.timeout(10_000),
+  });
+  const etag = o.etag ? ((await store.head(objectKey))?.etag ?? null) : null;
+  if (o.etag) expect(etag).not.toBeNull();
   await db
     .insertInto("attachments")
     .values({
@@ -432,6 +438,7 @@ async function attachRow(
       object_key: objectKey,
       status: o.status ?? "ready",
       purpose: o.purpose ?? "chat",
+      etag,
     })
     .execute();
   return id;
@@ -524,6 +531,46 @@ describe("uploaded attachments (file preview: attachments join the conversation'
     expect((await listFiles(conv)).files.find((f) => f.id === gone)?.status).toBe("removed");
     const r = await owner({ method: "GET", url: `${filesUrl(conv)}/${gone}/content` });
     expect(r.statusCode).toBe(410);
+  });
+
+  it("an attachment whose object changed after finalize is removed: listed so, 410 on content", async () => {
+    const conv = await sandboxConversation();
+    const store = k.app.get(StorageService).kernel(orgId);
+    const replace = async (id: string, bytes: Buffer) =>
+      store.put(`attachments/${id}`, bytes, {
+        contentType: "text/plain",
+        size: bytes.byteLength,
+        signal: AbortSignal.timeout(10_000),
+      });
+    // same size, other bytes: only the etag tells
+    const swapped = await attachRow(conv, "s.txt", Buffer.from("aaaa"), "text/plain", {
+      etag: true,
+    });
+    await replace(swapped, Buffer.from("bbbb"));
+    // another size: the size tells (also with no etag recorded)
+    const resized = await attachRow(conv, "r.txt", Buffer.from("aaaa"), "text/plain");
+    await replace(resized, Buffer.from("longer bytes"));
+    const intact = await attachRow(conv, "i.txt", Buffer.from("same"), "text/plain", {
+      etag: true,
+    });
+    const listed = new Map((await listFiles(conv)).files.map((f) => [f.id, f.status]));
+    expect(listed).toEqual(
+      new Map([
+        [intact, "available"],
+        [resized, "removed"],
+        [swapped, "removed"],
+      ]),
+    );
+    for (const id of [swapped, resized]) {
+      const r = await owner({ method: "GET", url: `${filesUrl(conv)}/${id}/content` });
+      expect(r.statusCode).toBe(410);
+      expect(errCode(r)).toBe("conversation.artifact_removed");
+      const pv = await owner({ method: "GET", url: `${filesUrl(conv)}/${id}/previewers` });
+      expect(pv.statusCode).toBe(410);
+      expect(errCode(pv)).toBe("conversation.artifact_removed");
+    }
+    const ok = await owner({ method: "GET", url: `${filesUrl(conv)}/${intact}/content` });
+    expect(ok.body).toBe("same");
   });
 
   it("only this conversation's ready chat uploads in this org: everything else is not found", async () => {

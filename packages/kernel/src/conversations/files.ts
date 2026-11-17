@@ -6,6 +6,7 @@ import { StorageService } from "../storage/storage.service.js";
 import { UUID_RE } from "../ui/registry.js";
 import { ConversationAccess } from "./access.js";
 import { isInlineArtifactType, isTextArtifactType } from "./artifacts.js";
+import { AttachmentsService, type BoundAttachment } from "./attachments.service.js";
 import type { EventPayload } from "./events.js";
 
 /**
@@ -63,25 +64,15 @@ export interface FileContent {
 const conversationNotFound = () => new ApiError("conversation.not_found", "Conversation not found");
 const artifactNotFound = () =>
   new ApiError("conversation.artifact_not_found", "Artifact not found");
+const removed = () =>
+  new ApiError("conversation.artifact_removed", "The file is no longer available");
 
 type Delivery = EventPayload<"artifact_created"> & { createdAt: Date };
-
-/** A ready chat attachment bound to the conversation. */
-interface Upload {
-  id: string;
-  name: string;
-  contentType: string;
-  size: number;
-  objectKey: string;
-  /** The etag recorded at finalize (null: not recorded); a different object is not the upload. */
-  etag: string | null;
-  createdAt: Date;
-}
 
 /** One entry of the merged list: a delivered file (its versions) or an uploaded one. */
 type Entry =
   | { origin: "delivered"; at: Date; id: string; group: Delivery[] }
-  | { origin: "uploaded"; at: Date; id: string; upload: Upload };
+  | { origin: "uploaded"; at: Date; id: string; upload: BoundAttachment };
 
 /** Whether `a` lists before `b`: newer first, then the larger id (a total, stable order). */
 const before = (a: Entry, b: Entry): boolean =>
@@ -147,6 +138,9 @@ export class ConversationFiles {
     @Inject(StorageService) private readonly storage: Pick<StorageService, "kernel">,
     /** Same visibility as the event stream. */
     @Inject(ConversationAccess) private readonly access: Pick<ConversationAccess, "isAccessible">,
+    /** The attachments sent in the conversation, and the rule their stored content must meet. */
+    @Inject(AttachmentsService)
+    private readonly attachments: Pick<AttachmentsService, "boundRows" | "storedMatches">,
   ) {}
 
   private async checkAccess(orgId: string, conversationId: string, viewer: string) {
@@ -171,33 +165,9 @@ export class ConversationFiles {
   }
 
   /**
-   * The conversation's ready `chat` attachments in this org (never a skill package, an avatar, a
-   * pending or unbound upload), newest first; with `id`, only that one.
-   */
-  private async uploads(orgId: string, conversationId: string, id?: string): Promise<Upload[]> {
-    let q = this.db
-      .selectFrom("attachments")
-      .select(["id", "name", "content_type", "size", "object_key", "etag", "created_at"])
-      .where("org_id", "=", orgId)
-      .where("conversation_id", "=", conversationId)
-      .where("purpose", "=", "chat")
-      .where("status", "=", "ready");
-    if (id !== undefined) q = q.where("id", "=", id);
-    const rows = await q.orderBy("created_at", "desc").orderBy("id", "desc").execute();
-    return rows.map((r) => ({
-      id: r.id,
-      name: r.name,
-      contentType: r.content_type,
-      size: Number(r.size),
-      objectKey: r.object_key,
-      etag: r.etag,
-      createdAt: r.created_at,
-    }));
-  }
-
-  /**
    * One file of the conversation by id: a delivered version first, then an attachment sent in it;
-   * neither → `conversation.artifact_not_found`. Call after {@link checkAccess}.
+   * neither → `conversation.artifact_not_found`. An attachment carries `upload`, the row its stored
+   * object must still match. Call after {@link checkAccess}.
    */
   private async resolve(
     orgId: string,
@@ -209,7 +179,7 @@ export class ConversationFiles {
     contentType: string;
     size: number;
     objectKey: string;
-    etag: string | null;
+    upload?: BoundAttachment;
   }> {
     if (!UUID_RE.test(fileId)) throw artifactNotFound();
     const row = await this.db
@@ -228,10 +198,9 @@ export class ConversationFiles {
         contentType: a.contentType,
         size: a.size,
         objectKey: a.objectKey,
-        etag: null,
       };
     }
-    const [u] = await this.uploads(orgId, conversationId, fileId);
+    const [u] = await this.attachments.boundRows(orgId, conversationId, fileId);
     if (!u) throw artifactNotFound();
     return {
       id: u.id,
@@ -239,7 +208,7 @@ export class ConversationFiles {
       contentType: u.contentType,
       size: u.size,
       objectKey: u.objectKey,
-      etag: u.etag,
+      upload: u,
     };
   }
 
@@ -268,7 +237,9 @@ export class ConversationFiles {
       const first = g[0] as Delivery;
       return { origin: "delivered", at: first.createdAt, id: first.artifactId, group: g };
     });
-    const uploaded: Entry[] = (await this.uploads(orgId, conversationId)).map((u) => ({
+    // newest first, the larger id first at equal times
+    const bound = (await this.attachments.boundRows(orgId, conversationId)).reverse();
+    const uploaded: Entry[] = bound.map((u) => ({
       origin: "uploaded",
       at: u.createdAt,
       id: u.id,
@@ -304,7 +275,7 @@ export class ConversationFiles {
       if (e.origin === "uploaded") {
         const u = e.upload;
         const head = await store.head(u.objectKey);
-        const same = head !== null && (u.etag === null || u.etag === (head.etag ?? null));
+        const same = this.attachments.storedMatches(u, head, { orgId, conversationId });
         return {
           id: u.id,
           name: u.name,
@@ -348,17 +319,29 @@ export class ConversationFiles {
   /**
    * One file version of the conversation (any version's id, or an attachment sent in it) with its
    * object key, after checking the viewer can read the conversation. For the kernel only
-   * (previewers, embed grants): the key never leaves the kernel.
+   * (previewers, embed grants): the key never leaves the kernel. An attachment whose stored object
+   * is gone or no longer the one finalize checked → `conversation.artifact_removed`; `recorded` is
+   * then what a later read of the object must still match ({@link attachmentContentMatches}).
    */
   async file(
     orgId: string,
     conversationId: string,
     viewer: string,
     fileId: string,
-  ): Promise<{ id: string; name: string; contentType: string; size: number; objectKey: string }> {
+  ): Promise<{
+    id: string;
+    name: string;
+    contentType: string;
+    size: number;
+    objectKey: string;
+    recorded?: { size: number; etag: string | null };
+  }> {
     await this.checkAccess(orgId, conversationId, viewer);
-    const { etag: _etag, ...f } = await this.resolve(orgId, conversationId, fileId);
-    return f;
+    const { upload, ...f } = await this.resolve(orgId, conversationId, fileId);
+    if (!upload) return f;
+    const head = await this.storage.kernel(orgId).head(upload.objectKey);
+    if (!this.attachments.storedMatches(upload, head, { orgId, conversationId })) throw removed();
+    return { ...f, recorded: { size: upload.size, etag: upload.etag } };
   }
 
   /**
@@ -383,10 +366,14 @@ export class ConversationFiles {
     const got = await this.storage
       .kernel(orgId)
       .get(a.objectKey, { range: { start: 0, end: max - 1 } });
+    if (!got) throw removed();
     // an attachment whose object changed after finalize is not the upload any more
-    if (!got || (a.etag !== null && a.etag !== (got.head.etag ?? null))) {
-      await got?.body.cancel().catch(() => {});
-      throw new ApiError("conversation.artifact_removed", "The file is no longer available");
+    if (
+      a.upload &&
+      !this.attachments.storedMatches(a.upload, got.head, { orgId, conversationId })
+    ) {
+      await got.body.cancel().catch(() => {});
+      throw removed();
     }
     let body = await readPrefix(got.body, max);
     if (body.includes(0)) {

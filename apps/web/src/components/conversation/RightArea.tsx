@@ -581,6 +581,10 @@ export function useRightAreaSlot(p: {
     }
     return m;
   }, [files]);
+  const listedIds = useMemo(
+    () => new Set(files.flatMap((f) => [f.id, ...f.versions.map((v) => v.id)])),
+    [files],
+  );
   const removed = useMemo(
     () =>
       new Set(
@@ -689,6 +693,7 @@ export function useRightAreaSlot(p: {
       onOpenOutput: (callId) => open({ kind: "output", callId }),
       ...(target?.kind === "file" ? { selectedFile: target.id } : {}),
       removedFiles: removed,
+      listedFiles: listedIds,
       filePaths,
       ...(target?.kind === "subagent" ? { openSubagent: target.id } : {}),
       onOpenSubagent: (id) => open({ kind: "subagent", id }),

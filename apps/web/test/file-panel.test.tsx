@@ -242,6 +242,60 @@ describe("the file panel", () => {
     expect(img.getAttribute("src")).toBe(`${ORG}/attachments/a2/download`);
   });
 
+  it("a sent file opens in the panel once listed; one the list lacks yet downloads instead", async () => {
+    const opened: { location: { href: string }; opener: unknown; close(): void }[] = [];
+    vi.stubGlobal(
+      "open",
+      vi.fn(() => {
+        const tab = { location: { href: "" }, opener: {} as unknown, close: () => {} };
+        opened.push(tab);
+        return tab;
+      }),
+    );
+    api({
+      [`GET ${BASE}/events`]: () =>
+        json(200, {
+          events: [
+            userMsg(1, "see these", {
+              content: [
+                { type: "text", text: "see these" },
+                {
+                  type: "document",
+                  mediaType: "application/pdf",
+                  source: { kind: "ref", attachmentId: "a1" },
+                  name: "brief.pdf",
+                },
+                {
+                  type: "document",
+                  mediaType: "application/pdf",
+                  source: { kind: "ref", attachmentId: "a9" },
+                  name: "fresh.pdf",
+                },
+              ],
+            }),
+          ],
+        }),
+      [`GET ${BASE}/files`]: () =>
+        json(200, { files: [{ ...SENT, name: "brief.pdf" }, CSV], next: null }),
+      [`GET ${BASE}/files/a1/previewers`]: () => json(200, { previewers: [] }),
+    });
+    openAt("");
+    const user = userEvent.setup();
+    const log = await screen.findByRole("log");
+    // listed: the right panel opens it
+    await vi.waitFor(() => expect(window.location.hash).toBe(""));
+    await user.click(await within(log).findByRole("button", { name: /brief\.pdf/ }));
+    expect(await screen.findByRole("complementary", { name: "brief.pdf" })).toBeTruthy();
+    expect(window.location.hash).toBe("#file=a1");
+    expect(opened).toHaveLength(0);
+    // not listed (yet): the click downloads it, never doing nothing
+    await user.click(within(log).getByRole("button", { name: /fresh\.pdf/ }));
+    await vi.waitFor(() =>
+      expect(opened[0]?.location.href).toMatch(new RegExp(`${ORG}/attachments/a9/download$`)),
+    );
+    expect(window.location.hash).toBe("#file=a1");
+  });
+
   it("a path in prose that names a file output is a chip opening the panel", async () => {
     api();
     openAt("");

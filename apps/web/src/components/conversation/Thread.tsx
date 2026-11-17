@@ -121,6 +121,11 @@ export type ThreadProps = {
   selectedFile?: string;
   /** Files whose object is gone (decision 8). */
   removedFiles?: ReadonlySet<string>;
+  /**
+   * Ids of the files the right panel can open (every listed file's id and version ids): a sent
+   * attachment opens there once listed, and downloads until then.
+   */
+  listedFiles?: ReadonlySet<string>;
   /** Paths (and names) of the conversation's files: prose chips for them. */
   filePaths?: ReadonlyMap<string, string>;
   /** Renders an inline card (Task 20's extension slot); rendered after the thread items. */
@@ -184,6 +189,7 @@ type EntryContext = {
   filePaths: ReadonlyMap<string, string> | undefined;
   selectedFile: string | undefined;
   removedFiles: ReadonlySet<string> | undefined;
+  listedFiles: ReadonlySet<string> | undefined;
   openSubagent: string | undefined;
   /** Member display names (another member who stopped a run). */
   names: ReadonlyMap<string, string>;
@@ -221,6 +227,7 @@ export function Thread({
   onOpenOutput,
   selectedFile,
   removedFiles,
+  listedFiles,
   filePaths,
   renderCard,
   openSubagent,
@@ -330,6 +337,7 @@ export function Thread({
       filePaths,
       selectedFile,
       removedFiles,
+      listedFiles,
       openSubagent,
       names,
       links: { trajectory, configureModels },
@@ -359,6 +367,7 @@ export function Thread({
       filePaths,
       selectedFile,
       removedFiles,
+      listedFiles,
       openSubagent,
       names,
       trajectory,
@@ -442,6 +451,7 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
     filePaths,
     selectedFile,
     removedFiles,
+    listedFiles,
   } = c;
   /** The image this entry's zoom shows (§5.6): a thumbnail click sets it, closing clears it. */
   const [zoomId, setZoomId] = useState<string | null>(null);
@@ -711,10 +721,12 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
                         onOpen={(id) => {
                           const file = e.files.find((f) => f.attachmentId === id);
                           // An image zooms in the page; another upload opens in the right panel
-                          // (downloads where there is none); a resource mention does nothing.
+                          // once the files list has it (downloads otherwise: before the list is
+                          // read again, past its cap, or with no panel); a resource mention does
+                          // nothing.
                           if (file?.kind === "image") setZoomId(id);
                           else if (!id.startsWith("@")) {
-                            if (onOpenFile) onOpenFile(id);
+                            if (onOpenFile && listedFiles?.has(id)) onOpenFile(id);
                             else openDownload(attachmentDownloadUrl(orgId, id));
                           }
                         }}

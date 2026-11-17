@@ -1,4 +1,12 @@
-import { type JSX, type ReactNode, useId, useLayoutEffect, useRef, useState } from "react";
+import {
+  Fragment,
+  type JSX,
+  type ReactNode,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { IconButton } from "../controls/button";
 import { isSafeAttachmentHref } from "../display/attachments";
 import { Icon } from "../icons/icon";
@@ -217,7 +225,6 @@ export function BubbleAttachments({
       {files.map((a) => {
         const chip = (
           <button
-            key={a.id}
             type="button"
             className="cb-bubble-file"
             data-part="attachment"
@@ -228,7 +235,7 @@ export function BubbleAttachments({
             {a.size ? <span className="cb-muted">{a.size}</span> : null}
           </button>
         );
-        if (!onDownload || a.downloadable === false) return chip;
+        if (!onDownload || a.downloadable === false) return <Fragment key={a.id}>{chip}</Fragment>;
         return (
           <div key={a.id} className="cb-bubble-file-row" data-part="attachment-row">
             {chip}
