@@ -14,6 +14,7 @@ import {
   startChat,
   zh,
 } from "./support/chat";
+import { hydrated } from "./support/nav";
 import { selectOption } from "./support/select";
 import { signIn } from "./support/sign-in";
 
@@ -49,6 +50,8 @@ test("登录 → 新建 agent → 流式回复、停止、插话、刷新后历�
   await signIn(page);
   // the home is the new conversation
   await expect(page.locator('[data-template="ConversationPage"]')).toBeVisible();
+  // a click before hydration is lost (the link is not wired yet)
+  await hydrated(page);
   await page
     .getByRole("navigation", { name: "主导航" })
     .getByRole("link", { name: zh.nav.agents })

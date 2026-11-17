@@ -64,8 +64,8 @@ The maintainer picked A on 2026-11-17.
   `net.proxy_refused`, the codes `safeFetch` already uses), `host`, an English message naming the
   host, and `status` (the HTTP status of a refused redirect, `net.redirect` only). Plugins detect it
   with `isNetDeniedError(e)` (checks `name`, `code` and `host`), never `instanceof`, which fails
-  across package copies, and map it to their own actionable error (a connector's `ToolError` kind
-  `invalid_input` / setup check failure; a provider's `ModelError` kind `invalid_request`).
+  across package copies, and map it to their own actionable error (a connector's `ToolError` / setup
+  check failure; a provider's `ModelError` kind `invalid_request`).
 - Plugin authors: `ctx.net` needs a kernel that ships it; a plugin that calls it raises its
   manifest's minimum `sdk` to that release.
 - No new permission: `ctx.net.fetch` is strictly safer than the global `fetch` the plugin can
