@@ -39,6 +39,12 @@ const storage = new AsyncLocalStorage<TransactionStore>();
 export interface FenceAdmission {
   /** The transaction asked for shared admission (`admission: "shared"`). */
   shared: boolean;
+  /**
+   * The ordered authority prelude ({@link withTransactionFencePrelude}; never with `shared`): the
+   * fence runs it exactly once, after its org-level admission (the org row) and before any
+   * conversation row, the place of the permission authority locks in the global lock order.
+   */
+  prelude?: () => Promise<void>;
 }
 
 /** The mode a fence admitted a transaction in (a fence returning nothing admits exclusively). */
@@ -56,7 +62,22 @@ export function withTransactionFence<T>(fence: TransactionFence, fn: () => Promi
   return fences.run(fence, fn);
 }
 
-/** Install once before opening a transaction: ordered authority precedes the inherited run fence.
+/**
+ * Whether a fence is installed in this context (a claimed run's `RunExecution.withClaim`). A writer
+ * whose transaction must hold the org row before its permission authority locks requires it: only
+ * an inherited fence runs the ordered prelude after the org row.
+ */
+export function hasTransactionFence(): boolean {
+  return fences.getStore() !== undefined;
+}
+
+/**
+ * Install once before opening a transaction: the ordered authority (the permission authority
+ * locks) runs inside the inherited run fence, after its org row and before its conversation rows.
+ * The global lock order (`OrgLock`): org admission -> org row -> permission authority locks
+ * (platform, org, device, root) -> root conversation -> conversation. Offboarding and the org
+ * writers hold the org row when they take an org permission lock exclusively, so a prelude that
+ * took its shared permission locks before the fence's org row could deadlock with them.
  * Existing transactions are rejected because their row locks cannot be retroactively reordered.
  * The inherited fence remains intact; this does not expose an unfenced callback or dispatch API.
  */
@@ -71,10 +92,23 @@ export function withTransactionFencePrelude<T>(
   return withTransactionFence(async () => {
     if (entered) throw new Error("An ordered fence prelude permits only one new transaction");
     entered = true;
-    await prelude();
-    // the prelude took org-level authority locks, so the inherited fence admits exclusively: a
-    // shared admission after them would invert the order org admission -> org-level locks
-    return (await inherited?.({ shared: false })) || "exclusive";
+    if (!inherited) {
+      await prelude();
+      return "exclusive";
+    }
+    let ran = false;
+    // the inherited fence admits exclusively: the prelude takes org-level locks, which a shared
+    // admission (no org row) must never take
+    const mode = await inherited({
+      shared: false,
+      prelude: async () => {
+        if (ran) throw new Error("The ordered fence prelude runs once");
+        ran = true;
+        await prelude();
+      },
+    });
+    if (!ran) throw new Error("The inherited fence did not run the ordered authority prelude");
+    return mode || "exclusive";
   }, fn);
 }
 

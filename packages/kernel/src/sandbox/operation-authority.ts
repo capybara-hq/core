@@ -31,9 +31,11 @@ import { coversHost } from "./modes.js";
 import { isExecutionMethod, parseStartingExecutionGrants } from "./operation-authority-types.js";
 import { PermissionAuthorityEpochStore } from "./permission-authority-epochs.js";
 import { assertAuthorityHeld, PermissionAuthorityLock } from "./permission-authority-lock.js";
+import type { PermissionAvailability } from "./permission-availability.js";
 import { PermissionCallGrants } from "./permission-call-grants.js";
 import type { PermissionCallRef, PermissionReviewSnapshot } from "./permission-call-types.js";
 import { PermissionConfigPublication } from "./permission-config-publication.js";
+import type { AppliedEnvironment } from "./permission-context-types.js";
 import {
   type PermissionContextSubject,
   PermissionContextSubjectChanged,
@@ -68,6 +70,43 @@ export interface PermissionScopeFacts {
 }
 const UNPROVED_ENVIRONMENT =
   "The device's installed environment is not verified yet; it is checked when the device starts";
+/** A device state for which the recorded context carries no scope and admission refuses. */
+type WithheldScope = { state: "unsupported" | "unprobed"; reason: string };
+/**
+ * The one verdict over a device's runtime report and its applied environment (B1, B-16): the
+ * recorded permission context withholds its scope exactly when this returns a verdict, and
+ * admission refuses with the same reason, so the model is never told it can do what admission
+ * refuses, nor the reverse (on a cloud device admission applies it only once installed cloud
+ * evidence exists, B-15). Unknown applied facts precede a positive capability report; a working
+ * root that is not the installed workspace (no project) is never installed scope.
+ */
+function withheldScope(input: {
+  availability: PermissionAvailability;
+  effectiveProfile: PermissionProfile;
+  location: "local" | "cloud";
+  workingRoot: string;
+  projectPath: string | null;
+  applied: AppliedEnvironment | null;
+}): WithheldScope | null {
+  const { availability, applied } = input;
+  if (availability.state !== "supported")
+    return { state: availability.state, reason: availability.reason };
+  if (
+    applied === null ||
+    applied.location !== input.location ||
+    (input.projectPath === null && input.workingRoot !== applied.roots.workspace)
+  )
+    return { state: "unprobed", reason: UNPROVED_ENVIRONMENT };
+  if (input.effectiveProfile === "full-access") {
+    if (!availability.report.fullAccess)
+      return { state: "unsupported", reason: "This device's runtime cannot run Full access" };
+  } else if (availability.report.restricted === null)
+    return {
+      state: "unsupported",
+      reason: "This device's runtime cannot enforce the restricted permission profiles",
+    };
+  return null;
+}
 /** Only server-resolved facts enter this constructor; callers never submit roots or profile. */
 export function intersectPermissionScope(f: PermissionScopeFacts): SandboxOperationScope {
   if (f.profile === "full-access" && (!f.fullConsent || !f.fullAccessCeiling))
@@ -126,17 +165,8 @@ export class SandboxOperationAuthority {
     await this.publication.assertCurrent();
     await this.facts.assertCloudReconciled(ctx.orgId, ctx.deviceId);
     await this.facts.assertOwnerReportUsable(ctx.orgId, ctx.deviceId);
-    const member = await this.db
-      .selectFrom("memberships as m")
-      .innerJoin("accounts as a", "a.id", "m.account_id")
-      .innerJoin("orgs as o", "o.id", "m.org_id")
-      .select("m.account_id")
-      .where("m.org_id", "=", ctx.orgId)
-      .where("m.account_id", "=", ctx.accountId)
-      .where("a.status", "=", "active")
-      .where("o.deleted_at", "is", null)
-      .executeTakeFirst();
-    if (!member) throw new ApiError("device.not_found", "Device not found");
+    if (!(await this.isActiveMember(ctx.orgId, ctx.accountId)))
+      throw new ApiError("device.not_found", "Device not found");
     await this.facts.preview(ctx.orgId, ctx.accountId, ctx.deviceId);
     const scope = await this.facts.projectScope(ctx.orgId, ctx.accountId, ctx.deviceId);
     if (!scope.supported || scope.widerThanAllowed)
@@ -155,6 +185,23 @@ export class SandboxOperationAuthority {
       readRoots: scope.reach === "os-user" ? ["/"] : [scope.workspace],
       tag: operationId,
     });
+  }
+  /**
+   * The one actor liveness predicate of owner browsing, the recorded permission context and the
+   * managed device context writer: an active account that is still a member of a live org.
+   */
+  async isActiveMember(orgId: string, accountId: string): Promise<boolean> {
+    const member = await this.db
+      .selectFrom("memberships as m")
+      .innerJoin("accounts as a", "a.id", "m.account_id")
+      .innerJoin("orgs as o", "o.id", "m.org_id")
+      .select("m.account_id")
+      .where("m.org_id", "=", orgId)
+      .where("m.account_id", "=", accountId)
+      .where("a.status", "=", "active")
+      .where("o.deleted_at", "is", null)
+      .executeTakeFirst();
+    return member !== undefined;
   }
   async subjectFor(ctx: SandboxUseContext) {
     const root = await this.profiles.readOwnedRoot(
@@ -326,6 +373,8 @@ export class SandboxOperationAuthority {
       )
     )
       throw new ApiError("forbidden", "Unknown sandbox operation");
+    // the recorded context withholds its scope for exactly these states (B-16)
+    if (f.admissionRefusal) throw new ApiError("forbidden", f.admissionRefusal);
     const operationId = randomUUID();
     return intersectPermissionScope({
       operationId,
@@ -369,6 +418,9 @@ export class SandboxOperationAuthority {
       rootConversationId: initial.id,
     };
     await this.locks.acquire(subject, { kind: "admit" });
+    // the recorded context's actor predicate: a disabled or removed actor is refused alike (B-19)
+    if (!(await this.isActiveMember(ctx.orgId, ctx.actor.accountId)))
+      throw new ApiError("forbidden", "This run's actor is no longer authorized");
     await this.publication.assertCurrent();
     await this.facts.assertCloudReconciled(ctx.orgId, ctx.deviceId);
     await this.facts.assertOwnerReportUsable(ctx.orgId, ctx.deviceId);
@@ -408,6 +460,25 @@ export class SandboxOperationAuthority {
           }
         : undefined,
     );
+    const effectiveProfile: PermissionProfile = unattended ? "request-approval" : view.profile;
+    // B-15 (W2-H1): a cloud device records its runtime report and installed evidence only after
+    // the provisioning its first admitted operation causes, so cloud admission keeps its previous
+    // rule meanwhile (its recorded context stays unprobed: narrower, never wider); H1 records the
+    // cloud evidence and removes this exception
+    const withheld =
+      device.source === "local"
+        ? withheldScope({
+            availability: view.availability,
+            effectiveProfile,
+            location: "local",
+            workingRoot,
+            projectPath: root.project_path,
+            applied: await this.facts.readAppliedEnvironmentLocked({
+              orgId: ctx.orgId,
+              deviceId: ctx.deviceId,
+            }),
+          })
+        : null;
     const vector = await this.epochs.readLocked(subject);
     signal.throwIfAborted();
     if (!view.scopeRevision)
@@ -420,7 +491,7 @@ export class SandboxOperationAuthority {
       accountId: ctx.actor.accountId,
       runId: call.runId,
       callId: call.callId,
-      profile: unattended ? "request-approval" : view.profile,
+      profile: effectiveProfile,
       profileRevision: view.revision,
       scopeRevision: view.scopeRevision,
       authorityRevision: permissionScopeHash({ scopeRevision: view.scopeRevision, vector }),
@@ -433,7 +504,9 @@ export class SandboxOperationAuthority {
       fullConsent:
         view.profile === "full-access" && view.consentScope?.scopeRevision === view.scopeRevision,
       unattended,
-      availability: view.availability,
+      // the review and admission see the recorded context's verdict, never a wider one
+      availability: withheld ?? view.availability,
+      admissionRefusal: withheld?.reason ?? null,
       policy:
         device.source === "local"
           ? { ...policy, network: { kind: "allowlist", hosts: policy.localAllowedDomains } }
@@ -585,17 +658,8 @@ export class SandboxOperationAuthority {
       (root.device_id !== null && !held("device", root.device_id))
     )
       throw new PermissionContextSubjectChanged();
-    const member = await this.db
-      .selectFrom("memberships as m")
-      .innerJoin("accounts as a", "a.id", "m.account_id")
-      .innerJoin("orgs as o", "o.id", "m.org_id")
-      .select("m.account_id")
-      .where("m.org_id", "=", input.orgId)
-      .where("m.account_id", "=", input.accountId)
-      .where("a.status", "=", "active")
-      .where("o.deleted_at", "is", null)
-      .executeTakeFirst();
-    if (!member) throw new ApiError("forbidden", "This run's actor is no longer authorized");
+    if (!(await this.isActiveMember(input.orgId, input.accountId)))
+      throw new ApiError("forbidden", "This run's actor is no longer authorized");
     await this.publication.assertCurrent();
     const scheduled =
       (await this.runScheduledLocked(input.conversationId, input.accountId, input.runId)) ||
@@ -708,29 +772,25 @@ export class SandboxOperationAuthority {
       deviceId,
     });
     const location = base.device.source === "local" ? "local" : "cloud";
-    // unknown applied facts precede a positive capability report; a working root that is not the
-    // installed workspace (no project) is never reported as installed scope
-    if (
-      applied === null ||
-      applied.location !== location ||
-      (root.project_path === null && base.workingRoot !== applied.roots.workspace)
-    )
-      return without("unprobed", UNPROVED_ENVIRONMENT);
+    // the verdict admission refuses with (B-16)
+    const withheld = withheldScope({
+      availability,
+      effectiveProfile,
+      location,
+      workingRoot: base.workingRoot,
+      projectPath: root.project_path,
+      applied,
+    });
+    if (withheld) return without(withheld.state, withheld.reason);
+    if (applied === null) throw new Error("A supported context needs its applied environment");
     const full = effectiveProfile === "full-access";
-    if (full) {
-      if (!availability.report.fullAccess)
-        return without("unsupported", "This device's runtime cannot run Full access");
-      if (
-        !view.fullAccessCeiling ||
+    if (
+      full &&
+      (!view.fullAccessCeiling ||
         view.consentScope?.deviceId !== deviceId ||
-        view.consentScope.scopeRevision !== scopeRevision
-      )
-        throw new Error("Full access lost its ceiling or consent inside one authority read");
-    } else if (availability.report.restricted === null)
-      return without(
-        "unsupported",
-        "This device's runtime cannot enforce the restricted permission profiles",
-      );
+        view.consentScope.scopeRevision !== scopeRevision)
+    )
+      throw new Error("Full access lost its ceiling or consent inside one authority read");
     const hosts = [...new Set(base.allowedHosts)].sort(permissionCodePointCompare);
     return parse({
       ...known,

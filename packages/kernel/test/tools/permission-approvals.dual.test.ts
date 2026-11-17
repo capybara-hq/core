@@ -701,8 +701,16 @@ it("profile writer versus inherited claim fence refuses replaced and cancelled w
     profile: "request-approval",
     expectedRevision: 0,
   });
-  const replacement = await b.app.get(RunExecution).claim(f.conversationId, f.runId, randomUUID());
-  expect(replacement).not.toBeNull();
+  // another execution takes the run on replica b. The paused prelude runs inside the fence after
+  // its org row, so b's RunExecution.claim (which locks the org row too) would wait for it; the
+  // replaced execution id is what a's fence then compares
+  const replaced = await f.db
+    .updateTable("runs")
+    .set({ execution_id: randomUUID() })
+    .where("id", "=", f.runId)
+    .where("execution_id", "=", f.claim.executionId)
+    .executeTakeFirst();
+  expect(replaced.numUpdatedRows).toBe(1n);
   live = false;
   release.resolve();
   expect(await running).toMatchObject({ message: "execution revoked" });

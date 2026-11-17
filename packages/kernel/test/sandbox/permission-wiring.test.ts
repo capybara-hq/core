@@ -33,13 +33,14 @@ import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority
 import { OperationAuthorityModule } from "../../src/sandbox/operation-authority.module.js";
 import { PermissionAuthorityEpochStore } from "../../src/sandbox/permission-authority-epochs.js";
 import { PermissionAuthorityLock } from "../../src/sandbox/permission-authority-lock.js";
-import { PermissionFacts, permissionScopeHash } from "../../src/sandbox/permission-facts.js";
+import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { SandboxProviders } from "../../src/sandbox/providers.js";
 import { SandboxModule } from "../../src/sandbox/sandbox.module.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
+import { seedInstalledEvidence } from "../helpers/installed-evidence.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
 import { enableModelProviders, startKernel, type TestKernel } from "../helpers/runs.js";
@@ -293,26 +294,19 @@ describe("permission reader behavior", () => {
         await facts.view(orgId, owner.id, await store.readOwnedRoot(orgId, child.id, owner.id)),
       ).toEqual(view);
       expect((await store.readRoot(orgId, child.id)).id).toBe(root.id);
-      const scope = await authority.resolve(ctx, "readFile", new AbortController().signal);
-      expect(scope).toMatchObject({
-        rootConversationId: root.id,
-        profile: "approve-for-me",
-        filesystem: {
-          kind: "scoped",
-          readRoots: ["/child-recorded"],
-          writeRoots: ["/child-recorded"],
-        },
-      });
-      expect(scope.ceilingRevision).toBe(
-        permissionScopeHash({
-          scopeRevision: view.scopeRevision,
-          vector: { platform: 0, org: 0, device: 0, root: 0 },
-        }),
+      // the holder's recorded workspace is the base working root admission and the context use
+      expect(await authority.workingRootFor({ orgId, deviceId, conversationId: child.id })).toBe(
+        "/child-recorded",
       );
+      // B-16: a device without a runtime report or installed binding is never admitted scope (the
+      // recorded context says unprobed for the same reason)
+      await expect(
+        authority.resolve(ctx, "readFile", new AbortController().signal),
+      ).rejects.toMatchObject({ code: "forbidden" });
       await db.deleteFrom("conversation_events").where("conversation_id", "=", child.id).execute();
-      expect(
-        (await authority.resolve(ctx, "readFile", new AbortController().signal)).filesystem,
-      ).toMatchObject({ readRoots: ["/root-recorded"] });
+      expect(await authority.workingRootFor({ orgId, deviceId, conversationId: child.id })).toBe(
+        "/root-recorded",
+      );
       await expect(
         authority.resolve(
           { ...ctx, actor: { ...ctx.actor, conversationId: root.id } },
@@ -471,7 +465,10 @@ import {
   SandboxScopeDeniedError,
 } from "@capybara-hq/plugin-sdk";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
-import { TransactionHost } from "../../src/infra/database/transaction-host.js";
+import {
+  runOutsideTransaction,
+  TransactionHost,
+} from "../../src/infra/database/transaction-host.js";
 import { type ExecutionClaim, RunExecution } from "../../src/runtime/run-execution.js";
 import { SandboxLeases } from "../../src/sandbox/leases.js";
 import { SandboxOperationIntents } from "../../src/sandbox/operation-intents.js";
@@ -489,7 +486,10 @@ function barrier() {
   });
   return { promise, resolve };
 }
-async function operationFixture(impl: Partial<SandboxProvider> = {}) {
+async function operationFixture(
+  impl: Partial<SandboxProvider> = {},
+  opts: { evidence?: boolean } = {},
+) {
   const f = await workingFixture(),
     runId = randomUUID(),
     executionId = randomUUID(),
@@ -569,6 +569,14 @@ async function operationFixture(impl: Partial<SandboxProvider> = {}) {
   k.app
     .get(SandboxProviders)
     .register({ plugin: "@permission-test", version: "test-1", impl: provider });
+  // the installed environment admission proves (B-16)
+  if (opts.evidence !== false)
+    await seedInstalledEvidence(k, raw, {
+      orgId: f.orgId,
+      deviceId: f.deviceId,
+      provider: "@permission-test",
+      version: "test-1",
+    });
   const claim: ExecutionClaim = {
     orgId: f.orgId,
     conversationId: f.root.id,
@@ -604,21 +612,24 @@ it("retains the caller lease and signal, and refreshes scope inside the same hel
         async (h, p, _info, signal) => {
           expect(await k.app.get(SandboxLeases).tryExclusive(f.deviceId)).toBeNull();
           await p.stat(h, "/work/a", signal);
-          await k.app.get(TransactionHost).run(async () => {
-            await k.app
-              .get(PermissionAuthorityLock)
-              .acquire(
-                { orgId: f.orgId, deviceId: f.deviceId, rootConversationId: f.root.id },
-                { kind: "write", level: "root" },
-              );
-            await k.app.get(PermissionAuthorityEpochStore).bumpLocked("root", f.root.id, 0);
-            await k.app
-              .get(KernelDb)
-              .updateTable("conversations")
-              .set({ permission_profile: "request-approval", permission_revision: 1 })
-              .where("id", "=", f.root.id)
-              .execute();
-          });
+          // a profile writer is its own unfenced transaction (an HTTP request), not this run's
+          await runOutsideTransaction(() =>
+            k.app.get(TransactionHost).run(async () => {
+              await k.app
+                .get(PermissionAuthorityLock)
+                .acquire(
+                  { orgId: f.orgId, deviceId: f.deviceId, rootConversationId: f.root.id },
+                  { kind: "write", level: "root" },
+                );
+              await k.app.get(PermissionAuthorityEpochStore).bumpLocked("root", f.root.id, 0);
+              await k.app
+                .get(KernelDb)
+                .updateTable("conversations")
+                .set({ permission_profile: "request-approval", permission_revision: 1 })
+                .where("id", "=", f.root.id)
+                .execute();
+            }),
+          );
           await p.stat(h, "/work/b", signal);
           controller.abort(new Error("caller ended"));
           expect(signal.aborted).toBe(true);
@@ -700,7 +711,7 @@ it("revocation before launch acknowledgement keeps the effect cancelled and the 
   expect((await k.app.get(SandboxOperationIntents).read(row.operation_id)).state).toBe("revoked");
 });
 it("runtime report reads never probe and invalidate every provenance dimension", async () => {
-  const f = await operationFixture();
+  const f = await operationFixture({}, { evidence: false });
   const reports = k.app.get(PermissionRuntimeReports),
     tx = k.app.get(TransactionHost),
     ceilings = k.app.get(PermissionCeilingWrites);
@@ -1289,9 +1300,16 @@ it.each(["replaced", "cancelled"] as const)(
     const spy = vi.spyOn(ceilings, "lock").mockImplementationOnce(async (subject, level) => {
       await lock(subject, level);
       if (kind === "cancelled") live = false;
+      // another execution took the run: the prelude now runs after the fence's org row, so a
+      // concurrent RunExecution.claim (which locks the org row too) would wait for this
+      // transaction; the replaced execution id is what the fence's check then reads
       else
         await runOutsideTransaction(() =>
-          k.app.get(RunExecution).claim(f.root.id, f.claim.runId, randomUUID()),
+          kernelDb(raw)
+            .updateTable("runs")
+            .set({ execution_id: randomUUID() })
+            .where("id", "=", f.claim.runId)
+            .execute(),
         );
     });
     try {

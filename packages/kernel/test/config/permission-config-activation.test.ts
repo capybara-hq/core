@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { SandboxProvider } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import { sql } from "kysely";
 import pg from "pg";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { closeKernelApp, createKernelApp } from "../../src/app.js";
@@ -52,6 +53,13 @@ const publisher = (cfg = config()) =>
     new KernelConfigService({ config: cfg, env: {} }, log),
     k.app.get(PermissionCeilingWrites),
   );
+const barrier = () => {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+};
 const snapshot = async () => ({
   active: await db.selectFrom("permission_config_publication").selectAll().execute(),
   epochs: await db.selectFrom("permission_authority_epochs").selectAll().execute(),
@@ -84,6 +92,59 @@ it("ordinary initialization, matching and mismatch cannot overwrite authority", 
   expect((await a.initialize()).outcome).toBe("matching");
   expect((await b.initialize()).outcome).toBe("mismatch");
   expect(await snapshot()).toEqual(before);
+});
+it("first initialization converting org keys keeps the lock order org row before permission locks", async () => {
+  // an org whose settings still carry the released autoMode key: initialization converts it
+  const accountId = randomUUID(),
+    orgId = randomUUID();
+  await db.insertInto("accounts").values({ id: accountId, display_name: "Order" }).execute();
+  await db
+    .insertInto("orgs")
+    .values({
+      id: orgId,
+      slug: orgId,
+      name: "Order",
+      created_by: accountId,
+      settings: JSON.stringify({ autoMode: "off" }),
+    })
+    .execute();
+  const held = barrier(),
+    release = barrier();
+  const host = k.app.get(TransactionHost);
+  // a fenced prelude's order: the org row first, then the permission authority locks
+  const fenced = host.run(async () => {
+    await db.selectFrom("orgs").select("id").where("id", "=", orgId).forNoKeyUpdate().execute();
+    held.resolve();
+    await release.promise;
+    await k.app.get(PermissionAuthorityLock).acquire({ orgId }, { kind: "admit" });
+  });
+  await held.promise;
+  const init = publisher().initialize();
+  // initialization waits for a lock the fenced transaction holds
+  await expect
+    .poll(async () =>
+      Number(
+        (
+          await sql<{ n: string }>`select count(*) n from pg_locks l
+            join pg_stat_activity a on a.pid = l.pid
+            where not l.granted and a.datname = current_database()`.execute(db.db)
+        ).rows[0]?.n,
+      ),
+    )
+    .toBeGreaterThan(0);
+  release.resolve();
+  const [a, b] = await Promise.allSettled([fenced, init]);
+  expect(a.status === "rejected" ? String(a.reason) : "fulfilled").toBe("fulfilled");
+  expect(b.status === "rejected" ? String(b.reason) : "fulfilled").toBe("fulfilled");
+  expect(
+    (
+      await db
+        .selectFrom("orgs")
+        .select("settings")
+        .where("id", "=", orgId)
+        .executeTakeFirstOrThrow()
+    ).settings,
+  ).toEqual({ fullAccess: "off" });
 });
 it("explicit CAS refuses absence/stale expectation and same candidate is idempotent", async () => {
   const a = publisher();

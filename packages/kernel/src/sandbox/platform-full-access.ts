@@ -214,12 +214,29 @@ const same = (a: DevicesFullAccessStored, b: DevicesFullAccessStored) =>
 /**
  * The one-time conversion of the stored permission keys (B1), run only inside the permission
  * configuration publication transaction under the platform authority write lock (which excludes
- * every org and device writer): the deployment setting `devicesAutoMode` becomes
+ * every org and device writer; the caller locked the org rows to convert before it,
+ * {@link lockOrgsWithStoredPermissionKeys}): the deployment setting `devicesAutoMode` becomes
  * `devicesFullAccess`, and every org's `autoMode` becomes `fullAccess` (absent stays absent:
  * the org follows the platform). Values convert exactly; an invalid old value converts to an
  * explicit `off` with a warning. An old and a new value that differ stop the conversion (the
  * caller's transaction rolls back): never pick the wider one. Idempotent.
  */
+/**
+ * Locks the org rows {@link convertStoredPermissionKeys} would convert, in id order, before the
+ * caller takes the platform authority write lock: the global lock order puts the org row before
+ * the permission authority locks (a fenced prelude holds an org row while it waits for its shared
+ * platform lock). The conversion itself then finds its rows already held.
+ */
+export async function lockOrgsWithStoredPermissionKeys(db: KernelSchemaDb): Promise<void> {
+  await db
+    .selectFrom("orgs")
+    .select("id")
+    .where(sql<boolean>`settings ? ${"autoMode"}`)
+    .orderBy("id")
+    .forUpdate()
+    .execute();
+}
+
 export async function convertStoredPermissionKeys(
   db: KernelSchemaDb,
   log?: Pick<KernelLogger, "warn">,

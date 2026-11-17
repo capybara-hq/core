@@ -14,7 +14,10 @@ import {
 import { DeviceProjectsService } from "../devices/device-projects.service.js";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { TransactionHost } from "../infra/database/transaction-host.js";
+import {
+  TransactionHost,
+  withTransactionFencePrelude,
+} from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KernelEvents } from "../infra/events/kernel-events.js";
 import { ProviderRegistry } from "../runtime/providers.js";
@@ -825,19 +828,22 @@ export class ConversationsService {
   async remove(orgId: string, conversationId: string, accountId: string): Promise<void> {
     await this.writable(orgId, conversationId, accountId);
     // Close entrances before the direct stop. The outbox owes the same claim-revoking cleanup.
-    await this.markDeleted(orgId, conversationId, accountId);
+    // The root authority lock is the transaction's ordered prelude: inside a run's fence (a
+    // Platform call) it follows the org row and precedes the conversation rows
+    const subject = await this.deletionSubject(orgId, conversationId);
+    await withTransactionFencePrelude(
+      () => this.ceilings.lock(subject, "root"),
+      () => this.markDeleted(orgId, conversationId, accountId, subject),
+    );
     await this.deletion.stopTree(conversationId, accountId);
     await this.eventLog.publishChanged(conversationId, "deleted");
   }
 
-  // the publish happens after the commit, in the caller; the tree stop after it is owed here
-  // (transactional outbox spec §6), so a process that dies before it still stops the tree
-  @Transactional()
-  private async markDeleted(
+  /** The authority subject a deletion locks: the tree's root and its device, read without locks. */
+  private async deletionSubject(
     orgId: string,
     conversationId: string,
-    accountId: string,
-  ): Promise<void> {
+  ): Promise<{ orgId: string; rootConversationId: string; deviceId?: string }> {
     const binding = await this.db
       .selectFrom("conversations")
       .select(["device_id", "parent_conversation_id"])
@@ -864,16 +870,35 @@ export class ConversationsService {
       .select("device_id")
       .where("id", "=", rootId)
       .executeTakeFirstOrThrow();
-    const subject = {
+    return {
       orgId,
       rootConversationId: rootId,
       ...(root.device_id ? { deviceId: root.device_id } : {}),
     };
+  }
+
+  // the publish happens after the commit, in the caller; the tree stop after it is owed here
+  // (transactional outbox spec §6), so a process that dies before it still stops the tree
+  @Transactional()
+  private async markDeleted(
+    orgId: string,
+    conversationId: string,
+    accountId: string,
+    locked: { orgId: string; rootConversationId: string; deviceId?: string },
+  ): Promise<void> {
+    // the prelude locked `locked`; a root or device that changed since is not covered by it
+    const subject = await this.deletionSubject(orgId, conversationId);
+    if (
+      subject.rootConversationId !== locked.rootConversationId ||
+      subject.deviceId !== locked.deviceId
+    )
+      throw new ApiError("conflict", "The conversation's device changed; retry the deletion");
     await this.ceilings.lock(subject, "root");
     await this.ceilings.publishLocked(
       subject,
       "root",
-      (_scope, intent) => conversationId === rootId || intent.conversation_id === conversationId,
+      (_scope, intent) =>
+        conversationId === subject.rootConversationId || intent.conversation_id === conversationId,
     );
     const row = await this.db
       .selectFrom("conversations")
