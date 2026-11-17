@@ -1,4 +1,4 @@
-import { Inject, Injectable, Module } from "@nestjs/common";
+import { Inject, Injectable, Module, Optional } from "@nestjs/common";
 import { sql } from "kysely";
 import { oweDelivery } from "../channels/deliver-job.js";
 import { ApiError } from "../errors.js";
@@ -163,7 +163,9 @@ const EVENT_COLUMNS = [
 export class EventLog {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
-    @Inject(KERNEL_BUS) private readonly bus: EventBus,
+    // Optional: the Redis-free CLI (openKernelCli redis:false) has no bus; publishes are hints whose
+    // loss is harmless (readers catch up by seq), so there they are skipped.
+    @Optional() @Inject(KERNEL_BUS) private readonly bus: EventBus | undefined,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
     @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
@@ -218,6 +220,7 @@ export class EventLog {
 
   /** 发布「日志已推进到 toSeq」；发布失败只记日志（事件已提交，订阅方可按 seq 补读）。 */
   async notify(conversationId: string, toSeq: number): Promise<void> {
+    if (!this.bus) return;
     const msg: ConversationBusMessage = { kind: "events", toSeq };
     try {
       await this.bus.publish(conversationTopic(conversationId), msg);
@@ -231,6 +234,7 @@ export class EventLog {
    * A failed publish only logs: the state is in PG and the next read sees it.
    */
   async publishChanged(conversationId: string, what: ConversationChange): Promise<void> {
+    if (!this.bus) return;
     const msg: ConversationBusMessage = { kind: "changed", what };
     try {
       await this.bus.publish(conversationTopic(conversationId), msg);

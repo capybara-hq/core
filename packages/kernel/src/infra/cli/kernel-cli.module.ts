@@ -151,8 +151,8 @@ export class KernelCliModule {
   /**
    * A context over a pool the caller owns, for code that has a pool and no config
    * (`@capybara-hq/testing`'s `createLocalAccount`): the logger, the database handles over `pool`
-   * (never closed by the context), in-process events and the given modules. No config, no keyring,
-   * no Redis: only modules that need nothing more fit.
+   * (never closed by the context), the outbox, in-process events and the given modules. No config,
+   * no keyring, no Redis: only modules that need nothing more fit.
    */
   static overPool(
     // biome-ignore lint/suspicious/noExplicitAny: the pool carries no schema types
@@ -165,6 +165,9 @@ export class KernelCliModule {
       imports: [
         LoggingModule.forLogger(opts.logger),
         DatabaseModule.borrowing(pool),
+        // owed work the modules' writes carry (an account status change revokes permission
+        // authority through the outbox): rows in PG, delivered by a worker's relay
+        OutboxModule,
         KernelEventsModule,
         ...opts.modules,
       ],

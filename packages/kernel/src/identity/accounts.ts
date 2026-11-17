@@ -7,7 +7,7 @@ import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
-import { PermissionAuthorityModule } from "../sandbox/permission-authority.module.js";
+import { PermissionCeilingWritesModule } from "../sandbox/permission-authority.module.js";
 import { PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
 import { assertThemeOnForAccount } from "../themes/theme-state.js";
 import { audit } from "./audit.js";
@@ -677,7 +677,7 @@ export interface SuperAdminInput {
  * `createLocalAccount` import it alone.
  */
 @Module({
-  imports: [SetupLockModule, SuperAdminLockModule, PermissionAuthorityModule],
+  imports: [SetupLockModule, SuperAdminLockModule, PermissionCeilingWritesModule],
   providers: [AccountsService],
   exports: [AccountsService],
 })
