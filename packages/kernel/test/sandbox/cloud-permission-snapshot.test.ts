@@ -11,6 +11,7 @@ import { CloudPermissionSnapshots } from "../../src/sandbox/cloud-permission-sna
 import { runSandboxResetFiles } from "../../src/sandbox/jobs.js";
 import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
+import { readRuntimeReport } from "../../src/sandbox/permission-runtime-reports.js";
 import { SandboxProviders } from "../../src/sandbox/providers.js";
 import { seedCloudEvidence, seedCloudInstance } from "../helpers/installed-evidence.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
@@ -475,4 +476,91 @@ it("a snapshot narrowed to an allowlist revokes execution scopes outside any all
   expect(of(environment)).toBe("revoked");
   expect(of(covered)).toBe("admitted");
   expect(of(none)).toBe("admitted");
+});
+
+it("B-12: a provider instance narrower than the snapshot keeps the narrower boundary on reconcile (intersection), never widened", async () => {
+  // snapshotted open with Full while the applied limits were unknown: blocked
+  const f = await fixture({ instance: null });
+  await f.fullRoot();
+  expect(await snapshots().snapshot(f.orgId, f.deviceId)).toMatchObject({
+    state: "reconcile-required",
+  });
+  expect(await f.device()).toMatchObject({ owner_full_access: true, outer_network: OPEN });
+  // the provider's instance turns out to run narrower than the snapshot in every dimension
+  const strict = { mode: "sandbox", network: { kind: "allowlist", hosts: ["a.example"] } };
+  await db
+    .updateTable("device_instances")
+    .set({ instance_limits: JSON.stringify(strict) })
+    .where("device_id", "=", f.deviceId)
+    .execute();
+  // reconciling keeps the narrower boundary: the authority is cut to it (a real narrowing,
+  // published through the device ceiling writer), which then is exactly what the instance runs
+  expect(await snapshots().reconcile(f.orgId, f.deviceId)).toMatchObject({ state: "bound" });
+  expect(await f.device()).toMatchObject({
+    owner_full_access: false,
+    outer_network: { kind: "allowlist", hosts: ["a.example"] },
+    permission_reconcile_required: false,
+  });
+  expect(await f.root()).toBe("approve-for-me");
+  expect(await policy(f)).toMatchObject({
+    mode: "sandbox",
+    network: { kind: "allowlist", hosts: ["a.example"] },
+  });
+});
+
+it("B-12: applied limits wider in one dimension are narrowed in the other and name the update target, never wider than the instance", async () => {
+  // old sandbox-open (false/open), an unknown instance first
+  const f = await fixture({ mode: "sandbox", instance: null });
+  await snapshots().snapshot(f.orgId, f.deviceId);
+  // the instance runs auto (wider than the sandbox ceiling) on one host (narrower than open)
+  await db
+    .updateTable("device_instances")
+    .set({
+      instance_limits: JSON.stringify({
+        mode: "auto",
+        network: { kind: "allowlist", hosts: ["a.example"] },
+      }),
+    })
+    .where("device_id", "=", f.deviceId)
+    .execute();
+  expect(await snapshots().reconcile(f.orgId, f.deviceId)).toMatchObject({
+    state: "reconcile-required",
+    target: { mode: "sandbox", network: { kind: "allowlist", hosts: ["a.example"] } },
+  });
+  expect(await f.device()).toMatchObject({
+    owner_full_access: false,
+    outer_network: { kind: "allowlist", hosts: ["a.example"] },
+    permission_reconcile_required: true,
+  });
+});
+
+it("B-12: an instance whose applied mode is the OS sandbox reads Full as unsupported (its outer boundary rests on child filters)", async () => {
+  const f = await fixture({ instance: { mode: "sandbox", network: OPEN } });
+  await seedCloudEvidence(k, {
+    orgId: f.orgId,
+    deviceId: f.deviceId,
+    provider: PROVIDER,
+    version: "test",
+  });
+  const availability = await readRuntimeReport(db.db, f.deviceId, PROVIDER, "test");
+  expect(availability).toMatchObject({
+    state: "supported",
+    report: { fullAccess: false, restricted: { network: true } },
+  });
+  // the same provider report on an instance applied without the OS sandbox keeps Full
+  await db
+    .updateTable("device_instances")
+    .set({ instance_limits: JSON.stringify({ mode: "auto", network: OPEN }) })
+    .where("device_id", "=", f.deviceId)
+    .execute();
+  await seedCloudEvidence(k, {
+    orgId: f.orgId,
+    deviceId: f.deviceId,
+    provider: PROVIDER,
+    version: "test",
+  });
+  expect(await readRuntimeReport(db.db, f.deviceId, PROVIDER, "test")).toMatchObject({
+    state: "supported",
+    report: { fullAccess: true },
+  });
 });

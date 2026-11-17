@@ -139,7 +139,12 @@ export class SandboxOperationReconcileJob {
         (isSandboxScopeDeniedError(error) || isSandboxPermissionUnsupportedError(error))
       ) {
         await this.intents.settleBackgroundRefusal(operationId, claimed.execution_id, {
-          kind: isSandboxScopeDeniedError(error) ? "denied" : "unsupported",
+          // a not-sent refusal was deferred above; kept distinct should it ever reach here
+          kind: isDeviceRequestNotSent(error)
+            ? "not_sent"
+            : isSandboxScopeDeniedError(error)
+              ? "denied"
+              : "unsupported",
           message: error.message,
         });
         return;

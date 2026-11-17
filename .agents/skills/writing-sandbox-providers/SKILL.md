@@ -153,6 +153,17 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   once per generation and never fails the lifecycle step; after a resume it clears the recorded identity (unprobed),
   otherwise the evidence stays as it was. A cloud device without an instance is refused by admission but stays
   provisionable: provisioning is the lease's job, and the first operation is admitted only after it recorded the evidence.
+  Full access needs the instance itself to hold the outer boundary (B-12, `cloudEnforceable`): an instance applied in the
+  `sandbox` mode reads `fullAccess: false` whatever its provider reports (restricted support stands).
+- **Cloud reconcile** (B-12, `CloudPermissionSnapshots.reconcile*`): reconciling a device that carries
+  `permission_reconcile_required` first narrows its authority to the applied limits the instance is known to run, by
+  intersection (Full only where it runs `auto`, the outer network cut to the applied one; a real narrowing is published
+  through the device ceiling writer), never the other way. The marker clears when the applied limits then are exactly the
+  effective ones with nothing `unapplied`; otherwise the outcome names the `target` (the effective limits, never wider than
+  the instance in any dimension). `SandboxService.reconcileLimits` (the worker's every-minute `sandbox-reconcile-limits`
+  cron, each device at most once per 10 minutes) applies that target through the provider's `update` under the exclusive
+  lease (a suspended instance is resumed, its leftovers killed, and suspended again), records it and reconciles again. No
+  `update`, `recreate`, a gone instance or a failure leave the marker and its file reset action.
 - **Legacy retirement** (permission runtime cutover 8.5, migration 0157, `sandbox/legacy-retirement.ts`):
   - **Freeze.** `LegacyRetirementStore.freeze` writes the freeze row under the exclusive platform authority lock, then enumerates
     before it returns. Every SID launch checks the freeze under the shared lock right before its dispatch, recording the exact
@@ -166,6 +177,11 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
     `RetireLegacyTasksJob` is retryable and bounded; the gate never depends on it.
   - **Retirement.** The current cloud incarnation is destroyed whole by its provider (never resumed or `killAll`ed; files kept),
     and the confirmed destruction is recorded in `device_instance_destructions`. `retire()` and `destroyRow` record theirs too.
+    B-22: a **suspended** current cloud incarnation whose members are all revoked managed starts is not destroyed (its other
+    tasks would be lost): each revoked ref's exact `background.stop` is sent while suspended (the provider persists the
+    cancel), the instance is resumed, each stop is confirmed (`stopped` / `already-exited`) and the obligation resolves
+    `exact-cancelled` (migration 0159); a use then goes on with the resumed instance, the worker suspends it again. A member
+    recorded later reopens the obligation. Any failure is noted and falls back to the whole-instance destroy.
     A cloud incarnation the kernel cannot name (`unknown` provider or generation) resolves only once the device's current
     incarnation is destroyed with confirmation (the gate destroys a live one), the row keeps no `prev_handle`, and the
     obligation was recorded after the freeze. When the current row is not live (destroyed without a record, or `creating` with

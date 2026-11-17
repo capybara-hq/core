@@ -705,11 +705,12 @@ export class LegacyRetirementStore {
       .returning("ref_id")
       .executeTakeFirst();
     // a restart covers only what ran before it: a member found later (a row of an old replica) on
-    // the same local incarnation reopens the obligation against the current boot
+    // the same local incarnation reopens the obligation against the current boot; an exact
+    // cancel covers only the refs it stopped, and the incarnation lives on (B-22)
     if (
       r !== undefined &&
       obligation.state === "resolved" &&
-      obligation.resolution === "host-rebooted"
+      (obligation.resolution === "host-rebooted" || obligation.resolution === "exact-cancelled")
     ) {
       // read under the obligation's lock: a hello that resolved it meanwhile is seen (M1)
       const now = await this.currentBoot(deviceId);
@@ -946,6 +947,37 @@ export class LegacyRetirementStore {
       .where("id", "=", id)
       .where("state", "in", ["open", "quarantined"])
       .execute();
+  }
+
+  /**
+   * Every member of the obligation was a revoked managed start whose exact cancellation its
+   * provider confirmed on the resumed incarnation (B-22): the obligation resolves without a
+   * destroy. A member recorded later reopens it ({@link addMember}).
+   */
+  async resolveCancelled(id: string): Promise<void> {
+    await this.db
+      .updateTable("device_retirement_obligations")
+      .set({
+        state: "resolved",
+        resolution: "exact-cancelled",
+        resolved_at: sql<Date>`now()`,
+        last_error: null,
+      })
+      .where("id", "=", id)
+      .where("state", "in", ["open", "quarantined"])
+      .execute();
+  }
+
+  /** The members of one obligation, oldest first. */
+  async membersOf(obligationId: string): Promise<RetirementMember[]> {
+    const rows = await this.db
+      .selectFrom("device_retirement_members")
+      .select(["obligation_id", "kind", "ref_id"])
+      .where("obligation_id", "=", obligationId)
+      .orderBy("created_at", "asc")
+      .orderBy("ref_id", "asc")
+      .execute();
+    return rows.map((r) => ({ obligationId: r.obligation_id, kind: r.kind, refId: r.ref_id }));
   }
 
   /**
