@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { isIP, isIPv4 } from "node:net";
 import { posix } from "node:path";
 import {
   type ExecResult,
@@ -10,13 +11,24 @@ import {
   type SandboxNetworkScope,
   type SandboxOperation,
   type SandboxPermissionSupport,
+  validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
 import type { NativeFixtureEntry } from "./sandbox-native-conformance.js";
 
 /** A controlled endpoint whose receipts the fixture counts out of band (never via the device). */
 export interface SandboxPermissionEndpoint {
-  /** A numeric address the device can reach directly. */
-  readonly host: string;
+  /**
+   * The host name a scope allowlists for this endpoint (it must pass `validateAllowHost`, which
+   * refuses IP literals). The provider or fixture maps it to the endpoint; an ungranted endpoint's
+   * name is never allowlisted, so a proxy asked for it by name must refuse.
+   */
+  readonly name: string;
+  /**
+   * The endpoint's numeric address (an IP literal) for raw socket clients: the pointer race and
+   * the ungranted, network-none and Full controls connect here. The granted endpoint's address and
+   * at least one ungranted address are IPv4 (the race program builds IPv4 socket addresses).
+   */
+  readonly address: string;
   readonly port: number;
   /** Accepted connections so far, observed by the endpoint itself. */
   receipts(): Promise<number>;
@@ -42,10 +54,21 @@ export interface SandboxPermissionFixture {
   readonly sibling: string;
   /** Existing files the device user may write ordinarily but no restricted grant covers. */
   readonly protectedPaths: readonly string[];
-  /** `granted` is reachable by allowlisting its host; `ungranted` never is. */
+  /** `granted` is reachable by allowlisting its name; `ungranted` never is. */
   readonly endpoints: {
     readonly granted: SandboxPermissionEndpoint;
     readonly ungranted: readonly SandboxPermissionEndpoint[];
+    /**
+     * How a restricted allowlist operation reaches `granted`:
+     * - `direct`: by connecting to its address (the provider admits the address it maps the
+     *   allowlisted name to); Python, curl and Node connect straight to it.
+     * - `proxy`: only through the HTTP proxy the provider names in the operation's environment
+     *   (`http_proxy`, the variable curl and Python read for http URLs), which resolves `name`.
+     *   Positives use curl and Python through that proxy; raw connects to the address are not
+     *   expected to work, and the pointer race targets the proxy instead.
+     * Either way the device needs no name resolution of its own for endpoint names.
+     */
+    readonly access: "direct" | "proxy";
   };
   /** The provider's own runtime report; the harness never infers support from a fixture. */
   support(): Promise<SandboxPermissionSupport>;
@@ -81,7 +104,13 @@ ok = 0
 if mode == "connect":
     def sockaddr(host, port):
         return struct.pack("HH4s8x", socket.AF_INET, socket.htons(port), socket.inet_aton(host))
-    good = sockaddr(sys.argv[3], int(sys.argv[4]))
+    if sys.argv[3] == "proxy":
+        # The allowed target is the operation's own HTTP proxy, taken from its environment.
+        import os, urllib.parse
+        proxy = urllib.parse.urlsplit(os.environ.get("http_proxy") or os.environ["HTTP_PROXY"])
+        good = sockaddr(socket.gethostbyname(proxy.hostname), proxy.port)
+    else:
+        good = sockaddr(sys.argv[3], int(sys.argv[4]))
     bad = sockaddr(sys.argv[5], int(sys.argv[6]))
     buffer = ctypes.create_string_buffer(good, len(good))
     thread = threading.Thread(target=flipper, args=(buffer, good, bad))
@@ -232,8 +261,15 @@ print("swaps=%d" % swaps)
  * overlap orders, component/root swaps and mutable syscall pointers during access, exact
  * cancellation and fresh narrowed scopes. Restricted network none/allowlist may bind and listen on
  * loopback (127.0.0.1, ::1) only. Pathname UNIX services outside the roots stay unreachable under
- * every network kind, environment included; metadata reads outside the roots are not covered. A provider that reports restricted unsupported must
+ * every network kind, environment included. A provider that reports restricted unsupported must
  * refuse restricted operations (fail closed); nothing here substitutes a fixture flag for support.
+ *
+ * Not covered, by design (known limitations, not passes): metadata reads outside the roots (stat,
+ * readlink, xattrs, statfs), and the world-readable `/proc/<pid>` entries of other processes of the
+ * same uid, such as `cmdline`, `stat` and `status`. A restricted operation can therefore read the
+ * command line of a concurrent Full command on the device: Landlock cannot scope `/proc` to the
+ * operation's own process tree (see the Linux launcher's known limitations). Providers keep secrets
+ * out of command lines; ptrace-guarded entries (`environ`, `mem`, `maps`, `fd`) stay closed.
  */
 export async function runSandboxPermissionConformance(
   fixture: SandboxPermissionFixture,
@@ -259,8 +295,9 @@ export async function runSandboxPermissionConformance(
     filesystem: { kind: "device" },
     network: { kind: "environment" },
   };
-  const { granted, ungranted } = fixture.endpoints;
-  const allowlisted: SandboxNetworkScope = { kind: "allowlist", hosts: [granted.host] };
+  const { granted, ungranted, access } = fixture.endpoints;
+  const proxied = access === "proxy";
+  const allowlisted: SandboxNetworkScope = { kind: "allowlist", hosts: [granted.name] };
   const exec = async (
     grant: SandboxPermissionGrant,
     command: string,
@@ -283,19 +320,43 @@ export async function runSandboxPermissionConformance(
   const denied = async (promise: Promise<unknown>, what: string) => {
     await assert.rejects(promise, (error) => isSandboxScopeDeniedError(error), what);
   };
-  const waitFor = async (path: string) => {
-    while ((await fixture.inspect.readFile(path)) === null) {
-      await new Promise((resolve) => setImmediate(resolve));
-    }
-  };
+  const waitFor = (path: string, pending: Promise<unknown>) =>
+    waitForFile(fixture.inspect.readFile, path, pending);
   const receipts = async () =>
     Promise.all([granted, ...ungranted].map((endpoint) => endpoint.receipts()));
   const connect = (endpoint: SandboxPermissionEndpoint) =>
     `python3 -c ${quote(
-      `import socket; socket.create_connection((${JSON.stringify(endpoint.host)}, ${endpoint.port}), 10).close()`,
+      `import socket; socket.create_connection((${JSON.stringify(endpoint.address)}, ${endpoint.port}), 10).close()`,
+    )}`;
+  /** An HTTP request by name; curl and Python use the environment's proxy when there is one. */
+  const byName = (endpoint: SandboxPermissionEndpoint) =>
+    `curl -fsS -m 10 -o /dev/null http://${endpoint.name}:${endpoint.port}/`;
+  const urlopen = (endpoint: SandboxPermissionEndpoint) =>
+    `python3 -c ${quote(
+      `import urllib.request; urllib.request.urlopen("http://${endpoint.name}:${endpoint.port}/", timeout=10).read()`,
     )}`;
 
   try {
+    for (const [label, endpoint] of [
+      ["granted", granted],
+      ...ungranted.map((endpoint) => ["ungranted", endpoint] as const),
+    ] as const) {
+      const problems = validateAllowHost(endpoint.name);
+      assert(
+        problems.length === 0,
+        `${label} endpoint name ${endpoint.name} is not a valid allowlist host: ${problems.join("; ")}`,
+      );
+      assert(
+        isIP(endpoint.address) !== 0,
+        `${label} endpoint address ${endpoint.address} is not a numeric address`,
+      );
+    }
+    assert(isIPv4(granted.address), "the granted endpoint address must be IPv4 (race program)");
+    assert(
+      ungranted.every((endpoint) => endpoint.name !== granted.name),
+      "ungranted endpoints need names other than the granted one",
+    );
+
     const support = await fixture.support();
     if (support.restricted === null) {
       // Fail closed: no restricted operation may run, and nothing falls back to Full access.
@@ -415,22 +476,44 @@ export async function runSandboxPermissionConformance(
 
     // Network: only the granted endpoint, and only while allowlisted.
     const base = await receipts();
-    for (const command of [
-      connect(granted),
-      `curl -fsS -m 10 -o /dev/null http://${granted.host}:${granted.port}/`,
-      `node -e ${quote(`require("net").connect(${granted.port}, ${JSON.stringify(granted.host)}).on("connect", function () { this.end() })`)}`,
-    ]) {
+    const positives = proxied
+      ? [byName(granted), urlopen(granted)]
+      : [
+          connect(granted),
+          `curl -fsS -m 10 -o /dev/null http://${granted.address}:${granted.port}/`,
+          `node -e ${quote(`require("net").connect(${granted.port}, ${JSON.stringify(granted.address)}).on("connect", function () { this.end() })`)}`,
+        ];
+    for (const command of positives) {
       const result = await exec(restricted(allowlisted), command);
       assert.equal(result.exitCode, 0, `granted endpoint must work: ${command}: ${result.stderr}`);
     }
     for (const endpoint of ungranted) {
-      const result = await exec(restricted(allowlisted), connect(endpoint));
-      assert.notEqual(result.exitCode, 0, `ungranted ${endpoint.host}:${endpoint.port}`);
+      // Raw connects to an ungranted address fail; through a proxy, so does a request by name.
+      for (const command of proxied ? [connect(endpoint), byName(endpoint)] : [connect(endpoint)]) {
+        const result = await exec(restricted(allowlisted), command);
+        assert.notEqual(result.exitCode, 0, `ungranted ${endpoint.name}: ${command}`);
+      }
     }
-    const none = await exec(restricted(), connect(granted));
-    assert.notEqual(none.exitCode, 0, "network none must refuse even the granted endpoint");
+    if (proxied) {
+      // allowlisted traffic goes through the proxy: a raw connect to the granted address bypasses
+      // it and must be refused as well
+      const raw = await exec(restricted(allowlisted), connect(granted));
+      assert.notEqual(
+        raw.exitCode,
+        0,
+        `a proxied provider must refuse a raw connect: ${granted.name}`,
+      );
+    }
+    for (const command of [connect(granted), byName(granted)]) {
+      const none = await exec(restricted(), command);
+      assert.notEqual(
+        none.exitCode,
+        0,
+        `network none must refuse even the granted endpoint: ${command}`,
+      );
+    }
     const after = await receipts();
-    assert.equal(after[0], (base[0] ?? 0) + 3, "granted endpoint receipts");
+    assert.equal(after[0], (base[0] ?? 0) + positives.length, "granted endpoint receipts");
     assert.deepEqual(after.slice(1), base.slice(1), "ungranted endpoints must see no connection");
 
     // Restricted network none/allowlist may listen on loopback only.
@@ -452,7 +535,7 @@ export async function runSandboxPermissionConformance(
         `python3 -c ${quote(UNIX_SERVER)} ${quote(at(sibling, "srv.sock"))} ${quote(at(sibling, "srv.count"))}`,
         server.signal,
       );
-      await waitFor(at(sibling, "srv.count"));
+      await waitFor(at(sibling, "srv.count"), outside);
       await fixture.seed([
         { path: at(root, "srv-link.sock"), kind: "symlink", target: at(sibling, "srv.sock") },
       ]);
@@ -491,9 +574,14 @@ export async function runSandboxPermissionConformance(
         "stream=ok seqpacket=ok dgram=ok raw=ok link=ok pair-dgram=ok pair-raw=ok",
         `Full UNIX control: ${control.stderr}`,
       );
-      while (text(await fixture.inspect.readFile(at(sibling, "srv.count"))) !== "7") {
-        await new Promise((resolve) => setImmediate(resolve));
-      }
+      await waitForFile(
+        async (path) => {
+          const data = await fixture.inspect.readFile(path);
+          return text(data) === "7" ? data : null;
+        },
+        at(sibling, "srv.count"),
+        outside,
+      );
       server.abort();
       await outside;
     }
@@ -521,7 +609,7 @@ export async function runSandboxPermissionConformance(
         `printf r > ready-a; until [ -e barrier-a ]; do sleep 0.01; done; ` +
           `printf pwn > ${quote(at(sibling, "overlap-a"))}; cat ${quote(at(sibling, "secret"))}; true`,
       );
-      await waitFor(at(root, "ready-a"));
+      await waitFor(at(root, "ready-a"), first);
       await exec(full, `printf full > ${quote(at(sibling, "full-a"))} && touch barrier-a`);
       assert(!(await first).stdout.includes(secret), "restricted after a live Full operation");
       assert.equal(await fixture.inspect.readFile(at(sibling, "overlap-a")), null);
@@ -530,7 +618,7 @@ export async function runSandboxPermissionConformance(
         `printf r > ready-b; until [ -e barrier-b ]; do sleep 0.01; done; ` +
           `printf full > ${quote(at(sibling, "full-b"))}`,
       );
-      await waitFor(at(root, "ready-b"));
+      await waitFor(at(root, "ready-b"), fullFirst);
       const second = await exec(
         restricted(),
         `printf pwn > ${quote(at(sibling, "overlap-b"))}; cat ${quote(at(sibling, "secret"))}; touch barrier-b`,
@@ -548,7 +636,7 @@ export async function runSandboxPermissionConformance(
         full,
         `python3 -c ${quote(SWAP_PROGRAM)} ${quote(race)} ${quote(sibling)} ${quote(at(root, "race-stop"))}`,
       );
-      await waitFor(at(race, "swapping"));
+      await waitFor(at(race, "swapping"), swapper);
       for (let index = 0; index < 30; index++) {
         const op = await native(restricted());
         try {
@@ -581,7 +669,7 @@ export async function runSandboxPermissionConformance(
         `printf r > ready-root; until [ -e ${quote(at(moved, "barrier-root"))} ]; do sleep 0.01; done; ` +
           `printf pwn > ${quote(at(root, "after-swap"))}; cat ${quote(at(root, "secret"))}; printf ok > in-place; true`,
       );
-      await waitFor(at(root, "ready-root"));
+      await waitFor(at(root, "ready-root"), live);
       await exec(
         full,
         `mv ${quote(root)} ${quote(moved)} && ln -s ${quote(sibling)} ${quote(root)} && touch ${quote(at(moved, "barrier-root"))}`,
@@ -614,17 +702,23 @@ export async function runSandboxPermissionConformance(
     }
 
     // A mutable syscall pointer: another thread rewrites the address/path during the check.
-    const target = ungranted[0];
+    // Direct access flips between the granted and an ungranted address; proxied access between the
+    // operation's proxy (from its environment) and an ungranted address.
+    const target = ungranted.find((endpoint) => isIPv4(endpoint.address));
     if (target) {
       const before = await receipts();
+      const good = proxied ? "proxy -" : `${granted.address} ${granted.port}`;
       const flip = await exec(
         restricted(allowlisted),
-        `python3 -c ${quote(FLIP_PROGRAM)} connect 1500 ${granted.host} ${granted.port} ${target.host} ${target.port}`,
+        `python3 -c ${quote(FLIP_PROGRAM)} connect 1500 ${good} ${target.address} ${target.port}`,
       );
       assert.equal(flip.exitCode, 0, `pointer race program must run: ${flip.stderr}`);
       const flipped = await receipts();
       assert.deepEqual(flipped.slice(1), before.slice(1), "a flipped sockaddr must not escape");
-      assert((flipped[0] ?? 0) > (before[0] ?? 0), "the race must also reach the granted endpoint");
+      assert.notEqual(flip.stdout.trim(), "ok=0", "the race must also reach the allowed target");
+      if (!proxied) {
+        assert((flipped[0] ?? 0) > (before[0] ?? 0), "the race must reach the granted endpoint");
+      }
       const chmods = await exec(
         restricted(),
         `python3 -c ${quote(FLIP_PROGRAM)} chmod 3000 ${quote(at(root, "inroot.txt"))} ${quote(at(sibling, "secret"))}`,
@@ -639,7 +733,7 @@ export async function runSandboxPermissionConformance(
       restricted(),
       `printf r > ready-keep; until [ -e release-keep ]; do sleep 0.01; done; printf done > kept`,
     );
-    await waitFor(at(root, "ready-keep"));
+    await waitFor(at(root, "ready-keep"), keepAlive);
     const abort = new AbortController();
     const cancelled = exec(
       restricted(),
@@ -649,7 +743,7 @@ export async function runSandboxPermissionConformance(
         `until [ -e p3 ]; do sleep 0.01; done; printf r > ready-cancel; sleep 1004`,
       abort.signal,
     );
-    await waitFor(at(root, "ready-cancel"));
+    await waitFor(at(root, "ready-cancel"), cancelled);
     const pids = await Promise.all(
       ["p1", "p2", "p3"].map(async (name) =>
         Number(text(await fixture.inspect.readFile(at(root, name)))),
@@ -679,7 +773,7 @@ export async function runSandboxPermissionConformance(
       `printf r > ready-broad; until [ -e narrow/keep/release-broad ]; do sleep 0.01; done; ` +
         `printf broad > broad.txt`,
     );
-    await waitFor(at(root, "ready-broad"));
+    await waitFor(at(root, "ready-broad"), broad);
     const overlapping = await (await fixture.operation(narrowed)).exec({
       command: `printf pwn > ${quote(at(root, "overlapping.txt"))}; touch release-broad; true`,
       cwd: at(root, "narrow/keep"),
@@ -711,5 +805,46 @@ export async function runSandboxPermissionConformance(
     );
   } finally {
     await fixture.dispose();
+  }
+}
+
+/**
+ * Polls a trusted read until `path` exists, racing the operation that should create it: if that
+ * operation settles first (refused, failed or exited without the file), this throws at once with
+ * the operation's error or exit, after one last read. The operation's rejection is always handled.
+ */
+export async function waitForFile(
+  read: (path: string) => Promise<Uint8Array | null>,
+  path: string,
+  pending: Promise<unknown>,
+): Promise<void> {
+  let ended: { error: unknown } | { value: unknown } | undefined;
+  pending.then(
+    (value) => {
+      ended = { value };
+    },
+    (error: unknown) => {
+      ended = { error };
+    },
+  );
+  for (;;) {
+    if ((await read(path)) !== null) return;
+    if (ended) {
+      // The operation may have written the file just before it ended.
+      if ((await read(path)) !== null) return;
+      if ("error" in ended) {
+        const reason = ended.error instanceof Error ? ended.error.message : String(ended.error);
+        throw new Error(`operation ended before ${path} existed: ${reason}`, {
+          cause: ended.error,
+        });
+      }
+      const result = ended.value as Partial<ExecResult> | undefined;
+      const detail =
+        result && "exitCode" in result
+          ? `exit ${result.exitCode}${result.timedOut ? " (timed out)" : ""}: ${result.stderr ?? ""}`
+          : "it returned";
+      throw new Error(`operation ended before ${path} existed: ${detail}`);
+    }
+    await new Promise((resolve) => setImmediate(resolve));
   }
 }
