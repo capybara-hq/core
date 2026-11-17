@@ -27,6 +27,7 @@ import {
 import { workingRootOf } from "../../../devices/working-root.js";
 import { ApiError } from "../../../errors.js";
 import type { KernelConfigService } from "../../../infra/config/kernel-config.service.js";
+import { InstanceBindingError } from "../../../local-devices/instance-bindings.js";
 import { AUTO_MODE_NOT_ALLOWED_TEXT } from "../../../local-devices/local-device-provider.js";
 import { type DeviceModeLevel, devicePathsChange } from "../../../runtime/context/device-paths.js";
 import { SandboxPathBusyError } from "../../../sandbox/leases.js";
@@ -508,6 +509,11 @@ const AUTO_MODE_TOOL_TEXT = `${AUTO_MODE_NOT_ALLOWED_TEXT} Ask the user to switc
  * error is logged to `log` as a warning (the pipeline logs only errors it did not get as a
  * `ToolError`).
  */
+const RECONCILE_REQUIRED_TEXT =
+  "This device's sandbox limits must be established again before it runs anything, so nothing ran. Ask the person to reset the device's files on the devices page, then retry, or to start a new conversation on another device.";
+const INSTANCE_BINDING_TEXT =
+  "The device's machine has not confirmed its current instance, so nothing ran. Ask the person to restart capybara-device on that machine (updating it if it is outdated), then retry, or to start a new conversation on another device.";
+
 export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefined): unknown {
   if (e instanceof ManagedDeviceContextStale)
     return new ToolError(MANAGED_DEVICE_CONTEXT_STALE_TEXT, { kind: "unavailable" });
@@ -543,6 +549,9 @@ export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefine
     if (e.code === "device.offline") return new ToolError(DEVICE_OFFLINE_TEXT);
     if (e.code === "device.program_outdated") return new ToolError(DEVICE_OUTDATED_TEXT);
     if (e.code === "device.auto_mode_not_allowed") return new ToolError(AUTO_MODE_TOOL_TEXT);
+    if (e.code === "device.permission_reconcile_required") {
+      return new ToolError(RECONCILE_REQUIRED_TEXT, { kind: "unavailable" });
+    }
     if (e.code === "sandbox.open_network_refused") {
       return new ToolError(SANDBOX_OPEN_NETWORK_REFUSED_TEXT);
     }
@@ -551,6 +560,10 @@ export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefine
   // an operation outside withSandbox's own mapping (it records lost files itself)
   if (isFileSystemGoneError(e)) return new ToolError(FILES_GONE_TEXT);
   if (e instanceof DeviceProtocolError) return new ToolError(deviceProtocolText(e.message));
+  if (e instanceof InstanceBindingError) {
+    log?.warn("device instance binding failed", { err: e });
+    return new ToolError(INSTANCE_BINDING_TEXT, { kind: "unavailable" });
+  }
   if (e instanceof SandboxLockLostError) return new ToolError(LOCK_LOST_TEXT);
   if (e instanceof SandboxPathBusyError) return new ToolError(PATH_BUSY_TEXT);
   return e;

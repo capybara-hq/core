@@ -332,7 +332,11 @@ it("an open legacy obligation refuses both replicas and sends no bind", async ()
     .execute();
   f.machine.lose = false;
   const results = await Promise.allSettled([use(0, f.ctx), use(1, f.ctx)]);
-  expect(results.map((r) => r.status)).toEqual(["rejected", "rejected"]);
+  for (const r of results)
+    expect(r.status === "rejected" && r.reason).toMatchObject({
+      name: "RetirementPendingError",
+      code: "device.replace_required",
+    });
   expect(f.machine.sent).toHaveLength(1);
   expect(await f.bindings()).toMatchObject([{ status: "awaiting-device" }]);
 });
@@ -392,6 +396,41 @@ it("a reconcile marker written under one replica's exclusive lease refuses both 
     await expect(sandbox(replica).withSandbox(ctx, fn, signal())).rejects.toMatchObject({
       code: "device.permission_reconcile_required",
     });
+  expect(fn).not.toHaveBeenCalled();
+  expect(await readFakeSandboxOps(root)).toEqual(before);
+});
+
+it("an acquire waiting while the snapshot writer holds the lease is refused once it marks", async () => {
+  const seed = await seedConversation(raw);
+  const deviceId = await seedDevice(raw, seed.orgId, seed.accountId, "cloud");
+  const ctx = {
+    orgId: seed.orgId,
+    deviceId,
+    holderConversationId: seed.conversationId,
+    actor: { accountId: seed.accountId, conversationId: seed.conversationId },
+  };
+  const sandbox = (replica: number) => {
+    const s = kernels[replica]?.app.get(SandboxService);
+    if (!s) throw new Error("missing replica");
+    return s;
+  };
+  await sandbox(0).withSandbox(ctx, async () => "created", signal());
+  const leases = kernels[1]?.app.get(SandboxLeases);
+  if (!leases) throw new Error("missing replica");
+  // replica 1 is the B1 snapshot writer: it holds the exclusive lease while it decides
+  const lease = await leases.acquireExclusive(deviceId, signal(), undefined, { intent: true });
+  const before = await readFakeSandboxOps(root);
+  const tried = leaseAttempt(0);
+  const fn = vi.fn(async () => "ran");
+  const waiting = sandbox(0).withSandbox(ctx, fn, signal());
+  await tried;
+  await db()
+    .updateTable("devices")
+    .set({ permission_reconcile_required: true })
+    .where("id", "=", deviceId)
+    .execute();
+  await lease.release();
+  await expect(waiting).rejects.toMatchObject({ code: "device.permission_reconcile_required" });
   expect(fn).not.toHaveBeenCalled();
   expect(await readFakeSandboxOps(root)).toEqual(before);
 });

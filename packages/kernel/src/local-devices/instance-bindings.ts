@@ -95,7 +95,12 @@ export class LocalInstanceBindings implements SandboxInstanceBinder {
    * acquire path's shared-use condition). No committed binding reads as not installed.
    */
   async installed(deviceId: string): Promise<boolean> {
-    return (await this.committed(deviceId))?.status === "installed";
+    return (await this.status(deviceId)) === "installed";
+  }
+
+  /** The current generation's committed binding status, or null when none was committed. */
+  async status(deviceId: string): Promise<"installed" | "awaiting-device" | null> {
+    return (await this.committed(deviceId))?.status ?? null;
   }
 
   /**

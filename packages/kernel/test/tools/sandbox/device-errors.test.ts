@@ -1,6 +1,7 @@
-import { DeviceProtocolError, FileSystemGoneError } from "@capybara-hq/plugin-sdk";
+import { DeviceProtocolError, FileSystemGoneError, ToolError } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import { ApiError } from "../../../src/errors.js";
+import { InstanceBindingError } from "../../../src/local-devices/instance-bindings.js";
 import { mapSandboxError } from "../../../src/tools/builtins/sandbox/common.js";
 
 /** The model-visible tool errors of a device (spec 2026-11-07-environments-design §15). */
@@ -33,5 +34,24 @@ describe("sandbox tool errors", () => {
     const text = message(mapSandboxError(err, undefined));
     expect(text).toMatch(/device/);
     expect(text).not.toMatch(/environment/i);
+  });
+
+  it("a device whose sandbox limits must be established again says how to recover", () => {
+    const mapped = mapSandboxError(
+      new ApiError("device.permission_reconcile_required", "internal detail"),
+      undefined,
+    );
+    expect(mapped).toBeInstanceOf(ToolError);
+    expect(message(mapped)).toMatch(/device/);
+    expect(message(mapped)).toMatch(/reset/);
+    expect(message(mapped)).not.toContain("internal detail");
+  });
+
+  it("an instance binding that cannot complete is an actionable device error", () => {
+    const mapped = mapSandboxError(new InstanceBindingError("No committed binding"), undefined);
+    expect(mapped).toBeInstanceOf(ToolError);
+    expect(message(mapped)).toMatch(/device/);
+    expect(message(mapped)).toMatch(/capybara-device/);
+    expect(message(mapped)).not.toContain("No committed binding");
   });
 });
