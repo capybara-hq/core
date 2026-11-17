@@ -1,4 +1,5 @@
-import { existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -27,6 +28,21 @@ it.runIf(process.platform === "darwin")(
     const state = join(root, "state");
     await mkdir(project);
     await mkdir(state, { mode: 0o700 });
+    execFileSync("git", ["init", "-q", project]);
+    execFileSync("git", [
+      "-C",
+      project,
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@t",
+      "commit",
+      "-q",
+      "--allow-empty",
+      "-m",
+      "init",
+    ]);
+    await mkdir(join(project, ".git/modules/sub"), { recursive: true });
     const worker = await startMacOperationWorker(
       {
         kind: "exec",
@@ -43,7 +59,10 @@ it.runIf(process.platform === "darwin")(
           command:
             "mkdir -p .git/hooks sub/.vscode .claude/commands; printf x > .git/hooks/pre-commit; " +
             "printf x > .git/commondir; printf x > sub/.vscode/settings.json; printf x > .zshrc; " +
-            "printf x > .claude/commands/c.md; printf ok > plain.txt; true",
+            "printf x > .claude/commands/c.md; printf x > .envrc; printf x > .npmrc; " +
+            "printf x > .git/modules/sub/config; mv .git g2; " +
+            "printf a > f && git add f && git -c user.name=t -c user.email=t@t commit -qm m && " +
+            "git log --oneline | wc -l | tr -d ' ' > commits; printf ok > plain.txt; true",
           cwd: project,
           timeoutMs: 20_000,
           maxOutputBytes: 4096,
@@ -59,12 +78,20 @@ it.runIf(process.platform === "darwin")(
     const result = (await worker.completion) as ExecResult;
     expect(result.exitCode).toBe(0);
     expect(existsSync(join(project, "plain.txt"))).toBe(true);
+    // ordinary git work in the repository still works under the patterns (a repository nested
+    // deeper keeps its .git movable on macOS: a recorded residual)
+    expect(existsSync(join(project, "commits")), result.stderr).toBe(true);
+    expect(readFileSync(join(project, "commits"), "utf8").trim(), result.stderr).toBe("2");
     for (const path of [
       ".git/hooks/pre-commit",
       ".git/commondir",
       "sub/.vscode/settings.json",
       ".zshrc",
       ".claude/commands/c.md",
+      ".envrc",
+      ".npmrc",
+      ".git/modules/sub/config",
+      "g2",
     ])
       expect(existsSync(join(project, path)), path).toBe(false);
   },

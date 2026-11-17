@@ -6,7 +6,7 @@ import {
   MAX_DEVICE_SCAN_DIRS,
   MAX_DEVICE_SCAN_RESULTS,
 } from "./sandbox.js";
-import { SANDBOX_MANDATORY_WRITE_DENIES } from "./sandbox-write-denies.js";
+import { SANDBOX_WRITE_POLICY_PYTHON } from "./sandbox-write-denies.js";
 
 /**
  * Private Python 3 transport: one JSON request on stdin, one result/error on stdout.
@@ -33,16 +33,11 @@ SKIP_BASE = ${JSON.stringify(DEVICE_SCAN_SKIPPED_BASE_DIRS)}
 # ECMAScript whitespace (Python's str.strip also removes several extra control characters).
 SPACE = "\u0009\u000a\u000b\u000c\u000d\u0020\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"
 
-# Restricted roots ({"denyWrites": true}) never write these (sandbox-write-denies.ts).
-WRITE_DENIES = [[name.lower() for name in entry] for entry in ${JSON.stringify(SANDBOX_MANDATORY_WRITE_DENIES)}]
+# Restricted roots ({"denyWrites": true}) follow the shared write policy (sandbox-write-denies.ts).
+${SANDBOX_WRITE_POLICY_PYTHON}
 
 class ScopeDenied(Exception):
     pass
-
-def write_denied(path):
-    parts = [part.lower() for part in path.split("/") if part]
-    return any(parts[i:i + len(entry)] == entry
-               for entry in WRITE_DENIES for i in range(len(parts) - len(entry) + 1))
 
 def units(value):
     return value.encode("utf-16-be", "surrogatepass")
@@ -170,7 +165,7 @@ class NativeFiles:
     def open(self, path, write=False, directory=False):
         parent, name = self.parent(path, write, write)
         try:
-            if write and self.deny_writes and name.lower() == ".git":
+            if write and self.deny_writes and _fold_parts(name) == [".git"]:
                 os.close(parent)
                 parent = None
                 raise ScopeDenied("A file named .git would point git elsewhere")

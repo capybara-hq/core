@@ -60,6 +60,7 @@ import threading
 import time
 
 CHUNK = 65536
+NAT64 = ipaddress.ip_network("64:ff9b::/96")
 RUNTIME_FILES = ("linux-sandbox.py", "native-files.py")
 NR_PIDFD_OPEN = 434
 NR_PIDFD_SEND_SIGNAL = 424
@@ -332,8 +333,9 @@ class Forwarder:
     """A loopback HTTP proxy owned by one operation: CONNECT and absolute http:// requests for the
     operation's allowlisted names are tunnelled; every other name is refused without connecting.
     The launcher's broker grants the restricted command this endpoint and nothing else. Clients
-    authenticate with the operation's token; CONNECT reaches ports 80 and 443 only; names that
-    resolve to loopback, link-local, private or unique-local addresses are refused."""
+    authenticate with the operation's token; CONNECT reaches ports 80 and 443 and plain requests
+    port 80 only (allowlist entries name no port); a name is reached only at a globally routable
+    address. A test fixture's seam (allow_private) lifts the address and port rules."""
 
     def __init__(self, hosts, allow_private=False):
         self.hosts = hosts
@@ -402,11 +404,14 @@ class Forwarder:
             rewritten = None
             if method == "CONNECT":
                 host, port = split_target(target, 443)
-                if port not in (80, 443):
+                # allowlist entries name no port: web ports only (any port for a test fixture)
+                if port not in (80, 443) and not self.allow_private:
                     host = None
             elif target.startswith("http://"):
                 authority, _, path = target[7:].partition("/")
                 host, port = split_target(authority, 80)
+                if port != 80 and not self.allow_private:
+                    host = None
                 headers = [line for line in lines[1:]
                            if not line.lower().startswith((b"proxy-", b"connection:"))]
                 rewritten = ("%s /%s %s\r\n" % (method, path, version)).encode() + b"\r\n".join(
@@ -447,9 +452,9 @@ class Forwarder:
             ip = ipaddress.ip_address(address[0].split("%")[0])
             if getattr(ip, "ipv4_mapped", None):
                 ip = ip.ipv4_mapped
-            if not self.allow_private and (ip.is_loopback or ip.is_link_local or ip.is_private
-                                           or ip.is_unspecified or ip.is_multicast
-                                           or ip.is_reserved):
+            # only globally routable addresses (not loopback, private, link-local, shared
+            # 100.64/10, unique-local or NAT64) unless a test fixture allows its local endpoints
+            if not self.allow_private and (not ip.is_global or ip in NAT64):
                 continue
             sock = socket.socket(family, kind, proto)
             try:

@@ -593,6 +593,106 @@ export async function runSandboxPermissionConformance(
     );
     assert.equal(text(await fixture.inspect.readFile(at(root, "repo/.git/config"))), "cfg");
 
+    // Inside a .git directory only git's ordinary internals are writable: the gitdirs of
+    // submodules and worktrees keep their configuration, hooks and pointers too. A bare-repository
+    // lookalike (a HEAD file outside .git) and moving .git away are refused as well, and the
+    // matching folds case and Unicode compatibility forms.
+    await fixture.seed([
+      {
+        path: at(root, "repo/.git/modules/sub/config"),
+        kind: "file",
+        data: new TextEncoder().encode("cfg"),
+      },
+      { path: at(root, "repo/.git/modules/sub/hooks"), kind: "directory" },
+      { path: at(root, "repo/.git/modules/sub/objects"), kind: "directory" },
+      {
+        path: at(root, "repo/.git/worktrees/wt/commondir"),
+        kind: "file",
+        data: new TextEncoder().encode("../.."),
+      },
+    ]);
+    const internals = await exec(
+      restricted(),
+      [
+        "cd repo",
+        "printf x >> .git/modules/sub/config",
+        "printf x > .git/modules/sub/hooks/pre-commit",
+        "printf x > .git/worktrees/wt/commondir",
+        "printf x > .git/worktrees/wt/config.worktree",
+        "printf x > .git/worktrees/wt/gitdir",
+        "printf x > .git/info-attributes-probe; mkdir -p .git/info; printf x > .git/info/attributes",
+        "printf x > .git/modules/sub/objects/ok-object",
+        "mkdir -p ../bare/objects ../bare/refs; printf 'ref: refs/heads/main' > ../bare/HEAD; printf x > ../bare/config",
+        "mv .git ../moved-git; printf x >> ../moved-git/config",
+        "cd ..",
+        "printf x > .envrc; printf x > .npmrc; mkdir -p deep; printf x > deep/.npmrc",
+        "printf x > .ＢＡＳＨＲＣ; printf x > .ｅｎｖｒｃ",
+        "true",
+      ].join("; "),
+    );
+    assert.equal(internals.exitCode, 0, `the git-internals probe must run: ${internals.stderr}`);
+    assert.equal(
+      text(await fixture.inspect.readFile(at(root, "repo/.git/modules/sub/config"))),
+      "cfg",
+      "submodule config",
+    );
+    assert.equal(
+      text(await fixture.inspect.readFile(at(root, "repo/.git/worktrees/wt/commondir"))),
+      "../..",
+      "worktree commondir",
+    );
+    assert.equal(
+      text(await fixture.inspect.readFile(at(root, "repo/.git/modules/sub/objects/ok-object"))),
+      "x",
+      "submodule objects stay writable",
+    );
+    assert.equal(
+      text(await fixture.inspect.readFile(at(root, "repo/.git/config"))),
+      "cfg",
+      "moving .git away",
+    );
+    for (const path of [
+      "repo/.git/modules/sub/hooks/pre-commit",
+      "repo/.git/worktrees/wt/config.worktree",
+      "repo/.git/worktrees/wt/gitdir",
+      "repo/.git/info-attributes-probe",
+      "repo/.git/info/attributes",
+      "bare/HEAD",
+      "moved-git/config",
+      ".envrc",
+      ".npmrc",
+      "deep/.npmrc",
+      ".ＢＡＳＨＲＣ",
+      ".ｅｎｖｒｃ",
+    ])
+      assert.equal(await fixture.inspect.readFile(at(root, path)), null, `mandatory deny: ${path}`);
+    await denied(
+      (await native(restricted())).writeFile(
+        at(root, "repo/.git/modules/sub/config"),
+        bytes,
+        signal,
+      ),
+      "native write of a submodule's config",
+    );
+    await denied(
+      (await native(restricted())).writeFile(at(root, "bare2/HEAD"), bytes, signal),
+      "native write of a bare-repository HEAD",
+    );
+    if (support.fullAccess) {
+      // ordinary git work in a restricted repository keeps working under these rules
+      await exec(
+        full,
+        `cd ${quote(root)} && git init -q work && git -C work -c user.name=t -c user.email=t@t commit -q --allow-empty -m init`,
+      );
+      const git = await exec(
+        restricted(),
+        "cd work && printf a > f && git add f && git -c user.name=t -c user.email=t@t commit -qm m && " +
+          "git checkout -qb topic && git status --short && git log --oneline | wc -l",
+      );
+      assert.equal(git.exitCode, 0, `ordinary restricted git work: ${git.stderr}`);
+      assert.equal(git.stdout.trim(), "2", "the restricted commit landed");
+    }
+
     // Negative controls: sibling, symlink escapes and protected paths stay out of reach.
     const reads = await exec(
       restricted(),

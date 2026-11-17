@@ -348,40 +348,60 @@ describe.skipIf(unavailable !== null)("Linux host operation backend", () => {
     expect(ok).toMatchObject({ exitCode: 0, stdout: "ok" });
   });
 
-  it("the allowlist proxy serves only its own operation, ports 80/443 for CONNECT, no private targets", async () => {
+  it("the allowlist proxy: its own token, web ports only, globally routable addresses only", async () => {
     const root = project("proxy");
-    const allowlisted = scopeFor(backend.deviceId, {
-      profile: "approve-for-me",
-      filesystem: { kind: "scoped", readRoots: [], writeRoots: [root] },
-      network: { kind: "allowlist", hosts: [NAMES.granted] },
+    // a local web server on port 80, which the granted name resolves to (a loopback address)
+    const listener = full();
+    await backend.background("start", {
+      scope: listener,
+      authority: authorityFor(listener.operationId),
+      args: {
+        command: `cd ${root} && exec python3 -m http.server 80 --bind 127.0.0.1`,
+        timeoutMs: 600_000,
+        maxOutputBytes: 1024,
+        taskId: "task-http",
+        outputPath: `${root}/http.log`,
+        retainUntilMs: Date.now() + 3_600_000,
+      },
     });
-    // raw requests to the operation's proxy: without its token, and CONNECT to another port
+    // ready (checked from Full access: a restricted command reaches only its proxy)
+    const ready = full();
+    await backend.operation(ready, authorityFor(ready.operationId)).exec({
+      command: `until python3 -c "import socket; socket.create_connection(('127.0.0.1', 80), 1)" 2>/dev/null; do sleep 0.05; done`,
+      timeoutMs: 30_000,
+      maxOutputBytes: 100,
+      signal: new AbortController().signal,
+    });
     const probe = String.raw`
-import os, socket, urllib.parse
+import base64, os, socket, sys, time, urllib.parse
 proxy = urllib.parse.urlsplit(os.environ["http_proxy"])
 def ask(request):
     s = socket.create_connection((proxy.hostname, proxy.port), 10)
     s.sendall(request)
     return s.recv(64).split(b" ")[1].decode()
-import base64
-auth = base64.b64encode(("%s:%s" % (proxy.username, proxy.password)).encode()).decode()
+auth = "Proxy-Authorization: Basic " + base64.b64encode(("%s:%s" % (proxy.username, proxy.password)).encode()).decode()
 CRLF = "\r\n"
-GET = "GET http://NAME:18080/ HTTP/1.1" + CRLF
-print(ask((GET + "Host: x" + CRLF + CRLF).encode()),
-      ask(("CONNECT NAME:18080 HTTP/1.1" + CRLF + "Proxy-Authorization: Basic " + auth + CRLF + CRLF).encode()),
-      ask((GET + "Proxy-Authorization: Basic " + auth + CRLF + CRLF).encode()))
+def get(port, header=""):
+    return ask(("GET http://NAME:%d/ HTTP/1.1" % port + CRLF + header + CRLF + CRLF).encode())
+print(get(80), ask(("CONNECT NAME:18080 HTTP/1.1" + CRLF + auth + CRLF + CRLF).encode()),
+      get(18080, auth), get(80, auth))
 `.replaceAll("NAME", NAMES.granted);
-    const result = await backend
-      .operation(allowlisted, authorityFor(allowlisted.operationId))
-      .exec({
+    const ask = async (target: HostBackend) => {
+      const scope = scopeFor(target.deviceId, {
+        profile: "approve-for-me",
+        filesystem: { kind: "scoped", readRoots: [], writeRoots: [root] },
+        network: { kind: "allowlist", hosts: [NAMES.granted] },
+      });
+      return target.operation(scope, authorityFor(scope.operationId)).exec({
         command: `python3 - <<'EOF'\n${probe}\nEOF`,
         cwd: root,
-        timeoutMs: 20_000,
+        timeoutMs: 30_000,
         maxOutputBytes: 1000,
         signal: new AbortController().signal,
       });
-    expect(result.stdout.trim(), result.stderr).toBe("407 403 200");
-    // a backend without the fixture seam refuses the loopback the granted name resolves to
+    };
+    // production rules: no token 407, CONNECT to another port 403, plain request to another port
+    // 403, and the loopback the name resolves to is refused (502)
     device.run("mkdir -m 700 /home/sandbox/state-private");
     const strict = new HostServer(device);
     servers.push(strict);
@@ -390,19 +410,34 @@ print(ask((GET + "Host: x" + CRLF + CRLF).encode()),
       deviceId: "device-private",
       privateProxyTargets: false,
     });
-    const scope = scopeFor(production.deviceId, {
-      profile: "approve-for-me",
-      filesystem: { kind: "scoped", readRoots: [], writeRoots: [root] },
-      network: { kind: "allowlist", hosts: [NAMES.granted] },
-    });
-    const refused = await production.operation(scope, authorityFor(scope.operationId)).exec({
-      command: `curl -s -o /dev/null -w '%{http_code}' -m 10 http://${NAMES.granted}:18080/`,
+    const refused = await ask(production);
+    expect(refused.stdout.trim(), refused.stderr).toBe("407 403 403 502");
+    // the fixture seam lifts only the address and port rules: the same target is then reached
+    const seamed = await ask(backend);
+    expect(seamed.stdout.trim(), seamed.stderr).toBe("407 200 200 200");
+  });
+
+  it("a brokered FIFO open waits for its peer without pinning a broker thread", async () => {
+    const root = project("fifo");
+    const scope = restricted(root);
+    const piped = await backend.operation(scope, authorityFor(scope.operationId)).exec({
+      command: "mkfifo f && (sleep 0.2; cat f) & sleep 0.05; printf through > f; wait",
       cwd: root,
       timeoutMs: 20_000,
       maxOutputBytes: 100,
       signal: new AbortController().signal,
     });
-    expect(refused.stdout).toBe("502");
+    expect(piped).toMatchObject({ exitCode: 0, stdout: "through" });
+    // no reader ever: the timeout ends the command and the broker gives the open up
+    const lonely = restricted(root);
+    const stuck = await backend.operation(lonely, authorityFor(lonely.operationId)).exec({
+      command: "mkfifo g && printf x > g",
+      cwd: root,
+      timeoutMs: 1000,
+      maxOutputBytes: 100,
+      signal: new AbortController().signal,
+    });
+    expect(stuck.timedOut).toBe(true);
   });
 
   it("reports restricted unavailable when switched off, and Full still works", async () => {
