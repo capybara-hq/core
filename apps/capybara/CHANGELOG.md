@@ -1,5 +1,148 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.42
+
+### Patch Changes
+
+- c0a1184: Design review fixes: release-candidate tool keys in frozen sub-agent definitions are rewritten
+  (migration 0144); readiness counts only the model services an organization can see and turn on; the
+  notice of an unreadable template skill is shown with the sub-agent's task; a process that swallowed
+  a fatal event stops gracefully and exits 1; a switch-on whose install vanished answers a retryable
+  conflict; the web labels the git push policy audit action, enables a disabled model service from
+  `/admin/models`, repairs an unreadable forbidden list from its notice and shares one Load more.
+- 8f1950d: Drop the `legacy_format` extension status and the `catalog.legacy_format` / `extension.legacy_format`
+  error codes: a package without `.capybara-plugin/plugin.json` is refused as an ordinary invalid
+  package whose message names the expected manifest path.
+- 4e871ad: More release-candidate compatibility removed before 0.1.0: the deprecated
+  `POST /api/v1/orgs/:orgId/conversations/:id/queue` alias is gone (send with `…/messages`).
+  Migration 0140 removes the history-only forms of agent definitions (an enabled `tools` list,
+  `skills.orgSkills` / `skills.pinned`) from agent versions, logged sub-agent definitions and eval
+  snapshots, fills both lists of every logged follow-up narrowing and drops `selectedSkills` from
+  agent template versions; the kernel no longer reads those forms. Saving an agent with a policy for
+  a builtin that no longer exists (`SkillWrite`) is now refused like any unknown key instead of being
+  dropped silently.
+  Migration 0141 deletes the plugin install ledger rows of org skills and agent templates without
+  plugin provenance (shared by the org as its own items, or its own rows an old install added a
+  version to; recorded before ruling P3-46); the uninstall no longer checks for promoted rows.
+  Log events no longer accept the shapes of older logs: `compaction_summary` requires `savedTokens`
+  and `step`, `compaction_failed` requires `step`, and `approval_requested` requires `requestedFor`
+  and `approverRole` (each nullable); the web reads `savedTokens` as always present.
+  Migration 0142 fills those fields on rows logged before they existed (`savedTokens` 0, `step` from
+  the run's compaction usage, the approver fields from the approval row).
+- e30fef0: No compatibility with release-candidate data before 0.1.0: migration 0139 rewrites the old tool
+  keys left in agent versions and templates, deletes the tool grants migration 0063 could not map and
+  renames the pre-rename connector audit actions (`app.created` and so on), and the kernel drops the
+  readers that mapped them on every load (in-flight old tool keys, the eval replay mapping and
+  `legacyKeyMatch`, the `tools.legacy_key_unmapped` startup notice, the audit action aliases). Also
+  removed: the removal of retired BullMQ job schedulers at worker start, the reading of a second
+  `cap_rt` cookie (the one on the old `/api/v1/auth` path is only cleared), the warning about the retired `CAPYBARA_SUBAGENTS__MAX_CONCURRENT_PER_RUN`
+  variable, `aliasOf` in `GET …/conversations/:id/tools`, and the run context's fallback for messages
+  that recorded no zone or language.
+- c122975: `model-provider@1` is removed before 0.1.0 (no plugin provides it): the SDK drops
+  `ModelProviderV1`, `ModelInfoV1`, `ModelRequestV1`, the `@1` constant
+  `MODEL_PROVIDER_EXTENSION_POINT`, the deprecated `ModelInfo.capabilities.effort` and
+  `ModelRequest.effort`; `EXTENSION_POINTS["model-provider"].majors` is `[2]`, so the kernel refuses
+  to load a plugin providing `@1`, and its `@1` adapter is gone. `MODEL_PROVIDER_EXTENSION_POINT_V2`
+  stays the constant to provide. The conformance suite in `@capybara-hq/testing` runs only `@2`
+  targets: `ConformanceTarget` no longer has `contract` (drop `contract: 2`; `plugin` is required).
+  The kernel's model list cache keys no longer carry the contract major.
+- dbfed21: Org admins set a connector's default git push policy (allow / ask / deny) on its settings page, the
+  new `PUT …/connectors/:connectorId/git-push-policy` route or the Platform operation
+  `connectors.set-git-push-policy` (which may only tighten it). Members see their standing push
+  decisions per repository on the connector's permissions sheet and can clear them.
+- 4992759: Plugin installs drop the unused `upgrading` status: migration 0138 turns any such row into
+  `installed` and tightens the status check; the kernel reads one set of live install statuses.
+- 9077604: Add `capybara secrets rewrap`: after a master key rotation it rewraps every org data key and pending
+  initial password sealed with a key in `masterKeyPrevious` with the current `masterKey`, in batches,
+  idempotently, printing counts and never a key. The kernel's `rewrapDataKeys` becomes
+  `rewrapToCurrentMasterKey` (batched, both tables, checks every key in use first) plus
+  `rewrapMasterKeys` for the CLI. The deployment guide has a zero-downtime rotation runbook.
+- 3ee2265: `model_call.request.toolsOmitted` records that the kernel left a step's tools out because the model
+  has no tool support; the tool-change notice reads it instead of matching the reminder text.
+  Pinned skills are gone from request building: `skills_catalog` has no `pinned`, the pinned blocks
+  and notices are no longer rendered, and the `pinned_changed` drift reason is removed.
+  `model_call.request` requires `tools`, `params`, `absorbedUpToSeq` and `maxOutputTokens`, and
+  records `media` with `mediaBudgetBytes`; request building, compaction and the web no longer treat
+  a call without `absorbedUpToSeq` as having taken in everything before it, and step replay no longer
+  refuses such recordings (`eval.recording_unsupported` is gone).
+  Migration 0143 fills those fields on `model_call` rows (and eval snapshots) logged before they
+  existed, with the values the old readers assumed: `absorbedUpToSeq` the call's own seq, no tools
+  marked `toolsOmitted`, empty `params`, and the default media budget where `media` was recorded.
+- 0543a28: A model provider is now on in an organization only when the organization enabled it (its extension
+  switch on, or a required bootstrap plugin), like every other extension. A provider an organization
+  never enabled is absent from its model lists and catalog and resolves to `agent.model_unavailable`
+  ("not enabled in this organization").
+  Org readiness (`GET /orgs/:orgId/readiness`, `agents.readiness`, computed once in
+  `ReadinessService`) answers `modelProvider: "org_fixable"` with `orgFixableProviders` (each provider
+  with its reason: `not_enabled`, or `needs_config` when it is on but waits for the org's own config)
+  when an org admin can make a provider the platform offers usable, and `none` when only the super
+  admin can help.
+- 6d39796: One place to set up a model: the setup checklist, the run row's fix entry and the models pages lead
+  to `/admin/models` (super admins: the platform's model services with their deployment config in a
+  Sheet, and the marketplace's model services not installed yet with 安装) or `/settings/models` (org
+  admins: the model services offered to the org with 启用 and 配置 inline). While the platform has a
+  provider the org can turn on or configure (readiness `org_fixable`), the setup step and the page
+  guide the org admins (a super admin too, when one of them) to Settings → Models instead of the admin
+  console; members wait for an org admin.
+- 09965db: Org admins can read their organization's audit log: `GET /api/v1/orgs/:orgId/audit` (keyset paged,
+  optional action prefix, never an event's detail), the `orgs.audit` Platform operation and the
+  organization settings page 审计日志 / Audit log. The super admin's `GET /api/v1/admin/audit` takes
+  an optional `orgId` and both routes an optional `action` prefix.
+- a7ce103: Org security settings fail narrow: an unreadable stored `sandboxToolPolicy` reads as `ask` and an
+  unreadable scheduled-task `forbiddenTools` list fails unattended runs and refuses new task grants
+  (both logged with the org id) until an org admin saves it again; the settings page shows a notice
+  and its Save repairs the list, and unrelated settings writes no longer reset it to empty.
+- 001648a: Share one run-liveness helper across run queueing, the execution fence, the orphan check and
+  deletion, and stop only the live conversations of a deleted organization, recording the
+  `org_deleted` stop reason.
+- 4c9cc0c: Remove the deprecated UI `place` key, `PLACE_SLOTS`, `UiPlace`, `slotRefOf` and `aliasOf` from the
+  plugin SDK: a UI contribution names its `slot`, which is now required. `resolveUiSlots` no longer
+  returns `deprecatedPlace`, and `capybara-plugin check` drops the `ui-place-deprecated` rule.
+- 8f02aba: Replay guarantees zero drift only for logs written by the current format: the frozen
+  release-candidate texts and the drift reasons `legacy_event` and `text_inline_threshold` (a log
+  recorded before the 8 000-character text inline threshold) are gone. The line
+  restored after a compaction now reads "Skills invoked earlier in this conversation", since it also
+  names the template skills the kernel writes at a sub-agent's start.
+- e6ac5dc: Honour a provider's retry-after on the same model for up to 5 minutes (and within the run's
+  remaining deadline) instead of failing or falling back after 10 seconds.
+- 5f9a8a8: Owe a plugin's scope sync from its extension's deploy (enable, upgrade, approval) and the import
+  commit instead of a post-deploy add, a delayed backstop and an in-process reconcile wait; fan an
+  item's sync out to one job per chunk of orgs, all scope jobs sharing one BullMQ retry policy.
+- 3324504: A process that swallowed an unhandled rejection or uncaught exception now answers `/readyz` with 503
+  at once, stops gracefully (the SIGTERM drain) and exits with 1, so any restart policy replaces it
+  (`/healthz` stays 200).
+- 154bfef: Start a template sub-agent with its skills written as skill invocation messages instead of a
+  preamble line asking it to load them; the web shows them with the sub-agent's task.
+- ee468de: Label the plugin review's npm provenance as an unverified attestation.
+- c452bfe: An org's new plugin version applied at once, and the platform's import-and-update, no longer owe
+  a scope sync from the import's commit: the update that follows owes it with its own commit. The
+  early sync ran while the update moved the extension, installed the old version in the owner org
+  mid-update and made the update refuse its own preview (`plugin.upgrade_stale`).
+- Updated dependencies [d522c01]
+- Updated dependencies [c0a1184]
+- Updated dependencies [8f1950d]
+- Updated dependencies [4e871ad]
+- Updated dependencies [e30fef0]
+- Updated dependencies [c122975]
+- Updated dependencies [dbfed21]
+- Updated dependencies [4992759]
+- Updated dependencies [9077604]
+- Updated dependencies [3ee2265]
+- Updated dependencies [0543a28]
+- Updated dependencies [09965db]
+- Updated dependencies [a7ce103]
+- Updated dependencies [001648a]
+- Updated dependencies [2882379]
+- Updated dependencies [8f02aba]
+- Updated dependencies [e6ac5dc]
+- Updated dependencies [5f9a8a8]
+- Updated dependencies [0a76603]
+- Updated dependencies [3324504]
+- Updated dependencies [154bfef]
+- Updated dependencies [243734a]
+- Updated dependencies [c452bfe]
+  - @capybara-hq/kernel@0.1.0-rc.37
+
 ## 0.1.0-rc.41
 
 ### Patch Changes
