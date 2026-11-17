@@ -7,7 +7,7 @@ Status: draft for maintainer review. Source: design review 2026-11-16, finding
 
 An org admin or member can type a URL that a plugin then requests from inside the shared kernel
 process: a connector endpoint (`connector-mcp`, `connector-openapi`), a model provider base URL
-(`openai-compatible`, `ark` endpoints), a sandbox API URL. Today those plugins call the global
+(an org-overridable `baseUrl`, e.g. `deepseek`), and similar fields. Today those plugins call the global
 `fetch`, so a URL such as `http://169.254.169.254/…` or an internal service reaches the kernel's
 network: server-side request forgery across tenants.
 
