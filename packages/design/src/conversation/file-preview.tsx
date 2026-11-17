@@ -50,7 +50,7 @@ export type FilePreviewHeader = {
   version?: string;
   /**
    * The conversation's files: the name becomes a switcher. `uploaded`: a file a person sent with a
-   * message, marked "上传" / "Uploaded".
+   * message, marked "Uploaded" (zh: the 上传 label). english-comments-ok: quotes the zh UI label
    */
   files?: { id: string; name: string; uploaded?: boolean }[];
   /** The id of the shown file in `files`. */

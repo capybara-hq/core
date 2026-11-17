@@ -295,8 +295,8 @@ export function FilesSection({
   onAll,
 }: {
   /**
-   * `from`: the sub-agent that delivered the file ("来自 <sub-agent>"); `uploaded`: a person sent
-   * it with a message ("上传").
+   * `from`: the sub-agent that delivered the file ("from <sub-agent>"); `uploaded`: a person sent
+   * it with a message (the "Uploaded" tag).
    */
   files: {
     id: string;
@@ -353,7 +353,7 @@ export function FilesSection({
 export type RightPanelSwitcher = {
   groups: {
     label?: string;
-    /** `tag`: a word after the label (an uploaded file's "上传"). */
+    /** `tag`: a word after the label (an uploaded file's "Uploaded"). */
     items: { id: string; label: string; icon?: IconName; badge?: string; tag?: string }[];
   }[];
   current: string;
