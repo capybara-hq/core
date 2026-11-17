@@ -8,6 +8,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { SANDBOX_RUNTIME_SOURCE } from "@capybara-hq/plugin-sdk";
+import { LINUX_DEVICE_AGENT } from "./linux-agent.js";
 import { PRELUDE } from "./native-helper-client.js";
 import { WORKER } from "./operation-worker.js";
 import { OUTPUT_SPOOL_HELPER } from "./output-spool-helper.js";
@@ -166,6 +167,11 @@ export interface ManifestLayout {
 }
 const HELPER_MODULES = [
   "mac-operation-backend",
+  "linux-operation-backend",
+  "linux-operation-worker",
+  "linux-runtime",
+  "linux-agent",
+  "docker-operations",
   "operation-supervisor",
   "operation-worker",
   "native-helper-client",
@@ -183,6 +189,9 @@ export function installedLayout(): ManifestLayout {
   const native = SANDBOX_RUNTIME_SOURCE.files.find((f) => f.name === "native-files.py");
   if (!native || sha256(native.source) !== native.sha256)
     throw new RuntimeManifestError("Bundled native helper source does not match its hash");
+  const linux = SANDBOX_RUNTIME_SOURCE.files.find((f) => f.name === "linux-sandbox.py");
+  if (!linux || sha256(linux.source) !== linux.sha256)
+    throw new RuntimeManifestError("Bundled Linux launcher source does not match its hash");
   return {
     packageRoot: resolve(dirname(here), "..", ".."),
     helperModules: HELPER_MODULES,
@@ -192,6 +201,9 @@ export function installedLayout(): ManifestLayout {
       "inline/native-helper-prelude.py": PRELUDE,
       "inline/output-spool-helper.py": OUTPUT_SPOOL_HELPER,
       "inline/mac-worker.mjs": WORKER,
+      // the Linux backend stages these next to native-files.py (linux-runtime.ts)
+      "inline/linux-sandbox.py": linux.source,
+      "inline/linux-device-agent.py": LINUX_DEVICE_AGENT,
     },
     // the worker bootstrap loads the resolved @anthropic-ai/sandbox-runtime entry
     dynamicImports: {

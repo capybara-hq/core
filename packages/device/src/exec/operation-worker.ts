@@ -30,6 +30,13 @@ import { ENV_NAME_RE, OutputCap, shellQuote } from "./shared.js";
 export interface TrustedLaunchIdentity {
   pid: number;
   token: string;
+  /**
+   * Linux only: the closed session the operation agent owns (its SID and the leader's start
+   * time), and the device process that launched it. A later device process reaps that exact
+   * session after a lost supervisor; nothing is ever found by an environment marker.
+   */
+  session?: { sid: number; start: number };
+  process?: string;
 }
 type Scope = SandboxOperationScope | SandboxBrowseScope | SandboxPreparationScope;
 interface Common {
