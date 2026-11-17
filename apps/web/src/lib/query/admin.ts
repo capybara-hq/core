@@ -342,7 +342,7 @@ export const marketplaceEntriesQuery = (sourceId: string, q: string) =>
     freshness: "deployment",
   });
 
-/** One org's internal endpoints for the super admin (the 内部端点 Sheet on `/admin/orgs`). */
+/** One org's internal endpoints for the super admin (the Internal endpoints Sheet on `/admin/orgs`). */
 export const adminOrgNetworkAllowancesQuery = (orgId: string) =>
   defineQuery({
     key: d().adminOrgNetworkAllowances(orgId),

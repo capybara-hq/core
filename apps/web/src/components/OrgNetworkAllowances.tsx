@@ -49,7 +49,7 @@ function useRows(
   }));
 }
 
-/** The list could not be read: one line and 重试, in the block that failed. */
+/** The list could not be read: one line and Retry, in the block that failed. */
 function LoadFailed({ onRetry }: { onRetry(): void }) {
   const t = useTranslations("orgNetwork");
   return (
@@ -67,9 +67,9 @@ function LoadFailed({ onRetry }: { onRetry(): void }) {
 }
 
 /**
- * 内部端点 for one org, in a Sheet on `/admin/orgs` (super admins; plugin safe fetch spec): the
- * entries with 移除 each and a field to add one. The kernel checks and normalizes an entry; a
- * refusal is one sentence with the kernel's reason behind the 「原始错误」 toggle.
+ * Internal endpoints for one org, in a Sheet on `/admin/orgs` (super admins; plugin safe fetch spec): the
+ * entries with Remove each and a field to add one. The kernel checks and normalizes an entry; a
+ * refusal is one sentence with the kernel's reason behind the "Raw error" toggle.
  */
 export function OrgNetworkSheet({
   org,
@@ -182,7 +182,7 @@ export function OrgNetworkSheet({
 }
 
 /**
- * 内部端点 on the org settings page: what a super admin allowed this org's extension requests to
+ * Internal endpoints on the org settings page: what a super admin allowed this org's extension requests to
  * reach, read-only for org admins (the copy says a super admin manages it). Members never see it:
  * the caller renders it for org admins only.
  */
