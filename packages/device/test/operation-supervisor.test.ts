@@ -8,12 +8,12 @@ import { shellQuote } from "../src/exec/shared.js";
 import { sealWorkspaceRuntime } from "./runtime-seal.js";
 
 // restricted workers launch only from a verified, sealed runtime closure (B-7)
-let unseal: (() => Promise<void>) | undefined;
+const workspace = { runtimeHash: "", cleanup: async () => {} };
 beforeAll(async () => {
-  unseal = await sealWorkspaceRuntime();
+  Object.assign(workspace, await sealWorkspaceRuntime());
 });
 afterAll(async () => {
-  await unseal?.();
+  await workspace.cleanup();
 });
 
 const dirs: string[] = [];
@@ -108,6 +108,7 @@ const request = (stateDir: string) => ({
   args: { command: "echo hello", timeoutMs: 1000, maxOutputBytes: 1000 },
   stateDir,
   pythonPath: "/usr/bin/python3",
+  runtimeHash: workspace.runtimeHash,
   beforeLaunch: async () => {},
   onLaunch: async () => {},
 });
@@ -284,6 +285,7 @@ it.runIf(process.platform === "darwin")(
             stateDir,
             managedOutput: { artifactRoot: stateDir, outputPath: join(stateDir, `${id}.out`) },
             pythonPath: "/usr/bin/python3",
+            runtimeHash: workspace.runtimeHash,
             beforeLaunch: async () => {},
             onLaunch: async (info) => {
               identities.push(info.pid);
@@ -431,6 +433,7 @@ it.runIf(process.platform === "darwin")(
       },
       stateDir,
       pythonPath: "/usr/bin/python3",
+      runtimeHash: workspace.runtimeHash,
     };
     await writeFile(
       script,

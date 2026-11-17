@@ -499,9 +499,18 @@ async function enumerate(
       name: string;
       version: string;
       dependencies?: Record<string, string>;
+      peerDependencies?: Record<string, string>;
+      optionalDependencies?: Record<string, string>;
     };
     if (pkg.name !== spec) throw new RuntimeManifestError(`${spec} resolved to ${pkg.name}`);
     const id = `${pkg.name}@${pkg.version}`;
+    // only declared dependencies are staged as links inside the copy; a peer or optional one
+    // would be resolved wherever Node finds it, outside the verified closure
+    for (const field of ["peerDependencies", "optionalDependencies"] as const)
+      if (Object.keys(pkg[field] ?? {}).length)
+        throw new RuntimeManifestError(
+          `${id} declares ${field}, which the runtime closure cannot pin; it cannot be verified`,
+        );
     if ([...runtimeRoots.values()].includes(id))
       throw new RuntimeManifestError(
         `Two installed copies of ${id}; the manifest cannot name both`,

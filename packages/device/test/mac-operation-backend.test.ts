@@ -8,12 +8,12 @@ import type { MacWorkerHandle } from "../src/exec/operation-worker.js";
 import { sealWorkspaceRuntime } from "./runtime-seal.js";
 
 // restricted workers launch only from a verified, sealed runtime closure (B-7)
-let unseal: (() => Promise<void>) | undefined;
+const workspace = { runtimeHash: "", cleanup: async () => {} };
 beforeAll(async () => {
-  unseal = await sealWorkspaceRuntime();
+  Object.assign(workspace, await sealWorkspaceRuntime());
 });
 afterAll(async () => {
-  await unseal?.();
+  await workspace.cleanup();
 });
 
 const dirs: string[] = [];
@@ -58,6 +58,7 @@ async function fixture() {
       stateDir: dir,
       roots,
       pythonPath: "/usr/bin/python3",
+      runtimeHash: workspace.runtimeHash,
       readOwnerCeiling: async () => {
         ceilingReads++;
         return ceiling;
@@ -238,6 +239,7 @@ it.runIf(process.platform === "darwin")(
             },
             stateDir,
             pythonPath: "/usr/bin/python3",
+            runtimeHash: workspace.runtimeHash,
             beforeLaunch: async () => {},
             onLaunch: async () => {},
           },
@@ -403,6 +405,7 @@ it.runIf(process.platform === "darwin")(
           },
           stateDir,
           pythonPath: "/usr/bin/python3",
+          runtimeHash: workspace.runtimeHash,
           beforeLaunch: async () => {},
           onLaunch: async () => {},
         },
@@ -521,6 +524,7 @@ it.runIf(process.platform === "darwin")(
               },
               stateDir,
               pythonPath: "/usr/bin/python3",
+              runtimeHash: workspace.runtimeHash,
               beforeLaunch: async () => {},
               onLaunch: async (info) => {
                 identities.push(info.pid);
@@ -680,6 +684,7 @@ it.runIf(process.platform === "darwin")(
         stateDir,
         roots,
         pythonPath: "/usr/bin/python3",
+        runtimeHash: workspace.runtimeHash,
         readOwnerCeiling: async () => ceiling,
       },
       { restrictedSupported: true, platform: "darwin", startWorker: startMacOperationWorker },

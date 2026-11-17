@@ -20,7 +20,12 @@ import {
   runNativeHelper,
 } from "./native-helper-client.js";
 import type { LocalExecAuthority, LocalOperationGrant } from "./operation-types.js";
-import { sealedRuntimeEntry, stagePrivateSource, stageRuntimeSource } from "./runtime-source.js";
+import {
+  acquireSealedRuntime,
+  type SealedRuntime,
+  stagePrivateSource,
+  stageRuntimeSource,
+} from "./runtime-source.js";
 import { ENV_NAME_RE, OutputCap, shellQuote } from "./shared.js";
 export interface TrustedLaunchIdentity {
   pid: number;
@@ -32,6 +37,11 @@ interface Common {
   grant: LocalOperationGrant;
   stateDir: string;
   pythonPath: string;
+  /**
+   * The runtime hash the instance binding attested (from the bound backend). A restricted launch
+   * runs only the sealed runtime with exactly this hash; absent, it is refused.
+   */
+  runtimeHash?: string;
   authority?: LocalExecAuthority;
   beforeLaunch: () => Promise<void>;
   onLaunch: (identity: TrustedLaunchIdentity) => Promise<void>;
@@ -74,6 +84,8 @@ export function createCancellationAttempt(
     return pending;
   };
 }
+/** The JVM proxy agent the sandbox runtime points sandboxed JVMs at, inside its package. */
+export const JAVA_PROXY_AGENT_JAR = "vendor/java-proxy-agent/srt-proxy-agent.jar";
 /** The fixed private worker bootstrap (a runtime-manifest helper entry). */
 export const WORKER = `import {pathToFileURL} from 'node:url';
 import {spawn} from 'node:child_process';
@@ -249,11 +261,16 @@ export async function startMacOperationWorker(
   };
   signal.addEventListener("abort", abort, { once: true });
   if (signal.aborted) abort();
+  let sealed: SealedRuntime | undefined;
   const completion = (async () => {
     try {
-      // Restricted workers import only the sealed private copy of the verified runtime closure;
-      // a closure changed since verification is refused here, before anything is spawned.
-      const runtimeEntry = request.grant.full ? "" : await sealedRuntimeEntry();
+      // Restricted workers import only the sealed private copy of the verified runtime closure
+      // the binding attested; anything else is refused here, before anything is spawned.
+      if (!request.grant.full) sealed = await acquireSealedRuntime(request.runtimeHash);
+      const runtimeEntry = sealed?.entry ?? "";
+      // sandboxed JVMs load the staged agent: readable inside the sandbox, and named explicitly so
+      // the runtime never looks for a global install of it
+      const javaAgent = sealed?.stagedFile(JAVA_PROXY_AGENT_JAR);
       const helper =
         request.kind === "native" ? await stageRuntimeSource(request.stateDir) : undefined;
       const roots: PinnedNativeRoot[] = [];
@@ -318,8 +335,13 @@ export async function startMacOperationWorker(
           "/Applications/Xcode.app",
           "/Library/Developer",
           ...(helper ? [{ path: helper, literal: true }] : []),
+          ...(javaAgent ? [{ path: javaAgent, literal: true }] : []),
           ...runtimeRoots,
-          ...ancestors([...runtimeRoots, ...(helper ? [helper] : [])]),
+          ...ancestors([
+            ...runtimeRoots,
+            ...(helper ? [helper] : []),
+            ...(javaAgent ? [javaAgent] : []),
+          ]),
         ];
         const writeRoots =
           request.kind === "native"
@@ -377,6 +399,7 @@ export async function startMacOperationWorker(
             deniedDomains: [],
             allowLocalBinding: false,
           },
+          ...(javaAgent ? { javaAgentJarPath: javaAgent } : {}),
         };
         const initialized = message(runtime, "ready");
         runtime.send({
@@ -386,6 +409,8 @@ export async function startMacOperationWorker(
           config,
         });
         const initializedInfo = await initialized;
+        // the worker has imported the runtime: the copy may be pruned from now on
+        sealed?.release();
         await request.onRuntimeReady?.({
           pid: runtime.pid as number,
           proxyUrl: String(initializedInfo.proxyUrl),
@@ -568,6 +593,7 @@ export async function startMacOperationWorker(
       throw e;
     } finally {
       finished = true;
+      sealed?.release();
       signal.removeEventListener("abort", abort);
       kill(child);
       await Promise.all(files.map((f) => f.close()));

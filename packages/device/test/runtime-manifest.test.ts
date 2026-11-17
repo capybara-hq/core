@@ -34,7 +34,7 @@ import {
   RuntimeManifestError,
   verifyInstalledRuntime,
 } from "../src/exec/runtime-manifest.js";
-import { sealedRuntimeEntry } from "../src/exec/runtime-source.js";
+import { acquireSealedRuntime } from "../src/exec/runtime-source.js";
 
 const sha = (s: string | Buffer) => createHash("sha256").update(s).digest("hex");
 const dirs: string[] = [];
@@ -255,10 +255,18 @@ describe("verified runtime closure: verify-to-launch pinning (B-7)", () => {
     const state = await realpath(await mkdtemp(join(tmpdir(), "cap-seal-")));
     dirs.push(state);
     const verified = await verifyInstalledRuntime(env, f.layout, { stageIn: state });
+    bound = verified.runtimeHash;
     return { ...f, state, verified, dep: join(f.pkg, "node_modules/rt-dep/i.js") };
   }
-  const refused = (pattern: RegExp) => async () => {
-    const error = await sealedRuntimeEntry().then(
+  // the runtime hash the (simulated) binding attested
+  let bound = "";
+  const sealedRuntimeEntry = async (hash: string | undefined = bound) => {
+    const held = await acquireSealedRuntime(hash);
+    held.release();
+    return held.entry;
+  };
+  const refused = (pattern: RegExp, hash?: string) => async () => {
+    const error = await sealedRuntimeEntry(hash ?? bound).then(
       () => undefined,
       (e: unknown) => e,
     );
@@ -351,6 +359,48 @@ describe("verified runtime closure: verify-to-launch pinning (B-7)", () => {
     expect(await sealedRuntimeEntry()).toMatch(/operation-runtime/);
   });
 
+  it("refuses a seal that is not the runtime the binding attested", async () => {
+    const f = await sealed();
+    const x = f.verified.runtimeHash;
+    await refused(/not the one this instance binding attested/, "")();
+    // the install changes and a later verification (of the changed install) seals X'
+    await writeFile(f.dep, "module.exports = 3;\n");
+    await f.ship();
+    const changed = await verifyInstalledRuntime(env, f.layout, { stageIn: f.state });
+    expect(changed.runtimeHash).not.toBe(x);
+    // a launch for the binding that attested X is refused; one for X' runs
+    await refused(/not the one this instance binding attested/, x)();
+    expect(await sealedRuntimeEntry(changed.runtimeHash)).toMatch(/operation-runtime/);
+  });
+
+  it("pruning keeps copies a launch still holds and other verifications' temporary copies", async () => {
+    const f = await sealed();
+    const held = await acquireSealedRuntime(bound);
+    const heldCopy = held.entry.slice(0, held.entry.indexOf("/store/"));
+    const other = join(f.state, "operation-runtime", "closure-tmp-other-verification");
+    await mkdir(other, { mode: 0o700 });
+    for (let i = 0; i < 3; i++) await verifyInstalledRuntime(env, f.layout, { stageIn: f.state });
+    await expect(stat(heldCopy)).resolves.toBeDefined();
+    await expect(stat(other)).resolves.toBeDefined();
+    held.release();
+    await verifyInstalledRuntime(env, f.layout, { stageIn: f.state });
+    await expect(stat(heldCopy)).rejects.toThrow();
+    const left = await readdir(join(f.state, "operation-runtime"));
+    expect(left.filter((n) => n.startsWith("closure-") && !n.includes("tmp"))).toHaveLength(2);
+  });
+
+  it.each(["peerDependencies", "optionalDependencies"])(
+    "refuses a runtime package that declares %s (resolved outside the copy)",
+    async (field) => {
+      const f = await fixture();
+      await f.file(
+        join(f.pkg, "node_modules/rt-dep/package.json"),
+        JSON.stringify({ name: "rt-dep", version: "2.0.0", main: "i.js", [field]: { x: "1" } }),
+      );
+      await expect(enumerateInstalled(f.layout)).rejects.toThrow(`rt-dep@2.0.0 declares ${field}`);
+    },
+  );
+
   it.runIf(process.platform === "darwin")(
     "a restricted worker loads the staged runtime and is refused before fork after a change",
     async () => {
@@ -363,8 +413,8 @@ describe("verified runtime closure: verify-to-launch pinning (B-7)", () => {
           "export const SandboxManager = {",
           "  checkDependencies: () => ({ errors: [] }),",
           "  isSupportedPlatform: () => true,",
-          "  initialize: async () => {},",
-          "  getProxyAuthToken: () => Buffer.from(fileURLToPath(import.meta.url)).toString('hex'),",
+          "  initialize: async (config) => { globalThis.config = config; },",
+          "  getProxyAuthToken: () => Buffer.from(JSON.stringify({ from: fileURLToPath(import.meta.url), config: globalThis.config })).toString('hex'),",
           "  getProxyPort: () => 1,",
           "  wrapWithSandbox: async (script) => script,",
           "  reset: async () => {},",
@@ -382,13 +432,18 @@ describe("verified runtime closure: verify-to-launch pinning (B-7)", () => {
           dependencies: { "rt-dep": "1" },
         }),
       );
+      await f.file(join(f.rt, "vendor/java-proxy-agent/srt-proxy-agent.jar"), "PK jar");
       await f.ship();
       const state = await realpath(await mkdtemp(join(tmpdir(), "cap-seal-worker-")));
       dirs.push(state);
-      await verifyInstalledRuntime(env, f.layout, { stageIn: state });
+      bound = (await verifyInstalledRuntime(env, f.layout, { stageIn: state })).runtimeHash;
       const { startMacOperationWorker } = await import("../src/exec/operation-worker.js");
       const loadedFrom: string[] = [];
-      const launch = () =>
+      const configs: {
+        javaAgentJarPath?: string;
+        filesystem: { allowRead: unknown[] };
+      }[] = [];
+      const launch = (runtimeHash = bound) =>
         startMacOperationWorker(
           {
             kind: "exec",
@@ -416,11 +471,14 @@ describe("verified runtime closure: verify-to-launch pinning (B-7)", () => {
             },
             stateDir: state,
             pythonPath: "/usr/bin/python3",
+            runtimeHash,
             beforeLaunch: async () => {},
             onLaunch: async () => {},
             onRuntimeReady: async ({ proxyUrl }) => {
               const token = /^http:\/\/srt:([0-9a-f]+)@/.exec(proxyUrl)?.[1] ?? "";
-              loadedFrom.push(Buffer.from(token, "hex").toString());
+              const report = JSON.parse(Buffer.from(token, "hex").toString());
+              loadedFrom.push(report.from);
+              configs.push(report.config);
             },
           },
           AbortSignal.timeout(15000),
@@ -429,6 +487,18 @@ describe("verified runtime closure: verify-to-launch pinning (B-7)", () => {
       expect(await worker.completion).toMatchObject({ exitCode: 0, stdout: "ok\n" });
       expect(loadedFrom).toEqual([await sealedRuntimeEntry()]);
       expect(loadedFrom[0]?.startsWith(join(state, "operation-runtime/"))).toBe(true);
+      // sandboxed JVMs get the staged agent, named explicitly and readable inside the sandbox
+      const jar = join(
+        loadedFrom[0] as string,
+        "../../vendor/java-proxy-agent/srt-proxy-agent.jar",
+      );
+      expect(await readFile(jar, "utf8")).toBe("PK jar");
+      expect(configs[0]?.javaAgentJarPath).toBe(jar);
+      expect(configs[0]?.filesystem.allowRead).toContainEqual({ path: jar, literal: true });
+
+      // a launch for another binding's runtime is refused before fork
+      const otherBinding = await launch("0".repeat(64));
+      await expect(otherBinding.completion).rejects.toThrow(/not the one this instance binding/);
 
       await writeFile(join(f.pkg, "node_modules/rt-dep/i.js"), "module.exports = 3;\n");
       const refusedWorker = await launch();

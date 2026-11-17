@@ -118,24 +118,34 @@ it("a restricted launch imports the staged copy of the npm-installed closure (B-
     import { readFile, writeFile } from "node:fs/promises";
     const m = await import(${JSON.stringify(join(installed, "dist/exec/runtime-manifest.js"))});
     const s = await import(${JSON.stringify(join(installed, "dist/exec/runtime-source.js"))});
-    await m.verifyInstalledRuntime({ pythonPath: "/usr/bin/python3",
+    const { runtimeHash } = await m.verifyInstalledRuntime({ pythonPath: "/usr/bin/python3",
       roots: { workspace: "/w", skills: "/s", tmp: "/t" } }, undefined, { stageIn: ${JSON.stringify(state)} });
-    const entry = await s.sealedRuntimeEntry();
+    const held = await s.acquireSealedRuntime(runtimeHash);
+    held.release();
+    const entry = held.entry;
+    const jar = held.stagedFile("vendor/java-proxy-agent/srt-proxy-agent.jar");
     const { SandboxManager } = await import(pathToFileURL(entry).href);
     const zod = ${JSON.stringify(join(installed, "dist/node_modules/zod/package.json"))};
     const original = await readFile(zod);
     await writeFile(zod, original + " ");
-    const refused = await s.sealedRuntimeEntry().then(() => "launched", (e) => e.name + ": " + e.message);
+    const refused = await s.acquireSealedRuntime(runtimeHash).then(() => "launched", (e) => e.name + ": " + e.message);
     await writeFile(zod, original);
-    console.log(JSON.stringify({ entry, initialize: typeof SandboxManager.initialize, refused }));`;
+    console.log(JSON.stringify({ entry, jar, initialize: typeof SandboxManager.initialize, refused }));`;
   const { stdout } = await run(process.execPath, ["--input-type=module", "-e", script], {
     cwd: dir,
     env,
   });
-  const out = JSON.parse(stdout) as { entry: string; initialize: string; refused: string };
+  const out = JSON.parse(stdout) as {
+    entry: string;
+    jar?: string;
+    initialize: string;
+    refused: string;
+  };
   // the vendored runtime and its dependencies resolve from inside the private staged copy
   expect(out.entry.startsWith(join(await realpath(state), "operation-runtime/"))).toBe(true);
   expect(out.initialize).toBe("function");
+  // the vendored JVM proxy agent is staged with it (workers name it for sandboxed JVMs)
+  expect(out.jar?.startsWith(join(await realpath(state), "operation-runtime/"))).toBe(true);
   expect(out.refused).toMatch(
     /^SandboxPermissionUnsupportedError: The sandbox runtime changed after it was verified \(changed .*zod\/package\.json\)/,
   );
