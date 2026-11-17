@@ -30,6 +30,11 @@ import type { KernelConfigService } from "../../../infra/config/kernel-config.se
 import { InstanceBindingError } from "../../../local-devices/instance-bindings.js";
 import { AUTO_MODE_NOT_ALLOWED_TEXT } from "../../../local-devices/local-device-provider.js";
 import { type DeviceModeLevel, devicePathsChange } from "../../../runtime/context/device-paths.js";
+import {
+  ATTACHMENTS_ROOT,
+  attachmentsDir,
+  attachmentsRoot,
+} from "../../../sandbox/attachments-path.js";
 import { SandboxPathBusyError } from "../../../sandbox/leases.js";
 import type { LegacyRetirementStore } from "../../../sandbox/legacy-retirement.js";
 import {
@@ -236,16 +241,7 @@ export const SANDBOX_CREATE_FAILED_TEXT =
 const LOCK_LOST_TEXT =
   "The sandbox operation was interrupted because the sandbox lock was lost; check the sandbox state and retry.";
 
-/** The directory of attachments in the device (each conversation has a subdirectory). */
-export const attachmentsRoot = (roots: SandboxRoots): string => `${roots.workspace}/attachments`;
-/** {@link attachmentsRoot} of an instance with the default roots. */
-export const ATTACHMENTS_ROOT = attachmentsRoot(DEFAULT_SANDBOX_ROOTS);
-/**
- * One conversation's attachment directory: the first 12 hex digits of the root conversation's
- * UUID, so conversations sharing a device do not overwrite each other's files.
- */
-export const attachmentsDir = (roots: SandboxRoots, rootConversationId: string): string =>
-  `${attachmentsRoot(roots)}/${rootConversationId.replaceAll("-", "").slice(0, 12)}`;
+export { ATTACHMENTS_ROOT, attachmentsDir, attachmentsRoot };
 /** 附件文件名的上限（UTF-8 字节，常见文件系统单个文件名上限 255 字节，留出 `-N` 后缀的余量）。 */
 export const ATTACHMENT_NAME_MAX_BYTES = 200;
 

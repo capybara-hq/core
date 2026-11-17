@@ -564,3 +564,36 @@ it("B-12: an instance whose applied mode is the OS sandbox reads Full as unsuppo
     report: { fullAccess: true },
   });
 });
+
+it("B-12: the recorded limits of a destroyed instance never narrow the authority; a file-system-bound provider's do", async () => {
+  const f = await fixture({ instance: null });
+  await snapshots().snapshot(f.orgId, f.deviceId);
+  // the instance was destroyed; its stale record is left on the row with the files
+  const strict = { mode: "sandbox", network: { kind: "allowlist", hosts: ["a.example"] } };
+  await db
+    .updateTable("device_instances")
+    .set({ status: "destroyed", handle: null, instance_limits: JSON.stringify(strict) })
+    .where("device_id", "=", f.deviceId)
+    .execute();
+  expect(await snapshots().reconcile(f.orgId, f.deviceId)).toMatchObject({
+    state: "reconcile-required",
+  });
+  expect(await f.device()).toMatchObject({ owner_full_access: true, outer_network: OPEN });
+  // a provider whose limits are fixed at its file system: the record is what the files enforce
+  const providers = k.app.get(SandboxProviders);
+  const entry = providers.forName(PROVIDER);
+  if (!entry) throw new Error("expected the test provider");
+  providers.register({
+    ...entry,
+    impl: Object.assign(Object.create(entry.impl), { limitsApplyAt: "fileSystem" }),
+  });
+  try {
+    await snapshots().reconcile(f.orgId, f.deviceId);
+    expect(await f.device()).toMatchObject({
+      owner_full_access: false,
+      outer_network: { kind: "allowlist", hosts: ["a.example"] },
+    });
+  } finally {
+    providers.register(entry);
+  }
+});

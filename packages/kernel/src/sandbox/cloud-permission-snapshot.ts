@@ -27,6 +27,7 @@ import { PermissionAuthorityLock } from "./permission-authority-lock.js";
 import { needsFullCeiling, PermissionCeilingWrites } from "./permission-ceiling-writes.js";
 import { PermissionConfigPublication } from "./permission-config-publication.js";
 import { PermissionFacts } from "./permission-facts.js";
+import { providerForDevice, SandboxProviders } from "./providers.js";
 
 /**
  * What a snapshot or reconciliation found: `unprobed` (no instance or file system yet: the next
@@ -149,6 +150,9 @@ export class CloudPermissionSnapshots {
     private readonly ceilings: Pick<PermissionCeilingWrites, "publishLocked">,
     @Inject(LegacyRetirementStore)
     private readonly retirement: Pick<LegacyRetirementStore, "assertCutoverBarrier">,
+    /** Whether a device's provider fixes limits at its file system (B-12 intersection). */
+    @Inject(SandboxProviders)
+    private readonly providers: Pick<SandboxProviders, "cloud" | "forName">,
   ) {}
 
   /**
@@ -368,7 +372,14 @@ export class CloudPermissionSnapshots {
     let target: AppliedLimits | undefined;
     if (instance !== null) {
       const rec = readInstanceLimits(instance.instance_limits);
-      if (rec.applied !== null && device.owner_full_access !== null) {
+      // only a record in force narrows: a live instance's, or the file system's of a provider
+      // that fixes limits there; a destroyed instance's record is stale (the next create applies
+      // the desired limits)
+      const inForce =
+        (instance.handle !== null &&
+          (instance.status === "running" || instance.status === "suspended")) ||
+        providerForDevice(this.providers, device.provider)?.impl.limitsApplyAt === "fileSystem";
+      if (inForce && rec.applied !== null && device.owner_full_access !== null) {
         const outer = device.outer_network ?? { kind: "open-public", hosts: [] };
         const narrowed = cloudSnapshotOf(
           { mode: device.owner_full_access ? "auto" : "sandbox", network: outer },
@@ -431,6 +442,7 @@ export class CloudPermissionSnapshots {
       .selectFrom("devices")
       .select([
         "source",
+        "provider",
         "mode",
         "owner_full_access",
         "outer_network",

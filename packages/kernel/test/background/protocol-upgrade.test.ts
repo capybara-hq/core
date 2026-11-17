@@ -16,7 +16,9 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { XactLock } from "../../src/infra/database/xact-lock.js";
+import type { CloudPermissionSnapshots } from "../../src/sandbox/cloud-permission-snapshot.js";
 import type { LegacyRetirementStore } from "../../src/sandbox/legacy-retirement.js";
+import { appliedOf } from "../../src/sandbox/modes.js";
 import type { SandboxOperationIntents } from "../../src/sandbox/operation-intents.js";
 import { LOCAL_PROVIDER } from "../../src/sandbox/providers.js";
 import { RetirementPendingError, type SandboxService } from "../../src/sandbox/sandbox.service.js";
@@ -88,8 +90,9 @@ function spied(name: string, impl: SandboxProvider): SandboxProvider {
 let cloud: SandboxProvider;
 let local: SandboxProvider;
 
-const service = (): SandboxService =>
+const service = (snapshots?: Pick<CloudPermissionSnapshots, "reconcileHeld">): SandboxService =>
   sandboxServiceFor({
+    ...(snapshots !== undefined && { snapshots }),
     db,
     redis,
     provider: () => ({ plugin: "sandbox-fake", impl: cloud }),
@@ -867,8 +870,14 @@ describe("revoked managed starts on an incarnation that no longer runs (8.4 hand
 });
 
 describe("a suspended cloud instance with a revoked managed start (B-22)", () => {
-  /** What each exact stop answers, by operation id; absent: `stopped`. */
+  /** What each exact stop answers once resumed, by operation id; absent: `stopped`. */
   let stopAnswers: Map<string, "stopped" | "cancel-pending" | "lost" | "throw">;
+  /** What each exact stop answers while suspended, by operation id; absent: `cancel-pending`. */
+  let preStopAnswers: Map<string, "cancel-pending" | "lost" | "throw">;
+  /** The executions the stub provider still runs (exact refs by operation id). */
+  let running: Set<string>;
+  /** `update` calls (B-12 lifecycle reconcile). */
+  let updates: number;
   /** Instances the stub's `stop` saw suspended: an exact stop there only persists the cancel. */
   const suspended = async (id: string) =>
     (await instance(id)).status === "suspended" && !calls.some((c) => c.includes(" resume "));
@@ -880,12 +889,21 @@ describe("a suspended cloud instance with a revoked managed start (B-22)", () =>
     w.background = {
       stop: async (h: SandboxHandle, ref: SandboxExecutionRef) => {
         calls.push(`cloud stop ${ref.operationId} ${h.id}`);
-        if (await suspended(deviceId)) return { outcome: "cancel-pending" };
+        if (await suspended(deviceId)) {
+          const pre = preStopAnswers.get(ref.operationId) ?? "cancel-pending";
+          if (pre === "throw") throw new Error("the provider did not record the cancel");
+          return { outcome: pre } as { outcome: "cancel-pending" };
+        }
         const answer = stopAnswers.get(ref.operationId) ?? "stopped";
         if (answer === "throw") throw new Error("the device did not answer the stop");
+        if (answer === "stopped") running.delete(ref.operationId);
         return { outcome: answer } as { outcome: "stopped" };
       },
     } as unknown as NonNullable<SandboxProvider["background"]>;
+    w.update = async () => {
+      updates++;
+      return "updated";
+    };
     w.suspend = (h, s) => {
       calls.push(`cloud suspend ${h.id}`);
       return base.suspend(h, s);
@@ -947,6 +965,9 @@ describe("a suspended cloud instance with a revoked managed start (B-22)", () =>
     const g = String((await instance(dev)).created_at.getTime());
     const revoked = await managedStart(dev, first.id, g, "revoked");
     const sibling = await managedStart(dev, first.id, g, "completed");
+    // both executions run in the instance (the revoked one until its exact stop)
+    running.add(revoked);
+    running.add(sibling);
     expect(await s.suspendIdle(new Date(Date.now() + DAY))).toBe(1);
     calls = [];
     return { s, dev, first, g, revoked, sibling };
@@ -954,6 +975,9 @@ describe("a suspended cloud instance with a revoked managed start (B-22)", () =>
 
   beforeEach(() => {
     stopAnswers = new Map();
+    preStopAnswers = new Map();
+    running = new Set();
+    updates = 0;
   });
 
   it("the use resumes, cancels exactly the revoked ref with confirmation and keeps the instance: the sibling survives", async () => {
@@ -969,6 +993,8 @@ describe("a suspended cloud instance with a revoked managed start (B-22)", () =>
       `cloud killAll ${first.id}`,
     ]);
     expect(calls.some((c) => c.includes(sibling))).toBe(false);
+    // the sibling execution keeps running; only the revoked one was stopped
+    expect([...running]).toEqual([sibling]);
     expect(await obligations(dev)).toMatchObject([
       { instance_generation: g, state: "resolved", resolution: "exact-cancelled" },
     ]);
@@ -1048,6 +1074,82 @@ describe("a suspended cloud instance with a revoked managed start (B-22)", () =>
     calls = [];
     const fresh = await use(s, dev);
     expect(calls).toEqual([`cloud destroy ${first.id}`, `cloud create ${fresh.id}`]);
+  });
+
+  it.each(["lost", "throw"] as const)(
+    "a pre-resume stop answering %s destroys the instance while still suspended",
+    async (answer) => {
+      const { s, dev, first, revoked } = await suspendedWithRevoked();
+      preStopAnswers.set(revoked, answer);
+      const fresh = await use(s, dev);
+      expect(calls).toEqual([
+        `cloud stop ${revoked} ${first.id}`,
+        `cloud destroy ${first.id}`,
+        `cloud create ${fresh.id}`,
+      ]);
+      expect(await obligations(dev)).toMatchObject([
+        { state: "resolved", resolution: "provider-destroyed", attempts: 1 },
+      ]);
+    },
+  );
+
+  it("a member added while the cancel runs is never resolved unstopped: the instance is destroyed instead", async () => {
+    const { s, dev, first, g, revoked } = await suspendedWithRevoked();
+    let late = "";
+    const read = retirement.membersOf.bind(retirement);
+    const spy = vi.spyOn(retirement, "membersOf").mockImplementationOnce(async (id) => {
+      const members = await read(id);
+      // a concurrent scan records another revoked start of the same incarnation
+      late = await managedStart(dev, first.id, g, "revoked");
+      await retirement.scanUntilStable(5, dev);
+      return members;
+    });
+    try {
+      const fresh = await use(s, dev);
+      expect(calls).toEqual([
+        `cloud stop ${revoked} ${first.id}`,
+        `cloud resume ${first.id}`,
+        `cloud stop ${revoked} ${first.id}`,
+        `cloud destroy ${first.id}`,
+        `cloud create ${fresh.id}`,
+      ]);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(await obligations(dev)).toMatchObject([
+      { state: "resolved", resolution: "provider-destroyed" },
+    ]);
+    expect(await intent(late)).toEqual({ state: "revoked", revoke_acknowledged: false });
+  });
+
+  it("a member an old replica added after an exact cancel reopens the obligation on the next scan (rolling upgrade)", async () => {
+    const { s, dev, first, g } = await suspendedWithRevoked();
+    expect(await s.retireLegacy(dev)).toBe("clear");
+    const [o] = await obligations(dev);
+    expect(o).toMatchObject({ state: "resolved", resolution: "exact-cancelled" });
+    // an old replica's addMember: the member row only, the obligation left resolved
+    const late = await managedStart(dev, first.id, g, "revoked");
+    await sql`INSERT INTO capybara.device_retirement_members (obligation_id, kind, ref_id)
+      VALUES (${o?.id}, 'revoked-start', ${late})`.execute(raw);
+    // never settled (acknowledged unstopped) while it waits
+    expect((await retirement.unsettledMembers(100)).map((m) => m.refId)).not.toContain(late);
+    expect(await retirement.hasUnresolved(dev)).toBe(true);
+    await retirement.scan(dev);
+    expect(await obligations(dev)).toMatchObject([{ state: "open", resolution: null }]);
+  });
+
+  it("the lifecycle reconcile of a marked device never resumes past an open retirement obligation (C1)", async () => {
+    const { dev, first } = await suspendedWithRevoked();
+    const policy = await service().devicePolicy({ orgId: seed.orgId, deviceId: dev });
+    const target = appliedOf({ mode: policy.mode, network: policy.network });
+    const s = service({
+      reconcileHeld: async () => ({ state: "reconcile-required", action: "reset-files", target }),
+    });
+    expect(await s.reconcileLimits(dev)).toMatchObject({ state: "reconcile-required" });
+    expect(calls.filter((c) => c.includes(" resume "))).toEqual([]);
+    expect(updates).toBe(0);
+    expect((await instance(dev)).status).toBe("suspended");
+    expect(first.id).toBeTruthy();
   });
 });
 

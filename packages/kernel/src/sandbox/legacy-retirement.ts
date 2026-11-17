@@ -530,7 +530,7 @@ export class LegacyRetirementStore {
    * worker repeats it every tick, so a row an old unfenced replica writes later is still found.
    */
   async scan(deviceId?: string): Promise<{ added: number }> {
-    let added = 0;
+    let added = await this.reopenLateMembers(deviceId);
     if (await this.frozen()) added += await this.scanLegacyTasks(deviceId);
     added += await this.scanRevokedStarts(deviceId);
     return { added };
@@ -712,8 +712,9 @@ export class LegacyRetirementStore {
       obligation.state === "resolved" &&
       (obligation.resolution === "host-rebooted" || obligation.resolution === "exact-cancelled")
     ) {
-      // read under the obligation's lock: a hello that resolved it meanwhile is seen (M1)
-      const now = await this.currentBoot(deviceId);
+      // read under the obligation's lock: a hello that resolved it meanwhile is seen (M1); a
+      // cloud incarnation has no boot
+      const now = isCloudProvider(provider) ? null : await this.currentBoot(deviceId);
       await this.db
         .updateTable("device_retirement_obligations")
         .set({
@@ -895,6 +896,17 @@ export class LegacyRetirementStore {
     if (row !== undefined) return true;
     if ((await this.revokedCandidates(deviceId).limit(1).executeTakeFirst()) !== undefined)
       return true;
+    // an exact-cancelled obligation a member was added to after the cancel (a rolling upgrade)
+    const late = await this.db
+      .selectFrom("device_retirement_obligations as o")
+      .select("o.id")
+      .where("o.device_id", "=", deviceId)
+      .where("o.state", "=", "resolved")
+      .where("o.resolution", "=", "exact-cancelled")
+      .where(({ exists }) => exists(this.lateMember()))
+      .limit(1)
+      .executeTakeFirst();
+    if (late !== undefined) return true;
     return (
       (await this.frozen()) &&
       (await this.legacyCandidates(deviceId).limit(1).executeTakeFirst()) !== undefined
@@ -950,11 +962,39 @@ export class LegacyRetirementStore {
   }
 
   /**
-   * Every member of the obligation was a revoked managed start whose exact cancellation its
-   * provider confirmed on the resumed incarnation (B-22): the obligation resolves without a
-   * destroy. A member recorded later reopens it ({@link addMember}).
+   * The provider confirmed the exact cancellation of the revoked managed starts `covered` on the
+   * resumed incarnation (B-22): under the obligation's row lock (the lock {@link addMember} takes
+   * before it adds a member), resolves it as `exact-cancelled` and acknowledges those
+   * revocations, only while every member is one of them. False (nothing changed) when a member
+   * outside `covered` exists, which was never stopped: the caller destroys the incarnation
+   * instead. Acknowledging here is what tells a member added later apart ({@link scan}).
    */
-  async resolveCancelled(id: string): Promise<void> {
+  @Transactional({ propagation: "requires_new" })
+  async resolveCancelled(id: string, covered: readonly string[]): Promise<boolean> {
+    const o = await this.db
+      .selectFrom("device_retirement_obligations")
+      .select(["state"])
+      .where("id", "=", id)
+      .forUpdate()
+      .executeTakeFirst();
+    if (o === undefined || (o.state !== "open" && o.state !== "quarantined")) return false;
+    const members = await this.db
+      .selectFrom("device_retirement_members")
+      .select(["kind", "ref_id"])
+      .where("obligation_id", "=", id)
+      .execute();
+    const set = new Set(covered);
+    if (
+      members.length === 0 ||
+      members.some((m) => m.kind !== "revoked-start" || !set.has(m.ref_id))
+    )
+      return false;
+    await this.db
+      .updateTable("sandbox_operation_intents")
+      .set({ revoke_acknowledged: true, updated_at: new Date() })
+      .where("operation_id", "in", [...set])
+      .where("state", "=", "revoked")
+      .execute();
     await this.db
       .updateTable("device_retirement_obligations")
       .set({
@@ -964,8 +1004,51 @@ export class LegacyRetirementStore {
         last_error: null,
       })
       .where("id", "=", id)
-      .where("state", "in", ["open", "quarantined"])
       .execute();
+    return true;
+  }
+
+  /**
+   * Reopens `exact-cancelled` obligations holding a member nobody stopped: a legacy row, or a
+   * revoked start whose revocation is still unacknowledged (every member the cancel covered was
+   * acknowledged with the resolution). A replica without the reopen in {@link addMember} (a
+   * rolling upgrade) adds such members to a resolved obligation; the next scan of a new one
+   * reopens it. Returns how many it reopened.
+   */
+  private async reopenLateMembers(deviceId?: string): Promise<number> {
+    let q = this.db
+      .updateTable("device_retirement_obligations as o")
+      .set({ state: "open", resolution: null, resolved_at: null })
+      .where("o.state", "=", "resolved")
+      .where("o.resolution", "=", "exact-cancelled")
+      .where(({ exists }) => exists(this.lateMember()));
+    if (deviceId !== undefined) q = q.where("o.device_id", "=", deviceId);
+    const r = await q.executeTakeFirst();
+    return Number(r.numUpdatedRows);
+  }
+
+  /**
+   * A member of obligation `o` an exact cancel never covered (see {@link reopenLateMembers}),
+   * correlated on `o.id`.
+   */
+  private lateMember() {
+    return this.db
+      .selectFrom("device_retirement_members as lm")
+      .select("lm.ref_id")
+      .where(sql<boolean>`lm.obligation_id = o.id`)
+      .where((eb) =>
+        eb.or([
+          eb("lm.kind", "=", "legacy-task"),
+          eb.exists(
+            eb
+              .selectFrom("sandbox_operation_intents as li")
+              .select("li.operation_id")
+              .whereRef("li.operation_id", "=", "lm.ref_id")
+              .where("li.state", "=", "revoked")
+              .where("li.revoke_acknowledged", "=", false),
+          ),
+        ]),
+      );
   }
 
   /** The members of one obligation, oldest first. */
@@ -1041,6 +1124,26 @@ export class LegacyRetirementStore {
       .select(["m.obligation_id", "m.kind", "m.ref_id"])
       .where("o.state", "=", "resolved")
       .where("m.settled", "=", false)
+      // a member an exact cancel never covered is not settled (acknowledged unstopped): the next
+      // scan reopens its obligation
+      .where(({ eb, not, exists, selectFrom }) =>
+        eb.or([
+          eb("o.resolution", "is", null),
+          eb("o.resolution", "!=", "exact-cancelled"),
+          not(
+            exists(
+              selectFrom("sandbox_operation_intents as ui")
+                .select("ui.operation_id")
+                .whereRef("ui.operation_id", "=", "m.ref_id")
+                .where("ui.state", "=", "revoked")
+                .where("ui.revoke_acknowledged", "=", false),
+            ),
+          ),
+        ]),
+      )
+      .where(({ eb, and }) =>
+        eb.not(and([eb("o.resolution", "=", "exact-cancelled"), eb("m.kind", "=", "legacy-task")])),
+      )
       .orderBy("m.created_at", "asc")
       .limit(limit)
       .execute();
