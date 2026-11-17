@@ -133,7 +133,8 @@
       "slug_taken": "This slug is already used by another organization.",
       "auto_mode_not_allowed": "The platform does not allow auto mode.",
       "network_allowance_invalid": "The internal endpoint is not valid: use a hostname, a *.domain wildcard, an IP address or CIDR, or an origin such as http://host:8080. Link-local, loopback (including localhost) and unspecified addresses are never allowed, nor wildcards over a public suffix.",
-      "network_allowance_not_found": "The organization has no such internal endpoint (it may have been removed already)."
+      "network_allowance_not_found": "The organization has no such internal endpoint (it may have been removed already).",
+      "network_allowance_widen_not_allowed": "Only a super admin in the admin console on the web can allow an internal endpoint, not an API token or the Platform tool."
     },
     "setup": {
       "already_completed": "Setup has already been completed.",
@@ -4137,13 +4138,13 @@
         "orgMemberRemoved": "Removed a member",
         "orgMemberRoleChanged": "Changed a member's role",
         "orgModelDisabledSet": "Switched a model on or off for the organization",
+        "orgNetworkAllowanceAdded": "Allowed an internal endpoint for the organization",
+        "orgNetworkAllowanceRemoved": "Removed an internal endpoint of the organization",
         "orgOwnershipTransferred": "Transferred the organization's ownership",
         "orgPluginConfigUpdated": "Changed a plugin's settings",
         "orgServiceTokenCreated": "Created a service token",
         "orgServiceTokenRevoked": "Revoked a service token",
         "orgSettingsUpdated": "Changed the organization settings",
-        "orgNetworkAllowanceAdded": "Allowed an internal endpoint for the organization",
-        "orgNetworkAllowanceRemoved": "Removed an internal endpoint of the organization",
         "orgUpdated": "Updated the organization's name or slug",
         "pluginOrgInstallFailed": "A plugin failed to install",
         "pluginOrgInstalled": "Installed a plugin",

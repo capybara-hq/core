@@ -11,10 +11,7 @@ import { DEPLOYMENT_SETTINGS_PATCH, SettingsService } from "../../identity/setti
 import { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import { MembersService } from "../../orgs/members.service.js";
-import {
-  allowanceEntryProblem,
-  OrgNetworkAllowances,
-} from "../../orgs/network-allowances.service.js";
+import { OrgNetworkAllowances } from "../../orgs/network-allowances.service.js";
 import { networkAllowanceView, OrgUpdateBody } from "../../orgs/orgs.schemas.js";
 import { type Org, OrgsService } from "../../orgs/orgs.service.js";
 import { defineOperation, type OperationContext } from "../operation.js";
@@ -264,7 +261,7 @@ export class OrgsOperations implements OnModuleInit {
       defineOperation({
         id: "admin.org-network-allowance-add",
         description:
-          "Let an org's extension requests reach an internal endpoint (super admin): entry is a hostname or *.domain wildcard (https, any port), an IP address or CIDR such as 10.1.0.0/16 (IP-literal URLs only), or an origin such as http://mcp.internal:8080 (exactly that scheme, host and port; plain http allowed). Link-local (cloud metadata), loopback and unspecified addresses are never allowed. Takes effect on the org's next request; an entry already listed is returned as is. The org's audit log records it.",
+          "Let an org's extension requests reach an internal endpoint (super admin): entry is a hostname or *.domain wildcard (https, any port), an IP address or CIDR such as 10.1.0.0/16 (IP-literal URLs only), or an origin such as http://mcp.internal:8080 (exactly that scheme, host and port; plain http allowed). Link-local (cloud metadata), loopback and unspecified addresses are never allowed. Only a person widens: through this tool the add is always refused, and the super admin adds the endpoint in the admin console on the web; listing and removing work here.",
         input: NetworkAllowanceBody.extend({ orgId: OrgId }).strict(),
         example: {
           orgId: "00000000-0000-4000-8000-000000000000",
@@ -280,18 +277,11 @@ export class OrgsOperations implements OnModuleInit {
             next: "Look the org up with orgs.list and pass its id.",
           },
           {
-            code: "org.network_allowance_invalid",
-            next: "Fix the entry as the message says: a hostname, *.domain, IP, CIDR or an origin such as http://host:8080; never link-local or loopback. An org holds at most 200 entries: remove unused ones first.",
+            code: "org.network_allowance_widen_not_allowed",
+            next: "Add the internal endpoint yourself on the org's page in the admin console on the web.",
           },
         ],
-        precheck: (i) =>
-          precheckBy(async () => {
-            await this.org(i.orgId);
-            const problem = allowanceEntryProblem(i.entry);
-            if (problem !== null) {
-              throw new ApiError("org.network_allowance_invalid", `${named(i.entry)}: ${problem}`);
-            }
-          }),
+        precheck: (i) => precheckBy(() => this.networkAdmin.checkAdd(i.orgId, i.entry, true)),
         summary: async (i) => {
           const name = await orElse(async () => named((await this.org(i.orgId)).name), i.orgId);
           const entry = named(i.entry.trim());
@@ -302,7 +292,7 @@ export class OrgsOperations implements OnModuleInit {
         },
         run: async (input, ctx) => ({
           allowance: networkAllowanceView(
-            await this.networkAdmin.add(input.orgId, input.entry, ctx.actorAccountId),
+            await this.networkAdmin.add(input.orgId, input.entry, ctx.actorAccountId, true),
           ),
         }),
       }),

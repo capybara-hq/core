@@ -3,6 +3,7 @@ import type { z } from "zod";
 import {
   CurrentPrincipal,
   type Principal,
+  patTokenId,
   requireUser,
   SuperAdmin,
 } from "../identity/principal.js";
@@ -40,7 +41,10 @@ export class AdminOrgNetworkController {
     return { allowances: (await this.admin.list(orgId)).map(networkAllowanceView) };
   }
 
-  /** Adds an entry; an invalid one → 400 `org.network_allowance_invalid` with the reason. */
+  /**
+   * Adds an entry; an invalid one → 400 `org.network_allowance_invalid` with the reason. Only a
+   * person widens: a personal access token → 400 `org.network_allowance_widen_not_allowed`.
+   */
   @Post()
   @HttpCode(201)
   async add(
@@ -49,7 +53,12 @@ export class AdminOrgNetworkController {
     @ZBody(NetworkAllowanceBodyDto) body: z.infer<typeof NetworkAllowanceBody>,
   ): Promise<{ allowance: NetworkAllowanceView }> {
     const actor = requireUser(principal);
-    const allowance = await this.admin.add(orgId, body.entry, actor.account.id);
+    const allowance = await this.admin.add(
+      orgId,
+      body.entry,
+      actor.account.id,
+      patTokenId(actor) !== undefined,
+    );
     return { allowance: networkAllowanceView(allowance) };
   }
 

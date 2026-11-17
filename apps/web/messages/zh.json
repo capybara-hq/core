@@ -133,7 +133,8 @@
       "slug_taken": "该 slug 已被其他组织使用。",
       "auto_mode_not_allowed": "平台不允许自动模式。",
       "network_allowance_invalid": "内部端点无效：请填写主机名、*.domain 通配符、IP 地址或 CIDR，或 http://host:8080 这样的源。链路本地、回环（包括 localhost）和未指定地址始终不允许，覆盖整个公共后缀的通配符也不允许。",
-      "network_allowance_not_found": "该组织没有这个内部端点（可能已被移除）。"
+      "network_allowance_not_found": "该组织没有这个内部端点（可能已被移除）。",
+      "network_allowance_widen_not_allowed": "只有超级管理员能在 Web 上的管理控制台里放行内部端点，API 令牌或 Platform 工具不可以。"
     },
     "setup": {
       "already_completed": "系统已完成初始化。",
@@ -4125,13 +4126,13 @@
         "orgMemberRemoved": "移除了成员",
         "orgMemberRoleChanged": "修改了成员角色",
         "orgModelDisabledSet": "为组织开启或关闭了模型",
+        "orgNetworkAllowanceAdded": "为组织放行了一个内部端点",
+        "orgNetworkAllowanceRemoved": "移除了组织的一个内部端点",
         "orgOwnershipTransferred": "转让了组织所有权",
         "orgPluginConfigUpdated": "修改了插件设置",
         "orgServiceTokenCreated": "创建了服务令牌",
         "orgServiceTokenRevoked": "撤销了服务令牌",
         "orgSettingsUpdated": "修改了组织设置",
-        "orgNetworkAllowanceAdded": "为组织放行了一个内部端点",
-        "orgNetworkAllowanceRemoved": "移除了组织的一个内部端点",
         "orgUpdated": "修改了组织名称或标识",
         "pluginOrgInstallFailed": "插件安装失败",
         "pluginOrgInstalled": "安装了插件",

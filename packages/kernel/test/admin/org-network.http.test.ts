@@ -169,6 +169,9 @@ describe("super admin routes", () => {
     const list = await root({ method: "GET", url: adminUrl(unknown) });
     expect(list.statusCode).toBe(404);
     expect(errCode(list)).toBe("org.not_found");
+    const del = await root({ method: "DELETE", url: `${adminUrl(unknown)}/${randomUUID()}` });
+    expect(del.statusCode).toBe(404);
+    expect(errCode(del)).toBe("org.not_found");
     const post = await root({
       method: "POST",
       url: adminUrl(unknown),
@@ -176,6 +179,31 @@ describe("super admin routes", () => {
     });
     expect(post.statusCode).toBe(404);
     expect(errCode(post)).toBe("org.not_found");
+  });
+
+  it("refuses an add through a personal access token; list and remove stay open", async () => {
+    const a = await add(orgId, "pat.example");
+    const { token } = await apiTokensFor(db).createPersonal(rootId, { name: "cli" });
+    const headers = { authorization: `Bearer ${token}` };
+    const post = await k.http.inject({
+      method: "POST",
+      url: adminUrl(orgId),
+      headers,
+      payload: { entry: "other.example" },
+    });
+    expect(post.statusCode).toBe(400);
+    expect(errCode(post)).toBe("org.network_allowance_widen_not_allowed");
+    const list = await k.http.inject({ method: "GET", url: adminUrl(orgId), headers });
+    expect(list.statusCode).toBe(200);
+    expect((list.json() as { allowances: View[] }).allowances.map((x) => x.entry)).toEqual([
+      "pat.example",
+    ]);
+    const del = await k.http.inject({
+      method: "DELETE",
+      url: `${adminUrl(orgId)}/${a.id}`,
+      headers,
+    });
+    expect(del.statusCode).toBe(204);
   });
 
   it("is closed to anyone but a super admin", async () => {
@@ -256,58 +284,79 @@ describe("Platform operations", () => {
     });
   };
 
+  /** The `ApiError` code a raw `op.run` rejects with. */
+  const codeOf = async (id: string, input: unknown, ctx: OperationContext = ctxOf(rootId)) => {
+    const o = op(id);
+    try {
+      await o.run(o.input.parse(input), ctx);
+    } catch (e) {
+      return (e as { code?: string }).code;
+    }
+    throw new Error(`${id} did not refuse`);
+  };
+
   it("mirror the routes and return the same rows", async () => {
-    const added = (await run("admin.org-network-allowance-add", {
-      orgId: otherOrgId,
-      entry: "https://git.beta.example:8443",
-    })) as { allowance: View };
-    expect(added.allowance.entry).toBe("https://git.beta.example:8443");
+    const added = await add(otherOrgId, "https://git.beta.example:8443");
 
     const listed = (await run("admin.org-network-allowances", { orgId: otherOrgId })) as {
       allowances: { id: string; entry: string; createdAt: Date }[];
     };
     const http = await root({ method: "GET", url: adminUrl(otherOrgId) });
     expect(JSON.parse(JSON.stringify(listed))).toEqual(http.json());
+    expect(listed.allowances.map((a) => a.id)).toContain(added.id);
 
     const read = (await run("orgs.network-allowances", {}, ctxOf(rootId, otherOrgId))) as unknown;
     expect(JSON.parse(JSON.stringify(read))).toEqual(http.json());
 
     expect(
-      await run("admin.org-network-allowance-remove", {
-        orgId: otherOrgId,
-        id: added.allowance.id,
-      }),
-    ).toEqual({ id: added.allowance.id, removed: true });
+      await run("admin.org-network-allowance-remove", { orgId: otherOrgId, id: added.id }),
+    ).toEqual({ id: added.id, removed: true });
     const rows = await auditRows(otherOrgId);
     expect(rows.at(-1)).toMatchObject({
       action: "org.network_allowance_removed",
-      target: added.allowance.id,
+      target: added.id,
     });
   });
 
-  it("precheck refuses an invalid entry and a missing id before the card", async () => {
+  it("refuse an add (only a person widens), in the precheck and in the run", async () => {
     const addOp = op("admin.org-network-allowance-add");
+    for (const entry of ["widen.example", "169.254.169.254"]) {
+      expect(
+        await addOp.precheck?.(addOp.input.parse({ orgId, entry }), ctxOf(rootId)),
+      ).toMatchObject({ ok: false, code: "org.network_allowance_widen_not_allowed" });
+    }
+    expect(await codeOf("admin.org-network-allowance-add", { orgId, entry: "widen.example" })).toBe(
+      "org.network_allowance_widen_not_allowed",
+    );
     expect(
-      await addOp.precheck?.(addOp.input.parse({ orgId, entry: "169.254.169.254" }), ctxOf(rootId)),
-    ).toMatchObject({ ok: false, code: "org.network_allowance_invalid" });
-    expect(
-      await addOp.precheck?.(addOp.input.parse({ orgId, entry: "mcp.internal" }), ctxOf(rootId)),
-    ).toEqual({ ok: true });
+      (await auditRows(orgId)).some((r) => JSON.stringify(r.detail).includes("widen.example")),
+    ).toBe(false);
+  });
+
+  it("remove: precheck and run refuse a missing id and a missing org", async () => {
     const removeOp = op("admin.org-network-allowance-remove");
     expect(
       await removeOp.precheck?.(removeOp.input.parse({ orgId, id: randomUUID() }), ctxOf(rootId)),
     ).toMatchObject({ ok: false, code: "org.network_allowance_not_found" });
+    expect(await codeOf("admin.org-network-allowance-remove", { orgId, id: randomUUID() })).toBe(
+      "org.network_allowance_not_found",
+    );
+    const unknown = { orgId: randomUUID(), id: randomUUID() };
+    expect(await removeOp.precheck?.(removeOp.input.parse(unknown), ctxOf(rootId))).toMatchObject({
+      ok: false,
+      code: "org.not_found",
+    });
+    expect(await codeOf("admin.org-network-allowance-remove", unknown)).toBe("org.not_found");
   });
 
-  it("a write by an account that is no super admin is refused", async () => {
-    await expect(
-      run("admin.org-network-allowance-add", { orgId, entry: "x.example" }, ctxOf(ownerId)),
-    ).rejects.toThrow();
+  it("a write by an account that is no super admin is refused with forbidden", async () => {
+    const a = await add(orgId, "keep.example");
     expect(
-      (await auditRows(orgId)).some(
-        (r) => r.detail && JSON.stringify(r.detail).includes("x.example"),
-      ),
-    ).toBe(false);
+      await codeOf("admin.org-network-allowance-remove", { orgId, id: a.id }, ctxOf(ownerId)),
+    ).toBe("forbidden");
+    const list = await root({ method: "GET", url: adminUrl(orgId) });
+    expect((list.json() as { allowances: View[] }).allowances.map((x) => x.id)).toContain(a.id);
+    await root({ method: "DELETE", url: `${adminUrl(orgId)}/${a.id}` });
   });
 
   it("declares the route's authorization", () => {
