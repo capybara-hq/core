@@ -23,6 +23,7 @@ import {
   bootstrapFileName,
   type Connector,
   type ConnectorSession,
+  type ExtensionNet,
   type ModelProvider,
   type ObjectStore,
   SDK_VERSION,
@@ -54,6 +55,9 @@ import {
   type TestKernel,
   type TestS3,
 } from "../src/index.js";
+
+/** A `ctx.net` stand-in for fakes created without a kernel: a plain fetch to loopback servers. */
+const directNet: ExtensionNet = { fetch: (url, init) => fetch(url, init) };
 
 /**
  * The fake extensions of `fixtures/extensions` (see src/fixtures.ts): each packs with the plugin
@@ -205,6 +209,7 @@ const baseConfig = (pgUrl: string, redisUrl: string, over: Record<string, unknow
     http: { port: 0 },
     extensionPermissions: { autoApprove: true },
     marketplaces: { official: { enabled: false } },
+    net: { allowInsecureLoopback: true },
     log: { level: "error" },
     ...over,
   });
@@ -510,7 +515,7 @@ describe("loaded by path in a kernel", () => {
     it("inspect: the deployment config picks the hint behind 401 (api_key)", async () => {
       const locked = await startFakeMcpServer({ tools: [], requireBearer: "t" });
       try {
-        const c = createFakeConnector(true, "api_key");
+        const c = createFakeConnector(directNet, "api_key");
         expect(
           await c.inspect?.({
             endpoint: { url: locked.url },
@@ -526,8 +531,8 @@ describe("loaded by path in a kernel", () => {
     });
 
     it("the deployment config names the kind (default fake)", () => {
-      expect(createFakeConnector(true).kind).toBe("fake");
-      expect(createFakeConnector(true, "bearer", "mcp").kind).toBe("mcp");
+      expect(createFakeConnector(directNet).kind).toBe("fake");
+      expect(createFakeConnector(directNet, "bearer", "mcp").kind).toBe("mcp");
     });
 
     it("a route change without a rename changes connectorData; calls keep the given spec's route", async () => {
@@ -1067,7 +1072,7 @@ describe("fake-openapi (connector kind openapi)", () => {
     await new Promise<void>((r) => server.close(() => r()));
   });
   const signal = new AbortController().signal;
-  const c = createFakeOpenApiConnector(true);
+  const c = createFakeOpenApiConnector(directNet);
   const endpoint = (over: Record<string, unknown> = {}) => ({
     specUrl: `${base}/doc.json`,
     ...over,

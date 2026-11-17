@@ -6,6 +6,7 @@ import {
   type ConnectorOpenArgs,
   type ConnectorSession,
   defineExtension,
+  type ExtensionNet,
   ToolError,
   type ToolResult,
   type ToolSpec,
@@ -28,7 +29,8 @@ import { z } from "zod";
  * ```
  *
  * - `endpointSchema`: `{ specUrl, baseUrl?, operations? }` (the wizard's OpenAPI endpoint without
- *   `specText`), https or (with `allowInsecureLoopback`, default on) loopback http;
+ *   `specText`), https or loopback http (the kernel's `ctx.net` decides what is
+ *   reachable: test kernels set `net.allowInsecureLoopback`);
  * - `inspect`: the document's security schemes as auth hints (`{ scheme, ...value }`) and its
  *   operations (`id` = name);
  * - a session lists one tool per operation (all, or the endpoint's `operations`), named by the
@@ -39,26 +41,21 @@ import { z } from "zod";
  *   kind `unavailable`.
  */
 
-const DeploymentConfig = z.object({
-  /** Accept http://127.0.0.1 / localhost / [::1] URLs (on by default: this is a test fake). */
-  allowInsecureLoopback: z.boolean().default(true),
-});
-
 const isLoopbackHttp = (u: URL): boolean =>
   u.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(u.hostname);
 
-const urlOk = (raw: string, loopback: boolean): boolean => {
+const urlOk = (raw: string): boolean => {
   try {
     const u = new URL(raw);
-    return u.protocol === "https:" || (loopback && isLoopbackHttp(u));
+    return u.protocol === "https:" || isLoopbackHttp(u);
   } catch {
     return true; // z.url() reports the format error
   }
 };
 
 /** The endpoint: the document URL, an optional API base URL and the selected operations. */
-export function fakeOpenApiEndpointSchema(allowInsecureLoopback: boolean) {
-  const url = z.url().refine((v) => urlOk(v, allowInsecureLoopback), {
+export function fakeOpenApiEndpointSchema() {
+  const url = z.url().refine(urlOk, {
     message: "URL must use https (plain http only for loopback hosts)",
   });
   return z
@@ -104,10 +101,15 @@ const UNREACHABLE_TEXT = "Could not reach the connector's server; retry later.";
 const AUTH_FAILED_TEXT = "Authentication failed for this connector; ask the user to reconnect it.";
 
 /** Reads the operations document (no credentials: like an OpenAPI document, it is public). */
-async function loadDoc(endpoint: Endpoint, signal: AbortSignal): Promise<Doc> {
+async function loadDoc(
+  net: ExtensionNet,
+  orgId: string,
+  endpoint: Endpoint,
+  signal: AbortSignal,
+): Promise<Doc> {
   let res: Response;
   try {
-    res = await fetch(endpoint.specUrl, { signal, redirect: "manual" });
+    res = await net.fetch(endpoint.specUrl, { signal, redirect: "manual" }, { orgId });
   } catch {
     throw new ToolError(UNREACHABLE_TEXT, { kind: "unavailable" });
   }
@@ -143,8 +145,12 @@ const INPUT_SCHEMA = {
 const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
-async function openSession(endpoint: Endpoint, args: ConnectorOpenArgs): Promise<ConnectorSession> {
-  const doc = await loadDoc(endpoint, args.signal);
+async function openSession(
+  net: ExtensionNet,
+  endpoint: Endpoint,
+  args: ConnectorOpenArgs,
+): Promise<ConnectorSession> {
+  const doc = await loadDoc(net, args.orgId, endpoint, args.signal);
   const base = endpoint.baseUrl ?? doc.baseUrl ?? new URL(endpoint.specUrl).origin;
   const ops = selected(doc, endpoint);
   return {
@@ -178,13 +184,17 @@ async function openSession(endpoint: Endpoint, args: ConnectorOpenArgs): Promise
         const headers = new Headers(inj.headers);
         if (body !== undefined) headers.set("content-type", "application/json");
         try {
-          return await fetch(url, {
-            method,
-            headers,
-            ...(body !== undefined && { body }),
-            signal: AbortSignal.any([signal, args.signal]),
-            redirect: "manual",
-          });
+          return await net.fetch(
+            url.toString(),
+            {
+              method,
+              headers,
+              ...(body !== undefined && { body }),
+              signal: AbortSignal.any([signal, args.signal]),
+              redirect: "manual",
+            },
+            { orgId: args.orgId },
+          );
         } catch (e) {
           if (signal.aborted || args.signal.aborted) throw e;
           throw new ToolError(UNREACHABLE_TEXT, { kind: "unavailable" });
@@ -221,8 +231,13 @@ async function openSession(endpoint: Endpoint, args: ConnectorOpenArgs): Promise
   };
 }
 
-async function inspect(endpoint: Endpoint, signal: AbortSignal): Promise<ConnectorInspection> {
-  const doc = await loadDoc(endpoint, signal);
+async function inspect(
+  net: ExtensionNet,
+  orgId: string,
+  endpoint: Endpoint,
+  signal: AbortSignal,
+): Promise<ConnectorInspection> {
+  const doc = await loadDoc(net, orgId, endpoint, signal);
   return {
     authHints: hintsOf(doc),
     operations: doc.operations.map((o) => ({
@@ -235,13 +250,13 @@ async function inspect(endpoint: Endpoint, signal: AbortSignal): Promise<Connect
 }
 
 /** Creates the fake OpenAPI connector (exported for unit tests that call it without a kernel). */
-export function createFakeOpenApiConnector(allowInsecureLoopback: boolean): Connector {
-  const schema = fakeOpenApiEndpointSchema(allowInsecureLoopback);
+export function createFakeOpenApiConnector(net: ExtensionNet): Connector {
+  const schema = fakeOpenApiEndpointSchema();
   return {
     kind: "openapi",
     endpointSchema: schema,
-    open: (args) => openSession(schema.parse(args.endpoint), args),
-    inspect: ({ endpoint, signal }) => inspect(schema.parse(endpoint), signal),
+    open: (args) => openSession(net, schema.parse(args.endpoint), args),
+    inspect: ({ endpoint, signal, orgId }) => inspect(net, orgId, schema.parse(endpoint), signal),
   };
 }
 
@@ -250,9 +265,7 @@ export default defineExtension({
   version: "0.1.0",
   sdk: "^0.1.0-rc.0",
   provides: [CONNECTOR_EXTENSION_POINT],
-  config: { deployment: DeploymentConfig },
   setup(ctx) {
-    const { allowInsecureLoopback } = DeploymentConfig.parse(ctx.config ?? {});
-    ctx.provide(CONNECTOR_EXTENSION_POINT, createFakeOpenApiConnector(allowInsecureLoopback));
+    ctx.provide(CONNECTOR_EXTENSION_POINT, createFakeOpenApiConnector(ctx.net));
   },
 });
