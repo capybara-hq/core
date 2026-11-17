@@ -42,6 +42,7 @@ import {
   isDeviceName,
   renameDevice,
   resetDeviceFiles,
+  resetPollInterval,
   revokeDeviceMachine,
 } from "../../../../lib/devices";
 import { extensionLabel, labelLocale } from "../../../../lib/extension-label";
@@ -81,18 +82,11 @@ export default function DeviceView({ id }: { id: string }) {
 function DevicePage({ orgId, id }: { orgId: string; id: string }) {
   const t = useTranslations("devices");
   const scope = usePagePath("org");
-  // 重建文件 is a job: after the request the page polls until the files are back
-  const [resetting, setResetting] = useState(false);
+  // 重建文件 is a job: after the request the page polls until the files are back, within a deadline
+  const [resetAt, setResetAt] = useState<number | null>(null);
   const read = usePageQuery({
     ...deviceQuery(orgId, id),
-    refetchInterval: (q) => {
-      const d = q.state.data?.device;
-      return resetting &&
-        d !== undefined &&
-        (d.filesLost || d.mode.pendingFilesReset || d.reconcileRequired)
-        ? RESET_POLL_MS
-        : false;
-    },
+    refetchInterval: (q) => resetPollInterval(q.state.data?.device, resetAt, Date.now()),
   });
   if (read.kind === "notFound") return <NotFound />;
   if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
@@ -126,12 +120,13 @@ function DevicePage({ orgId, id }: { orgId: string; id: string }) {
     );
   }
   return (
-    <Detail orgId={orgId} device={read.data.device} onResetScheduled={() => setResetting(true)} />
+    <Detail
+      orgId={orgId}
+      device={read.data.device}
+      onResetScheduled={() => setResetAt(Date.now())}
+    />
   );
 }
-
-/** How often the page reads the device while a file reset it requested is pending. */
-const RESET_POLL_MS = 1500;
 
 type Dialogs = "rename" | "reset" | "delete" | "revoke" | null;
 

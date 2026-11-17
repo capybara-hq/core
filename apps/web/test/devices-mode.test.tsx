@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import { CEILING_COMMAND } from "../src/components/DeviceModeSection";
+import { RESET_POLL_DEADLINE_MS, RESET_POLL_MS, resetPollInterval } from "../src/lib/devices";
 import { keys } from "../src/lib/query/keys";
 import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
@@ -845,6 +846,34 @@ describe("the recent changes", () => {
     expect(meta).toContain(E.recent.via.device);
     expect(meta).not.toContain(E.recent.unknownBy);
     expect(meta).not.toContain("Ada");
+  });
+});
+
+describe("polling after a file reset", () => {
+  const at = 1_000_000;
+  const state = (over: Record<string, unknown> = {}) => ({
+    filesLost: false,
+    reconcileRequired: false,
+    mode: { pendingFilesReset: false },
+    ...over,
+  });
+
+  it("polls while a reset is pending and stops once nothing waits for it", () => {
+    expect(resetPollInterval(state({ filesLost: true }), at, at + 1)).toBe(RESET_POLL_MS);
+    expect(resetPollInterval(state({ reconcileRequired: true }), at, at + 1)).toBe(RESET_POLL_MS);
+    expect(resetPollInterval(state({ mode: { pendingFilesReset: true } }), at, at + 1)).toBe(
+      RESET_POLL_MS,
+    );
+    expect(resetPollInterval(state(), at, at + 1)).toBe(false);
+    // no reset requested: never polls
+    expect(resetPollInterval(state({ filesLost: true }), null, at)).toBe(false);
+    expect(resetPollInterval(undefined, at, at)).toBe(false);
+  });
+
+  it("never polls forever: a marker that stays set stops polling at the deadline", () => {
+    const marked = state({ reconcileRequired: true });
+    expect(resetPollInterval(marked, at, at + RESET_POLL_DEADLINE_MS - 1)).toBe(RESET_POLL_MS);
+    expect(resetPollInterval(marked, at, at + RESET_POLL_DEADLINE_MS)).toBe(false);
   });
 });
 

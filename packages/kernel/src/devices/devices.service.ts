@@ -133,7 +133,8 @@ export interface DeviceOwnerCeilingView {
   fullAccess: boolean;
   /**
    * Whether the owner's side allows Full access as the kernel applies it: a cloud device's ceiling
-   * narrowed by its old sandbox switch (`cloudChosenMode`); a local machine's reported ceiling.
+   * narrowed by its old sandbox switch (`cloudChosenMode`); a local machine's derived mode
+   * (`ownerModeOf`: its report, else an older program's mode or isolation), as admission reads it.
    * The platform and the org may still cut it ({@link DeviceModeView.allowedMode}).
    */
   effectiveFullAccess: boolean;
@@ -1749,6 +1750,7 @@ function ownerCeilingViewOf(
   r: {
     source: "cloud" | "local";
     machine_id: string | null;
+    machine_features: unknown;
     machine_local_policy: unknown;
     machine_owner_report: unknown;
     owner_full_access: boolean | null;
@@ -1780,7 +1782,13 @@ function ownerCeilingViewOf(
     revision: f.revision,
     sequence: f.sequence,
     fullAccess: f.fullAccess,
-    effectiveFullAccess: f.fullAccess,
+    // the mode admission derives (an old program without a report included), fail closed
+    effectiveFullAccess:
+      ownerModeOf({
+        features: r.machine_features,
+        local_policy: r.machine_local_policy,
+        owner_report: r.machine_owner_report,
+      }) === "auto",
     restrictedProjectReach: f.restrictedProjectReach,
     restrictedAllowedDomains: f.restrictedAllowedDomains,
     observedAt: f.observedAt,

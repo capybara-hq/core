@@ -196,6 +196,30 @@ export function deviceState(e: Device): DeviceState {
   return e.instance?.status ?? "notStarted";
 }
 
+/** How often the device page reads a device while a file reset it requested is pending. */
+export const RESET_POLL_MS = 1500;
+/** How long the page polls after a file reset at most: a marker that stays set never polls forever. */
+export const RESET_POLL_DEADLINE_MS = 120_000;
+
+/**
+ * The device page's poll after a file reset (`startedAt`: when it was requested, null for none):
+ * every {@link RESET_POLL_MS} while the files are lost, a change waits for the reset or the sandbox
+ * limits must be established again, and never past {@link RESET_POLL_DEADLINE_MS}.
+ */
+export function resetPollInterval(
+  d:
+    | (Pick<Device, "filesLost" | "reconcileRequired"> & {
+        mode: Pick<DeviceModeView, "pendingFilesReset">;
+      })
+    | undefined,
+  startedAt: number | null,
+  now: number,
+): number | false {
+  if (d === undefined || startedAt === null || now - startedAt >= RESET_POLL_DEADLINE_MS)
+    return false;
+  return d.filesLost || d.mode.pendingFilesReset || d.reconcileRequired ? RESET_POLL_MS : false;
+}
+
 /**
  * A device's name for people: its own name, else 个人设备 / "Personal" for the default, else
  * for a former default 个人设备（Docker 沙箱） / "Personal (Docker sandbox)" (the provider's display
