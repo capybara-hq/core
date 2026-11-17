@@ -1,6 +1,7 @@
 // biome-ignore-all lint/suspicious/noExplicitAny: test handles over an untyped Kysely
 import { EventLog } from "../../src/conversations/event-log.js";
 import { XactLock } from "../../src/infra/database/xact-lock.js";
+import { LegacyRetirementStore } from "../../src/sandbox/legacy-retirement.js";
 import { PermissionAuthorityEpochStore } from "../../src/sandbox/permission-authority-epochs.js";
 import { PermissionAuthorityLock } from "../../src/sandbox/permission-authority-lock.js";
 import { PermissionCeilingWrites } from "../../src/sandbox/permission-ceiling-writes.js";
@@ -332,6 +333,16 @@ export function ceilingWritesOver(
     lock,
     new PermissionAuthorityEpochStore(h.db, h.txHost, lock),
     new OutboxService(h.txHost, h.db, quiet, async () => {}),
+  );
+}
+
+/** The legacy retirement store (8.5) over `db`'s handles. */
+export function retirementFor(db: Kysely<any>): LegacyRetirementStore {
+  const h = handlesFor(db);
+  return new LegacyRetirementStore(
+    h.db,
+    h.txHost,
+    new PermissionAuthorityLock(h.db, h.txHost, new XactLock(h.db, h.txHost)),
   );
 }
 

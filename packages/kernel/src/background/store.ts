@@ -213,7 +213,8 @@ export class BackgroundTaskStore {
   async reserve(row: BackgroundTaskReservation, maxTasks: number): Promise<boolean> {
     await this.launchLock.lock(row.sandboxConversationId);
     if ((await this.countRunning(row.sandboxConversationId)) >= maxTasks) return false;
-    await this.insert({ ...row, sid: null, sandboxCreatedAt: null });
+    // not admitted for dispatch yet (0148): the launch's freeze check marks it `dispatched`
+    await this.insert({ ...row, sid: null, sandboxCreatedAt: null }, "reserved");
     return true;
   }
 
@@ -422,10 +423,18 @@ export class BackgroundTaskStore {
     }));
   }
 
-  async insert(row: BackgroundTaskInsert): Promise<void> {
+  /**
+   * Inserts a legacy row. `legacyDispatch` (0148) defaults to `unknown`: a row is "never
+   * dispatched" only when its reservation says so.
+   */
+  async insert(
+    row: BackgroundTaskInsert,
+    legacyDispatch: "unknown" | "reserved" = "unknown",
+  ): Promise<void> {
     await this.db
       .insertInto("background_tasks")
       .values({
+        legacy_dispatch: legacyDispatch,
         id: row.id,
         org_id: row.orgId,
         conversation_id: row.conversationId,

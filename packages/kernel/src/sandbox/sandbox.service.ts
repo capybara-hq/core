@@ -88,6 +88,7 @@ import {
   type SandboxPathLease,
   sandboxBusy,
 } from "./leases.js";
+import { isCloudProvider, LegacyRetirementStore } from "./legacy-retirement.js";
 import {
   type AppliedLimits,
   appliedOf,
@@ -445,6 +446,21 @@ const otherProvider = (provider: string): ApiError =>
     `This device's files are kept by the sandbox provider ${provider}, which is not the current provider; it can be used again once ${provider} is the deployment's sandbox provider`,
   );
 
+/**
+ * The device's old instance incarnation may still run legacy work that was never retired (503):
+ * the device stays unavailable until the provider confirms that incarnation destroyed, or for
+ * good when it is quarantined (permission runtime cutover 8.5). Never a retirement claim.
+ */
+export const retirementPending = (): ApiError =>
+  new ApiError(
+    "device.unavailable",
+    "This device is unavailable: background work started by an earlier version may still run on its previous instance, and that instance has not been confirmed destroyed. A cloud device becomes usable once its provider confirms the old instance destroyed; a local machine stays unavailable until an administrator replaces it.",
+  );
+const isRetirementPending = (err: unknown): boolean =>
+  err instanceof ApiError &&
+  err.code === "device.unavailable" &&
+  err.message.startsWith("This device is unavailable: background work");
+
 const abortReason = (signal: AbortSignal): unknown =>
   signal.reason ?? new DOMException("This operation was aborted", "AbortError");
 
@@ -573,6 +589,18 @@ export class SandboxService {
     @Inject(SandboxOperationIntents) private readonly operationIntents: SandboxOperationIntents,
     @Inject(SandboxOperationAuthority) private readonly authority: SandboxOperationAuthority,
     @Inject(PermissionInstanceWrites) private readonly instanceWrites: PermissionInstanceWrites,
+    /** The retirement obligations every lifecycle acquisition is gated on (8.5). */
+    @Inject(LegacyRetirementStore)
+    private readonly retirement: Pick<
+      LegacyRetirementStore,
+      | "unresolved"
+      | "hasUnresolved"
+      | "quarantine"
+      | "noteFailure"
+      | "resolveDestroyed"
+      | "recordDestruction"
+      | "destructionRecorded"
+    >,
   ) {}
 
   /** Poll interval while waiting for a lease (the leases' own). */
@@ -1519,7 +1547,9 @@ export class SandboxService {
         // an instance whose mode or network must change goes through the exclusive lease
         const ready = (r: Row | undefined): r is Row & { handle: SandboxHandle } =>
           this.usable(r, p, gone) && !this.mustApply(r, p, want);
-        if (ready(row)) {
+        // a device with an unresolved retirement obligation is only entered through the
+        // exclusive lease, whose gate retires the old incarnation or refuses (8.5)
+        if (!(await this.retirement.hasUnresolved(env)) && ready(row)) {
           const lease = await this.leases.tryShared(env, this.cap, token);
           if (lease) {
             if (intent) await this.clearIntent(env, token);
@@ -1535,7 +1565,9 @@ export class SandboxService {
               }
             }
             const e = await this.asShared(ctx, p, lease, ready, signal);
-            if (e) return e;
+            // an obligation recorded while the shared lease was taken: back to the gate
+            if (e && (await this.retirement.hasUnresolved(env))) await this.leave(env, e);
+            else if (e) return e;
           }
         } else {
           const lease = await this.leases.tryExclusive(env, { token, intent: true });
@@ -1959,6 +1991,140 @@ export class SandboxService {
   }
 
   /**
+   * The worker's retirement of a device's old incarnations (8.5, `RetireLegacyTasksJob`): one try
+   * at the exclusive lifecycle lease, then the same gate as every acquisition. `busy`: a holder
+   * has the device (the inline gate runs on its next lifecycle acquisition anyway); `unavailable`:
+   * an obligation stays (quarantined, or a destroy that failed); `clear`: none left.
+   */
+  async retireLegacy(deviceId: string): Promise<"clear" | "unavailable" | "busy"> {
+    const lease = await this.leases.tryExclusive(deviceId);
+    if (!lease) return "busy";
+    try {
+      const row = await this.db
+        .selectFrom("device_instances")
+        .selectAll()
+        .where("device_id", "=", deviceId)
+        .executeTakeFirst();
+      const fence = row ? { gen: row.generation } : null;
+      if (row && fence) await this.fenced(lease, deviceId, fence, {});
+      await this.retireIncarnations(deviceId, lease, row, fence);
+      return "clear";
+    } catch (err) {
+      if (isRetirementPending(err)) return "unavailable";
+      throw err;
+    } finally {
+      await lease.release();
+    }
+  }
+
+  /**
+   * The retirement gate (permission runtime cutover 8.5), under the exclusive lifecycle lease and
+   * before the instance is used, resumed, rebuilt, switched to another provider, bound or
+   * downgraded to shared use: every unresolved obligation of the device is settled here or the
+   * device is unavailable ({@link retirementPending}).
+   * - The obligation names the **current** incarnation (provider and exact generation): a cloud
+   *   one is destroyed whole by its provider (never resumed, never `killAll`ed, the file system
+   *   kept), the confirmed destruction is recorded and the row reads `destroyed`, so the use
+   *   creates a fresh instance; a failed destroy keeps the obligation. A kernel-internal (local)
+   *   one is quarantined: its destroy is a no-op and a restart proves nothing.
+   * - It names an incarnation that is **not current** (replaced, a reused handle with another
+   *   generation, unknown): resolved only by a recorded provider-confirmed destruction of exactly
+   *   it, else quarantined. A newer generation is never evidence.
+   * Returns the row as it is afterwards.
+   */
+  private async retireIncarnations(
+    id: string,
+    held: SandboxLease,
+    row: Row | undefined,
+    fence: Fence | null,
+  ): Promise<Row | undefined> {
+    const open = await this.retirement.unresolved(id);
+    let now = row;
+    // every obligation is tried (one that stays never hides another that can resolve); the
+    // device is refused at the end while any stays
+    let pending = false;
+    for (const o of open) {
+      const gen = o.instanceGeneration;
+      const current =
+        now !== undefined &&
+        now.handle !== null &&
+        (now.status === "running" || now.status === "suspended" || now.status === "creating") &&
+        now.provider === o.provider &&
+        String(now.created_at.getTime()) === gen;
+      if (current && now?.handle) {
+        if (!isCloudProvider(o.provider)) {
+          await this.retirement.quarantine(
+            o.id,
+            "local instance: no trusted evidence that the processes of its legacy work ended",
+          );
+          pending = true;
+          continue;
+        }
+        const impl = this.providers.forName(o.provider)?.impl;
+        if (!impl) {
+          await this.retirement.noteFailure(o.id, `provider ${o.provider} is not loaded`);
+          pending = true;
+          continue;
+        }
+        try {
+          await impl.destroy(now.handle, opSignal(held));
+        } catch (err) {
+          if (held.signal.aborted) throw err;
+          await this.retirement.noteFailure(o.id, err);
+          this.log.warn("cannot destroy an instance that may run legacy work; device unavailable", {
+            deviceId: id,
+            err,
+          });
+          pending = true;
+          continue;
+        }
+        if (!(await held.renew())) throw new SandboxLockLostError(id);
+        await this.retirement.recordDestruction(id, o.provider, gen);
+        if (fence)
+          await this.fenced(held, id, fence, {
+            status: "destroyed",
+            destroyed_at: sql<Date>`now()`,
+            running_since: null,
+            suspended_at: null,
+            sweep_failed_at: null,
+          });
+        await this.retirement.resolveDestroyed(o.id);
+        this.log.info("instance that may run legacy work destroyed", { deviceId: id });
+        now = await this.db
+          .selectFrom("device_instances")
+          .selectAll()
+          .where("device_id", "=", id)
+          .executeTakeFirst();
+        continue;
+      }
+      // the existing whole-instance destroy left the row `destroyed` on exactly this incarnation
+      // with nothing kept for a later retry: the provider confirmed it
+      const destroyedHere =
+        now !== undefined &&
+        now.status === "destroyed" &&
+        now.provider === o.provider &&
+        String(now.created_at.getTime()) === gen &&
+        now.prev_handle === null &&
+        isCloudProvider(o.provider);
+      if (destroyedHere || (await this.retirement.destructionRecorded(id, o.provider, gen))) {
+        await this.retirement.resolveDestroyed(o.id);
+        continue;
+      }
+      await this.retirement.quarantine(
+        o.id,
+        !isCloudProvider(o.provider)
+          ? "local instance: no trusted evidence that the processes of its legacy work ended"
+          : gen === "unknown"
+            ? "the instance a possibly dispatched legacy launch ran in is unknown"
+            : "the old instance was replaced without a recorded confirmed destruction",
+      );
+      pending = true;
+    }
+    if (pending) throw retirementPending();
+    return now;
+  }
+
+  /**
    * Under the exclusive lease (before the downgrade), on an instance just resumed from
    * `suspended`: kills every command left in it (`killAll`), crashed holders' (`dead`, already
    * claimed) included. Never on the shared path: other holders may be running commands. A gone
@@ -2170,17 +2336,21 @@ export class SandboxService {
       .where("deleted_at", "is", null)
       .executeTakeFirst();
     if (!live) throw deviceNotFound();
-    const row = await this.db
+    const read = await this.db
       .selectFrom("device_instances")
       .selectAll()
       .where("device_id", "=", id)
       .executeTakeFirst();
-    if (!row) throw deviceNotFound();
-    if (row.org_id !== ctx.orgId) throw this.foreign(ctx);
-    const fence = { gen: row.generation };
+    if (!read) throw deviceNotFound();
+    if (read.org_id !== ctx.orgId) throw this.foreign(ctx);
+    const fence = { gen: read.generation };
     // Every acquisition first does a fenced increment: an old holder whose lease expired while it
     // kept running (a stalled sweep) then fails its next write.
     await this.fenced(held, id, fence, {});
+    // the retirement gate (8.5), before any use, resume, rebuild, provider switch or bind: an
+    // old incarnation that may run legacy work is destroyed (cloud, confirmed) or refuses
+    signal.throwIfAborted();
+    const row = (await this.retireIncarnations(id, held, read, fence)) ?? read;
     if (row.fs_status === "lost") throw deviceFilesLost(p.plugin === LOCAL_PROVIDER);
     if (
       row.provider !== null &&
@@ -2673,6 +2843,11 @@ export class SandboxService {
     const fence = { gen: row.generation };
     const signal = opSignal(held);
     const prev = await this.destroyInstance(row, p, signal);
+    // the provider's destroy resolved: confirmed destruction of exactly this cloud incarnation
+    // (8.5 evidence); a kernel-internal (local) destroy is a no-op and is never recorded
+    const owner = row.provider ?? p.plugin;
+    if (row.handle && owner === p.plugin && isCloudProvider(owner))
+      await this.retirement.recordDestruction(id, owner, String(row.created_at.getTime()));
     if (mode === "device") await this.destroyFiles(row, p, signal);
     if (!(await held.renew())) throw new SandboxLockLostError(id);
     if (mode === "instance") {

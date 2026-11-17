@@ -20,6 +20,7 @@ import {
 } from "../../../background/launch.js";
 import { KILL_SESSION_TIMEOUT_MS, killSession, SID_RE } from "../../../background/session.js";
 import type { BackgroundTaskRow } from "../../../background/store.js";
+import { runOutsideTransaction } from "../../../infra/database/transaction-host.js";
 import { operationIdFor } from "../../../sandbox/operation-intents.js";
 import type { BuiltinCallContext, BuiltinResult, BuiltinTool } from "../../registry.js";
 import {
@@ -310,6 +311,24 @@ async function runInBackground(
         const v = f ? new TextDecoder().decode(f.data).trim() : "";
         return SID_RE.test(v) ? v : null;
       };
+      // immediately before the dispatch (0148): refused once the legacy-launch freeze is
+      // published, else the reservation is marked as possibly dispatched in the same step
+      const legacyLaunch = deps.legacyLaunch;
+      if (legacyLaunch) {
+        const admission = await runOutsideTransaction(() =>
+          legacyLaunch.admitLegacyDispatch(ctx.orgId, id),
+        );
+        if (admission === "frozen")
+          return {
+            kind: "not_started",
+            why: "background tasks are being upgraded on this deployment and cannot be started with the old launcher",
+          } satisfies Launch;
+        if (admission === "gone")
+          return {
+            kind: "not_started",
+            why: "its task record was finished meanwhile",
+          } satisfies Launch;
+      }
       let r: ExecResult;
       try {
         r = await p.exec(h, {

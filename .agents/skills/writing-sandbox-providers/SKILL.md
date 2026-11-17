@@ -138,6 +138,15 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   instance, under the exclusive lease next to its `killAll`. The poll and `TaskOutput` / `TaskStop` use `SandboxService.ifRunning`: a shared
   lease only on a `running` row of the task's instance, never creating or resuming one. sandbox-fake puts node shims for `setsid`,
   `timeout`, `pkill -s` and `pgrep -s` first on its PATH (macOS has none) and kills an instance's processes on `suspend` and `destroy`.
+- **Legacy retirement** (permission runtime cutover 8.5, migration 0148, `sandbox/legacy-retirement.ts`): once the legacy-launch
+  freeze row exists (written under the exclusive platform authority lock; every SID launch checks it under the shared lock right
+  before its dispatch), `RetireLegacyTasksJob` records an obligation per device, provider and exact instance generation for every
+  legacy row whose processes may live on, and for revoked managed starts on an incarnation that no longer runs. `SandboxService`
+  checks them in `ensure` under the exclusive lease, before use, resume, rebuild or provider switch (a device with one never takes
+  the shared path), and `LocalInstanceBindings.bind` refuses while one is unresolved: the current cloud incarnation is destroyed
+  whole by its provider (never resumed or `killAll`ed; files kept) and the confirmed destruction recorded in
+  `device_instance_destructions`; a local, replaced-without-record or unknown one is quarantined (`device.unavailable`). A local
+  destroy, a restart, a new generation, a timeout or a SID never clears one. `ifRunning` (polls, stops) is not gated.
 
 ### Limits, modes and networks (`SandboxLimits`)
 

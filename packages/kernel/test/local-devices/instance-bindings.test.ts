@@ -6,7 +6,10 @@ import { KernelConfigSchema } from "../../src/config/schema.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
-import { LocalInstanceBindings } from "../../src/local-devices/instance-bindings.js";
+import {
+  InstanceBindingError,
+  LocalInstanceBindings,
+} from "../../src/local-devices/instance-bindings.js";
 import { MachinesService } from "../../src/local-devices/machines.js";
 import { LocalDeviceRelay } from "../../src/local-devices/relay.js";
 import { createLogger } from "../../src/log.js";
@@ -51,7 +54,7 @@ beforeEach(async () => {
   vi.restoreAllMocks();
   await truncateTables(
     raw,
-    "capybara.accounts, capybara.orgs, capybara.audit_events, capybara.outbox, capybara.device_generation_high_water, capybara.device_instance_bindings, capybara.device_permission_reports",
+    "capybara.accounts, capybara.orgs, capybara.audit_events, capybara.outbox, capybara.device_generation_high_water, capybara.device_instance_bindings, capybara.device_permission_reports, capybara.device_retirement_members, capybara.device_retirement_obligations",
   );
 });
 
@@ -291,6 +294,36 @@ it("an awaiting binding attests nothing; only the post-commit bind installs the 
     null,
   );
   expect(sent).toHaveLength(1);
+});
+
+it("an unresolved legacy retirement obligation refuses the bind before anything is sent (8.5)", async () => {
+  const f = await localDevice();
+  const g = await f.create();
+  // the device's earlier incarnation may still run legacy work (quarantined: a local machine)
+  await f.db
+    .insertInto("device_retirement_obligations")
+    .values({
+      device_id: f.deviceId,
+      org_id: f.orgId,
+      provider: "@local",
+      instance_generation: String(Number(g) - 1),
+      state: "quarantined",
+    })
+    .execute();
+  const sent = deviceAnswers();
+  await expect(
+    k.app.get(LocalInstanceBindings).bind(f.deviceId, AbortSignal.timeout(5000)),
+  ).rejects.toBeInstanceOf(InstanceBindingError);
+  expect(sent).toEqual([]);
+  // the new generation stays awaiting: it attests nothing and clears nothing
+  expect(await f.binding(g)).toMatchObject({ status: "awaiting-device" });
+  expect(
+    await f.db
+      .selectFrom("device_retirement_obligations")
+      .select("state")
+      .where("device_id", "=", f.deviceId)
+      .execute(),
+  ).toEqual([{ state: "quarantined" }]);
 });
 
 it("a first create on other roots than the person saw resets Full consent", async () => {

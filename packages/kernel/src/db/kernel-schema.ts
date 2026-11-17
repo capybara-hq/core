@@ -1107,6 +1107,12 @@ export interface BackgroundTasksTable {
     "tool" | "person" | "conversation_deleted" | "subagent_end" | null | undefined,
     "tool" | "person" | "conversation_deleted" | "subagent_end" | null
   >;
+  /** 0148: whether a legacy launch may have dispatched its command (see the migration). */
+  legacy_dispatch: ColumnType<
+    "unknown" | "reserved" | "dispatched",
+    "unknown" | "reserved" | "dispatched" | undefined,
+    "unknown" | "reserved" | "dispatched"
+  >;
 }
 
 /** 0143: see the migration for the meaning of each state. */
@@ -1658,6 +1664,51 @@ export interface KernelDatabase {
     >;
     created_at: Ts;
     installed_at: TsNullable;
+  };
+  /** Migration 0148: the durable legacy-launch freeze (one row, never removed). */
+  legacy_launch_freeze: {
+    id: "platform";
+    frozen_at: Generated<Date>;
+    frozen_by: string;
+  };
+  /** Migration 0148: the physical no-reuse obligation of one old instance incarnation. */
+  device_retirement_obligations: {
+    id: Generated<string>;
+    device_id: string;
+    org_id: string;
+    provider: string;
+    instance_generation: string;
+    state: ColumnType<
+      "open" | "quarantined" | "resolved",
+      "open" | "quarantined" | "resolved" | undefined,
+      "open" | "quarantined" | "resolved"
+    >;
+    resolution: ColumnType<
+      "provider-destroyed" | null,
+      "provider-destroyed" | null | undefined,
+      "provider-destroyed" | null
+    >;
+    reason: ColumnType<string | null, string | null | undefined, string | null>;
+    attempts: ColumnType<number, number | undefined, number>;
+    last_attempt_at: TsNullable;
+    last_error: ColumnType<string | null, string | null | undefined, string | null>;
+    created_at: Generated<Date>;
+    resolved_at: TsNullable;
+  };
+  /** Migration 0148: what put a retirement obligation there. */
+  device_retirement_members: {
+    obligation_id: string;
+    kind: "legacy-task" | "revoked-start";
+    ref_id: string;
+    settled: ColumnType<boolean, boolean | undefined, boolean>;
+    created_at: Generated<Date>;
+  };
+  /** Migration 0148: provider-confirmed destruction of a cloud instance incarnation. */
+  device_instance_destructions: {
+    device_id: string;
+    provider: string;
+    instance_generation: string;
+    destroyed_at: Generated<Date>;
   };
   sandbox_operation_intents: SandboxOperationIntentsTable;
   sandbox_operation_payload_chunks: {
