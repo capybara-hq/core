@@ -59,6 +59,7 @@ import { managedSandboxDeps } from "../../src/tools/builtins/builtin-tools.js";
 import {
   attachmentsDir,
   attachmentsRoot,
+  DEVICE_REQUEST_NOT_SENT_TOOL_TEXT,
   inSandbox,
   inSandboxOperations,
   type SandboxSession,
@@ -1198,7 +1199,9 @@ describe("cloud installed evidence in the real lifecycle", () => {
           ),
       ),
     );
-    expect(isDeviceRequestNotSent(err)).toBe(true);
+    // the tool route maps the typed refusal to its kernel-written text (nothing ran; safe to retry)
+    expect(err).toBeInstanceOf(ToolError);
+    expect((err as ToolError).message).toBe(DEVICE_REQUEST_NOT_SENT_TOOL_TEXT);
     const intents = k.app.get(SandboxOperationIntents);
     const row = await f.db
       .selectFrom("sandbox_operation_intents")

@@ -3,10 +3,22 @@ import type {
   FileSystemHandle,
   GitHostEntry,
   ParsedTheme,
+  PermissionProfile,
+  SandboxBrowseScope,
+  SandboxExecutionRef,
+  SandboxOperationScope,
+  SandboxPermissionSupport,
+  SandboxRoots,
   SkillInvocation,
 } from "@capybara-hq/plugin-sdk";
 import type { ColumnType, Generated, Kysely } from "kysely";
 import type { ModelRef } from "../agents/definition.js";
+import type { DeviceNetwork } from "../sandbox/modes.js";
+import type { StartingExecutionGrants } from "../sandbox/operation-authority-types.js";
+import type { AuthorityEpochVector } from "../sandbox/permission-authority-epochs.js";
+import type { PermissionExpansion } from "../sandbox/permission-call-types.js";
+import type { PermissionConfigProjection } from "../sandbox/permission-config-publication.js";
+import type { PermissionRuntimeIdentity } from "../sandbox/permission-runtime-reports.js";
 import type {
   ScheduleChat,
   ScheduleMarker,
@@ -38,12 +50,12 @@ export interface PermissionCallGrantsTable {
   spec_hash: string;
   call_input_hash: string;
   resolved_input_hash: string;
-  profile: import("@capybara-hq/plugin-sdk").PermissionProfile;
+  profile: PermissionProfile;
   profile_revision: number;
   scope_revision: string;
   authority_revision: string;
   binding_hash: string;
-  expansion: Json<import("../sandbox/permission-call-types.js").PermissionExpansion>;
+  expansion: Json<PermissionExpansion>;
   expansion_hash: string;
   candidate_hash: string;
   target_path: string | null;
@@ -68,7 +80,7 @@ export interface SandboxOperationIntentsTable {
   ordinal: number;
   method: "exec" | "backgroundStart" | "readFile" | "writeFile" | "stat" | "list" | "scan";
   execution_grants: ColumnType<
-    import("../sandbox/operation-authority-types.js").StartingExecutionGrants | null,
+    StartingExecutionGrants | null,
     string | null | undefined,
     string | null
   >;
@@ -76,11 +88,8 @@ export interface SandboxOperationIntentsTable {
   admission_hash: string;
   granted_hosts: Json<string[]>;
   input: Json<unknown>;
-  scope: Json<
-    | import("@capybara-hq/plugin-sdk").SandboxOperationScope
-    | import("@capybara-hq/plugin-sdk").SandboxBrowseScope
-  >;
-  epochs: Json<import("../sandbox/permission-authority-epochs.js").AuthorityEpochVector>;
+  scope: Json<SandboxOperationScope | SandboxBrowseScope>;
+  epochs: Json<AuthorityEpochVector>;
   provider: string;
   provider_version: string;
   instance_generation: string;
@@ -96,11 +105,7 @@ export interface SandboxOperationIntentsTable {
     | "revoked"
   >;
   /** 0152: the exact typed start result of an acknowledged backgroundStart. */
-  execution_ref: ColumnType<
-    import("@capybara-hq/plugin-sdk").SandboxExecutionRef | null,
-    string | null | undefined,
-    string | null
-  >;
+  execution_ref: ColumnType<SandboxExecutionRef | null, string | null | undefined, string | null>;
   execution_id: string;
   holder_token: Generated<string>;
   result: Json<unknown>;
@@ -1089,17 +1094,13 @@ export interface BackgroundTasksTable {
   ceiling_revision: NullableText;
   permission_grant_id: NullableText;
   network_authority: ColumnType<
-    import("../sandbox/operation-authority-types.js").StartingExecutionGrants | null,
+    StartingExecutionGrants | null,
     string | null | undefined,
     string | null
   >;
   working_root: NullableText;
   retain_until: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
-  execution_ref: ColumnType<
-    import("@capybara-hq/plugin-sdk").SandboxExecutionRef | null,
-    string | null | undefined,
-    string | null
-  >;
+  execution_ref: ColumnType<SandboxExecutionRef | null, string | null | undefined, string | null>;
   cancel_requested_at: ColumnType<
     Date | null,
     Date | string | null | undefined,
@@ -1195,11 +1196,7 @@ export interface DevicesTable {
   /** 0154: a cloud device's owner Full ceiling (B1 snapshot); null: not snapshotted yet. */
   owner_full_access: ColumnType<boolean | null, boolean | null | undefined, boolean | null>;
   /** 0154: a cloud device's outer network (B1 snapshot); null: not snapshotted yet. */
-  outer_network: ColumnType<
-    import("../sandbox/modes.js").DeviceNetwork | null,
-    string | null | undefined,
-    string | null
-  >;
+  outer_network: ColumnType<DeviceNetwork | null, string | null | undefined, string | null>;
   /** 0154: the provenance of the B1 snapshot. */
   permission_migration: ColumnType<unknown, string | null | undefined, string | null>;
   /** 0154: the applied limits must be established before any operation is admitted. */
@@ -1211,13 +1208,9 @@ export interface DevicesTable {
 
 /** 0088_environments.sql, renamed in 0105: the instance and file system of a device. */
 export interface DeviceInstancesTable {
-  permission_roots: ColumnType<
-    import("@capybara-hq/plugin-sdk").SandboxRoots | null,
-    string | null | undefined,
-    string | null
-  >;
+  permission_roots: ColumnType<SandboxRoots | null, string | null | undefined, string | null>;
   permission_runtime_identity: ColumnType<
-    import("../sandbox/permission-runtime-reports.js").PermissionRuntimeIdentity | null,
+    PermissionRuntimeIdentity | null,
     string | null | undefined,
     string | null
   >;
@@ -1647,123 +1640,144 @@ export interface OrgDataKeysTable {
   created_at: Ts;
 }
 
+/** Per-scope revision counters of the permission authority (migration 0146). */
+export interface PermissionAuthorityEpochsTable {
+  kind: string;
+  id: string;
+  revision: ColumnType<number, number | undefined, number>;
+  full_revision: Generated<number>;
+}
+
+export interface DevicePermissionReportsTable {
+  device_id: string;
+  provider: string;
+  provider_version: string;
+  instance_generation: string;
+  identity_hash: string;
+  report: Json<SandboxPermissionSupport>;
+  observed_at: Ts;
+}
+
+export interface DeviceGenerationHighWaterTable {
+  device_id: string;
+  /** bigint: read as a decimal string. */
+  high_water_ms: ColumnType<string, string | number, string | number>;
+  updated_at: Ts;
+}
+
+export interface DeviceInstanceBindingsTable {
+  device_id: string;
+  instance_generation: string;
+  binding_id: string;
+  provider: string;
+  previous_generation: string | null;
+  status: "awaiting-device" | "installed";
+  machine_id: string | null;
+  runtime_identity: ColumnType<
+    PermissionRuntimeIdentity | null,
+    string | null | undefined,
+    string | null
+  >;
+  created_at: Ts;
+  installed_at: TsNullable;
+}
+
+export interface LegacyLaunchFreezeTable {
+  id: "platform";
+  frozen_at: Generated<Date>;
+  frozen_by: string;
+  /** Migration 0158: when the freeze's enumeration last completed stable; null before. */
+  enumerated_at: TsNullable;
+}
+
+export interface DeviceRetirementObligationsTable {
+  id: Generated<string>;
+  device_id: string;
+  org_id: string;
+  provider: string;
+  instance_generation: string;
+  state: ColumnType<
+    "open" | "quarantined" | "resolved" | "abandoned",
+    "open" | "quarantined" | "resolved" | "abandoned" | undefined,
+    "open" | "quarantined" | "resolved" | "abandoned"
+  >;
+  /** When the obligation was abandoned with its deleted device (never evidence). */
+  abandoned_at: TsNullable;
+  /** `exact-cancelled`: every member was a revoked start cancelled by its exact ref (B-22). */
+  resolution: ColumnType<
+    "provider-destroyed" | "host-rebooted" | "exact-cancelled" | null,
+    "provider-destroyed" | "host-rebooted" | "exact-cancelled" | null | undefined,
+    "provider-destroyed" | "host-rebooted" | "exact-cancelled" | null
+  >;
+  /** A local incarnation: the machine and its boot identity when recorded (null: none). */
+  boot_machine_id: ColumnType<string | null, string | null | undefined, string | null>;
+  boot_id: ColumnType<string | null, string | null | undefined, string | null>;
+  reason: ColumnType<string | null, string | null | undefined, string | null>;
+  attempts: ColumnType<number, number | undefined, number>;
+  last_attempt_at: TsNullable;
+  last_error: ColumnType<string | null, string | null | undefined, string | null>;
+  created_at: Generated<Date>;
+  resolved_at: TsNullable;
+}
+
+export interface DeviceRetirementMembersTable {
+  obligation_id: string;
+  kind: "legacy-task" | "revoked-start";
+  ref_id: string;
+  settled: ColumnType<boolean, boolean | undefined, boolean>;
+  created_at: Generated<Date>;
+}
+
+export interface DeviceMachineBootsTable {
+  machine_id: string;
+  boot_id: string;
+  /** bigserial: read as a decimal string. */
+  seq: ColumnType<string, string | number | undefined, never>;
+  first_seen_at: Generated<Date>;
+}
+
+export interface DeviceInstanceDestructionsTable {
+  device_id: string;
+  provider: string;
+  instance_generation: string;
+  destroyed_at: Generated<Date>;
+}
+
+export interface SandboxOperationPayloadChunksTable {
+  operation_id: string;
+  slot: "input" | "result";
+  sequence: number;
+  data: Buffer;
+}
+
+export interface PermissionConfigPublicationTable {
+  id: string;
+  fingerprint: string;
+  projection: Json<PermissionConfigProjection>;
+  updated_at: Ts;
+}
+
 export interface KernelDatabase {
-  permission_authority_epochs: {
-    kind: string;
-    id: string;
-    revision: ColumnType<number, number | undefined, number>;
-    full_revision: Generated<number>;
-  };
+  permission_authority_epochs: PermissionAuthorityEpochsTable;
   accounts: AccountsTable;
-  device_permission_reports: {
-    device_id: string;
-    provider: string;
-    provider_version: string;
-    instance_generation: string;
-    identity_hash: string;
-    report: Json<import("@capybara-hq/plugin-sdk").SandboxPermissionSupport>;
-    observed_at: Ts;
-  };
+  device_permission_reports: DevicePermissionReportsTable;
   /** Migration 0155: per-device generation high-water mark; outlives instance rows. */
-  device_generation_high_water: {
-    device_id: string;
-    /** bigint: read as a decimal string. */
-    high_water_ms: ColumnType<string, string | number, string | number>;
-    updated_at: Ts;
-  };
+  device_generation_high_water: DeviceGenerationHighWaterTable;
   /** Migration 0155: post-commit binding of a local instance generation. */
-  device_instance_bindings: {
-    device_id: string;
-    instance_generation: string;
-    binding_id: string;
-    provider: string;
-    previous_generation: string | null;
-    status: "awaiting-device" | "installed";
-    machine_id: string | null;
-    runtime_identity: ColumnType<
-      import("../sandbox/permission-runtime-reports.js").PermissionRuntimeIdentity | null,
-      string | null | undefined,
-      string | null
-    >;
-    created_at: Ts;
-    installed_at: TsNullable;
-  };
+  device_instance_bindings: DeviceInstanceBindingsTable;
   /** Migration 0157: the durable legacy-launch freeze (one row, never removed). */
-  legacy_launch_freeze: {
-    id: "platform";
-    frozen_at: Generated<Date>;
-    frozen_by: string;
-    /** Migration 0158: when the freeze's enumeration last completed stable; null before. */
-    enumerated_at: TsNullable;
-  };
+  legacy_launch_freeze: LegacyLaunchFreezeTable;
   /** Migration 0157: the physical no-reuse obligation of one old instance incarnation. */
-  device_retirement_obligations: {
-    id: Generated<string>;
-    device_id: string;
-    org_id: string;
-    provider: string;
-    instance_generation: string;
-    state: ColumnType<
-      "open" | "quarantined" | "resolved" | "abandoned",
-      "open" | "quarantined" | "resolved" | "abandoned" | undefined,
-      "open" | "quarantined" | "resolved" | "abandoned"
-    >;
-    /** When the obligation was abandoned with its deleted device (never evidence). */
-    abandoned_at: TsNullable;
-    /** `exact-cancelled`: every member was a revoked start cancelled by its exact ref (B-22). */
-    resolution: ColumnType<
-      "provider-destroyed" | "host-rebooted" | "exact-cancelled" | null,
-      "provider-destroyed" | "host-rebooted" | "exact-cancelled" | null | undefined,
-      "provider-destroyed" | "host-rebooted" | "exact-cancelled" | null
-    >;
-    /** A local incarnation: the machine and its boot identity when recorded (null: none). */
-    boot_machine_id: ColumnType<string | null, string | null | undefined, string | null>;
-    boot_id: ColumnType<string | null, string | null | undefined, string | null>;
-    reason: ColumnType<string | null, string | null | undefined, string | null>;
-    attempts: ColumnType<number, number | undefined, number>;
-    last_attempt_at: TsNullable;
-    last_error: ColumnType<string | null, string | null | undefined, string | null>;
-    created_at: Generated<Date>;
-    resolved_at: TsNullable;
-  };
+  device_retirement_obligations: DeviceRetirementObligationsTable;
   /** Migration 0157: what put a retirement obligation there. */
-  device_retirement_members: {
-    obligation_id: string;
-    kind: "legacy-task" | "revoked-start";
-    ref_id: string;
-    settled: ColumnType<boolean, boolean | undefined, boolean>;
-    created_at: Generated<Date>;
-  };
+  device_retirement_members: DeviceRetirementMembersTable;
   /** Migration 0157: the OS boot identities a machine reported, in the order first seen. */
-  device_machine_boots: {
-    machine_id: string;
-    boot_id: string;
-    /** bigserial: read as a decimal string. */
-    seq: ColumnType<string, string | number | undefined, never>;
-    first_seen_at: Generated<Date>;
-  };
+  device_machine_boots: DeviceMachineBootsTable;
   /** Migration 0157: provider-confirmed destruction of a cloud instance incarnation. */
-  device_instance_destructions: {
-    device_id: string;
-    provider: string;
-    instance_generation: string;
-    destroyed_at: Generated<Date>;
-  };
+  device_instance_destructions: DeviceInstanceDestructionsTable;
   sandbox_operation_intents: SandboxOperationIntentsTable;
-  sandbox_operation_payload_chunks: {
-    operation_id: string;
-    slot: "input" | "result";
-    sequence: number;
-    data: Buffer;
-  };
-  permission_config_publication: {
-    id: string;
-    fingerprint: string;
-    projection: Json<
-      import("../sandbox/permission-config-publication.js").PermissionConfigProjection
-    >;
-    updated_at: Ts;
-  };
+  sandbox_operation_payload_chunks: SandboxOperationPayloadChunksTable;
+  permission_config_publication: PermissionConfigPublicationTable;
   org_data_keys: OrgDataKeysTable;
   account_initial_passwords: AccountInitialPasswordsTable;
   identities: IdentitiesTable;

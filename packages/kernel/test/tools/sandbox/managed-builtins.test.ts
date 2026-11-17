@@ -29,10 +29,7 @@ import {
 } from "../../../src/sandbox/managed-device-context.js";
 import { SandboxProviders } from "../../../src/sandbox/providers.js";
 import { SandboxService } from "../../../src/sandbox/sandbox.service.js";
-import {
-  type SandboxToolDeps,
-  SCOPE_DENIED_TOOL_TEXT,
-} from "../../../src/tools/builtins/sandbox/common.js";
+import type { SandboxToolDeps } from "../../../src/tools/builtins/sandbox/common.js";
 import { sandboxTools } from "../../../src/tools/builtins/sandbox/index.js";
 import { type SkillLoadDeps, skillLoadTool } from "../../../src/tools/builtins/skill-load.js";
 import type { BuiltinCallContext, BuiltinTool } from "../../../src/tools/registry.js";
@@ -573,19 +570,17 @@ describe("builtin tools on the managed route with the activation gate on", () =>
     expect((err as ToolError).message).not.toContain("provider secret");
   });
 
-  it("FetchAttachment enters on the managed route; the kernel's preparation refuses its directory with the scope text", async () => {
+  it("FetchAttachment copies into its directory through the managed preparation after the marked paths", async () => {
     const f = await seed();
     const legacy = vi.spyOn(k.app.get(SandboxService), "withSandbox");
-    // the kernel's preparation base for attachments (`attachments/<root id>`) is not yet the
-    // tool's directory (`attachments/<12 hex>`; W3-H2 aligns it): the copy is refused there
-    const err = await failure(runTool(f, "FetchAttachment", { file: "notes.txt" }));
-    expect(err).toBeInstanceOf(ToolError);
-    expect((err as ToolError).message).toBe(SCOPE_DENIED_TOOL_TEXT);
+    const r = await runTool(f, "FetchAttachment", { file: "notes.txt" });
+    expect(textOf(r)).toMatch(
+      /Copied notes\.txt to \/workspace\/attachments\/[0-9a-f]{12}\/notes\.txt/,
+    );
     expect(legacy).not.toHaveBeenCalled();
     expect(await markedPaths(f)).toHaveLength(1);
-    expect(reached).toEqual([]);
+    expect(reached).toEqual([{ method: "prepare", marked: 1 }]);
   });
-  it.todo("FetchAttachment copies once the kernel's attachments base is the tool's directory");
 
   it("Skill reads a project skill through managed operations after its own marked paths", async () => {
     const f = await seed();
