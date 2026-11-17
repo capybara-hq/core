@@ -29,6 +29,7 @@ import {
   deviceNetwork,
   type EffectiveDevicePolicy,
   effectiveDevicePolicy,
+  intersectNetworks,
   type NetworkKind,
   type OrgDeviceSettings,
   readDeploymentDevicePolicy,
@@ -105,6 +106,12 @@ export interface DeviceView {
    * not current: last-known facts, never authority. null for a cloud device not snapshotted yet.
    */
   ownerCeiling: DeviceOwnerCeilingView | null;
+  /**
+   * A cloud device whose B1 snapshot found applied limits it could not establish exactly: nothing
+   * runs on it until a file reset establishes them (`device.permission_reconcile_required` at
+   * admission). Always false for a local device.
+   */
+  reconcileRequired: boolean;
   sessionIsolation: boolean;
   /** Its file system is gone at the provider; reset the files to use it again. */
   filesLost: boolean;
@@ -122,7 +129,14 @@ export interface DeviceOwnerCeilingView {
   state: "report" | "blocked" | "legacy" | "missing" | "cloud";
   revision: string | null;
   sequence: number | null;
+  /** The owner's ceiling as stored or reported (a cloud device: the raw B1 ceiling). */
   fullAccess: boolean;
+  /**
+   * Whether the owner's side allows Full access as the kernel applies it: a cloud device's ceiling
+   * narrowed by its old sandbox switch (`cloudChosenMode`); a local machine's reported ceiling.
+   * The platform and the org may still cut it ({@link DeviceModeView.allowedMode}).
+   */
+  effectiveFullAccess: boolean;
   /** Restricted project reach; a cloud device stays within its provisioned files (`workspace`). */
   restrictedProjectReach: "workspace" | "os-user";
   restrictedAllowedDomains: string[];
@@ -149,10 +163,21 @@ export interface DeviceModeView {
   local: { reported: SandboxMode | null; allowedDomains: string[] } | null;
   /**
    * A cloud device: the network sandbox mode gives it, whatever mode it runs at now (the org's
-   * `cloudNetwork`, open by default; the kill switch empties it), so the page names what a switch
-   * to sandbox reaches before it is made (hardening spec D3). Null for a local device.
+   * `cloudNetwork`, open by default; the kill switch empties it) within its {@link outerNetwork},
+   * so the page names exactly what turning Full access off reaches before it is done (hardening
+   * spec D3). Null for a local device.
    */
   sandboxNetwork: { kind: NetworkKind; hosts: string[] } | null;
+  /**
+   * A cloud device: the network Full access gives it (the open public network, or the kill
+   * switch's empty allowlist) within its {@link outerNetwork}. Null for a local device.
+   */
+  fullNetwork: { kind: NetworkKind; hosts: string[] } | null;
+  /**
+   * A cloud device's B1 outer network: the boundary no mode or ceiling change widens. Null for a
+   * local device and for a cloud device not snapshotted yet.
+   */
+  outerNetwork: { kind: NetworkKind; hosts: string[] } | null;
   /**
    * A cloud device's instance runs another mode or network kind: its next use updates or recreates
    * it, files kept (「下次使用时生效，文件保留」).
@@ -176,16 +201,23 @@ export const RECENT_POLICY_CHANGES = 10;
  *   made on the machine by its owner (`device`, `capybara-device policy ...`); one sent whose
  *   answer never came (`device.policy_unknown`) or that failed (`device.policy_failed`) too;
  * - `mode` (`device.mode_changed`): the device switched between auto and sandbox mode, on the
- *   machine (`device`) or by a policy op (`web`, `im`).
+ *   machine (`device`) or by a policy op (`web`, `im`);
+ * - `ceiling` (`device.owner_ceiling_changed`): the owner ceiling changed, a cloud device's Full
+ *   ceiling on the device page (`web`) or a machine's authenticated report (`device`).
  */
 export interface DeviceModeChangeView {
   at: string;
-  kind: "policy" | "mode";
+  kind: "policy" | "mode" | "ceiling";
   /** Hosts added to / removed from the local allowlist (`policy` only; else empty). */
   add: string[];
   remove: string[];
   /** The mode change (`from`: the previous mode the machine reported); null when it did not change. */
   mode: { from?: SandboxMode | null; to: SandboxMode } | null;
+  /**
+   * The ceiling change (`ceiling` only; else null): Full access, and a machine's restricted project
+   * reach (a cloud device has none). `from` is null when the row does not say.
+   */
+  ceiling: { from: DeviceCeilingFacts | null; to: DeviceCeilingFacts } | null;
   /** The deciding account's display name (null when the account is gone). */
   by: string | null;
   /** `device`: made or reported on the machine itself. */
@@ -196,6 +228,12 @@ export interface DeviceModeChangeView {
    * machine refused it, never received it or stopped while applying it.
    */
   outcome: "applied" | "unknown" | "failed";
+}
+
+/** One side of a {@link DeviceModeChangeView.ceiling} change. */
+export interface DeviceCeilingFacts {
+  fullAccess: boolean;
+  restrictedProjectReach?: "workspace" | "os-user";
 }
 
 /** A change of a local device's policy by its owner (`POST /devices/:id/policy`). */
@@ -637,7 +675,7 @@ export class DevicesService {
     // outer network open, so the PATCH is refused until then (the old sandbox switch narrows)
     if (row.owner_full_access === null || row.outer_network === null)
       throw new ApiError(
-        "device.permission_reconcile_required",
+        "device.permission_not_migrated",
         "This device's permissions have not been migrated yet; switch it to sandbox mode to narrow it, and set its Full access ceiling once the migration has run",
       );
     const current = cloudChosenMode(row) !== "sandbox";
@@ -1239,6 +1277,7 @@ export class DevicesService {
         "e.mode",
         "e.owner_full_access",
         "e.outer_network",
+        "e.permission_reconcile_required",
         "e.created_at",
         "m.id as machine_id",
         "m.name as machine_name",
@@ -1317,7 +1356,11 @@ export class DevicesService {
         chosenOf(r),
         r.source === "local" ? null : r.outer_network,
       );
+    // the network each mode gives a cloud device, within its outer network once snapshotted
     const sandboxNetwork = deviceNetwork(deployment, settings, "sandbox");
+    const fullNetwork = deviceNetwork(deployment, settings, "auto");
+    const within = (n: DeviceNetwork, outer: DeviceNetwork | null): DeviceNetwork =>
+      outer === null ? n : intersectNetworks(n, outer);
     // each device's limits and its instance's pending change
     const perDevice = new Map(
       await Promise.all(
@@ -1396,12 +1439,15 @@ export class DevicesService {
             pendingNextUse: perDevice.get(r.id)?.state.pendingNextUse ?? false,
             pendingFilesReset: perDevice.get(r.id)?.state.pendingFilesReset ?? false,
             recent: recent.get(r.id) ?? [],
-            sandboxNetwork,
+            sandboxNetwork: within(sandboxNetwork, r.outer_network),
+            fullNetwork: within(fullNetwork, r.outer_network),
+            outerNetwork: r.source === "local" ? null : r.outer_network,
           },
           this.config.get().sandbox.limits.egress === "none",
         ),
         // a local device's machine decides it; cloud devices have none in phase 2
         ownerCeiling: ownerCeilingViewOf(r, online.get(r.id) ?? false),
+        reconcileRequired: r.source === "cloud" && r.permission_reconcile_required,
         sessionIsolation: r.machine_session_isolation ?? false,
         filesLost: r.fs_status === "lost",
         instance: live
@@ -1419,7 +1465,8 @@ export class DevicesService {
   /**
    * The last {@link RECENT_POLICY_CHANGES} mode and policy changes of each device in the org
    * (audit rows `device.policy_changed`, `device.policy_unknown`, `device.policy_failed`,
-   * `device.mode_changed`), newest first, with the deciding account's display name.
+   * `device.mode_changed`, `device.owner_ceiling_changed`), newest first, with the deciding
+   * account's display name.
    */
   private async recentModeChanges(
     orgId: string,
@@ -1555,15 +1602,28 @@ const limitsView = (l: SandboxLimits): SandboxLimits => ({
   network: { kind: l.network.kind, hosts: [...l.network.hosts] },
 });
 
-/** The audit actions a device's recent mode and policy changes list. */
+/** The audit actions a device's recent mode, policy and ceiling changes list. */
 const MODE_CHANGE_ACTIONS = [
   "device.policy_changed",
   "device.policy_unknown",
   "device.policy_failed",
   "device.mode_changed",
+  "device.owner_ceiling_changed",
 ] as const;
 
 const modeOrNull = (v: unknown): SandboxMode | null => (v === "auto" || v === "sandbox" ? v : null);
+
+/** One side of an audited ceiling change; null when the row does not carry a readable one. */
+function ceilingFactsOf(v: unknown): DeviceCeilingFacts | null {
+  if (typeof v !== "object" || v === null) return null;
+  const o = v as Record<string, unknown>;
+  if (typeof o.fullAccess !== "boolean") return null;
+  const reach = o.restrictedProjectReach;
+  return {
+    fullAccess: o.fullAccess,
+    ...((reach === "workspace" || reach === "os-user") && { restrictedProjectReach: reach }),
+  };
+}
 
 /** One audit row of {@link MODE_CHANGE_ACTIONS} as a {@link DeviceModeChangeView}. */
 function modeChangeOf(
@@ -1574,7 +1634,17 @@ function modeChangeOf(
 ): DeviceModeChangeView {
   const hosts = (v: unknown) =>
     Array.isArray(v) ? v.filter((h): h is string => typeof h === "string") : [];
-  const base = { at: at.toISOString(), add: [], remove: [], mode: null, by };
+  const base = { at: at.toISOString(), add: [], remove: [], mode: null, ceiling: null, by };
+  if (action === "device.owner_ceiling_changed") {
+    const to = ceilingFactsOf(d.to);
+    return {
+      ...base,
+      kind: "ceiling",
+      ceiling: to === null ? null : { from: ceilingFactsOf(d.from), to },
+      via: d.via === "im" ? "im" : d.via === "device" ? "device" : "web",
+      outcome: "applied",
+    };
+  }
   if (action === "device.mode_changed") {
     const to = modeOrNull(d.to);
     return {
@@ -1614,13 +1684,19 @@ export function deviceModeViewOf(
     pendingNextUse: boolean;
     pendingFilesReset: boolean;
     recent: DeviceModeChangeView[];
-    /** The network sandbox mode gives a cloud device ({@link deviceNetwork} for `sandbox`). */
+    /** The network sandbox mode gives a cloud device, within its outer network. */
     sandboxNetwork: DeviceNetwork;
+    /** The network Full access gives a cloud device, within its outer network. */
+    fullNetwork: DeviceNetwork;
+    /** A cloud device's B1 outer network; null when not snapshotted. */
+    outerNetwork: DeviceNetwork | null;
   },
   /** The platform kill switch (`sandbox.limits.egress: none`): the network is the platform's. */
   killSwitch = false,
 ): DeviceModeView {
-  const { sandboxNetwork, ...rest } = extra;
+  const { sandboxNetwork, fullNetwork, outerNetwork, ...rest } = extra;
+  const copy = (n: DeviceNetwork | null) =>
+    local || n === null ? null : { kind: n.kind, hosts: [...n.hosts] };
   const networkKind = local ? "allowlist" : policy.network.kind;
   const org = settings.cloudNetwork;
   // "org" only when the org supplied what is in effect: the kill switch always wins; auto mode
@@ -1661,7 +1737,9 @@ export function deviceModeViewOf(
           allowedDomains: [...(summary?.allowedDomains ?? [])],
         }
       : null,
-    sandboxNetwork: local ? null : { kind: sandboxNetwork.kind, hosts: [...sandboxNetwork.hosts] },
+    sandboxNetwork: copy(sandboxNetwork),
+    fullNetwork: copy(fullNetwork),
+    outerNetwork: copy(outerNetwork),
     ...rest,
   };
 }
@@ -1674,6 +1752,7 @@ function ownerCeilingViewOf(
     machine_local_policy: unknown;
     machine_owner_report: unknown;
     owner_full_access: boolean | null;
+    mode: "sandbox" | null;
   },
   online: boolean,
 ): DeviceOwnerCeilingView | null {
@@ -1685,6 +1764,7 @@ function ownerCeilingViewOf(
           revision: null,
           sequence: null,
           fullAccess: r.owner_full_access,
+          effectiveFullAccess: cloudChosenMode(r) !== "sandbox",
           restrictedProjectReach: "workspace",
           restrictedAllowedDomains: [],
           observedAt: null,
@@ -1700,6 +1780,7 @@ function ownerCeilingViewOf(
     revision: f.revision,
     sequence: f.sequence,
     fullAccess: f.fullAccess,
+    effectiveFullAccess: f.fullAccess,
     restrictedProjectReach: f.restrictedProjectReach,
     restrictedAllowedDomains: f.restrictedAllowedDomains,
     observedAt: f.observedAt,

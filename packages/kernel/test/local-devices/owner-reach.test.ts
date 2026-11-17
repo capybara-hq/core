@@ -242,6 +242,31 @@ describe("stale, missing and out-of-order reports", () => {
   });
 });
 
+describe("the device view's recent changes", () => {
+  it("a machine's ceiling change is listed as made on the machine", async () => {
+    const f = await fixture();
+    await f.record(report(1, true, "os-user"));
+    await f.record(report(2, false, "workspace"));
+    const view = await k.app.get(DevicesService).get(f.orgId, f.accountId, f.deviceId);
+    expect(view.mode.recent[0]).toMatchObject({
+      kind: "ceiling",
+      ceiling: {
+        from: { fullAccess: true, restrictedProjectReach: "os-user" },
+        to: { fullAccess: false, restrictedProjectReach: "workspace" },
+      },
+      via: "device",
+      outcome: "applied",
+    });
+    // a local device has no outer network of the deployment's
+    expect(view.reconcileRequired).toBe(false);
+    expect(view.mode).toMatchObject({
+      outerNetwork: null,
+      sandboxNetwork: null,
+      fullNetwork: null,
+    });
+  });
+});
+
 describe("reordered carriers (fix round 1)", () => {
   it("I2: a lower sequence from a policy frame, answer or bind is ignored, never blocks", async () => {
     const f = await fixture();
@@ -498,7 +523,7 @@ describe("cloud owner ceiling PATCH", () => {
       { ownerCeiling: { fullAccess: false } },
     ])
       await expect(c.patch(p)).rejects.toMatchObject({
-        code: "device.permission_reconcile_required",
+        code: "device.permission_not_migrated",
       });
     expect(
       await c.f.db
@@ -507,6 +532,46 @@ describe("cloud owner ceiling PATCH", () => {
         .where("id", "=", c.id)
         .executeTakeFirstOrThrow(),
     ).toEqual({ owner_full_access: null, outer_network: null, mode: "sandbox" });
+  });
+
+  it("the view reports the reconcile marker, the outer and resulting networks and the effective Full", async () => {
+    const c = await cloud();
+    const get = () => k.app.get(DevicesService).get(c.f.orgId, c.f.accountId, c.id);
+    let view = await get();
+    expect(view.reconcileRequired).toBe(false);
+    expect(view.mode.outerNetwork).toEqual({ kind: "allowlist", hosts: ["a.test"] });
+    // the org's cloud network is open by default: within the outer allowlist both modes reach it
+    expect(view.mode.sandboxNetwork).toEqual({ kind: "allowlist", hosts: ["a.test"] });
+    expect(view.mode.fullNetwork).toEqual({ kind: "allowlist", hosts: ["a.test"] });
+    expect(view.ownerCeiling).toMatchObject({ fullAccess: false, effectiveFullAccess: false });
+    // an old sandbox switch keeps Full off whatever the raw ceiling says
+    await c.f.db
+      .updateTable("devices")
+      .set({ owner_full_access: true, mode: "sandbox", permission_reconcile_required: true })
+      .where("id", "=", c.id)
+      .execute();
+    view = await get();
+    expect(view.reconcileRequired).toBe(true);
+    expect(view.ownerCeiling).toMatchObject({ fullAccess: true, effectiveFullAccess: false });
+    await c.f.db
+      .updateTable("devices")
+      .set({ mode: null, permission_reconcile_required: false })
+      .where("id", "=", c.id)
+      .execute();
+    expect((await get()).ownerCeiling).toMatchObject({
+      fullAccess: true,
+      effectiveFullAccess: true,
+    });
+  });
+
+  it("a ceiling change appears in the device's recent changes with its from and to", async () => {
+    const c = await cloud();
+    await c.patch({ ownerCeiling: { fullAccess: true }, confirmWidening: true });
+    const view = await c.patch({ ownerCeiling: { fullAccess: false } });
+    expect(view.mode.recent.map((r) => [r.kind, r.ceiling, r.via])).toEqual([
+      ["ceiling", { from: { fullAccess: true }, to: { fullAccess: false } }, "web"],
+      ["ceiling", { from: { fullAccess: false }, to: { fullAccess: true } }, "web"],
+    ]);
   });
 
   it("M3: widening is refused when the provider cannot run Full", async () => {

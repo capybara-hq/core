@@ -20,7 +20,14 @@ const summary = (s: Partial<DeviceLocalPolicySummary> = {}): DeviceLocalPolicySu
 });
 
 const OPEN = { kind: "open-public" as const, hosts: [] };
-const extra = { pendingNextUse: false, pendingFilesReset: false, recent: [], sandboxNetwork: OPEN };
+const extra = {
+  pendingNextUse: false,
+  pendingFilesReset: false,
+  recent: [],
+  sandboxNetwork: OPEN,
+  fullNetwork: OPEN,
+  outerNetwork: null,
+};
 
 describe("deviceModeViewOf", () => {
   it("a cloud device: the allowed mode, the open network, no local settings", () => {
@@ -70,6 +77,8 @@ describe("deviceModeViewOf", () => {
       local: { reported: "auto", allowedDomains: [] },
       // a local device's sandbox network is its machine's allowlist, not the cloud network
       sandboxNetwork: null,
+      fullNetwork: null,
+      outerNetwork: null,
     });
   });
 

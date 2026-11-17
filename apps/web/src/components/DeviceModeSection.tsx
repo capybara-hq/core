@@ -19,7 +19,6 @@ import {
 } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
-import { ApiClientError } from "../lib/api";
 import { osLabel } from "../lib/device-sign-in";
 import {
   type Device,
@@ -226,14 +225,6 @@ export function DeviceSettings({
       setFailure(err);
     }
   };
-  // on a cloud PATCH this code means the device is not migrated yet, which a file reset does not
-  // change: the page says so instead of the error's generic copy (that names the file reset that
-  // clears a conversation's admission marker)
-  const notMigrated =
-    !local &&
-    failure instanceof ApiClientError &&
-    failure.code === "device.permission_reconcile_required";
-
   return (
     <>
       <FormSection
@@ -287,13 +278,7 @@ export function DeviceSettings({
           </div>
         </FormSection>
       )}
-      {notMigrated ? (
-        <Text variant="prose" tone="warn">
-          {t("ceiling.notMigrated")}
-        </Text>
-      ) : (
-        failure !== null && <ApiErrorDetail error={failure} open />
-      )}
+      {failure !== null && <ApiErrorDetail error={failure} open />}
     </>
   );
 }
@@ -419,22 +404,21 @@ function CloudControls({
 }
 
 /**
- * The network line of a cloud ceiling change (kernel `cloudChosenMode` / `effectiveDevicePolicy`):
- * Full off makes the device choose sandbox, whose network is the org's cloud network
- * (`mode.sandboxNetwork`) within the device's outer network; Full allowed returns it to the open
- * public network (private networks blocked) within that outer network, which no change widens.
+ * The network line of a cloud ceiling change, exactly as the kernel computes it: Full off gives
+ * the org's cloud network (`mode.sandboxNetwork`), Full allowed the open public network
+ * (`mode.fullNetwork`), each already within the device's outer network. Null when the view has
+ * none (never for a cloud device).
  */
 function confirmNetworkLine(
   t: (key: string, values?: Record<string, string>) => string,
   e: Device,
   change: CloudChange,
-): string {
-  if (change === "widen") return t("network.widen");
-  const n = e.mode.sandboxNetwork;
-  if (n === null) return t("network.narrowOrg");
-  if (n.kind === "open-public") return t("network.narrowOpen");
-  if (n.hosts.length === 0) return t("network.narrowNone");
-  return t("network.narrowAllowlist", { hosts: n.hosts.join(", ") });
+): string | null {
+  const n = change === "widen" ? e.mode.fullNetwork : e.mode.sandboxNetwork;
+  if (n === null) return null;
+  if (n.kind === "open-public") return t("network.open");
+  if (n.hosts.length === 0) return t("network.none");
+  return t("network.allowlist", { hosts: n.hosts.join(", ") });
 }
 
 /**
@@ -457,6 +441,7 @@ function CeilingConfirmDialog({
   onConfirm(): void;
 }) {
   const t = useTranslations("devices.ceiling.confirm");
+  const network = confirmNetworkLine(t, e, change);
   return (
     <Dialog
       open
@@ -477,7 +462,7 @@ function CeilingConfirmDialog({
     >
       <Stack gap={8}>
         <Text variant="prose">{t(`effect.${change}`)}</Text>
-        <Text variant="prose">{confirmNetworkLine(t, e, change)}</Text>
+        {network !== null && <Text variant="prose">{network}</Text>}
         <Text variant="prose" tone="muted">
           {t("nextUse")}
         </Text>
@@ -489,7 +474,8 @@ function CeilingConfirmDialog({
 /**
  * The recent ceiling and policy changes: what, when, by whom and from where; a change sent to the
  * machine that did not take effect is marked. An old mode change reads as the ceiling it set (the
- * old auto is the Full ceiling, the old sandbox its narrowing).
+ * old auto is the Full ceiling, the old sandbox its narrowing); a ceiling change names what
+ * changed (Full access, a machine's project reach).
  */
 export function RecentChanges({ recent }: { recent: DeviceModeChange[] }) {
   const t = useTranslations("devices.recent");
@@ -497,11 +483,23 @@ export function RecentChanges({ recent }: { recent: DeviceModeChange[] }) {
   if (recent.length === 0) return null;
   const modeText = (c: DeviceModeChange["mode"]) =>
     c === null ? [] : [t(c.to === "auto" ? "fullAllowed" : "fullOff")];
+  const ceilingText = (c: DeviceModeChange["ceiling"]) => {
+    if (c === null) return [];
+    const { from, to } = c;
+    const reach = to.restrictedProjectReach;
+    return [
+      ...(from?.fullAccess !== to.fullAccess ? [t(to.fullAccess ? "fullAllowed" : "fullOff")] : []),
+      ...(reach !== undefined && from?.restrictedProjectReach !== reach
+        ? [t(`reach.${reach}`)]
+        : []),
+    ];
+  };
   const what = (c: DeviceModeChange) =>
     [
       ...(c.add.length > 0 ? [t("add", { hosts: c.add.join(", ") })] : []),
       ...(c.remove.length > 0 ? [t("remove", { hosts: c.remove.join(", ") })] : []),
       ...modeText(c.mode),
+      ...ceilingText(c.ceiling ?? null),
     ].join(" · ");
   return (
     <ContentSection title={t("title")}>
