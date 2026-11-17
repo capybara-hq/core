@@ -4,9 +4,11 @@ import {
   type PermissionProfile,
   rootsOf,
   type SandboxHandle,
+  validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
+import { permissionCodePointCompare } from "../conversations/events.js";
 import type { PermissionRoot } from "../conversations/permission-profile-store.js";
 import { DeviceAccess } from "../devices/access.js";
 import { deviceNotFound, projectsUnsupported } from "../devices/errors.js";
@@ -25,16 +27,24 @@ import { ownerFactsOf, ownerModeOf } from "../local-devices/owner-report.js";
 import { deviceFeaturesOf } from "../local-devices/policy-summary.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
 import {
+  appliedOf,
+  appliedWider,
   cloudChosenMode,
+  coversHost,
   type DeviceNetwork,
   type EffectiveDevicePolicy,
   effectiveDevicePolicy,
   readDeploymentDevicePolicy,
+  readInstanceLimits,
 } from "./modes.js";
 import { assertAuthorityHeld } from "./permission-authority-lock.js";
 import { permissionAvailabilityFor } from "./permission-availability.js";
-import type { AppliedEnvironment } from "./permission-context-types.js";
-import { readRuntimeReport, sameRuntimeIdentity } from "./permission-runtime-reports.js";
+import type { AppliedEnvironment, AppliedOuterNetwork } from "./permission-context-types.js";
+import {
+  readCurrentReport,
+  readRuntimeReport,
+  sameRuntimeIdentity,
+} from "./permission-runtime-reports.js";
 import { providerForDevice, SandboxProviders } from "./providers.js";
 import { homeOf } from "./review/rules.js";
 
@@ -531,15 +541,34 @@ export class PermissionFacts {
    * authority lock. Null whenever it cannot be proved: no live instance (none, creating,
    * destroyed), no installed binding of exactly this generation, a binding of another provider or
    * machine, a runtime identity differing from the bound one, roots differing from the committed
-   * ones. A cloud device has no installed provider binding yet, so its outer boundary is not
-   * proved either (its context stays unprobed until that evidence exists). Never desired policy,
-   * never a provider call, probe, resume or provisioning.
+   * ones. A cloud device proves it by its kernel-recorded cloud evidence instead (B-15,
+   * {@link cloudAppliedLocked}). Never desired policy, never a provider call, probe, resume or
+   * provisioning; a suspended instance is read as recorded.
    */
   async readAppliedEnvironmentLocked(input: {
     orgId: string;
     deviceId: string;
   }): Promise<AppliedEnvironment | null> {
     assertAuthorityHeld("device", input.deviceId);
+    return this.readAppliedEnvironment(input);
+  }
+
+  /**
+   * {@link readAppliedEnvironmentLocked} without the authority locks: a managed operation's held
+   * evidence only (read under its lifecycle lease), which the managed writer validates again
+   * under the locks. Never a basis for admission or a recorded context.
+   */
+  async readHeldEnvironment(input: {
+    orgId: string;
+    deviceId: string;
+  }): Promise<AppliedEnvironment | null> {
+    return this.readAppliedEnvironment(input);
+  }
+
+  private async readAppliedEnvironment(input: {
+    orgId: string;
+    deviceId: string;
+  }): Promise<AppliedEnvironment | null> {
     const device = await this.db
       .selectFrom("devices")
       .select(["source", "provider"])
@@ -557,6 +586,7 @@ export class PermissionFacts {
         "created_at",
         "permission_roots",
         "permission_runtime_identity",
+        "instance_limits",
       ])
       .where("device_id", "=", input.deviceId)
       .where("org_id", "=", input.orgId)
@@ -570,7 +600,20 @@ export class PermissionFacts {
       (device.provider !== null && device.provider !== instance.provider)
     )
       return null;
-    if (device.source !== "local") return null;
+    const roots = rootsOf(instance.handle);
+    const committed = instance.permission_roots;
+    if (
+      committed.workspace !== roots.workspace ||
+      committed.skills !== roots.skills ||
+      committed.tmp !== roots.tmp
+    )
+      return null;
+    if (device.source !== "local")
+      return this.cloudAppliedLocked(input, {
+        ...instance,
+        provider: instance.provider,
+        handle: instance.handle,
+      });
     const instanceGeneration = String(instance.created_at.getTime());
     const [binding, machine] = await Promise.all([
       this.db
@@ -596,14 +639,6 @@ export class PermissionFacts {
       !sameRuntimeIdentity(binding.runtime_identity, instance.permission_runtime_identity)
     )
       return null;
-    const roots = rootsOf(instance.handle);
-    const committed = instance.permission_roots;
-    if (
-      committed.workspace !== roots.workspace ||
-      committed.skills !== roots.skills ||
-      committed.tmp !== roots.tmp
-    )
-      return null;
     return {
       location: "local",
       provider: instance.provider,
@@ -616,4 +651,86 @@ export class PermissionFacts {
       outerNetwork: { kind: "host-environment" },
     };
   }
+
+  /**
+   * A cloud instance's installed environment (B-15, Q1 option A): its current runtime report
+   * recorded with the kernel-built cloud identity (provider plugin and version, handle,
+   * generation, applied limits; `readCurrentReport`), named by that report's identity hash in
+   * place of a binding id. Null while the evidence is missing or stale, while desired limits wait
+   * for a file reset (`unapplied`) and while the applied limits are more permissive than the
+   * effective desired ones in any dimension (mode, network kind, a host the desired allowlist
+   * does not cover; spec §124): a pending desired change is never projected as installed. Applied
+   * limits narrower than desired stand (the outer boundary is the applied network, and restricted
+   * hosts are cut to it); the next use's lifecycle lease applies any change before admitting an
+   * operation, and its new limits change the identity, so that use records the evidence again.
+   */
+  private async cloudAppliedLocked(
+    input: { orgId: string; deviceId: string },
+    instance: {
+      provider: string;
+      handle: SandboxHandle;
+      created_at: Date;
+      instance_limits: unknown;
+    },
+  ): Promise<AppliedEnvironment | null> {
+    const device = await this.db
+      .selectFrom("devices")
+      .select("provider")
+      .where("id", "=", input.deviceId)
+      .executeTakeFirst();
+    const entry = providerForDevice(this.providers, device?.provider ?? null);
+    if (!entry || entry.plugin !== instance.provider) return null;
+    const evidence = await readCurrentReport(
+      this.db.db,
+      input.deviceId,
+      entry.plugin,
+      entry.version,
+    );
+    if (evidence.identityHash === null) return null;
+    const limits = readInstanceLimits(instance.instance_limits);
+    if (limits.applied === null || limits.unapplied !== null) return null;
+    // applied limits more permissive than the effective desired ones (spec §124) are not the
+    // installed authority: unproved until the next use's lifecycle lease applies the narrowing
+    if (appliedWider(limits.applied, appliedOf(await this.devicePolicy(input)))) return null;
+    const outerNetwork = cloudOuterNetwork(limits.applied.network);
+    if (outerNetwork === null) return null;
+    const roots = rootsOf(instance.handle);
+    return {
+      location: "cloud",
+      provider: instance.provider,
+      instanceId: instance.handle.id,
+      instanceGeneration: String(instance.created_at.getTime()),
+      bindingId: evidence.identityHash,
+      roots: { workspace: roots.workspace, skills: roots.skills, tmp: roots.tmp },
+      outerNetwork,
+    };
+  }
+}
+
+/**
+ * The outer boundary a cloud instance's applied network proves: public addresses, or its exact
+ * allowlist (empty: network disabled). Null when the allowlist cannot be stated as recorded
+ * context hosts (a host that is not a normalized authority host, or more than the cap).
+ */
+export function cloudOuterNetwork(network: DeviceNetwork): AppliedOuterNetwork | null {
+  if (network.kind === "open-public") return { kind: "open-public" };
+  const hosts = [...new Set(network.hosts)].sort(permissionCodePointCompare);
+  if (hosts.length === 0) return { kind: "none" };
+  if (hosts.length > 100 || hosts.some((host) => validateAllowHost(host).length > 0)) return null;
+  return { kind: "allowlist", hosts };
+}
+
+/**
+ * Restricted hosts within a cloud instance's applied outer boundary (narrowing only): a host the
+ * outer allowlist does not cover cannot be reached, so neither admission nor the recorded context
+ * names it. A local device's host environment keeps every host.
+ */
+export function hostsWithinOuter(
+  hosts: readonly string[],
+  outer: AppliedOuterNetwork | undefined,
+): string[] {
+  if (!outer || outer.kind === "host-environment" || outer.kind === "open-public")
+    return [...hosts];
+  if (outer.kind === "none") return [];
+  return hosts.filter((host) => outer.hosts.some((pattern) => coversHost(pattern, host)));
 }

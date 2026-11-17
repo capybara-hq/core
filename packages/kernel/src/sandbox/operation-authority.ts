@@ -40,7 +40,7 @@ import {
   type PermissionContextSubject,
   PermissionContextSubjectChanged,
 } from "./permission-context-types.js";
-import { PermissionFacts, permissionScopeHash } from "./permission-facts.js";
+import { hostsWithinOuter, PermissionFacts, permissionScopeHash } from "./permission-facts.js";
 import { normalizePermissionExpansion } from "./review/permission-candidate.js";
 import type { SandboxUseContext } from "./use-context.js";
 export type SandboxAuthorityOperation =
@@ -76,9 +76,9 @@ type WithheldScope = { state: "unsupported" | "unprobed"; reason: string };
  * The one verdict over a device's runtime report and its applied environment (B1, B-16): the
  * recorded permission context withholds its scope exactly when this returns a verdict, and
  * admission refuses with the same reason, so the model is never told it can do what admission
- * refuses, nor the reverse (on a cloud device admission applies it only once installed cloud
- * evidence exists, B-15). Unknown applied facts precede a positive capability report; a working
- * root that is not the installed workspace (no project) is never installed scope.
+ * refuses, nor the reverse (local and cloud devices alike, B-15). Unknown applied facts precede a
+ * positive capability report; a working root that is not the installed workspace (no project) is
+ * never installed scope.
  */
 function withheldScope(input: {
   availability: PermissionAvailability;
@@ -333,6 +333,12 @@ export class SandboxOperationAuthority {
       )
         throw new ApiError("forbidden", "Permission expansion exceeds the current ceiling");
     }
+    // an accepted host addition the applied cloud outer boundary does not cover cannot be
+    // reached: cut like the base hosts, so admission never names more than the context (B-15)
+    const expansionHosts = hostsWithinOuter(
+      grant?.expansion.hosts ?? [],
+      f.outerNetwork ?? undefined,
+    );
     const scope = this.scopeOf(ctx, operation, {
       ...f,
       baseReadDirectories: [...f.baseReadDirectories, ...(grant?.expansion.readDirectories ?? [])],
@@ -340,10 +346,10 @@ export class SandboxOperationAuthority {
         ...f.baseWriteDirectories,
         ...(grant?.expansion.writeDirectories ?? []),
       ],
-      baseHosts: [...f.baseHosts, ...(grant?.expansion.hosts ?? [])],
+      baseHosts: [...f.baseHosts, ...expansionHosts],
     });
     const hosts = isExecutionMethod(operation)
-      ? [...new Set([...(networkGrant?.hosts ?? []), ...(grant?.expansion.hosts ?? [])])].sort()
+      ? [...new Set([...(networkGrant?.hosts ?? []), ...expansionHosts])].sort()
       : [];
     const executionGrants = isExecutionMethod(operation)
       ? parseStartingExecutionGrants({
@@ -352,7 +358,7 @@ export class SandboxOperationAuthority {
             ? {
                 hosts,
                 // The accepted per-call addition takes source precedence over the run/task envelope.
-                source: grant?.expansion.hosts.length
+                source: expansionHosts.length
                   ? { kind: "run", id: call.runId, accountId: ctx.actor.accountId }
                   : networkGrant?.source,
               }
@@ -418,7 +424,11 @@ export class SandboxOperationAuthority {
       rootConversationId: initial.id,
     };
     await this.locks.acquire(subject, { kind: "admit" });
-    // the recorded context's actor predicate: a disabled or removed actor is refused alike (B-19)
+    // the recorded context's actor predicate: a disabled or removed actor is refused alike (B-19).
+    // Both readers refuse in the same two steps with the same errors: the unlocked owned-root read
+    // (`conversation.not_found`), then this backstop under the locks for an actor removed in
+    // between (`forbidden`, the text `readContextLocked` and the managed writer throw). The
+    // recorder maps both codes to its one `actor` run error: the model-facing refusal is the same
     if (!(await this.isActiveMember(ctx.orgId, ctx.actor.accountId)))
       throw new ApiError("forbidden", "This run's actor is no longer authorized");
     await this.publication.assertCurrent();
@@ -445,13 +455,21 @@ export class SandboxOperationAuthority {
         ctx.actor.accountId,
         ctx.actor.runId,
       );
-    const { policy, device, workingRoot, grant, allowedHosts } = await this.baseScopeLocked({
+    const base = await this.baseScopeLocked({
       orgId: ctx.orgId,
       deviceId: ctx.deviceId,
       root,
       holderConversationId: ctx.holderConversationId,
       runId: ctx.actor.runId,
     });
+    const { policy, device, workingRoot, grant } = base;
+    const applied = await this.facts.readAppliedEnvironmentLocked({
+      orgId: ctx.orgId,
+      deviceId: ctx.deviceId,
+    });
+    // admission's hosts, as the recorded context names them: within a cloud instance's applied
+    // outer boundary
+    const allowedHosts = hostsWithinOuter(base.allowedHosts, applied?.outerNetwork);
     captureGrant?.(
       grant
         ? {
@@ -461,24 +479,17 @@ export class SandboxOperationAuthority {
         : undefined,
     );
     const effectiveProfile: PermissionProfile = unattended ? "request-approval" : view.profile;
-    // B-15 (W2-H1): a cloud device records its runtime report and installed evidence only after
-    // the provisioning its first admitted operation causes, so cloud admission keeps its previous
-    // rule meanwhile (its recorded context stays unprobed: narrower, never wider); H1 records the
-    // cloud evidence and removes this exception
-    const withheld =
-      device.source === "local"
-        ? withheldScope({
-            availability: view.availability,
-            effectiveProfile,
-            location: "local",
-            workingRoot,
-            projectPath: root.project_path,
-            applied: await this.facts.readAppliedEnvironmentLocked({
-              orgId: ctx.orgId,
-              deviceId: ctx.deviceId,
-            }),
-          })
-        : null;
+    // one verdict for local and cloud devices alike (B-16, B-15): a cloud device without an
+    // instance yet is refused here, but provisioning is not an admitted operation: the lifecycle
+    // lease creates the instance and records its evidence before the first operation is admitted
+    const withheld = withheldScope({
+      availability: view.availability,
+      effectiveProfile,
+      location: device.source === "local" ? "local" : "cloud",
+      workingRoot,
+      projectPath: root.project_path,
+      applied,
+    });
     const vector = await this.epochs.readLocked(subject);
     signal.throwIfAborted();
     if (!view.scopeRevision)
@@ -507,6 +518,7 @@ export class SandboxOperationAuthority {
       // the review and admission see the recorded context's verdict, never a wider one
       availability: withheld ?? view.availability,
       admissionRefusal: withheld?.reason ?? null,
+      outerNetwork: applied?.outerNetwork ?? null,
       policy:
         device.source === "local"
           ? { ...policy, network: { kind: "allowlist", hosts: policy.localAllowedDomains } }
@@ -772,6 +784,8 @@ export class SandboxOperationAuthority {
       deviceId,
     });
     const location = base.device.source === "local" ? "local" : "cloud";
+    // the hosts admission uses: within a cloud instance's applied outer boundary (B-15)
+    const allowedHosts = hostsWithinOuter(base.allowedHosts, applied?.outerNetwork);
     // the verdict admission refuses with (B-16)
     const withheld = withheldScope({
       availability,
@@ -791,7 +805,7 @@ export class SandboxOperationAuthority {
         view.consentScope.scopeRevision !== scopeRevision)
     )
       throw new Error("Full access lost its ceiling or consent inside one authority read");
-    const hosts = [...new Set(base.allowedHosts)].sort(permissionCodePointCompare);
+    const hosts = [...new Set(allowedHosts)].sort(permissionCodePointCompare);
     return parse({
       ...known,
       availability: { state: "supported" },

@@ -12,6 +12,7 @@ import { runSandboxResetFiles } from "../../src/sandbox/jobs.js";
 import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { SandboxProviders } from "../../src/sandbox/providers.js";
+import { seedCloudEvidence, seedCloudInstance } from "../helpers/installed-evidence.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
 
 /**
@@ -162,8 +163,15 @@ async function fixture(
       .resolve(ctx, "exec", new AbortController().signal)
       .then(
         () => "admitted",
-        (e: unknown) => (e as { code?: string }).code ?? String(e),
+        // an unprobed or unsupported device's refusal is its context reason (B-16)
+        (e: unknown) =>
+          (e as { code?: string }).code === "forbidden"
+            ? (e as Error).message
+            : ((e as { code?: string }).code ?? String(e)),
       );
+  // the lifecycle's create: a running instance of the wanted limits with its cloud evidence (B-15)
+  const provision = () =>
+    seedCloudInstance(k, { orgId, deviceId, provider: PROVIDER, version: "test" });
   const root = async () =>
     (
       await db
@@ -181,12 +189,25 @@ async function fixture(
       })
       .where("id", "=", conversationId)
       .execute();
-  return { orgId, deviceId, accountId, conversationId, ctx, device, admit, root, fullRoot };
+  return {
+    orgId,
+    deviceId,
+    accountId,
+    conversationId,
+    ctx,
+    device,
+    admit,
+    provision,
+    root,
+    fullRoot,
+  };
 }
 const snapshots = () => k.app.get(CloudPermissionSnapshots);
 const policy = (f: { orgId: string; deviceId: string }) =>
   k.app.get(PermissionFacts).devicePolicy({ orgId: f.orgId, deviceId: f.deviceId });
 const OPEN = { kind: "open-public", hosts: [] };
+/** A cloud device without current installed evidence (no instance yet, or none recorded). */
+const UNPROBED = "Checked when this device starts";
 
 it("a device without an instance stores the desired authority, unprobed, never blocked", async () => {
   const f = await fixture();
@@ -197,6 +218,9 @@ it("a device without an instance stores the desired authority, unprobed, never b
     permission_reconcile_required: false,
     permission_migration: { from: "auto-mode", old: { mode: "auto", network: OPEN } },
   });
+  // never blocked: without an instance it is honestly unprobed, and its first use provisions it
+  expect(await f.admit()).toBe(UNPROBED);
+  await f.provision();
   expect(await f.admit()).toBe("admitted");
 });
 
@@ -269,6 +293,9 @@ it.each([
       .where("device_id", "=", f.deviceId)
       .execute();
     expect(await snapshots().reconcile(f.orgId, f.deviceId)).toMatchObject({ state: "unprobed" });
+    // no longer blocked: unprobed until the next create applies the exact limits and records them
+    expect(await f.admit()).toBe(UNPROBED);
+    await f.provision();
     expect(await f.admit()).toBe("admitted");
   },
 );
@@ -344,6 +371,8 @@ it("the file reset job reconciles the device it reset", async () => {
   };
   await runSandboxResetFiles(sandbox, { data: { deviceId: f.deviceId } }, snapshots());
   expect((await f.device()).permission_reconcile_required).toBe(false);
+  expect(await f.admit()).toBe(UNPROBED);
+  await f.provision();
   expect(await f.admit()).toBe("admitted");
 });
 
@@ -392,6 +421,12 @@ it("refuses to snapshot on a replica whose permission configuration is not curre
 it("a snapshot narrowed to an allowlist revokes execution scopes outside any allowlist", async () => {
   const f = await fixture({
     instance: { mode: "auto", network: { kind: "allowlist", hosts: ["a.example"] } },
+  });
+  await seedCloudEvidence(k, {
+    orgId: f.orgId,
+    deviceId: f.deviceId,
+    provider: PROVIDER,
+    version: "test",
   });
   const scope = await k.app
     .get(SandboxOperationAuthority)

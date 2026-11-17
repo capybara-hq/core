@@ -19,6 +19,7 @@ import {
 } from "../../src/sandbox/permission-config-publication.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { SandboxProviders } from "../../src/sandbox/providers.js";
+import { seedCloudInstance } from "../helpers/installed-evidence.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
 
 let pgc: TestContainer, rd: TestContainer, a: TestKernel, b: TestKernel, db: KernelDb;
@@ -223,6 +224,14 @@ async function consent() {
         },
       } as unknown as SandboxProvider,
     });
+  // a provisioned instance (created under the open default) with its cloud evidence (B-15)
+  await seedCloudInstance(a, {
+    orgId,
+    deviceId,
+    provider: "@activation-dual",
+    version: "test",
+    applied: { mode: "auto", network: { kind: "open-public", hosts: [] } },
+  });
   const preview = await a.app.get(PermissionFacts).preview(orgId, accountId, deviceId);
   await db
     .updateTable("conversations")
@@ -246,12 +255,21 @@ async function consent() {
     holderConversationId: conversationId,
     actor: { accountId, conversationId },
   };
-  const admit = (replica: TestKernel) =>
-    replica.app.get(SandboxOperationAuthority).resolve(ctx, "exec", new AbortController().signal);
+  // a real use's lifecycle lease applies the replica's current desired limits (and records the
+  // cloud evidence) before it admits anything (B-15)
+  const applyDesired = (replica: TestKernel) =>
+    seedCloudInstance(replica, { orgId, deviceId, provider: "@activation-dual", version: "test" });
+  const admit = async (replica: TestKernel) => {
+    await applyDesired(replica);
+    return replica.app
+      .get(SandboxOperationAuthority)
+      .resolve(ctx, "exec", new AbortController().signal);
+  };
   return {
     row,
     view,
     admit,
+    applyDesired,
     ctx,
     accountId,
     orgId,
@@ -494,6 +512,7 @@ async function admittedIntent(
       .set({ permission_profile: "approve-for-me", permission_consent: null })
       .where("id", "=", f.conversationId)
       .execute();
+  await f.applyDesired(a);
   const scope = await a.app
     .get(SandboxOperationAuthority)
     .resolve(f.ctx, method, new AbortController().signal);

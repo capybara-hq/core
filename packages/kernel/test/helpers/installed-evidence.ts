@@ -1,8 +1,16 @@
-import type { SandboxPermissionSupport, SandboxRoots } from "@capybara-hq/plugin-sdk";
+import {
+  DEFAULT_SANDBOX_ROOTS,
+  rootsOf,
+  type SandboxPermissionSupport,
+  type SandboxRoots,
+} from "@capybara-hq/plugin-sdk";
 import type { Kysely } from "kysely";
 import { kernelDb } from "../../src/db/kernel-schema.js";
+import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
+import type { AppliedLimits } from "../../src/sandbox/modes.js";
 import { PermissionAuthorityLock } from "../../src/sandbox/permission-authority-lock.js";
+import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { PermissionRuntimeReports } from "../../src/sandbox/permission-runtime-reports.js";
 import type { TestKernel } from "./runs.js";
 
@@ -51,6 +59,11 @@ export async function seedInstalledEvidence(
     .set({ permission_roots: JSON.stringify(roots) })
     .where("device_id", "=", input.deviceId)
     .execute();
+  // a cloud device records the kernel-built cloud identity its row proves, as the lifecycle does
+  if (device.source !== "local") {
+    await seedCloudEvidence(k, input);
+    return { generation, bindingId: null };
+  }
   const identity = {
     runtimeHash: "a".repeat(64),
     helperHash: "b".repeat(64),
@@ -74,7 +87,6 @@ export async function seedInstalledEvidence(
         input.report ?? SUPPORTS_BOTH,
       );
   });
-  if (device.source !== "local") return { generation, bindingId: null };
   const machine = await db
     .selectFrom("device_machines")
     .select("id")
@@ -104,4 +116,88 @@ export async function seedInstalledEvidence(
     )
     .execute();
   return { generation, bindingId };
+}
+
+/**
+ * Records a cloud device's current instance evidence (B-15) the way the lifecycle does after create
+ * or resume: the provider's support report with the kernel-built identity of the committed row
+ * (its handle, generation and recorded applied limits). The instance row already exists.
+ */
+export async function seedCloudEvidence(
+  k: TestKernel,
+  input: {
+    orgId: string;
+    deviceId: string;
+    provider: string;
+    version: string;
+    report?: SandboxPermissionSupport;
+  },
+): Promise<void> {
+  await k.app.get(TransactionHost).run(async () => {
+    await k.app
+      .get(PermissionAuthorityLock)
+      .acquire(
+        { orgId: input.orgId, deviceId: input.deviceId },
+        { kind: "write", level: "device" },
+      );
+    // the roots `commitHandle` commits with the handle
+    const db = k.app.get(KernelDb);
+    const instance = await db
+      .selectFrom("device_instances")
+      .select("handle")
+      .where("device_id", "=", input.deviceId)
+      .executeTakeFirstOrThrow();
+    if (!instance.handle) throw new Error("The cloud instance needs a handle");
+    await db
+      .updateTable("device_instances")
+      .set({ permission_roots: JSON.stringify(rootsOf(instance.handle)) })
+      .where("device_id", "=", input.deviceId)
+      .execute();
+    await k.app
+      .get(PermissionRuntimeReports)
+      .recordCloud(input.deviceId, input.provider, input.version, input.report ?? SUPPORTS_BOTH);
+  });
+}
+
+/**
+ * Provisions a cloud device's instance as the lifecycle's create does (B-15): a running instance
+ * on the default roots whose recorded applied limits are `applied` (default: what the device's
+ * effective policy wants now), then its cloud evidence. Replaces any instance row it had.
+ */
+export async function seedCloudInstance(
+  k: TestKernel,
+  input: {
+    orgId: string;
+    deviceId: string;
+    provider: string;
+    version: string;
+    applied?: AppliedLimits;
+    report?: SandboxPermissionSupport;
+  },
+): Promise<void> {
+  const db = k.app.get(KernelDb);
+  const policy = await k.app
+    .get(PermissionFacts)
+    .devicePolicy({ orgId: input.orgId, deviceId: input.deviceId });
+  const applied = input.applied ?? {
+    mode: policy.mode,
+    network: { kind: policy.network.kind, hosts: [...policy.network.hosts] },
+  };
+  const row = {
+    org_id: input.orgId,
+    provider: input.provider,
+    status: "running" as const,
+    handle: JSON.stringify({ id: input.deviceId, roots: DEFAULT_SANDBOX_ROOTS }),
+    permission_roots: JSON.stringify(DEFAULT_SANDBOX_ROOTS),
+    fs_status: "ready" as const,
+    fs_handle: JSON.stringify({ id: `fs-${input.deviceId}` }),
+    had_instance: true,
+    instance_limits: JSON.stringify(applied),
+  };
+  await db
+    .insertInto("device_instances")
+    .values({ device_id: input.deviceId, ...row })
+    .onConflict((oc) => oc.column("device_id").doUpdateSet(row))
+    .execute();
+  await seedCloudEvidence(k, input);
 }

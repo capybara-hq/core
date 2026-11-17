@@ -10,6 +10,7 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { PermissionContextRecorder } from "../../src/runtime/permission-context.service.js";
 import { type ExecutionClaim, RunExecution } from "../../src/runtime/run-execution.js";
+import type { AppliedLimits } from "../../src/sandbox/modes.js";
 import { PermissionAuthorityLock } from "../../src/sandbox/permission-authority-lock.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { PermissionRuntimeReports } from "../../src/sandbox/permission-runtime-reports.js";
@@ -67,10 +68,17 @@ const PROVIDER_METHODS = [
   "permissionSupport",
   "revokeOperation",
 ];
-/** Replaces the registered `@local` provider with a recording, throwing one (restore after). */
-export function spyProvider(k: TestKernel, opts: { contract?: boolean } = {}) {
+/**
+ * Replaces the registered `@local` provider (or `opts.plugin`) with a recording, throwing one
+ * (restore after).
+ */
+export function spyProvider(
+  k: TestKernel,
+  opts: { contract?: boolean; plugin?: string; version?: string } = {},
+) {
+  const plugin = opts.plugin ?? "@local";
   const providers = k.app.get(SandboxProviders);
-  const previous = providers.forName("@local");
+  const previous = providers.forName(plugin);
   const calls: string[] = [];
   const impl: Record<string, unknown> = {};
   for (const name of PROVIDER_METHODS) {
@@ -84,13 +92,76 @@ export function spyProvider(k: TestKernel, opts: { contract?: boolean } = {}) {
       throw new Error(`a permission context read called provider ${name}`);
     };
   }
-  providers.register({ plugin: "@local", impl: impl as unknown as SandboxProvider });
+  providers.register({
+    plugin,
+    ...(opts.version !== undefined && { version: opts.version }),
+    impl: impl as unknown as SandboxProvider,
+  });
   return {
     calls,
     restore: () => {
       if (previous) providers.register(previous);
     },
   };
+}
+
+/** The cloud provider of {@link toCloudDevice}: a recording, throwing spy (readers never probe). */
+export const CLOUD_PROVIDER = "@cloud-context-test";
+export const CLOUD_VERSION = "cloud-1";
+
+/**
+ * Turns the fixture's device into a cloud device of {@link CLOUD_PROVIDER} whose instance runs
+ * the limits its effective policy wants (`limits` overrides them). `evidence`: records the
+ * kernel-built cloud evidence under the device writer lock, as the lifecycle does after create or
+ * resume (B-15). Returns the provider spy (its calls must stay empty: readers never probe).
+ */
+export async function toCloudDevice(
+  k: TestKernel,
+  f: { orgId: string; deviceId: string; db: KernelSchemaDb },
+  opts: {
+    evidence?: boolean;
+    report?: ReportKind;
+    limits?: (desired: AppliedLimits) => unknown;
+    /** The device's narrowing switch: its desired mode is then `sandbox`. */
+    sandboxMode?: boolean;
+  } = {},
+) {
+  const spy = spyProvider(k, { plugin: CLOUD_PROVIDER, version: CLOUD_VERSION });
+  await f.db
+    .updateTable("devices")
+    .set({
+      source: "cloud",
+      provider: CLOUD_PROVIDER,
+      outer_network: JSON.stringify({ kind: "allowlist", hosts: [] }),
+      ...(opts.sandboxMode && { mode: "sandbox" as const }),
+    })
+    .where("id", "=", f.deviceId)
+    .execute();
+  const policy = await k.app
+    .get(PermissionFacts)
+    .devicePolicy({ orgId: f.orgId, deviceId: f.deviceId });
+  const desired: AppliedLimits = {
+    mode: policy.mode,
+    network: { kind: policy.network.kind, hosts: [...policy.network.hosts] },
+  };
+  await f.db
+    .updateTable("device_instances")
+    .set({
+      provider: CLOUD_PROVIDER,
+      instance_limits: JSON.stringify(opts.limits ? opts.limits(desired) : desired),
+    })
+    .where("device_id", "=", f.deviceId)
+    .execute();
+  if (opts.evidence)
+    await k.app.get(TransactionHost).run(async () => {
+      await k.app
+        .get(PermissionAuthorityLock)
+        .acquire({ orgId: f.orgId, deviceId: f.deviceId }, { kind: "write", level: "device" });
+      await k.app
+        .get(PermissionRuntimeReports)
+        .recordCloud(f.deviceId, CLOUD_PROVIDER, CLOUD_VERSION, REPORTS[opts.report ?? "both"]);
+    });
+  return { spy, desired };
 }
 
 export interface ContextSeed {
