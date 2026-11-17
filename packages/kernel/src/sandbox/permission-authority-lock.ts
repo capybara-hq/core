@@ -92,8 +92,12 @@ export class PermissionAuthorityLock {
     }
   }
   assertHeld(kind: AuthorityLevel, id: string, exclusive = false): void {
-    const held = currentStore()?.permissionLocks?.get(keyOf(kind, id));
-    if (!held || (exclusive && held !== "exclusive"))
-      throw new Error("The matching authority lock is required");
+    assertAuthorityHeld(kind, id, exclusive);
   }
+}
+/** The current transaction holds this authority lock (exclusively when asked); else throws. */
+export function assertAuthorityHeld(kind: AuthorityLevel, id: string, exclusive = false): void {
+  const held = currentStore()?.permissionLocks?.get(keyOf(kind, id));
+  if (!held || (exclusive && held !== "exclusive"))
+    throw new Error("The matching authority lock is required");
 }

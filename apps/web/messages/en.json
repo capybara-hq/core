@@ -186,7 +186,12 @@
       "hook_denied": "The request was blocked by the policy of the \"{plugin}\" extension.",
       "hook_denied_unknown": "The request was blocked by an extension policy.",
       "context_too_large": "The conversation is too large for the model's context window. Compact the conversation, then try again.",
-      "not_found": "The run does not exist in this conversation."
+      "not_found": "The run does not exist in this conversation.",
+      "permission_context_stale": "Permission configuration changed. Wait for configuration activation, then retry this run.",
+      "permission_context_changed": "The device binding changed while preparing this request. Retry the run after the binding settles.",
+      "permission_context_unavailable": "Permission context could not be read or recorded. Retry this run when storage is available.",
+      "permission_context_invalid": "Permission context is invalid. Ask an administrator to inspect the run before retrying.",
+      "permission_context_actor_unavailable": "This run's actor is no longer authorized. Start a new run with an authorized account."
     },
     "component": {
       "not_found": "The component does not exist or was removed.",
