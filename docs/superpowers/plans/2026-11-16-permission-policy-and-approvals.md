@@ -98,7 +98,7 @@ Adopted decisions are in the accepted design: directory-only explicit presentati
 
 The Task 7 implementer is the sole integrator of its listed shared event/schema/module/outbox/status
 files and test membership in an isolated worktree. Root owns Git staging and commits. Allocate
-`packages/kernel/src/migrations/0141_permission_call_grants_and_approvals.sql`; existing applied
+`packages/kernel/src/migrations/0149_permission_call_grants_and_approvals.sql`; existing applied
 migrations remain immutable. Task 6c continues independently and exclusively owns TransactionHost,
 permission-config-publication, startup/lifecycle/CLI files and its focused tests. No Task 6c source
 change or live service/configuration action is part of this assignment.

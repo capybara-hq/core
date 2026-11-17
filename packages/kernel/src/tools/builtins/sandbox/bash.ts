@@ -311,7 +311,7 @@ async function runInBackground(
         const v = f ? new TextDecoder().decode(f.data).trim() : "";
         return SID_RE.test(v) ? v : null;
       };
-      // immediately before the dispatch (0148): refused once the legacy-launch freeze is
+      // immediately before the dispatch (0156): refused once the legacy-launch freeze is
       // published, else the reservation is marked as possibly dispatched in the same step
       const legacyLaunch = deps.legacyLaunch;
       if (legacyLaunch) {

@@ -130,7 +130,7 @@ beforeAll(async () => {
   );
   await sql
     .raw(
-      `set search_path to capybara,public;${await readFile(new URL("../../src/migrations/0140_sandbox_operation_intents.sql", import.meta.url), "utf8")}`,
+      `set search_path to capybara,public;${await readFile(new URL("../../src/migrations/0148_sandbox_operation_intents.sql", import.meta.url), "utf8")}`,
     )
     .execute(pool);
   await sql`alter table capybara.sandbox_operation_intents add column permission_grant_id uuid`.execute(
@@ -138,7 +138,7 @@ beforeAll(async () => {
   );
   await sql
     .raw(
-      `set search_path to capybara,public;${await readFile(new URL("../../src/migrations/0142_starting_execution_grants.sql", import.meta.url), "utf8")}`,
+      `set search_path to capybara,public;${await readFile(new URL("../../src/migrations/0150_starting_execution_grants.sql", import.meta.url), "utf8")}`,
     )
     .execute(pool);
   replicas.push(...pools.map(replica));
