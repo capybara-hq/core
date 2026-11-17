@@ -320,6 +320,38 @@ describe("recorded permission context recorder", () => {
       .execute();
     expect(await runErrorCode(record(f))).toBe(PERMISSION_CONTEXT_RUN_ERRORS.invalid.code);
     expect(await contexts(raw, f.rootId)).toEqual([]);
+    // a child whose own row looks ordinary but whose root is a replay conversation refuses too
+    // (the guard covers the whole tree, independent of whether replays dispatch children)
+    const tree = await seedContext(k, raw);
+    const child = randomUUID();
+    await tree.db
+      .insertInto("conversations")
+      .values({
+        id: child,
+        org_id: tree.orgId,
+        agent_id: tree.agentId,
+        account_id: tree.accountId,
+        kind: "subagent",
+        parent_conversation_id: tree.rootId,
+      } as never)
+      .execute();
+    await tree.db
+      .updateTable("conversations")
+      .set({ kind: "eval" })
+      .where("id", "=", tree.rootId)
+      .execute();
+    const childRun = await startRun(k, raw, child, tree.accountId);
+    expect(
+      await runErrorCode(
+        recordUnder(k, childRun.claim, {
+          orgId: tree.orgId,
+          conversationId: child,
+          runId: childRun.runId,
+          accountId: tree.accountId,
+        }),
+      ),
+    ).toBe(PERMISSION_CONTEXT_RUN_ERRORS.invalid.code);
+    expect(await contexts(raw, child)).toEqual([]);
   });
 
   it("a replaced claim, an ended or deleted run and an abort append nothing and keep their identity", async () => {

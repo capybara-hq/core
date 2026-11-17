@@ -84,7 +84,14 @@ import {
 } from "./hook-calls.js";
 import type { SubagentParent } from "./loop.js";
 import { MediaCache } from "./media-cache.js";
+import {
+  PERMISSION_CONTEXT_RUN_ERRORS,
+  type PermissionContextFailureKind,
+  permissionContextFailureKind,
+  permissionContextKindOfCode,
+} from "./permission-context-errors.js";
 import { type BoundProvider, ProviderListError, type ProviderRegistry } from "./providers.js";
+import { ExecutionRevoked } from "./run-execution.js";
 import type { StepLog } from "./step-log.js";
 import { budgetRunOf, subagentBudgetUsedUp } from "./subagents/limits.js";
 
@@ -198,9 +205,11 @@ export interface ModelStepDeps {
   /**
    * The request boundary of the recorded permission context (permission context replay spec B2):
    * before each agent-history request construction, record (live) or feed (full-run replay) the
-   * permission context, then rebuild from the complete log. Dormant: nothing in the runtime calls it
-   * until Gate 9.4 wires the request boundary and its producer. Full-run replays strip any live one
-   * and install only the recorded feeder (`evals/recorded-permission-context.ts`).
+   * permission context, then rebuild from the complete log. Called at every request construction
+   * of the attempt ladder (a retry, a fallback, the rebuild after a forced compaction, wrap-up);
+   * absent, no call and no reread (old requests build byte for byte). Live runs get the recorder
+   * only through the paired activation gate (`RunSteps`); full-run replays strip any live one and
+   * install only the recorded feeder (`evals/recorded-permission-context.ts`).
    */
   permissionContext?: PermissionContextPort;
 }
@@ -208,8 +217,12 @@ export interface ModelStepDeps {
 /** What the request boundary passes to {@link PermissionContextPort.beforeRequest}. */
 export type PermissionContextRequestInput = Pick<
   ModelStepInput,
-  "orgId" | "conversationId" | "runId" | "accountId" | "step" | "signal"
-> & { attempt: number };
+  "orgId" | "conversationId" | "runId" | "step" | "signal"
+> & {
+  /** The run's actor; a step without one fails before the callback (no request is sent). */
+  accountId: string;
+  attempt: number;
+};
 
 /** {@link ModelStepDeps.permissionContext}: one call per request construction (spec B2). */
 export interface PermissionContextPort {
@@ -318,6 +331,60 @@ export class RunError extends Error {
   ) {
     super(message);
     this.name = "RunError";
+  }
+}
+
+/**
+ * A failure of the permission context boundary (the callback or its complete-log refresh) before
+ * any request is sent (spec B2): never a provider error, never retried or sent to a fallback; the
+ * attempt ladder turns it into its named {@link RunError} before classifying anything.
+ */
+export class PermissionContextBeforeRequestError extends Error {
+  override readonly name = "PermissionContextBeforeRequestError";
+  constructor(readonly kind: PermissionContextFailureKind) {
+    super(PERMISSION_CONTEXT_RUN_ERRORS[kind].message);
+  }
+  toRunError(): RunError {
+    const v = PERMISSION_CONTEXT_RUN_ERRORS[this.kind];
+    return new RunError(v.code, v.message);
+  }
+}
+
+/**
+ * The request boundary of one construction (spec B2): only when `deps.permissionContext` exists,
+ * awaits its `beforeRequest` and returns the complete ordered log read once after it; undefined
+ * without one (no call, no reread). A revoked execution keeps its identical `ExecutionRevoked`, an
+ * abort its own error (the ladder turns it into `StepAborted`); every other failure of the
+ * callback or the refresh is a {@link PermissionContextBeforeRequestError}.
+ */
+async function permissionContextBoundary(
+  deps: ModelStepDeps,
+  input: ModelStepInput,
+  attempt: number,
+): Promise<ConversationEvent[] | undefined> {
+  const port = deps.permissionContext;
+  if (!port) return undefined;
+  try {
+    if (input.accountId === undefined) throw new PermissionContextBeforeRequestError("actor");
+    await port.beforeRequest({
+      orgId: input.orgId,
+      conversationId: input.conversationId,
+      runId: input.runId,
+      accountId: input.accountId,
+      step: input.step,
+      signal: input.signal,
+      attempt,
+    });
+    return await readAllEvents(deps.eventLog, input.conversationId);
+  } catch (error) {
+    if (error instanceof ExecutionRevoked || error instanceof PermissionContextBeforeRequestError)
+      throw error;
+    if (input.signal.aborted) throw error;
+    const kind =
+      error instanceof RunError
+        ? (permissionContextKindOfCode(error.code) ?? "invalid")
+        : permissionContextFailureKind(error);
+    throw new PermissionContextBeforeRequestError(kind);
   }
 }
 
@@ -1736,6 +1803,10 @@ async function ladder(
         // (§4.3 point 5): one forced compaction with this rung's model, the squeezed fit, then
         // `run.context_too_large` before any call.
         const fit = async () => {
+          // the permission context boundary of this construction (spec B2): record (or feed) the
+          // context, then build from the complete log read once after it; absent, `evs` stays
+          const refreshed = await permissionContextBoundary(deps, input, attempt);
+          if (refreshed !== undefined) evs = refreshed;
           await loadMedia(deps, input, evs, info, tools);
           const built = buildRequest(deps, evs, input, info, params.value, runtime, tools, wrapUp);
           const { request, estimate } = built;
@@ -1922,8 +1993,13 @@ async function ladder(
         }
         return { outcome, ref: rung.ref };
       } catch (err) {
+        // a revoked or replaced execution reaches the worker as the identical object, before the
+        // abort and any classification (it must never write a stale terminal event)
+        if (err instanceof ExecutionRevoked) throw err;
         if (err instanceof StepAborted) throw err;
         if (signal.aborted) throw new StepAborted();
+        // the permission context boundary sent nothing: its named run error, no provider fallback
+        if (err instanceof PermissionContextBeforeRequestError) throw err.toRunError();
         // a hook denial is final (not retried, not reclassified)
         if (err instanceof RunError) throw err;
         if (err instanceof BudgetUsedUp) throw err;
