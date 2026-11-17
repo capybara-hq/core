@@ -75,7 +75,8 @@ export function createCancellationAttempt(
     return pending;
   };
 }
-const WORKER = `import {pathToFileURL} from 'node:url';
+/** The fixed private worker bootstrap (a runtime-manifest helper entry). */
+export const WORKER = `import {pathToFileURL} from 'node:url';
 import {spawn} from 'node:child_process';
 import {randomUUID} from 'node:crypto';
 let manager,initialized=false,wrapped=false,closing=false,full=false,child,childClosed,timer,timedOut=false,killed=false;

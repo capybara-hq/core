@@ -42,7 +42,8 @@
     "NOTICE"
   ],
   "scripts": {
-    "build": "tsc -b"
+    "build": "tsc -b",
+    "prepack": "node tools/runtime-manifest.ts"
   },
   "dependencies": {
     "@anthropic-ai/sandbox-runtime": "0.0.81",
