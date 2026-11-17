@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "marketplace": {
     "url": "https://github.com/capybara-hq/plugins.git",
-    "commit": "662be35cf449fe5b24bf54d532f9dc8f1ad847d5"
+    "commit": "7b9ad17111bc253fbfcd70b2cdeb6aefb4d43497"
   },
   "plugins": [
     {
@@ -108,6 +108,15 @@
       "npm": "@capybara-hq/plugin-skills-core",
       "version": "0.1.0-rc.1",
       "integrity": "sha512-eIad/YOTGMAjOQPEVrN6jfq/WHhpJUn5FifbELnFmRij1yo+mI4b/5/72DZ0cjsRXFWhUODen2IPmhYH/YZqWQ==",
+      "required": false,
+      "builtin": true
+    },
+    {
+      "name": "file-preview",
+      "source": "npm",
+      "npm": "@capybara-hq/plugin-file-preview",
+      "version": "0.1.0-rc.0",
+      "integrity": "sha512-ClsZznUmoUO+Bc3uzp//i3BBw43nWybbtJhMfL073VGCP3i3eP70uymaC+hzMSurnAFk8As2fa/3WgGL23V5Ig==",
       "required": false,
       "builtin": true
     }
