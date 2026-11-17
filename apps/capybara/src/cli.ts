@@ -20,6 +20,7 @@ import {
   runExtensionsState,
 } from "./commands/extensions.js";
 import { runMigrate } from "./commands/migrate.js";
+import { runPermissionsCutover } from "./commands/permissions.js";
 import { runPluginsImport, runPluginsList } from "./commands/plugins.js";
 import { runSecretsRewrap } from "./commands/secrets.js";
 import { runStart } from "./commands/start.js";
@@ -152,6 +153,8 @@ export async function main(
       return runPluginsImport({ target: cmd.target, yes: cmd.yes }, log, env, io);
     case "secrets-rewrap":
       return runSecretsRewrap(log, env, io);
+    case "permissions-cutover":
+      return runPermissionsCutover({ action: cmd.action, json: cmd.json }, log, env, io);
     case "start":
       if (envFile !== undefined) log.info("loaded env file", { path: envFile });
       return runStart(

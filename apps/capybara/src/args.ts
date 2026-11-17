@@ -29,7 +29,16 @@ export type Command =
   | { command: "plugins-import"; target: string; yes: boolean }
   | { command: "config-migrate-permissions"; input: string; output: string }
   | { command: "secrets-rewrap" }
+  | {
+      command: "permissions-cutover";
+      action: (typeof CUTOVER_ACTIONS)[number];
+      /** Print JSON instead of the human-readable form. */
+      json: boolean;
+    }
   | { command: "help" };
+
+/** The actions of `capybara permissions cutover`, in runbook order. */
+export const CUTOVER_ACTIONS = ["report", "freeze", "snapshot"] as const;
 
 export const USAGE = `Usage:
   capybara start [--role api,worker,gateway]   Start the kernel (roles override config "roles");
@@ -103,6 +112,25 @@ export const USAGE = `Usage:
                                                key in masterKeyPrevious with masterKey (in
                                                batches; a re-run does nothing); prints counts,
                                                never a key. See docs/deploy/README.md
+  capybara permissions cutover report [--json] Show where the permission cutover stands: the
+                                               pre-checks (local devices without a boot
+                                               identity, cloud devices with unknown
+                                               incarnations), live replicas on another version
+                                               and legacy rows only an old, unfenced replica
+                                               writes, the legacy freeze, retirement
+                                               obligations and the cloud snapshot; PostgreSQL
+                                               only (replicas read from Redis when it answers)
+  capybara permissions cutover freeze [--json] Publish the legacy-launch freeze (never undone) and
+                                               enumerate the legacy work until stable before
+                                               returning; a re-run completes an interrupted
+                                               enumeration. PostgreSQL only. Stop every old
+                                               replica first
+  capybara permissions cutover snapshot [--json]
+                                               Snapshot every cloud device's permission authority
+                                               under its lifecycle lease (needs Redis); refuses
+                                               before the freeze or when this config is not the
+                                               published one; a re-run publishes nothing and
+                                               resumes an interrupted run
   capybara help                                Show this help
 
 Every command first loads .env from the working directory when it exists (variables already set
@@ -151,6 +179,40 @@ export function parseCli(argv: string[]): Command {
   const activation = activatePermissionConfig === undefined ? {} : { activatePermissionConfig };
   if (command === undefined || command === "help" || v.help) {
     return { command: "help" };
+  }
+  if (command !== "permissions" && v.json !== undefined)
+    throw new UsageError("--json is only valid for permissions cutover");
+  if (command === "permissions") {
+    const [group, action, ...extra] = rest;
+    if (group !== "cutover")
+      throw new UsageError(
+        group === undefined
+          ? "missing permissions command (expected cutover)"
+          : `unknown permissions command "${group}"`,
+      );
+    if (action === undefined)
+      throw new UsageError(
+        `missing cutover action (expected one of ${CUTOVER_ACTIONS.join(", ")})`,
+      );
+    if (!(CUTOVER_ACTIONS as readonly string[]).includes(action))
+      throw new UsageError(`unknown cutover action "${action}"`);
+    if (extra.length > 0) throw new UsageError(`unexpected argument "${extra[0]}"`);
+    for (const opt of [
+      "role",
+      "yes",
+      "dir",
+      "manifest",
+      "in",
+      "out",
+      ...ADMIN_CREATE_OPTIONS,
+    ] as const) {
+      if (v[opt] !== undefined) throw new UsageError(`--${opt} is not valid for permissions`);
+    }
+    return {
+      command: "permissions-cutover",
+      action: action as (typeof CUTOVER_ACTIONS)[number],
+      json: v.json === true,
+    };
   }
   if (command !== "config") {
     for (const opt of ["in", "out"] as const) {
@@ -356,6 +418,7 @@ function parse(argv: string[]) {
       manifest: { type: "string" },
       in: { type: "string" },
       out: { type: "string" },
+      json: { type: "boolean" },
       help: { type: "boolean", short: "h" },
     },
   });
