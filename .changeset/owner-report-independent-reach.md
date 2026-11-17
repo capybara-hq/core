@@ -2,7 +2,7 @@
 "@capybara-hq/kernel": minor
 ---
 
-Persist authenticated device owner reports (migration 0155, `device_machines.owner_report`) through
+Persist authenticated device owner reports (migration 0157, `device_machines.owner_report`) through
 one owner writer fed by the staged v3 hello, policy frame, applied policy answers and statuses and
 the bind answer: a higher sequence is recorded, the same report is idempotent, a lower or
 conflicting one blocks new authority (`device.owner_report_stale`) until a valid current report.

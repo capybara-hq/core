@@ -138,7 +138,7 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   instance, under the exclusive lease next to its `killAll`. The poll and `TaskOutput` / `TaskStop` use `SandboxService.ifRunning`: a shared
   lease only on a `running` row of the task's instance, never creating or resuming one. sandbox-fake puts node shims for `setsid`,
   `timeout`, `pkill -s` and `pgrep -s` first on its PATH (macOS has none) and kills an instance's processes on `suspend` and `destroy`.
-- **Legacy retirement** (permission runtime cutover 8.5, migration 0156, `sandbox/legacy-retirement.ts`):
+- **Legacy retirement** (permission runtime cutover 8.5, migration 0157, `sandbox/legacy-retirement.ts`):
   - **Freeze.** `LegacyRetirementStore.freeze` writes the freeze row under the exclusive platform authority lock, then enumerates
     before it returns. Every SID launch checks the freeze under the shared lock right before its dispatch, recording the exact
     incarnation (provider and generation) it dispatches into.
