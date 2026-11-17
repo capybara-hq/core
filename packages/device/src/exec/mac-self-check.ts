@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, realpath, rm } from "node:fs/promises";
+import { mkdir, realpath, rm, writeFile } from "node:fs/promises";
+import { type AddressInfo, createServer } from "node:net";
 import { join } from "node:path";
 import type { ExecResult, SandboxOperationScope } from "@capybara-hq/plugin-sdk";
+import type { RestrictedProof } from "./mac-operation-backend.js";
 import {
   type MacWorkerHandle,
   type MacWorkerRequest,
@@ -21,13 +23,43 @@ export interface MacSelfCheckInput {
   startWorker?: (request: MacWorkerRequest, signal: AbortSignal) => Promise<MacWorkerHandle>;
 }
 
+/** What each self-check exit code means: the probe that did not hold. */
+const PROBE_FAILURES: Record<number, string> = {
+  3: "a write outside the write root went through",
+  4: "a read of a denied path went through",
+  5: "a network connection went through",
+};
+
+/** Whether a TCP connection reaches a local listener while `run` runs; the listener is closed after. */
+async function withListener<T>(
+  run: (port: number) => Promise<T>,
+): Promise<{ value: T; reached: boolean }> {
+  let reached = false;
+  const server = createServer((socket) => {
+    reached = true;
+    socket.destroy();
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+  try {
+    const value = await run((server.address() as AddressInfo).port);
+    return { value, reached };
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+}
+
 /**
  * The worker self-check a macOS binding runs before it reports restricted support (permission
  * activation B-27): a real restricted worker, launched from the sealed runtime the binding
- * attested, must write and remove a file inside its one write root and must be refused a write
- * to a sibling directory outside it, with no network. Together with the verified manifest (the
- * seal exists only after `verifyInstalledRuntime` succeeded in this process) this is the proof
- * that restricted execution holds here. Returns null when it holds, else why not; never throws.
+ * attested, must write and remove a file inside its one write root, and must be refused a write
+ * to a sibling directory outside it, a read of a file under a denied read root, and a TCP
+ * connection to a listener on this machine (its network is none). Together with the verified
+ * manifest (the seal exists only after `verifyInstalledRuntime` succeeded in this process) this is
+ * the proof that restricted execution holds here. Returns null when it holds, else why not; never
+ * throws.
  */
 export async function macRestrictedSelfCheck(
   input: MacSelfCheckInput,
@@ -35,7 +67,8 @@ export async function macRestrictedSelfCheck(
 ): Promise<string | null> {
   if ((input.platform ?? process.platform) !== "darwin")
     return "Restricted execution with this backend needs macOS";
-  if (!input.runtimeHash)
+  const runtimeHash = input.runtimeHash;
+  if (!runtimeHash)
     return "Restricted macOS execution needs an instance binding with an attested runtime";
   const scratch = join(input.stateDir, `restricted-check-${randomUUID()}`);
   try {
@@ -43,53 +76,116 @@ export async function macRestrictedSelfCheck(
     const base = await realpath(scratch);
     const allowed = join(base, "allowed");
     const denied = join(base, "denied");
-    await mkdir(allowed, { mode: 0o700 });
-    await mkdir(denied, { mode: 0o700 });
+    const hidden = join(base, "hidden");
+    for (const dir of [allowed, denied, hidden]) await mkdir(dir, { mode: 0o700 });
+    await writeFile(join(hidden, "secret"), "restricted self-check", { mode: 0o600 });
     const probe = (dir: string) => shellQuote(join(dir, "probe"));
-    // exit 3: the write outside the root went through; any other failure: the allowed one did not
-    const command =
-      `: > ${probe(allowed)} && rm ${probe(allowed)} && ` +
-      `if (: > ${probe(denied)}) 2>/dev/null; then exit 3; fi`;
-    const operationId = `self-check-${randomUUID()}`;
-    const scope: SandboxOperationScope = {
-      operationId,
-      admitBeforeMs: Date.now() + 60_000,
-      deviceId: "self-check",
-      rootConversationId: "self-check",
-      profileRevision: 0,
-      ceilingRevision: "self-check",
-      profile: "request-approval",
-      actor: { accountId: "self-check", conversationId: "self-check" },
-      tag: operationId,
-      filesystem: { kind: "scoped", readRoots: [], writeRoots: [allowed] },
-      network: { kind: "none" },
-    };
-    const request: MacWorkerRequest = {
-      kind: "exec",
-      scope,
-      grant: {
-        full: false,
-        readRoots: [],
-        writeRoots: [allowed],
-        hosts: [],
-        deniedReadRoots: [],
-        revision: "self-check",
-      },
-      stateDir: input.stateDir,
-      pythonPath: input.pythonPath,
-      runtimeHash: input.runtimeHash,
-      beforeLaunch: async () => signal.throwIfAborted(),
-      onLaunch: async () => {},
-      args: { command, timeoutMs: 20_000, maxOutputBytes: 4096 },
-    };
-    const worker = await (input.startWorker ?? startMacOperationWorker)(request, signal);
-    await worker.ready;
-    const result = (await worker.completion) as ExecResult;
+    const { value: result, reached } = await withListener(async (port) => {
+      // exit 3, 4, 5: a refused action went through; any other failure: the allowed write failed
+      const command =
+        `: > ${probe(allowed)} && rm ${probe(allowed)} && ` +
+        `if (: > ${probe(denied)}) 2>/dev/null; then exit 3; fi; ` +
+        `if cat ${shellQuote(join(hidden, "secret"))} >/dev/null 2>&1; then exit 4; fi; ` +
+        `if (exec 3<>/dev/tcp/127.0.0.1/${port}) 2>/dev/null; then exit 5; fi`;
+      const operationId = `self-check-${randomUUID()}`;
+      const scope: SandboxOperationScope = {
+        operationId,
+        admitBeforeMs: Date.now() + 60_000,
+        deviceId: "self-check",
+        rootConversationId: "self-check",
+        profileRevision: 0,
+        ceilingRevision: "self-check",
+        profile: "request-approval",
+        actor: { accountId: "self-check", conversationId: "self-check" },
+        tag: operationId,
+        filesystem: { kind: "scoped", readRoots: [], writeRoots: [allowed] },
+        network: { kind: "none" },
+      };
+      const request: MacWorkerRequest = {
+        kind: "exec",
+        scope,
+        grant: {
+          full: false,
+          readRoots: [],
+          writeRoots: [allowed],
+          hosts: [],
+          deniedReadRoots: [hidden],
+          revision: "self-check",
+        },
+        stateDir: input.stateDir,
+        pythonPath: input.pythonPath,
+        runtimeHash,
+        beforeLaunch: async () => signal.throwIfAborted(),
+        onLaunch: async () => {},
+        args: { command, timeoutMs: 20_000, maxOutputBytes: 4096 },
+      };
+      const worker = await (input.startWorker ?? startMacOperationWorker)(request, signal);
+      const abort = () => void worker.cancel("Self-check deadline", 0).catch(() => {});
+      signal.addEventListener("abort", abort, { once: true });
+      try {
+        await worker.ready;
+        return (await Promise.race([
+          worker.completion,
+          new Promise<never>((_, reject) => {
+            if (signal.aborted) reject(new Error("the self-check ran out of time"));
+            signal.addEventListener(
+              "abort",
+              () => reject(new Error("the self-check ran out of time")),
+              { once: true },
+            );
+          }),
+        ])) as ExecResult;
+      } finally {
+        signal.removeEventListener("abort", abort);
+      }
+    });
+    if (reached)
+      return "Restricted macOS execution does not hold here (a network connection went through)";
     if (result.exitCode === 0 && !result.timedOut) return null;
-    return `Restricted macOS execution does not hold here (the self-check exited ${result.exitCode}${result.timedOut ? ", timed out" : ""})`;
+    const what =
+      PROBE_FAILURES[result.exitCode ?? -1] ??
+      `the allowed write failed (exit ${result.exitCode}${result.timedOut ? ", timed out" : ""})`;
+    return `Restricted macOS execution does not hold here (${what})`;
   } catch (error) {
     return `The restricted macOS self-check failed: ${(error as Error).message}`;
   } finally {
     await rm(scratch, { recursive: true, force: true }).catch(() => {});
   }
+}
+
+/**
+ * A generation's restricted proof (M-4): the self-check result, retried after a failure when a
+ * report asks (`refresh`) at most once per `retryMs`, so a transient failure (a slow first
+ * launch, a busy machine) does not disable restricted execution for the whole generation. Each
+ * attempt is bounded by `timeoutMs`.
+ */
+export function createRestrictedProof(
+  check: (signal: AbortSignal) => Promise<string | null>,
+  opts: { timeoutMs: number; retryMs: number; now?: () => number },
+): RestrictedProof & { attempt(): Promise<void> } {
+  const now = opts.now ?? Date.now;
+  let failure: string | null = "Restricted macOS execution has not been checked yet";
+  let last = Number.NEGATIVE_INFINITY;
+  let running: Promise<void> | undefined;
+  const attempt = (): Promise<void> => {
+    running ??= (async () => {
+      last = now();
+      failure = await check(AbortSignal.timeout(opts.timeoutMs)).catch(
+        (error: unknown) => `The restricted macOS self-check failed: ${String(error)}`,
+      );
+    })().finally(() => {
+      running = undefined;
+    });
+    return running;
+  };
+  return {
+    failure: () => failure,
+    attempt,
+    refresh: async () => {
+      if (failure === null) return;
+      if (running) return running;
+      if (now() - last < opts.retryMs) return;
+      return attempt();
+    },
+  };
 }

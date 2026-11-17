@@ -10,9 +10,11 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DISCONNECTED_MESSAGE } from "../src/client.js";
+import type { OperationContainerHost } from "../src/exec/docker-operations.js";
 import type { LinuxProbe } from "../src/exec/linux-runtime.js";
 import type { MacSelfCheckInput } from "../src/exec/mac-self-check.js";
 import type { MacWorkerRequest } from "../src/exec/operation-worker.js";
+import type { EnvironmentInputs } from "../src/exec/runtime-manifest.js";
 import { PolicyStore } from "../src/policy-store.js";
 import { CREDENTIAL_CHANGED_MESSAGE, connectStaged } from "../src/staged-connect.js";
 import { createStagedDevice, UNBOUND_SUPPORT } from "../src/staged-device.js";
@@ -69,7 +71,7 @@ const request = (instanceGeneration: string, bindingId: string, previous: string
 });
 
 /** Workers that run until cancelled or finished; every launch is recorded. */
-function workers() {
+function workers(opts: { cancelRejects?: () => boolean } = {}) {
   const launched: MacWorkerRequest[] = [];
   const finishers: (() => void)[] = [];
   const cancelled: string[] = [];
@@ -94,6 +96,7 @@ function workers() {
       completion,
       cancel: async () => {
         cancelled.push(r.scope.operationId);
+        if (opts.cancelRejects?.()) throw new Error("the process does not end");
         finish();
       },
     };
@@ -109,11 +112,18 @@ function staged(
     probe?: LinuxProbe;
     verify?: () => Promise<void>;
     runtimeHash?: () => string;
+    selfChecks?: (string | null)[];
+    clock?: () => number;
+    cancelRejects?: () => boolean;
+    container?: OperationContainerHost;
+    imageDigest?: string;
+    dispose?: () => Promise<void>;
   } = {},
 ) {
-  const w = workers();
+  const w = workers({ ...(o.cancelRejects && { cancelRejects: o.cancelRejects }) });
   const checks: MacSelfCheckInput[] = [];
   const verifications: { stageIn: string }[] = [];
+  const environments: EnvironmentInputs[] = [];
   const device = createStagedDevice({
     cred: o.cred ?? credential(),
     stateDir: state,
@@ -121,13 +131,20 @@ function staged(
     home: join(root, "home"),
     platform: o.platform ?? "darwin",
     startWorker: w.startWorker,
-    verifyRuntime: async (_env, options) => {
+    ...(o.container && { container: o.container }),
+    ...(o.dispose && { dispose: o.dispose }),
+    selfCheckRetryMs: o.clock ? 100 : 0,
+    ...(o.clock && { selfCheckNow: o.clock }),
+    containerImageDigest: async () => o.imageDigest ?? `sha256:${"f".repeat(64)}`,
+    verifyRuntime: async (env, options) => {
       verifications.push(options);
+      environments.push(env);
       await o.verify?.();
       return verified(o.runtimeHash?.());
     },
     selfCheck: async (input) => {
       checks.push(input);
+      if (o.selfChecks) return o.selfChecks.shift() ?? null;
       return o.selfCheck === undefined ? null : o.selfCheck;
     },
     linux: {
@@ -184,7 +201,7 @@ function staged(
   cleanups.push(() => {
     for (const f of w.finishers) f();
   });
-  return { device, ...w, checks, verifications, startTask, startExec };
+  return { device, ...w, checks, verifications, environments, startTask, startExec };
 }
 
 describe("staged device parts (W3-M)", () => {
@@ -329,10 +346,71 @@ describe("staged device parts (W3-M)", () => {
     const running = s.startExec("exec-1");
     await vi.waitFor(() => expect(s.launched.length).toBe(2));
     const outcomes = await s.device.cancelOwners(signal());
-    expect(outcomes.map((o) => o.outcome)).toEqual(["stopped", "stopped"]);
+    expect(outcomes.map((o) => o.result.outcome)).toEqual(["stopped", "stopped"]);
     expect(s.cancelled.sort()).toEqual(["exec-1", "task-1"]);
     await running;
     await expect(s.startTask("task-2")).rejects.toBeInstanceOf(SandboxPermissionUnsupportedError);
+  });
+});
+
+describe("staged device parts: fix round", () => {
+  it("a failed self-check is retried by the next report, not kept for the generation (M-4)", async () => {
+    let clock = 0;
+    const s = staged({ selfChecks: ["busy machine", null], clock: () => clock });
+    const answer = await s.device.binder.bind(request(G1, B1, null), signal());
+    expect(answer.permissionSupport.restricted).toBeNull();
+    expect(answer.permissionSupport.unavailableReason).toBe("busy machine");
+    // a restricted operation is refused with that reason meanwhile
+    expect((await s.device.report()).permissionSupport.restricted).toBeNull();
+    expect(s.checks).toHaveLength(1);
+    clock = 150;
+    // the next hello retries it on the same generation's backend
+    const hello = await s.device.report();
+    expect(hello.permissionSupport.restricted).not.toBeNull();
+    expect(s.checks).toHaveLength(2);
+    expect(s.device.binder.current()?.binding.instanceGeneration).toBe(G1);
+  });
+
+  it("a docker-mode device attests its container's image id (M-2)", async () => {
+    const released: string[] = [];
+    const container: OperationContainerHost = {
+      operationContainer: async () => ({
+        name: "capybara-device-d",
+        user: "1000:1000",
+        release: () => released.push("capybara-device-d"),
+      }),
+    };
+    const digest = `sha256:${"9".repeat(64)}`;
+    const s = staged({
+      cred: credential({ mode: "docker" }),
+      platform: "linux",
+      container,
+      imageDigest: digest,
+    });
+    await s.device.binder.bind(request(G1, B1, null), signal());
+    expect(s.environments[0]?.providerImageDigest).toBe(digest);
+    expect(s.environments[0]?.roots).toEqual({
+      workspace: "/workspace",
+      skills: "/skills",
+      tmp: "/tmp",
+    });
+    expect(released).toEqual(["capybara-device-d"]);
+    // a re-pulled tag (another image id) is another runtime: the bind of that runtime is refused
+    const tag = staged({
+      cred: credential({ mode: "docker" }),
+      platform: "linux",
+      container,
+      imageDigest: "latest",
+    });
+    await expect(tag.device.binder.bind(request(G1, B1, null), signal())).rejects.toThrow(
+      /not a sha256 digest/,
+    );
+  });
+
+  it("dispose releases what construction acquired (M-5)", async () => {
+    const dispose = vi.fn(async () => {});
+    await staged({ dispose }).device.dispose();
+    expect(dispose).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -483,5 +561,121 @@ describe("staged connection (W3-M)", () => {
     expect(s.cancelled).toEqual(["task-1"]);
     expect(errs).toContain(CREDENTIAL_CHANGED_MESSAGE);
     expect(k.sockets).toHaveLength(1);
+  });
+
+  for (const ending of ["401", "4003"] as const) {
+    it(`a terminal ${ending} stops the running foreground and background work before it ends (I-1)`, async () => {
+      const k = await kernel();
+      const s = staged({ cred: credential({ connectUrl: k.url }) });
+      const conn = connectStaged(s.device, { err: () => {}, bootId: null, sleep: async () => {} });
+      await k.waitFor("hello", () => k.of("hello")[0]);
+      ready(k, 0);
+      send(k, 0, "b1", "bindInstance", request(G1, B1, null));
+      await res(k, "b1");
+      await s.startTask("task-1");
+      const running = s.startExec("exec-1");
+      await vi.waitFor(() => expect(s.launched.length).toBe(2));
+      if (ending === "401") {
+        k.rejectWith = 401;
+        k.sockets[0]?.terminate();
+      } else k.sockets[0]?.close(4003, "revoked");
+      expect(await conn.done).toBe(0);
+      expect(s.cancelled.sort()).toEqual(["exec-1", "task-1"]);
+      await running;
+    });
+  }
+
+  it("a machine stop whose cancellations do not settle answers an error naming them (I-2)", async () => {
+    const k = await kernel();
+    let rejects = false;
+    const s = staged({ cred: credential({ connectUrl: k.url }), cancelRejects: () => rejects });
+    const errs: string[] = [];
+    const conn = connectStaged(s.device, { err: (l) => errs.push(l), bootId: null });
+    await k.waitFor("hello", () => k.of("hello")[0]);
+    ready(k, 0);
+    send(k, 0, "b1", "bindInstance", request(G1, B1, null));
+    await res(k, "b1");
+    await s.startTask("task-1");
+    rejects = true;
+    send(k, 0, "s1", "stop", { reason: "deleted" });
+    const answer = await res(k, "s1");
+    expect(answer).toMatchObject({ ok: false, error: { kind: "error" } });
+    expect(answer.error.message).toMatch(/task-1/);
+    expect(await conn.done).toBe(0);
+    expect(errs.some((l) => /still stopping.*task-1/.test(l))).toBe(true);
+    rejects = false;
+  });
+
+  it("stop logs what is still stopping when cancellations do not settle (I-2)", async () => {
+    const k = await kernel();
+    let rejects = false;
+    const s = staged({ cred: credential({ connectUrl: k.url }), cancelRejects: () => rejects });
+    const errs: string[] = [];
+    const conn = connectStaged(s.device, { err: (l) => errs.push(l), bootId: null });
+    await k.waitFor("hello", () => k.of("hello")[0]);
+    ready(k, 0);
+    send(k, 0, "b1", "bindInstance", request(G1, B1, null));
+    await res(k, "b1");
+    await s.startTask("task-1");
+    rejects = true;
+    conn.stop();
+    expect(await conn.done).toBe(0);
+    expect(errs.some((l) => /still stopping.*task-1/.test(l))).toBe(true);
+    rejects = false;
+  });
+
+  it("drain waits until the held answers reached a socket (M-3)", async () => {
+    const k = await kernel();
+    let release!: () => void;
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    const s = staged({ cred: credential({ connectUrl: k.url }), verify: () => held });
+    const conn = connectStaged(s.device, { err: () => {}, bootId: null, sleep: async () => {} });
+    await k.waitFor("hello", () => k.of("hello", 0)[0]);
+    ready(k, 0);
+    send(k, 0, "b1", "bindInstance", request(G1, B1, null));
+    await vi.waitFor(() => expect(s.verifications.length).toBe(1));
+    k.sockets[0]?.terminate();
+    await k.waitFor("second hello", () => k.of("hello", 1)[0]);
+    conn.drain();
+    release();
+    const state = s.device.states.for(credential({ connectUrl: k.url }));
+    await vi.waitFor(() => expect(state.pending.has("b1")).toBe(true));
+    let ended = false;
+    void conn.done.then(() => {
+      ended = true;
+    });
+    // drained of work, but an answer is still held: the program waits for a ready socket
+    await new Promise((r) => setImmediate(r));
+    expect(ended).toBe(false);
+    ready(k, 1);
+    expect(await res(k, "b1")).toMatchObject({ ok: true });
+    expect(await conn.done).toBe(0);
+  });
+
+  it("drain gives up on held answers after the credential's grace (M-3)", async () => {
+    const k = await kernel();
+    let release!: () => void;
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    const s = staged({
+      cred: credential({ connectUrl: k.url, reconnectGraceSeconds: 1 }),
+      verify: () => held,
+    });
+    const conn = connectStaged(s.device, { err: () => {}, bootId: null });
+    await k.waitFor("hello", () => k.of("hello", 0)[0]);
+    ready(k, 0);
+    send(k, 0, "b1", "bindInstance", request(G1, B1, null));
+    await vi.waitFor(() => expect(s.verifications.length).toBe(1));
+    // no reconnect succeeds from here on
+    k.rejectWith = 503;
+    k.sockets[0]?.terminate();
+    conn.drain();
+    release();
+    const started = Date.now();
+    expect(await conn.done).toBe(0);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(900);
   });
 });

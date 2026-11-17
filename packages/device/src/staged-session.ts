@@ -409,8 +409,11 @@ export function serveStagedSession(
           // a machine stop is answered even when its deadline passed: the program ends anyway
           if (ctl.signal.aborted && frame.op !== "stop") return;
           deliver(res);
-          if (frame.op === "stop" && res.ok)
-            machine?.stopped((frame.args as { reason: "revoked" | "deleted" }).reason);
+          // a valid machine stop ends the program even when some stops are still pending (its
+          // answer names them): the machine is revoked or deleted either way
+          const reason = (frame.args as { reason?: unknown }).reason;
+          if (frame.op === "stop" && machine && (reason === "revoked" || reason === "deleted"))
+            machine.stopped(reason);
         })
         .catch(fail)
         .finally(() => {

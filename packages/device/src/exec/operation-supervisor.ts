@@ -1312,29 +1312,69 @@ export class MacOperationSupervisor {
     return outcome;
   }
 
+  /** Live background tasks this process owns (a live worker with managed output), by id. */
+  private liveBackground(): Set<string> {
+    const ids = new Set<string>();
+    for (const id of this.live.keys()) {
+      const entry = this.entries.get(id);
+      if (entry && (entry.output !== undefined || this.spools.has(id))) ids.add(id);
+    }
+    return ids;
+  }
+  /**
+   * What would still refuse a binding to `generation` once this supervisor's live background
+   * tasks were stopped: live or faulted foreground workers, cancellations in flight, collectors
+   * and reads not belonging to those tasks, pending persistence, and other generations'
+   * unsettled entries that are not those tasks (uncertain work of earlier processes included).
+   */
+  blockersBesidesLiveBackground(generation: string): number {
+    const background = this.liveBackground();
+    let count = 0;
+    for (const id of new Set([...this.live.keys(), ...this.faultOwners.keys()]))
+      if (!background.has(id)) count++;
+    count += this.cancellations.size + this.controlWrites.size + this.dirtyControls.size;
+    for (const id of this.spools.keys()) if (!background.has(id)) count++;
+    for (const readers of this.outputReads.values()) count += readers.size;
+    for (const e of this.entries.values()) {
+      const id = e.ref.operationId;
+      if (e.ref.instanceGeneration === generation || background.has(id)) continue;
+      if (this.live.has(id) || this.faultOwners.has(id) || this.cancellations.has(id)) continue;
+      const settled =
+        e.state === "completed" ||
+        e.stop?.outcome === "stopped" ||
+        e.stop?.outcome === "already-exited";
+      if (!settled) count++;
+    }
+    return count;
+  }
   /**
    * Exact-stops every operation this supervisor owns live (a live or faulted worker), each by its
-   * recorded ref, never a PID or marker scan; `backgroundOnly` limits it to background tasks
-   * (entries with managed output). Resolves with each outcome once its attempt settled; a failed
-   * attempt reports `cancel-pending` and stays owned (and journaled as pending).
+   * recorded ref, never a PID or marker scan; `backgroundOnly` limits it to live background tasks.
+   * Resolves with each outcome once its attempt settled or `signal` aborted: an attempt that has
+   * not settled by then reports `cancel-pending` and stays owned (and journaled as pending).
    */
   async stopOwned(opts: {
     backgroundOnly: boolean;
     graceMs: number;
     signal: AbortSignal;
-  }): Promise<SandboxStopResult[]> {
-    const targets: Entry[] = [];
-    for (const id of new Set([...this.live.keys(), ...this.faultOwners.keys()])) {
-      const entry = this.entries.get(id);
-      if (entry && (!opts.backgroundOnly || entry.output !== undefined || this.spools.has(id)))
-        targets.push(entry);
-    }
+  }): Promise<{ operationId: string; result: SandboxStopResult }[]> {
+    const ids = opts.backgroundOnly
+      ? this.liveBackground()
+      : new Set([...this.live.keys(), ...this.faultOwners.keys()]);
+    const pending = (): SandboxStopResult => ({ outcome: "cancel-pending" });
+    const aborted = new Promise<SandboxStopResult>((resolve) => {
+      if (opts.signal.aborted) resolve(pending());
+      else opts.signal.addEventListener("abort", () => resolve(pending()), { once: true });
+    });
     return Promise.all(
-      targets.map((entry) =>
-        this.stop(entry.ref, { graceMs: opts.graceMs, signal: opts.signal }).catch(
-          (): SandboxStopResult => ({ outcome: "cancel-pending" }),
-        ),
-      ),
+      [...ids].flatMap((operationId) => {
+        const entry = this.entries.get(operationId);
+        if (!entry) return [];
+        const attempt = opts.signal.aborted
+          ? Promise.resolve(pending())
+          : this.stop(entry.ref, { graceMs: opts.graceMs, signal: opts.signal }).catch(pending);
+        return [Promise.race([attempt, aborted]).then((result) => ({ operationId, result }))];
+      }),
     );
   }
   async revokeOperation(ref: SandboxOperationRef, signal: AbortSignal): Promise<void> {

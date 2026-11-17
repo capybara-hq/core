@@ -1,3 +1,4 @@
+import { STAGED_DEVICE_PROTOCOL_VERSION } from "@capybara-hq/plugin-sdk";
 import WebSocket from "ws";
 import { currentBootId } from "./boot-id.js";
 import {
@@ -9,7 +10,7 @@ import {
   REPLACED_MESSAGE,
 } from "./client.js";
 import { policySummary } from "./server-ops.js";
-import type { StagedDevice } from "./staged-device.js";
+import { type OwnedStop, type StagedDevice, unconfirmedStops } from "./staged-device.js";
 import {
   drainStagedSession,
   type StagedSessionState,
@@ -17,9 +18,6 @@ import {
   stagedSessionIdentity,
 } from "./staged-session.js";
 import type { Credential } from "./state.js";
-
-/** The staged protocol's header and hello version. */
-export const STAGED_PROTOCOL = 3;
 
 /** Printed when the machine credential changed under a running program. */
 export const CREDENTIAL_CHANGED_MESSAGE =
@@ -42,10 +40,10 @@ export interface StagedConnectOptions {
   /** How often the owner report is checked for a change made on the machine (default 2 s). */
   policyCheckMs?: number;
   /**
-   * The machine credential now, read at each reconnect (default: the one the program started
-   * with). A different credential discards the old one's session state, held answers included,
-   * stops the old credential's work and ends the program with exit 1, so the service manager
-   * (or the owner) starts it again with the new credential.
+   * The machine credential now, read only before each reconnect, never while a socket is open
+   * (default: the one the program started with). A different credential discards the old one's
+   * session state, held answers included, stops the old credential's work and ends the program
+   * with exit 1, so the service manager (or the owner) starts it again with the new credential.
    */
   credential?: () => Credential | undefined;
 }
@@ -117,12 +115,56 @@ export function connectStaged(device: StagedDevice, opts: StagedConnectOptions =
     else endSession(end);
   };
 
+  /**
+   * Exact-stops everything the program owns, bounded: what has not settled by then is logged by
+   * operation id (it stays owned, `cancel-pending`). Every end of the program goes through it once.
+   */
+  let cancelling: Promise<OwnedStop[]> | undefined;
+  const stopOwned = (signal?: AbortSignal): Promise<OwnedStop[]> => {
+    state.draining = true;
+    cancelling ??= device
+      .cancelOwners(
+        signal
+          ? AbortSignal.any([signal, AbortSignal.timeout(STOP_CANCEL_TIMEOUT_MS)])
+          : AbortSignal.timeout(STOP_CANCEL_TIMEOUT_MS),
+      )
+      .catch((): OwnedStop[] => [])
+      .then((stops) => {
+        const pending = unconfirmedStops(stops);
+        if (pending.length > 0)
+          err(
+            `${pending.length} operation(s) still stopping after the stop request: ` +
+              `${pending.map((p) => p.operationId).join(", ")}. They may keep running; check them on this machine.`,
+          );
+        return pending;
+      });
+    return cancelling;
+  };
+
+  /**
+   * A drained program still holding answers for a socket waits until a ready socket took them,
+   * at most the credential's grace (protocol 2's drain does the same).
+   */
+  const heldAnswersDelivered = async (): Promise<void> => {
+    const deadline = Date.now() + state.graceMs;
+    for (;;) {
+      const now = Date.now();
+      for (const [id, p] of state.pending) if (p.expires <= now) state.pending.delete(id);
+      if (state.pending.size === 0 || now >= deadline || lifetime.signal.aborted) return;
+      await defaultSleep(Math.min(100, deadline - now), lifetime.signal);
+    }
+  };
+
   const machine = {
     create: (signal: AbortSignal) => device.create(signal),
     stop: async (_reason: "revoked" | "deleted", signal: AbortSignal) => {
       // the machine is going away: nothing new is admitted, the owned work is stopped exactly
-      state.draining = true;
-      await device.cancelOwners(signal);
+      const pending = await stopOwned(signal);
+      if (pending.length > 0)
+        throw new Error(
+          `The machine stopped admitting work, but ${pending.length} operation(s) are still ` +
+            `stopping: ${pending.map((p) => p.operationId).join(", ")}`,
+        );
     },
     stopped: (reason: "revoked" | "deleted") =>
       finish({
@@ -148,7 +190,7 @@ export function connectStaged(device: StagedDevice, opts: StagedConnectOptions =
       const sock = new WebSocket(cred.connectUrl, {
         headers: {
           Authorization: `Bearer ${cred.credential}`,
-          "X-Capybara-Device-Protocol": String(STAGED_PROTOCOL),
+          "X-Capybara-Device-Protocol": String(STAGED_DEVICE_PROTOCOL_VERSION),
         },
       });
       ws = sock;
@@ -248,8 +290,8 @@ export function connectStaged(device: StagedDevice, opts: StagedConnectOptions =
       const cred = opts.credential?.() ?? started;
       if (stagedSessionIdentity(cred) !== identity) {
         // another credential: its state replaces (discards) ours; our work does not outlive it
+        // (stopped as the program ends, below)
         state = device.states.for(cred);
-        await device.cancelOwners(AbortSignal.timeout(STOP_CANCEL_TIMEOUT_MS)).catch(() => []);
         err(CREDENTIAL_CHANGED_MESSAGE);
         return 1;
       }
@@ -265,11 +307,11 @@ export function connectStaged(device: StagedDevice, opts: StagedConnectOptions =
     return exitAfterStop?.exit ?? 0;
   };
 
-  /** A stop's exact cancellation in flight: the program never ends before it settled. */
-  let cancelling: Promise<unknown> | undefined;
+  // every end (stop, drain, machine stop, 401 / 426, replaced, revoked, a new credential) leaves
+  // no owned work running: v2 aborted every running request as its connection ended
   const done = loop()
     .then(async (code) => {
-      await cancelling;
+      await stopOwned();
       return code;
     })
     .finally(() => {
@@ -283,6 +325,7 @@ export function connectStaged(device: StagedDevice, opts: StagedConnectOptions =
       draining = true;
       // no new admission at once; ends when the requests and the owned work settled
       void drainStagedSession(state, device.drainTarget(), new AbortController().signal)
+        .then(() => heldAnswersDelivered())
         .then(() => finish({ exit: 0 }))
         .catch((error: unknown) => {
           err(`Drain failed: ${String(error)}`);
@@ -292,12 +335,8 @@ export function connectStaged(device: StagedDevice, opts: StagedConnectOptions =
     stop() {
       if (stopping || exitAfterStop) return;
       exitAfterStop = { exit: 0 };
-      state.draining = true;
       // a stopped program leaves no work running: the owned operations are stopped exactly
-      cancelling = device
-        .cancelOwners(AbortSignal.timeout(STOP_CANCEL_TIMEOUT_MS))
-        .catch(() => [])
-        .then(() => finish({ exit: 0 }));
+      void stopOwned().then(() => finish({ exit: 0 }));
     },
   };
 }

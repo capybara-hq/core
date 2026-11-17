@@ -493,4 +493,31 @@ describe("start: the staged protocol (W3-M)", () => {
     expect(code).toBe(1);
     expect(err[0]).toContain("no execution backend");
   });
+
+  it("a stop before the staged program connected disposes what it built (M-5)", async () => {
+    writeCredential(dir, cred);
+    const proc = Object.assign(new EventEmitter(), { pid: 4262 });
+    const calls: string[] = [];
+    const code = await start({
+      stateDir: dir,
+      out: () => {},
+      err: () => {},
+      proc: proc as never,
+      protocol: 3,
+      createStaged: () => {
+        proc.emit("SIGTERM");
+        return {
+          ...fakeStaged(calls),
+          dispose: async () => {
+            calls.push("dispose");
+          },
+        } as unknown as StagedDevice;
+      },
+      connectStaged: () => {
+        throw new Error("must not connect");
+      },
+    });
+    expect(code).toBe(0);
+    expect(calls).toEqual(["recover", "dispose"]);
+  });
 });

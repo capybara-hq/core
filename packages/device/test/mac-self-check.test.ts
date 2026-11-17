@@ -1,8 +1,9 @@
 import { mkdtemp, readdir, realpath, rm } from "node:fs/promises";
+import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
-import { macRestrictedSelfCheck } from "../src/exec/mac-self-check.js";
+import { createRestrictedProof, macRestrictedSelfCheck } from "../src/exec/mac-self-check.js";
 import type { MacWorkerRequest } from "../src/exec/operation-worker.js";
 import { sealWorkspaceRuntime } from "./runtime-seal.js";
 
@@ -105,9 +106,48 @@ it("asks the worker for a restricted write inside its root and a refused one out
   expect(request.grant.writeRoots).toHaveLength(1);
   expect(request.runtimeHash).toBe("a".repeat(64));
   expect(request.args.command).toContain(request.grant.writeRoots[0]);
+  // a denied read root holding a file, and a TCP connection to a local listener
+  expect(request.grant.deniedReadRoots).toHaveLength(1);
+  expect(request.args.command).toContain(`${request.grant.deniedReadRoots[0]}/secret`);
+  expect(request.args.command).toMatch(/\/dev\/tcp\/127\.0\.0\.1\/\d+/);
+  expect(await macRestrictedSelfCheck({ ...input, startWorker: startWorker(4) }, signal())).toMatch(
+    /read of a denied path went through/,
+  );
+  expect(await macRestrictedSelfCheck({ ...input, startWorker: startWorker(5) }, signal())).toMatch(
+    /network connection went through/,
+  );
+  // a worker that reaches the listener fails the check even when it exits 0
+  const leaky = async (r: MacWorkerRequest) => {
+    if (r.kind !== "exec") throw new Error("expected exec");
+    const port = Number(/\/dev\/tcp\/127\.0\.0\.1\/(\d+)/.exec(r.args.command)?.[1]);
+    await new Promise<void>((resolve) => {
+      const socket = connect(port, "127.0.0.1", () => {
+        socket.end();
+      });
+      socket.on("close", () => resolve());
+      socket.on("error", () => resolve());
+    });
+    return {
+      ready: Promise.resolve(),
+      completion: Promise.resolve(result(0)),
+      cancel: async () => {},
+    };
+  };
+  expect(await macRestrictedSelfCheck({ ...input, startWorker: leaky }, signal())).toMatch(
+    /network connection went through/,
+  );
+  // a worker that never ends is bounded by the signal
+  const stuck = async () => ({
+    ready: Promise.resolve(),
+    completion: new Promise<never>(() => {}),
+    cancel: async () => {},
+  });
+  expect(
+    await macRestrictedSelfCheck({ ...input, startWorker: stuck }, AbortSignal.timeout(50)),
+  ).toMatch(/ran out of time/);
   // the denied write succeeded (or the allowed one failed): restricted execution does not hold
   expect(await macRestrictedSelfCheck({ ...input, startWorker: startWorker(3) }, signal())).toMatch(
-    /does not hold/,
+    /write outside the write root went through/,
   );
   const throwing = async () => {
     throw new Error("no sealed runtime");
@@ -116,4 +156,26 @@ it("asks the worker for a restricted write inside its root and a refused one out
     /self-check failed: no sealed runtime/,
   );
   expect(await readdir(dir)).toEqual([]);
+});
+
+it("a failed proof is retried on the next report after its interval, not disabled for good", async () => {
+  let clock = 0;
+  const outcomes: (string | null)[] = ["busy machine", null];
+  const proof = createRestrictedProof(async () => outcomes.shift() ?? null, {
+    timeoutMs: 1000,
+    retryMs: 100,
+    now: () => clock,
+  });
+  expect(proof.failure()).toMatch(/not been checked/);
+  await proof.attempt();
+  expect(proof.failure()).toBe("busy machine");
+  // within the interval a report does not run it again
+  await proof.refresh();
+  expect(proof.failure()).toBe("busy machine");
+  clock = 150;
+  await proof.refresh();
+  expect(proof.failure()).toBeNull();
+  // a held proof is never checked again
+  await proof.refresh();
+  expect(outcomes).toEqual([]);
 });
