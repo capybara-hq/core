@@ -737,6 +737,8 @@ export class DirectorySync {
     source: string,
     accountId: string,
   ): Promise<OffboardResult | undefined> {
+    // offboarding: the org admission lock first (`Offboarding.offboard`)
+    await this.orgLock.lockForRemoval(orgId);
     if (!(await this.orgLock.tryLock(orgId))) return undefined;
     const row = await this.db
       .selectFrom("memberships")

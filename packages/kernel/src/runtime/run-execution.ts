@@ -1,7 +1,9 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { Inject, Injectable } from "@nestjs/common";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost, withTransactionFence } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { XactLock } from "../infra/database/xact-lock.js";
 import { isLive } from "./run-liveness.js";
 import { rootConversationOf } from "./subagents/child.js";
 
@@ -13,6 +15,19 @@ export interface ExecutionClaim {
   executionId: string;
 }
 
+/** Set inside a tool step: every fenced transaction there is admitted exclusively. */
+const exclusiveScope = new AsyncLocalStorage<true>();
+
+/**
+ * Runs `fn` (a tool step, a sub-agent dispatch) with every fenced transaction it opens admitted
+ * exclusively, even one that asks for shared admission (an event append made by a tool): tool
+ * code takes org-level locks (`OrgLock`, agents, memberships, devices) after the conversation
+ * rows, which only the exclusive admission (the org row first) keeps in the global lock order.
+ */
+export function withExclusiveAdmission<T>(fn: () => Promise<T>): Promise<T> {
+  return exclusiveScope.run(true, fn);
+}
+
 /** Internal interruption: a revoked execution must never write its own terminal failure. */
 export class ExecutionRevoked extends Error {
   constructor() {
@@ -20,11 +35,35 @@ export class ExecutionRevoked extends Error {
   }
 }
 
-/** Claims serialize on the same conversation lock as the event log and all fenced writes. */
+/**
+ * Claims serialize on the same conversation lock as the event log and all fenced writes.
+ *
+ * The fence admits every writable transaction of a claimed run in one of two modes, then locks the
+ * root and the current conversation rows `FOR NO KEY UPDATE` and compares `runs.execution_id`:
+ * - **exclusive** (the default, and every transaction inside a tool step,
+ *   {@link withExclusiveAdmission}): the org row `FOR NO KEY UPDATE`, `OrgLock`'s mode. These
+ *   transactions serialize per org with each other and with org admin writes, so whatever they
+ *   lock after the conversation rows (`OrgLock`, agents, memberships, the default device) stays in
+ *   the order org row → conversations that offboarding and the decisions take.
+ * - **shared** (a transaction opened with `admission: "shared"`: the run loop's event appends,
+ *   checkpoint writes and suspend): the org admission lock shared
+ *   (`XactLock.admitOrgShared`), and the org row read without a lock. These transactions lock
+ *   nothing org-level after the conversation rows, so the runs of one org append in parallel.
+ *   Org deletion and offboarding take the admission lock exclusively first
+ *   (`OrgLock.lockForRemoval`): they wait for the admitted writes, keep new ones out (a later one
+ *   then sees the org deleted), and are not starved by a stream of them (the lock queues fairly).
+ *
+ * Global order: org admission lock → org row → root conversation → conversation. A claim never
+ * opens a nested fenced `requires_new` transaction (shared or not) and waits for it while its
+ * outer fenced transaction is open: the inner one waits for the outer's root row (and, behind a
+ * queued deletion, for the admission lock) on another connection, which PostgreSQL cannot see as
+ * a deadlock.
+ */
 @Injectable()
 export class RunExecution {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(XactLock) private readonly xactLock: XactLock,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
 
@@ -57,8 +96,11 @@ export class RunExecution {
   }
 
   withClaim<T>(claim: ExecutionClaim, live: () => boolean, fn: () => Promise<T>): Promise<T> {
-    return withTransactionFence(async () => {
-      if (!live() || !(await this.lockLiveConversation(claim))) throw new ExecutionRevoked();
+    return withTransactionFence(async ({ shared }) => {
+      const admitShared = shared && !exclusiveScope.getStore();
+      if (!live() || !(await this.lockLiveConversation(claim, admitShared))) {
+        throw new ExecutionRevoked();
+      }
       const run = await this.db
         .selectFrom("runs")
         .select("execution_id")
@@ -69,13 +111,22 @@ export class RunExecution {
     }, fn);
   }
 
-  /** Org, root, current conversation; allow FK references while excluding deletion and writes. */
-  private async lockLiveConversation(claim: ExecutionClaim): Promise<boolean> {
+  /**
+   * The admission (see the class), then the root and the current conversation; NO KEY UPDATE
+   * allows foreign key references while excluding deletion and other writers. The root stays
+   * `FOR NO KEY UPDATE` in both modes: a sub-agent's handback appends to its parent (the root at
+   * depth 1) under `FOR UPDATE`, so two siblings holding the root only shared would deadlock
+   * upgrading it.
+   */
+  private async lockLiveConversation(claim: ExecutionClaim, shared = false): Promise<boolean> {
+    // shared: after the admission lock, a plain read sees a committed deletion (a new statement
+    // under READ COMMITTED), and the deletion cannot commit before this transaction ends
+    if (shared) await this.xactLock.admitOrgShared(claim.orgId);
     const org = await this.db
       .selectFrom("orgs")
       .select("deleted_at")
       .where("id", "=", claim.orgId)
-      .forNoKeyUpdate()
+      .$call((q) => (shared ? q : q.forNoKeyUpdate()))
       .executeTakeFirst();
     if (!org || !isLive(org.deleted_at)) return false;
     const root = await this.db

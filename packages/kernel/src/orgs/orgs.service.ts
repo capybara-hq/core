@@ -266,7 +266,10 @@ export class OrgsService {
     actor: Account,
     actorTokenId: string | undefined,
   ): Promise<void> {
-    // The same org authorization lock admits fenced worker writes before conversation locks.
+    // the org admission lock exclusively first (it waits for the run writes the fence admitted
+    // shared, which see the org deleted after this commits), then the org row, which admits the
+    // other fenced run writes (`RunExecution`)
+    await this.orgLock.lockForRemoval(orgId);
     await this.orgLock.lockAndAuthorize(orgId, actor.id, "org.delete");
     await this.db
       .updateTable("orgs")

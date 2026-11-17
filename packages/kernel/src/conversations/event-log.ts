@@ -206,7 +206,10 @@ export class EventLog {
     return { events: out, fresh };
   }
 
-  @Transactional({ propagation: "requires_new" })
+  // shared admission under a run fence (`RunExecution`): an append locks only the conversation row
+  // and its own rows, so the runs of one org append in parallel (a tool step's are still admitted
+  // exclusively)
+  @Transactional({ propagation: "requires_new", admission: "shared" })
   private async appendOwn(
     conversationId: string,
     events: AppendEvent[],

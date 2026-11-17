@@ -21,6 +21,11 @@ export type StepAuditEntry = Parameters<typeof audit>[1];
  * definitions it sent, a denial with its audit row, usage events with their owed `usage.report`
  * deliveries (transactional outbox spec §8.1), and a sub-agent's usage counted on its parent run.
  * The step functions (`model-call.ts`, `hook-calls.ts`) reach it through their deps.
+ *
+ * Run loop hot-path writes: each transaction asks the run fence for shared admission
+ * (`RunExecution`), so the runs of one org write in parallel. They lock only the conversation rows,
+ * the run rows of the same tree and rows of their own; never anything org-level (`OrgLock`,
+ * agents, memberships).
  */
 @Injectable()
 export class StepLog {
@@ -36,7 +41,7 @@ export class StepLog {
    * one transaction. Returns what was written (hits included) and the highest new seq (null:
    * nothing new).
    */
-  @Transactional({ propagation: "requires_new" })
+  @Transactional({ propagation: "requires_new", admission: "shared" })
   async appendReported(
     conversationId: string,
     events: AppendEvent[],
@@ -56,7 +61,7 @@ export class StepLog {
    * once; the new usage events' `usage.report` deliveries are owed in the same transaction. Returns
    * what was written (hits included) and the highest new seq (null: nothing new).
    */
-  @Transactional({ propagation: "requires_new" })
+  @Transactional({ propagation: "requires_new", admission: "shared" })
   async appendCounted(
     conversationId: string,
     counter: { parentRunId: string; budgetRunId?: string | undefined },
@@ -86,7 +91,7 @@ export class StepLog {
   }
 
   /** Appends events with their audit row (a hook denial). */
-  @Transactional({ propagation: "requires_new" })
+  @Transactional({ propagation: "requires_new", admission: "shared" })
   async appendAudited(
     conversationId: string,
     events: AppendEvent[],
@@ -101,7 +106,7 @@ export class StepLog {
    * Appends a `model_call` with the tool definitions its request sent, stored by fingerprint in
    * `tool_specs` in the same transaction (a request can be rebuilt from the log and the specs).
    */
-  @Transactional({ propagation: "requires_new" })
+  @Transactional({ propagation: "requires_new", admission: "shared" })
   async appendWithSpecs(
     conversationId: string,
     specs: readonly { specHash: string; spec: ToolSpec }[],

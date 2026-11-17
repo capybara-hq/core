@@ -1,8 +1,9 @@
 import { Inject, Injectable, Module } from "@nestjs/common";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { TransactionHost } from "../infra/database/transaction-host.js";
+import { inFencedTransaction, TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { XactLock } from "../infra/database/xact-lock.js";
 import { can, type OrgAction, type OrgRole } from "./roles.js";
 
 /** The locked org's metadata (audits record the values before a change). */
@@ -20,14 +21,37 @@ export interface LockedOrg {
  * foreign key check against the org row (`FOR KEY SHARE`, taken by every insert of a row that
  * references the org, and by an update of a row the same transaction already wrote) is not blocked.
  * With FOR UPDATE, offboarding (org row, then the member's conversations) deadlocked with an event
- * log append (a conversation row, then the org foreign key check).
+ * log append (a conversation row, then the org foreign key check). Nothing takes the org row
+ * `FOR UPDATE`: org deletion's `deleted_at` update is a no-key update too.
+ *
+ * The global lock order: the org admission lock ({@link lockForRemoval}; the run fence's shared
+ * admission, `RunExecution`) → this org row lock (also the run fence's exclusive admission) → the
+ * root conversation → the conversation.
  */
 @Injectable()
 export class OrgLock {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(XactLock) private readonly xactLock: XactLock,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
+
+  /**
+   * Org deletion's and offboarding's lock: the org admission lock exclusively
+   * (`XactLock.admitOrgExclusive`), taken first in the transaction, before the org row
+   * ({@link lockAndAuthorize}). It waits for every run write the fence admitted shared (event
+   * appends, checkpoints) and keeps new ones out until the transaction ends, so a later one sees
+   * the org deleted; it queues fairly, so a stream of run writes does not starve it. Never inside
+   * a run's fenced transaction: that one may hold a conversation row that an admitted run write
+   * waits for.
+   */
+  @Transactional({ propagation: "mandatory" })
+  async lockForRemoval(orgId: string): Promise<void> {
+    if (inFencedTransaction()) {
+      throw new Error("org deletion and offboarding never run inside a run's fenced transaction");
+    }
+    await this.xactLock.admitOrgExclusive(orgId);
+  }
 
   /** Locks the org row; undefined when the org does not exist or is soft-deleted. */
   @Transactional({ propagation: "mandatory" })

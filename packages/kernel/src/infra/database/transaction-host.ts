@@ -17,16 +17,24 @@ interface TransactionStore {
   hooks: AfterCommitHook[];
   /** Set once the transaction settled: continuations that outlive it must not use it. */
   done: boolean;
+  /** A fence admitted it (`withTransactionFence`): it holds the caller's admission locks. */
+  fenced: boolean;
 }
 
 /** One store for the process: `afterCommit` (a free function) reads it without a host instance. */
 const storage = new AsyncLocalStorage<TransactionStore>();
 
+/** How a fence admits the transaction it runs in ({@link TransactionOptions.admission}). */
+export interface FenceAdmission {
+  /** The transaction asked for shared admission (`admission: "shared"`). */
+  shared: boolean;
+}
+
 /** A caller's execution authority, checked inside every new transaction before domain writes. */
-const fences = new AsyncLocalStorage<() => Promise<void>>();
+const fences = new AsyncLocalStorage<(admission: FenceAdmission) => Promise<void>>();
 
 export function withTransactionFence<T>(
-  fence: () => Promise<void>,
+  fence: (admission: FenceAdmission) => Promise<void>,
   fn: () => Promise<T>,
 ): Promise<T> {
   return fences.run(fence, fn);
@@ -46,6 +54,14 @@ export interface TransactionOptions {
   isolationLevel?: IsolationLevel;
   /** Access mode of a transaction this call opens (ignored when it joins one). */
   accessMode?: AccessMode;
+  /**
+   * How the caller's fence (`withTransactionFence`) admits a transaction this call opens (ignored
+   * when it joins one, or with no fence in context). Default: the fence's exclusive admission.
+   * `shared`: the run loop's own hot-path writes (event appends, checkpoints, the suspend), which
+   * the run fence admits under a shared lock so the runs of one org write in parallel
+   * (`RunExecution`); a fence may still admit it exclusively (inside a tool step).
+   */
+  admission?: "shared";
 }
 
 /** Logger for hook failures outside a transaction; set by `TransactionHost`, console until then. */
@@ -76,6 +92,11 @@ export function queueAfterCommit(fn: AfterCommitHook): void {
 function liveStore(): TransactionStore | undefined {
   const store = storage.getStore();
   return store && !store.done ? store : undefined;
+}
+
+/** Whether the live transaction in context was admitted by a fence (a claimed run's write). */
+export function inFencedTransaction(): boolean {
+  return liveStore()?.fenced === true;
 }
 
 /** The transaction store in the current async context (used by `afterCommit`). */
@@ -136,11 +157,13 @@ export class TransactionHost {
         builder = builder.setIsolationLevel(opts.isolationLevel);
       if (opts.accessMode !== undefined) builder = builder.setAccessMode(opts.accessMode);
       result = await builder.execute((trx) => {
-        store = { pool: this.pool, trx, hooks, done: false };
-        return storage.run(store, async () => {
+        const fence = opts.accessMode === "read only" ? undefined : fences.getStore();
+        const own: TransactionStore = { pool: this.pool, trx, hooks, done: false, fenced: !!fence };
+        store = own;
+        return storage.run(own, async () => {
           // PostgreSQL forbids row locks in a read-only snapshot and enforces that it cannot
           // mutate. Every later mutation or external dispatch still enters a writable fence.
-          if (opts.accessMode !== "read only") await fences.getStore()?.();
+          await fence?.({ shared: opts.admission === "shared" });
           return fn();
         });
       });
