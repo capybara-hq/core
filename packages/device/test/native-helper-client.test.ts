@@ -2,9 +2,19 @@ import { spawn } from "node:child_process";
 import { mkdtemp, open, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { runNativeHelper } from "../src/exec/native-helper-client.js";
 import { stageRuntimeSource } from "../src/exec/runtime-source.js";
+import { sealWorkspaceRuntime } from "./runtime-seal.js";
+
+// restricted workers launch only from a verified, sealed runtime closure (B-7)
+let unseal: (() => Promise<void>) | undefined;
+beforeAll(async () => {
+  unseal = await sealWorkspaceRuntime();
+});
+afterAll(async () => {
+  await unseal?.();
+});
 
 describe("private pinned descriptor helper transport", () => {
   it("handshakes inherited descriptors before dispatch and preserves ordinary file semantics", async () => {

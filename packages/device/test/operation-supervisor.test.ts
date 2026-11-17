@@ -1,10 +1,20 @@
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
 import { MacOperationSupervisor } from "../src/exec/operation-supervisor.js";
 import type { MacWorkerRequest } from "../src/exec/operation-worker.js";
 import { shellQuote } from "../src/exec/shared.js";
+import { sealWorkspaceRuntime } from "./runtime-seal.js";
+
+// restricted workers launch only from a verified, sealed runtime closure (B-7)
+let unseal: (() => Promise<void>) | undefined;
+beforeAll(async () => {
+  unseal = await sealWorkspaceRuntime();
+});
+afterAll(async () => {
+  await unseal?.();
+});
 
 const dirs: string[] = [];
 afterEach(async () => {
@@ -401,6 +411,7 @@ it.runIf(process.platform === "darwin")(
     const port = address.port;
     const script = join(root, "controller.mjs");
     const workerUrl = new URL("../src/exec/operation-worker.ts", import.meta.url).href;
+    const sealUrl = new URL("./runtime-seal.ts", import.meta.url).href;
     const request = {
       kind: "exec",
       scope: { ...scope, operationId: "disconnect", admitBeforeMs: Date.now() + 30000 },
@@ -423,7 +434,7 @@ it.runIf(process.platform === "darwin")(
     };
     await writeFile(
       script,
-      `import {startMacOperationWorker} from ${JSON.stringify(workerUrl)}; const worker=await startMacOperationWorker({...${JSON.stringify(request)},beforeLaunch:async()=>{},onLaunch:async identity=>process.send({pid:identity.pid}),onRuntimeReady:async identity=>process.send({pid:identity.pid})},new AbortController().signal);await worker.ready;process.send({ready:true});await worker.completion;`,
+      `import {startMacOperationWorker} from ${JSON.stringify(workerUrl)}; import {sealWorkspaceRuntime} from ${JSON.stringify(sealUrl)}; await sealWorkspaceRuntime(${JSON.stringify(root)}); const worker=await startMacOperationWorker({...${JSON.stringify(request)},beforeLaunch:async()=>{},onLaunch:async identity=>process.send({pid:identity.pid}),onRuntimeReady:async identity=>process.send({pid:identity.pid})},new AbortController().signal);await worker.ready;process.send({ready:true});await worker.completion;`,
     );
     const child = fork(script, [], {
       execArgv: ["--import", "tsx", "--conditions=@capybara-hq/source"],

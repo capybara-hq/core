@@ -1,7 +1,21 @@
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SandboxPermissionUnsupportedError } from "@capybara-hq/plugin-sdk";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   canonicalEnvironment,
@@ -20,6 +34,7 @@ import {
   RuntimeManifestError,
   verifyInstalledRuntime,
 } from "../src/exec/runtime-manifest.js";
+import { sealedRuntimeEntry } from "../src/exec/runtime-source.js";
 
 const sha = (s: string | Buffer) => createHash("sha256").update(s).digest("hex");
 const dirs: string[] = [];
@@ -231,6 +246,200 @@ describe("installed closure", () => {
       "inline/output-spool-helper.py",
     ]);
   });
+});
+
+describe("verified runtime closure: verify-to-launch pinning (B-7)", () => {
+  async function sealed() {
+    const f = await fixture();
+    await f.ship();
+    const state = await realpath(await mkdtemp(join(tmpdir(), "cap-seal-")));
+    dirs.push(state);
+    const verified = await verifyInstalledRuntime(env, f.layout, { stageIn: state });
+    return { ...f, state, verified, dep: join(f.pkg, "node_modules/rt-dep/i.js") };
+  }
+  const refused = (pattern: RegExp) => async () => {
+    const error = await sealedRuntimeEntry().then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(SandboxPermissionUnsupportedError);
+    expect((error as Error).message).toMatch(pattern);
+  };
+
+  // first in the file: no test before it verified anything in this process
+  it("refuses before any verification", refused(/not been verified/));
+
+  it("launches from a private staged copy of exactly the verified bytes", async () => {
+    const f = await sealed();
+    const entry = await sealedRuntimeEntry();
+    expect(entry.startsWith(join(f.state, "operation-runtime/"))).toBe(true);
+    expect(await readFile(entry, "utf8")).toBe(await readFile(join(f.rt, "dist/index.js"), "utf8"));
+    // the staged runtime resolves its dependencies inside the staged copy, never the install
+    const req = createRequire(entry);
+    expect(req("rt-dep")).toBe(2);
+    expect(req.resolve("rt-dep").startsWith(join(f.state, "operation-runtime/"))).toBe(true);
+    expect((await stat(entry)).mode & 0o222).toBe(0);
+    // unchanged bytes keep launching, also when a file is rewritten with the same bytes
+    expect(await sealedRuntimeEntry()).toBe(entry);
+    await writeFile(f.dep, "module.exports = 2;\n");
+    expect(await sealedRuntimeEntry()).toBe(entry);
+  });
+
+  it("refuses the launch after a byte changed in the installed closure", async () => {
+    const f = await sealed();
+    await writeFile(f.dep, "module.exports = 3;\n");
+    await refused(/changed after it was verified \(changed .*rt-dep\/i\.js\).*restart/)();
+    await writeFile(f.dep, "module.exports = 2;\n");
+    expect(await sealedRuntimeEntry()).toMatch(/operation-runtime/);
+  });
+
+  it("refuses a replaced file, a symlink swap and an added file", async () => {
+    const f = await sealed();
+    await rm(f.dep);
+    await refused(/missing .*rt-dep\/i\.js/)();
+    await writeFile(f.dep, "module.exports = 'other';\n");
+    await refused(/changed .*rt-dep\/i\.js/)();
+    // a link to identical bytes is still not the verified regular file
+    const copy = join(f.pkg, "copy.js");
+    await writeFile(copy, "module.exports = 2;\n");
+    await rm(f.dep);
+    await symlink(copy, f.dep);
+    await refused(/rt-dep\/i\.js is no longer a regular file/)();
+    await rm(f.dep);
+    await copyFile(copy, f.dep);
+    expect(await sealedRuntimeEntry()).toMatch(/operation-runtime/);
+    await writeFile(join(f.rt, "dist/extra.js"), "x");
+    await refused(/unexpected .*dist\/extra\.js/)();
+  });
+
+  it("refuses a staged copy changed after staging", async () => {
+    await sealed();
+    const entry = await sealedRuntimeEntry();
+    await chmod(entry, 0o600);
+    await writeFile(entry, "module.exports = { evil: true };\n");
+    await refused(/staged copy/)();
+  });
+
+  it("refuses a staged dependency swapped for a link elsewhere", async () => {
+    const f = await sealed();
+    const entry = await sealedRuntimeEntry();
+    const dep = createRequire(entry).resolve("rt-dep");
+    await chmod(join(dep, ".."), 0o700);
+    await rm(dep);
+    await symlink(f.dep, dep);
+    await refused(/staged copy/)();
+  });
+
+  it("refuses after a failed re-verification", async () => {
+    const f = await sealed();
+    await writeFile(f.dep, "module.exports = 3;\n");
+    await expect(verifyInstalledRuntime(env, f.layout, { stageIn: f.state })).rejects.toThrow(
+      "changed node_modules/rt-dep@2.0.0/i.js",
+    );
+    // the failed attempt leaves no seal (even with the old bytes back) and no partial copy
+    await writeFile(f.dep, "module.exports = 2;\n");
+    await refused(/not been verified/)();
+    const staged = await readdir(join(f.state, "operation-runtime"));
+    expect(staged.filter((n) => n.includes("tmp"))).toEqual([]);
+    // a successful re-verification seals again and prunes copies older than the previous one
+    await verifyInstalledRuntime(env, f.layout, { stageIn: f.state });
+    await verifyInstalledRuntime(env, f.layout, { stageIn: f.state });
+    await verifyInstalledRuntime(env, f.layout, { stageIn: f.state });
+    expect(
+      (await readdir(join(f.state, "operation-runtime"))).filter((n) => n.startsWith("closure-")),
+    ).toHaveLength(2);
+    expect(await sealedRuntimeEntry()).toMatch(/operation-runtime/);
+  });
+
+  it.runIf(process.platform === "darwin")(
+    "a restricted worker loads the staged runtime and is refused before fork after a change",
+    async () => {
+      const f = await fixture();
+      // a stand-in sandbox runtime that reports where it was loaded from through its proxy token
+      await f.file(
+        join(f.rt, "dist/index.js"),
+        [
+          'import { fileURLToPath } from "node:url";',
+          "export const SandboxManager = {",
+          "  checkDependencies: () => ({ errors: [] }),",
+          "  isSupportedPlatform: () => true,",
+          "  initialize: async () => {},",
+          "  getProxyAuthToken: () => Buffer.from(fileURLToPath(import.meta.url)).toString('hex'),",
+          "  getProxyPort: () => 1,",
+          "  wrapWithSandbox: async (script) => script,",
+          "  reset: async () => {},",
+          "};",
+          "",
+        ].join("\n"),
+      );
+      await f.file(
+        join(f.rt, "package.json"),
+        JSON.stringify({
+          name: "@fixture/runtime",
+          version: "0.0.1",
+          type: "module",
+          main: "dist/index.js",
+          dependencies: { "rt-dep": "1" },
+        }),
+      );
+      await f.ship();
+      const state = await realpath(await mkdtemp(join(tmpdir(), "cap-seal-worker-")));
+      dirs.push(state);
+      await verifyInstalledRuntime(env, f.layout, { stageIn: state });
+      const { startMacOperationWorker } = await import("../src/exec/operation-worker.js");
+      const loadedFrom: string[] = [];
+      const launch = () =>
+        startMacOperationWorker(
+          {
+            kind: "exec",
+            scope: {
+              operationId: "seal-fixture",
+              admitBeforeMs: Date.now() + 30000,
+              deviceId: "owned-fixture",
+              rootConversationId: "r",
+              profileRevision: 0,
+              ceilingRevision: "fixture",
+              profile: "approve-for-me",
+              actor: { accountId: "a", conversationId: "r" },
+              tag: "fixture",
+              filesystem: { kind: "scoped", readRoots: [state], writeRoots: [] },
+              network: { kind: "none" },
+            },
+            args: { command: "echo ok", cwd: state, timeoutMs: 8000, maxOutputBytes: 1000 },
+            grant: {
+              full: false,
+              readRoots: [state],
+              writeRoots: [],
+              hosts: [],
+              deniedReadRoots: [],
+              revision: "fixture",
+            },
+            stateDir: state,
+            pythonPath: "/usr/bin/python3",
+            beforeLaunch: async () => {},
+            onLaunch: async () => {},
+            onRuntimeReady: async ({ proxyUrl }) => {
+              const token = /^http:\/\/srt:([0-9a-f]+)@/.exec(proxyUrl)?.[1] ?? "";
+              loadedFrom.push(Buffer.from(token, "hex").toString());
+            },
+          },
+          AbortSignal.timeout(15000),
+        );
+      const worker = await launch();
+      expect(await worker.completion).toMatchObject({ exitCode: 0, stdout: "ok\n" });
+      expect(loadedFrom).toEqual([await sealedRuntimeEntry()]);
+      expect(loadedFrom[0]?.startsWith(join(state, "operation-runtime/"))).toBe(true);
+
+      await writeFile(join(f.pkg, "node_modules/rt-dep/i.js"), "module.exports = 3;\n");
+      const refusedWorker = await launch();
+      await expect(refusedWorker.completion).rejects.toBeInstanceOf(
+        SandboxPermissionUnsupportedError,
+      );
+      await expect(refusedWorker.ready).rejects.toThrow(/changed after it was verified/);
+      // no worker process was started for the refused launch
+      expect(loadedFrom).toHaveLength(1);
+    },
+  );
 });
 
 describe("environment fingerprint", () => {
