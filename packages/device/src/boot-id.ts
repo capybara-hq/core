@@ -22,15 +22,6 @@ const realSources: BootIdSources = {
     }),
 };
 
-/**
- * The `kern.boottime` value as a boot identity: `{ sec = 1700000000, usec = 123456 } …` becomes
- * `boottime-1700000000.123456`. Undefined when it does not read as that.
- */
-export function bootTimeId(raw: string): string | undefined {
-  const m = /sec\s*=\s*(\d+)\s*,\s*usec\s*=\s*(\d+)/.exec(raw);
-  return m ? `boottime-${m[1]}.${m[2]}` : undefined;
-}
-
 const attempt = (read: () => string): string | undefined => {
   try {
     return read().trim();
@@ -41,7 +32,7 @@ const attempt = (read: () => string): string | undefined => {
 
 /**
  * The identity of the host's current OS boot, reported in the hello (`bootId`): Linux
- * `/proc/sys/kernel/random/boot_id`; macOS `kern.bootsessionuuid`, else `kern.boottime`. A value
+ * `/proc/sys/kernel/random/boot_id`; macOS `kern.bootsessionuuid` only (none otherwise). A value
  * that differs from an earlier one proves the host restarted since. Undefined when none can be
  * read or it is malformed (the deployment then has no restart evidence for this machine).
  */
@@ -50,11 +41,8 @@ export function readBootId(sources: BootIdSources = realSources): string | undef
   if (sources.platform === "linux") {
     id = attempt(() => sources.readFile("/proc/sys/kernel/random/boot_id"));
   } else if (sources.platform === "darwin") {
+    // only the boot session UUID: `kern.boottime` moves when the clock is stepped (M3)
     id = attempt(() => sources.sysctl("kern.bootsessionuuid"));
-    if (!id) {
-      const raw = attempt(() => sources.sysctl("kern.boottime"));
-      id = raw === undefined ? undefined : bootTimeId(raw);
-    }
   }
   return isDeviceBootId(id) ? id : undefined;
 }

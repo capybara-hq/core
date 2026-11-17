@@ -1107,6 +1107,9 @@ export interface BackgroundTasksTable {
     "tool" | "person" | "conversation_deleted" | "subagent_end" | null | undefined,
     "tool" | "person" | "conversation_deleted" | "subagent_end" | null
   >;
+  /** 0148: the exact incarnation a legacy dispatch was admitted for; null on historical rows. */
+  legacy_dispatch_provider: NullableText;
+  legacy_dispatch_generation: NullableText;
   /** 0148: whether a legacy launch may have dispatched its command (see the migration). */
   legacy_dispatch: ColumnType<
     "unknown" | "reserved" | "dispatched",

@@ -217,7 +217,8 @@ export class SandboxOperationReconcileJob {
       throw owed("The recorded execution reference does not match its start");
     const r = await this.sandbox.ifRunning(
       row.device_id,
-      { createdAt: new Date(generation) },
+      // the exact stop of a revoked start: an exact-ref drain (8.5)
+      { createdAt: new Date(generation), exactRef: true },
       async (p, h, signal) => {
         if (h.id !== ref.instanceId) throw new ManagedInstanceMismatchError();
         if (!p.background)

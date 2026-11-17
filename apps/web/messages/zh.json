@@ -367,7 +367,8 @@
       "owner_report_stale": "这台电脑发来的权限报告已过期，新的工作已暂停。请在电脑上重新运行 capybara-device login。",
       "owner_ceiling_confirmation_required": "为该设备开启完全访问需要你确认。请确认后再试。",
       "full_access_not_allowed": "平台、你的组织或该设备的提供方不允许该设备使用完全访问。",
-      "restart_required": "旧版本启动的后台任务可能仍在这台电脑上运行。请重启这台电脑以完成升级，然后再试。"
+      "restart_required": "旧版本启动的后台任务可能仍在这台电脑上运行。请重启这台电脑以完成升级，然后再试。",
+      "replace_required": "旧版本启动的后台任务可能仍在这台电脑上运行，且这台电脑无法证明已重启。请删除这台设备，再把这台电脑作为新设备重新连接。"
     },
     "device_sign_in": {
       "authorization_pending": "还未确认连接，请在网页上确认后稍候。",

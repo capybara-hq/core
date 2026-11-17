@@ -11,3 +11,7 @@ provider switch) and the local instance bind check them under the exclusive leas
 incarnation is retired only by its provider's confirmed whole-instance destroy (files kept), a local
 or unverifiable one stays quarantined and the device unavailable. A worker job enumerates, retires
 and settles them with backoff. Migration 0148.
+The freeze enumerates before it returns and the gate enumerates each device it serves, so neither
+depends on the worker; once frozen, lost-task kills by SID stop and their marks are kept. Legacy
+polls, stops and reads by SID and staged browsing are refused on a device under an obligation (exact
+managed drains go on). A launch records the exact incarnation its dispatch was admitted for.

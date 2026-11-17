@@ -138,17 +138,31 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   instance, under the exclusive lease next to its `killAll`. The poll and `TaskOutput` / `TaskStop` use `SandboxService.ifRunning`: a shared
   lease only on a `running` row of the task's instance, never creating or resuming one. sandbox-fake puts node shims for `setsid`,
   `timeout`, `pkill -s` and `pgrep -s` first on its PATH (macOS has none) and kills an instance's processes on `suspend` and `destroy`.
-- **Legacy retirement** (permission runtime cutover 8.5, migration 0148, `sandbox/legacy-retirement.ts`): once the legacy-launch
-  freeze row exists (written under the exclusive platform authority lock; every SID launch checks it under the shared lock right
-  before its dispatch), `RetireLegacyTasksJob` records an obligation per device, provider and exact instance generation for every
-  legacy row whose processes may live on, and for revoked managed starts on an incarnation that no longer runs. `SandboxService`
-  checks them in `ensure` under the exclusive lease, before use, resume, rebuild or provider switch (a device with one never takes
-  the shared path), and `LocalInstanceBindings.bind` refuses while one is unresolved: the current cloud incarnation is destroyed
-  whole by its provider (never resumed or `killAll`ed; files kept) and the confirmed destruction recorded in
-  `device_instance_destructions`; a local, replaced-without-record or unknown one is quarantined (`device.unavailable`). A local
-  destroy, a service restart, a new generation, a timeout or a SID never clears one; a local one records the boot identity
-  (`bootId`, from authenticated hellos) its machine last reported and resolves `host-rebooted` once any current machine of the
-  device reports another, not earlier, boot (the OS instance is the evidence, not the credential) (`device.restart_required` until then; none recorded: never). `ifRunning` (polls, stops) is not gated.
+- **Legacy retirement** (permission runtime cutover 8.5, migration 0148, `sandbox/legacy-retirement.ts`):
+  - **Freeze.** `LegacyRetirementStore.freeze` writes the freeze row under the exclusive platform authority lock, then enumerates
+    before it returns. Every SID launch checks the freeze under the shared lock right before its dispatch, recording the exact
+    incarnation (provider and generation) it dispatches into.
+  - **Obligations.** One per device, provider and exact instance generation, for every legacy row whose processes may live on and
+    for each revoked managed start on an incarnation that no longer runs. A historical reservation without a recorded incarnation
+    is `unknown`, never the current instance.
+  - **Gate.** `SandboxService` enumerates the device itself and checks its obligations in `ensure`, under the exclusive lease,
+    before use, resume, rebuild or provider switch. A device with an unresolved obligation, or with a candidate not yet
+    enumerated, never takes the shared path. `LocalInstanceBindings.bind` refuses while one is unresolved.
+    `RetireLegacyTasksJob` is retryable and bounded; the gate never depends on it.
+  - **Retirement.** The current cloud incarnation is destroyed whole by its provider (never resumed or `killAll`ed; files kept),
+    and the confirmed destruction is recorded in `device_instance_destructions`. `retire()` and `destroyRow` record theirs too.
+    Other cloud or `unknown` incarnations are quarantined (`device.unavailable`).
+  - **Local machines.** A local obligation keeps the boot identity (`bootId`, from authenticated hellos; a hello without one clears
+    it) that the device's machine last reported. It resolves `host-rebooted` once any current machine of the device reports
+    another, not earlier, boot: the OS instance is the evidence, not the credential. Until then the device answers
+    `device.restart_required`. With no boot recorded it never resolves and answers `device.replace_required`: delete the device
+    and connect the computer as a new one.
+  - **What never clears an obligation.** A local destroy, a service restart, a new generation, a timeout or a SID.
+  - **After the freeze.** `killPendingTasks` neither signals nor clears kill marks.
+  - **`ifRunning`.** It refuses legacy SID polls, stops and reads and staged browse on such a device (`RetirementPendingError`).
+    Only exact-ref managed drains pass `exactRef: true`.
+  - **Cutover order.** Ship the device build that reports `bootId` first. Wait until `report().localWithoutBoot` (local devices with
+    legacy rows whose machine has no recorded boot) is empty or accepted. Then publish the freeze.
 
 ### Limits, modes and networks (`SandboxLimits`)
 

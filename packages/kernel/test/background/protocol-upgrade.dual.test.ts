@@ -114,6 +114,8 @@ function replica(): { s: SandboxService; store: LegacyRetirementStore } {
 }
 
 const signal = () => AbortSignal.timeout(50_000);
+/** The incarnation a racing dispatch is admitted for. */
+const AT = { provider: "sandbox-fake", generation: "1763370000123" };
 const use = (s: SandboxService, deviceId: string) =>
   s.withSandbox(
     {
@@ -209,11 +211,11 @@ it("the freeze on one replica fences dispatch admissions racing it on the other"
   const dev = await seedDevice(raw, seed.orgId, seed.accountId);
   const ids = await Promise.all(Array.from({ length: 12 }, () => runningLegacyRow(dev, null)));
   const [admissions] = await Promise.all([
-    Promise.all(ids.map((id) => b.store.admitLegacyDispatch(seed.orgId, id))),
+    Promise.all(ids.map((id) => b.store.admitLegacyDispatch(seed.orgId, id, AT))),
     a.store.freeze("replica-a"),
   ]);
   // after the freeze committed nothing more is admitted
-  expect(await b.store.admitLegacyDispatch(seed.orgId, ids[0] as string)).toBe("frozen");
+  expect(await b.store.admitLegacyDispatch(seed.orgId, ids[0] as string, AT)).toBe("frozen");
   await a.store.scanUntilStable();
   const admitted = ids.filter((_, i) => admissions[i] === "admitted").sort();
   const members = await sql<{ ref_id: string }>`SELECT ref_id

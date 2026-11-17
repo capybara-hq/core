@@ -115,7 +115,7 @@ export class MachinesService {
     @Inject(OwnerReports) private readonly owners: OwnerReports,
     /** The host's boot identity: restart evidence for local legacy obligations (8.5). */
     @Inject(LegacyRetirementStore)
-    private readonly retirement: Pick<LegacyRetirementStore, "recordBoot">,
+    private readonly retirement: Pick<LegacyRetirementStore, "recordBoot" | "clearBoot">,
   ) {}
 
   /**
@@ -353,6 +353,8 @@ export class MachinesService {
     // only an authenticated, claimed connection's hello reaches here (the machine row locked):
     // its boot identity is the evidence a restart ended the old processes
     if (hello.bootId !== undefined) await this.retirement.recordBoot(machineId, hello.bootId);
+    // a hello without one (a downgraded program) leaves no stale boot as evidence (M2)
+    else await this.retirement.clearBoot(machineId);
   }
 
   /**

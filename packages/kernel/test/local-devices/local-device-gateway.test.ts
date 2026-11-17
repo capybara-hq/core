@@ -217,10 +217,11 @@ const machineBoot = async (machineId: string) =>
 
 /** Connects `credential` over the real gateway with a hello reporting `bootId`; waits for its record. */
 async function hello(credential: string, machineId: string, bootId?: string): Promise<void> {
+  // only the hello's record writes roots, so a connect-time touch of a new machine never counts
   const seen = async () =>
     (
       await sql<{ at: Date | null }>`SELECT last_seen_at AS at FROM capybara.device_machines
-        WHERE id = ${machineId}`.execute(raw)
+        WHERE id = ${machineId} AND roots IS NOT NULL`.execute(raw)
     ).rows[0]?.at?.getTime() ?? 0;
   const before = await seen();
   const m = new FakeMachine(url, credential, undefined, { hello: false });
@@ -308,6 +309,10 @@ describe("boot identity evidence for local legacy retirement", () => {
     // a stale or replayed earlier boot changes nothing
     await hello(d.credential, d.machineId, B1);
     expect(await machineBoot(d.machineId)).toBe(B2);
+
+    // a hello without a boot identity (a downgraded program) keeps no stale boot as evidence
+    await hello(d.credential, d.machineId);
+    expect(await machineBoot(d.machineId)).toBeNull();
   });
 
   it("an obligation recorded without a boot identity never resolves by itself", async () => {
@@ -320,9 +325,9 @@ describe("boot identity evidence for local legacy retirement", () => {
     await hello(d.credential, d.machineId, B1);
     await hello(d.credential, d.machineId, B2);
     expect(await states(d.deviceId)).toEqual([{ state: unresolved, resolution: null }]);
-    // nothing a restart could prove: the generic unavailable answer, not a restart request
+    // nothing a restart could prove: the owner replaces the device, no restart request
     await expect(use(d.deviceId, d.accountId)).rejects.toMatchObject({
-      code: "device.unavailable",
+      code: "device.replace_required",
     });
     expect(await states(d.deviceId)).toEqual([{ state: "quarantined", resolution: null }]);
   });

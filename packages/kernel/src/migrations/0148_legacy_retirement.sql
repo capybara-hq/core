@@ -19,6 +19,14 @@ ALTER TABLE background_tasks ADD COLUMN IF NOT EXISTS legacy_dispatch text NOT N
 ALTER TABLE background_tasks DROP CONSTRAINT IF EXISTS background_tasks_legacy_dispatch_check;
 ALTER TABLE background_tasks ADD CONSTRAINT background_tasks_legacy_dispatch_check
   CHECK (legacy_dispatch IN ('unknown', 'reserved', 'dispatched'));
+-- The exact incarnation a dispatch was admitted for (provider and generation, read under the
+-- launch's shared lease): a reservation that never got its sid still names where it may run. NULL
+-- on historical rows: their incarnation is `unknown`, never guessed from the current instance.
+ALTER TABLE background_tasks ADD COLUMN IF NOT EXISTS legacy_dispatch_provider text;
+ALTER TABLE background_tasks ADD COLUMN IF NOT EXISTS legacy_dispatch_generation text;
+ALTER TABLE background_tasks DROP CONSTRAINT IF EXISTS background_tasks_legacy_dispatch_generation_check;
+ALTER TABLE background_tasks ADD CONSTRAINT background_tasks_legacy_dispatch_generation_check
+  CHECK (legacy_dispatch_generation IS NULL OR legacy_dispatch_generation ~ '^[0-9]{1,16}$');
 
 -- The physical no-reuse obligation of one old instance incarnation: the device, its provider and
 -- the exact instance generation (the epoch millisecond of device_instances.created_at; 'unknown'
@@ -81,7 +89,8 @@ CREATE TABLE IF NOT EXISTS device_instance_destructions (
 -- The worker's enumeration runs every tick: only the rows it may select are indexed.
 CREATE INDEX IF NOT EXISTS background_tasks_legacy_retirement_idx
   ON background_tasks (device_id)
-  WHERE launch_state = 'legacy' AND (status = 'running' OR kill_pending OR sid IS NULL);
+  WHERE launch_state = 'legacy' AND device_id IS NOT NULL
+    AND (status = 'running' OR kill_pending OR sid IS NULL);
 CREATE INDEX IF NOT EXISTS sandbox_operation_intents_owed_background_revoke_idx
   ON sandbox_operation_intents (device_id)
   WHERE method = 'backgroundStart' AND state = 'revoked' AND NOT revoke_acknowledged

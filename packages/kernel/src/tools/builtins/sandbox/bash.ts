@@ -315,8 +315,13 @@ async function runInBackground(
       // published, else the reservation is marked as possibly dispatched in the same step
       const legacyLaunch = deps.legacyLaunch;
       if (legacyLaunch) {
+        // under the shared lease: the incarnation the launch dispatches into, exactly (I2)
+        const at = await currentInstance(deviceId);
         const admission = await runOutsideTransaction(() =>
-          legacyLaunch.admitLegacyDispatch(ctx.orgId, id),
+          legacyLaunch.admitLegacyDispatch(ctx.orgId, id, {
+            provider: at?.provider ?? "unknown",
+            generation: at ? String(at.createdAt.getTime()) : "unknown",
+          }),
         );
         if (admission === "frozen")
           return {

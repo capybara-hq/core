@@ -389,6 +389,8 @@ export const ERROR_CODES = {
   "device.owner_report_stale": 409,
   /** A local device's old instance may still run legacy work until the computer restarts (8.5). */
   "device.restart_required": 503,
+  /** A local device's old instance may still run legacy work and no restart can prove it (8.5). */
+  "device.replace_required": 503,
   "device.owner_ceiling_confirmation_required": 409,
   "device.full_access_not_allowed": 409,
   /**

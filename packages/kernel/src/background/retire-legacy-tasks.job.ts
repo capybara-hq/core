@@ -92,7 +92,7 @@ export class RetireLegacyTasksJob {
     for (const deviceId of await this.retirement.due(RETIRE_DEVICES_PER_TICK)) {
       if (signal?.aborted) return result;
       try {
-        const outcome = await this.sandbox.retireLegacy(deviceId);
+        const outcome = await this.sandbox.retireLegacy(deviceId, signal);
         if (outcome === "clear") result.cleared++;
         else if (outcome === "unavailable") result.unavailable++;
         else result.busy++;

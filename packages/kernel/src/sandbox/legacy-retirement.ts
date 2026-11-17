@@ -85,6 +85,13 @@ export interface LegacyRetirementReport {
   unsettledMembers: number;
   /** True only with the freeze published and every obligation resolved and settled. */
   retired: boolean;
+  /**
+   * The cutover pre-check (before the freeze, too): local devices with legacy rows whose processes
+   * may still exist and whose current machine has no recorded boot identity. Their obligations
+   * could never resolve by a restart: ship the boot-reporting device build and wait for these to
+   * report before publishing the freeze.
+   */
+  localWithoutBoot: { deviceId: string; machineId: string | null }[];
   unresolved: {
     deviceId: string;
     provider: string;
@@ -141,11 +148,20 @@ export class LegacyRetirementStore {
   ) {}
 
   /**
-   * Publishes the legacy-launch freeze under the platform authority writer; idempotent. Returns
-   * when it was first published. Never undone.
+   * Publishes the legacy-launch freeze under the platform authority writer, then enumerates every
+   * legacy row and revoked start until stable; idempotent. Returns when it was first published.
+   * Never undone.
    */
-  @Transactional({ propagation: "requires_new" })
   async freeze(by: string): Promise<Date> {
+    const at = await this.publishFreeze(by);
+    // enumerated before the freeze returns: no use may run between it and the first scan (the
+    // gate also scans each device it serves, so a worker that never runs bypasses nothing)
+    await this.scanUntilStable();
+    return at;
+  }
+
+  @Transactional({ propagation: "requires_new" })
+  private async publishFreeze(by: string): Promise<Date> {
     await this.locks.acquire({}, { kind: "write", level: "platform" });
     await this.db
       .insertInto("legacy_launch_freeze")
@@ -175,12 +191,23 @@ export class LegacyRetirementStore {
    * the freeze is published; otherwise marks the reservation `dispatched` in the same transaction.
    */
   @Transactional({ propagation: "requires_new" })
-  async admitLegacyDispatch(orgId: string, taskId: string): Promise<LegacyDispatchAdmission> {
+  async admitLegacyDispatch(
+    orgId: string,
+    taskId: string,
+    /** The exact incarnation the launch dispatches into (read under its shared lease). */
+    instance: { provider: string; generation: string },
+  ): Promise<LegacyDispatchAdmission> {
     await this.locks.acquire({ orgId }, { kind: "admit" });
     if (await this.frozen()) return "frozen";
     const r = await this.db
       .updateTable("background_tasks")
-      .set({ legacy_dispatch: "dispatched" })
+      .set({
+        legacy_dispatch: "dispatched",
+        legacy_dispatch_provider: instance.provider,
+        legacy_dispatch_generation: GENERATION_RE.test(instance.generation)
+          ? instance.generation
+          : null,
+      })
       .where("id", "=", taskId)
       .where("org_id", "=", orgId)
       .where("status", "=", "running")
@@ -196,26 +223,34 @@ export class LegacyRetirementStore {
    * members of their obligations. Idempotent; returns how many new members it recorded. The
    * worker repeats it every tick, so a row an old unfenced replica writes later is still found.
    */
-  async scan(): Promise<{ added: number }> {
+  async scan(deviceId?: string): Promise<{ added: number }> {
     let added = 0;
-    if (await this.frozen()) added += await this.scanLegacyTasks();
-    added += await this.scanRevokedStarts();
+    if (await this.frozen()) added += await this.scanLegacyTasks(deviceId);
+    added += await this.scanRevokedStarts(deviceId);
     return { added };
   }
 
   /** Repeats {@link scan} until a pass adds nothing (at most `maxPasses`). */
-  async scanUntilStable(maxPasses = 5): Promise<{ added: number; stable: boolean }> {
+  async scanUntilStable(
+    maxPasses = 5,
+    deviceId?: string,
+  ): Promise<{ added: number; stable: boolean }> {
     let added = 0;
     for (let i = 0; i < maxPasses; i++) {
-      const pass = await this.scan();
+      const pass = await this.scan(deviceId);
       added += pass.added;
       if (pass.added === 0) return { added, stable: true };
     }
     return { added, stable: false };
   }
 
-  private async scanLegacyTasks(): Promise<number> {
-    const rows = await this.db
+  /**
+   * Legacy rows whose processes may still exist and that are not members yet (one device's, or
+   * all). The `(status = 'running' OR kill_pending OR sid IS NULL)` conjunct is the partial index's
+   * predicate (0148), stated as is so the planner can use it.
+   */
+  private legacyCandidates(deviceId?: string) {
+    let q = this.db
       .selectFrom("background_tasks as t")
       .leftJoin("devices as d", "d.id", "t.device_id")
       .leftJoin("device_instances as i", "i.device_id", "t.device_id")
@@ -224,13 +259,15 @@ export class LegacyRetirementStore {
         "t.org_id",
         "t.device_id",
         "t.sandbox_created_at",
+        "t.legacy_dispatch_generation",
+        "t.legacy_dispatch_provider",
         "d.source",
         "i.provider as instance_provider",
         "i.created_at as instance_created_at",
-        "i.status as instance_status",
       ])
       .where("t.launch_state", "=", "legacy")
       .where("t.device_id", "is not", null)
+      .where(sql<boolean>`(t.status = 'running' OR t.kill_pending OR t.sid IS NULL)`)
       .where(
         sql<boolean>`(
           (t.status = 'running' AND (t.sid IS NOT NULL OR t.legacy_dispatch <> 'reserved'))
@@ -247,39 +284,42 @@ export class LegacyRetirementStore {
               .whereRef("m.ref_id", "=", "t.id"),
           ),
         ),
-      )
+      );
+    if (deviceId !== undefined) q = q.where("t.device_id", "=", deviceId);
+    return q;
+  }
+
+  private async scanLegacyTasks(deviceId?: string): Promise<number> {
+    const rows = await this.legacyCandidates(deviceId)
       .orderBy("t.started_at", "asc")
       .orderBy("t.id", "asc")
       .execute();
     let added = 0;
     for (const r of rows) {
       const deviceId = r.device_id as string;
-      const live =
-        r.instance_created_at !== null &&
-        r.instance_status !== null &&
-        ["creating", "running", "suspended"].includes(r.instance_status);
+      // the exact incarnation: the one it started in, else the one its dispatch was admitted for;
+      // a historical reservation without either is `unknown`, never the instance current now (I2)
       const generation =
         r.sandbox_created_at !== null
           ? generationOf(new Date(r.sandbox_created_at))
-          : live && r.instance_created_at
-            ? generationOf(r.instance_created_at)
-            : "unknown";
+          : (r.legacy_dispatch_generation ?? "unknown");
       const current =
         r.instance_created_at !== null && generationOf(r.instance_created_at) === generation;
+      // its own provider: the instance row's only when it is that incarnation (M6)
       const provider =
         r.source === "local"
           ? LOCAL_PROVIDER
-          : current && r.instance_provider
-            ? r.instance_provider
-            : (r.instance_provider ?? "unknown");
+          : (r.legacy_dispatch_provider ??
+            (current && r.instance_provider ? r.instance_provider : "unknown"));
       if (await this.addMember(deviceId, r.org_id, provider, generation, "legacy-task", r.id))
         added++;
     }
     return added;
   }
 
-  private async scanRevokedStarts(): Promise<number> {
-    const rows = await this.db
+  /** Revoked managed starts on an incarnation that no longer runs, not members yet. */
+  private revokedCandidates(deviceId?: string) {
+    let q = this.db
       .selectFrom("sandbox_operation_intents as o")
       .select(["o.operation_id", "o.org_id", "o.device_id", "o.provider", "o.instance_generation"])
       .where("o.method", "=", "backgroundStart")
@@ -311,9 +351,13 @@ export class LegacyRetirementStore {
               .whereRef("m.ref_id", "=", "o.operation_id"),
           ),
         ),
-      )
-      .orderBy("o.operation_id")
-      .execute();
+      );
+    if (deviceId !== undefined) q = q.where("o.device_id", "=", deviceId);
+    return q;
+  }
+
+  private async scanRevokedStarts(deviceId?: string): Promise<number> {
+    const rows = await this.revokedCandidates(deviceId).orderBy("o.operation_id").execute();
     let added = 0;
     for (const r of rows) {
       const generation = GENERATION_RE.test(r.instance_generation)
@@ -379,18 +423,21 @@ export class LegacyRetirementStore {
       r !== undefined &&
       obligation.state === "resolved" &&
       obligation.resolution === "host-rebooted"
-    )
+    ) {
+      // read under the obligation's lock: a hello that resolved it meanwhile is seen (M1)
+      const now = await this.currentBoot(deviceId);
       await this.db
         .updateTable("device_retirement_obligations")
         .set({
           state: "open",
           resolution: null,
           resolved_at: null,
-          boot_machine_id: boot?.machineId ?? null,
-          boot_id: boot?.bootId ?? null,
+          boot_machine_id: now?.machineId ?? null,
+          boot_id: now?.bootId ?? null,
         })
         .where("id", "=", obligation.id)
         .execute();
+    }
     return r !== undefined;
   }
 
@@ -445,6 +492,18 @@ export class LegacyRetirementStore {
     else return "stale";
     await this.settleRebooted(machine.device_id);
     return report;
+  }
+
+  /**
+   * A hello without a boot identity: the machine has no current boot any more, so a boot it
+   * reported earlier is never taken as the one its later work ran under (M2).
+   */
+  async clearBoot(machineId: string): Promise<void> {
+    await this.db
+      .updateTable("device_machines")
+      .set({ boot_id: null })
+      .where("id", "=", machineId)
+      .execute();
   }
 
   /**
@@ -531,7 +590,11 @@ export class LegacyRetirementStore {
     return rows.map(toObligation);
   }
 
-  /** Whether the device has an unresolved obligation (the shared-path check). */
+  /**
+   * Whether the device has an unresolved obligation, or a candidate not enumerated yet (a legacy
+   * row once frozen, a revoked start): the shared-path check. A candidate counts as unresolved, so
+   * the device goes to the gate, which enumerates it under the exclusive lease (C1).
+   */
   async hasUnresolved(deviceId: string): Promise<boolean> {
     const row = await this.db
       .selectFrom("device_retirement_obligations")
@@ -540,7 +603,13 @@ export class LegacyRetirementStore {
       .where("state", "<>", "resolved")
       .limit(1)
       .executeTakeFirst();
-    return row !== undefined;
+    if (row !== undefined) return true;
+    if ((await this.revokedCandidates(deviceId).limit(1).executeTakeFirst()) !== undefined)
+      return true;
+    return (
+      (await this.frozen()) &&
+      (await this.legacyCandidates(deviceId).limit(1).executeTakeFirst()) !== undefined
+    );
   }
 
   /**
@@ -690,6 +759,28 @@ export class LegacyRetirementStore {
       .where("state", "<>", "resolved")
       .orderBy("created_at", "asc")
       .execute();
+    const withoutBoot = await this.db
+      .selectFrom("background_tasks as t")
+      .innerJoin("devices as d", "d.id", "t.device_id")
+      .leftJoin("device_machines as m", (j) =>
+        j.onRef("m.device_id", "=", "d.id").on("m.revoked_at", "is", null),
+      )
+      .select(["t.device_id", "m.id as machine_id"])
+      .distinct()
+      .where("d.source", "=", "local")
+      .where("d.deleted_at", "is", null)
+      .where("t.launch_state", "=", "legacy")
+      .where(sql<boolean>`(t.status = 'running' OR t.kill_pending OR t.sid IS NULL)`)
+      .where(
+        sql<boolean>`(
+          (t.status = 'running' AND (t.sid IS NOT NULL OR t.legacy_dispatch <> 'reserved'))
+          OR t.kill_pending
+          OR (t.sid IS NULL AND t.legacy_dispatch <> 'reserved')
+        )`,
+      )
+      .where((eb) => eb.or([eb("m.id", "is", null), eb("m.boot_id", "is", null)]))
+      .orderBy("t.device_id")
+      .execute();
     const open = n("open"),
       quarantined = n("quarantined"),
       unsettledMembers = Number(unsettled.n);
@@ -700,6 +791,10 @@ export class LegacyRetirementStore {
       resolved: n("resolved"),
       unsettledMembers,
       retired: frozen && open === 0 && quarantined === 0 && unsettledMembers === 0,
+      localWithoutBoot: withoutBoot.map((r) => ({
+        deviceId: r.device_id as string,
+        machineId: r.machine_id,
+      })),
       unresolved: unresolved.map((r) => ({
         deviceId: r.device_id,
         provider: r.provider,

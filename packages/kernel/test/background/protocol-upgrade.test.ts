@@ -19,7 +19,7 @@ import { XactLock } from "../../src/infra/database/xact-lock.js";
 import type { LegacyRetirementStore } from "../../src/sandbox/legacy-retirement.js";
 import type { SandboxOperationIntents } from "../../src/sandbox/operation-intents.js";
 import { LOCAL_PROVIDER } from "../../src/sandbox/providers.js";
-import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
+import { RetirementPendingError, type SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { createFakeSandbox } from "../fixtures/plugins/sandbox-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { handlesFor, retirementFor } from "../helpers/identity.js";
@@ -87,7 +87,7 @@ const service = (): SandboxService =>
     db,
     redis,
     provider: () => ({ plugin: "sandbox-fake", impl: cloud }),
-    lookup: (plugin) => (plugin === "sandbox-fake" ? cloud : undefined),
+    lookup: (plugin) => (plugin === "sandbox-fake" || plugin === "old-fake" ? cloud : undefined),
     internal: [{ plugin: LOCAL_PROVIDER, impl: local }],
     config: () => config,
     log: {},
@@ -175,6 +175,8 @@ const members = async () =>
       .execute()
   ).map((m) => `${m.kind} ${m.ref_id}`);
 const unavailable = { code: "device.unavailable" };
+/** A local device whose computer never reported a boot identity: replace it. */
+const replace = { code: "device.replace_required" };
 
 /** A legacy (SID-era) row as an older kernel wrote it (`legacy_dispatch` left at its default). */
 async function legacyRow(
@@ -241,20 +243,23 @@ describe("enumeration under the legacy-launch freeze", () => {
     expect(await retirement.scanUntilStable()).toEqual({ added: 0, stable: true });
     expect(await obligations(dev)).toEqual([]);
 
+    // the freeze itself enumerates before it returns: no worker scan is needed
     await retirement.freeze("test");
-    expect(await retirement.scanUntilStable()).toEqual({ added: 5, stable: true });
     expect(await members()).toEqual(
       [running, reservedUnknown, stopping, killPending, failedMaybeDispatched]
         .map((id) => `legacy-task ${id}`)
         .sort(),
     );
-    const [o] = await obligations(dev);
-    expect(o).toMatchObject({
-      provider: "sandbox-fake",
-      instance_generation: String(g.getTime()),
-      state: "open",
-    });
-    expect(await obligations(dev)).toHaveLength(1);
+    // historical reservations name no incarnation: `unknown`, never the instance current now
+    // (whose provider is not theirs either)
+    expect(
+      (await obligations(dev)).map((o) => [o.provider, o.instance_generation, o.state]).sort(),
+    ).toEqual(
+      [
+        ["sandbox-fake", String(g.getTime()), "open"],
+        ["unknown", "unknown", "open"],
+      ].sort(),
+    );
     // the rows themselves are untouched: no SID becomes an execution reference
     const rows = await db
       .selectFrom("background_tasks")
@@ -268,18 +273,80 @@ describe("enumeration under the legacy-launch freeze", () => {
     const dev = await seedDevice(raw, seed.orgId, seed.accountId);
     const before = await legacyRow(dev, { sid: null, dispatch: "reserved" });
     const after = await legacyRow(dev, { sid: null, dispatch: "reserved" });
-    expect(await retirement.admitLegacyDispatch(seed.orgId, before)).toBe("admitted");
+    const at = { provider: "sandbox-fake", generation: "1763370000123" };
+    expect(await retirement.admitLegacyDispatch(seed.orgId, before, at)).toBe("admitted");
     await retirement.freeze("test");
-    expect(await retirement.admitLegacyDispatch(seed.orgId, after)).toBe("frozen");
+    expect(await retirement.admitLegacyDispatch(seed.orgId, after, at)).toBe("frozen");
     const marks = await db
       .selectFrom("background_tasks")
-      .select(["id", "legacy_dispatch"])
+      .select(["id", "legacy_dispatch", "legacy_dispatch_generation"])
       .orderBy("id")
       .execute();
-    expect(Object.fromEntries(marks.map((m) => [m.id, m.legacy_dispatch]))).toEqual({
-      [before]: "dispatched",
-      [after]: "reserved",
+    expect(Object.fromEntries(marks.map((m) => [m.id, m]))).toMatchObject({
+      [before]: { legacy_dispatch: "dispatched", legacy_dispatch_generation: at.generation },
+      [after]: { legacy_dispatch: "reserved", legacy_dispatch_generation: null },
     });
+    // the admitted reservation's obligation is keyed by the incarnation it was admitted for
+    expect(await obligations(dev)).toMatchObject([
+      { provider: "sandbox-fake", instance_generation: at.generation },
+    ]);
+  });
+
+  it("the gate enumerates on its own: a row written after the freeze (no worker scan) refuses use and keeps its kill mark", async () => {
+    const s = service();
+    const dev = await seedDevice(raw, seed.orgId, seed.accountId);
+    await use(s, dev);
+    const g = (await instance(dev)).created_at;
+    await retirement.freeze("test");
+    // an old, unfenced replica's row of an earlier incarnation, after the freeze's own scan
+    const late = await legacyRow(dev, {
+      status: "lost",
+      createdAt: new Date(g.getTime() - 60_000),
+      killPending: true,
+    });
+    expect(await obligations(dev)).toEqual([]);
+    expect(await retirement.hasUnresolved(dev)).toBe(true);
+    calls = [];
+    await expect(use(s, dev)).rejects.toMatchObject(unavailable);
+    expect(calls).toEqual([]);
+    expect(await members()).toEqual([`legacy-task ${late}`]);
+    expect((await tasks.get(late))?.killPending).toBe(true);
+  });
+
+  it("an incarnation under an obligation refuses legacy SID callers; exact-ref drains go on", async () => {
+    const s = service();
+    const dev = await seedDevice(raw, seed.orgId, seed.accountId);
+    await use(s, dev);
+    const g = (await instance(dev)).created_at;
+    await legacyRow(dev, { createdAt: g });
+    await retirement.freeze("test");
+    let ran = 0;
+    const fn = async () => {
+      ran++;
+      return "ran";
+    };
+    await expect(s.ifRunning(dev, { createdAt: g }, fn)).rejects.toBeInstanceOf(
+      RetirementPendingError,
+    );
+    expect(ran).toBe(0);
+    expect(await s.ifRunning(dev, { createdAt: g, exactRef: true }, fn)).toEqual({
+      kind: "ran",
+      value: "ran",
+    });
+  });
+
+  it("a confirmed destroy of a previous provider's incarnation is recorded", async () => {
+    const s = service();
+    const dev = await seedDevice(raw, seed.orgId, seed.accountId);
+    await use(s, dev);
+    const g = (await instance(dev)).created_at;
+    // the instance was made by a provider the deployment has since replaced (still loaded)
+    await sql`UPDATE capybara.device_instances SET provider = 'old-fake'
+      WHERE device_id = ${dev}`.execute(raw);
+    await s.destroyInactive(new Date(Date.now() + 365 * DAY));
+    expect(await db.selectFrom("device_instance_destructions").selectAll().execute()).toMatchObject(
+      [{ device_id: dev, provider: "old-fake", instance_generation: String(g.getTime()) }],
+    );
   });
 });
 
@@ -355,13 +422,13 @@ describe("the retirement gate", () => {
     expect(await obligations(dev)).toMatchObject([{ provider: LOCAL_PROVIDER, state: "open" }]);
     calls = [];
 
-    await expect(use(s, dev)).rejects.toMatchObject(unavailable);
+    await expect(use(s, dev)).rejects.toMatchObject(replace);
     expect(await obligations(dev)).toMatchObject([{ state: "quarantined" }]);
     expect(calls).toEqual([]);
 
     // the reset destroys through the local provider (a no-op on a machine): no evidence
     await s.resetFileSystem(dev);
-    await expect(use(s, dev)).rejects.toMatchObject(unavailable);
+    await expect(use(s, dev)).rejects.toMatchObject(replace);
     expect(await s.retireLegacy(dev)).toBe("unavailable");
     expect(await obligations(dev)).toMatchObject([{ state: "quarantined", resolution: null }]);
     expect(await db.selectFrom("device_instance_destructions").selectAll().execute()).toEqual([]);
@@ -388,7 +455,7 @@ describe("the retirement gate", () => {
     expect(await tasks.get(task)).toBeUndefined();
     expect(await retirement.scanUntilStable()).toEqual({ added: 0, stable: true });
     expect(await members()).toEqual([`legacy-task ${task}`]);
-    await expect(use(s, dev)).rejects.toMatchObject(unavailable);
+    await expect(use(s, dev)).rejects.toMatchObject(replace);
     expect(await retirement.report()).toMatchObject({
       frozen: true,
       quarantined: 1,
@@ -453,10 +520,13 @@ describe("revoked managed starts on an incarnation that no longer runs (8.4 hand
     // the instance it ran on is destroyed by the kernel's own path (confirmed, recorded) and
     // replaced by a new generation
     await s.destroyInactive(new Date(Date.now() + 365 * DAY));
-    await use(s, dev);
+    // the next use would create a new generation: the gate enumerates the device itself first
+    // (no worker scan), resolves the destroyed one and refuses for the stale one
+    await expect(use(s, dev)).rejects.toMatchObject(unavailable);
+    expect(await acknowledged(destroyed)).toBe(false);
 
     const r = await job(s).runOnce();
-    expect(r.added).toBe(2);
+    expect(r.settled).toBe(1);
     expect(await acknowledged(destroyed)).toBe(true);
     expect(await acknowledged(stale)).toBe(false);
     expect((await obligations(dev)).map((o) => [o.instance_generation === g1, o.state])).toEqual(
@@ -480,7 +550,8 @@ describe("revoked managed starts on an incarnation that no longer runs (8.4 hand
     await retirement.freeze("test");
     calls = [];
     const r = await job(s).runOnce();
-    expect(r).toMatchObject({ added: 1, cleared: 1, settled: 1 });
+    // the freeze enumerated it already
+    expect(r).toMatchObject({ added: 0, cleared: 1, settled: 1 });
     expect(calls).toEqual([`cloud destroy ${old.id}`]);
     expect((await tasks.get(task))?.killPending).toBe(false);
     expect(await retirement.report()).toMatchObject({ frozen: true, open: 0, retired: true });

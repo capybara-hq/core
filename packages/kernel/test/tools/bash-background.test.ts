@@ -291,18 +291,26 @@ describe("Bash run_in_background", () => {
     let markAtExec: string | undefined;
     const exec = fake.exec;
     fake.exec = async (h, args) => {
-      if (args.command.includes("setsid nohup"))
-        markAtExec = (
-          await sql<{ legacy_dispatch: string }>`SELECT legacy_dispatch
+      if (args.command.includes("setsid nohup")) {
+        const r = (
+          await sql<{
+            legacy_dispatch: string;
+            legacy_dispatch_provider: string | null;
+            legacy_dispatch_generation: string | null;
+          }>`SELECT legacy_dispatch, legacy_dispatch_provider, legacy_dispatch_generation
             FROM capybara.background_tasks`.execute(raw)
-        ).rows[0]?.legacy_dispatch;
+        ).rows[0];
+        // the exact incarnation it dispatches into, read under its lease (I2)
+        const at = await sandboxCreatedAt(envId);
+        markAtExec = `${r?.legacy_dispatch} ${r?.legacy_dispatch_provider} ${r?.legacy_dispatch_generation === String(at.getTime())}`;
+      }
       return exec(h, args);
     };
     await bash().run(
       { command: "sleep 30", description: "Before the freeze", run_in_background: true },
       ctx(),
     );
-    expect(markAtExec).toBe("dispatched");
+    expect(markAtExec).toBe("dispatched sandbox-fake true");
   });
 
   it("a reservation made before the freeze is refused right before its dispatch: no launch exec", async () => {

@@ -160,7 +160,7 @@ export interface DeviceHello {
   home?: string;
   /**
    * The identity of the host's current OS boot (Linux `/proc/sys/kernel/random/boot_id`; macOS
-   * `kern.bootsessionuuid`, else `kern.boottime`): a value that differs from an earlier one of the
+   * `kern.bootsessionuuid`): a value that differs from an earlier one of the
    * same machine proves the host restarted since, so no process of that earlier boot can exist.
    * A malformed value is dropped by the parser.
    */
