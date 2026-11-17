@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { constants } from "node:fs";
+import { type BigIntStats, constants } from "node:fs";
 import { lstat, open, readdir, readFile, realpath } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { arch, platform, release, version } from "node:os";
@@ -11,6 +11,12 @@ import { SANDBOX_RUNTIME_SOURCE } from "@capybara-hq/plugin-sdk";
 import { PRELUDE } from "./native-helper-client.js";
 import { WORKER } from "./operation-worker.js";
 import { OUTPUT_SPOOL_HELPER } from "./output-spool-helper.js";
+import {
+  ClosureStager,
+  fileIdentity,
+  type InstalledDirRecord,
+  type InstalledFileRecord,
+} from "./runtime-source.js";
 
 /**
  * Canonical installed-byte manifest, version 1 (permission runtime cutover B4). The package build
@@ -109,28 +115,32 @@ export const environmentHash = (f: EnvironmentFacts) => sha256(canonicalEnvironm
 
 /**
  * The bytes of one regular file read through its opened handle (no symlink at the last
- * component, identity checked against the path after the read), so a swap during hashing fails.
+ * component, identity checked against the path after the read), so a swap or a write during
+ * hashing fails. The identity is the one the bytes belong to.
  */
-export async function hashRegularFile(path: string): Promise<{ size: number; sha256: string }> {
+async function readRegularFile(path: string): Promise<{ bytes: Buffer; stat: BigIntStats }> {
   const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW).catch((e) => {
     throw new RuntimeManifestError(`Cannot open ${path}: ${(e as Error).message}`);
   });
   try {
-    const before = await file.stat();
+    const before = await file.stat({ bigint: true });
     if (!before.isFile()) throw new RuntimeManifestError(`${path} is not a regular file`);
     const bytes = await file.readFile();
-    const after = await lstat(path);
+    const after = await lstat(path, { bigint: true });
     if (
       !after.isFile() ||
-      after.dev !== before.dev ||
-      after.ino !== before.ino ||
-      after.size !== bytes.byteLength
+      fileIdentity(after) !== fileIdentity(before) ||
+      after.size !== BigInt(bytes.byteLength)
     )
       throw new RuntimeManifestError(`${path} changed while it was verified`);
-    return { size: bytes.byteLength, sha256: sha256(bytes) };
+    return { bytes, stat: before };
   } finally {
     await file.close();
   }
+}
+export async function hashRegularFile(path: string): Promise<{ size: number; sha256: string }> {
+  const { bytes } = await readRegularFile(path);
+  return { size: bytes.byteLength, sha256: sha256(bytes) };
 }
 
 const textEntry = (name: string, text: string): ManifestEntry => {
@@ -329,11 +339,28 @@ const logical = (prefix: string, root: string, file: string) => {
   return `${prefix}/${rel.split(sep).join("/")}`;
 };
 
-/** Every regular file of a package (its own nested node_modules excluded); links are refused. */
-async function packageFiles(root: string): Promise<string[]> {
+/**
+ * Every regular file of a package (its own nested node_modules excluded); links are refused.
+ * Each walked directory is recorded with an identity taken around its listing, so an entry added
+ * while it is listed fails here, and one added later shows at launch.
+ */
+async function packageFiles(root: string, dirs: InstalledDirRecord[]): Promise<string[]> {
   const out: string[] = [];
   const walk = async (dir: string) => {
-    for (const e of await readdir(dir, { withFileTypes: true })) {
+    const before = await lstat(dir, { bigint: true });
+    const entries = await readdir(dir, { withFileTypes: true });
+    const after = await lstat(dir, { bigint: true });
+    if (!after.isDirectory() || fileIdentity(after) !== fileIdentity(before))
+      throw new RuntimeManifestError(`${dir} changed while it was verified`);
+    dirs.push({
+      path: dir,
+      identity: fileIdentity(after),
+      names: entries
+        .map((e) => e.name)
+        .filter((n) => n !== "node_modules")
+        .sort(),
+    });
+    for (const e of entries) {
       const p = join(dir, e.name);
       if (e.isDirectory()) {
         if (e.name !== "node_modules") await walk(p);
@@ -345,6 +372,15 @@ async function packageFiles(root: string): Promise<string[]> {
   return out;
 }
 
+/** What one enumeration saw, for staging and the launch-time identity checks. */
+interface Observed {
+  files: InstalledFileRecord[];
+  dirs: InstalledDirRecord[];
+  /** The first runtime package's entry module, as `[package id, package-relative path]`. */
+  entry?: { id: string; rel: string };
+  stager?: ClosureStager;
+}
+
 /**
  * The installed runtime and helper entries for `layout`, hashed from the files on disk. Helper
  * entries: the static import closure of the helper modules (into `@capybara-hq/*` packages), plus
@@ -354,6 +390,22 @@ async function packageFiles(root: string): Promise<string[]> {
 export async function enumerateInstalled(
   layout: ManifestLayout,
 ): Promise<{ runtime: ManifestEntry[]; helpers: ManifestEntry[] }> {
+  return enumerate(layout, { files: [], dirs: [] });
+}
+async function enumerate(
+  layout: ManifestLayout,
+  seen: Observed,
+): Promise<{ runtime: ManifestEntry[]; helpers: ManifestEntry[] }> {
+  const record = (path: string, stat: BigIntStats, bytes: Uint8Array) => {
+    const entry = {
+      path,
+      identity: fileIdentity(stat),
+      size: bytes.byteLength,
+      sha256: sha256(bytes),
+    };
+    seen.files.push(entry);
+    return entry;
+  };
   const packageRoot = await realpath(layout.packageRoot);
   const helpers = new Map<string, ManifestEntry>();
   const runtimeRoots = new Map<string, string>();
@@ -371,7 +423,8 @@ export async function enumerateInstalled(
     const name = owner.name
       ? logical(`node_modules/${owner.name}`, owner.root, file)
       : logical("package", owner.root, file);
-    const { size, sha256: hash } = await hashRegularFile(file);
+    const read = await readRegularFile(file);
+    const { size, sha256: hash } = record(file, read.stat, read.bytes);
     helpers.set(name, [name, size, hash]);
     if (!file.endsWith(".js") && !file.endsWith(".mjs")) continue;
     for (const spec of moduleImports(
@@ -402,16 +455,18 @@ export async function enumerateInstalled(
     helpers.set(name, textEntry(name, text));
 
   const runtime = new Map<string, ManifestEntry>();
-  const pending = [
+  const pending: { spec: string; from: string; parent?: string; entry?: boolean }[] = [
+    ...thirdParty,
     // resolved from where the worker runs (dist/exec), so a bundled dist/node_modules wins
-    ...layout.runtimePackages.map((spec) => ({
+    ...layout.runtimePackages.map((spec, i) => ({
       spec,
       from: join(packageRoot, dirname(layout.helperModules[0] ?? "package.json")),
+      entry: i === 0,
     })),
-    ...thirdParty,
   ];
+  const dependencies: { parent: string; spec: string; root: string }[] = [];
   while (pending.length) {
-    const { spec, from } = pending.pop() as { spec: string; from: string };
+    const { spec, from, parent, entry } = pending.pop() as (typeof pending)[number];
     let manifest: string;
     try {
       manifest = await realpath(
@@ -427,27 +482,63 @@ export async function enumerateInstalled(
       manifest = join((await packageRootOf(entry)).root, "package.json");
     }
     const root = dirname(manifest);
+    if (parent) dependencies.push({ parent, spec, root });
+    if (entry) {
+      const main = await realpath(createRequire(join(from, "package.json")).resolve(spec)).catch(
+        () => {
+          throw new RuntimeManifestError(`Runtime package ${spec} has no entry module`);
+        },
+      );
+      const rel = relative(root, main);
+      if (rel.startsWith("..") || rel === "")
+        throw new RuntimeManifestError(`The entry of ${spec} is outside its package`);
+      seen.entry = { id: runtimeRoots.get(root) ?? "", rel: rel.split(sep).join("/") };
+    }
     if (runtimeRoots.has(root)) continue;
     const pkg = JSON.parse(await readFile(manifest, "utf8")) as {
       name: string;
       version: string;
       dependencies?: Record<string, string>;
+      peerDependencies?: Record<string, string>;
+      optionalDependencies?: Record<string, string>;
     };
     if (pkg.name !== spec) throw new RuntimeManifestError(`${spec} resolved to ${pkg.name}`);
     const id = `${pkg.name}@${pkg.version}`;
+    // only declared dependencies are staged as links inside the copy; a peer or optional one
+    // would be resolved wherever Node finds it, outside the verified closure
+    for (const field of ["peerDependencies", "optionalDependencies"] as const)
+      if (Object.keys(pkg[field] ?? {}).length)
+        throw new RuntimeManifestError(
+          `${id} declares ${field}, which the runtime closure cannot pin; it cannot be verified`,
+        );
     if ([...runtimeRoots.values()].includes(id))
       throw new RuntimeManifestError(
         `Two installed copies of ${id}; the manifest cannot name both`,
       );
     runtimeRoots.set(root, id);
+    if (entry && seen.entry) seen.entry.id = id;
     const meta = `meta/${id}`;
     runtime.set(meta, textEntry(meta, id));
-    for (const file of await packageFiles(root)) {
+    for (const file of await packageFiles(root, seen.dirs)) {
       const name = logical(`node_modules/${id}`, root, file);
-      const { size, sha256: hash } = await hashRegularFile(file);
+      const read = await readRegularFile(file);
+      const { size, sha256: hash } = record(file, read.stat, read.bytes);
       runtime.set(name, [name, size, hash]);
+      // staged from the very bytes just hashed
+      await seen.stager?.file(
+        id,
+        name.slice(`node_modules/${id}/`.length),
+        read.bytes,
+        (read.stat.mode & 0o100n) !== 0n,
+      );
     }
-    for (const dep of Object.keys(pkg.dependencies ?? {})) pending.push({ spec: dep, from: root });
+    for (const dep of Object.keys(pkg.dependencies ?? {}))
+      pending.push({ spec: dep, from: root, parent: id });
+  }
+  for (const d of dependencies) {
+    const to = runtimeRoots.get(d.root);
+    if (!to) throw new RuntimeManifestError(`${d.spec} was resolved but not enumerated`);
+    await seen.stager?.dependency(d.parent, d.spec, to);
   }
   return {
     runtime: checkEntries([...runtime.values()]),
@@ -622,17 +713,42 @@ export interface VerifiedRuntime {
 export async function verifyInstalledRuntime(
   environment: EnvironmentInputs,
   layout: ManifestLayout = installedLayout(),
+  options: {
+    /**
+     * The private state directory to stage the verified runtime closure in. Restricted workers
+     * launch only from a staged, sealed copy (`sealedRuntimeEntry`), so the verifier a binding
+     * relies on passes it; a verification without it seals nothing.
+     */
+    stageIn?: string;
+  } = {},
 ): Promise<VerifiedRuntime> {
-  const shipped = await readShippedManifest(await realpath(layout.packageRoot));
-  const installed = await enumerateInstalled(layout);
-  for (const kind of ["runtime", "helpers"] as const)
-    if (canonicalManifest(kind, shipped[kind]) !== canonicalManifest(kind, installed[kind]))
-      throw new RuntimeManifestError(
-        `Installed ${kind} differ from the shipped manifest (${firstDifference(shipped[kind], installed[kind])}); reinstall capybara-device`,
-      );
-  return {
-    runtimeHash: manifestHash("runtime", installed.runtime),
-    helperHash: manifestHash("helpers", installed.helpers),
-    imageFingerprint: environmentHash(await collectEnvironment(environment)),
-  };
+  const seen: Observed = { files: [], dirs: [] };
+  if (options.stageIn) seen.stager = await ClosureStager.begin(options.stageIn);
+  try {
+    const shipped = await readShippedManifest(await realpath(layout.packageRoot));
+    const installed = await enumerate(layout, seen);
+    for (const kind of ["runtime", "helpers"] as const)
+      if (canonicalManifest(kind, shipped[kind]) !== canonicalManifest(kind, installed[kind]))
+        throw new RuntimeManifestError(
+          `Installed ${kind} differ from the shipped manifest (${firstDifference(shipped[kind], installed[kind])}); reinstall capybara-device`,
+        );
+    const verified = {
+      runtimeHash: manifestHash("runtime", installed.runtime),
+      helperHash: manifestHash("helpers", installed.helpers),
+      imageFingerprint: environmentHash(await collectEnvironment(environment)),
+    };
+    if (seen.stager) {
+      if (!seen.entry?.id) throw new RuntimeManifestError("The layout names no runtime package");
+      await seen.stager.commit({
+        runtimeHash: verified.runtimeHash,
+        entry: seen.entry,
+        files: seen.files,
+        dirs: seen.dirs,
+      });
+    }
+    return verified;
+  } catch (e) {
+    await seen.stager?.abort();
+    throw e;
+  }
 }

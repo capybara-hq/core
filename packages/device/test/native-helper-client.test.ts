@@ -2,9 +2,19 @@ import { spawn } from "node:child_process";
 import { mkdtemp, open, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { runNativeHelper } from "../src/exec/native-helper-client.js";
 import { stageRuntimeSource } from "../src/exec/runtime-source.js";
+import { sealWorkspaceRuntime } from "./runtime-seal.js";
+
+// restricted workers launch only from a verified, sealed runtime closure (B-7)
+const workspace = { runtimeHash: "", cleanup: async () => {} };
+beforeAll(async () => {
+  Object.assign(workspace, await sealWorkspaceRuntime());
+});
+afterAll(async () => {
+  await workspace.cleanup();
+});
 
 describe("private pinned descriptor helper transport", () => {
   it("handshakes inherited descriptors before dispatch and preserves ordinary file semantics", async () => {
@@ -102,6 +112,7 @@ it.runIf(process.platform === "darwin")(
           },
           stateDir,
           pythonPath: "/usr/bin/python3",
+          runtimeHash: workspace.runtimeHash,
           beforeLaunch: async () => {},
           onLaunch: async () => {},
         },
@@ -182,6 +193,7 @@ it
           },
           stateDir,
           pythonPath: "/usr/bin/python3",
+          runtimeHash: workspace.runtimeHash,
           beforeLaunch: async () => {},
           onLaunch: async () => {},
         },
@@ -242,6 +254,7 @@ it.runIf(process.platform === "darwin")(
           },
           stateDir,
           pythonPath: "/usr/bin/python3",
+          runtimeHash: workspace.runtimeHash,
           beforeLaunch: async () => {},
           onLaunch: async () => {},
         },
@@ -372,6 +385,7 @@ it.runIf(process.platform === "darwin")(
           },
           stateDir,
           pythonPath: "/usr/bin/python3",
+          runtimeHash: workspace.runtimeHash,
           beforeLaunch: async () => {},
           onLaunch: async () => {},
         },

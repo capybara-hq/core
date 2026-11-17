@@ -1,10 +1,20 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
 import { createMacOperationBackend } from "../src/exec/mac-operation-backend.js";
 import type { DeviceOwnerCeiling } from "../src/exec/operation-types.js";
 import type { MacWorkerHandle } from "../src/exec/operation-worker.js";
+import { sealWorkspaceRuntime } from "./runtime-seal.js";
+
+// restricted workers launch only from a verified, sealed runtime closure (B-7)
+const workspace = { runtimeHash: "", cleanup: async () => {} };
+beforeAll(async () => {
+  Object.assign(workspace, await sealWorkspaceRuntime());
+});
+afterAll(async () => {
+  await workspace.cleanup();
+});
 
 const dirs: string[] = [];
 afterEach(async () => {
@@ -48,6 +58,7 @@ async function fixture() {
       stateDir: dir,
       roots,
       pythonPath: "/usr/bin/python3",
+      runtimeHash: workspace.runtimeHash,
       readOwnerCeiling: async () => {
         ceilingReads++;
         return ceiling;
@@ -228,6 +239,7 @@ it.runIf(process.platform === "darwin")(
             },
             stateDir,
             pythonPath: "/usr/bin/python3",
+            runtimeHash: workspace.runtimeHash,
             beforeLaunch: async () => {},
             onLaunch: async () => {},
           },
@@ -393,6 +405,7 @@ it.runIf(process.platform === "darwin")(
           },
           stateDir,
           pythonPath: "/usr/bin/python3",
+          runtimeHash: workspace.runtimeHash,
           beforeLaunch: async () => {},
           onLaunch: async () => {},
         },
@@ -511,6 +524,7 @@ it.runIf(process.platform === "darwin")(
               },
               stateDir,
               pythonPath: "/usr/bin/python3",
+              runtimeHash: workspace.runtimeHash,
               beforeLaunch: async () => {},
               onLaunch: async (info) => {
                 identities.push(info.pid);
@@ -670,6 +684,7 @@ it.runIf(process.platform === "darwin")(
         stateDir,
         roots,
         pythonPath: "/usr/bin/python3",
+        runtimeHash: workspace.runtimeHash,
         readOwnerCeiling: async () => ceiling,
       },
       { restrictedSupported: true, platform: "darwin", startWorker: startMacOperationWorker },

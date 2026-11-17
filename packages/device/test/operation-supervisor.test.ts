@@ -1,10 +1,20 @@
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
 import { MacOperationSupervisor } from "../src/exec/operation-supervisor.js";
 import type { MacWorkerRequest } from "../src/exec/operation-worker.js";
 import { shellQuote } from "../src/exec/shared.js";
+import { sealWorkspaceRuntime } from "./runtime-seal.js";
+
+// restricted workers launch only from a verified, sealed runtime closure (B-7)
+const workspace = { runtimeHash: "", cleanup: async () => {} };
+beforeAll(async () => {
+  Object.assign(workspace, await sealWorkspaceRuntime());
+});
+afterAll(async () => {
+  await workspace.cleanup();
+});
 
 const dirs: string[] = [];
 afterEach(async () => {
@@ -98,6 +108,7 @@ const request = (stateDir: string) => ({
   args: { command: "echo hello", timeoutMs: 1000, maxOutputBytes: 1000 },
   stateDir,
   pythonPath: "/usr/bin/python3",
+  runtimeHash: workspace.runtimeHash,
   beforeLaunch: async () => {},
   onLaunch: async () => {},
 });
@@ -274,6 +285,7 @@ it.runIf(process.platform === "darwin")(
             stateDir,
             managedOutput: { artifactRoot: stateDir, outputPath: join(stateDir, `${id}.out`) },
             pythonPath: "/usr/bin/python3",
+            runtimeHash: workspace.runtimeHash,
             beforeLaunch: async () => {},
             onLaunch: async (info) => {
               identities.push(info.pid);
@@ -401,6 +413,7 @@ it.runIf(process.platform === "darwin")(
     const port = address.port;
     const script = join(root, "controller.mjs");
     const workerUrl = new URL("../src/exec/operation-worker.ts", import.meta.url).href;
+    const sealUrl = new URL("./runtime-seal.ts", import.meta.url).href;
     const request = {
       kind: "exec",
       scope: { ...scope, operationId: "disconnect", admitBeforeMs: Date.now() + 30000 },
@@ -420,10 +433,11 @@ it.runIf(process.platform === "darwin")(
       },
       stateDir,
       pythonPath: "/usr/bin/python3",
+      runtimeHash: workspace.runtimeHash,
     };
     await writeFile(
       script,
-      `import {startMacOperationWorker} from ${JSON.stringify(workerUrl)}; const worker=await startMacOperationWorker({...${JSON.stringify(request)},beforeLaunch:async()=>{},onLaunch:async identity=>process.send({pid:identity.pid}),onRuntimeReady:async identity=>process.send({pid:identity.pid})},new AbortController().signal);await worker.ready;process.send({ready:true});await worker.completion;`,
+      `import {startMacOperationWorker} from ${JSON.stringify(workerUrl)}; import {sealWorkspaceRuntime} from ${JSON.stringify(sealUrl)}; await sealWorkspaceRuntime(${JSON.stringify(root)}); const worker=await startMacOperationWorker({...${JSON.stringify(request)},beforeLaunch:async()=>{},onLaunch:async identity=>process.send({pid:identity.pid}),onRuntimeReady:async identity=>process.send({pid:identity.pid})},new AbortController().signal);await worker.ready;process.send({ready:true});await worker.completion;`,
     );
     const child = fork(script, [], {
       execArgv: ["--import", "tsx", "--conditions=@capybara-hq/source"],
