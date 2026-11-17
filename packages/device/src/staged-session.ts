@@ -16,7 +16,9 @@ import type { Credential } from "./state.js";
  */
 export interface StagedSessionState {
   readonly graceMs: number;
-  readonly running: Map<string, { op: string; ctl: AbortController }>;
+  readonly running: Map<string, { op: string; ctl: AbortController; done: Promise<void> }>;
+  /** Set by {@link drainStagedSession}; never cleared in this process (a drained device is not reused). */
+  draining: boolean;
   /** Answers waiting for the next ready socket, with their expiry. */
   readonly pending: Map<string, { res: DeviceResponseV3; expires: number }>;
   /** Delivers on the current ready socket; undefined while none is ready. */
@@ -24,7 +26,13 @@ export interface StagedSessionState {
 }
 
 export function createStagedSessionState(opts: { graceMs: number }): StagedSessionState {
-  return { graceMs: opts.graceMs, running: new Map(), pending: new Map(), current: undefined };
+  return {
+    graceMs: opts.graceMs,
+    running: new Map(),
+    pending: new Map(),
+    current: undefined,
+    draining: false,
+  };
 }
 
 /**
@@ -33,6 +41,72 @@ export function createStagedSessionState(opts: { graceMs: number }): StagedSessi
  * socket close aborts it (the kernel retries the read from the same offset).
  */
 const CONNECTION_FENCED = new Set(["backgroundReadOutput"]);
+
+/**
+ * Admissions a draining session refuses here: unsupervised native, preparation and browsing
+ * operations and instance creation. Execution and background starts reach the supervisor, which
+ * refuses only fresh admissions (a retry of an admitted id stays recoverable); exact status, read,
+ * tail, stop, revoke and policy reconciliation are always served.
+ */
+const REFUSED_WHILE_DRAINING = new Set([
+  "readFile",
+  "writeFile",
+  "stat",
+  "list",
+  "scan",
+  "prepareReadFile",
+  "prepareWriteFile",
+  "prepareStat",
+  "browseStat",
+  "browseList",
+  "browseScan",
+  "create",
+]);
+
+export type StagedDrainReport =
+  | { drained: true }
+  | {
+      drained: false;
+      pending: { requests: number } & ReturnType<MacOperationBackend["lifecycle"]["ownership"]>;
+    };
+
+/**
+ * Graceful drain (permission runtime cutover phase 8.4): new admissions are refused at once;
+ * status, reads, tails, stops, reconciliation and recovery of admitted ids continue. It resolves
+ * `drained` only when the in-flight requests and everything the backend owns (acknowledged tasks
+ * whose start RPC already ended, collectors, pending exact cancellations, deferred persistence)
+ * have settled. When `signal` aborts first it reports what is pending; the session stays draining
+ * and is never reused. The caller disconnects after a drained report.
+ */
+export async function drainStagedSession(
+  state: StagedSessionState,
+  backend: Pick<MacOperationBackend, "lifecycle">,
+  signal: AbortSignal,
+): Promise<StagedDrainReport> {
+  state.draining = true;
+  backend.lifecycle.beginDrain();
+  const aborted = new Promise<void>((resolve) => {
+    if (signal.aborted) resolve();
+    else signal.addEventListener("abort", () => resolve(), { once: true });
+  });
+  while (state.running.size > 0 && !signal.aborted)
+    await Promise.race([
+      Promise.allSettled([...state.running.values()].map((r) => r.done)),
+      aborted,
+    ]);
+  if (!signal.aborted) {
+    try {
+      await backend.lifecycle.settle(signal);
+      if (state.running.size === 0) return { drained: true };
+    } catch {
+      // reported below with what is still owned
+    }
+  }
+  return {
+    drained: false,
+    pending: { requests: state.running.size, ...backend.lifecycle.ownership() },
+  };
+}
 
 /**
  * Dormant authenticated socket adapter. Production connect() remains v2 until paired activation.
@@ -137,13 +211,16 @@ export function serveStagedSession(
         refuse(frame.id, "error", "Duplicate request; use a fresh request id");
         return;
       }
+      if (state.draining && REFUSED_WHILE_DRAINING.has(frame.op)) {
+        refuse(frame.id, "unsupported", "The device is draining; retry after it reconnects");
+        return;
+      }
       const ctl = new AbortController();
-      state.running.set(frame.id, { op: frame.op, ctl });
       const timer = setTimeout(
         () => ctl.abort(new Error("Request deadline elapsed; retry the request")),
         frame.deadlineMs,
       );
-      void serveOperationV3(backend, handle, frame, ctl.signal)
+      const done = serveOperationV3(backend, handle, frame, ctl.signal)
         .then((res) => {
           if (ctl.signal.aborted) return;
           deliver(res);
@@ -153,6 +230,7 @@ export function serveStagedSession(
           clearTimeout(timer);
           state.running.delete(frame.id);
         });
+      state.running.set(frame.id, { op: frame.op, ctl, done });
     } catch (error) {
       fail(error);
     }

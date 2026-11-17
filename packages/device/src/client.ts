@@ -513,4 +513,9 @@ export function connect(
 }
 
 // Explicit dormant seam only; connect() never selects it or advertises v3.
-export { createStagedSessionState, serveStagedSession } from "./staged-session.js";
+export {
+  createStagedSessionState,
+  drainStagedSession,
+  type StagedDrainReport,
+  serveStagedSession,
+} from "./staged-session.js";

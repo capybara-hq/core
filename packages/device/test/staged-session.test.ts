@@ -10,7 +10,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { afterEach, expect, it, vi } from "vitest";
 import WebSocket, { WebSocketServer } from "ws";
-import { createStagedSessionState, serveStagedSession } from "../src/client.js";
+import { createStagedSessionState, drainStagedSession, serveStagedSession } from "../src/client.js";
 import { createMacOperationBackend } from "../src/exec/mac-operation-backend.js";
 import type { MacWorkerRequest } from "../src/exec/operation-worker.js";
 
@@ -193,6 +193,8 @@ async function fixture(negotiate = true, bound = true) {
     backend,
     handle,
     ref,
+    roots,
+    state,
     get client() {
       return client;
     },
@@ -410,4 +412,50 @@ it("a socket blip aborts in-flight reads only; other operations finish and answe
   f.socket.send(JSON.stringify({ type: "cancel", id: "status-cancelled" }));
   await expect.poll(() => signals.get("status-2")?.aborted).toBe(true);
   expect(f.cancelled).not.toHaveBeenCalled();
+});
+
+it("graceful drain after the start RPC ended refuses new admissions, serves exact controls and waits for the task", async () => {
+  const f = await fixture();
+  const drain = drainStagedSession(f.state, f.backend, new AbortController().signal);
+  let done = false;
+  void drain.then(() => {
+    done = true;
+  });
+  const browse = await f.request("browseStat", {
+    scope: {
+      operationId: "browse-1",
+      admitBeforeMs: 1000,
+      deviceId: "d",
+      accountId: "a",
+      ceilingRevision: "c",
+      readRoots: [f.roots.workspace],
+      tag: "browse-1",
+    },
+    path: f.roots.workspace,
+  }).response;
+  expect(browse).toMatchObject({ ok: false, error: { kind: "unsupported" } });
+  expect(!browse.ok && browse.error.message).toMatch(/draining/);
+  const status = await f.request("backgroundStatus", { ref: f.ref }).response;
+  expect(status).toMatchObject({ ok: true, result: { state: "running" } });
+  // the acknowledged task keeps the drain open; its start RPC ended long ago and is not killed
+  expect(done).toBe(false);
+  expect(f.cancelled).not.toHaveBeenCalled();
+  f.finish();
+  expect(await drain).toEqual({ drained: true });
+});
+
+it("a drain timeout reports the pending owners and the session stays draining", async () => {
+  const f = await fixture();
+  const giveUp = new AbortController();
+  const drain = drainStagedSession(f.state, f.backend, giveUp.signal);
+  await new Promise<void>((r) => setImmediate(r));
+  giveUp.abort(new Error("drain timeout"));
+  expect(await drain).toEqual({
+    drained: false,
+    pending: { requests: 0, workers: 1, cancellations: 0, collectors: 1, persistence: 0 },
+  });
+  // a timed-out drain is never reused: new admissions stay refused, exact controls stay served
+  const stop = await f.request("backgroundStop", { ref: f.ref, graceMs: 0 }).response;
+  expect(stop).toMatchObject({ ok: true, result: { outcome: "stopped" } });
+  expect(f.state.draining).toBe(true);
 });

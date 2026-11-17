@@ -656,10 +656,7 @@ it("concurrent stops retain the claimed winner after worker completion before ca
   const cancellationSettles = new Promise<void>((resolve) => {
     release = resolve;
   });
-  let gone!: () => void;
-  const workerRemoved = new Promise<void>((resolve) => {
-    gone = resolve;
-  });
+  const watched: boolean[] = [];
   let cancels = 0;
   const supervisor = new MacOperationSupervisor({
     stateDir,
@@ -667,7 +664,7 @@ it("concurrent stops retain the claimed winner after worker completion before ca
     instanceGeneration: "g",
     now: () => 1,
     onLiveChanged: (live) => {
-      if (!live) gone();
+      watched.push(live);
     },
     start: async (request) => {
       await request.beforeLaunch();
@@ -690,7 +687,11 @@ it("concurrent stops retain the claimed winner after worker completion before ca
   try {
     await cancelling;
     finish({ ...result, exitCode: null });
-    await workerRemoved;
+    const { vi } = await import("vitest");
+    await vi.waitFor(() => expect(supervisor.ownership().workers).toBe(0));
+    // the worker is gone but its cancellation is still owned: the owner watcher stays on (8.4)
+    expect(supervisor.ownership().cancellations).toBe(1);
+    expect(watched).not.toContain(false);
     const second = supervisor.stop(ref, { graceMs: 0, signal });
     // Wait behind the second stop's claim in the serialized journal queue.
     await supervisor.settled("op");
@@ -700,6 +701,7 @@ it("concurrent stops retain the claimed winner after worker completion before ca
       { outcome: "stopped" },
     ]);
     expect(cancels).toBe(1);
+    expect(watched.at(-1)).toBe(false);
     expect(await supervisor.stop(ref, { graceMs: 0, signal })).toEqual({ outcome: "stopped" });
   } finally {
     release();
@@ -816,3 +818,79 @@ it.each(["stale", "invalid"])(
     expect(f.cancelled()).toBe(1);
   },
 );
+// Phase 8.4: graceful drain. A start RPC that already answered is not the task's owner: the
+// supervisor keeps owning the worker, and a drain waits for it.
+const idle = () => new Promise<void>((r) => setImmediate(r));
+it("drain refuses fresh admission, keeps admitted retries and exact controls, and waits for an acknowledged task", async () => {
+  const f = await fixture();
+  const req = request(f.stateDir);
+  const ref = await f.supervisor.start(req, "hash", 2000, signal);
+  f.supervisor.beginDrain();
+  const fresh = {
+    ...req,
+    scope: { ...scope, operationId: "fresh", tag: "fresh" },
+    managedOutput: { artifactRoot: f.stateDir, outputPath: join(f.stateDir, "fresh.out") },
+  };
+  await expect(f.supervisor.start(fresh, "hash", 2000, signal)).rejects.toThrow(/draining/);
+  await expect(f.supervisor.execute(fresh, "hash", signal)).rejects.toThrow(/draining/);
+  expect(f.starts()).toBe(1);
+  // a retry of an admitted id is recovery, not a new admission
+  expect(await f.supervisor.start(req, "hash", 2000, signal)).toEqual(ref);
+  expect(await f.supervisor.status(ref, signal)).toEqual({ state: "running" });
+  expect(f.supervisor.ownership()).toMatchObject({ workers: 1 });
+  let drained = false;
+  const settling = f.supervisor.settle(new AbortController().signal).then(() => {
+    drained = true;
+  });
+  await idle();
+  await idle();
+  // the start RPC answered long ago; the worker still runs and drain has not finished
+  expect(drained).toBe(false);
+  expect(f.cancelled()).toBe(0);
+  f.finish();
+  await settling;
+  expect(f.supervisor.ownership()).toEqual({
+    workers: 0,
+    cancellations: 0,
+    collectors: 0,
+    persistence: 0,
+  });
+  expect(await f.supervisor.status(ref, signal)).toEqual({
+    state: "exited",
+    exitCode: 0,
+    timedOut: false,
+  });
+});
+it("a drain that cannot settle reports what is still owned and stays draining", async () => {
+  const f = await fixture(true);
+  const req = request(f.stateDir);
+  const ref = await f.supervisor.start(req, "hash", 2000, signal);
+  // the owner's cancellation cannot be established: the stop stays pending
+  expect(await f.supervisor.stop(ref, { graceMs: 0, signal })).toEqual({
+    outcome: "cancel-pending",
+  });
+  f.supervisor.beginDrain();
+  const giveUp = new AbortController();
+  const settling = f.supervisor.settle(giveUp.signal);
+  await idle();
+  giveUp.abort(new Error("drain timeout"));
+  const error = await settling.then(
+    () => undefined,
+    (e: unknown) => e,
+  );
+  expect(error).toMatchObject({ name: "DrainPendingError", pending: { workers: 1 } });
+  // never reusable after a timed-out drain
+  await expect(
+    f.supervisor.start(
+      { ...req, scope: { ...scope, operationId: "later", tag: "later" } },
+      "hash",
+      2000,
+      signal,
+    ),
+  ).rejects.toThrow(/draining/);
+  // a repeated cancellation delivery is still served by the exact owner
+  expect(await f.supervisor.stop(ref, { graceMs: 0, signal })).toEqual({
+    outcome: "cancel-pending",
+  });
+  expect(f.cancelled()).toBe(2);
+});
