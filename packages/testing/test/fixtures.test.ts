@@ -341,12 +341,13 @@ describe("loaded by path in a kernel", () => {
       ...(o.onElicit !== undefined && { onElicit: o.onElicit }),
     });
 
-    it("validates the endpoint: loopback http and https, no credential headers", () => {
+    it("validates the endpoint: http and https (ctx.net decides reachability), no credential headers", () => {
       const c = connector();
       expect(c.kind).toBe("fake");
       expect(c.endpointSchema.safeParse({ url: "http://127.0.0.1:1/mcp" }).success).toBe(true);
       expect(c.endpointSchema.safeParse({ url: "https://mcp.example.com/mcp" }).success).toBe(true);
-      expect(c.endpointSchema.safeParse({ url: "http://mcp.example.com/mcp" }).success).toBe(false);
+      expect(c.endpointSchema.safeParse({ url: "http://mcp.example.com/mcp" }).success).toBe(true);
+      expect(c.endpointSchema.safeParse({ url: "ftp://mcp.example.com/mcp" }).success).toBe(false);
       expect(
         c.endpointSchema.safeParse({
           url: "https://x.example.com",
@@ -1086,11 +1087,14 @@ describe("fake-openapi (connector kind openapi)", () => {
       orgId: "org-test",
     });
 
-  it("is kind openapi; the endpoint is a spec URL (https or loopback http) and optional operations", () => {
+  it("is kind openapi; the endpoint is a spec URL (http or https) and optional operations", () => {
     expect(c.kind).toBe("openapi");
     expect(c.endpointSchema.safeParse(endpoint()).success).toBe(true);
     expect(c.endpointSchema.safeParse(endpoint({ operations: ["listPets"] })).success).toBe(true);
     expect(c.endpointSchema.safeParse({ specUrl: "http://api.example.com/x.json" }).success).toBe(
+      true,
+    );
+    expect(c.endpointSchema.safeParse({ specUrl: "ftp://api.example.com/x.json" }).success).toBe(
       false,
     );
     expect(c.endpointSchema.safeParse({ url: `${base}/doc.json` }).success).toBe(false);
