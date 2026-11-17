@@ -15,9 +15,14 @@ import { Transactional } from "../../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../../infra/tokens.js";
 import type { KernelLogger } from "../../log.js";
 import { SandboxLockLostError, SandboxPathBusyError } from "../../sandbox/leases.js";
+import {
+  PERMISSION_CONTEXT_ACTIVATION,
+  permissionContextActive,
+} from "../../sandbox/permission-context-types.js";
 import { homeOf } from "../../sandbox/review/rules.js";
-import { SandboxService } from "../../sandbox/sandbox.service.js";
+import { SandboxService, type SandboxUseContext } from "../../sandbox/sandbox.service.js";
 import { providerConnectionFailure } from "../../sandbox/unreachable.js";
+import { currentExecutionClaim } from "../run-execution.js";
 import { runEndedIn } from "../run-status.js";
 import {
   type ProjectFiles,
@@ -40,6 +45,21 @@ export const PROJECT_KNOWLEDGE_TIMEOUT_MS = 30_000;
  * {@link PROJECT_KNOWLEDGE_TIMEOUT_MS}.
  */
 export const PROJECT_KNOWLEDGE_TIMEOUT = Symbol("PROJECT_KNOWLEDGE_TIMEOUT");
+
+/**
+ * The invocation id prefix of a run start's knowledge read on the operation route (once the
+ * activation gate is on): `project_root:<runId>`, one per run, so a retried run start names the
+ * same operations (their consumed identities, never a new launch).
+ */
+export const PROJECT_ROOT_CALL_PREFIX = "project_root:";
+
+/** The run start has no current execution claim of its own run: nothing is admitted. */
+class KnowledgeClaimMissing extends Error {
+  constructor() {
+    super("The run start has no current execution claim of its run");
+    this.name = "KnowledgeClaimMissing";
+  }
+}
 
 /**
  * An error that says the device could not be asked, not that the project is unreadable: the
@@ -85,7 +105,10 @@ export interface ProjectKnowledgeInput {
  *
  * Reads in the device's effective mode (`DeviceProjectsService.scopeFor`, the same scope the
  * binding was checked against) and through `SandboxService.withSandbox`, as a tool call does, so
- * a bound conversation starts its device eagerly (the accepted cost, spec §4.4). A project the
+ * a bound conversation starts its device eagerly (the accepted cost, spec §4.4). Once the
+ * activation gate is on the read goes through `SandboxService.withOperations` instead: every
+ * stat / readFile / list a managed operation under the run's current execution claim, acting for
+ * the run's trigger (permission activation W3-L). A project the
  * run cannot use is recorded as `unavailable` with its reason: a project the device no longer
  * keeps under the bound name and path (`removed`, not asked), a root that is gone, out of the mode
  * (or above the owner's home) or unreadable, or a machine that does not announce projects
@@ -102,11 +125,14 @@ export class ProjectKnowledgeService {
     @Inject(ConversationDevices) private readonly devices: Pick<ConversationDevices, "forTool">,
     @Inject(DeviceProjectsService)
     private readonly projects: Pick<DeviceProjectsService, "scopeFor" | "keeps">,
-    @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "withSandbox">,
+    @Inject(SandboxService)
+    private readonly sandbox: Pick<SandboxService, "withSandbox" | "withOperations">,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     @Optional()
     @Inject(PROJECT_KNOWLEDGE_TIMEOUT)
     private readonly timeoutMs: () => number = () => PROJECT_KNOWLEDGE_TIMEOUT_MS,
+    /** The paired activation gate: once on, the read is a set of managed operations. */
+    @Optional() @Inject(PERMISSION_CONTEXT_ACTIVATION) private readonly activation?: boolean,
   ) {}
 
   /**
@@ -208,7 +234,8 @@ export class ProjectKnowledgeService {
           projectUnavailable.widerMode(bound.root),
         );
       }
-      return await this.sandbox.withSandbox(
+      const enter = await this.entry(input, bound.accountId);
+      return await enter(
         {
           orgId: input.orgId,
           deviceId,
@@ -217,7 +244,7 @@ export class ProjectKnowledgeService {
           // started, restarted or had its files reset
           silent: true,
           actor: {
-            accountId: bound.accountId,
+            accountId: enter.accountId,
             conversationId: input.conversationId,
             runId: input.runId,
           },
@@ -260,6 +287,44 @@ export class ProjectKnowledgeService {
       });
       return null;
     }
+  }
+
+  /**
+   * How the read enters the device. Gate off: the raw `withSandbox`, acting for the conversation's
+   * owner (unchanged). Gate on: `withOperations` under the run's current execution claim (the run
+   * start runs inside it; another run's claim or none admits nothing), acting for the run's
+   * trigger as admission requires, with one invocation per run ({@link PROJECT_ROOT_CALL_PREFIX})
+   * bounded by the read's time limit.
+   */
+  private async entry(
+    input: ProjectKnowledgeInput,
+    owner: string,
+  ): Promise<SandboxService["withSandbox"] & { accountId: string }> {
+    if (!permissionContextActive(this.activation))
+      return Object.assign(this.sandbox.withSandbox.bind(this.sandbox), { accountId: owner });
+    const claim = currentExecutionClaim();
+    if (
+      !claim ||
+      claim.runId !== input.runId ||
+      claim.conversationId !== input.conversationId ||
+      claim.orgId !== input.orgId
+    )
+      throw new KnowledgeClaimMissing();
+    const run = await this.db.db
+      .selectFrom("runs")
+      .select("trigger_account_id")
+      .where("id", "=", input.runId)
+      .where("conversation_id", "=", input.conversationId)
+      .executeTakeFirst();
+    if (!run) throw new KnowledgeClaimMissing();
+    const invocation = {
+      claim,
+      callId: `${PROJECT_ROOT_CALL_PREFIX}${input.runId}`,
+      deadlineMs: Date.now() + this.timeoutMs(),
+    };
+    const enter: SandboxService["withSandbox"] = (ctx: SandboxUseContext, fn, signal) =>
+      this.sandbox.withOperations(ctx, invocation, fn, signal);
+    return Object.assign(enter, { accountId: run.trigger_account_id });
   }
 
   /**
