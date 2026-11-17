@@ -57,10 +57,19 @@ Two admission modes, chosen per transaction:
   step: `EventLog.append` (its own transaction), the `StepLog` writes (model output, usage, hook
   denials, `model_call` with its tool specs), the checkpoint writes (`KyselyCheckpointSaver`) and
   the suspend (`Waits.suspendIn`). These lock only the conversation rows of the run's tree, run
-  rows of the same tree and rows of their own; nothing org-level.
+  rows of the same tree and rows of their own; nothing org-level. Enforced: the fence returns the
+  mode it admitted in (kept on the transaction store), and `OrgLock`, `DevicesService.lockMember`
+  and `XactLock.lock` throw inside a shared transaction (`assertNotSharedAdmission`); shared
+  admission refuses an isolation level other than READ COMMITTED (its unlocked org read needs a
+  fresh statement snapshot). A writer that locks several conversation or run rows of one tree locks
+  the root first. The tool-step scope is conformance with this design and defence in depth, not
+  what keeps the order (a shared transaction cannot take an org-level lock anyway).
 - **Org deletion and offboarding** take the exclusive `pg_advisory_xact_lock` on the same key
   first in their transaction (`OrgLock.lockForRemoval`; `Offboarding.offboard` takes it too, a
-  no-op when its caller already did), then `OrgLock` (`FOR NO KEY UPDATE`) as before. The org row
+  no-op when its caller already did), then `OrgLock` (`FOR NO KEY UPDATE`) as before. Org deletion
+  and member removal first check the actor's role without locks (`OrgLock.precheck`), so an
+  unauthorized call is refused before it holds off the org's run writes; the locked check after
+  the locks decides. The org row
   is never locked `FOR UPDATE`: the deletion's `deleted_at` update is a no-key update, so foreign
   key checks against the org are never blocked. Heavyweight locks queue in order, so once the
   deletion waits, new shared admissions queue behind it: it waits only for the hot-path writes
