@@ -70,7 +70,9 @@ The maintainer picked A on 2026-11-17.
 - `ctx.net` is built in `ctx/create-ctx.ts` on `safeFetch`: https only, private / loopback /
   link-local addresses refused, the address pinned at connect time, `net.httpsProxy` /
   `net.noProxy` honoured like the kernel's own outbound calls (the proxy is the deployment's
-  egress control; with a proxy the proxy resolves hosts, IP literals are still checked).
+  egress control; with a proxy the proxy resolves hosts, IP literals are still checked). An org's
+  allowed internal https hosts must therefore also be listed in `net.noProxy`, or the proxy resolves
+  them and the org allowances do not apply.
 - **Internal hosts are allowed per org** (maintainer choice 2026-11-17, option b: tenants must not
   share each other's internal reach). A super admin grants an org a list of internal endpoints;
   `ctx.net.fetch` made for an org-bound call (connector calls, org-scoped provider calls) allows a
@@ -96,8 +98,8 @@ The maintainer picked A on 2026-11-17.
 - A call that is not org-bound (deployment-level work) gets public addresses only.
 - The kernel's own outbound calls keep `marketplaces.allowPrivateHosts` / their current policies;
   the org lists do not widen them, and that list does not widen plugin requests.
-- Testing: one switch `net.allowInsecureLoopback` (tests only, documented as such) lets
-  `ctx.net.fetch` reach http on loopback; the connector plugins' own `allowInsecureLoopback`
+- Testing: one switch `net.allowInsecureLoopback` (tests only, documented as such) lifts every
+  loopback / unspecified-address refusal for `ctx.net.fetch` (link-local and metadata stay refused); the connector plugins' own `allowInsecureLoopback`
   deployment config is removed (their e2e tests and core's `fake-connector` / `fake-openapi`
   fixtures set the kernel key instead).
 - Redirects: never followed. With `redirect: "manual"` a 3xx response is returned to the plugin
@@ -127,9 +129,8 @@ manifests' minimum `sdk` to the release that ships `ctx.net`.
 - Kernel: `ctx.net.fetch` refuses a private / loopback / link-local address and an http URL,
   allows an exempted host, re-checks a redirect to a private address, streams a chunked
   response, honours the proxy (existing proxy test fixtures), aborts with the signal.
-- Test stacks that run fake servers on 127.0.0.1 (connectors, providers) exempt loopback the way
-  kernel tests do today (`allowInsecureLoopback` / the exemption list in the test config), so
-  existing plugin tests keep working.
+- Test stacks that run fake servers on 127.0.0.1 (connectors, providers) set
+  `net.allowInsecureLoopback: true` in the test config, so existing plugin tests keep working.
 
 ## AGENTS.md rules touched
 
