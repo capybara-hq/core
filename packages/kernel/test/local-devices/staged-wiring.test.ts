@@ -5,6 +5,7 @@ import {
   type DeviceOwnerCeilingV3,
   type KernelReadyV3,
   parseDeviceFrameV3,
+  SandboxPermissionUnsupportedError,
   ToolError,
 } from "@capybara-hq/plugin-sdk";
 import { startTestRedis, type TestContainer } from "@capybara-hq/testing";
@@ -193,6 +194,7 @@ async function fixture() {
   return {
     deviceId,
     relay,
+    locks,
     bus,
     gateway,
     machines,
@@ -407,4 +409,65 @@ it("a non-held staged request fenced to a replaced connection is typed not sent"
   expect(wasDeviceRequestNotSent(e)).toBe(true);
   expect(e).not.toBeInstanceOf(DeviceRequestNotSentError);
   expect(f.received.map((r) => r.op)).not.toContain("policyStatus");
+});
+
+it("M2: the staged provider refuses every raw protocol 2 call before anything is queued", async () => {
+  const f = await fixture();
+  const relayed = vi.spyOn(f.relay, "call");
+  const s = signal();
+  const calls: [string, () => Promise<unknown>][] = [
+    [
+      "exec",
+      () =>
+        f.staged.exec(f.handle, {
+          command: "true",
+          timeoutMs: 1000,
+          maxOutputBytes: 1000,
+          tag: "t",
+          actor: { accountId: "a", conversationId: "c" },
+          signal: s,
+        } as never),
+    ],
+    ["readFile", () => f.staged.readFile(f.handle, "/w/a", { maxBytes: 10, signal: s })],
+    ["writeFile", () => f.staged.writeFile(f.handle, "/w/a", new Uint8Array(1), s)],
+    ["stat", () => f.staged.stat(f.handle, "/w/a", s)],
+    [
+      "list",
+      () =>
+        f.staged.list?.(f.handle, "/w", { limit: 10, limits: { mode: "sandbox" }, signal: s }) ??
+        Promise.resolve(),
+    ],
+    [
+      "scan",
+      () =>
+        f.staged.scan?.(f.handle, "/w", { limits: { mode: "sandbox" }, signal: s }) ??
+        Promise.resolve(),
+    ],
+  ];
+  for (const [name, call] of calls) {
+    const e = await call().then(
+      () => Error(`${name} was not refused`),
+      (x: unknown) => x,
+    );
+    expect(e, name).toBeInstanceOf(SandboxPermissionUnsupportedError);
+    expect((e as Error).message, name).toContain("operation scope");
+  }
+  expect(relayed).not.toHaveBeenCalled();
+  expect(await redis.llen(deviceReqKey(f.deviceId))).toBe(0);
+  expect(f.received).toEqual([]);
+});
+
+it("M4: with the protocol gate closed the policy codec lookup reads nothing", async () => {
+  const f = await fixture();
+  const held = vi.spyOn(f.locks, "holderOf");
+  const transport = vi.spyOn(f.targets, "transport");
+  expect(await f.relay.stagedTransport(f.deviceId)).toBeNull();
+  expect(held).not.toHaveBeenCalled();
+  expect(transport).not.toHaveBeenCalled();
+  // opened (as the paired activation does), the live staged connection is found
+  f.relay.stagedProtocolActive = () => true;
+  expect(await f.relay.stagedTransport(f.deviceId)).toEqual({
+    connectionId: f.session.ready().connectionId,
+    maxFrameBytes: 69632,
+  });
 });

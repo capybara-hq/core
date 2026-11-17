@@ -18,6 +18,7 @@ import {
   type SandboxBrowse,
   type SandboxOperation,
   type SandboxPermissionSupport,
+  SandboxPermissionUnsupportedError,
   type SandboxPreparation,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Optional } from "@nestjs/common";
@@ -59,6 +60,18 @@ const NAME_PREFIX = "cap-device-";
  */
 export const AUTO_MODE_NOT_ALLOWED_TEXT =
   "This device's machine runs in auto mode, which your organization does not allow. Run `capybara-device mode sandbox` on that machine to switch it to sandbox mode.";
+
+/**
+ * A raw protocol 2 method on the staged provider: refused before anything is queued (a v3
+ * machine runs work only under an admitted operation scope; there is no raw fallback).
+ */
+const refuseRaw =
+  (method: string) =>
+  async (..._args: unknown[]): Promise<never> => {
+    throw new SandboxPermissionUnsupportedError(
+      `${method} without an operation scope is not available on a protocol 3 device; run it through an admitted operation scope`,
+    );
+  };
 
 /** What the staged provider sends through: the relay's protocol 3 call and the attested support. */
 export interface StagedDeviceTransport {
@@ -127,12 +140,25 @@ export class LocalDeviceProvider implements SandboxProvider {
 
   /**
    * The `@local` provider as the staged (protocol 3) registration hands it out
-   * (`LocalDevicesModule`): the protocol 2 lifecycle methods it shares, the v3 operation adapter
-   * ({@link stagedOperations}), `create` as a protocol 3 request, and no broad kill. A v3 machine
-   * has no `killAll` / `killTagged` (permission runtime cutover B-1): the kernel revokes the exact
-   * operations of a crashed holder (`OperationIntents.revokeHolders`, owed before every kill the
-   * lifecycle runs) and those revocations reach the machine as `revokeOperation`, so the kills
-   * here are no-ops that queue nothing. Dormant until the protocol gate selects it.
+   * (`LocalDevicesModule`): the protocol 2 lifecycle methods that send no frame (file system,
+   * resume, suspend, destroy), the v3 operation adapter ({@link stagedOperations}), `create` as a
+   * protocol 3 request, no raw protocol 2 call and no broad kill. Dormant until the protocol gate
+   * selects it.
+   *
+   * The raw methods (`exec`, `readFile`, `writeFile`, `stat`, `list`, `scan`) refuse before
+   * anything is queued: a v3 machine runs work only under an admitted operation scope, and
+   * missing operation support never falls back to them.
+   *
+   * A v3 machine has no `killAll` / `killTagged` (permission runtime cutover B-1), so both are
+   * no-ops that queue nothing. What reaches the machine instead is only what the kernel revokes
+   * exactly (`revokeOperation` per intent): `SandboxService` calls `OperationIntents.revokeHolders`
+   * with the crashed holders' tokens before `killTagged` and before `killLeftovers`' `killAll`, and
+   * that revokes those holders' admitted, dispatching and started-or-unknown intents only. Not
+   * covered today: the `killAll` after a failed limits change on a resumed instance and the one
+   * in `quarantine` (unreachable for `@local`) revoke nothing first; `killLeftovers` revokes only
+   * the dead tokens, not the started-or-unknown intents of live holders of the instance; and
+   * tokens `claimDeadHolders` already deleted are lost when `revokeHolders` then throws. Revoking
+   * every started-or-unknown intent of the generation on a v3 resume is W5-P3a's kernel change.
    */
   staged(transport: StagedDeviceTransport): SandboxProvider {
     const ops = this.stagedOperations(transport);
@@ -151,6 +177,12 @@ export class LocalDeviceProvider implements SandboxProvider {
         ) as { roots: SandboxRoots };
         return { id, roots: r.roots, limits: args.limits } satisfies LocalDeviceHandle;
       },
+      exec: refuseRaw("exec"),
+      readFile: refuseRaw("readFile"),
+      writeFile: refuseRaw("writeFile"),
+      stat: refuseRaw("stat"),
+      list: refuseRaw("list"),
+      scan: refuseRaw("scan"),
       killAll: async (_h, signal) => {
         signal.throwIfAborted();
       },

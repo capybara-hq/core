@@ -15,6 +15,7 @@ import {
   type StoredOwnerReport,
   storedOwnerReportOf,
 } from "./owner-report.js";
+import { opExplainsOwnerChange, pendingPolicyOpsOf } from "./policy-summary.js";
 
 /** What became of an arrived owner report. */
 export type OwnerReportOutcome = "recorded" | "same" | "stale" | "conflict" | "revoked";
@@ -78,7 +79,15 @@ export class OwnerReports {
     const report: DeviceOwnerCeilingV3 = parseOwnerCeilingReportV3(raw);
     const row = await this.db
       .selectFrom("device_machines")
-      .select(["org_id", "device_id", "account_id", "owner_report", "local_policy", "roots"])
+      .select([
+        "org_id",
+        "device_id",
+        "account_id",
+        "owner_report",
+        "local_policy",
+        "roots",
+        "pending_policy_ops",
+      ])
       .where("id", "=", machineId)
       .where("revoked_at", "is", null)
       .forUpdate()
@@ -145,7 +154,24 @@ export class OwnerReports {
           ownerReportRevokes(after, scope, intent.method, intent.granted_hosts, roots),
         fullChanged || meta.rootsChanged === true,
       );
-    const by = meta.explainedBy;
+    // the op whose change this is: its answer names it, else (the machine's own report of it, a
+    // policy frame or a reconnect hello, landing first) a live pending op of the platform's that
+    // asked for exactly this narrowing; the answer then finds the same report and audits nothing
+    const nowMs = Date.now();
+    const pending =
+      meta.explainedBy === undefined
+        ? pendingPolicyOpsOf(row.pending_policy_ops).find(
+            (op) => op.until > nowMs && opExplainsOwnerChange(op, before, after),
+          )
+        : undefined;
+    const by =
+      meta.explainedBy ??
+      (pending && {
+        accountId: pending.source.accountId,
+        via: pending.source.via,
+        opId: pending.id,
+        ...(pending.actorTokenId !== undefined && { actorTokenId: pending.actorTokenId }),
+      });
     if (before.state !== "missing" && (fullChanged || reachChanged))
       await audit(this.db.db, {
         actorAccountId: by?.accountId ?? row.account_id,

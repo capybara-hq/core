@@ -512,7 +512,17 @@ describe("DevicePolicyService.apply", () => {
 async function stagedMachine(
   d: { deviceId: string; machineId: string; credential: string },
   owner: DeviceOwnerCeilingV3,
+  opts: {
+    /** Runs before the `policy` answer goes out (the machine's own report of it, say). */
+    beforeAnswer?: (next: DeviceOwnerCeilingV3, socket: WebSocket) => Promise<void>;
+  } = {},
 ) {
+  // the protocol gate, opened for this test only (the deployment's stays at protocol 2)
+  const relay = k.app.get(LocalDeviceRelay);
+  relay.stagedProtocolActive = () => true;
+  stagedCleanups.push(async () => {
+    relay.stagedProtocolActive = stagedDeviceProtocolActive;
+  });
   const server = new WebSocketServer({ port: 0, host: "127.0.0.1" });
   await once(server, "listening");
   const address = server.address();
@@ -529,7 +539,7 @@ async function stagedMachine(
   const requests: { op: string; args: Record<string, unknown> }[] = [];
   let ready: KernelReadyV3 | undefined;
   let current = owner;
-  socket.on("message", (data) => {
+  socket.on("message", async (data) => {
     const frame = parseDeviceFrameV3(data.toString(), "kernel", 69632);
     if (frame.type === "ready") {
       ready = frame;
@@ -546,6 +556,7 @@ async function stagedMachine(
       sequence: current.sequence + 1,
       revision: `r${current.sequence + 1}`,
     };
+    await opts.beforeAnswer?.(current, socket);
     socket.send(
       JSON.stringify({
         type: "res",
@@ -659,6 +670,45 @@ describe("staged (protocol 3) machines", () => {
           via: "web",
           opId: expect.any(String),
         }),
+      },
+    ]);
+  });
+
+  it("I1: the machine's own report of a web narrowing before the answer is audited once, as the op's", async () => {
+    const d = await device();
+    const m = await stagedMachine(d, OWNER_FULL, {
+      // the device pushes its policy frame first and it is recorded before the answer arrives
+      beforeAnswer: async (next, socket) => {
+        socket.send(
+          JSON.stringify({
+            type: "policy",
+            policy: { mode: "sandbox", allowedDomains: [] },
+            ownerCeiling: next,
+          }),
+        );
+        await waitFor(
+          async () => (await ownerReportOf(d.machineId)).report.sequence === next.sequence,
+          10_000,
+          "the machine's own report recorded",
+        );
+      },
+    });
+    // the org owner acts on the member's device: an actor other than the machine's owner
+    const out = await policies.apply({
+      orgId,
+      deviceId: d.deviceId,
+      change: { ownerCeiling: { fullAccess: false } },
+      source: { accountId: ownerId, accountName: "O", via: "web" },
+    });
+    expect(out).toMatchObject({ applied: true });
+    const opId = m.requests.find((r) => r.op === "policy")?.args.opId;
+    expect(typeof opId).toBe("string");
+    expect(await ownerReportOf(d.machineId)).toMatchObject({ via: "policy" });
+    expect(await ceilingAudits(d.deviceId)).toEqual([
+      {
+        action: "device.owner_ceiling_changed",
+        actor_account_id: ownerId,
+        detail: expect.objectContaining({ by: ownerId, via: "web", opId }),
       },
     ]);
   });
