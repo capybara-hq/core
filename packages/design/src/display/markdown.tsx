@@ -14,11 +14,12 @@ import type {
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { gfmFromMarkdown } from "mdast-util-gfm";
 import { gfm } from "micromark-extension-gfm";
-import { Fragment, type JSX, type ReactNode, useMemo } from "react";
+import { Fragment, type JSX, type ReactNode, useMemo, useRef } from "react";
 import { FileChip } from "../conversation/files";
 import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
 import { CodeBlock } from "./chat";
+import { useScrollbarRelayout } from "./scrollbar-relayout";
 
 /**
  * Rendered Markdown (design spec §6.16.4): mdast to React elements, never HTML. Raw HTML renders
@@ -249,6 +250,17 @@ function listItem(
   );
 }
 
+/** A table's sideways scroller, kept sized to its scrollbar in WebKit ({@link useScrollbarRelayout}). */
+function TableWrap({ children }: { children: ReactNode }): JSX.Element {
+  const ref = useRef<HTMLDivElement>(null);
+  useScrollbarRelayout(ref);
+  return (
+    <div className="cb-md-table-wrap" ref={ref}>
+      {children}
+    </div>
+  );
+}
+
 function table(node: Table, ctx: Ctx, depth: number, key: number, tail?: ReactNode): ReactNode {
   const [head, ...body] = node.children;
   const align = (i: number) => node.align?.[i] ?? undefined;
@@ -263,7 +275,7 @@ function table(node: Table, ctx: Ctx, depth: number, key: number, tail?: ReactNo
   const more = body.length - shown.length;
   return (
     <Fragment key={key}>
-      <div className="cb-md-table-wrap">
+      <TableWrap>
         <table className="cb-md-table" data-part="md-table">
           {head ? (
             <thead data-part="md-table-head">
@@ -277,7 +289,7 @@ function table(node: Table, ctx: Ctx, depth: number, key: number, tail?: ReactNo
             ))}
           </tbody>
         </table>
-      </div>
+      </TableWrap>
       {more > 0 ? (
         <p className="cb-md-more" data-part="md-table-more">
           {ctx.moreRows(more)}

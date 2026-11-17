@@ -5,6 +5,7 @@ import type { IconName } from "../icons/paths";
 import { useInBox } from "../layout/box";
 import { useDesignT } from "../provider";
 import { StatusMark } from "./basic";
+import { useScrollbarRelayout } from "./scrollbar-relayout";
 
 /* 对话时间线与渲染 schema 积木（spec §6.9）。只接收普通 props，不依赖 SDK 类型。 */
 
@@ -269,6 +270,7 @@ export function CodeBlock({ language, text, framed, title, copyable }: CodeBlock
   const inBox = useInBox() !== null;
   const t = useDesignT();
   const pre = useRef<HTMLPreElement>(null);
+  useScrollbarRelayout(pre);
   const [copied, setCopied] = useState<"no" | "yes" | "manual">("no");
   useEffect(() => {
     if (copied !== "yes") return;

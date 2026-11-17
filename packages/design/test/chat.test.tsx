@@ -210,6 +210,53 @@ describe("CodeBlock", () => {
     }
   });
 
+  it("re-lays out its ancestors when its sideways scrollbar comes or goes (WebKit)", () => {
+    // WebKit keeps a flex ancestor's size from before an auto scrollbar appeared, so a classic
+    // scrollbar would hang below the block over the next row (the approval card's buttons).
+    let report: (() => void) | undefined;
+    const observed: { box?: string }[] = [];
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(cb: () => void) {
+          report = cb;
+        }
+        observe(_el: Element, options?: { box?: string }) {
+          observed.push(options ?? {});
+        }
+        disconnect() {}
+      },
+    );
+    try {
+      const { container } = wrap(<CodeBlock text={"x".repeat(400)} />);
+      const pre = container.querySelector("pre") as HTMLPreElement;
+      // the border box: a scrollbar changes it, not the content box
+      expect(observed).toEqual([{ box: "border-box" }]);
+      let bar = 0;
+      Object.defineProperty(pre, "offsetHeight", { get: () => 36 + bar });
+      Object.defineProperty(pre, "clientHeight", { get: () => 36 });
+      const set = vi.spyOn(pre.style, "setProperty");
+      // no scrollbar: nothing to do
+      act(() => report?.());
+      expect(set).not.toHaveBeenCalled();
+      // the scrollbar appears: the block's layout is dirtied once, and nothing is left inline
+      bar = 15;
+      act(() => report?.());
+      expect(set).toHaveBeenCalledTimes(1);
+      expect(set).toHaveBeenCalledWith("min-height", "1px");
+      expect(pre.getAttribute("style") ?? "").toBe("");
+      // the same scrollbar again (the text grew): nothing
+      act(() => report?.());
+      expect(set).toHaveBeenCalledTimes(1);
+      // it goes: once more
+      bar = 0;
+      act(() => report?.());
+      expect(set).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("without a clipboard the code is selected for a manual copy", async () => {
     vi.stubGlobal("navigator", { ...navigator, clipboard: undefined });
     try {
