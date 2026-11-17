@@ -403,7 +403,11 @@ export async function enumerateInstalled(
 
   const runtime = new Map<string, ManifestEntry>();
   const pending = [
-    ...layout.runtimePackages.map((spec) => ({ spec, from: packageRoot })),
+    // resolved from where the worker runs (dist/exec), so a bundled dist/node_modules wins
+    ...layout.runtimePackages.map((spec) => ({
+      spec,
+      from: join(packageRoot, dirname(layout.helperModules[0] ?? "package.json")),
+    })),
     ...thirdParty,
   ];
   while (pending.length) {

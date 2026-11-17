@@ -42,7 +42,7 @@ const verified = {
 
 async function fixture() {
   const root = await realpath(await mkdtemp(join(tmpdir(), "cap-binding-")));
-  cleanups.push(() => rm(root, { recursive: true, force: true }));
+  cleanups.push(() => rm(root, { recursive: true, force: true, maxRetries: 10 }));
   const roots = {
     workspace: join(root, "work"),
     skills: join(root, "skills"),
