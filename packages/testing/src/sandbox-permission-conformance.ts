@@ -727,6 +727,19 @@ export async function runSandboxPermissionConformance(
       );
       assert.equal(git.exitCode, 0, `ordinary restricted git work: ${git.stderr}`);
       assert.equal(git.stdout.trim(), "2", "the restricted commit landed");
+      // stash, pack-refs and gc write git internals of their own (index.stash.<n>,
+      // packed-refs.new, MERGE_AUTOSTASH) that the allowlist keeps writable
+      const housekeeping = await exec(
+        restricted(),
+        'cd work && g() { git -c user.name=t -c user.email=t@t -c gc.auto=0 "$@"; } && ' +
+          "printf b >> f && g stash -q && g stash pop -q && g commit -qam s && " +
+          "g pack-refs --all && g gc -q && git stash list | wc -l",
+      );
+      assert.equal(
+        housekeeping.exitCode,
+        0,
+        `restricted stash, pack-refs and gc: ${housekeeping.stderr}`,
+      );
     }
 
     // Negative controls: sibling, symlink escapes and protected paths stay out of reach.

@@ -401,7 +401,9 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   repositories; it **can forge a rebase or cherry-pick in progress** (`rebase-merge/`,
   `rebase-apply/`, `sequencer/` are writable for git's own use), and the owner's `git rebase
   --continue` (or `cherry-pick --continue`) then runs the `exec` lines of the todo list it wrote;
-  `package.json` scripts and similar convention-run files are not covered. On macOS a directory
+  `package.json` scripts and similar convention-run files are not covered; `git worktree prune`
+  and the config-section removal of `git branch -D` fail under restricted; on macOS a multi-commit
+  cherry-pick or revert reports it cannot remove `.git/sequencer` (the worker removes it when empty). On macOS a directory
   renamed into git's subtrees keeps contents Seatbelt never saw; owners are advised to set
   `git config --global safe.bareRepository explicit` (documented, never changed automatically).
 

@@ -18,5 +18,6 @@ an unsupported kernel, ABI, architecture or Python below 3.9 fails closed. A loc
 runs the same agent in its container. The macOS worker now enforces the same write policy through ordered Seatbelt regex rules (the
 pnpm patch of `@anthropic-ai/sandbox-runtime` accepts `writeRegexRules`): case-insensitive denies,
 the gitdir allowlist, no bare-repository `HEAD`, no forged repository, no `.git` and no directory
-holding a kept `HEAD` moved away, each write root matched in every spelling Seatbelt may see.
+holding a kept `HEAD` moved away, each write root matched in every spelling Seatbelt may see; git keeps working inside submodules,
+and the worker removes an empty `.git/sequencer` after a restricted command.
 The README recommends `git config --global safe.bareRepository explicit` as defence in depth.

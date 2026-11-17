@@ -50,18 +50,19 @@ function chunked(
   prefix: string,
   alternatives: readonly string[],
   suffix: string,
+  operations: MacWriteRegexRule["operations"] = WRITE,
 ): MacWriteRegexRule[] {
   const rules: MacWriteRegexRule[] = [];
   let group: string[] = [];
   const regex = (names: string[]) => `${prefix}(${names.join("|")})${suffix}`;
   for (const alternative of alternatives) {
     if (group.length && regex([...group, alternative]).length > MAX_REGEX) {
-      rules.push({ action, operations: WRITE, regex: regex(group) });
+      rules.push({ action, operations, regex: regex(group) });
       group = [];
     }
     group.push(alternative);
   }
-  if (group.length) rules.push({ action, operations: WRITE, regex: regex(group) });
+  if (group.length) rules.push({ action, operations, regex: regex(group) });
   return rules;
 }
 
@@ -123,6 +124,7 @@ export function macWriteRegexRules(root: string): MacWriteRegexRule[] {
   const anywhere = `^${escaped}/(.*/)?`;
   const git = `${anywhere}${ci(".git")}`;
   const nested = `(/${ci("modules")}/.+|/${ci("worktrees")}/[^/]+)?`;
+  const inside = `(/${ci("modules")}/.+|/${ci("worktrees")}/[^/]+)`;
   const subtrees = any(SANDBOX_GIT_ALLOWED_DIRECTORIES);
   const head = ci("HEAD");
   const lock = `(${ci(".lock")})?`;
@@ -146,6 +148,7 @@ export function macWriteRegexRules(root: string): MacWriteRegexRule[] {
     allow(`${git}${nested}/${subtrees}(/.*)?$`),
     ...chunked("allow", `${git}${nested}/`, SANDBOX_GIT_ALLOWED_FILES.map(ci), `${lock}$`),
     allow(`${git}${nested}/${ci("info")}/${ci("exclude")}${lock}$`),
+    allow(`${git}${nested}/${ci("index.stash.")}[0-9]+${lock}$`),
     allow(`${git}/${ci("worktrees")}/[^/]+$`),
     deny(
       `${git}/(.*/)?${any(SANDBOX_GIT_DENIED_INTERNALS.map((n) => n.split("/").pop() as string))}(/.*)?$`,
@@ -158,7 +161,29 @@ export function macWriteRegexRules(root: string): MacWriteRegexRule[] {
     allow(`${git}${nested}/${ci("sequencer")}/${head}$`),
     // a directory that holds (or may hold) a HEAD git keeps never leaves .git (Seatbelt checks
     // file-write-unlink on a rename's source): moved out it would become a bare-repository
-    // lookalike; restricted git therefore cannot remove these directories either
+    // lookalike, so neither do submodule and worktree gitdirs or anything in them …
+    {
+      action: "deny",
+      operations: ["file-write-unlink"],
+      regex: `${git}/(${ci("modules")}/.+|${ci("worktrees")}/[^/]+)$`,
+    },
+    // … except git's ordinary internals strictly inside such a gitdir (git renames and removes
+    // its lock files, objects and refs there as at the top level) …
+    ...chunked("allow", `${git}${inside}/`, SANDBOX_GIT_ALLOWED_FILES.map(ci), `${lock}$`, [
+      "file-write-unlink",
+    ]),
+    {
+      action: "allow",
+      operations: ["file-write-unlink"],
+      regex: `${git}${inside}/(${ci("info")}/${ci("exclude")}|${ci("index.stash.")}[0-9]+)${lock}$`,
+    },
+    {
+      action: "allow",
+      operations: ["file-write-unlink"],
+      regex: `${git}${inside}/${subtrees}(/.+)?$`,
+    },
+    // … and, in every gitdir, the directory entries that hold or may hold a kept HEAD stay put
+    // (restricted git therefore cannot remove them either)
     {
       action: "deny",
       operations: ["file-write-unlink"],
@@ -172,11 +197,6 @@ export function macWriteRegexRules(root: string): MacWriteRegexRule[] {
         `${ci("refs")}/${ci("remotes")}/[^/]+`,
         ci("sequencer"),
       ].join("|")})$`,
-    },
-    {
-      action: "deny",
-      operations: ["file-write-unlink"],
-      regex: `${git}/(${ci("modules")}/.+|${ci("worktrees")}/[^/]+)$`,
     },
     {
       action: "deny",

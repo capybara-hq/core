@@ -124,6 +124,8 @@ export const SANDBOX_GIT_ALLOWED_FILES: readonly string[] = Object.freeze([
   "bisect_names",
   "bisect_terms",
   "packed-refs",
+  "packed-refs.new",
+  "merge_autostash",
   "commit_editmsg",
   "tag_editmsg",
   "squash_msg",
@@ -522,7 +524,8 @@ function gitInternalAllowed(rel: readonly string[]): boolean {
   }
   if (rel.length === 1) {
     const base = head.endsWith(".lock") ? head.slice(0, -5) : head;
-    return SANDBOX_GIT_ALLOWED_FILES.includes(base);
+    // git stash's temporary index: index.stash.<pid>
+    return SANDBOX_GIT_ALLOWED_FILES.includes(base) || /^index\.stash\.[0-9]+$/.test(base);
   }
   return (
     head === "info" && rel.length === 2 && ["exclude", "exclude.lock"].includes(rel[1] as string)
@@ -611,7 +614,8 @@ def _git_internal_allowed(rel):
         return any(r and _git_internal_allowed(r) for r in readings)
     if len(rel) == 1:
         base = head[:-5] if head.endswith(".lock") else head
-        return base in GIT_ALLOWED_FILES
+        stash = base.startswith("index.stash.") and base[12:].isascii() and base[12:].isdigit()
+        return base in GIT_ALLOWED_FILES or stash
     return head == "info" and len(rel) == 2 and rel[1] in ("exclude", "exclude.lock")
 
 

@@ -195,7 +195,11 @@ rebase or cherry-pick in progress (git's `rebase-merge/`, `rebase-apply/` and `s
 writable for git's own use), and continuing it (`git rebase --continue`) runs the `exec` lines of
 the todo list it wrote, as the owner; on macOS and Linux alike it can leave, inside git's own
 internals, a directory shaped like a repository without a configuration of its own (a kept `HEAD`
-with git's ordinary entries), which only matters to an owner who runs git from inside `.git`; files tools execute by convention without
+with git's ordinary entries), which only matters to an owner who runs git from inside `.git`; `git worktree prune` cannot remove
+worktree gitdirs and `git branch -D` warns that it cannot remove the branch's config section (both
+write what the policy keeps); on macOS a multi-commit cherry-pick or revert reports that it cannot
+remove `.git/sequencer` (its commits land; the device removes the empty directory after the
+command); files tools execute by convention without
 configuration, such as `package.json` scripts run by `npm test`, are not covered, so the owner
 reviews such changes before running them unsandboxed. macOS expresses the same policy as ordered Seatbelt
 regex rules (a pnpm patch of the sandbox runtime); Seatbelt sees paths, not contents, so a directory
