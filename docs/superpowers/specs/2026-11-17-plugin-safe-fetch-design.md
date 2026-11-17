@@ -52,14 +52,22 @@ The maintainer picked A on 2026-11-17.
 
 ### SDK
 
-- `ctx.net.fetch(url: string, init?: RequestInit & { signal?: AbortSignal }): Promise<Response>`,
-  the global `fetch` signature. `signal` defaults to `ctx.signal` combined with the caller's.
-- `NetDeniedError` (exported from the SDK; plugins test `err.name === "NetDeniedError"`, not
-  `instanceof`, which fails across package copies) with `code`
-  (`net.insecure_url` | `net.private_address` | `net.dns_failed` | …, the codes `safeFetch`
-  already uses) and an English message naming the host. Plugins map it to their own actionable
-  error (a connector's `ToolError` kind `invalid_input` / setup check failure; a provider's
-  `ModelError` kind `invalid_request`).
+- `ctx.net.fetch(url: string, init?: RequestInit, opts?: { orgId?: string }): Promise<Response>`,
+  the global `fetch` signature plus the org the request is made for. `init.signal` is combined
+  with `ctx.signal`. Only with `opts.orgId` may the target be one of that org's allowed internal
+  endpoints (below); without it only public addresses are reachable.
+- `ConnectorOpenArgs.orgId` (required) and `orgId` in the `Connector.inspect` args (required) carry
+  the org a connector session or install preview serves, so a connector extension passes it to
+  `ctx.net.fetch`. Model providers take it from the org-bound call's `{ orgId, config }`.
+- `NetDeniedError` (exported from the SDK) with `code`
+  (`net.insecure_url` | `net.private_address` | `net.dns_failed` | `net.redirect` |
+  `net.proxy_refused`, the codes `safeFetch` already uses), `host`, an English message naming the
+  host, and `status` (the HTTP status of a refused redirect, `net.redirect` only). Plugins detect it
+  with `isNetDeniedError(e)` (checks `name`, `code` and `host`), never `instanceof`, which fails
+  across package copies, and map it to their own actionable error (a connector's `ToolError` kind
+  `invalid_input` / setup check failure; a provider's `ModelError` kind `invalid_request`).
+- Plugin authors: `ctx.net` needs a kernel that ships it; a plugin that calls it raises its
+  manifest's minimum `sdk` to that release.
 - No new permission: `ctx.net.fetch` is strictly safer than the global `fetch` the plugin can
   already call, so gating it would only push plugins back to `fetch`.
 - Documented rule (writing-* skills in both repositories): a URL whose host comes from a person
@@ -81,10 +89,23 @@ The maintainer picked A on 2026-11-17.
   - an origin `http://host:port` / `https://host:port` (allows exactly that origin, including plain
     http, which internal MCP and model servers often use).
   Validation reuses `privateHostEntryProblem` / the CIDR rules of `net/public-address.ts`
-  (IP / CIDR entries allowed within its minimum prefix). Link-local (cloud metadata) stays refused
-  whatever the list says. Loopback (127.0.0.0/8, `::1`, 0.0.0.0/8, `::`) and the metadata
+  (IP / CIDR entries allowed within its minimum prefix), with the rules added in review:
+  - IPv6 forms that embed an IPv4 address (v4-mapped, NAT64, 6to4, IPv4-compatible) are refused;
+  - a wildcard over a public suffix (`*.com`, `*.co.uk`) is refused;
+  - `localhost` names (`localhost`, `*.localhost`) and numeric hosts a URL parser reads as an
+    IP (e.g. `2130706433`, `0x7f.1`) are refused: write the dotted IP address;
+  - loopback and unspecified addresses (127.0.0.0/8, `::1`, 0.0.0.0/8, `::`), link-local and the
+    metadata endpoints are refused as entries;
+  - an org holds at most 200 entries (`add` serializes on the org row lock to enforce the cap).
+  Link-local (cloud metadata) stays refused whatever the list says. Loopback (127.0.0.0/8, `::1`, 0.0.0.0/8, `::`) and the metadata
   endpoints `fd00:ec2::254` and `100.100.100.200` are refused for `ctx.net` just the same, whatever
   the list says; only the tests-only `net.allowInsecureLoopback` lifts the loopback refusal.
+- **Trust model.** The kernel trusts the `orgId` a plugin passes to `ctx.net.fetch`: extensions run
+  in process with full trust (approval is governance, not a sandbox), so the kernel does not try to
+  bind a request to the org of the call it happens inside. `ctx.net` protects against
+  person-supplied URLs, not against a hostile plugin. The obligation on plugins: pass the org the
+  request serves, and never reuse one org's sessions, clients or connections for another org
+  (a session opened with `ConnectorOpenArgs.orgId` serves that org only).
 - **Adding an allowance is a widening** of what the org's plugins can reach: it is refused for API
   tokens and for the Platform tool (`org.network_allowance_widen_not_allowed`), so a person adds it
   in the UI. Listing and removing stay open to both (removing only narrows).
@@ -127,8 +148,8 @@ manifests' minimum `sdk` to the release that ships `ctx.net`.
 ### Tests
 
 - Kernel: `ctx.net.fetch` refuses a private / loopback / link-local address and an http URL,
-  allows an exempted host, re-checks a redirect to a private address, streams a chunked
-  response, honours the proxy (existing proxy test fixtures), aborts with the signal.
+  allows an exempted host, returns a 3xx under `redirect: "manual"` and otherwise refuses it with
+  `net.redirect`, streams a chunked response, honours the proxy (existing proxy test fixtures), aborts with the signal.
 - Test stacks that run fake servers on 127.0.0.1 (connectors, providers) set
   `net.allowInsecureLoopback: true` in the test config, so existing plugin tests keep working.
 
