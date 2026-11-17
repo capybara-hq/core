@@ -4,11 +4,15 @@
 
 Linux and local-Docker operation backends for permission profiles (dormant: reachable only through
 the staged protocol 3 path). On Linux hosts the device runs restricted commands through the SDK's
-Landlock and seccomp-broker launcher on pinned root descriptors, with network none or an allowlist
-served by a proxy owned by the operation; native file work uses the SDK helper on the same kind of
-pinned descriptors and refuses owner-denied paths and link targets; Full access runs as the OS user
-without restricted filters. Background work, retained output and exact cancellation share the macOS
-supervisor; a lost agent's recorded session (SID and start time) is reaped, also by the next device
-process. Restricted support is the launcher's own probe: an unsupported kernel, ABI or architecture
-reports restricted unavailable while Full access keeps working. A local-Docker device runs the same
-agent inside its container from a root-owned runtime it stages there.
+Landlock and seccomp-broker launcher on pinned root descriptors, with every filesystem write
+brokered and the mandatory write denies refused, and network none or an allowlist served by a
+token-protected proxy owned by the operation (CONNECT to ports 80 and 443 only, no loopback or
+private targets). Native file work uses the SDK helper on pinned descriptors and refuses
+owner-denied paths (compared by real path too), link targets and the mandatory write denies; Full
+access runs as the OS user without restricted filters. The agent runs from inline source and
+executes the SDK runtime only from sealed memfds whose digests it checked. Background work,
+retained output and exact cancellation share the macOS supervisor; cancellation works without
+pidfds too, an abort escalates like a cancel, and a lost agent's recorded session (SID and start
+time) is reaped, also by the next device process. Restricted support is the launcher's own probe:
+an unsupported kernel, ABI, architecture or Python below 3.9 fails closed. A local-Docker device
+runs the same agent in its container. The macOS worker now applies the same shared deny list.

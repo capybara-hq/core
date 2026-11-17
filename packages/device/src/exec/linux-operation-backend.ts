@@ -35,6 +35,11 @@ export interface LinuxBackendDependencies {
   acquireRuntime?: (runtimeHash: string | undefined) => Promise<{ release(): void }>;
   now?: () => number;
   watch?: (tick: () => Promise<void>) => () => void;
+  /**
+   * Test seam (trusted construction only): the allowlist proxy may reach loopback and private
+   * addresses, as a conformance fixture's local endpoints need. Production never sets it.
+   */
+  allowPrivateProxyTargets?: boolean;
   /** Called with a reap failure of a lost supervisor's session (default: ignored). */
   onReapError?: (error: unknown) => void;
 }
@@ -85,8 +90,7 @@ export async function createLinuxOperationBackend(
   dependencies: LinuxBackendDependencies = {},
 ): Promise<LocalOperationBackend> {
   const transport =
-    dependencies.transport ??
-    hostLinuxTransport({ stateDir: options.stateDir, pythonPath: options.pythonPath });
+    dependencies.transport ?? hostLinuxTransport({ pythonPath: options.pythonPath });
   const probe = await (dependencies.probe ?? (() => probeLinuxRuntime(transport)))();
   const unavailableReason =
     dependencies.restrictedSupported === false
@@ -101,6 +105,7 @@ export async function createLinuxOperationBackend(
     linuxOperationWorker({
       transport,
       baseEnv: dependencies.baseEnv ?? hostBaseEnv,
+      ...(dependencies.allowPrivateProxyTargets ? { allowPrivateProxyTargets: true } : {}),
       ...(dependencies.acquireRuntime ? { acquireRuntime: dependencies.acquireRuntime } : {}),
     });
   return createLocalOperationBackend(
@@ -112,8 +117,8 @@ export async function createLinuxOperationBackend(
     {
       restricted: unavailableReason === undefined,
       ...(unavailableReason ? { unavailableReason } : {}),
-      fullAccess: true,
-      background: true,
+      fullAccess: probe.agentAvailable !== false,
+      background: probe.agentAvailable !== false,
       pending: unavailableReason ?? "Restricted Linux execution is unavailable",
       startWorker,
       checkRestrictedGrant: checkLinuxRestrictedGrant,

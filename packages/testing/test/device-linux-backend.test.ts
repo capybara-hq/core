@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -156,5 +156,43 @@ describe.skipIf(unavailable !== null)("capybara-device Linux operation backends"
     const support = await backend.support();
     if (required) expect(support.restricted).not.toBeNull();
     await runSandboxPermissionConformance(fixture(device, backend));
+  });
+
+  // The executor's real layout: workspace and tmp are host directories bind-mounted into the
+  // container. Where the mount does not keep Landlock's rules (Docker Desktop's file sharing) the
+  // backend reports restricted unavailable and this records why instead of passing vacuously.
+  it("local-Docker backend on bind-mounted host directories: passes the full permission conformance", async (context) => {
+    const dir = await realpath(await mkdtemp(join(tmpdir(), "cap-docker-bind-")));
+    cleanups.push(() => rm(dir, { recursive: true, force: true }));
+    await mkdir(join(dir, "workspace"));
+    await mkdir(join(dir, "tmp"));
+    await chmod(join(dir, "workspace"), 0o777);
+    await chmod(join(dir, "tmp"), 0o1777);
+    const bound = await startLinuxDevice({ bindWorkspace: dir });
+    cleanups.push(async () => bound.remove());
+    const server = new HostServer(await localServerFile(dir));
+    servers.push(server);
+    const state = join(dir, "state");
+    await mkdir(state, { mode: 0o700 });
+    const backend = await hostBackend(server, {
+      stateDir: state,
+      deviceId: "device-docker-bind",
+      docker: {
+        container: bound.name,
+        hostRoots: {
+          workspace: join(dir, "workspace"),
+          skills: join(dir, "s"),
+          tmp: join(dir, "tmp"),
+        },
+      },
+    });
+    const support = await backend.support();
+    if (
+      support.restricted === null &&
+      /Landlock rules do not hold/.test(support.unavailableReason ?? "")
+    )
+      return context.skip(`bind mounts here drop Landlock rules: ${support.unavailableReason}`);
+    if (required) expect(support.restricted).not.toBeNull();
+    await runSandboxPermissionConformance(fixture(bound, backend));
   });
 });

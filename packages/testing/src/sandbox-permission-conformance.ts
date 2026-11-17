@@ -500,6 +500,99 @@ export async function runSandboxPermissionConformance(
       { entries: [{ name: "n.bin", isDir: false }], truncated: false },
     );
 
+    // Mandatory write denies inside a granted root (the macOS set, shared through the SDK): git
+    // configuration and hooks (a later unsandboxed `git` there would run them), shell startup
+    // files and editor/agent configuration. Direct writes, creation, renames, hard and symbolic
+    // links, and the same paths in a repository the command creates itself all stay refused.
+    await fixture.seed([
+      { path: at(root, "repo/.git/config"), kind: "file", data: new TextEncoder().encode("cfg") },
+      {
+        path: at(root, "repo/.git/hooks/pre-commit.sample"),
+        kind: "file",
+        data: new TextEncoder().encode("s"),
+      },
+      { path: at(root, "repo/.git/HEAD"), kind: "file", data: new TextEncoder().encode("ref: x") },
+    ]);
+    const evil = '[core]\n\tfsmonitor = "touch escaped; false"\n';
+    const denies = await exec(
+      restricted(),
+      [
+        `cd repo`,
+        `printf ${quote(evil)} > .git/config`,
+        `printf x >> .git/config`,
+        `mkdir -p .git/hooks; printf '#!/bin/sh' > .git/hooks/pre-commit`,
+        `chmod 755 .git/hooks/pre-commit.sample`,
+        `printf x > staged-config; mv staged-config .git/config`,
+        `printf x > staged-hook; ln staged-hook .git/hooks/post-checkout`,
+        `ln -s ../staged-hook .git/hooks/pre-push`,
+        `ln -s .git/config cfg-link; printf x > cfg-link`,
+        `mkdir moved; printf x > moved/config; mkdir -p sub; mv moved sub/.git`,
+        `mkdir -p ../ptr && printf 'gitdir: /tmp' > ../ptr/.git`,
+        `cd ..; git init -q nested 2>/dev/null; mkdir -p nested/.git/hooks; printf x > nested/.git/hooks/pre-commit; printf x > nested/.git/config`,
+        `printf x > .bashrc; printf x > .zshrc; printf x > .profile; printf x > .gitconfig; printf x > .gitmodules; printf x > .mcp.json`,
+        `mkdir -p .vscode && printf x > .vscode/settings.json; mkdir -p .idea && printf x > .idea/x`,
+        `mkdir -p .claude/commands .claude/agents; printf x > .claude/commands/c.md; printf x > .claude/agents/a.md`,
+        `mkdir -p deep/er; printf x > deep/er/.bash_profile`,
+        `printf ok > allowed.txt`,
+        `true`,
+      ].join("; "),
+    );
+    assert.equal(denies.exitCode, 0, `the mandatory-deny probe must run: ${denies.stderr}`);
+    assert.equal(
+      text(await fixture.inspect.readFile(at(root, "allowed.txt"))),
+      "ok",
+      "ordinary writes",
+    );
+    assert.equal(
+      text(await fixture.inspect.readFile(at(root, "repo/.git/config"))),
+      "cfg",
+      ".git/config",
+    );
+    assert.equal(
+      (await fixture.inspect.mode(at(root, "repo/.git/hooks/pre-commit.sample"))) !== 0o755,
+      true,
+      "hook mode",
+    );
+    for (const path of [
+      "repo/.git/hooks/pre-commit",
+      "repo/.git/hooks/post-checkout",
+      "repo/.git/hooks/pre-push",
+      "repo/sub/.git/config",
+      "ptr/.git",
+      "nested/.git/hooks/pre-commit",
+      "nested/.git/config",
+      ".bashrc",
+      ".zshrc",
+      ".profile",
+      ".gitconfig",
+      ".gitmodules",
+      ".mcp.json",
+      ".vscode/settings.json",
+      ".idea/x",
+      ".claude/commands/c.md",
+      ".claude/agents/a.md",
+      "deep/er/.bash_profile",
+    ])
+      assert.equal(await fixture.inspect.readFile(at(root, path)), null, `mandatory deny: ${path}`);
+    assert.equal(
+      await fixture.inspect.mode(at(root, "repo/.git/hooks/pre-push")),
+      null,
+      "a symbolic link into the hooks is refused too",
+    );
+    await denied(
+      (await native(restricted())).writeFile(at(root, "repo/.git/config"), bytes, signal),
+      "native write of .git/config",
+    );
+    await denied(
+      (await native(restricted())).writeFile(at(root, "repo/.git/hooks/post-merge"), bytes, signal),
+      "native write of a git hook",
+    );
+    await denied(
+      (await native(restricted())).writeFile(at(root, ".vscode/tasks.json"), bytes, signal),
+      "native write of editor configuration",
+    );
+    assert.equal(text(await fixture.inspect.readFile(at(root, "repo/.git/config"))), "cfg");
+
     // Negative controls: sibling, symlink escapes and protected paths stay out of reach.
     const reads = await exec(
       restricted(),

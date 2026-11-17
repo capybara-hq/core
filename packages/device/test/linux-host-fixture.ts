@@ -172,6 +172,8 @@ export async function hostBackend(
     deviceId?: string;
     restrictedSupported?: boolean;
     deniedReadRoots?: string[];
+    /** Whether the allowlist proxy may reach the fixture's local endpoints (default true). */
+    privateProxyTargets?: boolean;
     /** A local-Docker device: the server runs here, its agents in this container. */
     docker?: { container: string; hostRoots: { workspace: string; skills: string; tmp: string } };
   },
@@ -190,6 +192,7 @@ export async function hostBackend(
     ceiling,
     runtimeHash: RUNTIME_HASH,
     ...(options.restrictedSupported === false ? { restrictedSupported: false } : {}),
+    ...(options.privateProxyTargets === false ? { privateProxyTargets: false } : {}),
     ...(options.docker
       ? {
           mode: "docker",

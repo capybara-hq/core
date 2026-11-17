@@ -9,7 +9,6 @@ import {
   type SandboxExecOptions,
   SandboxPermissionUnsupportedError,
 } from "@capybara-hq/plugin-sdk";
-import { stageContainerRuntime } from "../../src/exec/docker.js";
 import { createDockerOperationBackend } from "../../src/exec/docker-operations.js";
 import {
   createHostOperationBackend,
@@ -59,10 +58,11 @@ async function handle(message: Record<string, unknown>): Promise<unknown> {
           return { release: () => {} };
         },
         ...(message.restrictedSupported === false ? { restrictedSupported: false } : {}),
+        // the fixture's endpoints are local addresses
+        allowPrivateProxyTargets: message.privateProxyTargets !== false,
       };
       if (message.mode === "docker") {
         const container = String(message.container);
-        await stageContainerRuntime(container);
         backend = await createDockerOperationBackend(
           {
             ...common,

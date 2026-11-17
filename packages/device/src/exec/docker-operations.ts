@@ -7,7 +7,6 @@ import {
   type SandboxRoots,
   SandboxScopeDeniedError,
 } from "@capybara-hq/plugin-sdk";
-import { OPERATION_RUNTIME_DIR } from "./docker.js";
 import {
   checkLinuxRestrictedGrant,
   type LinuxBackendDependencies,
@@ -15,6 +14,7 @@ import {
 } from "./linux-operation-backend.js";
 import { DEVICE_PROCESS_TOKEN, linuxOperationWorker } from "./linux-operation-worker.js";
 import {
+  agentArgv,
   checkRestrictedRoot,
   type LinuxAgentTransport,
   linuxRuntimeBundle,
@@ -45,6 +45,8 @@ export interface OperationContainerHost {
   ): Promise<{ name: string; user: string; release: () => void }>;
 }
 
+/** The image's interpreter, by absolute path (never looked up through a PATH). */
+const CONTAINER_PYTHON = "/usr/bin/python3";
 const CONTAINER_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
 /** A container command's starting environment: the image's ordinary one, never this host's. */
@@ -61,33 +63,96 @@ export function containerBaseEnv(full: boolean): Record<string, string> {
 }
 
 /**
+ * Ends an agent left inside the container after its `docker exec` client died: the exact process
+ * (PID plus start time, checked again before each signal) gets SIGTERM, then SIGKILL, and this
+ * returns once it is gone.
+ */
+const END_AGENT = String.raw`
+import os, sys, time
+pid, start = int(sys.argv[1]), int(sys.argv[2])
+def same():
+    try:
+        with open("/proc/%d/stat" % pid) as handle:
+            data = handle.read()
+    except OSError:
+        return False
+    fields = data[data.rindex(")") + 2:].split()
+    return int(fields[19]) == start and fields[0] not in ("Z", "X")
+for signum, rounds in ((15, 200), (9, 2000)):
+    for _ in range(rounds):
+        if not same():
+            sys.exit(0)
+        try:
+            os.kill(pid, signum)
+        except OSError:
+            pass
+        time.sleep(0.01)
+sys.exit(1)
+`;
+
+/**
  * Agents in the device's local container: one `docker exec` per operation as the container user,
- * from the root-owned runtime the executor staged and verified. The container stays held (never
- * recreated) while the agent runs; the end of the exec's stdin tells the agent the device was lost.
+ * with the agent's source inline (nothing staged in the container). The container stays held
+ * (never recreated) until the agent is gone; the end of the exec's stdin tells the agent the device
+ * was lost, and an agent whose client died is ended exactly before the container is released.
  */
 export function dockerLinuxTransport(host: OperationContainerHost): LinuxAgentTransport {
   const bundle = linuxRuntimeBundle();
   return {
     kind: "docker",
-    expect: bundle.expect,
-    spawn: async () => {
-      const container = await host.operationContainer(new AbortController().signal);
+    bundle,
+    spawn: async (signal) => {
+      const container = await host.operationContainer(signal ?? new AbortController().signal);
       try {
         const child = spawn(
           "docker",
-          [
-            "exec",
-            "-i",
-            "-u",
-            container.user,
-            container.name,
-            "python3",
-            "-I",
-            `${OPERATION_RUNTIME_DIR}/device-agent.py`,
-          ],
+          ["exec", "-i", "-u", container.user, container.name, CONTAINER_PYTHON, ...agentArgv()],
           { stdio: ["pipe", "pipe", "pipe"] },
         );
-        child.once("close", container.release);
+        let agent: { pid: number; start: number } | undefined;
+        let head = "";
+        const tap = (b: Buffer) => {
+          head += b.toString("utf8");
+          const end = head.indexOf("\n");
+          if (end < 0 && head.length < 4096) return;
+          child.stdout?.off("data", tap);
+          try {
+            const first = JSON.parse(head.slice(0, end)) as {
+              event?: string;
+              pid?: number;
+              start?: number;
+            };
+            if (
+              first.event === "agent" &&
+              Number.isSafeInteger(first.pid) &&
+              Number.isSafeInteger(first.start)
+            )
+              agent = { pid: first.pid as number, start: first.start as number };
+          } catch {}
+        };
+        child.stdout?.on("data", tap);
+        child.once("close", (_code, signalCode) => {
+          if (!signalCode || !agent) return container.release();
+          // the client was killed: the agent may still run inside; end it exactly first
+          const ender = spawn(
+            "docker",
+            [
+              "exec",
+              "-u",
+              container.user,
+              container.name,
+              CONTAINER_PYTHON,
+              "-I",
+              "-c",
+              END_AGENT,
+              String(agent.pid),
+              String(agent.start),
+            ],
+            { stdio: "ignore" },
+          );
+          ender.once("close", container.release);
+          ender.once("error", container.release);
+        });
         child.once("error", container.release);
         return child;
       } catch (error) {
@@ -254,7 +319,12 @@ export async function createDockerOperationBackend(
   const acquire = dependencies.acquireRuntime ?? acquireSealedRuntime;
   const worker =
     dependencies.startWorker ??
-    linuxOperationWorker({ transport, baseEnv: containerBaseEnv, acquireRuntime: acquire });
+    linuxOperationWorker({
+      transport,
+      baseEnv: containerBaseEnv,
+      acquireRuntime: acquire,
+      ...(dependencies.allowPrivateProxyTargets ? { allowPrivateProxyTargets: true } : {}),
+    });
   const startWorker = async (
     request: MacWorkerRequest,
     signal: AbortSignal,
@@ -285,8 +355,8 @@ export async function createDockerOperationBackend(
     {
       restricted: unavailableReason === undefined,
       ...(unavailableReason ? { unavailableReason } : {}),
-      fullAccess: true,
-      background: true,
+      fullAccess: probe.agentAvailable !== false,
+      background: probe.agentAvailable !== false,
       pending: unavailableReason ?? "Restricted execution in the device container is unavailable",
       startWorker,
       checkRestrictedGrant: checkLinuxRestrictedGrant,

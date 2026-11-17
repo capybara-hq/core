@@ -1,78 +1,72 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { join } from "node:path";
 import { SANDBOX_RUNTIME_SOURCE, SandboxPermissionUnsupportedError } from "@capybara-hq/plugin-sdk";
 import { LINUX_DEVICE_AGENT } from "./linux-agent.js";
-import { stagePrivateBundle } from "./runtime-source.js";
 
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 
-/** The files a Linux operation agent runs from, all verified against their digests. */
+/**
+ * What every agent request carries: the SDK's restricted Linux launcher and native helper (bundle
+ * version 2, each checked here against its shipped digest) with those digests. The agent seals the
+ * bytes into memfds and checks the digests again before anything runs from them.
+ */
 export interface LinuxRuntimeBundle {
-  files: readonly { name: string; source: string; sha256: string }[];
-  /** Digests the agent checks the staged SDK files against before it uses them. */
+  runtime: Readonly<Record<string, string>>;
   expect: Readonly<Record<string, string>>;
 }
 
-/**
- * The SDK's restricted Linux launcher and native helper (bundle version 2, each checked against
- * its shipped digest) plus this program's agent. Anything else is refused: nothing is staged.
- */
 export function linuxRuntimeBundle(): LinuxRuntimeBundle {
   if (SANDBOX_RUNTIME_SOURCE.version !== 2)
     throw new SandboxPermissionUnsupportedError("Unsupported sandbox runtime bundle");
-  const files: { name: string; source: string; sha256: string }[] = [];
+  const runtime: Record<string, string> = {};
+  const expect: Record<string, string> = {};
   for (const name of ["linux-sandbox.py", "native-files.py"]) {
     const file = SANDBOX_RUNTIME_SOURCE.files.find((f) => f.name === name);
     if (!file || sha256(file.source) !== file.sha256)
       throw new SandboxPermissionUnsupportedError(`The bundled ${name} does not match its digest`);
-    files.push({ name, source: file.source, sha256: file.sha256 });
+    runtime[name] = file.source;
+    expect[name] = file.sha256;
   }
-  files.push({
-    name: "device-agent.py",
-    source: LINUX_DEVICE_AGENT,
-    sha256: sha256(LINUX_DEVICE_AGENT),
-  });
-  return {
-    files,
-    expect: Object.freeze(
-      Object.fromEntries(
-        files.filter((f) => f.name !== "device-agent.py").map((f) => [f.name, f.sha256]),
-      ),
-    ),
-  };
+  return { runtime: Object.freeze(runtime), expect: Object.freeze(expect) };
+}
+
+/** The agent's command line: its source inline, so no file stands between check and run. */
+export function agentArgv(): string[] {
+  return ["-I", "-c", LINUX_DEVICE_AGENT];
 }
 
 /** How the device starts one operation agent: on this host, or inside its local container. */
 export interface LinuxAgentTransport {
   readonly kind: "host" | "docker";
-  readonly expect: Readonly<Record<string, string>>;
-  /** One fresh agent process with piped stdin, stdout and stderr. */
-  spawn(): Promise<ChildProcess>;
+  readonly bundle: LinuxRuntimeBundle;
+  /** One fresh agent process with piped stdin, stdout and stderr; an abort stops waiting. */
+  spawn(signal?: AbortSignal): Promise<ChildProcess>;
 }
 
 /**
- * Runs agents on this Linux host from the owner's private staging directory (re-verified on
- * every launch). Each agent has its own session, so a terminal signal to capybara-device never
- * reaches it; it notices the device's loss by the end of its stdin and ends what it owns.
+ * Runs agents on this Linux host. Each agent has its own session, so a terminal signal to
+ * capybara-device never reaches it; it notices the device's loss by the end of its stdin and ends
+ * what it owns.
  */
-export function hostLinuxTransport(options: {
-  stateDir: string;
-  pythonPath: string;
-}): LinuxAgentTransport {
+export function hostLinuxTransport(options: { pythonPath: string }): LinuxAgentTransport {
   const bundle = linuxRuntimeBundle();
   return {
     kind: "host",
-    expect: bundle.expect,
-    spawn: async () => {
-      const dir = await stagePrivateBundle(options.stateDir, "linux", bundle.files);
-      return spawn(options.pythonPath, ["-I", join(dir, "device-agent.py")], {
+    bundle,
+    spawn: async (signal) => {
+      signal?.throwIfAborted();
+      return spawn(options.pythonPath, agentArgv(), {
         stdio: ["pipe", "pipe", "pipe"],
         detached: true,
         env: { PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin", LANG: "C.UTF-8" },
       });
     },
   };
+}
+
+/** A request line with the runtime the agent seals and checks. */
+export function agentLine(transport: LinuxAgentTransport, request: Record<string, unknown>) {
+  return `${JSON.stringify({ ...request, runtime: transport.bundle.runtime, expect: transport.bundle.expect })}\n`;
 }
 
 /** One JSON event line of an agent. */
@@ -112,7 +106,7 @@ export async function agentRequest(
     if (stderr.length < 4096) stderr += b.toString("utf8");
   });
   child.stdin?.on("error", () => {});
-  const line = `${JSON.stringify({ ...request, expect: transport.expect })}\n`;
+  const line = agentLine(transport, request);
   if (holdInput) child.stdin?.write(line);
   else child.stdin?.end(line);
   const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
@@ -141,6 +135,11 @@ export interface LinuxProbe {
   reason?: string;
   arch?: string;
   landlockAbi?: number;
+  /**
+   * False when the agent itself cannot run (no Python 3.9+, a traced agent, no interpreter):
+   * then Full access and background work are unavailable too.
+   */
+  agentAvailable?: boolean;
 }
 
 /**
@@ -174,7 +173,8 @@ export async function probeLinuxRuntime(transport: LinuxAgentTransport): Promise
   } catch (error) {
     return {
       restricted: null,
-      reason: `The restricted Linux runtime probe failed: ${(error as Error).message}`,
+      reason: `The operation agent cannot run: ${(error as Error).message}`,
+      agentAvailable: false,
     };
   }
 }

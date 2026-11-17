@@ -11,7 +11,6 @@ export interface OperationGrant {
   readonly network: SandboxOperationScope["network"];
 }
 
-import { OPERATION_RUNTIME_DIR, stageContainerRuntime } from "../src/exec/docker.js";
 import type { DeviceOwnerCeiling } from "../src/exec/operation-types.js";
 
 /**
@@ -82,7 +81,13 @@ export interface LinuxDevice {
 }
 
 /** Starts the hardened device container, stages the runtime and starts the endpoints. */
-export async function startLinuxDevice(): Promise<LinuxDevice> {
+export async function startLinuxDevice(
+  options: {
+    seccompProfile?: string;
+    /** Bind-mount this host directory at /workspace and /tmp, as the device's executor does. */
+    bindWorkspace?: string;
+  } = {},
+): Promise<LinuxDevice> {
   const name = `capybara-w2s-${randomUUID().slice(0, 12)}`;
   docker([
     "run",
@@ -98,6 +103,7 @@ export async function startLinuxDevice(): Promise<LinuxDevice> {
     "--security-opt",
     "no-new-privileges",
     "--read-only",
+    ...(options.seccompProfile ? ["--security-opt", `seccomp=${options.seccompProfile}`] : []),
     "--network",
     "none",
     // the agent's allowlist proxy resolves names like any client would
@@ -105,14 +111,14 @@ export async function startLinuxDevice(): Promise<LinuxDevice> {
       "--add-host",
       `${host}:${ENDPOINTS[key as keyof typeof ENDPOINTS][0]}`,
     ]),
-    "--tmpfs",
-    "/tmp:size=64m",
+    ...(options.bindWorkspace
+      ? ["--mount", `type=bind,source=${options.bindWorkspace}/tmp,target=/tmp`]
+      : ["--tmpfs", "/tmp:size=64m"]),
     "--tmpfs",
     "/home/sandbox:uid=1000,gid=1000,mode=755",
-    "--tmpfs",
-    "/workspace:exec,uid=1000,gid=1000,mode=755",
-    "--tmpfs",
-    `${OPERATION_RUNTIME_DIR}:mode=755`,
+    ...(options.bindWorkspace
+      ? ["--mount", `type=bind,source=${options.bindWorkspace}/workspace,target=/workspace`]
+      : ["--tmpfs", "/workspace:exec,uid=1000,gid=1000,mode=755"]),
     "--tmpfs",
     `${RECEIPTS}:mode=755`,
     IMAGE,
@@ -122,7 +128,6 @@ export async function startLinuxDevice(): Promise<LinuxDevice> {
   const run = (command: string, user = USER) =>
     docker(["exec", "-i", "-u", user, name, "sh", "-c", command]);
   try {
-    await stageContainerRuntime(name);
     docker(
       ["exec", "-i", "-u", "0", name, "sh", "-c", `cat > ${RECEIPTS}/listen.py`],
       await import("node:fs").then((fs) => fs.readFileSync(LISTEN, "utf8")),

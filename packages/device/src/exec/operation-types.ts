@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { statSync } from "node:fs";
+import { realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import {
   type DeviceExecGrants,
   type SandboxLimits,
@@ -86,16 +86,39 @@ export function readStrictOwnerCeilingSync(input: {
     roots,
     restrictedProjectReach: policy.ownerCeiling.restrictedProjectReach,
     restrictedAllowedDomains: Object.freeze([...policy.allowedDomains]),
-    restrictedDeniedReadRoots: Object.freeze([
-      ...deniedSecretPaths(input.home ?? homedir()),
-      resolve(input.stateDir),
-    ]),
+    restrictedDeniedReadRoots: Object.freeze(
+      withCanonicalForms([...deniedSecretPaths(input.home ?? homedir()), resolve(input.stateDir)]),
+    ),
     preparation: Object.freeze({
       skillsRoot: roots.skills,
       attachmentsBase: join(roots.workspace, "attachments"),
     }),
     fullNetwork: "environment",
   });
+}
+/**
+ * Each path plus its canonical form (the real path of its nearest existing ancestor with the
+ * missing names appended), so a denied path is matched whether a grant names it through a link
+ * (a symlinked home, a symlinked ~/.aws) or by its real location.
+ */
+export function withCanonicalForms(paths: readonly string[]): string[] {
+  const out = new Set<string>();
+  for (const path of paths) {
+    out.add(path);
+    let anchor = path;
+    const missing: string[] = [];
+    for (;;) {
+      try {
+        out.add(join(realpathSync(anchor), ...missing));
+        break;
+      } catch {
+        if (anchor === dirname(anchor)) break;
+        missing.unshift(basename(anchor));
+        anchor = dirname(anchor);
+      }
+    }
+  }
+  return [...out];
 }
 export function checkRoots(
   read: readonly string[],

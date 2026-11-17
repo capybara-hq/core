@@ -6,6 +6,7 @@ import {
   MAX_DEVICE_SCAN_DIRS,
   MAX_DEVICE_SCAN_RESULTS,
 } from "./sandbox.js";
+import { SANDBOX_MANDATORY_WRITE_DENIES } from "./sandbox-write-denies.js";
 
 /**
  * Private Python 3 transport: one JSON request on stdin, one result/error on stdout.
@@ -32,8 +33,16 @@ SKIP_BASE = ${JSON.stringify(DEVICE_SCAN_SKIPPED_BASE_DIRS)}
 # ECMAScript whitespace (Python's str.strip also removes several extra control characters).
 SPACE = "\u0009\u000a\u000b\u000c\u000d\u0020\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"
 
+# Restricted roots ({"denyWrites": true}) never write these (sandbox-write-denies.ts).
+WRITE_DENIES = [[name.lower() for name in entry] for entry in ${JSON.stringify(SANDBOX_MANDATORY_WRITE_DENIES)}]
+
 class ScopeDenied(Exception):
     pass
+
+def write_denied(path):
+    parts = [part.lower() for part in path.split("/") if part]
+    return any(parts[i:i + len(entry)] == entry
+               for entry in WRITE_DENIES for i in range(len(parts) - len(entry) + 1))
 
 def units(value):
     return value.encode("utf-16-be", "surrogatepass")
@@ -66,6 +75,7 @@ def valid_name(name):
 class NativeFiles:
     def __init__(self, roots):
         self.roots = roots
+        self.deny_writes = roots.get("denyWrites") is True
         # Descriptors are supplied by the trusted consumer, never reopened by root pathname.
         for root in roots["read"] + roots["write"]:
             if not valid_path(root["path"]) or os.path.normpath(root["path"]) != root["path"]:
@@ -81,6 +91,8 @@ class NativeFiles:
         if not valid_path(path):
             raise ValueError("Supply a valid absolute native path")
         path = os.path.normpath(path)
+        if write and self.deny_writes and write_denied(path):
+            raise ScopeDenied("Native path is a protected write target")
         roots = self.roots["write"] if write else self.roots["read"] + self.roots["write"]
         matches = [root for root in roots if within(root["path"], path)]
         if not matches:
@@ -89,7 +101,11 @@ class NativeFiles:
         fd = os.dup(root["fd"])
         current = root["path"]
         parts = os.path.relpath(path, current).split("/")
-        return self.walk(fd, current, parts, write, create, links, must_exist)
+        result = self.walk(fd, current, parts, write, create, links, must_exist)
+        if write and self.deny_writes and write_denied(result[2]):
+            os.close(result[0])
+            raise ScopeDenied("Native path is a protected write target")
+        return result
 
     def walk(self, fd, current, parts, write, create, links, must_exist):
         try:
@@ -99,6 +115,8 @@ class NativeFiles:
                     info = os.stat(name, dir_fd=fd, follow_symlinks=False)
                 except FileNotFoundError:
                     if not final and create:
+                        if self.deny_writes and write_denied(os.path.join(current, name)):
+                            raise ScopeDenied("Native path is a protected write target")
                         try:
                             os.mkdir(name, 0o755, dir_fd=fd)
                         except FileExistsError:
@@ -152,13 +170,18 @@ class NativeFiles:
     def open(self, path, write=False, directory=False):
         parent, name = self.parent(path, write, write)
         try:
+            if write and self.deny_writes and name.lower() == ".git":
+                os.close(parent)
+                parent = None
+                raise ScopeDenied("A file named .git would point git elsewhere")
             flags = os.O_NOFOLLOW | os.O_NONBLOCK
             flags |= os.O_WRONLY | os.O_CREAT if write else os.O_RDONLY
             if directory:
                 flags |= os.O_DIRECTORY
             return os.open(name, flags, 0o600, dir_fd=parent)
         finally:
-            os.close(parent)
+            if parent is not None:
+                os.close(parent)
 
     def metadata(self, path):
         parent, name = self.parent(path)

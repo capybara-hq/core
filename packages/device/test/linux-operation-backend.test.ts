@@ -1,9 +1,13 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { SandboxExecutionRef } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   dockerUnavailable,
   inspect,
   type LinuxDevice,
+  NAMES,
   scopeFor,
   startLinuxDevice,
 } from "./linux-docker-fixture.js";
@@ -241,7 +245,7 @@ describe.skipIf(unavailable !== null)("Linux host operation backend", () => {
     const [child] = (await pidsOf(root, ["child"])) as [number];
     // the supervisor is lost (as by the OOM killer): SIGKILL the agent, nothing else
     device.run(
-      `for p in /proc/[0-9]*; do [ "\${p#/proc/}" = "$$" ] && continue; grep -q device-agent.py $p/cmdline 2>/dev/null && kill -9 \${p#/proc/}; done; true`,
+      `for p in /proc/[0-9]*; do [ "\${p#/proc/}" = "$$" ] && continue; grep -q "def native_watch" $p/cmdline 2>/dev/null && kill -9 \${p#/proc/}; done; true`,
     );
     expect(await running).toMatch(/agent was lost/);
     expect(await alive([child])).toEqual([]);
@@ -278,7 +282,7 @@ describe.skipIf(unavailable !== null)("Linux host operation backend", () => {
     // device process and agent die together: nothing is left to end the Full session
     const serverPid = await first.ready;
     device.run(
-      `for p in /proc/[0-9]*; do [ "\${p#/proc/}" = "$$" ] && continue; grep -q device-agent.py $p/cmdline 2>/dev/null && kill -9 \${p#/proc/}; done; kill -9 ${serverPid}`,
+      `for p in /proc/[0-9]*; do [ "\${p#/proc/}" = "$$" ] && continue; grep -q "def native_watch" $p/cmdline 2>/dev/null && kill -9 \${p#/proc/}; done; kill -9 ${serverPid}`,
     );
     await first.exited;
     expect(await alive([child])).toEqual([child]);
@@ -344,6 +348,63 @@ describe.skipIf(unavailable !== null)("Linux host operation backend", () => {
     expect(ok).toMatchObject({ exitCode: 0, stdout: "ok" });
   });
 
+  it("the allowlist proxy serves only its own operation, ports 80/443 for CONNECT, no private targets", async () => {
+    const root = project("proxy");
+    const allowlisted = scopeFor(backend.deviceId, {
+      profile: "approve-for-me",
+      filesystem: { kind: "scoped", readRoots: [], writeRoots: [root] },
+      network: { kind: "allowlist", hosts: [NAMES.granted] },
+    });
+    // raw requests to the operation's proxy: without its token, and CONNECT to another port
+    const probe = String.raw`
+import os, socket, urllib.parse
+proxy = urllib.parse.urlsplit(os.environ["http_proxy"])
+def ask(request):
+    s = socket.create_connection((proxy.hostname, proxy.port), 10)
+    s.sendall(request)
+    return s.recv(64).split(b" ")[1].decode()
+import base64
+auth = base64.b64encode(("%s:%s" % (proxy.username, proxy.password)).encode()).decode()
+CRLF = "\r\n"
+GET = "GET http://NAME:18080/ HTTP/1.1" + CRLF
+print(ask((GET + "Host: x" + CRLF + CRLF).encode()),
+      ask(("CONNECT NAME:18080 HTTP/1.1" + CRLF + "Proxy-Authorization: Basic " + auth + CRLF + CRLF).encode()),
+      ask((GET + "Proxy-Authorization: Basic " + auth + CRLF + CRLF).encode()))
+`.replaceAll("NAME", NAMES.granted);
+    const result = await backend
+      .operation(allowlisted, authorityFor(allowlisted.operationId))
+      .exec({
+        command: `python3 - <<'EOF'\n${probe}\nEOF`,
+        cwd: root,
+        timeoutMs: 20_000,
+        maxOutputBytes: 1000,
+        signal: new AbortController().signal,
+      });
+    expect(result.stdout.trim(), result.stderr).toBe("407 403 200");
+    // a backend without the fixture seam refuses the loopback the granted name resolves to
+    device.run("mkdir -m 700 /home/sandbox/state-private");
+    const strict = new HostServer(device);
+    servers.push(strict);
+    const production = await hostBackend(strict, {
+      stateDir: "/home/sandbox/state-private",
+      deviceId: "device-private",
+      privateProxyTargets: false,
+    });
+    const scope = scopeFor(production.deviceId, {
+      profile: "approve-for-me",
+      filesystem: { kind: "scoped", readRoots: [], writeRoots: [root] },
+      network: { kind: "allowlist", hosts: [NAMES.granted] },
+    });
+    const refused = await production.operation(scope, authorityFor(scope.operationId)).exec({
+      command: `curl -s -o /dev/null -w '%{http_code}' -m 10 http://${NAMES.granted}:18080/`,
+      cwd: root,
+      timeoutMs: 20_000,
+      maxOutputBytes: 100,
+      signal: new AbortController().signal,
+    });
+    expect(refused.stdout).toBe("502");
+  });
+
   it("reports restricted unavailable when switched off, and Full still works", async () => {
     device.run("mkdir -m 700 /home/sandbox/state-off");
     const off = new HostServer(device);
@@ -382,5 +443,93 @@ describe.skipIf(unavailable !== null)("Linux host operation backend", () => {
       signal: new AbortController().signal,
     });
     expect(result).toMatchObject({ exitCode: 0, stdout: "full\n" });
+  });
+});
+
+// Full access where the kernel offers no pidfds (an old kernel, or a seccomp profile that returns
+// ENOSYS for pidfd_open and pidfd_send_signal): timeouts and aborts still end the command.
+describe.skipIf(unavailable !== null)("Linux host operation backend without pidfds", () => {
+  let device: LinuxDevice;
+  let backend: HostBackend;
+  let dir: string;
+  const servers: HostServer[] = [];
+  const read = async (path: string) => {
+    const value = (await inspect(device, { what: "read", path })) as string | null;
+    return value === null ? null : Buffer.from(value, "base64").toString();
+  };
+
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "cap-no-pidfd-"));
+    const profile = join(dir, "seccomp.json");
+    await writeFile(
+      profile,
+      JSON.stringify({
+        defaultAction: "SCMP_ACT_ALLOW",
+        syscalls: [
+          { names: ["pidfd_open", "pidfd_send_signal"], action: "SCMP_ACT_ERRNO", errnoRet: 38 },
+        ],
+      }),
+    );
+    device = await startLinuxDevice({ seccompProfile: profile });
+    await installServer(device);
+    device.run("mkdir -m 700 /home/sandbox/state");
+    const server = new HostServer(device);
+    servers.push(server);
+    backend = await hostBackend(server, { stateDir: "/home/sandbox/state" });
+  });
+  afterAll(async () => {
+    for (const s of servers) s.close();
+    device?.remove();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const full = () =>
+    scopeFor(backend.deviceId, {
+      profile: "full-access",
+      filesystem: { kind: "device" },
+      network: { kind: "environment" },
+    });
+
+  it("reports restricted unavailable (the launcher needs pidfds) but keeps Full", async () => {
+    const support = await backend.support();
+    expect(support.restricted).toBeNull();
+    expect(support.fullAccess).toBe(true);
+  });
+
+  it("a Full timeout ends the command and its session", async () => {
+    device.run("mkdir -p /workspace/np");
+    const scope = full();
+    const started = Date.now();
+    const result = await backend.operation(scope, authorityFor(scope.operationId)).exec({
+      command: "cd /workspace/np && (sleep 1000 & echo $! > child); sleep 1001",
+      timeoutMs: 2000,
+      maxOutputBytes: 100,
+      signal: new AbortController().signal,
+    });
+    expect(result).toMatchObject({ timedOut: true, exitCode: null });
+    expect(Date.now() - started).toBeLessThan(15_000);
+    const child = Number(await read("/workspace/np/child"));
+    expect(await inspect(device, { what: "alive", pids: [child] })).toEqual([]);
+  });
+
+  it("a Full abort ends the command and its session", async () => {
+    device.run("mkdir -p /workspace/na");
+    const scope = full();
+    const abort = new AbortController();
+    const running = backend
+      .operation(scope, authorityFor(scope.operationId))
+      .exec({
+        command: "cd /workspace/na && (sleep 1000 & echo $! > child); printf r > ready; sleep 1001",
+        timeoutMs: 600_000,
+        maxOutputBytes: 100,
+        signal: abort.signal,
+      })
+      .catch((error: unknown) => error);
+    while ((await read("/workspace/na/ready")) === null)
+      await new Promise((resolve) => setImmediate(resolve));
+    const child = Number(await read("/workspace/na/child"));
+    abort.abort();
+    await running;
+    expect(await inspect(device, { what: "alive", pids: [child] })).toEqual([]);
   });
 });
