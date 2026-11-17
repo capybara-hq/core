@@ -13,6 +13,7 @@ import { MANAGED_STOP_GRACE_MS, ManagedInstanceMismatchError } from "../backgrou
 import { BackgroundTaskStopper } from "../background/stop.js";
 import { BackgroundTaskStore } from "../background/store.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
+import { isDeviceRequestNotSent } from "../local-devices/relay.js";
 import { checkManagedStart, type ManagedStartArgs } from "./held-operations.js";
 import { type OperationIntent, SandboxOperationIntents } from "./operation-intents.js";
 import { SandboxProviders } from "./providers.js";
@@ -123,6 +124,11 @@ export class SandboxOperationReconcileJob {
         r.value.instanceId,
       );
     } catch (error) {
+      // never sent (the device's connection changed): nothing learned about the first dispatch
+      if (isDeviceRequestNotSent(error)) {
+        await this.intents.deferBackgroundRecovery(operationId);
+        return;
+      }
       if (at.phase === "check" && isSandboxScopeDeniedError(error)) {
         // The kernel will not send it again, but cannot prove the first dispatch had no effect.
         await this.intents.abandonBackgroundLaunch(operationId, "refused");
