@@ -212,16 +212,6 @@ const same = (a: DevicesFullAccessStored, b: DevicesFullAccessStored) =>
   a.permission === b.permission;
 
 /**
- * The one-time conversion of the stored permission keys (B1), run only inside the permission
- * configuration publication transaction under the platform authority write lock (which excludes
- * every org and device writer; the caller locked the org rows to convert before it,
- * {@link lockOrgsWithStoredPermissionKeys}): the deployment setting `devicesAutoMode` becomes
- * `devicesFullAccess`, and every org's `autoMode` becomes `fullAccess` (absent stays absent:
- * the org follows the platform). Values convert exactly; an invalid old value converts to an
- * explicit `off` with a warning. An old and a new value that differ stop the conversion (the
- * caller's transaction rolls back): never pick the wider one. Idempotent.
- */
-/**
  * Locks the org rows {@link convertStoredPermissionKeys} would convert, in id order, before the
  * caller takes the platform authority write lock: the global lock order puts the org row before
  * the permission authority locks (a fenced prelude holds an org row while it waits for its shared
@@ -233,10 +223,22 @@ export async function lockOrgsWithStoredPermissionKeys(db: KernelSchemaDb): Prom
     .select("id")
     .where(sql<boolean>`settings ? ${"autoMode"}`)
     .orderBy("id")
-    .forUpdate()
+    // the conversion updates only `settings`, a non-key column: the org row lock's mode (OrgLock),
+    // which leaves foreign key checks against the org (FOR KEY SHARE) unblocked
+    .forNoKeyUpdate()
     .execute();
 }
 
+/**
+ * The one-time conversion of the stored permission keys (B1), run only inside the permission
+ * configuration publication transaction under the platform authority write lock (which excludes
+ * every org and device writer; the caller locked the org rows to convert before it,
+ * {@link lockOrgsWithStoredPermissionKeys}): the deployment setting `devicesAutoMode` becomes
+ * `devicesFullAccess`, and every org's `autoMode` becomes `fullAccess` (absent stays absent:
+ * the org follows the platform). Values convert exactly; an invalid old value converts to an
+ * explicit `off` with a warning. An old and a new value that differ stop the conversion (the
+ * caller's transaction rolls back): never pick the wider one. Idempotent.
+ */
 export async function convertStoredPermissionKeys(
   db: KernelSchemaDb,
   log?: Pick<KernelLogger, "warn">,
@@ -270,7 +272,7 @@ export async function convertStoredPermissionKeys(
     .select(["id", "settings"])
     .where(sql<boolean>`settings ? ${"autoMode"}`)
     .orderBy("id")
-    .forUpdate()
+    .forNoKeyUpdate()
     .execute();
   for (const org of orgs) {
     const { autoMode, ...rest } = asObject(org.settings);

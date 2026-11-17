@@ -74,8 +74,9 @@ export class ExecutionRevoked extends Error {
  *   (`OrgLock.lockForRemoval`): they wait for the admitted writes, keep new ones out (a later one
  *   then sees the org deleted), and are not starved by a stream of them (the lock queues fairly).
  *
- * Global order: org admission lock → org row → permission authority locks (an ordered prelude,
- * `withTransactionFencePrelude`, runs here) → root conversation → conversation; a writer that
+ * Global order (`OrgLock`): org admission lock → org row → membership → device row → super admin
+ * lock → permission authority locks (an ordered prelude, `withTransactionFencePrelude`, runs here
+ * and takes them with the locks before them) → root conversation → conversation; a writer that
  * locks several conversation or run rows of one tree locks the tree's root first (the fence
  * does, so every fenced write of a tree serializes on its root). A claim never
  * opens a nested fenced `requires_new` transaction (shared or not) and waits for it while its
