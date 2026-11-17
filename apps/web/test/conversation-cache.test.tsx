@@ -485,7 +485,8 @@ describe("the conversation page from the cache", () => {
     expect(await screen.findByText("while away")).toBeTruthy();
     await vi.waitFor(() =>
       expect(gets(calls).sort()).toEqual(
-        [BASE, `${BASE}/files`, `${BASE}/queue`, `${BASE}/device`].sort(),
+        // the owner's permissions too: a profile change while away
+        [BASE, `${BASE}/files`, `${BASE}/queue`, `${BASE}/device`, `${BASE}/permissions`].sort(),
       ),
     );
     window.history.replaceState(null, "", "/");
@@ -674,7 +675,9 @@ describe("owner permission read boundaries through the actual route", () => {
       permission,
     );
     expect(result.calls.some((c) => c.url.includes("/conversations/root"))).toBe(false);
-    expect(browser).toEqual([]);
+    // after the first paint, the owner child's root subscription reads only the root's row (its
+    // cursor; Task 10D), never the root's log
+    expect(browser.map((c) => c.url)).toEqual(["/api/v1/orgs/o1/conversations/root"]);
   });
 
   it("an owned scheduled conversation still schedules its supported owner GET", async () => {

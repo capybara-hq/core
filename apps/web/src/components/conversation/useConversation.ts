@@ -26,10 +26,14 @@ import {
   isPlatformCallDone,
   loadEarlierEvents,
 } from "../../lib/query/conversation";
+import { inboxChangeKeys } from "../../lib/query/inbox";
 import { keys } from "../../lib/query/keys";
 import { useAppMutation } from "../../lib/query/mutation";
+import { raisePermissionWatermark, refreshPermissionViews } from "../../lib/query/permission-state";
+import { meQuery } from "../../lib/query/shell";
 import { refreshUiViews } from "../../lib/query/ui";
 import { HOME_PATH } from "../../lib/routes";
+import type { Me } from "../../lib/session";
 import { useStopUnderWay } from "../../lib/stop";
 import {
   acceptCompaction,
@@ -306,6 +310,25 @@ export function useConversation(orgId: string, conversationId: string): Conversa
           // A pending approval changed without a decision: its card reads it again.
           if (added > 0 && e.type === "approval_updated") {
             invalidate(keys.org(orgId).approval(e.payload.approvalId));
+          }
+          // A permission change made this card stale for good (superseded): its approval and the
+          // inbox read again; the log already draws the card as final.
+          if (added > 0 && e.type === "approval_decided" && e.payload.decision === "superseded") {
+            invalidate(keys.org(orgId).approval(e.payload.approvalId));
+            for (const k of inboxChangeKeys(orgId)) invalidate(k);
+          }
+          // This root's profile changed (here or elsewhere): views naming it are not confirmed
+          // until a read reaches the event's revision (the watermark is raised first). A viewer's
+          // owner read has no observer, so nothing is read for it.
+          if (added > 0 && e.type === "permission_profile_changed") {
+            const accountId = qc.getQueryData<Me>(meQuery().queryKey)?.account.id;
+            if (accountId !== undefined)
+              raisePermissionWatermark(
+                qc,
+                { accountId, orgId, rootId: conversationId },
+                e.payload.revision,
+              );
+            refreshPermissionViews(qc, orgId, conversationId);
           }
           // The catch-up delivered something: what lives outside the log may have changed too.
           if (catchingUp.current && added > 0) {

@@ -81,8 +81,23 @@ export interface ReviewRecord {
   commandHash?: string;
 }
 
+/**
+ * The exact reach a permission approval grants (permission profiles, Task 7): each directory with
+ * its descendants (write directories may also be read) and each host. Shown whole, never clipped.
+ */
+export interface PermissionScope {
+  readDirectories: string[];
+  writeDirectories: string[];
+  hosts: string[];
+}
+
 /** A `command` ask's facts (auto mode spec §5.4; display only). */
 export interface CommandAsk {
+  /** The exact reach this ask grants (absent in older logs). */
+  permissionScope?: PermissionScope;
+  /** The file the call targets, informational only: the scope names its directory. */
+  targetPath?: string;
+  candidateHash?: string;
   kind: "command" | "write";
   /** The command text, or the tool key of the write. */
   command: string;
@@ -303,8 +318,14 @@ type EventBody =
       payload: {
         approvalId: string;
         callId: string;
-        /** `skipped`: a network ask the person answered with a message instead. */
-        decision: "approved" | "denied" | "expired" | "cancelled" | "skipped";
+        /**
+         * `skipped`: a network ask the person answered with a message instead. `superseded`: a
+         * permission change (`reason` `user` / `authority-changed`, at root `revision`) replaced
+         * the pending ask; nobody decided it.
+         */
+        decision: "approved" | "denied" | "expired" | "cancelled" | "skipped" | "superseded";
+        /** The root permission revision that superseded the ask. */
+        revision?: number;
         scope?: "once" | "session" | "always";
         byAccountId: string | null;
         /** The reason given with a denial. */

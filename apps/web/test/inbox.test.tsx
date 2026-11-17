@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
+import { keys } from "../src/lib/query/keys";
 import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
@@ -333,6 +334,112 @@ describe("inbox: command review asks (auto mode spec §5.4)", () => {
     const scopes = await screen.findByRole("radiogroup", { name: en.approval.scopeLabel });
     expect(within(scopes).getAllByRole("radio")).toHaveLength(1);
     expect(within(scopes).queryByText(en.approval.scope.session)).toBeNull();
+  });
+});
+
+describe("inbox: exact permission scope and superseded asks (Task 10D)", () => {
+  const LONG = `/outside/${"very-long-directory-name-".repeat(12)}end`;
+  const SCOPE = {
+    readDirectories: ["/outside/reports", LONG],
+    writeDirectories: ["/outside/reports"],
+    hosts: ["api.example.com", "files.example.org"],
+  };
+  const scoped = (over: Record<string, unknown> = {}) =>
+    approval("a", {
+      kind: "command",
+      toolKey: "Write",
+      toolName: "Write",
+      connector: null,
+      input: {},
+      scopes: ["once"],
+      command: {
+        deviceId: "d1",
+        deviceName: "box",
+        mode: "auto",
+        kind: "write",
+        command: "Write",
+        path: "/outside/reports/report.txt",
+        rule: null,
+        reason: "Writes outside the project",
+        permissionScope: SCOPE,
+        targetPath: "/outside/reports/report.txt",
+      },
+      ...over,
+    });
+  const values = (container: HTMLElement, k: string) =>
+    [
+      ...container.querySelectorAll(
+        `[data-role="permission-scope"] [data-scope="${k}"] [data-pre="true"]`,
+      ),
+    ].map((e) => e.textContent);
+
+  it("shows the same exact directories, hosts and separate target file as the conversation", async () => {
+    const { container } = await renderInbox({ [LIST]: () => json(200, inbox([scoped()])) });
+    expect(await screen.findByText(en.approval.command.titleWrite)).toBeTruthy();
+    expect(values(container, "write")).toEqual(["/outside/reports"]);
+    expect(values(container, "read")).toEqual(["/outside/reports", LONG]);
+    expect(values(container, "hosts")).toEqual(["api.example.com", "files.example.org"]);
+    expect(values(container, "target")).toEqual(["/outside/reports/report.txt"]);
+    expect(screen.getByRole("button", { name: en.approval.approve })).toBeTruthy();
+  });
+
+  it("a superseded item (a cached list) offers no approve, deny or scope", async () => {
+    const { container } = await renderInbox(
+      {
+        [LIST]: () =>
+          json(
+            200,
+            inbox([
+              scoped({
+                status: "superseded",
+                supersededRevision: 5,
+                supersededReason: "authority-changed",
+              }),
+            ]),
+          ),
+      },
+      { locale: "zh" },
+    );
+    expect(await screen.findByText(zh.approval.superseded.authorityChanged)).toBeTruthy();
+    expect(screen.getByText(zh.approval.decision.superseded)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: zh.approval.approve })).toBeNull();
+    expect(screen.queryByRole("button", { name: zh.approval.deny })).toBeNull();
+    expect(screen.queryByRole("radiogroup")).toBeNull();
+    expect(values(container, "hosts")).toEqual(["api.example.com", "files.example.org"]);
+  });
+
+  it("a listed pending item this tab already knows as superseded loses its actions, without a read", async () => {
+    const { client, calls } = await renderInbox({ [LIST]: () => json(200, inbox([scoped()])) });
+    expect(await screen.findByRole("button", { name: en.approval.approve })).toBeTruthy();
+    // a conversation's stream or card read it superseded meanwhile
+    act(() =>
+      client.setQueryData(keys.org("o1").approval("a"), {
+        ...scoped(),
+        status: "superseded",
+        supersededRevision: 2,
+        supersededReason: "user",
+      }),
+    );
+    expect(await screen.findByText(en.approval.superseded.user)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: en.approval.approve })).toBeNull();
+    expect(screen.queryByRole("radiogroup")).toBeNull();
+    expect(calls.filter((c) => c.url.includes("/approvals/"))).toEqual([]);
+  });
+
+  it("a late decision on an item superseded meanwhile reads the inbox again and never retries", async () => {
+    let listed = 0;
+    const { calls } = await renderInbox({
+      [LIST]: () => json(200, inbox(++listed <= 1 ? [scoped()] : [])),
+      "GET /api/v1/orgs/o1/inbox/count": () => json(200, { count: 0 }),
+      "POST /api/v1/orgs/o1/approvals/a/decision": () =>
+        json(409, {
+          error: { code: "approval.already_decided", message: "Approval already decided" },
+        }),
+    });
+    await userEvent.setup().click(await screen.findByRole("button", { name: en.approval.approve }));
+    expect(await screen.findByText(en.inbox.empty)).toBeTruthy();
+    expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
+    expect(calls.filter((c) => c.url === "/api/v1/orgs/o1/inbox").length).toBeGreaterThan(0);
   });
 });
 

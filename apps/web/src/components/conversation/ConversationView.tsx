@@ -32,7 +32,6 @@ import {
 } from "../../lib/query/conversation";
 import { keys as queryKeys } from "../../lib/query/keys";
 import { useAppMutation } from "../../lib/query/mutation";
-import { permissionsQuery } from "../../lib/query/permissions";
 import { scheduleQuery } from "../../lib/query/schedules";
 import { useWhoWaits } from "../../lib/query/who-waits";
 import { runParts } from "../../lib/run-row";
@@ -77,11 +76,12 @@ import {
   newClientMessageId,
 } from "./ComposerBar";
 import { LeftoverBubbles, PendingBubbles, usePendingSends } from "./PendingBubbles";
-import { recordedProfile, useLockedPermissionPicker } from "./PermissionPicker";
+import { useConversationPermission } from "./PermissionPicker";
 import { useDeviceRefresh } from "./PropertiesSections";
 import { useRightAreaSlot } from "./RightArea";
 import { Thread, type ThreadProps } from "./Thread";
 import { type SendResult, useConversation } from "./useConversation";
+import { useRootPermissionSubscription } from "./useRootPermissionSubscription";
 import { lockedDevicePicker, useSelection } from "./useSelection";
 
 /**
@@ -262,27 +262,24 @@ export function useConversationPage(
       onInspect: inspectProject,
     };
   }
-  // The permission profile: an owner-only read (an unknown owner never authorizes it, as in the
-  // route's prefetch), shown read-only; a shared viewer reads and sees nothing.
-  const row = conv.conversation;
-  const owner = row !== undefined && row.accountId === session.me.account.id;
-  const permissionsQ = permissionsQuery(orgId, conversationId);
-  const permissions = useQuery({
-    ...permissionsQ,
-    enabled: owner,
-    retryOnMount: retryOnMountOf(permissionsQ.queryKey),
+  // The permission profile (owner only; a shared viewer reads and sees nothing): editable on an
+  // interactive root once confirmed, locked on a child (inherited) or a scheduled task's.
+  const permission = useConversationPermission({
+    orgId,
+    conversationId,
+    row: conv.conversation,
+    events: conv.events,
+    // unknown while the bound device is read (Full waits for it)
+    deviceLabel: device.data ? deviceName(device.data) : undefined,
   });
-  // Until the owner's read lands (a conversation just created by its first message), the profile
-  // the log recorded for it is shown: never a default, never a fabricated view.
-  const recorded = owner ? recordedProfile(conv.events) : undefined;
-  const permissionPicker = useLockedPermissionPicker(
-    owner ? (permissions.data?.profile ?? recorded) : undefined,
-    permissions.data !== undefined && permissions.data.rootConversationId !== conversationId
-      ? "inherited"
-      : row?.scheduledTaskId
-        ? "scheduled"
-        : "profile",
-  );
+  const permissionPicker = permission.picker;
+  // an owner's child follows its root's profile live through the root's stream
+  useRootPermissionSubscription({
+    orgId,
+    accountId: session.me.account.id,
+    viewedId: conversationId,
+    rootId: permission.inheritedRootId,
+  });
   const keys = useMemo(() => toolKeysOf(conv.events), [conv.events]);
   const info = useToolInfo(orgId, conversationId, keys);
   useDeviceRefresh(orgId, conversationId, conv.events);
@@ -558,6 +555,7 @@ export function useConversationPage(
     composer: ({ sendDisabled }) => (
       <Stack gap={8}>
         {conv.error !== undefined && <FormError message={conv.error} />}
+        {permission.notice}
         <ComposerBar
           orgId={orgId}
           sendDisabled={sendDisabled}
@@ -653,6 +651,7 @@ export function useConversationPage(
         />
       ) : null}
       {slot.agentMap}
+      {permission.dialog}
     </>
   );
   return { page, dialogs };

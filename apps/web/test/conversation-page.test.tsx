@@ -133,10 +133,13 @@ describe("the conversation page (ConversationPage)", () => {
     await screen.findByRole("button", { name: `${en.chat.pickModel}: Fake 1` });
     const bar = container.querySelector('[data-part="composer"]') as HTMLElement;
     expect(bar).not.toBeNull();
-    // the only read-only value is the owner's permission profile, never an agent picker
-    expect([...bar.querySelectorAll('[data-locked="true"]')].map((e) => e.textContent)).toEqual([
-      en.chat.permission.profile.approveForMe,
-    ]);
+    // no read-only value at all: the owner edits the permission profile, never an agent picker
+    expect([...bar.querySelectorAll('[data-locked="true"]')].map((e) => e.textContent)).toEqual([]);
+    expect(
+      within(bar).getByRole("button", {
+        name: `${en.chat.permission.label}: ${en.chat.permission.profile.approveForMe}`,
+      }),
+    ).toBeTruthy();
     expect(bar.textContent).not.toContain("Echo agent");
   });
 
@@ -1353,7 +1356,7 @@ describe("the first open after the server's snapshot (web query cache spec §6)"
     });
     await vi.waitFor(() =>
       expect(new Set(calls.map((c) => c.url.split("?")[0]))).toEqual(
-        new Set([BASE, `${BASE}/queue`, `${BASE}/files`, `${BASE}/device`]),
+        new Set([BASE, `${BASE}/queue`, `${BASE}/files`, `${BASE}/device`, `${BASE}/permissions`]),
       ),
     );
     expect(await screen.findByText("while away")).toBeTruthy();

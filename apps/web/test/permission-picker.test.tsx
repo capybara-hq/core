@@ -74,7 +74,7 @@ function Harness({ deviceId, project, deviceLabel = "Laptop", initial }: Where) 
         }}
         send={{ mode: "send", onClick: () => {} }}
       />
-      <output data-testid="selection">{JSON.stringify(choice.selection)}</output>
+      <output data-testid="selection">{JSON.stringify(choice.selection ?? null)}</output>
       {choice.dialog}
     </>
   );
@@ -407,6 +407,27 @@ describe("a starting choice that arrives after mount (review M2)", () => {
   });
 });
 
+describe("a recorded Full access is the current state, never a new consent (10C review Minor 1)", () => {
+  it("shows Full checked but yields no selection; choosing Full again needs the dialog", async () => {
+    const user = userEvent.setup();
+    mount({ deviceId: "d1", initial: "full-access" });
+    expect(permissionButton().getAttribute("aria-label")).toBe("Permissions: Full access");
+    // no consent was given here: nothing could send or PATCH Full access
+    expect(screen.getByTestId("selection").textContent).toBe("null");
+    let menu = await openMenu(user);
+    await user.click(within(menu).getByRole("menuitemradio", { name: "Approve for me" }));
+    expect(selection()).toEqual({ profile: "approve-for-me" });
+    await waitFor(async () => {
+      menu = await openMenu(user);
+      expect(full(menu).getAttribute("aria-disabled")).toBeNull();
+      await user.click(full(menu));
+    });
+    const dialog = screen.getByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Use Full access" }));
+    expect(selection()).toEqual({ profile: "full-access", consentScopeRevision: "scope-1" });
+  });
+});
+
 describe("the review model note and its settings link", () => {
   it("an org admin gets the model purposes link", async () => {
     const user = userEvent.setup();
@@ -482,7 +503,7 @@ const composerPermission = () =>
     '[data-part="composer-pickers"] [data-locked="true"][title], [data-part="composer-pickers"] .cb-picker[data-locked="true"]',
   );
 
-describe("where the choice shows (editable in a new conversation, read-only until live changes land)", () => {
+describe("where the choice shows (editable in a new conversation and an owner's interactive root)", () => {
   it("a new conversation offers the choice, Approve for me by default, on desktop and phone", async () => {
     const browser = expectNoFirstPaintFetch();
     await renderRouteWithCache("/", homeRoutes(), { locale: "en" });
@@ -496,19 +517,17 @@ describe("where the choice shows (editable in a new conversation, read-only unti
     expect(browser).toEqual([]);
   });
 
-  it("the owner sees the conversation's recorded profile from the hydrated read", async () => {
+  it("the owner of an interactive root edits the profile from the hydrated read", async () => {
     const browser = expectNoFirstPaintFetch();
     await renderRouteWithCache(
       "/chat/c1",
       chatRoutes("c1", {}, permissionsView({ profile: "request-approval", revision: 3 })),
       { locale: "en" },
     );
-    await screen.findAllByText("Request approval");
-    const locked = composerPermission();
-    expect(locked?.textContent).toBe("Request approval");
-    expect(locked?.getAttribute("title")).toBe(
-      "Works directly in the project and asks you before going beyond it.",
-    );
+    const pickers = document.querySelector('[data-part="composer-pickers"]') as HTMLElement;
+    const button = within(pickers).getByRole("button", { name: /^Permissions/ });
+    expect(button.getAttribute("aria-label")).toBe("Permissions: Request approval");
+    expect(composerPermission()).toBeNull();
     expect(browser).toEqual([]);
   });
 

@@ -1605,7 +1605,13 @@
         "limits": "这不是 root 权限：sudo 仍可能要求密码，平台和组织的禁止规则仍然有效。",
         "confirm": "使用完全访问",
         "cancel": "取消"
-      }
+      },
+      "unconfirmed": "这是上次确认的权限，确认最新状态之前不能再次更改。",
+      "unconfirmedFailed": "无法确认当前权限，显示的是上次确认的值。",
+      "refresh": "刷新",
+      "changed": "权限已更改。更改只对新的操作生效，已开始的工作保留开始时的权限。",
+      "conflict": "权限或其范围已在此期间变化，请查看当前选择后重新选择。",
+      "unknownOutcome": "未收到回应，更改可能已保存，也可能未保存。显示的是上次确认的值。"
     },
     "firstSend": {
       "unconfirmed": "之前的消息没有收到回应，可能已经创建了对话。",
@@ -1977,7 +1983,8 @@
       "denied": "已拒绝",
       "expired": "已过期",
       "cancelled": "已取消",
-      "skipped": "已跳过"
+      "skipped": "已跳过",
+      "superseded": "已被取代"
     },
     "decidedBy": "处理人：{who}",
     "you": "你",
@@ -2010,6 +2017,18 @@
         "failed": "设备的网络规则修改没有生效：{message} 你可以重新处理。",
         "appliedUndecided": "设备已经允许，但做出这个选择的人已不能处理这条请求。"
       }
+    },
+    "permissionScope": {
+      "intro": "批准后仅本次操作获得以下访问范围，每个目录包含其中的全部内容。",
+      "write": "读写",
+      "read": "只读",
+      "hosts": "网络主机",
+      "target": "目标文件（仅供参考）"
+    },
+    "superseded": {
+      "user": "在有人处理之前，权限更改取代了此请求，未获批准；如仍需要，会出现新的请求。",
+      "authorityChanged": "在有人处理之前，设备或组织的权限变化取代了此请求，未获批准。",
+      "revision": "权限版本 {n}"
     }
   },
   "question": {
@@ -5411,7 +5430,8 @@
       "loadFailed": "无法打开该子智能体。"
     },
     "contextTotal": "含子智能体的 token 总数 {n}",
-    "background": "后台任务"
+    "background": "后台任务",
+    "startingGrant": "运行中的工作保留开始时的权限，权限更改只对新的操作生效；撤销设备或组织的访问仍可能使其停止。"
   },
   "background": {
     "inBackground": "后台运行",
