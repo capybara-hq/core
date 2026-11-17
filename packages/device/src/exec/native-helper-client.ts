@@ -36,6 +36,10 @@ export interface NativeHelperLaunch {
 }
 // The pinned SDK source remains unchanged. This fixed transport only establishes its exact
 // directory roots; the ancestor descriptor never becomes a NativeFiles data grant.
+/** The native helper by name: the bundle also carries the Linux launcher, so order is not relied on. */
+const NATIVE_FILES_SOURCE =
+  SANDBOX_RUNTIME_SOURCE.files.find((file) => file.name === "native-files.py")?.source ?? "";
+
 const PRELUDE = String.raw`
 import os,json,sys,errno
 expected=json.loads(sys.argv[2])
@@ -103,13 +107,7 @@ export function nativeHelperInvocation(
   });
   return {
     command: launch.pythonPath,
-    args: [
-      "-I",
-      "-c",
-      PRELUDE,
-      SANDBOX_RUNTIME_SOURCE.files[0]?.source ?? "",
-      JSON.stringify(expected),
-    ],
+    args: ["-I", "-c", PRELUDE, NATIVE_FILES_SOURCE, JSON.stringify(expected)],
   };
 }
 /** Fixed helper only. Descriptor 3 is a private handshake, never command stdout. */
@@ -127,7 +125,7 @@ export async function runNativeHelper(
   });
   const child = (launch.spawn ?? spawn)(
     launch.pythonPath,
-    ["-I", "-c", PRELUDE, SANDBOX_RUNTIME_SOURCE.files[0]?.source ?? "", JSON.stringify(expected)],
+    ["-I", "-c", PRELUDE, NATIVE_FILES_SOURCE, JSON.stringify(expected)],
     { detached: true, stdio: ["pipe", "pipe", "pipe", "pipe", ...roots.map((r) => r.fd)] },
   );
   let bytes = 0;
