@@ -11,10 +11,12 @@ import {
   enumerateInstalled,
   environmentHash,
   hashRegularFile,
+  helperPythonSources,
   installedLayout,
   type ManifestLayout,
   manifestHash,
   moduleImports,
+  pythonImports,
   RuntimeManifestError,
   verifyInstalledRuntime,
 } from "../src/exec/runtime-manifest.js";
@@ -280,5 +282,37 @@ describe("environment fingerprint", () => {
       ...collected,
       environmentBoundaryDigest: "",
     });
+  });
+});
+
+describe("environment covers every helper import (fix round 1, M2)", () => {
+  it("parses the imports of the shipped Python helpers", () => {
+    expect(
+      pythonImports("import os, sys as s\n  from urllib.parse import quote\nimport a.b # c\n"),
+    ).toEqual(["a.b", "os", "sys", "urllib.parse"]);
+    const all = new Set(helperPythonSources().flatMap(pythonImports));
+    for (const m of ["urllib.parse", "re", "base64", "json", "errno", "stat"])
+      expect(all).toContain(m);
+  });
+  it("fingerprints the file of every module a helper imports", async () => {
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const modules = [...new Set(helperPythonSources().flatMap(pythonImports))];
+    // where the interpreter loads each one from (built-in modules have no file)
+    const origins = JSON.parse(
+      (
+        await promisify(execFile)("/usr/bin/python3", [
+          "-I",
+          "-c",
+          "import json,sys,importlib,os\nprint(json.dumps([os.path.realpath(f) for f in [getattr(importlib.import_module(m),'__file__',None) for m in json.loads(sys.argv[1])] if f]))",
+          JSON.stringify(modules),
+        ])
+      ).stdout,
+    ) as string[];
+    expect(origins.some((o) => o.endsWith("urllib/parse.py"))).toBe(true);
+    const collected = await collectEnvironment(env);
+    const names = collected.interpreterLibraryEntries.map((e) => e[0]);
+    for (const origin of origins)
+      expect(names.some((n) => origin.endsWith(n.replace(/^python(-abs)?\//, "")))).toBe(true);
   });
 });

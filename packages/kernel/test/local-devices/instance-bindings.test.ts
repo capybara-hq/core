@@ -231,7 +231,7 @@ it("serializes creates within one database millisecond to consecutive generation
   const a = await f.create();
   const b = await f.create();
   expect([Number(a), Number(b)]).toEqual([now, now + 1]);
-  expect((await f.binding(b))?.previous_generation).toBeNull();
+  expect((await f.binding(b))?.previous_generation).toBe(a);
 });
 
 it("refuses an unordered prior generation instead of guessing a high-water mark", async () => {
@@ -472,4 +472,258 @@ it("a new machine credential is never asked to confirm another machine's binding
     .execute();
   const g = await f.create();
   expect((await f.binding(g))?.previous_generation).toBeNull();
+});
+
+// ---- fix round 1: binding chain (I2), transaction rule (M5), allocation races (M7), retention (M8)
+
+/** The real device half: the staged binder over a real operation backend, in an owned directory. */
+async function realDevice(deviceId: string, credential: string, stateDir?: string) {
+  const { mkdtemp, mkdir, realpath } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { InstanceBinder, credentialIdentity } = await import(
+    "../../../device/src/exec/instance-binding.js"
+  );
+  const { createMacOperationBackend } = await import(
+    "../../../device/src/exec/mac-operation-backend.js"
+  );
+  const dir = stateDir ?? (await realpath(await mkdtemp(join(tmpdir(), "cap-kernel-binding-"))));
+  const roots = { workspace: join(dir, "w"), skills: join(dir, "s"), tmp: join(dir, "t") };
+  for (const r of Object.values(roots)) await mkdir(r, { recursive: true });
+  const binder = new InstanceBinder({
+    deviceId,
+    credentialIdentity: credentialIdentity(credential),
+    stateDir: dir,
+    createBackend: (instanceGeneration) =>
+      createMacOperationBackend(
+        {
+          deviceId,
+          instanceGeneration,
+          stateDir: dir,
+          roots,
+          pythonPath: "/usr/bin/python3",
+          readOwnerCeiling: async () => ({
+            revision: "r",
+            fullAccess: true,
+            roots,
+            restrictedProjectReach: "workspace",
+            restrictedAllowedDomains: [],
+            restrictedDeniedReadRoots: [],
+            preparation: { skillsRoot: roots.skills, attachmentsBase: join(roots.workspace, "a") },
+            fullNetwork: "environment",
+          }),
+        },
+        { platform: "darwin", watch: () => () => {} },
+      ),
+    verify: async () => ({
+      runtimeHash: "a".repeat(64),
+      helperHash: "b".repeat(64),
+      imageFingerprint: "c".repeat(64),
+    }),
+    ownerReport: async () => ({
+      version: 2,
+      sequence: 1,
+      revision: "owner-1",
+      fullAccess: true,
+      restrictedProjectReach: "workspace",
+      restrictedAllowedDomains: [],
+    }),
+  });
+  return { binder, dir };
+}
+
+/** The relay delivers bindInstance to `device`; `lose` drops the answer after the device acted. */
+function relayTo(device: { binder: { bind: (r: never, s: AbortSignal) => Promise<unknown> } }) {
+  const relay = k.app.get(LocalDeviceRelay);
+  const state = { lose: false };
+  vi.spyOn(relay, "connection").mockResolvedValue({ connectionId: "c1", maxFrameBytes: 69632 });
+  vi.spyOn(relay, "callV3").mockImplementation(async (_d, op, args, opts) => {
+    expect(op).toBe("bindInstance");
+    const answer = await device.binder.bind(args as never, opts.signal);
+    if (state.lose) throw new Error("device.offline: the answer was lost");
+    return answer;
+  });
+  return state;
+}
+
+it("a lost answer, then a replacement: the next binding follows what was sent (cross-side)", async () => {
+  const f = await localDevice();
+  const device = await realDevice(f.deviceId, "credential-1");
+  const bindings = k.app.get(LocalInstanceBindings);
+  const g1 = await f.create();
+  const relay = relayTo(device);
+  relay.lose = true;
+  await expect(bindings.bind(f.deviceId, AbortSignal.timeout(5000))).rejects.toThrow("lost");
+  expect((await f.binding(g1))?.status).toBe("awaiting-device");
+  // the device persisted G1; the kernel replaces the instance before ever installing it
+  const g2 = await f.create();
+  expect((await f.binding(g2))?.previous_generation).toBe(g1);
+  relay.lose = false;
+  await bindings.bind(f.deviceId, AbortSignal.timeout(5000));
+  expect((await f.binding(g2))?.status).toBe("installed");
+  expect((await f.report()).state).toBe("supported");
+});
+
+it("a re-login binds its first generation on a device that kept the old binding (cross-side)", async () => {
+  const f = await localDevice();
+  const old = await realDevice(f.deviceId, "credential-1");
+  const bindings = k.app.get(LocalInstanceBindings);
+  await f.create();
+  relayTo(old);
+  await bindings.bind(f.deviceId, AbortSignal.timeout(5000));
+  await f.db
+    .updateTable("device_machines")
+    .set({ revoked_at: new Date() })
+    .where("id", "=", f.machineId)
+    .execute();
+  await f.db
+    .insertInto("device_machines")
+    .values({
+      org_id: f.orgId,
+      device_id: f.deviceId,
+      account_id: f.accountId,
+      credential_hash: randomUUID(),
+      name: "Laptop",
+      os: "linux",
+      arch: "x64",
+      program_version: "0.1.0",
+      roots: JSON.stringify(ROOTS),
+    })
+    .execute();
+  const g = await f.create();
+  // the same state directory, a new credential
+  const relogged = await realDevice(f.deviceId, "credential-2", old.dir);
+  vi.restoreAllMocks();
+  relayTo(relogged);
+  await bindings.bind(f.deviceId, AbortSignal.timeout(5000));
+  expect((await f.binding(g))?.status).toBe("installed");
+});
+
+it("two devices sharing a state directory each bind their own chain (cross-side)", async () => {
+  const a = await localDevice();
+  const b = await localDevice();
+  const first = await realDevice(a.deviceId, "credential-a");
+  const second = await realDevice(b.deviceId, "credential-b", first.dir);
+  const bindings = k.app.get(LocalInstanceBindings);
+  const ga = await a.create();
+  const gb = await b.create();
+  const relay = k.app.get(LocalDeviceRelay);
+  vi.spyOn(relay, "connection").mockResolvedValue({ connectionId: "c1", maxFrameBytes: 69632 });
+  vi.spyOn(relay, "callV3").mockImplementation(async (deviceId, _op, args, opts) =>
+    (deviceId === a.deviceId ? first : second).binder.bind(args as never, opts.signal),
+  );
+  await bindings.bind(a.deviceId, AbortSignal.timeout(5000));
+  await bindings.bind(b.deviceId, AbortSignal.timeout(5000));
+  expect((await a.binding(ga))?.status).toBe("installed");
+  expect((await b.binding(gb))?.status).toBe("installed");
+});
+
+it("bind refuses to hold a transaction across the device round trip", async () => {
+  const f = await localDevice();
+  await f.create();
+  deviceAnswers();
+  await expect(
+    k.app
+      .get(TransactionHost)
+      .run(() => k.app.get(LocalInstanceBindings).bind(f.deviceId, AbortSignal.timeout(5000))),
+  ).rejects.toThrow("transaction");
+});
+
+it("concurrent commits of one fence allocate one generation and one binding", async () => {
+  const f = await localDevice();
+  const writes = k.app.get(PermissionInstanceWrites);
+  const commit = () =>
+    writes.commitHandle(
+      f.orgId,
+      f.deviceId,
+      0,
+      ROOTS,
+      { status: "running", handle: JSON.stringify({ id: f.deviceId, roots: ROOTS }) },
+      new AbortController().signal,
+    );
+  const results = await Promise.allSettled([commit(), commit(), commit()]);
+  const won = results.filter((r) => r.status === "fulfilled");
+  expect(won).toHaveLength(1);
+  const g = String((won[0] as PromiseFulfilledResult<Date>).value.getTime());
+  const marks = await f.db
+    .selectFrom("device_generation_high_water")
+    .select("high_water_ms")
+    .where("device_id", "=", f.deviceId)
+    .execute();
+  expect(marks.map((m) => String(m.high_water_ms))).toEqual([g]);
+  const rows = await f.db
+    .selectFrom("device_instance_bindings")
+    .select("instance_generation")
+    .where("device_id", "=", f.deviceId)
+    .execute();
+  expect(rows).toEqual([{ instance_generation: g }]);
+});
+
+it("a lost commit reply is reconciled from the committed binding without allocating", async () => {
+  const f = await localDevice();
+  const g = await f.create(); // the commit landed; pretend its caller never saw the answer
+  const mark = async () =>
+    (
+      await f.db
+        .selectFrom("device_generation_high_water")
+        .select("high_water_ms")
+        .where("device_id", "=", f.deviceId)
+        .executeTakeFirstOrThrow()
+    ).high_water_ms;
+  const before = await mark();
+  // another holder finds the same committed generation and binding
+  const committed = await k.app.get(LocalInstanceBindings).committed(f.deviceId);
+  expect(committed?.request.instanceGeneration).toBe(g);
+  const sent = deviceAnswers();
+  await k.app.get(LocalInstanceBindings).bind(f.deviceId, AbortSignal.timeout(5000));
+  expect(sent[0]?.bindingId).toBe(committed?.request.bindingId);
+  expect(await mark()).toBe(before);
+  expect((await f.binding(g))?.status).toBe("installed");
+});
+
+it("old bindings are pruned except the chain, the latest per machine and owed retirements", async () => {
+  const f = await localDevice();
+  const bindings = k.app.get(LocalInstanceBindings);
+  // the second generation still owes a revoked task's exact stop
+  const owe = (generation: string) =>
+    f.db
+      .insertInto("sandbox_operation_intents")
+      .values({
+        operation_id: randomUUID(),
+        org_id: f.orgId,
+        account_id: f.accountId,
+        device_id: f.deviceId,
+        ordinal: 0,
+        method: "backgroundStart",
+        input_hash: "i",
+        admission_hash: "a",
+        granted_hosts: "[]",
+        input: "{}",
+        scope: "{}",
+        epochs: JSON.stringify({ platform: 0, org: 0, device: 0, root: 0 }),
+        provider: "@local",
+        provider_version: "0.1.0",
+        instance_generation: generation,
+        execution_id: randomUUID(),
+        deadline: new Date(),
+        retain_until: new Date(Date.now() + 60000),
+        state: "revoked",
+      })
+      .execute();
+  const gens: string[] = [];
+  for (let i = 0; i < 4; i++) {
+    gens.push(await f.create());
+    vi.restoreAllMocks();
+    deviceAnswers();
+    await bindings.bind(f.deviceId, AbortSignal.timeout(5000));
+    if (i === 1) await owe(gens[1] as string);
+  }
+  const g5 = await f.create();
+  const kept = await f.db
+    .selectFrom("device_instance_bindings")
+    .select("instance_generation")
+    .where("device_id", "=", f.deviceId)
+    .orderBy("instance_generation")
+    .execute();
+  expect(kept.map((r) => r.instance_generation)).toEqual([gens[1], gens[3], g5]);
 });
