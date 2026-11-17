@@ -7,6 +7,7 @@ import { KernelConfigSchema } from "../../src/config/schema.js";
 import { EventLog } from "../../src/conversations/event-log.js";
 import { PermissionProfilesService } from "../../src/conversations/permission-profiles.service.js";
 import { createDb } from "../../src/db/pool.js";
+import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import {
   runOutsideTransaction,
   TransactionHost,
@@ -28,6 +29,7 @@ import { SandboxOperationIntents } from "../../src/sandbox/operation-intents.js"
 import { PermissionAuthorityEpochStore } from "../../src/sandbox/permission-authority-epochs.js";
 import { PermissionAuthorityLock } from "../../src/sandbox/permission-authority-lock.js";
 import { PermissionCallGrants } from "../../src/sandbox/permission-call-grants.js";
+import { PermissionCeilingWrites } from "../../src/sandbox/permission-ceiling-writes.js";
 import { PermissionConfigPublication } from "../../src/sandbox/permission-config-publication.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { PermissionRuntimeReports } from "../../src/sandbox/permission-runtime-reports.js";
@@ -156,6 +158,13 @@ afterEach(() => {
 });
 
 const signal = () => new AbortController().signal;
+const deferred = () => {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+};
 const must = <T>(value: T | undefined): T => {
   if (value === undefined) throw new Error("expected a recorded permission context");
   return value;
@@ -362,7 +371,7 @@ describe("recorded permission context recorder", () => {
           () => runOutsideTransaction(() => recorder.record(inputOf(replaced), signal())),
         ),
       ),
-    ).toEqual(expect.any(String));
+    ).toBe(PERMISSION_CONTEXT_RUN_ERRORS.invalid.code);
     expect(await contexts(raw, replaced.rootId)).toEqual([]);
     await f.db
       .updateTable("conversations")
@@ -423,6 +432,7 @@ describe("recorded permission context recorder", () => {
         (e: unknown) => e,
       );
     expect(error).toBeInstanceOf(RunError);
+    expect((error as RunError).code).toBe(PERMISSION_CONTEXT_RUN_ERRORS.invalid.code);
     expect(await contexts(raw, f.rootId)).toEqual([]);
   });
 
@@ -978,7 +988,7 @@ describe("permission context projection", () => {
         .execute();
     // the context is no-send (no event); admission refuses on the same first predicate (the
     // owned root of an active member, `readOwnedRoot`), and its actor check backs it under the locks
-    expect(await runErrorCode(record(f))).toEqual(expect.any(String));
+    expect(await runErrorCode(record(f))).toBe(PERMISSION_CONTEXT_RUN_ERRORS.actor.code);
     expect(await contexts(raw, f.rootId)).toEqual([]);
     await expect(
       k.app.get(SandboxOperationAuthority).resolve(
@@ -992,6 +1002,71 @@ describe("permission context projection", () => {
         signal(),
       ),
     ).rejects.toMatchObject({ code: "conversation.not_found" });
+  });
+
+  it("an actor disabled while admission waits for its authority locks is refused by the backstop", async () => {
+    const f = await seedContext(k, raw);
+    const host = k.app.get(TransactionHost);
+    const held = deferred();
+    const go = deferred();
+    // the account disable's own order: the platform write lock, then the status (uncommitted)
+    const disable = host.run(async () => {
+      await k.app.get(PermissionCeilingWrites).lock({}, "platform");
+      await k.app
+        .get(KernelDb)
+        .updateTable("accounts")
+        .set({ status: "disabled" })
+        .where("id", "=", f.accountId)
+        .execute();
+      held.resolve();
+      await go.promise;
+    });
+    await held.promise;
+    let settled = false;
+    // the first actor check (the owned root of an active member) still sees the actor active;
+    // admission then waits for its shared authority locks
+    const admission = host
+      .run(() =>
+        k.app.get(SandboxOperationAuthority).resolve(
+          {
+            orgId: f.orgId,
+            deviceId: f.deviceId,
+            holderConversationId: f.rootId,
+            actor: { accountId: f.accountId, conversationId: f.rootId, runId: f.runId },
+          },
+          "exec",
+          signal(),
+        ),
+      )
+      .then(
+        () => ({ admitted: true as const }),
+        (e: unknown) => e,
+      )
+      .finally(() => {
+        settled = true;
+      });
+    await expect
+      .poll(async () => {
+        const n = Number(
+          (
+            await sql<{ n: string }>`select count(*) n from pg_locks l
+              join pg_stat_activity a on a.pid = l.pid
+              where not l.granted and a.datname = current_database()`.execute(raw)
+          ).rows[0]?.n,
+        );
+        return settled || n > 0;
+      })
+      .toBe(true);
+    expect(settled).toBe(false);
+    go.resolve();
+    await disable;
+    // under the locks the backstop sees the committed disable. Its refusal differs from the first
+    // check's `conversation.not_found` (that check hides the conversation; this one names the
+    // actor, as the recorded context's `run.permission_context_actor_unavailable` does)
+    expect(await admission).toMatchObject({
+      code: "forbidden",
+      message: "This run's actor is no longer authorized",
+    });
   });
 
   it("scheduled roots, children and wakes evaluate Request approval with the actual task grants", async () => {

@@ -11,7 +11,10 @@ import {
 import { XactLock } from "../../src/infra/database/xact-lock.js";
 import { createLogger } from "../../src/log.js";
 import { PermissionAuthorityEpochStore } from "../../src/sandbox/permission-authority-epochs.js";
-import { PermissionAuthorityLock } from "../../src/sandbox/permission-authority-lock.js";
+import {
+  PermissionAuthorityLock,
+  PermissionLockOrderError,
+} from "../../src/sandbox/permission-authority-lock.js";
 
 let pg: TestContainer;
 let pool: ReturnType<typeof createDb>;
@@ -182,11 +185,32 @@ it("inside a fenced transaction authority locks are taken only in the ordered pr
   );
   // an unfenced transaction keeps its ordinary acquisition
   await host.run(() => lock.acquire(subject, { kind: "admit" }));
-  // known follow-up: a ceiling writer inside a fenced transaction (a Platform operation in a tool
-  // step) still locks after the fence; flip this when those writers take a prelude
-  await withTransactionFence(
+  // a ceiling writer is held to the same order: its write lock after the fence's rows is refused
+  // with the typed internal error naming the missing locks
+  const err = await withTransactionFence(
     async () => "exclusive",
     () => host.run(() => lock.acquire(subject, { kind: "write", level: "root" })),
+  ).then(
+    () => undefined,
+    (e: unknown) => e,
+  );
+  expect(err).toBeInstanceOf(PermissionLockOrderError);
+  expect((err as PermissionLockOrderError).keys).toEqual([
+    "permission-authority-platform-platform",
+    "permission-authority-org-org",
+    "permission-authority-root-root",
+  ]);
+  // and in its prelude it commits
+  await withTransactionFence(
+    async ({ prelude }) => {
+      await prelude?.();
+      return "exclusive";
+    },
+    () =>
+      withTransactionFencePrelude(
+        () => lock.acquire(subject, { kind: "write", level: "root" }),
+        () => host.run(() => lock.acquire(subject, { kind: "write", level: "root" })),
+      ),
   );
 });
 

@@ -17,7 +17,7 @@ import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { TransactionHost } from "../infra/database/transaction-host.js";
+import { TransactionHost, withOrderedLocks } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
@@ -708,14 +708,21 @@ export class SettingsService {
         check.error.issues.map((i) => ({ path: i.path.join("."), message: i.message })),
       );
     }
-    await this.write(
-      normalizeDeploymentSettingsPatch(check.data),
-      actorAccountId,
-      actorTokenId,
-      auditDetail,
-      opts,
+    const normalized = normalizeDeploymentSettingsPatch(check.data);
+    // the super admin lock, then (for a Full switch change) the platform permission authority
+    // lock: the ordered prelude, so inside a run's fence (the Platform tool's
+    // `admin.update-settings`) they precede the conversation rows; the patch decides the lock
+    await withOrderedLocks(
+      () => this.lockFor(normalized, actorAccountId),
+      () => this.write(normalized, actorAccountId, actorTokenId, auditDetail, opts),
     );
     return this.view();
+  }
+
+  @Transactional({ propagation: "mandatory" })
+  private async lockFor(patch: DeploymentSettingsPatch, actorAccountId: string): Promise<void> {
+    await this.adminLock.lockAndAuthorize(actorAccountId);
+    if (patch.devicesFullAccess !== undefined) await this.ceilings.lock({}, "platform");
   }
 
   @Transactional()
@@ -726,8 +733,8 @@ export class SettingsService {
     auditDetail: Record<string, unknown> | undefined,
     opts: { onlyNarrows?: boolean },
   ): Promise<void> {
-    await this.adminLock.lockAndAuthorize(actorAccountId);
-    if (patch.devicesFullAccess !== undefined) await this.ceilings.lock({}, "platform");
+    // held since the prelude (`lockFor`); naming them again re-checks the actor
+    await this.lockFor(patch, actorAccountId);
     // The super admin lock serializes every settings write: the current overrides are read
     // and merged under it, so no concurrent change is lost
     const next: Partial<DeploymentSettings> = {};
