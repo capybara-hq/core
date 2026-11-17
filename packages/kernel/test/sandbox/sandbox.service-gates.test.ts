@@ -31,7 +31,7 @@ import { truncateTables } from "../helpers/db.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
 import { seedDevice } from "../helpers/sandbox.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
-import { stagedHello } from "../local-devices/fake-machine.js";
+import { stagedHello } from "../local-devices/fake-machine-v3.js";
 
 /**
  * The SandboxService acquire gates of the permission activation plan (W1-E):

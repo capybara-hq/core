@@ -100,6 +100,11 @@ export class FakeMachine {
     });
   }
 
+  /** Sends the protocol 2 hello with `overrides` applied (the shape `fake-machine-v3.ts` shares). */
+  hello(overrides: Record<string, unknown> = {}): void {
+    this.send({ ...HELLO, ...overrides });
+  }
+
   send(frame: unknown): void {
     this.ws.send(JSON.stringify(frame));
   }

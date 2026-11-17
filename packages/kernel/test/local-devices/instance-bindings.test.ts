@@ -26,7 +26,7 @@ import { truncateTables } from "../helpers/db.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
-import { stagedHello as fakeHello } from "./fake-machine.js";
+import { stagedHello as fakeHello } from "./fake-machine-v3.js";
 
 let pg: TestContainer, redis: TestContainer, k: TestKernel, raw: ReturnType<typeof createDb>;
 beforeAll(async () => {
